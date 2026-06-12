@@ -5,6 +5,7 @@
 //! 使前端和命令层与具体协议解耦。
 
 pub mod serial;
+pub mod manager;
 
 use serde::{Deserialize, Serialize};
 
@@ -34,10 +35,10 @@ impl ConnectionType {
         &[ConnectionType::Serial, ConnectionType::Ssh, ConnectionType::Telnet]
     }
 
-    /// 人类可读标签
+    /// 人类可读标签（前端 i18n 覆盖此值）
     pub fn label(&self) -> &'static str {
         match self {
-            ConnectionType::Serial => "串口 (Serial)",
+            ConnectionType::Serial => "Serial",
             ConnectionType::Ssh => "SSH",
             ConnectionType::Telnet => "Telnet",
         }
@@ -87,6 +88,7 @@ pub trait TermSession: Send {
     fn write(&mut self, data: &[u8]) -> Result<(), String>;
 
     /// 获取当前状态
+    #[allow(dead_code)]
     fn state(&self) -> SessionState;
 
     /// 获取连接类型

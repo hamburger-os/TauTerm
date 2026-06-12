@@ -1,0 +1,57 @@
+.bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--blur-medium));
+  border: 1px solid var(--glass-border);
+  border-radius: 0 0 0 var(--radius-md);
+  z-index: var(--z-overlay);
+}
+
+.input {
+  width: 180px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--glass-border-focus);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.count {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  min-width: 36px;
+  text-align: center;
+}
+
+.btn {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.btn:hover { color: var(--text-primary); border-color: var(--glass-border-hover); }
+.btn.active { color: var(--accent-primary); border-color: var(--accent-primary); }

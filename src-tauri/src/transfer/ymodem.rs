@@ -52,9 +52,11 @@ const DATA_BLOCK_SIZE: usize = 1024;
 const BLOCK0_SIZE: usize = 128;
 const MAX_RETRIES: u32 = 10;
 
-/// YModem 实现结构体
+/// YModem 实现结构体（旧 trait 实现，保留兼容）
+#[allow(dead_code)]
 pub struct YModem;
 
+#[allow(dead_code)]
 impl YModem {
     pub fn new() -> Self {
         Self
@@ -104,9 +106,9 @@ impl YModem {
 impl FileTransferProtocol for YModem {
     fn send_files(
         &mut self,
-        file_paths: &[String],
-        progress_callback: Box<dyn Fn(TransferProgress) + Send>,
-        cancel_signal: tokio::sync::oneshot::Receiver<()>,
+        _file_paths: &[String],
+        _progress_callback: Box<dyn Fn(TransferProgress) + Send>,
+        _cancel_signal: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // YModem 发送需要直接访问串口
         // 此 trait 方法由 SerialPortManager 调用并传入端口访问
@@ -135,23 +137,38 @@ impl YModemSender {
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 阶段 1：等待接收方发送 'C'（CRC 模式请求）
-        // 发送方等待接收方启动传输
-        for retry in 0..MAX_RETRIES {
+        // 标准 YModem 接收方会持续发送 'C'（每秒一次），直到发送方响应。
+        // 发送前已清空缓冲区，此处严格匹配 'C' 字符。
+        // 收到非 'C' 字节说明设备未进入 YModem 接收模式，需用户先在设备端执行接收命令。
+        let mut c_count = 0u32;
+        for retry in 0..MAX_RETRIES * 3 {
             if cancel() { return Err("传输已取消".into()); }
-            match Self::read_byte_with_timeout(port, 3000)? {
-                Some(C) => break,
+            match Self::read_byte_with_timeout(port, 1000)? {
+                Some(C) => {
+                    c_count += 1;
+                    if c_count >= 1 { break; }  // 收到至少一个 'C' 即继续
+                }
                 Some(NAK) => continue,
                 Some(CAN) => return Err("接收方取消了传输".into()),
-                _ => {
-                    if retry == MAX_RETRIES - 1 {
-                        return Err("等待接收方超时".into());
+                Some(other) => {
+                    // 收到非协议字节 → 设备可能未进入 YModem 模式
+                    if retry >= MAX_RETRIES {
+                        return Err(format!(
+                            "未检测到设备 YModem 就绪信号（收到 0x{:02X} 而非 0x43 'C'）。\n请先在设备终端中执行 YModem 接收命令（如 loady、rb、rz 等），待设备开始发送 'C' 后再启动文件传输。",
+                            other
+                        ).into());
+                    }
+                }
+                None => {
+                    if retry == MAX_RETRIES * 3 - 1 {
+                        return Err("等待设备 YModem 就绪信号超时。请先在设备终端中执行接收命令（如 loady、rb）。".into());
                     }
                 }
             }
         }
 
         // 阶段 2：发送文件
-        for (file_idx, file_path) in file_paths.iter().enumerate() {
+        for (_file_idx, file_path) in file_paths.iter().enumerate() {
             if cancel() { return Err("传输已取消".into()); }
 
             let file_name = std::path::Path::new(file_path)
@@ -213,8 +230,12 @@ impl YModemSender {
         }
 
         // 阶段 3：发送批次结束（空块 0）
+        // 某些嵌入式 YModem 实现在 EOT+ACK 后立即退出协议模式，
+        // 不再响应空块 0。此处将空块 0 失败降级为警告，因为文件数据已完整传输。
         let empty_block0 = [0u8; BLOCK0_SIZE];
-        Self::send_block(port, 0, &empty_block0, BLOCK0_SIZE, cancel)?;
+        if let Err(e) = Self::send_block(port, 0, &empty_block0, BLOCK0_SIZE, cancel) {
+            log::warn!("YModem 批次结束空块 0 发送失败（文件数据已传输）: {}", e);
+        }
 
         Ok(())
     }
@@ -318,7 +339,7 @@ impl YModemReceiver {
     pub fn receive(
         port: &mut Box<dyn serialport::SerialPort>,
         download_dir: &str,
-        on_progress: impl Fn(TransferProgress),
+        _on_progress: impl Fn(TransferProgress),
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(download_dir)?;

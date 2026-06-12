@@ -109,10 +109,14 @@ export default function SerialConfigSidebar({
     ? typeEndpoints.map((ep) => ({ value: ep.name, label: ep.name }))
     : [{ value: "", label: t("serial.noPorts") }];
 
-  // 连接类型选项
+  // 连接类型选项（使用 i18n 翻译）
+  const typeLabel = useCallback(
+    (id: string) => t(`connectionType.${id}` as unknown as Parameters<typeof t>[0], { defaultValue: id }),
+    [t]
+  );
   const typeOptions = connectionTypes.map((ct) => ({
     value: ct.id,
-    label: ct.available ? ct.label : `${ct.label} (即将推出)`,
+    label: ct.available ? typeLabel(ct.id) : `${typeLabel(ct.id)} ${t("connectionType.comingSoon")}`,
   }));
 
   // 自动选择第一个端点
@@ -150,7 +154,7 @@ export default function SerialConfigSidebar({
         <div className={styles.form}>
           {/* 连接类型选择 */}
           <GlassSelect
-            label="连接类型"
+            label={t("connectionType.label")}
             options={typeOptions}
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
@@ -208,9 +212,9 @@ export default function SerialConfigSidebar({
           )}
 
           {/* 未实现的连接类型 */}
-          {!isSerialType && selectedTypeAvailable === false && (
+          {!isSerialType && !selectedTypeAvailable && (
             <div className={styles.comingSoon}>
-              <p>🚧 {selectedType === "ssh" ? "SSH" : "Telnet"} 连接将在未来版本中支持</p>
+              <p>🚧 {typeLabel(selectedType)} {t("connectionType.comingSoon")}</p>
             </div>
           )}
         </div>

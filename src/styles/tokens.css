@@ -1,34 +1,32 @@
 /* ========================================
-   TauTerm Liquid Glass 设计令牌
-   定义全局 CSS 自定义属性
+   TauTerm Liquid Glass v2 设计令牌
+   Neon Dark (默认) + Ocean + Sunset
    ======================================== */
 
-:root {
-  /* === 颜色 === */
-
+:root, [data-theme="neon-dark"] {
   /* 基础背景 */
-  --bg-primary: #0a0a1a;
-  --bg-secondary: #0d1117;
-  --bg-gradient: linear-gradient(135deg, #0a0a1a 0%, #0d1117 100%);
+  --bg-primary: #060610;
+  --bg-secondary: #0a0a1a;
+  --bg-gradient: linear-gradient(135deg, #060610 0%, #0a0a1a 40%, #0d0d24 100%);
 
   /* 玻璃面板 */
-  --glass-bg: rgba(255, 255, 255, 0.03);
-  --glass-bg-hover: rgba(255, 255, 255, 0.05);
-  --glass-bg-active: rgba(255, 255, 255, 0.08);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-border-hover: rgba(255, 255, 255, 0.15);
-  --glass-border-focus: rgba(0, 212, 170, 0.5);
+  --glass-bg: rgba(0, 212, 170, 0.03);
+  --glass-bg-hover: rgba(0, 212, 170, 0.06);
+  --glass-bg-active: rgba(0, 212, 170, 0.10);
+  --glass-border: rgba(0, 212, 170, 0.10);
+  --glass-border-hover: rgba(0, 212, 170, 0.25);
+  --glass-border-focus: rgba(0, 212, 170, 0.45);
 
-  /* 强调色（青绿 → 天蓝渐变） */
-  --accent-start: #00d4aa;
-  --accent-end: #00a3ff;
+  /* 强调色（青绿 → 天蓝霓虹） */
+  --accent-primary: #00d4aa;
+  --accent-secondary: #00a3ff;
   --accent-gradient: linear-gradient(135deg, #00d4aa 0%, #00a3ff 100%);
-  --accent-glow: rgba(0, 212, 170, 0.3);
+  --accent-glow: rgba(0, 212, 170, 0.35);
 
   /* 文字 */
-  --text-primary: #e0e0e0;
-  --text-secondary: #888;
-  --text-muted: #555;
+  --text-primary: #e0e0ff;
+  --text-secondary: #8888aa;
+  --text-muted: #505070;
   --text-accent: #00d4aa;
 
   /* 状态颜色 */
@@ -37,38 +35,38 @@
   --color-warning: #ffa502;
   --color-info: #00a3ff;
 
-  /* === 模糊 === */
+  /* 模糊 */
   --blur-light: 8px;
   --blur-medium: 16px;
   --blur-heavy: 24px;
 
-  /* === 圆角 === */
-  --radius-sm: 6px;
+  /* 圆角 */
+  --radius-sm: 4px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
   --radius-full: 9999px;
 
-  /* === 过渡 === */
+  /* 过渡 */
   --transition-fast: 150ms ease;
   --transition-normal: 300ms ease;
   --transition-slow: 500ms ease;
 
-  /* === 字体 === */
+  /* 字体 */
   --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code",
     "Consolas", "Courier New", monospace;
 
-  /* === 字号 === */
-  --text-xs: 0.75rem;   /* 12px */
-  --text-sm: 0.8125rem; /* 13px */
-  --text-base: 0.875rem;/* 14px */
-  --text-md: 1rem;      /* 16px */
-  --text-lg: 1.125rem;  /* 18px */
-  --text-xl: 1.25rem;   /* 20px */
+  /* 字号 */
+  --text-xs: 0.7rem;
+  --text-sm: 0.78rem;
+  --text-base: 0.85rem;
+  --text-md: 0.95rem;
+  --text-lg: 1.1rem;
+  --text-xl: 1.25rem;
 
-  /* === 间距 === */
+  /* 间距 */
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 12px;
@@ -76,14 +74,60 @@
   --spacing-xl: 24px;
   --spacing-2xl: 32px;
 
-  /* === 阴影 === */
-  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.4);
-  --shadow-glow: 0 0 20px rgba(0, 212, 170, 0.15);
-  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.3);
+  /* 阴影 */
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 20px rgba(0, 212, 170, 0.2);
+  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.4);
 
-  /* === 层级 === */
+  /* 层级 */
   --z-sidebar: 10;
   --z-panel: 20;
   --z-overlay: 30;
   --z-toast: 50;
+}
+
+/* Ocean Blue 主题 */
+[data-theme="ocean"] {
+  --bg-primary: #0a0e1a;
+  --bg-secondary: #0d1225;
+  --bg-gradient: linear-gradient(135deg, #0a0e1a 0%, #0d1225 40%, #101830 100%);
+  --glass-bg: rgba(59, 130, 246, 0.03);
+  --glass-bg-hover: rgba(59, 130, 246, 0.06);
+  --glass-bg-active: rgba(59, 130, 246, 0.10);
+  --glass-border: rgba(59, 130, 246, 0.10);
+  --glass-border-hover: rgba(59, 130, 246, 0.25);
+  --glass-border-focus: rgba(59, 130, 246, 0.45);
+  --accent-primary: #3b82f6;
+  --accent-secondary: #60a5fa;
+  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+  --accent-glow: rgba(59, 130, 246, 0.35);
+  --text-primary: #e0ecff;
+  --text-secondary: #8899bb;
+  --text-muted: #506088;
+  --text-accent: #60a5fa;
+  --color-success: #34d399;
+  --color-info: #3b82f6;
+}
+
+/* Sunset Amber 主题 */
+[data-theme="sunset"] {
+  --bg-primary: #1a0e0a;
+  --bg-secondary: #1f1210;
+  --bg-gradient: linear-gradient(135deg, #1a0e0a 0%, #1f1210 40%, #2a1815 100%);
+  --glass-bg: rgba(251, 146, 60, 0.03);
+  --glass-bg-hover: rgba(251, 146, 60, 0.06);
+  --glass-bg-active: rgba(251, 146, 60, 0.10);
+  --glass-border: rgba(251, 146, 60, 0.10);
+  --glass-border-hover: rgba(251, 146, 60, 0.25);
+  --glass-border-focus: rgba(251, 146, 60, 0.45);
+  --accent-primary: #fb923c;
+  --accent-secondary: #fbbf24;
+  --accent-gradient: linear-gradient(135deg, #fb923c 0%, #fbbf24 100%);
+  --accent-glow: rgba(251, 146, 60, 0.35);
+  --text-primary: #ffe8d6;
+  --text-secondary: #bb9988;
+  --text-muted: #806050;
+  --text-accent: #fbbf24;
+  --color-success: #34d399;
+  --color-info: #fbbf24;
 }

@@ -4,6 +4,7 @@
 
 /// 传输进度信息
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TransferProgress {
     /// 当前文件名
     pub file_name: String,
@@ -17,6 +18,7 @@ pub struct TransferProgress {
 
 /// 传输方向
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum TransferDirection {
     Send,
     Receive,
@@ -24,6 +26,7 @@ pub enum TransferDirection {
 
 /// 传输状态
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum TransferStatus {
     InProgress,
     Completed,
@@ -31,7 +34,8 @@ pub enum TransferStatus {
     Cancelled,
 }
 
-/// 文件传输协议 trait
+/// 文件传输协议 trait（供未来扩展 ZModem/Kermit）
+#[allow(dead_code)]
 pub trait FileTransferProtocol {
     /// 发送文件
     fn send_files(

@@ -1,0 +1,50 @@
+.handle {
+  position: relative;
+  flex-shrink: 0;
+  z-index: var(--z-sidebar);
+}
+
+.horizontal {
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.vertical {
+  height: 4px;
+  width: 100%;
+  cursor: row-resize;
+}
+
+.glow {
+  position: absolute;
+  background: var(--accent-primary);
+  opacity: 0;
+}
+
+.horizontal .glow {
+  top: 0;
+  bottom: 0;
+  left: 1px;
+  right: 1px;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.vertical .glow {
+  left: 0;
+  right: 0;
+  top: 1px;
+  bottom: 1px;
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--accent-primary);
+  font-size: 14px;
+  opacity: 0;
+  pointer-events: none;
+}

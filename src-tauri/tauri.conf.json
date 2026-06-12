@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri/v2/crates/tauri-utils/schema.json",
   "productName": "TauTerm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.tauterm.app",
   "build": {
     "frontendDist": "../dist",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "TauTerm - 串口终端",
+        "title": "TauTerm - Terminal Emulator",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

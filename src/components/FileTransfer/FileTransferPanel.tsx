@@ -16,6 +16,12 @@ interface FileTransferPanelProps {
   history: TransferHistoryItem[];
   /** 错误信息 */
   error: string | null;
+  /** 是否已连接串口 */
+  isConnected: boolean;
+  /** 选择文件并发送 */
+  onSendFiles: () => void;
+  /** 选择目录并接收 */
+  onReceiveFiles: () => void;
   /** 取消传输 */
   onCancel: () => void;
   /** 清除错误 */
@@ -52,6 +58,9 @@ export default function FileTransferPanel({
   progress,
   history,
   error,
+  isConnected,
+  onSendFiles,
+  onReceiveFiles,
   onCancel,
   onClearError,
   onClearHistory,
@@ -59,6 +68,7 @@ export default function FileTransferPanel({
   const { t } = useTranslation();
 
   const isTransferring = status === "transferring";
+  const canTransfer = isConnected && !isTransferring;
   const progressPercent =
     progress && progress.total_bytes > 0
       ? Math.round((progress.bytes_transferred / progress.total_bytes) * 100)
@@ -87,12 +97,40 @@ export default function FileTransferPanel({
     <div className={styles.panel}>
       <div className={styles.header}>
         <h3 className={styles.title}>{t("transfer.title")}</h3>
-        {isTransferring && (
-          <GlassButton variant="danger" size="sm" onClick={onCancel}>
-            {t("transfer.cancel")}
-          </GlassButton>
-        )}
+        <div className={styles.actions}>
+          {isTransferring ? (
+            <GlassButton variant="danger" size="sm" onClick={onCancel}>
+              {t("transfer.cancel")}
+            </GlassButton>
+          ) : (
+            <>
+              <GlassButton
+                variant="primary"
+                size="sm"
+                disabled={!canTransfer}
+                onClick={onSendFiles}
+              >
+                📤 {t("transfer.sendFiles")}
+              </GlassButton>
+              <GlassButton
+                variant="primary"
+                size="sm"
+                disabled={!canTransfer}
+                onClick={onReceiveFiles}
+              >
+                📥 {t("transfer.receiveFiles")}
+              </GlassButton>
+            </>
+          )}
+        </div>
       </div>
+
+      {/* 未连接时提示 */}
+      {!isConnected && (
+        <div className={styles.hintBox}>
+          {t("serial.disconnected")}
+        </div>
+      )}
 
       {/* 当前传输进度 */}
       {progress && isTransferring && (

@@ -8,8 +8,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use crate::serial::config::SerialConfig;
 
-/// 串口连接状态
+/// 串口连接状态（保留供未来使用）
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum ConnectionState {
     Disconnected,
     Connecting,
@@ -17,9 +18,11 @@ pub enum ConnectionState {
 }
 
 /// 共享的串口句柄
+#[allow(dead_code)]
 type SharedPort = Arc<Mutex<Option<Box<dyn serialport::SerialPort>>>>;
 
-/// 串口管理器
+/// 串口管理器（保留供未来使用）
+#[allow(dead_code)]
 pub struct SerialPortManager {
     /// 共享的串口句柄
     port: SharedPort,
@@ -31,6 +34,7 @@ pub struct SerialPortManager {
     transfer_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
+#[allow(dead_code)]
 impl SerialPortManager {
     /// 创建新的串口管理器实例
     pub fn new() -> Self {

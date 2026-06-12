@@ -2,8 +2,9 @@
 //!
 //! 定义串口连接的所有可配置参数。
 
-/// 串口配置结构体
+/// 串口配置结构体（保留供未来使用）
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct SerialConfig {
     /// 端口名称（如 "COM1"、"/dev/ttyUSB0"）
     pub port_name: String,
@@ -32,6 +33,7 @@ impl Default for SerialConfig {
     }
 }
 
+#[allow(dead_code)]
 impl SerialConfig {
     /// 创建新的串口配置
     pub fn new(

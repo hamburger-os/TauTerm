@@ -1,288 +1,208 @@
 //! 串口会话实现
 //!
-//! 将串口连接封装为 `TermSession` trait 实现。
+//! 使用专用 I/O 线程独占串口端口。
+//! I/O 线程使用缓冲通道（sync_channel(32)）和公平读写调度。
 
-use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::io::Read;
+use std::sync::mpsc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use crate::session::{ConnectionType, EndpointInfo, SessionState, TermSession};
-use crate::transfer::ymodem::{YModemSender, YModemReceiver};
+use crate::session::manager::{IoCmd, spawn_io_thread};
 
-/// 共享串口句柄
-type SharedPort = Arc<Mutex<Option<Box<dyn serialport::SerialPort>>>>;
-
-/// 串口会话
-///
-/// 实现 `TermSession` trait，管理串口的枚举、连接和读写。
+/// 最小串口会话（兼容 TermSession trait）
 pub struct SerialSession {
-    port: SharedPort,
     state: SessionState,
-    read_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    transfer_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl SerialSession {
     pub fn new() -> Self {
         Self {
-            port: Arc::new(Mutex::new(None)),
             state: SessionState::Disconnected,
-            read_cancel_tx: None,
-            transfer_cancel_tx: None,
         }
     }
 
-    /// 启动后台读取任务
-    fn start_read_loop(
-        port: SharedPort,
-        on_data: Box<dyn Fn(Vec<u8>) + Send>,
-        on_disconnect: Box<dyn Fn() + Send>,
-        mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    ) {
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            loop {
-                if cancel_rx.try_recv().is_ok() {
-                    break;
-                }
+    /// 创建串口会话
+    ///
+    /// 打开端口，启动 I/O 线程，返回 (session, write_tx, io_thread, cancel_tx, actual_params)
+    pub fn create_session(
+        session_id: &str,
+        endpoint: &str,
+        params: &serde_json::Value,
+        on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
+        on_disconnect: Box<dyn Fn(String) + Send>,
+    ) -> Result<(
+        SerialSession,
+        mpsc::SyncSender<IoCmd>,
+        std::thread::JoinHandle<()>,
+        tokio::sync::oneshot::Sender<()>,
+        serde_json::Value,
+    ), String> {
+        let actual_params = Self::build_params(params);
+        let port = Self::open_port(endpoint, &actual_params)?;
 
-                let read_result = {
-                    let mut guard = match port.lock() {
-                        Ok(g) => g,
-                        Err(_) => break,
-                    };
-                    match guard.as_mut() {
-                        Some(p) => p.read(&mut buf),
-                        None => break,
-                    }
-                };
+        let (write_tx, write_rx) = mpsc::sync_channel::<IoCmd>(32);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
-                match read_result {
-                    Ok(n) if n > 0 => {
-                        on_data(buf[..n].to_vec());
-                    }
-                    Ok(_) => {
-                        // 超时或无数据
-                        std::thread::sleep(Duration::from_millis(1));
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                        std::thread::sleep(Duration::from_millis(1));
-                    }
-                    Err(_) => {
-                        on_disconnect();
-                        break;
-                    }
+        let sid = session_id.to_string();
+        let io_handle = spawn_io_thread(port, sid, on_data, on_disconnect, write_rx, cancel_rx);
+
+        Ok((
+            SerialSession { state: SessionState::Connected },
+            write_tx,
+            io_handle,
+            cancel_tx,
+            actual_params,
+        ))
+    }
+
+    /// 构建串口参数（从 JSON Value 提取，使用默认值填充）
+    fn build_params(params: &serde_json::Value) -> serde_json::Value {
+        let baud_rate = params.get("baud_rate").and_then(|v| v.as_u64()).unwrap_or(115200);
+        let data_bits = params.get("data_bits").and_then(|v| v.as_u64()).unwrap_or(8);
+        let parity = params.get("parity").and_then(|v| v.as_str()).unwrap_or("none");
+        let stop_bits = params.get("stop_bits").and_then(|v| v.as_str()).unwrap_or("1");
+        let flow_control = params.get("flow_control").and_then(|v| v.as_str()).unwrap_or("none");
+
+        serde_json::json!({
+            "baud_rate": baud_rate,
+            "data_bits": data_bits,
+            "parity": parity,
+            "stop_bits": stop_bits,
+            "flow_control": flow_control,
+        })
+    }
+
+    /// 打开串口端口
+    fn open_port(endpoint: &str, params: &serde_json::Value) -> Result<Box<dyn serialport::SerialPort>, String> {
+        let baud_rate = params.get("baud_rate").and_then(|v| v.as_u64()).unwrap_or(115200) as u32;
+        let dbv = params.get("data_bits").and_then(|v| v.as_u64()).unwrap_or(8) as u8;
+        let ps = params.get("parity").and_then(|v| v.as_str()).unwrap_or("none");
+        let sbs = params.get("stop_bits").and_then(|v| v.as_str()).unwrap_or("1");
+        let fcs = params.get("flow_control").and_then(|v| v.as_str()).unwrap_or("none");
+
+        let db = match dbv { 5=>serialport::DataBits::Five,6=>serialport::DataBits::Six,7=>serialport::DataBits::Seven,_=>serialport::DataBits::Eight };
+        let pa = match ps { "even"=>serialport::Parity::Even,"odd"=>serialport::Parity::Odd,_=>serialport::Parity::None };
+        let sb = match sbs { "2"=>serialport::StopBits::Two,_=>serialport::StopBits::One };
+        let fc = match fcs { "rts_cts"=>serialport::FlowControl::Hardware,"xon_xoff"=>serialport::FlowControl::Software,_=>serialport::FlowControl::None };
+
+        serialport::new(endpoint, baud_rate)
+            .data_bits(db).parity(pa).stop_bits(sb).flow_control(fc)
+            .timeout(Duration::from_millis(50))
+            .open()
+            .map_err(|e| format!("无法打开端口 {}: {}", endpoint, e))
+    }
+
+    // ── YModem 文件传输 ────────────────────────────
+
+    /// 临时打开专用端口用于 YModem 传输
+    pub fn open_port_for_transfer(endpoint: &str, params: &serde_json::Value) -> Result<Box<dyn serialport::SerialPort>, String> {
+        Self::open_port(endpoint, params)
+    }
+
+    /// 清空端口接收缓冲区
+    ///
+    /// 丢弃设备残留输出，避免干扰 YModem 握手协议。
+    /// 连续读取直到连续 3 次超时（50ms 每次），确保缓冲区清空。
+    pub fn flush_port_buffer(port: &mut Box<dyn serialport::SerialPort>) {
+        let mut buf = [0u8; 256];
+        let mut empty_count = 0;
+        for _ in 0..20 {
+            match port.read(&mut buf) {
+                Ok(n) if n > 0 => { empty_count = 0; }
+                _ => {
+                    empty_count += 1;
+                    if empty_count >= 3 { break; }
                 }
             }
-        });
+        }
     }
 
     /// YModem 发送文件
     pub fn ymodem_send(
-        port: SharedPort,
+        port: &mut Box<dyn serialport::SerialPort>,
         app: AppHandle,
         file_paths: Vec<String>,
-        mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+        cancel_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<(), String> {
-        let mut guard = port.lock().map_err(|e| format!("锁错误: {}", e))?;
-        let serial_port = guard.as_mut().ok_or("串口未打开")?;
-
-        let mut cancelled = false;
-        let cancel_fn = &mut || {
-            if cancelled { return true; }
-            cancelled = cancel_rx.try_recv().is_ok();
-            cancelled
-        };
-
-        let app_clone = app.clone();
-        let on_progress = move |p: crate::transfer::protocol::TransferProgress| {
-            let _ = app_clone.emit("transfer-progress", serde_json::json!({
-                "file_name": p.file_name,
-                "bytes_transferred": p.bytes_transferred,
-                "total_bytes": p.total_bytes,
-                "direction": "send",
-            }));
-        };
-
-        YModemSender::send(serial_port, &file_paths, on_progress, cancel_fn)
-            .map_err(|e| e.to_string())?;
-
-        let _ = app.emit("transfer-complete", serde_json::json!({
-            "success": true,
-            "files": file_paths.len(),
-        }));
+        use crate::transfer::ymodem::YModemSender;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let c = cancelled.clone();
+        std::thread::spawn(move || { let _ = cancel_rx.blocking_recv(); c.store(true, Ordering::SeqCst); });
+        let cancel_fn = &mut || cancelled.load(Ordering::SeqCst);
+        let ac = app.clone();
+        YModemSender::send(port, &file_paths,
+            move |p| { let _ = ac.emit("transfer-progress", serde_json::json!({"file_name":p.file_name,"bytes_transferred":p.bytes_transferred,"total_bytes":p.total_bytes,"direction":"send"})); },
+            cancel_fn,
+        ).map_err(|e| e.to_string())?;
+        let _ = app.emit("transfer-complete", serde_json::json!({"success":true,"files":file_paths.len()}));
         Ok(())
     }
 
     /// YModem 接收文件
     pub fn ymodem_receive(
-        port: SharedPort,
+        port: &mut Box<dyn serialport::SerialPort>,
         app: AppHandle,
         download_dir: String,
-        mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
+        cancel_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<(), String> {
-        let mut guard = port.lock().map_err(|e| format!("锁错误: {}", e))?;
-        let serial_port = guard.as_mut().ok_or("串口未打开")?;
-
-        let mut cancelled = false;
-        let cancel_fn = &mut || {
-            if cancelled { return true; }
-            cancelled = cancel_rx.try_recv().is_ok();
-            cancelled
-        };
-
-        let app_clone = app.clone();
-        let on_progress = move |p: crate::transfer::protocol::TransferProgress| {
-            let _ = app_clone.emit("transfer-progress", serde_json::json!({
-                "file_name": p.file_name,
-                "bytes_transferred": p.bytes_transferred,
-                "total_bytes": p.total_bytes,
-                "direction": "receive",
-            }));
-        };
-
-        YModemReceiver::receive(serial_port, &download_dir, on_progress, cancel_fn)
-            .map_err(|e| e.to_string())?;
-
-        let _ = app.emit("transfer-complete", serde_json::json!({
-            "success": true,
-            "message": "接收完成",
-        }));
+        use crate::transfer::ymodem::YModemReceiver;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let c = cancelled.clone();
+        std::thread::spawn(move || { let _ = cancel_rx.blocking_recv(); c.store(true, Ordering::SeqCst); });
+        let cancel_fn = &mut || cancelled.load(Ordering::SeqCst);
+        let ac = app.clone();
+        YModemReceiver::receive(port, &download_dir,
+            move |p| { let _ = ac.emit("transfer-progress", serde_json::json!({"file_name":p.file_name,"bytes_transferred":p.bytes_transferred,"total_bytes":p.total_bytes,"direction":"receive"})); },
+            cancel_fn,
+        ).map_err(|e| e.to_string())?;
+        let _ = app.emit("transfer-complete", serde_json::json!({"success":true,"message":"接收完成"}));
         Ok(())
-    }
-
-    /// 获取端口共享引用（供 YModem 命令使用）
-    pub fn port_handle(&self) -> SharedPort {
-        self.port.clone()
-    }
-
-    /// 获取取消信号发送端
-    pub fn take_cancel_tx(&mut self) -> Option<tokio::sync::oneshot::Sender<()>> {
-        self.transfer_cancel_tx.take()
-    }
-
-    /// 设置取消信号发送端
-    pub fn set_cancel_tx(&mut self, tx: tokio::sync::oneshot::Sender<()>) {
-        self.transfer_cancel_tx = Some(tx);
     }
 }
 
+// ── TermSession trait 实现 ────────────────────────
+// 注意: 多会话架构中，SerialSession 的 TermSession trait 实现保留用于兼容性，
+// 实际会话管理通过 SessionManager 完成。
+
 impl TermSession for SerialSession {
     fn enumerate_endpoints(&self) -> Result<Vec<EndpointInfo>, String> {
-        let ports = serialport::available_ports().map_err(|e| e.to_string())?;
-        Ok(ports
-            .into_iter()
-            .map(|p| EndpointInfo {
+        serialport::available_ports().map_err(|e| e.to_string()).map(|ports|
+            ports.into_iter().map(|p| EndpointInfo {
                 name: p.port_name.clone(),
                 description: p.port_name,
                 connection_type: ConnectionType::Serial,
-            })
-            .collect())
+            }).collect()
+        )
     }
 
     fn connect(
         &mut self,
-        endpoint: &str,
-        params: serde_json::Value,
-        on_data: Box<dyn Fn(Vec<u8>) + Send>,
-        on_disconnect: Box<dyn Fn() + Send>,
+        _endpoint: &str,
+        _params: serde_json::Value,
+        _on_data: Box<dyn Fn(Vec<u8>) + Send>,
+        _on_disconnect: Box<dyn Fn() + Send>,
     ) -> Result<(), String> {
-        // 解析参数
-        let baud_rate = params.get("baud_rate").and_then(|v| v.as_u64()).unwrap_or(115200) as u32;
-        let data_bits_val = params.get("data_bits").and_then(|v| v.as_u64()).unwrap_or(8) as u8;
-        let parity_str = params.get("parity").and_then(|v| v.as_str()).unwrap_or("none");
-        let stop_bits_str = params.get("stop_bits").and_then(|v| v.as_str()).unwrap_or("1");
-        let flow_control_str = params.get("flow_control").and_then(|v| v.as_str()).unwrap_or("none");
-
-        let data_bits = match data_bits_val {
-            5 => serialport::DataBits::Five,
-            6 => serialport::DataBits::Six,
-            7 => serialport::DataBits::Seven,
-            _ => serialport::DataBits::Eight,
-        };
-        let parity = match parity_str {
-            "even" => serialport::Parity::Even,
-            "odd" => serialport::Parity::Odd,
-            _ => serialport::Parity::None,
-        };
-        let stop_bits = match stop_bits_str {
-            "2" => serialport::StopBits::Two,
-            _ => serialport::StopBits::One,
-        };
-        let flow_control = match flow_control_str {
-            "rts_cts" => serialport::FlowControl::Hardware,
-            "xon_xoff" => serialport::FlowControl::Software,
-            _ => serialport::FlowControl::None,
-        };
-
-        self.state = SessionState::Connecting;
-
-        let port = serialport::new(endpoint, baud_rate)
-            .data_bits(data_bits)
-            .parity(parity)
-            .stop_bits(stop_bits)
-            .flow_control(flow_control)
-            .timeout(Duration::from_millis(50))
-            .open()
-            .map_err(|e| format!("无法打开端口 {}: {}", endpoint, e))?;
-
-        {
-            let mut guard = self.port.lock().map_err(|e| format!("锁错误: {}", e))?;
-            *guard = Some(port);
-        }
-
-        self.state = SessionState::Connected;
-
-        // 启动后台读取
-        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-        self.read_cancel_tx = Some(cancel_tx);
-
-        Self::start_read_loop(
-            self.port.clone(),
-            on_data,
-            on_disconnect,
-            cancel_rx,
-        );
-
-        Ok(())
+        Err("请使用 SessionManager::create_session() 创建会话".into())
     }
 
     fn disconnect(&mut self) -> Result<(), String> {
-        if let Some(tx) = self.read_cancel_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(tx) = self.transfer_cancel_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Ok(mut guard) = self.port.lock() {
-            *guard = None;
-        }
         self.state = SessionState::Disconnected;
         Ok(())
     }
 
-    fn write(&mut self, data: &[u8]) -> Result<(), String> {
-        let mut guard = self.port.lock().map_err(|e| format!("锁错误: {}", e))?;
-        match guard.as_mut() {
-            Some(port) => {
-                port.write_all(data).map_err(|e| e.to_string())?;
-                Ok(())
-            }
-            None => Err("串口未打开".into()),
-        }
+    fn write(&mut self, _data: &[u8]) -> Result<(), String> {
+        Err("请使用 SessionManager::write() 写入数据".into())
     }
 
-    fn state(&self) -> SessionState {
-        self.state.clone()
-    }
-
-    fn connection_type(&self) -> ConnectionType {
-        ConnectionType::Serial
-    }
+    fn state(&self) -> SessionState { self.state.clone() }
+    fn connection_type(&self) -> ConnectionType { ConnectionType::Serial }
 }
 
 impl Drop for SerialSession {
-    fn drop(&mut self) {
-        let _ = self.disconnect();
-    }
+    fn drop(&mut self) { let _ = self.disconnect(); }
 }

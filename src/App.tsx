@@ -1,333 +1,305 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useTranslation } from "react-i18next";
-import { useSerialPort } from "./hooks/useSerialPort";
-import { useFileTransfer } from "./hooks/useFileTransfer";
-import Terminal from "./components/Terminal/Terminal";
-import SerialConfigSidebar from "./components/Sidebar/SerialConfigSidebar";
+import { open } from "@tauri-apps/plugin-dialog";
+import { AnimatePresence, motion } from "framer-motion";
+import AppShell from "./components/Layout/AppShell";
+import Toolbar from "./components/Layout/Toolbar";
+import SessionSidebar from "./components/Layout/SessionSidebar";
+import TabBar from "./components/Layout/TabBar";
+import StatusBar from "./components/Layout/StatusBar";
+import ResizeHandle from "./components/Layout/ResizeHandle";
+import TerminalView from "./components/Terminal/TerminalView";
 import FileTransferPanel from "./components/FileTransfer/FileTransferPanel";
-import GlassButton from "./components/common/GlassButton";
+import CommandPalette from "./components/CommandPalette/CommandPalette";
+import ConnectDialog from "./components/Layout/ConnectDialog";
 import Toast from "./components/common/Toast";
+import { useSession } from "./context/SessionContext";
+import { useTransfer } from "./context/TransferContext";
+import { useKeyboard } from "./hooks/useKeyboard";
 import "./i18n/index";
 import "./App.css";
 
-/** 侧边栏最小/最大宽度 */
-const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_MAX_WIDTH = 400;
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 400;
+const PANEL_MIN = 24;
+const PANEL_DEFAULT = 200;
+const PANEL_MAX_RATIO = 0.5;
 
-/** 文件传输面板最小/最大高度 */
-const PANEL_MIN_HEIGHT = 24;
-const PANEL_MAX_HEIGHT_RATIO = 0.5;
-
-/** Toast 消息类型 */
 interface ToastMessage {
   id: number;
   type: "success" | "error" | "warning" | "info";
   message: string;
 }
 
-function App() {
-  const { t, i18n } = useTranslation();
+function AppInner() {
+  // Context hooks
+  const { state: sessionState, connect, refreshEndpoints } = useSession();
+  const { state: transferState, sendFiles: transferSend, receiveFiles: transferReceive, cancelTransfer: transferCancel, clearError: clearTransferError, clearHistory: clearTransferHistory, setDragging } = useTransfer();
+  const { registerAction } = useKeyboard();
 
-  // ===== 会话连接 =====
-  const {
-    status,
-    endpoints,
-    connectionTypes,
-    connectedEndpoint,
-    error: serialError,
-    refreshEndpoints,
-    connect,
-    disconnect,
-    sendData,
-    onData,
-    onDisconnect,
-    clearError: clearSerialError,
-  } = useSerialPort();
-
-  // ===== 文件传输 =====
-  const {
-    status: transferStatus,
-    progress: transferProgress,
-    history: transferHistory,
-    error: transferError,
-    cancelTransfer,
-    clearError: clearTransferError,
-    clearHistory,
-  } = useFileTransfer();
-
-  // ===== 布局状态 =====
-  const [sidebarWidth, setSidebarWidth] = useState(280);
+  // Layout state
+  const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [panelHeight, setPanelHeight] = useState(PANEL_MIN_HEIGHT);
-  const [isResizingPanel, setIsResizingPanel] = useState(false);
+  const [panelHeight, setPanelHeight] = useState(PANEL_MIN);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [isResizingPanel, setIsResizingPanel] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
 
-  // ===== Toast =====
+  // Toast
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const toastIdRef = useRef(0);
-
-  const addToast = useCallback(
-    (type: ToastMessage["type"], message: string) => {
-      const id = ++toastIdRef.current;
-      setToasts((prev) => [...prev, { id, type, message }]);
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 5000);
-    },
-    []
-  );
-
-  const removeToast = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+  const addToast = useCallback((type: ToastMessage["type"], message: string) => {
+    const id = ++toastIdRef.current;
+    setToasts(prev => [...prev, { id, type, message }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
   }, []);
 
-  // ===== 终端数据回调 =====
-  const [terminalWriteData, setTerminalWriteData] = useState<Uint8Array | null>(null);
+  // Event handlers
+  useEffect(() => {
+    if (sessionState.error) addToast("error", sessionState.error);
+  }, [sessionState.error, addToast]);
 
   useEffect(() => {
-    onData((data) => {
-      setTerminalWriteData(data);
-      // 清除上一次的数据，以便相同数据也能触发更新
-      setTimeout(() => setTerminalWriteData(null), 0);
-    });
-  }, [onData]);
+    if (transferState.error) addToast("error", transferState.error);
+  }, [transferState.error, addToast]);
 
-  // ===== 串口状态监控 =====
-  useEffect(() => {
-    onDisconnect(() => {
-      addToast("warning", t("serial.deviceDisconnected"));
-    });
-  }, [onDisconnect, addToast, t]);
+  // Resize: sidebar
+  const sidebarStartX = useRef(0); const sidebarStartWidth = useRef(0);
+  const handleSidebarMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); setIsResizingSidebar(true);
+    sidebarStartX.current = e.clientX; sidebarStartWidth.current = sidebarWidth;
+  }, [sidebarWidth]);
 
-  useEffect(() => {
-    if (serialError) {
-      addToast("error", serialError);
-    }
-  }, [serialError, addToast]);
+  // Resize: panel
+  const panelStartY = useRef(0); const panelStartHeight = useRef(0);
+  const handlePanelMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); setIsResizingPanel(true);
+    panelStartY.current = e.clientY; panelStartHeight.current = panelHeight;
+  }, [panelHeight]);
 
   useEffect(() => {
-    if (transferError) {
-      addToast("error", transferError);
-    }
-  }, [transferError, addToast]);
-
-  // ===== 拖拽调整大小（侧边栏） =====
-  const sidebarStartX = useRef(0);
-  const sidebarStartWidth = useRef(0);
-
-  const handleSidebarMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      setIsResizingSidebar(true);
-      sidebarStartX.current = e.clientX;
-      sidebarStartWidth.current = sidebarWidth;
-    },
-    [sidebarWidth]
-  );
-
-  // ===== 拖拽调整大小（面板） =====
-  const panelStartY = useRef(0);
-  const panelStartHeight = useRef(0);
-
-  const handlePanelMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      setIsResizingPanel(true);
-      panelStartY.current = e.clientY;
-      panelStartHeight.current = panelHeight;
-    },
-    [panelHeight]
-  );
-
-  // ===== 全局鼠标事件 =====
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMove = (e: MouseEvent) => {
       if (isResizingSidebar) {
-        const delta = e.clientX - sidebarStartX.current;
-        setSidebarWidth(
-          Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, sidebarStartWidth.current + delta))
-        );
+        setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, sidebarStartWidth.current + (e.clientX - sidebarStartX.current))));
       }
       if (isResizingPanel) {
-        const delta = panelStartY.current - e.clientY;
-        const maxHeight = window.innerHeight * PANEL_MAX_HEIGHT_RATIO;
-        const newHeight = Math.min(maxHeight, Math.max(PANEL_MIN_HEIGHT, panelStartHeight.current + delta));
-        setPanelHeight(newHeight);
-        if (newHeight > PANEL_MIN_HEIGHT + 10) {
-          setIsPanelOpen(true);
-        }
+        const maxH = window.innerHeight * PANEL_MAX_RATIO;
+        const newH = Math.min(maxH, Math.max(PANEL_MIN, panelStartHeight.current - (e.clientY - panelStartY.current)));
+        setPanelHeight(newH);
+        if (newH > PANEL_MIN + 10) setIsPanelOpen(true);
       }
     };
-
-    const handleMouseUp = () => {
-      setIsResizingSidebar(false);
-      setIsResizingPanel(false);
-    };
-
+    const handleUp = () => { setIsResizingSidebar(false); setIsResizingPanel(false); };
     if (isResizingSidebar || isResizingPanel) {
-      document.addEventListener("mousemove", handleMouseMove);
-      document.addEventListener("mouseup", handleMouseUp);
+      document.addEventListener("mousemove", handleMove);
+      document.addEventListener("mouseup", handleUp);
       document.body.style.cursor = isResizingSidebar ? "col-resize" : "row-resize";
       document.body.style.userSelect = "none";
     }
-
     return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("mousemove", handleMove);
+      document.removeEventListener("mouseup", handleUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
   }, [isResizingSidebar, isResizingPanel]);
 
-  // ===== 面板切换 =====
+  // Panel toggle
   const togglePanel = useCallback(() => {
-    if (isPanelOpen) {
-      setIsPanelOpen(false);
-      setPanelHeight(PANEL_MIN_HEIGHT);
-    } else {
-      setIsPanelOpen(true);
-      setPanelHeight(200);
-    }
+    if (isPanelOpen) { setIsPanelOpen(false); setPanelHeight(PANEL_MIN); }
+    else { setIsPanelOpen(true); setPanelHeight(PANEL_DEFAULT); }
   }, [isPanelOpen]);
 
-  // ===== 语言切换 =====
-  const toggleLanguage = useCallback(() => {
-    const newLang = i18n.language === "zh-CN" ? "en-US" : "zh-CN";
-    i18n.changeLanguage(newLang);
-    localStorage.setItem("tauterm-language", newLang);
-    addToast("info", newLang === "zh-CN" ? "已切换为中文" : "Switched to English");
-  }, [i18n, addToast]);
-
-  // ===== 键盘快捷键 =====
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Shift+F：切换文件传输面板
-      if (e.ctrlKey && e.shiftKey && e.key === "F") {
-        e.preventDefault();
-        togglePanel();
+  // File transfer
+  const handleSendFiles = useCallback(async () => {
+    if (!sessionState.activeTabId) return;
+    try {
+      const selected = await open({ multiple: false, filters: [{ name: "Files", extensions: ["bin", "hex", "elf", "*"] }] });
+      if (selected) {
+        const paths = Array.isArray(selected) ? selected : [selected];
+        transferSend(sessionState.activeTabId, paths);
       }
-      // Ctrl+Shift+R：刷新端口列表
-      if (e.ctrlKey && e.shiftKey && e.key === "R") {
-        e.preventDefault();
-        refreshEndpoints();
-        addToast("info", t("serial.scanning"));
+    } catch (e) { addToast("error", `${e}`); }
+  }, [sessionState.activeTabId, transferSend, addToast]);
+
+  const handleReceiveFiles = useCallback(async () => {
+    if (!sessionState.activeTabId) return;
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (selected && typeof selected === "string") {
+        transferReceive(sessionState.activeTabId, selected);
+      }
+    } catch (e) { addToast("error", `${e}`); }
+  }, [sessionState.activeTabId, transferReceive, addToast]);
+
+  // Global drag events for Dropzone
+  useEffect(() => {
+    const handleDragEnter = (e: DragEvent) => { e.preventDefault(); setDragging(true); };
+    const handleDragLeave = (e: DragEvent) => {
+      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
+        setDragging(false);
       }
     };
+    const handleDragOver = (e: DragEvent) => { e.preventDefault(); };
+    const handleDrop = (e: DragEvent) => { e.preventDefault(); setDragging(false); };
+    document.addEventListener("dragenter", handleDragEnter);
+    document.addEventListener("dragleave", handleDragLeave);
+    document.addEventListener("dragover", handleDragOver);
+    document.addEventListener("drop", handleDrop);
+    return () => {
+      document.removeEventListener("dragenter", handleDragEnter);
+      document.removeEventListener("dragleave", handleDragLeave);
+      document.removeEventListener("dragover", handleDragOver);
+      document.removeEventListener("drop", handleDrop);
+    };
+  }, [setDragging]);
 
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [togglePanel, refreshEndpoints, addToast, t]);
+  // Keyboard shortcuts
+  useEffect(() => {
+    registerAction("palette.open", () => setPaletteOpen(true));
+    registerAction("session.new", () => setConnectDialogOpen(true));
+    registerAction("transfer.toggle", togglePanel);
+    registerAction("sidebar.toggle", () => setSidebarVisible(v => !v));
+    registerAction("serial.refresh", refreshEndpoints);
+  }, [registerAction, togglePanel, refreshEndpoints]);
+
+  // Command palette execution
+  const handlePaletteExecute = useCallback((cmdId: string) => {
+    switch (cmdId) {
+      case "session.new": connect("", {}); break;
+      case "terminal.search": /* handled by TerminalView */ break;
+      case "transfer.toggle": togglePanel(); break;
+      case "sidebar.toggle": setSidebarVisible(v => !v); break;
+      case "serial.refresh": refreshEndpoints(); break;
+      case "palette.open": setPaletteOpen(true); break;
+    }
+  }, [connect, togglePanel, refreshEndpoints]);
+
+  // Toolbar action handler
+  const handleToolbarAction = useCallback((actionId: string) => {
+    switch (actionId) {
+      case "newSession": setConnectDialogOpen(true); break;
+      case "refresh": refreshEndpoints(); break;
+      case "transfer": togglePanel(); break;
+      case "sidebar": setSidebarVisible(v => !v); break;
+      case "commands": setPaletteOpen(true); break;
+    }
+  }, [refreshEndpoints, togglePanel]);
 
   return (
     <div className="app-root">
-      <div className="app-layout">
-        <div className="app-body">
-          {/* 侧边栏 */}
-          <aside className="sidebar" style={{ width: sidebarWidth }}>
-            <SerialConfigSidebar
-              endpoints={endpoints}
-              connectionTypes={connectionTypes}
-              status={status}
-              connectedEndpoint={connectedEndpoint}
-              error={serialError}
-              onRefresh={refreshEndpoints}
-              onConnect={connect}
-              onDisconnect={disconnect}
-              onClearError={clearSerialError}
-            />
-          </aside>
+      {/* Toolbar */}
+      <Toolbar onAction={handleToolbarAction} />
 
-          {/* 拖拽手柄 */}
-          <div
-            className={`sidebar-resize-handle ${isResizingSidebar ? "active" : ""}`}
-            onMouseDown={handleSidebarMouseDown}
-          />
-
-          {/* 终端视口 */}
-          <main className="terminal-viewport">
-            <Terminal
-              onData={sendData}
-              writeData={terminalWriteData}
-              isConnected={status === "connected"}
-            />
-          </main>
-        </div>
-
-        {/* 文件传输面板拖拽手柄 */}
-        <div
-          className={`panel-resize-handle ${isResizingPanel ? "active" : ""}`}
-          onMouseDown={handlePanelMouseDown}
-          onDoubleClick={togglePanel}
-        />
-
-        {/* 文件传输面板 */}
-        <div
-          className="file-transfer-panel"
-          style={{
-            height: panelHeight,
-            display: isPanelOpen ? "flex" : "none",
-          }}
-        >
-          <FileTransferPanel
-            status={transferStatus}
-            progress={transferProgress}
-            history={transferHistory}
-            error={transferError}
-            onCancel={cancelTransfer}
-            onClearError={clearTransferError}
-            onClearHistory={clearHistory}
-          />
-        </div>
-
-        {/* 状态栏 */}
-        <div className="status-bar">
-          <div className="status-bar-left">
-            <div className="connection-indicator">
-              <span
-                className={`connection-dot ${
-                  status === "connected"
-                    ? "connected"
-                    : status === "connecting"
-                      ? "connecting"
-                      : "disconnected"
-                }`}
-              />
-              <span>
-                {status === "connected"
-                  ? `${t("serial.connected")}: ${connectedEndpoint}`
-                  : status === "connecting"
-                    ? t("serial.connecting")
-                    : t("serial.disconnected")}
-              </span>
-            </div>
-          </div>
-          <div className="status-bar-right">
-            {/* 语言切换按钮 */}
-            <GlassButton
-              variant="ghost"
-              size="sm"
-              onClick={toggleLanguage}
-              title={t("settings.language")}
+      <div className="app-body">
+        {/* Session Sidebar */}
+        <AnimatePresence>
+          {sidebarVisible && (
+            <motion.aside
+              className="sidebar"
+              style={{ width: sidebarWidth }}
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: sidebarWidth, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
             >
-              {i18n.language === "zh-CN" ? "EN" : "中"}
-            </GlassButton>
-            <span>{t("app.version")} 0.1.0</span>
-          </div>
-        </div>
+              <SessionSidebar />
+            </motion.aside>
+          )}
+        </AnimatePresence>
+
+        {/* Resize Handle */}
+        {sidebarVisible && (
+          <ResizeHandle direction="horizontal" onMouseDown={handleSidebarMouseDown} />
+        )}
+
+        {/* Main Terminal Area */}
+        <main className="terminal-viewport">
+          <TabBar onNewSession={() => setConnectDialogOpen(true)} />
+          <TerminalView />
+        </main>
       </div>
 
-      {/* Toast 通知 */}
-      {toasts.map((toast, index) => (
-        <Toast
-          key={toast.id}
-          type={toast.type}
-          message={toast.message}
-          index={index}
-          onClose={() => removeToast(toast.id)}
+      {/* Panel Resize Handle */}
+      <ResizeHandle direction="vertical" onMouseDown={handlePanelMouseDown} />
+
+      {/* File Transfer Panel */}
+      <motion.div
+        className="file-transfer-panel"
+        style={{
+          height: panelHeight,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+        animate={{ height: panelHeight }}
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+      >
+        <FileTransferPanel
+          status={transferState.status}
+          progress={transferState.progress}
+          history={transferState.history}
+          error={transferState.error}
+          isConnected={sessionState.tabs.some(t => t.state === "connected")}
+          onSendFiles={handleSendFiles}
+          onReceiveFiles={handleReceiveFiles}
+          onCancel={() => sessionState.activeTabId && transferCancel(sessionState.activeTabId)}
+          onClearError={clearTransferError}
+          onClearHistory={clearTransferHistory}
         />
+      </motion.div>
+
+      {/* Status Bar */}
+      <StatusBar />
+
+      {/* Command Palette */}
+      <CommandPalette
+        isOpen={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onExecute={handlePaletteExecute}
+      />
+
+      {/* Connect Dialog */}
+      <ConnectDialog
+        isOpen={connectDialogOpen}
+        onClose={() => setConnectDialogOpen(false)}
+      />
+
+      {/* Dropzone Overlay */}
+      <AnimatePresence>
+        {transferState.isDragging && (
+          <motion.div
+            className="dropzone-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="dropzone-message"
+              animate={{ scale: [1, 1.05, 1] }}
+              transition={{ repeat: Infinity, duration: 1.5 }}
+            >
+              ⚡ Drop to Transfer
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Toasts */}
+      {toasts.map((toast, index) => (
+        <Toast key={toast.id} type={toast.type} message={toast.message} index={index} onClose={() => {
+          setToasts(prev => prev.filter(t => t.id !== toast.id));
+        }} />
       ))}
     </div>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AppShell>
+      <AppInner />
+    </AppShell>
+  );
+}

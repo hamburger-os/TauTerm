@@ -5,11 +5,12 @@
 //!
 //! ## 架构
 //!
-//! 所有连接类型通过 `TermSession` trait 统一抽象：
-//! - `SerialSession`：串口连接（首发）
-//! - SSH / Telnet：未来版本实现
+//! `SessionManager` 管理所有活跃会话的生命周期：
+//! - 每标签页独立 I/O 线程（带缓冲通道）
+//! - 支持最多 10 个并发会话
+//! - 会话配置持久化到 JSON
 //!
-//! 前端通过 Tauri 命令与当前会话交互，不感知具体连接类型。
+//! 前端通过 Tauri 命令与 SessionManager 交互。
 
 mod commands;
 mod serial;
@@ -17,12 +18,13 @@ mod session;
 mod transfer;
 
 use std::sync::Mutex;
-use session::serial::SerialSession;
+use tauri::Manager;
+use session::manager::SessionManager;
 
 /// 全局应用状态
 pub struct AppState {
-    /// 当前活跃会话（首发仅串口，未来可切换）
-    pub session: Mutex<SerialSession>,
+    /// 会话管理器（管理所有活跃的终端会话）
+    pub manager: Mutex<SessionManager>,
 }
 
 /// TauTerm 应用入口
@@ -34,7 +36,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
-            session: Mutex::new(SerialSession::new()),
+            manager: Mutex::new(SessionManager::new()),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,
@@ -42,10 +44,26 @@ pub fn run() {
             commands::connect_session,
             commands::disconnect_session,
             commands::write_data,
+            commands::switch_active_session,
+            commands::rename_session,
+            commands::reorder_tabs,
+            commands::get_tabs,
+            commands::save_sessions,
+            commands::load_sessions,
             commands::send_files_ymodem,
             commands::receive_files_ymodem,
             commands::cancel_transfer,
         ])
-        .run(tauri::generate_context!())
-        .expect("启动 TauTerm 时发生错误");
+        .build(tauri::generate_context!())
+        .expect("启动 TauTerm 时发生错误")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                let path = SessionManager::sessions_file_path(app_handle);
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    if let Ok(manager) = state.manager.lock() {
+                        let _ = manager.save_to_disk(&path);
+                    }
+                }
+            }
+        });
 }

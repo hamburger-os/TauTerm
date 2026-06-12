@@ -1,4 +1,4 @@
-/* TauTerm 应用布局 */
+/* TauTerm v0.2 — Hub Layout */
 
 .app-root {
   width: 100vw;
@@ -11,15 +11,7 @@
   font-family: var(--font-ui);
 }
 
-/* ===== 主布局：侧边栏 + 终端 + 底部面板 ===== */
-
-.app-layout {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  width: 100%;
-  overflow: hidden;
-}
+/* ===== 主布局 ===== */
 
 .app-body {
   display: flex;
@@ -35,26 +27,7 @@
   background: var(--glass-bg);
   backdrop-filter: blur(var(--blur-medium));
   -webkit-backdrop-filter: blur(var(--blur-medium));
-  overflow-y: auto;
-  overflow-x: hidden;
-  transition: width var(--transition-normal);
-}
-
-/* 侧边栏拖拽调整大小的手柄 */
-.sidebar-resize-handle {
-  width: 4px;
-  height: 100%;
-  cursor: col-resize;
-  background: transparent;
-  transition: background var(--transition-fast);
-  flex-shrink: 0;
-  position: relative;
-}
-
-.sidebar-resize-handle:hover,
-.sidebar-resize-handle.active {
-  background: var(--accent-start);
-  opacity: 0.6;
+  overflow: hidden;
 }
 
 /* ===== 终端视口 ===== */
@@ -66,10 +39,10 @@
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.2);
 }
 
-/* ===== 底部文件传输面板 ===== */
+/* ===== 文件传输面板 ===== */
 
 .file-transfer-panel {
   border-top: 1px solid var(--glass-border);
@@ -77,135 +50,36 @@
   backdrop-filter: blur(var(--blur-medium));
   -webkit-backdrop-filter: blur(var(--blur-medium));
   overflow: hidden;
-  transition: height var(--transition-normal);
 }
 
-/* 面板拖拽调整大小的手柄 */
-.panel-resize-handle {
-  height: 4px;
-  width: 100%;
-  cursor: row-resize;
-  background: transparent;
-  transition: background var(--transition-fast);
-  flex-shrink: 0;
-}
+/* ===== Dropzone 覆盖层 ===== */
 
-.panel-resize-handle:hover,
-.panel-resize-handle.active {
-  background: var(--accent-start);
-  opacity: 0.6;
-}
-
-/* ===== 状态栏 ===== */
-
-.status-bar {
+.dropzone-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 2px 12px;
-  height: 24px;
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
+  justify-content: center;
+  z-index: var(--z-overlay);
+  backdrop-filter: blur(4px);
+}
+
+.dropzone-message {
+  padding: 24px 48px;
   background: var(--glass-bg);
-  border-top: 1px solid var(--glass-border);
-  flex-shrink: 0;
+  border: 2px solid var(--accent-primary);
+  border-radius: var(--radius-lg);
+  color: var(--accent-primary);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  text-shadow: 0 0 10px var(--accent-glow);
+  box-shadow: 0 0 20px var(--accent-glow), var(--shadow-glass);
 }
 
-.status-bar-left,
-.status-bar-right {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-lg);
-}
+/* ===== 呼吸灯动画 ===== */
 
-/* 连接状态指示器 */
-.connection-indicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.connection-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  transition: background var(--transition-fast);
-}
-
-.connection-dot.connected {
-  background: var(--color-success);
-  box-shadow: 0 0 6px var(--color-success);
-  animation: pulse 2s ease-in-out infinite;
-}
-
-.connection-dot.connecting {
-  background: var(--color-warning);
-  animation: pulse 1s ease-in-out infinite;
-}
-
-.connection-dot.disconnected {
-  background: var(--text-muted);
-}
-
-/* ===== 动画 ===== */
-
-/* 脉冲动画 */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-/* 面板滑入 */
-@keyframes slideUp {
-  from {
-    transform: translateY(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-/* 面板滑出 */
-@keyframes slideDown {
-  from {
-    transform: translateY(0);
-    opacity: 1;
-  }
-  to {
-    transform: translateY(100%);
-    opacity: 0;
-  }
-}
-
-/* 淡入 */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* 淡出 */
-@keyframes fadeOut {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-/* 悬停微交互（缩放） */
-.hover-scale {
-  transition: transform var(--transition-fast);
-}
-
-.hover-scale:hover {
-  transform: scale(1.05);
-}
-
-/* 悬停微交互（亮度） */
-.hover-brighten {
-  transition: filter var(--transition-fast);
-}
-
-.hover-brighten:hover {
-  filter: brightness(1.2);
+  50% { opacity: 0.4; }
 }
