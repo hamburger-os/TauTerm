@@ -1,0 +1,65 @@
+{
+  "app": {
+    "title": "TauTerm - Serial Terminal",
+    "version": "Version"
+  },
+  "serial": {
+    "title": "Serial Settings",
+    "port": "Port",
+    "baudRate": "Baud Rate",
+    "dataBits": "Data Bits",
+    "parity": "Parity",
+    "stopBits": "Stop Bits",
+    "flowControl": "Flow Control",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "refresh": "Refresh",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "connecting": "Connecting...",
+    "noPorts": "No serial ports detected",
+    "portOccupied": "Port is occupied",
+    "deviceDisconnected": "Device disconnected",
+    "scanning": "Scanning ports..."
+  },
+  "transfer": {
+    "title": "File Transfer",
+    "sendFiles": "Send Files",
+    "receiveFiles": "Receive Files",
+    "selectFiles": "Select Files",
+    "downloadDir": "Download Directory",
+    "cancel": "Cancel Transfer",
+    "sending": "Sending",
+    "receiving": "Receiving",
+    "complete": "Transfer Complete",
+    "failed": "Transfer Failed",
+    "cancelled": "Cancelled",
+    "history": "Transfer History",
+    "fileName": "File Name",
+    "direction": "Direction",
+    "size": "Size",
+    "status": "Status",
+    "time": "Time",
+    "send": "Send",
+    "receive": "Receive",
+    "noHistory": "No transfer history"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "switchToEn": "Switch to English",
+    "switchToZh": "切换为中文",
+    "theme": "Theme"
+  },
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "close": "Close",
+    "error": "Error",
+    "warning": "Warning",
+    "info": "Info",
+    "success": "Success",
+    "confirm": "Confirm",
+    "retry": "Retry"
+  }
+}

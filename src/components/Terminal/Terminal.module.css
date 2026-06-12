@@ -1,0 +1,31 @@
+/* 终端容器 */
+
+.terminal {
+  flex: 1;
+  width: 100%;
+  overflow: hidden;
+  padding: 4px;
+}
+
+.terminal :global(.xterm) {
+  height: 100%;
+  padding: 4px;
+}
+
+.terminal :global(.xterm-viewport) {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.terminal :global(.xterm-viewport::-webkit-scrollbar) {
+  width: 6px;
+}
+
+.terminal :global(.xterm-viewport::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+.terminal :global(.xterm-viewport::-webkit-scrollbar-thumb) {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}

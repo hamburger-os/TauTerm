@@ -1,0 +1,6 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "commit_message": {
+    "prompt": "按照 conventional commits 格式，用中文总结我的代码更改并生成 commit message。请只返回 commit message 本身，不要输出任何额外文本。"
+  }
+}

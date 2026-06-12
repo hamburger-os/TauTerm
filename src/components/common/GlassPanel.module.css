@@ -1,0 +1,40 @@
+/* 磨砂玻璃面板 */
+
+.panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--blur-medium));
+  -webkit-backdrop-filter: blur(var(--blur-medium));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-glass);
+  transition: border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+/* 变体 */
+.default {
+  /* 默认样式 */
+}
+
+.elevated {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: var(--shadow-elevated);
+}
+
+/* 内边距 */
+.padding-none {
+  padding: 0;
+}
+
+.padding-sm {
+  padding: var(--spacing-sm);
+}
+
+.padding-md {
+  padding: var(--spacing-lg);
+}
+
+.padding-lg {
+  padding: var(--spacing-xl);
+}

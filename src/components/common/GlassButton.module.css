@@ -1,0 +1,109 @@
+/* 玻璃拟态按钮 */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ===== 尺寸 ===== */
+
+.sm {
+  padding: 4px 12px;
+  font-size: var(--text-xs);
+  height: 28px;
+}
+
+.md {
+  padding: 6px 16px;
+  font-size: var(--text-sm);
+  height: 34px;
+}
+
+.lg {
+  padding: 8px 24px;
+  font-size: var(--text-base);
+  height: 40px;
+}
+
+/* ===== 变体 ===== */
+
+/* 主按钮：强调渐变 */
+.primary {
+  background: var(--accent-gradient);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px rgba(0, 212, 170, 0.2);
+}
+
+.primary:hover:not(:disabled) {
+  box-shadow: 0 4px 16px var(--accent-glow);
+  filter: brightness(1.1);
+}
+
+/* 次要按钮：玻璃边框 */
+.secondary {
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  border-color: var(--glass-border);
+  backdrop-filter: blur(var(--blur-light));
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-hover);
+}
+
+/* 幽灵按钮：无背景 */
+.ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--glass-bg);
+  color: var(--text-primary);
+}
+
+/* 危险按钮 */
+.danger {
+  background: rgba(255, 71, 87, 0.1);
+  color: var(--color-error);
+  border-color: rgba(255, 71, 87, 0.3);
+}
+
+.danger:hover:not(:disabled) {
+  background: rgba(255, 71, 87, 0.2);
+  border-color: var(--color-error);
+}
+
+/* 全宽 */
+.fullWidth {
+  width: 100%;
+}
+
+/* 加载状态 */
+.loading .content {
+  opacity: 0;
+}

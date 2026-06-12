@@ -1,0 +1,65 @@
+{
+  "app": {
+    "title": "TauTerm - 串口终端",
+    "version": "版本"
+  },
+  "serial": {
+    "title": "串口设置",
+    "port": "端口",
+    "baudRate": "波特率",
+    "dataBits": "数据位",
+    "parity": "校验位",
+    "stopBits": "停止位",
+    "flowControl": "流控",
+    "connect": "连接",
+    "disconnect": "断开",
+    "refresh": "刷新",
+    "connected": "已连接",
+    "disconnected": "已断开",
+    "connecting": "连接中...",
+    "noPorts": "未检测到串口",
+    "portOccupied": "端口已被占用",
+    "deviceDisconnected": "设备已断开",
+    "scanning": "正在扫描端口..."
+  },
+  "transfer": {
+    "title": "文件传输",
+    "sendFiles": "发送文件",
+    "receiveFiles": "接收文件",
+    "selectFiles": "选择文件",
+    "downloadDir": "下载目录",
+    "cancel": "取消传输",
+    "sending": "正在发送",
+    "receiving": "正在接收",
+    "complete": "传输完成",
+    "failed": "传输失败",
+    "cancelled": "已取消",
+    "history": "传输历史",
+    "fileName": "文件名",
+    "direction": "方向",
+    "size": "大小",
+    "status": "状态",
+    "time": "时间",
+    "send": "发送",
+    "receive": "接收",
+    "noHistory": "暂无传输记录"
+  },
+  "settings": {
+    "title": "设置",
+    "language": "语言",
+    "switchToEn": "Switch to English",
+    "switchToZh": "切换为中文",
+    "theme": "主题"
+  },
+  "common": {
+    "ok": "确定",
+    "cancel": "取消",
+    "close": "关闭",
+    "error": "错误",
+    "warning": "警告",
+    "info": "提示",
+    "success": "成功",
+    "confirm": "确认",
+    "retry": "重试"
+  }
+}
