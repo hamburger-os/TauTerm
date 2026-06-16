@@ -70,3 +70,19 @@
   font-size: var(--text-xs);
   color: var(--text-muted);
 }
+
+/* 传输进行中横幅 */
+.transferBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(234, 179, 8, 0.12);
+  border-bottom: 1px solid rgba(234, 179, 8, 0.25);
+  color: #eab308;
+  font-size: var(--text-xs);
+}
+
+.transferBannerIcon {
+  font-size: 14px;
+}

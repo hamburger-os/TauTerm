@@ -105,6 +105,17 @@
   box-shadow: 0 0 6px var(--accent-glow);
 }
 
+.statusDot.transferring {
+  background: #eab308;
+  box-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 .itemName {
   color: var(--text-primary);
   font-size: var(--text-sm);

@@ -40,7 +40,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession }: Sessi
     if (!menu.session) return [];
     const { state: sessionState } = menu.session;
 
-    if (sessionState === "connected") {
+    if (sessionState === "connected" || sessionState === "transferring") {
       return [
         { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect", icon: "⏹" },
         { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "⚙" },
@@ -116,7 +116,10 @@ export default function SessionSidebar({ onSelectSession, onEditSession }: Sessi
               onContextMenu={(e) => handleContextMenu(e, tab)}
             >
               <div className={styles.itemLeft}>
-                <span className={`${styles.statusDot} ${tab.state === "connected" ? styles.connected : ""}`} />
+                <span className={`${styles.statusDot} ${
+                  tab.state === "connected" ? styles.connected :
+                  tab.state === "transferring" ? styles.transferring : ""
+                }`} />
                 <div>
                   <div className={styles.itemName}>{tab.name}</div>
                   <div className={styles.itemEndpoint}>{tab.endpoint}</div>

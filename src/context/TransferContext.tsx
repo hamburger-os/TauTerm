@@ -1,26 +1,9 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { TransferDirection, TransferStatus, TransferProgress, TransferHistoryItem } from "../types/transfer";
 
-export type TransferDirection = "send" | "receive";
-export type TransferStatus = "idle" | "transferring" | "completed" | "failed" | "cancelled";
-
-export interface TransferProgress {
-  file_name: string;
-  bytes_transferred: number;
-  total_bytes: number;
-  direction: TransferDirection;
-}
-
-export interface TransferHistoryItem {
-  id: string;
-  file_name: string;
-  direction: TransferDirection;
-  size: number;
-  status: TransferStatus;
-  timestamp: number;
-  error?: string;
-}
+export type { TransferDirection, TransferStatus, TransferProgress, TransferHistoryItem };
 
 interface TransferState {
   status: TransferStatus;
@@ -155,7 +138,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       });
       if (cancelled) { u2(); return; }
       unlisteners.push(u2);
-    })();
+    })().catch((e) => {
+      console.error("TransferContext: 事件监听器注册失败:", e);
+    });
 
     return () => {
       cancelled = true;

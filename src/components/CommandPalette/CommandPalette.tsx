@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { shortcutRegistry } from "../../shortcuts/registry";
+import type { ShortcutActionId } from "../../shortcuts/actionIds";
 import styles from "./CommandPalette.module.css";
 
 interface CommandItem {
-  id: string;
+  id: ShortcutActionId;
   label: string;
   category: string;
   shortcut?: string;
@@ -14,7 +15,7 @@ interface CommandItem {
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
-  onExecute: (commandId: string) => void;
+  onExecute: (commandId: ShortcutActionId) => void;
 }
 
 /**
@@ -71,6 +72,13 @@ export default function CommandPalette({ isOpen, onClose, onExecute }: CommandPa
 
   // 选中范围内平铺列表 index
   const flatList = filtered;
+
+  // 预计算索引 Map，避免 O(n²) 的 indexOf 查找
+  const flatIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    flatList.forEach((cmd, i) => map.set(cmd.id, i));
+    return map;
+  }, [flatList]);
 
   const handleSelect = useCallback((command: CommandItem) => {
     onExecute(command.id);
@@ -130,7 +138,7 @@ export default function CommandPalette({ isOpen, onClose, onExecute }: CommandPa
                 <div key={category} className={styles.group}>
                   <div className={styles.groupTitle}>{category}</div>
                   {commands.map(cmd => {
-                    const idx = flatList.indexOf(cmd);
+                    const idx = flatIndex.get(cmd.id) ?? 0;
                     return (
                       <div
                         key={cmd.id}

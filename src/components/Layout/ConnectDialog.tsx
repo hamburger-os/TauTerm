@@ -159,6 +159,16 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     if (e.target === e.currentTarget) onClose();
   }, [onClose]);
 
+  // Escape 键关闭对话框
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   // 预定义的模式列表
@@ -223,7 +233,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             <>
               <div className={styles.configHeader}>
                 <button className={styles.backBtn} onClick={handleBack} disabled={connecting}>
-                  ← {t("common.cancel") || "Back"}
+                  ← {t("common.back")}
                 </button>
                 <h2 className={styles.title}>
                   {modes.find(m => m.id === selectedMode)?.icon}{" "}

@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useRef } from "react";
 import { shortcutRegistry } from "../shortcuts/registry";
+import type { ShortcutActionId } from "../shortcuts/actionIds";
 
 /**
  * 全局快捷键监听 hook
@@ -8,13 +9,13 @@ import { shortcutRegistry } from "../shortcuts/registry";
  * 输入框内不触发（终端除外）。
  */
 export function useKeyboard() {
-  const actionCallbacks = useRef<Map<string, () => void>>(new Map());
+  const actionCallbacks = useRef<Map<ShortcutActionId, () => void>>(new Map());
 
-  const registerAction = useCallback((shortcutId: string, action: () => void) => {
+  const registerAction = useCallback((shortcutId: ShortcutActionId, action: () => void) => {
     actionCallbacks.current.set(shortcutId, action);
   }, []);
 
-  const unregisterAction = useCallback((shortcutId: string) => {
+  const unregisterAction = useCallback((shortcutId: ShortcutActionId) => {
     actionCallbacks.current.delete(shortcutId);
   }, []);
 

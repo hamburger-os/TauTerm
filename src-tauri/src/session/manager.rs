@@ -25,7 +25,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
-use crate::session::{ConnectionType, SessionState, TermSession};
+use crate::session::{ConnectionType, SessionImpl, SessionState};
 use crate::session::serial::SerialSession;
 
 /// 标签页/会话唯一标识符
@@ -36,20 +36,29 @@ pub type TabId = String;
 pub enum IoCmd {
     Write(Vec<u8>),
     Shutdown,
+    /// 将串口所有权移交给传输代码。
+    /// `give_tx` 用于交出端口，`return_rx` 用于阻塞等待端口归还。
+    HandoffPort {
+        give_tx: std::sync::mpsc::SyncSender<Box<dyn serialport::SerialPort>>,
+        return_rx: std::sync::mpsc::Receiver<Box<dyn serialport::SerialPort>>,
+    },
 }
 
 /// 单个会话句柄
 pub struct SessionHandle {
     pub id: TabId,
     pub name: String,
-    pub connection: Box<dyn TermSession>,
+    pub session: SessionImpl,
     pub write_tx: mpsc::SyncSender<IoCmd>,
     pub io_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    pub cancel_transfer_tx: Option<tokio::sync::oneshot::Sender<()>>,
     pub io_thread: Option<std::thread::JoinHandle<()>>,
     pub state: SessionState,
     pub connection_type: ConnectionType,
     pub endpoint: String,
     pub params: serde_json::Value,
+    /// 传输完成后用于归还串口端口给 I/O 线程的发送端
+    pub port_return_tx: Option<mpsc::SyncSender<Box<dyn serialport::SerialPort>>>,
 }
 
 /// 会话管理器
@@ -120,14 +129,16 @@ impl SessionManager {
                 let handle = SessionHandle {
                     id: id.clone(),
                     name: tab_name,
-                    connection: Box::new(_session),
+                    session: SessionImpl::Serial(_session),
                     write_tx,
                     io_cancel_tx: Some(io_cancel_tx),
+                    cancel_transfer_tx: None,
                     io_thread: Some(io_thread),
                     state: SessionState::Connected,
                     connection_type,
                     endpoint: endpoint.to_string(),
                     params: actual_params,
+                    port_return_tx: None,
                 };
 
                 self.sessions.insert(id.clone(), handle);
@@ -147,7 +158,15 @@ impl SessionManager {
         let mut handle = self.sessions.remove(session_id)
             .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
 
-        // 发送取消信号
+        // 取消正在进行的传输
+        if let Some(tx) = handle.cancel_transfer_tx.take() {
+            let _ = tx.send(());
+        }
+        // 释放端口归还通道：若 I/O 线程正在 HandoffPort 等待中，
+        // drop sender 会导致 return_rx.recv_timeout 收到 Disconnected 并退出
+        handle.port_return_tx = None;
+
+        // 发送取消信号（正常模式下的 I/O 线程）
         if let Some(tx) = handle.io_cancel_tx.take() {
             let _ = tx.send(());
         }
@@ -250,13 +269,51 @@ impl SessionManager {
         }).collect()
     }
 
-    /// 取消指定会话的传输
-    pub fn cancel_transfer(&self, session_id: &str) -> Result<(), String> {
-        let handle = self.sessions.get(session_id)
+    /// 重连指定会话
+    ///
+    /// 重新打开串口并启动 I/O 线程，恢复已断开的会话到 Connected 状态。
+    /// 返回更新后的连接参数。
+    pub fn reconnect_session(
+        &mut self,
+        session_id: &str,
+        on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
+        on_disconnect: Box<dyn Fn(String) + Send>,
+    ) -> Result<serde_json::Value, String> {
+        let handle = self.sessions.get_mut(session_id)
             .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
-        // 通过 SessionHandle 的 transfer_cancel 通道（如果需要）
-        // 当前由 SerialSession 内部管理
-        let _ = handle;
+
+        match handle.connection_type {
+            ConnectionType::Serial => {
+                let (session, write_tx, io_thread, io_cancel_tx, actual_params) =
+                    SerialSession::create_session(
+                        session_id,
+                        &handle.endpoint,
+                        &handle.params,
+                        on_data,
+                        on_disconnect,
+                    )?;
+
+                handle.session = SessionImpl::Serial(session);
+                handle.write_tx = write_tx;
+                handle.io_cancel_tx = Some(io_cancel_tx);
+                handle.io_thread = Some(io_thread);
+                handle.state = SessionState::Connected;
+                handle.params = actual_params.clone();
+                handle.port_return_tx = None;
+
+                Ok(actual_params)
+            }
+            _ => Err(format!("{} 连接类型不支持重连", handle.connection_type.label())),
+        }
+    }
+
+    /// 取消指定会话的传输
+    pub fn cancel_transfer(&mut self, session_id: &str) -> Result<(), String> {
+        let handle = self.sessions.get_mut(session_id)
+            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+        if let Some(tx) = handle.cancel_transfer_tx.take() {
+            let _ = tx.send(());
+        }
         Ok(())
     }
 
@@ -434,6 +491,34 @@ where
                         // 继续处理下一个排队写入
                     }
                     Ok(IoCmd::Shutdown) => return,
+                    Ok(IoCmd::HandoffPort { give_tx, return_rx }) => {
+                        // 将串口所有权移交给传输代码
+                        let _ = give_tx.send(port);
+                        // 阻塞等待端口归还，每 100ms 检查取消标志
+                        loop {
+                            if cancel_flag.load(Ordering::SeqCst) {
+                                return; // 会话关闭，退出
+                            }
+                            match return_rx.recv_timeout(Duration::from_millis(100)) {
+                                Ok(returned_port) => {
+                                    port = returned_port;
+                                    // 清空传输期间残留的缓冲区数据
+                                    let _ = port.clear(serialport::ClearBuffer::All);
+                                    break; // 端口已归还，恢复正常的读写循环
+                                }
+                                Err(mpsc::RecvTimeoutError::Timeout) => {
+                                    // 继续等待，再次检查取消标志
+                                    continue;
+                                }
+                                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                                    // return_tx 被 drop（会话关闭），I/O 线程退出
+                                    return;
+                                }
+                            }
+                        }
+                        // 跳出内层写循环，回到外层主循环继续正常读写
+                        break;
+                    }
                     Err(mpsc::TryRecvError::Empty) => break,
                     Err(mpsc::TryRecvError::Disconnected) => return,
                 }

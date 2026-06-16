@@ -1,5 +1,7 @@
+import { ACTION_IDS, type ShortcutActionId } from "./actionIds";
+
 export interface ShortcutAction {
-  id: string;
+  id: ShortcutActionId;
   keys: string; // e.g., "Ctrl+Shift+N"
   description: string;
   category: string;
@@ -88,20 +90,20 @@ export const shortcutRegistry = new ShortcutRegistry();
 
 // ── 注册默认快捷键 ───────────────────────────────────
 
-shortcutRegistry.register({ id: "session.new", keys: "Ctrl+Shift+N", description: "新建会话", category: "Session" });
-shortcutRegistry.register({ id: "session.close", keys: "Ctrl+Shift+W", description: "关闭当前会话", category: "Session" });
-shortcutRegistry.register({ id: "session.next", keys: "Ctrl+Tab", description: "下一个标签页", category: "Session" });
-shortcutRegistry.register({ id: "session.prev", keys: "Ctrl+Shift+Tab", description: "上一个标签页", category: "Session" });
-shortcutRegistry.register({ id: "session.tab1", keys: "Alt+1", description: "切换到标签页 1", category: "Session" });
-shortcutRegistry.register({ id: "session.tab2", keys: "Alt+2", description: "切换到标签页 2", category: "Session" });
-shortcutRegistry.register({ id: "session.tab3", keys: "Alt+3", description: "切换到标签页 3", category: "Session" });
+shortcutRegistry.register({ id: ACTION_IDS.SESSION_NEW, keys: "Ctrl+Shift+N", description: "新建会话", category: "Session" });
+shortcutRegistry.register({ id: ACTION_IDS.SESSION_CLOSE, keys: "Ctrl+Shift+W", description: "关闭当前会话", category: "Session" });
+shortcutRegistry.register({ id: ACTION_IDS.SESSION_NEXT, keys: "Ctrl+Tab", description: "下一个标签页", category: "Session" });
+shortcutRegistry.register({ id: ACTION_IDS.SESSION_PREV, keys: "Ctrl+Shift+Tab", description: "上一个标签页", category: "Session" });
+shortcutRegistry.register({ id: ACTION_IDS.SESSION_TAB1, keys: "Alt+1", description: "切换到标签页 1", category: "Session" });
+shortcutRegistry.register({ id: ACTION_IDS.SESSION_TAB2, keys: "Alt+2", description: "切换到标签页 2", category: "Session" });
+shortcutRegistry.register({ id: ACTION_IDS.SESSION_TAB3, keys: "Alt+3", description: "切换到标签页 3", category: "Session" });
 
-shortcutRegistry.register({ id: "terminal.search", keys: "Ctrl+F", description: "终端搜索", category: "Terminal" });
-shortcutRegistry.register({ id: "terminal.copy", keys: "Ctrl+Shift+C", description: "复制", category: "Terminal" });
-shortcutRegistry.register({ id: "terminal.paste", keys: "Ctrl+Shift+V", description: "粘贴", category: "Terminal" });
+shortcutRegistry.register({ id: ACTION_IDS.TERMINAL_SEARCH, keys: "Ctrl+F", description: "终端搜索", category: "Terminal" });
+shortcutRegistry.register({ id: ACTION_IDS.TERMINAL_COPY, keys: "Ctrl+Shift+C", description: "复制", category: "Terminal" });
+shortcutRegistry.register({ id: ACTION_IDS.TERMINAL_PASTE, keys: "Ctrl+Shift+V", description: "粘贴", category: "Terminal" });
 
-shortcutRegistry.register({ id: "transfer.toggle", keys: "Ctrl+Shift+F", description: "切换文件传输面板", category: "Transfer" });
+shortcutRegistry.register({ id: ACTION_IDS.TRANSFER_TOGGLE, keys: "Ctrl+Shift+F", description: "切换文件传输面板", category: "Transfer" });
 
-shortcutRegistry.register({ id: "palette.open", keys: "Ctrl+Shift+P", description: "打开命令面板", category: "Application" });
-shortcutRegistry.register({ id: "sidebar.toggle", keys: "Ctrl+Shift+B", description: "切换侧边栏", category: "Application" });
-shortcutRegistry.register({ id: "serial.refresh", keys: "Ctrl+Shift+R", description: "刷新端口列表", category: "Application" });
+shortcutRegistry.register({ id: ACTION_IDS.PALETTE_OPEN, keys: "Ctrl+Shift+P", description: "打开命令面板", category: "Application" });
+shortcutRegistry.register({ id: ACTION_IDS.SIDEBAR_TOGGLE, keys: "Ctrl+Shift+B", description: "切换侧边栏", category: "Application" });
+shortcutRegistry.register({ id: ACTION_IDS.SERIAL_REFRESH, keys: "Ctrl+Shift+R", description: "刷新端口列表", category: "Application" });

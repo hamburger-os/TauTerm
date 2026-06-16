@@ -104,7 +104,9 @@
     "send": "发送",
     "receive": "接收",
     "noHistory": "暂无传输记录",
-    "dropHere": "⚡ 拖放到此传输"
+    "dropHere": "⚡ 拖放到此传输",
+    "transferringBanner": "文件传输进行中，终端数据暂缓...",
+    "transferringStatus": "传输中..."
   },
   "settings": {
     "title": "设置",
@@ -115,6 +117,7 @@
   },
   "common": {
     "ok": "确定",
+    "back": "返回",
     "cancel": "取消",
     "close": "关闭",
     "error": "错误",

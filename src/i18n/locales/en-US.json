@@ -104,7 +104,9 @@
     "send": "Send",
     "receive": "Receive",
     "noHistory": "No transfer history",
-    "dropHere": "⚡ Drop to Transfer"
+    "dropHere": "⚡ Drop to Transfer",
+    "transferringBanner": "File transfer in progress, terminal paused...",
+    "transferringStatus": "Transferring..."
   },
   "settings": {
     "title": "Settings",
@@ -115,6 +117,7 @@
   },
   "common": {
     "ok": "OK",
+    "back": "Back",
     "cancel": "Cancel",
     "close": "Close",
     "error": "Error",

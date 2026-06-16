@@ -4,7 +4,7 @@ import type {
   TransferStatus,
   TransferProgress,
   TransferHistoryItem,
-} from "../../hooks/useFileTransfer";
+} from "../../types/transfer";
 import styles from "./FileTransferPanel.module.css";
 
 interface FileTransferPanelProps {

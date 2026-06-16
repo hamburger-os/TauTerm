@@ -48,6 +48,11 @@
   color: var(--text-muted);
 }
 
+.transferring {
+  color: #eab308;
+  text-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
+}
+
 .emptyState {
   display: flex;
   align-items: center;

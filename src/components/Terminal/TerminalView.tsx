@@ -2,6 +2,8 @@ import { useEffect, useRef, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
+import { useKeyboard } from "../../hooks/useKeyboard";
+import { ACTION_IDS } from "../../shortcuts/actionIds";
 import TerminalInstance from "./Terminal";
 import SearchBar from "./SearchBar";
 import styles from "./Terminal.module.css";
@@ -15,9 +17,15 @@ import styles from "./Terminal.module.css";
 export default function TerminalView() {
   const { t } = useTranslation();
   const { state, sendData, onSessionData } = useSession();
+  const { registerAction } = useKeyboard();
   const writeRefs = useRef<Map<string, (data: Uint8Array | string) => void>>(new Map());
   const [searchVisible, setSearchVisible] = useState(false);
   const activeTermRef = useRef<any>(null);
+
+  // 注册 Ctrl+F 搜索快捷键
+  useEffect(() => {
+    registerAction(ACTION_IDS.TERMINAL_SEARCH, () => setSearchVisible(v => !v));
+  }, [registerAction]);
 
   // 注册数据回调，将每个 session 的数据路由到对应终端
   useEffect(() => {
@@ -54,16 +62,28 @@ export default function TerminalView() {
   }, [sendData]);
 
   const activeTab = state.tabs.find(t => t.id === state.activeTabId);
+  const isTermActive = activeTab?.state === "connected" || activeTab?.state === "transferring";
   const activeTerm = activeTab ? {
     id: activeTab.id,
-    isConnected: activeTab.state === "connected",
+    isConnected: isTermActive,
+    isTransferring: activeTab.state === "transferring",
   } : null;
 
   return (
     <div className={styles.viewport}>
       <div className={styles.terminalArea}>
+        {activeTerm?.isTransferring && (
+          <motion.div
+            className={styles.transferBanner}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <span className={styles.transferBannerIcon}>📤</span>
+            <span>{t("transfer.transferringBanner", "File transfer in progress – terminal paused")}</span>
+          </motion.div>
+        )}
         <AnimatePresence mode="wait">
-          {activeTerm ? (
+          {activeTerm && activeTerm.isConnected ? (
             <motion.div
               key={`${activeTerm.id}-${activeTerm.isConnected}`}
               className={styles.terminalWrapper}
@@ -93,7 +113,12 @@ export default function TerminalView() {
         </AnimatePresence>
       </div>
 
-      {searchVisible && <SearchBar onClose={() => setSearchVisible(false)} />}
+      {searchVisible && (
+        <SearchBar
+          onClose={() => setSearchVisible(false)}
+          terminal={activeTermRef.current?.terminal ?? null}
+        />
+      )}
     </div>
   );
 }

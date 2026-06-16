@@ -1,13 +1,14 @@
 //! 终端会话抽象模块
 //!
-//! 定义 `TermSession` trait，抽象统一的终端连接接口。
-//! 所有连接类型（串口、SSH、Telnet 等）均实现此 trait，
+//! 定义 `SessionImpl` 枚举，统一管理不同连接类型的终端会话。
+//! 所有连接类型（串口、SSH、Telnet 等）均作为枚举变体，
 //! 使前端和命令层与具体协议解耦。
 
 pub mod serial;
 pub mod manager;
 
 use serde::{Deserialize, Serialize};
+use serial::SerialSession;
 
 /// 会话端点信息（展示给用户的可连接目标）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,37 +61,32 @@ pub enum SessionState {
     Disconnected,
     Connecting,
     Connected,
+    /// 会话已连接但正在进行文件传输（串口由传输代码临时持有）
+    Transferring,
 }
 
-/// 终端会话 trait
+/// 会话实现枚举
 ///
-/// 所有连接类型均实现此 trait，提供统一的：
-/// - 端点枚举
-/// - 连接/断开管理
-/// - 数据读写
-pub trait TermSession: Send {
-    /// 枚举可用端点
-    fn enumerate_endpoints(&self) -> Result<Vec<EndpointInfo>, String>;
+/// 使用具体枚举替代 trait 对象，无 vtable 开销，变体扩展明确。
+/// 未来添加 SSH/Telnet 时只需增加变体。
+pub enum SessionImpl {
+    Serial(SerialSession),
+    // Ssh(SshSession),     // 未来版本
+    // Telnet(TelnetSession), // 未来版本
+}
 
-    /// 连接到指定端点
-    fn connect(
-        &mut self,
-        endpoint: &str,
-        params: serde_json::Value,
-        on_data: Box<dyn Fn(Vec<u8>) + Send>,
-        on_disconnect: Box<dyn Fn() + Send>,
-    ) -> Result<(), String>;
-
-    /// 断开连接
-    fn disconnect(&mut self) -> Result<(), String>;
-
-    /// 写入数据
-    fn write(&mut self, data: &[u8]) -> Result<(), String>;
-
-    /// 获取当前状态
-    #[allow(dead_code)]
-    fn state(&self) -> SessionState;
+impl SessionImpl {
+    /// 获取会话状态
+    pub fn state(&self) -> SessionState {
+        match self {
+            SessionImpl::Serial(s) => s.state(),
+        }
+    }
 
     /// 获取连接类型
-    fn connection_type(&self) -> ConnectionType;
+    pub fn connection_type(&self) -> ConnectionType {
+        match self {
+            SessionImpl::Serial(_) => ConnectionType::Serial,
+        }
+    }
 }

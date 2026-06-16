@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 // ── Types ───────────────────────────────────────────
 
-export type ConnectionStatus = "disconnected" | "connecting" | "connected";
+export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "transferring";
 
 export interface TabInfo {
   id: string;
@@ -309,25 +309,41 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u3(); return; }
       unlisteners.push(u3);
 
-      const u4 = await listen<{ session_id: string; success: boolean }>("session-transfer-complete", (event) => {
-        // 传输完成后标记会话为 disconnected，但不删除标签页（方便用户重连）
-        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "disconnected" });
+      const u4 = await listen<{ session_id: string }>("session-transfer-started", (event) => {
+        // 传输开始，标记为 transferring（不断开！）
+        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "transferring" });
       });
       if (cancelled) { u4(); return; }
       unlisteners.push(u4);
 
-      const u5 = await listen<{ session_id: string }>("session-switched", (event) => {
-        dispatch({ type: "SET_ACTIVE", id: event.payload.session_id });
+      const u5 = await listen<{ session_id: string }>("session-transfer-finished", (event) => {
+        // 传输完成且会话已恢复
+        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "connected" });
       });
       if (cancelled) { u5(); return; }
       unlisteners.push(u5);
 
-      const u6 = await listen<{ session_id: string; name: string }>("session-renamed", (event) => {
-        dispatch({ type: "RENAME_TAB", id: event.payload.session_id, name: event.payload.name });
+      const u6 = await listen<{ session_id: string; error?: string }>("session-transfer-failed", (event) => {
+        // 传输失败（如取消或异常），会话保持连接但标记错误
+        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "connected" });
       });
       if (cancelled) { u6(); return; }
       unlisteners.push(u6);
-    })();
+
+      const u7 = await listen<{ session_id: string }>("session-switched", (event) => {
+        dispatch({ type: "SET_ACTIVE", id: event.payload.session_id });
+      });
+      if (cancelled) { u7(); return; }
+      unlisteners.push(u7);
+
+      const u8 = await listen<{ session_id: string; name: string }>("session-renamed", (event) => {
+        dispatch({ type: "RENAME_TAB", id: event.payload.session_id, name: event.payload.name });
+      });
+      if (cancelled) { u8(); return; }
+      unlisteners.push(u8);
+    })().catch((e) => {
+      console.error("SessionContext: 事件监听器注册失败:", e);
+    });
 
     return () => {
       cancelled = true;

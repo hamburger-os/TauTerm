@@ -61,7 +61,9 @@ pub fn run() {
                 let path = SessionManager::sessions_file_path(app_handle);
                 if let Some(state) = app_handle.try_state::<AppState>() {
                     if let Ok(manager) = state.manager.lock() {
-                        let _ = manager.save_to_disk(&path);
+                        if let Err(e) = manager.save_to_disk(&path) {
+                            log::warn!("保存会话到磁盘失败: {}", e);
+                        }
                     }
                 }
             }

@@ -34,7 +34,7 @@ export default function BottomPanel({ onSendFiles, onReceiveFiles }: BottomPanel
     setActiveTab(tabId);
   }, []);
 
-  const isConnected = sessionState.tabs.some(t => t.state === "connected");
+  const isConnected = sessionState.tabs.some(t => t.state === "connected" || t.state === "transferring");
 
   return (
     <div className={styles.panel}>

@@ -14,6 +14,7 @@ import Toast from "./components/common/Toast";
 import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
 import { useKeyboard } from "./hooks/useKeyboard";
+import { ACTION_IDS } from "./shortcuts/actionIds";
 import "./i18n/index";
 import "./App.css";
 
@@ -51,7 +52,7 @@ function AppInner() {
   const addToast = useCallback((type: ToastMessage["type"], message: string) => {
     const id = ++toastIdRef.current;
     setToasts(prev => [...prev, { id, type, message }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 5000);
+    // Auto-dismiss handled by Toast component's useEffect
   }, []);
 
   // Event handlers
@@ -148,20 +149,20 @@ function AppInner() {
 
   // Keyboard shortcuts
   useEffect(() => {
-    registerAction("palette.open", () => setPaletteOpen(true));
-    registerAction("session.new", () => { setEditSessionId(null); setConnectDialogOpen(true); });
-    registerAction("sidebar.toggle", () => setSidebarVisible(v => !v));
-    registerAction("serial.refresh", refreshEndpoints);
+    registerAction(ACTION_IDS.PALETTE_OPEN, () => setPaletteOpen(true));
+    registerAction(ACTION_IDS.SESSION_NEW, () => { setEditSessionId(null); setConnectDialogOpen(true); });
+    registerAction(ACTION_IDS.SIDEBAR_TOGGLE, () => setSidebarVisible(v => !v));
+    registerAction(ACTION_IDS.SERIAL_REFRESH, refreshEndpoints);
   }, [registerAction, refreshEndpoints]);
 
   // Command palette execution
   const handlePaletteExecute = useCallback((cmdId: string) => {
     switch (cmdId) {
-      case "session.new": setEditSessionId(null); setConnectDialogOpen(true); break;
-      case "terminal.search": /* handled by TerminalView */ break;
-      case "sidebar.toggle": setSidebarVisible(v => !v); break;
-      case "serial.refresh": refreshEndpoints(); break;
-      case "palette.open": setPaletteOpen(true); break;
+      case ACTION_IDS.SESSION_NEW: setEditSessionId(null); setConnectDialogOpen(true); break;
+      case ACTION_IDS.TERMINAL_SEARCH: /* handled by TerminalView */ break;
+      case ACTION_IDS.SIDEBAR_TOGGLE: setSidebarVisible(v => !v); break;
+      case ACTION_IDS.SERIAL_REFRESH: refreshEndpoints(); break;
+      case ACTION_IDS.PALETTE_OPEN: setPaletteOpen(true); break;
     }
   }, [refreshEndpoints]);
 

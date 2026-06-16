@@ -7,8 +7,22 @@ use std::io::Read;
 use std::sync::mpsc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use crate::session::{ConnectionType, EndpointInfo, SessionState, TermSession};
+use crate::session::{ConnectionType, EndpointInfo, SessionState};
 use crate::session::manager::{IoCmd, spawn_io_thread};
+
+// ── 串口连接常量 ────────────────────────────
+/// 打开端口最大重试次数
+const PORT_OPEN_RETRIES: u32 = 3;
+/// 重试间隔（毫秒）
+const PORT_OPEN_RETRY_DELAY_MS: u64 = 100;
+/// 端口稳定等待时间（毫秒）
+const PORT_STABILIZE_DELAY_MS: u64 = 30;
+/// 端口读取超时（毫秒）
+const PORT_READ_TIMEOUT_MS: u64 = 50;
+/// 清空缓冲区最大迭代次数
+const FLUSH_MAX_ITERATIONS: u32 = 20;
+/// 连续空读阈值（缓冲区已清空）
+const FLUSH_EMPTY_THRESHOLD: u32 = 3;
 
 /// 最小串口会话（兼容 TermSession trait）
 pub struct SerialSession {
@@ -91,20 +105,20 @@ impl SerialSession {
         let fc = match fcs { "rts_cts"=>serialport::FlowControl::Hardware,"xon_xoff"=>serialport::FlowControl::Software,_=>serialport::FlowControl::None };
 
         let mut last_err = String::new();
-        for attempt in 0..3 {
+        for attempt in 0..PORT_OPEN_RETRIES {
             if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                std::thread::sleep(std::time::Duration::from_millis(PORT_OPEN_RETRY_DELAY_MS));
             }
             match serialport::new(endpoint, baud_rate)
                 .data_bits(db).parity(pa).stop_bits(sb).flow_control(fc)
-                .timeout(Duration::from_millis(50))
+                .timeout(Duration::from_millis(PORT_READ_TIMEOUT_MS))
                 .open()
             {
                 Ok(port) => {
                     // 清空缓冲区，丢弃上次连接残留的数据
                     let _ = port.clear(serialport::ClearBuffer::All);
                     // 短暂等待设备稳定
-                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    std::thread::sleep(std::time::Duration::from_millis(PORT_STABILIZE_DELAY_MS));
                     return Ok(port);
                 }
                 Err(e) => {
@@ -117,24 +131,19 @@ impl SerialSession {
 
     // ── YModem 文件传输 ────────────────────────────
 
-    /// 临时打开专用端口用于 YModem 传输
-    pub fn open_port_for_transfer(endpoint: &str, params: &serde_json::Value) -> Result<Box<dyn serialport::SerialPort>, String> {
-        Self::open_port(endpoint, params)
-    }
-
     /// 清空端口接收缓冲区
     ///
     /// 丢弃设备残留输出，避免干扰 YModem 握手协议。
     /// 连续读取直到连续 3 次超时（50ms 每次），确保缓冲区清空。
     pub fn flush_port_buffer(port: &mut Box<dyn serialport::SerialPort>) {
         let mut buf = [0u8; 256];
-        let mut empty_count = 0;
-        for _ in 0..20 {
+        let mut empty_count = 0u32;
+        for _ in 0..FLUSH_MAX_ITERATIONS {
             match port.read(&mut buf) {
                 Ok(n) if n > 0 => { empty_count = 0; }
                 _ => {
                     empty_count += 1;
-                    if empty_count >= 3 { break; }
+                    if empty_count >= FLUSH_EMPTY_THRESHOLD { break; }
                 }
             }
         }
@@ -187,12 +196,9 @@ impl SerialSession {
     }
 }
 
-// ── TermSession trait 实现 ────────────────────────
-// 注意: 多会话架构中，SerialSession 的 TermSession trait 实现保留用于兼容性，
-// 实际会话管理通过 SessionManager 完成。
-
-impl TermSession for SerialSession {
-    fn enumerate_endpoints(&self) -> Result<Vec<EndpointInfo>, String> {
+impl SerialSession {
+    /// 枚举可用串口端点（静态方法，无需实例）
+    pub fn enumerate_serial_endpoints() -> Result<Vec<EndpointInfo>, String> {
         serialport::available_ports().map_err(|e| e.to_string()).map(|ports|
             ports.into_iter().map(|p| EndpointInfo {
                 name: p.port_name.clone(),
@@ -202,29 +208,9 @@ impl TermSession for SerialSession {
         )
     }
 
-    fn connect(
-        &mut self,
-        _endpoint: &str,
-        _params: serde_json::Value,
-        _on_data: Box<dyn Fn(Vec<u8>) + Send>,
-        _on_disconnect: Box<dyn Fn() + Send>,
-    ) -> Result<(), String> {
-        Err("请使用 SessionManager::create_session() 创建会话".into())
-    }
-
-    fn disconnect(&mut self) -> Result<(), String> {
-        self.state = SessionState::Disconnected;
-        Ok(())
-    }
-
-    fn write(&mut self, _data: &[u8]) -> Result<(), String> {
-        Err("请使用 SessionManager::write() 写入数据".into())
-    }
-
-    fn state(&self) -> SessionState { self.state.clone() }
-    fn connection_type(&self) -> ConnectionType { ConnectionType::Serial }
+    pub fn state(&self) -> SessionState { self.state.clone() }
 }
 
 impl Drop for SerialSession {
-    fn drop(&mut self) { let _ = self.disconnect(); }
+    fn drop(&mut self) { self.state = SessionState::Disconnected; }
 }

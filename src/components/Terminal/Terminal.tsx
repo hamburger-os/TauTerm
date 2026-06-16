@@ -37,10 +37,13 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   const onCleanupRef = useRef(onCleanup);
   onCleanupRef.current = onCleanup;
 
-  // 暴露 direct write 方法
+  // 暴露 xterm 实例和 write 方法
   useImperativeHandle(ref, () => ({
     write: (data: Uint8Array | string) => {
       xtermRef.current?.write(data);
+    },
+    get terminal() {
+      return xtermRef.current;
     },
   }));
 

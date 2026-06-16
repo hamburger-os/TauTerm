@@ -22,18 +22,23 @@ export default function StatusBar() {
     <div className={styles.bar}>
       <div className={styles.left}>
         <div className={styles.indicator}>
-          <span className={`${styles.dot} ${activeTab?.state === "connected" ? styles.connected : ""}`} />
+          <span className={`${styles.dot} ${
+            activeTab?.state === "connected" ? styles.connected :
+            activeTab?.state === "transferring" ? styles.transferring : ""
+          }`} />
           <span className={styles.text}>
             {activeTab?.state === "connected"
               ? `${t("serial.connected")}: ${activeTab.endpoint}`
-              : t("serial.disconnected")}
+              : activeTab?.state === "transferring"
+                ? `${t("transfer.transferringStatus") || "Transferring..."}: ${activeTab.endpoint}`
+                : t("serial.disconnected")}
           </span>
         </div>
       </div>
 
       <div className={styles.right}>
         <span className={styles.meta}>
-          {activeTab?.state === "connected" ? `${activeTab.endpoint}` : ""}
+          {(activeTab?.state === "connected" || activeTab?.state === "transferring") ? `${activeTab.endpoint}` : ""}
         </span>
         <button className={styles.langBtn} onClick={toggleLanguage}>
           {i18n.language === "zh-CN" ? "EN" : "中"}

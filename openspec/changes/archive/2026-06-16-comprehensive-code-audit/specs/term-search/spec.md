@@ -1,23 +1,6 @@
-# term-search
+# term-search (delta)
 
-## Purpose
-
-定义终端搜索功能要求，包括搜索栏激活、文本搜索、匹配导航和大小写切换。
-
-## Requirements
-
-### Requirement: Search Bar Activation
-The system SHALL open a search bar overlay anchored to the top-right of the active terminal when user presses Ctrl+F.
-The search bar SHALL include a text input, match counter, and navigation buttons.
-The search bar SHALL auto-focus the input field.
-
-#### Scenario: Open search
-- **WHEN** user presses Ctrl+F while focused in the terminal
-- **THEN** a search bar appears at the top-right of the terminal with an empty input field
-
-#### Scenario: Close search
-- **WHEN** user presses Escape while search bar is open
-- **THEN** the search bar closes, all highlights are cleared
+## MODIFIED Requirements
 
 ### Requirement: Text Search
 The system SHALL search the terminal's scrollback buffer for the entered text.

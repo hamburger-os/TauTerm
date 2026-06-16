@@ -6,9 +6,25 @@
 //! - EOT / 批次结束（空块 0）
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::time::Duration;
-use crate::transfer::protocol::{FileTransferProtocol, TransferDirection, TransferProgress};
+
+/// 传输方向
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransferDirection {
+    Send,
+    Receive,
+}
+
+/// 传输进度
+#[derive(Debug, Clone)]
+pub struct TransferProgress {
+    pub file_name: String,
+    pub bytes_transferred: u64,
+    pub total_bytes: u64,
+    #[allow(dead_code)]
+    pub direction: TransferDirection,
+}
 
 /// CRC-16/CCITT 查找表
 const CRC_TABLE: [u16; 256] = {
@@ -52,79 +68,6 @@ const DATA_BLOCK_SIZE: usize = 1024;
 const BLOCK0_SIZE: usize = 128;
 const MAX_RETRIES: u32 = 10;
 
-/// YModem 实现结构体（旧 trait 实现，保留兼容）
-#[allow(dead_code)]
-pub struct YModem;
-
-#[allow(dead_code)]
-impl YModem {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// 等待接收方发送特定字节，带超时
-    fn wait_for_byte(
-        port: &mut Box<dyn serialport::SerialPort>,
-        expected: u8,
-        timeout_ms: u64,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        let mut buf = [0u8; 1];
-        let start = std::time::Instant::now();
-        loop {
-            match port.read(&mut buf) {
-                Ok(1) => {
-                    if buf[0] == CAN {
-                        return Ok(false); // 对方取消
-                    }
-                    if buf[0] == expected {
-                        return Ok(true);
-                    }
-                }
-                Ok(_) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                Err(e) => return Err(Box::new(e)),
-            }
-            if start.elapsed() > Duration::from_millis(timeout_ms) {
-                return Ok(false); // 超时
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    /// 读取一个字节
-    fn read_byte(port: &mut Box<dyn serialport::SerialPort>) -> Result<Option<u8>, Box<dyn std::error::Error>> {
-        let mut buf = [0u8; 1];
-        match port.read(&mut buf) {
-            Ok(1) => Ok(Some(buf[0])),
-            Ok(_) => Ok(None),
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => Ok(None),
-            Err(e) => Err(Box::new(e)),
-        }
-    }
-}
-
-impl FileTransferProtocol for YModem {
-    fn send_files(
-        &mut self,
-        _file_paths: &[String],
-        _progress_callback: Box<dyn Fn(TransferProgress) + Send>,
-        _cancel_signal: tokio::sync::oneshot::Receiver<()>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // YModem 发送需要直接访问串口
-        // 此 trait 方法由 SerialPortManager 调用并传入端口访问
-        Err("send_files 需要通过 SerialPortManager 调用".into())
-    }
-
-    fn receive_files(
-        &mut self,
-        _download_dir: &str,
-        _progress_callback: Box<dyn Fn(TransferProgress) + Send>,
-        _cancel_signal: tokio::sync::oneshot::Receiver<()>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Err("receive_files 需要通过 SerialPortManager 调用".into())
-    }
-}
-
 /// YModem 发送器 — 直接操作串口
 pub struct YModemSender;
 
@@ -143,7 +86,7 @@ impl YModemSender {
         let mut c_count = 0u32;
         for retry in 0..MAX_RETRIES * 3 {
             if cancel() { return Err("传输已取消".into()); }
-            match Self::read_byte_with_timeout(port, 1000)? {
+            match read_byte_with_timeout(port, 1000)? {
                 Some(C) => {
                     c_count += 1;
                     if c_count >= 1 { break; }  // 收到至少一个 'C' 即继续
@@ -268,7 +211,7 @@ impl YModemSender {
             port.write_all(&packet)?;
 
             // 等待 ACK
-            match Self::read_byte_with_timeout(port, 3000)? {
+            match read_byte_with_timeout(port, 3000)? {
                 Some(ACK) => return Ok(()),
                 Some(CAN) => return Err("接收方取消了传输".into()),
                 Some(NAK) | None => {
@@ -295,7 +238,7 @@ impl YModemSender {
         for retry in 0..MAX_RETRIES {
             if cancel() { return Err("传输已取消".into()); }
             port.write_all(&[EOT])?;
-            match Self::read_byte_with_timeout(port, 3000)? {
+            match read_byte_with_timeout(port, 3000)? {
                 Some(ACK) => return Ok(()),
                 Some(CAN) => return Err("接收方取消了传输".into()),
                 Some(NAK) | None => {
@@ -308,26 +251,26 @@ impl YModemSender {
         }
         Err("EOT 发送失败".into())
     }
+}
 
-    /// 读取一个字节（带超时）
-    fn read_byte_with_timeout(
-        port: &mut Box<dyn serialport::SerialPort>,
-        timeout_ms: u64,
-    ) -> Result<Option<u8>, Box<dyn std::error::Error>> {
-        let mut buf = [0u8; 1];
-        let start = std::time::Instant::now();
-        loop {
-            match port.read(&mut buf) {
-                Ok(1) => return Ok(Some(buf[0])),
-                Ok(_) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                Err(e) => return Err(Box::new(e)),
-            }
-            if start.elapsed() > Duration::from_millis(timeout_ms) {
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(10));
+/// 读取一个字节（带超时）— 共享工具函数
+fn read_byte_with_timeout(
+    port: &mut Box<dyn serialport::SerialPort>,
+    timeout_ms: u64,
+) -> Result<Option<u8>, Box<dyn std::error::Error>> {
+    let mut buf = [0u8; 1];
+    let start = std::time::Instant::now();
+    loop {
+        match port.read(&mut buf) {
+            Ok(1) => return Ok(Some(buf[0])),
+            Ok(_) => {}
+            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e) => return Err(Box::new(e)),
         }
+        if start.elapsed() > Duration::from_millis(timeout_ms) {
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -339,17 +282,18 @@ impl YModemReceiver {
     pub fn receive(
         port: &mut Box<dyn serialport::SerialPort>,
         download_dir: &str,
-        _on_progress: impl Fn(TransferProgress),
+        on_progress: impl Fn(TransferProgress),
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(download_dir)?;
+
+        let mut current_file: Option<(String, fs::File, u64)> = None; // (name, handle, total_size)
 
         // 阶段 1：发送 'C' 启动 CRC 模式传输
         for retry in 0..MAX_RETRIES {
             if cancel() { return Err("传输已取消".into()); }
             port.write_all(&[C])?;
-            // 等待响应
-            match Self::read_byte_with_timeout(port, 3000)? {
+            match read_byte_with_timeout(port, 3000)? {
                 Some(SOH) | Some(STX) => break,
                 Some(CAN) => return Err("发送方取消了传输".into()),
                 _ => {
@@ -363,12 +307,20 @@ impl YModemReceiver {
         loop {
             if cancel() { return Err("传输已取消".into()); }
 
-            // 读取块头
-            let header = match Self::read_byte_with_timeout(port, 5000)? {
+            let header = match read_byte_with_timeout(port, 5000)? {
                 Some(SOH) => SOH,
                 Some(STX) => STX,
                 Some(EOT) => {
-                    // 文件结束
+                    // 文件结束 — 关闭当前文件
+                    if let Some((name, file, total)) = current_file.take() {
+                        drop(file);
+                        on_progress(TransferProgress {
+                            file_name: name,
+                            bytes_transferred: total,
+                            total_bytes: total,
+                            direction: TransferDirection::Receive,
+                        });
+                    }
                     port.write_all(&[ACK])?;
                     continue; // 可能是批次中的下一个文件
                 }
@@ -379,11 +331,11 @@ impl YModemReceiver {
             let block_size = if header == STX { DATA_BLOCK_SIZE } else { BLOCK0_SIZE };
 
             // 读取块序号和反码
-            let block_num = match Self::read_byte_with_timeout(port, 1000)? {
+            let block_num = match read_byte_with_timeout(port, 1000)? {
                 Some(b) => b,
                 None => return Err("读取块序号超时".into()),
             };
-            let block_num_neg = match Self::read_byte_with_timeout(port, 1000)? {
+            let block_num_neg = match read_byte_with_timeout(port, 1000)? {
                 Some(b) => b,
                 None => return Err("读取块序号反码超时".into()),
             };
@@ -396,18 +348,18 @@ impl YModemReceiver {
             // 读取块数据
             let mut data = vec![0u8; block_size];
             for b in data.iter_mut() {
-                *b = match Self::read_byte_with_timeout(port, 1000)? {
+                *b = match read_byte_with_timeout(port, 1000)? {
                     Some(byte) => byte,
                     None => return Err("读取块数据超时".into()),
                 };
             }
 
             // 读取 CRC
-            let crc_hi = match Self::read_byte_with_timeout(port, 1000)? {
+            let crc_hi = match read_byte_with_timeout(port, 1000)? {
                 Some(b) => b,
                 None => return Err("读取 CRC 超时".into()),
             };
-            let crc_lo = match Self::read_byte_with_timeout(port, 1000)? {
+            let crc_lo = match read_byte_with_timeout(port, 1000)? {
                 Some(b) => b,
                 None => return Err("读取 CRC 超时".into()),
             };
@@ -422,52 +374,70 @@ impl YModemReceiver {
 
             // 块 0 处理
             if block_num == 0 {
-                let data_slice = &data;
                 // 空块 0 → 批次结束
-                if data_slice[0] == 0 {
+                if data[0] == 0 {
+                    if let Some((_, file, _)) = current_file.take() {
+                        drop(file);
+                    }
                     port.write_all(&[ACK])?;
                     break;
                 }
 
-                // 解析文件元数据：name\0size...
-                let null_pos = data_slice.iter().position(|&b| b == 0);
-                if let Some(pos) = null_pos {
-                    let file_name = String::from_utf8_lossy(&data_slice[..pos]).to_string();
-                    // 当前文件信息已解析，等待数据块
-                    port.write_all(&[ACK])?;
-                    // 在实际传输循环中，后续数据块会写入到当前文件
-                    // 简化实现：接受文件但不解析文件大小
-                    let _ = file_name;
-                } else {
-                    port.write_all(&[ACK])?;
+                // 关闭上一个文件（如果存在）
+                if let Some((_, file, _)) = current_file.take() {
+                    drop(file);
                 }
+
+                // 解析文件元数据：name\0size\0...
+                let null_pos = data.iter().position(|&b| b == 0);
+                if let Some(pos) = null_pos {
+                    let file_name = String::from_utf8_lossy(&data[..pos]).to_string();
+                    let file_path = std::path::Path::new(download_dir).join(&file_name);
+
+                    // 解析文件大小（在 name\0 之后，下一个 \0 之前）
+                    let rest = &data[pos + 1..];
+                    let size_str = rest.iter()
+                        .take_while(|&&b| b != 0)
+                        .map(|&b| b as char)
+                        .collect::<String>();
+                    let total_size: u64 = size_str.parse().unwrap_or(0);
+
+                    match fs::File::create(&file_path) {
+                        Ok(file) => {
+                            current_file = Some((file_name.clone(), file, total_size));
+                            on_progress(TransferProgress {
+                                file_name,
+                                bytes_transferred: 0,
+                                total_bytes: total_size,
+                                direction: TransferDirection::Receive,
+                            });
+                        }
+                        Err(e) => return Err(format!("无法创建文件 {:?}: {}", file_path, e).into()),
+                    }
+                }
+                port.write_all(&[ACK])?;
             } else {
-                // 数据块 — 简化实现：追加到文件
+                // 数据块 — 写入当前文件
+                if let Some((ref file_name, ref mut file, total_size)) = current_file {
+                    // 截断到实际大小（最后一块可能不满）
+                    let write_len = if block_size == DATA_BLOCK_SIZE {
+                        data.len()
+                    } else {
+                        data.iter().rposition(|&b| b != 0x1A).map_or(0, |p| p + 1)
+                    };
+                    file.write_all(&data[..write_len])?;
+                    let pos = file.stream_position().unwrap_or(0);
+                    on_progress(TransferProgress {
+                        file_name: file_name.clone(),
+                        bytes_transferred: pos,
+                        total_bytes: total_size,
+                        direction: TransferDirection::Receive,
+                    });
+                }
                 port.write_all(&[ACK])?;
             }
         }
 
         Ok(())
-    }
-
-    /// 读取一个字节（带超时）
-    fn read_byte_with_timeout(
-        port: &mut Box<dyn serialport::SerialPort>,
-        timeout_ms: u64,
-    ) -> Result<Option<u8>, Box<dyn std::error::Error>> {
-        let mut buf = [0u8; 1];
-        let start = std::time::Instant::now();
-        loop {
-            match port.read(&mut buf) {
-                Ok(1) => return Ok(Some(buf[0])),
-                Ok(_) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                Err(e) => return Err(Box::new(e)),
-            }
-            if start.elapsed() > Duration::from_millis(timeout_ms) {
-                return Ok(None);
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
     }
 }
