@@ -4,11 +4,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import AppShell from "./components/Layout/AppShell";
 import Toolbar from "./components/Layout/Toolbar";
 import SessionSidebar from "./components/Layout/SessionSidebar";
-import TabBar from "./components/Layout/TabBar";
 import StatusBar from "./components/Layout/StatusBar";
 import ResizeHandle from "./components/Layout/ResizeHandle";
 import TerminalView from "./components/Terminal/TerminalView";
-import FileTransferPanel from "./components/FileTransfer/FileTransferPanel";
+import BottomPanel from "./components/Layout/BottomPanel";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
 import ConnectDialog from "./components/Layout/ConnectDialog";
 import Toast from "./components/common/Toast";
@@ -20,8 +19,8 @@ import "./App.css";
 
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 400;
-const PANEL_MIN = 24;
-const PANEL_DEFAULT = 200;
+const PANEL_MIN = 120;
+const PANEL_DEFAULT = 250;
 const PANEL_MAX_RATIO = 0.5;
 
 interface ToastMessage {
@@ -32,19 +31,19 @@ interface ToastMessage {
 
 function AppInner() {
   // Context hooks
-  const { state: sessionState, connect, refreshEndpoints } = useSession();
-  const { state: transferState, sendFiles: transferSend, receiveFiles: transferReceive, cancelTransfer: transferCancel, clearError: clearTransferError, clearHistory: clearTransferHistory, setDragging } = useTransfer();
+  const { state: sessionState, refreshEndpoints } = useSession();
+  const { state: transferState, sendFiles: transferSend, receiveFiles: transferReceive, setDragging } = useTransfer();
   const { registerAction } = useKeyboard();
 
   // Layout state
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [panelHeight, setPanelHeight] = useState(PANEL_MIN);
-  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [panelHeight, setPanelHeight] = useState(PANEL_DEFAULT);
   const [isResizingPanel, setIsResizingPanel] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [editSessionId, setEditSessionId] = useState<string | null>(null);
 
   // Toast
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -71,7 +70,7 @@ function AppInner() {
     sidebarStartX.current = e.clientX; sidebarStartWidth.current = sidebarWidth;
   }, [sidebarWidth]);
 
-  // Resize: panel
+  // Resize: bottom panel
   const panelStartY = useRef(0); const panelStartHeight = useRef(0);
   const handlePanelMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault(); setIsResizingPanel(true);
@@ -85,9 +84,7 @@ function AppInner() {
       }
       if (isResizingPanel) {
         const maxH = window.innerHeight * PANEL_MAX_RATIO;
-        const newH = Math.min(maxH, Math.max(PANEL_MIN, panelStartHeight.current - (e.clientY - panelStartY.current)));
-        setPanelHeight(newH);
-        if (newH > PANEL_MIN + 10) setIsPanelOpen(true);
+        setPanelHeight(Math.min(maxH, Math.max(PANEL_MIN, panelStartHeight.current - (e.clientY - panelStartY.current))));
       }
     };
     const handleUp = () => { setIsResizingSidebar(false); setIsResizingPanel(false); };
@@ -105,13 +102,7 @@ function AppInner() {
     };
   }, [isResizingSidebar, isResizingPanel]);
 
-  // Panel toggle
-  const togglePanel = useCallback(() => {
-    if (isPanelOpen) { setIsPanelOpen(false); setPanelHeight(PANEL_MIN); }
-    else { setIsPanelOpen(true); setPanelHeight(PANEL_DEFAULT); }
-  }, [isPanelOpen]);
-
-  // File transfer
+  // File transfer handlers
   const handleSendFiles = useCallback(async () => {
     if (!sessionState.activeTabId) return;
     try {
@@ -133,7 +124,7 @@ function AppInner() {
     } catch (e) { addToast("error", `${e}`); }
   }, [sessionState.activeTabId, transferReceive, addToast]);
 
-  // Global drag events for Dropzone
+  // Global drag events for dropzone
   useEffect(() => {
     const handleDragEnter = (e: DragEvent) => { e.preventDefault(); setDragging(true); };
     const handleDragLeave = (e: DragEvent) => {
@@ -158,34 +149,31 @@ function AppInner() {
   // Keyboard shortcuts
   useEffect(() => {
     registerAction("palette.open", () => setPaletteOpen(true));
-    registerAction("session.new", () => setConnectDialogOpen(true));
-    registerAction("transfer.toggle", togglePanel);
+    registerAction("session.new", () => { setEditSessionId(null); setConnectDialogOpen(true); });
     registerAction("sidebar.toggle", () => setSidebarVisible(v => !v));
     registerAction("serial.refresh", refreshEndpoints);
-  }, [registerAction, togglePanel, refreshEndpoints]);
+  }, [registerAction, refreshEndpoints]);
 
   // Command palette execution
   const handlePaletteExecute = useCallback((cmdId: string) => {
     switch (cmdId) {
-      case "session.new": connect("", {}); break;
+      case "session.new": setEditSessionId(null); setConnectDialogOpen(true); break;
       case "terminal.search": /* handled by TerminalView */ break;
-      case "transfer.toggle": togglePanel(); break;
       case "sidebar.toggle": setSidebarVisible(v => !v); break;
       case "serial.refresh": refreshEndpoints(); break;
       case "palette.open": setPaletteOpen(true); break;
     }
-  }, [connect, togglePanel, refreshEndpoints]);
+  }, [refreshEndpoints]);
 
   // Toolbar action handler
   const handleToolbarAction = useCallback((actionId: string) => {
     switch (actionId) {
-      case "newSession": setConnectDialogOpen(true); break;
-      case "refresh": refreshEndpoints(); break;
-      case "transfer": togglePanel(); break;
+      case "newSession": setEditSessionId(null); setConnectDialogOpen(true); break;
       case "sidebar": setSidebarVisible(v => !v); break;
       case "commands": setPaletteOpen(true); break;
+      case "settings": addToast("info", "设置功能即将推出"); break;
     }
-  }, [refreshEndpoints, togglePanel]);
+  }, [addToast]);
 
   return (
     <div className="app-root">
@@ -204,7 +192,9 @@ function AppInner() {
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
             >
-              <SessionSidebar />
+              <SessionSidebar
+                onEditSession={(id) => { setEditSessionId(id); setConnectDialogOpen(true); }}
+              />
             </motion.aside>
           )}
         </AnimatePresence>
@@ -216,7 +206,6 @@ function AppInner() {
 
         {/* Main Terminal Area */}
         <main className="terminal-viewport">
-          <TabBar onNewSession={() => setConnectDialogOpen(true)} />
           <TerminalView />
         </main>
       </div>
@@ -224,8 +213,8 @@ function AppInner() {
       {/* Panel Resize Handle */}
       <ResizeHandle direction="vertical" onMouseDown={handlePanelMouseDown} />
 
-      {/* File Transfer Panel */}
-      <motion.div
+      {/* Bottom Panel — resizable, tabbed, always visible */}
+      <div
         className="file-transfer-panel"
         style={{
           height: panelHeight,
@@ -233,22 +222,12 @@ function AppInner() {
           flexDirection: "column",
           overflow: "hidden",
         }}
-        animate={{ height: panelHeight }}
-        transition={{ type: "spring", stiffness: 300, damping: 30 }}
       >
-        <FileTransferPanel
-          status={transferState.status}
-          progress={transferState.progress}
-          history={transferState.history}
-          error={transferState.error}
-          isConnected={sessionState.tabs.some(t => t.state === "connected")}
+        <BottomPanel
           onSendFiles={handleSendFiles}
           onReceiveFiles={handleReceiveFiles}
-          onCancel={() => sessionState.activeTabId && transferCancel(sessionState.activeTabId)}
-          onClearError={clearTransferError}
-          onClearHistory={clearTransferHistory}
         />
-      </motion.div>
+      </div>
 
       {/* Status Bar */}
       <StatusBar />
@@ -263,7 +242,8 @@ function AppInner() {
       {/* Connect Dialog */}
       <ConnectDialog
         isOpen={connectDialogOpen}
-        onClose={() => setConnectDialogOpen(false)}
+        onClose={() => { setConnectDialogOpen(false); setEditSessionId(null); }}
+        editSessionId={editSessionId}
       />
 
       {/* Dropzone Overlay */}

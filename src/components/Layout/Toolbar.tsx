@@ -11,10 +11,9 @@ interface ToolbarButton {
 
 const TOOLBAR_BUTTONS: ToolbarButton[] = [
   { id: "newSession", icon: "➕", labelKey: "toolbar.newSession", shortcut: "Ctrl+N" },
-  { id: "refresh", icon: "🔄", labelKey: "toolbar.refresh" },
-  { id: "transfer", icon: "📂", labelKey: "toolbar.transfer", shortcut: "Ctrl+T" },
   { id: "sidebar", icon: "☰", labelKey: "toolbar.sidebar", shortcut: "Ctrl+B" },
   { id: "commands", icon: "⌘", labelKey: "toolbar.commands", shortcut: "Ctrl+P" },
+  { id: "settings", icon: "⚙", labelKey: "toolbar.settings" },
 ];
 
 interface ToolbarProps {

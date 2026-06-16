@@ -9,6 +9,7 @@
     "serial": "Serial",
     "ssh": "SSH",
     "telnet": "Telnet",
+    "tftp": "TFTP",
     "comingSoon": "(Coming Soon)"
   },
   "serial": {
@@ -33,14 +34,16 @@
   "session": {
     "sessions": "Sessions",
     "noSessions": "No active sessions",
-    "emptyHint": "Use the quick connect bar or Ctrl+Shift+N to create a new session",
+    "emptyHint": "Click + New Session or use Ctrl+N to create a new session",
     "newSession": "New Session",
     "closeSession": "Close Session",
     "renameSession": "Rename",
-    "closeConfirm": "Close this session?"
+    "closeConfirm": "Close this session?",
+    "deleteConfirm": "Delete this session?",
+    "clearAllDisconnected": "Clear all disconnected sessions"
   },
   "search": {
-    "placeholder": "Search...",
+    "placeholder": "Search sessions...",
     "noResults": "No results",
     "caseSensitive": "Case sensitive"
   },
@@ -51,9 +54,6 @@
   "shortcuts": {
     "newSession": "New Session",
     "closeSession": "Close Session",
-    "nextTab": "Next Tab",
-    "prevTab": "Previous Tab",
-    "togglePanel": "Toggle Transfer Panel",
     "openPalette": "Open Command Palette",
     "toggleSidebar": "Toggle Sidebar",
     "refreshPorts": "Refresh Ports",
@@ -65,15 +65,23 @@
     "sunset": "Sunset Amber",
     "switchTo": "Switch to"
   },
-  "layout": {
-    "quickConnect": "Quick connect: COM3 or COM3:115200"
-  },
   "toolbar": {
     "newSession": "New Session",
-    "refresh": "Refresh",
-    "transfer": "Transfer",
     "sidebar": "Sidebar",
-    "commands": "Commands"
+    "commands": "Commands",
+    "settings": "Settings"
+  },
+  "contextMenu": {
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "configure": "Configure",
+    "reconnect": "Reconnect",
+    "rename": "Rename",
+    "delete": "Delete"
+  },
+  "bottomPanel": {
+    "noSession": "No active session",
+    "sessionInfo": "Session Info"
   },
   "transfer": {
     "title": "File Transfer",
@@ -96,7 +104,6 @@
     "send": "Send",
     "receive": "Receive",
     "noHistory": "No transfer history",
-    "togglePanel": "File Transfer",
     "dropHere": "⚡ Drop to Transfer"
   },
   "settings": {

@@ -10,7 +10,7 @@
 }
 
 .dialog {
-  width: 400px;
+  width: 420px;
   max-height: 80vh;
   overflow-y: auto;
   background: rgba(10, 10, 26, 0.95);
@@ -25,8 +25,109 @@
   color: var(--text-primary);
   font-size: var(--text-lg);
   font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.subtitle {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
   margin: 0 0 16px;
 }
+
+.configHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.configHeader .title {
+  margin: 0;
+}
+
+.backBtn {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+}
+
+.backBtn:hover { color: var(--text-primary); border-color: var(--glass-border-hover); }
+
+/* ── 模式卡片网格 ── */
+
+.modeGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.modeCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  position: relative;
+}
+
+.modeCard:hover:not(:disabled) {
+  background: rgba(0, 212, 170, 0.06);
+  border-color: rgba(0, 212, 170, 0.3);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.modeCardDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modeIcon {
+  font-size: 28px;
+}
+
+.modeLabel {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.comingSoonBadge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.comingSoonBanner {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius-sm);
+  margin-top: 8px;
+}
+
+/* ── 表单字段 ── */
 
 .field {
   margin-bottom: 12px;
@@ -92,13 +193,6 @@
 }
 
 .iconBtn:hover { color: var(--text-primary); border-color: var(--glass-border-hover); }
-
-.comingSoon {
-  padding: 24px;
-  text-align: center;
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-}
 
 .error {
   padding: 8px;

@@ -117,10 +117,10 @@ interface SessionContextValue {
   refreshEndpoints: () => Promise<void>;
   connect: (endpoint: string, params: Record<string, unknown>, name?: string) => Promise<string | null>;
   disconnect: (sessionId: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
   switchTab: (sessionId: string) => Promise<void>;
   renameTab: (sessionId: string, name: string) => Promise<void>;
-  reorderTabs: (ids: string[]) => Promise<void>;
   getTabs: () => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onSessionDisconnect: (callback: (sessionId: string, reason?: string) => void) => void;
@@ -167,17 +167,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const disconnect = useCallback(async (sessionId: string) => {
-    // 恢复的标签页没有后端会话，直接从列表中移除
+    // 已断开的会话保留在侧栏中，不做任何操作
     const tab = state.tabs.find(t => t.id === sessionId);
     if (tab?.state === "disconnected") {
-      dispatch({ type: "REMOVE_TAB", id: sessionId });
       return;
     }
     try {
       await invoke("disconnect_session", { sessionId });
+      // 后端会发出 session-disconnected 事件，handler 会将状态设为 "disconnected"
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `断开失败: ${e}` });
     }
+  }, [state.tabs]);
+
+  const deleteSession = useCallback(async (sessionId: string) => {
+    const tab = state.tabs.find(t => t.id === sessionId);
+    // 如果会话已连接，先断开后端连接
+    if (tab?.state === "connected" || tab?.state === "connecting") {
+      try {
+        await invoke("disconnect_session", { sessionId });
+      } catch (_e) {
+        // 后端断开可能失败，仍继续从前端移除
+      }
+    }
+    dispatch({ type: "REMOVE_TAB", id: sessionId });
   }, [state.tabs]);
 
   const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
@@ -202,15 +215,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "RENAME_TAB", id: sessionId, name });
     try {
       await invoke("rename_session", { sessionId, newName: name });
-    } catch (_e) {
-      // 恢复的标签页在后端不存在，静默忽略
-    }
-  }, []);
-
-  const reorderTabs = useCallback(async (ids: string[]) => {
-    dispatch({ type: "REORDER_TABS", ids });
-    try {
-      await invoke("reorder_tabs", { sessionIds: ids });
     } catch (_e) {
       // 恢复的标签页在后端不存在，静默忽略
     }
@@ -278,17 +282,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; name: string; params: Record<string, unknown> }>(
         "session-connected",
         (event) => {
           dispatch({
             type: "ADD_TAB",
             tab: {
               id: event.payload.session_id,
-              name: `Serial @ ${event.payload.endpoint}`,
+              name: event.payload.name || `Serial @ ${event.payload.endpoint}`,
               connection_type: event.payload.connection_type,
               endpoint: event.payload.endpoint,
               state: "connected",
+              params: event.payload.params,
             },
           });
         }
@@ -298,7 +303,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       const u3 = await listen<{ session_id: string; reason?: string }>("session-disconnected", (event) => {
         const reason = event.payload.reason;
-        dispatch({ type: "REMOVE_TAB", id: event.payload.session_id });
+        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "disconnected" });
         disconnectCallbackRef.current?.(event.payload.session_id, reason);
       });
       if (cancelled) { u3(); return; }
@@ -344,10 +349,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       refreshEndpoints,
       connect,
       disconnect,
+      deleteSession,
       sendData,
       switchTab,
       renameTab,
-      reorderTabs,
       getTabs,
       onSessionData,
       onSessionDisconnect,

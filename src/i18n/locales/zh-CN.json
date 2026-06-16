@@ -7,8 +7,9 @@
   "connectionType": {
     "label": "连接类型",
     "serial": "串口 (Serial)",
-    "ssh": "SSH",
+    "ssh": "SSH (安全外壳)",
     "telnet": "Telnet",
+    "tftp": "TFTP",
     "comingSoon": "(即将推出)"
   },
   "serial": {
@@ -33,14 +34,16 @@
   "session": {
     "sessions": "会话",
     "noSessions": "暂无活跃会话",
-    "emptyHint": "使用快速连接栏或 Ctrl+Shift+N 创建新会话",
+    "emptyHint": "点击顶部 + 新建会话 或使用 Ctrl+N 创建新会话",
     "newSession": "新建会话",
     "closeSession": "关闭会话",
     "renameSession": "重命名",
-    "closeConfirm": "确定要关闭此会话吗？"
+    "closeConfirm": "确定要关闭此会话吗？",
+    "deleteConfirm": "确定要删除此会话吗？",
+    "clearAllDisconnected": "清除所有已断开会话"
   },
   "search": {
-    "placeholder": "搜索...",
+    "placeholder": "搜索会话...",
     "noResults": "无匹配结果",
     "caseSensitive": "区分大小写"
   },
@@ -51,9 +54,6 @@
   "shortcuts": {
     "newSession": "新建会话",
     "closeSession": "关闭当前会话",
-    "nextTab": "下一个标签页",
-    "prevTab": "上一个标签页",
-    "togglePanel": "切换文件传输面板",
     "openPalette": "打开命令面板",
     "toggleSidebar": "切换侧边栏",
     "refreshPorts": "刷新端口列表",
@@ -65,15 +65,23 @@
     "sunset": "日落琥珀",
     "switchTo": "切换到"
   },
-  "layout": {
-    "quickConnect": "快速连接: COM3 或 COM3:115200"
-  },
   "toolbar": {
     "newSession": "新建会话",
-    "refresh": "刷新端口",
-    "transfer": "文件传输",
     "sidebar": "侧栏",
-    "commands": "命令面板"
+    "commands": "命令面板",
+    "settings": "设置"
+  },
+  "contextMenu": {
+    "connect": "连接",
+    "disconnect": "断开",
+    "configure": "配置",
+    "reconnect": "重连",
+    "rename": "重命名",
+    "delete": "删除"
+  },
+  "bottomPanel": {
+    "noSession": "无活跃会话",
+    "sessionInfo": "会话信息"
   },
   "transfer": {
     "title": "文件传输",
@@ -96,7 +104,6 @@
     "send": "发送",
     "receive": "接收",
     "noHistory": "暂无传输记录",
-    "togglePanel": "文件传输",
     "dropHere": "⚡ 拖放到此传输"
   },
   "settings": {

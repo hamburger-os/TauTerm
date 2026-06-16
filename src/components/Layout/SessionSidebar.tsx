@@ -1,37 +1,95 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
+import { useContextMenu } from "../../hooks/useContextMenu";
+import ContextMenu from "../common/ContextMenu";
+import type { ContextMenuItem } from "../common/ContextMenu";
 import styles from "./SessionSidebar.module.css";
 
 interface SessionSidebarProps {
   onSelectSession?: (id: string) => void;
+  onEditSession?: (id: string) => void;
 }
 
 /**
  * 左侧会话列表侧边栏
  *
- * 显示所有活跃会话，支持搜索过滤。
+ * 显示所有活跃和已断开会话，支持搜索过滤和右键上下文菜单。
  */
-export default function SessionSidebar({ onSelectSession }: SessionSidebarProps) {
+export default function SessionSidebar({ onSelectSession, onEditSession }: SessionSidebarProps) {
   const { t } = useTranslation();
-  const { state, switchTab } = useSession();
+  const { state, switchTab, disconnect, deleteSession, connect } = useSession();
   const [search, setSearch] = useState("");
+  const { menu, openMenu, closeMenu } = useContextMenu();
 
   const filtered = state.tabs.filter(tab =>
     !search || tab.name.toLowerCase().includes(search.toLowerCase()) || tab.endpoint.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleSelect = (id: string) => {
+  const handleSelect = useCallback((id: string) => {
     switchTab(id);
     onSelectSession?.(id);
-  };
+  }, [switchTab, onSelectSession]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, tab: typeof state.tabs[0]) => {
+    openMenu(e, tab);
+  }, [openMenu]);
+
+  const getMenuItems = useCallback((): ContextMenuItem[] => {
+    if (!menu.session) return [];
+    const { state: sessionState } = menu.session;
+
+    if (sessionState === "connected") {
+      return [
+        { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect", icon: "⏹" },
+        { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "⚙" },
+        { id: "delete", label: t("contextMenu.delete") || "Delete", icon: "🗑", danger: true },
+      ];
+    }
+    return [
+      { id: "connect", label: t("contextMenu.connect") || "Connect", icon: "▶" },
+      { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "⚙" },
+      { id: "delete", label: t("contextMenu.delete") || "Delete", icon: "🗑", danger: true },
+    ];
+  }, [menu.session, t]);
+
+  const handleMenuSelect = useCallback(async (itemId: string, sessionId: string) => {
+    switch (itemId) {
+      case "connect": {
+        // 直接使用保存的参数重连，不弹出配置窗口
+        const tab = state.tabs.find(t => t.id === sessionId);
+        if (tab?.state === "disconnected" && tab.params) {
+          try {
+            const sid = await connect(tab.endpoint, tab.params as Record<string, unknown>, tab.name);
+            if (sid) {
+              await switchTab(sid);
+            }
+          } catch (_e) {
+            // 错误已在 SessionContext 中处理
+          }
+        }
+        break;
+      }
+      case "configure":
+        onEditSession?.(sessionId);
+        break;
+      case "disconnect":
+        disconnect(sessionId);
+        break;
+      case "delete":
+        if (window.confirm(t("session.deleteConfirm") || "Delete this session?")) {
+          deleteSession(sessionId);
+        }
+        break;
+    }
+  }, [onEditSession, disconnect, deleteSession, connect, switchTab, state.tabs, t]);
 
   return (
     <div className={styles.sidebar}>
       <div className={styles.header}>
         <span className={styles.title}>{t("session.sessions")}</span>
-        <span className={styles.count}>{state.tabs.length}/10</span>
+        <span className={styles.count}>{state.tabs.length}</span>
       </div>
 
       <input
@@ -55,6 +113,7 @@ export default function SessionSidebar({ onSelectSession }: SessionSidebarProps)
               whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.06)" }}
               whileTap={{ scale: 0.98 }}
               onClick={() => handleSelect(tab.id)}
+              onContextMenu={(e) => handleContextMenu(e, tab)}
             >
               <div className={styles.itemLeft}>
                 <span className={`${styles.statusDot} ${tab.state === "connected" ? styles.connected : ""}`} />
@@ -74,6 +133,14 @@ export default function SessionSidebar({ onSelectSession }: SessionSidebarProps)
           ))
         )}
       </div>
+
+      {/* 右键上下文菜单 */}
+      <ContextMenu
+        state={menu}
+        items={getMenuItems()}
+        onSelect={handleMenuSelect}
+        onClose={closeMenu}
+      />
     </div>
   );
 }

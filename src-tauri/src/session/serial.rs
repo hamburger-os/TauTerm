@@ -74,6 +74,10 @@ impl SerialSession {
     }
 
     /// 打开串口端口
+    ///
+    /// 通过最多 3 次重试（每次间隔 100ms）处理 Windows COM 端口句柄释放时机问题。
+    /// 断开后立即重连时，操作系统可能尚未完全释放端口句柄，短暂延迟后重试可解决此问题。
+    /// 打开成功后清空缓冲区以确保端口处于可用状态。
     fn open_port(endpoint: &str, params: &serde_json::Value) -> Result<Box<dyn serialport::SerialPort>, String> {
         let baud_rate = params.get("baud_rate").and_then(|v| v.as_u64()).unwrap_or(115200) as u32;
         let dbv = params.get("data_bits").and_then(|v| v.as_u64()).unwrap_or(8) as u8;
@@ -86,11 +90,29 @@ impl SerialSession {
         let sb = match sbs { "2"=>serialport::StopBits::Two,_=>serialport::StopBits::One };
         let fc = match fcs { "rts_cts"=>serialport::FlowControl::Hardware,"xon_xoff"=>serialport::FlowControl::Software,_=>serialport::FlowControl::None };
 
-        serialport::new(endpoint, baud_rate)
-            .data_bits(db).parity(pa).stop_bits(sb).flow_control(fc)
-            .timeout(Duration::from_millis(50))
-            .open()
-            .map_err(|e| format!("无法打开端口 {}: {}", endpoint, e))
+        let mut last_err = String::new();
+        for attempt in 0..3 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            match serialport::new(endpoint, baud_rate)
+                .data_bits(db).parity(pa).stop_bits(sb).flow_control(fc)
+                .timeout(Duration::from_millis(50))
+                .open()
+            {
+                Ok(port) => {
+                    // 清空缓冲区，丢弃上次连接残留的数据
+                    let _ = port.clear(serialport::ClearBuffer::All);
+                    // 短暂等待设备稳定
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    return Ok(port);
+                }
+                Err(e) => {
+                    last_err = format!("无法打开端口 {}: {}", endpoint, e);
+                }
+            }
+        }
+        Err(last_err)
     }
 
     // ── YModem 文件传输 ────────────────────────────

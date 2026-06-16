@@ -1,0 +1,55 @@
+.menu {
+  position: fixed;
+  z-index: var(--z-overlay);
+  min-width: 160px;
+  background: rgba(14, 14, 32, 0.96);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 16px rgba(0, 212, 170, 0.08);
+  backdrop-filter: blur(var(--blur-heavy));
+  -webkit-backdrop-filter: blur(var(--blur-heavy));
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+
+.menuItem:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.menuItem.danger:hover:not(:disabled) {
+  background: rgba(255, 71, 87, 0.12);
+  color: var(--color-error);
+}
+
+.menuItem.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.itemIcon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.itemLabel {
+  white-space: nowrap;
+}

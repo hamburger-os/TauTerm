@@ -12,8 +12,10 @@ interface TerminalInstanceProps {
   onData?: (data: string) => void;
   /** 是否已连接 */
   isConnected?: boolean;
-  /** 当终端就绪时回调 */
+  /** 当终端就绪时回调，传入 write 函数供父组件注册数据路由 */
   onTermReady?: (writeFn: (data: Uint8Array | string) => void) => void;
+  /** 当终端实例卸载时回调，供父组件清理数据路由 */
+  onCleanup?: (sessionId: string) => void;
 }
 
 /**
@@ -23,12 +25,17 @@ interface TerminalInstanceProps {
  * 接受 sessionId 以区分数据路由。
  */
 const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function TerminalInstance(
-  { sessionId, onData, isConnected = false, onTermReady },
+  { sessionId, onData, isConnected = false, onTermReady, onCleanup },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  // 使用 ref 持有最新的回调，避免初始化 effect 中的闭包过期问题
+  const onTermReadyRef = useRef(onTermReady);
+  onTermReadyRef.current = onTermReady;
+  const onCleanupRef = useRef(onCleanup);
+  onCleanupRef.current = onCleanup;
 
   // 暴露 direct write 方法
   useImperativeHandle(ref, () => ({
@@ -36,15 +43,6 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       xtermRef.current?.write(data);
     },
   }));
-
-  // 通知父组件写函数就绪
-  useEffect(() => {
-    if (xtermRef.current && onTermReady) {
-      onTermReady((data: Uint8Array | string) => {
-        xtermRef.current?.write(data);
-      });
-    }
-  }, [onTermReady]);
 
   // 初始化 xterm.js
   useEffect(() => {
@@ -97,6 +95,11 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    // 终端初始化完成后立即注册写函数，不依赖外部重渲染触发
+    onTermReadyRef.current?.((data: Uint8Array | string) => {
+      term.write(data);
+    });
+
     const handleResize = () => {
       try { fitAddon.fit(); } catch { /* ignore */ }
     };
@@ -109,6 +112,8 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       term.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
+      // 通知父组件清理此会话的 writeRefs 条目
+      onCleanupRef.current?.(sessionId);
     };
   }, []);
 

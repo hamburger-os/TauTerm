@@ -1,21 +1,22 @@
 # TauTerm — 跨平台全功能终端模拟器
 
-基于 **Tauri v2**（Rust + React + TypeScript）构建的现代化跨平台终端模拟器，采用 **Neon Dark Liquid Glass** 设计风格和 **Framer Motion** 动画引擎。
+基于 **Tauri v2**（Rust + React + TypeScript）构建的现代化跨平台终端模拟器，采用 **Liquid Glass** 设计风格和 **Framer Motion** 动画引擎。
 
-v0.2 引入多会话标签页架构、命令面板、终端搜索等专业功能。
+v0.2 引入多会话侧栏架构、全功能新建会话对话框（模式优先）、右键上下文菜单、命令面板、终端搜索和 YModem 文件传输等专业功能。
 
 ## ✨ 功能特性
 
-- 🔌 **多协议架构** — 统一的 SessionManager 抽象层，当前支持串口，预留 SSH/Telnet 扩展
-- 🗂️ **多标签页** — 同时管理多个终端会话，拖拽排序，独立 I/O 线程互不干扰
+- 🔌 **多协议架构** — 统一的 SessionManager 抽象层，当前支持串口，预留 SSH/Telnet/TFTP 扩展
+- 🗂️ **多会话管理** — 左侧栏管理所有会话，支持无限数量历史会话，右键上下文菜单（连接/重连/配置/删除）
+- 🪟 **全功能新建会话** — 模式优先设计（串口/SSH/Telnet/TFTP），串口模式完整可用，其他模式预览占位
 - 🖥️ **终端仿真** — 基于 xterm.js，支持 ANSI 转义序列、彩色输出和光标控制
 - 🔍 **终端搜索** — `Ctrl+F` 搜索终端 buffer，支持大小写切换和上下导航
 - ⚡ **命令面板** — `Ctrl+Shift+P` 模糊搜索所有命令，键盘驱动操作
-- 📁 **文件传输** — 支持 YModem 协议的批量文件收发，带进度指示和 Drag & Drop
-- 🎨 **Neon Dark 主题** — Liquid Glass v2 磨砂玻璃面板、霓虹发光边框、Framer Motion 交互动画
+- 📁 **文件传输** — 支持 YModem 协议的批量文件收发，带进度指示和 Drag & Drop，底部面板可拖拽调整高度
+- 🎨 **主题** — Liquid Glass v2 磨砂玻璃面板、霓虹发光边框、Framer Motion 交互动画
 - 🌐 **多语言** — 默认简体中文，支持即时切换至英文
-- 💾 **会话持久化** — 自动保存/恢复会话配置，启动即还原上次工作状态
-- 🎹 **快捷键系统** — 统一注册表 + 冲突检测，14 个默认快捷键
+- 💾 **会话持久化** — 断开会话保留在侧栏，自动保存/恢复会话配置与参数，重连无需重新配置
+- 🎹 **快捷键系统** — 统一注册表 + 冲突检测
 - 🚀 **跨平台** — Windows、Linux、macOS
 
 ## 🛠️ 技术栈
@@ -37,13 +38,13 @@ v0.2 引入多会话标签页架构、命令面板、终端搜索等专业功能
 ┌──────────────────────────────────────────────────┐
 │  React 前端                                       │
 │  ├── AppShell (Context Provider 层)               │
-│  ├── QuickConnectBar (快速连接栏)                  │
-│  ├── SessionSidebar (会话列表)                    │
-│  ├── TabBar (标签页栏 + 拖拽排序)                  │
+│  ├── Toolbar (新建会话 / 侧栏 / 命令面板 / 设置)    │
+│  ├── SessionSidebar (会话列表 + 右键上下文菜单)     │
 │  ├── TerminalView (xterm.js 多实例)               │
 │  ├── SearchBar (终端内容搜索)                      │
 │  ├── CommandPalette (命令面板)                     │
-│  ├── FileTransferPanel (YModem + Dropzone)        │
+│  ├── BottomPanel (信息面板 + 文件传输，可调高度)     │
+│  ├── ConnectDialog (模式选择 → 参数配置，两步流程)   │
 │  └── StatusBar (状态栏)                           │
 ├──────────────────────────────────────────────────┤
 │  State: SessionContext + ThemeContext + TransferContext │
@@ -62,14 +63,11 @@ v0.2 引入多会话标签页架构、命令面板、终端搜索等专业功能
 
 | 快捷键 | 操作 |
 |--------|------|
-| `Ctrl+Shift+N` | 新建会话 |
+| `Ctrl+N` | 新建会话 |
 | `Ctrl+Shift+W` | 关闭当前会话 |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | 切换标签页 |
-| `Alt+1-9` | 跳转到指定标签页 |
 | `Ctrl+F` | 终端搜索 |
 | `Ctrl+Shift+P` | 命令面板 |
-| `Ctrl+Shift+F` | 切换文件传输面板 |
-| `Ctrl+Shift+B` | 切换侧边栏 |
+| `Ctrl+B` | 切换侧边栏 |
 | `Ctrl+Shift+R` | 刷新端口列表 |
 | `Ctrl+Shift+C/V` | 复制/粘贴 |
 
@@ -126,12 +124,12 @@ TauTerm/
 │   │   ├── ThemeContext.tsx    # 主题管理
 │   │   └── TransferContext.tsx # 文件传输状态
 │   ├── components/
-│   │   ├── Layout/            # AppShell, QuickConnectBar, SessionSidebar, TabBar, StatusBar, ResizeHandle
+│   │   ├── Layout/            # AppShell, Toolbar, SessionSidebar, BottomPanel, ConnectDialog, ResizeHandle, StatusBar
 │   │   ├── Terminal/          # Terminal, TerminalView, SearchBar
 │   │   ├── CommandPalette/    # 命令面板
 │   │   ├── FileTransfer/      # FileTransferPanel
-│   │   └── common/            # GlassPanel, GlassButton, Toast
-│   ├── hooks/                 # useKeyboard
+│   │   └── common/            # GlassPanel, GlassButton, ContextMenu, Toast
+│   ├── hooks/                 # useKeyboard, useContextMenu
 │   ├── shortcuts/             # 快捷键注册表
 │   ├── i18n/                  # zh-CN / en-US
 │   └── styles/                # tokens.css, global.css
@@ -141,16 +139,18 @@ TauTerm/
 ## 🗺️ 路线图
 
 - [x] 串口终端（枚举、连接、收发数据）
-- [x] 多会话标签页架构
+- [x] 多会话侧栏架构 + 会话持久化
+- [x] 全功能新建会话对话框（模式优先）
+- [x] 右键上下文菜单（连接/重连/配置/删除）
 - [x] YModem 文件传输 + Drag & Drop
 - [x] Liquid Glass v2 设计系统 (Neon Dark / Ocean / Sunset)
 - [x] 终端搜索 (Ctrl+F)
 - [x] 命令面板 (Ctrl+Shift+P)
 - [x] 快捷键系统
-- [x] 会话持久化 (JSON)
 - [x] 中/英多语言支持
 - [ ] SSH 终端连接
 - [ ] Telnet 终端连接
+- [ ] TFTP 传输
 - [ ] SCP/SFTP 文件传输
 - [ ] 终端分屏
 - [ ] 终端会话录制

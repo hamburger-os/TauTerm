@@ -20,7 +20,7 @@
 //! ├── io_thread: Option<JoinHandle>
 //! └── state: SessionState
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
@@ -157,6 +157,9 @@ impl SessionManager {
         if let Some(thread) = handle.io_thread.take() {
             let _ = thread.join();
         }
+        // Windows: 短暂等待 COM 端口句柄释放
+        #[cfg(target_os = "windows")]
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         // 从 tab_order 中移除
         self.tab_order.retain(|id| id != session_id);
@@ -286,10 +289,51 @@ impl SessionManager {
     }
 
     /// 保存会话到磁盘
+    ///
+    /// 合并当前内存中的会话与文件中已有的会话配置：
+    /// - 内存中存在的会话按 ID 覆盖/追加
+    /// - 已存在于文件中但不在内存中的条目（已断开的会话）予以保留
+    /// - 若内存中无任何会话且文件已有数据，跳过写入以保护已有数据
     pub fn save_to_disk(&self, path: &std::path::Path) -> Result<(), String> {
-        let saved: Vec<SavedSession> = self.get_saved_sessions();
-        // 只保存非活跃连接的会话参数（已连接的会话在恢复时不自动连接）
-        let json = serde_json::to_string_pretty(&saved)
+        let current: Vec<SavedSession> = self.get_saved_sessions();
+
+        // 加载已有持久化会话（文件不存在或损坏视为空）
+        let existing = Self::load_from_disk(path).unwrap_or_default();
+
+        // 若当前内存中无任何会话，保留已有数据不覆盖
+        if current.is_empty() {
+            return Ok(());
+        }
+
+        // 收集当前内存中会话的 ID，用于去重（使用 owned String 避免 borrow 冲突）
+        let current_ids: HashSet<String> = current.iter().map(|s| s.id.clone()).collect();
+
+        // 保留已有文件中不在当前内存中的条目（已断开但未删除的会话）
+        let mut merged: Vec<SavedSession> = existing
+            .into_iter()
+            .filter(|s| !current_ids.contains(&s.id))
+            .collect();
+
+        // 追加当前内存中的会话
+        merged.extend(current);
+
+        // 按 (endpoint, connection_type) 二次去重：
+        // 重连时相同端口的旧已断开记录与新活跃记录可能拥有不同 ID，
+        // 须以当前内存中的条目替换文件中同端口的旧条目，避免累积重复标签页
+        let mut dedup: HashMap<(String, String), SavedSession> = HashMap::new();
+        for s in merged {
+            let key = (s.endpoint.clone(), s.connection_type.clone());
+            if current_ids.contains(&s.id) {
+                // 当前内存中的条目始终覆盖
+                dedup.insert(key, s);
+            } else {
+                // 已有文件的条目仅在 key 不存在时插入
+                dedup.entry(key).or_insert(s);
+            }
+        }
+        let merged: Vec<SavedSession> = dedup.into_values().collect();
+
+        let json = serde_json::to_string_pretty(&merged)
             .map_err(|e| format!("序列化失败: {}", e))?;
         std::fs::write(path, json)
             .map_err(|e| format!("写入文件失败: {}", e))

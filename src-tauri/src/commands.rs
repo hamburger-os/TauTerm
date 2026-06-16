@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use crate::session::{ConnectionType, SessionState, TermSession};
 use crate::session::manager::SessionManager;
 use crate::session::serial::SerialSession;
@@ -99,6 +99,11 @@ pub fn connect_session(
 
     let app_disconnect = app.clone();
     let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
+        // 标记会话为已断开，清理 I/O 线程引用，避免僵尸句柄累积
+        let app_state: State<AppState> = app_disconnect.state();
+        if let Ok(mut manager) = app_state.manager.lock() {
+            manager.mark_disconnected(&session_id);
+        }
         let _ = app_disconnect.emit("session-disconnected", serde_json::json!({
             "session_id": session_id,
         }));
@@ -106,16 +111,24 @@ pub fn connect_session(
 
     let conn_type = ConnectionType::Serial; // 当前仅串口
     let session_name = name.unwrap_or_default();
+    let params_clone = params.clone();
     let session_id = manager.create_session(&session_name, conn_type, &endpoint, params, on_data, on_disconnect)?;
 
     // 自动保存
     let path = SessionManager::sessions_file_path(&app);
     let _ = manager.save_to_disk(&path);
 
+    // 获取会话的实际名称和参数（回填到前端标签页，用于断开后重连）
+    let (actual_name, actual_params) = manager.get_session(&session_id)
+        .map(|h| (h.name.clone(), h.params.clone()))
+        .unwrap_or((session_name, params_clone));
+
     let _ = app.emit("session-connected", serde_json::json!({
         "session_id": session_id,
         "endpoint": endpoint,
         "connection_type": "serial",
+        "name": actual_name,
+        "params": actual_params,
     }));
 
     Ok(session_id)
@@ -129,10 +142,12 @@ pub fn disconnect_session(
     session_id: String,
 ) -> Result<(), String> {
     let mut manager = state.manager.lock().map_err(|e| e.to_string())?;
-    manager.close_session(&session_id)?;
 
+    // 先保存：此时会话仍在 HashMap 中，保存后可随应用重启恢复
     let path = SessionManager::sessions_file_path(&app);
     let _ = manager.save_to_disk(&path);
+
+    manager.close_session(&session_id)?;
 
     let _ = app.emit("session-disconnected", serde_json::json!({
         "session_id": session_id,
