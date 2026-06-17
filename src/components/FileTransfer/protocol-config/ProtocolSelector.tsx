@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import type { ProtocolType, TransferConfig } from "../../../types/transfer";
 import { PROTOCOL_TYPES, PROTOCOL_REGISTRY } from "../../../types/transfer";
+import inputStyles from "../../common/GlassInput.module.css";
 
 interface ProtocolSelectorProps {
   value: TransferConfig;
@@ -27,15 +28,9 @@ export default function ProtocolSelector({
       <select
         value={value.protocol}
         onChange={handleChange}
+        className={`${inputStyles.input} ${inputStyles.select}`}
         style={{
-          padding: "4px 8px",
           fontSize: "var(--text-xs)",
-          background: "var(--glass-bg)",
-          border: "1px solid var(--glass-border)",
-          borderRadius: "var(--radius-sm)",
-          color: "var(--text-primary)",
-          cursor: "pointer",
-          fontFamily: "inherit",
         }}
       >
         {PROTOCOL_TYPES.map((pt) => (

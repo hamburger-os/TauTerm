@@ -92,6 +92,7 @@ impl SerialSession {
         let parity = params.get("parity").and_then(|v| v.as_str()).unwrap_or("none");
         let stop_bits = params.get("stop_bits").and_then(|v| v.as_str()).unwrap_or("1");
         let flow_control = params.get("flow_control").and_then(|v| v.as_str()).unwrap_or("none");
+        let data_mode = params.get("data_mode").and_then(|v| v.as_str()).unwrap_or("text");
 
         serde_json::json!({
             "baud_rate": baud_rate,
@@ -99,6 +100,7 @@ impl SerialSession {
             "parity": parity,
             "stop_bits": stop_bits,
             "flow_control": flow_control,
+            "data_mode": data_mode,
         })
     }
 

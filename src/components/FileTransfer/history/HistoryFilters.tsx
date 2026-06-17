@@ -6,28 +6,23 @@ import type {
   TransferStatus,
 } from "../../../types/transfer";
 import { PROTOCOL_TYPES } from "../../../types/transfer";
+import inputStyles from "../../common/GlassInput.module.css";
 
 interface HistoryFiltersProps {
   filter: HistoryFilter;
   onChange: (f: HistoryFilter) => void;
 }
 
-const selectStyle: React.CSSProperties = {
-  padding: "2px 4px",
-  fontSize: "0.6rem",
-  background: "var(--glass-bg)",
-  border: "1px solid var(--glass-border)",
-  borderRadius: "var(--radius-sm)",
-  color: "var(--text-secondary)",
-  cursor: "pointer",
-  fontFamily: "inherit",
-};
-
 export default function HistoryFilters({
   filter,
   onChange,
 }: HistoryFiltersProps) {
   const { t } = useTranslation();
+
+  const compactStyle: React.CSSProperties = {
+    fontSize: "0.6rem",
+    padding: "2px 4px",
+  };
 
   return (
     <div
@@ -38,7 +33,8 @@ export default function HistoryFilters({
       }}
     >
       <select
-        style={selectStyle}
+        className={`${inputStyles.input} ${inputStyles.select}`}
+        style={compactStyle}
         value={filter.protocol}
         onChange={(e) =>
           onChange({
@@ -56,7 +52,8 @@ export default function HistoryFilters({
       </select>
 
       <select
-        style={selectStyle}
+        className={`${inputStyles.input} ${inputStyles.select}`}
+        style={compactStyle}
         value={filter.direction}
         onChange={(e) =>
           onChange({
@@ -73,7 +70,8 @@ export default function HistoryFilters({
       </select>
 
       <select
-        style={selectStyle}
+        className={`${inputStyles.input} ${inputStyles.select}`}
+        style={compactStyle}
         value={filter.status}
         onChange={(e) =>
           onChange({

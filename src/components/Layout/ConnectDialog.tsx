@@ -55,6 +55,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [parity, setParity] = useState("none");
   const [stopBits, setStopBits] = useState("1");
   const [flowControl, setFlowControl] = useState("none");
+  const [dataMode, setDataMode] = useState("text");
   const [sessionName, setSessionName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +84,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           if (typeof p.parity === "string") setParity(p.parity);
           if (typeof p.stop_bits === "string") setStopBits(p.stop_bits);
           if (typeof p.flow_control === "string") setFlowControl(p.flow_control);
+          if (typeof p.data_mode === "string") setDataMode(p.data_mode);
         }
         if (targetTab.name) {
           setSessionName(targetTab.name);
@@ -100,6 +102,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setParity("none");
     setStopBits("1");
     setFlowControl("none");
+    setDataMode("text");
     setSessionName("");
   }, [isOpen, editSessionId, state.tabs, refreshEndpoints]);
 
@@ -133,6 +136,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       parity,
       stop_bits: stopBits,
       flow_control: flowControl,
+      data_mode: dataMode,
     } : {};
 
     try {
@@ -153,7 +157,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, sessionName, selectedMode, editSessionId, state.tabs, connect, disconnect, switchTab, onClose]);
+  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, dataMode, sessionName, selectedMode, editSessionId, state.tabs, connect, disconnect, switchTab, onClose]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -304,6 +308,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                     <label className={styles.label}>{t("serial.flowControl")}</label>
                     <select className={styles.select} value={flowControl} onChange={e => setFlowControl(e.target.value)} disabled={connecting}>
                       {FLOW_CONTROL.map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
+                    </select>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("serial.dataMode")}</label>
+                    <select className={styles.select} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
+                      <option value="text">{t("serial.dataModeText")}</option>
+                      <option value="hex">{t("serial.dataModeHex")}</option>
                     </select>
                   </div>
                 </>

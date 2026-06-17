@@ -159,14 +159,18 @@
 .select, .input {
   width: 100%;
   padding: 6px 10px;
-  background: rgba(255, 255, 255, 0.04);
+  background-color: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-family: var(--font-ui);
   outline: none;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.select:hover:not(:disabled), .input:hover:not(:disabled) {
+  border-color: var(--glass-border-hover);
 }
 
 .select:focus, .input:focus {
@@ -176,6 +180,23 @@
 
 .select:disabled, .input:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Select-only: custom dark arrow, hide native chrome */
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+  cursor: pointer;
+}
+
+.select option {
+  background: #1a1a2e;
+  color: var(--text-primary);
 }
 
 .iconBtn {
