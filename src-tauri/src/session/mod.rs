@@ -65,6 +65,17 @@ pub enum SessionState {
     Transferring,
 }
 
+/// I/O 统计快照（协议无关）
+///
+/// 由 I/O 线程实时更新，StatsCollector 定期采集并推送至前端。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStats {
+    pub tab_id: String,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+    pub connected_at: Option<u64>,
+}
+
 /// 会话实现枚举
 ///
 /// 使用具体枚举替代 trait 对象，无 vtable 开销，变体扩展明确。

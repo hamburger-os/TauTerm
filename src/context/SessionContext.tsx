@@ -6,6 +6,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "transferring";
 
+/** I/O 运行时统计 */
+export interface SessionStats {
+  txBytes: number;
+  rxBytes: number;
+}
+
 export interface TabInfo {
   id: string;
   name: string;
@@ -14,6 +20,10 @@ export interface TabInfo {
   state: ConnectionStatus;
   /** 连接参数（恢复会话时用于回填配置） */
   params?: Record<string, unknown>;
+  /** I/O 实时统计 */
+  stats: SessionStats;
+  /** 连接建立时的时间戳 (Date.now()) */
+  connectedAt: number | null;
 }
 
 export interface ConnectionTypeInfo {
@@ -47,6 +57,7 @@ type SessionAction =
   | { type: "SET_ENDPOINTS"; endpoints: EndpointInfo[] }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
+  | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
   | { type: "CLEAR_TABS" };
 
 const initialState: SessionState = {
@@ -101,6 +112,15 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       return {
         ...state,
         tabs: state.tabs.map(t => t.id === action.id ? { ...t, state: action.state } : t),
+      };
+    case "UPDATE_TAB_STATS":
+      return {
+        ...state,
+        tabs: state.tabs.map(t =>
+          t.id === action.id
+            ? { ...t, stats: action.stats, connectedAt: action.connectedAt ?? t.connectedAt }
+            : t
+        ),
       };
     case "CLEAR_TABS":
       return { ...state, tabs: [], activeTabId: null };
@@ -249,6 +269,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           endpoint: s.endpoint,
           state: "disconnected" as ConnectionStatus,
           params: s.params,
+          stats: { txBytes: 0, rxBytes: 0 },
+          connectedAt: null,
         }));
         dispatch({ type: "SET_TABS", tabs });
         if (tabs.length > 0) {
@@ -282,7 +304,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; name: string; params: Record<string, unknown> }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; name: string; params: Record<string, unknown>; connected_at?: number | null }>(
         "session-connected",
         (event) => {
           dispatch({
@@ -294,6 +316,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               endpoint: event.payload.endpoint,
               state: "connected",
               params: event.payload.params,
+              stats: { txBytes: 0, rxBytes: 0 },
+              connectedAt: event.payload.connected_at ?? Date.now(),
             },
           });
         }
@@ -341,6 +365,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       });
       if (cancelled) { u8(); return; }
       unlisteners.push(u8);
+
+      const u9 = await listen<{ tab_id: string; tx_bytes: number; rx_bytes: number; connected_at?: number | null }>(
+        "session-stats",
+        (event) => {
+          dispatch({
+            type: "UPDATE_TAB_STATS",
+            id: event.payload.tab_id,
+            stats: { txBytes: event.payload.tx_bytes, rxBytes: event.payload.rx_bytes },
+            connectedAt: event.payload.connected_at,
+          });
+        }
+      );
+      if (cancelled) { u9(); return; }
+      unlisteners.push(u9);
     })().catch((e) => {
       console.error("SessionContext: 事件监听器注册失败:", e);
     });

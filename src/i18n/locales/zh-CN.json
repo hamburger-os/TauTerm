@@ -40,7 +40,13 @@
     "renameSession": "重命名",
     "closeConfirm": "确定要关闭此会话吗？",
     "deleteConfirm": "确定要删除此会话吗？",
-    "clearAllDisconnected": "清除所有已断开会话"
+    "clearAllDisconnected": "清除所有已断开会话",
+    "status": "状态"
+  },
+  "stats": {
+    "txBytes": "发送",
+    "rxBytes": "接收",
+    "uptime": "运行"
   },
   "search": {
     "placeholder": "搜索会话...",

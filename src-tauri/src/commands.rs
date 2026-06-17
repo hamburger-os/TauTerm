@@ -111,16 +111,16 @@ pub fn connect_session(
     let conn_type = ConnectionType::Serial; // 当前仅串口
     let session_name = name.unwrap_or_default();
     let params_clone = params.clone();
-    let session_id = manager.create_session(&session_name, conn_type, &endpoint, params, on_data, on_disconnect)?;
+    let session_id = manager.create_session(&session_name, conn_type, &endpoint, params, on_data, on_disconnect, app.clone())?;
 
     // 自动保存
     let path = SessionManager::sessions_file_path(&app);
     let _ = manager.save_to_disk(&path);
 
-    // 获取会话的实际名称和参数（回填到前端标签页，用于断开后重连）
-    let (actual_name, actual_params) = manager.get_session(&session_id)
-        .map(|h| (h.name.clone(), h.params.clone()))
-        .unwrap_or((session_name, params_clone));
+    // 获取会话的实际名称、参数和连接时间戳（回填到前端标签页，用于断开后重连）
+    let (actual_name, actual_params, connected_at) = manager.get_session(&session_id)
+        .map(|h| (h.name.clone(), h.params.clone(), h.connected_at))
+        .unwrap_or((session_name, params_clone, None));
 
     let _ = app.emit("session-connected", serde_json::json!({
         "session_id": session_id,
@@ -128,6 +128,7 @@ pub fn connect_session(
         "connection_type": "serial",
         "name": actual_name,
         "params": actual_params,
+        "connected_at": connected_at,
     }));
 
     Ok(session_id)

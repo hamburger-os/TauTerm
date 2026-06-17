@@ -21,11 +21,12 @@
 //! └── state: SessionState
 
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
-use crate::session::{ConnectionType, SessionImpl, SessionState};
+use tauri::{Emitter, Manager};
+use crate::session::{ConnectionType, SessionImpl, SessionState, SessionStats};
 use crate::session::serial::SerialSession;
 
 /// 标签页/会话唯一标识符
@@ -59,6 +60,13 @@ pub struct SessionHandle {
     pub params: serde_json::Value,
     /// 传输完成后用于归还串口端口给 I/O 线程的发送端
     pub port_return_tx: Option<mpsc::SyncSender<Box<dyn serialport::SerialPort>>>,
+    /// I/O 统计原子计数器（I/O 线程写入，StatsCollector 读取）
+    pub tx_bytes: Arc<AtomicU64>,
+    pub rx_bytes: Arc<AtomicU64>,
+    /// 会话建立连接时的时间戳（毫秒）
+    pub connected_at: Option<u64>,
+    /// 取消 StatsCollector 任务的发送端
+    pub stats_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 /// 会话管理器
@@ -93,7 +101,7 @@ impl SessionManager {
 
     /// 创建新会话
     ///
-    /// 打开串口连接，启动 I/O 线程，返回会话 ID。
+    /// 打开串口连接，启动 I/O 线程和 StatsCollector，返回会话 ID。
     pub fn create_session(
         &mut self,
         name: &str,
@@ -102,6 +110,7 @@ impl SessionManager {
         params: serde_json::Value,
         on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
         on_disconnect: Box<dyn Fn(String) + Send>,
+        app_handle: tauri::AppHandle,
     ) -> Result<TabId, String> {
         if self.sessions.len() >= self.max_sessions {
             return Err(format!("已达到最大会话数限制 ({})", self.max_sessions));
@@ -114,10 +123,17 @@ impl SessionManager {
             name.to_string()
         };
 
+        let connected_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        );
+
         // 根据连接类型创建会话
         match connection_type {
             ConnectionType::Serial => {
-                let (_session, write_tx, io_thread, io_cancel_tx, actual_params) =
+                let (session, write_tx, io_thread, io_cancel_tx, actual_params) =
                     SerialSession::create_session(
                         &id,
                         endpoint,
@@ -126,10 +142,25 @@ impl SessionManager {
                         on_disconnect,
                     )?;
 
+                // 从 SerialSession 提取原子计数器（在移入 SessionImpl 之前）
+                let tx_bytes = session.tx_counter();
+                let rx_bytes = session.rx_counter();
+
+                // 启动 StatsCollector（每秒采集并推送至前端）
+                let (stats_cancel_tx, stats_cancel_rx) = tokio::sync::oneshot::channel::<()>();
+                Self::start_stats_collector(
+                    app_handle.clone(),
+                    id.clone(),
+                    tx_bytes.clone(),
+                    rx_bytes.clone(),
+                    connected_at,
+                    stats_cancel_rx,
+                );
+
                 let handle = SessionHandle {
                     id: id.clone(),
                     name: tab_name,
-                    session: SessionImpl::Serial(_session),
+                    session: SessionImpl::Serial(session),
                     write_tx,
                     io_cancel_tx: Some(io_cancel_tx),
                     cancel_transfer_tx: None,
@@ -139,6 +170,10 @@ impl SessionManager {
                     endpoint: endpoint.to_string(),
                     params: actual_params,
                     port_return_tx: None,
+                    tx_bytes,
+                    rx_bytes,
+                    connected_at,
+                    stats_cancel_tx: Some(stats_cancel_tx),
                 };
 
                 self.sessions.insert(id.clone(), handle);
@@ -160,6 +195,10 @@ impl SessionManager {
 
         // 取消正在进行的传输
         if let Some(tx) = handle.cancel_transfer_tx.take() {
+            let _ = tx.send(());
+        }
+        // 取消 StatsCollector 任务
+        if let Some(tx) = handle.stats_cancel_tx.take() {
             let _ = tx.send(());
         }
         // 释放端口归还通道：若 I/O 线程正在 HandoffPort 等待中，
@@ -278,9 +317,22 @@ impl SessionManager {
         session_id: &str,
         on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
         on_disconnect: Box<dyn Fn(String) + Send>,
+        app_handle: tauri::AppHandle,
     ) -> Result<serde_json::Value, String> {
         let handle = self.sessions.get_mut(session_id)
             .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+
+        // 停止旧的 StatsCollector
+        if let Some(tx) = handle.stats_cancel_tx.take() {
+            let _ = tx.send(());
+        }
+
+        let connected_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        );
 
         match handle.connection_type {
             ConnectionType::Serial => {
@@ -293,6 +345,21 @@ impl SessionManager {
                         on_disconnect,
                     )?;
 
+                // 提取新的原子计数器
+                let tx_bytes = session.tx_counter();
+                let rx_bytes = session.rx_counter();
+
+                // 启动新的 StatsCollector
+                let (stats_cancel_tx, stats_cancel_rx) = tokio::sync::oneshot::channel::<()>();
+                SessionManager::start_stats_collector(
+                    app_handle.clone(),
+                    session_id.to_string(),
+                    tx_bytes.clone(),
+                    rx_bytes.clone(),
+                    connected_at,
+                    stats_cancel_rx,
+                );
+
                 handle.session = SessionImpl::Serial(session);
                 handle.write_tx = write_tx;
                 handle.io_cancel_tx = Some(io_cancel_tx);
@@ -300,6 +367,10 @@ impl SessionManager {
                 handle.state = SessionState::Connected;
                 handle.params = actual_params.clone();
                 handle.port_return_tx = None;
+                handle.tx_bytes = tx_bytes;
+                handle.rx_bytes = rx_bytes;
+                handle.connected_at = connected_at;
+                handle.stats_cancel_tx = Some(stats_cancel_tx);
 
                 Ok(actual_params)
             }
@@ -327,12 +398,69 @@ impl SessionManager {
         self.sessions.get(session_id).map(|h| h.state.clone())
     }
 
+    /// 启动 I/O 统计采集器
+    ///
+    /// 每 1 秒读取原子计数器的值并通过 Tauri 事件 `session-stats` 推送至前端。
+    /// 任务由 `cancel_rx` 控制生命周期，会话关闭时自动停止。
+    fn start_stats_collector(
+        app_handle: tauri::AppHandle,
+        tab_id: String,
+        tx_bytes: Arc<AtomicU64>,
+        rx_bytes: Arc<AtomicU64>,
+        connected_at: Option<u64>,
+        cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    ) {
+        // 使用独立 std::thread + tokio runtime，避免依赖外部 tokio context
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    log::error!("StatsCollector: 无法创建 tokio runtime: {}", e);
+                    return;
+                }
+            };
+
+            rt.block_on(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(1));
+                tokio::pin!(let cancel = cancel_rx;);
+
+                let mut last_tx: u64 = 0;
+                let mut last_rx: u64 = 0;
+
+                loop {
+                    tokio::select! {
+                        _ = &mut cancel => break,
+                        _ = interval.tick() => {
+                            let tx = tx_bytes.load(Ordering::Relaxed);
+                            let rx = rx_bytes.load(Ordering::Relaxed);
+
+                            if tx != last_tx || rx != last_rx {
+                                last_tx = tx;
+                                last_rx = rx;
+                                let _ = app_handle.emit("session-stats", SessionStats {
+                                    tab_id: tab_id.clone(),
+                                    tx_bytes: tx,
+                                    rx_bytes: rx,
+                                    connected_at,
+                                });
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
     /// 标记会话状态为已断开
     pub fn mark_disconnected(&mut self, session_id: &str) {
         if let Some(handle) = self.sessions.get_mut(session_id) {
             handle.state = SessionState::Disconnected;
             handle.io_cancel_tx = None;
             handle.io_thread = None;
+            // 停止 StatsCollector
+            if let Some(tx) = handle.stats_cancel_tx.take() {
+                let _ = tx.send(());
+            }
         }
     }
 
@@ -432,6 +560,9 @@ impl Drop for SessionManager {
 ///
 /// 使用缓冲通道和公平读写调度。
 /// 供 SerialSession 使用，未来 SshSession/TelnetSession 也可复用。
+///
+/// `tx_bytes` / `rx_bytes` 原子计数器由 I/O 线程实时更新，
+/// 供 `StatsCollector` 定期采集并推送至前端。
 pub fn spawn_io_thread<F, D>(
     mut port: Box<dyn serialport::SerialPort>,
     session_id: String,
@@ -439,6 +570,8 @@ pub fn spawn_io_thread<F, D>(
     mut on_disconnect: D,
     write_rx: mpsc::Receiver<IoCmd>,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    tx_bytes: Arc<AtomicU64>,
+    rx_bytes: Arc<AtomicU64>,
 ) -> std::thread::JoinHandle<()>
 where
     F: FnMut(String, Vec<u8>) + Send + 'static,
@@ -469,6 +602,7 @@ where
             // 2. 尝试读取（非阻塞，50ms 超时）
             match port.read(&mut buf) {
                 Ok(n) if n > 0 => {
+                    rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
                     on_data(session_id.clone(), buf[..n].to_vec());
                     // 注意：不再 continue，继续处理写入
                 }
@@ -488,6 +622,7 @@ where
                             on_disconnect(session_id.clone());
                             return; // 退出线程
                         }
+                        tx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
                         // 继续处理下一个排队写入
                     }
                     Ok(IoCmd::Shutdown) => return,

@@ -4,7 +4,8 @@
 //! I/O 线程使用缓冲通道（sync_channel(32)）和公平读写调度。
 
 use std::io::Read;
-use std::sync::mpsc;
+use std::sync::atomic::AtomicU64;
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use crate::session::{ConnectionType, EndpointInfo, SessionState};
@@ -27,12 +28,18 @@ const FLUSH_EMPTY_THRESHOLD: u32 = 3;
 /// 最小串口会话（兼容 TermSession trait）
 pub struct SerialSession {
     state: SessionState,
+    /// I/O 线程写入的已发送字节总数
+    tx_bytes: Arc<AtomicU64>,
+    /// I/O 线程写入的已接收字节总数
+    rx_bytes: Arc<AtomicU64>,
 }
 
 impl SerialSession {
     pub fn new() -> Self {
         Self {
             state: SessionState::Disconnected,
+            tx_bytes: Arc::new(AtomicU64::new(0)),
+            rx_bytes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -58,11 +65,19 @@ impl SerialSession {
         let (write_tx, write_rx) = mpsc::sync_channel::<IoCmd>(32);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
+        let tx_bytes = Arc::new(AtomicU64::new(0));
+        let rx_bytes = Arc::new(AtomicU64::new(0));
+        let tx_clone = tx_bytes.clone();
+        let rx_clone = rx_bytes.clone();
+
         let sid = session_id.to_string();
-        let io_handle = spawn_io_thread(port, sid, on_data, on_disconnect, write_rx, cancel_rx);
+        let io_handle = spawn_io_thread(
+            port, sid, on_data, on_disconnect, write_rx, cancel_rx,
+            tx_clone, rx_clone,
+        );
 
         Ok((
-            SerialSession { state: SessionState::Connected },
+            SerialSession { state: SessionState::Connected, tx_bytes, rx_bytes },
             write_tx,
             io_handle,
             cancel_tx,
@@ -298,6 +313,11 @@ impl SerialSession {
     }
 
     pub fn state(&self) -> SessionState { self.state.clone() }
+
+    /// 获取 TX 字节计数器的 Arc 克隆（供 StatsCollector 使用）
+    pub fn tx_counter(&self) -> Arc<AtomicU64> { self.tx_bytes.clone() }
+    /// 获取 RX 字节计数器的 Arc 克隆（供 StatsCollector 使用）
+    pub fn rx_counter(&self) -> Arc<AtomicU64> { self.rx_bytes.clone() }
 }
 
 impl Drop for SerialSession {

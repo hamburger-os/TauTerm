@@ -40,7 +40,13 @@
     "renameSession": "Rename",
     "closeConfirm": "Close this session?",
     "deleteConfirm": "Delete this session?",
-    "clearAllDisconnected": "Clear all disconnected sessions"
+    "clearAllDisconnected": "Clear all disconnected sessions",
+    "status": "Status"
+  },
+  "stats": {
+    "txBytes": "TX",
+    "rxBytes": "RX",
+    "uptime": "Uptime"
   },
   "search": {
     "placeholder": "Search sessions...",
