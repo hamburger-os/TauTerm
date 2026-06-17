@@ -8,33 +8,27 @@
 
 ## 架构总览
 
-```
-                         TauTerm Microkernel
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │
-│  │  Window   │ │   Tab    │ │   IPC    │ │     Config       │  │
-│  │  Manager  │ │   Host   │ │  Bridge  │ │     Store        │  │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘  │
-│                                                                 │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │
-│  │  Plugin   │ │  Theme   │ │ Shortcut │ │      i18n        │  │
-│  │   Host    │ │  Engine  │ │  Engine  │ │     Engine       │  │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘  │
-│                                                                 │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ Plugin Registry
-           ┌───────────────┼───────────────┬──────────────┐
-           │               │               │              │
-     ┌─────▼─────┐  ┌─────▼─────┐  ┌──────▼──────┐ ┌────▼─────┐
-     │  Serial   │  │   SSH     │  │   Telnet    │ │ TCP Raw  │
-     │  Plugin   │  │  Plugin   │  │   Plugin    │ │  Plugin  │
-     └───────────┘  └───────────┘  └─────────────┘ └──────────┘
-           │               │               │              │
-     ┌─────▼─────┐  ┌─────▼─────┐  ┌──────▼──────┐ ┌────▼─────┐
-     │   TRDP    │  │  Shell    │  │    FTP      │ │  iPerf3  │
-     │  Plugin   │  │  Local    │  │   Plugin    │ │  Plugin  │
-     └───────────┘  └───────────┘  └─────────────┘ └──────────┘
+```mermaid
+graph TB
+    subgraph Microkernel["TauTerm Microkernel"]
+        direction LR
+        WM[Window Manager] --- TH[Tab Host] --- IPC[IPC Bridge] --- CS[Config Store]
+        PH[Plugin Host] --- TE[Theme Engine] --- SE[Shortcut Engine] --- I18N[i18n Engine]
+    end
+
+    Microkernel -->|"Plugin Registry"| Registry["Plugin Registry"]
+
+    Registry --> S1[Serial<br/>Plugin]
+    Registry --> S2[SSH<br/>Plugin]
+    Registry --> S3[Telnet<br/>Plugin]
+    Registry --> S4[TCP Raw<br/>Plugin]
+    Registry --> S5[TRDP<br/>Plugin]
+    Registry --> S6[Shell Local<br/>Plugin]
+    Registry --> S7[FTP<br/>Plugin]
+    Registry --> S8[iPerf3<br/>Plugin]
+
+    S1 ~~~ S2 ~~~ S3 ~~~ S4
+    S5 ~~~ S6 ~~~ S7 ~~~ S8
 ```
 
 ### 设计原则
@@ -120,8 +114,16 @@ registerPlugin({
 
 ### 生命周期
 
-```
-Discover → Load → Initialize → Ready → (Stop → Unload)
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Discover
+    Discover --> Load
+    Load --> Initialize
+    Initialize --> Ready
+    Ready --> Stop
+    Stop --> Unload
+    Unload --> [*]
 ```
 
 ---
@@ -141,23 +143,12 @@ Discover → Load → Initialize → Ready → (Stop → Unload)
 
 根据会话协议自动选择传输策略：
 
-```
-                    ┌─────────────────────┐
-                    │   TransferManager    │
-                    │  策略自动选择         │
-                    └─────────┬───────────┘
-                              │
-          ┌───────────────────┼───────────────────┐
-          │                   │                   │
-    ┌─────▼─────┐      ┌─────▼─────┐      ┌─────▼─────┐
-    │  Inline   │      │SideChannel│      │ Separate  │
-    │  策略      │      │  策略      │      │Connection │
-    │           │      │           │      │  策略      │
-    │ 串口移交   │      │ SSH 子通道 │      │ 独立连接   │
-    │ YModem    │      │ SFTP/SCP  │      │ FTP       │
-    │ XModem    │      │           │      │           │
-    │ ZModem    │      │           │      │           │
-    └───────────┘      └───────────┘      └───────────┘
+```mermaid
+graph TD
+    TM[TransferManager<br/>策略自动选择]
+    TM --> Inline[Inline 策略<br/>串口移交<br/>YModem / XModem / ZModem]
+    TM --> SideChannel[SideChannel 策略<br/>SSH 子通道<br/>SFTP / SCP]
+    TM --> Separate[SeparateConnection 策略<br/>独立连接<br/>FTP]
 ```
 
 ---
@@ -177,20 +168,16 @@ Discover → Load → Initialize → Ready → (Stop → Unload)
 
 ## 安全模型
 
-```
-┌─────────────────────────────────────┐
-│         凭据存储 (Credential Store)   │
-│  ┌────────┐ ┌────────┐ ┌──────────┐│
-│  │ 密码    │ │SSH 密钥│ │证书/Token││
-│  │(加密)   │ │(加密)   │ │(加密)     ││
-│  └────────┘ └────────┘ └──────────┘│
-│                                     │
-│  主后端: keyring-rs                  │
-│  (macOS Keychain /                  │
-│   Windows Credential Manager /      │
-│   Linux Secret Service)             │
-│  降级: AES-256-GCM 加密文件          │
-└─────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph CS[凭据存储 Credential Store]
+        PW[密码<br/>加密]
+        KEY[SSH 密钥<br/>加密]
+        CERT[证书/Token<br/>加密]
+    end
+
+    CS -->|"主后端"| Keyring[keyring-rs<br/>macOS Keychain<br/>Windows Credential Manager<br/>Linux Secret Service]
+    CS -.->|"降级"| AES[AES-256-GCM<br/>加密文件]
 ```
 
 - **主机密钥验证**: SSH `known_hosts` 管理，首次连接指纹确认，密钥变更安全警告
