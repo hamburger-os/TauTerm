@@ -56,3 +56,16 @@ YModem 传输的取消 oneshot 通道 SHALL 从命令函数局部变量提升为
 #### Scenario: Single implementation
 - **WHEN** 需要修改超时读取逻辑
 - **THEN** 仅修改一处函数定义，发送和接收两端行为保持一致
+
+### Requirement: Architecture stub types are documented as reserved
+`channel/mod.rs` 中标记 `#[allow(dead_code)]` 的 `IoStrategy` 和 `ContentType` 枚举 SHALL 添加文档注释说明其作为多协议架构桩的预留用途，使每个变体通过文档即可理解其设计意图。`#[allow(dead_code)]` SHALL 保留在枚举级别（非逐个变体），并附带注释说明为何需要压制警告。
+
+#### Scenario: IoStrategy is documented with targeted allow
+- **WHEN** 开发者阅读 `channel/mod.rs` 中的 `IoStrategy` 枚举
+- **THEN** 枚举上方 SHALL 包含 doc comment 说明 "预留: 用于区分同步/异步 I/O 策略，当前仅使用 Sync 变体（串口），Async 变体为 SSH/TCP 插件预留"
+- **AND** `#[allow(dead_code)]` 仅出现在枚举级别并附带注释说明原因
+
+#### Scenario: ContentType is documented with targeted allow
+- **WHEN** 开发者阅读 `channel/mod.rs` 中的 `ContentType` 枚举
+- **THEN** 枚举上方 SHALL 包含 doc comment 说明各变体对应的前端渲染器（Terminal → TerminalRenderer、FileBrowser → FileBrowserRenderer、StatsDashboard → StatsDashboardRenderer、Custom → CustomRenderer）
+- **AND** `#[allow(dead_code)]` SHALL 出现在枚举级别并附带注释说明原因

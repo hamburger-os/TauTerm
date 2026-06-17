@@ -18,6 +18,8 @@ export interface TabInfo {
   connection_type: string;
   endpoint: string;
   state: ConnectionStatus;
+  /** 插件标识符 */
+  pluginId: string;
   /** 连接参数（恢复会话时用于回填配置） */
   params?: Record<string, unknown>;
   /** I/O 实时统计 */
@@ -135,7 +137,7 @@ interface SessionContextValue {
   state: SessionState;
   fetchConnectionTypes: () => Promise<void>;
   refreshEndpoints: () => Promise<void>;
-  connect: (endpoint: string, params: Record<string, unknown>, name?: string) => Promise<string | null>;
+  connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string) => Promise<string | null>;
   disconnect: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
@@ -175,10 +177,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string) => {
+  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string) => {
     dispatch({ type: "SET_ERROR", error: null });
     try {
-      const sessionId = await invoke<string>("connect_session", { endpoint, params, name });
+      const sessionId = await invoke<string>("connect_session", {
+        endpoint, params, name,
+        pluginId: pluginId || "serial",
+      });
       return sessionId;
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `连接失败: ${e}` });
@@ -268,6 +273,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           connection_type: s.connection_type,
           endpoint: s.endpoint,
           state: "disconnected" as ConnectionStatus,
+          pluginId: (s as any).plugin_id || "serial",
           params: s.params,
           stats: { txBytes: 0, rxBytes: 0 },
           connectedAt: null,
@@ -304,7 +310,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; name: string; params: Record<string, unknown>; connected_at?: number | null }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null }>(
         "session-connected",
         (event) => {
           dispatch({
@@ -315,6 +321,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               connection_type: event.payload.connection_type,
               endpoint: event.payload.endpoint,
               state: "connected",
+              pluginId: event.payload.plugin_id || "serial",
               params: event.payload.params,
               stats: { txBytes: 0, rxBytes: 0 },
               connectedAt: event.payload.connected_at ?? Date.now(),

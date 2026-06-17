@@ -7,7 +7,7 @@ import Toolbar from "./components/Layout/Toolbar";
 import SessionSidebar from "./components/Layout/SessionSidebar";
 import StatusBar from "./components/Layout/StatusBar";
 import ResizeHandle from "./components/Layout/ResizeHandle";
-import TerminalView from "./components/Terminal/TerminalView";
+import TabContentDispatcher from "./components/TabContentDispatcher";
 import BottomPanel from "./components/Layout/BottomPanel";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
 import ConnectDialog from "./components/Layout/ConnectDialog";
@@ -238,7 +238,7 @@ function AppInner() {
 
         {/* Main Terminal Area */}
         <main className="terminal-viewport">
-          <TerminalView />
+          <TabContentDispatcher />
         </main>
       </div>
 

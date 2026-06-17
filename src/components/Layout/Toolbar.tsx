@@ -1,56 +1,125 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import { useSession } from "../../context/SessionContext";
+import { pluginRegistry } from "../../core/plugin-registry";
+import type { ToolbarItem } from "../../core/plugin-registry";
 import styles from "./Toolbar.module.css";
-
-interface ToolbarButton {
-  id: string;
-  icon: string;
-  labelKey: string;
-  shortcut?: string;
-}
-
-const TOOLBAR_BUTTONS: ToolbarButton[] = [
-  { id: "newSession", icon: "➕", labelKey: "toolbar.newSession", shortcut: "Ctrl+N" },
-  { id: "sidebar", icon: "☰", labelKey: "toolbar.sidebar", shortcut: "Ctrl+B" },
-  { id: "commands", icon: "⌘", labelKey: "toolbar.commands", shortcut: "Ctrl+P" },
-  { id: "settings", icon: "⚙", labelKey: "toolbar.settings" },
-];
 
 interface ToolbarProps {
   onAction: (actionId: string) => void;
 }
 
 /**
- * 顶部功能工具栏
+ * 功能工具栏
  *
- * 图标+文字按钮，替代原有的 QuickConnectBar。
- * 提供新建会话、刷新端口、传输面板、侧栏切换、命令面板五个常用操作。
+ * 三区布局：
+ *   左侧 — 全局按钮（新建会话、侧栏切换）
+ *   中央 — 活跃插件的工具栏项（动态注入）
+ *   右侧 — 命令面板、设置
  */
 export default function Toolbar({ onAction }: ToolbarProps) {
   const { t } = useTranslation();
+  const { state } = useSession();
+  const activeTab = state.tabs.find(t => t.id === state.activeTabId);
+
+  // 获取活跃插件的工具栏项
+  const pluginToolbarItems: ToolbarItem[] = activeTab
+    ? pluginRegistry.get(activeTab.pluginId)?.toolbarItems ?? []
+    : [];
+
+  const leftItems = pluginToolbarItems.filter(i => i.position === "left");
+  const centerItems = pluginToolbarItems.filter(i => i.position === "center");
+  const rightItems = pluginToolbarItems.filter(i => i.position === "right");
 
   const handleClick = useCallback(
-    (id: string) => {
-      onAction(id);
-    },
+    (id: string) => onAction(id),
     [onAction]
   );
 
   return (
     <div className={styles.toolbar}>
-      <span className={styles.logo}>⚡ TauTerm</span>
-      <div className={styles.buttons}>
-        {TOOLBAR_BUTTONS.map((btn) => (
+      {/* 左侧：Logo + 全局按钮 + 插件左区 */}
+      <div className={styles.leftZone}>
+        <span className={styles.logo}>⚡ TauTerm</span>
+
+        <button
+          className={styles.toolbarButton}
+          onClick={() => handleClick("newSession")}
+          title={t("toolbar.newSession") + " (Ctrl+N)"}
+        >
+          <span className={styles.icon}>➕</span>
+          <span className={styles.label}>{t("toolbar.newSession")}</span>
+        </button>
+
+        <button
+          className={styles.toolbarButton}
+          onClick={() => handleClick("sidebar")}
+          title={t("toolbar.sidebar") + " (Ctrl+B)"}
+        >
+          <span className={styles.icon}>☰</span>
+          <span className={styles.label}>{t("toolbar.sidebar")}</span>
+        </button>
+
+        {/* 插件左区按钮 */}
+        {leftItems.map(item => (
           <button
-            key={btn.id}
+            key={item.id}
             className={styles.toolbarButton}
-            onClick={() => handleClick(btn.id)}
-            title={btn.shortcut ? `${t(btn.labelKey)} (${btn.shortcut})` : t(btn.labelKey)}
+            onClick={item.onClick}
+            title={item.label}
           >
-            <span className={styles.icon}>{btn.icon}</span>
-            <span className={styles.label}>{t(btn.labelKey)}</span>
+            <span className={styles.icon}>{item.icon}</span>
+            <span className={styles.label}>{item.label}</span>
           </button>
         ))}
+      </div>
+
+      {/* 中央：插件中区 */}
+      <div className={styles.centerZone}>
+        {centerItems.map(item => (
+          <button
+            key={item.id}
+            className={styles.toolbarButton}
+            onClick={item.onClick}
+            title={item.label}
+          >
+            <span className={styles.icon}>{item.icon}</span>
+            <span className={styles.label}>{item.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* 右侧：插件右区 + 全局按钮 */}
+      <div className={styles.rightZone}>
+        {rightItems.map(item => (
+          <button
+            key={item.id}
+            className={styles.toolbarButton}
+            onClick={item.onClick}
+            title={item.label}
+          >
+            <span className={styles.icon}>{item.icon}</span>
+            <span className={styles.label}>{item.label}</span>
+          </button>
+        ))}
+
+        <button
+          className={styles.toolbarButton}
+          onClick={() => handleClick("commands")}
+          title={t("toolbar.commands") + " (Ctrl+Shift+P)"}
+        >
+          <span className={styles.icon}>⌘</span>
+          <span className={styles.label}>{t("toolbar.commands")}</span>
+        </button>
+
+        <button
+          className={styles.toolbarButton}
+          onClick={() => handleClick("settings")}
+          title={t("toolbar.settings")}
+        >
+          <span className={styles.icon}>⚙</span>
+          <span className={styles.label}>{t("toolbar.settings")}</span>
+        </button>
       </div>
     </div>
   );

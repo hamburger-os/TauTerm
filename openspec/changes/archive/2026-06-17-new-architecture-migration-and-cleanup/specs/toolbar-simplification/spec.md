@@ -1,10 +1,6 @@
-# toolbar-simplification
+# toolbar-simplification (delta)
 
-## Purpose
-
-定义工具栏简化要求，仅保留核心操作按钮。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Toolbar contains only essential actions
 The toolbar SHALL display exactly four global action buttons distributed across a three-zone layout: New Session and Sidebar Toggle on the left, Command Palette and Settings on the right. Plugin toolbar items SHALL be dynamically injected into the appropriate zone based on their `position` declaration.
@@ -23,7 +19,7 @@ The toolbar SHALL display exactly four global action buttons distributed across 
 
 #### Scenario: No active plugin session
 - **WHEN** no session is active
-- **THEN** the plugin toolbar zones SHALL be empty
+- **THEN** the plugin toolbar zones (left plugin, center, right plugin) SHALL be empty
 - **AND** the four global buttons SHALL remain visible and functional
 
 ### Requirement: Settings button placeholder

@@ -1,5 +1,8 @@
 //! 文件传输模块
 //!
-//! 支持 YModem 协议的文件收发功能。
+//! 多策略传输架构：Inline / SideChannel / SeparateConnection
 
+pub mod manager;
 pub mod ymodem;
+
+pub use manager::TransferManager;

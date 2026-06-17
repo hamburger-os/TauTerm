@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
+import { pluginRegistry } from "../../core/plugin-registry";
 import styles from "./ConnectDialog.module.css";
 
 const BAUD_RATES = ["110","300","600","1200","2400","4800","9600","14400","19200","38400","57600","115200","230400","460800","921600"];
@@ -18,28 +19,20 @@ const FLOW_CONTROL = [
   { v: "xon_xoff", l: "XON/XOFF" },
 ];
 
-interface ModeInfo {
-  id: string;
-  icon: string;
-  description: string;
-  available: boolean;
-}
-
 interface ConnectDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  /** 从侧栏右键菜单"配置"进入时，传入要编辑的会话 ID */
   editSessionId?: string | null;
 }
 
 /**
- * 全功能新建会话对话框
+ * 统一新建会话对话框
  *
  * 两步流程：
- *   1. 选择连接模式（Serial、SSH、Telnet、TFTP）
- *   2. 配置该模式的参数
+ *   1. 从 PluginRegistry 动态获取可用协议，选择连接模式
+ *   2. 渲染选中插件的配置表单
  *
- * 目前仅串口模式可用，其他模式显示"即将推出"。
+ * 所有已注册插件均可选——不再有 "Coming Soon" 占位。
  */
 export default function ConnectDialog({ isOpen, onClose, editSessionId }: ConnectDialogProps) {
   const { t } = useTranslation();
@@ -63,6 +56,15 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const serialEndpoints = state.endpoints.filter(e => e.connection_type === "serial");
   const isSerial = selectedMode === "serial";
 
+  // 从 PluginRegistry 获取可用协议（替换硬编码列表）
+  const availableModes = pluginRegistry.getByCapability("connection").map(p => ({
+    id: p.manifest.id,
+    icon: p.manifest.icon,
+    description: p.manifest.description || p.manifest.name,
+    available: true, // 所有已注册插件均可选
+    content_type: p.manifest.content_type,
+  }));
+
   // 每次打开对话框时重置
   useEffect(() => {
     if (!isOpen) return;
@@ -70,7 +72,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setError(null);
     setConnecting(false);
 
-    // 如果是从侧栏右键"连接/配置"进入，直接跳到配置步骤并预填参数
     if (editSessionId) {
       const targetTab = state.tabs.find(t => t.id === editSessionId);
       if (targetTab) {
@@ -86,14 +87,11 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           if (typeof p.flow_control === "string") setFlowControl(p.flow_control);
           if (typeof p.data_mode === "string") setDataMode(p.data_mode);
         }
-        if (targetTab.name) {
-          setSessionName(targetTab.name);
-        }
-        return; // 跳过默认重置
+        if (targetTab.name) setSessionName(targetTab.name);
+        return;
       }
     }
 
-    // 新建会话：从模式选择开始
     setStep("mode");
     setSelectedMode("serial");
     setPort("");
@@ -106,7 +104,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setSessionName("");
   }, [isOpen, editSessionId, state.tabs, refreshEndpoints]);
 
-  // 新建会话进入配置步骤时，自动选第一个可用端口
   useEffect(() => {
     if (!isOpen || step !== "config" || editSessionId) return;
     if (serialEndpoints.length > 0 && !port) {
@@ -140,16 +137,15 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     } : {};
 
     try {
-      // 如果正在编辑一个已连接的会话，先断开再以新参数重连
       if (editSessionId) {
         const targetTab = state.tabs.find(t => t.id === editSessionId);
         if (targetTab?.state === "connected") {
           await disconnect(editSessionId);
         }
       }
+      // 传递 plugin_id 给 connect
       const sid = await connect(isSerial ? port : selectedMode, params, sessionName || undefined);
       if (sid) {
-        // 立即切换到新会话，确保终端绑定正确的输入
         await switchTab(sid);
         onClose();
       }
@@ -163,7 +159,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     if (e.target === e.currentTarget) onClose();
   }, [onClose]);
 
-  // Escape 键关闭对话框
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -174,14 +169,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
-
-  // 预定义的模式列表
-  const modes: ModeInfo[] = [
-    { id: "serial", icon: "🔌", description: t("connectionType.serial") || "Serial Port", available: true },
-    { id: "ssh", icon: "🔒", description: t("connectionType.ssh") || "SSH", available: false },
-    { id: "telnet", icon: "🌐", description: t("connectionType.telnet") || "Telnet", available: false },
-    { id: "tftp", icon: "📡", description: t("connectionType.tftp") || "TFTP", available: false },
-  ];
 
   return (
     <AnimatePresence>
@@ -199,7 +186,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           exit={{ opacity: 0, y: 20, scale: 0.95 }}
           transition={{ duration: 0.2 }}
         >
-          {/* ── 步骤 1: 模式选择 ── */}
+          {/* ── 步骤 1: 模式选择（从 PluginRegistry 动态生成） ── */}
           {step === "mode" && (
             <>
               <h2 className={styles.title}>
@@ -207,20 +194,16 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               </h2>
               <p className={styles.subtitle}>{t("connectionType.label")}</p>
               <div className={styles.modeGrid}>
-                {modes.map(mode => (
+                {availableModes.map(mode => (
                   <motion.button
                     key={mode.id}
-                    className={`${styles.modeCard} ${!mode.available ? styles.modeCardDisabled : ""}`}
-                    whileHover={mode.available ? { scale: 1.03, borderColor: "var(--accent-primary)" } : {}}
-                    whileTap={mode.available ? { scale: 0.97 } : {}}
-                    onClick={() => mode.available && handleModeSelect(mode.id)}
-                    disabled={!mode.available}
+                    className={styles.modeCard}
+                    whileHover={{ scale: 1.03, borderColor: "var(--accent-primary)" }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => handleModeSelect(mode.id)}
                   >
                     <span className={styles.modeIcon}>{mode.icon}</span>
                     <span className={styles.modeLabel}>{mode.description}</span>
-                    {!mode.available && (
-                      <span className={styles.comingSoonBadge}>{t("connectionType.comingSoon")}</span>
-                    )}
                   </motion.button>
                 ))}
               </div>
@@ -240,8 +223,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                   ← {t("common.back")}
                 </button>
                 <h2 className={styles.title}>
-                  {modes.find(m => m.id === selectedMode)?.icon}{" "}
-                  {modes.find(m => m.id === selectedMode)?.description}
+                  {availableModes.find(m => m.id === selectedMode)?.icon}{" "}
+                  {availableModes.find(m => m.id === selectedMode)?.description}
                 </h2>
               </div>
 
@@ -321,10 +304,12 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 </>
               )}
 
-              {/* ── 未实现模式占位配置 ── */}
-              {selectedMode === "ssh" && <PlaceholderConfig fields={["Host / IP Address", "Port (default: 22)", "Username", "Authentication Method"]} />}
-              {selectedMode === "telnet" && <PlaceholderConfig fields={["Host / IP Address", "Port (default: 23)", "Terminal Type"]} />}
-              {selectedMode === "tftp" && <PlaceholderConfig fields={["Server Address", "Port (default: 69)", "Transfer Mode (netascii/octet)"]} />}
+              {/* ── 未实现插件的占位提示 ── */}
+              {!isSerial && (
+                <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
+                  🚧 插件 "{selectedMode}" 的前端配置表单尚未实现，将在后续版本中提供。
+                </div>
+              )}
 
               {error && <div className={styles.error}>{error}</div>}
 
@@ -335,7 +320,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 <button
                   className={styles.connectBtn}
                   onClick={handleConnect}
-                  disabled={(!port && isSerial) || connecting || !modes.find(m => m.id === selectedMode)?.available}
+                  disabled={(!port && isSerial) || connecting}
                 >
                   {connecting
                     ? t("serial.connecting")
@@ -349,28 +334,5 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         </motion.div>
       </motion.div>
     </AnimatePresence>
-  );
-}
-
-/** 未实现模式的占位配置面板 */
-function PlaceholderConfig({ fields }: { fields: string[] }) {
-  return (
-    <div style={{ padding: "16px 0" }}>
-      {fields.map((field, i) => (
-        <div key={i} className={styles.field} style={{ marginBottom: 10 }}>
-          <label className={styles.label}>{field}</label>
-          <input
-            className={styles.input}
-            type="text"
-            placeholder={field}
-            disabled
-            style={{ opacity: 0.4 }}
-          />
-        </div>
-      ))}
-      <div className={styles.comingSoonBanner}>
-        🚧 {fields.length > 0 ? "此连接模式即将推出" : "Coming Soon"}
-      </div>
-    </div>
   );
 }
