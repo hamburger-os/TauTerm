@@ -2,8 +2,6 @@
 
 基于 **Tauri v2**（Rust + React + TypeScript）构建的现代化跨平台终端模拟器，采用 **Liquid Glass** 设计风格和 **Framer Motion** 动画引擎。
 
-v0.2 引入多会话侧栏架构、全功能新建会话对话框（模式优先）、右键上下文菜单、命令面板、终端搜索和 YModem 文件传输等专业功能。
-
 ## ✨ 功能特性
 
 - 🔌 **多协议架构** — 统一的 SessionManager 抽象层，当前支持串口，预留 SSH/Telnet/TFTP 扩展
@@ -12,7 +10,7 @@ v0.2 引入多会话侧栏架构、全功能新建会话对话框（模式优先
 - 🖥️ **终端仿真** — 基于 xterm.js，支持 ANSI 转义序列、彩色输出和光标控制
 - 🔍 **终端搜索** — `Ctrl+F` 搜索终端 buffer，支持大小写切换和上下导航
 - ⚡ **命令面板** — `Ctrl+Shift+P` 模糊搜索所有命令，键盘驱动操作
-- 📁 **文件传输** — 支持 YModem 协议的批量文件收发，带进度指示和 Drag & Drop，底部面板可拖拽调整高度
+- 📁 **文件传输** — 多协议传输框架（YModem/XModem/ZModem），支持批量文件收发、逐文件进度、传输历史和 Drag & Drop，底部面板三列布局（配置｜进度｜历史）
 - 🎨 **主题** — Liquid Glass v2 磨砂玻璃面板、霓虹发光边框、Framer Motion 交互动画
 - 🌐 **多语言** — 默认简体中文，支持即时切换至英文
 - 💾 **会话持久化** — 断开会话保留在侧栏，自动保存/恢复会话配置与参数，重连无需重新配置
@@ -55,7 +53,7 @@ v0.2 引入多会话侧栏架构、全功能新建会话对话框（模式优先
 │  ├── SessionManager (多会话生命周期)               │
 │  │   └── SessionHandle (独立 I/O 线程 + 缓冲通道)  │
 │  ├── SerialSession (串口连接实现)                  │
-│  └── transfer/ (YModem 传输协议)                   │
+│  └── transfer/ (YModem 传输协议，多协议扩展预留)     │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -115,8 +113,8 @@ TauTerm/
 │   │   ├── mod.rs
 │   │   └── config.rs          # 串口配置类型
 │   └── transfer/              # 文件传输协议
-│       ├── protocol.rs
-│       └── ymodem.rs
+│       ├── mod.rs
+│       └── ymodem.rs           # YModem 协议实现（发送/接收）
 ├── src/                       # React 前端
 │   ├── App.tsx                # AppInner + 布局集成
 │   ├── context/
@@ -127,7 +125,12 @@ TauTerm/
 │   │   ├── Layout/            # AppShell, Toolbar, SessionSidebar, BottomPanel, ConnectDialog, ResizeHandle, StatusBar
 │   │   ├── Terminal/          # Terminal, TerminalView, SearchBar
 │   │   ├── CommandPalette/    # 命令面板
-│   │   ├── FileTransfer/      # FileTransferPanel
+│   │   ├── FileTransfer/      # 文件传输面板（三列布局）
+│   │   │   ├── columns/        # ConfigColumn, ProgressColumn, HistoryColumn
+│   │   │   ├── protocol-config/# 协议选择器 + Y/X/ZModem 配置表单
+│   │   │   ├── progress/       # AggregateProgress, PerFileList, ProgressBar
+│   │   │   ├── history/        # HistoryFilters, HistoryItem
+│   │   │   └── shared/         # ProtocolBadge, ConnectionStatusDot
 │   │   └── common/            # GlassPanel, GlassButton, ContextMenu, Toast
 │   ├── hooks/                 # useKeyboard, useContextMenu
 │   ├── shortcuts/             # 快捷键注册表
@@ -142,7 +145,7 @@ TauTerm/
 - [x] 多会话侧栏架构 + 会话持久化
 - [x] 全功能新建会话对话框（模式优先）
 - [x] 右键上下文菜单（连接/重连/配置/删除）
-- [x] YModem 文件传输 + Drag & Drop
+- [x] 文件传输框架（已实现 YModem，预留 XModem/ZModem）+ Drag & Drop
 - [x] Liquid Glass v2 设计系统 (Neon Dark / Ocean / Sunset)
 - [x] 终端搜索 (Ctrl+F)
 - [x] 命令面板 (Ctrl+Shift+P)

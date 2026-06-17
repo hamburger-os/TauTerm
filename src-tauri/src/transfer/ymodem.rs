@@ -22,8 +22,43 @@ pub struct TransferProgress {
     pub file_name: String,
     pub bytes_transferred: u64,
     pub total_bytes: u64,
+    pub file_index: u32,
+    pub total_files: u32,
+    pub aggregate_bytes_transferred: u64,
+    pub aggregate_total_bytes: u64,
     #[allow(dead_code)]
     pub direction: TransferDirection,
+}
+
+/// 文件级别事件（非逐块进度）
+#[derive(Debug, Clone)]
+pub enum YModemFileEvent {
+    /// 文件开始传输
+    FileStart {
+        file_name: String,
+        file_index: u32,
+        total_files: u32,
+        file_size: u64,
+    },
+    /// 文件传输完成（成功或失败）
+    FileComplete {
+        file_name: String,
+        file_index: u32,
+        total_files: u32,
+        bytes_transferred: u64,
+        success: bool,
+        error: Option<String>,
+    },
+}
+
+/// 批次传输结果，用于 transfer-complete 事件
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BatchFileResult {
+    pub file_name: String,
+    pub status: String,   // "completed" | "failed"
+    pub size: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// CRC-16/CCITT 查找表
@@ -73,19 +108,25 @@ pub struct YModemSender;
 
 impl YModemSender {
     /// 通过串口发送文件（YModem 协议）
+    ///
+    /// 返回 `Ok(batch_results)` 其中包含每个文件的传输结果。
+    /// 部分文件失败时仍返回 Ok — 调用方通过 BatchFileResult.status 判断。
     pub fn send(
         port: &mut Box<dyn serialport::SerialPort>,
         file_paths: &[String],
         on_progress: impl Fn(TransferProgress),
+        on_file_event: impl Fn(YModemFileEvent),
         cancel: &mut dyn FnMut() -> bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
+        let total_files = file_paths.len() as u32;
+
         // 阶段 1：等待接收方发送 'C'（CRC 模式请求）
         // 标准 YModem 接收方会持续发送 'C'（每秒一次），直到发送方响应。
         // 发送前已清空缓冲区，此处严格匹配 'C' 字符。
         // 收到非 'C' 字节说明设备未进入 YModem 接收模式，需用户先在设备端执行接收命令。
         let mut c_count = 0u32;
         for retry in 0..MAX_RETRIES * 3 {
-            if cancel() { return Err("传输已取消".into()); }
+            if cancel() { Self::send_cancel(port); return Err("传输已取消".into()); }
             match read_byte_with_timeout(port, 1000)? {
                 Some(C) => {
                     c_count += 1;
@@ -110,9 +151,34 @@ impl YModemSender {
             }
         }
 
+        // 计算批次总大小（用于聚合进度）
+        let mut aggregate_total: u64 = 0;
+        let mut file_sizes: Vec<u64> = Vec::with_capacity(file_paths.len());
+        for file_path in file_paths {
+            match fs::metadata(file_path) {
+                Ok(m) => {
+                    file_sizes.push(m.len());
+                    aggregate_total += m.len();
+                }
+                Err(_) => {
+                    file_sizes.push(0);
+                }
+            }
+        }
+
         // 阶段 2：发送文件
-        for (_file_idx, file_path) in file_paths.iter().enumerate() {
-            if cancel() { return Err("传输已取消".into()); }
+        let mut batch_results: Vec<BatchFileResult> = Vec::with_capacity(file_paths.len());
+        let mut aggregate_completed: u64 = 0; // 已完成文件的总字节数
+
+        for (file_idx, file_path) in file_paths.iter().enumerate() {
+            if cancel() { Self::send_cancel(port); return Err("传输已取消".into()); }
+
+            // 第一个文件之后，清空串口缓冲区中可能残留的字节
+            // （设备在 send_eot 阶段可能输出调试信息等），直接继续下一文件。
+            // send_eot() 已完成 EOT→NAK→EOT→ACK(+'C') 握手，无需额外等待。
+            if file_idx > 0 {
+                Self::flush_port_buffer(port);
+            }
 
             let file_name = std::path::Path::new(file_path)
                 .file_name()
@@ -120,9 +186,41 @@ impl YModemSender {
                 .unwrap_or("unknown")
                 .to_string();
 
-            let metadata = fs::metadata(file_path)?;
-            let file_size = metadata.len();
-            let mut file = fs::File::open(file_path)?;
+            let file_size = file_sizes[file_idx];
+            let fi = file_idx as u32;
+
+            // 发送文件开始事件
+            on_file_event(YModemFileEvent::FileStart {
+                file_name: file_name.clone(),
+                file_index: fi,
+                total_files,
+                file_size,
+            });
+
+            // 尝试打开文件
+            let file = match fs::File::open(file_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    let err_msg = format!("无法打开文件: {}", e);
+                    on_file_event(YModemFileEvent::FileComplete {
+                        file_name: file_name.clone(),
+                        file_index: fi,
+                        total_files,
+                        bytes_transferred: 0,
+                        success: false,
+                        error: Some(err_msg.clone()),
+                    });
+                    batch_results.push(BatchFileResult {
+                        file_name: file_name.clone(),
+                        status: "failed".into(),
+                        size: 0,
+                        error: Some(err_msg.clone()),
+                    });
+                    // 将失败文件的大小从聚合中剔除
+                    aggregate_total -= file_size;
+                    continue;
+                }
+            };
 
             // 发送块 0（文件元数据）
             let mut block0 = [0u8; BLOCK0_SIZE];
@@ -131,17 +229,60 @@ impl YModemSender {
             let copy_len = meta_bytes.len().min(BLOCK0_SIZE);
             block0[..copy_len].copy_from_slice(&meta_bytes[..copy_len]);
 
-            Self::send_block(port, 0, &block0, BLOCK0_SIZE, cancel)?;
+            if let Err(e) = Self::send_block(port, 0, &block0, BLOCK0_SIZE, cancel) {
+                let err_msg = e.to_string();
+                on_file_event(YModemFileEvent::FileComplete {
+                    file_name: file_name.clone(),
+                    file_index: fi,
+                    total_files,
+                    bytes_transferred: 0,
+                    success: false,
+                    error: Some(err_msg.clone()),
+                });
+                batch_results.push(BatchFileResult {
+                    file_name: file_name.clone(),
+                    status: "failed".into(),
+                    size: file_size,
+                    error: Some(err_msg),
+                });
+                aggregate_total -= file_size;
+                continue;
+            }
 
             // 发送数据块
             let mut block_num: u8 = 1;
             let mut buf = [0u8; DATA_BLOCK_SIZE];
             let mut total_sent: u64 = 0;
+            let mut file = std::io::BufReader::new(file);
 
             loop {
-                if cancel() { return Err("传输已取消".into()); }
+                if cancel() {
+                    Self::send_cancel(port);
+                    return Err("传输已取消".into());
+                }
 
-                let n = file.read(&mut buf)?;
+                let n = match file.read(&mut buf) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        let err_msg = format!("读取文件错误: {}", e);
+                        on_file_event(YModemFileEvent::FileComplete {
+                            file_name: file_name.clone(),
+                            file_index: fi,
+                            total_files,
+                            bytes_transferred: total_sent,
+                            success: false,
+                            error: Some(err_msg.clone()),
+                        });
+                        batch_results.push(BatchFileResult {
+                            file_name: file_name.clone(),
+                            status: "failed".into(),
+                            size: file_size,
+                            error: Some(err_msg),
+                        });
+                        aggregate_total -= file_size;
+                        break;
+                    }
+                };
                 if n == 0 { break; }
 
                 // 填充不足的数据块
@@ -155,32 +296,140 @@ impl YModemSender {
                     arr
                 };
 
-                Self::send_block(port, block_num, &block_data, DATA_BLOCK_SIZE, cancel)?;
+                if let Err(e) = Self::send_block(port, block_num, &block_data, DATA_BLOCK_SIZE, cancel) {
+                    let err_msg = e.to_string();
+                    on_file_event(YModemFileEvent::FileComplete {
+                        file_name: file_name.clone(),
+                        file_index: fi,
+                        total_files,
+                        bytes_transferred: total_sent,
+                        success: false,
+                        error: Some(err_msg.clone()),
+                    });
+                    batch_results.push(BatchFileResult {
+                        file_name: file_name.clone(),
+                        status: "failed".into(),
+                        size: file_size,
+                        error: Some(err_msg),
+                    });
+                    aggregate_total -= file_size;
+                    break;
+                }
 
                 total_sent += n as u64;
                 on_progress(TransferProgress {
                     file_name: file_name.clone(),
                     bytes_transferred: total_sent,
                     total_bytes: file_size,
+                    file_index: fi,
+                    total_files,
+                    aggregate_bytes_transferred: aggregate_completed + total_sent,
+                    aggregate_total_bytes: aggregate_total,
                     direction: TransferDirection::Send,
                 });
 
                 block_num = block_num.wrapping_add(1);
             }
 
+            // 如果上面是读错误跳出的，continue 到下一个文件
+            if total_sent == 0 && file_size > 0 {
+                continue;
+            }
+
             // 发送 EOT
-            Self::send_eot(port, cancel)?;
+            let eot_result = Self::send_eot(port, cancel);
+            match eot_result {
+                Ok(()) => {
+                    aggregate_completed += file_size;
+                    on_file_event(YModemFileEvent::FileComplete {
+                        file_name: file_name.clone(),
+                        file_index: fi,
+                        total_files,
+                        bytes_transferred: total_sent,
+                        success: true,
+                        error: None,
+                    });
+                    batch_results.push(BatchFileResult {
+                        file_name: file_name.clone(),
+                        status: "completed".into(),
+                        size: file_size,
+                        error: None,
+                    });
+                    // 发送最终进度（100%）
+                    on_progress(TransferProgress {
+                        file_name: file_name.clone(),
+                        bytes_transferred: total_sent,
+                        total_bytes: file_size,
+                        file_index: fi,
+                        total_files,
+                        aggregate_bytes_transferred: aggregate_completed,
+                        aggregate_total_bytes: aggregate_total,
+                        direction: TransferDirection::Send,
+                    });
+                }
+                Err(e) => {
+                    let err_msg = e.to_string();
+                    on_file_event(YModemFileEvent::FileComplete {
+                        file_name: file_name.clone(),
+                        file_index: fi,
+                        total_files,
+                        bytes_transferred: total_sent,
+                        success: false,
+                        error: Some(err_msg.clone()),
+                    });
+                    batch_results.push(BatchFileResult {
+                        file_name: file_name.clone(),
+                        status: "failed".into(),
+                        size: file_size,
+                        error: Some(err_msg),
+                    });
+                    aggregate_total -= file_size;
+                }
+            }
         }
 
         // 阶段 3：发送批次结束（空块 0）
-        // 某些嵌入式 YModem 实现在 EOT+ACK 后立即退出协议模式，
-        // 不再响应空块 0。此处将空块 0 失败降级为警告，因为文件数据已完整传输。
+        // send_eot() 已经完成了与设备的 EOT→NAK→EOT→ACK(+'C') 握手。
+        // 最后一个文件后，设备端已发送 'C' 等待下一个 Block 0。
+        // 直接发送空 Block 0 作为"没有更多文件"的响应（YMODEM 标准方式）。
         let empty_block0 = [0u8; BLOCK0_SIZE];
         if let Err(e) = Self::send_block(port, 0, &empty_block0, BLOCK0_SIZE, cancel) {
             log::warn!("YModem 批次结束空块 0 发送失败（文件数据已传输）: {}", e);
         }
 
-        Ok(())
+        Ok(batch_results)
+    }
+
+    /// 发送 CAN 序列通知远端取消（尽力而为）
+    fn send_cancel(port: &mut Box<dyn serialport::SerialPort>) {
+        // 发送两个连续的 CAN 字节（YModem 规范要求）
+        if let Err(e) = port.write_all(&[CAN, CAN]) {
+            log::warn!("发送 CAN 序列失败: {}", e);
+        }
+        // 短暂排空，保证字节发出
+        if let Err(e) = port.flush() {
+            log::warn!("CAN 后刷新端口失败: {}", e);
+        }
+        // 等待一小段时间让远端处理
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    /// 清空端口接收缓冲区
+    ///
+    /// 丢弃设备残留输出，避免干扰 YModem 握手协议。
+    /// 连续读取直到连续 3 次超时（每次 50ms），确保缓冲区清空。
+    fn flush_port_buffer(port: &mut Box<dyn serialport::SerialPort>) {
+        let mut buf = [0u8; 256];
+        let mut empty_count = 0u32;
+        for _ in 0..20 {
+            match port.read(&mut buf) {
+                Ok(n) if n > 0 => { empty_count = 0; }
+                _ => {
+                    empty_count += 1;
+                    if empty_count >= 3 { break; }
+                }
+            }
+        }
     }
 
     /// 发送单个块
@@ -209,6 +458,7 @@ impl YModemSender {
             if cancel() { return Err("传输已取消".into()); }
 
             port.write_all(&packet)?;
+            port.flush()?;
 
             // 等待 ACK
             match read_byte_with_timeout(port, 3000)? {
@@ -230,7 +480,17 @@ impl YModemSender {
         Err(format!("块 {} 发送失败", block_num).into())
     }
 
-    /// 发送 EOT
+    /// 发送 EOT（文件结束）
+    ///
+    /// RT-Thread YMODEM 接收端（及多数嵌入式实现）的 EOT 握手序列：
+    ///   1. 发送方 → EOT
+    ///   2. 设备端 → NAK（要求重传 EOT，同时 on_end 回调关闭文件）
+    ///   3. 发送方 → EOT（重传）
+    ///   4. 设备端 → ACK（确认 EOT），紧接着 → 'C'（请求下一文件）
+    ///
+    /// 设备端 on_end 回调涉及 Flash 写入，可能耗时数秒。
+    /// 第一轮 EOT 的响应等待因此使用较长的 5 秒超时。
+    /// ACK 后的 'C' 探测窗口放宽到 2 秒以防设备处理延迟。
     fn send_eot(
         port: &mut Box<dyn serialport::SerialPort>,
         cancel: &mut dyn FnMut() -> bool,
@@ -238,18 +498,62 @@ impl YModemSender {
         for retry in 0..MAX_RETRIES {
             if cancel() { return Err("传输已取消".into()); }
             port.write_all(&[EOT])?;
-            match read_byte_with_timeout(port, 3000)? {
-                Some(ACK) => return Ok(()),
-                Some(CAN) => return Err("接收方取消了传输".into()),
-                Some(NAK) | None => {
-                    if retry == MAX_RETRIES - 1 {
-                        return Err("EOT 确认超时".into());
+            port.flush()?;
+
+            // 等待 ACK / NAK / 'C'，使用 5 秒超时以适应设备端 on_end 回调的 Flash 写入延迟
+            match read_byte_with_timeout(port, 5000)? {
+                Some(ACK) => {
+                    // 设备 ACK 了 EOT。探测是否紧跟着 'C'（请求下一文件）。
+                    // RT-Thread 的 _rym_do_fin 在 ACK 后立即发送 'C'，无延迟。
+                    // 放宽探测窗口至 2 秒以防处理延迟或串口缓冲。
+                    match read_byte_with_timeout(port, 2000)? {
+                        Some(C) => {
+                            log::info!("EOT: ACK 后收到 'C'，接收方已请求下一文件");
+                            return Ok(());
+                        }
+                        Some(NAK) => {
+                            // ACK 后又收到 NAK——设备要求重传（罕见但不排除）
+                            log::info!("EOT: ACK 后收到 NAK，重传 EOT");
+                            continue;
+                        }
+                        Some(CAN) => {
+                            return Err("接收方取消了传输".into());
+                        }
+                        _ => {
+                            // 超时或收到其他字节，视为 EOT 握手完成
+                            log::info!("EOT: 收到 ACK（未探测到 'C'）");
+                            return Ok(());
+                        }
                     }
                 }
-                _ => continue,
+                Some(C) => {
+                    // 设备直接回复 'C'（部分实现省略 ACK，直接请求下一文件）
+                    log::info!("EOT: 收到 'C'（替代 ACK），接收方已请求下一文件");
+                    return Ok(());
+                }
+                Some(NAK) => {
+                    // 设备要求重传 EOT——标准 YMODEM 行为！
+                    // RT-Thread 实现在 on_end() 之后发送 NAK 要求第二次 EOT
+                    log::info!("EOT: 收到 NAK，重传 EOT（第 {} 次）", retry + 1);
+                    continue;
+                }
+                Some(CAN) => {
+                    return Err("接收方取消了传输".into());
+                }
+                None => {
+                    // 超时——设备端 on_end 回调（Flash 写入）可能耗时较长
+                    if retry == MAX_RETRIES - 1 {
+                        return Err("EOT 确认超时：设备可能正在处理文件（Flash 写入）".into());
+                    }
+                    log::info!("EOT: 等待响应超时，重试（第 {} 次）", retry + 1);
+                    continue;
+                }
+                _ => {
+                    continue;
+                }
             }
         }
-        Err("EOT 发送失败".into())
+        Err("EOT 发送失败：超过最大重试次数".into())
     }
 }
 
@@ -279,20 +583,28 @@ pub struct YModemReceiver;
 
 impl YModemReceiver {
     /// 通过串口接收文件（YModem 协议）
+    ///
+    /// 返回 `Ok(batch_results)` 包含每个接收到的文件的结果。
     pub fn receive(
         port: &mut Box<dyn serialport::SerialPort>,
         download_dir: &str,
         on_progress: impl Fn(TransferProgress),
+        on_file_event: impl Fn(YModemFileEvent),
         cancel: &mut dyn FnMut() -> bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
         fs::create_dir_all(download_dir)?;
 
         let mut current_file: Option<(String, fs::File, u64)> = None; // (name, handle, total_size)
+        let mut file_index: u32 = 0;
+        let mut aggregate_bytes: u64 = 0; // 已完成的文件总大小
+        let mut aggregate_total: u64 = 0; // 所有已知文件的总大小（动态更新）
+        let mut batch_results: Vec<BatchFileResult> = Vec::new();
 
         // 阶段 1：发送 'C' 启动 CRC 模式传输
         for retry in 0..MAX_RETRIES {
-            if cancel() { return Err("传输已取消".into()); }
+            if cancel() { Self::send_cancel(port); return Err("传输已取消".into()); }
             port.write_all(&[C])?;
+            port.flush()?;
             match read_byte_with_timeout(port, 3000)? {
                 Some(SOH) | Some(STX) => break,
                 Some(CAN) => return Err("发送方取消了传输".into()),
@@ -305,23 +617,51 @@ impl YModemReceiver {
         }
 
         loop {
-            if cancel() { return Err("传输已取消".into()); }
+            if cancel() {
+                Self::send_cancel(port);
+                return Err("传输已取消".into());
+            }
 
             let header = match read_byte_with_timeout(port, 5000)? {
                 Some(SOH) => SOH,
                 Some(STX) => STX,
                 Some(EOT) => {
                     // 文件结束 — 关闭当前文件
-                    if let Some((name, file, total)) = current_file.take() {
-                        drop(file);
+                    if let Some((name, _, total)) = current_file.take() {
+                        let fsize = total;
+                        aggregate_bytes += fsize;
+                        on_file_event(YModemFileEvent::FileComplete {
+                            file_name: name.clone(),
+                            file_index,
+                            total_files: 0, // 接收方不知道总文件数
+                            bytes_transferred: fsize,
+                            success: true,
+                            error: None,
+                        });
                         on_progress(TransferProgress {
-                            file_name: name,
-                            bytes_transferred: total,
-                            total_bytes: total,
+                            file_name: name.clone(),
+                            bytes_transferred: fsize,
+                            total_bytes: fsize,
+                            file_index,
+                            total_files: 0,
+                            aggregate_bytes_transferred: aggregate_bytes,
+                            aggregate_total_bytes: aggregate_total,
                             direction: TransferDirection::Receive,
                         });
+                        batch_results.push(BatchFileResult {
+                            file_name: name,
+                            status: "completed".into(),
+                            size: fsize,
+                            error: None,
+                        });
+                        file_index += 1;
                     }
                     port.write_all(&[ACK])?;
+                    port.flush()?;
+                    // YModem 批量模式：ACK EOT 后发送 'C' 请求发送方传输下一个文件。
+                    // 最多尝试数次，若发送方不响应则超时退出。
+                    port.write_all(&[C])?;
+                    port.flush()?;
                     continue; // 可能是批次中的下一个文件
                 }
                 Some(CAN) => return Err("发送方取消了传输".into()),
@@ -342,6 +682,7 @@ impl YModemReceiver {
 
             if block_num != !block_num_neg {
                 port.write_all(&[NAK])?;
+                port.flush()?;
                 continue;
             }
 
@@ -369,6 +710,7 @@ impl YModemReceiver {
             let computed_crc = crc16_ccitt(&data);
             if computed_crc != received_crc {
                 port.write_all(&[NAK])?;
+                port.flush()?;
                 continue;
             }
 
@@ -376,16 +718,44 @@ impl YModemReceiver {
             if block_num == 0 {
                 // 空块 0 → 批次结束
                 if data[0] == 0 {
-                    if let Some((_, file, _)) = current_file.take() {
-                        drop(file);
+                    if let Some((name, _, total)) = current_file.take() {
+                        on_file_event(YModemFileEvent::FileComplete {
+                            file_name: name.clone(),
+                            file_index,
+                            total_files: 0,
+                            bytes_transferred: total,
+                            success: true,
+                            error: None,
+                        });
+                        batch_results.push(BatchFileResult {
+                            file_name: name,
+                            status: "completed".into(),
+                            size: total,
+                            error: None,
+                        });
                     }
                     port.write_all(&[ACK])?;
+                    port.flush()?;
                     break;
                 }
 
-                // 关闭上一个文件（如果存在）
-                if let Some((_, file, _)) = current_file.take() {
-                    drop(file);
+                // 关闭上一个文件（如果存在）并记录结果
+                if let Some((prev_name, _, prev_total)) = current_file.take() {
+                    aggregate_bytes += prev_total;
+                    on_file_event(YModemFileEvent::FileComplete {
+                        file_name: prev_name.clone(),
+                        file_index: file_index - 1,
+                        total_files: 0,
+                        bytes_transferred: prev_total,
+                        success: true,
+                        error: None,
+                    });
+                    batch_results.push(BatchFileResult {
+                        file_name: prev_name,
+                        status: "completed".into(),
+                        size: prev_total,
+                        error: None,
+                    });
                 }
 
                 // 解析文件元数据：name\0size\0...
@@ -402,13 +772,25 @@ impl YModemReceiver {
                         .collect::<String>();
                     let total_size: u64 = size_str.parse().unwrap_or(0);
 
+                    aggregate_total += total_size;
+
                     match fs::File::create(&file_path) {
                         Ok(file) => {
                             current_file = Some((file_name.clone(), file, total_size));
+                            on_file_event(YModemFileEvent::FileStart {
+                                file_name: file_name.clone(),
+                                file_index,
+                                total_files: 0, // 接收方未知
+                                file_size: total_size,
+                            });
                             on_progress(TransferProgress {
                                 file_name,
                                 bytes_transferred: 0,
                                 total_bytes: total_size,
+                                file_index,
+                                total_files: 0,
+                                aggregate_bytes_transferred: aggregate_bytes,
+                                aggregate_total_bytes: aggregate_total,
                                 direction: TransferDirection::Receive,
                             });
                         }
@@ -416,6 +798,7 @@ impl YModemReceiver {
                     }
                 }
                 port.write_all(&[ACK])?;
+                port.flush()?;
             } else {
                 // 数据块 — 写入当前文件
                 if let Some((ref file_name, ref mut file, total_size)) = current_file {
@@ -431,13 +814,29 @@ impl YModemReceiver {
                         file_name: file_name.clone(),
                         bytes_transferred: pos,
                         total_bytes: total_size,
+                        file_index,
+                        total_files: 0,
+                        aggregate_bytes_transferred: aggregate_bytes + pos,
+                        aggregate_total_bytes: aggregate_total,
                         direction: TransferDirection::Receive,
                     });
                 }
                 port.write_all(&[ACK])?;
+                port.flush()?;
             }
         }
 
-        Ok(())
+        Ok(batch_results)
+    }
+
+    /// 发送 CAN 序列通知远端取消（尽力而为）
+    fn send_cancel(port: &mut Box<dyn serialport::SerialPort>) {
+        if let Err(e) = port.write_all(&[CAN, CAN]) {
+            log::warn!("接收方发送 CAN 序列失败: {}", e);
+        }
+        if let Err(e) = port.flush() {
+            log::warn!("接收方 CAN 后刷新端口失败: {}", e);
+        }
+        std::thread::sleep(Duration::from_millis(100));
     }
 }

@@ -22,7 +22,7 @@ type TabId = "info" | "transfer";
 export default function BottomPanel({ onSendFiles, onReceiveFiles }: BottomPanelProps) {
   const { t } = useTranslation();
   const { state: sessionState } = useSession();
-  const { state: transferState, cancelTransfer, clearError, clearHistory } = useTransfer();
+  const { cancelTransfer } = useTransfer();
   const [activeTab, setActiveTab] = useState<TabId>("info");
 
   const tabs: { id: TabId; label: string; icon: string }[] = [
@@ -65,16 +65,10 @@ export default function BottomPanel({ onSendFiles, onReceiveFiles }: BottomPanel
             <BottomInfoPanel />
           ) : (
             <FileTransferPanel
-              status={transferState.status}
-              progress={transferState.progress}
-              history={transferState.history}
-              error={transferState.error}
               isConnected={isConnected}
               onSendFiles={onSendFiles}
               onReceiveFiles={onReceiveFiles}
               onCancel={() => sessionState.activeTabId && cancelTransfer(sessionState.activeTabId)}
-              onClearError={clearError}
-              onClearHistory={clearHistory}
             />
           )}
         </motion.div>

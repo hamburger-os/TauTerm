@@ -156,7 +156,7 @@ impl SerialSession {
         file_paths: Vec<String>,
         cancel_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<(), String> {
-        use crate::transfer::ymodem::YModemSender;
+        use crate::transfer::ymodem::{YModemSender, YModemFileEvent};
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -164,11 +164,55 @@ impl SerialSession {
         std::thread::spawn(move || { let _ = cancel_rx.blocking_recv(); c.store(true, Ordering::SeqCst); });
         let cancel_fn = &mut || cancelled.load(Ordering::SeqCst);
         let ac = app.clone();
-        YModemSender::send(port, &file_paths,
-            move |p| { let _ = ac.emit("transfer-progress", serde_json::json!({"file_name":p.file_name,"bytes_transferred":p.bytes_transferred,"total_bytes":p.total_bytes,"direction":"send"})); },
+        let ac2 = app.clone();
+        let batch_results = YModemSender::send(port, &file_paths,
+            move |p| {
+                let _ = ac.emit("transfer-progress", serde_json::json!({
+                    "file_name": p.file_name,
+                    "bytes_transferred": p.bytes_transferred,
+                    "total_bytes": p.total_bytes,
+                    "file_index": p.file_index,
+                    "total_files": p.total_files,
+                    "aggregate_bytes_transferred": p.aggregate_bytes_transferred,
+                    "aggregate_total_bytes": p.aggregate_total_bytes,
+                    "direction": "send"
+                }));
+            },
+            move |e| {
+                match e {
+                    YModemFileEvent::FileStart { file_name, file_index, total_files, file_size } => {
+                        let _ = ac2.emit("transfer-file-start", serde_json::json!({
+                            "file_name": file_name,
+                            "file_index": file_index,
+                            "total_files": total_files,
+                            "file_size": file_size
+                        }));
+                    }
+                    YModemFileEvent::FileComplete { file_name, file_index, total_files, bytes_transferred, success, error } => {
+                        let _ = ac2.emit("transfer-file-complete", serde_json::json!({
+                            "file_name": file_name,
+                            "file_index": file_index,
+                            "total_files": total_files,
+                            "bytes_transferred": bytes_transferred,
+                            "success": success,
+                            "error": error
+                        }));
+                    }
+                }
+            },
             cancel_fn,
         ).map_err(|e| e.to_string())?;
-        let _ = app.emit("transfer-complete", serde_json::json!({"success":true,"files":file_paths.len()}));
+
+        let completed = batch_results.iter().filter(|r| r.status == "completed").count();
+        let failed = batch_results.iter().filter(|r| r.status == "failed").count();
+        let skipped = batch_results.iter().filter(|r| r.status == "skipped").count();
+        let _ = app.emit("transfer-complete", serde_json::json!({
+            "success": failed == 0 && skipped == 0,
+            "files_completed": completed,
+            "files_failed": failed,
+            "files_skipped": skipped,
+            "results": batch_results
+        }));
         Ok(())
     }
 
@@ -179,7 +223,7 @@ impl SerialSession {
         download_dir: String,
         cancel_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> Result<(), String> {
-        use crate::transfer::ymodem::YModemReceiver;
+        use crate::transfer::ymodem::{YModemReceiver, YModemFileEvent};
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
         let cancelled = Arc::new(AtomicBool::new(false));
@@ -187,11 +231,56 @@ impl SerialSession {
         std::thread::spawn(move || { let _ = cancel_rx.blocking_recv(); c.store(true, Ordering::SeqCst); });
         let cancel_fn = &mut || cancelled.load(Ordering::SeqCst);
         let ac = app.clone();
-        YModemReceiver::receive(port, &download_dir,
-            move |p| { let _ = ac.emit("transfer-progress", serde_json::json!({"file_name":p.file_name,"bytes_transferred":p.bytes_transferred,"total_bytes":p.total_bytes,"direction":"receive"})); },
+        let ac2 = app.clone();
+        let batch_results = YModemReceiver::receive(port, &download_dir,
+            move |p| {
+                let _ = ac.emit("transfer-progress", serde_json::json!({
+                    "file_name": p.file_name,
+                    "bytes_transferred": p.bytes_transferred,
+                    "total_bytes": p.total_bytes,
+                    "file_index": p.file_index,
+                    "total_files": p.total_files,
+                    "aggregate_bytes_transferred": p.aggregate_bytes_transferred,
+                    "aggregate_total_bytes": p.aggregate_total_bytes,
+                    "direction": "receive"
+                }));
+            },
+            move |e| {
+                match e {
+                    YModemFileEvent::FileStart { file_name, file_index, total_files, file_size } => {
+                        let _ = ac2.emit("transfer-file-start", serde_json::json!({
+                            "file_name": file_name,
+                            "file_index": file_index,
+                            "total_files": total_files,
+                            "file_size": file_size
+                        }));
+                    }
+                    YModemFileEvent::FileComplete { file_name, file_index, total_files, bytes_transferred, success, error } => {
+                        let _ = ac2.emit("transfer-file-complete", serde_json::json!({
+                            "file_name": file_name,
+                            "file_index": file_index,
+                            "total_files": total_files,
+                            "bytes_transferred": bytes_transferred,
+                            "success": success,
+                            "error": error
+                        }));
+                    }
+                }
+            },
             cancel_fn,
         ).map_err(|e| e.to_string())?;
-        let _ = app.emit("transfer-complete", serde_json::json!({"success":true,"message":"接收完成"}));
+
+        let completed = batch_results.iter().filter(|r| r.status == "completed").count();
+        let failed = batch_results.iter().filter(|r| r.status == "failed").count();
+        let skipped = batch_results.iter().filter(|r| r.status == "skipped").count();
+        let _ = app.emit("transfer-complete", serde_json::json!({
+            "success": failed == 0 && skipped == 0,
+            "files_completed": completed,
+            "files_failed": failed,
+            "files_skipped": skipped,
+            "message": "接收完成",
+            "results": batch_results
+        }));
         Ok(())
     }
 }

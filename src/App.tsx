@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { AnimatePresence, motion } from "framer-motion";
 import AppShell from "./components/Layout/AppShell";
 import Toolbar from "./components/Layout/Toolbar";
@@ -107,7 +108,7 @@ function AppInner() {
   const handleSendFiles = useCallback(async () => {
     if (!sessionState.activeTabId) return;
     try {
-      const selected = await open({ multiple: false, filters: [{ name: "Files", extensions: ["bin", "hex", "elf", "*"] }] });
+      const selected = await open({ multiple: true, filters: [{ name: "Files", extensions: ["bin", "hex", "elf", "*"] }] });
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
         transferSend(sessionState.activeTabId, paths);
@@ -125,8 +126,9 @@ function AppInner() {
     } catch (e) { addToast("error", `${e}`); }
   }, [sessionState.activeTabId, transferReceive, addToast]);
 
-  // Global drag events for dropzone
+  // Global drag events for dropzone visual feedback + Tauri native drop
   useEffect(() => {
+    // DOM-level events for visual drag overlay
     const handleDragEnter = (e: DragEvent) => { e.preventDefault(); setDragging(true); };
     const handleDragLeave = (e: DragEvent) => {
       if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
@@ -134,18 +136,47 @@ function AppInner() {
       }
     };
     const handleDragOver = (e: DragEvent) => { e.preventDefault(); };
+    // Drop is handled by Tauri native event below; DOM drop just prevents default
     const handleDrop = (e: DragEvent) => { e.preventDefault(); setDragging(false); };
     document.addEventListener("dragenter", handleDragEnter);
     document.addEventListener("dragleave", handleDragLeave);
     document.addEventListener("dragover", handleDragOver);
     document.addEventListener("drop", handleDrop);
+
+    // Tauri native drag-drop: provides actual file paths
+    let unlistenDrop: (() => void) | undefined;
+    (async () => {
+      try {
+        unlistenDrop = await getCurrentWebviewWindow().onDragDropEvent((event) => {
+          if (event.payload.type === "drop") {
+            setDragging(false);
+            const paths = event.payload.paths;
+            if (paths && paths.length > 0) {
+              if (sessionState.activeTabId) {
+                transferSend(sessionState.activeTabId, paths);
+              } else {
+                addToast("warning", "请先连接到串口设备再拖拽传输文件");
+              }
+            }
+          } else if (event.payload.type === "over") {
+            setDragging(true);
+          } else if (event.payload.type === "leave") {
+            setDragging(false);
+          }
+        });
+      } catch (e) {
+        console.warn("Tauri drag-drop 事件注册失败，拖拽传文件功能不可用:", e);
+      }
+    })();
+
     return () => {
       document.removeEventListener("dragenter", handleDragEnter);
       document.removeEventListener("dragleave", handleDragLeave);
       document.removeEventListener("dragover", handleDragOver);
       document.removeEventListener("drop", handleDrop);
+      if (unlistenDrop) unlistenDrop();
     };
-  }, [setDragging]);
+  }, [setDragging, sessionState.activeTabId, transferSend, addToast]);
 
   // Keyboard shortcuts
   useEffect(() => {
