@@ -12,6 +12,8 @@ interface TerminalInstanceProps {
   onData?: (data: string) => void;
   /** 是否已连接 */
   isConnected?: boolean;
+  /** 是否为当前活跃标签页 */
+  isActive?: boolean;
   /** 当终端就绪时回调，传入 write 函数供父组件注册数据路由 */
   onTermReady?: (writeFn: (data: Uint8Array | string) => void) => void;
   /** 当终端实例卸载时回调，供父组件清理数据路由 */
@@ -25,7 +27,7 @@ interface TerminalInstanceProps {
  * 接受 sessionId 以区分数据路由。
  */
 const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function TerminalInstance(
-  { sessionId, onData, isConnected = false, onTermReady, onCleanup },
+  { sessionId, onData, isConnected = false, isActive = true, onTermReady, onCleanup },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -41,6 +43,9 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   useImperativeHandle(ref, () => ({
     write: (data: Uint8Array | string) => {
       xtermRef.current?.write(data);
+    },
+    fit: () => {
+      fitAddonRef.current?.fit();
     },
     get terminal() {
       return xtermRef.current;
@@ -81,7 +86,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       cursorBlink: true,
       cursorStyle: "bar",
       allowProposedApi: true,
-      scrollback: 5000,
+      scrollback: 50000,
       cols: 80,
       rows: 24,
     });
@@ -119,6 +124,23 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       onCleanupRef.current?.(sessionId);
     };
   }, []);
+
+  // 当标签页变为活跃时重新调整终端尺寸
+  // 使用双 rAF 确保 DOM 已完成 opacity 过渡和布局计算
+  useEffect(() => {
+    if (!isActive || !containerRef.current || !fitAddonRef.current) return;
+    let raf1: number;
+    let raf2: number;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        try { fitAddonRef.current?.fit(); } catch { /* ignore */ }
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [isActive]);
 
   // 捕获终端输入
   useEffect(() => {

@@ -11,16 +11,30 @@ import styles from "./Terminal.module.css";
 /**
  * 终端区域管理器
  *
- * 渲染当前活跃标签页的终端实例。
- * 非活跃标签页的终端保持 DOM 但不渲染（节省资源但保留状态可选）。
+ * 同时渲染所有已连接标签页的终端实例，使用 CSS opacity 控制可见性。
+ * 非活跃标签页的终端保持在 DOM 中并继续接收数据，切换时无需重建。
  */
 export default function TerminalView() {
   const { t } = useTranslation();
   const { state, sendData, onSessionData } = useSession();
   const { registerAction } = useKeyboard();
   const writeRefs = useRef<Map<string, (data: Uint8Array | string) => void>>(new Map());
+  const terminalRefs = useRef<Map<string, any>>(new Map());
   const [searchVisible, setSearchVisible] = useState(false);
   const activeTermRef = useRef<any>(null);
+
+  // 所有已连接的标签页（需要保持终端实例存活）
+  const connectedTabs = state.tabs.filter(
+    t => t.state === "connected" || t.state === "transferring"
+  );
+  const activeTab = state.tabs.find(t => t.id === state.activeTabId);
+
+  // 同步 activeTermRef 指向当前活跃标签页的终端引用
+  useEffect(() => {
+    activeTermRef.current = state.activeTabId
+      ? terminalRefs.current.get(state.activeTabId) ?? null
+      : null;
+  }, [state.activeTabId]);
 
   // 注册 Ctrl+F 搜索快捷键
   useEffect(() => {
@@ -35,19 +49,20 @@ export default function TerminalView() {
     });
   }, [onSessionData]);
 
-  // 清理已删除会话的 writeRefs 条目（处理非活跃标签页被删除的情况）
+  // 清理已断开/已删除会话的 writeRefs 和 terminalRefs 条目
   useEffect(() => {
-    const validIds = new Set(state.tabs.map(t => t.id));
+    const connectedIds = new Set(connectedTabs.map(t => t.id));
     const toRemove: string[] = [];
     writeRefs.current.forEach((_, id) => {
-      if (!validIds.has(id)) {
+      if (!connectedIds.has(id)) {
         toRemove.push(id);
       }
     });
     for (const id of toRemove) {
       writeRefs.current.delete(id);
+      terminalRefs.current.delete(id);
     }
-  }, [state.tabs]);
+  }, [connectedTabs]);
 
   const handleTermReady = useCallback((sessionId: string, writeFn: (data: Uint8Array | string) => void) => {
     writeRefs.current.set(sessionId, writeFn);
@@ -61,18 +76,12 @@ export default function TerminalView() {
     sendData(sessionId, data);
   }, [sendData]);
 
-  const activeTab = state.tabs.find(t => t.id === state.activeTabId);
-  const isTermActive = activeTab?.state === "connected" || activeTab?.state === "transferring";
-  const activeTerm = activeTab ? {
-    id: activeTab.id,
-    isConnected: isTermActive,
-    isTransferring: activeTab.state === "transferring",
-  } : null;
+  const isActiveTransferring = activeTab?.state === "transferring";
 
   return (
     <div className={styles.viewport}>
       <div className={styles.terminalArea}>
-        {activeTerm?.isTransferring && (
+        {isActiveTransferring && (
           <motion.div
             className={styles.transferBanner}
             initial={{ opacity: 0, y: -4 }}
@@ -82,26 +91,42 @@ export default function TerminalView() {
             <span>{t("transfer.transferringBanner", "File transfer in progress – terminal paused")}</span>
           </motion.div>
         )}
-        <AnimatePresence mode="wait">
-          {activeTerm && activeTerm.isConnected ? (
-            <motion.div
-              key={`${activeTerm.id}-${activeTerm.isConnected}`}
-              className={styles.terminalWrapper}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-            >
-              <TerminalInstance
-                sessionId={activeTerm.id}
-                onData={(data) => handleData(activeTerm.id, data)}
-                isConnected={activeTerm.isConnected}
-                onTermReady={(writeFn) => handleTermReady(activeTerm.id, writeFn)}
-                onCleanup={handleTermCleanup}
-                ref={activeTermRef}
-              />
-            </motion.div>
-          ) : (
+
+        <div className={styles.terminalsContainer}>
+          <AnimatePresence>
+            {connectedTabs.map(tab => {
+              const isActive = tab.id === state.activeTabId;
+              return (
+                <motion.div
+                  key={tab.id}
+                  className={styles.terminalWrapper}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: isActive ? 1 : 0 }}
+                  exit={{ opacity: 0 }}
+                  style={{ pointerEvents: isActive ? "auto" : "none" }}
+                  transition={{ duration: 0.15 }}
+                >
+                  <TerminalInstance
+                    sessionId={tab.id}
+                    onData={(data) => handleData(tab.id, data)}
+                    isConnected={tab.state === "connected" || tab.state === "transferring"}
+                    isActive={isActive}
+                    onTermReady={(writeFn) => handleTermReady(tab.id, writeFn)}
+                    onCleanup={handleTermCleanup}
+                    ref={(node) => {
+                      if (node) {
+                        terminalRefs.current.set(tab.id, node);
+                      } else {
+                        terminalRefs.current.delete(tab.id);
+                      }
+                    }}
+                  />
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+
+          {connectedTabs.length === 0 && (
             <div className={styles.emptyState}>
               <div className={styles.emptyIcon}>⚡</div>
               <div>{t("session.noSessions")}</div>
@@ -110,7 +135,7 @@ export default function TerminalView() {
               </div>
             </div>
           )}
-        </AnimatePresence>
+        </div>
       </div>
 
       {searchVisible && (
