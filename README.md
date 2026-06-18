@@ -337,25 +337,247 @@ TauTerm/
 
 ## 构建与运行
 
-### 前置要求
+### 环境要求
 
-- **Node.js** >= 18
-- **Rust** >= 1.75
-- **Windows**: Visual Studio Build Tools
-- **Linux**: `libwebkit2gtk-4.1-dev`、`libappindicator3-dev`、`libssh2-dev`、`libkeyring-dev`
-- **macOS**: Xcode Command Line Tools
+| 组件 | 版本要求 | 说明 |
+|------|---------|------|
+| **Node.js** | >= 18 | 前端运行时与包管理器 |
+| **Rust** | >= 1.96 (推荐) / >= 1.75 (最低) | 后端编译工具链 |
+| **npm** | >= 9 | 随 Node.js 附带 |
+
+> **注意**: Rust 1.96+ 内置 `rust-lld` 链接器，在 Windows 上**无需额外安装 Visual Studio Build Tools**。如果使用较低版本 Rust，则需要安装 VS Build Tools 提供 MSVC 链接器。
+
+---
+
+### Windows 环境安装
+
+#### 1. 安装 Node.js
+
+从 [nodejs.org](https://nodejs.org/) 下载 LTS 版本安装，或使用 winget：
+
+```powershell
+winget install --id OpenJS.NodeJS.LTS --source winget
+```
+
+验证安装：
+
+```powershell
+node --version   # 应输出 >= v18.0.0
+npm --version    # 应输出 >= 9.0.0
+```
+
+#### 2. 安装 Rust
+
+使用 winget 安装 rustup（Rust 官方工具链管理器）：
+
+```powershell
+winget install --id Rustlang.Rustup --source winget
+```
+
+安装完成后，**重新打开终端**使环境变量生效，然后设置默认工具链：
+
+```powershell
+rustup default stable
+```
+
+> **下载慢？** 可设置国内镜像源加速：
+> ```powershell
+> $env:RUSTUP_DIST_SERVER = "https://mirrors.ustc.edu.cn/rust-static"
+> rustup default stable
+> ```
+
+验证安装：
+
+```powershell
+rustc --version   # 应输出 >= rustc 1.75.0
+cargo --version   # 应输出 >= cargo 1.75.0
+```
+
+#### 3. 链接器（二选一）
+
+**方案 A（推荐）：使用 Rust 内置的 rust-lld**
+
+Rust 1.96+ 自带 LLVM 链接器 `rust-lld`，无需额外安装。项目已配置 `.cargo/config.toml` 自动使用。
+
+**方案 B：安装 Visual Studio Build Tools**
+
+如果使用较低版本 Rust，或遇到链接器错误，可使用 winget 安装：
+
+```powershell
+# VS 2022 Build Tools（Windows 10 / Windows 11 早期版本）
+winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget
+
+# VS 2026 Build Tools（Windows 11 最新版本，推荐）
+winget install --id Microsoft.VisualStudio.BuildTools --source winget
+```
+
+安装后运行 VS Installer 添加 C++ 工作负载：
+
+```powershell
+& "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" `
+  modify --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait
+```
+
+---
+
+### Linux 环境安装
+
+#### Ubuntu / Debian
+
+```bash
+# 安装系统依赖
+sudo apt update
+sudo apt install -y \
+  libwebkit2gtk-4.1-dev \
+  libappindicator3-dev \
+  librsvg2-dev \
+  patchelf \
+  libssl-dev \
+  libssh2-dev \
+  libkeyring-dev
+
+# 安装 Node.js（使用 NodeSource）
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# 安装 Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+```
+
+#### Fedora / RHEL
+
+```bash
+sudo dnf install -y \
+  webkit2gtk4.1-devel \
+  libappindicator-gtk3-devel \
+  librsvg2-devel \
+  patchelf \
+  openssl-devel \
+  libssh2-devel
+
+# Node.js 和 Rust 安装同上
+```
+
+#### Arch Linux
+
+```bash
+sudo pacman -S --needed \
+  webkit2gtk-4.1 \
+  libappindicator-gtk3 \
+  librsvg \
+  patchelf \
+  openssl \
+  libssh2
+```
+
+---
+
+### macOS 环境安装
+
+```bash
+# 安装 Xcode Command Line Tools
+xcode-select --install
+
+# 安装 Node.js（使用 Homebrew）
+brew install node
+
+# 安装 Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source "$HOME/.cargo/env"
+```
+
+---
+
+### 环境验证
+
+运行以下命令确认所有组件正确安装：
+
+```powershell
+# Windows (PowerShell)
+node --version   # >= 18
+npm --version    # >= 9
+rustc --version  # >= 1.75
+cargo --version  # >= 1.75
+
+# Linux / macOS
+node --version && npm --version && rustc --version && cargo --version
+```
+
+---
 
 ### 开发模式
 
 ```bash
+# 克隆仓库
+git clone https://github.com/your-org/TauTerm.git
+cd TauTerm
+
+# 安装前端依赖
 npm install
+
+# 启动开发模式（同时启动 Vite 开发服务器和 Tauri 桌面窗口）
 npm run tauri dev
 ```
+
+- Vite 开发服务器运行在 `http://localhost:1420`
+- Tauri 窗口自动打开，支持热更新（前端）和热重载（Rust）
+
+> **首次运行**：`npm run tauri dev` 会编译所有 Rust 依赖（约 200+ crates），需要 **5-15 分钟**（视网络和 CPU 而定）。后续编译将利用缓存，通常只需几秒。
+
+---
 
 ### 生产构建
 
 ```bash
+# 构建生产版本
 npm run tauri build
+```
+
+构建产物位于 `src-tauri/target/release/bundle/`：
+- **Windows**: `.msi` / `.exe` 安装包
+- **Linux**: `.deb` / `.rpm` / `.AppImage`
+- **macOS**: `.dmg` / `.app` 包
+
+---
+
+### 常见问题
+
+#### Windows: `error: linker 'link.exe' not found`
+
+**原因**: 缺少 MSVC 链接器。
+
+**解决方案**:
+1. 确保 Rust 版本 >= 1.96，使用内置 `rust-lld` 链接器
+2. 或安装 Visual Studio Build Tools（见上方「方案 B」）
+3. 或手动指定链接器：`rustup component add llvm-tools-preview`
+
+#### Windows: `winget` 安装 VS Build Tools 后 `rustc` 仍报链接器错误
+
+VS Build Tools 安装后需**重新打开终端**以加载环境变量。或手动激活：
+
+```powershell
+& "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+```
+
+#### Linux: `libwebkit2gtk-4.1-dev` 未找到
+
+Ubuntu 20.04 及更早版本可能需要添加 PPA 或升级到 22.04+。
+
+#### macOS: 打开应用时提示「无法验证开发者」
+
+```bash
+sudo xattr -r -d com.apple.quarantine /path/to/TauTerm.app
+```
+
+#### 下载 Rust 依赖缓慢
+
+设置国内镜像：
+
+```powershell
+# Windows (PowerShell) - 设置环境变量
+[System.Environment]::SetEnvironmentVariable('RUSTUP_DIST_SERVER', 'https://mirrors.ustc.edu.cn/rust-static', 'User')
+[System.Environment]::SetEnvironmentVariable('RUSTUP_UPDATE_ROOT', 'https://mirrors.ustc.edu.cn/rust-static/rustup', 'User')
 ```
 
 ---
