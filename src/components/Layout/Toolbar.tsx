@@ -38,18 +38,9 @@ export default function Toolbar({ onAction }: ToolbarProps) {
 
   return (
     <div className={styles.toolbar}>
-      {/* 左侧：Logo + 全局按钮 + 插件左区 */}
+      {/* 左侧：Logo + 侧栏图标按钮 + 插件左区 */}
       <div className={styles.leftZone}>
         <span className={styles.logo}>⚡ TauTerm</span>
-
-        <button
-          className={styles.toolbarButton}
-          onClick={() => handleClick("newSession")}
-          title={t("toolbar.newSession") + " (Ctrl+N)"}
-        >
-          <span className={styles.icon}>➕</span>
-          <span className={styles.label}>{t("toolbar.newSession")}</span>
-        </button>
 
         <button
           className={styles.toolbarButton}
@@ -57,7 +48,6 @@ export default function Toolbar({ onAction }: ToolbarProps) {
           title={t("toolbar.sidebar") + " (Ctrl+B)"}
         >
           <span className={styles.icon}>☰</span>
-          <span className={styles.label}>{t("toolbar.sidebar")}</span>
         </button>
 
         {/* 插件左区按钮 */}
@@ -89,7 +79,7 @@ export default function Toolbar({ onAction }: ToolbarProps) {
         ))}
       </div>
 
-      {/* 右侧：插件右区 + 全局按钮 */}
+      {/* 右侧：插件右区 + 命令面板图标按钮 */}
       <div className={styles.rightZone}>
         {rightItems.map(item => (
           <button
@@ -109,16 +99,6 @@ export default function Toolbar({ onAction }: ToolbarProps) {
           title={t("toolbar.commands") + " (Ctrl+Shift+P)"}
         >
           <span className={styles.icon}>⌘</span>
-          <span className={styles.label}>{t("toolbar.commands")}</span>
-        </button>
-
-        <button
-          className={styles.toolbarButton}
-          onClick={() => handleClick("settings")}
-          title={t("toolbar.settings")}
-        >
-          <span className={styles.icon}>⚙</span>
-          <span className={styles.label}>{t("toolbar.settings")}</span>
         </button>
       </div>
     </div>

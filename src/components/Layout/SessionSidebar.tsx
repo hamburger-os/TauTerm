@@ -10,14 +10,17 @@ import styles from "./SessionSidebar.module.css";
 interface SessionSidebarProps {
   onSelectSession?: (id: string) => void;
   onEditSession?: (id: string) => void;
+  onSettingsClick?: () => void;
+  onNewSession?: () => void;
 }
 
 /**
  * 左侧会话列表侧边栏
  *
  * 显示所有活跃和已断开会话，支持搜索过滤和右键上下文菜单。
+ * 底部提供设置按钮。
  */
-export default function SessionSidebar({ onSelectSession, onEditSession }: SessionSidebarProps) {
+export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
   const { t } = useTranslation();
   const { state, switchTab, disconnect, deleteSession, connect } = useSession();
   const [search, setSearch] = useState("");
@@ -57,13 +60,13 @@ export default function SessionSidebar({ onSelectSession, onEditSession }: Sessi
   const handleMenuSelect = useCallback(async (itemId: string, sessionId: string) => {
     switch (itemId) {
       case "connect": {
-        // 直接使用保存的参数重连，不弹出配置窗口
         const tab = state.tabs.find(t => t.id === sessionId);
         if (tab?.state === "disconnected" && tab.params) {
           try {
-            const sid = await connect(tab.endpoint, tab.params as Record<string, unknown>, tab.name);
+            const sid = await connect(tab.endpoint, tab.params as Record<string, unknown>, tab.name, undefined, tab.transferEnabled, tab.transferProtocol);
             if (sid) {
               await switchTab(sid);
+              await deleteSession(sessionId); // 删除旧的断开标签页
             }
           } catch (_e) {
             // 错误已在 SessionContext 中处理
@@ -87,9 +90,16 @@ export default function SessionSidebar({ onSelectSession, onEditSession }: Sessi
 
   return (
     <div className={styles.sidebar}>
+      {/* 顶部：标题 + 新建按钮 */}
       <div className={styles.header}>
         <span className={styles.title}>{t("session.sessions")}</span>
-        <span className={styles.count}>{state.tabs.length}</span>
+        <button
+          className={styles.addBtn}
+          onClick={() => onNewSession?.()}
+          title={t("session.newSession") + " (Ctrl+N)"}
+        >
+          +
+        </button>
       </div>
 
       <input
@@ -100,6 +110,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession }: Sessi
         onChange={(e) => setSearch(e.target.value)}
       />
 
+      {/* 中部：会话列表 (可滚动) */}
       <div className={styles.list}>
         {filtered.length === 0 ? (
           <div className={styles.empty}>
@@ -135,6 +146,18 @@ export default function SessionSidebar({ onSelectSession, onEditSession }: Sessi
             </motion.div>
           ))
         )}
+      </div>
+
+      {/* 底部：设置按钮 */}
+      <div className={styles.bottomSection}>
+        <button
+          className={styles.settingsBtn}
+          onClick={onSettingsClick}
+          title={t("sidebar.settings")}
+        >
+          <span className={styles.settingsIcon}>⚙</span>
+          <span className={styles.settingsLabel}>{t("sidebar.settings")}</span>
+        </button>
       </div>
 
       {/* 右键上下文菜单 */}

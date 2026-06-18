@@ -1,5 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { AnimatePresence, motion } from "framer-motion";
 import AppShell from "./components/Layout/AppShell";
@@ -8,22 +7,26 @@ import SessionSidebar from "./components/Layout/SessionSidebar";
 import StatusBar from "./components/Layout/StatusBar";
 import ResizeHandle from "./components/Layout/ResizeHandle";
 import TabContentDispatcher from "./components/TabContentDispatcher";
-import BottomPanel from "./components/Layout/BottomPanel";
+import SendBar from "./components/SendBar/SendBar";
+import TransmissionPanel from "./components/Transmission/TransmissionPanel";
+import type { ProtocolType } from "./types/transfer";
+import SettingsPage from "./components/Settings/SettingsPage";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
 import ConnectDialog from "./components/Layout/ConnectDialog";
 import Toast from "./components/common/Toast";
 import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
 import { useKeyboard } from "./hooks/useKeyboard";
+import { pluginRegistry } from "./core/plugin-registry";
 import { ACTION_IDS } from "./shortcuts/actionIds";
 import "./i18n/index";
 import "./App.css";
 
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 400;
-const PANEL_MIN = 120;
-const PANEL_DEFAULT = 250;
-const PANEL_MAX_RATIO = 0.5;
+const TRANSMISSION_MIN = 160;
+const TRANSMISSION_MAX = 500;
+const TRANSMISSION_DEFAULT = 260;
 
 interface ToastMessage {
   id: number;
@@ -34,18 +37,19 @@ interface ToastMessage {
 function AppInner() {
   // Context hooks
   const { state: sessionState, refreshEndpoints } = useSession();
-  const { state: transferState, sendFiles: transferSend, receiveFiles: transferReceive, setDragging } = useTransfer();
+  const { state: transferState, sendFiles: transferSend, setDragging } = useTransfer();
   const { registerAction } = useKeyboard();
 
   // Layout state
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [panelHeight, setPanelHeight] = useState(PANEL_DEFAULT);
-  const [isResizingPanel, setIsResizingPanel] = useState(false);
+  const [transmissionWidth, setTransmissionWidth] = useState(TRANSMISSION_DEFAULT);
+  const [isResizingTransmission, setIsResizingTransmission] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [editSessionId, setEditSessionId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Toast
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -53,7 +57,6 @@ function AppInner() {
   const addToast = useCallback((type: ToastMessage["type"], message: string) => {
     const id = ++toastIdRef.current;
     setToasts(prev => [...prev, { id, type, message }]);
-    // Auto-dismiss handled by Toast component's useEffect
   }, []);
 
   // Event handlers
@@ -72,63 +75,42 @@ function AppInner() {
     sidebarStartX.current = e.clientX; sidebarStartWidth.current = sidebarWidth;
   }, [sidebarWidth]);
 
-  // Resize: bottom panel
-  const panelStartY = useRef(0); const panelStartHeight = useRef(0);
-  const handlePanelMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault(); setIsResizingPanel(true);
-    panelStartY.current = e.clientY; panelStartHeight.current = panelHeight;
-  }, [panelHeight]);
+  // Resize: transmission panel
+  const transmissionStartX = useRef(0); const transmissionStartWidth = useRef(0);
+  const handleTransmissionMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); setIsResizingTransmission(true);
+    transmissionStartX.current = e.clientX; transmissionStartWidth.current = transmissionWidth;
+  }, [transmissionWidth]);
 
   useEffect(() => {
+    const resizeActive = isResizingSidebar || isResizingTransmission;
+    if (!resizeActive) return;
+
     const handleMove = (e: MouseEvent) => {
       if (isResizingSidebar) {
         setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, sidebarStartWidth.current + (e.clientX - sidebarStartX.current))));
       }
-      if (isResizingPanel) {
-        const maxH = window.innerHeight * PANEL_MAX_RATIO;
-        setPanelHeight(Math.min(maxH, Math.max(PANEL_MIN, panelStartHeight.current - (e.clientY - panelStartY.current))));
+      if (isResizingTransmission) {
+        // 向左拖动增大面板，向右拖动减小面板
+        setTransmissionWidth(Math.min(TRANSMISSION_MAX, Math.max(TRANSMISSION_MIN, transmissionStartWidth.current - (e.clientX - transmissionStartX.current))));
       }
     };
-    const handleUp = () => { setIsResizingSidebar(false); setIsResizingPanel(false); };
-    if (isResizingSidebar || isResizingPanel) {
-      document.addEventListener("mousemove", handleMove);
-      document.addEventListener("mouseup", handleUp);
-      document.body.style.cursor = isResizingSidebar ? "col-resize" : "row-resize";
-      document.body.style.userSelect = "none";
-    }
+    const handleUp = () => { setIsResizingSidebar(false); setIsResizingTransmission(false); };
+    document.addEventListener("mousemove", handleMove);
+    document.addEventListener("mouseup", handleUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
     return () => {
       document.removeEventListener("mousemove", handleMove);
       document.removeEventListener("mouseup", handleUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isResizingSidebar, isResizingPanel]);
-
-  // File transfer handlers
-  const handleSendFiles = useCallback(async () => {
-    if (!sessionState.activeTabId) return;
-    try {
-      const selected = await open({ multiple: true, filters: [{ name: "Files", extensions: ["bin", "hex", "elf", "*"] }] });
-      if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        transferSend(sessionState.activeTabId, paths);
-      }
-    } catch (e) { addToast("error", `${e}`); }
-  }, [sessionState.activeTabId, transferSend, addToast]);
-
-  const handleReceiveFiles = useCallback(async () => {
-    if (!sessionState.activeTabId) return;
-    try {
-      const selected = await open({ directory: true, multiple: false });
-      if (selected && typeof selected === "string") {
-        transferReceive(sessionState.activeTabId, selected);
-      }
-    } catch (e) { addToast("error", `${e}`); }
-  }, [sessionState.activeTabId, transferReceive, addToast]);
+  }, [isResizingSidebar, isResizingTransmission]);
 
   // Global drag events for dropzone visual feedback + Tauri native drop
   useEffect(() => {
-    // DOM-level events for visual drag overlay
     const handleDragEnter = (e: DragEvent) => { e.preventDefault(); setDragging(true); };
     const handleDragLeave = (e: DragEvent) => {
       if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
@@ -136,14 +118,12 @@ function AppInner() {
       }
     };
     const handleDragOver = (e: DragEvent) => { e.preventDefault(); };
-    // Drop is handled by Tauri native event below; DOM drop just prevents default
     const handleDrop = (e: DragEvent) => { e.preventDefault(); setDragging(false); };
     document.addEventListener("dragenter", handleDragEnter);
     document.addEventListener("dragleave", handleDragLeave);
     document.addEventListener("dragover", handleDragOver);
     document.addEventListener("drop", handleDrop);
 
-    // Tauri native drag-drop: provides actual file paths
     let unlistenDrop: (() => void) | undefined;
     (async () => {
       try {
@@ -190,7 +170,7 @@ function AppInner() {
   const handlePaletteExecute = useCallback((cmdId: string) => {
     switch (cmdId) {
       case ACTION_IDS.SESSION_NEW: setEditSessionId(null); setConnectDialogOpen(true); break;
-      case ACTION_IDS.TERMINAL_SEARCH: /* handled by TerminalView */ break;
+      case ACTION_IDS.TERMINAL_SEARCH: break;
       case ACTION_IDS.SIDEBAR_TOGGLE: setSidebarVisible(v => !v); break;
       case ACTION_IDS.SERIAL_REFRESH: refreshEndpoints(); break;
       case ACTION_IDS.PALETTE_OPEN: setPaletteOpen(true); break;
@@ -203,17 +183,17 @@ function AppInner() {
       case "newSession": setEditSessionId(null); setConnectDialogOpen(true); break;
       case "sidebar": setSidebarVisible(v => !v); break;
       case "commands": setPaletteOpen(true); break;
-      case "settings": addToast("info", "设置功能即将推出"); break;
+      case "settings": setSettingsOpen(true); break;
     }
-  }, [addToast]);
+  }, []);
 
   return (
     <div className="app-root">
-      {/* Toolbar */}
+      {/* 顶栏 */}
       <Toolbar onAction={handleToolbarAction} />
 
       <div className="app-body">
-        {/* Session Sidebar */}
+        {/* 侧栏 — 全高 */}
         <AnimatePresence>
           {sidebarVisible && (
             <motion.aside
@@ -226,59 +206,84 @@ function AppInner() {
             >
               <SessionSidebar
                 onEditSession={(id) => { setEditSessionId(id); setConnectDialogOpen(true); }}
+                onNewSession={() => { setEditSessionId(null); setConnectDialogOpen(true); }}
+                onSettingsClick={() => setSettingsOpen(true)}
               />
             </motion.aside>
           )}
         </AnimatePresence>
 
-        {/* Resize Handle */}
+        {/* 侧栏拖拽条 */}
         {sidebarVisible && (
           <ResizeHandle direction="horizontal" onMouseDown={handleSidebarMouseDown} />
         )}
 
-        {/* Main Terminal Area */}
-        <main className="terminal-viewport">
-          <TabContentDispatcher />
-        </main>
+        {/* 主内容区：终端 + 传输面板 + 发送栏 */}
+        <div className="main-content">
+          <div className="terminal-transmission-row">
+            <main className="terminal-viewport">
+              <TabContentDispatcher />
+            </main>
+            {sessionState.tabs.map(tab => {
+                const tabPlugin = pluginRegistry.get(tab.pluginId);
+                const tabShowTransmission = tabPlugin
+                  ? (tabPlugin.manifest.transfer_protocols?.length ?? 0) > 0 && tab.transferEnabled !== false
+                  : false;
+                const isActive = tab.id === sessionState.activeTabId;
+                return (
+                  <React.Fragment key={tab.id}>
+                    {isActive && tabShowTransmission && (
+                      <ResizeHandle direction="horizontal" onMouseDown={handleTransmissionMouseDown} />
+                    )}
+                    {isActive && tabShowTransmission && (
+                      <div style={{ width: transmissionWidth }}>
+                        <TransmissionPanel
+                          sessionId={tab.id}
+                          isConnected={tab.state === "connected" || tab.state === "transferring"}
+                          initialProtocol={tab.transferProtocol as ProtocolType | undefined}
+                        />
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+          </div>
+          {sessionState.tabs.map(tab => {
+            const isActive = tab.id === sessionState.activeTabId;
+            if (!isActive) return null;
+            return (
+              <div key={tab.id}>
+                <SendBar sessionId={tab.id} />
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Panel Resize Handle */}
-      <ResizeHandle direction="vertical" onMouseDown={handlePanelMouseDown} />
-
-      {/* Bottom Panel — resizable, tabbed, always visible */}
-      <div
-        className="file-transfer-panel"
-        style={{
-          height: panelHeight,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-        }}
-      >
-        <BottomPanel
-          onSendFiles={handleSendFiles}
-          onReceiveFiles={handleReceiveFiles}
-        />
-      </div>
-
-      {/* Status Bar */}
+      {/* 状态栏 */}
       <StatusBar />
 
-      {/* Command Palette */}
+      {/* 设置页 (全屏覆盖层) */}
+      <SettingsPage
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
+
+      {/* 命令面板 */}
       <CommandPalette
         isOpen={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         onExecute={handlePaletteExecute}
       />
 
-      {/* Connect Dialog */}
+      {/* 连接对话框 */}
       <ConnectDialog
         isOpen={connectDialogOpen}
         onClose={() => { setConnectDialogOpen(false); setEditSessionId(null); }}
         editSessionId={editSessionId}
       />
 
-      {/* Dropzone Overlay */}
+      {/* 拖拽覆盖层 */}
       <AnimatePresence>
         {transferState.isDragging && (
           <motion.div
@@ -298,7 +303,7 @@ function AppInner() {
         )}
       </AnimatePresence>
 
-      {/* Toasts */}
+      {/* Toast 通知 */}
       {toasts.map((toast, index) => (
         <Toast key={toast.id} type={toast.type} message={toast.message} index={index} onClose={() => {
           setToasts(prev => prev.filter(t => t.id !== toast.id));

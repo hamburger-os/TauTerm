@@ -153,7 +153,8 @@ export interface TransferCompleteEvent {
   files_completed?: number;
   files_failed?: number;
   files_skipped?: number;
-  message?: string;
+  /** 传输方向，由后端显式提供 */
+  direction?: TransferDirection;
   results?: BatchFileResult[];
 }
 
@@ -181,15 +182,3 @@ export interface BatchFileEntry {
   error?: string;
 }
 
-/** 历史记录过滤器 */
-export interface HistoryFilter {
-  protocol: ProtocolType | "all";
-  direction: TransferDirection | "all";
-  status: TransferStatus | "all";
-}
-
-export const DEFAULT_HISTORY_FILTER: HistoryFilter = {
-  protocol: "all",
-  direction: "all",
-  status: "all",
-};

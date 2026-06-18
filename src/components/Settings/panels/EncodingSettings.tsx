@@ -1,0 +1,67 @@
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import styles from "../SettingsPage.module.css";
+
+const CHARSETS = [
+  { id: "utf-8", labelKey: "settings.charsetUtf8" },
+  { id: "gb2312", labelKey: "settings.charsetGb2312" },
+  { id: "gbk", labelKey: "settings.charsetGbk" },
+  { id: "big5", labelKey: "settings.charsetBig5" },
+  { id: "shift-jis", labelKey: "settings.charsetShiftJis" },
+  { id: "euc-kr", labelKey: "settings.charsetEucKr" },
+  { id: "iso-8859-1", labelKey: "settings.charsetLatin1" },
+];
+
+/**
+ * 字符编码设置面板
+ *
+ * 选择会话数据的字符编码，v1 版本当前仅存储配置。
+ */
+export default function EncodingSettings() {
+  const { t } = useTranslation();
+  const [encoding, setEncoding] = useState(() => {
+    return localStorage.getItem("tauterm-encoding") || "utf-8";
+  });
+
+  const handleChange = (enc: string) => {
+    setEncoding(enc);
+    localStorage.setItem("tauterm-encoding", enc);
+  };
+
+  return (
+    <div>
+      <h3 className={styles.panelTitle}>{t("settings.encoding")}</h3>
+
+      <div className={styles.settingGroup}>
+        <span className={styles.settingLabel}>{t("settings.charsetLabel")}</span>
+        <div className={styles.optionList}>
+          {CHARSETS.map(cs => (
+            <button
+              key={cs.id}
+              className={`${styles.optionItem} ${encoding === cs.id ? styles.optionItemActive : ""}`}
+              onClick={() => handleChange(cs.id)}
+            >
+              <span className={styles.optionIcon}>✓</span>
+              <span>{t(cs.labelKey)}</span>
+              <span style={{ color: "var(--text-muted)", fontSize: "11px", marginLeft: "auto" }}>
+                {cs.id.toUpperCase()}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={styles.encodingNote} style={{
+        padding: "10px 14px",
+        background: "rgba(255, 165, 2, 0.08)",
+        border: "1px solid rgba(255, 165, 2, 0.2)",
+        borderRadius: "var(--radius-sm)",
+        fontSize: "var(--text-xs)",
+        color: "var(--color-warning)",
+        marginTop: "12px",
+      }}>
+        ⚠ {t("settings.charsetNote")}
+      </div>
+    </div>
+  );
+}

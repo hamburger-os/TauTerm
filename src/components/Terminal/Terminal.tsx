@@ -58,7 +58,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
     const term = new XTerm({
       convertEol: true,
-      fontSize: 14,
+      fontSize: Number(localStorage.getItem("tauterm-font-size") || "14"),
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
       theme: {
         background: "rgba(0, 0, 0, 0.25)",

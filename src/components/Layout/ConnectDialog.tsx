@@ -36,7 +36,7 @@ interface ConnectDialogProps {
  */
 export default function ConnectDialog({ isOpen, onClose, editSessionId }: ConnectDialogProps) {
   const { t } = useTranslation();
-  const { state, refreshEndpoints, connect, disconnect, switchTab } = useSession();
+  const { state, refreshEndpoints, disconnect, switchTab, deleteSession, createOfflineSession } = useSession();
 
   const [step, setStep] = useState<"mode" | "config">("mode");
   const [selectedMode, setSelectedMode] = useState("serial");
@@ -49,6 +49,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [stopBits, setStopBits] = useState("1");
   const [flowControl, setFlowControl] = useState("none");
   const [dataMode, setDataMode] = useState("text");
+  const [transferEnabled, setTransferEnabled] = useState(true);
+  const [transferProtocol, setTransferProtocol] = useState<"ymodem" | "xmodem" | "zmodem">("ymodem");
   const [sessionName, setSessionName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +90,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           if (typeof p.data_mode === "string") setDataMode(p.data_mode);
         }
         if (targetTab.name) setSessionName(targetTab.name);
+        if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
+        if (typeof targetTab.transferProtocol === "string") setTransferProtocol(targetTab.transferProtocol as "ymodem" | "xmodem" | "zmodem");
         return;
       }
     }
@@ -101,6 +105,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setStopBits("1");
     setFlowControl("none");
     setDataMode("text");
+    setTransferEnabled(true);
+    setTransferProtocol("ymodem");
     setSessionName("");
   }, [isOpen, editSessionId, state.tabs, refreshEndpoints]);
 
@@ -122,7 +128,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setError(null);
   }, []);
 
-  const handleConnect = useCallback(async () => {
+  const handleCreate = useCallback(async () => {
     if (!port && isSerial) return;
     setError(null);
     setConnecting(true);
@@ -134,18 +140,28 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       stop_bits: stopBits,
       flow_control: flowControl,
       data_mode: dataMode,
+      transfer_enabled: transferEnabled,
+      transfer_protocol: transferProtocol,
     } : {};
 
     try {
       if (editSessionId) {
+        // 编辑模式：先断连，再用新配置替换旧会话
         const targetTab = state.tabs.find(t => t.id === editSessionId);
         if (targetTab?.state === "connected") {
           await disconnect(editSessionId);
         }
       }
-      // 传递 plugin_id 给 connect
-      const sid = await connect(isSerial ? port : selectedMode, params, sessionName || undefined);
+      // 仅保存配置，不打开串口（连接由右键菜单触发）
+      const sid = await createOfflineSession(
+        isSerial ? port : selectedMode, params,
+        sessionName || undefined, undefined,
+        transferEnabled, transferProtocol,
+      );
       if (sid) {
+        if (editSessionId) {
+          await deleteSession(editSessionId);
+        }
         await switchTab(sid);
         onClose();
       }
@@ -153,7 +169,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, dataMode, sessionName, selectedMode, editSessionId, state.tabs, connect, disconnect, switchTab, onClose]);
+  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, dataMode, transferEnabled, transferProtocol, sessionName, selectedMode, editSessionId, state.tabs, createOfflineSession, disconnect, deleteSession, switchTab, onClose]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -301,6 +317,36 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       <option value="hex">{t("serial.dataModeHex")}</option>
                     </select>
                   </div>
+
+                  {/* 文件传输开关 */}
+                  <div className={styles.field}>
+                    <label className={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={transferEnabled}
+                        onChange={e => setTransferEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <span>{t("serial.enableTransfer")}</span>
+                    </label>
+                  </div>
+
+                  {/* 传输协议选择（仅启用传输时可见） */}
+                  {transferEnabled && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("serial.transferProtocol")}</label>
+                      <select
+                        className={styles.select}
+                        value={transferProtocol}
+                        onChange={e => setTransferProtocol(e.target.value as "ymodem" | "xmodem" | "zmodem")}
+                        disabled={connecting}
+                      >
+                        <option value="ymodem">YModem</option>
+                        <option value="xmodem">XModem</option>
+                        <option value="zmodem">ZModem</option>
+                      </select>
+                    </div>
+                  )}
                 </>
               )}
 
@@ -319,14 +365,12 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 </button>
                 <button
                   className={styles.connectBtn}
-                  onClick={handleConnect}
+                  onClick={handleCreate}
                   disabled={(!port && isSerial) || connecting}
                 >
                   {connecting
-                    ? t("serial.connecting")
-                    : (editSessionId && state.tabs.find(t => t.id === editSessionId)?.state === "connected")
-                      ? (t("contextMenu.reconnect") || "Reconnect")
-                      : t("serial.connect")}
+                    ? t("serial.confirming")
+                    : t("serial.confirm")}
                 </button>
               </div>
             </>

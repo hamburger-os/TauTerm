@@ -1,0 +1,164 @@
+/* 传输子系统面板 — 竖向侧面板 */
+
+.panel {
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--blur-medium));
+  -webkit-backdrop-filter: blur(var(--blur-medium));
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* 标题栏 */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+.title {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* 面板主体 (可滚动) */
+.body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 操作按钮行 */
+.actionRow {
+  display: flex;
+  gap: 4px;
+}
+
+.actionRow button {
+  flex: 1;
+}
+
+/* 配置区 */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sectionLabel {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 协议标签 (只读) */
+.protocolBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+/* 文件选择摘要 */
+.fileSummary {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 6px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+/* 进度区 */
+.progressSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 8px;
+}
+
+.fileListScroll {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+/* 占位提示 */
+.placeholder {
+  padding: 12px 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+/* 错误框 */
+.errorBox {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 6px;
+  background: rgba(255, 71, 87, 0.1);
+  border: 1px solid rgba(255, 71, 87, 0.25);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  color: var(--color-error);
+}
+
+.errorText {
+  flex: 1;
+  word-break: break-word;
+}
+
+.errorClose {
+  background: none;
+  border: none;
+  color: var(--color-error);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.errorClose:hover {
+  opacity: 1;
+}
+
+/* 失败/跳过汇总 */
+.failSummary {
+  padding: 4px 6px;
+  background: rgba(255, 71, 87, 0.08);
+  border: 1px solid rgba(255, 71, 87, 0.2);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  color: var(--color-error);
+}
+
+.skipSummary {
+  padding: 4px 6px;
+  background: rgba(255, 165, 2, 0.08);
+  border: 1px solid rgba(255, 165, 2, 0.2);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  color: var(--color-warning);
+}

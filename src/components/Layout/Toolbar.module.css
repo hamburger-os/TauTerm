@@ -60,3 +60,27 @@
 .label {
   line-height: 1;
 }
+
+/* 三区布局 */
+.leftZone,
+.centerZone,
+.rightZone {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.centerZone {
+  flex: 1;
+  justify-content: center;
+}
+
+.leftZone {
+  flex-shrink: 0;
+}
+
+.rightZone {
+  flex-shrink: 0;
+  margin-left: auto;
+}

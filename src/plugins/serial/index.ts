@@ -17,18 +17,7 @@ registerPlugin({
     capabilities: ["connection", "transfer", "endpoint_discovery"],
     transfer_protocols: ["ymodem", "xmodem", "zmodem"],
   },
-  toolbarItems: [
-    {
-      id: "serial-refresh",
-      icon: "🔄",
-      label: "刷新端口",
-      position: "left",
-      onClick: () => {
-        // 刷新端口列表通过 refreshEndpoints 在 ConnectDialog 中处理
-        console.log("[serial] Refresh ports requested");
-      },
-    },
-  ],
+  toolbarItems: [],
   locales: {
     "zh-CN": {
       "port": "端口",

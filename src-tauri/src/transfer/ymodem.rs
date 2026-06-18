@@ -26,6 +26,8 @@ pub struct TransferProgress {
     pub total_files: u32,
     pub aggregate_bytes_transferred: u64,
     pub aggregate_total_bytes: u64,
+    /// 传输方向（字段不直接在 Rust 侧读取，但通过 JSON 序列化发送到前端
+    /// transfer-progress 事件，前端据此显示方向指示器）
     #[allow(dead_code)]
     pub direction: TransferDirection,
 }

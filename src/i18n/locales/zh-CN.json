@@ -1,7 +1,6 @@
 {
   "app": {
     "title": "TauTerm",
-    "version": "v0.2.0",
     "description": "跨平台全功能终端模拟器"
   },
   "connectionType": {
@@ -23,7 +22,13 @@
     "dataMode": "数据模式",
     "dataModeText": "文本 (Text)",
     "dataModeHex": "HEX (十六进制)",
+    "enableTransfer": "启用文件传输",
+    "transferProtocol": "传输协议",
     "connect": "连接",
+    "create": "创建",
+    "creating": "创建中...",
+    "confirm": "确认",
+    "confirming": "确认中...",
     "disconnect": "断开",
     "refresh": "刷新",
     "connected": "已连接",
@@ -171,12 +176,80 @@
       }
     }
   },
+  "sidebar": {
+    "settings": "设置"
+  },
+  "sendBar": {
+    "send": "发送",
+    "placeholder": "输入要发送的数据...",
+    "appendNewline": "追加换行",
+    "sendMode": "发送模式",
+    "sendModeText": "文本",
+    "sendModeHex": "HEX",
+    "repeatSend": "重复发送",
+    "interval": "间隔(ms)",
+    "sendHistory": "发送历史",
+    "newline_crlf": "\\r\\n (CRLF)",
+    "newline_lf": "\\n (LF)",
+    "newline_cr": "\\r (CR)",
+    "newline_none": "无",
+    "disconnected": "会话已断开，发送功能不可用"
+  },
   "settings": {
     "title": "设置",
+    "general": "通用",
+    "appearance": "外观",
     "language": "语言",
+    "encoding": "字符编码",
+    "about": "关于",
     "switchToEn": "Switch to English",
     "switchToZh": "切换为中文",
-    "theme": "主题"
+    "theme": "主题",
+    "themeNeonDark": "霓虹暗黑",
+    "themeOcean": "深海蓝",
+    "themeSunset": "日落琥珀",
+    "defaultDataMode": "默认数据模式",
+    "fontSize": "终端字体大小",
+    "fontSizeNote": "更改后需重新连接终端生效",
+    "languageLabel": "界面语言",
+    "languageZh": "中文",
+    "languageEn": "English",
+    "charsetLabel": "数据字符编码",
+    "charsetUtf8": "UTF-8",
+    "charsetGb2312": "GB2312",
+    "charsetGbk": "GBK",
+    "charsetBig5": "Big5",
+    "charsetShiftJis": "Shift-JIS",
+    "charsetEucKr": "EUC-KR",
+    "charsetLatin1": "ISO-8859-1 (Latin-1)",
+    "charsetNote": "注：字符编码目前仅影响显示设置，完整的编码转码支持将在后续版本中实现。",
+    "appVersion": "应用版本",
+    "buildInfo": "构建信息"
+  },
+  "statusBar": {
+    "baudRate": "波特率",
+    "dataBits": "数据位",
+    "parity": "校验位",
+    "stopBits": "停止位",
+    "flowControl": "流控",
+    "dtr": "DTR",
+    "rts": "RTS",
+    "cts": "CTS",
+    "dsr": "DSR",
+    "uptime": "运行时间",
+    "dataMode": "数据模式"
+  },
+  "transmission": {
+    "title": "文件传输",
+    "send": "发送",
+    "receive": "接收",
+    "cancel": "取消",
+    "config": "配置",
+    "progress": "进度",
+    "noActiveTransfer": "暂无活跃传输",
+    "notAvailable": "当前会话不支持文件传输",
+    "selectFiles": "选择文件",
+    "selectDir": "选择目录"
   },
   "common": {
     "ok": "确定",

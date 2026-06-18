@@ -51,6 +51,8 @@ pub struct SavedSessionInfo {
     pub params: Value,
     pub timestamp: u64,
     pub plugin_id: String,
+    pub transfer_enabled: bool,
+    pub transfer_protocol: Option<String>,
 }
 
 // ── 命令：连接类型 ──────────────────────────────────
@@ -102,6 +104,8 @@ pub fn connect_session(
     params: Value,
     name: Option<String>,
     plugin_id: Option<String>,
+    transfer_enabled: Option<bool>,
+    transfer_protocol: Option<String>,
 ) -> Result<String, String> {
     let pid = plugin_id.unwrap_or_else(|| "serial".into());
 
@@ -114,7 +118,7 @@ pub fn connect_session(
     }
 
     match pid.as_str() {
-        "serial" => connect_session_serial(app, state, endpoint, params, name),
+        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol),
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
@@ -126,6 +130,8 @@ fn connect_session_serial(
     endpoint: String,
     params: Value,
     name: Option<String>,
+    transfer_enabled: Option<bool>,
+    transfer_protocol: Option<String>,
 ) -> Result<String, String> {
     // 通过 SerialAdapter（ProtocolAdapter trait）创建 Channel
     let channel = state.serial_adapter.connect(&endpoint, &params)
@@ -162,10 +168,15 @@ fn connect_session_serial(
         }));
     });
 
+    let transfer_enabled_val = transfer_enabled.unwrap_or(true);
+    let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "ymodem".into());
+
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
     let session_id = store.create_session(
         &session_name, "serial", &endpoint, params, channel,
         on_data, on_disconnect, app.clone(),
+        transfer_enabled_val,
+        Some(transfer_protocol_val.clone()),
     )?;
 
     // 自动保存
@@ -188,6 +199,8 @@ fn connect_session_serial(
         "name": actual_name,
         "params": actual_params,
         "connected_at": connected_at,
+        "transfer_enabled": transfer_enabled_val,
+        "transfer_protocol": transfer_protocol_val,
     }));
 
     Ok(session_id)
@@ -320,7 +333,55 @@ pub fn load_sessions(
         params: s.params,
         timestamp: s.timestamp,
         plugin_id: s.plugin_id,
+        transfer_enabled: s.transfer_enabled,
+        transfer_protocol: s.transfer_protocol.clone(),
     }).collect())
+}
+
+// ── 会话配置命令 ─────────────────────────────────────
+
+/// 保存会话配置（不打开端口，仅持久化配置）
+#[tauri::command]
+pub fn save_session_config(
+    app: AppHandle,
+    _state: State<AppState>,
+    endpoint: String,
+    params: Value,
+    name: Option<String>,
+    plugin_id: Option<String>,
+    transfer_enabled: Option<bool>,
+    transfer_protocol: Option<String>,
+) -> Result<String, String> {
+    let pid = plugin_id.unwrap_or_else(|| "serial".into());
+    let id = uuid::Uuid::new_v4().to_string();
+    let session_name = name.unwrap_or_else(|| format!("{} @ {}", pid, endpoint));
+
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+
+    let saved = crate::kernel::session_store::SavedSession {
+        id: id.clone(),
+        name: session_name,
+        plugin_id: pid,
+        endpoint,
+        params: params.clone(),
+        timestamp: now,
+        transfer_enabled: transfer_enabled.unwrap_or(true),
+        transfer_protocol: transfer_protocol.clone(),
+    };
+
+    SessionStore::save_config_to_disk(&app, saved)?;
+
+    Ok(id)
+}
+
+/// 删除会话配置（从 sessions.json 中移除指定会话）
+#[tauri::command]
+pub fn delete_session_config(
+    app: AppHandle,
+    _state: State<AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    SessionStore::delete_config_from_disk(&app, &session_id)
 }
 
 // ── YModem 文件传输命令 ────────────────────────────
@@ -332,9 +393,19 @@ pub fn send_files_ymodem(
     state: State<AppState>,
     session_id: String,
     file_paths: Vec<String>,
+    #[allow(unused)] block_size: Option<u32>,
+    #[allow(unused)] checksum_mode: Option<String>,
 ) -> Result<(), String> {
     // 验证策略
     let _strategy = TransferManager::select_strategy_by_protocol(&TransferProtocolType::YModem);
+
+    // 记录协议配置参数，供后续实现使用
+    if let Some(bs) = block_size {
+        log::info!("YModem 发送 block_size={}", bs);
+    }
+    if let Some(ref cm) = checksum_mode {
+        log::info!("YModem 发送 checksum_mode={}", cm);
+    }
 
     let (give_tx, give_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
     let (return_tx, return_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
@@ -357,7 +428,17 @@ pub fn send_files_ymodem(
     }
 
     let mut channel = give_rx.recv()
-        .map_err(|_| "无法从 I/O 线程获取 Channel".to_string())?;
+        .map_err(|e| {
+            // 握手失败，恢复会话状态
+            if let Ok(mut store) = state.session_store.lock() {
+                if let Some(h) = store.get_session_mut(&session_id) {
+                    h.state = SessionState::Connected;
+                    h.cancel_transfer_tx = None;
+                    h.channel_return_tx = None;
+                }
+            }
+            format!("无法从 I/O 线程获取 Channel: {}", e)
+        })?;
 
     let _ = app.emit("session-transfer-started", serde_json::json!({
         "session_id": session_id,
@@ -419,8 +500,18 @@ pub fn receive_files_ymodem(
     state: State<AppState>,
     session_id: String,
     download_dir: String,
+    #[allow(unused)] block_size: Option<u32>,
+    #[allow(unused)] checksum_mode: Option<String>,
 ) -> Result<(), String> {
     let _strategy = TransferManager::select_strategy_by_protocol(&TransferProtocolType::YModem);
+
+    // 记录协议配置参数，供后续实现使用
+    if let Some(bs) = block_size {
+        log::info!("YModem 接收 block_size={}", bs);
+    }
+    if let Some(ref cm) = checksum_mode {
+        log::info!("YModem 接收 checksum_mode={}", cm);
+    }
 
     let (give_tx, give_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
     let (return_tx, return_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
@@ -443,7 +534,17 @@ pub fn receive_files_ymodem(
     }
 
     let mut channel = give_rx.recv()
-        .map_err(|_| "无法从 I/O 线程获取 Channel".to_string())?;
+        .map_err(|e| {
+            // 握手失败，恢复会话状态
+            if let Ok(mut store) = state.session_store.lock() {
+                if let Some(h) = store.get_session_mut(&session_id) {
+                    h.state = SessionState::Connected;
+                    h.cancel_transfer_tx = None;
+                    h.channel_return_tx = None;
+                }
+            }
+            format!("无法从 I/O 线程获取 Channel: {}", e)
+        })?;
 
     let _ = app.emit("session-transfer-started", serde_json::json!({
         "session_id": session_id,
@@ -713,6 +814,7 @@ fn ymodem_send(
         "files_completed": completed,
         "files_failed": failed,
         "files_skipped": skipped,
+        "direction": "send",
         "results": batch_results
     }));
     Ok(())
@@ -777,7 +879,7 @@ fn ymodem_receive(
         "files_completed": completed,
         "files_failed": failed,
         "files_skipped": skipped,
-        "message": "接收完成",
+        "direction": "receive",
         "results": batch_results
     }));
     Ok(())
