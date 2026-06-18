@@ -1,6 +1,6 @@
 [package]
 name = "tauterm"
-version = "0.2.0"
+version = "0.3.0"
 description = "TauTerm - 跨平台串口终端模拟器"
 authors = ["TauTerm"]
 edition = "2021"

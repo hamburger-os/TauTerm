@@ -18,7 +18,7 @@
 //! └── state: SessionState
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,12 @@ pub struct ActiveSessionHandle {
     pub rx_bytes: Arc<AtomicU64>,
     pub connected_at: Option<u64>,
     pub stats_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    /// 统计采集器的取消标志（用于无 tokio 的 std thread 轮询）
+    pub stats_cancel_flag: Option<Arc<AtomicBool>>,
+    /// 是否启用文件传输子系统（默认 true）
+    pub transfer_enabled: bool,
+    /// 文件传输协议（ymodem / xmodem / zmodem）
+    pub transfer_protocol: Option<String>,
 }
 
 /// 会话存储
@@ -83,7 +89,13 @@ pub struct SavedSession {
     pub endpoint: String,
     pub params: serde_json::Value,
     pub timestamp: u64,
+    pub transfer_enabled: bool,
+    pub transfer_protocol: Option<String>,
 }
+
+/// 全局文件锁 — 保护 sessions.json 的 read-modify-write 操作。
+/// 目前 Tauri 命令串行执行，但该锁为未来的并行调用（如批量删除）提供安全保证。
+static SESSIONS_FILE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl SessionStore {
     pub fn new() -> Self {
@@ -107,6 +119,8 @@ impl SessionStore {
         on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
         on_disconnect: Box<dyn Fn(String) + Send>,
         app_handle: tauri::AppHandle,
+        transfer_enabled: bool,
+        transfer_protocol: Option<String>,
     ) -> Result<TabId, String> {
         if self.sessions.len() >= self.max_sessions {
             return Err(format!("已达到最大会话数限制 ({})", self.max_sessions));
@@ -140,15 +154,15 @@ impl SessionStore {
             tx_clone, rx_clone,
         );
 
-        // 启动 StatsCollector
-        let (stats_cancel_tx, stats_cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        // 启动 StatsCollector（使用 std thread + AtomicBool 取消，无需 tokio runtime）
+        let stats_cancel_flag = Arc::new(AtomicBool::new(false));
         Self::start_stats_collector(
             app_handle.clone(),
             id.clone(),
             tx_bytes.clone(),
             rx_bytes.clone(),
             connected_at,
-            stats_cancel_rx,
+            stats_cancel_flag.clone(),
         );
 
         let handle = ActiveSessionHandle {
@@ -166,7 +180,10 @@ impl SessionStore {
             tx_bytes,
             rx_bytes,
             connected_at,
-            stats_cancel_tx: Some(stats_cancel_tx),
+            stats_cancel_tx: None,
+            stats_cancel_flag: Some(stats_cancel_flag),
+            transfer_enabled,
+            transfer_protocol,
         };
 
         self.sessions.insert(id.clone(), handle);
@@ -185,9 +202,9 @@ impl SessionStore {
         if let Some(tx) = handle.cancel_transfer_tx.take() {
             let _ = tx.send(());
         }
-        // 取消 StatsCollector
-        if let Some(tx) = handle.stats_cancel_tx.take() {
-            let _ = tx.send(());
+        // 取消 StatsCollector（通过 AtomicBool 标志）
+        if let Some(ref flag) = handle.stats_cancel_flag {
+            flag.store(true, Ordering::SeqCst);
         }
         // 释放 Channel 归还通道
         handle.channel_return_tx = None;
@@ -277,10 +294,14 @@ impl SessionStore {
             endpoint: h.endpoint.clone(),
             params: h.params.clone(),
             timestamp: chrono::Utc::now().timestamp_millis() as u64,
+            transfer_enabled: h.transfer_enabled,
+            transfer_protocol: h.transfer_protocol.clone(),
         }).collect()
     }
 
     /// 重连指定会话
+    /// TODO: 暴露为 Tauri 命令并在前端 ConnectDialog 编辑模式中使用，
+    /// 以保留 UUID 和 I/O 统计连续性（当前前端使用 delete+create 方式）。
     pub fn reconnect_session(
         &mut self,
         session_id: &str,
@@ -292,8 +313,8 @@ impl SessionStore {
         let handle = self.sessions.get_mut(session_id)
             .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
 
-        if let Some(tx) = handle.stats_cancel_tx.take() {
-            let _ = tx.send(());
+        if let Some(ref flag) = handle.stats_cancel_flag {
+            flag.store(true, Ordering::SeqCst);
         }
 
         let connected_at = Some(
@@ -315,14 +336,14 @@ impl SessionStore {
             tx_bytes.clone(), rx_bytes.clone(),
         );
 
-        let (stats_cancel_tx, stats_cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let new_stats_flag = Arc::new(AtomicBool::new(false));
         Self::start_stats_collector(
             app_handle.clone(),
             session_id.to_string(),
             tx_bytes.clone(),
             rx_bytes.clone(),
             connected_at,
-            stats_cancel_rx,
+            new_stats_flag.clone(),
         );
 
         let params = handle.params.clone();
@@ -334,7 +355,8 @@ impl SessionStore {
         handle.tx_bytes = tx_bytes;
         handle.rx_bytes = rx_bytes;
         handle.connected_at = connected_at;
-        handle.stats_cancel_tx = Some(stats_cancel_tx);
+        handle.stats_cancel_tx = None;
+        handle.stats_cancel_flag = Some(new_stats_flag);
 
         Ok(params)
     }
@@ -360,58 +382,42 @@ impl SessionStore {
             handle.state = SessionState::Disconnected;
             handle.io_cancel_tx = None;
             handle.io_thread = None;
-            if let Some(tx) = handle.stats_cancel_tx.take() {
-                let _ = tx.send(());
+            if let Some(ref flag) = handle.stats_cancel_flag {
+                flag.store(true, Ordering::SeqCst);
             }
         }
     }
 
-    /// 启动 I/O 统计采集器
+    /// 启动 I/O 统计采集器（使用 std::thread + AtomicBool 取消，无需 tokio runtime）
     fn start_stats_collector(
         app_handle: tauri::AppHandle,
         tab_id: String,
         tx_bytes: Arc<AtomicU64>,
         rx_bytes: Arc<AtomicU64>,
         connected_at: Option<u64>,
-        cancel_rx: tokio::sync::oneshot::Receiver<()>,
+        cancel_flag: Arc<AtomicBool>,
     ) {
         std::thread::spawn(move || {
-            let rt = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt,
-                Err(e) => {
-                    log::error!("StatsCollector: 无法创建 tokio runtime: {}", e);
-                    return;
+            let mut last_tx: u64 = 0;
+            let mut last_rx: u64 = 0;
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+                if cancel_flag.load(Ordering::SeqCst) {
+                    break;
                 }
-            };
-
-            rt.block_on(async move {
-                let mut interval = tokio::time::interval(Duration::from_secs(1));
-                tokio::pin!(let cancel = cancel_rx;);
-
-                let mut last_tx: u64 = 0;
-                let mut last_rx: u64 = 0;
-
-                loop {
-                    tokio::select! {
-                        _ = &mut cancel => break,
-                        _ = interval.tick() => {
-                            let tx = tx_bytes.load(Ordering::Relaxed);
-                            let rx = rx_bytes.load(Ordering::Relaxed);
-
-                            if tx != last_tx || rx != last_rx {
-                                last_tx = tx;
-                                last_rx = rx;
-                                let _ = app_handle.emit("session-stats", SessionStats {
-                                    tab_id: tab_id.clone(),
-                                    tx_bytes: tx,
-                                    rx_bytes: rx,
-                                    connected_at,
-                                });
-                            }
-                        }
-                    }
+                let tx = tx_bytes.load(Ordering::Relaxed);
+                let rx = rx_bytes.load(Ordering::Relaxed);
+                if tx != last_tx || rx != last_rx {
+                    last_tx = tx;
+                    last_rx = rx;
+                    let _ = app_handle.emit("session-stats", SessionStats {
+                        tab_id: tab_id.clone(),
+                        tx_bytes: tx,
+                        rx_bytes: rx,
+                        connected_at,
+                    });
                 }
-            });
+            }
         });
     }
 
@@ -427,6 +433,7 @@ impl SessionStore {
 
     /// 保存会话到磁盘
     pub fn save_to_disk(&self, path: &std::path::Path) -> Result<(), String> {
+        let _guard = SESSIONS_FILE_MUTEX.lock().map_err(|e| format!("获取文件锁失败: {}", e))?;
         let current: Vec<SavedSession> = self.get_saved_sessions();
         let existing = Self::load_from_disk(path).unwrap_or_default();
 
@@ -441,13 +448,13 @@ impl SessionStore {
             .collect();
         merged.extend(current);
 
-        let mut dedup: HashMap<(String, String), SavedSession> = HashMap::new();
+        // 按 session id 去重（保留 current_ids 中的版本，它们是最新的）
+        let mut dedup: HashMap<String, SavedSession> = HashMap::new();
         for s in merged {
-            let key = (s.endpoint.clone(), s.plugin_id.clone());
             if current_ids.contains(&s.id) {
-                dedup.insert(key, s);
+                dedup.insert(s.id.clone(), s);
             } else {
-                dedup.entry(key).or_insert(s);
+                dedup.entry(s.id.clone()).or_insert(s);
             }
         }
         let merged: Vec<SavedSession> = dedup.into_values().collect();
@@ -477,6 +484,38 @@ impl SessionStore {
                 Ok(Vec::new())
             }
         }
+    }
+
+    /// 保存单个会话配置到磁盘（合并写入，不依赖内存状态）
+    pub fn save_config_to_disk(
+        app_handle: &tauri::AppHandle,
+        session: SavedSession,
+    ) -> Result<(), String> {
+        let _guard = SESSIONS_FILE_MUTEX.lock().map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let path = Self::sessions_file_path(app_handle);
+        let mut existing = Self::load_from_disk(&path).unwrap_or_default();
+        // 用新配置覆盖同 ID 的旧记录
+        existing.retain(|s| s.id != session.id);
+        existing.push(session);
+        let json = serde_json::to_string_pretty(&existing)
+            .map_err(|e| format!("序列化失败: {}", e))?;
+        std::fs::write(&path, json)
+            .map_err(|e| format!("写入文件失败: {}", e))
+    }
+
+    /// 从磁盘删除指定会话配置
+    pub fn delete_config_from_disk(
+        app_handle: &tauri::AppHandle,
+        session_id: &str,
+    ) -> Result<(), String> {
+        let _guard = SESSIONS_FILE_MUTEX.lock().map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let path = Self::sessions_file_path(app_handle);
+        let existing = Self::load_from_disk(&path).unwrap_or_default();
+        let filtered: Vec<_> = existing.into_iter().filter(|s| s.id != session_id).collect();
+        let json = serde_json::to_string_pretty(&filtered)
+            .map_err(|e| format!("序列化失败: {}", e))?;
+        std::fs::write(&path, json)
+            .map_err(|e| format!("写入文件失败: {}", e))
     }
 }
 

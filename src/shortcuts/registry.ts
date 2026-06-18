@@ -102,7 +102,6 @@ shortcutRegistry.register({ id: ACTION_IDS.TERMINAL_SEARCH, keys: "Ctrl+F", desc
 shortcutRegistry.register({ id: ACTION_IDS.TERMINAL_COPY, keys: "Ctrl+Shift+C", description: "复制", category: "Terminal" });
 shortcutRegistry.register({ id: ACTION_IDS.TERMINAL_PASTE, keys: "Ctrl+Shift+V", description: "粘贴", category: "Terminal" });
 
-shortcutRegistry.register({ id: ACTION_IDS.TRANSFER_TOGGLE, keys: "Ctrl+Shift+F", description: "切换文件传输面板", category: "Transfer" });
 
 shortcutRegistry.register({ id: ACTION_IDS.PALETTE_OPEN, keys: "Ctrl+Shift+P", description: "打开命令面板", category: "Application" });
 shortcutRegistry.register({ id: ACTION_IDS.SIDEBAR_TOGGLE, keys: "Ctrl+Shift+B", description: "切换侧边栏", category: "Application" });

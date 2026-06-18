@@ -20,9 +20,6 @@ export const ACTION_IDS = {
   TERMINAL_COPY: "terminal.copy",
   TERMINAL_PASTE: "terminal.paste",
 
-  // Transfer
-  TRANSFER_TOGGLE: "transfer.toggle",
-
   // Application
   PALETTE_OPEN: "palette.open",
   SIDEBAR_TOGGLE: "sidebar.toggle",

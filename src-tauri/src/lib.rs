@@ -106,6 +106,8 @@ pub fn run() {
             commands::get_tabs,
             commands::save_sessions,
             commands::load_sessions,
+            commands::save_session_config,
+            commands::delete_session_config,
             commands::send_files_ymodem,
             commands::receive_files_ymodem,
             commands::cancel_transfer,

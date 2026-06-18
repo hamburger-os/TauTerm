@@ -24,9 +24,28 @@
   letter-spacing: 0.5px;
 }
 
-.count {
-  color: var(--text-muted);
-  font-size: 10px;
+.addBtn {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  transition: all var(--transition-fast);
+}
+
+.addBtn:hover {
+  background: rgba(0, 212, 170, 0.08);
+  border-color: rgba(0, 212, 170, 0.25);
+  color: var(--accent-primary);
 }
 
 .search {
@@ -138,4 +157,44 @@
   background: var(--accent-primary);
   border-radius: 0 2px 2px 0;
   box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* ===== 底部区域 ===== */
+
+.bottomSection {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.settingsBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.settingsBtn:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--glass-border-hover);
+  color: var(--text-primary);
+}
+
+.settingsIcon {
+  font-size: var(--text-sm);
+  flex-shrink: 0;
+}
+
+.settingsLabel {
+  white-space: nowrap;
 }

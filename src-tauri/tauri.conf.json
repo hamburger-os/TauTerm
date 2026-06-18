@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri/v2/crates/tauri-utils/schema.json",
   "productName": "TauTerm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "identifier": "com.tauterm.app",
   "build": {
     "frontendDist": "../dist",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; script-src 'self'"
     }
   },
   "plugins": {}

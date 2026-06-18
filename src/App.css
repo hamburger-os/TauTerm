@@ -1,4 +1,4 @@
-/* TauTerm v0.2 — Hub Layout */
+/* TauTerm v0.3 — Refactored Hub Layout */
 
 .app-root {
   width: 100vw;
@@ -17,6 +17,7 @@
   display: flex;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* ===== 侧边栏 ===== */
@@ -30,26 +31,34 @@
   overflow: hidden;
 }
 
+/* ===== 主内容区 ===== */
+
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.terminal-transmission-row {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  min-height: 0;
+}
+
 /* ===== 终端视口 ===== */
 
 .terminal-viewport {
   flex: 1;
-  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
   background: rgba(0, 0, 0, 0.2);
-}
-
-/* ===== 文件传输面板 ===== */
-
-.file-transfer-panel {
-  border-top: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--blur-medium));
-  -webkit-backdrop-filter: blur(var(--blur-medium));
-  overflow: hidden;
+  min-width: 0;
 }
 
 /* ===== Dropzone 覆盖层 ===== */

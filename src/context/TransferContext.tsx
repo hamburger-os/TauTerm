@@ -135,7 +135,10 @@ function transferReducer(
       return updated;
     }
     case "ADD_HISTORY":
-      return { ...state, history: [action.item, ...state.history] };
+      return {
+        ...state,
+        history: [action.item, ...state.history].slice(0, 100),
+      };
     case "CLEAR_HISTORY":
       return { ...state, history: [] };
     case "SET_ERROR":
@@ -214,7 +217,7 @@ function transferReducer(
           synced[key] = {
             ...synced[key],
             status: "skipped",
-            error: "批次提前结束，该文件未被传输",
+            error: "Batch ended early, file not transferred",
           };
         }
       }
@@ -261,6 +264,9 @@ const TransferContext = createContext<TransferContextValue | null>(null);
 export function TransferProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(transferReducer, initialState);
   const idCounter = useRef(0);
+  // 使用 ref 追踪 activeProtocol，避免事件监听器闭包过期
+  const activeProtocolRef = useRef(state.activeProtocol);
+  activeProtocolRef.current = state.activeProtocol;
 
   const addHistory = useCallback(
     (item: Omit<TransferHistoryItem, "id">) => {
@@ -294,7 +300,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       if (!commandName) {
         dispatch({
           type: "SET_ERROR",
-          error: `不支持的协议/方向组合: ${protocol}/${direction}`,
+          error: "transfer.error.unsupported",
         });
         return;
       }
@@ -341,14 +347,14 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         dispatch({ type: "SET_STATUS", status: "failed" });
         dispatch({
           type: "SET_ERROR",
-          error: `${direction === "send" ? "发送" : "接收"}失败: ${e}`,
+          error: `Transfer failed: ${e}`,
         });
         addHistory({
           file_name:
             direction === "send"
               ? (filePaths && extractFileNames(filePaths).join(", ")) ||
                 "unknown"
-              : "接收文件",
+              : "batch-receive",
           direction,
           size: 0,
           status: "failed",
@@ -393,7 +399,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       await invoke("cancel_transfer", { sessionId });
       dispatch({ type: "SET_STATUS", status: "cancelled" });
     } catch (e) {
-      dispatch({ type: "SET_ERROR", error: `取消失败: ${e}` });
+      dispatch({ type: "SET_ERROR", error: `Cancel failed: ${e}` });
     }
   }, []);
 
@@ -447,14 +453,12 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           } else {
             dispatch({ type: "SET_STATUS", status: "failed" });
           }
-          // Per-file history with protocol info
+          // Per-file history with protocol info — 从 ref 读取避免闭包过期
           if (payload.results && payload.results.length > 0) {
-            const activeProtocol = payload.results.length > 0
-              ? "ymodem" as ProtocolType
-              : null;
+            const activeProtocol = activeProtocolRef.current ?? "ymodem";
             for (const r of payload.results) {
               const direction: TransferDirection =
-                payload.message === "接收完成" ? "receive" : "send";
+                payload.direction ?? "send";
               addHistory({
                 file_name: r.file_name,
                 direction,
@@ -499,7 +503,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       }
       unlisteners.push(u4);
     })().catch((e) => {
-      console.error("TransferContext: 事件监听器注册失败:", e);
+      console.error("TransferContext: Failed to register event listeners:", e);
     });
 
     return () => {

@@ -208,16 +208,18 @@ graph LR
 
 - 🔌 **微内核插件架构** — 所有协议作为独立插件，新协议无需修改内核代码
 - 🗂️ **统一标签页管理** — 串口、SSH、FTP、iPerf 共享同一标签栏，拖拽排序，右键菜单
+- 🗂️ **离线会话配置** — 不连接即可创建/编辑会话参数，持久化保存，右键菜单一键连接
 - 🖥️ **终端仿真** — 基于 xterm.js，多实例池管理，CSS opacity 无重建切换
-- 📁 **多策略文件传输** — Inline / SideChannel / SeparateConnection 自适应，YModem/XModem/ZModem + SFTP/SCP + FTP
+- 📁 **文件传输** — 右侧竖向面板，按会话独立配置传输协议（YModem/XModem/ZModem），Inline / SideChannel / SeparateConnection 多策略自适应
+- 📤 **数据发送栏** — 终端底部快速发送，支持 Text/HEX 模式切换、换行符追加、重复发送、发送历史
+- ⚙️ **设置页面** — 全屏覆盖层，主题切换 / 字体大小 / 语言 / 字符编码集中管理
 - 🔐 **凭据存储** — OS 原生 keyring + AES-256-GCM 降级，密码/密钥/证书/Token 类型安全
 - 🎨 **Liquid Glass v2 设计系统** — 磨砂玻璃面板、霓虹发光边框、Framer Motion 动画、Neon Dark / Ocean / Sunset 三主题
 - 🌐 **多语言** — i18next 命名空间隔离，插件自带翻译，运行时切换
 - ⚡ **命令面板** — `Ctrl+Shift+P` 模糊搜索所有命令，键盘驱动操作
 - 🔍 **终端搜索** — `Ctrl+F` 搜索 buffer，大小写切换，上下导航
 - 🎹 **快捷键系统** — 全局/插件作用域，冲突检测，作用域分发
-- 💾 **会话持久化** — Config Store 类型安全存储，Schema 校验，断开会话保留重连
-- 🚀 **跨平台** — Windows / Linux / macOS，原生体验
+- 💾 **会话持久化** — 离线创建/编辑会话配置，断开会话保留重连，按会话独立传输开关
 
 ---
 
@@ -252,6 +254,8 @@ TauTerm/
 │   │   ├── plugin_host.rs      # 插件发现、加载、生命周期
 │   │   ├── theme_engine.rs     # CSS 变量生成、主题切换
 │   │   ├── shortcut_engine.rs  # 快捷键注册、冲突检测、作用域分发
+│   │   ├── plugin_adapter.rs   # ProtocolAdapter trait + ContentType/IoStrategy 定义
+│   │   ├── session_store.rs    # 会话存储、I/O 生命周期、统计采集
 │   │   └── i18n_engine.rs      # 命名空间翻译、动态语言切换
 │   │
 │   ├── channel/                # I/O 通道抽象层
@@ -263,29 +267,16 @@ TauTerm/
 │   │
 │   ├── transfer/               # 传输子系统
 │   │   ├── mod.rs              # TransferManager + 策略选择
-│   │   ├── strategy_inline.rs  # Inline 策略（端口移交）
-│   │   ├── strategy_sidechannel.rs  # SideChannel 策略（SSH SFTP）
-│   │   ├── strategy_separate.rs     # SeparateConnection 策略（FTP）
-│   │   └── protocols/          # 传输协议实现
-│   │       ├── ymodem.rs
-│   │       ├── xmodem.rs
-│   │       ├── zmodem.rs
-│   │       └── sftp.rs
+│   │   ├── manager.rs          # 传输策略调度
+│   │   ├── ymodem.rs           # YModem 协议实现（发送/接收引擎）
+│   │   └── types.rs            # TransferProtocolType 枚举等共享类型
 │   │
 │   ├── security/               # 安全模块
-│   │   ├── credential_store.rs # 凭据存储（keyring + AES 降级）
-│   │   ├── known_hosts.rs      # SSH 主机密钥管理
-│   │   └── log_sanitizer.rs    # 日志脱敏
+│   │   └── credential_store.rs # 凭据存储（keyring + AES 降级）
 │   │
 │   └── plugins/                # 内建协议插件
-│       ├── serial/             # 串口插件（ProtocolAdapter + Channel）
-│       ├── ssh/                # SSH 插件
-│       ├── telnet/             # Telnet 插件
-│       ├── tcp_raw/            # TCP Raw 插件
-│       ├── trdp/               # TRDP 插件
-│       ├── shell_local/        # 本地 Shell 插件
-│       ├── ftp/                # FTP 插件
-│       └── iperf3/             # iPerf3 插件
+│       └── serial/             # 串口插件（ProtocolAdapter + Channel）
+│       # SSH / Telnet / TCP Raw / TRDP / Shell / FTP / iPerf3 — 计划中
 │
 ├── src/                        # React 前端
 │   ├── core/                   # 内核前端 API
@@ -294,25 +285,23 @@ TauTerm/
 │   │   ├── config-store.ts     # useConfigStore() hook
 │   │   └── event-bus.ts        # 类型事件订阅
 │   │
-│   ├── renderers/              # 内容适配器
+│   ├── renderers/              # 内容适配器（计划中）
 │   │   ├── TerminalRenderer.tsx    # xterm.js 实例池
-│   │   ├── FileBrowserRenderer.tsx # 双栏文件树
-│   │   ├── StatsDashboard.tsx      # 图表仪表盘
+│   │   ├── FileBrowserRenderer.tsx # 双栏文件树（计划中）
 │   │   └── CustomRenderer.tsx      # 插件自定义委托
 │   │
 │   ├── components/             # UI 组件
-│   │   ├── Layout/             # AppShell, Toolbar, Sidebar, TabBar, BottomPanel, StatusBar
-│   │   ├── ConnectDialog/      # 统一连接对话框（动态协议选择 + 插件 ConnectForm）
+│   │   ├── Layout/             # Toolbar, Sidebar, TabBar, StatusBar, ConnectDialog, ResizeHandle
 │   │   ├── CommandPalette/     # 命令面板
-│   │   ├── FileTransfer/       # 文件传输面板
+│   │   ├── SendBar/            # 数据发送栏（文本/HEX 输入、重复发送、发送历史）
+│   │   ├── Transmission/       # 传输侧面板（协议配置 + 发送/接收 + 进度）
+│   │   ├── Settings/           # 设置页（全屏覆盖层：通用/外观/语言/编码/关于）
+│   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
 │   │   └── common/             # GlassPanel, GlassButton, ContextMenu, Toast
 │   │
 │   └── plugins/                # 插件前端
-│       ├── serial/             # SerialConnectForm, 工具栏, 状态栏
-│       ├── ssh/                # SshConnectForm, 端口转发面板
-│       ├── telnet/
-│       ├── ftp/
-│       └── iperf3/
+│       └── serial/             # SerialConnectForm, 工具栏, 状态栏
+│       # SSH / Telnet / FTP / iPerf3 等前端插件 — 计划中
 │
 └── package.json
 ```
@@ -323,7 +312,7 @@ TauTerm/
 
 | 快捷键 | 操作 | 作用域 |
 |--------|------|--------|
-| `Ctrl+N` | 新建会话 | 全局 |
+| `Ctrl+Shift+N` | 新建会话 | 全局 |
 | `Ctrl+Shift+W` | 关闭当前标签页 | 全局 |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | 切换标签页 | 全局 |
 | `Alt+1` ~ `Alt+9` | 快速切换到标签页 N | 全局 |
@@ -331,7 +320,6 @@ TauTerm/
 | `Ctrl+Shift+P` | 命令面板 | 全局 |
 | `Ctrl+Shift+B` | 切换侧边栏 | 全局 |
 | `Ctrl+Shift+R` | 刷新端口列表 | Serial 作用域 |
-| `Ctrl+Shift+F` | 切换文件传输面板 | 全局 |
 
 ---
 
@@ -362,7 +350,7 @@ npm run tauri build
 
 ## 发展路线图
 
-### v0.3 — 微内核重构
+### v0.3 — 微内核重构 ✅（当前版本）
 - [x] 8 模块微内核架构
 - [x] `Channel` trait I/O 抽象
 - [x] Plugin Host + `ProtocolAdapter` trait
@@ -430,12 +418,13 @@ TauTerm 处于活跃开发阶段，欢迎贡献。
 ### 开发新插件
 
 1. 在 `src-tauri/src/plugins/` 创建插件目录
-2. 实现 `ProtocolAdapter` trait
-3. 编写 `manifest.json` 和 `capabilities.json`
-4. 在 `registerPlugin()` 中注册前端组件
-5. 在 Plugin Host 中注册插件
+2. 实现 `ProtocolAdapter` trait（见上文"后端核心 Trait"章节）
+3. 编写 `manifest.json` 声明元数据与能力（参考 Serial 插件 `manifest` 定义）
+4. 在 `registerPlugin()` 中注册前端组件（`connectForm`、`locales` 等）
+5. 在 Plugin Host（`src-tauri/src/lib.rs` 的 `run()` 函数）中注册插件
+6. 在 `commands.rs` 的 `connect_session` match 分支中添加协议路由
 
-详细指南见 `docs/architecture/plugin-development.md`。
+详细插件开发指南将在 v1.0 发布时随插件 SDK 文档一同推出。
 
 ---
 

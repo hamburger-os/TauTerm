@@ -1,7 +1,6 @@
 {
   "app": {
     "title": "TauTerm",
-    "version": "v0.2.0",
     "description": "Cross-platform Full Terminal Emulator"
   },
   "connectionType": {
@@ -23,7 +22,13 @@
     "dataMode": "Data Mode",
     "dataModeText": "Text",
     "dataModeHex": "HEX",
+    "enableTransfer": "Enable File Transfer",
+    "transferProtocol": "Transfer Protocol",
     "connect": "Connect",
+    "create": "Create",
+    "creating": "Creating...",
+    "confirm": "Confirm",
+    "confirming": "Confirming...",
     "disconnect": "Disconnect",
     "refresh": "Refresh",
     "connected": "Connected",
@@ -171,12 +176,80 @@
       }
     }
   },
+  "sidebar": {
+    "settings": "Settings"
+  },
+  "sendBar": {
+    "send": "Send",
+    "placeholder": "Type data to send...",
+    "appendNewline": "Append Newline",
+    "sendMode": "Send Mode",
+    "sendModeText": "Text",
+    "sendModeHex": "HEX",
+    "repeatSend": "Repeat Send",
+    "interval": "Interval(ms)",
+    "sendHistory": "Send History",
+    "newline_crlf": "\\r\\n (CRLF)",
+    "newline_lf": "\\n (LF)",
+    "newline_cr": "\\r (CR)",
+    "newline_none": "None",
+    "disconnected": "Session disconnected, send unavailable"
+  },
   "settings": {
     "title": "Settings",
+    "general": "General",
+    "appearance": "Appearance",
     "language": "Language",
+    "encoding": "Encoding",
+    "about": "About",
     "switchToEn": "Switch to English",
     "switchToZh": "切换为中文",
-    "theme": "Theme"
+    "theme": "Theme",
+    "themeNeonDark": "Neon Dark",
+    "themeOcean": "Ocean Blue",
+    "themeSunset": "Sunset Amber",
+    "defaultDataMode": "Default Data Mode",
+    "fontSize": "Terminal Font Size",
+    "fontSizeNote": "Changes take effect after reconnecting the terminal",
+    "languageLabel": "Interface Language",
+    "languageZh": "中文",
+    "languageEn": "English",
+    "charsetLabel": "Character Encoding",
+    "charsetUtf8": "UTF-8",
+    "charsetGb2312": "GB2312",
+    "charsetGbk": "GBK",
+    "charsetBig5": "Big5",
+    "charsetShiftJis": "Shift-JIS",
+    "charsetEucKr": "EUC-KR",
+    "charsetLatin1": "ISO-8859-1 (Latin-1)",
+    "charsetNote": "Note: Encoding currently affects display settings only. Full transcoding support will be added in a future release.",
+    "appVersion": "App Version",
+    "buildInfo": "Build Info"
+  },
+  "statusBar": {
+    "baudRate": "Baud",
+    "dataBits": "Data",
+    "parity": "Parity",
+    "stopBits": "Stop",
+    "flowControl": "Flow",
+    "dtr": "DTR",
+    "rts": "RTS",
+    "cts": "CTS",
+    "dsr": "DSR",
+    "uptime": "Uptime",
+    "dataMode": "Data Mode"
+  },
+  "transmission": {
+    "title": "File Transfer",
+    "send": "Send",
+    "receive": "Receive",
+    "cancel": "Cancel",
+    "config": "Config",
+    "progress": "Progress",
+    "noActiveTransfer": "No active transfer",
+    "notAvailable": "Transfer not available",
+    "selectFiles": "Select Files",
+    "selectDir": "Select Directory"
   },
   "common": {
     "ok": "OK",
