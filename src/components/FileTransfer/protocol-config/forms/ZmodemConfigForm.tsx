@@ -16,11 +16,11 @@ export default function ZmodemConfigForm({
   const toggleStyle = (active: boolean): React.CSSProperties => ({
     width: "32px",
     height: "18px",
-    borderRadius: "9px",
+    borderRadius: "var(--radius-full)",
     background: active
       ? "var(--accent-gradient)"
-      : "rgba(255,255,255,0.12)",
-    border: "none",
+      : "var(--glass-button-bg)",
+    border: "1px solid var(--glass-border-default)",
     cursor: "pointer",
     position: "relative",
     transition: "background 0.2s",
@@ -72,7 +72,7 @@ export default function ZmodemConfigForm({
               width: "14px",
               height: "14px",
               borderRadius: "50%",
-              background: "#fff",
+              background: "var(--text-primary)",
               transition: "left 0.2s",
             }}
           />
@@ -107,7 +107,7 @@ export default function ZmodemConfigForm({
               width: "14px",
               height: "14px",
               borderRadius: "50%",
-              background: "#fff",
+              background: "var(--text-primary)",
               transition: "left 0.2s",
             }}
           />
@@ -142,7 +142,7 @@ export default function ZmodemConfigForm({
               width: "14px",
               height: "14px",
               borderRadius: "50%",
-              background: "#fff",
+              background: "var(--text-primary)",
               transition: "left 0.2s",
             }}
           />

@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { AnimatePresence, motion } from "framer-motion";
 import AppShell from "./components/Layout/AppShell";
+import GoogleGlowBackground from "./components/Layout/GoogleGlowBackground";
 import Toolbar from "./components/Layout/Toolbar";
 import SessionSidebar from "./components/Layout/SessionSidebar";
 import StatusBar from "./components/Layout/StatusBar";
@@ -189,7 +190,10 @@ function AppInner() {
 
   return (
     <div className="app-root">
-      {/* 顶栏 */}
+      {/* 动态光球背景层 (z-index: 0) */}
+      <GoogleGlowBackground />
+
+      {/* 顶栏 (z-index: 10) */}
       <Toolbar onAction={handleToolbarAction} />
 
       <div className="app-body">

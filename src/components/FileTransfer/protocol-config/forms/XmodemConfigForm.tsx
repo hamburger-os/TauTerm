@@ -18,14 +18,14 @@ export default function XmodemConfigForm({
       padding: "3px 6px",
       fontSize: "var(--text-xs)",
       textAlign: "center" as const,
-      background: active ? "var(--glass-bg-active)" : "var(--glass-bg)",
+      background: active ? "var(--glass-bg-active)" : "var(--glass-button-bg)",
       border: active
         ? "1px solid var(--glass-border-focus)"
-        : "1px solid var(--glass-border)",
+        : "1px solid var(--glass-border-default)",
       borderRadius: "var(--radius-sm)",
       color: active ? "var(--text-primary)" : "var(--text-secondary)",
       cursor: "pointer",
-      transition: "all var(--transition-fast, 0.15s)",
+      transition: "all var(--transition-fast)",
     }) as React.CSSProperties;
 
   return (

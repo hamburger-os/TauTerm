@@ -1,4 +1,4 @@
-/* TauTerm v0.3 — Refactored Hub Layout */
+/* TauTerm v0.3 — Liquid Glass v3 Hub Layout */
 
 .app-root {
   width: 100vw;
@@ -6,7 +6,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-gradient);
+  background: transparent; /* 由 GoogleGlowBackground 提供底色 */
   color: var(--text-primary);
   font-family: var(--font-ui);
 }
@@ -25,7 +25,7 @@
 .sidebar {
   height: 100%;
   border-right: 1px solid var(--glass-border);
-  background: var(--glass-bg);
+  background: var(--block-sidebar-bg);
   backdrop-filter: blur(var(--blur-medium));
   -webkit-backdrop-filter: blur(var(--blur-medium));
   overflow: hidden;
@@ -57,7 +57,9 @@
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--block-terminal-bg);
+  backdrop-filter: blur(var(--blur-light));
+  -webkit-backdrop-filter: blur(var(--blur-light));
   min-width: 0;
 }
 
@@ -66,12 +68,13 @@
 .dropzone-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: var(--z-overlay);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(var(--blur-xs));
+  -webkit-backdrop-filter: blur(var(--blur-xs));
 }
 
 .dropzone-message {
@@ -84,11 +87,4 @@
   font-weight: 700;
   text-shadow: 0 0 10px var(--accent-glow);
   box-shadow: 0 0 20px var(--accent-glow), var(--shadow-glass);
-}
-
-/* ===== 呼吸灯动画 ===== */
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
 }

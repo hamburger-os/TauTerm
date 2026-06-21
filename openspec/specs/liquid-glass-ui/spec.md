@@ -2,103 +2,153 @@
 
 ## Purpose
 
-定义 Liquid Glass 设计系统要求，包括玻璃拟态视觉风格（v2 升级）、暗色主题、排版、响应式布局、Framer Motion 动画集成和交互动效。
+定义 Liquid Glass v3 设计系统要求，包括玻璃拟态视觉风格（v3 升级）、动态光球背景、暗色/浅色双模主题、排版、响应式布局、Framer Motion 动画集成和交互动效。
 
 ## Requirements
 
-### Requirement: Liquid Glass 设计语言
-界面必须实现升级版玻璃拟态设计系统（v2），特征为 Neon Dark 主题、更深的背景层次、Framer Motion 驱动的交互动画。
+### Requirement: Liquid Glass Design Language
+The interface SHALL implement Liquid Glass v3 design system, featuring:
 
-#### Scenario: 玻璃面板渲染
-- **WHEN** 应用窗口显示
-- **THEN** 所有面板表面必须以 `backdrop-filter: blur(16px)`、半透明深色背景（`rgba(0, 212, 170, 0.04)`）和低透明度青色（`rgba(0, 212, 170, 0.12)`）的 1px 微细边框渲染，背景为深邃暗色（`#060610`）
+- **Dynamic orb background**: 4 Google-colored orbs with CSS morphing and orbital animations behind all UI
+- **Enhanced glass panels**: `backdrop-filter: blur(25-35px)` with saturation boost per theme, SVG `feTurbulence` noise texture overlay, asymmetric border highlights (top and left borders brighter than bottom/right)
+- **Multi-layer shadows**: Combined outer shadow for depth (`0 10-20px 40-50px`) and inner highlight shadow (`inset 0 1-2px`) for glass edge refraction
+- **Framer Motion-driven interactions**: Spring-based animations for panels, hover micro-interactions with `translateY(-2px)` lift effect
 
-#### Scenario: 深度和层次感
-- **WHEN** 不同层级的玻璃面板重叠
-- **THEN** 重叠区域必须显示增强的模糊和变暗效果，通过各层营造视觉深度感，Z-index 清晰分层
+#### Scenario: Glass panel renders with v3 effects
+- **WHEN** application window displays
+- **THEN** all panel surfaces render with 25-35px backdrop blur, SVG noise texture grain, asymmetric border highlights, and multi-layer shadows
 
-#### Scenario: 悬停和激活状态
-- **WHEN** 用户悬停或交互 UI 元素（按钮、输入框、选择器）
-- **THEN** 元素必须显示背景透明度、边框亮度的平滑过渡，以及微妙的发光效果
+#### Scenario: Depth and layering
+- **WHEN** glass panels at different z-levels overlap (background orbs → main window → sidebar → terminal → toolbar)
+- **THEN** each layer shows accumulated blur and darkening effects through the translucent glass material, creating visual depth
 
-### Requirement: 暗色主题基础
-界面必须使用 Neon Dark 主题作为默认基础，深色星空背景配合青色/蓝色霓虹强调色。
+#### Scenario: Hover and active states
+- **WHEN** user hovers or interacts with UI elements (buttons, inputs, session items)
+- **THEN** elements display smooth transitions in background opacity, border brightness, subtle `translateY(-2px)` lift, and glow effects over 0.3s cubic-bezier
 
-#### Scenario: 背景渐变
-- **WHEN** 应用渲染
-- **THEN** 根背景必须显示从深空黑（`#060610`）到深蓝黑（`#0a0a1a`）的平滑渐变
+### Requirement: Dark Theme Foundation
+The interface SHALL use `google-glow` as the default dark theme with deep background and Google 4-color ambient orbs.
 
-#### Scenario: 文字对比度
-- **WHEN** 文字显示在玻璃面板上
-- **THEN** 主文字必须使用 `#e0e0ff`，辅助文字必须使用 `#8888aa`，强调文字使用 `#00d4aa` 带 text-shadow 发光
+The default dark background SHALL be `#080808` with 4 colored orbs (blue, red, yellow, green) animating behind a glass application shell.
 
-### Requirement: 强调色和渐变
-系统必须使用青绿到天蓝的霓虹色作为主要强调色，带发光效果。
+The `obsidian` theme SHALL provide an alternative darker aesthetic with near-black background (`#030303`), reduced orb opacity for neon contrast, and smoked dark glass fill.
 
-#### Scenario: 主按钮使用强调渐变
-- **WHEN** 主操作按钮（连接、发送、接收）在默认状态下渲染
-- **THEN** 必须以青绿到天蓝渐变（`#00d4aa → #00a3ff`）作为其背景色，并带有 `box-shadow` 发光效果
+#### Scenario: Default dark background with orbs
+- **WHEN** application renders with google-glow theme
+- **THEN** the root background is `#080808` with 4 morphing colored orbs providing ambient illumination behind the glass UI
 
-#### Scenario: 焦点和选中指示
-- **WHEN** UI 元素获得焦点或被选中
-- **THEN** 必须显示 3px 宽的青色霓虹指示线（左侧或底部），并带有发光阴影
+#### Scenario: Text contrast on dark glass
+- **WHEN** text displays on glass panels in dark themes
+- **THEN** primary text uses bright white-toned colors, secondary text uses reduced opacity whites, ensuring readability against the dark glass background
 
-#### Scenario: 进度指示
-- **WHEN** 显示进度条（文件传输、连接状态）
-- **THEN** 已填充部分必须使用强调渐变
+### Requirement: Light Theme Foundation
+The interface SHALL provide a `frosted` light theme with bright white-gray background (`#f8fafc`) and frosted white glass panels.
 
-### Requirement: 终端排版
-终端视口必须使用优化的等宽字体以提高可读性，UI 装饰使用清爽的无衬线字体。两种字体均需支持中文字符渲染。
+In light mode, orbs SHALL use `mix-blend-mode: multiply` with reduced opacity (0.35) to create watercolor-like diffusion on the light background.
 
-#### Scenario: 终端字体
-- **WHEN** 终端渲染文字
-- **THEN** 必须使用 JetBrains Mono（回退到 Cascadia Code、Fira Code 或系统等宽字体）以舒适的阅读大小显示
+Text colors in light mode SHALL invert to dark grays: primary `#1e293b`, secondary `#475569`, muted `#94a3b8`.
 
-#### Scenario: UI 字体
-- **WHEN** UI 装饰元素（标签、按钮、菜单）渲染文字
-- **THEN** 必须使用 Inter（回退到系统无衬线字体），具有适当的字重和大小层次结构。中文字符必须能正常回退到系统默认中文字体
+#### Scenario: Light theme background
+- **WHEN** frosted theme is active
+- **THEN** background is `#f8fafc` with pastel-toned orbs using multiply blend, glass panels are bright white-translucent with soft gray shadows
 
-### Requirement: 可调整面板的响应式布局
-应用布局必须适应窗口大小变化，并允许用户调整侧边栏和文件传输面板的大小。
+#### Scenario: Text readability in light mode
+- **WHEN** text displays on glass panels in frosted theme
+- **THEN** primary text is dark gray `#1e293b`, ensuring strong contrast against the bright glass background
 
-#### Scenario: 窗口大小调整
-- **WHEN** 用户调整应用窗口大小
-- **THEN** 终端视口必须填满可用空间，侧边栏必须在其最小/最大约束内保持宽度，所有玻璃面板必须以新尺寸正确重新渲染模糊效果
+### Requirement: Accent Colors and Gradients
+The system SHALL use blue (`#4285F4`) as the primary accent color across all themes for consistency with the Google color system.
 
-#### Scenario: 可调整的侧边栏
-- **WHEN** 用户拖动侧边栏与终端之间的分隔线
-- **THEN** 侧边栏宽度必须在 200px（最小）和 400px（最大）之间平滑调整
+Primary action buttons SHALL use a blue-to-indigo gradient: `linear-gradient(135deg, #4285F4, #6366f1)` in dark themes, or solid blue in the frosted light theme.
 
-#### Scenario: 可调整的文件传输面板
-- **WHEN** 用户拖动文件传输面板与终端之间的分隔线
-- **THEN** 面板高度必须在 150px（最小）和窗口高度的 50%（最大）之间平滑调整
+Focus states SHALL show a blue outer glow appropriate to the active theme (stronger in dark, subtler in light).
 
-### Requirement: 流畅动画和过渡
-界面必须使用 Framer Motion 和 CSS transition 处理所有状态变化和交互反馈。
+#### Scenario: Primary button uses blue gradient
+- **WHEN** the Send button renders in a dark theme
+- **THEN** it displays a blue-to-indigo gradient background with a blue glow shadow
 
-#### Scenario: 面板滑动动画
-- **WHEN** 互动面板打开或关闭
-- **THEN** 必须以 Framer Motion spring 动画过渡，无布局跳动或闪烁
+#### Scenario: Focus indicator
+- **WHEN** an input element receives focus
+- **THEN** it displays a blue glow ring appropriate to the active theme
 
-#### Scenario: 悬停微交互
-- **WHEN** 用户悬停在交互元素上
-- **THEN** 必须在 0.3s 内发生背景亮度变化、边框发光、轻微缩放（`scale(1.02)`）效果
+#### Scenario: Progress indication
+- **WHEN** a progress bar displays (file transfer)
+- **THEN** the filled portion uses a gradient from blue through cyan to green, with a glow shadow
 
-#### Scenario: 连接状态过渡
-- **WHEN** 连接状态变化
-- **THEN** 状态指示器必须播放呼吸灯动画（connecting: 1.5s pulse），成功后触发一次涟漪动画（scale + opacity 渐变消失）
+### Requirement: Terminal Typography
+The terminal viewport SHALL use optimized monospace fonts for readability and UI chrome SHALL use clean sans-serif fonts. Both SHALL support Chinese character rendering.
 
-### Requirement: Framer Motion 动画集成
-系统必须集成 Framer Motion 库驱动所有 UI 交互动画。
+#### Scenario: Terminal font
+- **WHEN** terminal renders text
+- **THEN** JetBrains Mono (fallback: Cascadia Code, Fira Code, system monospace) is used at comfortable reading size
 
-#### Scenario: 组件进出动画
-- **WHEN** 组件挂载或卸载（如标签页切换、面板开关）
-- **THEN** 必须使用 AnimatePresence 播放进场和退场动画
+#### Scenario: UI font
+- **WHEN** UI chrome elements render text
+- **THEN** Inter (fallback: system sans-serif) is used with appropriate weight and size hierarchy. Chinese characters fall back to system default Chinese fonts.
 
-#### Scenario: 拖拽排序
-- **WHEN** 用户拖拽标签页重新排序
-- **THEN** 必须使用 Framer Motion `drag` 和 `Reorder` 组件实现平滑的拖拽重排
+### Requirement: Responsive Layout with Resizable Panels
+The application layout SHALL adapt to window size changes and allow user resizing of sidebar and file transmission panel.
 
-#### Scenario: 手势交互
-- **WHEN** 用户与 UI 元素进行复杂手势交互（如拖拽调整面板大小）
-- **THEN** 必须包含阻尼感和视觉反馈（如 resize handle 发光线的渐变出现/消失）
+#### Scenario: Window resize
+- **WHEN** user resizes the application window
+- **THEN** the terminal viewport fills available space, sidebar stays within min/max constraints, all glass panels correctly re-render blur at new dimensions
+
+#### Scenario: Resizable sidebar
+- **WHEN** user drags the divider between sidebar and terminal
+- **THEN** sidebar width smoothly adjusts between 180px (min) and 400px (max)
+
+#### Scenario: Resizable file transfer panel
+- **WHEN** user drags the divider between file transfer panel and terminal
+- **THEN** panel width smoothly adjusts between 160px (min) and 500px (max)
+
+### Requirement: Smooth Animation and Transitions
+The interface SHALL use Framer Motion and CSS transitions for all state changes and interaction feedback.
+
+Hover micro-interactions SHALL include: background brightness change, border glow, `translateY(-2px)` lift, and shadow enhancement over 0.3s cubic-bezier.
+
+The background orbs SHALL animate continuously via CSS `@keyframes` with durations between 12s and 28s.
+
+#### Scenario: Panel slide animation
+- **WHEN** side panel opens or closes
+- **THEN** it transitions with Framer Motion spring animation without layout jumps or flickering
+
+#### Scenario: Hover micro-interaction
+- **WHEN** user hovers over interactive elements (buttons, session items)
+- **THEN** elements lift by 2px, background brightens, and border glows over 0.3s
+
+#### Scenario: Connection state transition
+- **WHEN** connection state changes
+- **THEN** status indicator plays a breathing pulse animation with glow effects
+
+### Requirement: Framer Motion Integration
+The system SHALL integrate Framer Motion library to drive all UI interaction animations.
+
+#### Scenario: Component enter/exit
+- **WHEN** components mount or unmount (tab switches, panel toggles)
+- **THEN** AnimatePresence plays enter and exit animations
+
+#### Scenario: Gesture interactions
+- **WHEN** user performs complex gesture interactions (e.g., drag to resize panels)
+- **THEN** visual feedback includes damping feel (resize handle glow line fade in/out)
+
+### Requirement: Orb Background Integration in Layout
+The `App` component SHALL render `GoogleGlowBackground` as the first child element, before the main application shell.
+
+The main application shell SHALL be positioned at `z-index: 10` relative to the orb background at `z-index: 0`.
+
+#### Scenario: Orb background renders behind app shell
+- **WHEN** application displays
+- **THEN** animated orbs are visible behind the glass application window, shining through translucent areas
+
+### Requirement: Transparent Terminal Background
+The XTerm.js terminal instance background SHALL be set to `transparent` to allow the orb background and glass effects to show through.
+
+The terminal text SHALL use high-contrast colors appropriate for the active theme.
+
+#### Scenario: Terminal transparency in dark theme
+- **WHEN** a terminal session is active in google-glow or obsidian theme
+- **THEN** the terminal background is transparent, showing the orb colors and glass texture behind the text
+
+#### Scenario: Terminal readability in light theme
+- **WHEN** a terminal session is active in frosted theme
+- **THEN** terminal text is dark slate for readability against the bright glass background

@@ -9,7 +9,7 @@
   padding: 10px 16px;
   min-width: 280px;
   max-width: 420px;
-  background: rgba(20, 20, 40, 0.95);
+  background: var(--dialog-bg);
   backdrop-filter: blur(var(--blur-heavy));
   -webkit-backdrop-filter: blur(var(--blur-heavy));
   border: 1px solid var(--glass-border);

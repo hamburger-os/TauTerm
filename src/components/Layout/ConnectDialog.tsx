@@ -360,11 +360,11 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               {error && <div className={styles.error}>{error}</div>}
 
               <div className={styles.actions}>
-                <button className={styles.cancelBtn} onClick={handleBack} disabled={connecting}>
+                <button className={`${styles.cancelBtn} liquid-glass-button`} onClick={handleBack} disabled={connecting}>
                   {t("common.cancel")}
                 </button>
                 <button
-                  className={styles.connectBtn}
+                  className={`${styles.connectBtn} liquid-primary-button`}
                   onClick={handleCreate}
                   disabled={(!port && isSerial) || connecting}
                 >

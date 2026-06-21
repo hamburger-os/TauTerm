@@ -35,7 +35,7 @@ graph TB
 
 | 原则 | 说明 |
 |------|------|
-| **内核不含协议** | 8 个内核模块提供平台能力（窗口、标签页、IPC、配置、插件、主题、快捷键、国际化），不包含任何会话类型逻辑 |
+| **内核不含协议** | 10 个内核模块提供平台能力（窗口、标签页、IPC、配置、插件、主题、快捷键、国际化、插件适配、会话存储），不包含任何会话类型逻辑 |
 | **一切皆插件** | 每个协议和功能都是独立插件，通过 `ProtocolAdapter` trait 和 `registerPlugin()` API 注册 |
 | **统一标签页** | 所有会话类型共享同一套标签栏，通过 `content_type` 适配器动态切换内容视图 |
 | **策略自适应** | 传输、I/O、安全策略根据会话协议自动选择，无需用户干预 |
@@ -214,7 +214,7 @@ graph LR
 - 📤 **数据发送栏** — 终端底部快速发送，支持 Text/HEX 模式切换、换行符追加、重复发送、发送历史
 - ⚙️ **设置页面** — 全屏覆盖层，主题切换 / 字体大小 / 语言 / 字符编码集中管理
 - 🔐 **凭据存储** — OS 原生 keyring + AES-256-GCM 降级，密码/密钥/证书/Token 类型安全
-- 🎨 **Liquid Glass v2 设计系统** — 磨砂玻璃面板、霓虹发光边框、Framer Motion 动画、Neon Dark / Ocean / Sunset 三主题
+- 🎨 **Liquid Glass v3 设计系统** — 动态炫彩光球背景、SVG 噪点磨砂纹理、不对称高光边框、Framer Motion 动画、Google Glow / Obsidian / Frosted 三主题
 - 🌐 **多语言** — i18next 命名空间隔离，插件自带翻译，运行时切换
 - ⚡ **命令面板** — `Ctrl+Shift+P` 模糊搜索所有命令，键盘驱动操作
 - 🔍 **终端搜索** — `Ctrl+F` 搜索 buffer，大小写切换，上下导航
@@ -252,7 +252,7 @@ TauTerm/
 │   │   ├── ipc_bridge.rs       # Tauri 命令路由、事件总线、Stream 通道
 │   │   ├── config_store.rs     # 类型安全 KV 存储、Schema 校验
 │   │   ├── plugin_host.rs      # 插件发现、加载、生命周期
-│   │   ├── theme_engine.rs     # CSS 变量生成、主题切换
+│   │   ├── theme_engine.rs     # CSS 令牌生成、三主题切换（Google Glow / Obsidian / Frosted）
 │   │   ├── shortcut_engine.rs  # 快捷键注册、冲突检测、作用域分发
 │   │   ├── plugin_adapter.rs   # ProtocolAdapter trait + ContentType/IoStrategy 定义
 │   │   ├── session_store.rs    # 会话存储、I/O 生命周期、统计采集
@@ -291,13 +291,17 @@ TauTerm/
 │   │   └── CustomRenderer.tsx      # 插件自定义委托
 │   │
 │   ├── components/             # UI 组件
-│   │   ├── Layout/             # Toolbar, Sidebar, TabBar, StatusBar, ConnectDialog, ResizeHandle
+│   │   ├── Layout/             # Toolbar, Sidebar, StatusBar, ConnectDialog, ResizeHandle, GoogleGlowBackground
 │   │   ├── CommandPalette/     # 命令面板
 │   │   ├── SendBar/            # 数据发送栏（文本/HEX 输入、重复发送、发送历史）
 │   │   ├── Transmission/       # 传输侧面板（协议配置 + 发送/接收 + 进度）
 │   │   ├── Settings/           # 设置页（全屏覆盖层：通用/外观/语言/编码/关于）
 │   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
-│   │   └── common/             # GlassPanel, GlassButton, ContextMenu, Toast
+│   │   └── common/             # GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
+│   │
+│   ├── styles/                 # 全局样式
+│   │   ├── tokens.css           # CSS 自定义属性（3 套主题令牌）
+│   │   └── global.css           # 全局动画（morph/flow）和液态玻璃类
 │   │
 │   └── plugins/                # 插件前端
 │       └── serial/             # SerialConnectForm, 工具栏, 状态栏
@@ -385,7 +389,7 @@ cargo --version   # 应输出 >= cargo 1.75.0
 
 **方案 A（推荐）：使用 Rust 内置的 rust-lld**
 
-Rust 1.96+ 自带 LLVM 链接器 `rust-lld`，无需额外安装。项目已配置 `.cargo/config.toml` 自动使用。
+Rust 1.96+ 自带 LLVM 链接器 `rust-lld`，无需额外安装，编译器会自动使用。
 
 **方案 B：安装 Visual Studio Build Tools**
 
@@ -625,7 +629,7 @@ sudo xattr -r -d com.apple.quarantine /path/to/TauTerm.app
 | 多会话管理 | 统一标签栏 + 内容适配器 | 标签页 | 标签页 + 侧栏 |
 | 传输策略 | Inline / SideChannel / SeparateConn | 有限 | FTP/SFTP 内置 |
 | 安全存储 | keyring + AES-256-GCM | 内置加密 | 内置加密 |
-| 主题系统 | Liquid Glass v2 + 插件 token 注入 | 有限主题 | 有限主题 |
+| 主题系统 | Liquid Glass v3 + 动态光球背景 + 噪点纹理 + 三主题 | 有限主题 | 有限主题 |
 | 跨平台 | Windows / Linux / macOS | Windows / Linux / macOS | Windows |
 | UI 框架 | React 18 + Framer Motion | Qt | 原生 Win32 |
 | 插件生态 | 计划中 | 无 | 有限（插件） |
@@ -647,6 +651,13 @@ TauTerm 处于活跃开发阶段，欢迎贡献。
 6. 在 `commands.rs` 的 `connect_session` match 分支中添加协议路由
 
 详细插件开发指南将在 v1.0 发布时随插件 SDK 文档一同推出。
+
+### 主题开发
+
+所有 UI 组件遵循 **Liquid Glass v3** 设计系统。开发新组件或修改样式时，请参考：
+
+- [主题开发指南](docs/theme-guide.md) — CSS 令牌参考、组件开发规范、检查清单
+- [tauterm-theme 技能](.claude/skills/tauterm-theme/SKILL.md) — Claude Code 内强制执行的零硬编码颜色规则
 
 ---
 

@@ -1,15 +1,15 @@
-/* 设置页 — 全屏覆盖层 */
+/* 设置页 v3 */
 
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: var(--z-overlay, 100);
-  background: rgba(0, 0, 0, 0.6);
+  z-index: var(--z-overlay);
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(var(--blur-xs));
+  -webkit-backdrop-filter: blur(var(--blur-xs));
 }
 
 .container {
@@ -17,10 +17,12 @@
   max-width: 90vw;
   height: 520px;
   max-height: 85vh;
-  background: var(--bg-secondary);
+  background: var(--dialog-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.5), 0 0 80px rgba(0, 212, 170, 0.05);
+  box-shadow: var(--shadow-glass), var(--dialog-shadow);
+  backdrop-filter: blur(var(--blur-heavy));
+  -webkit-backdrop-filter: blur(var(--blur-heavy));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -55,7 +57,7 @@
 
 .closeBtn:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--glass-bg);
 }
 
 /* 主体 */
@@ -82,7 +84,7 @@
   gap: 8px;
   padding: 8px 12px;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
   font-size: 13px;
@@ -93,14 +95,14 @@
 }
 
 .navItem:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--glass-bg);
   color: var(--text-primary);
 }
 
 .navItemActive {
-  background: rgba(0, 212, 170, 0.08);
+  background: var(--glass-bg-active);
   color: var(--accent-primary);
-  border: 1px solid rgba(0, 212, 170, 0.15);
+  border: 1px solid var(--glass-border-focus);
 }
 
 .navIcon {
@@ -162,7 +164,7 @@
   gap: 10px;
   padding: 8px 12px;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
   font-size: 13px;
@@ -173,12 +175,12 @@
 
 .optionItem:hover {
   border-color: var(--glass-border-hover);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--glass-bg);
 }
 
 .optionItemActive {
-  border-color: rgba(0, 212, 170, 0.3);
-  background: rgba(0, 212, 170, 0.06);
+  border-color: var(--glass-border-focus);
+  background: var(--glass-bg-active);
   color: var(--accent-primary);
 }
 
@@ -193,26 +195,33 @@
 
 /* 下拉选择 */
 .selectField {
+  appearance: none;
+  -webkit-appearance: none;
   width: 100%;
   max-width: 260px;
-  padding: 6px 10px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 28px 6px 10px;
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-md);
+  background: var(--glass-input-bg);
+  background-image: var(--select-arrow); /* fill color adapts per theme */
+  background-repeat: no-repeat;
+  background-position: right 10px center;
   color: var(--text-primary);
   font-size: 13px;
   font-family: var(--font-ui);
   outline: none;
   cursor: pointer;
   transition: border-color var(--transition-fast);
+  box-shadow: var(--glass-input-shadow-inner);
 }
 
 .selectField:focus {
-  border-color: var(--glass-border-focus);
+  border-color: var(--glass-input-focus-border);
+  box-shadow: var(--glass-input-focus-glow);
 }
 
 .selectField option {
-  background: var(--bg-secondary);
+  background: var(--select-option-bg);
   color: var(--text-primary);
 }
 
@@ -260,8 +269,8 @@
 .encodingNote {
   margin-top: 12px;
   padding: 8px 12px;
-  background: rgba(255, 165, 2, 0.06);
-  border: 1px solid rgba(255, 165, 2, 0.15);
+  background: color-mix(in srgb, var(--color-warning) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 15%, transparent);
   border-radius: var(--radius-sm);
   color: var(--color-warning);
   font-size: 11px;

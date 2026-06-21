@@ -28,7 +28,7 @@ const GlassInput = forwardRef<HTMLInputElement, GlassInputProps>(
     return (
       <div className={classes}>
         {label && <label className={styles.label}>{label}</label>}
-        <input ref={ref} className={styles.input} {...props} />
+        <input ref={ref} className={`${styles.input} liquid-glass-input`} {...props} />
         {error && <span className={styles.error}>{error}</span>}
       </div>
     );

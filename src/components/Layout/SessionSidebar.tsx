@@ -121,7 +121,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
             <motion.div
               key={tab.id}
               className={`${styles.item} ${state.activeTabId === tab.id ? styles.active : ""}`}
-              whileHover={{ scale: 1.02, backgroundColor: "rgba(255,255,255,0.06)" }}
+              whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => handleSelect(tab.id)}
               onContextMenu={(e) => handleContextMenu(e, tab)}

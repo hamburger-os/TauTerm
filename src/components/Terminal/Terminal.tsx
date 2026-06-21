@@ -3,7 +3,58 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
+import { useTheme } from "../../context/ThemeContext";
 import styles from "./Terminal.module.css";
+
+/** 深色主题终端配色 (google-glow / obsidian) */
+const DARK_TERMINAL_THEME = {
+  background: "transparent",
+  foreground: "#e0e0ff",
+  cursor: "#4285F4",
+  cursorAccent: "#060610",
+  selectionBackground: "rgba(66, 133, 244, 0.3)",
+  black: "#1a1a2e",
+  red: "#ff4757",
+  green: "#34d399",
+  yellow: "#ffa502",
+  blue: "#4285F4",
+  magenta: "#a855f7",
+  cyan: "#60a5fa",
+  white: "#e0e0ff",
+  brightBlack: "#555577",
+  brightRed: "#ff6b81",
+  brightGreen: "#4ade80",
+  brightYellow: "#ffbe76",
+  brightBlue: "#60a5fa",
+  brightMagenta: "#c084fc",
+  brightCyan: "#67e8f9",
+  brightWhite: "#ffffff",
+} as const;
+
+/** 浅色主题终端配色 (frosted) */
+const LIGHT_TERMINAL_THEME = {
+  background: "transparent",
+  foreground: "#1e293b",
+  cursor: "#3b82f6",
+  cursorAccent: "#f8fafc",
+  selectionBackground: "rgba(59, 130, 246, 0.2)",
+  black: "#f1f5f9",
+  red: "#dc2626",
+  green: "#16a34a",
+  yellow: "#d97706",
+  blue: "#2563eb",
+  magenta: "#9333ea",
+  cyan: "#0891b2",
+  white: "#1e293b",
+  brightBlack: "#94a3b8",
+  brightRed: "#ef4444",
+  brightGreen: "#22c55e",
+  brightYellow: "#f59e0b",
+  brightBlue: "#3b82f6",
+  brightMagenta: "#a855f7",
+  brightCyan: "#06b6d4",
+  brightWhite: "#0f172a",
+} as const;
 
 interface TerminalInstanceProps {
   /** 会话 ID，用于关联数据和命令 */
@@ -39,6 +90,10 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   const onCleanupRef = useRef(onCleanup);
   onCleanupRef.current = onCleanup;
 
+  const { theme } = useTheme();
+  const isDark = theme === "google-glow" || theme === "obsidian";
+  const terminalTheme = isDark ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
+
   // 暴露 xterm 实例和 write 方法
   useImperativeHandle(ref, () => ({
     write: (data: Uint8Array | string) => {
@@ -60,29 +115,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       convertEol: true,
       fontSize: Number(localStorage.getItem("tauterm-font-size") || "14"),
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
-      theme: {
-        background: "rgba(0, 0, 0, 0.25)",
-        foreground: "#e0e0ff",
-        cursor: "#00d4aa",
-        cursorAccent: "#060610",
-        selectionBackground: "rgba(0, 212, 170, 0.3)",
-        black: "#1a1a2e",
-        red: "#ff4757",
-        green: "#00d4aa",
-        yellow: "#ffa502",
-        blue: "#00a3ff",
-        magenta: "#a855f7",
-        cyan: "#00d4aa",
-        white: "#e0e0ff",
-        brightBlack: "#555577",
-        brightRed: "#ff6b81",
-        brightGreen: "#00ffcc",
-        brightYellow: "#ffbe76",
-        brightBlue: "#45aaf2",
-        brightMagenta: "#c084fc",
-        brightCyan: "#00ffcc",
-        brightWhite: "#ffffff",
-      },
+      theme: terminalTheme,
       cursorBlink: true,
       cursorStyle: "bar",
       allowProposedApi: true,
@@ -124,6 +157,12 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       onCleanupRef.current?.(sessionId);
     };
   }, []);
+
+  // 主题变化时动态更新终端配色，无需销毁重建
+  useEffect(() => {
+    if (!xtermRef.current) return;
+    xtermRef.current.options.theme = terminalTheme;
+  }, [theme, terminalTheme]);
 
   // 当标签页变为活跃时重新调整终端尺寸
   // 使用双 rAF 确保 DOM 已完成 opacity 过渡和布局计算

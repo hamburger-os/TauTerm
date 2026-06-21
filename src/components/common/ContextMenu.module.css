@@ -2,10 +2,10 @@
   position: fixed;
   z-index: var(--z-overlay);
   min-width: 160px;
-  background: rgba(14, 14, 32, 0.96);
+  background: var(--dialog-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 16px rgba(0, 212, 170, 0.08);
+  box-shadow: var(--shadow-glass), var(--dialog-shadow);
   backdrop-filter: blur(var(--blur-heavy));
   -webkit-backdrop-filter: blur(var(--blur-heavy));
   padding: 4px;
@@ -30,11 +30,11 @@
 }
 
 .menuItem:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--glass-bg-hover);
 }
 
 .menuItem.danger:hover:not(:disabled) {
-  background: rgba(255, 71, 87, 0.12);
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
   color: var(--color-error);
 }
 

@@ -1,3 +1,5 @@
+/* 拖拽手柄 v3 */
+
 .handle {
   position: relative;
   flex-shrink: 0;

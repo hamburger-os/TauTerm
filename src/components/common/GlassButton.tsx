@@ -27,10 +27,12 @@ export default function GlassButton({
   disabled,
   ...props
 }: GlassButtonProps) {
+  const globalClass = variant === "primary" ? "liquid-primary-button" : "liquid-glass-button";
   const classes = [
     styles.button,
     styles[variant],
     styles[size],
+    globalClass,
     fullWidth && styles.fullWidth,
     loading && styles.loading,
     className,

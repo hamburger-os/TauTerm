@@ -23,7 +23,7 @@ function EmptyState() {
       justifyContent: "center",
       height: "100%",
       gap: 12,
-      color: "var(--text-muted, #888)",
+      color: "var(--text-muted)",
     }}>
       <span style={{ fontSize: 48, opacity: 0.3 }}>⚡</span>
       <span style={{ fontSize: 14 }}>
@@ -41,7 +41,7 @@ function UnknownContentType({ type }: { type: string }) {
       alignItems: "center",
       justifyContent: "center",
       height: "100%",
-      color: "var(--text-muted, #888)",
+      color: "var(--text-muted)",
     }}>
       未知的内容类型: {type}
     </div>

@@ -74,9 +74,9 @@
     "search": "终端搜索"
   },
   "theme": {
-    "neonDark": "霓虹暗黑",
-    "ocean": "深海蓝",
-    "sunset": "日落琥珀",
+    "googleGlow": "炫彩流光",
+    "obsidian": "黑曜石",
+    "frosted": "白霜",
     "switchTo": "切换到"
   },
   "toolbar": {
@@ -205,9 +205,9 @@
     "switchToEn": "Switch to English",
     "switchToZh": "切换为中文",
     "theme": "主题",
-    "themeNeonDark": "霓虹暗黑",
-    "themeOcean": "深海蓝",
-    "themeSunset": "日落琥珀",
+    "themeGoogleGlow": "炫彩流光",
+    "themeObsidian": "黑曜石",
+    "themeFrosted": "白霜",
     "defaultDataMode": "默认数据模式",
     "fontSize": "终端字体大小",
     "fontSizeNote": "更改后需重新连接终端生效",

@@ -47,6 +47,12 @@ export default function SendBar({ sessionId }: SendBarProps) {
 
   const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
 
+  // HEX 输入有效性检查：非空、偶数长度、纯十六进制字符
+  const isHexValid = (value: string): boolean => {
+    const hex = value.replace(/\s/g, "");
+    return hex.length > 0 && hex.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(hex);
+  };
+
   // 发送逻辑
   const doSend = useCallback(() => {
     // 使用 ref 读取最新值，避免定时器回调因闭包陈旧而发送过时数据
@@ -89,7 +95,10 @@ export default function SendBar({ sessionId }: SendBarProps) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-    if (repeatEnabled && repeatInterval >= 50 && inputRefForInterval.current.trim()) {
+    const hasValidInput = sendMode === "hex"
+      ? isHexValid(inputRefForInterval.current)
+      : inputRefForInterval.current.trim().length > 0;
+    if (repeatEnabled && repeatInterval >= 50 && hasValidInput) {
       intervalRef.current = setInterval(doSend, repeatInterval);
     }
     return () => {
@@ -175,7 +184,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
           {sendMode === "text" ? t("sendBar.sendModeText") : t("sendBar.sendModeHex")}
         </button>
 
-        {/* 重复发送 */}
+        {/* 重复发送 — 液态玻璃切换开关 */}
         <label className={styles.repeatLabel} title={t("sendBar.repeatSend")}>
           <input
             type="checkbox"
@@ -184,6 +193,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
             onChange={(e) => setRepeatEnabled(e.target.checked)}
             disabled={!isConnected}
           />
+          <div className={styles.toggleTrack} />
           <span className={styles.repeatText}>⟳</span>
         </label>
         {repeatEnabled && (
@@ -229,11 +239,11 @@ export default function SendBar({ sessionId }: SendBarProps) {
           </div>
         )}
 
-        {/* 发送按钮 */}
+        {/* 发送按钮 — 炫彩流光 */}
         <button
-          className={styles.sendBtn}
+          className={`${styles.sendBtn} liquid-primary-button`}
           onClick={doSend}
-          disabled={!isConnected || (sendMode === "text" && !inputText.trim())}
+          disabled={!isConnected || (sendMode === "text" && !inputText.trim()) || (sendMode === "hex" && !isHexValid(inputText))}
         >
           {t("sendBar.send")}
         </button>

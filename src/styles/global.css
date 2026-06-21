@@ -1,4 +1,4 @@
-/* TauTerm 全局样式 */
+/* TauTerm Liquid Glass v3 全局样式 */
 
 @import "./tokens.css";
 
@@ -19,7 +19,7 @@ body,
 }
 
 body {
-  background: var(--bg-gradient);
+  background: var(--bg-base);
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: var(--text-base);
@@ -30,7 +30,7 @@ body {
 
 /* 文字选择 */
 ::selection {
-  background: rgba(0, 212, 170, 0.3);
+  background: color-mix(in srgb, var(--accent-primary) 30%, transparent);
   color: #fff;
 }
 
@@ -45,16 +45,222 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
+  background: var(--glass-border);
+  border-radius: var(--radius-xs);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--glass-border-hover);
 }
 
 /* 聚焦样式 */
 :focus-visible {
   outline: 2px solid var(--glass-border-focus);
   outline-offset: 2px;
+}
+
+/* ==========================================
+   1. 不规则液体形状形变动画
+   ========================================== */
+@keyframes morph {
+  0%   { border-radius: 40% 60% 70% 30% / 40% 40% 60% 50%; }
+  34%  { border-radius: 70% 30% 50% 50% / 30% 30% 70% 70%; }
+  67%  { border-radius: 100% 60% 60% 100% / 100% 100% 60% 60%; }
+  100% { border-radius: 40% 60% 70% 30% / 40% 40% 60% 50%; }
+}
+
+/* ==========================================
+   2. 复杂的流光盘旋运动轨迹
+   ========================================== */
+@keyframes flow1 {
+  0%   { transform: translate(0%, 0%) rotate(0deg) scale(1); }
+  50%  { transform: translate(10vw, 10vh) rotate(180deg) scale(1.3); }
+  100% { transform: translate(0%, 0%) rotate(360deg) scale(1); }
+}
+@keyframes flow2 {
+  0%   { transform: translate(0%, 0%) rotate(0deg) scale(1.2); }
+  50%  { transform: translate(-10vw, 15vh) rotate(-180deg) scale(0.9); }
+  100% { transform: translate(0%, 0%) rotate(-360deg) scale(1.2); }
+}
+@keyframes flow3 {
+  0%   { transform: translate(0%, 0%) rotate(0deg) scale(0.9); }
+  50%  { transform: translate(15vw, -10vh) rotate(180deg) scale(1.4); }
+  100% { transform: translate(0%, 0%) rotate(360deg) scale(0.9); }
+}
+@keyframes flow4 {
+  0%   { transform: translate(0%, 0%) rotate(0deg) scale(1.1); }
+  50%  { transform: translate(-15vw, -15vh) rotate(-180deg) scale(0.8); }
+  100% { transform: translate(0%, 0%) rotate(-360deg) scale(1.1); }
+}
+
+/* ==========================================
+   3. 流光光球基础样式
+   ========================================== */
+.glow-orb {
+  position: absolute;
+  filter: blur(var(--bg-orb-blur));
+  opacity: var(--bg-orb-opacity);
+  mix-blend-mode: var(--bg-orb-blend);
+  will-change: transform, border-radius;
+}
+
+/* ==========================================
+   4. 液态玻璃核心效果
+   ========================================== */
+.liquid-glass {
+  position: relative;
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  box-shadow: var(--glass-shadow-outer),
+              var(--glass-shadow-inner);
+}
+
+/* SVG 噪点纹理叠加层，使用主题令牌控制不透明度 */
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  /* baseFrequency 三套主题共享 0.8 (0.8/0.85/0.9 差异微乎其微) */
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: var(--glass-noise-opacity);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ==========================================
+   5. 液态玻璃按钮
+   ========================================== */
+.liquid-glass-button {
+  background: var(--glass-button-bg);
+  border: 1px solid var(--glass-button-border);
+  box-shadow: var(--glass-button-shadow-inset);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.liquid-glass-button:hover {
+  background: var(--glass-button-hover-bg);
+  border-color: var(--glass-button-hover-border);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-elevated),
+              var(--glass-button-shadow-inset);
+}
+
+/* ==========================================
+   6. 液态玻璃输入框
+   ========================================== */
+.liquid-glass-input {
+  background: var(--glass-input-bg);
+  border: 1px solid var(--glass-input-border);
+  box-shadow: var(--glass-input-shadow-inner);
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.3s ease;
+}
+
+.liquid-glass-input::placeholder {
+  color: var(--text-muted);
+}
+
+.liquid-glass-input:focus {
+  background: var(--glass-input-bg);
+  border-color: var(--glass-input-focus-border);
+  box-shadow: var(--glass-input-shadow-inner),
+              var(--glass-input-focus-glow);
+}
+
+/* ==========================================
+   7. 炫彩流光背景位移动画
+   ========================================== */
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* ==========================================
+   8. 炫彩流光主按钮 — 全息动态光效
+   ========================================== */
+.liquid-primary-button {
+  /* 全息渐变（由主题令牌控制） */
+  background: var(--accent-holofoil-gradient);
+  background-size: 300% 300%;
+  animation: gradient-shift 4s ease infinite;
+
+  /* 玻璃边框与高光 */
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.8),
+    0 4px 15px rgba(168, 85, 247, 0.3);
+
+  /* 文字 */
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  font-weight: 600;
+
+  /* 玻璃模糊 */
+  backdrop-filter: blur(var(--blur-light));
+  -webkit-backdrop-filter: blur(var(--blur-light));
+
+  /* 布局 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+
+  /* 过渡 */
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+
+.liquid-primary-button:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px) scale(1.02);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 1),
+    0 6px 20px rgba(236, 72, 153, 0.4);
+}
+
+.liquid-primary-button:hover:not(:disabled) svg {
+  transform: translateX(2px);
+  transition: transform 0.3s ease;
+}
+
+.liquid-primary-button svg {
+  transition: transform 0.3s ease;
+}
+
+.liquid-primary-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.liquid-primary-button:disabled {
+  background: var(--glass-button-bg);
+  color: var(--text-muted);
+  animation: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ==========================================
+   9. 呼吸灯动画
+   ========================================== */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ==========================================
+   10. 流光动画（进度条不确定态）
+   ========================================== */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
 }

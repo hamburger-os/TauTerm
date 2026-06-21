@@ -1,4 +1,6 @@
-/* 玻璃拟态输入框 */
+/* 液态玻璃输入框 v3
+   基础视觉由全局 .liquid-glass-input 提供
+   本模块仅保留布局、尺寸、hover/disabled/error 状态和 select 样式 */
 
 .wrapper {
   display: flex;
@@ -25,26 +27,11 @@
   height: 34px;
   font-size: var(--text-sm);
   font-family: var(--font-ui);
-  color: var(--text-primary);
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
-  outline: none;
-  transition: border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.input::placeholder {
-  color: var(--text-muted);
 }
 
 .input:hover:not(:disabled) {
   border-color: var(--glass-border-hover);
-}
-
-.input:focus {
-  border-color: var(--glass-border-focus);
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .input:disabled {
@@ -58,7 +45,8 @@
 }
 
 .hasError .input:focus {
-  box-shadow: 0 0 0 3px rgba(255, 71, 87, 0.2);
+  box-shadow: var(--glass-input-shadow-inner),
+              0 0 0 3px color-mix(in srgb, var(--color-error) 20%, transparent);
 }
 
 .error {
@@ -70,7 +58,7 @@
 .select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-image: var(--select-arrow); /* fill color adapts per theme */
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 28px;
@@ -78,6 +66,6 @@
 }
 
 .select option {
-  background: #1a1a2e;
+  background: var(--select-option-bg);
   color: var(--text-primary);
 }

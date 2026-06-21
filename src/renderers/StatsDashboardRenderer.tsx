@@ -48,7 +48,7 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     flex: 1,
     padding: 16,
-    backgroundColor: "var(--bg-primary, #0a0a1a)",
+    backgroundColor: "var(--bg-base)",
     overflow: "auto",
   },
   header: {
@@ -60,14 +60,14 @@ const styles: Record<string, React.CSSProperties> = {
   title: {
     fontSize: 16,
     fontWeight: 600,
-    color: "var(--text-primary, #e0e0ff)",
+    color: "var(--text-primary)",
   },
   badge: {
     fontSize: 11,
     padding: "2px 8px",
-    borderRadius: 4,
-    backgroundColor: "var(--accent-color, #00ffff)",
-    color: "#000",
+    borderRadius: "var(--radius-xs)",
+    backgroundColor: "var(--accent-primary)",
+    color: "var(--text-on-accent)",
   },
   grid: {
     display: "grid",
@@ -76,19 +76,19 @@ const styles: Record<string, React.CSSProperties> = {
   },
   card: {
     padding: 16,
-    borderRadius: 8,
-    backgroundColor: "var(--bg-secondary, #12122a)",
-    border: "1px solid var(--border-color, rgba(0,255,255,0.15))",
+    borderRadius: "var(--radius-md)",
+    backgroundColor: "var(--bg-secondary)",
+    border: "1px solid var(--glass-border)",
   },
   cardTitle: {
     fontSize: 12,
-    color: "var(--text-secondary, #888)",
+    color: "var(--text-secondary)",
     marginBottom: 8,
   },
   cardValue: {
     fontSize: 24,
     fontWeight: 700,
-    color: "var(--text-primary, #e0e0ff)",
+    color: "var(--text-primary)",
     marginBottom: 12,
   },
   chartPlaceholder: {
@@ -97,9 +97,9 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     fontSize: 11,
-    color: "var(--text-muted, #444)",
-    border: "1px dashed var(--border-color, rgba(0,255,255,0.1))",
-    borderRadius: 4,
+    color: "var(--text-muted)",
+    border: "1px dashed var(--glass-border)",
+    borderRadius: "var(--radius-xs)",
   },
 };
 

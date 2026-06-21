@@ -1,23 +1,27 @@
+/* 新建会话对话框 v3 */
+
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: var(--z-toast);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(var(--blur-xs));
+  -webkit-backdrop-filter: blur(var(--blur-xs));
 }
 
 .dialog {
   width: 420px;
   max-height: 80vh;
   overflow-y: auto;
-  background: rgba(10, 10, 26, 0.95);
+  background: var(--dialog-bg);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-glass), 0 0 30px rgba(0, 212, 170, 0.15);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-glass), var(--dialog-shadow);
   backdrop-filter: blur(var(--blur-heavy));
+  -webkit-backdrop-filter: blur(var(--blur-heavy));
   padding: 20px;
 }
 
@@ -74,9 +78,9 @@
   align-items: center;
   gap: 8px;
   padding: 16px 10px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all var(--transition-fast);
   color: var(--text-primary);
@@ -85,8 +89,8 @@
 }
 
 .modeCard:hover:not(:disabled) {
-  background: rgba(0, 212, 170, 0.06);
-  border-color: rgba(0, 212, 170, 0.3);
+  background: var(--glass-bg-hover);
+  border-color: var(--accent-primary);
   box-shadow: 0 0 12px var(--accent-glow);
 }
 
@@ -109,10 +113,10 @@
   top: 6px;
   right: 6px;
   font-size: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--glass-bg);
   color: var(--text-muted);
   padding: 2px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
@@ -159,13 +163,14 @@
 .select, .input {
   width: 100%;
   padding: 6px 10px;
-  background-color: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
+  background: var(--glass-input-bg);
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-family: var(--font-ui);
   outline: none;
+  box-shadow: var(--glass-input-shadow-inner);
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
@@ -174,8 +179,8 @@
 }
 
 .select:focus, .input:focus {
-  border-color: var(--glass-border-focus);
-  box-shadow: 0 0 6px var(--accent-glow);
+  border-color: var(--glass-input-focus-border);
+  box-shadow: var(--glass-input-focus-glow);
 }
 
 .select:disabled, .input:disabled {
@@ -183,11 +188,11 @@
   cursor: not-allowed;
 }
 
-/* Select-only: custom dark arrow, hide native chrome */
+/* Select-only: custom arrow via CSS variable */
 .select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-image: var(--select-arrow); /* fill color adapts per theme */
   background-repeat: no-repeat;
   background-position: right 10px center;
   padding-right: 28px;
@@ -195,7 +200,7 @@
 }
 
 .select option {
-  background: #1a1a2e;
+  background: var(--select-option-bg);
   color: var(--text-primary);
 }
 
@@ -203,9 +208,9 @@
   width: 30px;
   height: 30px;
   border: 1px solid var(--glass-border);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--glass-button-bg);
   color: var(--text-secondary);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 14px;
   display: flex;
@@ -218,8 +223,8 @@
 .error {
   padding: 8px;
   margin-bottom: 10px;
-  background: rgba(255, 71, 87, 0.1);
-  border: 1px solid rgba(255, 71, 87, 0.3);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
   border-radius: var(--radius-sm);
   color: var(--color-error);
   font-size: var(--text-xs);
@@ -234,7 +239,7 @@
 
 .cancelBtn, .connectBtn {
   padding: 7px 18px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
@@ -249,22 +254,7 @@
 
 .cancelBtn:hover { color: var(--text-primary); border-color: var(--glass-border-hover); }
 
-.connectBtn {
-  background: var(--accent-gradient);
-  border: none;
-  color: #000;
-  font-weight: 600;
-}
-
-.connectBtn:hover:not(:disabled) {
-  box-shadow: 0 0 12px var(--accent-glow);
-  transform: scale(1.02);
-}
-
-.connectBtn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+/* .connectBtn 视觉由全局 .liquid-primary-button 接管 */
 
 /* ── 复选框 ── */
 

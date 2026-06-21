@@ -74,9 +74,9 @@
     "search": "Search in Terminal"
   },
   "theme": {
-    "neonDark": "Neon Dark",
-    "ocean": "Ocean Blue",
-    "sunset": "Sunset Amber",
+    "googleGlow": "Google Glow",
+    "obsidian": "Obsidian",
+    "frosted": "Frosted",
     "switchTo": "Switch to"
   },
   "toolbar": {

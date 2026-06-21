@@ -1,4 +1,5 @@
-/* 终端视图容器 */
+/* 终端视图容器 v3 */
+
 .viewport {
   flex: 1;
   display: flex;
@@ -12,6 +13,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  backdrop-filter: blur(var(--blur-xs));
+  -webkit-backdrop-filter: blur(var(--blur-xs));
 }
 
 /* 所有终端叠放的相对定位容器 */
@@ -29,7 +32,7 @@
   height: 100%;
 }
 
-/* 终端实例 */
+/* 终端实例 — 背景透明以透出流光效果 */
 .terminal {
   flex: 1;
   width: 100%;
@@ -38,14 +41,21 @@
   padding: 4px;
 }
 
+/* 强制覆盖 xterm.css 默认黑色背景，实现玻璃透明效果 */
 .terminal :global(.xterm) {
   height: 100%;
   padding: 4px;
+  background-color: transparent !important;
+}
+
+.terminal :global(.xterm-screen) {
+  background-color: transparent !important;
 }
 
 .terminal :global(.xterm-viewport) {
+  background-color: transparent !important;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  scrollbar-color: var(--glass-border) transparent;
 }
 
 .terminal :global(.xterm-viewport::-webkit-scrollbar) {
@@ -57,8 +67,8 @@
 }
 
 .terminal :global(.xterm-viewport::-webkit-scrollbar-thumb) {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  background: var(--glass-border);
+  border-radius: var(--radius-xs);
 }
 
 /* 空状态 */
@@ -89,9 +99,9 @@
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  background: rgba(234, 179, 8, 0.12);
-  border-bottom: 1px solid rgba(234, 179, 8, 0.25);
-  color: #eab308;
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);
+  color: var(--color-warning);
   font-size: var(--text-xs);
 }
 

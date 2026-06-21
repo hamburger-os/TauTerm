@@ -23,7 +23,7 @@ export default function ProgressBar({
       className={className}
       style={{
         height: `${height}px`,
-        background: "rgba(255, 255, 255, 0.08)",
+        background: "var(--glass-border)",
         borderRadius: `${height / 2}px`,
         overflow: "hidden",
       }}
@@ -36,11 +36,9 @@ export default function ProgressBar({
           borderRadius: `${height / 2}px`,
           transition: "width 200ms ease",
           boxShadow: "0 0 8px var(--accent-glow)",
-          ...(indeterminate
-            ? {
-                animation: "shimmer 1.5s ease-in-out infinite",
-              }
-            : {}),
+          animation: indeterminate
+            ? "shimmer 1.5s ease-in-out infinite"
+            : undefined,
         }}
       />
     </div>

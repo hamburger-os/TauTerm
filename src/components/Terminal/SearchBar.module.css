@@ -6,8 +6,9 @@
   align-items: center;
   gap: 4px;
   padding: 6px 10px;
-  background: var(--glass-bg);
+  background: var(--block-terminal-bg);
   backdrop-filter: blur(var(--blur-medium));
+  -webkit-backdrop-filter: blur(var(--blur-medium));
   border: 1px solid var(--glass-border);
   border-radius: 0 0 0 var(--radius-md);
   z-index: var(--z-overlay);
@@ -15,19 +16,21 @@
 
 .input {
   width: 180px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
+  background: var(--glass-input-bg);
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-md);
   padding: 3px 8px;
   color: var(--text-primary);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
   outline: none;
+  box-shadow: var(--glass-input-shadow-inner);
 }
 
 .input:focus {
-  border-color: var(--glass-border-focus);
-  box-shadow: 0 0 6px var(--accent-glow);
+  border-color: var(--glass-input-focus-border);
+  box-shadow: var(--glass-input-shadow-inner),
+              var(--glass-input-focus-glow);
 }
 
 .count {
@@ -44,7 +47,7 @@
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text-secondary);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 11px;
   display: flex;

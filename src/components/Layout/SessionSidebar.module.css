@@ -1,8 +1,10 @@
+/* 会话侧边栏 v3 */
+
 .sidebar {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--glass-bg);
+  background: var(--block-sidebar-bg);
   backdrop-filter: blur(var(--blur-medium));
   -webkit-backdrop-filter: blur(var(--blur-medium));
   border-right: 1px solid var(--glass-border);
@@ -18,21 +20,21 @@
 
 .title {
   color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 1.5px;
 }
 
 .addBtn {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: transparent;
+  border: 1px solid var(--glass-button-border);
+  border-radius: var(--radius-md);
+  background: var(--glass-button-bg);
   color: var(--text-secondary);
   font-size: 14px;
   font-weight: 600;
@@ -43,25 +45,29 @@
 }
 
 .addBtn:hover {
-  background: rgba(0, 212, 170, 0.08);
-  border-color: rgba(0, 212, 170, 0.25);
+  background: var(--glass-button-hover-bg);
+  border-color: var(--glass-button-hover-border);
   color: var(--accent-primary);
+  transform: translateY(-1px);
 }
 
 .search {
   margin: 4px 8px 8px;
   padding: 5px 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
+  background: var(--glass-input-bg);
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--text-xs);
   outline: none;
   transition: border-color var(--transition-fast);
+  box-shadow: var(--glass-input-shadow-inner);
 }
 
 .search:focus {
-  border-color: var(--glass-border-focus);
+  border-color: var(--glass-input-focus-border);
+  box-shadow: var(--glass-input-shadow-inner),
+              var(--glass-input-focus-glow);
 }
 
 .search::placeholder {
@@ -87,20 +93,23 @@
   align-items: center;
   justify-content: space-between;
   padding: 7px 8px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: background var(--transition-fast);
+  transition: all var(--transition-normal);
   margin-bottom: 2px;
   border: 1px solid transparent;
 }
 
 .item:hover {
+  background: var(--glass-bg-hover);
   border-color: var(--glass-border-hover);
 }
 
 .item.active {
-  background: rgba(0, 212, 170, 0.06);
-  border: 1px solid rgba(0, 212, 170, 0.15);
+  background: var(--glass-bg-active);
+  border: 1px solid var(--glass-border-hover);
+  box-shadow: var(--shadow-sm),
+              inset 0 1px 0 var(--glass-border-top);
 }
 
 .itemLeft {
@@ -120,19 +129,15 @@
 }
 
 .statusDot.connected {
-  background: var(--accent-primary);
-  box-shadow: 0 0 6px var(--accent-glow);
+  background: var(--color-success);
+  box-shadow: 0 0 10px var(--color-success);
+  animation: pulse 2s ease-in-out infinite;
 }
 
 .statusDot.transferring {
-  background: #eab308;
-  box-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
+  background: var(--color-warning);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-warning) 60%, transparent);
   animation: pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
 }
 
 .itemName {
@@ -175,7 +180,7 @@
   width: 100%;
   padding: 5px 8px;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
   font-size: 11px;
@@ -185,7 +190,7 @@
 }
 
 .settingsBtn:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--glass-bg-hover);
   border-color: var(--glass-border-hover);
   color: var(--text-primary);
 }

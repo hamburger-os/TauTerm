@@ -34,18 +34,18 @@ export default function YmodemConfigForm({
                 background:
                   config.blockSize === bs
                     ? "var(--glass-bg-active)"
-                    : "var(--glass-bg)",
+                    : "var(--glass-button-bg)",
                 border:
                   config.blockSize === bs
                     ? "1px solid var(--glass-border-focus)"
-                    : "1px solid var(--glass-border)",
+                    : "1px solid var(--glass-border-default)",
                 borderRadius: "var(--radius-sm)",
                 color:
                   config.blockSize === bs
                     ? "var(--text-primary)"
                     : "var(--text-secondary)",
                 cursor: "pointer",
-                transition: "all var(--transition-fast, 0.15s)",
+                transition: "all var(--transition-fast)",
               }}
             >
               {bs === 1024
@@ -87,7 +87,7 @@ export default function YmodemConfigForm({
                     ? "var(--text-primary)"
                     : "var(--text-secondary)",
                 cursor: "pointer",
-                transition: "all var(--transition-fast, 0.15s)",
+                transition: "all var(--transition-fast)",
               }}
             >
               {mode === "crc16"

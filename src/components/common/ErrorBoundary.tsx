@@ -84,13 +84,10 @@ export default class ErrorBoundary extends Component<
               </p>
               <button
                 onClick={this.handleRetry}
+                className="liquid-primary-button"
                 style={{
                   padding: "8px 24px",
-                  background: "var(--accent-gradient)",
-                  color: "#fff",
-                  border: "none",
                   borderRadius: "var(--radius-md)",
-                  cursor: "pointer",
                   fontSize: "var(--text-sm)",
                 }}
               >

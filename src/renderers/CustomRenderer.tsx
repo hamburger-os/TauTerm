@@ -34,7 +34,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     height: "100%",
-    color: "var(--text-muted, #888)",
+    color: "var(--text-muted)",
   },
 };
 

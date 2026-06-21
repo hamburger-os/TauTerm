@@ -37,7 +37,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flex: 1,
     height: "100%",
-    backgroundColor: "var(--bg-primary, #0a0a1a)",
+    backgroundColor: "var(--bg-base)",
   },
   pane: {
     flex: 1,
@@ -49,8 +49,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "8px 12px",
     fontSize: 12,
     fontWeight: 600,
-    color: "var(--text-secondary, #888)",
-    borderBottom: "1px solid var(--border-color, rgba(0,255,255,0.15))",
+    color: "var(--text-secondary)",
+    borderBottom: "1px solid var(--glass-border)",
   },
   paneContent: {
     flex: 1,
@@ -61,10 +61,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   divider: {
     width: 1,
-    backgroundColor: "var(--border-color, rgba(0,255,255,0.15))",
+    backgroundColor: "var(--glass-border)",
   },
   placeholder: {
-    color: "var(--text-muted, #555)",
+    color: "var(--text-muted)",
     fontSize: 14,
   },
 };

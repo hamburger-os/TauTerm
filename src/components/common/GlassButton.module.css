@@ -1,16 +1,16 @@
-/* 玻璃拟态按钮 */
+/* 液态玻璃按钮 v3
+   基础视觉由全局 .liquid-glass-button / .liquid-primary-button 提供
+   本模块仅保留布局、尺寸和变体差异化样式 */
 
 .button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--spacing-sm);
-  border: 1px solid transparent;
   border-radius: var(--radius-md);
   font-family: var(--font-ui);
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-fast);
   position: relative;
   overflow: hidden;
   user-select: none;
@@ -24,6 +24,8 @@
 .button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+  transform: none;
+  filter: grayscale(0.5);
 }
 
 /* ===== 尺寸 ===== */
@@ -48,30 +50,33 @@
 
 /* ===== 变体 ===== */
 
-/* 主按钮：强调渐变 */
+/* 主按钮：视觉由全局 .liquid-primary-button 接管 */
 .primary {
-  background: var(--accent-gradient);
-  color: #fff;
-  border-color: transparent;
-  box-shadow: 0 2px 8px rgba(0, 212, 170, 0.2);
+  /* 仅保留 SVG 过渡增强 */
 }
 
-.primary:hover:not(:disabled) {
-  box-shadow: 0 4px 16px var(--accent-glow);
-  filter: brightness(1.1);
+.primary:hover:not(:disabled) svg {
+  transform: translateX(2px);
+  transition: transform 0.3s ease;
 }
 
-/* 次要按钮：玻璃边框 */
+.primary svg {
+  transition: transform 0.3s ease;
+}
+
+.primary:disabled {
+  background: var(--glass-button-bg);
+  color: var(--text-muted);
+  animation: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  opacity: 0.5;
+}
+
+/* 次要按钮：视觉由全局 .liquid-glass-button 接管 */
 .secondary {
-  background: var(--glass-bg);
   color: var(--text-primary);
-  border-color: var(--glass-border);
-  backdrop-filter: blur(var(--blur-light));
-}
-
-.secondary:hover:not(:disabled) {
-  background: var(--glass-bg-hover);
-  border-color: var(--glass-border-hover);
 }
 
 /* 幽灵按钮：无背景 */
@@ -79,23 +84,27 @@
   background: transparent;
   color: var(--text-secondary);
   border-color: transparent;
+  box-shadow: none;
 }
 
 .ghost:hover:not(:disabled) {
-  background: var(--glass-bg);
+  background: var(--glass-button-bg);
   color: var(--text-primary);
+  box-shadow: none;
 }
 
 /* 危险按钮 */
 .danger {
-  background: rgba(255, 71, 87, 0.1);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
   color: var(--color-error);
-  border-color: rgba(255, 71, 87, 0.3);
+  border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
+  box-shadow: none;
 }
 
 .danger:hover:not(:disabled) {
-  background: rgba(255, 71, 87, 0.2);
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
   border-color: var(--color-error);
+  box-shadow: 0 5px 15px color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 /* 全宽 */

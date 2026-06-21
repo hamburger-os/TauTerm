@@ -1,4 +1,4 @@
-/* 顶部功能工具栏 */
+/* 顶部功能工具栏 v3 */
 
 .toolbar {
   display: flex;
@@ -6,8 +6,10 @@
   justify-content: space-between;
   height: 36px;
   padding: 0 var(--spacing-md);
-  background: var(--glass-bg);
-  border-bottom: 1px solid var(--glass-border);
+  background: var(--block-toolbar-bg);
+  backdrop-filter: blur(var(--blur-medium));
+  -webkit-backdrop-filter: blur(var(--blur-medium));
+  border-bottom: 1px solid var(--glass-border-default);
   flex-shrink: 0;
   user-select: none;
 }
@@ -18,13 +20,6 @@
   color: var(--text-primary);
   white-space: nowrap;
   margin-right: var(--spacing-lg);
-}
-
-.buttons {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  overflow: hidden;
 }
 
 .toolbarButton {
@@ -40,16 +35,16 @@
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 150ms ease, color 150ms ease;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .toolbarButton:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--glass-bg-hover);
   color: var(--text-primary);
 }
 
 .toolbarButton:active {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--glass-bg-active);
 }
 
 .icon {

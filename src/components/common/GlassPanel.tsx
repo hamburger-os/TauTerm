@@ -23,6 +23,7 @@ export default function GlassPanel({
   padding = "md",
 }: GlassPanelProps) {
   const classes = [
+    "liquid-glass",
     styles.panel,
     styles[variant],
     styles[`padding-${padding}`],

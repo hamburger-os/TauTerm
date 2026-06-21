@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
 
-export type ThemeId = "neon-dark" | "ocean" | "sunset";
+export type ThemeId = "google-glow" | "obsidian" | "frosted";
 
 interface ThemeInfo {
   id: ThemeId;
@@ -9,9 +9,9 @@ interface ThemeInfo {
 }
 
 export const THEMES: ThemeInfo[] = [
-  { id: "neon-dark", name: "霓虹暗黑", nameEn: "Neon Dark" },
-  { id: "ocean", name: "深海蓝", nameEn: "Ocean Blue" },
-  { id: "sunset", name: "日落琥珀", nameEn: "Sunset Amber" },
+  { id: "google-glow", name: "炫彩流光", nameEn: "Google Glow" },
+  { id: "obsidian", name: "黑曜石", nameEn: "Obsidian" },
+  { id: "frosted", name: "白霜", nameEn: "Frosted" },
 ];
 
 interface ThemeContextValue {
@@ -24,7 +24,15 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeId>(() => {
-    return (localStorage.getItem("tauterm-theme") as ThemeId) || "neon-dark";
+    const stored = localStorage.getItem("tauterm-theme");
+    // 迁移旧主题 ID 到新主题
+    if (stored === "neon-dark" || stored === "ocean" || stored === "sunset") {
+      return "google-glow";
+    }
+    if (stored === "google-glow" || stored === "obsidian" || stored === "frosted") {
+      return stored;
+    }
+    return "google-glow";
   });
 
   const setTheme = useCallback((newTheme: ThemeId) => {
