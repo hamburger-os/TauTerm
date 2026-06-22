@@ -43,7 +43,7 @@ export default function EncodingSettings() {
             >
               <span className={styles.optionIcon}>✓</span>
               <span>{t(cs.labelKey)}</span>
-              <span style={{ color: "var(--text-muted)", fontSize: "11px", marginLeft: "auto" }}>
+              <span className={styles.charsetCode}>
                 {cs.id.toUpperCase()}
               </span>
             </button>
@@ -51,15 +51,7 @@ export default function EncodingSettings() {
         </div>
       </div>
 
-      <div className={styles.encodingNote} style={{
-        padding: "10px 14px",
-        background: "rgba(255, 165, 2, 0.08)",
-        border: "1px solid rgba(255, 165, 2, 0.2)",
-        borderRadius: "var(--radius-sm)",
-        fontSize: "var(--text-xs)",
-        color: "var(--color-warning)",
-        marginTop: "12px",
-      }}>
+      <div className={styles.encodingNote}>
         ⚠ {t("settings.charsetNote")}
       </div>
     </div>

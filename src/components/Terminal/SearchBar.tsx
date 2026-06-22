@@ -158,7 +158,7 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
       >
         <input
           ref={inputRef}
-          className={`${styles.input} ${query && totalMatches === 0 ? styles.noMatch : ""}`}
+          className={`${styles.input} liquid-glass-input ${query && totalMatches === 0 ? styles.noMatch : ""}`}
           type="text"
           placeholder={t("search.placeholder") || "Search..."}
           value={query}
@@ -169,19 +169,19 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
           {totalMatches > 0 ? `${matchIndex}/${totalMatches}` : query ? "0/0" : ""}
         </span>
         <button
-          className={`${styles.btn} ${caseSensitive ? styles.active : ""}`}
+          className={`${styles.btn} liquid-glass-button ${caseSensitive ? styles.active : ""}`}
           onClick={() => setCaseSensitive(!caseSensitive)}
           title="Case sensitive"
         >
           Aa
         </button>
-        <button className={styles.btn} onClick={() => setMatchIndex(prev => prev > 1 ? prev - 1 : totalMatches)}>
+        <button className={`${styles.btn} liquid-glass-button`} onClick={() => setMatchIndex(prev => prev > 1 ? prev - 1 : totalMatches)}>
           ↑
         </button>
-        <button className={styles.btn} onClick={() => setMatchIndex(prev => prev < totalMatches ? prev + 1 : 1)}>
+        <button className={`${styles.btn} liquid-glass-button`} onClick={() => setMatchIndex(prev => prev < totalMatches ? prev + 1 : 1)}>
           ↓
         </button>
-        <button className={styles.btn} onClick={onClose}>×</button>
+        <button className={`${styles.btn} liquid-glass-button`} onClick={onClose}>×</button>
       </motion.div>
     </AnimatePresence>
   );

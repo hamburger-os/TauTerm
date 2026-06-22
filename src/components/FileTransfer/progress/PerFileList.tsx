@@ -1,5 +1,6 @@
 import type { BatchFileEntry } from "../../../types/transfer";
 import ProgressBar from "./ProgressBar";
+import styles from "./PerFileList.module.css";
 
 /** 格式化文件大小 */
 function formatSize(bytes: number): string {
@@ -35,82 +36,42 @@ export default function PerFileList({ entries }: PerFileListProps) {
   if (entries.length === 0) return null;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "2px",
-      }}
-    >
+    <div className={styles.list}>
       {entries.map((entry) => {
         const filePercent =
           entry.totalBytes > 0
             ? Math.round((entry.bytesTransferred / entry.totalBytes) * 100)
             : 0;
+        const isError =
+          entry.status === "failed" || entry.status === "skipped";
         return (
           <div
             key={entry.fileName}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "var(--spacing-sm)",
-              padding: "2px var(--spacing-sm)",
-              background: "var(--glass-bg)",
-              border: "1px solid var(--glass-border)",
-              borderRadius: "var(--radius-sm)",
-              fontSize: "var(--text-xs)",
-            }}
+            className={`${styles.row} liquid-glass`}
           >
-            <span style={{ flexShrink: 0, width: "18px", textAlign: "center" }}>
+            <span className={styles.iconCell}>
               {getStatusIcon(entry.status)}
             </span>
-            <div
-              style={{
-                flex: 1,
-                overflow: "hidden",
-                display: "flex",
-                flexDirection: "column",
-                gap: "2px",
-              }}
-            >
-              <span
-                title={entry.fileName}
-                style={{
-                  color: "var(--text-primary)",
-                  fontFamily: "var(--font-mono)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
+            <div className={styles.fileInfo}>
+              <span title={entry.fileName} className={styles.fileName}>
                 {entry.fileName}
               </span>
               {entry.status === "transferring" && entry.totalBytes > 0 && (
                 <ProgressBar percent={filePercent} height={2} />
               )}
-              {(entry.status === "failed" || entry.status === "skipped") &&
-                entry.error && (
-                  <span
-                    style={{
-                      color:
-                        entry.status === "skipped"
-                          ? "var(--color-warning)"
-                          : "var(--color-error)",
-                      fontSize: "0.6rem",
-                    }}
-                  >
-                    {entry.error}
-                  </span>
-                )}
+              {isError && entry.error && (
+                <span
+                  className={`${styles.errorText} ${
+                    entry.status === "skipped"
+                      ? styles.errorSkipped
+                      : styles.errorFailed
+                  }`}
+                >
+                  {entry.error}
+                </span>
+              )}
             </div>
-            <span
-              style={{
-                flexShrink: 0,
-                color: "var(--text-muted)",
-                fontSize: "0.6rem",
-                whiteSpace: "nowrap",
-              }}
-            >
+            <span className={styles.fileSize}>
               {entry.status === "pending"
                 ? "—"
                 : formatSize(entry.bytesTransferred)}

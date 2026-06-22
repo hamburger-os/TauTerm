@@ -1,3 +1,5 @@
+import styles from "./ProgressBar.module.css";
+
 interface ProgressBarProps {
   /** 进度百分比 0-100 */
   percent: number;
@@ -20,25 +22,19 @@ export default function ProgressBar({
 }: ProgressBarProps) {
   return (
     <div
-      className={className}
+      className={`${className} ${styles.track}`}
       style={{
         height: `${height}px`,
-        background: "var(--glass-border)",
         borderRadius: `${height / 2}px`,
-        overflow: "hidden",
       }}
     >
       <div
+        className={`${styles.fill} ${indeterminate ? styles.indeterminate : ""}`}
         style={{
-          height: "100%",
-          width: indeterminate ? "30%" : `${Math.min(100, Math.max(0, percent))}%`,
-          background: "var(--accent-gradient)",
+          width: indeterminate
+            ? undefined
+            : `${Math.min(100, Math.max(0, percent))}%`,
           borderRadius: `${height / 2}px`,
-          transition: "width 200ms ease",
-          boxShadow: "0 0 8px var(--accent-glow)",
-          animation: indeterminate
-            ? "shimmer 1.5s ease-in-out infinite"
-            : undefined,
         }}
       />
     </div>

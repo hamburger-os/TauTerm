@@ -3,7 +3,7 @@
   z-index: var(--z-overlay);
   min-width: 160px;
   background: var(--dialog-bg);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-glass), var(--dialog-shadow);
   backdrop-filter: blur(var(--blur-heavy));
@@ -44,7 +44,7 @@
 }
 
 .itemIcon {
-  font-size: 14px;
+  font-size: var(--text-md);
   width: 18px;
   text-align: center;
   flex-shrink: 0;

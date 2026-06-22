@@ -178,7 +178,7 @@ export default function TerminalView() {
 
   return (
     <div className={styles.viewport}>
-      <div className={styles.terminalArea}>
+      <div className={`${styles.terminalArea} liquid-glass`}>
         {isActiveTransferring && (
           <motion.div
             className={styles.transferBanner}

@@ -1,0 +1,20 @@
+/* 可复用进度条 v3 */
+
+.track {
+  background: var(--glass-border-default);
+  overflow: hidden;
+  /* height 和 border-radius 由组件通过内联 style 动态设置 */
+}
+
+.fill {
+  height: 100%;
+  background: var(--accent-gradient);
+  transition: width var(--transition-fast);
+  box-shadow: 0 0 8px var(--accent-glow);
+  /* width 和 border-radius 由组件通过内联 style 动态设置 */
+}
+
+.indeterminate {
+  width: 30%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}

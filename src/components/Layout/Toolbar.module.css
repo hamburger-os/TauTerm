@@ -6,12 +6,9 @@
   justify-content: space-between;
   height: 36px;
   padding: 0 var(--spacing-md);
-  background: var(--block-toolbar-bg);
-  backdrop-filter: blur(var(--blur-medium));
-  -webkit-backdrop-filter: blur(var(--blur-medium));
-  border-bottom: 1px solid var(--glass-border-default);
   flex-shrink: 0;
   user-select: none;
+  border-radius: var(--radius-lg);  /* 16px — Panel tier */
 }
 
 .logo {

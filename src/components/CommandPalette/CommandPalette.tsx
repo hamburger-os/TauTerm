@@ -107,14 +107,14 @@ export default function CommandPalette({ isOpen, onClose, onExecute }: CommandPa
   return (
     <AnimatePresence>
       <motion.div
-        className={styles.overlay}
+        className={`${styles.overlay} glass-overlay`}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={onClose}
       >
         <motion.div
-          className={styles.palette}
+          className={`${styles.palette} liquid-glass`}
           initial={{ opacity: 0, y: -20, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -20, scale: 0.95 }}

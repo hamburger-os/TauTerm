@@ -201,7 +201,7 @@ function AppInner() {
         <AnimatePresence>
           {sidebarVisible && (
             <motion.aside
-              className="sidebar"
+              className="sidebar liquid-glass"
               style={{ width: sidebarWidth }}
               initial={{ width: 0, opacity: 0 }}
               animate={{ width: sidebarWidth, opacity: 1 }}
@@ -225,7 +225,7 @@ function AppInner() {
         {/* 主内容区：终端 + 传输面板 + 发送栏 */}
         <div className="main-content">
           <div className="terminal-transmission-row">
-            <main className="terminal-viewport">
+            <main className="terminal-viewport liquid-glass">
               <TabContentDispatcher />
             </main>
             {sessionState.tabs.map(tab => {
@@ -291,7 +291,7 @@ function AppInner() {
       <AnimatePresence>
         {transferState.isDragging && (
           <motion.div
-            className="dropzone-overlay"
+            className="dropzone-overlay glass-overlay"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

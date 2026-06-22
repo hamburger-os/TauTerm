@@ -5,7 +5,7 @@ description: >
 license: MIT
 metadata:
   author: tauterm
-  version: "1.4"
+  version: "2.0"
 ---
 
 # TauTerm Liquid Glass v3 Theme System
@@ -29,29 +29,42 @@ Full reference at `docs/theme-guide.md`. Quick lookup:
 font-family: var(--font-ui);       /* Inter, sans-serif */
 font-family: var(--font-mono);     /* JetBrains Mono, monospace */
 font-size: var(--text-xs);         /* 0.7rem (~11.2px) */
-font-size: var(--text-sm);         /* 12px */
-font-size: var(--text-base);       /* 13px */
-font-size: var(--text-md);         /* 14px */
-font-size: var(--text-lg);         /* 16px */
-font-size: var(--text-xl);         /* 18px */
-border-radius: var(--radius-xs);   /*  3px — scrollbars only */
-border-radius: var(--radius-sm);   /*  6px */
-border-radius: var(--radius-md);   /* 10px */
-border-radius: var(--radius-lg);   /* 14px */
-border-radius: var(--radius-xl);   /* 18px */
-border-radius: var(--radius-2xl);  /* 24px */
-border-radius: var(--radius-full); /* 9999px — toggles, pills */
+font-size: var(--text-sm);         /* 0.78rem (~12px) */
+font-size: var(--text-base);       /* 0.85rem (~14px) */
+font-size: var(--text-md);         /* 0.95rem (~15px) */
+font-size: var(--text-lg);         /* 1.1rem (~18px) */
+font-size: var(--text-xl);         /* 1.25rem (20px) */
+border-radius: var(--radius-xs);   /*  4px — micro: scrollbars, shortcut hints */
+border-radius: var(--radius-sm);   /* 12px — control (compact): toolbar buttons, nav items, error boxes */
+border-radius: var(--radius-md);   /* 12px — control (standard): buttons, inputs, selects, list items */
+border-radius: var(--radius-lg);   /* 16px — panel: terminal modules, cards, glass panels */
+border-radius: var(--radius-xl);   /* 24px — frame: dialogs, modals, main containers */
+border-radius: var(--radius-2xl);  /* 24px — frame alias (same as xl, backward compatible) */
+border-radius: var(--radius-full); /* 9999px — pill: toggles, badges, status dots */
 padding: var(--spacing-md);        /* 12px (xs:4 sm:8 md:12 lg:16 xl:24 2xl:32) */
 transition: all var(--transition-fast);  /* 150ms ease */
 transition: all var(--transition-normal); /* 300ms ease */
 transition: all var(--transition-button); /* 0.3s cubic-bezier(0.4, 0, 0.2, 1) — button hover lift */
 transition: all var(--transition-input);  /* 0.3s ease — input focus glow */
+transition: all var(--transition-knob);   /* 200ms ease — toggle knob position */
 z-index: var(--z-sidebar);         /* 10 */
 z-index: var(--z-panel);           /* 20 */
 z-index: var(--z-overlay);         /* 30 */
 z-index: var(--z-toast);           /* 50 */
 blur: var(--blur-xs);              /*  4px — overlay backdrops (shared constant) */
 ```
+
+### Border-Radius Tier Quick Reference (v3.1)
+
+| Semantic Tier | Value | Token(s) | Use For |
+|--------------|-------|----------|---------|
+| Frame | 24px | `--radius-xl`, `--radius-2xl` | Dialogs, modals, settings container, command palette |
+| Panel | 16px | `--radius-lg` | Terminal viewport, layout chrome (toolbar/sidebar/statusbar/sendbar/transmission panel), cards, glass panels |
+| Control | 12px | `--radius-sm`, `--radius-md` | Buttons, inputs, selects, list/nav items |
+| Pill | 9999px | `--radius-full` | Toggle tracks/knobs, badges, indicator dots |
+| Micro | 4px | `--radius-xs` | Scrollbar thumbs, tiny shortcut badges |
+
+**Edge-contact (0px) exception**: Only when an element's outer edge touches a screen edge or parent boundary (e.g., fullscreen terminal viewport, dividers). Rounding edge-touching elements creates awkward gaps. Layout chrome surfaces use `app-root` `gap: 6px` / `padding: 6px` for breathing room; flush inner edges get clipped by `overflow: hidden` → effectively 0px.
 
 ### Theme Tokens (Level 2 — vary per theme)
 
@@ -68,6 +81,7 @@ color: var(--accent-primary);
 color: var(--accent-secondary);
 background: var(--accent-gradient);  /* blue→indigo */
 box-shadow: 0 0 10px var(--accent-glow);
+color: var(--text-on-accent);       /* Always #fff — text on accent backgrounds */
 ```
 
 **Blur (theme-dependent — values vary per theme):**
@@ -81,10 +95,10 @@ backdrop-filter: blur(var(--glass-blur));  /* 25px google-glow / 30px obsidian /
 **Glass panels:**
 ```css
 background: var(--glass-fill);         /* v3 primary — glass fill gradient */
-background: var(--glass-bg);           /* v2 alias — still works */
+/* background: var(--glass-bg); */     /* @deprecated v2 alias — use --glass-fill */
 backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
 border: 1px solid var(--glass-border-default);  /* v3 primary */
-border: 1px solid var(--glass-border);          /* v2 alias */
+/* border: 1px solid var(--glass-border); */    /* @deprecated v2 alias — use --glass-border-default */
 border-top: 1px solid var(--glass-border-top);
 border-left: 1px solid var(--glass-border-left);
 box-shadow: var(--glass-shadow-outer), var(--glass-shadow-inner);
@@ -113,13 +127,14 @@ border-color: var(--glass-input-focus-border);
 box-shadow: var(--glass-input-shadow-inner), var(--glass-input-focus-glow);
 ```
 
-**Layout blocks:**
+**Layout blocks (@deprecated — use `.liquid-glass` + `var(--glass-fill)`):**
 ```css
-background: var(--block-toolbar-bg);     /* Toolbar area */
-background: var(--block-sidebar-bg);     /* Sidebar area */
-background: var(--block-terminal-bg);    /* Terminal viewport */
-background: var(--block-sendbar-bg);     /* SendBar area */
-background: var(--block-statusbar-bg);   /* StatusBar area */
+/* @deprecated v1.5 — DO NOT USE in new code */
+/* background: var(--block-toolbar-bg);     Toolbar area */
+/* background: var(--block-sidebar-bg);     Sidebar area */
+/* background: var(--block-terminal-bg);    Terminal viewport */
+/* background: var(--block-sendbar-bg);     SendBar area */
+/* background: var(--block-statusbar-bg);   StatusBar area */
 ```
 
 **Primary action button (holographic):**
@@ -171,10 +186,10 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 
 | Class | When to use |
 |-------|-------------|
-| `.liquid-glass` | Full glass panel: SVG noise texture (via ::before with per-theme opacity) + asymmetric top/left highlight borders + multi-layer shadows + saturate filter. Used by `GlassPanel` component automatically. |
+| `.liquid-glass` | Full glass panel: SVG noise texture (via ::before with per-theme opacity) + asymmetric top/left highlight borders + multi-layer shadows + saturate filter. **Use on ALL layout chrome surfaces** (toolbar, sidebar, statusbar, terminal viewport, sendbar, transmission panel) **and** dialogs/popups/dropdowns. Used by `GlassPanel` component automatically. |
 | `.liquid-primary-button` | Primary action button: holographic gradient with `gradient-shift` animation, glass blur, white text. Use for Send, Connect, Submit buttons. |
-| `.liquid-glass-button` | Secondary glass button: semi-transparent bg, hover lift effect. Use for Cancel, Close, auxiliary actions. |
-| `.liquid-glass-input` | Glass input: dark inset bg, accent glow on focus. Use for search bars, text inputs. |
+| `.liquid-glass-button` | Secondary glass button: semi-transparent bg, hover lift effect. Use for Cancel, Close, auxiliary actions, icon buttons, option selectors. |
+| `.liquid-glass-input` | Glass input: dark inset bg, accent glow on focus. Use for search bars, text inputs, textareas, selects. |
 | `.glow-orb` | Animated background orb. Used internally by `GoogleGlowBackground`. |
 
 ```tsx
@@ -183,6 +198,32 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 <input className={`${styles.search} liquid-glass-input`} />
 <div className={`${styles.card} liquid-glass`}>Content</div>
 ```
+
+**⚠️ `.liquid-glass` positioning constraint**: `.liquid-glass` forces `position: relative` (needed for the `::before` noise texture). Do NOT use `.liquid-glass` on elements that need `position: absolute` or `position: fixed` (context menus, floating search bars, toast notifications, absolutely-positioned dropdowns). These elements must keep their glass properties (`background`, `border`, `box-shadow`, `backdrop-filter`) in their own CSS Module.
+
+**Floating element glass pattern** (for `position: absolute` / `position: fixed` elements that can't use `.liquid-glass`):
+
+```css
+/* ✅ Correct — v3 tokens, self-contained glass */
+.floatingPanel {
+  position: absolute; /* or fixed */
+  background: var(--dialog-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-glass), var(--dialog-shadow);
+}
+
+/* ❌ Wrong — using deprecated tokens on floating element */
+.floatingPanel {
+  background: var(--block-terminal-bg);       /* @deprecated */
+  backdrop-filter: blur(var(--blur-medium));   /* use --glass-blur */
+  border: 1px solid var(--glass-border);       /* v2 alias */
+}
+```
+
+**Default border-radius**: `.liquid-glass-button` and `.liquid-glass-input` provide `border-radius: var(--radius-md)` (12px, Control tier) by default. CSS Modules may override with a different value (e.g., `--radius-sm`, `--radius-lg`) — the module CSS loads after global CSS and automatically wins the cascade.
 
 ## Component Patterns
 
@@ -193,7 +234,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 .myComponent {
   background: var(--glass-fill);
   border: 1px solid var(--glass-border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-md);  /* 12px — Control tier */
   color: var(--text-primary);
   padding: var(--spacing-md);
 }
@@ -207,8 +248,104 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
   background: rgba(0, 0, 0, 0.2);   /* hardcoded, won't work in frosted theme */
   border: 1px solid #fff;            /* invisible on light background */
   color: #888;                       /* fixed, won't change with theme */
-  border-radius: 4px;                /* too small for glass feel */
+  border-radius: 4px;                /* too small for glass feel — use Control tier (12px) */
 }
+```
+
+### Layout Chrome Pattern (v1.6)
+
+Layout chrome surfaces (toolbar, sidebar, status bar, terminal viewport, send bar, transmission panel) MUST use the `.liquid-glass` global class. CSS Modules for layout chrome ONLY contain layout properties + `border-radius: var(--radius-lg)` (16px, Panel tier) — NEVER visual glass properties. The `app-root` provides `gap: 6px` and `padding: 6px` to create breathing room for rounded corners. Inner edges flush against adjacent surfaces get clipped by `overflow: hidden`, effectively applying the 0px edge-contact rule:
+
+```css
+/* ✅ Correct — CSS Module: layout + border-radius only */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 var(--spacing-md);
+  flex-shrink: 0;
+  user-select: none;
+  border-radius: var(--radius-lg);  /* 16px — Panel tier */
+  /* NO background, border, box-shadow, or backdrop-filter here */
+}
+
+/* ❌ Wrong — CSS Module hand-rolling glass */
+.toolbar {
+  background: var(--block-toolbar-bg);              /* @deprecated — use .liquid-glass */
+  backdrop-filter: blur(var(--blur-medium));         /* @deprecated — use .liquid-glass */
+  border-bottom: 1px solid var(--glass-border-default); /* @deprecated — use .liquid-glass */
+}
+```
+
+```tsx
+// JSX: compose CSS Module class + liquid-glass global class
+<div className={`${styles.toolbar} liquid-glass`}>
+```
+
+### Layout Bar Alignment (v1.8)
+
+All layout chrome bars (toolbar, sidebar, status bar, send bar, transmission panel) MUST follow these alignment rules:
+
+- Use `display: flex; align-items: center;` — children are **vertically centered**, NEVER `flex-end` or `flex-start`
+- Use a fixed `height` (Toolbar=36px, StatusBar=26px, SendBar=40px), NOT `min-height`
+- Buttons/inputs/selects inside the bar use consistent vertical `padding` (e.g., `4px 8px`) so all controls share the same height and text baselines align horizontally
+- Child groups (e.g., `.actions`) also use `align-items: center` internally
+
+```css
+/* ✅ Correct — vertical center + fixed height */
+.sendBar {
+  display: flex;
+  align-items: center;  /* center, NOT flex-end */
+  height: 40px;         /* fixed, NOT min-height */
+  gap: 6px;
+  padding: 6px 8px;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 var(--spacing-md);
+}
+
+/* ❌ Wrong — flex-end causes controls to sit at different vertical positions */
+.sendBar {
+  align-items: flex-end;   /* jagged bottom alignment */
+  min-height: 40px;        /* no fixed height */
+}
+```
+
+> **Convention**: Toolbar=36px, StatusBar=26px, SendBar=40px. Panels (sidebar, transmission panel) use `height: 100%` / `flex: 1` to fill the parent.
+
+### Font-Size Token Guidance (v1.8)
+
+All `font-size` values ≥ ~11px MUST use `--text-*` tokens. Only micro-text (8px/9px/10px) for status bars, badges, and tiny labels may use raw px values:
+
+| Token | rem | ≈px | Use For |
+|-------|-----|-----|---------|
+| `--text-xs` | 0.7rem | ≈11px | Auxiliary labels, search fields, toolbar buttons, small controls |
+| `--text-sm` | 0.78rem | ≈12px | Secondary text, list item names, form labels |
+| `--text-base` | 0.85rem | ≈13px | Body text, nav items, settings options, descriptions |
+| `--text-md` | 0.95rem | ≈15px | Titles, icon buttons, larger controls |
+| `--text-lg` | 1.1rem | ≈18px | Panel titles, dialog titles |
+| `--text-xl` | 1.25rem | ≈20px | Large headings (rare) |
+
+```css
+/* ✅ Correct — tokens for 11px+ */
+font-size: var(--text-sm);       /* 12px → token */
+font-size: var(--text-base);     /* 13px → token */
+font-size: var(--text-xs);       /* 11px → token */
+
+/* ✅ Correct — px for micro-text (8/9/10px only) */
+font-size: 10px;                 /* status bar info — micro tier */
+font-size: 9px;                  /* section labels — micro tier */
+font-size: 8px;                  /* tiny badges — micro tier */
+
+/* ❌ Wrong — raw px where a token exists */
+font-size: 14px;                 /* use var(--text-md) */
+font-size: 13px;                 /* use var(--text-base) */
+font-size: 12px;                 /* use var(--text-sm) */
+font-size: 11px;                 /* use var(--text-xs) */
 ```
 
 ### Inline Style Component
@@ -236,7 +373,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 .dialog {
   background: var(--dialog-bg);
   border: 1px solid var(--glass-border-default);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-xl);  /* 24px — Frame tier */
   box-shadow: var(--shadow-glass), var(--dialog-shadow);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
@@ -260,7 +397,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
   -webkit-appearance: none;
   width: 100%;
   padding: 6px 28px 6px 10px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-md);  /* 12px — Control tier */
   font-size: var(--text-sm);
   font-family: var(--font-ui);
   cursor: pointer;
@@ -358,7 +495,7 @@ The canonical toggle switch pattern (from SendBar.module.css):
   border: 1px solid var(--glass-input-border);
   border-radius: var(--radius-full);
   box-shadow: var(--glass-input-shadow-inner);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--transition-button);
 }
 /* Slider knob */
 .toggleTrack::after {
@@ -366,9 +503,9 @@ The canonical toggle switch pattern (from SendBar.module.css):
   position: absolute;
   top: 2px; left: 2px;
   width: 11px; height: 11px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);  /* 9999px — Pill tier */
   background: var(--text-muted);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--transition-button);
 }
 /* Checked: track fills with accent gradient */
 .toggleCheck:checked + .toggleTrack {
@@ -385,10 +522,35 @@ The canonical toggle switch pattern (from SendBar.module.css):
 
 ### Indicator Dot Pattern
 
+State colors MUST be controlled via CSS Module variant classes — NOT inline `style` attributes. Use `.dotConnected` / `.dotDisconnected` class composition:
+
+```css
+.dot {
+  width: 7px; height: 7px;
+  border-radius: var(--radius-full);  /* 9999px — Pill tier */
+  flex-shrink: 0;
+}
+.dotConnected {
+  background: var(--color-success);
+  box-shadow: 0 0 6px var(--color-success);
+}
+.dotDisconnected {
+  background: var(--color-error);
+  box-shadow: 0 0 6px var(--color-error);
+}
+```
+
+```tsx
+// Class composition switches state — avoid inline style
+<span className={`${styles.dot} ${isConnected ? styles.dotConnected : styles.dotDisconnected}`} />
+```
+
+For pulsing connected indicators (session sidebar), add the `pulse` animation:
+
 ```css
 .statusDot {
   width: 7px; height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   background: var(--text-muted);
 }
 .statusDot.connected {
@@ -402,18 +564,24 @@ The canonical toggle switch pattern (from SendBar.module.css):
 
 Run this mental checklist for every new/changed component:
 
-1. All `color`/`background`/`border`/`box-shadow` use `var(--xxx)` tokens — no raw hex, no raw rgba
+1. All `color`/`background`/`border`/`box-shadow`/`font-size` use `var(--xxx)` tokens. For `font-size`: ≥11px MUST use `--text-*` tokens; only micro-text (8/9/10px) may use raw px values.
 2. No `rgba(0,0,0,x)` or `rgba(255,255,255,x)` hardcoded (except allowed exceptions)
-3. `border-radius` uses `var(--radius-md)` or larger (minimum 6px, prefer 10px+)
+3. `border-radius` uses the correct semantic tier: Frame→xl/2xl(24px), Panel→lg(16px), Control→md/sm(12px), Pill→full(9999px), Micro→xs(4px). Zero hardcoded pixel values (except ProgressBar's dynamic `${height/2}px`). Edge-touching elements use 0px.
 4. Dialogs/popups use `var(--dialog-bg)` background + `backdrop-filter: blur()`
 5. Select `<option>` elements use `var(--select-option-bg)`
 6. Would look correct in all 3 themes: google-glow (dark), obsidian (darker), frosted (light)
 7. Use `color-mix(in srgb, var(--color-*) N%, transparent)` for status-tinted backgrounds — never hardcode rgba
 8. z-index values use `var(--z-*)` tokens — never raw numbers
 9. `backdrop-filter` blur values use `var(--blur-*)` or `var(--glass-blur)` tokens
+9a. `transition` values use `var(--transition-*)` tokens — never raw `0.3s ease`, `0.2s`, etc.
 10. Modal/overlay backdrops use `var(--overlay-bg)` — not hardcoded black
-11. All `<select>` and `<input>` elements use the global `liquid-glass-input` class for base visuals (bg/border/color/shadow/focus/hover/disabled). CSS Modules only define select-specific props (appearance, arrow, option bg) and component-level sizing. Every select/input in the project should look identical regardless of which component it lives in.
+11. All `<select>` and `<input>` elements use the global `liquid-glass-input` class for base visuals (bg/border/color/shadow/focus/hover/disabled). All glass button elements (`<button>` that look like glass buttons) use `liquid-glass-button` or `GlassButton` component. CSS Modules only define layout/sizing/select-specific props (appearance, arrow, option bg). Every input/select/button in the project should look identical regardless of which component it lives in.
 12. Custom SVG data URIs (select arrows, etc.) have their hardcoded fill color noted in a comment
-13. Disabled opacity: use `opacity: 0.5` for buttons, `opacity: 0.4` for inputs/selects — be consistent across components
+13. Disabled opacity: `opacity: 0.5` for buttons (`.liquid-glass-button` / `.liquid-primary-button`), `opacity: 0.4` for inputs/selects (`.liquid-glass-input`). These are managed BY the global classes — CSS Modules do not need to redefine them. (Note: `.liquid-glass-button:disabled` was added in v3.1 to close a gap where only the primary and input variants had global disabled rules.)
+14. Layout surfaces (toolbar, sidebar, statusbar, terminal viewport, sendbar, transmission panel) use `liquid-glass` global class — CSS Modules for layout chrome contain ONLY layout properties. NO hand-rolled `background` / `backdrop-filter` / `border` / `box-shadow` on chrome surfaces.
+15. No v2 deprecated tokens: `--glass-bg` → `--glass-fill`, `--glass-border` → `--glass-border-default`, `--block-*` → `.liquid-glass`. Verify with: `grep -rn '\-\-glass-border[^-]\|\-\-glass-bg[^-]\|\-\-block-' src/ --include='*.css' --include='*.tsx'`
+16. Layout bars use `align-items: center` + fixed `height` (Toolbar=36px, StatusBar=26px, SendBar=40px). Controls inside the bar use consistent vertical padding to ensure horizontal alignment.
+17. Renderer components (under `src/renderers/`) must use CSS Modules + tokens — inline `React.CSSProperties` objects with hardcoded numeric values are forbidden.
+18. No dead CSS Module classes — every class defined in a `.module.css` file must be referenced by the corresponding `.tsx` file.
 
 > **Dead token note**: `--glass-noise-frequency` was previously defined in tokens.css but is NOT used by the noise SVG in `global.css` (the `baseFrequency` differences between themes are negligible — all use 0.8). Do NOT define or reference this token in new themes or components.

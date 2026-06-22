@@ -1,26 +1,17 @@
 /* 命令面板 v3 */
 
+/* position/inset/background/display/justify-content 由 glass-overlay 全局类提供
+   .overlay 仅覆盖差异：顶部锚定 (vs 垂直居中) + z-index */
 .overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay-bg);
-  display: flex;
-  justify-content: center;
-  padding-top: 15vh;
   z-index: var(--z-toast);
-  backdrop-filter: blur(var(--blur-xs));
-  -webkit-backdrop-filter: blur(var(--blur-xs));
+  align-items: flex-start;   /* 覆盖 glass-overlay 的 center → macOS Spotlight 风格顶部锚定 */
+  padding-top: 15vh;
 }
 
 .palette {
   width: 520px;
   max-height: 400px;
-  background: var(--dialog-bg);
-  border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-glass), var(--dialog-shadow);
-  backdrop-filter: blur(var(--blur-heavy));
-  -webkit-backdrop-filter: blur(var(--blur-heavy));
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -31,7 +22,7 @@
   padding: 12px 16px;
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--glass-border-default);
   color: var(--text-primary);
   font-size: var(--text-md);
   font-family: var(--font-ui);
@@ -84,7 +75,7 @@
   color: var(--text-muted);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
-  background: var(--glass-bg);
+  background: var(--glass-fill);
   padding: 2px 6px;
   border-radius: var(--radius-xs);
 }

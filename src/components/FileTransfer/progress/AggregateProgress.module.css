@@ -1,0 +1,31 @@
+/* 聚合进度卡片 v3
+   玻璃效果由全局 .liquid-glass 提供 */
+
+/* 卡片容器 */
+.container {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-md);  /* 12px — Control tier */
+  flex-shrink: 0;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  margin-right: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+  font-size: var(--text-xs);
+}
+
+.fileName {
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.stats {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}

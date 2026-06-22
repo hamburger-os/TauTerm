@@ -89,12 +89,12 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   }, [onEditSession, disconnect, deleteSession, connect, switchTab, state.tabs, t]);
 
   return (
-    <div className={styles.sidebar}>
+    <div className={`${styles.sidebar} liquid-glass`}>
       {/* 顶部：标题 + 新建按钮 */}
       <div className={styles.header}>
         <span className={styles.title}>{t("session.sessions")}</span>
         <button
-          className={styles.addBtn}
+          className={`${styles.addBtn} liquid-glass-button`}
           onClick={() => onNewSession?.()}
           title={t("session.newSession") + " (Ctrl+N)"}
         >
@@ -103,7 +103,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       </div>
 
       <input
-        className={styles.search}
+        className={`${styles.search} liquid-glass-input`}
         type="text"
         placeholder={t("search.placeholder") || "Search sessions..."}
         value={search}
@@ -151,7 +151,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       {/* 底部：设置按钮 */}
       <div className={styles.bottomSection}>
         <button
-          className={styles.settingsBtn}
+          className={`${styles.settingsBtn} liquid-glass-button`}
           onClick={onSettingsClick}
           title={t("sidebar.settings")}
         >

@@ -53,7 +53,7 @@ export default function StatusBar() {
   const dataMode = params?.data_mode === "hex" ? "HEX" : "Text";
 
   return (
-    <div className={styles.bar}>
+    <div className={`${styles.bar} liquid-glass`}>
       <div className={styles.left}>
         {/* 连接状态 */}
         <div className={styles.indicator}>

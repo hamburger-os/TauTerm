@@ -1,0 +1,58 @@
+/* 逐文件列表 v3
+   每行的玻璃效果由全局 .liquid-glass 提供 */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+.iconCell {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+.fileInfo {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.fileName {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.errorText {
+  font-size: var(--text-xs);
+}
+
+.errorSkipped {
+  color: var(--color-warning);
+}
+
+.errorFailed {
+  color: var(--color-error);
+}
+
+.fileSize {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}

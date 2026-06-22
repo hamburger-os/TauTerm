@@ -24,14 +24,11 @@ export default function ProtocolSelector({
   const meta = PROTOCOL_REGISTRY[value.protocol];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+    <div className={inputStyles.wrapper}>
       <select
         value={value.protocol}
         onChange={handleChange}
-        className={`${inputStyles.input} ${inputStyles.select} liquid-glass-input`}
-        style={{
-          fontSize: "var(--text-xs)",
-        }}
+        className={`${inputStyles.input} ${inputStyles.select} ${inputStyles.selectSmall} liquid-glass-input`}
       >
         {PROTOCOL_TYPES.map((pt) => (
           <option key={pt} value={pt}>
@@ -40,13 +37,7 @@ export default function ProtocolSelector({
           </option>
         ))}
       </select>
-      <span
-        style={{
-          fontSize: "0.6rem",
-          color: "var(--text-muted)",
-          lineHeight: "1.3",
-        }}
-      >
+      <span className={inputStyles.description}>
         {t(meta.i18nKey + "Description" as any, "") ||
           (t(meta.i18nKey) || value.protocol.toUpperCase())}
       </span>

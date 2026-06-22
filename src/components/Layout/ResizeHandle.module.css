@@ -46,7 +46,7 @@
   left: 50%;
   transform: translate(-50%, -50%);
   color: var(--accent-primary);
-  font-size: 14px;
+  font-size: var(--text-md);
   opacity: 0;
   pointer-events: none;
 }

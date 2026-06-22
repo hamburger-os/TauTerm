@@ -1,3 +1,5 @@
+import styles from "./ConnectionStatusDot.module.css";
+
 interface ConnectionStatusDotProps {
   isConnected: boolean;
   portName?: string;
@@ -10,7 +12,6 @@ export default function ConnectionStatusDot({
   portName,
   baudRate,
 }: ConnectionStatusDotProps) {
-  const color = isConnected ? "var(--color-success)" : "var(--color-error)";
   const label = isConnected
     ? [portName, baudRate ? `${baudRate}` : null]
         .filter(Boolean)
@@ -18,34 +19,11 @@ export default function ConnectionStatusDot({
     : "未连接";
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: "6px",
-        fontSize: "var(--text-xs)",
-        color: "var(--text-secondary)",
-      }}
-    >
+    <div className={styles.container}>
       <span
-        style={{
-          width: "8px",
-          height: "8px",
-          borderRadius: "50%",
-          background: color,
-          boxShadow: `0 0 6px ${color}`,
-          flexShrink: 0,
-        }}
+        className={`${styles.dot} ${isConnected ? styles.dotConnected : styles.dotDisconnected}`}
       />
-      <span
-        style={{
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {label}
-      </span>
+      <span className={styles.label}>{label}</span>
     </div>
   );
 }

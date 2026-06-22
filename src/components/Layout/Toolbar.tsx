@@ -37,7 +37,7 @@ export default function Toolbar({ onAction }: ToolbarProps) {
   );
 
   return (
-    <div className={styles.toolbar}>
+    <div className={`${styles.toolbar} liquid-glass`}>
       {/* 左侧：Logo + 侧栏图标按钮 + 插件左区 */}
       <div className={styles.leftZone}>
         <span className={styles.logo}>⚡ TauTerm</span>

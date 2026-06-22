@@ -90,7 +90,7 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
   const skippedCount = batchEntries.filter(e => e.status === "skipped").length;
 
   return (
-    <div className={styles.panel} style={style}>
+    <div className={`${styles.panel} liquid-glass`} style={style}>
       {/* 标题栏 */}
       <div className={styles.header}>
         <span className={styles.title}>{t("transmission.title")}</span>

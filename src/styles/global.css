@@ -45,7 +45,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--glass-border);
+  background: var(--glass-border-default);
   border-radius: var(--radius-xs);
 }
 
@@ -107,6 +107,9 @@ body {
 /* ==========================================
    4. 液态玻璃核心效果
    ========================================== */
+/* ⚠️ position: relative 为 ::before 噪点纹理提供定位上下文。
+   不可用于 position:absolute / position:fixed 的元素（会覆盖其定位）。
+   这些元素需在 CSS Module 中自行维护玻璃效果属性。 */
 .liquid-glass {
   position: relative;
   background: var(--glass-fill);
@@ -138,8 +141,9 @@ body {
 .liquid-glass-button {
   background: var(--glass-button-bg);
   border: 1px solid var(--glass-button-border);
+  border-radius: var(--radius-md);
   box-shadow: var(--glass-button-shadow-inset);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--transition-button);
 }
 
 .liquid-glass-button:hover {
@@ -150,16 +154,23 @@ body {
               var(--glass-button-shadow-inset);
 }
 
+.liquid-glass-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* ==========================================
    6. 液态玻璃输入框
    ========================================== */
 .liquid-glass-input {
   background: var(--glass-input-bg);
   border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-md);
   box-shadow: var(--glass-input-shadow-inner);
   color: var(--text-primary);
   outline: none;
-  transition: all 0.3s ease;
+  transition: all var(--transition-input);
 }
 
 .liquid-glass-input::placeholder {
@@ -202,6 +213,7 @@ body {
 
   /* 玻璃边框与高光 */
   border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: var(--radius-md);
   box-shadow:
     inset 0 1px 2px rgba(255, 255, 255, 0.8),
     0 4px 15px rgba(168, 85, 247, 0.3);
@@ -222,7 +234,7 @@ body {
   gap: 0.5rem;
 
   /* 过渡 */
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all var(--transition-button);
   cursor: pointer;
 }
 
@@ -236,11 +248,11 @@ body {
 
 .liquid-primary-button:hover:not(:disabled) svg {
   transform: translateX(2px);
-  transition: transform 0.3s ease;
+  transition: transform var(--transition-button);
 }
 
 .liquid-primary-button svg {
-  transition: transform 0.3s ease;
+  transition: transform var(--transition-button);
 }
 
 .liquid-primary-button:active:not(:disabled) {
@@ -272,4 +284,16 @@ body {
 @keyframes shimmer {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(400%); }
+}
+
+/* ==========================================
+   11. 液态玻璃模态覆盖层
+   ========================================== */
+.glass-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }

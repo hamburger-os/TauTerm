@@ -13,8 +13,6 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  backdrop-filter: blur(var(--blur-xs));
-  -webkit-backdrop-filter: blur(var(--blur-xs));
 }
 
 /* 所有终端叠放的相对定位容器 */
@@ -55,21 +53,10 @@
 .terminal :global(.xterm-viewport) {
   background-color: transparent !important;
   scrollbar-width: thin;
-  scrollbar-color: var(--glass-border) transparent;
+  scrollbar-color: var(--glass-border-default) transparent;
 }
 
-.terminal :global(.xterm-viewport::-webkit-scrollbar) {
-  width: 6px;
-}
-
-.terminal :global(.xterm-viewport::-webkit-scrollbar-track) {
-  background: transparent;
-}
-
-.terminal :global(.xterm-viewport::-webkit-scrollbar-thumb) {
-  background: var(--glass-border);
-  border-radius: var(--radius-xs);
-}
+/* webkit 滚动条样式由全局 global.css ::-webkit-scrollbar 统一管理 */
 
 /* 空状态 */
 .emptyState {
@@ -106,5 +93,5 @@
 }
 
 .transferBannerIcon {
-  font-size: 14px;
+  font-size: var(--text-md);
 }

@@ -7,6 +7,7 @@
 
 import type { FC } from "react";
 import type { TabInfo } from "./types";
+import styles from "./StatsDashboardRenderer.module.css";
 
 interface StatsDashboardRendererProps {
   tab: TabInfo;
@@ -14,93 +15,34 @@ interface StatsDashboardRendererProps {
 
 const StatsDashboardRenderer: FC<StatsDashboardRendererProps> = ({ tab }) => {
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <span style={styles.title}>📊 {tab.name}</span>
-        <span style={styles.badge}>统计仪表盘</span>
+    <div className={styles.container}>
+      <div className={styles.header}>
+        <span className={styles.title}>📊 {tab.name}</span>
+        <span className={styles.badge}>统计仪表盘</span>
       </div>
-      <div style={styles.grid}>
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>吞吐量</div>
-          <div style={styles.cardValue}>— Mbps</div>
-          <div style={styles.chartPlaceholder}>[实时图表区域]</div>
+      <div className={styles.grid}>
+        <div className={styles.card}>
+          <div className={styles.cardTitle}>吞吐量</div>
+          <div className={styles.cardValue}>— Mbps</div>
+          <div className={styles.chartPlaceholder}>[实时图表区域]</div>
         </div>
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>延迟 / 抖动</div>
-          <div style={styles.cardValue}>— ms</div>
-          <div style={styles.chartPlaceholder}>[实时图表区域]</div>
+        <div className={styles.card}>
+          <div className={styles.cardTitle}>延迟 / 抖动</div>
+          <div className={styles.cardValue}>— ms</div>
+          <div className={styles.chartPlaceholder}>[实时图表区域]</div>
         </div>
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>丢包率</div>
-          <div style={styles.cardValue}>— %</div>
-          <div style={styles.chartPlaceholder}>[实时图表区域]</div>
+        <div className={styles.card}>
+          <div className={styles.cardTitle}>丢包率</div>
+          <div className={styles.cardValue}>— %</div>
+          <div className={styles.chartPlaceholder}>[实时图表区域]</div>
         </div>
-        <div style={styles.card}>
-          <div style={styles.cardTitle}>连接状态</div>
-          <div style={styles.cardValue}>已连接</div>
+        <div className={styles.card}>
+          <div className={styles.cardTitle}>连接状态</div>
+          <div className={styles.cardValue}>已连接</div>
         </div>
       </div>
     </div>
   );
-};
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    flex: 1,
-    padding: 16,
-    backgroundColor: "var(--bg-base)",
-    overflow: "auto",
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 16,
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: 600,
-    color: "var(--text-primary)",
-  },
-  badge: {
-    fontSize: 11,
-    padding: "2px 8px",
-    borderRadius: "var(--radius-xs)",
-    backgroundColor: "var(--accent-primary)",
-    color: "var(--text-on-accent)",
-  },
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-    gap: 12,
-  },
-  card: {
-    padding: 16,
-    borderRadius: "var(--radius-md)",
-    backgroundColor: "var(--bg-secondary)",
-    border: "1px solid var(--glass-border)",
-  },
-  cardTitle: {
-    fontSize: 12,
-    color: "var(--text-secondary)",
-    marginBottom: 8,
-  },
-  cardValue: {
-    fontSize: 24,
-    fontWeight: 700,
-    color: "var(--text-primary)",
-    marginBottom: 12,
-  },
-  chartPlaceholder: {
-    height: 60,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontSize: 11,
-    color: "var(--text-muted)",
-    border: "1px dashed var(--glass-border)",
-    borderRadius: "var(--radius-xs)",
-  },
 };
 
 export default StatsDashboardRenderer;

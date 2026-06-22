@@ -136,7 +136,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
   }, []);
 
   return (
-    <div className={styles.sendBar}>
+    <div className={`${styles.sendBar} liquid-glass`}>
       {/* 输入区域 */}
       <div className={styles.inputArea}>
         <textarea
@@ -176,7 +176,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
 
         {/* 发送模式切换 */}
         <button
-          className={`${styles.modeBtn} ${sendMode === "hex" ? styles.modeActive : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button ${sendMode === "hex" ? styles.modeActive : ""}`}
           onClick={() => setSendMode(m => m === "text" ? "hex" : "text")}
           title={t("sendBar.sendMode")}
           disabled={!isConnected}
@@ -199,7 +199,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
         {repeatEnabled && (
           <input
             type="number"
-            className={styles.intervalInput}
+            className={`${styles.intervalInput} liquid-glass-input`}
             value={repeatInterval}
             onChange={(e) => setRepeatInterval(Math.max(50, Number(e.target.value)))}
             min={50}
@@ -213,7 +213,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
         {sendHistory.length > 0 && (
           <div className={styles.historyWrap}>
             <button
-              className={styles.historyBtn}
+              className={`${styles.historyBtn} liquid-glass-button`}
               onClick={() => setShowOptions(o => !o)}
               title={t("sendBar.sendHistory")}
             >

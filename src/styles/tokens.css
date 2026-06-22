@@ -20,14 +20,19 @@
   --text-lg: 1.1rem;
   --text-xl: 1.25rem;
 
-  /* 圆角 */
-  --radius-xs: 3px;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
-  --radius-2xl: 24px;
-  --radius-full: 9999px;
+  /* 圆角 — 4+1 层级体系
+     Frame  (24px):  弹窗/模态框/主容器
+     Panel  (16px):  终端模块/卡片/面板
+     Control(12px):  按钮/输入框/列表项
+     Pill   (9999px): 开关/徽章/状态点
+     Micro  (4px):   滚动条/微小提示       */
+  --radius-xs: 4px;        /* Micro — 滚动条、快捷键小提示 */
+  --radius-sm: 12px;       /* Control (compact) — 工具栏按钮、导航项、错误框 */
+  --radius-md: 12px;       /* Control (standard) — 按钮、输入框、选择框、列表项 */
+  --radius-lg: 16px;       /* Panel — 终端模块、卡片、玻璃面板 */
+  --radius-xl: 24px;       /* Frame — 弹窗、设置容器、命令面板 */
+  --radius-2xl: 24px;      /* Frame alias — 与 xl 同值，向后兼容 */
+  --radius-full: 9999px;   /* Pill — 开关轨道/滑块、徽章、状态指示点 */
 
   /* 间距 */
   --spacing-xs: 4px;
@@ -42,6 +47,7 @@
   --transition-normal: 300ms ease;
   --transition-button: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-input: 0.3s ease;
+  --transition-knob: 200ms ease;
 
   /* 模糊 */
   --blur-xs: 4px;
@@ -88,7 +94,7 @@
   --glass-input-focus-border: rgba(255, 255, 255, 0.25);
   --glass-input-focus-glow: 0 0 20px rgba(66, 133, 244, 0.4);
 
-  /* 布局区块 */
+  /* 布局区块 — @deprecated v1.5 布局表面统一使用 .liquid-glass + var(--glass-fill) */
   --block-toolbar-bg: rgba(0, 0, 0, 0.1);
   --block-sidebar-bg: rgba(0, 0, 0, 0.2);
   --block-terminal-bg: rgba(0, 0, 0, 0.3);
@@ -178,7 +184,7 @@
   --glass-input-focus-border: rgba(255, 255, 255, 0.15);
   --glass-input-focus-glow: 0 0 20px rgba(66, 133, 244, 0.3);
 
-  /* 布局区块 */
+  /* 布局区块 — @deprecated v1.5 布局表面统一使用 .liquid-glass + var(--glass-fill) */
   --block-toolbar-bg: rgba(0, 0, 0, 0.4);
   --block-sidebar-bg: rgba(0, 0, 0, 0.6);
   --block-terminal-bg: rgba(0, 0, 0, 0.5);
@@ -268,7 +274,7 @@
   --glass-input-focus-border: rgba(66, 133, 244, 0.5);
   --glass-input-focus-glow: 0 0 0 3px rgba(66, 133, 244, 0.15);
 
-  /* 布局区块 */
+  /* 布局区块 — @deprecated v1.5 布局表面统一使用 .liquid-glass + var(--glass-fill) */
   --block-toolbar-bg: rgba(255, 255, 255, 0.3);
   --block-sidebar-bg: rgba(255, 255, 255, 0.2);
   --block-terminal-bg: rgba(255, 255, 255, 0.3);

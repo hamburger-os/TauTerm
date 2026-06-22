@@ -189,14 +189,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   return (
     <AnimatePresence>
       <motion.div
-        className={styles.overlay}
+        className={`${styles.overlay} glass-overlay`}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         onClick={handleOverlayClick}
       >
         <motion.div
-          className={styles.dialog}
+          className={`${styles.dialog} liquid-glass`}
           initial={{ opacity: 0, y: 20, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 20, scale: 0.95 }}
@@ -224,7 +224,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 ))}
               </div>
               <div className={styles.actions}>
-                <button className={styles.cancelBtn} onClick={onClose}>
+                <button className={`${styles.cancelBtn} liquid-glass-button`} onClick={onClose}>
                   {t("common.cancel")}
                 </button>
               </div>
@@ -235,7 +235,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           {step === "config" && (
             <>
               <div className={styles.configHeader}>
-                <button className={styles.backBtn} onClick={handleBack} disabled={connecting}>
+                <button className={`${styles.backBtn} liquid-glass-button`} onClick={handleBack} disabled={connecting}>
                   ← {t("common.back")}
                 </button>
                 <h2 className={styles.title}>
@@ -269,7 +269,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                           <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
                         ))}
                       </select>
-                      <button className={styles.iconBtn} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}>↻</button>
+                      <button className={`${styles.iconBtn} liquid-glass-button`} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}>↻</button>
                     </div>
                   </div>
 

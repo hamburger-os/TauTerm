@@ -1,0 +1,64 @@
+/* ZModem 协议配置表单 */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.groupLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rowLabel {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* 切换开关 — 规范液态玻璃模式（参考 SendBar.module.css） */
+
+/* 隐藏原生 button 的默认外观 */
+.toggleBtn {
+  width: 32px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--glass-button-bg);
+  border: 1px solid var(--glass-border-default);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--transition-knob);
+}
+
+.toggleBtnActive {
+  background: var(--accent-gradient);
+  border-color: transparent;
+}
+
+/* 滑块 */
+.toggleKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+  background: var(--text-primary);
+  transition: left var(--transition-knob);
+}
+
+.toggleKnobActive {
+  left: 16px;
+}

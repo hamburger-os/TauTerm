@@ -1,27 +1,15 @@
 /* 新建会话对话框 v3 */
 
 .overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   z-index: var(--z-toast);
-  backdrop-filter: blur(var(--blur-xs));
-  -webkit-backdrop-filter: blur(var(--blur-xs));
+  /* position/inset/background/display/align/justify 由 glass-overlay 全局类提供 */
 }
 
 .dialog {
   width: 420px;
   max-height: 80vh;
   overflow-y: auto;
-  background: var(--dialog-bg);
-  border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-glass), var(--dialog-shadow);
-  backdrop-filter: blur(var(--blur-heavy));
-  -webkit-backdrop-filter: blur(var(--blur-heavy));
   padding: 20px;
 }
 
@@ -51,7 +39,6 @@
 
 .backBtn {
   background: transparent;
-  border: 1px solid var(--glass-border);
   color: var(--text-secondary);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
@@ -61,7 +48,7 @@
   transition: all var(--transition-fast);
 }
 
-.backBtn:hover { color: var(--text-primary); border-color: var(--glass-border-hover); }
+.backBtn:hover { color: var(--text-primary); }
 
 /* ── 模式卡片网格 ── */
 
@@ -78,8 +65,8 @@
   align-items: center;
   gap: 8px;
   padding: 16px 10px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
   border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -113,7 +100,7 @@
   top: 6px;
   right: 6px;
   font-size: 8px;
-  background: var(--glass-bg);
+  background: var(--glass-fill);
   color: var(--text-muted);
   padding: 2px 6px;
   border-radius: var(--radius-full);
@@ -126,7 +113,7 @@
   text-align: center;
   color: var(--text-muted);
   font-size: var(--text-sm);
-  border: 1px dashed var(--glass-border);
+  border: 1px dashed var(--glass-border-default);
   border-radius: var(--radius-sm);
   margin-top: 8px;
 }
@@ -187,18 +174,16 @@
 .iconBtn {
   width: 30px;
   height: 30px;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-button-bg);
   color: var(--text-secondary);
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-md);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.iconBtn:hover { color: var(--text-primary); border-color: var(--glass-border-hover); }
+.iconBtn:hover { color: var(--text-primary); }
 
 .error {
   padding: 8px;
@@ -227,12 +212,8 @@
 }
 
 .cancelBtn {
-  background: transparent;
-  border: 1px solid var(--glass-border);
   color: var(--text-secondary);
 }
-
-.cancelBtn:hover { color: var(--text-primary); border-color: var(--glass-border-hover); }
 
 /* .connectBtn 视觉由全局 .liquid-primary-button 接管 */
 

@@ -1,15 +1,8 @@
 /* 设置页 v3 */
 
 .overlay {
-  position: fixed;
-  inset: 0;
   z-index: var(--z-overlay);
-  background: var(--overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  backdrop-filter: blur(var(--blur-xs));
-  -webkit-backdrop-filter: blur(var(--blur-xs));
+  /* position/inset/background/display/align/justify 由 glass-overlay 全局类提供 */
 }
 
 .container {
@@ -17,12 +10,7 @@
   max-width: 90vw;
   height: 520px;
   max-height: 85vh;
-  background: var(--dialog-bg);
-  border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-glass), var(--dialog-shadow);
-  backdrop-filter: blur(var(--blur-heavy));
-  -webkit-backdrop-filter: blur(var(--blur-heavy));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -34,13 +22,13 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--glass-border);
+  border-bottom: 1px solid var(--glass-border-default);
   flex-shrink: 0;
 }
 
 .headerTitle {
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: var(--text-md);
   font-weight: 700;
 }
 
@@ -48,7 +36,7 @@
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 16px;
+  font-size: var(--text-lg);
   cursor: pointer;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
@@ -57,7 +45,7 @@
 
 .closeBtn:hover {
   color: var(--text-primary);
-  background: var(--glass-bg);
+  background: var(--glass-fill);
 }
 
 /* 主体 */
@@ -71,7 +59,7 @@
 .nav {
   width: 180px;
   padding: 12px 8px;
-  border-right: 1px solid var(--glass-border);
+  border-right: 1px solid var(--glass-border-default);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -87,7 +75,7 @@
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-family: var(--font-ui);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -95,7 +83,7 @@
 }
 
 .navItem:hover {
-  background: var(--glass-bg);
+  background: var(--glass-fill);
   color: var(--text-primary);
 }
 
@@ -106,7 +94,7 @@
 }
 
 .navIcon {
-  font-size: 14px;
+  font-size: var(--text-md);
   flex-shrink: 0;
 }
 
@@ -128,7 +116,7 @@
 /* 面板通用 */
 .panelTitle {
   color: var(--text-primary);
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 700;
   margin: 0 0 16px 0;
 }
@@ -140,7 +128,7 @@
 .settingLabel {
   display: block;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   margin-bottom: 6px;
 }
@@ -163,11 +151,11 @@
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--glass-border-default);
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-family: var(--font-ui);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -175,7 +163,7 @@
 
 .optionItem:hover {
   border-color: var(--glass-border-hover);
-  background: var(--glass-bg);
+  background: var(--glass-fill);
 }
 
 .optionItemActive {
@@ -185,44 +173,19 @@
 }
 
 .optionIcon {
-  font-size: 12px;
+  font-size: var(--text-sm);
   visibility: hidden;
+}
+
+/* 编码简写标识（选项内的等宽后缀） */
+.charsetCode {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  margin-left: auto;
 }
 
 .optionItemActive .optionIcon {
   visibility: visible;
-}
-
-/* 下拉选择 */
-.selectField {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 100%;
-  max-width: 260px;
-  padding: 6px 28px 6px 10px;
-  border: 1px solid var(--glass-input-border);
-  border-radius: var(--radius-md);
-  background: var(--glass-input-bg);
-  background-image: var(--select-arrow); /* fill color adapts per theme */
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: var(--font-ui);
-  outline: none;
-  cursor: pointer;
-  transition: border-color var(--transition-fast);
-  box-shadow: var(--glass-input-shadow-inner);
-}
-
-.selectField:focus {
-  border-color: var(--glass-input-focus-border);
-  box-shadow: var(--glass-input-focus-glow);
-}
-
-.selectField option {
-  background: var(--select-option-bg);
-  color: var(--text-primary);
 }
 
 /* 关于页 */
@@ -233,19 +196,19 @@
 
 .aboutVersion {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--text-base);
   margin: 4px 0 12px;
 }
 
 .aboutDesc {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-base);
   margin-bottom: 20px;
   line-height: 1.5;
 }
 
 .aboutInfo {
-  border-top: 1px solid var(--glass-border);
+  border-top: 1px solid var(--glass-border-default);
   padding-top: 16px;
 }
 
@@ -253,7 +216,7 @@
   display: flex;
   justify-content: space-between;
   padding: 6px 0;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .aboutLabel {
@@ -273,7 +236,7 @@
   border: 1px solid color-mix(in srgb, var(--color-warning) 15%, transparent);
   border-radius: var(--radius-sm);
   color: var(--color-warning);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -292,7 +255,7 @@
 
 .fontSliderValue {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--text-base);
   font-family: var(--font-mono);
   min-width: 28px;
   text-align: right;

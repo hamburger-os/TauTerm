@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import ProgressBar from "./ProgressBar";
+import styles from "./AggregateProgress.module.css";
 
 /** 格式化文件大小 */
 function formatSize(bytes: number): string {
@@ -32,41 +33,16 @@ export default function AggregateProgress({
       : 0;
 
   return (
-    <div
-      style={{
-        padding: "var(--spacing-xs) var(--spacing-sm)",
-        background: "var(--glass-bg)",
-        border: "1px solid var(--glass-border)",
-        borderRadius: "var(--radius-md)",
-        flexShrink: 0,
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: "4px",
-          fontSize: "var(--text-xs)",
-        }}
-      >
-        <span
-          style={{
-            color: "var(--text-primary)",
-            fontWeight: 500,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flex: 1,
-            marginRight: "8px",
-          }}
-        >
+    <div className={`${styles.container} liquid-glass`}>
+      <div className={styles.header}>
+        <span className={styles.fileName}>
           {currentFileName ||
             t("transfer.fileXOfY", {
               current: currentFileIndex + 1,
               total: totalFiles,
             })}
         </span>
-        <span style={{ color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+        <span className={styles.stats}>
           {formatSize(aggregateBytesTransferred)} /{" "}
           {formatSize(aggregateTotalBytes)} ({percent}%)
         </span>

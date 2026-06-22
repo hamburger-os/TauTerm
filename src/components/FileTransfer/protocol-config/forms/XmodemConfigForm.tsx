@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { XmodemTransferConfig } from "../../../../types/transfer";
+import styles from "./shared/ProtocolOptionForm.module.css";
 
 interface XmodemConfigFormProps {
   config: XmodemTransferConfig;
@@ -12,36 +13,19 @@ export default function XmodemConfigForm({
   onChange,
 }: XmodemConfigFormProps) {
   const { t } = useTranslation();
-  const btnStyle = (active: boolean) =>
-    ({
-      flex: 1,
-      padding: "3px 6px",
-      fontSize: "var(--text-xs)",
-      textAlign: "center" as const,
-      background: active ? "var(--glass-bg-active)" : "var(--glass-button-bg)",
-      border: active
-        ? "1px solid var(--glass-border-focus)"
-        : "1px solid var(--glass-border-default)",
-      borderRadius: "var(--radius-sm)",
-      color: active ? "var(--text-primary)" : "var(--text-secondary)",
-      cursor: "pointer",
-      transition: "all var(--transition-fast)",
-    }) as React.CSSProperties;
 
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-sm)" }}
-    >
+    <div className={styles.form}>
       {/* Block Size */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-        <label style={{ fontSize: "0.6rem", color: "var(--text-muted)" }}>
+      <div className={styles.group}>
+        <label className={styles.groupLabel}>
           {t("transfer.configBlockSize")}
         </label>
-        <div style={{ display: "flex", gap: "2px" }}>
+        <div className={styles.btnRow}>
           {([128, 1024] as const).map((bs) => (
             <button
               key={bs}
-              style={btnStyle(config.blockSize === bs)}
+              className={`${styles.optionBtn} liquid-glass-button ${config.blockSize === bs ? styles.optionBtnActive : ""}`}
               onClick={() => onChange({ ...config, blockSize: bs })}
             >
               {bs === 1024
@@ -53,15 +37,15 @@ export default function XmodemConfigForm({
       </div>
 
       {/* Checksum Mode */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-        <label style={{ fontSize: "0.6rem", color: "var(--text-muted)" }}>
+      <div className={styles.group}>
+        <label className={styles.groupLabel}>
           {t("transfer.configChecksumMode")}
         </label>
-        <div style={{ display: "flex", gap: "2px" }}>
+        <div className={styles.btnRow}>
           {(["checksum", "crc16"] as const).map((mode) => (
             <button
               key={mode}
-              style={btnStyle(config.checksumMode === mode)}
+              className={`${styles.optionBtn} liquid-glass-button ${config.checksumMode === mode ? styles.optionBtnActive : ""}`}
               onClick={() => onChange({ ...config, checksumMode: mode })}
             >
               {mode === "checksum"
@@ -73,15 +57,15 @@ export default function XmodemConfigForm({
       </div>
 
       {/* Init Char */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-        <label style={{ fontSize: "0.6rem", color: "var(--text-muted)" }}>
+      <div className={styles.group}>
+        <label className={styles.groupLabel}>
           {t("transfer.configInitChar")}
         </label>
-        <div style={{ display: "flex", gap: "2px" }}>
+        <div className={styles.btnRow}>
           {(["nak", "crc"] as const).map((init) => (
             <button
               key={init}
-              style={btnStyle(config.initChar === init)}
+              className={`${styles.optionBtn} liquid-glass-button ${config.initChar === init ? styles.optionBtnActive : ""}`}
               onClick={() => onChange({ ...config, initChar: init })}
             >
               {init === "nak"

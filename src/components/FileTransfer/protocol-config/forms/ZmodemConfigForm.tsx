@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { ZmodemTransferConfig } from "../../../../types/transfer";
+import styles from "./ZmodemConfigForm.module.css";
 
 interface ZmodemConfigFormProps {
   config: ZmodemTransferConfig;
@@ -13,26 +14,11 @@ export default function ZmodemConfigForm({
 }: ZmodemConfigFormProps) {
   const { t } = useTranslation();
 
-  const toggleStyle = (active: boolean): React.CSSProperties => ({
-    width: "32px",
-    height: "18px",
-    borderRadius: "var(--radius-full)",
-    background: active
-      ? "var(--accent-gradient)"
-      : "var(--glass-button-bg)",
-    border: "1px solid var(--glass-border-default)",
-    cursor: "pointer",
-    position: "relative",
-    transition: "background 0.2s",
-  });
-
   return (
-    <div
-      style={{ display: "flex", flexDirection: "column", gap: "var(--spacing-sm)" }}
-    >
+    <div className={styles.form}>
       {/* Window Size */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-        <label style={{ fontSize: "0.6rem", color: "var(--text-muted)" }}>
+      <div className={styles.group}>
+        <label className={styles.groupLabel}>
           {t("transfer.configWindowSize")}: {config.windowSize}
         </label>
         <input
@@ -43,55 +29,34 @@ export default function ZmodemConfigForm({
           onChange={(e) =>
             onChange({ ...config, windowSize: Number(e.target.value) })
           }
-          style={{ width: "100%", accentColor: "var(--color-info)" }}
+          style={{ width: "100%", accentColor: "var(--accent-primary)" }}
         />
       </div>
 
       {/* Resume */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>
           {t("transfer.configResumeEnabled")}
         </span>
         <button
-          style={toggleStyle(config.resumeEnabled)}
+          className={`${styles.toggleBtn} ${config.resumeEnabled ? styles.toggleBtnActive : ""}`}
           onClick={() =>
             onChange({ ...config, resumeEnabled: !config.resumeEnabled })
           }
         >
           <span
-            style={{
-              position: "absolute",
-              top: "2px",
-              left: config.resumeEnabled ? "16px" : "2px",
-              width: "14px",
-              height: "14px",
-              borderRadius: "50%",
-              background: "var(--text-primary)",
-              transition: "left 0.2s",
-            }}
+            className={`${styles.toggleKnob} ${config.resumeEnabled ? styles.toggleKnobActive : ""}`}
           />
         </button>
       </div>
 
       {/* Compression */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>
           {t("transfer.configCompression")}
         </span>
         <button
-          style={toggleStyle(config.compressionEnabled)}
+          className={`${styles.toggleBtn} ${config.compressionEnabled ? styles.toggleBtnActive : ""}`}
           onClick={() =>
             onChange({
               ...config,
@@ -100,33 +65,18 @@ export default function ZmodemConfigForm({
           }
         >
           <span
-            style={{
-              position: "absolute",
-              top: "2px",
-              left: config.compressionEnabled ? "16px" : "2px",
-              width: "14px",
-              height: "14px",
-              borderRadius: "50%",
-              background: "var(--text-primary)",
-              transition: "left 0.2s",
-            }}
+            className={`${styles.toggleKnob} ${config.compressionEnabled ? styles.toggleKnobActive : ""}`}
           />
         </button>
       </div>
 
       {/* Streaming */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <span style={{ fontSize: "var(--text-xs)", color: "var(--text-secondary)" }}>
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>
           {t("transfer.configStreaming")}
         </span>
         <button
-          style={toggleStyle(config.streamingMode)}
+          className={`${styles.toggleBtn} ${config.streamingMode ? styles.toggleBtnActive : ""}`}
           onClick={() =>
             onChange({
               ...config,
@@ -135,16 +85,7 @@ export default function ZmodemConfigForm({
           }
         >
           <span
-            style={{
-              position: "absolute",
-              top: "2px",
-              left: config.streamingMode ? "16px" : "2px",
-              width: "14px",
-              height: "14px",
-              borderRadius: "50%",
-              background: "var(--text-primary)",
-              transition: "left 0.2s",
-            }}
+            className={`${styles.toggleKnob} ${config.streamingMode ? styles.toggleKnobActive : ""}`}
           />
         </button>
       </div>

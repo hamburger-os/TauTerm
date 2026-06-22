@@ -45,6 +45,18 @@
   color: var(--color-error);
 }
 
+/* 协议选择器描述文本 */
+.description {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.3;
+}
+
+/* 小型选择框 */
+.selectSmall {
+  font-size: var(--text-xs);
+}
+
 /* 选择框特殊样式 */
 .select {
   appearance: none;

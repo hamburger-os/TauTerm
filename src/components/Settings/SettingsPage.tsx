@@ -79,7 +79,7 @@ export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          className={styles.overlay}
+          className={`${styles.overlay} glass-overlay`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -87,7 +87,7 @@ export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
           onClick={handleOverlayClick}
         >
           <motion.div
-            className={styles.container}
+            className={`${styles.container} liquid-glass`}
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
