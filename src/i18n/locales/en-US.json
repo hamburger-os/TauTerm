@@ -83,7 +83,14 @@
     "newSession": "New Session",
     "sidebar": "Sidebar",
     "commands": "Commands",
-    "settings": "Settings"
+    "settings": "Settings",
+    "searchPlaceholder": "Search files or run commands..."
+  },
+  "titleBar": {
+    "minimize": "Minimize",
+    "maximize": "Maximize",
+    "restore": "Restore",
+    "close": "Close"
   },
   "contextMenu": {
     "connect": "Connect",

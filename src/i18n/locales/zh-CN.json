@@ -83,7 +83,14 @@
     "newSession": "新建会话",
     "sidebar": "侧栏",
     "commands": "命令面板",
-    "settings": "设置"
+    "settings": "设置",
+    "searchPlaceholder": "搜索文件或运行命令..."
+  },
+  "titleBar": {
+    "minimize": "最小化",
+    "maximize": "最大化",
+    "restore": "还原",
+    "close": "关闭"
   },
   "contextMenu": {
     "connect": "连接",

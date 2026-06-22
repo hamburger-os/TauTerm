@@ -4,11 +4,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 36px;
+  height: 40px;
   padding: 0 var(--spacing-md);
   flex-shrink: 0;
   user-select: none;
-  border-radius: var(--radius-lg);  /* 16px — Panel tier */
+  border-radius: var(--radius-window) var(--radius-window) 0 0;  /* 匹配 Windows 11 窗口原生圆角 */
+  cursor: grab;  /* 非交互区域可拖拽窗口；按钮/searchTrigger 自身有 cursor: pointer，自然覆盖 */
 }
 
 .logo {
@@ -75,4 +76,54 @@
 .rightZone {
   flex-shrink: 0;
   margin-left: auto;
+}
+
+/* VSCode 风格搜索 / 命令触发输入框 */
+.searchTrigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  height: 28px;
+  width: 320px;
+  max-width: 50vw;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  background: var(--glass-input-bg);
+  border: 1px solid var(--glass-input-border);
+  box-shadow: var(--glass-input-shadow-inner);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-family: inherit;
+  transition: all var(--transition-input);
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.searchTrigger:hover {
+  border-color: var(--glass-border-hover);
+  color: var(--text-secondary);
+}
+
+.searchIcon {
+  font-size: var(--text-sm);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.searchPlaceholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 拖动区域占位 — 无交互元素的弹性空白，cursor 继承父级 .toolbar 的 grab */
+.dragSpacer {
+  flex: 1;
+  min-width: 12px;
+  height: 100%;
+}
+
+.dragSpacer:active {
+  cursor: grabbing;
 }

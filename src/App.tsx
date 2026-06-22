@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"; // 拖放事件（onDragDropEvent 仅 WebviewWindow 类型可用）
+import { getCurrentWindow } from "@tauri-apps/api/window";               // 窗口状态（最大化/还原追踪）
 import { AnimatePresence, motion } from "framer-motion";
 import AppShell from "./components/Layout/AppShell";
 import GoogleGlowBackground from "./components/Layout/GoogleGlowBackground";
@@ -28,6 +29,7 @@ const SIDEBAR_MAX = 400;
 const TRANSMISSION_MIN = 160;
 const TRANSMISSION_MAX = 500;
 const TRANSMISSION_DEFAULT = 260;
+const RESIZE_DEBOUNCE_MS = 150;
 
 interface ToastMessage {
   id: number;
@@ -51,6 +53,7 @@ function AppInner() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [editSessionId, setEditSessionId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
 
   // Toast
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -159,6 +162,30 @@ function AppInner() {
     };
   }, [setDragging, sessionState.activeTabId, transferSend, addToast]);
 
+  // 窗口最大化/还原状态追踪
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+    let resizeTimer: ReturnType<typeof setTimeout>;
+
+    // 初始状态
+    appWindow.isMaximized().then(setIsMaximized).catch(() => {});
+
+    // 监听窗口大小变化（防抖避免 IPC 风暴）
+    appWindow.onResized(() => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(async () => {
+        const maximized = await appWindow.isMaximized();
+        setIsMaximized(prev => prev === maximized ? prev : maximized);
+      }, RESIZE_DEBOUNCE_MS);
+    }).then(fn => { unlisten = fn; });
+
+    return () => {
+      clearTimeout(resizeTimer);
+      unlisten?.();
+    };
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     registerAction(ACTION_IDS.PALETTE_OPEN, () => setPaletteOpen(true));
@@ -194,7 +221,7 @@ function AppInner() {
       <GoogleGlowBackground />
 
       {/* 顶栏 (z-index: 10) */}
-      <Toolbar onAction={handleToolbarAction} />
+      <Toolbar onAction={handleToolbarAction} isMaximized={isMaximized} />
 
       <div className="app-body">
         {/* 侧栏 — 全高 */}

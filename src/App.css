@@ -9,8 +9,6 @@
   background: transparent; /* 由 GoogleGlowBackground 提供底色 */
   color: var(--text-primary);
   font-family: var(--font-ui);
-  gap: 6px;
-  padding: 6px;
 }
 
 /* ===== 主布局 ===== */
@@ -19,6 +17,7 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  margin: 6px;  /* 顶栏与底栏贴边，中间内容区保留 6px 间距 */
 }
 
 /* ===== 侧边栏 ===== */

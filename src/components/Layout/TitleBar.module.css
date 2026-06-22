@@ -1,0 +1,41 @@
+/* 窗口控制按钮 — Liquid Glass v3 风格 */
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+.controlButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);  /* 12px，与 toolbarButton 一致 */
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-family: "Segoe MDL2 Assets", "Segoe UI", system-ui, sans-serif;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.controlButton:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-primary);
+}
+
+.controlButton:active {
+  background: var(--glass-bg-active);
+}
+
+.closeButton:hover {
+  background: var(--color-error, #ff4757);
+  color: #fff;
+}

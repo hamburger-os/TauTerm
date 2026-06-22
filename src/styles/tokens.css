@@ -33,6 +33,7 @@
   --radius-xl: 24px;       /* Frame — 弹窗、设置容器、命令面板 */
   --radius-2xl: 24px;      /* Frame alias — 与 xl 同值，向后兼容 */
   --radius-full: 9999px;   /* Pill — 开关轨道/滑块、徽章、状态指示点 */
+  --radius-window: 8px;    /* Window — 无边框窗口圆角（匹配 Windows 11 原生） */
 
   /* 间距 */
   --spacing-xs: 4px;
