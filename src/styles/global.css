@@ -173,6 +173,15 @@ body {
               var(--glass-input-focus-glow);
 }
 
+.liquid-glass-input:hover:not(:disabled) {
+  border-color: var(--glass-border-hover);
+}
+
+.liquid-glass-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ==========================================
    7. 炫彩流光背景位移动画
    ========================================== */

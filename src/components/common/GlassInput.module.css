@@ -30,15 +30,6 @@
   border-radius: var(--radius-md);
 }
 
-.input:hover:not(:disabled) {
-  border-color: var(--glass-border-hover);
-}
-
-.input:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 /* 错误状态 */
 .hasError .input {
   border-color: var(--color-error);

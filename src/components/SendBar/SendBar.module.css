@@ -23,29 +23,12 @@
 .inputField {
   width: 100%;
   padding: 4px 8px;
-  border: 1px solid var(--glass-input-border);
   border-radius: var(--radius-lg);
-  background: var(--glass-input-bg);
-  box-shadow: var(--glass-input-shadow-inner);
-  color: var(--text-primary);
   font-size: 12px;
   font-family: var(--font-mono);
-  outline: none;
   resize: none;
   line-height: 1.4;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   overflow-y: hidden;
-}
-
-.inputField:focus {
-  border-color: var(--glass-input-focus-border);
-  box-shadow: var(--glass-input-shadow-inner),
-              var(--glass-input-focus-glow);
-}
-
-.inputField:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .inputField::placeholder {
@@ -74,34 +57,14 @@
   appearance: none;
   -webkit-appearance: none;
   padding: 5px 8px;
-  border: 1px solid var(--glass-input-border);
   border-radius: var(--radius-md);
-  background: var(--glass-input-bg);
   background-image: var(--select-arrow); /* fill color adapts per theme */
   background-repeat: no-repeat;
   background-position: right 7px center;
   padding-right: 22px;
-  color: var(--text-primary);
   font-size: var(--text-xs);
   font-family: var(--font-ui);
-  outline: none;
   cursor: pointer;
-  box-shadow: var(--glass-input-shadow-inner);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.select:hover:not(:disabled) {
-  border-color: var(--glass-border-hover);
-}
-
-.select:focus {
-  border-color: var(--glass-input-focus-border);
-  box-shadow: var(--glass-input-shadow-inner), var(--glass-input-focus-glow);
-}
-
-.select:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .select option {

@@ -141,7 +141,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
       <div className={styles.inputArea}>
         <textarea
           ref={inputRef}
-          className={`${styles.inputField} ${sendMode === "hex" ? styles.hexInput : ""}`}
+          className={`${styles.inputField} liquid-glass-input ${sendMode === "hex" ? styles.hexInput : ""}`}
           value={inputText}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
@@ -161,7 +161,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
         {/* 换行符选择 */}
         <div className={styles.dropdown}>
           <select
-            className={styles.select}
+            className={`${styles.select} liquid-glass-input`}
             value={newlineMode}
             onChange={(e) => setNewlineMode(e.target.value as NewlineMode)}
             title={t("sendBar.appendNewline")}

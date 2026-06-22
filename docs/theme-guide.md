@@ -152,17 +152,22 @@ background: "#34A853";             // Google 光球颜色（设计特征）
 
 ### 新增 select 下拉
 
+**推荐方式：直接使用全局 `.liquid-glass-input` class + 少量 select 特有样式**
+
 ```css
+/* CSS Module — 仅保留 select 特有属性 + 组件级尺寸 */
 .select {
-  background: var(--glass-input-bg);
-  border: 1px solid var(--glass-input-border);
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  padding: 6px 28px 6px 10px;
   border-radius: var(--radius-md);
-  color: var(--text-primary);
-  box-shadow: var(--glass-input-shadow-inner);
-}
-.select:focus {
-  border-color: var(--glass-input-focus-border);
-  box-shadow: var(--glass-input-focus-glow);
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 10px center;
 }
 .select option {
   background: var(--select-option-bg);
@@ -170,23 +175,23 @@ background: "#34A853";             // Google 光球颜色（设计特征）
 }
 ```
 
-**select 箭头 data URI 令牌示例**：`--select-arrow` 包含完整的 SVG data URI，各主题通过 fill 颜色适配：
+```tsx
+// JSX — `.liquid-glass-input` 全局类提供 bg/border/color/shadow/focus/hover/disabled
+<select className={`${styles.select} liquid-glass-input`}>
+  <option value="a">A</option>
+</select>
+```
+
+> `.liquid-glass-input` 已提供：`background`、`border`、`box-shadow`、`color`、`outline`、
+> `:focus` 发光、`:hover` 边框、`:disabled` 透明度。CSS Module 只需写 select 特有属性和组件级尺寸。
+
+**select 箭头 data URI 令牌**：`--select-arrow` 包含完整的 SVG data URI，各主题通过 fill 颜色适配：
 
 | 主题 | 箭头颜色 |
 |------|---------|
 | google-glow | `%23686888`（#686888，弱化文字色） |
 | obsidian | `%23666666`（#666666） |
 | frosted | `%2394a3b8`（#94a3b8，石板灰） |
-
-```css
-/* 用法：直接引用令牌 */
-.select {
-  background-image: var(--select-arrow);
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 28px;
-}
-```
 
 ### 状态着色背景（color-mix 模式）
 
@@ -330,7 +335,7 @@ background: "#34A853";             // Google 光球颜色（设计特征）
 - [ ] `z-index` 使用 `var(--z-*)` 令牌 — 禁止裸数字
 - [ ] `backdrop-filter` 模糊值使用 `var(--blur-*)` 或 `var(--glass-blur)` 令牌
 - [ ] 遮罩/蒙版背景使用 `var(--overlay-bg)` — 禁止硬编码黑色
-- [ ] 所有 `<select>` 元素使用 `appearance: none` / `-webkit-appearance: none`，搭配自定义 SVG 箭头 data URI，option 使用 `var(--select-option-bg)`，焦点态辉光与其他输入框一致
+- [ ] 所有 `<select>` 和 `<input>` 元素使用全局 `liquid-glass-input` class 获取基础视觉，CSS Module 仅保留组件级差异化属性（尺寸、箭头、option）
 - [ ] 自定义 SVG data URI（如 select 箭头）的硬编码填充色需在注释中注明
 
 > **注意**：`tokens.css` 中定义的 `--glass-noise-frequency` 目前未被 `global.css` 的噪点 SVG 实际使用（三套主题的 `baseFrequency` 差异微乎其微，统一为 0.8）。新增主题时不需定义此令牌。

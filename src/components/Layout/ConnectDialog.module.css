@@ -163,29 +163,9 @@
 .select, .input {
   width: 100%;
   padding: 6px 10px;
-  background: var(--glass-input-bg);
-  border: 1px solid var(--glass-input-border);
   border-radius: var(--radius-md);
-  color: var(--text-primary);
   font-size: var(--text-sm);
   font-family: var(--font-ui);
-  outline: none;
-  box-shadow: var(--glass-input-shadow-inner);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-.select:hover:not(:disabled), .input:hover:not(:disabled) {
-  border-color: var(--glass-border-hover);
-}
-
-.select:focus, .input:focus {
-  border-color: var(--glass-input-focus-border);
-  box-shadow: var(--glass-input-focus-glow);
-}
-
-.select:disabled, .input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* Select-only: custom arrow via CSS variable */

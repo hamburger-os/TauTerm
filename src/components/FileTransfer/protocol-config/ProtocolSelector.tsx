@@ -28,7 +28,7 @@ export default function ProtocolSelector({
       <select
         value={value.protocol}
         onChange={handleChange}
-        className={`${inputStyles.input} ${inputStyles.select}`}
+        className={`${inputStyles.input} ${inputStyles.select} liquid-glass-input`}
         style={{
           fontSize: "var(--text-xs)",
         }}

@@ -251,29 +251,39 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 
 ### New Select Dropdown Template
 
+**Preferred: combine CSS Module + global `.liquid-glass-input` class**
+
 ```css
+/* CSS Module — select-specific + sizing only */
 .select {
   appearance: none;
-  background: var(--glass-input-bg);
-  border: 1px solid var(--glass-input-border);
+  -webkit-appearance: none;
+  width: 100%;
+  padding: 6px 28px 6px 10px;
   border-radius: var(--radius-md);
-  color: var(--text-primary);
-  box-shadow: var(--glass-input-shadow-inner);
-  /* Custom arrow — fill color uses var(--select-arrow) token, defined per theme */
-  background-image: url("data:image/svg+xml,%3Csvg ... fill='%2394a3b8' ...");
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  background-image: var(--select-arrow);
   background-repeat: no-repeat;
   background-position: right 10px center;
-  padding-right: 28px;
-}
-.select:focus {
-  border-color: var(--glass-input-focus-border);
-  box-shadow: var(--glass-input-shadow-inner), var(--glass-input-focus-glow);
 }
 .select option {
   background: var(--select-option-bg);
   color: var(--text-primary);
 }
 ```
+
+```tsx
+// JSX — `.liquid-glass-input` provides bg/border/color/shadow/focus/hover/disabled
+<select className={`${styles.select} liquid-glass-input`}>
+  <option value="a">A</option>
+</select>
+```
+
+> `.liquid-glass-input` already handles: `background`, `border`, `box-shadow`, `color`,
+> `outline`, `:focus` glow, `:hover` border, `:disabled` transparency.
+> CSS Modules only need to define select-specific props and component-level sizing.
 
 ### Status-Tinted Background (color-mix pattern)
 
@@ -402,7 +412,7 @@ Run this mental checklist for every new/changed component:
 8. z-index values use `var(--z-*)` tokens — never raw numbers
 9. `backdrop-filter` blur values use `var(--blur-*)` or `var(--glass-blur)` tokens
 10. Modal/overlay backdrops use `var(--overlay-bg)` — not hardcoded black
-11. All `<select>` elements use `appearance: none` / `-webkit-appearance: none` with custom SVG arrow data URI, `var(--select-option-bg)` for options, and consistent focus glow — every select in the project should look identical regardless of which component it lives in
+11. All `<select>` and `<input>` elements use the global `liquid-glass-input` class for base visuals (bg/border/color/shadow/focus/hover/disabled). CSS Modules only define select-specific props (appearance, arrow, option bg) and component-level sizing. Every select/input in the project should look identical regardless of which component it lives in.
 12. Custom SVG data URIs (select arrows, etc.) have their hardcoded fill color noted in a comment
 13. Disabled opacity: use `opacity: 0.5` for buttons, `opacity: 0.4` for inputs/selects — be consistent across components
 

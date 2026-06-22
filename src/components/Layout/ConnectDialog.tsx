@@ -248,7 +248,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               <div className={styles.field}>
                 <label className={styles.label}>{t("session.renameSession")} ({t("session.newSession")})</label>
                 <input
-                  className={styles.input}
+                  className={`${styles.input} liquid-glass-input`}
                   type="text"
                   placeholder={isSerial ? port || "COM3" : "My Session"}
                   value={sessionName}
@@ -263,7 +263,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                   <div className={styles.field}>
                     <label className={styles.label}>{t("serial.port")}</label>
                     <div className={styles.row}>
-                      <select className={styles.select} style={{ flex: 1 }} value={port} onChange={e => setPort(e.target.value)} disabled={connecting}>
+                      <select className={`${styles.select} liquid-glass-input`} style={{ flex: 1 }} value={port} onChange={e => setPort(e.target.value)} disabled={connecting}>
                         {serialEndpoints.length === 0 && <option value="">{t("serial.noPorts")}</option>}
                         {serialEndpoints.map(ep => (
                           <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
@@ -276,13 +276,13 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                   <div className={styles.row2}>
                     <div className={styles.field}>
                       <label className={styles.label}>{t("serial.baudRate")}</label>
-                      <select className={styles.select} value={baudRate} onChange={e => setBaudRate(e.target.value)} disabled={connecting}>
+                      <select className={`${styles.select} liquid-glass-input`} value={baudRate} onChange={e => setBaudRate(e.target.value)} disabled={connecting}>
                         {BAUD_RATES.map(b => <option key={b} value={b}>{b}</option>)}
                       </select>
                     </div>
                     <div className={styles.field}>
                       <label className={styles.label}>{t("serial.dataBits")}</label>
-                      <select className={styles.select} value={dataBits} onChange={e => setDataBits(e.target.value)} disabled={connecting}>
+                      <select className={`${styles.select} liquid-glass-input`} value={dataBits} onChange={e => setDataBits(e.target.value)} disabled={connecting}>
                         {DATA_BITS.map(d => <option key={d} value={d}>{d}</option>)}
                       </select>
                     </div>
@@ -291,13 +291,13 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                   <div className={styles.row2}>
                     <div className={styles.field}>
                       <label className={styles.label}>{t("serial.parity")}</label>
-                      <select className={styles.select} value={parity} onChange={e => setParity(e.target.value)} disabled={connecting}>
+                      <select className={`${styles.select} liquid-glass-input`} value={parity} onChange={e => setParity(e.target.value)} disabled={connecting}>
                         {PARITY.map(p => <option key={p.v} value={p.v}>{p.l}</option>)}
                       </select>
                     </div>
                     <div className={styles.field}>
                       <label className={styles.label}>{t("serial.stopBits")}</label>
-                      <select className={styles.select} value={stopBits} onChange={e => setStopBits(e.target.value)} disabled={connecting}>
+                      <select className={`${styles.select} liquid-glass-input`} value={stopBits} onChange={e => setStopBits(e.target.value)} disabled={connecting}>
                         {STOP_BITS.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
@@ -305,14 +305,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
                   <div className={styles.field}>
                     <label className={styles.label}>{t("serial.flowControl")}</label>
-                    <select className={styles.select} value={flowControl} onChange={e => setFlowControl(e.target.value)} disabled={connecting}>
+                    <select className={`${styles.select} liquid-glass-input`} value={flowControl} onChange={e => setFlowControl(e.target.value)} disabled={connecting}>
                       {FLOW_CONTROL.map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
                     </select>
                   </div>
 
                   <div className={styles.field}>
                     <label className={styles.label}>{t("serial.dataMode")}</label>
-                    <select className={styles.select} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
+                    <select className={`${styles.select} liquid-glass-input`} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
                       <option value="text">{t("serial.dataModeText")}</option>
                       <option value="hex">{t("serial.dataModeHex")}</option>
                     </select>
@@ -336,7 +336,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                     <div className={styles.field}>
                       <label className={styles.label}>{t("serial.transferProtocol")}</label>
                       <select
-                        className={styles.select}
+                        className={`${styles.select} liquid-glass-input`}
                         value={transferProtocol}
                         onChange={e => setTransferProtocol(e.target.value as "ymodem" | "xmodem" | "zmodem")}
                         disabled={connecting}
