@@ -10,7 +10,6 @@ use crate::channel::Channel;
 use crate::channel::io_loop::IoLoopCmd;
 use crate::kernel::plugin_adapter::{ProtocolAdapter, TransferProtocolType};
 use crate::kernel::session_store::{SessionState, SessionStore};
-use crate::transfer::TransferManager;
 use crate::AppState;
 
 // ── 数据结构 ────────────────────────────────────────
@@ -384,138 +383,106 @@ pub fn delete_session_config(
     SessionStore::delete_config_from_disk(&app, &session_id)
 }
 
-// ── YModem 文件传输命令 ────────────────────────────
+// ── 文件传输命令（统一 X/Y/ZModem）────────────────────
 
-/// YModem 发送文件（新架构：IoLoopCmd::HandoffPort + Channel）
+/// X/Y/ZModem 发送文件（带协议选择 + YMODEM 可选配置）
 #[tauri::command]
-pub fn send_files_ymodem(
+pub fn send_files(
     app: AppHandle,
     state: State<AppState>,
     session_id: String,
     file_paths: Vec<String>,
-    #[allow(unused)] block_size: Option<u32>,
-    #[allow(unused)] checksum_mode: Option<String>,
+    protocol: String,
+    block_size: Option<usize>,
+    checksum_mode: Option<String>,
+    streaming: Option<bool>,
 ) -> Result<(), String> {
-    // 验证策略
-    let _strategy = TransferManager::select_strategy_by_protocol(&TransferProtocolType::YModem);
-
-    // 记录协议配置参数，供后续实现使用
-    if let Some(bs) = block_size {
-        log::info!("YModem 发送 block_size={}", bs);
-    }
-    if let Some(ref cm) = checksum_mode {
-        log::info!("YModem 发送 checksum_mode={}", cm);
-    }
-
-    let (give_tx, give_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
-    let (return_tx, return_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
-
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-
-    {
-        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let handle = store.get_session_mut(&session_id)
-            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
-
-        if handle.state != SessionState::Connected {
-            return Err("会话未连接".into());
-        }
-        handle.state = SessionState::Transferring;
-        handle.channel_return_tx = Some(return_tx);
-        handle.cancel_transfer_tx = Some(cancel_tx);
-
-        let _ = handle.write_tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx });
-    }
-
-    let mut channel = give_rx.recv()
-        .map_err(|e| {
-            // 握手失败，恢复会话状态
-            if let Ok(mut store) = state.session_store.lock() {
-                if let Some(h) = store.get_session_mut(&session_id) {
-                    h.state = SessionState::Connected;
-                    h.cancel_transfer_tx = None;
-                    h.channel_return_tx = None;
-                }
-            }
-            format!("无法从 I/O 线程获取 Channel: {}", e)
-        })?;
-
-    let _ = app.emit("session-transfer-started", serde_json::json!({
-        "session_id": session_id,
-    }));
-
-    // 提取串口端口，将传输移至后台线程（不阻塞 UI）
-    let port_any = channel.try_handoff()
-        .ok_or_else(|| "Channel 不支持端口移交".to_string())?;
-    let boxed_port = port_any
-        .downcast::<Box<dyn serialport::SerialPort>>()
-        .map_err(|_| "端口类型转换失败".to_string())?;
-    let mut port = *boxed_port;
-    // channel 已交出端口，不再需要
-    drop(channel);
-
-    // 后台线程执行 YModem 传输，命令立即返回
-    let app_clone = app.clone();
-    let sid = session_id.clone();
-    std::thread::spawn(move || {
-        flush_port_buffer(&mut port);
-        let result = ymodem_send(&mut port, app_clone.clone(), file_paths, cancel_rx);
-
-        // 归还 Channel 给 I/O 循环线程（重新构造 SerialChannel）
-        let app_state: State<AppState> = app_clone.state();
-        if let Ok(mut store) = app_state.session_store.lock() {
-            if let Some(h) = store.get_session_mut(&sid) {
-                h.cancel_transfer_tx = None;
-                h.state = SessionState::Connected;
-                if let Some(tx) = h.channel_return_tx.take() {
-                    use crate::channel::serial_channel::SerialChannel;
-                    let new_channel = SerialChannel::new(port);
-                    let _ = tx.send(Box::new(new_channel));
-                }
-            }
-        }
-
-        match result {
-            Ok(()) => {
-                let _ = app_clone.emit("session-transfer-finished", serde_json::json!({
-                    "session_id": sid,
-                }));
-            }
-            Err(e) => {
-                let _ = app_clone.emit("session-transfer-failed", serde_json::json!({
-                    "session_id": sid,
-                    "error": e,
-                }));
-            }
-        }
-    });
-
-    Ok(())
+    let pt: TransferProtocolType = protocol.parse()
+        .map_err(|_| format!("不支持的传输协议: {}", protocol))?;
+    send_files_internal(app, state, session_id, file_paths, pt, block_size, checksum_mode, streaming)
 }
 
-/// YModem 接收文件（新架构）
+/// 发送文件内部实现
+fn send_files_internal(
+    app: AppHandle,
+    state: State<AppState>,
+    session_id: String,
+    file_paths: Vec<String>,
+    protocol_type: TransferProtocolType,
+    block_size: Option<usize>,
+    checksum_mode: Option<String>,
+    streaming: Option<bool>,
+) -> Result<(), String> {
+    let file_infos: Vec<crate::transfer::types::FileInfo> = file_paths
+        .iter()
+        .filter_map(|p| {
+            match crate::transfer::types::FileInfo::from_path(p) {
+                Ok(info) => Some(info),
+                Err(e) => {
+                    log::warn!("无法获取文件信息 {}: {}", p, e);
+                    None
+                }
+            }
+        })
+        .collect();
+
+    if file_infos.is_empty() {
+        return Err("没有可传输的有效文件".into());
+    }
+
+    let pt = protocol_type.clone();
+    handoff_and_spawn_transfer(app, state, session_id, &protocol_type, move |port, app_handle, cancel_rx| {
+        transfer_send(port, app_handle, file_infos, pt, cancel_rx, block_size, checksum_mode, streaming)
+    })
+}
+
+/// X/Y/ZModem 接收文件（带协议选择 + YMODEM 可选配置）
 #[tauri::command]
-pub fn receive_files_ymodem(
+pub fn receive_files(
     app: AppHandle,
     state: State<AppState>,
     session_id: String,
     download_dir: String,
-    #[allow(unused)] block_size: Option<u32>,
-    #[allow(unused)] checksum_mode: Option<String>,
+    protocol: String,
+    block_size: Option<usize>,
+    checksum_mode: Option<String>,
+    streaming: Option<bool>,
 ) -> Result<(), String> {
-    let _strategy = TransferManager::select_strategy_by_protocol(&TransferProtocolType::YModem);
+    let pt: TransferProtocolType = protocol.parse()
+        .map_err(|_| format!("不支持的传输协议: {}", protocol))?;
+    receive_files_internal(app, state, session_id, download_dir, pt, block_size, checksum_mode, streaming)
+}
 
-    // 记录协议配置参数，供后续实现使用
-    if let Some(bs) = block_size {
-        log::info!("YModem 接收 block_size={}", bs);
-    }
-    if let Some(ref cm) = checksum_mode {
-        log::info!("YModem 接收 checksum_mode={}", cm);
-    }
+/// 接收文件内部实现
+fn receive_files_internal(
+    app: AppHandle,
+    state: State<AppState>,
+    session_id: String,
+    download_dir: String,
+    protocol_type: TransferProtocolType,
+    block_size: Option<usize>,
+    checksum_mode: Option<String>,
+    streaming: Option<bool>,
+) -> Result<(), String> {
+    let pt = protocol_type.clone();
+    handoff_and_spawn_transfer(app, state, session_id, &protocol_type, move |port, app_handle, cancel_rx| {
+        transfer_receive(port, app_handle, download_dir, pt, cancel_rx, block_size, checksum_mode, streaming)
+    })
+}
 
+/// Channel 交接 + 后台线程 — send/receive 共享实现
+fn handoff_and_spawn_transfer<F>(
+    app: AppHandle,
+    state: State<AppState>,
+    session_id: String,
+    protocol_type: &TransferProtocolType,
+    transfer_fn: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&mut Box<dyn serialport::SerialPort>, AppHandle, tokio::sync::oneshot::Receiver<()>) -> Result<(), String> + Send + 'static,
+{
     let (give_tx, give_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
     let (return_tx, return_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
-
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
     {
@@ -535,7 +502,6 @@ pub fn receive_files_ymodem(
 
     let mut channel = give_rx.recv()
         .map_err(|e| {
-            // 握手失败，恢复会话状态
             if let Ok(mut store) = state.session_store.lock() {
                 if let Some(h) = store.get_session_mut(&session_id) {
                     h.state = SessionState::Connected;
@@ -546,28 +512,26 @@ pub fn receive_files_ymodem(
             format!("无法从 I/O 线程获取 Channel: {}", e)
         })?;
 
+    let protocol_str = format!("{:?}", protocol_type).to_lowercase();
     let _ = app.emit("session-transfer-started", serde_json::json!({
         "session_id": session_id,
+        "protocol": protocol_str,
     }));
 
-    // 提取串口端口，将传输移至后台线程（不阻塞 UI）
     let port_any = channel.try_handoff()
         .ok_or_else(|| "Channel 不支持端口移交".to_string())?;
     let boxed_port = port_any
         .downcast::<Box<dyn serialport::SerialPort>>()
         .map_err(|_| "端口类型转换失败".to_string())?;
     let mut port = *boxed_port;
-    // channel 已交出端口，不再需要
     drop(channel);
 
-    // 后台线程执行 YModem 接收，命令立即返回
     let app_clone = app.clone();
     let sid = session_id.clone();
     std::thread::spawn(move || {
-        flush_port_buffer(&mut port);
-        let result = ymodem_receive(&mut port, app_clone.clone(), download_dir, cancel_rx);
+        crate::transfer::io::flush_port_buffer(&mut port);
+        let result = transfer_fn(&mut port, app_clone.clone(), cancel_rx);
 
-        // 归还 Channel 给 I/O 循环线程（重新构造 SerialChannel）
         let app_state: State<AppState> = app_clone.state();
         if let Ok(mut store) = app_state.session_store.lock() {
             if let Some(h) = store.get_session_mut(&sid) {
@@ -737,74 +701,94 @@ pub fn set_theme(
         .map_err(|e| e.to_string())
 }
 
-// ── YModem 工具函数 ─────────────────────────────────
+// ── 协议无关的传输辅助函数 ──────────────────────────
 
-/// 清空串口缓冲区
-fn flush_port_buffer(port: &mut Box<dyn serialport::SerialPort>) {
-    use std::io::Read;
-    let mut buf = [0u8; 256];
-    let mut empty_count = 0u32;
-    for _ in 0..20 {
-        match port.read(&mut buf) {
-            Ok(n) if n > 0 => { empty_count = 0; }
-            _ => {
-                empty_count += 1;
-                if empty_count >= 3 { break; }
-            }
-        }
-    }
-}
-
-/// YModem 发送文件
-fn ymodem_send(
+/// 通过 TransferProtocol trait 发送文件
+fn transfer_send(
     port: &mut Box<dyn serialport::SerialPort>,
     app: AppHandle,
-    file_paths: Vec<String>,
+    files: Vec<crate::transfer::types::FileInfo>,
+    protocol_type: TransferProtocolType,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    block_size: Option<usize>,
+    _checksum_mode: Option<String>,  // 保留用于 API 兼容，模式由握手动态检测
+    streaming: Option<bool>,
 ) -> Result<(), String> {
-    use crate::transfer::ymodem::{YModemSender, YModemFileEvent};
+    use crate::transfer::protocol::create_protocol;
+    use crate::transfer::types::{FileTransferEvent, TransferProgress};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
+    let protocol_str = format!("{:?}", protocol_type).to_lowercase();
+    let protocol: Box<dyn crate::transfer::protocol::TransferProtocol> = match &protocol_type {
+        TransferProtocolType::YModem => {
+            let mut ymodem = crate::transfer::ymodem::YModem::default();
+            if let Some(bs) = block_size {
+                ymodem.block_size = bs;
+            }
+            // checksum_mode 由握手动态检测（'C'=CRC-16, NAK=校验和），
+            // 前端参数仅保留用于 API 兼容，不再写入结构体。
+            if let Some(s) = streaming {
+                ymodem.streaming = s;
+            }
+            Box::new(ymodem)
+        }
+        _ => create_protocol(&protocol_type)
+            .ok_or_else(|| format!("{} 协议未实现", protocol_str))?,
+    };
+
     let cancelled = Arc::new(AtomicBool::new(false));
     let c = cancelled.clone();
-    std::thread::spawn(move || { let _ = cancel_rx.blocking_recv(); c.store(true, Ordering::SeqCst); });
+    std::thread::spawn(move || {
+        let _ = cancel_rx.blocking_recv();
+        c.store(true, Ordering::SeqCst);
+    });
     let cancel_fn = &mut || cancelled.load(Ordering::SeqCst);
 
     let ac = app.clone();
     let ac2 = app.clone();
-    let batch_results = YModemSender::send(port, &file_paths,
-        move |p| {
-            let _ = ac.emit("transfer-progress", serde_json::json!({
-                "file_name": p.file_name,
-                "bytes_transferred": p.bytes_transferred,
-                "total_bytes": p.total_bytes,
-                "file_index": p.file_index,
-                "total_files": p.total_files,
-                "aggregate_bytes_transferred": p.aggregate_bytes_transferred,
-                "aggregate_total_bytes": p.aggregate_total_bytes,
-                "direction": "send"
-            }));
-        },
-        move |e| {
-            match e {
-                YModemFileEvent::FileStart { file_name, file_index, total_files, file_size } => {
-                    let _ = ac2.emit("transfer-file-start", serde_json::json!({
-                        "file_name": file_name, "file_index": file_index,
-                        "total_files": total_files, "file_size": file_size
-                    }));
-                }
-                YModemFileEvent::FileComplete { file_name, file_index, total_files, bytes_transferred, success, error } => {
-                    let _ = ac2.emit("transfer-file-complete", serde_json::json!({
-                        "file_name": file_name, "file_index": file_index,
-                        "total_files": total_files, "bytes_transferred": bytes_transferred,
-                        "success": success, "error": error
-                    }));
-                }
+    let proto = protocol_str.clone();
+
+    let on_progress: &dyn Fn(TransferProgress) = &move |p: TransferProgress| {
+        let _ = ac.emit("transfer-progress", serde_json::json!({
+            "file_name": p.file_name,
+            "bytes_transferred": p.bytes_transferred,
+            "total_bytes": p.total_bytes,
+            "file_index": p.file_index,
+            "total_files": p.total_files,
+            "aggregate_bytes_transferred": p.aggregate_bytes_transferred,
+            "aggregate_total_bytes": p.aggregate_total_bytes,
+            "direction": "send",
+            "protocol": proto,
+        }));
+    };
+
+    let on_file_event: &dyn Fn(FileTransferEvent) = &move |e: FileTransferEvent| {
+        match e {
+            FileTransferEvent::FileStart { file_name, file_index, total_files, file_size } => {
+                let _ = ac2.emit("transfer-file-start", serde_json::json!({
+                    "file_name": file_name,
+                    "file_index": file_index,
+                    "total_files": total_files,
+                    "file_size": file_size,
+                }));
             }
-        },
-        cancel_fn,
-    ).map_err(|e| e.to_string())?;
+            FileTransferEvent::FileComplete { file_name, file_index, total_files, bytes_transferred, success, error } => {
+                let _ = ac2.emit("transfer-file-complete", serde_json::json!({
+                    "file_name": file_name,
+                    "file_index": file_index,
+                    "total_files": total_files,
+                    "bytes_transferred": bytes_transferred,
+                    "success": success,
+                    "error": error,
+                }));
+            }
+        }
+    };
+
+    let batch_results = protocol
+        .send_files(port, &files, on_progress, on_file_event, cancel_fn)
+        .map_err(|e| e.to_string())?;
 
     let completed = batch_results.iter().filter(|r| r.status == "completed").count();
     let failed = batch_results.iter().filter(|r| r.status == "failed").count();
@@ -815,61 +799,98 @@ fn ymodem_send(
         "files_failed": failed,
         "files_skipped": skipped,
         "direction": "send",
-        "results": batch_results
+        "protocol": protocol_str,
+        "results": batch_results,
     }));
     Ok(())
 }
 
-/// YModem 接收文件
-fn ymodem_receive(
+/// 通过 TransferProtocol trait 接收文件
+fn transfer_receive(
     port: &mut Box<dyn serialport::SerialPort>,
     app: AppHandle,
     download_dir: String,
+    protocol_type: TransferProtocolType,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    block_size: Option<usize>,
+    _checksum_mode: Option<String>,  // 保留用于 API 兼容，模式由握手动态检测
+    streaming: Option<bool>,
 ) -> Result<(), String> {
-    use crate::transfer::ymodem::{YModemReceiver, YModemFileEvent};
+    use crate::transfer::protocol::create_protocol;
+    use crate::transfer::types::{FileTransferEvent, TransferProgress};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
+    let protocol_str = format!("{:?}", protocol_type).to_lowercase();
+    let protocol: Box<dyn crate::transfer::protocol::TransferProtocol> = match &protocol_type {
+        TransferProtocolType::YModem => {
+            let mut ymodem = crate::transfer::ymodem::YModem::default();
+            if let Some(bs) = block_size {
+                ymodem.block_size = bs;
+            }
+            // checksum_mode 由握手动态检测（'C'=CRC-16, NAK=校验和），
+            // 前端参数仅保留用于 API 兼容，不再写入结构体。
+            if let Some(s) = streaming {
+                ymodem.streaming = s;
+            }
+            Box::new(ymodem)
+        }
+        _ => create_protocol(&protocol_type)
+            .ok_or_else(|| format!("{} 协议未实现", protocol_str))?,
+    };
+
     let cancelled = Arc::new(AtomicBool::new(false));
     let c = cancelled.clone();
-    std::thread::spawn(move || { let _ = cancel_rx.blocking_recv(); c.store(true, Ordering::SeqCst); });
+    std::thread::spawn(move || {
+        let _ = cancel_rx.blocking_recv();
+        c.store(true, Ordering::SeqCst);
+    });
     let cancel_fn = &mut || cancelled.load(Ordering::SeqCst);
 
     let ac = app.clone();
     let ac2 = app.clone();
-    let batch_results = YModemReceiver::receive(port, &download_dir,
-        move |p| {
-            let _ = ac.emit("transfer-progress", serde_json::json!({
-                "file_name": p.file_name,
-                "bytes_transferred": p.bytes_transferred,
-                "total_bytes": p.total_bytes,
-                "file_index": p.file_index,
-                "total_files": p.total_files,
-                "aggregate_bytes_transferred": p.aggregate_bytes_transferred,
-                "aggregate_total_bytes": p.aggregate_total_bytes,
-                "direction": "receive"
-            }));
-        },
-        move |e| {
-            match e {
-                YModemFileEvent::FileStart { file_name, file_index, total_files, file_size } => {
-                    let _ = ac2.emit("transfer-file-start", serde_json::json!({
-                        "file_name": file_name, "file_index": file_index,
-                        "total_files": total_files, "file_size": file_size
-                    }));
-                }
-                YModemFileEvent::FileComplete { file_name, file_index, total_files, bytes_transferred, success, error } => {
-                    let _ = ac2.emit("transfer-file-complete", serde_json::json!({
-                        "file_name": file_name, "file_index": file_index,
-                        "total_files": total_files, "bytes_transferred": bytes_transferred,
-                        "success": success, "error": error
-                    }));
-                }
+    let proto = protocol_str.clone();
+
+    let on_progress: &dyn Fn(TransferProgress) = &move |p: TransferProgress| {
+        let _ = ac.emit("transfer-progress", serde_json::json!({
+            "file_name": p.file_name,
+            "bytes_transferred": p.bytes_transferred,
+            "total_bytes": p.total_bytes,
+            "file_index": p.file_index,
+            "total_files": p.total_files,
+            "aggregate_bytes_transferred": p.aggregate_bytes_transferred,
+            "aggregate_total_bytes": p.aggregate_total_bytes,
+            "direction": "receive",
+            "protocol": proto,
+        }));
+    };
+
+    let on_file_event: &dyn Fn(FileTransferEvent) = &move |e: FileTransferEvent| {
+        match e {
+            FileTransferEvent::FileStart { file_name, file_index, total_files, file_size } => {
+                let _ = ac2.emit("transfer-file-start", serde_json::json!({
+                    "file_name": file_name,
+                    "file_index": file_index,
+                    "total_files": total_files,
+                    "file_size": file_size,
+                }));
             }
-        },
-        cancel_fn,
-    ).map_err(|e| e.to_string())?;
+            FileTransferEvent::FileComplete { file_name, file_index, total_files, bytes_transferred, success, error } => {
+                let _ = ac2.emit("transfer-file-complete", serde_json::json!({
+                    "file_name": file_name,
+                    "file_index": file_index,
+                    "total_files": total_files,
+                    "bytes_transferred": bytes_transferred,
+                    "success": success,
+                    "error": error,
+                }));
+            }
+        }
+    };
+
+    let batch_results = protocol
+        .receive_files(port, &download_dir, on_progress, on_file_event, cancel_fn)
+        .map_err(|e| e.to_string())?;
 
     let completed = batch_results.iter().filter(|r| r.status == "completed").count();
     let failed = batch_results.iter().filter(|r| r.status == "failed").count();
@@ -880,7 +901,8 @@ fn ymodem_receive(
         "files_failed": failed,
         "files_skipped": skipped,
         "direction": "receive",
-        "results": batch_results
+        "protocol": protocol_str,
+        "results": batch_results,
     }));
     Ok(())
 }

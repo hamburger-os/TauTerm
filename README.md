@@ -526,7 +526,7 @@ npm run tauri dev
 npm run tauri build
 ```
 
-构建产物位于 `src-tauri/target/release/bundle/`：
+构建产物位于 `src-tauri/target/release/`：
 - **Windows**: `.msi` / `.exe` 安装包
 - **Linux**: `.deb` / `.rpm` / `.AppImage`
 - **macOS**: `.dmg` / `.app` 包

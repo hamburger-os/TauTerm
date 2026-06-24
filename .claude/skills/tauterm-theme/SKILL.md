@@ -70,10 +70,20 @@ blur: var(--blur-xs);              /*  4px — overlay backdrops (shared constan
 
 **Text:**
 ```css
-color: var(--text-primary);     /* main text */
-color: var(--text-secondary);   /* secondary text */
-color: var(--text-muted);       /* dim text — use sparingly, NOT for small controls */
+color: var(--text-primary);     /* main text — body, active items, headings, file names */
+color: var(--text-secondary);   /* secondary text — form labels, setting labels, button labels,
+                                   status text, port info, section headers, descriptions.
+                                   Use for ANY text the user needs to read to operate the UI. */
+color: var(--text-muted);       /* dim text — RESERVED for: placeholders, timestamps, keyboard
+                                   shortcuts, file-size metadata, version numbers, disabled states.
+                                   NEVER use for labels, identifiers, or descriptions that users
+                                   need to read. When in doubt, choose --text-secondary. */
 ```
+
+**Text Color Decision Rule (choose `--text-muted` vs `--text-secondary`):**
+- Can the user still operate this part of the UI **without** reading this text? → If YES, `--text-muted` is OK (placeholder, timestamp, shortcut, version)
+- Is this text a label, section header, field name, port/endpoint identifier, or description that helps the user understand what to do? → `--text-secondary`
+- If unsure → `--text-secondary`. Text that is slightly too bright is always better than text that is unreadable.
 
 **Accent:**
 ```css
@@ -564,7 +574,7 @@ For pulsing connected indicators (session sidebar), add the `pulse` animation:
 
 Run this mental checklist for every new/changed component:
 
-1. All `color`/`background`/`border`/`box-shadow`/`font-size` use `var(--xxx)` tokens. For `font-size`: ≥11px MUST use `--text-*` tokens; only micro-text (8/9/10px) may use raw px values.
+1. All `color`/`background`/`border`/`box-shadow`/`font-size` use `var(--xxx)` tokens. For `font-size`: ≥11px MUST use `--text-*` tokens; only micro-text (8/9/10px) may use raw px values. For text color: `--text-muted` is reserved for placeholders, timestamps, shortcuts, and metadata — NEVER for labels, identifiers, or descriptions the user needs to read. All WCAG AA contrast ratios: `--text-muted` ≥ 5.5:1 on `--bg-base`, `--text-secondary` ≥ 7:1.
 2. No `rgba(0,0,0,x)` or `rgba(255,255,255,x)` hardcoded (except allowed exceptions)
 3. `border-radius` uses the correct semantic tier: Frame→xl/2xl(24px), Panel→lg(16px), Control→md/sm(12px), Pill→full(9999px), Micro→xs(4px). Zero hardcoded pixel values (except ProgressBar's dynamic `${height/2}px`). Edge-touching elements use 0px.
 4. Dialogs/popups use `var(--dialog-bg)` background + `backdrop-filter: blur()`

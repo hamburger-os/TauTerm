@@ -2,48 +2,52 @@
 
 ## Purpose
 
-定义新建会话对话框的模式优先设计要求，包括两步交互流程和可扩展架构。
+定义新建会话对话框的模式优先设计要求，协议卡片从 Plugin Registry 动态生成，`ConnectionType::all()` 被移除。
 
 ## Requirements
 
 ### Requirement: New session dialog has mode-first design
-The new session dialog SHALL present a two-step flow: first select a connection mode, then configure mode-specific parameters. The mode selection SHALL be presented as a grid of visually distinct mode cards.
+The new session dialog SHALL present a two-step flow: first select a protocol from the registered plugins, then configure protocol-specific parameters. The protocol selection SHALL be presented as a grid of visually distinct cards dynamically generated from the Plugin Registry.
 
 #### Scenario: User opens the new session dialog
 - **WHEN** the user clicks the "New Session" toolbar button or triggers the new-session keyboard shortcut
-- **THEN** a modal dialog opens showing a grid of connection mode cards (Serial, SSH, Telnet, TFTP)
-- **AND** each card SHALL display an icon, name, and brief description
+- **THEN** a modal dialog opens showing a grid of protocol cards derived from all plugins registered in the Plugin Host that declare the `connection` capability
+- **AND** each card SHALL display the plugin's icon, name, and description from its manifest
 
-#### Scenario: User selects the Serial mode card
-- **WHEN** the user clicks the "Serial" mode card
-- **THEN** the dialog SHALL transition to show the serial configuration form
-- **AND** the form SHALL include: port selector, baud rate, data bits, parity, stop bits, flow control, and optional session name
+#### Scenario: User selects the Serial protocol card
+- **WHEN** the user clicks the "Serial" protocol card
+- **THEN** the dialog SHALL transition to show the `SerialConnectForm` component provided by the Serial plugin via `registerPlugin()`
+- **AND** the form SHALL include all fields defined in the Serial plugin's `config_schema`
 
-#### Scenario: User selects an unavailable mode card
-- **WHEN** the user clicks an SSH, Telnet, or TFTP mode card
-- **THEN** the dialog SHALL show that mode's configuration form with placeholder fields
-- **AND** a "Coming Soon" badge SHALL be visible
-- **AND** the Connect button SHALL be disabled
+#### Scenario: All displayed protocol cards are available
+- **WHEN** the dialog displays protocol cards
+- **THEN** every displayed card SHALL represent a fully functional, registered plugin—no "Coming Soon" badges or disabled cards
+- **AND** plugins without the `connection` capability SHALL be excluded from the dialog
 
-### Requirement: Mode cards support extensibility
-The dialog SHALL be structured so adding a new connection mode requires only a new card component and a new config panel component.
+### Requirement: Protocol cards are dynamically generated from Plugin Registry
+The dialog SHALL query the Plugin Host for all plugins declaring the `connection` capability and render one card per plugin.
+The dialog SHALL NOT hard-code any protocol list or connection type enumeration.
 
-#### Scenario: Developer adds a new connection mode
-- **WHEN** a developer adds a new mode definition and corresponding card + config panel components
-- **THEN** the new mode SHALL appear in the mode selection grid without modifying the dialog's core layout logic
-- **AND** the config panel SHALL render when that mode is selected
+#### Scenario: New plugin appears automatically in dialog
+- **WHEN** a new protocol plugin is registered with the Plugin Host (with `connection` capability)
+- **THEN** its protocol card SHALL appear in the new session dialog without any dialog code changes
+
+#### Scenario: Plugin is removed or disabled
+- **WHEN** a plugin is unregistered from the Plugin Host
+- **THEN** its protocol card SHALL NOT appear in the new session dialog
 
 ### Requirement: Serial mode configuration is fully functional
 The Serial configuration panel SHALL provide all fields to establish a serial connection and SHALL connect to the selected port with the specified parameters.
+The Serial plugin SHALL provide the connect form component and handle parameter validation.
 
 #### Scenario: User configures and connects via serial
-- **WHEN** the user selects a serial port, sets parameters (baud rate, data bits, parity, stop bits, flow control), and clicks Connect
-- **THEN** the system SHALL invoke `connect_session` with the serial port endpoint and parameters
+- **WHEN** the user selects a serial port, sets parameters, and clicks Connect
+- **THEN** the system SHALL invoke `connect_session` with `plugin_id = "serial"`, endpoint, and parameters
 - **AND** upon successful connection, the dialog SHALL close
-- **AND** a new session entry SHALL appear in the sidebar in "connecting" then "connected" state
+- **AND** a new session tab SHALL appear in "connecting" then "connected" state
 
 #### Scenario: User configures but no port is available
-- **WHEN** no serial ports are detected
+- **WHEN** no serial ports are detected by the Serial plugin's `discover_endpoints()`
 - **THEN** the port selector SHALL show "No serial ports detected"
 - **AND** the Connect button SHALL be disabled
 
@@ -52,4 +56,4 @@ The session name field SHALL be optional. When left empty, the system SHALL gene
 
 #### Scenario: User leaves session name empty
 - **WHEN** the user connects without entering a session name
-- **THEN** the session SHALL be named with the format "<ConnectionType> @ <Endpoint>" (e.g., "Serial @ COM3")
+- **THEN** the session SHALL be named with the format "<PluginName> @ <Endpoint>" (e.g., "Serial @ COM3", "SSH @ 192.168.1.1")

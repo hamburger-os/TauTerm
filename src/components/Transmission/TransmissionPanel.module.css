@@ -53,7 +53,7 @@
 }
 
 .sectionLabel {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;

@@ -22,6 +22,7 @@ import type {
   TransferCompleteEvent,
   TransferConfig,
   ProtocolType,
+  YmodemTransferConfig,
 } from "../types/transfer";
 import { PROTOCOL_REGISTRY } from "../types/transfer";
 
@@ -35,22 +36,22 @@ export type {
 
 // ── Command Routing Table ─────────────────────────────────
 
-/** 协议 → 方向 → Tauri 命令名 */
+/** 协议 → 方向 → Tauri 命令名（统一使用 send_files / receive_files） */
 const COMMAND_MAP: Record<
   ProtocolType,
   Record<TransferDirection, string>
 > = {
   ymodem: {
-    send: "send_files_ymodem",
-    receive: "receive_files_ymodem",
+    send: "send_files",
+    receive: "receive_files",
   },
   xmodem: {
-    send: "send_files_xmodem",
-    receive: "receive_files_xmodem",
+    send: "send_files",
+    receive: "receive_files",
   },
   zmodem: {
-    send: "send_files_zmodem",
-    receive: "receive_files_zmodem",
+    send: "send_files",
+    receive: "receive_files",
   },
 };
 
@@ -131,6 +132,17 @@ function transferReducer(
             status: "transferring" as const,
           },
         };
+      } else {
+        // 接收端事先不知道文件名，需按需创建条目
+        updated.batchFiles = {
+          ...state.batchFiles,
+          [key]: {
+            fileName: key,
+            status: "transferring" as const,
+            bytesTransferred: p.bytes_transferred,
+            totalBytes: p.total_bytes,
+          },
+        };
       }
       return updated;
     }
@@ -175,6 +187,14 @@ function transferReducer(
           status: "transferring",
           totalBytes: action.event.file_size,
         };
+      } else {
+        // 接收端按需创建条目
+        updatedBatch[key] = {
+          fileName: key,
+          status: "transferring",
+          bytesTransferred: 0,
+          totalBytes: action.event.file_size,
+        };
       }
       return {
         ...state,
@@ -193,6 +213,15 @@ function transferReducer(
           bytesTransferred: action.event.bytes_transferred,
           error: action.event.error ?? undefined,
         };
+      } else {
+        // 接收端按需创建条目
+        updatedBatch[key] = {
+          fileName: key,
+          status: action.event.success ? "completed" : "failed",
+          bytesTransferred: action.event.bytes_transferred,
+          totalBytes: action.event.bytes_transferred,
+          error: action.event.error ?? undefined,
+        };
       }
       return {
         ...state,
@@ -205,6 +234,15 @@ function transferReducer(
         if (synced[r.file_name]) {
           synced[r.file_name] = {
             ...synced[r.file_name],
+            status: r.status as FileTransferState,
+            bytesTransferred: r.size,
+            totalBytes: r.size,
+            error: r.error ?? undefined,
+          };
+        } else {
+          // 接收端按需创建条目
+          synced[r.file_name] = {
+            fileName: r.file_name,
             status: r.status as FileTransferState,
             bytesTransferred: r.size,
             totalBytes: r.size,
@@ -318,29 +356,21 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_STATUS", status: "transferring" });
 
       try {
-        const args: Record<string, unknown> = { sessionId };
+        const args: Record<string, unknown> = {
+          sessionId,
+          protocol: config.protocol,
+        };
         if (direction === "send" && filePaths) {
           args.filePaths = filePaths;
         }
         if (direction === "receive" && downloadDir) {
           args.downloadDir = downloadDir;
         }
-        // Pass protocol config params to backend
-        switch (config.protocol) {
-          case "ymodem":
-            args.blockSize = config.blockSize;
-            args.checksumMode = config.checksumMode;
-            break;
-          case "xmodem":
-            args.blockSize = config.blockSize;
-            args.checksumMode = config.checksumMode;
-            args.initChar = config.initChar;
-            break;
-          case "zmodem":
-            args.windowSize = config.windowSize;
-            args.resume = config.resumeEnabled;
-            args.compression = config.compressionEnabled;
-            break;
+        // 传递 YMODEM 专属配置到 Rust 端
+        if (config.protocol === "ymodem" && "blockSize" in config) {
+          args.blockSize = config.blockSize;
+          args.checksumMode = config.checksumMode;
+          args.streaming = (config as YmodemTransferConfig).streaming ?? false;
         }
         await invoke(commandName, args);
       } catch (e) {
@@ -455,7 +485,8 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           }
           // Per-file history with protocol info — 从 ref 读取避免闭包过期
           if (payload.results && payload.results.length > 0) {
-            const activeProtocol = activeProtocolRef.current ?? "ymodem";
+            // use ref value; if already cleared, use state for correctness
+            const activeProtocol = activeProtocolRef.current ?? state.activeProtocol;
             for (const r of payload.results) {
               const direction: TransferDirection =
                 payload.direction ?? "send";
@@ -467,7 +498,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
                   r.status === "completed" ? "completed" : "failed",
                 timestamp: Date.now(),
                 error: r.error ?? undefined,
-                protocol: activeProtocol ?? "ymodem",
+                protocol: activeProtocol ?? state.activeProtocol ?? "unknown",
               });
             }
           }

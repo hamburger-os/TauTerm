@@ -48,7 +48,7 @@
 /* 协议选择器描述文本 */
 .description {
   font-size: var(--text-xs);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   line-height: 1.3;
 }
 

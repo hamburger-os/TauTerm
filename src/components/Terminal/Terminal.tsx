@@ -46,7 +46,7 @@ const LIGHT_TERMINAL_THEME = {
   magenta: "#9333ea",
   cyan: "#0891b2",
   white: "#1e293b",
-  brightBlack: "#94a3b8",
+  brightBlack: "#64748b",
   brightRed: "#ef4444",
   brightGreen: "#22c55e",
   brightYellow: "#f59e0b",

@@ -25,6 +25,32 @@ pub enum TransferProtocolType {
     Ftp,
 }
 
+/// 字符串解析为 TransferProtocolType
+///
+/// 支持大小写不敏感: "ymodem", "YMODEM", "YModem" 等
+impl std::str::FromStr for TransferProtocolType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "ymodem" => Ok(TransferProtocolType::YModem),
+            "xmodem" => Ok(TransferProtocolType::XModem),
+            "zmodem" => Ok(TransferProtocolType::ZModem),
+            "sftp" => Ok(TransferProtocolType::Sftp),
+            "scp" => Ok(TransferProtocolType::Scp),
+            "ftp" => Ok(TransferProtocolType::Ftp),
+            other => Err(format!("不支持的传输协议: '{}'。支持: ymodem, xmodem, zmodem, sftp, scp, ftp", other)),
+        }
+    }
+}
+
+impl std::fmt::Display for TransferProtocolType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = format!("{:?}", self).to_lowercase();
+        write!(f, "{}", s)
+    }
+}
+
 /// 插件清单
 ///
 /// 描述插件的基本元数据。内建插件在编译时提供此信息。

@@ -27,8 +27,10 @@ export interface YmodemTransferConfig {
   protocol: "ymodem";
   /** 块大小（字节），YModem 标准为 1024 */
   blockSize: 128 | 1024;
-  /** 校验模式 */
-  checksumMode: "crc16" | "crc32";
+  /** 校验模式：crc16 (CRC-16/CCITT) 或 checksum8 (8 位算术校验和) */
+  checksumMode: "crc16" | "checksum8";
+  /** YMODEM-g 流模式（发送 'G' 替代 'C'，无逐包 ACK） */
+  streaming: boolean;
 }
 
 export interface XmodemTransferConfig {
@@ -76,6 +78,7 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
       protocol: "ymodem",
       blockSize: 1024,
       checksumMode: "crc16",
+      streaming: false,
     },
   },
   xmodem: {
@@ -170,7 +173,7 @@ export interface TransferHistoryItem {
   timestamp: number;
   error?: string;
   /** 使用的协议 */
-  protocol: ProtocolType;
+  protocol: ProtocolType | "unknown";
 }
 
 /** 批次文件条目（前端 UI 状态） */

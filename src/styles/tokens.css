@@ -104,8 +104,8 @@
 
   /* 文字 */
   --text-primary: #e0e0ff;
-  --text-secondary: #9898b8;
-  --text-muted: #686888;
+  --text-secondary: #aaaacc;
+  --text-muted: #9494b8;
 
   /* 强调色 */
   --accent-primary: #4285F4;
@@ -149,7 +149,7 @@
   --dialog-shadow: 0 0 30px rgba(66, 133, 244, 0.15);
   /* 下拉选项 */
   --select-option-bg: #12122a;
-  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23686888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239494b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }
 
 /* Obsidian — 黑曜石暗色主题，近纯黑底 + 霓虹光球 + 磨砂黑玻璃 */
@@ -195,7 +195,7 @@
   /* 文字 */
   --text-primary: #e6e6e6;
   --text-secondary: #a6a6a6;
-  --text-muted: #666666;
+  --text-muted: #909090;
 
   /* 强调色 */
   --accent-primary: #4285F4;
@@ -239,7 +239,7 @@
   --dialog-shadow: 0 0 30px rgba(66, 133, 244, 0.12);
   /* 下拉选项 */
   --select-option-bg: #0a0a12;
-  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666666' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23909090' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }
 
 /* Frosted — 白霜浅色主题，灰白底 + 漫反射光球 + 清透白霜玻璃 */
@@ -284,8 +284,8 @@
 
   /* 文字 */
   --text-primary: #1e293b;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  --text-secondary: #3d4f61;
+  --text-muted: #556270;
 
   /* 强调色 */
   --accent-primary: #3b82f6;
@@ -326,5 +326,5 @@
   --dialog-shadow: 0 0 40px rgba(0, 0, 0, 0.06);
   /* 下拉选项 */
   --select-option-bg: #ffffff;
-  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394a3b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23556270' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
 }

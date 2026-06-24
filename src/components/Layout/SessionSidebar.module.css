@@ -124,7 +124,7 @@
 }
 
 .itemEndpoint {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 10px;
 }
 

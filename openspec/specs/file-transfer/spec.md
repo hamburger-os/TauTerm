@@ -2,16 +2,16 @@
 
 ## Purpose
 
-定义文件传输功能要求，包括 YModem 协议实现、传输进度显示、传输界面和 Dropzone 拖拽上传。
+定义文件传输功能要求，包括多协议传输架构（YModem/XModem/ZModem/SFTP/SCP/FTP）、三策略自动选择（Inline / SideChannel / SeparateConnection）、传输进度显示、传输界面和 Dropzone 拖拽上传。
 
 ## Requirements
 
 ### Requirement: YModem 文件发送
-系统必须支持通过活跃串口连接，使用 YModem 协议从主机向远程设备发送文件。取消通道必须存储在 SessionHandle 中，在整个传输生命周期内保持有效。
+系统必须支持通过活跃会话连接，使用 YModem 协议从主机向远程设备发送文件。对于串口会话，使用 Inline 策略（端口移交）。对于其他传输类型，由 Transfer Manager 自动选择策略。取消通道必须存储在 SessionHandle 中，在整个传输生命周期内保持有效。
 
-#### Scenario: 发送单个文件
-- **WHEN** 用户选择单个文件并启动 YModem 发送
-- **THEN** 文件必须以 1024 字节块传输，带 CRC-16 错误校验，传输必须完成并收到接收方的成功确认
+#### Scenario: 通过串口发送单个文件
+- **WHEN** 用户在串口会话中选择单个文件并启动 YModem 发送
+- **THEN** Transfer Manager 检测到 channel 支持 handoff，使用 Inline 策略。I/O 循环暂停，端口移交给 YModem 发送器。文件必须以 1024 字节块传输，带 CRC-16 错误校验。
 
 #### Scenario: 批量发送多个文件
 - **WHEN** 用户选择多个文件并启动 YModem 批量发送
@@ -21,12 +21,12 @@
 - **WHEN** YModem 文件发送进行中
 - **THEN** 界面必须显示当前文件名、已传输字节/总字节、传输速度以及进度条
 
-#### Scenario: 取消进行中的传输
+#### Scenario: 取消进行中的 Inline 传输
 - **WHEN** 用户在活跃的 YModem 传输期间点击"取消"
-- **THEN** `cancel_transfer` 命令通过 `SessionHandle.cancel_transfer_tx` 发送信号，传输通过发送 CAN 序列（两个连续的 0x18 字节）中止，串口保持打开以供正常终端使用。取消信号通道必须在传输开始前创建并存储，在传输完成或取消后清除。
+- **THEN** 传输中止，端口立即归还给 I/O 循环，会话状态恢复为 "connected"。取消信号通道必须在传输开始前创建并存储。
 
 #### Scenario: 取消通道不在传输前被释放
-- **WHEN** `send_files_ymodem` 命令被调用
+- **WHEN** `send_files` 命令被调用
 - **THEN** 取消通道的发送端存储在 SessionHandle 中而非立即丢弃，确保取消信号仅在用户主动取消或传输完成后触发
 
 #### Scenario: 传输错误恢复
@@ -34,11 +34,15 @@
 - **THEN** 系统必须重新发送最后一个块，最多重试 10 次，之后以错误信息标记传输失败
 
 ### Requirement: 传输进度显示
-进度条必须包含流光扫光动画效果。
+所有三种传输策略必须使用统一的进度事件格式。进度条必须包含流光扫光动画效果。传输历史记录必须包含协议字段标识使用的传输协议。
 
 #### Scenario: 传输进度动画
-- **WHEN** YModem 文件传输进行中
-- **THEN** 进度条必须包含从左向右的流光扫光动画，配合百分比数字显示
+- **WHEN** 文件传输进行中（任意协议）
+- **THEN** 进度条必须包含从左向右的流光扫光动画，配合百分比数字显示，事件格式统一
+
+#### Scenario: 传输历史区分协议
+- **WHEN** 一次 YModem 传输和一次 SFTP 传输都记录到历史
+- **THEN** 历史记录条目 SHALL 显示对应的协议标签（📦 YModem、🔒 SFTP）
 
 ### Requirement: YModem 文件接收
 系统必须支持通过活跃串口连接，使用 YModem 协议从远程设备接收文件。接收到的文件数据必须实际写入磁盘。
@@ -64,11 +68,23 @@
 - **THEN** 传输必须被拒绝，串口保持打开以供正常终端使用
 
 ### Requirement: 文件传输界面
-系统必须在界面中提供专用的文件传输面板，用于发起和监控传输。面板必须支持拖拽上传（Dropzone）。
+系统必须在界面中提供专用的文件传输面板，用于发起和监控所有策略的传输。面板必须支持拖拽上传（Dropzone）。面板必须根据活跃会话的协议能力显示可用的传输操作。
 
 #### Scenario: 打开文件传输面板
 - **WHEN** 用户点击状态栏中的文件传输按钮或按下 Ctrl+Shift+F
-- **THEN** 必须从底部滑出一个玻璃面板，包含"发送文件"、"接收文件"按钮和传输历史列表
+- **THEN** 必须从底部滑出一个玻璃面板，包含传输操作按钮和传输历史列表
+
+#### Scenario: 串口会话显示 YModem 传输选项
+- **WHEN** 活跃会话是串口类型
+- **THEN** 传输面板 SHALL 显示 YModem/XModem/ZModem 发送和接收按钮
+
+#### Scenario: SSH 会话显示 SFTP 传输选项
+- **WHEN** 活跃会话是 SSH 类型
+- **THEN** 传输面板 SHALL 显示 SFTP 上传/下载按钮和文件浏览器入口
+
+#### Scenario: 拖拽文件自动选择传输协议
+- **WHEN** 用户在 SSH 会话中拖拽文件到窗口
+- **THEN** 系统 SHALL 自动选择 SFTP 作为传输协议并启动上传
 
 #### Scenario: 拖拽文件上传
 - **WHEN** 用户从桌面拖拽一个文件进入 TauTerm 窗口
@@ -104,3 +120,33 @@
 #### Scenario: 拖拽悬停在传输面板上
 - **WHEN** 拖拽的文件悬停在文件传输面板上方
 - **THEN** 面板边框以青色高频呼吸闪烁（1s 周期），背景略微变亮
+
+### Requirement: SFTP 文件传输（SideChannel 策略）
+系统必须支持通过 SSH 会话的 SFTP 子系统进行文件传输。SFTP 传输使用 SideChannel 策略——在 SSH 会话内打开独立 SFTP 子通道，不影响终端 I/O。
+
+#### Scenario: 通过 SSH 会话上传文件
+- **WHEN** 用户在 SSH 会话中启动 SFTP 文件上传
+- **THEN** Transfer Manager 检测到 channel 不支持 handoff，使用 SideChannel 策略。SSH 插件打开 SFTP 子通道，传输文件。终端会话继续正常运行。
+
+#### Scenario: SFTP 下载大文件并显示进度
+- **WHEN** 用户通过 SFTP 下载大文件
+- **THEN** 系统必须实时显示传输进度（文件名、已传输字节/总字节、速度），使用相同的 `transfer-progress` 事件格式
+
+### Requirement: FTP 文件传输（SeparateConnection 策略）
+系统必须支持通过 FTP 插件进行文件传输。FTP 传输使用 SeparateConnection 策略——控制连接保持活跃，数据连接独立建立和关闭。
+
+#### Scenario: FTP 被动模式下载
+- **WHEN** 用户在 FTP 会话中启动文件下载
+- **THEN** Transfer Manager 使用 SeparateConnection 策略，发送 PASV 命令，建立数据连接到返回的地址/端口，传输文件，关闭数据连接，控制连接保持活跃
+
+### Requirement: Transfer strategy auto-selection
+The system SHALL automatically select the appropriate transfer strategy (Inline, SideChannel, or SeparateConnection) based on the session's channel capabilities and protocol.
+The user SHALL NOT be required to manually choose a strategy.
+
+#### Scenario: Auto-select Inline for serial
+- **WHEN** any transfer is initiated on a serial session
+- **THEN** Inline strategy SHALL be selected automatically
+
+#### Scenario: Auto-select SideChannel for SSH
+- **WHEN** any transfer is initiated on an SSH session
+- **THEN** SideChannel strategy SHALL be selected automatically

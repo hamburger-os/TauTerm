@@ -42,7 +42,7 @@ export default function YmodemConfigForm({
           {t("transfer.configChecksumMode")}
         </label>
         <div className={styles.btnRow}>
-          {(["crc16", "crc32"] as const).map((mode) => (
+          {(["crc16", "checksum8"] as const).map((mode) => (
             <button
               key={mode}
               className={`${styles.optionBtn} liquid-glass-button ${config.checksumMode === mode ? styles.optionBtnActive : ""}`}
@@ -52,7 +52,7 @@ export default function YmodemConfigForm({
             >
               {mode === "crc16"
                 ? t("transfer.configChecksumCRC16")
-                : t("transfer.configChecksumCRC32")}
+                : t("transfer.configChecksumStandard")}
             </button>
           ))}
         </div>
