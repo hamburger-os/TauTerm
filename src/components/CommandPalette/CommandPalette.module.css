@@ -47,7 +47,7 @@
   padding: 4px 10px 2px;
   font-size: 10px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -83,6 +83,6 @@
 .empty {
   padding: 24px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--text-sm);
 }

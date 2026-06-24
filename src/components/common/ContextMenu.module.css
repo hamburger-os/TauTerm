@@ -6,8 +6,8 @@
   border: 1px solid var(--glass-border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-glass), var(--dialog-shadow);
-  backdrop-filter: blur(var(--blur-heavy));
-  -webkit-backdrop-filter: blur(var(--blur-heavy));
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   padding: 4px;
   display: flex;
   flex-direction: column;

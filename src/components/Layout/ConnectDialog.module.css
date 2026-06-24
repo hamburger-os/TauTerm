@@ -86,6 +86,7 @@
   cursor: not-allowed;
 }
 
+/* 装饰性 emoji 图标，不受编号令牌约束 */
 .modeIcon {
   font-size: 28px;
 }
@@ -101,7 +102,7 @@
   right: 6px;
   font-size: 8px;
   background: var(--glass-fill);
-  color: var(--text-muted);
+  color: var(--text-secondary);
   padding: 2px 6px;
   border-radius: var(--radius-full);
   text-transform: uppercase;
@@ -111,7 +112,7 @@
 .comingSoonBanner {
   padding: 16px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--text-sm);
   border: 1px dashed var(--glass-border-default);
   border-radius: var(--radius-sm);

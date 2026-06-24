@@ -35,7 +35,7 @@
 .closeBtn {
   background: none;
   border: none;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--text-lg);
   cursor: pointer;
   padding: 4px 8px;
@@ -220,7 +220,7 @@
 }
 
 .aboutLabel {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .aboutValue {

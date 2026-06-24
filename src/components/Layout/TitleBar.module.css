@@ -36,6 +36,6 @@
 }
 
 .closeButton:hover {
-  background: var(--color-error, #ff4757);
+  background: var(--color-error);
   color: #fff;
 }

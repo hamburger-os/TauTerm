@@ -57,7 +57,7 @@
 
 .empty {
   padding: 20px 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   text-align: center;
 }

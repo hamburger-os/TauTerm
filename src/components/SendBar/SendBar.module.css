@@ -156,7 +156,7 @@
 }
 
 .repeatText {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--text-base);
   line-height: 1;
 }
@@ -194,8 +194,8 @@
   border: 1px solid var(--glass-border-default);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-glass);
-  backdrop-filter: blur(var(--blur-heavy));
-  -webkit-backdrop-filter: blur(var(--blur-heavy));
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   z-index: var(--z-toast);
   overflow: hidden;
   display: flex;
@@ -205,7 +205,7 @@
 .historyTitle {
   padding: 4px 8px;
   font-size: 9px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   border-bottom: 1px solid var(--glass-border-default);
   text-transform: uppercase;
   letter-spacing: 0.5px;

@@ -70,6 +70,7 @@
   gap: 8px;
 }
 
+/* 装饰性 emoji 图标，不受编号令牌约束 */
 .emptyIcon {
   font-size: 32px;
   opacity: 0.5;
