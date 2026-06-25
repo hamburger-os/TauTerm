@@ -1,9 +1,44 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+
+const LOGO_SRC = resolve(__dirname, "src/assets/icons/logo.png");
+
+// 将 logo.png 复制到 dist/ 作为 favicon.png（构建时）
+function copyFavicon(outDir: string) {
+  const dest = resolve(outDir, "favicon.png");
+  if (existsSync(LOGO_SRC)) {
+    if (!existsSync(dirname(dest))) mkdirSync(dirname(dest), { recursive: true });
+    copyFileSync(LOGO_SRC, dest);
+  }
+}
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "favicon-from-logo",
+      // 开发服务器：将 /favicon.png 映射到 src/assets/icons/logo.png
+      configureServer(server) {
+        server.middlewares.use("/favicon.png", (_req, res) => {
+          if (existsSync(LOGO_SRC)) {
+            res.setHeader("Content-Type", "image/png");
+            res.end(readFileSync(LOGO_SRC));
+          } else {
+            res.statusCode = 404;
+            res.end();
+          }
+        });
+      },
+      // 构建：复制 logo.png → dist/favicon.png
+      closeBundle() {
+        // vite 默认输出到 dist/
+        copyFavicon(resolve(__dirname, "dist"));
+      },
+    },
+  ],
   // Prevent vite from obscuring Rust errors
   clearScreen: false,
   build: {

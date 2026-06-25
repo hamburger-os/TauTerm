@@ -98,7 +98,7 @@ Archive a completed change in the experimental workflow.
 **Change:** <change-name>
 **Schema:** <schema-name>
 **Archived to:** the archive path derived from `planningHome.changesDir`/YYYY-MM-DD-<name>/
-**Specs:** ✓ Synced to main specs
+**Specs:** [已完成] Synced to main specs
 
 All artifacts complete. All tasks complete.
 ```

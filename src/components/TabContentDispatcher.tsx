@@ -8,6 +8,7 @@
 import { useSession } from "../context/SessionContext";
 import { pluginRegistry } from "../core/plugin-registry";
 import type { ContentType } from "../core/plugin-registry";
+import Icon from "./common/Icon";
 import TerminalRenderer from "../renderers/TerminalRenderer";
 import FileBrowserRenderer from "../renderers/FileBrowserRenderer";
 import StatsDashboardRenderer from "../renderers/StatsDashboardRenderer";
@@ -25,7 +26,7 @@ function EmptyState() {
       gap: 12,
       color: "var(--text-muted)",
     }}>
-      <span style={{ fontSize: 48, opacity: 0.3 }}>⚡</span>
+      <Icon name="logo" size="2xl" />
       <span style={{ fontSize: 14 }}>
         请新建会话或从侧栏选择一个已保存的会话
       </span>

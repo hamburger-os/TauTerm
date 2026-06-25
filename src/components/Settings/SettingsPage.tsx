@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { motion, AnimatePresence } from "framer-motion";
+import Icon from "../common/Icon";
 import GeneralSettings from "./panels/GeneralSettings";
 import AppearanceSettings from "./panels/AppearanceSettings";
 import LanguageSettings from "./panels/LanguageSettings";
@@ -15,12 +16,12 @@ interface SettingsPageProps {
 
 type Category = "general" | "appearance" | "language" | "encoding" | "about";
 
-const CATEGORIES: { id: Category; icon: string; labelKey: string }[] = [
-  { id: "general", icon: "⚙", labelKey: "settings.general" },
-  { id: "appearance", icon: "🎨", labelKey: "settings.appearance" },
-  { id: "language", icon: "🌐", labelKey: "settings.language" },
-  { id: "encoding", icon: "🔤", labelKey: "settings.encoding" },
-  { id: "about", icon: "ℹ", labelKey: "settings.about" },
+const CATEGORIES: { id: Category; icon: import("../common/Icon").IconName; labelKey: string }[] = [
+  { id: "general", icon: "settings" as const, labelKey: "settings.general" },
+  { id: "appearance", icon: "palette" as const, labelKey: "settings.appearance" },
+  { id: "language", icon: "globe" as const, labelKey: "settings.language" },
+  { id: "encoding", icon: "font" as const, labelKey: "settings.encoding" },
+  { id: "about", icon: "info" as const, labelKey: "settings.about" },
 ];
 
 /**
@@ -96,7 +97,7 @@ export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
             {/* 标题栏 */}
             <div className={styles.header}>
               <span className={styles.headerTitle}>{t("settings.title")}</span>
-              <button className={styles.closeBtn} onClick={onClose}>✕</button>
+              <button className={styles.closeBtn} onClick={onClose}><Icon name="close" size="md" /></button>
             </div>
 
             <div className={styles.body}>
@@ -108,7 +109,7 @@ export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
                     className={`${styles.navItem} ${activeCategory === cat.id ? styles.navItemActive : ""}`}
                     onClick={() => setActiveCategory(cat.id)}
                   >
-                    <span className={styles.navIcon}>{cat.icon}</span>
+                    <Icon name={cat.icon} size="md" className={styles.navIcon} />
                     <span className={styles.navLabel}>{t(cat.labelKey)}</span>
                   </button>
                 ))}

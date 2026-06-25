@@ -107,7 +107,7 @@ body {
 /* ==========================================
    4. 液态玻璃核心效果
    ========================================== */
-/* ⚠️ position: relative 为 ::before 噪点纹理提供定位上下文。
+/* WARNING: position: relative 为 ::before 噪点纹理提供定位上下文。
    不可用于 position:absolute / position:fixed 的元素（会覆盖其定位）。
    这些元素需在 CSS Module 中自行维护玻璃效果属性。 */
 .liquid-glass {

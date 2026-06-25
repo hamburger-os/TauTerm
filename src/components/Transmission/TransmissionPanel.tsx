@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTransfer } from "../../context/TransferContext";
+import Icon from "../common/Icon";
 import type { TransferConfig } from "../../types/transfer";
 import { PROTOCOL_REGISTRY } from "../../types/transfer";
 import type { ProtocolType } from "../../types/transfer";
@@ -101,7 +102,7 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
           <div className={styles.actionRow}>
             {isTransferring ? (
               <GlassButton variant="danger" size="sm" onClick={handleCancel}>
-                ⏹ {t("transmission.cancel")}
+                <Icon name="stop" size="sm" /> {t("transmission.cancel")}
               </GlassButton>
             ) : (
               <>
@@ -111,7 +112,7 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
                   disabled={!canTransfer}
                   onClick={handleSend}
                 >
-                  📤 {t("transmission.send")}
+                  <Icon name="upload" size="sm" /> {t("transmission.send")}
                 </GlassButton>
                 <GlassButton
                   variant="primary"
@@ -119,7 +120,7 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
                   disabled={!canTransfer}
                   onClick={handleReceive}
                 >
-                  📥 {t("transmission.receive")}
+                  <Icon name="download" size="sm" /> {t("transmission.receive")}
                 </GlassButton>
               </>
             )}
@@ -166,21 +167,21 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
                 {error && (
                   <div className={styles.errorBox}>
                     <span className={styles.errorText}>{error}</span>
-                    <button className={styles.errorClose} onClick={clearError}>×</button>
+                    <button className={styles.errorClose} onClick={clearError}><Icon name="close" size="sm" /></button>
                   </div>
                 )}
 
                 {/* 失败汇总 */}
                 {failedCount > 0 && !isTransferring && (
                   <div className={styles.failSummary}>
-                    ⚠ {failedCount} {t("transfer.filesFailed")}
+                    <Icon name="warning" size="xs" /> {failedCount} {t("transfer.filesFailed")}
                   </div>
                 )}
 
                 {/* 跳过汇总 */}
                 {skippedCount > 0 && !isTransferring && (
                   <div className={styles.skipSummary}>
-                    ⏭ {skippedCount} {t("transfer.filesSkipped")}
+                    <Icon name="skip" size="xs" /> {skippedCount} {t("transfer.filesSkipped")}
                   </div>
                 )}
               </>

@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Terminal as XTerm } from "@xterm/xterm";
+import Icon from "../common/Icon";
 import styles from "./SearchBar.module.css";
 
 interface SearchBarProps {
@@ -176,12 +177,12 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
           Aa
         </button>
         <button className={`${styles.btn} liquid-glass-button`} onClick={() => setMatchIndex(prev => prev > 1 ? prev - 1 : totalMatches)}>
-          ↑
+          <Icon name="chevron-up" size="sm" />
         </button>
         <button className={`${styles.btn} liquid-glass-button`} onClick={() => setMatchIndex(prev => prev < totalMatches ? prev + 1 : 1)}>
-          ↓
+          <Icon name="chevron-down" size="sm" />
         </button>
-        <button className={`${styles.btn} liquid-glass-button`} onClick={onClose}>×</button>
+        <button className={`${styles.btn} liquid-glass-button`} onClick={onClose}><Icon name="close" size="sm" /></button>
       </motion.div>
     </AnimatePresence>
   );

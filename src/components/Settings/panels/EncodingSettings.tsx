@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import Icon from "../../common/Icon";
 import styles from "../SettingsPage.module.css";
 
 const CHARSETS = [
@@ -41,7 +42,7 @@ export default function EncodingSettings() {
               className={`${styles.optionItem} ${encoding === cs.id ? styles.optionItemActive : ""}`}
               onClick={() => handleChange(cs.id)}
             >
-              <span className={styles.optionIcon}>✓</span>
+              <Icon name="check-plain" size="sm" className={styles.optionIcon} />
               <span>{t(cs.labelKey)}</span>
               <span className={styles.charsetCode}>
                 {cs.id.toUpperCase()}
@@ -52,7 +53,7 @@ export default function EncodingSettings() {
       </div>
 
       <div className={styles.encodingNote}>
-        ⚠ {t("settings.charsetNote")}
+        <Icon name="warning" size="sm" /> {t("settings.charsetNote")}
       </div>
     </div>
   );

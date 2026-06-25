@@ -235,9 +235,9 @@ You: That changes everything.
      • Single user
 
                   SQLite          Postgres
-     Deployment   embedded ✓      needs server ✗
-     Offline      yes ✓           no ✗
-     Single file  yes ✓           no ✗
+     Deployment   embedded [满足]      needs server [未满足]
+     Offline      yes [满足]           no [未满足]
+     Single file  yes [满足]           no [未满足]
 
      SQLite. Not even close.
 

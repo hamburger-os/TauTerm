@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
 import { useContextMenu } from "../../hooks/useContextMenu";
 import ContextMenu from "../common/ContextMenu";
+import Icon from "../common/Icon";
 import type { ContextMenuItem } from "../common/ContextMenu";
 import styles from "./SessionSidebar.module.css";
 
@@ -45,15 +46,15 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
 
     if (sessionState === "connected" || sessionState === "transferring") {
       return [
-        { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect", icon: "⏹" },
-        { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "⚙" },
-        { id: "delete", label: t("contextMenu.delete") || "Delete", icon: "🗑", danger: true },
+        { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect", icon: "stop" },
+        { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "settings" },
+        { id: "delete", label: t("contextMenu.delete") || "Delete", icon: "trash", danger: true },
       ];
     }
     return [
-      { id: "connect", label: t("contextMenu.connect") || "Connect", icon: "▶" },
-      { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "⚙" },
-      { id: "delete", label: t("contextMenu.delete") || "Delete", icon: "🗑", danger: true },
+      { id: "connect", label: t("contextMenu.connect") || "Connect", icon: "play" },
+      { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "settings" },
+      { id: "delete", label: t("contextMenu.delete") || "Delete", icon: "trash", danger: true },
     ];
   }, [menu.session, t]);
 
@@ -155,7 +156,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           onClick={onSettingsClick}
           title={t("sidebar.settings")}
         >
-          <span className={styles.settingsIcon}>⚙</span>
+          <Icon name="settings" size="sm" className={styles.settingsIcon} />
           <span className={styles.settingsLabel}>{t("sidebar.settings")}</span>
         </button>
       </div>

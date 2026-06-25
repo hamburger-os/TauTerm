@@ -1,4 +1,6 @@
 import type { BatchFileEntry } from "../../../types/transfer";
+import Icon from "../../common/Icon";
+import type { IconName } from "../../common/Icon";
 import ProgressBar from "./ProgressBar";
 import styles from "./PerFileList.module.css";
 
@@ -10,20 +12,20 @@ function formatSize(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-function getStatusIcon(status: string): string {
+function getStatusIconName(status: string): IconName {
   switch (status) {
     case "pending":
-      return "⏳";
+      return "hourglass";
     case "transferring":
-      return "⬆️";
+      return "arrow-up-circle";
     case "completed":
-      return "✅";
+      return "check-circle";
     case "failed":
-      return "❌";
+      return "cross-circle";
     case "skipped":
-      return "⏭️";
+      return "skip";
     default:
-      return "";
+      return "info";
   }
 }
 
@@ -50,7 +52,7 @@ export default function PerFileList({ entries }: PerFileListProps) {
             className={`${styles.row} liquid-glass`}
           >
             <span className={styles.iconCell}>
-              {getStatusIcon(entry.status)}
+              <Icon name={getStatusIconName(entry.status)} size="sm" />
             </span>
             <div className={styles.fileInfo}>
               <span title={entry.fileName} className={styles.fileName}>

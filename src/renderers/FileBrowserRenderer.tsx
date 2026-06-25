@@ -7,6 +7,7 @@
 
 import type { FC } from "react";
 import type { TabInfo } from "./types";
+import Icon from "../components/common/Icon";
 import styles from "./FileBrowserRenderer.module.css";
 
 interface FileBrowserRendererProps {
@@ -17,14 +18,14 @@ const FileBrowserRenderer: FC<FileBrowserRendererProps> = ({ tab }) => {
   return (
     <div className={styles.container}>
       <div className={styles.pane}>
-        <div className={styles.paneHeader}>📁 本地文件</div>
+        <div className={styles.paneHeader}><Icon name="folder" size="sm" /> 本地文件</div>
         <div className={styles.paneContent}>
           <p className={styles.placeholder}>本地文件树（待实现）</p>
         </div>
       </div>
       <div className={styles.divider} />
       <div className={styles.pane}>
-        <div className={styles.paneHeader}>🌐 远程文件 ({tab.name})</div>
+        <div className={styles.paneHeader}><Icon name="globe" size="sm" /> 远程文件 ({tab.name})</div>
         <div className={styles.paneContent}>
           <p className={styles.placeholder}>远程文件树（待实现）</p>
         </div>

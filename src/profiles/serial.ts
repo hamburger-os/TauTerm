@@ -1,5 +1,6 @@
 import type { TabInfo } from "../context/SessionContext";
 import type { ProfileResolver, SessionProfile } from "./types";
+import type { IconName } from "../components/common/Icon";
 
 /**
  * Serial 连接的 Profile 解析器
@@ -18,13 +19,13 @@ export const serialProfile: ProfileResolver = (tab: TabInfo): SessionProfile => 
 
   return {
     identity: [
-      { label: "session.renameSession", value: tab.name, icon: "🏷" },
-      { label: "connectionType.label", value: "connectionType.serial", icon: "🔌" },
-      { label: "serial.port", value: tab.endpoint, icon: "📍" },
+      { label: "session.renameSession", value: tab.name, icon: "tag" },
+      { label: "connectionType.label", value: "connectionType.serial", icon: "plug" },
+      { label: "serial.port", value: tab.endpoint, icon: "pin" },
       {
         label: "session.status",
         value: statusValue(tab.state),
-        icon: statusIcon(tab.state),
+        icon: statusIconName(tab.state),
       },
     ],
     parameters: [
@@ -37,13 +38,13 @@ export const serialProfile: ProfileResolver = (tab: TabInfo): SessionProfile => 
   };
 };
 
-function statusIcon(state: string): string {
+function statusIconName(state: string): IconName {
   switch (state) {
-    case "connected": return "🟢";
-    case "disconnected": return "🔴";
-    case "connecting": return "🟡";
-    case "transferring": return "📤";
-    default: return "⚪";
+    case "connected": return "status-connected";
+    case "disconnected": return "status-disconnected";
+    case "connecting": return "status-connecting";
+    case "transferring": return "upload";
+    default: return "status-idle";
   }
 }
 

@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import Icon from "./Icon";
+import type { IconName } from "./Icon";
 import styles from "./Toast.module.css";
 
 interface ToastProps {
@@ -10,12 +12,12 @@ interface ToastProps {
   onClose: () => void;
 }
 
-/** Toast 图标 */
-const icons: Record<string, string> = {
-  success: "✓",
-  error: "✕",
-  warning: "⚠",
-  info: "ℹ",
+/** Toast 图标映射 */
+const iconMap: Record<string, IconName> = {
+  success: "check-plain",
+  error: "close",
+  warning: "warning",
+  info: "info",
 };
 
 /**
@@ -34,10 +36,10 @@ export default function Toast({ type, message, index = 0, onClose }: ToastProps)
       className={`${styles.toast} ${styles[type]}`}
       style={{ bottom: `${24 + index * 56}px` }}
     >
-      <span className={styles.icon}>{icons[type]}</span>
+      <Icon name={iconMap[type]} size="sm" className={styles.icon} />
       <span className={styles.message}>{message}</span>
       <button className={styles.close} onClick={onClose}>
-        ×
+        <Icon name="close" size="sm" />
       </button>
     </div>
   );

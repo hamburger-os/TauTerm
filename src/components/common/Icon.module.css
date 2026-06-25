@@ -1,0 +1,61 @@
+/* ==========================================
+   Icon — 统一图标组件样式
+   液态玻璃胶囊描边风格，3 策略渲染
+   ========================================== */
+
+/* ── Strategy A: PNG Mask-Image ──────────────────────────── */
+
+.maskIcon {
+  display: inline-block;
+  flex-shrink: 0;
+  /* background-color 由组件 inline style 设置（currentColor 或 color prop） */
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+  vertical-align: middle;
+}
+
+/* ── Strategy B: CSS Status Dots ─────────────────────────── */
+
+.statusDot {
+  display: inline-block;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  vertical-align: middle;
+}
+
+.statusConnected {
+  background: var(--color-success);
+  box-shadow: 0 0 4px var(--color-success);
+}
+
+.statusDisconnected {
+  background: var(--color-error);
+  box-shadow: 0 0 4px var(--color-error);
+}
+
+.statusConnecting {
+  background: var(--color-warning);
+  box-shadow: 0 0 4px var(--color-warning);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.statusIdle {
+  background: var(--text-muted);
+  /* 无发光 — 默认态不需要视觉强调 */
+}
+
+/* ── Animations ──────────────────────────────────────────── */
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}

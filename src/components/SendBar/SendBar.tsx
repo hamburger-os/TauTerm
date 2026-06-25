@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
+import Icon from "../common/Icon";
 import styles from "./SendBar.module.css";
 
 interface SendBarProps {
@@ -217,7 +218,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
               onClick={() => setShowOptions(o => !o)}
               title={t("sendBar.sendHistory")}
             >
-              ▾
+              <Icon name="chevron-dropdown" size="xs" />
             </button>
             {showOptions && (
               <div className={styles.historyDropdown}>

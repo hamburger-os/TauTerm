@@ -203,18 +203,18 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 | `.glow-orb` | Animated background orb. Used internally by `GoogleGlowBackground`. |
 
 ```tsx
-// ✅ Combine CSS Module + global utility class
+// [正确] Combine CSS Module + global utility class
 <button className={`${styles.sendBtn} liquid-primary-button`}>Send</button>
 <input className={`${styles.search} liquid-glass-input`} />
 <div className={`${styles.card} liquid-glass`}>Content</div>
 ```
 
-**⚠️ `.liquid-glass` positioning constraint**: `.liquid-glass` forces `position: relative` (needed for the `::before` noise texture). Do NOT use `.liquid-glass` on elements that need `position: absolute` or `position: fixed` (context menus, floating search bars, toast notifications, absolutely-positioned dropdowns). These elements must keep their glass properties (`background`, `border`, `box-shadow`, `backdrop-filter`) in their own CSS Module.
+**警告： `.liquid-glass` positioning constraint**: `.liquid-glass` forces `position: relative` (needed for the `::before` noise texture). Do NOT use `.liquid-glass` on elements that need `position: absolute` or `position: fixed` (context menus, floating search bars, toast notifications, absolutely-positioned dropdowns). These elements must keep their glass properties (`background`, `border`, `box-shadow`, `backdrop-filter`) in their own CSS Module.
 
 **Floating element glass pattern** (for `position: absolute` / `position: fixed` elements that can't use `.liquid-glass`):
 
 ```css
-/* ✅ Correct — v3 tokens, self-contained glass */
+/* [正确] Correct — v3 tokens, self-contained glass */
 .floatingPanel {
   position: absolute; /* or fixed */
   background: var(--dialog-bg);
@@ -225,7 +225,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
   box-shadow: var(--shadow-glass), var(--dialog-shadow);
 }
 
-/* ❌ Wrong — using deprecated tokens on floating element */
+/* [错误] Wrong — using deprecated tokens on floating element */
 .floatingPanel {
   background: var(--block-terminal-bg);       /* @deprecated */
   backdrop-filter: blur(var(--blur-medium));   /* use --glass-blur */
@@ -240,7 +240,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 ### CSS Module Component
 
 ```css
-/* ✅ Correct — v3 primary tokens */
+/* [正确] Correct — v3 primary tokens */
 .myComponent {
   background: var(--glass-fill);
   border: 1px solid var(--glass-border-default);
@@ -253,7 +253,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
   border-color: var(--glass-border-hover);
 }
 
-/* ❌ Wrong */
+/* [错误] Wrong */
 .myComponent {
   background: rgba(0, 0, 0, 0.2);   /* hardcoded, won't work in frosted theme */
   border: 1px solid #fff;            /* invisible on light background */
@@ -267,7 +267,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 Layout chrome surfaces (toolbar, sidebar, status bar, terminal viewport, send bar, transmission panel) MUST use the `.liquid-glass` global class. CSS Modules for layout chrome ONLY contain layout properties + `border-radius: var(--radius-lg)` (16px, Panel tier) — NEVER visual glass properties. The `app-root` provides `gap: 6px` and `padding: 6px` to create breathing room for rounded corners. Inner edges flush against adjacent surfaces get clipped by `overflow: hidden`, effectively applying the 0px edge-contact rule:
 
 ```css
-/* ✅ Correct — CSS Module: layout + border-radius only */
+/* [正确] Correct — CSS Module: layout + border-radius only */
 .toolbar {
   display: flex;
   align-items: center;
@@ -280,7 +280,7 @@ Layout chrome surfaces (toolbar, sidebar, status bar, terminal viewport, send ba
   /* NO background, border, box-shadow, or backdrop-filter here */
 }
 
-/* ❌ Wrong — CSS Module hand-rolling glass */
+/* [错误] Wrong — CSS Module hand-rolling glass */
 .toolbar {
   background: var(--block-toolbar-bg);              /* @deprecated — use .liquid-glass */
   backdrop-filter: blur(var(--blur-medium));         /* @deprecated — use .liquid-glass */
@@ -303,7 +303,7 @@ All layout chrome bars (toolbar, sidebar, status bar, send bar, transmission pan
 - Child groups (e.g., `.actions`) also use `align-items: center` internally
 
 ```css
-/* ✅ Correct — vertical center + fixed height */
+/* [正确] Correct — vertical center + fixed height */
 .sendBar {
   display: flex;
   align-items: center;  /* center, NOT flex-end */
@@ -318,7 +318,7 @@ All layout chrome bars (toolbar, sidebar, status bar, send bar, transmission pan
   padding: 0 var(--spacing-md);
 }
 
-/* ❌ Wrong — flex-end causes controls to sit at different vertical positions */
+/* [错误] Wrong — flex-end causes controls to sit at different vertical positions */
 .sendBar {
   align-items: flex-end;   /* jagged bottom alignment */
   min-height: 40px;        /* no fixed height */
@@ -341,17 +341,17 @@ All `font-size` values ≥ ~11px MUST use `--text-*` tokens. Only micro-text (8p
 | `--text-xl` | 1.25rem | ≈20px | Large headings (rare) |
 
 ```css
-/* ✅ Correct — tokens for 11px+ */
+/* [正确] Correct — tokens for 11px+ */
 font-size: var(--text-sm);       /* 12px → token */
 font-size: var(--text-base);     /* 13px → token */
 font-size: var(--text-xs);       /* 11px → token */
 
-/* ✅ Correct — px for micro-text (8/9/10px only) */
+/* [正确] Correct — px for micro-text (8/9/10px only) */
 font-size: 10px;                 /* status bar info — micro tier */
 font-size: 9px;                  /* section labels — micro tier */
 font-size: 8px;                  /* tiny badges — micro tier */
 
-/* ❌ Wrong — raw px where a token exists */
+/* [错误] Wrong — raw px where a token exists */
 font-size: 14px;                 /* use var(--text-md) */
 font-size: 13px;                 /* use var(--text-base) */
 font-size: 12px;                 /* use var(--text-sm) */
@@ -361,7 +361,7 @@ font-size: 11px;                 /* use var(--text-xs) */
 ### Inline Style Component
 
 ```tsx
-// ✅ Correct
+// [正确] Correct
 <div style={{
   backgroundColor: "var(--bg-base)",
   color: "var(--text-secondary)",
@@ -369,7 +369,7 @@ font-size: 11px;                 /* use var(--text-xs) */
   borderRadius: "var(--radius-md)",
 }} />
 
-// ❌ Wrong
+// [错误] Wrong
 <div style={{
   backgroundColor: "#0a0a1a",        // hardcoded dark
   color: "#888",                      // won't change with theme
@@ -437,7 +437,7 @@ font-size: 11px;                 /* use var(--text-xs) */
 Use `color-mix()` to create theme-adaptive tinted backgrounds. This is the canonical pattern for error boxes, warning banners, success indicators, and signal badges:
 
 ```css
-/* ✅ Correct — adapts to all 3 themes */
+/* [正确] Correct — adapts to all 3 themes */
 .errorBanner {
   background: color-mix(in srgb, var(--color-error) 15%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
@@ -451,7 +451,7 @@ Use `color-mix()` to create theme-adaptive tinted backgrounds. This is the canon
   background: color-mix(in srgb, var(--color-success) 12%, transparent);
 }
 
-/* ❌ Wrong — would need different rgba per theme */
+/* [错误] Wrong — would need different rgba per theme */
 .errorBanner {
   background: rgba(234, 67, 53, 0.15);  /* only works in google-glow */
 }

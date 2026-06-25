@@ -1,4 +1,5 @@
 import type { TabInfo } from "../context/SessionContext";
+import type { IconName } from "../components/common/Icon";
 
 /** 单个信息行 */
 export interface ProfileItem {
@@ -6,8 +7,8 @@ export interface ProfileItem {
   label: string;
   /** 显示值 */
   value: string;
-  /** 可选的图标（emoji） */
-  icon?: string;
+  /** 可选的图标名 */
+  icon?: IconName;
   /** 值是否使用等宽字体 */
   monospace?: boolean;
 }

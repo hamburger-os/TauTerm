@@ -24,10 +24,10 @@ export function resolveProfile(tab: TabInfo): SessionProfile {
   // 降级：未知协议类型
   return {
     identity: [
-      { label: "session.renameSession", value: tab.name, icon: "🏷" },
-      { label: "connectionType.label", value: tab.connection_type, icon: "🔌" },
-      { label: "serial.port", value: tab.endpoint, icon: "📍" },
-      { label: "session.status", value: tab.state, icon: "⚪" },
+      { label: "session.renameSession", value: tab.name, icon: "tag" },
+      { label: "connectionType.label", value: tab.connection_type, icon: "plug" },
+      { label: "serial.port", value: tab.endpoint, icon: "pin" },
+      { label: "session.status", value: tab.state, icon: "status-idle" },
     ],
     parameters: [
       { label: "session.status", value: tab.connection_type, monospace: true },

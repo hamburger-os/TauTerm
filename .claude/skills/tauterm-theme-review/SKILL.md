@@ -184,10 +184,10 @@ These are bugs that ONLY appear in the frosted (light) theme. They are the highe
 
 | 严重程度 | 数量 |
 |----------|------|
-| 🔴 CRITICAL | N |
-| 🟠 HIGH     | N |
-| 🟡 MEDIUM   | N |
-| 🔵 LOW      | N |
+| [严重] CRITICAL | N |
+| [高] HIGH     | N |
+| [中] MEDIUM   | N |
+| [低] LOW      | N |
 | **合计**    | **N** |
 
 ## 按组件分类的发现
@@ -345,40 +345,40 @@ These are known inconsistencies between the documentation and the codebase. Flag
 
 ### Fix: Hardcoded color → Token
 ```css
-/* ❌ Before */  color: #888;
-/* ✅ After  */  color: var(--text-secondary);
+/* [错误] Before */  color: #888;
+/* [正确] After  */  color: var(--text-secondary);
 ```
 
 ### Fix: Hardcoded background → Token
 ```css
-/* ❌ Before */  background: rgba(0, 0, 0, 0.3);
-/* ✅ After  */  background: var(--glass-input-bg);
+/* [错误] Before */  background: rgba(0, 0, 0, 0.3);
+/* [正确] After  */  background: var(--glass-input-bg);
 ```
 
 ### Fix: Deprecated token → v3 token
 ```css
-/* ❌ Before */  background: var(--glass-bg);
-/* ✅ After  */  background: var(--glass-fill);
+/* [错误] Before */  background: var(--glass-bg);
+/* [正确] After  */  background: var(--glass-fill);
 ```
 
 ### Fix: Missing global class
 ```tsx
-// ❌ Before
+// [错误] Before
 <button className={styles.myBtn}>Click</button>
 
-// ✅ After
+// [正确] After
 <button className={`${styles.myBtn} liquid-glass-button`}>Click</button>
 ```
 
 ### Fix: Status tint → color-mix()
 ```css
-/* ❌ Before */  background: rgba(255, 71, 87, 0.1);
-/* ✅ After  */  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+/* [错误] Before */  background: rgba(255, 71, 87, 0.1);
+/* [正确] After  */  background: color-mix(in srgb, var(--color-error) 10%, transparent);
 ```
 
 ### Fix: Floating element glass (can't use .liquid-glass)
 ```css
-/* ✅ Self-contained glass for position:absolute/fixed elements */
+/* [正确] Self-contained glass for position:absolute/fixed elements */
 .floatingPanel {
   position: absolute;
   background: var(--dialog-bg);

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import Icon from "../../common/Icon";
 import styles from "../SettingsPage.module.css";
 
 /**
@@ -25,14 +26,14 @@ export default function LanguageSettings() {
             className={`${styles.optionItem} ${i18n.language === "zh-CN" ? styles.optionItemActive : ""}`}
             onClick={() => handleLanguageChange("zh-CN")}
           >
-            <span className={styles.optionIcon}>✓</span>
+            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
             {t("settings.languageZh")}
           </button>
           <button
             className={`${styles.optionItem} ${i18n.language === "en-US" ? styles.optionItemActive : ""}`}
             onClick={() => handleLanguageChange("en-US")}
           >
-            <span className={styles.optionIcon}>✓</span>
+            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
             {t("settings.languageEn")}
           </button>
         </div>

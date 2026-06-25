@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import Icon from "../../common/Icon";
 import styles from "../SettingsPage.module.css";
 
 /**
@@ -26,14 +27,14 @@ export default function GeneralSettings() {
             className={`${styles.optionItem} ${currentMode === "text" ? styles.optionItemActive : ""}`}
             onClick={() => handleModeChange("text")}
           >
-            <span className={styles.optionIcon}>✓</span>
+            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
             {t("serial.dataModeText")}
           </button>
           <button
             className={`${styles.optionItem} ${currentMode === "hex" ? styles.optionItemActive : ""}`}
             onClick={() => handleModeChange("hex")}
           >
-            <span className={styles.optionIcon}>✓</span>
+            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
             {t("serial.dataModeHex")}
           </button>
         </div>

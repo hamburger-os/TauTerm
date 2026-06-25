@@ -1,3 +1,5 @@
+import type { IconName } from "../components/common/Icon";
+
 /** 协议标识 */
 export type ProtocolType = "ymodem" | "xmodem" | "zmodem";
 export const PROTOCOL_TYPES: ProtocolType[] = ["ymodem", "xmodem", "zmodem"];
@@ -65,7 +67,7 @@ export type TransferConfig =
 export interface ProtocolMeta {
   type: ProtocolType;
   i18nKey: string; // e.g. "transfer.protocols.ymodem.name"
-  icon: string; // e.g. "📦"
+  icon: IconName; // e.g. "package"
   defaultConfig: TransferConfig;
 }
 
@@ -73,7 +75,7 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
   ymodem: {
     type: "ymodem",
     i18nKey: "transfer.protocols.ymodem.name",
-    icon: "📦",
+    icon: "package",
     defaultConfig: {
       protocol: "ymodem",
       blockSize: 1024,
@@ -84,7 +86,7 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
   xmodem: {
     type: "xmodem",
     i18nKey: "transfer.protocols.xmodem.name",
-    icon: "📡",
+    icon: "antenna",
     defaultConfig: {
       protocol: "xmodem",
       blockSize: 128,
@@ -95,7 +97,7 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
   zmodem: {
     type: "zmodem",
     i18nKey: "transfer.protocols.zmodem.name",
-    icon: "⚡",
+    icon: "zmodem",
     defaultConfig: {
       protocol: "zmodem",
       windowSize: 4,

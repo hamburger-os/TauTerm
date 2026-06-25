@@ -15,6 +15,7 @@ import type { ProtocolType } from "./types/transfer";
 import SettingsPage from "./components/Settings/SettingsPage";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
 import ConnectDialog from "./components/Layout/ConnectDialog";
+import Icon from "./components/common/Icon";
 import Toast from "./components/common/Toast";
 import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
@@ -328,7 +329,7 @@ function AppInner() {
               animate={{ scale: [1, 1.05, 1] }}
               transition={{ repeat: Infinity, duration: 1.5 }}
             >
-              ⚡ Drop to Transfer
+              <Icon name="logo" size="lg" /> Drop to Transfer
             </motion.div>
           </motion.div>
         )}

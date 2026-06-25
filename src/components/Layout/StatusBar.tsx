@@ -4,6 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import { formatBytes, formatUptime, formatPortParams } from "../../utils/format";
+import Icon from "../common/Icon";
 import styles from "./StatusBar.module.css";
 
 /**
@@ -86,7 +87,7 @@ export default function StatusBar() {
         {/* 运行时间 */}
         {isConnected && uptime > 0 && (
           <div className={styles.segment}>
-            <span className={styles.uptimeText}>⏱ {formatUptime(uptime)}</span>
+            <span className={styles.uptimeText}><Icon name="stopwatch" size="xs" /> {formatUptime(uptime)}</span>
           </div>
         )}
 
@@ -100,8 +101,8 @@ export default function StatusBar() {
         {/* TX/RX 吞吐量 */}
         {activeTab && isConnected && (
           <div className={styles.stats}>
-            <span className={styles.statItem} title="TX">↑ {formatBytes(activeTab.stats.txBytes)}</span>
-            <span className={styles.statItem} title="RX">↓ {formatBytes(activeTab.stats.rxBytes)}</span>
+            <span className={styles.statItem} title="TX"><Icon name="chevron-up" size="xs" /> {formatBytes(activeTab.stats.txBytes)}</span>
+            <span className={styles.statItem} title="RX"><Icon name="chevron-down" size="xs" /> {formatBytes(activeTab.stats.rxBytes)}</span>
           </div>
         )}
 

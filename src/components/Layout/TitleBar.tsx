@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import Icon from "../common/Icon";
 import styles from "./TitleBar.module.css";
 
 interface TitleBarProps {
@@ -51,7 +52,7 @@ export default function TitleBar({ isMaximized }: TitleBarProps) {
         aria-label={t("titleBar.minimize")}
         title={t("titleBar.minimize")}
       >
-        ─
+        <Icon name="window-minimize" size="sm" />
       </button>
       <button
         className={styles.controlButton}
@@ -59,7 +60,7 @@ export default function TitleBar({ isMaximized }: TitleBarProps) {
         aria-label={isMaximized ? t("titleBar.restore") : t("titleBar.maximize")}
         title={isMaximized ? t("titleBar.restore") : t("titleBar.maximize")}
       >
-        {isMaximized ? "❐" : "□"}
+        <Icon name={isMaximized ? "window-restore" : "window-maximize"} size="sm" />
       </button>
       <button
         className={`${styles.controlButton} ${styles.closeButton}`}
@@ -67,7 +68,7 @@ export default function TitleBar({ isMaximized }: TitleBarProps) {
         aria-label={t("titleBar.close")}
         title={t("titleBar.close")}
       >
-        ✕
+        <Icon name="close" size="sm" />
       </button>
     </div>
   );

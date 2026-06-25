@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme, THEMES } from "../../../context/ThemeContext";
+import Icon from "../../common/Icon";
 import styles from "../SettingsPage.module.css";
 
 /**
@@ -34,7 +35,7 @@ export default function AppearanceSettings() {
               className={`${styles.optionItem} ${theme === tm.id ? styles.optionItemActive : ""}`}
               onClick={() => setTheme(tm.id)}
             >
-              <span className={styles.optionIcon}>✓</span>
+              <Icon name="check-plain" size="sm" className={styles.optionIcon} />
               {tm.name}
             </button>
           ))}

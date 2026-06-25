@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
 import { useKeyboard } from "../../hooks/useKeyboard";
 import { ACTION_IDS } from "../../shortcuts/actionIds";
+import Icon from "../common/Icon";
 import TerminalInstance from "./Terminal";
 import SearchBar from "./SearchBar";
 import styles from "./Terminal.module.css";
@@ -185,7 +186,7 @@ export default function TerminalView() {
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            <span className={styles.transferBannerIcon}>📤</span>
+            <Icon name="upload" size="sm" className={styles.transferBannerIcon} />
             <span>{t("transfer.transferringBanner", "File transfer in progress – terminal paused")}</span>
           </motion.div>
         )}
@@ -226,7 +227,7 @@ export default function TerminalView() {
 
           {connectedTabs.length === 0 && (
             <div className={styles.emptyState}>
-              <div className={styles.emptyIcon}>⚡</div>
+              <Icon name="logo" size="2xl" className={styles.emptyIcon} />
               <div>{t("session.noSessions")}</div>
               <div className={styles.emptyHint}>
                 {t("session.emptyHint") || "Use Ctrl+Shift+N to create a new session"}

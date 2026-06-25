@@ -1,5 +1,6 @@
 import { Component, ErrorInfo, ReactNode } from "react";
 import GlassPanel from "./GlassPanel";
+import Icon from "./Icon";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -55,14 +56,8 @@ export default class ErrorBoundary extends Component<
         >
           <GlassPanel padding="lg" variant="elevated">
             <div style={{ textAlign: "center", maxWidth: "400px" }}>
-              <div
-                style={{
-                  fontSize: "32px",
-                  marginBottom: "12px",
-                  color: "var(--color-error)",
-                }}
-              >
-                ⚠
+              <div style={{ marginBottom: "12px" }}>
+                <Icon name="warning" size="2xl" color="var(--color-error)" />
               </div>
               <h3
                 style={{

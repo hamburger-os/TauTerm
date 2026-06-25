@@ -165,7 +165,7 @@
     "filterStatus": "Status",
     "directionLabel_send": "Send",
     "directionLabel_receive": "Receive",
-    "dropHere": "⚡ Drop to Transfer",
+    "dropHere": "Drop to Transfer",
     "transferringBanner": "File transfer in progress, terminal paused...",
     "transferringStatus": "Transferring...",
     "protocols": {

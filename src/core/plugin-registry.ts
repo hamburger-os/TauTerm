@@ -6,6 +6,7 @@
  */
 
 import type { ComponentType, ReactNode } from "react";
+import type { IconName } from "../components/common/Icon";
 
 // ── Types ───────────────────────────────────────────
 
@@ -19,7 +20,7 @@ export interface PluginManifest {
   version: string;
   category: string;
   description: string;
-  icon: string;
+  icon: IconName;
   content_type: ContentType;
   capabilities: string[];
   transfer_protocols: string[];
@@ -41,7 +42,7 @@ export interface EndpointInfo {
 /** 工具栏项 */
 export interface ToolbarItem {
   id: string;
-  icon: string;
+  icon: IconName;
   label: string;
   position: "left" | "center" | "right";
   onClick: () => void;

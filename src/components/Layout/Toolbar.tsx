@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import type { ToolbarItem } from "../../core/plugin-registry";
+import Icon from "../common/Icon";
 import TitleBar from "./TitleBar";
 import styles from "./Toolbar.module.css";
 
@@ -51,14 +52,14 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
     <div className={`${styles.toolbar} liquid-glass`} onMouseDown={handleToolbarMouseDown}>
       {/* 左侧：Logo（可拖动）+ 侧栏图标按钮 + 插件左区 */}
       <div className={styles.leftZone}>
-        <span className={styles.logo}>⚡ TauTerm</span>
+        <span className={styles.logo}><Icon name="logo" size="lg" /> TauTerm</span>
 
         <button
           className={styles.toolbarButton}
           onClick={() => handleClick("sidebar")}
           title={t("toolbar.sidebar") + " (Ctrl+B)"}
         >
-          <span className={styles.icon}>☰</span>
+          <Icon name="menu" size="sm" className={styles.icon} />
         </button>
 
         {/* 插件左区按钮 */}
@@ -69,7 +70,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
             onClick={item.onClick}
             title={item.label}
           >
-            <span className={styles.icon}>{item.icon}</span>
+            <Icon name={item.icon} size="sm" className={styles.icon} />
             <span className={styles.label}>{item.label}</span>
           </button>
         ))}
@@ -90,7 +91,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
           aria-label={t("toolbar.commands")}
           title={t("toolbar.commands") + " (Ctrl+Shift+P)"}
         >
-          <span className={styles.searchIcon}>🔍</span>
+          <Icon name="search" size="sm" className={styles.searchIcon} />
           <span className={styles.searchPlaceholder}>
             {t("toolbar.searchPlaceholder") || "Search files or run commands..."}
           </span>
@@ -103,7 +104,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
             onClick={item.onClick}
             title={item.label}
           >
-            <span className={styles.icon}>{item.icon}</span>
+            <Icon name={item.icon} size="sm" className={styles.icon} />
             <span className={styles.label}>{item.label}</span>
           </button>
         ))}
@@ -121,7 +122,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
             onClick={item.onClick}
             title={item.label}
           >
-            <span className={styles.icon}>{item.icon}</span>
+            <Icon name={item.icon} size="sm" className={styles.icon} />
             <span className={styles.label}>{item.label}</span>
           </button>
         ))}

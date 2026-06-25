@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
+import Icon from "../common/Icon";
 import styles from "./ConnectDialog.module.css";
 
 const BAUD_RATES = ["110","300","600","1200","2400","4800","9600","14400","19200","38400","57600","115200","230400","460800","921600"];
@@ -218,7 +219,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                     whileTap={{ scale: 0.97 }}
                     onClick={() => handleModeSelect(mode.id)}
                   >
-                    <span className={styles.modeIcon}>{mode.icon}</span>
+                    <Icon name={mode.icon} size="lg" className={styles.modeIcon} />
                     <span className={styles.modeLabel}>{mode.description}</span>
                   </motion.button>
                 ))}
@@ -236,11 +237,10 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             <>
               <div className={styles.configHeader}>
                 <button className={`${styles.backBtn} liquid-glass-button`} onClick={handleBack} disabled={connecting}>
-                  ← {t("common.back")}
+                  <Icon name="back-arrow" size="sm" /> {t("common.back")}
                 </button>
                 <h2 className={styles.title}>
-                  {availableModes.find(m => m.id === selectedMode)?.icon}{" "}
-                  {availableModes.find(m => m.id === selectedMode)?.description}
+                  {(() => { const m = availableModes.find(m => m.id === selectedMode); return m ? <><Icon name={m.icon} size="md" />{" "}{m.description}</> : selectedMode; })()}
                 </h2>
               </div>
 
@@ -269,7 +269,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                           <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
                         ))}
                       </select>
-                      <button className={`${styles.iconBtn} liquid-glass-button`} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}>↻</button>
+                      <button className={`${styles.iconBtn} liquid-glass-button`} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}><Icon name="refresh" size="sm" /></button>
                     </div>
                   </div>
 
@@ -353,7 +353,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               {/* ── 未实现插件的占位提示 ── */}
               {!isSerial && (
                 <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
-                  🚧 插件 "{selectedMode}" 的前端配置表单尚未实现，将在后续版本中提供。
+                  <Icon name="construction" size="lg" /> 插件 "{selectedMode}" 的前端配置表单尚未实现，将在后续版本中提供。
                 </div>
               )}
 

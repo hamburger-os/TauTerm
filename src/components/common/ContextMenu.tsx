@@ -2,12 +2,14 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import type { ContextMenuState } from "../../hooks/useContextMenu";
+import Icon from "./Icon";
+import type { IconName } from "./Icon";
 import styles from "./ContextMenu.module.css";
 
 export interface ContextMenuItem {
   id: string;
   label: string;
-  icon?: string;
+  icon?: IconName;
   danger?: boolean;
   disabled?: boolean;
 }
@@ -73,7 +75,7 @@ export default function ContextMenu({ state, items, onSelect, onClose }: Context
               }}
               disabled={item.disabled}
             >
-              {item.icon && <span className={styles.itemIcon}>{item.icon}</span>}
+              {item.icon && <Icon name={item.icon} size="sm" className={styles.itemIcon} />}
               <span className={styles.itemLabel}>{item.label}</span>
             </button>
           ))}

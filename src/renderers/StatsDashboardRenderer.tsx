@@ -7,6 +7,7 @@
 
 import type { FC } from "react";
 import type { TabInfo } from "./types";
+import Icon from "../components/common/Icon";
 import styles from "./StatsDashboardRenderer.module.css";
 
 interface StatsDashboardRendererProps {
@@ -17,7 +18,7 @@ const StatsDashboardRenderer: FC<StatsDashboardRendererProps> = ({ tab }) => {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <span className={styles.title}>📊 {tab.name}</span>
+        <span className={styles.title}><Icon name="chart" size="md" /> {tab.name}</span>
         <span className={styles.badge}>统计仪表盘</span>
       </div>
       <div className={styles.grid}>
