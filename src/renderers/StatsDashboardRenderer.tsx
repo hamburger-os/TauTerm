@@ -22,22 +22,22 @@ const StatsDashboardRenderer: FC<StatsDashboardRendererProps> = ({ tab }) => {
         <span className={styles.badge}>统计仪表盘</span>
       </div>
       <div className={styles.grid}>
-        <div className={styles.card}>
+        <div className={`${styles.card} liquid-glass-card`}>
           <div className={styles.cardTitle}>吞吐量</div>
           <div className={styles.cardValue}>— Mbps</div>
           <div className={styles.chartPlaceholder}>[实时图表区域]</div>
         </div>
-        <div className={styles.card}>
+        <div className={`${styles.card} liquid-glass-card`}>
           <div className={styles.cardTitle}>延迟 / 抖动</div>
           <div className={styles.cardValue}>— ms</div>
           <div className={styles.chartPlaceholder}>[实时图表区域]</div>
         </div>
-        <div className={styles.card}>
+        <div className={`${styles.card} liquid-glass-card`}>
           <div className={styles.cardTitle}>丢包率</div>
           <div className={styles.cardValue}>— %</div>
           <div className={styles.chartPlaceholder}>[实时图表区域]</div>
         </div>
-        <div className={styles.card}>
+        <div className={`${styles.card} liquid-glass-card`}>
           <div className={styles.cardTitle}>连接状态</div>
           <div className={styles.cardValue}>已连接</div>
         </div>

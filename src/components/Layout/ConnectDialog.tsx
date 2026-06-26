@@ -214,7 +214,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 {availableModes.map(mode => (
                   <motion.button
                     key={mode.id}
-                    className={styles.modeCard}
+                    className={`${styles.modeCard} liquid-glass-card`}
                     whileHover={{ scale: 1.03, borderColor: "var(--accent-primary)" }}
                     whileTap={{ scale: 0.97 }}
                     onClick={() => handleModeSelect(mode.id)}
@@ -269,7 +269,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                           <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
                         ))}
                       </select>
-                      <button className={`${styles.iconBtn} liquid-glass-button`} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}><Icon name="refresh" size="sm" /></button>
+                      <button className={`${styles.iconBtn} liquid-glass-button`} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}><Icon name="refresh" size="md" color="var(--accent-primary)" /></button>
                     </div>
                   </div>
 
@@ -327,6 +327,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                         onChange={e => setTransferEnabled(e.target.checked)}
                         disabled={connecting}
                       />
+                      <div className={styles.toggleTrack} />
                       <span>{t("serial.enableTransfer")}</span>
                     </label>
                   </div>

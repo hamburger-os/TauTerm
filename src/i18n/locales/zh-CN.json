@@ -42,7 +42,7 @@
   "session": {
     "sessions": "会话",
     "noSessions": "暂无活跃会话",
-    "emptyHint": "点击顶部 + 新建会话 或使用 Ctrl+N 创建新会话",
+    "emptyHint": "点击顶部 + 新建会话 或使用 Ctrl+Shift+N 创建新会话",
     "newSession": "新建会话",
     "closeSession": "关闭会话",
     "renameSession": "重命名",

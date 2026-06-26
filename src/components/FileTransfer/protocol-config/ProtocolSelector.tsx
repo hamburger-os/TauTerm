@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import type { ProtocolType, TransferConfig } from "../../../types/transfer";
 import { PROTOCOL_TYPES, PROTOCOL_REGISTRY } from "../../../types/transfer";
+import Icon from "../../common/Icon";
 import inputStyles from "../../common/GlassInput.module.css";
 
 interface ProtocolSelectorProps {
@@ -25,6 +26,12 @@ export default function ProtocolSelector({
 
   return (
     <div className={inputStyles.wrapper}>
+      <div className={inputStyles.labelRow}>
+        <Icon name={meta.icon} size="sm" />
+        <span className={inputStyles.label}>
+          {t(meta.i18nKey)}
+        </span>
+      </div>
       <select
         value={value.protocol}
         onChange={handleChange}
@@ -32,7 +39,6 @@ export default function ProtocolSelector({
       >
         {PROTOCOL_TYPES.map((pt) => (
           <option key={pt} value={pt}>
-            {PROTOCOL_REGISTRY[pt].icon}{" "}
             {t(PROTOCOL_REGISTRY[pt].i18nKey)}
           </option>
         ))}

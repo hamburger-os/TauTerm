@@ -87,7 +87,7 @@ export default function StatusBar() {
         {/* 运行时间 */}
         {isConnected && uptime > 0 && (
           <div className={styles.segment}>
-            <span className={styles.uptimeText}><Icon name="stopwatch" size="xs" /> {formatUptime(uptime)}</span>
+            <span className={styles.uptimeText}><Icon name="stopwatch" size="sm" /> {formatUptime(uptime)}</span>
           </div>
         )}
 

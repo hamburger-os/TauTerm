@@ -136,6 +136,18 @@ body {
 }
 
 /* ==========================================
+   4.5 液态玻璃卡片 — 内层卡片（无 backdrop-filter / 噪声纹理，轻阴影）
+   适用于嵌套在 .liquid-glass 表面内部的小型卡片元素
+   ========================================== */
+.liquid-glass-card {
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  box-shadow: var(--shadow-elevated);
+}
+
+/* ==========================================
    5. 液态玻璃按钮
    ========================================== */
 .liquid-glass-button {

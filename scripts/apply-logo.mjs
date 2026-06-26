@@ -50,9 +50,10 @@ header.writeUInt16LE(1, 4);     // image count
 
 // Directory entry for a single PNG-embedded icon
 const entry = Buffer.alloc(16);
-const imgSize = Math.min(pngSize, 256); // cap displayed size at 256
-entry.writeUInt8(imgSize, 0);          // width (0 = 256)
-entry.writeUInt8(imgSize, 1);          // height
+const imgSize = Math.min(pngSize, 256);
+const dim = imgSize >= 256 ? 0 : imgSize; // ICO uses 0 to represent 256
+entry.writeUInt8(dim, 0); // width
+entry.writeUInt8(dim, 1); // height
 entry.writeUInt8(0, 2);               // color palette count
 entry.writeUInt8(0, 3);               // reserved
 entry.writeUInt16LE(1, 4);            // color planes
@@ -65,3 +66,9 @@ writeFileSync(ICON_ICO, ico);
 console.log(`生成: ${ICON_ICO} (${ico.length} bytes)`);
 
 console.log("\n完成! logo.png 已部署到所有位置。");
+console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+console.log("📌 Windows 任务栏图标更新提示：");
+console.log("  1. 重新构建应用: cargo tauri build (或 cargo tauri dev)");
+console.log("  2. 清除图标缓存: ie4uinit.exe -show");
+console.log("  3. 如仍未更新，从任务栏取消固定后重新固定应用");
+console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

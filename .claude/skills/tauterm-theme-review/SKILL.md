@@ -60,6 +60,20 @@ grep -rn 'blur(var(--glass-blur))' src/components/ src/renderers/ --include='*.c
 
 # --text-muted 在功能标签上的误用
 grep -rn 'color:\s*var(--text-muted)' src/components/ --include='*.css'
+
+# 卡片一致性 — 内层卡片缺失 .liquid-glass-card（F8：交叉比对 var(--glass-fill) 与 TSX className）
+grep -rn 'var(--glass-fill)' src/components/ src/renderers/ --include='*.css'
+
+# 卡片一致性 — 元素缺失 3D 不对称边框高光（F10：仅有平面 border，无 border-top/border-left）
+grep -rn 'border: 1px solid var(--glass-border-default)' src/components/ src/renderers/ --include='*.css'
+
+# 卡片一致性 — Mini-Card 阴影层级错误（F9：<50px 元素使用了 --shadow-elevated）
+grep -rn 'box-shadow:\s*var(--shadow-elevated)' src/components/ src/renderers/ --include='*.css'
+# ↑ 交叉比对每个匹配结果：如果元素高度 <50px → 应降级为 var(--shadow-sm)
+
+# 卡片一致性 — Card 阴影层级确认（F9 反向：--shadow-sm 用于 ≥50px 元素？）
+grep -rn 'box-shadow:\s*var(--shadow-sm)' src/components/ src/renderers/ --include='*.css'
+# ↑ 交叉比对：如果元素高度 ≥50px → 应升级为 var(--shadow-elevated) 或使用 .liquid-glass-card
 ```
 
 对于**单个组件**审计：
@@ -154,6 +168,10 @@ These are code quality concerns that don't directly break visual appearance.
 | **F4** | `.liquid-glass` on absolute/fixed elements | Check for className containing `liquid-glass` on elements with `position: absolute` or `position: fixed` in CSS Module | Remove `.liquid-glass` and inline the glass properties in the CSS Module using v3 tokens |
 | **F5** | Select missing option background | Check `<select>` elements; their `<option>` children need explicit background | Add `.mySelect option { background: var(--select-option-bg); color: var(--text-primary); }` |
 | **F6** | Undocumented SVG data URI colors | Check for `url("data:image/svg+xml,...")` without a comment noting the hardcoded fill | Add comment: `/* fill color: #xxxxxx — matches --text-muted */` |
+| **F7** | `.liquid-glass` nested inside `.liquid-glass` | Manual review of component JSX tree — check if any element with `liquid-glass` class is a descendant of another `liquid-glass` element | Replace inner `.liquid-glass` with `.liquid-glass-card`. Only layout chrome surfaces (sidebar, toolbar, terminal, statusbar, sendbar, transmission panel) should use `.liquid-glass` at the outermost level |
+| **F8** | Card missing `.liquid-glass-card` or wrong shadow tier | Check inner elements nested in `.liquid-glass` surfaces that have `var(--glass-fill)` background. If height ≥50px: must use `.liquid-glass-card` (provides `--shadow-elevated`). If height <50px: must use Mini-Card pattern with `var(--shadow-sm)` — using `--shadow-elevated` on small elements is wrong. grep for `var(--glass-fill)` in CSS Modules, cross-reference with TSX className | For ≥50px elements: add `.liquid-glass-card`. For <50px elements: use Mini-Card pattern (module-specific CSS with `var(--shadow-sm)` + 3D asymmetric borders) |
+| **F9** | Mini-card missing 3D borders or wrong shadow tier | Check small elements with `var(--shadow-sm)` — if they have only flat `border: 1px solid var(--glass-border-default)` without `border-top`/`border-left` highlights. Also check elements <50px using `var(--shadow-elevated)` (wrong tier for size — should be `var(--shadow-sm)`). grep for `var(--shadow-elevated)` in CSS Modules and manually verify element height | Add `border-top: 1px solid var(--glass-border-top)` and `border-left: 1px solid var(--glass-border-left)`. If `--shadow-elevated` is on a <50px element, downgrade to `var(--shadow-sm)` |
+| **F10** | Card element using `var(--glass-fill)` with flat borders | Check any element using `var(--glass-fill)` background — must also have 3D asymmetric borders (`border-top` + `border-left` highlights) or be using `.liquid-glass-card` (which provides them). Flat `border: 1px solid var(--glass-border-default)` alone on a `glass-fill` background is the most common card consistency bug. grep for `var(--glass-fill)` in CSS Modules, verify each has `border-top` and `border-left` or uses `.liquid-glass-card` in TSX | Add `border-top: 1px solid var(--glass-border-top)` and `border-left: 1px solid var(--glass-border-left)`. If element is ≥50px and doesn't use `.liquid-glass-card`, add the global class instead |
 
 ### Category G: Frosted-Specific Issues (CRITICAL)
 
@@ -166,6 +184,7 @@ These are bugs that ONLY appear in the frosted (light) theme. They are the highe
 | **G3** | Dark-only `rgba(0,0,0,x)` backgrounds | grep `rgba\(\s*0,\s*0,\s*0` in CSS — these create dark patches invisible on dark themes but very visible on light | Use `var(--glass-*-bg)` tokens or `color-mix()` pattern |
 | **G4** | `mix-blend-mode: screen` on light bg | Check if `screen` blend mode is used outside `GoogleGlowBackground` orbs | Each theme has its own `--bg-orb-blend` (screen for dark, multiply for frosted); don't hardcode |
 | **G5** | Hardcoded overlay opacity | Check overlay/modal backdrops for hardcoded `rgba(0,0,0,x)` opacity | Use `var(--overlay-bg)` — frosted has lower opacity (0.2 vs 0.5/0.6 in dark themes) |
+| **G6** | Undetectable glass fill in frosted | Elements with `var(--glass-fill)` but no `box-shadow` — the frosted theme's shadows are extremely subtle (4-6px); without shadow, the glass fill blends into the parent surface and looks flat | Ensure all glass elements have at least `var(--shadow-sm)`; for larger cards use `.liquid-glass-card` (which provides `var(--shadow-elevated)`) |
 
 ---
 
@@ -237,6 +256,15 @@ These 6 surfaces use the `className={styles.xxx + ' liquid-glass'}` pattern — 
 - `TerminalView.tsx` (Terminal.module.css — the viewport container)
 - `SendBar.tsx` (SendBar.module.css)
 - `TransmissionPanel.tsx` (TransmissionPanel.module.css)
+
+### Inner Card Surfaces (use `.liquid-glass-card` or Mini-Card pattern)
+
+These elements are nested inside a `.liquid-glass` layout surface and must NOT use `.liquid-glass`:
+
+- `AggregateProgress.tsx` — nested inside TransmissionPanel, uses `.liquid-glass-card`
+- `ConnectDialog.tsx` `.modeCard` — nested inside ConnectDialog (`.liquid-glass`), now uses `.liquid-glass-card` for consistent `shadow-elevated` + 3D borders
+- `StatsDashboardRenderer` `.card` — nested inside terminal viewport (`.liquid-glass`), now uses `.liquid-glass-card` for glass consistency (was previously `var(--bg-secondary)` solid)
+- `PerFileList.tsx` (`.row` elements) — uses Mini-Card pattern (`var(--shadow-sm)` 6px shadow + 3D asymmetric borders), consistent with other small elements in the TransmissionPanel (`.fileSummary`, `.errorBox`, etc.)
 
 ### Floating Elements (CANNOT use `.liquid-glass`)
 

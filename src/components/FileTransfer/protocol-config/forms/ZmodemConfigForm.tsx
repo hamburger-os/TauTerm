@@ -38,16 +38,16 @@ export default function ZmodemConfigForm({
         <span className={styles.rowLabel}>
           {t("transfer.configResumeEnabled")}
         </span>
-        <button
-          className={`${styles.toggleBtn} ${config.resumeEnabled ? styles.toggleBtnActive : ""}`}
-          onClick={() =>
-            onChange({ ...config, resumeEnabled: !config.resumeEnabled })
-          }
-        >
-          <span
-            className={`${styles.toggleKnob} ${config.resumeEnabled ? styles.toggleKnobActive : ""}`}
+        <label className={styles.toggleLabel}>
+          <input
+            type="checkbox"
+            checked={config.resumeEnabled}
+            onChange={() =>
+              onChange({ ...config, resumeEnabled: !config.resumeEnabled })
+            }
           />
-        </button>
+          <div className={styles.toggleTrack} />
+        </label>
       </div>
 
       {/* Compression */}
@@ -55,19 +55,19 @@ export default function ZmodemConfigForm({
         <span className={styles.rowLabel}>
           {t("transfer.configCompression")}
         </span>
-        <button
-          className={`${styles.toggleBtn} ${config.compressionEnabled ? styles.toggleBtnActive : ""}`}
-          onClick={() =>
-            onChange({
-              ...config,
-              compressionEnabled: !config.compressionEnabled,
-            })
-          }
-        >
-          <span
-            className={`${styles.toggleKnob} ${config.compressionEnabled ? styles.toggleKnobActive : ""}`}
+        <label className={styles.toggleLabel}>
+          <input
+            type="checkbox"
+            checked={config.compressionEnabled}
+            onChange={() =>
+              onChange({
+                ...config,
+                compressionEnabled: !config.compressionEnabled,
+              })
+            }
           />
-        </button>
+          <div className={styles.toggleTrack} />
+        </label>
       </div>
 
       {/* Streaming */}
@@ -75,19 +75,19 @@ export default function ZmodemConfigForm({
         <span className={styles.rowLabel}>
           {t("transfer.configStreaming")}
         </span>
-        <button
-          className={`${styles.toggleBtn} ${config.streamingMode ? styles.toggleBtnActive : ""}`}
-          onClick={() =>
-            onChange({
-              ...config,
-              streamingMode: !config.streamingMode,
-            })
-          }
-        >
-          <span
-            className={`${styles.toggleKnob} ${config.streamingMode ? styles.toggleKnobActive : ""}`}
+        <label className={styles.toggleLabel}>
+          <input
+            type="checkbox"
+            checked={config.streamingMode}
+            onChange={() =>
+              onChange({
+                ...config,
+                streamingMode: !config.streamingMode,
+              })
+            }
           />
-        </button>
+          <div className={styles.toggleTrack} />
+        </label>
       </div>
     </div>
   );

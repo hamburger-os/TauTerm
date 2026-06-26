@@ -60,29 +60,19 @@
   letter-spacing: 0.5px;
 }
 
-/* 协议标签 (只读) */
-.protocolBadge {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--glass-fill);
-  border: 1px solid var(--glass-border-default);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  color: var(--text-primary);
-}
-
-/* 文件选择摘要 */
+/* 文件选择摘要 — Mini-Card 模式 */
 .fileSummary {
   display: flex;
   justify-content: space-between;
   padding: 4px 6px;
   background: var(--glass-fill);
   border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);    /* 3D 不对称高光 — Mini-Card 模式 */
+  border-left: 1px solid var(--glass-border-left);  /* 3D 不对称高光 — Mini-Card 模式 */
   border-radius: var(--radius-md);
   font-size: 10px;
   color: var(--text-secondary);
+  box-shadow: var(--shadow-sm);  /* 6px — 微型元素用最轻阴影 */
 }
 
 /* 进度区 */
@@ -118,6 +108,7 @@
   border-radius: var(--radius-sm);
   font-size: 10px;
   color: var(--color-error);
+  box-shadow: var(--shadow-sm);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
 }
 
 .errorText {
@@ -149,6 +140,7 @@
   border-radius: var(--radius-sm);
   font-size: 10px;
   color: var(--color-error);
+  box-shadow: var(--shadow-sm);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
 }
 
 .skipSummary {
@@ -158,4 +150,5 @@
   border-radius: var(--radius-sm);
   font-size: 10px;
   color: var(--color-warning);
+  box-shadow: var(--shadow-sm);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
 }

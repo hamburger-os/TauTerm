@@ -42,7 +42,7 @@
   "session": {
     "sessions": "Sessions",
     "noSessions": "No active sessions",
-    "emptyHint": "Click + New Session or use Ctrl+N to create a new session",
+    "emptyHint": "Click + New Session or use Ctrl+Shift+N to create a new session",
     "newSession": "New Session",
     "closeSession": "Close Session",
     "renameSession": "Rename",

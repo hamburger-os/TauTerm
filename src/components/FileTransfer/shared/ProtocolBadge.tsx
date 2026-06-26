@@ -1,5 +1,6 @@
 import type { ProtocolType } from "../../../types/transfer";
 import { PROTOCOL_REGISTRY } from "../../../types/transfer";
+import Icon from "../../common/Icon";
 import styles from "./ProtocolBadge.module.css";
 
 interface ProtocolBadgeProps {
@@ -13,7 +14,8 @@ export default function ProtocolBadge({ protocol }: ProtocolBadgeProps) {
 
   return (
     <span className={styles.badge}>
-      {meta.icon} {protocol.toUpperCase()}
+      <Icon name={meta.icon} size="sm" />
+      {protocol.toUpperCase()}
     </span>
   );
 }

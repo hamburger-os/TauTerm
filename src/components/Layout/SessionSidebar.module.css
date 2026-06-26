@@ -23,16 +23,13 @@
 }
 
 .addBtn {
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary);
-  font-size: var(--text-md);
-  font-weight: 600;
+  color: var(--text-primary);
   cursor: pointer;
-  line-height: 1;
   padding: 0;
   transition: all var(--transition-fast);
 }
@@ -92,27 +89,6 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.statusDot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
-  background: var(--text-muted);
-  flex-shrink: 0;
-  transition: all var(--transition-fast);
-}
-
-.statusDot.connected {
-  background: var(--color-success);
-  box-shadow: 0 0 10px var(--color-success);
-  animation: pulse 2s ease-in-out infinite;
-}
-
-.statusDot.transferring {
-  background: var(--color-warning);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--color-warning) 60%, transparent);
-  animation: pulse 1.5s ease-in-out infinite;
 }
 
 .itemName {

@@ -3,18 +3,27 @@
    液态玻璃胶囊描边风格，3 策略渲染
    ========================================== */
 
-/* ── Strategy A: PNG Mask-Image ──────────────────────────── */
+/* ── Strategy A: PNG Mask-Image（仅 color 覆盖模式） ────── */
 
 .maskIcon {
   display: inline-block;
   flex-shrink: 0;
-  /* background-color 由组件 inline style 设置（currentColor 或 color prop） */
+  /* background-color 由组件 inline style 设置 */
   mask-repeat: no-repeat;
   mask-position: center;
   mask-size: contain;
   -webkit-mask-repeat: no-repeat;
   -webkit-mask-position: center;
   -webkit-mask-size: contain;
+  vertical-align: middle;
+}
+
+/* ── Strategy A2: PNG <img> 直接渲染（保留玻璃质感） ──────── */
+
+.imgIcon {
+  display: inline-block;
+  flex-shrink: 0;
+  object-fit: contain;
   vertical-align: middle;
 }
 

@@ -17,7 +17,7 @@ function getStatusIconName(status: string): IconName {
     case "pending":
       return "hourglass";
     case "transferring":
-      return "arrow-up-circle";
+      return "transfer-progress";
     case "completed":
       return "check-circle";
     case "failed":
@@ -49,7 +49,7 @@ export default function PerFileList({ entries }: PerFileListProps) {
         return (
           <div
             key={entry.fileName}
-            className={`${styles.row} liquid-glass`}
+            className={styles.row}
           >
             <span className={styles.iconCell}>
               <Icon name={getStatusIconName(entry.status)} size="sm" />

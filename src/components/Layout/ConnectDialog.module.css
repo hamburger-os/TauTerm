@@ -65,14 +65,13 @@
   align-items: center;
   gap: 8px;
   padding: 16px 10px;
-  background: var(--glass-fill);
-  border: 1px solid var(--glass-border-default);
   border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all var(--transition-fast);
   color: var(--text-primary);
   font-family: var(--font-ui);
   position: relative;
+  /* background, border, box-shadow 由全局 .liquid-glass-card 提供 */
 }
 
 .modeCard:hover:not(:disabled) {
@@ -175,16 +174,18 @@
 .iconBtn {
   width: 30px;
   height: 30px;
-  color: var(--text-secondary);
+  color: var(--accent-primary);
   border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: var(--text-md);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-.iconBtn:hover { color: var(--text-primary); }
+.iconBtn:hover {
+  color: var(--accent-secondary);
+  background: var(--glass-bg-hover);
+}
 
 .error {
   padding: 8px;
@@ -218,7 +219,7 @@
 
 /* .connectBtn 视觉由全局 .liquid-primary-button 接管 */
 
-/* ── 复选框 ── */
+/* ── 液态玻璃切换开关 ── */
 
 .checkboxLabel {
   display: flex;
@@ -230,14 +231,56 @@
   user-select: none;
 }
 
+/* 隐藏原生复选框 */
 .checkboxLabel input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent-primary);
-  cursor: pointer;
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
 }
 
-.checkboxLabel input[type="checkbox"]:disabled {
-  opacity: 0.5;
+/* 自定义开关轨道 */
+.toggleTrack {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  background: var(--glass-input-bg);
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--glass-input-shadow-inner);
+  transition: all var(--transition-button);
+  flex-shrink: 0;
+}
+
+/* 开关滑块 */
+.toggleTrack::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+  transition: all var(--transition-button);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 选中态：轨道填充强调渐变 */
+.checkboxLabel input[type="checkbox"]:checked + .toggleTrack {
+  background: var(--accent-gradient);
+  border-color: transparent;
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* 选中态：滑块变色并右移 */
+.checkboxLabel input[type="checkbox"]:checked + .toggleTrack::after {
+  left: 15px;
+  background: var(--text-primary);
+}
+
+/* 禁用态 */
+.checkboxLabel input[type="checkbox"]:disabled + .toggleTrack {
+  opacity: 0.35;
   cursor: not-allowed;
 }

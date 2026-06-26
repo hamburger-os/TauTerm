@@ -1,5 +1,5 @@
 /* 聚合进度卡片 v3
-   玻璃效果由全局 .liquid-glass 提供 */
+   玻璃效果由全局 .liquid-glass-card 提供 */
 
 /* 卡片容器 */
 .container {
@@ -28,4 +28,8 @@
 .stats {
   color: var(--text-secondary);
   white-space: nowrap;
+}
+
+.speed {
+  color: var(--accent-primary);
 }

@@ -49,6 +49,7 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
     aggregateTotalBytes,
     currentFileIndex,
     totalFiles,
+    speed,
   } = transferState;
 
   const isTransferring = status === "transferring";
@@ -158,6 +159,7 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
                   totalFiles={totalFiles}
                   aggregateBytesTransferred={aggregateBytesTransferred}
                   aggregateTotalBytes={aggregateTotalBytes}
+                  speed={speed}
                 />
                 <div className={styles.fileListScroll}>
                   <PerFileList entries={batchEntries} />
@@ -174,14 +176,14 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
                 {/* 失败汇总 */}
                 {failedCount > 0 && !isTransferring && (
                   <div className={styles.failSummary}>
-                    <Icon name="warning" size="xs" /> {failedCount} {t("transfer.filesFailed")}
+                    <Icon name="warning" size="sm" /> {failedCount} {t("transfer.filesFailed")}
                   </div>
                 )}
 
                 {/* 跳过汇总 */}
                 {skippedCount > 0 && !isTransferring && (
                   <div className={styles.skipSummary}>
-                    <Icon name="skip" size="xs" /> {skippedCount} {t("transfer.filesSkipped")}
+                    <Icon name="skip" size="sm" /> {skippedCount} {t("transfer.filesSkipped")}
                   </div>
                 )}
               </>

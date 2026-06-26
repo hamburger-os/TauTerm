@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import Icon from "../../common/Icon";
 import styles from "../SettingsPage.module.css";
@@ -10,10 +11,13 @@ import styles from "../SettingsPage.module.css";
 export default function GeneralSettings() {
   const { t } = useTranslation();
 
-  const currentMode = localStorage.getItem("tauterm-default-data-mode") || "text";
+  const [currentMode, setCurrentMode] = useState<string>(
+    () => localStorage.getItem("tauterm-default-data-mode") || "text"
+  );
 
   const handleModeChange = (mode: string) => {
     localStorage.setItem("tauterm-default-data-mode", mode);
+    setCurrentMode(mode);
   };
 
   return (

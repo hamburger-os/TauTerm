@@ -341,15 +341,7 @@ background: "#34A853";             // Google 光球颜色（设计特征）
 </label>
 ```
 
-### 切换开关变体
-
-TauTerm 中有两种有效的切换开关实现模式：
-
-1. **checkbox-hack 模式**（SendBar.module.css）：隐藏原生 `<input type="checkbox">`，使用相邻兄弟选择器 `+ .toggleTrack` 控制自定义轨道/滑块样式。这是**规范推荐模式**。
-
-2. **button-toggle 模式**（ZmodemConfigForm.module.css）：使用 `<button>` 元素 + 内部 `<span>` 滑块，通过 `.toggleBtnActive` / `.toggleKnobActive` 类切换状态。此模式适用于需要在 JSX 中直接控制样式的场景（如配置表单内联开关）。
-
-两种模式视觉效果一致：轨道使用 `var(--glass-input-bg)` + `var(--glass-input-border)`，激活态使用 `var(--accent-gradient)`，开关圆点使用 `var(--radius-full)`。优先使用模式 1（checkbox-hack），模式 2 仅在模式 1 不适用时使用。
+> **唯一规范模式**：项目中所有切换开关统一使用 checkbox-hack 模式（隐藏原生 checkbox + `<div className={styles.toggleTrack} />`）。SendBar（`repeatCheck`）、ConnectDialog（`checkboxLabel`）、ZmodemConfigForm（`toggleLabel`）均使用相同 CSS 令牌和尺寸（30×17px 轨道、11px 滑块、`var(--accent-gradient)` 激活态、`var(--accent-glow)` 发光），差异仅在于 CSS Module 类名前缀。禁止使用 button + span 的自定义 toggle 模式——该类已从 ZmodemConfigForm 中移除并统一为 checkbox-hack 模式。
 
 ### 状态指示点
 
@@ -388,11 +380,61 @@ TauTerm 中有两种有效的切换开关实现模式：
 | Class | 用途 |
 |-------|------|
 | `.liquid-glass` | 完整液态玻璃面板效果（含 SVG 噪点纹理 + 不对称高光边框 + 多层阴影）。**适用于：弹窗、面板、下拉菜单、以及所有布局 chrome 表面（工具栏、侧边栏、状态栏、终端视口、发送栏）** |
+| `.liquid-glass-card` | 液态玻璃卡片（继承 `glass-fill` 填充 + 不对称高光边框，使用 `shadow-elevated` 卡片阴影）。**适用于：所有嵌套在 `.liquid-glass` 内部的高度 ≥50px 的内层卡片（模式选择卡、设置面板内卡片、统计面板卡片、聚合进度卡等）**。无 `backdrop-filter`（父 Surface 已提供）、无 `::before` 噪声、无 `position: relative` 约束。**注意**：高度 <50px 的微型元素（如文件列表行、传输摘要条等）应使用 Mini-Card 模式（见下文）在 CSS Module 中用 `var(--shadow-sm)`（6px）+ 3D 不对称边框自行定义 |
 | `.liquid-glass-button` | 液态玻璃按钮（半透明底 + 悬浮上浮 + 阴影增强）。**适用于：所有次要按钮、图标按钮、选项按钮** |
 | `.liquid-glass-input` | 液态玻璃输入框（暗色内凹底 + focus 蓝色辉光）。**适用于：所有 `<input>`、`<textarea>`、`<select>` 元素** |
 | `.liquid-primary-button` | 炫彩主动作按钮（全息渐变 + `gradient-shift` 动画 + 玻璃模糊） |
 | `.glass-overlay` | 模态覆盖层：fixed 定位 + 半透明蒙版背景 + flex 居中。**适用于：** 弹窗背景、设置页背景、拖拽覆盖层。注意：不含 `z-index`，各使用场景在 CSS Module 中自行设置 |
 | `.glow-orb` | 光球（用于 GoogleGlowBackground 中的 4 个流动光球） |
+
+### 玻璃表面二级体系
+
+TauTerm 的玻璃表面分为两个层级，按元素是否直接面对页面背景选择：
+
+| 层级 | Class | 阴影 | backdrop-filter | ::before 噪声 | position | 适用场景 |
+|------|-------|------|-----------------|---------------|----------|---------|
+| **Surface** | `.liquid-glass` | `--glass-shadow-outer` + `--glass-shadow-inner` (40px) | blur(25-35px) | SVG 噪点纹理 | `relative` | 布局 chrome 表面（侧边栏、工具栏、终端视口、状态栏、发送栏、传输面板）、弹窗/模态框 |
+| **Card** | `.liquid-glass-card` | `--shadow-elevated` (16px) | 无 | 无 | `static` | 内层卡片（聚合进度卡、模式选择卡、设置面板内卡片、统计面板卡片等） |
+| **Mini-Card** | *(CSS Module 模式)* | `--shadow-sm` (6px) | 无 | 无 | `static` | 极小型信息条/标签（传输面板摘要等 ~30-50px，非交互卡片） |
+
+**选择规则**：
+- 元素直接面对页面背景或构成独立视觉区域（最外层玻璃表面） → `.liquid-glass`
+- 元素嵌套在另一个 `.liquid-glass` 表面内部（内层卡片） → `.liquid-glass-card`
+- 极小型元素（~30-50px）嵌套在 `.liquid-glass` 内部 → Mini-Card 模式（见下文）
+- **禁止**在 `.liquid-glass` 内部再次使用 `.liquid-glass` — 会导致 40px 阴影叠加 + backdrop-filter 堆叠 + 噪声纹理三重叠加，产生不协调的视觉效果
+- `.liquid-glass-card` 无 `position: relative`，因此也可用于 `position: absolute` 或 `position: fixed` 元素（而 `.liquid-glass` 不可）
+
+```css
+/* 典型用法：外层 Surface + 内层 Card */
+<div className={`${styles.panel} liquid-glass`}>
+  {/* 面板内容 */}
+  <div className={`${styles.innerCard} liquid-glass-card`}>
+    {/* 内层卡片 — 16px 卡片阴影，无模糊叠加 */}
+  </div>
+</div>
+```
+
+### Mini-Card 模式（微型卡片 CSS 规范）
+
+嵌套在 `.liquid-glass` 内部的极小型元素（~30-50px）不应使用 `.liquid-glass-card` — 16px 阴影在微型元素上过重。应使用 Mini-Card 模式，在 CSS Module 中自行定义：
+
+```css
+/* Mini-Card 模式 — 微型行/标签元素（~30-50px）
+   使用 glass-fill + 3D 不对称边框高光 + 最轻阴影 tier */
+.miniCard {
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);    /* 3D 不对称高光 — 顶边更亮 */
+  border-left: 1px solid var(--glass-border-left);  /* 3D 不对称高光 — 左侧次亮 */
+  border-radius: var(--radius-sm);                   /* 12px — Control tier */
+  box-shadow: var(--shadow-sm);                      /* 6px — 微型元素最轻阴影 */
+}
+```
+
+此模式确保微型元素与 `.liquid-glass-card` 共享相同的 3D 视觉语言（不对称边框高光），但使用适配其尺寸的 6px 阴影。适用场景：
+- TransmissionPanel 文件摘要条（`.fileSummary`）
+- PerFileList 文件列表行（`.row`）—— ~35px，与同面板其他微型元素一致
+- 其他 <50px 高度的非交互信息条/标签元素
 
 ```css
 /* 典型用法：组合 CSS Module class + 全局 tool class */
@@ -475,7 +517,7 @@ protocol-config/forms/
 import styles from "./shared/ProtocolOptionForm.module.css";
 ```
 
-> **注意**：`ZmodemConfigForm.module.css` 与 `ProtocolOptionForm.module.css` 使用相同的 `.form` / `.group` / `.groupLabel` 结构类，但 Zmodem 表单的 `.row` / `.toggleBtn` 模式与 Xmodem/Ymodem 的 `.btnRow` / `.optionBtn` 模式不同。Zmodem 保持独立 CSS Module 是因为其切换开关交互模式本质上不同于选项按钮。如果未来出现更多使用 toggle 模式的协议表单，可考虑提取共享的 `.form` / `.group` 结构到 shared 目录。
+> **注意**：`ZmodemConfigForm.module.css` 与 `ProtocolOptionForm.module.css` 使用相同的 `.form` / `.group` / `.groupLabel` 结构类，但 Zmodem 表单的 `.row` / `.toggleLabel` / `.toggleTrack` 模式与 Xmodem/Ymodem 的 `.btnRow` / `.optionBtn` 模式不同（toggle 开关 vs 选项按钮）。切换开关使用统一的 checkbox-hack 模式（隐藏原生 checkbox + toggleTrack div），与 SendBar / ConnectDialog 一致。如果未来出现更多使用 toggle 模式的协议表单，可考虑提取共享的 `.form` / `.group` 结构到 shared 目录。
 
 ### 渲染器 CSS Module 模式
 
@@ -661,6 +703,8 @@ digraph text_color_choice {
 - [ ] 所有 `<select>` 和 `<input>` 元素使用全局 `liquid-glass-input` class 获取基础视觉，CSS Module 仅保留组件级差异化属性（尺寸、箭头、option）
 - [ ] 自定义 SVG data URI（如 select 箭头）的硬编码填充色需在注释中注明
 - [ ] 布局表面（工具栏、侧边栏、状态栏、终端视口、发送栏）使用 `liquid-glass` 全局类 — 禁止在布局 chrome 上手写 `background` / `backdrop-filter` / `border` / `box-shadow`
+- [ ] 内层卡片嵌套在 `.liquid-glass` 表面内部 → 使用 `.liquid-glass-card` 全局类；极小型元素（~30-50px）→ 使用 Mini-Card 模式（`var(--shadow-sm)` + 3D 不对称边框）
+- [ ] 玻璃表面元素有 3D 不对称边框高光（`border-top: var(--glass-border-top)`, `border-left: var(--glass-border-left)`）— 不得只用平面 `border: 1px solid var(--glass-border-default)`，除非是 Tab、下拉菜单项等非卡片元素
 - [ ] 布局栏使用 `align-items: center` + 固定 `height`（Toolbar=36px, StatusBar=26px, SendBar=40px），内部控件统一垂直 padding 以保证水平对齐
 - [ ] 无 v2 别名令牌残留：`--glass-bg` → `--glass-fill`，`--glass-border` → `--glass-border-default`，`--block-*` → 全局 `.liquid-glass` 类。提交前运行 `grep -rn '\-\-glass-border[^-]\|\-\-glass-bg[^-]\|\-\-block-' src/ --include='*.css' --include='*.tsx'` 验证
 - [ ] 无含硬编码数值的 `style={}` 内联对象 — 所有组件和渲染器统一使用 CSS Module + Token

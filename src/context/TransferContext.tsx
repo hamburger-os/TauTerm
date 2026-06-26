@@ -72,6 +72,10 @@ interface TransferState {
   totalFiles: number;
   /** 当前活跃传输使用的协议 */
   activeProtocol: ProtocolType | null;
+  /** 当前传输速度（bytes/s） */
+  speed: number;
+  /** 传输开始时间戳（ms），用于速度计算 */
+  transferStartTime: number;
 }
 
 type TransferAction =
@@ -100,6 +104,8 @@ const initialState: TransferState = {
   currentFileIndex: 0,
   totalFiles: 0,
   activeProtocol: null,
+  speed: 0,
+  transferStartTime: 0,
 };
 
 function transferReducer(
@@ -107,20 +113,34 @@ function transferReducer(
   action: TransferAction,
 ): TransferState {
   switch (action.type) {
-    case "SET_STATUS":
-      return { ...state, status: action.status };
+    case "SET_STATUS": {
+      return {
+        ...state,
+        status: action.status,
+      };
+    }
     case "SET_PROGRESS": {
       const p = action.progress;
       const key = p.file_name;
+      const aggregateBytes =
+        p.aggregate_bytes_transferred ?? p.bytes_transferred;
+      // 接收端无 INIT_BATCH，首次 progress 事件时初始化计时起点
+      const startTime =
+        state.transferStartTime > 0
+          ? state.transferStartTime
+          : Date.now();
       const updated: TransferState = {
         ...state,
         progress: p,
         status: "transferring" as TransferStatus,
-        aggregateBytesTransferred:
-          p.aggregate_bytes_transferred ?? p.bytes_transferred,
+        aggregateBytesTransferred: aggregateBytes,
         aggregateTotalBytes: p.aggregate_total_bytes ?? p.total_bytes,
         currentFileIndex: p.file_index ?? 0,
         totalFiles: p.total_files ?? 1,
+        transferStartTime: startTime,
+        // 计算传输速度 (bytes/ms * 1000 = bytes/s)
+        speed:
+          (aggregateBytes / Math.max(1, Date.now() - startTime)) * 1000,
       };
       if (state.batchFiles[key]) {
         updated.batchFiles = {
@@ -176,6 +196,8 @@ function transferReducer(
         currentFileIndex: 0,
         aggregateBytesTransferred: 0,
         aggregateTotalBytes: 0,
+        speed: 0,
+        transferStartTime: Date.now(),
       };
     }
     case "FILE_START": {
@@ -269,6 +291,8 @@ function transferReducer(
         aggregateTotalBytes: 0,
         currentFileIndex: 0,
         totalFiles: 0,
+        speed: 0,
+        transferStartTime: 0,
       };
     default:
       return state;

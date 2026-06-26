@@ -197,6 +197,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 | Class | When to use |
 |-------|-------------|
 | `.liquid-glass` | Full glass panel: SVG noise texture (via ::before with per-theme opacity) + asymmetric top/left highlight borders + multi-layer shadows + saturate filter. **Use on ALL layout chrome surfaces** (toolbar, sidebar, statusbar, terminal viewport, sendbar, transmission panel) **and** dialogs/popups/dropdowns. Used by `GlassPanel` component automatically. |
+| `.liquid-glass-card` | Glass card: inherits `glass-fill` fill + asymmetric highlight borders, uses `shadow-elevated` (16px) shadow. **Use for ALL inner cards nested inside a `.liquid-glass` surface** (aggregate progress card, mode selection cards, settings panel cards, stats dashboard cards, etc.). No `backdrop-filter` (parent Surface already provides blur), no `::before` noise, no `position: relative` constraint — CAN be used on `position: absolute/fixed` elements. For very small list rows (~30-50px), use the Mini-Card pattern instead (see Card Patterns section). |
 | `.liquid-primary-button` | Primary action button: holographic gradient with `gradient-shift` animation, glass blur, white text. Use for Send, Connect, Submit buttons. |
 | `.liquid-glass-button` | Secondary glass button: semi-transparent bg, hover lift effect. Use for Cancel, Close, auxiliary actions, icon buttons, option selectors. |
 | `.liquid-glass-input` | Glass input: dark inset bg, accent glow on focus. Use for search bars, text inputs, textareas, selects. |
@@ -291,6 +292,62 @@ Layout chrome surfaces (toolbar, sidebar, status bar, terminal viewport, send ba
 ```tsx
 // JSX: compose CSS Module class + liquid-glass global class
 <div className={`${styles.toolbar} liquid-glass`}>
+```
+
+### Glass Surface Tier Selection (v3.2)
+
+TauTerm has two glass surface tiers. Choose based on whether the element is a top-level layout surface or a nested inner card:
+
+| Tier | Class | Shadow | Backdrop Blur | Noise | Position | Use For |
+|------|-------|--------|---------------|-------|----------|---------|
+| **Surface** | `.liquid-glass` | `--glass-shadow-outer` + `--glass-shadow-inner` (40px) | blur(25-35px) | YES | `relative` | Layout chrome (sidebar, toolbar, terminal, statusbar, sendbar, transmission panel), dialogs, modals |
+| **Card** | `.liquid-glass-card` | `--shadow-elevated` (16px) | NO | NO | `static` | Inner cards ≥50px height, nested inside a `.liquid-glass` surface (mode selection cards, settings cards, stats dashboard cards, aggregate progress cards) |
+
+**Selection rules**:
+- Element faces the page background or forms an independent visual region → `.liquid-glass`
+- Element is nested inside another `.liquid-glass` surface → `.liquid-glass-card`
+- **NEVER nest `.liquid-glass` inside `.liquid-glass`** — causes 40px shadow stacking + backdrop-filter compounding + triple noise overlay
+- `.liquid-glass-card` is safe for `position: absolute` / `position: fixed` elements (no `position: relative` constraint)
+
+```tsx
+// [正确] Correct — outer Surface + inner Card
+<div className={`${styles.panel} liquid-glass`}>
+  <div className={`${styles.card} liquid-glass-card`}>
+    {/* inner card content */}
+  </div>
+</div>
+
+// [错误] Wrong — nested .liquid-glass inside .liquid-glass
+<div className={`${styles.panel} liquid-glass`}>
+  <div className={`${styles.card} liquid-glass`}>
+    {/* 40px shadow inside an already-blurred panel — visually heavy */}
+  </div>
+</div>
+```
+
+### Mini-Card CSS Module Pattern (v3.3)
+
+Very small elements (~30-50px) nested inside `.liquid-glass` surfaces should NOT use `.liquid-glass-card` (16px shadow is too heavy). Instead, use module-specific CSS with the Mini-Card pattern:
+
+```css
+/* Mini-Card — small rows/labels inside .liquid-glass surfaces
+   Uses glass-fill + 3D asymmetric borders + lightest shadow (6px) */
+.miniCard {
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);    /* 3D highlight — brighter top */
+  border-left: 1px solid var(--glass-border-left);  /* 3D highlight — mid-bright left */
+  border-radius: var(--radius-sm);                   /* 12px — Control tier */
+  box-shadow: var(--shadow-sm);                      /* 6px — lighter than card tier */
+}
+```
+
+Elements that should use this pattern:
+- Transmission panel file summary bars (`.fileSummary`)
+- PerFileList file rows (`.row`) — ~35px, consistent with other small elements in the panel
+- Other non-interactive info bars/labels under ~50px height
+
+The 3D asymmetric borders maintain visual language consistency with larger `.liquid-glass-card` elements while `shadow-sm` provides appropriate depth for the element's size.
 ```
 
 ### Layout Bar Alignment (v1.8)
@@ -574,7 +631,7 @@ For pulsing connected indicators (session sidebar), add the `pulse` animation:
 
 Run this mental checklist for every new/changed component:
 
-1. All `color`/`background`/`border`/`box-shadow`/`font-size` use `var(--xxx)` tokens. For `font-size`: ≥11px MUST use `--text-*` tokens; only micro-text (8/9/10px) may use raw px values. For text color: `--text-muted` is reserved for placeholders, timestamps, shortcuts, and metadata — NEVER for labels, identifiers, or descriptions the user needs to read. All WCAG AA contrast ratios: `--text-muted` ≥ 5.5:1 on `--bg-base`, `--text-secondary` ≥ 7:1.
+1. All `color`/`background`/`border`/`box-shadow`/`font-size` use `var(--xxx)` tokens. For `font-size`: ≥11px MUST use `--text-*` tokens; only micro-text (8/9/10px) may use raw px values. For text color: `--text-muted` is reserved for placeholders, timestamps, shortcuts, and metadata — NEVER for labels, identifiers, or descriptions the user needs to read. All WCAG AA contrast ratios: `--text-muted` ≥ 5.5:1 on `--bg-base`, `--text-secondary` ≥ 7:1. **Card elements**: inner cards inside `.liquid-glass` surfaces use `.liquid-glass-card` (height ≥50px, `--shadow-elevated` 16px阴影) or the Mini-Card pattern (height <50px, `--shadow-sm` 6px阴影 + 3D asymmetric borders). Flat `border: 1px solid var(--glass-border-default)` alone is never sufficient for glass card elements — always include `border-top: var(--glass-border-top)` and `border-left: var(--glass-border-left)` highlights.
 2. No `rgba(0,0,0,x)` or `rgba(255,255,255,x)` hardcoded (except allowed exceptions)
 3. `border-radius` uses the correct semantic tier: Frame→xl/2xl(24px), Panel→lg(16px), Control→md/sm(12px), Pill→full(9999px), Micro→xs(4px). Zero hardcoded pixel values (except ProgressBar's dynamic `${height/2}px`). Edge-touching elements use 0px.
 4. Dialogs/popups use `var(--dialog-bg)` background + `backdrop-filter: blur()`
@@ -593,5 +650,6 @@ Run this mental checklist for every new/changed component:
 16. Layout bars use `align-items: center` + fixed `height` (Toolbar=36px, StatusBar=26px, SendBar=40px). Controls inside the bar use consistent vertical padding to ensure horizontal alignment.
 17. Renderer components (under `src/renderers/`) must use CSS Modules + tokens — inline `React.CSSProperties` objects with hardcoded numeric values are forbidden.
 18. No dead CSS Module classes — every class defined in a `.module.css` file must be referenced by the corresponding `.tsx` file.
+19. Card elements use `.liquid-glass-card` when nested inside a `.liquid-glass` surface — NEVER nest `.liquid-glass` inside `.liquid-glass`. Layout chrome surfaces (sidebar, toolbar, etc.) keep using `.liquid-glass`. For elements with height <50px, use the Mini-Card pattern (module-specific CSS: `var(--shadow-sm)` + `var(--glass-fill)` + 3D asymmetric borders `border-top`/`border-left`) instead of `.liquid-glass-card`. Verify with: `grep -rn 'liquid-glass"' src/components/ --include='*.tsx'` and check that no `.liquid-glass` element is a child of another `.liquid-glass` element.
 
 > **Dead token note**: `--glass-noise-frequency` was previously defined in tokens.css but is NOT used by the noise SVG in `global.css` (the `baseFrequency` differences between themes are negligible — all use 0.8). Do NOT define or reference this token in new themes or components.

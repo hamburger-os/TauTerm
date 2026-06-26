@@ -3,7 +3,7 @@
 .container {
   flex: 1;
   padding: var(--spacing-lg);
-  background: var(--bg-base);
+  background: transparent;  /* 透出父级 .liquid-glass 终端玻璃表面 */
   overflow: auto;
 }
 
@@ -37,8 +37,7 @@
 .card {
   padding: var(--spacing-lg);
   border-radius: var(--radius-md);
-  background: var(--bg-secondary);
-  border: 1px solid var(--glass-border-default);
+  /* background, border, box-shadow 由全局 .liquid-glass-card 提供 */
 }
 
 .cardTitle {

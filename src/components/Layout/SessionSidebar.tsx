@@ -97,9 +97,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         <button
           className={`${styles.addBtn} liquid-glass-button`}
           onClick={() => onNewSession?.()}
-          title={t("session.newSession") + " (Ctrl+N)"}
+          title={t("session.newSession") + " (Ctrl+Shift+N)"}
         >
-          +
+          <Icon name="plus" size="md" color="var(--text-primary)" />
         </button>
       </div>
 
@@ -128,10 +128,14 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
               onContextMenu={(e) => handleContextMenu(e, tab)}
             >
               <div className={styles.itemLeft}>
-                <span className={`${styles.statusDot} ${
-                  tab.state === "connected" ? styles.connected :
-                  tab.state === "transferring" ? styles.transferring : ""
-                }`} />
+                <Icon
+                  name={
+                    tab.state === "connected" ? "status-connected" :
+                    tab.state === "transferring" ? "status-connecting" :
+                    "status-idle"
+                  }
+                  size={10}
+                />
                 <div>
                   <div className={styles.itemName}>{tab.name}</div>
                   <div className={styles.itemEndpoint}>{tab.endpoint}</div>

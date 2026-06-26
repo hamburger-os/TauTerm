@@ -30,90 +30,11 @@ import checkCirclePng from "../../assets/icons/check-circle.png";
 import crossCirclePng from "../../assets/icons/cross-circle.png";
 import skipPng from "../../assets/icons/skip.png";
 import hourglassPng from "../../assets/icons/hourglass.png";
-import arrowUpCirclePng from "../../assets/icons/arrow-up-circle.png";
+import transferProgressPng from "../../assets/icons/transfer-progress.png";
 import checkPlainPng from "../../assets/icons/check-plain.png";
 
-// ── Type Definitions ──────────────────────────────────────────
-
-/** 所有图标名称的联合类型 */
-export type IconName =
-  // Tier 1: PNG mask-image (29 icons)
-  | "logo"
-  | "zmodem"
-  | "plug"
-  | "pin"
-  | "tag"
-  | "settings"
-  | "palette"
-  | "globe"
-  | "font"
-  | "info"
-  | "search"
-  | "upload"
-  | "download"
-  | "package"
-  | "antenna"
-  | "trash"
-  | "stop"
-  | "play"
-  | "construction"
-  | "folder"
-  | "chart"
-  | "warning"
-  | "stopwatch"
-  | "check-circle"
-  | "cross-circle"
-  | "skip"
-  | "hourglass"
-  | "arrow-up-circle"
-  | "check-plain"
-  // Tier 2: CSS status dots (4 icons)
-  | "status-connected"
-  | "status-disconnected"
-  | "status-connecting"
-  | "status-idle"
-  // Tier 3: Inline SVG (10 icons)
-  | "close"
-  | "menu"
-  | "chevron-up"
-  | "chevron-down"
-  | "chevron-dropdown"
-  | "refresh"
-  | "window-minimize"
-  | "window-maximize"
-  | "window-restore"
-  | "back-arrow";
-
-/** 预设尺寸映射到 CSS 像素值 */
-const SIZE_MAP: Record<string, number> = {
-  xs: 10,
-  sm: 14,
-  md: 18,
-  lg: 24,
-  xl: 36,
-  "2xl": 48,
-};
-
-export interface IconProps extends HTMLAttributes<HTMLSpanElement> {
-  /** 图标名称 */
-  name: IconName;
-  /**
-   * 图标尺寸
-   * - 预设: "xs" | "sm" | "md" | "lg" | "xl" | "2xl"
-   * - 自定义: 数字（像素）
-   * @default "md"
-   */
-  size?: "xs" | "sm" | "md" | "lg" | "xl" | "2xl" | number;
-  /**
-   * 覆盖图标颜色（CSS 颜色值）
-   * 默认: currentColor（继承父元素文字颜色，自动适配主题）
-   */
-  color?: string;
-  /** 无障碍标签（用于装饰性图标时为屏幕阅读器提供文本） */
-  label?: string;
-}
-
 // ── PNG URL Mapping ───────────────────────────────────────────
+// Must be defined before IconName type so PNG key list can be derived
 
 const PNG_MAP: Record<string, string> = {
   logo: logoPng,
@@ -143,9 +64,65 @@ const PNG_MAP: Record<string, string> = {
   "cross-circle": crossCirclePng,
   skip: skipPng,
   hourglass: hourglassPng,
-  "arrow-up-circle": arrowUpCirclePng,
+  "transfer-progress": transferProgressPng,
   "check-plain": checkPlainPng,
 };
+
+// ── Type Definitions ──────────────────────────────────────────
+
+/** 从 PNG_MAP 的键推导，避免与常量集不同步 */
+type PngIconName = keyof typeof PNG_MAP;
+
+/** 所有图标名称的联合类型 */
+export type IconName =
+  // Tier 1: PNG mask-image (keyof PNG_MAP → 29 icons)
+  | PngIconName
+  // Tier 2: CSS status dots (4 icons)
+  | "status-connected"
+  | "status-disconnected"
+  | "status-connecting"
+  | "status-idle"
+  // Tier 3: Inline SVG (10 icons)
+  | "close"
+  | "menu"
+  | "chevron-up"
+  | "chevron-down"
+  | "chevron-dropdown"
+  | "refresh"
+  | "plus"
+  | "window-minimize"
+  | "window-maximize"
+  | "window-restore"
+  | "back-arrow";
+
+/** 预设尺寸映射到 CSS 像素值 */
+const SIZE_MAP: Record<string, number> = {
+  xs: 12,
+  sm: 14,
+  md: 18,
+  lg: 24,
+  xl: 36,
+  "2xl": 48,
+};
+
+export interface IconProps extends HTMLAttributes<HTMLElement> {
+  /** 图标名称 */
+  name: IconName;
+  /**
+   * 图标尺寸
+   * - 预设: "xs" | "sm" | "md" | "lg" | "xl" | "2xl"
+   * - 自定义: 数字（像素）
+   * @default "md"
+   */
+  size?: "xs" | "sm" | "md" | "lg" | "xl" | "2xl" | number;
+  /**
+   * 覆盖图标颜色（CSS 颜色值）
+   * 默认: currentColor（继承父元素文字颜色，自动适配主题）
+   */
+  color?: string;
+  /** 无障碍标签（用于装饰性图标时为屏幕阅读器提供文本） */
+  label?: string;
+}
 
 // ── Status Dot Class Mapping ──────────────────────────────────
 
@@ -209,17 +186,31 @@ export default function Icon({
   // ── Tier 1: PNG Mask-Image ──────────────────────────────
   if (name in PNG_MAP) {
     const pngUrl = PNG_MAP[name];
+    // 显式传入 color 时使用 mask-image（主题自适应着色）
+    if (color) {
+      return (
+        <span
+          className={`${styles.maskIcon} ${className}`.trim()}
+          style={{
+            ...inlineStyle,
+            maskImage: `url(${pngUrl})`,
+            WebkitMaskImage: `url(${pngUrl})`,
+            backgroundColor: color,
+          }}
+          role={label ? "img" : "presentation"}
+          aria-label={label}
+          {...spanProps}
+        />
+      );
+    }
+    // 默认渲染 <img> 保留原始 PNG 的玻璃质感视觉效果
     return (
-      <span
-        className={`${styles.maskIcon} ${className}`.trim()}
-        style={{
-          ...inlineStyle,
-          maskImage: `url(${pngUrl})`,
-          WebkitMaskImage: `url(${pngUrl})`,
-          backgroundColor: color || "currentColor",
-        }}
+      <img
+        src={pngUrl}
+        alt={label || ""}
+        className={`${styles.imgIcon} ${className}`.trim()}
+        style={inlineStyle}
         role={label ? "img" : "presentation"}
-        aria-label={label}
         {...spanProps}
       />
     );
@@ -285,9 +276,17 @@ export default function Icon({
 
     case "refresh":
       return (
+        <svg {...svgBaseProps} strokeWidth="2">
+          <polyline points="23 4 23 10 17 10" />
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+        </svg>
+      );
+
+    case "plus":
+      return (
         <svg {...svgBaseProps}>
-          <polyline points="20 12 20 4 12 4" />
-          <path d="M4 12a8 8 0 0 1 13.5-5.5L20 9" />
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
       );
 

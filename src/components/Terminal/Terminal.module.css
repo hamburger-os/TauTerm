@@ -65,9 +65,10 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font-size: var(--text-md);
   gap: 8px;
+  text-shadow: var(--glass-shadow-text);
 }
 
 /* 装饰性 emoji 图标，不受编号令牌约束 */
@@ -78,7 +79,8 @@
 
 .emptyHint {
   font-size: var(--text-xs);
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  opacity: 0.6;
 }
 
 /* 传输进行中横幅 */

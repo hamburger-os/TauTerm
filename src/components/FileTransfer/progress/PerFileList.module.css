@@ -1,5 +1,5 @@
-/* 逐文件列表 v3
-   每行的玻璃效果由全局 .liquid-glass 提供 */
+/* 逐文件列表 v3.1
+   每行使用 Mini-Card 模式：--shadow-sm（6px）+ 3D 不对称边框高光，与 TransmissionPanel 其他微型元素一致 */
 
 .list {
   display: flex;
@@ -14,6 +14,11 @@
   padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);     /* 3D 不对称高光 — Mini-Card 模式 */
+  border-left: 1px solid var(--glass-border-left);   /* 3D 不对称高光 — Mini-Card 模式 */
+  box-shadow: var(--shadow-sm);  /* 6px — Mini-Card 层，与 TransmissionPanel fileSummary 等一致 */
 }
 
 .iconCell {

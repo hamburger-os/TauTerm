@@ -80,6 +80,7 @@
   --glass-border-left: rgba(255, 255, 255, 0.2);
   --glass-shadow-outer: 0 10px 40px 0 rgba(0, 0, 0, 0.4);
   --glass-shadow-inner: inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.45);  /* 深色主题下不可见，仅 frosted 浅色主题下生效 */
 
   /* 按钮 */
   --glass-button-bg: rgba(255, 255, 255, 0.05);
@@ -170,6 +171,7 @@
   --glass-border-left: rgba(255, 255, 255, 0.08);
   --glass-shadow-outer: 0 20px 50px 0 rgba(0, 0, 0, 0.7);
   --glass-shadow-inner: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.45);  /* 深色主题下不可见，仅 frosted 浅色主题下生效 */
 
   /* 按钮 */
   --glass-button-bg: rgba(0, 0, 0, 0.4);
@@ -260,6 +262,7 @@
   --glass-border-left: rgba(148, 163, 184, 0.4);
   --glass-shadow-outer: 0 10px 40px 0 rgba(0, 0, 0, 0.06);
   --glass-shadow-inner: inset 0 2px 5px 0 rgba(255, 255, 255, 0.5);
+  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.08);  /* frosted 浅色主题下提供微妙文字深度 */
 
   /* 按钮 */
   --glass-button-bg: rgba(255, 255, 255, 0.6);

@@ -23,6 +23,7 @@ mod transfer;
 
 use std::sync::Mutex;
 use tauri::Manager;
+use tauri::image::Image;
 use kernel::config_store::ConfigStore;
 use kernel::ipc_bridge::IpcBridge;
 use kernel::tab_host::TabHost;
@@ -84,6 +85,10 @@ pub fn run() {
         .setup(|app| {
             let window = app.get_webview_window("main")
                 .expect("main window not found");
+            // 设置窗口图标（任务栏 + 标题栏）
+            if let Ok(icon) = Image::from_path("icons/icon.png") {
+              let _ = window.set_icon(icon);
+            }
             // Windows 平台无边框窗口丢失原生阴影，手动开启
             #[cfg(target_os = "windows")]
             let _ = window.set_shadow(true);
