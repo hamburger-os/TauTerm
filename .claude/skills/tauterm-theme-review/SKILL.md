@@ -110,20 +110,10 @@ These cause the component to look wrong in at least one theme — usually froste
 | **A4** | Transition raw values | grep `transition:.*\d+ms\s+ease` and `transition:.*\d+\.\d+s` not using `var(--transition-*)` | Transitions on motion.div (framer-motion uses its own API) |
 | **A5** | z-index raw numbers | grep `z-index:\s*\d+` — must use `var(--z-sidebar)`, `var(--z-panel)`, `var(--z-overlay)`, `var(--z-toast)` | None — all z-index values must use tokens |
 | **A6** | backdrop-filter blur raw values | grep `blur\(\d+px\)` — must use `var(--blur-*)` or `var(--glass-blur)` | GoogleGlowBackground orbs use `var(--bg-orb-blur)` |
-| **A7** | border-radius raw px | grep `border-radius:\s*\d+px` | Dynamic values (e.g., ProgressBar `height/2`), `0px` for edge-contact elements, `border-radius: 50%` for circles |
+| **A7** | border-radius raw px | grep `border-radius:\s*\d+px` | Dynamic values (e.g., ProgressBar `height/2`), `0px` for edge-contact elements, `border-radius: 50%` for circles. Window chrome corners use `--radius-window` (8px) |
 | **A8** | Floating element blur 令牌不一致 | grep `blur(var(--blur-heavy))` in CSS — 浮动元素（position:absolute/fixed）应使用 v3 主令牌 `--glass-blur` 而非 `--blur-heavy` | `--blur-heavy` 在 google-glow=24px 而 `--glass-blur`=25px，差异极小但统一使用主令牌保持一致性 |
 
-### Category B: Deprecated v2 Tokens (HIGH)
-
-These work but violate the v3 design system. All instances should be migrated.
-
-| ID | Check | Detection | Fix |
-|----|-------|-----------|-----|
-| **B1** | `--glass-bg` (v2 alias) | grep `--glass-bg[^-]` in CSS/TSX | Replace with `--glass-fill` |
-| **B2** | `--glass-border` (v2 alias) | grep `--glass-border[^-]` in CSS/TSX | Replace with `--glass-border-default` |
-| **B3** | `--block-*` (v1.5 deprecated) | grep `--block-` in CSS/TSX | Remove — layout surfaces use `.liquid-glass` global class instead |
-
-### Category C: Missing Global CSS Utility Classes (HIGH)
+### Category B: Missing Global CSS Utility Classes (HIGH)
 
 These classes provide the unified glass-morphism effect. Missing them causes visual inconsistency.
 
@@ -140,7 +130,7 @@ These degrade design consistency but the component still works in all themes.
 
 | ID | Check | Detection | Fix |
 |----|-------|-----------|-----|
-| **D1** | Wrong border-radius tier | Verify each element uses the correct semantic tier token | Frame→xl/2xl(24px), Panel→lg(16px), Control→md/sm(12px), Pill→full(9999px), Micro→xs(4px) |
+| **D1** | Wrong border-radius tier | Verify each element uses the correct semantic tier token | Frame→xl/2xl(24px), Panel→lg(16px), Control→md/sm(12px), Window→window(8px), Pill→full(9999px), Micro→xs(4px) |
 | **D2** | Text color semantic misuse | Check if `--text-muted` is used for functional labels users need to read. 重点检查 `.groupLabel`、`.sectionLabel`、`.fieldLabel` 等表单标签类名 | Use `--text-secondary` for functional labels; `--text-muted` only for placeholders/timestamps/shortcuts/metadata. 经验法则：表单标签、分组标题、字段名称 → `--text-secondary`；占位符、快捷键、版本号 → `--text-muted` |
 | **D3** | Missing `color-mix()` for status tints | Check if status-colored backgrounds use hardcoded rgba | Use `color-mix(in srgb, var(--color-*) N%, transparent)` pattern |
 | **D4** | Dialog missing backdrop-filter | Check dialogs/popups for `backdrop-filter: blur(...)` and `-webkit-backdrop-filter: blur(...)` | Add both properties using `var(--glass-blur)` |
@@ -186,6 +176,20 @@ These are bugs that ONLY appear in the frosted (light) theme. They are the highe
 | **G5** | Hardcoded overlay opacity | Check overlay/modal backdrops for hardcoded `rgba(0,0,0,x)` opacity | Use `var(--overlay-bg)` — frosted has lower opacity (0.2 vs 0.5/0.6 in dark themes) |
 | **G6** | Undetectable glass fill in frosted | Elements with `var(--glass-fill)` but no `box-shadow` — the frosted theme's shadows are extremely subtle (4-6px); without shadow, the glass fill blends into the parent surface and looks flat | Ensure all glass elements have at least `var(--shadow-sm)`; for larger cards use `.liquid-glass-card` (which provides `var(--shadow-elevated)`) |
 
+### Category H: DualPane Component Issues (MEDIUM)
+
+DualPane (`src/components/Terminal/DualPane.tsx` + `DualPane.module.css`) has specific theme constraints:
+
+| ID | Check | Detection | Fix |
+|----|-------|-----------|-----|
+| **H1** | Hardcoded `font-family` in `.container` | grep `font-family:` in `DualPane.module.css` — must be `var(--font-mono)`, not raw font stacks | Replace with `font-family: var(--font-mono);` |
+| **H2** | CSS custom properties (e.g., `--dual-*`) | grep `--dual-` in `DualPane.module.css` and `DualPane.tsx` — must NOT exist | Remove CSS custom properties; set layout values via React inline style (`fontSize`, `width`, `left`) on individual elements |
+| **H3** | TX row not using `--accent-secondary` | Check `.txRow` selector — must use `color: var(--accent-secondary);` | Ensure `.txRow { color: var(--accent-secondary); }` |
+| **H4** | Divider not using `--glass-border-*` tokens | Check `.divider` and `.dividerActive`/`:hover`/`:active` — must use `--glass-border-default` (default) and `--glass-border-hover` (active) | Replace hardcoded border colors with glass tokens |
+| **H5** | Timestamp tag using wrong token | Check `.tsTag` — must use `color: var(--text-secondary); opacity: 0.6;` (not `--text-muted`) | Fix to `var(--text-secondary)` + `opacity: 0.6` |
+| **H6** | Missing ARIA on divider | Check divider element in `DualPane.tsx` — must have `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow`, `aria-valuemin/max`, `tabIndex={0}` | Add ARIA attributes |
+| **H7** | Scrollbar using hardcoded color | Check `.scrollArea` webkit scrollbar selectors — must use `var(--glass-border-default)` | Replace with glass token |
+
 ---
 
 ## Report Format（审查报告格式）
@@ -226,11 +230,8 @@ These are bugs that ONLY appear in the frosted (light) theme. They are the highe
 ## 批量修复命令
 
 ```bash
-# 替换废弃的 --glass-bg → --glass-fill
-sed -i 's/var(--glass-bg)/var(--glass-fill)/g' src/components/**/*.module.css
-
-# 替换废弃的 --glass-border → --glass-border-default
-sed -i 's/var(--glass-border)\b/var(--glass-border-default)/g' src/components/**/*.module.css
+# 验证无残留 v2 别名令牌
+grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'
 ```
 ```
 
@@ -381,12 +382,6 @@ These are known inconsistencies between the documentation and the codebase. Flag
 ```css
 /* [错误] Before */  background: rgba(0, 0, 0, 0.3);
 /* [正确] After  */  background: var(--glass-input-bg);
-```
-
-### Fix: Deprecated token → v3 token
-```css
-/* [错误] Before */  background: var(--glass-bg);
-/* [正确] After  */  background: var(--glass-fill);
 ```
 
 ### Fix: Missing global class

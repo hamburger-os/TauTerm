@@ -26,13 +26,14 @@ blur: var(--blur-xs);               /* 4px — 遮罩层背景模糊（全局常
 
 ### 圆角语义层级（v3.1）
 
-TauTerm 使用 4+1 层圆角体系，元素按视觉层级选用对应的圆角令牌：
+TauTerm 使用 5+1 层圆角体系，元素按视觉层级选用对应的圆角令牌：
 
 | 语义层级 | 令牌 | 值 | 适用场景 |
 |---------|------|-----|---------|
 | **Frame** | `--radius-xl`, `--radius-2xl` | 24px | 弹窗、模态框、设置页容器、命令面板 — "宏大、温润的容器" |
 | **Panel** | `--radius-lg` | 16px | 终端视口、卡片面板、**以及布局 chrome 表面（工具栏、侧边栏、状态栏、发送栏、传输面板）** — "严谨的功能区" |
 | **Control** | `--radius-sm`, `--radius-md` | 12px | 按钮、输入框、选择框、列表项、导航项 — "精致的操作控件" |
+| **Window** | `--radius-window` | 8px | 窗口级圆角 — 工具栏顶部 / 状态栏底部，匹配操作系统窗口边框曲率 |
 | **Pill** | `--radius-full` | 9999px | 切换开关、徽章、状态指示点 — "聚焦的视觉点" |
 | **Micro** | `--radius-xs` | 4px | 滚动条滑块、快捷键小提示、微小标签 — 实用微型层级 |
 
@@ -65,14 +66,12 @@ box-shadow: 0 0 10px var(--accent-glow); /* 发光效果 */
 color: var(--text-on-accent);       /* 强调色上的文字色（三套主题均为 #fff） */
 
 /* ── 玻璃面板 ── */
-border: 1px solid var(--glass-border-default);    /* v3 默认边框（推荐） */
-border: 1px solid var(--glass-border);            /* v2 兼容别名 */
+border: 1px solid var(--glass-border-default);    /* 默认边框 */
 border-top: 1px solid var(--glass-border-top);    /* 顶部高光 */
 border-left: 1px solid var(--glass-border-left);  /* 左侧次高光 */
 box-shadow: var(--glass-shadow-outer);            /* 外阴影 */
 box-shadow: var(--glass-shadow-inner);            /* 内高光 */
-background: var(--glass-fill);                    /* 玻璃填充渐变 v3（推荐） */
-background: var(--glass-bg);                      /* v2 兼容别名 */
+background: var(--glass-fill);                    /* 玻璃填充渐变 */
 backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate)); /* 玻璃模糊 + 饱和度 */
 
 /* ── 玻璃按钮 ── */
@@ -102,27 +101,6 @@ background: var(--select-option-bg);     /* select option 背景 */
 box-shadow: var(--dialog-shadow);        /* 弹窗阴影 */
 /* select 箭头颜色使用 var(--select-arrow) 令牌，三套主题各自定义 */
 ```
-
-### v2 → v3 令牌迁移对照表
-
-为保证界面统一，所有组件必须使用 v3 主令牌。以下 v2 别名令牌均已废弃，仅保留定义以保证向后兼容：
-
-| v2 已弃用令牌 | v3 替代令牌 | 说明 |
-|-------------|-----------|------|
-| `--block-toolbar-bg` | `.liquid-glass` + `var(--glass-fill)` | 布局表面统一使用全局类 |
-| `--block-sidebar-bg` | `.liquid-glass` + `var(--glass-fill)` | 布局表面统一使用全局类 |
-| `--block-terminal-bg` | `.liquid-glass` + `var(--glass-fill)` 或 `var(--dialog-bg)`（浮动面板） | 布局表面统一使用全局类 |
-| `--block-sendbar-bg` | `.liquid-glass` + `var(--glass-fill)` | 布局表面统一使用全局类 |
-| `--block-statusbar-bg` | `.liquid-glass` + `var(--glass-fill)` | 布局表面统一使用全局类 |
-| `--glass-bg` | `--glass-fill` | 玻璃填充渐变（v3 主令牌） |
-| `--glass-border` | `--glass-border-default` | 玻璃边框（v3 主令牌） |
-
-> **检查命令**：提交前运行以下 grep 确保无残留 v2 令牌：
-> ```bash
-> grep -rn '\-\-glass-border[^-]' src/ --include='*.css' --include='*.tsx'
-> grep -rn '\-\-glass-bg[^-]' src/ --include='*.css' --include='*.tsx'
-> grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'
-> ```
 
 ## 组件开发规范
 
@@ -706,14 +684,14 @@ digraph text_color_choice {
 - [ ] 内层卡片嵌套在 `.liquid-glass` 表面内部 → 使用 `.liquid-glass-card` 全局类；极小型元素（~30-50px）→ 使用 Mini-Card 模式（`var(--shadow-sm)` + 3D 不对称边框）
 - [ ] 玻璃表面元素有 3D 不对称边框高光（`border-top: var(--glass-border-top)`, `border-left: var(--glass-border-left)`）— 不得只用平面 `border: 1px solid var(--glass-border-default)`，除非是 Tab、下拉菜单项等非卡片元素
 - [ ] 布局栏使用 `align-items: center` + 固定 `height`（Toolbar=36px, StatusBar=26px, SendBar=40px），内部控件统一垂直 padding 以保证水平对齐
-- [ ] 无 v2 别名令牌残留：`--glass-bg` → `--glass-fill`，`--glass-border` → `--glass-border-default`，`--block-*` → 全局 `.liquid-glass` 类。提交前运行 `grep -rn '\-\-glass-border[^-]\|\-\-glass-bg[^-]\|\-\-block-' src/ --include='*.css' --include='*.tsx'` 验证
+- [ ] 无 v2 别名令牌残留：`--glass-bg`、`--glass-border`、`--block-*` 已被移除，新代码禁止使用。提交前运行 `grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'` 验证
 - [ ] 无含硬编码数值的 `style={}` 内联对象 — 所有组件和渲染器统一使用 CSS Module + Token
 
 > **注意**：`tokens.css` 中定义的 `--glass-noise-frequency` 目前未被 `global.css` 的噪点 SVG 实际使用（三套主题的 `baseFrequency` 差异微乎其微，统一为 0.8）。新增主题时不需定义此令牌。
 >
 > **禁用态透明度规范**：禁用态透明度由全局类统一管理 — 按钮 `opacity: 0.5`（`.liquid-glass-button` / `.liquid-primary-button`），输入框/选择框 `opacity: 0.4`（`.liquid-glass-input`）。CSS Module 中无需重复定义。
 >
-> **区块背景令牌废弃**：`--block-toolbar-bg`、`--block-sidebar-bg`、`--block-terminal-bg`、`--block-sendbar-bg`、`--block-statusbar-bg` 已废弃。布局表面统一使用 `.liquid-glass` 全局类获取 `var(--glass-fill)` 背景渐变。tokens.css 中保留这些令牌定义以保证向后兼容，但新代码不得引用。
+> **区块背景令牌**：布局表面统一使用 `.liquid-glass` 全局类获取 `var(--glass-fill)` 背景渐变。不再使用独立的区块背景令牌。
 >
 > **`.liquid-glass` 定位约束**：`.liquid-glass` 强制设置 `position: relative` 以为 `::before` 噪点纹理提供定位上下文。因此 **不可**用于已设置 `position: absolute` 或 `position: fixed` 的元素（如右键菜单、浮动搜索栏、Toast 通知、绝对定位的下拉面板）。这些元素需在 CSS Module 中自行维护 `background` / `border` / `box-shadow` / `backdrop-filter` 属性。
 >
@@ -729,7 +707,7 @@ digraph text_color_choice {
 | `--text-primary` | `#e0e0ff` | `#e6e6e6` | `#1e293b` |
 | `--text-secondary` | `#aaaacc` | `#a6a6a6` | `#3d4f61` |
 | `--text-muted` | `#9494b8` | `#909090` | `#556270` |
-| `--glass-fill` | `linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%)` | `linear-gradient(135deg, rgba(20,20,25,0.6) 0%, rgba(5,5,10,0.4) 100%)` | `linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0.4) 100%)` |
+| `--glass-fill` | `linear-gradient(135deg, rgba(10,10,18,0.16) 0%, rgba(8,8,14,0.06) 100%)` | `linear-gradient(135deg, rgba(20,20,25,0.6) 0%, rgba(5,5,10,0.4) 100%)` | `linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(255,255,255,0.4) 100%)` |
 | `--glass-border-default` | `rgba(255,255,255,0.15)` | `rgba(255,255,255,0.05)` | `rgba(148,163,184,0.35)` |
 | `--glass-blur` | `25px` | `30px` | `35px` |
 | `--glass-noise-opacity` | `0.04` | `0.05` | `0.03` |
@@ -738,8 +716,8 @@ digraph text_color_choice {
 | `--dialog-bg` | `rgba(15,15,30,0.95)` | `rgba(8,8,12,0.97)` | `rgba(255,255,255,0.92)` |
 | `--select-option-bg` | `#12122a` | `#0a0a12` | `#ffffff` |
 | `--overlay-bg` | `rgba(0,0,0,0.5)` | `rgba(0,0,0,0.6)` | `rgba(0,0,0,0.2)` |
-| `--bg-orb-opacity` | `0.65` | `0.45` | `0.35` |
-| `--bg-orb-blur` | `120px` | `140px` | `140px` |
+| `--bg-orb-opacity` | `0.48` | `0.45` | `0.35` |
+| `--bg-orb-blur` | `150px` | `140px` | `140px` |
 | `--bg-orb-blend` | `screen` | `screen` | `multiply` |
 | `--text-on-accent` | `#fff` | `#fff` | `#fff` |
 
@@ -749,11 +727,84 @@ digraph text_color_choice {
 
 | 辅助令牌 | 说明 |
 |---------|------|
-| `--glass-bg` | WARNING: **已弃用** — v2 别名，请使用 `--glass-fill` |
+| `--glass-shadow-text` | 终端文字阴影（`0 1px 3px ...`），浅色主题中增强可读性 |
 | `--glass-bg-hover` / `--glass-bg-active` | 悬浮/激活态背景 |
-| `--glass-border` | WARNING: **已弃用** — v2 别名，请使用 `--glass-border-default` |
 | `--glass-border-hover` / `--glass-border-focus` | 悬浮/聚焦态边框 |
 | `--blur-light` / `--blur-medium` / `--blur-heavy` | 分级模糊值（8px / 16-20px / 24-35px） |
 | `--shadow-glass` / `--shadow-elevated` / `--shadow-sm` | 分级阴影系统 |
 | `--bg-secondary` | 次级背景色 |
 | `--text-on-accent` | 强调色上的文字色（三套主题均为 `#fff`） |
+
+### Dual Pane 双模显示令牌
+
+DualPane 组件复用现有主题令牌，无需在 `tokens.css` 中新增。
+
+**Token 使用表：**
+
+| 用途 | 令牌 | 说明 |
+|------|------|------|
+| TX 发送行文字颜色 | `var(--accent-secondary)` | 三套主题均为 `#60a5fa`（蓝色高亮） |
+| RX 接收行文字颜色 | `inherit` | 继承父级文字颜色（`--text-primary`） |
+| 等宽字体 | `var(--font-mono)` | 项目统一等宽字体栈 |
+| 分隔条默认颜色 | `var(--glass-border-default)` | 与容器描边一致 |
+| 分隔条悬停/激活颜色 | `var(--glass-border-hover)` | 拖拽或悬停时高亮 |
+| 时间戳标签 | `var(--text-secondary)` + `opacity: 0.6` | 与辅助文字一致，降低视觉权重 |
+| 滚动条滑块 | `var(--glass-border-default)` | 细滚动条（6px） |
+
+### DualPane 组件规范
+
+**组件结构：**
+```
+container (position: relative)
+├── scrollArea (overflow-y: auto, 统一滚动)
+│   └── row × N (flex 行，stretch 对齐)
+│       ├── asciiCell (ASCII 文本，自动换行)
+│       │   ├── dirTag [RX]/[TX]
+│       │   ├── tsTag [HH:MM:SS.mmm]
+│       │   └── 帧文本内容
+│       └── hexCell (HEX 字符串，pre-wrap)
+└── divider (绝对定位，可拖拽)
+```
+
+**CSS Module 类参考：**
+
+| 类名 | 关键属性 | Token 依赖 |
+|------|---------|-----------|
+| `.container` | `position: relative; font-family: var(--font-mono)` | `--font-mono` |
+| `.scrollArea` | `overflow-y: auto; contain: paint` | `--glass-border-default`（滚动条） |
+| `.row` | `display: flex; align-items: stretch` | — |
+| `.txRow` | `color: var(--accent-secondary)` | `--accent-secondary` |
+| `.rxRow` | `color: inherit` | — |
+| `.asciiCell` | `flex-shrink: 0; overflow-wrap: anywhere` | — |
+| `.hexCell` | `flex: 1; white-space: pre-wrap` | — |
+| `.divider` | `position: absolute; width: 2px; cursor: col-resize` | `--glass-border-default/hover` |
+| `.divider::after` | 扩展点击区域（±6px） | — |
+| `.dirTag` | `color: inherit; user-select: none` | — |
+| `.tsTag` | `color: var(--text-secondary); opacity: 0.6` | `--text-secondary` |
+
+**动态布局值：**
+
+以下值由 React inline style 在运行时设置，不通过 CSS Module 或 Token：
+
+| 值 | 设置位置 | 方式 |
+|----|---------|------|
+| 字号 `fontSize` | `.container` inline style | `style={{ fontSize: \`${fontSize}px\` }}` |
+| ASCII 列宽 `splitPct` | `.asciiCell` inline style | `style={{ width: \`${splitPct}%\` }}` |
+| 分隔条位置 `splitPct` | `.divider` inline style | `style={{ left: \`${splitPct}%\` }}` |
+
+**分隔条拖拽状态：**
+
+分隔条通过 `useState` 驱动 `dividerActive` CSS 类切换。`dragging` state 为 `true` 时添加该类，使分隔条悬停/激活样式与 `:hover`、`:active` 伪类一致：
+```css
+.divider:hover,
+.divider:active,
+.dividerActive {
+  background: var(--glass-border-hover);
+}
+```
+
+**规则：**
+- 禁止在 DualPane 中使用硬编码颜色、字体栈或字号
+- 动态布局值通过 React inline style 设置，禁止创建自定义 CSS 属性
+- 必须使用 `var(--font-mono)` 作为等宽字体，禁止硬编码字体列表
+- 分隔条必须使用 `role="separator"` 和完整 ARIA 属性

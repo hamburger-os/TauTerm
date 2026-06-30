@@ -84,16 +84,16 @@ export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
+          transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
           onClick={handleOverlayClick}
         >
           <motion.div
-            className={`${styles.container} liquid-glass`}
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.15, delay: 0.05, ease: [0.4, 0, 0.2, 1] }}
           >
+            <div className={`${styles.container} liquid-glass`}>
             {/* 标题栏 */}
             <div className={styles.header}>
               <span className={styles.headerTitle}>{t("settings.title")}</span>
@@ -121,6 +121,7 @@ export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
                   {panelContent}
                 </div>
               </div>
+            </div>
             </div>
           </motion.div>
         </motion.div>

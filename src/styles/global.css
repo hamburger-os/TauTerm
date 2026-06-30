@@ -120,6 +120,10 @@ body {
   border-left: 1px solid var(--glass-border-left);
   box-shadow: var(--glass-shadow-outer),
               var(--glass-shadow-inner);
+  /* Force GPU compositing for backdrop-filter: ensures blur texture is
+     pre-rendered as a GPU layer before any animation plays.
+     Does not permanently reserve GPU memory (unlike will-change). */
+  backface-visibility: hidden;
 }
 
 /* SVG 噪点纹理叠加层，使用主题令牌控制不透明度 */
@@ -202,6 +206,47 @@ body {
 
 .liquid-glass-input:disabled {
   opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 数字输入框微调箭头 —— 统一主题样式
+   - WebKit: 使用内联 SVG currentColor 绘制 ▲▼ 箭头，颜色随主题 token 自动适配
+   - Firefox: 隐藏原生微调按钮（Tauri 全平台使用 WebKit webview，保留以保持一致性） */
+.liquid-glass-input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+.liquid-glass-input[type="number"]::-webkit-outer-spin-button,
+.liquid-glass-input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  height: 24px;
+  width: 22px;
+  opacity: 0.55;
+  cursor: pointer;
+  color: var(--text-secondary);
+  background-color: var(--glass-input-bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='currentColor'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='currentColor'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px 20px;
+  border-left: 1px solid var(--glass-input-border);
+  transition: opacity var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.liquid-glass-input[type="number"]::-webkit-outer-spin-button:hover,
+.liquid-glass-input[type="number"]::-webkit-inner-spin-button:hover {
+  opacity: 1;
+  background-color: var(--glass-bg-hover);
+}
+
+.liquid-glass-input[type="number"]::-webkit-outer-spin-button:active,
+.liquid-glass-input[type="number"]::-webkit-inner-spin-button:active {
+  color: var(--text-primary);
+}
+
+.liquid-glass-input[type="number"]:disabled::-webkit-outer-spin-button,
+.liquid-glass-input[type="number"]:disabled::-webkit-inner-spin-button {
+  opacity: 0.3;
   cursor: not-allowed;
 }
 

@@ -15,6 +15,9 @@
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  /* GPU compositing layer is provided by the .liquid-glass global class
+     (backface-visibility: hidden), which ensures backdrop-filter blur
+     texture is captured before the wrapper's animation plays. */
 }
 
 .input {

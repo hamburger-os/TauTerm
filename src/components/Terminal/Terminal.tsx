@@ -69,6 +69,10 @@ interface TerminalInstanceProps {
   onTermReady?: (writeFn: (data: Uint8Array | string) => void) => void;
   /** 当终端实例卸载时回调，供父组件清理数据路由 */
   onCleanup?: (sessionId: string) => void;
+  /** 终端字体大小 (px)，来自 context，实时更新 */
+  fontSize?: number;
+  /** 终端行缓冲上限（所有模式统一），来自 context，实时更新 */
+  bufferLines?: number;
 }
 
 /**
@@ -78,7 +82,7 @@ interface TerminalInstanceProps {
  * 接受 sessionId 以区分数据路由。
  */
 const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function TerminalInstance(
-  { sessionId, onData, isConnected = false, isActive = true, onTermReady, onCleanup },
+  { sessionId, onData, isConnected = false, isActive = true, onTermReady, onCleanup, fontSize, bufferLines },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -113,13 +117,13 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
     const term = new XTerm({
       convertEol: true,
-      fontSize: Number(localStorage.getItem("tauterm-font-size") || "14"),
+      fontSize: fontSize ?? Number(localStorage.getItem("tauterm-font-size") || "14"),
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
       theme: terminalTheme,
       cursorBlink: true,
       cursorStyle: "bar",
       allowProposedApi: true,
-      scrollback: 50000,
+      scrollback: bufferLines ?? Number(localStorage.getItem("tauterm-buffer-lines") || "10000"),
       cols: 80,
       rows: 24,
     });
@@ -163,6 +167,21 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     if (!xtermRef.current) return;
     xtermRef.current.options.theme = terminalTheme;
   }, [theme, terminalTheme]);
+
+  // 字体大小 / 行缓冲实时更新：通过 context 驱动，设置页滑块拖动时即时生效
+  useEffect(() => {
+    if (!xtermRef.current) return;
+    if (fontSize !== undefined) {
+      xtermRef.current.options.fontSize = fontSize;
+    }
+    if (bufferLines !== undefined) {
+      xtermRef.current.options.scrollback = bufferLines;
+    }
+    // 字体变化后重新 fit 以适配新的单元格尺寸
+    if (fontSize !== undefined) {
+      try { fitAddonRef.current?.fit(); } catch { /* ignore */ }
+    }
+  }, [fontSize, bufferLines]);
 
   // 当标签页变为活跃时重新调整终端尺寸
   // 使用双 rAF 确保 DOM 已完成 opacity 过渡和布局计算

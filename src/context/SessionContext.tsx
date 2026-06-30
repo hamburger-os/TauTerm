@@ -67,6 +67,7 @@ type SessionAction =
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
+  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; pluginId?: string; connectedAt?: number | null }
   | { type: "CLEAR_TABS" };
 
 const initialState: SessionState = {
@@ -131,6 +132,24 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
             : t
         ),
       };
+    case "UPDATE_TAB_CONFIG":
+      return {
+        ...state,
+        tabs: state.tabs.map(t =>
+          t.id === action.id
+            ? {
+                ...t,
+                name: action.name,
+                endpoint: action.endpoint,
+                params: action.params,
+                transferEnabled: action.transferEnabled ?? t.transferEnabled,
+                transferProtocol: action.transferProtocol ?? t.transferProtocol,
+                pluginId: action.pluginId ?? t.pluginId,
+                connectedAt: action.connectedAt !== undefined ? action.connectedAt : t.connectedAt,
+              }
+            : t
+        ),
+      };
     case "CLEAR_TABS":
       return { ...state, tabs: [], activeTabId: null };
     default:
@@ -147,12 +166,14 @@ interface SessionContextValue {
   connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string) => Promise<string | null>;
   createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string) => Promise<string | null>;
   disconnect: (sessionId: string) => Promise<void>;
-  deleteSession: (sessionId: string) => Promise<void>;
+  deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
   switchTab: (sessionId: string) => Promise<void>;
   renameTab: (sessionId: string, name: string) => Promise<void>;
+  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string) => Promise<void>;
   getTabs: () => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
+  onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onSessionDisconnect: (callback: (sessionId: string, reason?: string) => void) => void;
   clearError: () => void;
 }
@@ -162,7 +183,11 @@ const SessionContext = createContext<SessionContextValue | null>(null);
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
   const dataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
+  const sentDataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
   const disconnectCallbackRef = useRef<((sessionId: string, reason?: string) => void) | null>(null);
+  // 保持最新的 tabs 引用，供事件监听器（闭包中 state 可能过期）使用
+  const tabsRef = useRef(state.tabs);
+  tabsRef.current = state.tabs;
 
   // ── Actions ─────────────────────────────────────
 
@@ -241,18 +266,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     try {
       await invoke("disconnect_session", { sessionId });
-      // 后端会发出 session-disconnected 事件，handler 会将状态设为 "disconnected"
+      // 同步更新前端状态，避免调用方在事件到达前读到过期的 "connected" 状态
+      dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `断开失败: ${e}` });
     }
   }, [state.tabs]);
 
-  const deleteSession = useCallback(async (sessionId: string) => {
+  const deleteSession = useCallback(async (sessionId: string, skipDisconnect = false) => {
     const tab = state.tabs.find(t => t.id === sessionId);
-    // 如果会话已连接，先断开后端连接
-    if (tab?.state === "connected" || tab?.state === "connecting" || tab?.state === "transferring") {
+    // 如果会话已连接，先断开后端连接（除非调用方已提前断连）
+    if (!skipDisconnect && (tab?.state === "connected" || tab?.state === "connecting" || tab?.state === "transferring")) {
       try {
         await invoke("disconnect_session", { sessionId });
+        dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
       } catch (_e) {
         // 断开失败，停止删除流程以避免后端资源泄漏
         dispatch({ type: "SET_ERROR", error: "Cannot delete active session — disconnect failed" });
@@ -272,6 +299,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
       await invoke("write_data", { sessionId, data: Array.from(bytes) });
+      // 通知 Dual 模式终端：数据已发送
+      sentDataCallbackRef.current?.(sessionId, bytes);
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${e}` });
     }
@@ -294,6 +323,75 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // 恢复的标签页在后端不存在，静默忽略
     }
   }, []);
+
+  const reconfigureSession = useCallback(async (
+    sessionId: string,
+    endpoint: string,
+    params: Record<string, unknown>,
+    name?: string,
+    transferEnabled?: boolean,
+    transferProtocol?: string,
+  ) => {
+    const tab = state.tabs.find(t => t.id === sessionId);
+    const wasConnected = tab?.state === "connected" || tab?.state === "transferring";
+
+    // 1. 如果已连接，先断连
+    if (wasConnected) {
+      try {
+        await invoke("disconnect_session", { sessionId });
+        dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
+      } catch (e) {
+        dispatch({ type: "SET_ERROR", error: `断开失败: ${e}` });
+        return;
+      }
+    }
+
+    // 2. 更新磁盘配置（保持相同 UUID）
+    try {
+      await invoke("save_session_config", {
+        endpoint,
+        params,
+        name: name || undefined,
+        transferEnabled: transferEnabled ?? true,
+        transferProtocol: transferProtocol || "ymodem",
+        sessionId, // 复用已有 UUID
+      });
+    } catch (e) {
+      dispatch({ type: "SET_ERROR", error: `保存配置失败: ${e}` });
+      return;
+    }
+
+    // 3. 更新前端 tab 状态
+    dispatch({
+      type: "UPDATE_TAB_CONFIG",
+      id: sessionId,
+      endpoint,
+      params,
+      name: name || tab?.name || `Serial @ ${endpoint}`,
+      transferEnabled,
+      transferProtocol,
+      pluginId: tab?.pluginId, // 保持原有 pluginId，为将来插件切换预留
+    });
+
+    // 4. 如果之前是连接状态，重新连接
+    if (wasConnected) {
+      try {
+        const newSessionId = await invoke<string>("connect_session", {
+          endpoint,
+          params,
+          name: name || tab?.name || undefined,
+          transferEnabled: transferEnabled ?? true,
+          transferProtocol: transferProtocol || "ymodem",
+          sessionId, // 保持 UUID 连续性
+        });
+        // connect_session 后端会 emit session-connected 事件，前端监听器会更新状态为 connected
+        // 但我们也需要同步更新（事件可能异步到达）
+        dispatch({ type: "SET_TAB_STATE", id: newSessionId, state: "connected" });
+      } catch (e) {
+        dispatch({ type: "SET_ERROR", error: `重连失败: ${e}` });
+      }
+    }
+  }, [state.tabs]);
 
   const getTabs = useCallback(async () => {
     try {
@@ -347,6 +445,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dataCallbackRef.current = callback;
   }, []);
 
+  const onDataSent = useCallback((callback: (sessionId: string, data: Uint8Array) => void) => {
+    sentDataCallbackRef.current = callback;
+  }, []);
+
   const onSessionDisconnect = useCallback((callback: (sessionId: string, reason?: string) => void) => {
     disconnectCallbackRef.current = callback;
   }, []);
@@ -368,22 +470,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string }>(
         "session-connected",
         (event) => {
-          dispatch({
-            type: "ADD_TAB",
-            tab: {
-              id: event.payload.session_id,
-              name: event.payload.name || `Serial @ ${event.payload.endpoint}`,
-              connection_type: event.payload.connection_type,
+          const sid = event.payload.session_id;
+          // 检查是否已存在同 ID 的 tab（如 reconfigureSession 重连场景），避免重复添加
+          const exists = tabsRef.current.some(t => t.id === sid);
+          if (exists) {
+            // 已存在：更新状态和配置，不新增 tab
+            dispatch({ type: "SET_TAB_STATE", id: sid, state: "connected" });
+            dispatch({
+              type: "UPDATE_TAB_CONFIG",
+              id: sid,
               endpoint: event.payload.endpoint,
-              state: "connected",
-              pluginId: event.payload.plugin_id || "serial",
               params: event.payload.params,
-              stats: { txBytes: 0, rxBytes: 0 },
-              connectedAt: event.payload.connected_at ?? Date.now(),
-              transferEnabled: event.payload.transfer_enabled ?? true,
+              name: event.payload.name || `Serial @ ${event.payload.endpoint}`,
+              transferEnabled: event.payload.transfer_enabled,
               transferProtocol: event.payload.transfer_protocol,
-            },
-          });
+              pluginId: event.payload.plugin_id || "serial",
+              connectedAt: event.payload.connected_at ?? Date.now(),
+            });
+          } else {
+            // 真正的新会话：添加 tab
+            dispatch({
+              type: "ADD_TAB",
+              tab: {
+                id: sid,
+                name: event.payload.name || `Serial @ ${event.payload.endpoint}`,
+                connection_type: event.payload.connection_type,
+                endpoint: event.payload.endpoint,
+                state: "connected",
+                pluginId: event.payload.plugin_id || "serial",
+                params: event.payload.params,
+                stats: { txBytes: 0, rxBytes: 0 },
+                connectedAt: event.payload.connected_at ?? Date.now(),
+                transferEnabled: event.payload.transfer_enabled ?? true,
+                transferProtocol: event.payload.transfer_protocol,
+              },
+            });
+          }
         }
       );
       if (cancelled) { u2(); return; }
@@ -472,8 +594,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       sendData,
       switchTab,
       renameTab,
+      reconfigureSession,
       getTabs,
       onSessionData,
+      onDataSent,
       onSessionDisconnect,
       clearError,
     }}>

@@ -121,12 +121,22 @@ impl SessionStore {
         app_handle: tauri::AppHandle,
         transfer_enabled: bool,
         transfer_protocol: Option<String>,
+        // 可选：传入已有的 session_id 以原地重连（保留 UUID）
+        id_override: Option<String>,
     ) -> Result<TabId, String> {
         if self.sessions.len() >= self.max_sessions {
             return Err(format!("已达到最大会话数限制 ({})", self.max_sessions));
         }
 
-        let id = uuid::Uuid::new_v4().to_string();
+        // 验证 id_override 为合法 UUID，防止任意字符串导致 HashMap 键冲突与资源泄漏
+        let id = if let Some(ref raw) = id_override {
+            if uuid::Uuid::parse_str(raw).is_err() {
+                return Err(format!("无效的 session_id 格式: {}", raw));
+            }
+            raw.clone()
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
         let tab_name = if name.is_empty() {
             format!("{} @ {}", plugin_id, endpoint)
         } else {
@@ -185,6 +195,16 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
         };
+
+        // 防御性检查：若 id_override 指向的会话已存在且未被正确关闭，
+        // 先清理旧会话，防止静默覆盖导致 I/O 线程、串口句柄、定时器等资源泄漏。
+        // 显式 drop() 确保 SessionHandle 的 Drop 实现（关闭 I/O 线程/句柄）
+        // 在新 session 插入前执行，避免新旧会话并发持有同一硬件资源。
+        if let Some(old_handle) = self.sessions.remove(&id) {
+            drop(old_handle);
+        }
+        // 若 tab_order 中已有此 ID（例如前端未正确同步），移除旧条目
+        self.tab_order.retain(|tid| tid != &id);
 
         self.sessions.insert(id.clone(), handle);
         self.tab_order.push(id.clone());

@@ -30,7 +30,7 @@
 
 #### Scenario: 中文语言文件完整性
 - **WHEN** 查看 `zh-CN.json`
-- **THEN** 文件必须包含 `app`、`serial`、`transfer`、`settings`、`common`、`session`、`search`、`palette`、`shortcuts` 和 `theme` 命名空间
+- **THEN** 文件必须包含 `app`、`serial`、`transfer`、`settings`、`common`、`session`、`search`、`palette`、`shortcuts` 和 `theme` 命名空间，`serial` 命名空间必须包含 `dataModeText`、`dataModeHex`、`dataModeDual` 三个数据模式键
 
 #### Scenario: 英文语言文件完整性
 - **WHEN** 查看 `en-US.json`

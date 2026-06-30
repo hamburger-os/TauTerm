@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
@@ -37,7 +37,7 @@ interface ConnectDialogProps {
  */
 export default function ConnectDialog({ isOpen, onClose, editSessionId }: ConnectDialogProps) {
   const { t } = useTranslation();
-  const { state, refreshEndpoints, disconnect, switchTab, deleteSession, createOfflineSession } = useSession();
+  const { state, refreshEndpoints, switchTab, createOfflineSession, reconfigureSession } = useSession();
 
   const [step, setStep] = useState<"mode" | "config">("mode");
   const [selectedMode, setSelectedMode] = useState("serial");
@@ -50,6 +50,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [stopBits, setStopBits] = useState("1");
   const [flowControl, setFlowControl] = useState("none");
   const [dataMode, setDataMode] = useState("text");
+  const [dualFrameTimeout, setDualFrameTimeout] = useState(50);
   const [transferEnabled, setTransferEnabled] = useState(true);
   const [transferProtocol, setTransferProtocol] = useState<"ymodem" | "xmodem" | "zmodem">("ymodem");
   const [sessionName, setSessionName] = useState("");
@@ -58,6 +59,11 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
   const serialEndpoints = state.endpoints.filter(e => e.connection_type === "serial");
   const isSerial = selectedMode === "serial";
+
+  // 保持最新的 tabs 引用，供 useEffect 在 editSessionId 变化时读取最新数据，
+  // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
+  const tabsRef = useRef(state.tabs);
+  tabsRef.current = state.tabs;
 
   // 从 PluginRegistry 获取可用协议（替换硬编码列表）
   const availableModes = pluginRegistry.getByCapability("connection").map(p => ({
@@ -76,7 +82,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setConnecting(false);
 
     if (editSessionId) {
-      const targetTab = state.tabs.find(t => t.id === editSessionId);
+      // 使用 tabsRef 读取最新 tabs，避免将 state.tabs 放入 deps（导致 session-stats 每秒重置表单）
+      const targetTab = tabsRef.current.find(t => t.id === editSessionId);
       if (targetTab) {
         setSelectedMode(targetTab.connection_type);
         setStep("config");
@@ -89,6 +96,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           if (typeof p.stop_bits === "string") setStopBits(p.stop_bits);
           if (typeof p.flow_control === "string") setFlowControl(p.flow_control);
           if (typeof p.data_mode === "string") setDataMode(p.data_mode);
+          if (typeof p.dual_frame_timeout_ms === "number") setDualFrameTimeout(p.dual_frame_timeout_ms);
         }
         if (targetTab.name) setSessionName(targetTab.name);
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
@@ -106,10 +114,11 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setStopBits("1");
     setFlowControl("none");
     setDataMode("text");
+    setDualFrameTimeout(50);
     setTransferEnabled(true);
     setTransferProtocol("ymodem");
     setSessionName("");
-  }, [isOpen, editSessionId, state.tabs, refreshEndpoints]);
+  }, [isOpen, editSessionId, refreshEndpoints]);
 
   useEffect(() => {
     if (!isOpen || step !== "config" || editSessionId) return;
@@ -141,36 +150,42 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       stop_bits: stopBits,
       flow_control: flowControl,
       data_mode: dataMode,
+      dual_frame_timeout_ms: dualFrameTimeout,
       transfer_enabled: transferEnabled,
       transfer_protocol: transferProtocol,
     } : {};
 
     try {
       if (editSessionId) {
-        // 编辑模式：先断连，再用新配置替换旧会话
-        const targetTab = state.tabs.find(t => t.id === editSessionId);
-        if (targetTab?.state === "connected") {
-          await disconnect(editSessionId);
-        }
-      }
-      // 仅保存配置，不打开串口（连接由右键菜单触发）
-      const sid = await createOfflineSession(
-        isSerial ? port : selectedMode, params,
-        sessionName || undefined, undefined,
-        transferEnabled, transferProtocol,
-      );
-      if (sid) {
-        if (editSessionId) {
-          await deleteSession(editSessionId);
-        }
-        await switchTab(sid);
+        // 编辑模式：原地更新配置，保持 UUID 连续性
+        //   - 已连接：断连 → 更新磁盘配置 → 重连
+        //   - 未连接：仅更新磁盘配置 + 前端状态
+        await reconfigureSession(
+          editSessionId,
+          isSerial ? port : selectedMode,
+          params,
+          sessionName || undefined,
+          transferEnabled,
+          transferProtocol,
+        );
         onClose();
+      } else {
+        // 新建模式：仅保存配置，不打开串口（连接由右键菜单触发）
+        const sid = await createOfflineSession(
+          isSerial ? port : selectedMode, params,
+          sessionName || undefined, undefined,
+          transferEnabled, transferProtocol,
+        );
+        if (sid) {
+          await switchTab(sid);
+          onClose();
+        }
       }
     } catch (e) {
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, dataMode, transferEnabled, transferProtocol, sessionName, selectedMode, editSessionId, state.tabs, createOfflineSession, disconnect, deleteSession, switchTab, onClose]);
+  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -185,24 +200,24 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
-
   return (
     <AnimatePresence>
-      <motion.div
-        className={`${styles.overlay} glass-overlay`}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={handleOverlayClick}
-      >
+      {isOpen && (
         <motion.div
-          className={`${styles.dialog} liquid-glass`}
-          initial={{ opacity: 0, y: 20, scale: 0.95 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 20, scale: 0.95 }}
-          transition={{ duration: 0.2 }}
+          className={`${styles.overlay} glass-overlay`}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+          onClick={handleOverlayClick}
         >
+          <motion.div
+            initial={{ y: 20, scale: 0.95, opacity: 0 }}
+            animate={{ y: 0, scale: 1, opacity: 1 }}
+            exit={{ y: 20, scale: 0.95, opacity: 0 }}
+            transition={{ duration: 0.15, delay: 0.05, ease: [0.4, 0, 0.2, 1] }}
+          >
+            <div className={`${styles.dialog} liquid-glass`}>
           {/* ── 步骤 1: 模式选择（从 PluginRegistry 动态生成） ── */}
           {step === "mode" && (
             <>
@@ -315,8 +330,26 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                     <select className={`${styles.select} liquid-glass-input`} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
                       <option value="text">{t("serial.dataModeText")}</option>
                       <option value="hex">{t("serial.dataModeHex")}</option>
+                      <option value="dual">{t("serial.dataModeDual")}</option>
                     </select>
                   </div>
+
+                  {/* Dual 模式分帧超时（仅 Dual 模式可见） */}
+                  {dataMode === "dual" && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("serial.dualFrameTimeout")}</label>
+                      <input
+                        type="number"
+                        className={`${styles.numberInput} liquid-glass-input`}
+                        value={dualFrameTimeout}
+                        min={5}
+                        max={500}
+                        step={5}
+                        onChange={e => setDualFrameTimeout(Number(e.target.value))}
+                        disabled={connecting}
+                      />
+                    </div>
+                  )}
 
                   {/* 文件传输开关 */}
                   <div className={styles.field}>
@@ -354,7 +387,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               {/* ── 未实现插件的占位提示 ── */}
               {!isSerial && (
                 <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
-                  <Icon name="construction" size="lg" /> 插件 "{selectedMode}" 的前端配置表单尚未实现，将在后续版本中提供。
+                  <Icon name="construction" size="lg" />{" "}
+                  {t("connectionType.formNotImplemented", { pluginName: selectedMode })}
                 </div>
               )}
 
@@ -376,8 +410,10 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               </div>
             </>
           )}
-        </motion.div>
+        </div>
       </motion.div>
+      </motion.div>
+      )}
     </AnimatePresence>
   );
 }

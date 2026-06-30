@@ -9,7 +9,7 @@ interface TitleBarProps {
 }
 
 /** 同步检测当前平台是否为需要自定义窗口控制的平台（Windows / Linux） */
-function needsCustomTitleBar(): boolean {
+export function needsCustomTitleBar(): boolean {
   // User-Agent Client Hints API（Chromium 90+ / WebView2 90+）
   if ("userAgentData" in navigator && (navigator as any).userAgentData?.platform) {
     return (navigator as any).userAgentData.platform !== "macOS";

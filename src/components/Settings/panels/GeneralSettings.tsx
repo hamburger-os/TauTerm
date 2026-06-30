@@ -41,9 +41,20 @@ export default function GeneralSettings() {
             <Icon name="check-plain" size="sm" className={styles.optionIcon} />
             {t("serial.dataModeHex")}
           </button>
+          <button
+            className={`${styles.optionItem} ${currentMode === "dual" ? styles.optionItemActive : ""}`}
+            onClick={() => handleModeChange("dual")}
+          >
+            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+            {t("serial.dataModeDual")}
+          </button>
         </div>
         <p className={styles.settingDesc}>
-          {t("settings.defaultDataMode")}: {currentMode === "text" ? t("serial.dataModeText") : t("serial.dataModeHex")}
+          {t("settings.defaultDataMode")}: {
+            currentMode === "text" ? t("serial.dataModeText") :
+            currentMode === "hex" ? t("serial.dataModeHex") :
+            t("serial.dataModeDual")
+          }
         </p>
       </div>
     </div>

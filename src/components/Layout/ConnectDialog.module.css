@@ -11,6 +11,9 @@
   overflow-y: auto;
   border-radius: var(--radius-xl);
   padding: 20px;
+  /* GPU compositing layer is provided by the .liquid-glass global class
+     (backface-visibility: hidden), which ensures backdrop-filter blur
+     texture is captured before the wrapper's animation plays. */
 }
 
 .title {
@@ -147,12 +150,18 @@
   font-weight: 500;
 }
 
-.select, .input {
+.select, .input, .numberInput {
   width: 100%;
   padding: 6px 10px;
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   font-family: var(--font-ui);
+}
+
+.numberInput {
+  width: 90px;
+  font-family: var(--font-mono);
+  text-align: center;
 }
 
 /* Select-only: custom arrow via CSS variable */

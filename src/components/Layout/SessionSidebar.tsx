@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
@@ -27,9 +27,18 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   const [search, setSearch] = useState("");
   const { menu, openMenu, closeMenu } = useContextMenu();
 
-  const filtered = state.tabs.filter(tab =>
-    !search || tab.name.toLowerCase().includes(search.toLowerCase()) || tab.endpoint.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = useMemo(() => state.tabs
+    .filter(tab =>
+      !search || tab.name.toLowerCase().includes(search.toLowerCase()) || tab.endpoint.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => {
+      // 稳定排序：连接类型 → 端口（自然排序） → 会话名称
+      const typeCmp = a.connection_type.localeCompare(b.connection_type);
+      if (typeCmp !== 0) return typeCmp;
+      const endpointCmp = a.endpoint.localeCompare(b.endpoint, undefined, { numeric: true });
+      if (endpointCmp !== 0) return endpointCmp;
+      return a.name.localeCompare(b.name);
+    }), [state.tabs, search]);
 
   const handleSelect = useCallback((id: string) => {
     switchTab(id);

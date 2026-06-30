@@ -1,0 +1,123 @@
+/* DualPane — 双栏数据显示（ASCII 左 / HEX 右）
+ *
+ * 单滚动容器 + 每帧一行 flex 布局：
+ * - 左右单元格各自换行，行高取最大值保证对齐
+ * - 绝对定位分隔条可拖拽调整列宽
+ * - 动态布局值（列宽、分隔条位置、字号）由 React inline style 设置
+ */
+
+.container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  line-height: 1.55;
+}
+
+/* ── 统一滚动区域 ── */
+
+.scrollArea {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: auto;
+  contain: paint;
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass-border-default) transparent;
+}
+
+.scrollArea::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollArea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollArea::-webkit-scrollbar-thumb {
+  background: var(--glass-border-default);
+  border-radius: 3px;
+}
+
+/* ── 每帧一行 ── */
+
+.row {
+  display: flex;
+  align-items: stretch;
+  min-height: 1.55em;
+}
+
+.txRow {
+  color: var(--accent-secondary);
+}
+
+.rxRow {
+  color: inherit;
+}
+
+/* ── 左单元格：ASCII 文本 ── */
+
+.asciiCell {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  overflow-wrap: anywhere;
+  color: inherit;
+}
+
+/* ── 右单元格：HEX ── */
+
+.hexCell {
+  flex: 1;
+  padding: 4px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: inherit;
+}
+
+/* ── 绝对定位拖拽分隔条 ── */
+
+.divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 2px;
+  background: var(--glass-border-default);
+  cursor: col-resize;
+  transition: background 0.15s;
+  z-index: 1;
+}
+
+.divider:hover,
+.divider:active,
+.dividerActive {
+  background: var(--glass-border-hover);
+}
+
+/* 扩展点击区域 */
+.divider::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  top: 0;
+  bottom: 0;
+}
+
+/* ── 方向与时间标签 ── */
+
+.dirTag {
+  color: inherit;
+  margin-right: 2px;
+  user-select: none;
+}
+
+.tsTag {
+  color: var(--text-secondary);
+  opacity: 0.6;
+  margin-right: 8px;
+  user-select: none;
+}
+

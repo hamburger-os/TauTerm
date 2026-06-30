@@ -54,7 +54,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
     return hex.length > 0 && hex.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(hex);
   };
 
-  // 发送逻辑
+  // 发送逻辑（手动触发：Enter / 点击发送按钮）
   const doSend = useCallback(() => {
     // 使用 ref 读取最新值，避免定时器回调因闭包陈旧而发送过时数据
     const currentInput = inputRefForInterval.current;
@@ -89,7 +89,38 @@ export default function SendBar({ sessionId }: SendBarProps) {
     inputRef.current?.focus();
   }, [newlineMode, sendMode, sessionId, sendData]);
 
-  // 重复发送定时器 — doSend 通过 ref 读取输入值，不受 doSend 引用变化影响
+  // 周期发送回调 — 与 doSend 逻辑一致，但不抢夺焦点
+  // 避免 setInterval 触发时打断用户在其他控件上的操作（如下拉框）
+  const doIntervalSend = useCallback(() => {
+    const currentInput = inputRefForInterval.current;
+    if (!currentInput.trim() && sendMode === "text") return;
+
+    let data: string | Uint8Array;
+    if (sendMode === "hex") {
+      const hex = currentInput.replace(/\s/g, "");
+      if (hex.length === 0 || hex.length % 2 !== 0) return;
+      if (!/^[0-9a-fA-F]+$/.test(hex)) return;
+      const len = hex.length / 2;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+      }
+      data = bytes;
+    } else {
+      data = currentInput + NEWLINE_MAP[newlineMode];
+    }
+
+    sendData(sessionId, data);
+
+    setSendHistory(prev => {
+      const entry = currentInput;
+      const next = [entry, ...prev.filter(h => h !== entry)];
+      return next.slice(0, 50);
+    });
+    // 注意：不调用 inputRef.current?.focus() —— 周期发送不应抢夺焦点
+  }, [newlineMode, sendMode, sessionId, sendData]);
+
+  // 重复发送定时器 — 使用 doIntervalSend 避免定时器抢夺焦点
   // 只依赖开关和间隔变化，避免因 newlineMode/sendMode 切换导致不必要的定时器重建
   useEffect(() => {
     if (intervalRef.current) {
@@ -100,7 +131,7 @@ export default function SendBar({ sessionId }: SendBarProps) {
       ? isHexValid(inputRefForInterval.current)
       : inputRefForInterval.current.trim().length > 0;
     if (repeatEnabled && repeatInterval >= 50 && hasValidInput) {
-      intervalRef.current = setInterval(doSend, repeatInterval);
+      intervalRef.current = setInterval(doIntervalSend, repeatInterval);
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);

@@ -61,6 +61,7 @@ blur: var(--blur-xs);              /*  4px — overlay backdrops (shared constan
 | Frame | 24px | `--radius-xl`, `--radius-2xl` | Dialogs, modals, settings container, command palette |
 | Panel | 16px | `--radius-lg` | Terminal viewport, layout chrome (toolbar/sidebar/statusbar/sendbar/transmission panel), cards, glass panels |
 | Control | 12px | `--radius-sm`, `--radius-md` | Buttons, inputs, selects, list/nav items |
+| Window | 8px | `--radius-window` | Window-level chrome corners (toolbar top / statusbar bottom), matches OS frame curvature |
 | Pill | 9999px | `--radius-full` | Toggle tracks/knobs, badges, indicator dots |
 | Micro | 4px | `--radius-xs` | Scrollbar thumbs, tiny shortcut badges |
 
@@ -104,14 +105,14 @@ backdrop-filter: blur(var(--glass-blur));  /* 25px google-glow / 30px obsidian /
 
 **Glass panels:**
 ```css
-background: var(--glass-fill);         /* v3 primary — glass fill gradient */
-/* background: var(--glass-bg); */     /* @deprecated v2 alias — use --glass-fill */
+background: var(--glass-fill);         /* glass fill gradient */
 backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
-border: 1px solid var(--glass-border-default);  /* v3 primary */
-/* border: 1px solid var(--glass-border); */    /* @deprecated v2 alias — use --glass-border-default */
+border: 1px solid var(--glass-border-default);  /* glass border */
 border-top: 1px solid var(--glass-border-top);
 border-left: 1px solid var(--glass-border-left);
 box-shadow: var(--glass-shadow-outer), var(--glass-shadow-inner);
+/* Terminal text shadow (frosted theme uses this for readability on glass) */
+text-shadow: var(--glass-shadow-text);
 /* Active/hover states */
 background: var(--glass-bg-active);
 border-color: var(--glass-border-focus);
@@ -135,16 +136,6 @@ box-shadow: var(--glass-input-shadow-inner);
 /* focus: */
 border-color: var(--glass-input-focus-border);
 box-shadow: var(--glass-input-shadow-inner), var(--glass-input-focus-glow);
-```
-
-**Layout blocks (@deprecated — use `.liquid-glass` + `var(--glass-fill)`):**
-```css
-/* @deprecated v1.5 — DO NOT USE in new code */
-/* background: var(--block-toolbar-bg);     Toolbar area */
-/* background: var(--block-sidebar-bg);     Sidebar area */
-/* background: var(--block-terminal-bg);    Terminal viewport */
-/* background: var(--block-sendbar-bg);     SendBar area */
-/* background: var(--block-statusbar-bg);   StatusBar area */
 ```
 
 **Primary action button (holographic):**
@@ -226,11 +217,10 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
   box-shadow: var(--shadow-glass), var(--dialog-shadow);
 }
 
-/* [错误] Wrong — using deprecated tokens on floating element */
+/* [错误] Wrong — using incorrect tokens on floating element */
 .floatingPanel {
-  background: var(--block-terminal-bg);       /* @deprecated */
   backdrop-filter: blur(var(--blur-medium));   /* use --glass-blur */
-  border: 1px solid var(--glass-border);       /* v2 alias */
+  border: 1px solid var(--glass-border-default); /* use glass token */
 }
 ```
 
@@ -489,6 +479,62 @@ font-size: 11px;                 /* use var(--text-xs) */
 > `outline`, `:focus` glow, `:hover` border, `:disabled` transparency.
 > CSS Modules only need to define select-specific props and component-level sizing.
 
+### Number Input Spin Button Pattern (v3.4)
+
+Number inputs (`<input type="number">`) with the `liquid-glass-input` class get auto-styled spin buttons (▲▼ arrows) from `global.css`. These use an inline SVG `background-image` with `fill="currentColor"` for automatic theme adaptation. CSS Modules should ONLY define layout/sizing — never override spin button visuals.
+
+**Global CSS handles (DO NOT redefine in CSS Modules):**
+```css
+/* global.css — these already exist, no need to copy */
+.liquid-glass-input[type="number"]::-webkit-inner-spin-button {
+  /* SVG arrows via background-image, color via var(--text-secondary) */
+  /* hover: opacity 1, active: color → var(--text-primary) */
+  /* disabled: opacity 0.3 */
+}
+```
+
+**CSS Module — layout/sizing only:**
+```css
+/* [正确] Correct — layout only, spin button visuals are global */
+.intervalInput {
+  width: 52px;
+  padding: 4px 6px;
+  border-radius: var(--radius-md);   /* 12px — Control tier */
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  text-align: right;
+  /* NO background, NO background-image, NO ::-webkit-inner-spin-button overrides */
+}
+
+/* [错误] Wrong — overriding global spin button visuals */
+.intervalInput::-webkit-inner-spin-button {
+  background: red;   /* breaks theme consistency */
+}
+```
+
+**JSX — compose with global class:**
+```tsx
+// [正确] Correct
+<input type="number"
+  className={`${styles.intervalInput} liquid-glass-input`}
+  value={interval} onChange={...} min={50} step={100} />
+
+// [错误] Wrong — missing liquid-glass-input → no spin button styling
+<input type="number" className={styles.intervalInput} />
+
+// [错误] Wrong — reusing .select class on number input
+// .select applies var(--select-arrow) background-image → conflicts with spin button
+<input type="number" className={`${styles.select} liquid-glass-input`} />
+```
+
+**Rules:**
+- Number inputs MUST use `className={${styles.xxx} liquid-glass-input}` — the global class provides spin button styling
+- CSS Modules MUST NOT define `::-webkit-inner-spin-button` / `::-webkit-outer-spin-button` pseudo-elements — global CSS owns these
+- CSS Modules MUST NOT set `background-image` on number inputs — conflicts with the spin button SVG arrows
+- Do NOT reuse the `.select` CSS Module class (which has `var(--select-arrow)` background-image) on `<input type="number">` — always use a dedicated number input class
+- The spin button SVG uses `fill="currentColor"` — the color adapts via the pseudo-element's `color` property set to `var(--text-secondary)` in global CSS
+- Spin button width is 22px (comfortable touch target) — ensure the number input is wide enough to accommodate (minimum ~50px for 2-3 digit values)
+
 ### Status-Tinted Background (color-mix pattern)
 
 Use `color-mix()` to create theme-adaptive tinted backgrounds. This is the canonical pattern for error boxes, warning banners, success indicators, and signal badges:
@@ -627,13 +673,50 @@ For pulsing connected indicators (session sidebar), add the `pulse` animation:
 }
 ```
 
+### DualPane Component Pattern
+
+DualPane is the dual-column ASCII/HEX display component for serial terminal data. It follows a strict separation: **static visual properties** live in CSS Module classes using tokens, **dynamic layout values** live in React inline styles.
+
+**Token hard requirements:**
+
+| Element | Must Use | Must NOT |
+|---------|----------|----------|
+| Container font | `var(--font-mono)` | Hardcoded font stack |
+| TX row color | `var(--accent-secondary)` | Hardcoded blue/cyan |
+| RX row color | `inherit` (inherits `--text-primary`) | Separate color token |
+| Divider default | `var(--glass-border-default)` | Any other border color |
+| Divider hover/active | `var(--glass-border-hover)` | Any other hover color |
+| Timestamp label | `var(--text-secondary)` + `opacity: 0.6` | `--text-muted` or hardcoded |
+| Scrollbar thumb | `var(--glass-border-default)` | Hardcoded color |
+
+**Dynamic layout values (inline style only):**
+
+```tsx
+// Container: fontSize via inline style (user-adjustable from localStorage)
+<div className={styles.container} style={{ fontSize: `${fontSize}px` }}>
+
+// ASCII cell: width via inline style (draggable split, defaults 33.33%)
+<div className={styles.asciiCell} style={{ width: `${splitPct}%` }}>
+
+// Divider: left position via inline style (tracks the split)
+<div className={styles.divider} style={{ left: `${splitPct}%` }}>
+```
+
+**Rules:**
+- Never create CSS custom properties (e.g., `--dual-split`, `--dual-font-size`) — use inline styles directly
+- Never hardcode font stacks — always use `var(--font-mono)`
+- Never hardcode colors in DualPane — all colors must reference theme tokens
+- Divider must use `position: absolute; transform: translateX(-50%)` — the inline `left` value is the split percentage
+- Divider must carry full ARIA: `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow`, `aria-valuemin/max`, `aria-label`, `tabIndex={0}`
+- Dragging state is driven by `useState` → CSS class `dividerActive` toggle (not ref)
+
 ## Before Submitting Code
 
 Run this mental checklist for every new/changed component:
 
 1. All `color`/`background`/`border`/`box-shadow`/`font-size` use `var(--xxx)` tokens. For `font-size`: ≥11px MUST use `--text-*` tokens; only micro-text (8/9/10px) may use raw px values. For text color: `--text-muted` is reserved for placeholders, timestamps, shortcuts, and metadata — NEVER for labels, identifiers, or descriptions the user needs to read. All WCAG AA contrast ratios: `--text-muted` ≥ 5.5:1 on `--bg-base`, `--text-secondary` ≥ 7:1. **Card elements**: inner cards inside `.liquid-glass` surfaces use `.liquid-glass-card` (height ≥50px, `--shadow-elevated` 16px阴影) or the Mini-Card pattern (height <50px, `--shadow-sm` 6px阴影 + 3D asymmetric borders). Flat `border: 1px solid var(--glass-border-default)` alone is never sufficient for glass card elements — always include `border-top: var(--glass-border-top)` and `border-left: var(--glass-border-left)` highlights.
 2. No `rgba(0,0,0,x)` or `rgba(255,255,255,x)` hardcoded (except allowed exceptions)
-3. `border-radius` uses the correct semantic tier: Frame→xl/2xl(24px), Panel→lg(16px), Control→md/sm(12px), Pill→full(9999px), Micro→xs(4px). Zero hardcoded pixel values (except ProgressBar's dynamic `${height/2}px`). Edge-touching elements use 0px.
+3. `border-radius` uses the correct semantic tier: Frame→xl/2xl(24px), Panel→lg(16px), Control→md/sm(12px), Window→window(8px), Pill→full(9999px), Micro→xs(4px). Zero hardcoded pixel values (except ProgressBar's dynamic `${height/2}px`). Edge-touching elements use 0px.
 4. Dialogs/popups use `var(--dialog-bg)` background + `backdrop-filter: blur()`
 5. Select `<option>` elements use `var(--select-option-bg)`
 6. Would look correct in all 3 themes: google-glow (dark), obsidian (darker), frosted (light)
@@ -646,7 +729,7 @@ Run this mental checklist for every new/changed component:
 12. Custom SVG data URIs (select arrows, etc.) have their hardcoded fill color noted in a comment
 13. Disabled opacity: `opacity: 0.5` for buttons (`.liquid-glass-button` / `.liquid-primary-button`), `opacity: 0.4` for inputs/selects (`.liquid-glass-input`). These are managed BY the global classes — CSS Modules do not need to redefine them. (Note: `.liquid-glass-button:disabled` was added in v3.1 to close a gap where only the primary and input variants had global disabled rules.)
 14. Layout surfaces (toolbar, sidebar, statusbar, terminal viewport, sendbar, transmission panel) use `liquid-glass` global class — CSS Modules for layout chrome contain ONLY layout properties. NO hand-rolled `background` / `backdrop-filter` / `border` / `box-shadow` on chrome surfaces.
-15. No v2 deprecated tokens: `--glass-bg` → `--glass-fill`, `--glass-border` → `--glass-border-default`, `--block-*` → `.liquid-glass`. Verify with: `grep -rn '\-\-glass-border[^-]\|\-\-glass-bg[^-]\|\-\-block-' src/ --include='*.css' --include='*.tsx'`
+15. No deprecated v2 tokens (`--glass-bg`, `--glass-border`, `--block-*`). Verify with: `grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'`
 16. Layout bars use `align-items: center` + fixed `height` (Toolbar=36px, StatusBar=26px, SendBar=40px). Controls inside the bar use consistent vertical padding to ensure horizontal alignment.
 17. Renderer components (under `src/renderers/`) must use CSS Modules + tokens — inline `React.CSSProperties` objects with hardcoded numeric values are forbidden.
 18. No dead CSS Module classes — every class defined in a `.module.css` file must be referenced by the corresponding `.tsx` file.

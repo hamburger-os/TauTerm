@@ -52,13 +52,13 @@ Flow animations SHALL use durations of 22s, 25s, 26s, and 28s respectively, with
 ### Requirement: Theme-Aware Orb Parameters
 The `opacity`, `filter: blur()`, and `mix-blend-mode` of `.glow-orb` elements SHALL vary by active theme via CSS custom properties.
 
-**google-glow**: opacity 0.65, blur 120px, mix-blend-mode screen
+**google-glow**: opacity 0.48, blur 150px, mix-blend-mode screen
 **obsidian**: opacity 0.45, blur 140px, mix-blend-mode screen
 **frosted**: opacity 0.35, blur 140px, mix-blend-mode multiply
 
 #### Scenario: Switch from google-glow to obsidian
 - **WHEN** user changes theme from google-glow to obsidian
-- **THEN** orb opacity decreases from 0.65 to 0.45, blur increases from 120px to 140px
+- **THEN** orb opacity decreases from 0.48 to 0.45, blur increases from 150px to 140px
 
 #### Scenario: Switch to frosted light theme
 - **WHEN** user changes theme to frosted

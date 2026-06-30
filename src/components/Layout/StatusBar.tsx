@@ -50,8 +50,8 @@ export default function StatusBar() {
   const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
   const params = activeTab?.params as Record<string, unknown> | undefined;
 
-  // 数据模式
-  const dataMode = params?.data_mode === "hex" ? "HEX" : "Text";
+  // 数据模式（使用 i18n 键确保语言切换时正确显示）
+  const dataMode = params?.data_mode === "hex" ? t("serial.dataModeHex") : params?.data_mode === "dual" ? t("serial.dataModeDual") : t("serial.dataModeText");
 
   return (
     <div className={`${styles.bar} liquid-glass`}>

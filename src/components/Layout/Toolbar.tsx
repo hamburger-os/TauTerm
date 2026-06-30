@@ -1,11 +1,11 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import type { ToolbarItem } from "../../core/plugin-registry";
 import Icon from "../common/Icon";
-import TitleBar from "./TitleBar";
+import TitleBar, { needsCustomTitleBar } from "./TitleBar";
 import styles from "./Toolbar.module.css";
 
 interface ToolbarProps {
@@ -35,16 +35,38 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
   const centerItems = pluginToolbarItems.filter(i => i.position === "center");
   const rightItems = pluginToolbarItems.filter(i => i.position === "right");
 
+  /** 手动双击检测 ref：记录上次 mousedown 的时间与坐标 */
+  const lastMouseDownRef = useRef<{ time: number; x: number; y: number } | null>(null);
+
   const handleClick = useCallback(
     (id: string) => onAction(id),
     [onAction]
   );
 
-  /** 工具栏非交互区域按下鼠标 → 触发窗口拖动 */
+  /** 工具栏非交互区域按下鼠标 → 触发窗口拖动 / 双击最大化 */
   const handleToolbarMouseDown = useCallback((e: React.MouseEvent) => {
-    // 仅当点击目标是工具栏容器自身或 spacer（非交互元素）时触发拖动
+    // 仅当点击目标是工具栏容器自身或 spacer（非交互元素）时触发
     const target = e.target as HTMLElement;
     if (target.closest("button, input, a, [role='button']")) return;
+
+    // 手动检测双击：在两次 mousedown 间距 < 300ms 且坐标变化 < 5px 时触发最大化/还原。
+    // 必须在 startDragging() 之前检测：startDragging() 会启动系统级窗口拖拽，
+    // 吞掉后续 mousedown 事件，导致 DOM dblclick 事件无法可靠触发。
+    const now = Date.now();
+    const last = lastMouseDownRef.current;
+    if (
+      needsCustomTitleBar() &&
+      last &&
+      now - last.time < 300 &&
+      Math.abs(e.clientX - last.x) < 5 &&
+      Math.abs(e.clientY - last.y) < 5
+    ) {
+      lastMouseDownRef.current = null;
+      getCurrentWindow().toggleMaximize();
+      return;
+    }
+
+    lastMouseDownRef.current = { time: now, x: e.clientX, y: e.clientY };
     getCurrentWindow().startDragging();
   }, []);
 

@@ -35,7 +35,7 @@ The right column (Technical Details, ~64% width) SHALL display:
 - Upper sub-area: Protocol-specific parameters (resolved via `ProfileResolver` per connection type)
 - Lower sub-area: Real-time runtime statistics (TX bytes, RX bytes, connection uptime)
 
-The two columns SHALL be separated by a glass-border divider (`1px solid var(--glass-border)`).
+The two columns SHALL be separated by a glass-border divider (`1px solid var(--glass-border-default)`).
 
 The panel SHALL maintain a minimum height of 120px to ensure all content areas remain visible.
 

@@ -9,7 +9,8 @@
     "ssh": "SSH",
     "telnet": "Telnet",
     "tftp": "TFTP",
-    "comingSoon": "(Coming Soon)"
+    "comingSoon": "(Coming Soon)",
+    "formNotImplemented": "The configuration form for the \"{{pluginName}}\" plugin is not yet implemented and will be provided in a future release."
   },
   "serial": {
     "title": "Connection Settings",
@@ -22,6 +23,8 @@
     "dataMode": "Data Mode",
     "dataModeText": "Text",
     "dataModeHex": "HEX",
+    "dataModeDual": "Dual",
+    "dualFrameTimeout": "Frame Timeout (ms)",
     "enableTransfer": "Enable File Transfer",
     "transferProtocol": "Transfer Protocol",
     "connect": "Connect",
@@ -212,12 +215,14 @@
     "switchToEn": "Switch to English",
     "switchToZh": "切换为中文",
     "theme": "Theme",
-    "themeNeonDark": "Neon Dark",
-    "themeOcean": "Ocean Blue",
-    "themeSunset": "Sunset Amber",
+    "themeGoogleGlow": "Google Glow",
+    "themeObsidian": "Obsidian",
+    "themeFrosted": "Frosted",
     "defaultDataMode": "Default Data Mode",
     "fontSize": "Terminal Font Size",
-    "fontSizeNote": "Changes take effect after reconnecting the terminal",
+    "fontSizeNote": "Changes apply immediately to all terminal views",
+    "bufferLines": "Buffer Lines",
+    "bufferLinesNote": "lines (1,000–100,000). Changes apply immediately to all modes",
     "languageLabel": "Interface Language",
     "languageZh": "中文",
     "languageEn": "English",
@@ -257,6 +262,9 @@
     "notAvailable": "Transfer not available",
     "selectFiles": "Select Files",
     "selectDir": "Select Directory"
+  },
+  "dualPane": {
+    "resizeLabel": "Resize panels"
   },
   "common": {
     "ok": "OK",

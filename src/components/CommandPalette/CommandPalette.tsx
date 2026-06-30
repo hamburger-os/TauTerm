@@ -102,25 +102,25 @@ export default function CommandPalette({ isOpen, onClose, onExecute }: CommandPa
     }
   }, [onClose, flatList, selectedIndex, handleSelect]);
 
-  if (!isOpen) return null;
-
   return (
     <AnimatePresence>
-      <motion.div
-        className={`${styles.overlay} glass-overlay`}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-      >
+      {isOpen && (
         <motion.div
-          className={`${styles.palette} liquid-glass`}
-          initial={{ opacity: 0, y: -20, scale: 0.95 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -20, scale: 0.95 }}
-          transition={{ duration: 0.15 }}
-          onClick={(e) => e.stopPropagation()}
+          className={`${styles.overlay} glass-overlay`}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.12, ease: [0.4, 0, 0.2, 1] }}
+          onClick={onClose}
         >
+          <motion.div
+            initial={{ y: -20, scale: 0.95, opacity: 0 }}
+            animate={{ y: 0, scale: 1, opacity: 1 }}
+            exit={{ y: -20, scale: 0.95, opacity: 0 }}
+            transition={{ duration: 0.11, delay: 0.04, ease: [0.4, 0, 0.2, 1] }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`${styles.palette} liquid-glass`}>
           <input
             ref={inputRef}
             className={styles.input}
@@ -155,8 +155,10 @@ export default function CommandPalette({ isOpen, onClose, onExecute }: CommandPa
               ))
             )}
           </div>
+          </div>
         </motion.div>
-      </motion.div>
+        </motion.div>
+      )}
     </AnimatePresence>
   );
 }

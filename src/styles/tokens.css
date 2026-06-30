@@ -66,12 +66,12 @@
 :root, [data-theme="google-glow"] {
   /* 背景与光球 */
   --bg-base: #080808;
-  --bg-orb-opacity: 0.65;
-  --bg-orb-blur: 120px;
+  --bg-orb-opacity: 0.48;
+  --bg-orb-blur: 150px;
   --bg-orb-blend: screen;
 
   /* 液态玻璃 */
-  --glass-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  --glass-fill: linear-gradient(135deg, rgba(10, 10, 18, 0.16) 0%, rgba(8, 8, 14, 0.06) 100%);
   --glass-noise-opacity: 0.04;
   --glass-blur: 25px;
   --glass-blur-saturate: 100%;
@@ -95,13 +95,6 @@
   --glass-input-shadow-inner: inset 0 2px 5px rgba(0, 0, 0, 0.3);
   --glass-input-focus-border: rgba(255, 255, 255, 0.25);
   --glass-input-focus-glow: 0 0 20px rgba(66, 133, 244, 0.4);
-
-  /* 布局区块 — @deprecated v1.5 布局表面统一使用 .liquid-glass + var(--glass-fill) */
-  --block-toolbar-bg: rgba(0, 0, 0, 0.1);
-  --block-sidebar-bg: rgba(0, 0, 0, 0.2);
-  --block-terminal-bg: rgba(0, 0, 0, 0.3);
-  --block-sendbar-bg: rgba(0, 0, 0, 0.4);
-  --block-statusbar-bg: rgba(0, 0, 0, 0.35);
 
   /* 文字 */
   --text-primary: #e0e0ff;
@@ -133,10 +126,8 @@
 
   /* 辅助令牌（跨组件共享的状态与层级令牌，所有 3 套主题各自定义） */
   --bg-secondary: #0f0f1a;
-  --glass-bg: rgba(255, 255, 255, 0.05);
   --glass-bg-hover: rgba(255, 255, 255, 0.08);
   --glass-bg-active: rgba(255, 255, 255, 0.12);
-  --glass-border: rgba(255, 255, 255, 0.1);
   --glass-border-hover: rgba(255, 255, 255, 0.25);
   --glass-border-focus: rgba(66, 133, 244, 0.5);
   --blur-light: 8px;
@@ -187,13 +178,6 @@
   --glass-input-focus-border: rgba(255, 255, 255, 0.15);
   --glass-input-focus-glow: 0 0 20px rgba(66, 133, 244, 0.3);
 
-  /* 布局区块 — @deprecated v1.5 布局表面统一使用 .liquid-glass + var(--glass-fill) */
-  --block-toolbar-bg: rgba(0, 0, 0, 0.4);
-  --block-sidebar-bg: rgba(0, 0, 0, 0.6);
-  --block-terminal-bg: rgba(0, 0, 0, 0.5);
-  --block-sendbar-bg: rgba(0, 0, 0, 0.6);
-  --block-statusbar-bg: rgba(0, 0, 0, 0.55);
-
   /* 文字 */
   --text-primary: #e6e6e6;
   --text-secondary: #a6a6a6;
@@ -224,10 +208,8 @@
 
   /* 辅助令牌（跨组件共享的状态与层级令牌） */
   --bg-secondary: #0a0a10;
-  --glass-bg: rgba(255, 255, 255, 0.04);
   --glass-bg-hover: rgba(255, 255, 255, 0.06);
   --glass-bg-active: rgba(255, 255, 255, 0.10);
-  --glass-border: rgba(255, 255, 255, 0.06);
   --glass-border-hover: rgba(255, 255, 255, 0.15);
   --glass-border-focus: rgba(66, 133, 244, 0.35);
   --blur-light: 8px;
@@ -278,13 +260,6 @@
   --glass-input-focus-border: rgba(66, 133, 244, 0.5);
   --glass-input-focus-glow: 0 0 0 3px rgba(66, 133, 244, 0.15);
 
-  /* 布局区块 — @deprecated v1.5 布局表面统一使用 .liquid-glass + var(--glass-fill) */
-  --block-toolbar-bg: rgba(255, 255, 255, 0.3);
-  --block-sidebar-bg: rgba(255, 255, 255, 0.2);
-  --block-terminal-bg: rgba(255, 255, 255, 0.3);
-  --block-sendbar-bg: rgba(255, 255, 255, 0.5);
-  --block-statusbar-bg: rgba(255, 255, 255, 0.45);
-
   /* 文字 */
   --text-primary: #1e293b;
   --text-secondary: #3d4f61;
@@ -312,10 +287,8 @@
 
   /* 辅助令牌（跨组件共享的状态与层级令牌） */
   --bg-secondary: #f1f5f9;
-  --glass-bg: rgba(255, 255, 255, 0.5);
   --glass-bg-hover: rgba(255, 255, 255, 0.7);
   --glass-bg-active: rgba(255, 255, 255, 0.9);
-  --glass-border: rgba(148, 163, 184, 0.35);
   --glass-border-hover: rgba(100, 116, 139, 0.5);
   --glass-border-focus: rgba(66, 133, 244, 0.5);
   --blur-light: 8px;

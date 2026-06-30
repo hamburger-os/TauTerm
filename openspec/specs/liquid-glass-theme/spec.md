@@ -32,7 +32,7 @@ The token system SHALL include the following categories:
 - Glass: `--glass-fill`, `--glass-noise-opacity`, `--glass-noise-frequency`, `--glass-blur`, `--glass-blur-saturate`, `--glass-border-default`, `--glass-border-top`, `--glass-border-left`, `--glass-shadow-outer`, `--glass-shadow-inner`
 - Buttons: `--glass-button-bg`, `--glass-button-border`, `--glass-button-hover-bg`, `--glass-button-hover-border`, `--glass-button-shadow-inset`
 - Inputs: `--glass-input-bg`, `--glass-input-border`, `--glass-input-shadow-inner`, `--glass-input-focus-border`, `--glass-input-focus-glow`
-- Layout blocks: `--block-toolbar-bg`, `--block-sidebar-bg`, `--block-terminal-bg`, `--block-sendbar-bg`
+- Layout surfaces: `.liquid-glass` global class with `var(--glass-fill)` gradient
 - Text & Accent: `--text-primary`, `--text-secondary`, `--text-muted`, `--accent-primary`, `--accent-secondary`, `--accent-gradient`, `--accent-glow`
 - Status colors: `--color-success`, `--color-error`, `--color-warning`, `--color-info`
 - Dialog: `--dialog-bg`, `--dialog-shadow`, `--select-option-bg`

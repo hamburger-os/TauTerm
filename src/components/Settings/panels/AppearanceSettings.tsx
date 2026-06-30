@@ -1,25 +1,19 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme, THEMES } from "../../../context/ThemeContext";
 import Icon from "../../common/Icon";
 import styles from "../SettingsPage.module.css";
 
+/** 行缓冲滑块步长：1,000 行一档，避免拖动时频繁重设 xterm scrollback */
+const BUFFER_LINES_STEP = 1000;
+
 /**
  * 外观设置面板
  *
- * 主题选择 + 终端字体大小。
+ * 主题选择 + 终端字体大小 + 行缓冲上限（所有数据模式统一）。
  */
 export default function AppearanceSettings() {
   const { t } = useTranslation();
-  const { theme, setTheme } = useTheme();
-  const [fontSize, setFontSize] = useState(() => {
-    return Number(localStorage.getItem("tauterm-font-size") || "14");
-  });
-
-  const handleFontSizeChange = (val: number) => {
-    setFontSize(val);
-    localStorage.setItem("tauterm-font-size", String(val));
-  };
+  const { theme, setTheme, fontSize, setFontSize, bufferLines, setBufferLines } = useTheme();
 
   return (
     <div>
@@ -53,12 +47,32 @@ export default function AppearanceSettings() {
             max={24}
             step={1}
             value={fontSize}
-            onChange={(e) => handleFontSizeChange(Number(e.target.value))}
+            onChange={(e) => setFontSize(Number(e.target.value))}
           />
           <span className={styles.fontSliderValue}>{fontSize}px</span>
         </div>
         <p className={styles.settingDesc}>
           {t("settings.fontSize")}: {fontSize}px ({t("settings.fontSizeNote")})
+        </p>
+      </div>
+
+      {/* 行缓冲上限（统一：Text / HEX / Dual） */}
+      <div className={styles.settingGroup}>
+        <span className={styles.settingLabel}>{t("settings.bufferLines")}</span>
+        <div className={styles.fontSlider}>
+          <input
+            type="range"
+            className={styles.fontSliderInput}
+            min={1000}
+            max={100000}
+            step={BUFFER_LINES_STEP}
+            value={bufferLines}
+            onChange={(e) => setBufferLines(Number(e.target.value))}
+          />
+          <span className={styles.fontSliderValue}>{bufferLines.toLocaleString()}</span>
+        </div>
+        <p className={styles.settingDesc}>
+          {t("settings.bufferLines")}: {bufferLines.toLocaleString()} {t("settings.bufferLinesNote")}
         </p>
       </div>
     </div>

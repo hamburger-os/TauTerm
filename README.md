@@ -209,10 +209,11 @@ graph LR
 - 🔌 **微内核插件架构** — 所有协议作为独立插件，新协议无需修改内核代码
 - 🗂️ **统一标签页管理** — 串口、SSH、FTP、iPerf 共享同一标签栏，拖拽排序，右键菜单
 - 🗂️ **离线会话配置** — 不连接即可创建/编辑会话参数，持久化保存，右键菜单一键连接
-- 🖥️ **终端仿真** — 基于 xterm.js，多实例池管理，CSS opacity 无重建切换
+- 🖥️ **终端仿真** — 基于 xterm.js，多实例池管理，CSS opacity 无重建切换；支持 Text / HEX / Dual 三种数据模式
 - 📁 **文件传输** — 右侧竖向面板，按会话独立配置传输协议（YModem/XModem/ZModem），Inline / SideChannel / SeparateConnection 多策略自适应
-- 📤 **数据发送栏** — 终端底部快速发送，支持 Text/HEX 模式切换、换行符追加、重复发送、发送历史
-- ⚙️ **设置页面** — 全屏覆盖层，主题切换 / 字体大小 / 语言 / 字符编码集中管理
+- 📤 **数据发送栏** — 终端底部快速发送，支持 Text/HEX 输入、换行符追加、重复发送、发送历史
+- 📊 **Dual 双模显示** — 可拖拽分栏同时展示 ASCII 文本与 HEX 十六进制，毫秒级时间戳、按 `\r\n`/`\n`/`\r` 自动分帧、TX/RX 颜色区分
+- ⚙️ **设置页面** — 5 面板全屏覆盖层：通用数据模式、外观（主题 / 字体 / 行缓冲）、语言、编码、关于；字体大小和行缓冲滑块拖动即实时生效
 - 🔐 **凭据存储** — OS 原生 keyring + AES-256-GCM 降级，密码/密钥/证书/Token 类型安全
 - 🎨 **Liquid Glass v3 设计系统** — 动态炫彩光球背景、SVG 噪点磨砂纹理、不对称高光边框、Framer Motion 动画、Google Glow / Obsidian / Frosted 三主题
 - 🌐 **多语言** — i18next 命名空间隔离，插件自带翻译，运行时切换
@@ -291,13 +292,13 @@ TauTerm/
 │   │   └── CustomRenderer.tsx      # 插件自定义委托
 │   │
 │   ├── components/             # UI 组件
-│   │   ├── Layout/             # Toolbar, Sidebar, StatusBar, ConnectDialog, ResizeHandle, GoogleGlowBackground
+│   │   ├── Layout/             # TitleBar, Toolbar, Sidebar, StatusBar, ConnectDialog, ResizeHandle, GoogleGlowBackground
 │   │   ├── CommandPalette/     # 命令面板
 │   │   ├── SendBar/            # 数据发送栏（文本/HEX 输入、重复发送、发送历史）
 │   │   ├── Transmission/       # 传输侧面板（协议配置 + 发送/接收 + 进度）
 │   │   ├── Settings/           # 设置页（全屏覆盖层：通用/外观/语言/编码/关于）
 │   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
-│   │   └── common/             # GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
+│   │   └── common/             # Icon（30+ SVG 图标）, GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
 │   │
 │   ├── styles/                 # 全局样式
 │   │   ├── tokens.css           # CSS 自定义属性（3 套主题令牌）

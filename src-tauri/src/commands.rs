@@ -105,6 +105,8 @@ pub fn connect_session(
     plugin_id: Option<String>,
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
+    // 可选：传入已有的 session_id 以原地重连（保留 UUID 和 I/O 统计连续性）
+    session_id: Option<String>,
 ) -> Result<String, String> {
     let pid = plugin_id.unwrap_or_else(|| "serial".into());
 
@@ -117,7 +119,7 @@ pub fn connect_session(
     }
 
     match pid.as_str() {
-        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol),
+        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, session_id),
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
@@ -131,6 +133,7 @@ fn connect_session_serial(
     name: Option<String>,
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
+    session_id: Option<String>,
 ) -> Result<String, String> {
     // 通过 SerialAdapter（ProtocolAdapter trait）创建 Channel
     let channel = state.serial_adapter.connect(&endpoint, &params)
@@ -170,18 +173,22 @@ fn connect_session_serial(
     let transfer_enabled_val = transfer_enabled.unwrap_or(true);
     let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "ymodem".into());
 
-    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let session_id = store.create_session(
-        &session_name, "serial", &endpoint, params, channel,
-        on_data, on_disconnect, app.clone(),
-        transfer_enabled_val,
-        Some(transfer_protocol_val.clone()),
-    )?;
+    // 在作用域块内创建会话并保存，利用 RAII 自动释放 MutexGuard
+    let session_id = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let session_id = store.create_session(
+            &session_name, "serial", &endpoint, params, channel,
+            on_data, on_disconnect, app.clone(),
+            transfer_enabled_val,
+            Some(transfer_protocol_val.clone()),
+            session_id,
+        )?;
 
-    // 自动保存
-    let path = SessionStore::sessions_file_path(&app);
-    let _ = store.save_to_disk(&path);
-    drop(store);
+        // 自动保存
+        let path = SessionStore::sessions_file_path(&app);
+        let _ = store.save_to_disk(&path);
+        session_id
+    };
 
     let (actual_name, actual_params, connected_at) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -350,9 +357,18 @@ pub fn save_session_config(
     plugin_id: Option<String>,
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
+    // 可选：传入已有的 session_id 以原地更新配置（保留 UUID 和 I/O 统计连续性）
+    session_id: Option<String>,
 ) -> Result<String, String> {
     let pid = plugin_id.unwrap_or_else(|| "serial".into());
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = if let Some(ref raw) = session_id {
+        if uuid::Uuid::parse_str(raw).is_err() {
+            return Err(format!("无效的 session_id 格式: {}", raw));
+        }
+        raw.clone()
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
     let session_name = name.unwrap_or_else(|| format!("{} @ {}", pid, endpoint));
 
     let now = chrono::Utc::now().timestamp_millis() as u64;
