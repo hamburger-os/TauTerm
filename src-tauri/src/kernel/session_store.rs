@@ -17,7 +17,7 @@
 //! ├── io_thread: Option<JoinHandle>
 //! └── state: SessionState
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
@@ -78,6 +78,12 @@ pub struct SessionStore {
     active_id: Option<TabId>,
     tab_order: Vec<TabId>,
     max_sessions: usize,
+    /// 持久化会话名称映射，会话从 HashMap 移除后仍保留，
+    /// 用于在错误消息中显示用户友好的名称而非原始 UUID。
+    /// 通过 `removed_order` 队列进行 LRU 淘汰，防止无限增长。
+    session_names: HashMap<TabId, String>,
+    /// 关闭顺序队列，用于淘汰 `session_names` 中最旧的已删除会话条目
+    removed_order: VecDeque<TabId>,
 }
 
 /// 持久化会话配置
@@ -98,12 +104,17 @@ pub struct SavedSession {
 static SESSIONS_FILE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 impl SessionStore {
+    /// 保留最近关闭会话名称的数量上限（LRU 淘汰）
+    const MAX_REMOVED_SESSION_NAMES: usize = 50;
+
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
             active_id: None,
             tab_order: Vec::new(),
             max_sessions: 10,
+            session_names: HashMap::new(),
+            removed_order: VecDeque::new(),
         }
     }
 
@@ -175,6 +186,9 @@ impl SessionStore {
             stats_cancel_flag.clone(),
         );
 
+        // 保存名称副本，后续用于错误消息（handle 会消耗 tab_name）
+        let session_name_for_map = tab_name.clone();
+
         let handle = ActiveSessionHandle {
             id: id.clone(),
             name: tab_name,
@@ -208,6 +222,7 @@ impl SessionStore {
 
         self.sessions.insert(id.clone(), handle);
         self.tab_order.push(id.clone());
+        self.session_names.insert(id.clone(), session_name_for_map);
         self.active_id = Some(id.clone());
 
         Ok(id)
@@ -216,7 +231,16 @@ impl SessionStore {
     /// 关闭指定会话
     pub fn close_session(&mut self, session_id: &str) -> Result<(), String> {
         let mut handle = self.sessions.remove(session_id)
-            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+            .ok_or_else(|| self.session_not_found(session_id))?;
+        // 保存名称（create_session 中已保存，此处作为保障）
+        self.session_names.insert(session_id.to_string(), handle.name.clone());
+        // LRU 淘汰：推入关闭队列，超出上限时移除最旧条目
+        self.removed_order.push_back(session_id.to_string());
+        while self.removed_order.len() > Self::MAX_REMOVED_SESSION_NAMES {
+            if let Some(old_id) = self.removed_order.pop_front() {
+                self.session_names.remove(&old_id);
+            }
+        }
 
         // 取消正在进行的传输
         if let Some(tx) = handle.cancel_transfer_tx.take() {
@@ -249,10 +273,19 @@ impl SessionStore {
         Ok(())
     }
 
+    /// 格式化"会话不存在"错误消息，优先使用已保存的会话名称
+    pub(crate) fn session_not_found(&self, session_id: &str) -> String {
+        let display_name = self.session_names
+            .get(session_id)
+            .map(|n| n.as_str())
+            .unwrap_or(session_id);
+        format!("会话 {} 不存在", display_name)
+    }
+
     /// 切换到指定会话
     pub fn switch_active(&mut self, session_id: &str) -> Result<(), String> {
         if !self.sessions.contains_key(session_id) {
-            return Err(format!("会话 {} 不存在", session_id));
+            return Err(self.session_not_found(session_id));
         }
         self.active_id = Some(session_id.to_string());
         Ok(())
@@ -260,9 +293,11 @@ impl SessionStore {
 
     /// 重命名会话
     pub fn rename_session(&mut self, session_id: &str, new_name: &str) -> Result<(), String> {
+        let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id)
-            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+            .ok_or(not_found)?;
         handle.name = new_name.to_string();
+        self.session_names.insert(session_id.to_string(), new_name.to_string());
         Ok(())
     }
 
@@ -270,7 +305,7 @@ impl SessionStore {
     pub fn reorder_tabs(&mut self, new_order: Vec<TabId>) -> Result<(), String> {
         for id in &new_order {
             if !self.sessions.contains_key(id) {
-                return Err(format!("会话 {} 不存在", id));
+                return Err(self.session_not_found(id));
             }
         }
         self.tab_order = new_order;
@@ -280,7 +315,7 @@ impl SessionStore {
     /// 向指定会话写入数据
     pub fn write(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
         let handle = self.sessions.get(session_id)
-            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+            .ok_or_else(|| self.session_not_found(session_id))?;
         handle.write_tx.send(IoLoopCmd::Write(data.to_vec()))
             .map_err(|e| format!("写入通道错误: {}", e))
     }
@@ -330,8 +365,9 @@ impl SessionStore {
         on_disconnect: Box<dyn Fn(String) + Send>,
         app_handle: tauri::AppHandle,
     ) -> Result<serde_json::Value, String> {
+        let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id)
-            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+            .ok_or(not_found)?;
 
         if let Some(ref flag) = handle.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
@@ -383,8 +419,9 @@ impl SessionStore {
 
     /// 取消传输
     pub fn cancel_transfer(&mut self, session_id: &str) -> Result<(), String> {
+        let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id)
-            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+            .ok_or(not_found)?;
         if let Some(tx) = handle.cancel_transfer_tx.take() {
             let _ = tx.send(());
         }

@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useReducer, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -176,6 +176,14 @@ interface SessionContextValue {
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onSessionDisconnect: (callback: (sessionId: string, reason?: string) => void) => void;
   clearError: () => void;
+  /** 日志：启动会话数据日志记录 */
+  startSessionLog: (sessionId: string) => Promise<string>;
+  /** 日志：停止会话数据日志记录 */
+  stopSessionLog: (sessionId: string) => Promise<void>;
+  /** 日志：当前正在记录的会话 ID 集合 */
+  loggingSessions: Set<string>;
+  /** 日志：活跃日志状态 (sessionId → { fileName, bytesWritten }) */
+  logStatuses: Map<string, { fileName: string; bytesWritten: number }>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -188,6 +196,44 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // 保持最新的 tabs 引用，供事件监听器（闭包中 state 可能过期）使用
   const tabsRef = useRef(state.tabs);
   tabsRef.current = state.tabs;
+
+  // ── Logging state ────────────────────────────────
+
+  const [loggingSessions, setLoggingSessions] = useState<Set<string>>(new Set());
+  const [logStatuses, setLogStatuses] = useState<Map<string, { fileName: string; bytesWritten: number }>>(new Map());
+
+  const startSessionLog = useCallback(async (sessionId: string): Promise<string> => {
+    try {
+      await invoke<string>("start_session_log", { sessionId });
+      setLoggingSessions(prev => new Set(prev).add(sessionId));
+      // 立即查询状态获取文件名
+      const statuses: Array<{ session_id: string; file_name: string; bytes_written: number }> =
+        await invoke("get_log_status");
+      setLogStatuses(new Map(statuses.map(s => [s.session_id, { fileName: s.file_name, bytesWritten: s.bytes_written }])));
+      return sessionId;
+    } catch (e) {
+      dispatch({ type: "SET_ERROR", error: `启动日志失败: ${e}` });
+      throw e;
+    }
+  }, []);
+
+  const stopSessionLog = useCallback(async (sessionId: string) => {
+    try {
+      await invoke("stop_session_log", { sessionId });
+      setLoggingSessions(prev => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
+      setLogStatuses(prev => {
+        const next = new Map(prev);
+        next.delete(sessionId);
+        return next;
+      });
+    } catch (e) {
+      dispatch({ type: "SET_ERROR", error: `停止日志失败: ${e}` });
+    }
+  }, []);
 
   // ── Actions ─────────────────────────────────────
 
@@ -264,11 +310,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (tab?.state === "disconnected") {
       return;
     }
+    // 先更新前端状态为 disconnected，让 React 同步停止周期发送定时器，
+    // 避免后端 close_session() 之后定时器还在触发 write_data 导致"会话不存在"错误
+    dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
     try {
       await invoke("disconnect_session", { sessionId });
-      // 同步更新前端状态，避免调用方在事件到达前读到过期的 "connected" 状态
-      dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
     } catch (e) {
+      // 后端调用失败，恢复连接状态以便用户重试
+      dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connected" });
       dispatch({ type: "SET_ERROR", error: `断开失败: ${e}` });
     }
   }, [state.tabs]);
@@ -277,11 +326,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const tab = state.tabs.find(t => t.id === sessionId);
     // 如果会话已连接，先断开后端连接（除非调用方已提前断连）
     if (!skipDisconnect && (tab?.state === "connected" || tab?.state === "connecting" || tab?.state === "transferring")) {
+      // 先更新前端状态，让 React 同步停止周期发送定时器
+      dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
       try {
         await invoke("disconnect_session", { sessionId });
-        dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
       } catch (_e) {
-        // 断开失败，停止删除流程以避免后端资源泄漏
+        // 断开失败，恢复连接状态并停止删除流程以避免后端资源泄漏
+        dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connected" });
         dispatch({ type: "SET_ERROR", error: "Cannot delete active session — disconnect failed" });
         return;
       }
@@ -513,8 +564,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       const u3 = await listen<{ session_id: string; reason?: string }>("session-disconnected", (event) => {
         const reason = event.payload.reason;
-        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "disconnected" });
-        disconnectCallbackRef.current?.(event.payload.session_id, reason);
+        const sid = event.payload.session_id;
+        dispatch({ type: "SET_TAB_STATE", id: sid, state: "disconnected" });
+        disconnectCallbackRef.current?.(sid, reason);
+        // 自动停止该会话的日志记录
+        setLoggingSessions(prev => {
+          if (!prev.has(sid)) return prev;
+          const next = new Set(prev);
+          next.delete(sid);
+          // 异步通知后端停止日志（不等待结果）
+          invoke("stop_session_log", { sessionId: sid }).catch(() => {});
+          return next;
+        });
+        setLogStatuses(prev => {
+          const next = new Map(prev);
+          next.delete(sid);
+          return next;
+        });
       });
       if (cancelled) { u3(); return; }
       unlisteners.push(u3);
@@ -575,6 +641,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // ── Periodic log status polling ──────────────────
+
+  const hasActiveLogs = loggingSessions.size > 0;
+
+  useEffect(() => {
+    if (!hasActiveLogs) return; // 无活跃日志时清除定时器，节省资源
+    const interval = setInterval(async () => {
+      try {
+        const statuses: Array<{ session_id: string; file_name: string; bytes_written: number }> =
+          await invoke("get_log_status");
+        setLogStatuses(new Map(statuses.map(s => [s.session_id, { fileName: s.file_name, bytesWritten: s.bytes_written }])));
+      } catch (_e) {
+        // 静默忽略
+      }
+    }, 5000); // 5s 轮询降低 IPC 开销，日志状态不需要秒级实时性
+    return () => clearInterval(interval);
+  }, [hasActiveLogs]);
+
   // Init
   useEffect(() => {
     fetchConnectionTypes();
@@ -600,6 +684,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       onDataSent,
       onSessionDisconnect,
       clearError,
+      startSessionLog,
+      stopSessionLog,
+      loggingSessions,
+      logStatuses,
     }}>
       {children}
     </SessionContext.Provider>

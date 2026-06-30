@@ -135,6 +135,36 @@
   align-items: center;
 }
 
+/* 日志状态指示器 */
+.logDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-error);
+  box-shadow: 0 0 6px var(--color-error);
+  animation: logPulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes logPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.logText {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+.logFileInfo {
+  margin-right: 8px;
+}
+
 /* 右侧 */
 .right {
   flex-shrink: 0;

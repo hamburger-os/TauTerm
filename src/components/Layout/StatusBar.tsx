@@ -16,7 +16,7 @@ import styles from "./StatusBar.module.css";
  */
 export default function StatusBar() {
   const { t } = useTranslation();
-  const { state } = useSession();
+  const { state, loggingSessions, logStatuses } = useSession();
   const activeTab = state.tabs.find(t => t.id === state.activeTabId);
 
   // 应用版本（从 tauri.conf.json 动态读取）
@@ -103,6 +103,24 @@ export default function StatusBar() {
           <div className={styles.stats}>
             <span className={styles.statItem} title="TX"><Icon name="chevron-up" size="xs" /> {formatBytes(activeTab.stats.txBytes)}</span>
             <span className={styles.statItem} title="RX"><Icon name="chevron-down" size="xs" /> {formatBytes(activeTab.stats.rxBytes)}</span>
+          </div>
+        )}
+
+        {/* 日志状态指示器 */}
+        {loggingSessions.size > 0 && (
+          <div className={styles.segment}>
+            <span className={styles.logDot} />
+            <span className={styles.logText}>
+              {Array.from(loggingSessions).map(sid => {
+                const status = logStatuses.get(sid);
+                if (!status) return null;
+                return (
+                  <span key={sid} className={styles.logFileInfo}>
+                    {status.fileName} ({formatBytes(status.bytesWritten)})
+                  </span>
+                );
+              })}
+            </span>
           </div>
         )}
 

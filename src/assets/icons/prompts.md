@@ -394,6 +394,20 @@ A liquid glass style plain checkmark icon (no outer circle), 3D glass sculpture 
 
 ---
 
+### 30. log — 日志/实时监控
+
+**中文提示词：**
+一个液态玻璃风格的日志/录制图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计方向：一张微微倾斜的圆角文档/页面，右上角悬浮一个饱满的小圆点（象征"正在记录"），文档表面有 3 条长度递减的水平胶囊形横线（象征日志条目行）。文档边缘粗壮圆润，圆点在文档上方投下微妙的玻璃折射。所有转角大圆角，线条粗壮。风格参考：磨砂玻璃质感、液态胶囊描边、录制/日志状态指示器。
+
+**English prompt:**
+A liquid glass style log/recording icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design direction: a slightly tilted rounded document/page with a plump small dot floating at the upper right corner (symbolizing "recording in progress"), the document surface has 3 horizontal capsule bars of decreasing length (representing log entry lines). The document edges are thick and heavily rounded, the dot casts subtle glass refraction above the document. All corners heavily filleted, strokes thick and bold. Style reference: frosted glass texture, liquid pill strokes, recording/log status indicator.
+
+**使用位置：** `src/assets/icons/log.png` — 右键菜单「实时监控」选项图标、设置页面「日志」分类图标、状态栏日志状态指示器
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
 ## 生成后检查清单 / Post-Generation Checklist
 
 ### 图标质量

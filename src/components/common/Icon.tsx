@@ -32,6 +32,7 @@ import skipPng from "../../assets/icons/skip.png";
 import hourglassPng from "../../assets/icons/hourglass.png";
 import transferProgressPng from "../../assets/icons/transfer-progress.png";
 import checkPlainPng from "../../assets/icons/check-plain.png";
+import logPng from "../../assets/icons/log.png";
 
 // ── PNG URL Mapping ───────────────────────────────────────────
 // Must be defined before IconName type so PNG key list can be derived
@@ -66,6 +67,7 @@ const PNG_MAP: Record<string, string> = {
   hourglass: hourglassPng,
   "transfer-progress": transferProgressPng,
   "check-plain": checkPlainPng,
+  log: logPng,
 };
 
 // ── Type Definitions ──────────────────────────────────────────

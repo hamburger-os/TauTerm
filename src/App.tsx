@@ -282,10 +282,9 @@ function AppInner() {
           </div>
           {sessionState.tabs.map(tab => {
             const isActive = tab.id === sessionState.activeTabId;
-            if (!isActive) return null;
             return (
-              <div key={tab.id}>
-                <SendBar sessionId={tab.id} />
+              <div key={tab.id} style={{ display: isActive ? undefined : "none" }}>
+                <SendBar sessionId={tab.id} isActive={isActive} />
               </div>
             );
           })}

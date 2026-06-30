@@ -101,7 +101,9 @@
     "configure": "Configure",
     "reconnect": "Reconnect",
     "rename": "Rename",
-    "delete": "Delete"
+    "delete": "Delete",
+    "startLogging": "Start Logging",
+    "stopLogging": "Stop Logging"
   },
   "bottomPanel": {
     "noSession": "No active session",
@@ -211,6 +213,7 @@
     "appearance": "Appearance",
     "language": "Language",
     "encoding": "Encoding",
+    "logging": "Logging",
     "about": "About",
     "switchToEn": "Switch to English",
     "switchToZh": "切换为中文",
@@ -265,6 +268,39 @@
   },
   "dualPane": {
     "resizeLabel": "Resize panels"
+  },
+  "logging": {
+    "systemLog": "System Log",
+    "systemLogDesc": "Automatically records app events on launch (connections, disconnections, errors, warnings). File: TauTerm_YYYYMMDD.log",
+    "systemLogStatus": "Status",
+    "systemLogLevel": "Minimum Level",
+    "levelError": "Error",
+    "levelWarn": "Warning",
+    "levelInfo": "Info",
+    "levelDebug": "Debug",
+    "sessionLog": "Session Data Log",
+    "sessionLogDesc": "Right-click a session → 'Start Logging' to record all TX/RX data to file.",
+    "commonConfig": "Common Settings",
+    "commonConfigDesc": "These settings apply to both system log and session data log.",
+    "fileSection": "File",
+    "performanceSection": "Performance",
+    "retentionSection": "Retention",
+    "actionsSection": "Actions",
+    "enableLogging": "Enable Session Logging",
+    "logDirectory": "Log Directory",
+    "maxFileSize": "Max File Size",
+    "bufferSize": "Buffer Size",
+    "flushInterval": "Flush Interval",
+    "retentionDays": "Keep Logs For",
+    "days": "days",
+    "openLogDir": "Open Log Directory",
+    "clearAllLogs": "Clear All Logs",
+    "clearConfirm": "Delete all log files? This cannot be undone.",
+    "cleared": "All log files cleared.",
+    "clearError": "Failed to clear logs",
+    "started": "Logging started",
+    "stopped": "Logging stopped",
+    "writing": "Writing"
   },
   "common": {
     "ok": "OK",

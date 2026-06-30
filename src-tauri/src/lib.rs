@@ -33,6 +33,7 @@ use kernel::shortcut_engine::ShortcutEngine;
 use kernel::theme_engine::ThemeEngine;
 use kernel::i18n_engine::I18nEngine;
 use kernel::window_manager::WindowManager;
+use kernel::log_engine::{LogEngine, LogConfig, LogBridge};
 use security::CredentialStore;
 use plugins::serial::SerialAdapter;
 
@@ -60,12 +61,18 @@ pub struct AppState {
     pub window_manager: WindowManager,
     /// 凭据存储
     pub credential_store: CredentialStore,
+    /// 日志引擎（生产者-消费者异步日志系统）
+    pub log_engine: Mutex<LogEngine>,
 }
 
 /// TauTerm 应用入口
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    // 用 LogBridge 替代 env_logger：所有 log::info!/warn!/error!
+    // 自动转发到 LogEngine，写入 TauTerm_{date}.log
+    log::set_logger(&LogBridge)
+        .map(|()| log::set_max_level(log::LevelFilter::Info))
+        .ok();
 
     // 初始化 Plugin Host 并注册内建插件
     let mut plugin_host = PluginHost::new();
@@ -92,6 +99,44 @@ pub fn run() {
             // Windows 平台无边框窗口丢失原生阴影，手动开启
             #[cfg(target_os = "windows")]
             let _ = window.set_shadow(true);
+
+            // 初始化日志目录
+            // 优先使用 exe 同级目录；不可写时回退到应用数据目录
+            let log_dir = {
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join("logs");
+                let _ = std::fs::create_dir_all(&exe_dir);
+                // 通过写入测试文件验证可写性
+                let test_file = exe_dir.join(".write_test");
+                if std::fs::write(&test_file, b"tau").is_ok() {
+                    let _ = std::fs::remove_file(&test_file);
+                    exe_dir
+                } else {
+                    let app_data = app.path().app_data_dir()
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                    let fallback = app_data.join("logs");
+                    let _ = std::fs::create_dir_all(&fallback);
+                    log::warn!("exe 同级日志目录不可写，回退到: {:?}", fallback);
+                    fallback
+                }
+            };
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Ok(log_engine) = state.log_engine.lock() {
+                    log_engine.set_log_dir(log_dir.clone());
+                }
+                // 同步到 ConfigStore 供前端查询
+                let _ = state.config_store.set(
+                    "log.dir",
+                    &log_dir.to_string_lossy().to_string(),
+                );
+            }
+            let _ = std::fs::create_dir_all(&log_dir);
+            log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
+            log::info!("日志目录: {:?}", log_dir);
+
             Ok(())
         })
         .manage(AppState {
@@ -106,6 +151,7 @@ pub fn run() {
             i18n_engine: I18nEngine::new(),
             window_manager: WindowManager::new(),
             credential_store: CredentialStore::new(),
+            log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,
@@ -134,6 +180,16 @@ pub fn run() {
             commands::get_theme_list,
             commands::get_active_theme,
             commands::set_theme,
+            commands::start_session_log,
+            commands::stop_session_log,
+            commands::log_event,
+            commands::get_log_status,
+            commands::set_system_log_config,
+            commands::get_log_dir,
+            commands::get_log_config,
+            commands::open_log_dir,
+            commands::update_log_config,
+            commands::clear_all_logs,
         ])
         .build(tauri::generate_context!())
         .expect("启动 TauTerm 时发生错误")

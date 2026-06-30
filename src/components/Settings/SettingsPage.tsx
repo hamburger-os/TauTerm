@@ -7,6 +7,7 @@ import GeneralSettings from "./panels/GeneralSettings";
 import AppearanceSettings from "./panels/AppearanceSettings";
 import LanguageSettings from "./panels/LanguageSettings";
 import EncodingSettings from "./panels/EncodingSettings";
+import LoggingSettings from "./panels/LoggingSettings";
 import styles from "./SettingsPage.module.css";
 
 interface SettingsPageProps {
@@ -14,13 +15,14 @@ interface SettingsPageProps {
   onClose: () => void;
 }
 
-type Category = "general" | "appearance" | "language" | "encoding" | "about";
+type Category = "general" | "appearance" | "language" | "encoding" | "logging" | "about";
 
 const CATEGORIES: { id: Category; icon: import("../common/Icon").IconName; labelKey: string }[] = [
   { id: "general", icon: "settings" as const, labelKey: "settings.general" },
   { id: "appearance", icon: "palette" as const, labelKey: "settings.appearance" },
   { id: "language", icon: "globe" as const, labelKey: "settings.language" },
   { id: "encoding", icon: "font" as const, labelKey: "settings.encoding" },
+  { id: "logging", icon: "log" as const, labelKey: "settings.logging" },
   { id: "about", icon: "info" as const, labelKey: "settings.about" },
 ];
 
@@ -60,6 +62,7 @@ export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
       case "appearance": return <AppearanceSettings />;
       case "language": return <LanguageSettings />;
       case "encoding": return <EncodingSettings />;
+      case "logging": return <LoggingSettings />;
       case "about": return (
         <div className={styles.aboutSection}>
           <h3 className={styles.panelTitle}>TauTerm</h3>

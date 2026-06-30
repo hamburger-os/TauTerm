@@ -35,7 +35,7 @@ graph TB
 
 | 原则 | 说明 |
 |------|------|
-| **内核不含协议** | 10 个内核模块提供平台能力（窗口、标签页、IPC、配置、插件、主题、快捷键、国际化、插件适配、会话存储），不包含任何会话类型逻辑 |
+| **内核不含协议** | 12 个内核模块提供平台能力（窗口、标签页、IPC、配置、插件、主题、快捷键、国际化、插件适配、会话存储、日志引擎、日志写入），不包含任何会话类型逻辑 |
 | **一切皆插件** | 每个协议和功能都是独立插件，通过 `ProtocolAdapter` trait 和 `registerPlugin()` API 注册 |
 | **统一标签页** | 所有会话类型共享同一套标签栏，通过 `content_type` 适配器动态切换内容视图 |
 | **策略自适应** | 传输、I/O、安全策略根据会话协议自动选择，无需用户干预 |
@@ -219,6 +219,7 @@ graph LR
 - 🌐 **多语言** — i18next 命名空间隔离，插件自带翻译，运行时切换
 - ⚡ **命令面板** — `Ctrl+Shift+P` 模糊搜索所有命令，键盘驱动操作
 - 🔍 **终端搜索** — `Ctrl+F` 搜索 buffer，大小写切换，上下导航
+- 📋 **日志系统** — 系统事件日志（`TauTerm_YYYYMMDD.log`）自动记录启动/错误/警告；会话数据日志支持 text/hex/dual 格式化、自动分卷与过期清理；右键菜单一键启停、状态栏实时指示
 - 🎹 **快捷键系统** — 全局/插件作用域，冲突检测，作用域分发
 - 💾 **会话持久化** — 离线创建/编辑会话配置，断开会话保留重连，按会话独立传输开关
 
@@ -257,7 +258,9 @@ TauTerm/
 │   │   ├── shortcut_engine.rs  # 快捷键注册、冲突检测、作用域分发
 │   │   ├── plugin_adapter.rs   # ProtocolAdapter trait + ContentType/IoStrategy 定义
 │   │   ├── session_store.rs    # 会话存储、I/O 生命周期、统计采集
-│   │   └── i18n_engine.rs      # 命名空间翻译、动态语言切换
+│   │   ├── i18n_engine.rs      # 命名空间翻译、动态语言切换
+│   │   ├── log_engine.rs       # 生产者-消费者异步日志引擎、LogBridge 桥接器
+│   │   └── log_writer.rs       # 日志文件写入器、text/hex/dual 格式化、自动分卷
 │   │
 │   ├── channel/                # I/O 通道抽象层
 │   │   ├── mod.rs              # Channel trait 定义
@@ -592,6 +595,7 @@ sudo xattr -r -d com.apple.quarantine /path/to/TauTerm.app
 - [ ] SFTP/SCP 文件传输（SideChannel 策略）
 
 ### v0.5 — 凭据 & 安全
+- [x] 日志基础设施（系统事件日志 + 会话数据日志）
 - [ ] Credential Store（keyring + AES 降级）
 - [ ] 日志脱敏
 - [ ] 权限提升确认

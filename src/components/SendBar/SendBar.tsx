@@ -6,6 +6,7 @@ import styles from "./SendBar.module.css";
 
 interface SendBarProps {
   sessionId: string;
+  isActive: boolean;
 }
 
 type NewlineMode = "crlf" | "lf" | "cr" | "none";
@@ -24,7 +25,7 @@ const NEWLINE_MAP: Record<NewlineMode, string> = {
  * 位于主内容区底部，支持文本/HEX 输入、换行符追加、
  * 重复发送、发送历史等功能。
  */
-export default function SendBar({ sessionId }: SendBarProps) {
+export default function SendBar({ sessionId, isActive }: SendBarProps) {
   const { t } = useTranslation();
   const { sendData, state } = useSession();
   const activeTab = state.tabs.find(tab => tab.id === sessionId);
@@ -127,6 +128,8 @@ export default function SendBar({ sessionId }: SendBarProps) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+    // 非活跃或已断开会话不启动定时器
+    if (!isActive || !isConnected) return;
     const hasValidInput = sendMode === "hex"
       ? isHexValid(inputRefForInterval.current)
       : inputRefForInterval.current.trim().length > 0;
@@ -136,8 +139,22 @@ export default function SendBar({ sessionId }: SendBarProps) {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repeatEnabled, repeatInterval]);
+  }, [isActive, isConnected, repeatEnabled, repeatInterval]);
+
+  // 断开会话时重置发送栏状态（周期发送、输入内容、历史记录）
+  const prevConnectedRef = useRef(isConnected);
+  useEffect(() => {
+    const wasConnected = prevConnectedRef.current;
+    prevConnectedRef.current = isConnected;
+    // 仅在 connected → disconnected 转换时重置
+    if (wasConnected && !isConnected) {
+      setRepeatEnabled(false);
+      setRepeatInterval(1000);
+      setInputText("");
+      setSendHistory([]);
+      setShowOptions(false);
+    }
+  }, [isConnected]);
 
   // 键盘处理
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {

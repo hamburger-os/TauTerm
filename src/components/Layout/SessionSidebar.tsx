@@ -23,7 +23,7 @@ interface SessionSidebarProps {
  */
 export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
   const { t } = useTranslation();
-  const { state, switchTab, disconnect, deleteSession, connect } = useSession();
+  const { state, switchTab, disconnect, deleteSession, connect, startSessionLog, stopSessionLog, loggingSessions } = useSession();
   const [search, setSearch] = useState("");
   const { menu, openMenu, closeMenu } = useContextMenu();
 
@@ -54,9 +54,11 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     const { state: sessionState } = menu.session;
 
     if (sessionState === "connected" || sessionState === "transferring") {
+      const isLogging = loggingSessions.has(menu.session.id);
       return [
         { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect", icon: "stop" },
         { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "settings" },
+        { id: "toggle_log", label: isLogging ? (t("contextMenu.stopLogging") || "Stop Logging") : (t("contextMenu.startLogging") || "Start Logging"), icon: "log" },
         { id: "delete", label: t("contextMenu.delete") || "Delete", icon: "trash", danger: true },
       ];
     }
@@ -76,7 +78,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
             const sid = await connect(tab.endpoint, tab.params as Record<string, unknown>, tab.name, undefined, tab.transferEnabled, tab.transferProtocol);
             if (sid) {
               await switchTab(sid);
-              await deleteSession(sessionId); // 删除旧的断开标签页
+              await deleteSession(sessionId);
             }
           } catch (_e) {
             // 错误已在 SessionContext 中处理
@@ -90,13 +92,21 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       case "disconnect":
         disconnect(sessionId);
         break;
+      case "toggle_log": {
+        if (loggingSessions.has(sessionId)) {
+          stopSessionLog(sessionId);
+        } else {
+          startSessionLog(sessionId);
+        }
+        break;
+      }
       case "delete":
         if (window.confirm(t("session.deleteConfirm") || "Delete this session?")) {
           deleteSession(sessionId);
         }
         break;
     }
-  }, [onEditSession, disconnect, deleteSession, connect, switchTab, state.tabs, t]);
+  }, [onEditSession, disconnect, deleteSession, connect, switchTab, state.tabs, t, loggingSessions, startSessionLog, stopSessionLog]);
 
   return (
     <div className={`${styles.sidebar} liquid-glass`}>

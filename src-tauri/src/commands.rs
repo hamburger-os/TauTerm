@@ -3,11 +3,13 @@
 //! 所有面向前端的 Tauri 命令。
 //! 通过 SerialAdapter + SessionStore + Channel 架构管理会话。
 
+use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 use crate::channel::Channel;
 use crate::channel::io_loop::IoLoopCmd;
+use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus};
 use crate::kernel::plugin_adapter::{ProtocolAdapter, TransferProtocolType};
 use crate::kernel::session_store::{SessionState, SessionStore};
 use crate::AppState;
@@ -150,12 +152,32 @@ fn connect_session_serial(
 
     let params_clone = params.clone();
     let session_name = name.unwrap_or_default();
+    // 获取 data_mode 用于日志格式化
+    let data_mode = params_clone
+        .get("data_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("text")
+        .to_string();
+    let data_mode_for_log = data_mode.clone(); // clone for use after the closure
 
     let app_data = app.clone();
+    // 克隆日志发送器以注入 on_data 回调
+    let log_tx = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        log_engine.sender()
+    };
     let on_data: Box<dyn Fn(String, Vec<u8>) + Send> = Box::new(move |session_id, data| {
         let _ = app_data.emit("session-data", serde_json::json!({
             "session_id": session_id,
             "data": data,
+        }));
+        // 异步发送 RX 数据日志（非阻塞）
+        let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
+            session_id: session_id.clone(),
+            direction: DataDirection::RX,
+            data_mode: data_mode.clone(),
+            payload: data.clone(),
+            timestamp: Local::now(),
         }));
     });
 
@@ -197,6 +219,8 @@ fn connect_session_serial(
             .unwrap_or((session_name, params_clone, None))
     };
 
+    log::info!("会话已连接: {} @ {} (data_mode={})", actual_name, endpoint, data_mode_for_log);
+
     let _ = app.emit("session-connected", serde_json::json!({
         "session_id": session_id,
         "endpoint": endpoint,
@@ -220,11 +244,16 @@ pub fn disconnect_session(
     state: State<AppState>,
     session_id: String,
 ) -> Result<(), String> {
+    let session_name = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.get_session(&session_id).map(|h| h.name.clone()).unwrap_or_default()
+    };
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
     let path = SessionStore::sessions_file_path(&app);
     let _ = store.save_to_disk(&path);
     store.close_session(&session_id)?;
 
+    log::info!("会话已断开: {}", session_name);
     let _ = app.emit("session-disconnected", serde_json::json!({
         "session_id": session_id,
     }));
@@ -238,8 +267,28 @@ pub fn write_data(
     session_id: String,
     data: Vec<u8>,
 ) -> Result<(), String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    store.write(&session_id, &data)
+    // 单次锁定 session_store：写入数据并获取 data_mode
+    let data_mode = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.write(&session_id, &data)?;
+        store
+            .get_session(&session_id)
+            .and_then(|h| h.params.get("data_mode"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "text".to_string())
+    };
+    // 异步发送 TX 数据日志（非阻塞，best-effort：失败不影响主流程）
+    if let Ok(log_engine) = state.log_engine.lock() {
+        let _ = log_engine.sender().try_send(LogEntry::SessionData(DataLogEntry {
+            session_id,
+            direction: DataDirection::TX,
+            data_mode,
+            payload: data,
+            timestamp: Local::now(),
+        }));
+    }
+    Ok(())
 }
 
 /// 切换活跃标签页
@@ -503,8 +552,9 @@ where
 
     {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let not_found = store.session_not_found(&session_id);
         let handle = store.get_session_mut(&session_id)
-            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+            .ok_or(not_found)?;
 
         if handle.state != SessionState::Connected {
             return Err("会话未连接".into());
@@ -715,6 +765,217 @@ pub fn set_theme(
 ) -> Result<(), String> {
     state.theme_engine.apply_theme(&name)
         .map_err(|e| e.to_string())
+}
+
+// ── 日志引擎命令 ────────────────────────────────────
+
+/// 启动会话数据日志记录
+///
+/// 锁顺序：session_store → log_engine（与 write_data 保持一致，避免死锁）
+#[tauri::command]
+pub fn start_session_log(
+    state: State<AppState>,
+    session_id: String,
+) -> Result<String, String> {
+    // 先锁定 session_store 读取会话信息（锁在块结束时释放）
+    let (session_name, port_name, data_mode) = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let handle = store
+            .get_session(&session_id)
+            .ok_or_else(|| store.session_not_found(&session_id))?;
+        (
+            handle.name.clone(),
+            handle.endpoint.clone(),
+            handle
+                .params
+                .get("data_mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("text")
+                .to_string(),
+        )
+    };
+
+    // 再锁定 log_engine 发送启动命令
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+
+    let cmd = LogEntry::Command(crate::kernel::log_engine::LogCommand::StartSession {
+        session_id: session_id.clone(),
+        session_name,
+        port_name,
+        data_mode,
+    });
+
+    log_engine
+        .sender()
+        .send(cmd)
+        .map_err(|e| format!("发送日志启动命令失败: {}", e))?;
+
+    Ok(session_id)
+}
+
+/// 停止会话数据日志记录
+#[tauri::command]
+pub fn stop_session_log(
+    state: State<AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+
+    let cmd = LogEntry::Command(crate::kernel::log_engine::LogCommand::StopSession {
+        session_id,
+    });
+
+    log_engine
+        .sender()
+        .send(cmd)
+        .map_err(|e| format!("发送日志停止命令失败: {}", e))?;
+
+    Ok(())
+}
+
+/// 前端用户操作/事件日志
+#[tauri::command]
+pub fn log_event(
+    state: State<AppState>,
+    level: String,
+    message: String,
+) -> Result<(), String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+
+    let _ = log_engine.sender().try_send(LogEntry::SystemEvent {
+        level,
+        message,
+        timestamp: Local::now(),
+    });
+
+    Ok(())
+}
+
+/// 获取当前活跃日志状态
+#[tauri::command]
+pub fn get_log_status(
+    state: State<AppState>,
+) -> Result<Vec<LogStatus>, String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    Ok(log_engine.get_active_logs())
+}
+
+/// 更新系统日志配置（启用/禁用 + 最低日志级别）
+#[tauri::command]
+pub fn set_system_log_config(
+    _state: State<AppState>,
+    enabled: bool,
+    level: String,
+) -> Result<(), String> {
+    crate::kernel::log_engine::set_system_log_config(enabled, &level);
+    Ok(())
+}
+
+/// 获取日志目录路径
+#[tauri::command]
+pub fn get_log_dir(
+    state: State<AppState>,
+) -> Result<String, String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    let config = log_engine.get_config();
+    Ok(config.log_dir.to_string_lossy().to_string())
+}
+
+/// 获取完整日志配置（供前端设置页面初始加载）
+///
+/// 返回前端友好的 `LogConfigResponse`（PathBuf 已转为字符串）。
+/// 前端调用此命令获取 Rust 端的当前配置，确保 UI 显示与后端一致。
+#[tauri::command]
+pub fn get_log_config(
+    state: State<AppState>,
+) -> Result<LogConfigResponse, String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    Ok(log_engine.get_config_response())
+}
+
+/// 在系统文件管理器中打开日志目录
+#[tauri::command]
+pub fn open_log_dir(
+    state: State<AppState>,
+) -> Result<(), String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    let config = log_engine.get_config();
+    let path = config.log_dir.clone();
+    let _ = std::fs::create_dir_all(&path);
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    Ok(())
+}
+
+/// 更新日志引擎运行时配置（由前端设置页调用）
+///
+/// 消费者线程下次循环自动读取新配置，无需重启。
+#[tauri::command]
+pub fn update_log_config(
+    state: State<AppState>,
+    config: LogConfigUpdate,
+) -> Result<(), String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    log_engine.update_config(config);
+    Ok(())
+}
+
+/// 清除所有日志文件
+#[tauri::command]
+pub fn clear_all_logs(
+    state: State<AppState>,
+) -> Result<(), String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    let config = log_engine.get_config();
+
+    // 1. 删除磁盘上的旧日志文件
+    match std::fs::read_dir(&config.log_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_none_or(|e| e != "log") {
+                    continue;
+                }
+                let _ = std::fs::remove_file(&path);
+            }
+            log::info!("所有日志文件已清除");
+        }
+        Err(e) => {
+            // 目录不存在不算错误
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!("清除日志失败: {}", e));
+            }
+        }
+    }
+
+    // 2. 通知消费者线程关闭旧文件句柄并创建新文件
+    //    必须在删除之后发送：消费者收到此命令后会 flush 旧句柄
+    //    并通过 rotate_file() 创建带递增序号的新文件
+    let _ = log_engine.sender().send(LogEntry::Command(
+        crate::kernel::log_engine::LogCommand::ReopenAfterClear,
+    ));
+
+    Ok(())
 }
 
 // ── 协议无关的传输辅助函数 ──────────────────────────

@@ -101,7 +101,9 @@
     "configure": "配置",
     "reconnect": "重连",
     "rename": "重命名",
-    "delete": "删除"
+    "delete": "删除",
+    "startLogging": "实时监控",
+    "stopLogging": "停止监控"
   },
   "bottomPanel": {
     "noSession": "无活跃会话",
@@ -211,6 +213,7 @@
     "appearance": "外观",
     "language": "语言",
     "encoding": "字符编码",
+    "logging": "日志",
     "about": "关于",
     "switchToEn": "Switch to English",
     "switchToZh": "切换为中文",
@@ -265,6 +268,39 @@
   },
   "dualPane": {
     "resizeLabel": "调整面板大小"
+  },
+  "logging": {
+    "systemLog": "软件自身日志",
+    "systemLogDesc": "应用启动后自动记录软件运行事件（连接、断开、错误、警告等）。文件名: TauTerm_YYYYMMDD.log",
+    "systemLogStatus": "启用状态",
+    "systemLogLevel": "最低记录级别",
+    "levelError": "错误 (Error)",
+    "levelWarn": "警告 (Warn)",
+    "levelInfo": "信息 (Info)",
+    "levelDebug": "调试 (Debug)",
+    "sessionLog": "会话数据日志",
+    "sessionLogDesc": "右键会话 →「实时监控」后开始记录所有 TX/RX 数据到文件。",
+    "commonConfig": "通用配置",
+    "commonConfigDesc": "以下配置同时适用于软件自身日志和会话数据日志。",
+    "fileSection": "文件",
+    "performanceSection": "性能",
+    "retentionSection": "保留策略",
+    "actionsSection": "操作",
+    "enableLogging": "启用会话日志",
+    "logDirectory": "日志目录",
+    "maxFileSize": "单文件最大大小",
+    "bufferSize": "缓冲区大小",
+    "flushInterval": "刷新间隔",
+    "retentionDays": "保留天数",
+    "days": "天",
+    "openLogDir": "打开日志目录",
+    "clearAllLogs": "清除所有日志",
+    "clearConfirm": "确定要删除所有日志文件吗？此操作不可撤销。",
+    "cleared": "所有日志文件已清除。",
+    "clearError": "清除日志失败",
+    "started": "已开始记录日志",
+    "stopped": "日志记录已停止",
+    "writing": "正在写入"
   },
   "common": {
     "ok": "确定",

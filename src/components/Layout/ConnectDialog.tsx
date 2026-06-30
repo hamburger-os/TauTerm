@@ -395,7 +395,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               {error && <div className={styles.error}>{error}</div>}
 
               <div className={styles.actions}>
-                <button className={`${styles.cancelBtn} liquid-glass-button`} onClick={handleBack} disabled={connecting}>
+                <button className={`${styles.cancelBtn} liquid-glass-button`} onClick={onClose} disabled={connecting}>
                   {t("common.cancel")}
                 </button>
                 <button
