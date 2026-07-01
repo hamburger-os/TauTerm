@@ -29,10 +29,6 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# OpenSpec: track archived changes, ignore active work-in-progress
-openspec/changes/*
-!openspec/changes/archive/
-
 # Brainstorming / visual companion mockups
 .superpowers/
 superpowers
