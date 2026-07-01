@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
 import Icon from "../common/Icon";
@@ -38,9 +39,11 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
   const [repeatInterval, setRepeatInterval] = useState(1000);
   const [sendHistory, setSendHistory] = useState<string[]>([]);
   const [showOptions, setShowOptions] = useState(false);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const historyBtnRef = useRef<HTMLButtonElement>(null);
   const inputRefForInterval = useRef(inputText);
   inputRefForInterval.current = inputText;
 
@@ -176,6 +179,51 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
     inputRef.current?.focus();
   }, []);
 
+  // 历史下拉框 — 计算 viewport 固定定位坐标，含边界检测
+  const handleToggleHistory = useCallback(() => {
+    setShowOptions(prev => {
+      if (!prev && historyBtnRef.current) {
+        const rect = historyBtnRef.current.getBoundingClientRect();
+        const dropdownWidth = 220;
+        const maxDropdownH = 180;
+        const gap = 4;
+        const spaceAbove = rect.top - gap;
+        const spaceBelow = window.innerHeight - rect.bottom - gap;
+        // 优先选空间大的方向
+        const openAbove = spaceAbove >= maxDropdownH || spaceAbove >= spaceBelow;
+
+        const availableH = openAbove ? spaceAbove : spaceBelow;
+        const maxH = Math.min(maxDropdownH, availableH);
+
+        setDropdownStyle({
+          position: "fixed",
+          left: Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8),
+          maxHeight: maxH,
+          // 向上打开：用 bottom 对齐按钮上方；向下打开：用 top 对齐按钮下方
+          ...(openAbove
+            ? { bottom: window.innerHeight - rect.top + gap }
+            : { top: rect.bottom + gap }),
+        });
+      }
+      return !prev;
+    });
+  }, []);
+
+  // 点击下拉框外部时关闭
+  useEffect(() => {
+    if (!showOptions) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (historyBtnRef.current && !historyBtnRef.current.contains(e.target as Node)) {
+        const dropdown = document.querySelector(`.${styles.historyDropdown}`);
+        if (dropdown && !dropdown.contains(e.target as Node)) {
+          setShowOptions(false);
+        }
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showOptions]);
+
   return (
     <div className={styles.basicSend}>
       {/* 输入区域 */}
@@ -226,44 +274,45 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
           </button>
         </div>
 
-        {/* Row 2: 重复发送间隔 + 开关 */}
+        {/* Row 2: [间隔输入] [ms + 重复开关 + 历史] */}
         <div className={styles.controlsRow2}>
-          <input
-            type="number"
-            className={`${styles.intervalInput} liquid-glass-input`}
-            value={repeatInterval}
-            onChange={(e) => setRepeatInterval(Math.max(50, Number(e.target.value)))}
-            min={50}
-            step={100}
-            title={t("sendBar.interval")}
-            disabled={!isConnected || !repeatEnabled}
-          />
-          <label className={styles.repeatLabel} title={t("sendBar.repeatSend")}>
+          <div className={styles.intervalWrap}>
             <input
-              type="checkbox"
-              className={styles.repeatCheck}
-              checked={repeatEnabled}
-              onChange={(e) => setRepeatEnabled(e.target.checked)}
-              disabled={!isConnected}
+              type="number"
+              className={`${styles.intervalInput} liquid-glass-input`}
+              value={repeatInterval}
+              onChange={(e) => setRepeatInterval(Math.max(50, Number(e.target.value)))}
+              min={50}
+              step={100}
+              title={t("sendBar.interval")}
+              disabled={!isConnected || !repeatEnabled}
             />
-            <div className={styles.toggleTrack} />
-            <Icon name="loop" size="xs" />
-          </label>
-        </div>
-
-        {/* Row 3: 发送历史 + 发送按钮 */}
-        <div className={styles.controlsRow3}>
-          <div className={styles.historyWrap}>
-            <button
-              className={`${styles.historyBtn} liquid-glass-button`}
-              onClick={() => setShowOptions(o => !o)}
-              title={t("sendBar.sendHistory")}
-              disabled={sendHistory.length === 0}
-            >
-              <Icon name="chevron-dropdown" size="xs" />
-            </button>
-            {showOptions && sendHistory.length > 0 && (
-              <div className={styles.historyDropdown}>
+          </div>
+          <div className={styles.repeatAndHistory}>
+            <span className={styles.intervalUnit}>ms</span>
+            <label className={styles.repeatLabel} title={t("sendBar.repeatSend")}>
+              <input
+                type="checkbox"
+                className={styles.repeatCheck}
+                checked={repeatEnabled}
+                onChange={(e) => setRepeatEnabled(e.target.checked)}
+                disabled={!isConnected}
+              />
+              <div className={styles.toggleTrack} />
+            </label>
+            <div className={styles.historyWrap}>
+              <button
+                ref={historyBtnRef}
+                className={`${styles.historyBtn} liquid-glass-button`}
+                onClick={handleToggleHistory}
+                title={t("sendBar.sendHistory")}
+                disabled={sendHistory.length === 0}
+              >
+                <Icon name="chevron-dropdown" size="xs" />
+              </button>
+            </div>
+            {showOptions && sendHistory.length > 0 && createPortal(
+              <div className={styles.historyDropdown} style={dropdownStyle}>
                 <div className={styles.historyTitle}>{t("sendBar.sendHistory")}</div>
                 <div className={styles.historyList}>
                   {sendHistory.slice(0, 20).map((entry, i) => (
@@ -277,9 +326,14 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
                     </button>
                   ))}
                 </div>
-              </div>
+              </div>,
+              document.body
             )}
           </div>
+        </div>
+
+        {/* Row 3: 全宽强调发送按钮 */}
+        <div className={styles.controlsRow3}>
           <button
             className={`${styles.sendBtn} liquid-primary-button`}
             onClick={doSend}

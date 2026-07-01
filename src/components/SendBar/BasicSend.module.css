@@ -56,18 +56,16 @@
   gap: 6px;
 }
 
-/* Row 2: loop count + interval + progress bar */
+/* Row 2: interval input + repeat toggle + history */
 .controlsRow2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
 }
 
-/* Row 3: send history + send button */
+/* Row 3: full-width send button */
 .controlsRow3 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  display: block;
 }
 
 .select {
@@ -171,12 +169,6 @@
   cursor: not-allowed;
 }
 
-.repeatText {
-  color: var(--text-secondary);
-  font-size: var(--text-base);
-  line-height: 1;
-}
-
 .intervalInput {
   width: 100%;
   box-sizing: border-box;
@@ -185,6 +177,25 @@
   font-size: var(--text-xs);
   font-family: var(--font-mono);
   text-align: right;
+}
+
+.intervalWrap {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.intervalUnit {
+  flex: 1;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}
+
+.repeatAndHistory {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* 发送历史 */
@@ -199,19 +210,19 @@
   cursor: pointer;
 }
 
+/* 内联 .liquid-glass 核心玻璃属性（position:fixed 不可直接使用 .liquid-glass） */
 .historyDropdown {
-  position: absolute;
-  bottom: 100%;
-  right: 0;
-  margin-bottom: 4px;
+  position: fixed;
   width: 220px;
   max-height: 180px;
-  background: var(--dialog-bg);
-  border: 1px solid var(--glass-border-default);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-glass);
+  background: var(--glass-fill);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  border-radius: var(--radius-md);
+  box-shadow: var(--glass-shadow-outer), var(--glass-shadow-inner);
   z-index: var(--z-toast);
   overflow: hidden;
   display: flex;
@@ -255,8 +266,14 @@
 }
 
 .sendBtn {
-  padding: 4px 14px;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 16px;
   font-size: var(--text-xs);
+  font-weight: 600;
   font-family: var(--font-ui);
   white-space: nowrap;
+  text-align: center;
+  letter-spacing: 0.3px;
 }
