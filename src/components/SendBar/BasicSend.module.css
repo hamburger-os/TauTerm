@@ -1,0 +1,262 @@
+/* 基础发送面板 */
+
+.basicSend {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 8px;
+  height: 100%;
+  font-family: var(--font-ui);
+}
+
+/* 输入区域 */
+.inputArea {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.inputField {
+  width: 100%;
+  height: 100%;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  resize: none;
+  line-height: 1.3;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.inputField::placeholder {
+  color: var(--text-muted);
+}
+
+.hexInput {
+  letter-spacing: 1px;
+  font-size: var(--text-xs);
+}
+
+/* 右侧 3-row control column */
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  width: 180px;
+  justify-content: flex-start;
+}
+
+/* Row 1: newline selector + text/hex toggle */
+.controlsRow1 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+/* Row 2: loop count + interval + progress bar */
+.controlsRow2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+/* Row 3: send history + send button */
+.controlsRow3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  padding-right: 22px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.select option {
+  background: var(--select-option-bg);
+  color: var(--text-primary);
+}
+
+/* 模式切换按钮 */
+.modeBtn {
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.modeBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.modeActive {
+  color: var(--accent-primary);
+  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+}
+
+/* 重复发送 — 液态玻璃切换开关 */
+.repeatLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.repeatCheck {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggleTrack {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  background: var(--glass-input-bg);
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--glass-input-shadow-inner);
+  transition: all var(--transition-button);
+  flex-shrink: 0;
+}
+
+.toggleTrack::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+  transition: all var(--transition-button);
+  box-shadow: var(--shadow-sm);
+}
+
+.repeatCheck:checked + .toggleTrack {
+  background: var(--accent-gradient);
+  border-color: transparent;
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.repeatCheck:checked + .toggleTrack::after {
+  left: 15px;
+  background: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.repeatCheck:disabled + .toggleTrack {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.repeatText {
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: 1;
+}
+
+.intervalInput {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+/* 发送历史 */
+.historyWrap {
+  position: relative;
+}
+
+.historyBtn {
+  padding: 4px 6px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.historyDropdown {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 4px;
+  width: 220px;
+  max-height: 180px;
+  background: var(--dialog-bg);
+  border: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-glass);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  z-index: var(--z-toast);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.historyTitle {
+  padding: 4px 8px;
+  font-size: 9px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--glass-border-default);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.historyList {
+  overflow-y: auto;
+  max-height: 156px;
+}
+
+.historyItem {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--transition-fast);
+}
+
+.historyItem:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-primary);
+}
+
+.sendBtn {
+  padding: 4px 14px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}

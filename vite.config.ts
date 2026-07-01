@@ -38,6 +38,25 @@ export default defineConfig(async () => ({
         copyFavicon(resolve(__dirname, "dist"));
       },
     },
+    {
+      // 开发模式预加载 logo.png，使其与 JS bundle 并行下载
+      // 避免首屏 logo 图标因网络请求延迟而晚于其他 UI 元素出现
+      name: "preload-logo",
+      apply: "serve",
+      transformIndexHtml() {
+        return [
+          {
+            tag: "link",
+            attrs: {
+              rel: "preload",
+              as: "image",
+              href: "/src/assets/icons/logo.png",
+            },
+            injectTo: "head" as const,
+          },
+        ];
+      },
+    },
   ],
   // Prevent vite from obscuring Rust errors
   clearScreen: false,

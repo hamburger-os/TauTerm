@@ -70,6 +70,8 @@ pub struct ActiveSessionHandle {
     pub transfer_enabled: bool,
     /// 文件传输协议（ymodem / xmodem / zmodem）
     pub transfer_protocol: Option<String>,
+    /// 是否启用发送栏（默认 true）
+    pub send_bar_enabled: bool,
 }
 
 /// 会话存储
@@ -97,6 +99,7 @@ pub struct SavedSession {
     pub timestamp: u64,
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
+    pub send_bar_enabled: bool,
 }
 
 /// 全局文件锁 — 保护 sessions.json 的 read-modify-write 操作。
@@ -132,6 +135,7 @@ impl SessionStore {
         app_handle: tauri::AppHandle,
         transfer_enabled: bool,
         transfer_protocol: Option<String>,
+        send_bar_enabled: bool,
         // 可选：传入已有的 session_id 以原地重连（保留 UUID）
         id_override: Option<String>,
     ) -> Result<TabId, String> {
@@ -208,6 +212,7 @@ impl SessionStore {
             stats_cancel_flag: Some(stats_cancel_flag),
             transfer_enabled,
             transfer_protocol,
+            send_bar_enabled,
         };
 
         // 防御性检查：若 id_override 指向的会话已存在且未被正确关闭，
@@ -351,6 +356,7 @@ impl SessionStore {
             timestamp: chrono::Utc::now().timestamp_millis() as u64,
             transfer_enabled: h.transfer_enabled,
             transfer_protocol: h.transfer_protocol.clone(),
+            send_bar_enabled: h.send_bar_enabled,
         }).collect()
     }
 

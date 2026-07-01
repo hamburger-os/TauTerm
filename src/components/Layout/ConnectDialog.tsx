@@ -53,6 +53,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [dualFrameTimeout, setDualFrameTimeout] = useState(50);
   const [transferEnabled, setTransferEnabled] = useState(true);
   const [transferProtocol, setTransferProtocol] = useState<"ymodem" | "xmodem" | "zmodem">("ymodem");
+  const [sendBarEnabled, setSendBarEnabled] = useState(true);
   const [sessionName, setSessionName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +102,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         if (targetTab.name) setSessionName(targetTab.name);
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
         if (typeof targetTab.transferProtocol === "string") setTransferProtocol(targetTab.transferProtocol as "ymodem" | "xmodem" | "zmodem");
+        if (typeof targetTab.sendBarEnabled === "boolean") setSendBarEnabled(targetTab.sendBarEnabled);
         return;
       }
     }
@@ -117,6 +119,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setDualFrameTimeout(50);
     setTransferEnabled(true);
     setTransferProtocol("ymodem");
+    setSendBarEnabled(true);
     setSessionName("");
   }, [isOpen, editSessionId, refreshEndpoints]);
 
@@ -153,6 +156,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       dual_frame_timeout_ms: dualFrameTimeout,
       transfer_enabled: transferEnabled,
       transfer_protocol: transferProtocol,
+      send_bar_enabled: sendBarEnabled,
     } : {};
 
     try {
@@ -167,6 +171,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           sessionName || undefined,
           transferEnabled,
           transferProtocol,
+          sendBarEnabled,
         );
         onClose();
       } else {
@@ -175,6 +180,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           isSerial ? port : selectedMode, params,
           sessionName || undefined, undefined,
           transferEnabled, transferProtocol,
+          sendBarEnabled,
         );
         if (sid) {
           await switchTab(sid);
@@ -381,6 +387,20 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       </select>
                     </div>
                   )}
+
+                  {/* 发送栏开关 */}
+                  <div className={styles.field}>
+                    <label className={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={sendBarEnabled}
+                        onChange={e => setSendBarEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div className={styles.toggleTrack} />
+                      <span>{t("serial.enableSendBar") || "启用发送栏"}</span>
+                    </label>
+                  </div>
                 </>
               )}
 

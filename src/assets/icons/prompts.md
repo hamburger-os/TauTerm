@@ -408,11 +408,173 @@ A liquid glass style log/recording icon, 3D glass sculpture on pure black backgr
 
 ---
 
+### 31. command-panel — 指令面板/快捷命令
+
+**中文提示词：**
+一个液态玻璃风格的终端命令面板图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：左侧为一个向右指向的实心圆角三角（播放/执行符号），右侧为三条长度递减的水平胶囊形横线（象征命令列表行），上下排列。三角和横线之间留适度间距，形成一个"指令列表 + 执行"的组合意象。所有转角大圆角，线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边。
+
+**English prompt:**
+A liquid glass style terminal command panel icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a right-pointing solid rounded triangle (play/execute symbol) on the left, with three horizontal capsule bars of decreasing length (representing command list rows) stacked vertically on the right. Moderate spacing between triangle and bars, forming a "command list + execution" visual metaphor. All corners heavily rounded, strokes thick and even. Style reference: frosted glass texture, liquid pill strokes.
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 32. drag-handle — 拖拽排序把手
+
+**中文提示词：**
+一个液态玻璃风格的拖拽排序把手图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：2 列 × 3 行均匀排列的 6 个饱满小圆点（grid dots），行列间距一致，每个圆点圆润饱满。整体造型简洁克制，象征可拖拽重新排序的 UI 把手。风格参考：磨砂玻璃质感、液态胶囊描边、拖拽把手通用 UI 元素。
+
+**English prompt:**
+A liquid glass style drag handle icon for reordering, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: 6 plump small dots arranged in a 2-column × 3-row grid, evenly spaced, each dot perfectly rounded. Overall shape is minimal and restrained, representing a draggable reorder handle common in UI design. Style reference: frosted glass texture, liquid pill strokes, drag handle UI element.
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 33. edit — 编辑/重命名
+
+**中文提示词：**
+一个液态玻璃风格的编辑/铅笔图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一根斜向约45°的圆角铅笔造型 — 笔身为一根粗壮的圆角矩形/胶囊形，笔尖处逐渐收窄为柔和的圆角锥形。笔身和笔尖之间自然过渡，所有转角大圆角，线条粗壮均匀。笔身中段可加一条柔和的弧形分割线（象征铅笔的木材与笔芯分界）。造型简洁现代，在 12×12px 极小尺寸下仍可辨识为"编辑"含义。风格参考：磨砂玻璃质感、液态胶囊描边、编辑/修改图标。
+
+**English prompt:**
+A liquid glass style edit/pencil icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a diagonal (~45°) rounded pencil shape — the body is a thick rounded rectangle/capsule, tapering at the tip into a soft rounded cone. The body-to-tip transition is smooth and natural, all corners heavily rounded, strokes thick and even. Optionally add a soft curved dividing line mid-body (representing the wood/core boundary). Clean and modern form, must remain recognizable as "edit" at 12×12px. Style reference: frosted glass texture, liquid pill strokes, edit/modify icon.
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 34. loop — 循环/重复发送
+
+**中文提示词：**
+一个液态玻璃风格的循环/重复发送图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：两条粗壮的圆角箭头沿圆形路径首尾追逐排列 — 每条箭头由弧形箭身与圆润箭头组成，整体形成一个环形的循环/重复意象。箭头线条粗壮均匀，所有端点为饱满的半圆形。圆弧环绕约 300°，形成接近闭合的环形。风格参考：磨砂玻璃质感、液态胶囊描边、循环/刷新图标。
+
+**English prompt:**
+A liquid glass style loop/repeat icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: two thick rounded arrows curved along a circular path arranged head-to-tail in a chasing ring — each arrow has a curved shaft and a rounded arrowhead, forming a circular loop/repeat motif. Arrow strokes thick and even, all terminals are plump half-circles. The arcs wrap approximately 300°, forming a nearly closed ring. Style reference: frosted glass texture, liquid pill strokes, loop/repeat icon.
+
+**使用位置：** `src/assets/icons/loop.png` — BasicSend 和 CommandPanel 的循环发送控制图标
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 35. close — 关闭/取消
+
+**中文提示词：**
+一个液态玻璃风格的关闭/取消图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：两条约45°交叉的粗壮圆角线段形成X形 — 每条线段的两个端点均为饱满的半圆形，交叉处自然融合。线条粗壮均匀，整体简洁有力。风格参考：磨砂玻璃质感、液态胶囊描边、关闭/取消符号。
+
+**English prompt:**
+A liquid glass style close/cancel icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: two thick rounded lines crossing at approximately 45° forming an X shape — each line's two endpoints are plump half-circles, the intersection blends naturally. Strokes thick and even, overall simple and bold. Style reference: frosted glass texture, liquid pill strokes, close/cancel symbol.
+
+**使用位置：** `src/assets/icons/close.png` — 搜索栏关闭按钮、Toast关闭按钮、设置页关闭、弹窗关闭
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 36. menu — 菜单/汉堡菜单
+
+**中文提示词：**
+一个液态玻璃风格的菜单/汉堡图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：3条水平并列的粗壮圆角胶囊形横线，长度一致，间距均匀，上下排列。每条横线两端为饱满的半圆形。风格参考：磨砂玻璃质感、液态胶囊描边、汉堡菜单图标。
+
+**English prompt:**
+A liquid glass style menu/hamburger icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: 3 horizontal thick rounded capsule bars of equal length, evenly spaced, stacked vertically. Each bar has plump half-circle endpoints. Style reference: frosted glass texture, liquid pill strokes, hamburger menu icon.
+
+**使用位置：** `src/assets/icons/menu.png` — 顶部工具栏菜单按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 37. chevron-up — 上箭头/收起
+
+**中文提示词：**
+一个液态玻璃风格的向上箭头/三角图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个粗壮的倒V形/人字形，两条线段以约90°在顶点相交，顶点为大圆角，两个下端点为饱满的半圆形。线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边、上箭头符号。
+
+**English prompt:**
+A liquid glass style chevron-up arrow icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick inverted V/chevron shape, two line segments meeting at approximately 90° at the apex, the apex is heavily rounded, both lower endpoints are plump half-circles. Strokes thick and even. Style reference: frosted glass texture, liquid pill strokes, up arrow symbol.
+
+**使用位置：** `src/assets/icons/chevron-up.png` — 状态栏收起按钮、搜索栏上翻
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 38. chevron-down — 下箭头/展开
+
+**中文提示词：**
+一个液态玻璃风格的向下箭头/三角图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个粗壮的V形/人字形，两条线段以约90°在底点相交，底点为大圆角，两个上端点为饱满的半圆形。与 chevron-up 上下对称。线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边、下箭头符号。
+
+**English prompt:**
+A liquid glass style chevron-down arrow icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick V/chevron shape, two line segments meeting at approximately 90° at the bottom point, the bottom point is heavily rounded, both upper endpoints are plump half-circles. Symmetric to chevron-up. Strokes thick and even. Style reference: frosted glass texture, liquid pill strokes, down arrow symbol.
+
+**使用位置：** `src/assets/icons/chevron-down.png` — 状态栏展开按钮、搜索栏下翻
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 39. chevron-dropdown — 下拉三角
+
+**中文提示词：**
+一个液态玻璃风格的下拉三角/展开图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个实心填充的V形/倒三角，三个顶点全部为大圆角，三条边带轻微向外弧度营造有机流体感。整体饱满有力，底部弧线宽于顶部。风格参考：磨砂玻璃质感、液态胶囊描边、下拉三角符号。
+
+**English prompt:**
+A liquid glass style dropdown triangle icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a solid filled V/downward triangle, all three vertices heavily rounded, the three edges have subtle outward curvature for organic fluid feel. Overall plump and bold, the bottom arc is wider than the top. Style reference: frosted glass texture, liquid pill strokes, dropdown triangle symbol.
+
+**使用位置：** `src/assets/icons/chevron-dropdown.png` — 发送栏发送历史下拉按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 40. refresh — 刷新/重新加载
+
+**中文提示词：**
+一个液态玻璃风格的刷新/重新加载图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一段粗壮的圆弧（约270°），一端带有圆润的箭头头部（V形），另一端为饱满的半圆形端点。圆弧线条粗壮均匀，箭头头部与弧线自然融合。整体形成"旋转刷新"的视觉意象。风格参考：磨砂玻璃质感、液态胶囊描边、刷新/重新加载符号。
+
+**English prompt:**
+A liquid glass style refresh/reload icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick arc (approximately 270°) with a rounded arrowhead (V-shape) at one end and a plump half-circle at the other. The arc stroke is thick and even, the arrowhead blends naturally with the arc line. Forms a "rotating refresh" visual metaphor. Style reference: frosted glass texture, liquid pill strokes, refresh/reload symbol.
+
+**使用位置：** `src/assets/icons/refresh.png` — 连接对话框刷新串口列表按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 41. plus — 新增/添加
+
+**中文提示词：**
+一个液态玻璃风格的新增/加号图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一条垂直粗壮圆角胶囊形线段和一条水平粗壮圆角胶囊形线段在中心十字交叉，交叉处自然融合。四条端点均为饱满的半圆形。线条粗壮均匀，整体对称简洁。风格参考：磨砂玻璃质感、液态胶囊描边、添加/新增符号。
+
+**English prompt:**
+A liquid glass style plus/add icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a vertical thick rounded capsule bar and a horizontal thick rounded capsule bar crossing at center, the intersection blends naturally. All four endpoints are plump half-circles. Strokes thick and even, overall symmetric and minimal. Style reference: frosted glass texture, liquid pill strokes, add/new symbol.
+
+**使用位置：** `src/assets/icons/plus.png` — 侧栏新建会话按钮、指令面板新增命令按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 42. back-arrow — 返回箭头
+
+**中文提示词：**
+一个液态玻璃风格的返回/左箭头图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个指向左侧的粗壮V形/人字形（约120°转角），尖角为大圆角，两个右端点为饱满的半圆形。线条粗壮均匀，简洁有力，表达"返回上一级"的语义。风格参考：磨砂玻璃质感、液态胶囊描边、返回箭头符号。
+
+**English prompt:**
+A liquid glass style back/left arrow icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick V/chevron shape pointing left (approximately 120° turn), the apex is heavily rounded, both right endpoints are plump half-circles. Strokes thick and even, simple and bold, expressing "go back" semantics. Style reference: frosted glass texture, liquid pill strokes, back arrow symbol.
+
+**使用位置：** `src/assets/icons/back-arrow.png` — 连接对话框返回按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
 ## 生成后检查清单 / Post-Generation Checklist
 
 ### 图标质量
 
-- [ ] 所有 29 个图标风格统一（描边粗细、圆角程度、视觉密度）
+- [ ] 所有 42 个图标风格统一（描边粗细、圆角程度、视觉密度）
 - [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
 - [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
 - [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI
@@ -420,7 +582,7 @@ A liquid glass style log/recording icon, 3D glass sculpture on pure black backgr
 
 ### 部署
 
-1. 将所有 29 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
+1. 将所有 42 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
 2. 运行部署脚本，一键将 logo 同步到 App 图标位置：
 
 ```bash

@@ -64,16 +64,6 @@ export default function ResizeHandle({ direction, onMouseDown, className }: Resi
         }}
         transition={{ duration: 0.2 }}
       />
-      <motion.div
-        className={styles.icon}
-        animate={{
-          opacity: isNear ? 1 : 0,
-          scale: isActive ? 1.2 : 1,
-        }}
-        transition={{ duration: 0.2 }}
-      >
-        {isHorizontal ? "⋮" : "⋯"}
-      </motion.div>
     </div>
   );
 }

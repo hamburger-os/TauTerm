@@ -1,247 +1,70 @@
-/* 发送栏 v3 */
+/* 发送栏容器 */
 
-.sendBar {
+.container {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  flex-shrink: 0;
-  height: 40px;
-  font-family: var(--font-ui);
-  border-radius: var(--radius-lg);  /* 16px — Panel tier */
-}
-
-/* 输入区域 */
-.inputArea {
   flex: 1;
-  min-width: 0;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  min-height: 90px;
 }
 
-.inputField {
-  width: 100%;
-  padding: 4px 8px;
-  border-radius: var(--radius-md);  /* Control tier — 文本输入框 */
-  font-size: var(--text-xs);
-  font-family: var(--font-mono);
-  resize: none;
-  line-height: 1.3;
-  overflow-y: hidden;
+/* ── 模式切换器 ── */
+.modeSwitcher {
+  display: flex;
+  flex-direction: column;
+  width: 36px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--glass-border-default);
+  padding: 4px 2px;
+  gap: 2px;
 }
 
-.inputField::placeholder {
-  color: var(--text-muted);
-}
-
-.hexInput {
-  letter-spacing: 1px;
-  font-size: var(--text-xs);
-}
-
-/* 操作按钮区 */
-.actions {
+.modeBtn {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-
-/* 下拉选择 */
-.dropdown {
-  flex-shrink: 0;
-}
-
-.select {
-  appearance: none;
-  -webkit-appearance: none;
-  padding: 4px 8px;
-  border-radius: var(--radius-md);
-  background-image: var(--select-arrow); /* fill color adapts per theme */
-  background-repeat: no-repeat;
-  background-position: right 7px center;
-  padding-right: 22px;
-  font-size: var(--text-xs);
-  font-family: var(--font-ui);
-  cursor: pointer;
-}
-
-.select option {
-  background: var(--select-option-bg);
-  color: var(--text-primary);
-}
-
-/* 模式切换按钮 */
-.modeBtn {
-  padding: 4px 8px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-family: var(--font-mono);
   cursor: pointer;
-  white-space: nowrap;
   transition: all var(--transition-fast);
 }
 
-.modeBtn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.modeActive {
-  color: var(--accent-primary);
-  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
-}
-
-/* 重复发送 — 液态玻璃切换开关 */
-.repeatLabel {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  user-select: none;
-}
-
-/* 隐藏原生复选框 */
-.repeatCheck {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-/* 自定义开关轨道 */
-.toggleTrack {
-  position: relative;
-  width: 30px;
-  height: 17px;
-  background: var(--glass-input-bg);
-  border: 1px solid var(--glass-input-border);
-  border-radius: var(--radius-full);
-  box-shadow: var(--glass-input-shadow-inner);
-  transition: all var(--transition-button);
-  flex-shrink: 0;
-}
-
-/* 开关滑块 */
-.toggleTrack::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 11px;
-  height: 11px;
-  border-radius: var(--radius-full);
-  background: var(--text-muted);
-  transition: all var(--transition-button);
-  box-shadow: var(--shadow-sm);
-}
-
-/* 选中态：轨道填充强调渐变 */
-.repeatCheck:checked + .toggleTrack {
-  background: var(--accent-gradient);
-  border-color: transparent;
-  box-shadow: 0 0 10px var(--accent-glow);
-}
-
-/* 选中态：滑块变色并右移 */
-.repeatCheck:checked + .toggleTrack::after {
-  left: 15px;
-  background: var(--text-primary);
-  box-shadow: var(--shadow-sm);
-}
-
-/* 禁用态 */
-.repeatCheck:disabled + .toggleTrack {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.repeatText {
-  color: var(--text-secondary);
-  font-size: var(--text-base);
-  line-height: 1;
-}
-
-.intervalInput {
-  width: 70px;
-  padding: 4px 6px;
-  border-radius: var(--radius-md);
-  font-size: var(--text-xs);
-  font-family: var(--font-mono);
-  text-align: right;
-}
-
-/* 发送历史 */
-.historyWrap {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.historyBtn {
-  padding: 4px 6px;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.historyDropdown {
-  position: absolute;
-  bottom: 100%;
-  right: 0;
-  margin-bottom: 4px;
-  width: 220px;
-  max-height: 180px;
-  background: var(--dialog-bg);
-  border: 1px solid var(--glass-border-default);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-glass);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  z-index: var(--z-toast);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.historyTitle {
-  padding: 4px 8px;
-  font-size: 9px;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--glass-border-default);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.historyList {
-  overflow-y: auto;
-  max-height: 156px;
-}
-
-.historyItem {
-  display: block;
-  width: 100%;
-  padding: 4px 8px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 10px;
-  font-family: var(--font-mono);
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background var(--transition-fast);
-}
-
-.historyItem:hover {
+.modeBtn:hover {
   background: var(--glass-bg-hover);
   color: var(--text-primary);
 }
 
-/* 发送按钮 — 布局尺寸，视觉由 .liquid-primary-button 接管 */
-.sendBtn {
-  padding: 4px 14px;
-  font-size: var(--text-xs);
-  font-family: var(--font-ui);
-  white-space: nowrap;
+.modeBtnActive {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 25%, transparent);
+}
+
+.modeBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.modeBtnActive:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.modeIcon {
+  font-size: var(--text-base);
+  line-height: 1;
+}
+
+/* ── 内容区 ── */
+.content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }

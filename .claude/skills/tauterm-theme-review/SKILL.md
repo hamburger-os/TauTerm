@@ -142,9 +142,9 @@ These cause visual misalignment between controls in layout chrome bars.
 | ID | Check | Detection | Fix |
 |----|-------|-----------|-----|
 | **E1** | `align-items` not `center` | Check layout bar CSS Modules for `align-items: flex-end` or `flex-start` | Use `align-items: center` |
-| **E2** | `min-height` instead of fixed `height` | Check layout bar CSS Modules | Use fixed `height` (Toolbar=40px, StatusBar=26px, SendBar=40px). Panels use `height: 100%` / `flex: 1` |
+| **E2** | `min-height` instead of fixed `height` | Check layout bar CSS Modules | Use fixed `height` (Toolbar=40px, StatusBar=26px). Panels (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1`. Sendbar additionally enforces `min-height: 90px` — this is intentional and should NOT be flagged. |
 
-> **Note**: The `tauterm-theme` skill says Toolbar=36px, but the actual code uses 40px. Either value is acceptable if consistent — flag the discrepancy for the user to decide.
+> **Note**: The `tauterm-theme` skill says Toolbar=36px, but the actual code uses 40px. Either value is acceptable if consistent — flag the discrepancy for the user to decide. Sendbar was migrated from fixed 40px to a flex-based resizable panel (min-height: 90px) as part of the SendBar modular refactoring — E2 should exempt sendbar the same way it exempts sidebar and transmission panel.
 
 ### Category F: Component-Specific Issues (LOW)
 

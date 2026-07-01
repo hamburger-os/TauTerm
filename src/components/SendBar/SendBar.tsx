@@ -1,301 +1,70 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { useSession } from "../../context/SessionContext";
+import BasicSend from "./BasicSend";
+import CommandPanel from "./CommandPanel";
 import Icon from "../common/Icon";
+import type { SendBarMode } from "./types";
 import styles from "./SendBar.module.css";
 
 interface SendBarProps {
   sessionId: string;
-  isActive: boolean;
 }
 
-type NewlineMode = "crlf" | "lf" | "cr" | "none";
-type SendMode = "text" | "hex";
-
-const NEWLINE_MAP: Record<NewlineMode, string> = {
-  crlf: "\r\n",
-  lf: "\n",
-  cr: "\r",
-  none: "",
-};
-
 /**
- * 发送栏组件
+ * 发送栏容器组件
  *
- * 位于主内容区底部，支持文本/HEX 输入、换行符追加、
- * 重复发送、发送历史等功能。
+ * - 左侧模式切换器：基础发送 / 指令面板
+ * - 内容区：根据当前模式渲染 BasicSend 或 CommandPanel
+ * - 高度由 App.tsx 通过 CSS 控制（支持拖拽调整）
  */
-export default function SendBar({ sessionId, isActive }: SendBarProps) {
+export default function SendBar({ sessionId }: SendBarProps) {
   const { t } = useTranslation();
-  const { sendData, state } = useSession();
-  const activeTab = state.tabs.find(tab => tab.id === sessionId);
 
-  const [inputText, setInputText] = useState("");
-  const [newlineMode, setNewlineMode] = useState<NewlineMode>("crlf");
-  const [sendMode, setSendMode] = useState<SendMode>(() => {
-    const stored = localStorage.getItem("tauterm-default-data-mode");
-    return stored === "hex" ? "hex" : "text";
-  });
-  const [repeatEnabled, setRepeatEnabled] = useState(false);
-  const [repeatInterval, setRepeatInterval] = useState(1000);
-  const [sendHistory, setSendHistory] = useState<string[]>([]);
-  const [showOptions, setShowOptions] = useState(false);
+  const [mode, setMode] = useState<SendBarMode>("basic");
+  const [isChildRunning, setIsChildRunning] = useState(false);
 
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const inputRefForInterval = useRef(inputText);
-  // 同步 ref 以便定时器回调读取最新值
-  inputRefForInterval.current = inputText;
+  const handleModeChange = useCallback((newMode: SendBarMode) => {
+    if (isChildRunning) return;
+    setMode(newMode);
+  }, [isChildRunning]);
 
-  const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
+  const handleSendingChange = useCallback((sending: boolean) => {
+    setIsChildRunning(sending);
+  }, []);
 
-  // HEX 输入有效性检查：非空、偶数长度、纯十六进制字符
-  const isHexValid = (value: string): boolean => {
-    const hex = value.replace(/\s/g, "");
-    return hex.length > 0 && hex.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(hex);
-  };
-
-  // 发送逻辑（手动触发：Enter / 点击发送按钮）
-  const doSend = useCallback(() => {
-    // 使用 ref 读取最新值，避免定时器回调因闭包陈旧而发送过时数据
-    const currentInput = inputRefForInterval.current;
-    if (!currentInput.trim() && sendMode === "text") return;
-
-    let data: string | Uint8Array;
-    if (sendMode === "hex") {
-      const hex = currentInput.replace(/\s/g, "");
-      // 必须为非空且长度为偶数
-      if (hex.length === 0 || hex.length % 2 !== 0) return;
-      if (!/^[0-9a-fA-F]+$/.test(hex)) return;
-      const len = hex.length / 2;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-      }
-      data = bytes;
-    } else {
-      data = currentInput + NEWLINE_MAP[newlineMode];
-    }
-
-    sendData(sessionId, data);
-
-    // 添加到发送历史 — 存储原始输入（不含换行符追加），避免换行符翻倍
-    setSendHistory(prev => {
-      const entry = currentInput;
-      const next = [entry, ...prev.filter(h => h !== entry)];
-      return next.slice(0, 50);
-    });
-
-    // 保持输入内容不清空，方便重复发送
-    inputRef.current?.focus();
-  }, [newlineMode, sendMode, sessionId, sendData]);
-
-  // 周期发送回调 — 与 doSend 逻辑一致，但不抢夺焦点
-  // 避免 setInterval 触发时打断用户在其他控件上的操作（如下拉框）
-  const doIntervalSend = useCallback(() => {
-    const currentInput = inputRefForInterval.current;
-    if (!currentInput.trim() && sendMode === "text") return;
-
-    let data: string | Uint8Array;
-    if (sendMode === "hex") {
-      const hex = currentInput.replace(/\s/g, "");
-      if (hex.length === 0 || hex.length % 2 !== 0) return;
-      if (!/^[0-9a-fA-F]+$/.test(hex)) return;
-      const len = hex.length / 2;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-      }
-      data = bytes;
-    } else {
-      data = currentInput + NEWLINE_MAP[newlineMode];
-    }
-
-    sendData(sessionId, data);
-
-    setSendHistory(prev => {
-      const entry = currentInput;
-      const next = [entry, ...prev.filter(h => h !== entry)];
-      return next.slice(0, 50);
-    });
-    // 注意：不调用 inputRef.current?.focus() —— 周期发送不应抢夺焦点
-  }, [newlineMode, sendMode, sessionId, sendData]);
-
-  // 重复发送定时器 — 使用 doIntervalSend 避免定时器抢夺焦点
-  // 只依赖开关和间隔变化，避免因 newlineMode/sendMode 切换导致不必要的定时器重建
-  useEffect(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    // 非活跃或已断开会话不启动定时器
-    if (!isActive || !isConnected) return;
-    const hasValidInput = sendMode === "hex"
-      ? isHexValid(inputRefForInterval.current)
-      : inputRefForInterval.current.trim().length > 0;
-    if (repeatEnabled && repeatInterval >= 50 && hasValidInput) {
-      intervalRef.current = setInterval(doIntervalSend, repeatInterval);
-    }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [isActive, isConnected, repeatEnabled, repeatInterval]);
-
-  // 断开会话时重置发送栏状态（周期发送、输入内容、历史记录）
-  const prevConnectedRef = useRef(isConnected);
-  useEffect(() => {
-    const wasConnected = prevConnectedRef.current;
-    prevConnectedRef.current = isConnected;
-    // 仅在 connected → disconnected 转换时重置
-    if (wasConnected && !isConnected) {
-      setRepeatEnabled(false);
-      setRepeatInterval(1000);
-      setInputText("");
-      setSendHistory([]);
-      setShowOptions(false);
-    }
-  }, [isConnected]);
-
-  // 键盘处理
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      doSend();
-    }
-  }, [doSend]);
-
-  // HEX 输入过滤
-  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value;
-    if (sendMode === "hex") {
-      // 只允许十六进制字符和空格
-      const filtered = val.replace(/[^0-9a-fA-F\s]/g, "");
-      setInputText(filtered);
-    } else {
-      setInputText(val);
-    }
-  }, [sendMode]);
-
-  // 历史项点击
-  const handleHistoryClick = useCallback((entry: string) => {
-    // 如果是 hex 模式且 entry 包含换行，处理一下
-    setInputText(entry);
-    setShowOptions(false);
-    inputRef.current?.focus();
+  const handleRunningChange = useCallback((running: boolean) => {
+    setIsChildRunning(running);
   }, []);
 
   return (
-    <div className={`${styles.sendBar} liquid-glass`}>
-      {/* 输入区域 */}
-      <div className={styles.inputArea}>
-        <textarea
-          ref={inputRef}
-          className={`${styles.inputField} liquid-glass-input ${sendMode === "hex" ? styles.hexInput : ""}`}
-          value={inputText}
-          onChange={handleInputChange}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            isConnected
-              ? sendMode === "hex" ? "FF 01 02..." : (t("sendBar.placeholder") || "Type data to send...")
-              : t("sendBar.disconnected")
-          }
-          disabled={!isConnected}
-          rows={1}
-          wrap="off"
-        />
+    <div className={`${styles.container} liquid-glass`}>
+      {/* 模式切换器 */}
+      <div className={styles.modeSwitcher}>
+        <button
+          className={`${styles.modeBtn} ${mode === "basic" ? styles.modeBtnActive : ""}`}
+          onClick={() => handleModeChange("basic")}
+          disabled={isChildRunning}
+          title={isChildRunning ? (t("sendBar.modeLocked") || "Mode locked during sending") : (t("sendBar.basicMode") || "Basic Send")}
+        >
+          <Icon name="upload" size="sm" />
+        </button>
+        <button
+          className={`${styles.modeBtn} ${mode === "command" ? styles.modeBtnActive : ""}`}
+          onClick={() => handleModeChange("command")}
+          disabled={isChildRunning}
+          title={isChildRunning ? (t("sendBar.modeLocked") || "Mode locked during sending") : (t("commandPanel.title") || "Command Panel")}
+        >
+          <Icon name="command-panel" size="sm" />
+        </button>
       </div>
 
-      {/* 操作按钮区 */}
-      <div className={styles.actions}>
-        {/* 换行符选择 */}
-        <div className={styles.dropdown}>
-          <select
-            className={`${styles.select} liquid-glass-input`}
-            value={newlineMode}
-            onChange={(e) => setNewlineMode(e.target.value as NewlineMode)}
-            title={t("sendBar.appendNewline")}
-            disabled={!isConnected || sendMode === "hex"}
-          >
-            <option value="crlf">{t("sendBar.newline_crlf")}</option>
-            <option value="lf">{t("sendBar.newline_lf")}</option>
-            <option value="cr">{t("sendBar.newline_cr")}</option>
-            <option value="none">{t("sendBar.newline_none")}</option>
-          </select>
-        </div>
-
-        {/* 发送模式切换 */}
-        <button
-          className={`${styles.modeBtn} liquid-glass-button ${sendMode === "hex" ? styles.modeActive : ""}`}
-          onClick={() => setSendMode(m => m === "text" ? "hex" : "text")}
-          title={t("sendBar.sendMode")}
-          disabled={!isConnected}
-        >
-          {sendMode === "text" ? t("sendBar.sendModeText") : t("sendBar.sendModeHex")}
-        </button>
-
-        {/* 重复发送 — 液态玻璃切换开关 */}
-        <label className={styles.repeatLabel} title={t("sendBar.repeatSend")}>
-          <input
-            type="checkbox"
-            className={styles.repeatCheck}
-            checked={repeatEnabled}
-            onChange={(e) => setRepeatEnabled(e.target.checked)}
-            disabled={!isConnected}
-          />
-          <div className={styles.toggleTrack} />
-          <span className={styles.repeatText}>⟳</span>
-        </label>
-        {repeatEnabled && (
-          <input
-            type="number"
-            className={`${styles.intervalInput} liquid-glass-input`}
-            value={repeatInterval}
-            onChange={(e) => setRepeatInterval(Math.max(50, Number(e.target.value)))}
-            min={50}
-            step={100}
-            title={t("sendBar.interval")}
-            disabled={!isConnected}
-          />
+      {/* 内容区 */}
+      <div className={styles.content}>
+        {mode === "basic" ? (
+          <BasicSend sessionId={sessionId} onSendingChange={handleSendingChange} />
+        ) : (
+          <CommandPanel sessionId={sessionId} onRunningChange={handleRunningChange} />
         )}
-
-        {/* 发送历史 */}
-        {sendHistory.length > 0 && (
-          <div className={styles.historyWrap}>
-            <button
-              className={`${styles.historyBtn} liquid-glass-button`}
-              onClick={() => setShowOptions(o => !o)}
-              title={t("sendBar.sendHistory")}
-            >
-              <Icon name="chevron-dropdown" size="xs" />
-            </button>
-            {showOptions && (
-              <div className={styles.historyDropdown}>
-                <div className={styles.historyTitle}>{t("sendBar.sendHistory")}</div>
-                <div className={styles.historyList}>
-                  {sendHistory.slice(0, 20).map((entry, i) => (
-                    <button
-                      key={i}
-                      className={styles.historyItem}
-                      onClick={() => handleHistoryClick(entry)}
-                      title={entry}
-                    >
-                      {entry.length > 40 ? entry.slice(0, 40) + "..." : entry}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* 发送按钮 — 炫彩流光 */}
-        <button
-          className={`${styles.sendBtn} liquid-primary-button`}
-          onClick={doSend}
-          disabled={!isConnected || (sendMode === "text" && !inputText.trim()) || (sendMode === "hex" && !isHexValid(inputText))}
-        >
-          {t("sendBar.send")}
-        </button>
       </div>
     </div>
   );

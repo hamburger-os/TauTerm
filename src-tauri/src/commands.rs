@@ -54,6 +54,7 @@ pub struct SavedSessionInfo {
     pub plugin_id: String,
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
+    pub send_bar_enabled: bool,
 }
 
 // ── 命令：连接类型 ──────────────────────────────────
@@ -107,6 +108,7 @@ pub fn connect_session(
     plugin_id: Option<String>,
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
+    send_bar_enabled: Option<bool>,
     // 可选：传入已有的 session_id 以原地重连（保留 UUID 和 I/O 统计连续性）
     session_id: Option<String>,
 ) -> Result<String, String> {
@@ -121,7 +123,7 @@ pub fn connect_session(
     }
 
     match pid.as_str() {
-        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, session_id),
+        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, session_id),
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
@@ -135,6 +137,7 @@ fn connect_session_serial(
     name: Option<String>,
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
+    send_bar_enabled: Option<bool>,
     session_id: Option<String>,
 ) -> Result<String, String> {
     // 通过 SerialAdapter（ProtocolAdapter trait）创建 Channel
@@ -194,6 +197,7 @@ fn connect_session_serial(
 
     let transfer_enabled_val = transfer_enabled.unwrap_or(true);
     let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "ymodem".into());
+    let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
 
     // 在作用域块内创建会话并保存，利用 RAII 自动释放 MutexGuard
     let session_id = {
@@ -203,6 +207,7 @@ fn connect_session_serial(
             on_data, on_disconnect, app.clone(),
             transfer_enabled_val,
             Some(transfer_protocol_val.clone()),
+            send_bar_enabled_val,
             session_id,
         )?;
 
@@ -231,6 +236,7 @@ fn connect_session_serial(
         "connected_at": connected_at,
         "transfer_enabled": transfer_enabled_val,
         "transfer_protocol": transfer_protocol_val,
+        "send_bar_enabled": send_bar_enabled_val,
     }));
 
     Ok(session_id)
@@ -390,6 +396,7 @@ pub fn load_sessions(
         plugin_id: s.plugin_id,
         transfer_enabled: s.transfer_enabled,
         transfer_protocol: s.transfer_protocol.clone(),
+        send_bar_enabled: s.send_bar_enabled,
     }).collect())
 }
 
@@ -406,6 +413,7 @@ pub fn save_session_config(
     plugin_id: Option<String>,
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
+    send_bar_enabled: Option<bool>,
     // 可选：传入已有的 session_id 以原地更新配置（保留 UUID 和 I/O 统计连续性）
     session_id: Option<String>,
 ) -> Result<String, String> {
@@ -431,6 +439,7 @@ pub fn save_session_config(
         timestamp: now,
         transfer_enabled: transfer_enabled.unwrap_or(true),
         transfer_protocol: transfer_protocol.clone(),
+        send_bar_enabled: send_bar_enabled.unwrap_or(true),
     };
 
     SessionStore::save_config_to_disk(&app, saved)?;

@@ -30,6 +30,9 @@ const SIDEBAR_MAX = 400;
 const TRANSMISSION_MIN = 160;
 const TRANSMISSION_MAX = 500;
 const TRANSMISSION_DEFAULT = 260;
+const SENDBAR_MIN_PCT = 5;
+const SENDBAR_MAX_PCT = 60;
+const SENDBAR_DEFAULT_PCT = SENDBAR_MIN_PCT;
 const RESIZE_DEBOUNCE_MS = 150;
 
 interface ToastMessage {
@@ -49,6 +52,9 @@ function AppInner() {
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [transmissionWidth, setTransmissionWidth] = useState(TRANSMISSION_DEFAULT);
   const [isResizingTransmission, setIsResizingTransmission] = useState(false);
+  const [sendBarPct, setSendBarPct] = useState(SENDBAR_DEFAULT_PCT);
+  const [isResizingSendBar, setIsResizingSendBar] = useState(false);
+  const mainContentRef = useRef<HTMLDivElement>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -87,8 +93,15 @@ function AppInner() {
     transmissionStartX.current = e.clientX; transmissionStartWidth.current = transmissionWidth;
   }, [transmissionWidth]);
 
+  // Resize: sendBar (flex ratio)
+  const sendBarStartY = useRef(0); const sendBarStartPct = useRef(SENDBAR_DEFAULT_PCT);
+  const handleSendBarMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); setIsResizingSendBar(true);
+    sendBarStartY.current = e.clientY; sendBarStartPct.current = sendBarPct;
+  }, [sendBarPct]);
+
   useEffect(() => {
-    const resizeActive = isResizingSidebar || isResizingTransmission;
+    const resizeActive = isResizingSidebar || isResizingTransmission || isResizingSendBar;
     if (!resizeActive) return;
 
     const handleMove = (e: MouseEvent) => {
@@ -96,14 +109,29 @@ function AppInner() {
         setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, sidebarStartWidth.current + (e.clientX - sidebarStartX.current))));
       }
       if (isResizingTransmission) {
-        // 向左拖动增大面板，向右拖动减小面板
         setTransmissionWidth(Math.min(TRANSMISSION_MAX, Math.max(TRANSMISSION_MIN, transmissionStartWidth.current - (e.clientX - transmissionStartX.current))));
       }
+      if (isResizingSendBar) {
+        const container = mainContentRef.current;
+        if (!container) return;
+        const containerHeight = container.clientHeight;
+        if (containerHeight <= 0) return;
+        // 向上拖增大 SendBar 占比
+        const deltaPct = ((sendBarStartY.current - e.clientY) / containerHeight) * 100;
+        // 动态最小百分比：确保 SendBar 不小于 90px（min-height）
+        const dynamicMinPct = Math.max(SENDBAR_MIN_PCT, Math.ceil(9000 / containerHeight));
+        const newPct = Math.min(SENDBAR_MAX_PCT, Math.max(dynamicMinPct, sendBarStartPct.current + deltaPct));
+        setSendBarPct(newPct);
+      }
     };
-    const handleUp = () => { setIsResizingSidebar(false); setIsResizingTransmission(false); };
+    const handleUp = () => {
+      setIsResizingSidebar(false);
+      setIsResizingTransmission(false);
+      setIsResizingSendBar(false);
+    };
     document.addEventListener("mousemove", handleMove);
     document.addEventListener("mouseup", handleUp);
-    document.body.style.cursor = "col-resize";
+    document.body.style.cursor = isResizingSendBar ? "row-resize" : "col-resize";
     document.body.style.userSelect = "none";
 
     return () => {
@@ -112,18 +140,28 @@ function AppInner() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isResizingSidebar, isResizingTransmission]);
+  }, [isResizingSidebar, isResizingTransmission, isResizingSendBar, sendBarPct]);
 
   // Global drag events for dropzone visual feedback + Tauri native drop
   useEffect(() => {
-    const handleDragEnter = (e: DragEvent) => { e.preventDefault(); setDragging(true); };
+    const handleDragEnter = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
+      e.preventDefault(); setDragging(true);
+    };
     const handleDragLeave = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
       if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
         setDragging(false);
       }
     };
-    const handleDragOver = (e: DragEvent) => { e.preventDefault(); };
-    const handleDrop = (e: DragEvent) => { e.preventDefault(); setDragging(false); };
+    const handleDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
+      e.preventDefault();
+    };
+    const handleDrop = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
+      e.preventDefault(); setDragging(false);
+    };
     document.addEventListener("dragenter", handleDragEnter);
     document.addEventListener("dragleave", handleDragLeave);
     document.addEventListener("dragover", handleDragOver);
@@ -251,8 +289,8 @@ function AppInner() {
         )}
 
         {/* 主内容区：终端 + 传输面板 + 发送栏 */}
-        <div className="main-content">
-          <div className="terminal-transmission-row">
+        <div className="main-content" ref={mainContentRef}>
+          <div className="terminal-transmission-row" style={{ flex: `${100 - sendBarPct} 1 ${100 - sendBarPct}%` }}>
             <main className="terminal-viewport liquid-glass">
               <TabContentDispatcher />
             </main>
@@ -282,10 +320,21 @@ function AppInner() {
           </div>
           {sessionState.tabs.map(tab => {
             const isActive = tab.id === sessionState.activeTabId;
+            const showSendBar = tab.sendBarEnabled !== false;
             return (
-              <div key={tab.id} style={{ display: isActive ? undefined : "none" }}>
-                <SendBar sessionId={tab.id} isActive={isActive} />
-              </div>
+              <React.Fragment key={tab.id}>
+                {(showSendBar && isActive) && (
+                  <ResizeHandle direction="vertical" onMouseDown={handleSendBarMouseDown} />
+                )}
+                {showSendBar && (
+                  <div style={isActive
+                    ? { flex: `${sendBarPct} 1 ${sendBarPct}%`, minHeight: 90, display: 'flex', flexDirection: 'column' as const }
+                    : { display: 'none' as const }
+                  }>
+                    <SendBar sessionId={tab.id} />
+                  </div>
+                )}
+              </React.Fragment>
             );
           })}
         </div>

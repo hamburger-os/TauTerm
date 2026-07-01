@@ -30,6 +30,8 @@ export interface TabInfo {
   transferEnabled?: boolean;
   /** 文件传输协议（ymodem / xmodem / zmodem） */
   transferProtocol?: string;
+  /** 是否启用发送栏（默认 true） */
+  sendBarEnabled?: boolean;
 }
 
 export interface ConnectionTypeInfo {
@@ -67,7 +69,7 @@ type SessionAction =
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
-  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; pluginId?: string; connectedAt?: number | null }
+  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
   | { type: "CLEAR_TABS" };
 
 const initialState: SessionState = {
@@ -144,6 +146,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
                 params: action.params,
                 transferEnabled: action.transferEnabled ?? t.transferEnabled,
                 transferProtocol: action.transferProtocol ?? t.transferProtocol,
+                sendBarEnabled: action.sendBarEnabled ?? t.sendBarEnabled,
                 pluginId: action.pluginId ?? t.pluginId,
                 connectedAt: action.connectedAt !== undefined ? action.connectedAt : t.connectedAt,
               }
@@ -163,14 +166,14 @@ interface SessionContextValue {
   state: SessionState;
   fetchConnectionTypes: () => Promise<void>;
   refreshEndpoints: () => Promise<void>;
-  connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string) => Promise<string | null>;
-  createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string) => Promise<string | null>;
+  connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
+  createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
   disconnect: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
   switchTab: (sessionId: string) => Promise<void>;
   renameTab: (sessionId: string, name: string) => Promise<void>;
-  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string) => Promise<void>;
+  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<void>;
   getTabs: () => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
@@ -256,7 +259,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string) => {
+  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => {
     dispatch({ type: "SET_ERROR", error: null });
     try {
       const sessionId = await invoke<string>("connect_session", {
@@ -264,6 +267,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         pluginId: pluginId || "serial",
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
+        sendBarEnabled: sendBarEnabled ?? true,
       });
       return sessionId;
     } catch (e) {
@@ -272,7 +276,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const createOfflineSession = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string) => {
+  const createOfflineSession = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => {
     dispatch({ type: "SET_ERROR", error: null });
     try {
       const sessionId = await invoke<string>("save_session_config", {
@@ -280,6 +284,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         pluginId: pluginId || "serial",
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
+        sendBarEnabled: sendBarEnabled ?? true,
       });
       dispatch({
         type: "ADD_TAB",
@@ -295,6 +300,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           connectedAt: null,
           transferEnabled: transferEnabled ?? true,
           transferProtocol,
+          sendBarEnabled: sendBarEnabled ?? true,
         },
       });
       return sessionId;
@@ -382,6 +388,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     name?: string,
     transferEnabled?: boolean,
     transferProtocol?: string,
+    sendBarEnabled?: boolean,
   ) => {
     const tab = state.tabs.find(t => t.id === sessionId);
     const wasConnected = tab?.state === "connected" || tab?.state === "transferring";
@@ -405,6 +412,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         name: name || undefined,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
+        sendBarEnabled: sendBarEnabled ?? true,
         sessionId, // 复用已有 UUID
       });
     } catch (e) {
@@ -421,6 +429,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       name: name || tab?.name || `Serial @ ${endpoint}`,
       transferEnabled,
       transferProtocol,
+      sendBarEnabled,
       pluginId: tab?.pluginId, // 保持原有 pluginId，为将来插件切换预留
     });
 
@@ -433,6 +442,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           name: name || tab?.name || undefined,
           transferEnabled: transferEnabled ?? true,
           transferProtocol: transferProtocol || "ymodem",
+          sendBarEnabled: sendBarEnabled ?? true,
           sessionId, // 保持 UUID 连续性
         });
         // connect_session 后端会 emit session-connected 事件，前端监听器会更新状态为 connected
@@ -467,6 +477,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         plugin_id?: string;
         transfer_enabled?: boolean;
         transfer_protocol?: string;
+        send_bar_enabled?: boolean;
       }>>("load_sessions");
       if (saved && saved.length > 0) {
         const tabs: TabInfo[] = saved.map((s) => ({
@@ -481,6 +492,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           connectedAt: null,
           transferEnabled: s.transfer_enabled ?? true,
           transferProtocol: s.transfer_protocol,
+          sendBarEnabled: s.send_bar_enabled ?? true,
         }));
         dispatch({ type: "SET_TABS", tabs });
         if (tabs.length > 0) {
@@ -518,7 +530,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
@@ -535,6 +547,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               name: event.payload.name || `Serial @ ${event.payload.endpoint}`,
               transferEnabled: event.payload.transfer_enabled,
               transferProtocol: event.payload.transfer_protocol,
+              sendBarEnabled: event.payload.send_bar_enabled,
               pluginId: event.payload.plugin_id || "serial",
               connectedAt: event.payload.connected_at ?? Date.now(),
             });
@@ -554,6 +567,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 connectedAt: event.payload.connected_at ?? Date.now(),
                 transferEnabled: event.payload.transfer_enabled ?? true,
                 transferProtocol: event.payload.transfer_protocol,
+                sendBarEnabled: event.payload.send_bar_enabled ?? true,
               },
             });
           }

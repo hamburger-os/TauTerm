@@ -534,19 +534,13 @@ const styles: Record<string, React.CSSProperties> = {
 所有布局 chrome 条（工具栏、侧边栏、状态栏、发送栏、传输面板）遵循统一的对齐约定：
 
 - 使用 `display: flex; align-items: center;` — 所有子元素在交叉轴方向**垂直居中**，绝不使用 `flex-end` 或 `flex-start`
-- 使用固定 `height`（Toolbar: 36px, StatusBar: 26px, SendBar: 40px），不使用 `min-height` — flex 容器应具有确定的尺寸
+- **固定高度条**使用固定 `height`（Toolbar: 36px, StatusBar: 26px），不使用 `min-height` — flex 容器应具有确定的尺寸
+- **弹性面板**（侧边栏、传输面板、发送栏）使用 `height: 100%` / `flex: 1` 撑满父容器；发送栏额外设置 `min-height: 90px`，用户可通过垂直 `ResizeHandle` 拖拽调整
 - 条内按钮/输入/选择控件统一垂直方向 `padding`（如 `4px 8px`），确保所有控件高度一致且文本基线对齐
 - 子元素组（如 `.actions`）内部同样使用 `align-items: center`
 
 ```css
-/* [CORRECT] 正确：布局栏对齐规范 */
-.sendBar {
-  display: flex;
-  align-items: center;  /* 垂直居中，非 flex-end */
-  height: 40px;         /* 固定高度，非 min-height */
-  gap: 6px;
-  padding: 6px 8px;
-}
+/* [CORRECT] 正确：固定高度条（工具栏/状态栏） */
 .toolbar {
   display: flex;
   align-items: center;
@@ -559,14 +553,23 @@ const styles: Record<string, React.CSSProperties> = {
   height: 26px;
 }
 
+/* [CORRECT] 正确：弹性面板（发送栏）— flex 比例 + min-height，无固定 height */
+.sendBar {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-height: 90px;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
 /* [INCORRECT] 错误：flex-end 导致控件底部参差不齐 */
 .sendBar {
   align-items: flex-end;
-  min-height: 40px;
 }
 ```
 
-> **约定值速查**：Toolbar = 36px, StatusBar = 26px, SendBar = 40px。Panel 类（侧边栏、传输面板）因内容可变，使用 `height: 100%` / `flex: 1` 撑满父容器即可。
+> **约定值速查**：Toolbar = 36px, StatusBar = 26px（固定高度）。Panel 类（侧边栏、传输面板、发送栏）使用 `height: 100%` / `flex: 1` 撑满父容器。发送栏额外约束 `min-height: 90px`，用户可通过垂直 `ResizeHandle` 拖拽调整。
 
 ### 字号令牌规范
 
@@ -683,7 +686,7 @@ digraph text_color_choice {
 - [ ] 布局表面（工具栏、侧边栏、状态栏、终端视口、发送栏）使用 `liquid-glass` 全局类 — 禁止在布局 chrome 上手写 `background` / `backdrop-filter` / `border` / `box-shadow`
 - [ ] 内层卡片嵌套在 `.liquid-glass` 表面内部 → 使用 `.liquid-glass-card` 全局类；极小型元素（~30-50px）→ 使用 Mini-Card 模式（`var(--shadow-sm)` + 3D 不对称边框）
 - [ ] 玻璃表面元素有 3D 不对称边框高光（`border-top: var(--glass-border-top)`, `border-left: var(--glass-border-left)`）— 不得只用平面 `border: 1px solid var(--glass-border-default)`，除非是 Tab、下拉菜单项等非卡片元素
-- [ ] 布局栏使用 `align-items: center` + 固定 `height`（Toolbar=36px, StatusBar=26px, SendBar=40px），内部控件统一垂直 padding 以保证水平对齐
+- [ ] 固定高度布局栏使用 `align-items: center` + 固定 `height`（Toolbar=36px, StatusBar=26px）；弹性面板（侧边栏、传输面板、发送栏）使用 `height: 100%` / `flex: 1`，发送栏额外约束 `min-height: 90px`。内部控件统一垂直 padding 以保证水平对齐
 - [ ] 无 v2 别名令牌残留：`--glass-bg`、`--glass-border`、`--block-*` 已被移除，新代码禁止使用。提交前运行 `grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'` 验证
 - [ ] 无含硬编码数值的 `style={}` 内联对象 — 所有组件和渲染器统一使用 CSS Module + Token
 

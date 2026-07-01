@@ -345,34 +345,42 @@ The 3D asymmetric borders maintain visual language consistency with larger `.liq
 All layout chrome bars (toolbar, sidebar, status bar, send bar, transmission panel) MUST follow these alignment rules:
 
 - Use `display: flex; align-items: center;` — children are **vertically centered**, NEVER `flex-end` or `flex-start`
-- Use a fixed `height` (Toolbar=36px, StatusBar=26px, SendBar=40px), NOT `min-height`
+- **Fixed-height bars** use a fixed `height` (Toolbar=36px, StatusBar=26px), NOT `min-height`
+- **Flex panels** (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1` to fill the parent; sendbar additionally sets `min-height: 90px` and is user-resizable via vertical `ResizeHandle`
 - Buttons/inputs/selects inside the bar use consistent vertical `padding` (e.g., `4px 8px`) so all controls share the same height and text baselines align horizontally
 - Child groups (e.g., `.actions`) also use `align-items: center` internally
 
 ```css
-/* [正确] Correct — vertical center + fixed height */
-.sendBar {
-  display: flex;
-  align-items: center;  /* center, NOT flex-end */
-  height: 40px;         /* fixed, NOT min-height */
-  gap: 6px;
-  padding: 6px 8px;
-}
+/* [正确] Correct — vertical center + fixed height (toolbar/statusbar) */
 .toolbar {
   display: flex;
   align-items: center;
   height: 36px;
   padding: 0 var(--spacing-md);
 }
+.statusBar {
+  display: flex;
+  align-items: center;
+  height: 26px;
+}
+
+/* [正确] Correct — flex panel (sendbar): flex ratio + min-height, no fixed height */
+.sendBar {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-height: 90px;
+  gap: 6px;
+  padding: 6px 8px;
+}
 
 /* [错误] Wrong — flex-end causes controls to sit at different vertical positions */
 .sendBar {
   align-items: flex-end;   /* jagged bottom alignment */
-  min-height: 40px;        /* no fixed height */
 }
 ```
 
-> **Convention**: Toolbar=36px, StatusBar=26px, SendBar=40px. Panels (sidebar, transmission panel) use `height: 100%` / `flex: 1` to fill the parent.
+> **Convention**: Toolbar=36px, StatusBar=26px (fixed height). Panels (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1` to fill the parent. Sendbar additionally enforces `min-height: 90px` and is user-resizable via vertical `ResizeHandle` drag.
 
 ### Font-Size Token Guidance (v1.8)
 
@@ -730,7 +738,7 @@ Run this mental checklist for every new/changed component:
 13. Disabled opacity: `opacity: 0.5` for buttons (`.liquid-glass-button` / `.liquid-primary-button`), `opacity: 0.4` for inputs/selects (`.liquid-glass-input`). These are managed BY the global classes — CSS Modules do not need to redefine them. (Note: `.liquid-glass-button:disabled` was added in v3.1 to close a gap where only the primary and input variants had global disabled rules.)
 14. Layout surfaces (toolbar, sidebar, statusbar, terminal viewport, sendbar, transmission panel) use `liquid-glass` global class — CSS Modules for layout chrome contain ONLY layout properties. NO hand-rolled `background` / `backdrop-filter` / `border` / `box-shadow` on chrome surfaces.
 15. No deprecated v2 tokens (`--glass-bg`, `--glass-border`, `--block-*`). Verify with: `grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'`
-16. Layout bars use `align-items: center` + fixed `height` (Toolbar=36px, StatusBar=26px, SendBar=40px). Controls inside the bar use consistent vertical padding to ensure horizontal alignment.
+16. Fixed-height layout bars use `align-items: center` + fixed `height` (Toolbar=36px, StatusBar=26px). Flex panels (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1`; sendbar additionally enforces `min-height: 90px`. Controls inside the bar use consistent vertical padding to ensure horizontal alignment.
 17. Renderer components (under `src/renderers/`) must use CSS Modules + tokens — inline `React.CSSProperties` objects with hardcoded numeric values are forbidden.
 18. No dead CSS Module classes — every class defined in a `.module.css` file must be referenced by the corresponding `.tsx` file.
 19. Card elements use `.liquid-glass-card` when nested inside a `.liquid-glass` surface — NEVER nest `.liquid-glass` inside `.liquid-glass`. Layout chrome surfaces (sidebar, toolbar, etc.) keep using `.liquid-glass`. For elements with height <50px, use the Mini-Card pattern (module-specific CSS: `var(--shadow-sm)` + `var(--glass-fill)` + 3D asymmetric borders `border-top`/`border-left`) instead of `.liquid-glass-card`. Verify with: `grep -rn 'liquid-glass"' src/components/ --include='*.tsx'` and check that no `.liquid-glass` element is a child of another `.liquid-glass` element.

@@ -1,0 +1,22 @@
+/* 发送栏共享组件样式 */
+
+.stopBtn {
+  background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+  color: var(--accent-primary);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
+  border-radius: var(--radius-md);
+  padding: 4px 14px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.stopBtn:hover {
+  background: color-mix(in srgb, var(--accent-primary) 22%, transparent);
+}
+
+.stopBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

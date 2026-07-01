@@ -33,6 +33,18 @@ import hourglassPng from "../../assets/icons/hourglass.png";
 import transferProgressPng from "../../assets/icons/transfer-progress.png";
 import checkPlainPng from "../../assets/icons/check-plain.png";
 import logPng from "../../assets/icons/log.png";
+import dragHandlePng from "../../assets/icons/drag-handle.png";
+import editPng from "../../assets/icons/edit.png";
+import loopPng from "../../assets/icons/loop.png";
+import closePng from "../../assets/icons/close.png";
+import menuPng from "../../assets/icons/menu.png";
+import chevronUpPng from "../../assets/icons/chevron-up.png";
+import chevronDownPng from "../../assets/icons/chevron-down.png";
+import chevronDropdownPng from "../../assets/icons/chevron-dropdown.png";
+import refreshPng from "../../assets/icons/refresh.png";
+import plusPng from "../../assets/icons/plus.png";
+import backArrowPng from "../../assets/icons/back-arrow.png";
+import commandPanelPng from "../../assets/icons/command-panel.png";
 
 // ── PNG URL Mapping ───────────────────────────────────────────
 // Must be defined before IconName type so PNG key list can be derived
@@ -68,7 +80,26 @@ const PNG_MAP: Record<string, string> = {
   "transfer-progress": transferProgressPng,
   "check-plain": checkPlainPng,
   log: logPng,
+  "drag-handle": dragHandlePng,
+  edit: editPng,
+  loop: loopPng,
+  close: closePng,
+  menu: menuPng,
+  "chevron-up": chevronUpPng,
+  "chevron-down": chevronDownPng,
+  "chevron-dropdown": chevronDropdownPng,
+  refresh: refreshPng,
+  plus: plusPng,
+  "back-arrow": backArrowPng,
+  "command-panel": commandPanelPng,
 };
+
+// ── Preload: 模块加载时提前下载所有 PNG 图标到浏览器缓存 ──────
+// 使用 new Image() 在 JS 解析阶段立即发起下载，避免 React 渲染 <img>
+// 标签后才开始请求导致的"弹入"延迟。到渲染时图片已在缓存中，即时显示。
+for (const pngUrl of Object.values(PNG_MAP)) {
+  new Image().src = pngUrl;
+}
 
 // ── Type Definitions ──────────────────────────────────────────
 
@@ -77,25 +108,17 @@ type PngIconName = keyof typeof PNG_MAP;
 
 /** 所有图标名称的联合类型 */
 export type IconName =
-  // Tier 1: PNG mask-image (keyof PNG_MAP → 29 icons)
+  // Tier 1: PNG mask-image (keyof PNG_MAP → 42 icons)
   | PngIconName
   // Tier 2: CSS status dots (4 icons)
   | "status-connected"
   | "status-disconnected"
   | "status-connecting"
   | "status-idle"
-  // Tier 3: Inline SVG (10 icons)
-  | "close"
-  | "menu"
-  | "chevron-up"
-  | "chevron-down"
-  | "chevron-dropdown"
-  | "refresh"
-  | "plus"
+  // Tier 3: Inline SVG — title bar window controls only (3 icons)
   | "window-minimize"
   | "window-maximize"
-  | "window-restore"
-  | "back-arrow";
+  | "window-restore";
 
 /** 预设尺寸映射到 CSS 像素值 */
 const SIZE_MAP: Record<string, number> = {
@@ -141,9 +164,9 @@ const STATUS_CLASS_MAP: Record<string, string> = {
  * 统一图标组件
  *
  * 三种内部渲染策略：
- * - Tier 1 (29 个): CSS mask-image 渲染 PNG，通过 currentColor 自动适配主题
+ * - Tier 1 (42 个): CSS mask-image / <img> 渲染 PNG，通过 currentColor 自动适配主题
  * - Tier 2 (4 个):  纯 CSS 状态圆点 + 主题色发光
- * - Tier 3 (10 个): 内联 SVG，stroke/fill="currentColor" 自动适配主题
+ * - Tier 3 (3 个):  内联 SVG（仅顶栏窗口控制按钮）
  *
  * @example
  * <Icon name="settings" size="sm" />
@@ -237,61 +260,6 @@ export default function Icon({
   };
 
   switch (name) {
-    case "close":
-      return (
-        <svg {...svgBaseProps}>
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      );
-
-    case "menu":
-      return (
-        <svg {...svgBaseProps}>
-          <line x1="4" y1="6" x2="20" y2="6" />
-          <line x1="4" y1="12" x2="20" y2="12" />
-          <line x1="4" y1="18" x2="20" y2="18" />
-        </svg>
-      );
-
-    case "chevron-up":
-      return (
-        <svg {...svgBaseProps}>
-          <polyline points="18 15 12 9 6 15" />
-        </svg>
-      );
-
-    case "chevron-down":
-      return (
-        <svg {...svgBaseProps}>
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      );
-
-    case "chevron-dropdown":
-      // 实心小三角（发送栏历史下拉）
-      return (
-        <svg {...svgBaseProps} fill="currentColor" stroke="none">
-          <polygon points="6 9 12 15 18 9" />
-        </svg>
-      );
-
-    case "refresh":
-      return (
-        <svg {...svgBaseProps} strokeWidth="2">
-          <polyline points="23 4 23 10 17 10" />
-          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-        </svg>
-      );
-
-    case "plus":
-      return (
-        <svg {...svgBaseProps}>
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-      );
-
     case "window-minimize":
       return (
         <svg {...svgBaseProps} strokeWidth="2">
@@ -311,13 +279,6 @@ export default function Icon({
         <svg {...svgBaseProps} strokeWidth="2">
           <rect x="4" y="7" width="12" height="12" rx="1" />
           <rect x="8" y="3" width="12" height="12" rx="1" />
-        </svg>
-      );
-
-    case "back-arrow":
-      return (
-        <svg {...svgBaseProps}>
-          <polyline points="16 6 8 12 16 18" />
         </svg>
       );
 
