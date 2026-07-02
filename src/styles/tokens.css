@@ -53,6 +53,9 @@
   /* 模糊 */
   --blur-xs: 4px;
 
+  /* 布局常量 */
+  --sendbar-min-height: 106px;
+
   /* 层级 */
   --z-sidebar: 10;
   --z-panel: 20;

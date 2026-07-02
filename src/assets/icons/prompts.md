@@ -570,11 +570,25 @@ A liquid glass style back/left arrow icon, 3D glass sculpture on pure black back
 
 ---
 
+### 43. keyboard — 键盘快捷键
+
+**中文提示词：**
+一个液态玻璃风格的键盘快捷键图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个圆角矩形外框（象征键盘按键/键帽），内部有 2 条水平平行的粗壮圆角胶囊形横线（象征按键上的功能标记）。外框四角大圆角，内部横线两端为饱满的半圆形。整体造型简洁现代，在 18×18px 小尺寸下仍可辨识为"键盘/快捷键"含义。风格参考：磨砂玻璃质感、液态胶囊描边、快捷键 UI 图标。
+
+**English prompt:**
+A liquid glass style keyboard shortcut icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a rounded rectangle outline (representing a keyboard keycap) with 2 horizontal parallel thick rounded capsule bars inside (representing function markings on the key). All four outer corners heavily rounded, internal bar endpoints are plump half-circles. Clean and modern form, must remain recognizable as "keyboard/shortcut" at 18×18px. Style reference: frosted glass texture, liquid pill strokes, shortcut UI icon.
+
+**使用位置：** `src/assets/icons/keyboard.png` — 设置页面「快捷键」分类图标
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
 ## 生成后检查清单 / Post-Generation Checklist
 
 ### 图标质量
 
-- [ ] 所有 42 个图标风格统一（描边粗细、圆角程度、视觉密度）
+- [ ] 所有 43 个图标风格统一（描边粗细、圆角程度、视觉密度）
 - [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
 - [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
 - [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI

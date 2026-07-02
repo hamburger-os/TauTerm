@@ -30,6 +30,13 @@
   height: 100%;
 }
 
+/* 终端实例相对定位容器 — 支持浮动按钮等绝对定位覆盖层 */
+.terminalInstanceWrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 /* 终端实例 — 背景透明以透出流光效果 */
 .terminal {
   flex: 1;

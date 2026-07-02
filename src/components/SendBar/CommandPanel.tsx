@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useSession } from "../../context/SessionContext";
+import { useSendBar } from "./SendBarContext";
 import Icon from "../common/Icon";
 import CommandEditorModal from "./CommandEditorModal";
 import useCommandRunner from "./useCommandRunner";
@@ -12,6 +13,7 @@ import styles from "./CommandPanel.module.css";
 
 interface CommandPanelProps {
   sessionId: string;
+  isActive: boolean;
   onRunningChange?: (running: boolean) => void;
 }
 
@@ -40,7 +42,7 @@ function saveConfigs(configs: CommandConfig[]) {
   } catch { /* ignore */ }
 }
 
-export default function CommandPanel({ sessionId, onRunningChange }: CommandPanelProps) {
+export default function CommandPanel({ sessionId, isActive, onRunningChange }: CommandPanelProps) {
   const { t } = useTranslation();
   const { sendData, state } = useSession();
   const activeTab = state.tabs.find(tab => tab.id === sessionId);
@@ -55,18 +57,21 @@ export default function CommandPanel({ sessionId, onRunningChange }: CommandPane
     return configs.find(c => c.name === activeConfigName) ?? configs[0];
   }, [configs, activeConfigName]);
 
+  // `commands` 和 `defaultDelay` 保留为局部 state 而非常量 context：
+  // commands 涉及拖拽排序和独立 localStorage 持久化，defaultDelay 与 commands 紧耦合；
+  // 两者均不与 BasicSend 共享，迁入 context 会增加不必要的 dispatch 间接层。
   const [commands, setCommands] = useState<CommandItem[]>(activeConfig?.commands ?? []);
   const [defaultDelay, setDefaultDelay] = useState(activeConfig?.defaultDelay ?? 500);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [loopCount, setLoopCount] = useState(1); // 0=infinite, 1=once, >1=fixed
+  const { state: sendBarState, dispatch } = useSendBar();
+  const { selectedIds, loopCount } = sendBarState.command;
 
   useEffect(() => {
     if (activeConfig) {
       setCommands(activeConfig.commands);
       setDefaultDelay(activeConfig.defaultDelay);
-      setSelectedIds(new Set());
+      dispatch({ type: "CLEAR_COMMAND_SELECTION" });
     }
-  }, [activeConfigName]);
+  }, [activeConfigName, activeConfig, dispatch]);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<CommandItem | null>(null);
@@ -97,11 +102,11 @@ export default function CommandPanel({ sessionId, onRunningChange }: CommandPane
   const onRunningChangeRef = useRef(onRunningChange);
   onRunningChangeRef.current = onRunningChange;
   useEffect(() => {
-    if (runner.isRunning) {
+    if (runner.isRunning && isActive) {
       onRunningChangeRef.current?.(true);
       return () => onRunningChangeRef.current?.(false);
     }
-  }, [runner.isRunning]);
+  }, [runner.isRunning, isActive]);
 
   const persistConfig = useCallback((cmds: CommandItem[], delay: number) => {
     setConfigs(prev => {
@@ -223,13 +228,11 @@ export default function CommandPanel({ sessionId, onRunningChange }: CommandPane
       persistConfig(next, defaultDelay);
       return next;
     });
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+    if (selectedIds.has(id)) {
+      dispatch({ type: "TOGGLE_COMMAND_SELECT", id });
+    }
     setDeleteConfirmId(null);
-  }, [defaultDelay, persistConfig]);
+  }, [defaultDelay, persistConfig, selectedIds, dispatch]);
 
   const handleSaveCommand = useCallback((item: CommandItem) => {
     setCommands(prev => {
@@ -247,19 +250,14 @@ export default function CommandPanel({ sessionId, onRunningChange }: CommandPane
   }, [defaultDelay, persistConfig]);
 
   const toggleSelect = useCallback((id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
+    dispatch({ type: "TOGGLE_COMMAND_SELECT", id });
+  }, [dispatch]);
 
   const handleLoopCountChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const val = Number(e.target.value);
     if (isNaN(val)) return;
-    setLoopCount(Math.max(0, val));
-  }, []);
+    dispatch({ type: "SET_LOOP_COUNT", count: Math.max(0, val) });
+  }, [dispatch]);
 
   // ── 拖拽排序（指针事件实现，兼容 Tauri WebView2）──
   // WebView2 默认 dragDropEnabled: true 会在 OS 层拦截 HTML5 DnD 事件，
@@ -365,18 +363,18 @@ export default function CommandPanel({ sessionId, onRunningChange }: CommandPane
   }, [commands, selectedIds, loopCount, runner]);
 
   useEffect(() => {
-    if (!isConnected && runner.isRunning) {
+    if ((!isConnected || !isActive) && runner.isRunning) {
       runner.stop();
     }
-  }, [isConnected, runner]);
+  }, [isConnected, isActive, runner]);
 
   const handleSelectAll = useCallback(() => {
     if (selectedIds.size === commands.length) {
-      setSelectedIds(new Set());
+      dispatch({ type: "CLEAR_COMMAND_SELECTION" });
     } else {
-      setSelectedIds(new Set(commands.map(c => c.id)));
+      dispatch({ type: "SELECT_ALL_COMMANDS", ids: commands.map(c => c.id) });
     }
-  }, [commands, selectedIds]);
+  }, [commands, selectedIds, dispatch]);
 
   // ── 导入导出 ──
 

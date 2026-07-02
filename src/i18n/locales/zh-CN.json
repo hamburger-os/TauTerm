@@ -272,7 +272,23 @@
     "charsetLatin1": "ISO-8859-1 (Latin-1)",
     "charsetNote": "注：字符编码目前仅影响显示设置，完整的编码转码支持将在后续版本中实现。",
     "appVersion": "应用版本",
-    "buildInfo": "构建信息"
+    "buildInfo": "构建信息",
+    "shortcuts": "快捷键",
+    "shortcutsDesc": "点击任意快捷键项进入录制模式，按下目标组合键即可修改。按 Esc 取消录制。",
+    "shortcutsReset": "重置为默认值",
+    "shortcutsRecording": "等待输入...",
+    "shortcutsConflict": "已被「{{name}}」占用",
+    "shortcutsCategory_session": "会话",
+    "shortcutsCategory_terminal": "终端",
+    "shortcutsCategory_application": "应用",
+    "shortcutsAction_newSession": "新建会话",
+    "shortcutsAction_closeSession": "关闭当前会话",
+    "shortcutsAction_nextTab": "下一个标签页",
+    "shortcutsAction_prevTab": "上一个标签页",
+    "shortcutsAction_terminalSearch": "终端搜索",
+    "shortcutsAction_openPalette": "打开命令面板",
+    "shortcutsAction_toggleSidebar": "切换侧边栏",
+    "shortcutsAction_refreshPorts": "刷新端口列表"
   },
   "statusBar": {
     "baudRate": "波特率",
@@ -301,6 +317,9 @@
   },
   "dualPane": {
     "resizeLabel": "调整面板大小"
+  },
+  "terminal": {
+    "scrollToBottom": "回到底部"
   },
   "logging": {
     "systemLog": "软件自身日志",

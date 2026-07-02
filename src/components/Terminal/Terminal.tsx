@@ -1,10 +1,14 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { useTheme } from "../../context/ThemeContext";
+import ScrollToBottomButton from "./ScrollToBottomButton";
 import styles from "./Terminal.module.css";
+
+/** 视口底部容差行数：视口底边与缓冲区底部的间距小于此值即视为"在底部" */
+const SCROLL_BOTTOM_TOLERANCE = 5;
 
 /** 深色主题终端配色 (google-glow / obsidian) */
 const DARK_TERMINAL_THEME = {
@@ -89,6 +93,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   // 使用 ref 持有最新的回调，避免初始化 effect 中的闭包过期问题
+  const [isAtBottom, setIsAtBottom] = useState(true);
   const onTermReadyRef = useRef(onTermReady);
   onTermReadyRef.current = onTermReady;
   const onCleanupRef = useRef(onCleanup);
@@ -162,6 +167,25 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     };
   }, []);
 
+  // 跟踪 xterm.js 视口滚动位置，用于自动滚动检测和浮动按钮
+  useEffect(() => {
+    const term = xtermRef.current;
+    if (!term) return;
+
+    const disposable = term.onScroll((viewportY: number) => {
+      const buffer = term.buffer.active;
+      // 视口底部行号 = 视口顶部行号 + 可见行数
+      // baseY 是缓冲区历史底部（最大行号），视口底部 >= baseY - 5 即视为"在底部"
+      const viewportBottom = viewportY + term.rows;
+      const atBottom = viewportBottom >= buffer.baseY - SCROLL_BOTTOM_TOLERANCE;
+      setIsAtBottom(atBottom);
+    });
+
+    return () => {
+      disposable.dispose();
+    };
+  }, []);
+
   // 主题变化时动态更新终端配色，无需销毁重建
   useEffect(() => {
     if (!xtermRef.current) return;
@@ -226,12 +250,21 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   }, [onData, isConnected]);
 
   return (
-    <div
-      ref={containerRef}
-      className={styles.terminal}
-      onPaste={handlePaste}
-      onContextMenu={handleContextMenu}
-    />
+    <div className={styles.terminalInstanceWrapper}>
+      <div
+        ref={containerRef}
+        className={styles.terminal}
+        onPaste={handlePaste}
+        onContextMenu={handleContextMenu}
+      />
+      <ScrollToBottomButton
+        visible={!isAtBottom}
+        onClick={() => {
+          xtermRef.current?.scrollToBottom();
+          setIsAtBottom(true);
+        }}
+      />
+    </div>
   );
 });
 

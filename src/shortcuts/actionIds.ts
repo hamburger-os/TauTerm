@@ -11,14 +11,8 @@ export const ACTION_IDS = {
   SESSION_CLOSE: "session.close",
   SESSION_NEXT: "session.next",
   SESSION_PREV: "session.prev",
-  SESSION_TAB1: "session.tab1",
-  SESSION_TAB2: "session.tab2",
-  SESSION_TAB3: "session.tab3",
-
-  // Terminal
+  // Terminal (copy/paste handled by xterm.js natively, not via shortcut registry)
   TERMINAL_SEARCH: "terminal.search",
-  TERMINAL_COPY: "terminal.copy",
-  TERMINAL_PASTE: "terminal.paste",
 
   // Application
   PALETTE_OPEN: "palette.open",

@@ -1,6 +1,7 @@
 import { useRef, useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import styles from "./DualPane.module.css";
+import ScrollToBottomButton from "./ScrollToBottomButton";
 
 // ── 数据类型 ──
 
@@ -49,6 +50,7 @@ export default function DualPane({ lines, fontSize = 13 }: DualPaneProps) {
   const [splitPct, setSplitPct] = useState(DEFAULT_SPLIT);
   const [dragging, setDragging] = useState(false);
   const autoScrollRef = useRef(true);
+  const [isAtBottom, setIsAtBottom] = useState(true);
 
   // ── 滚动事件：检测用户是否手动滚离底部 ──
 
@@ -57,6 +59,7 @@ export default function DualPane({ lines, fontSize = 13 }: DualPaneProps) {
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
     autoScrollRef.current = atBottom;
+    setIsAtBottom(atBottom);
   }, []);
 
   // ── 新数据自动滚底 ──
@@ -64,8 +67,31 @@ export default function DualPane({ lines, fontSize = 13 }: DualPaneProps) {
   useEffect(() => {
     if (!autoScrollRef.current) return;
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    // 与 scrollToBottom 的 rAF 模式保持一致：设置 scrollTop 会触发 scroll 事件，
+    // 该事件可能在布局稳定前触发，导致错误地计算出非底部位置。
+    // 延迟到下一帧重新确认状态。
+    requestAnimationFrame(() => {
+      autoScrollRef.current = true;
+      setIsAtBottom(true);
+    });
   }, [lines]);
+
+  // ── 回到底部 ──
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+    // 使用 rAF 延迟设置，确保 scroll 事件触发 handleScroll 后再覆盖 autoScrollRef
+    // 避免浏览器在 scroll 位置未稳定时触发事件导致 autoScrollRef 被错误重置为 false
+    requestAnimationFrame(() => {
+      autoScrollRef.current = true;
+      setIsAtBottom(true);
+    });
+  }, []);
 
   // ── 拖拽分隔条：通过 CSS 变量 --dual-split 控制列宽 ──
   // 使用 useEffect + dragging state 管理 document 级监听器，
@@ -157,6 +183,12 @@ export default function DualPane({ lines, fontSize = 13 }: DualPaneProps) {
         tabIndex={0}
         onMouseDown={handleDividerDown}
         onKeyDown={handleDividerKey}
+      />
+
+      {/* 浮动"回到底部"按钮：用户上滚离开底部时显示 */}
+      <ScrollToBottomButton
+        visible={!isAtBottom}
+        onClick={scrollToBottom}
       />
     </div>
   );

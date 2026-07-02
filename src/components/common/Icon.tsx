@@ -45,6 +45,7 @@ import refreshPng from "../../assets/icons/refresh.png";
 import plusPng from "../../assets/icons/plus.png";
 import backArrowPng from "../../assets/icons/back-arrow.png";
 import commandPanelPng from "../../assets/icons/command-panel.png";
+import keyboardPng from "../../assets/icons/keyboard.png";
 
 // ── PNG URL Mapping ───────────────────────────────────────────
 // Must be defined before IconName type so PNG key list can be derived
@@ -92,6 +93,7 @@ const PNG_MAP: Record<string, string> = {
   plus: plusPng,
   "back-arrow": backArrowPng,
   "command-panel": commandPanelPng,
+  keyboard: keyboardPng,
 };
 
 // ── Preload: 模块加载时提前下载所有 PNG 图标到浏览器缓存 ──────

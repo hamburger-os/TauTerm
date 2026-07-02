@@ -272,7 +272,23 @@
     "charsetLatin1": "ISO-8859-1 (Latin-1)",
     "charsetNote": "Note: Encoding currently affects display settings only. Full transcoding support will be added in a future release.",
     "appVersion": "App Version",
-    "buildInfo": "Build Info"
+    "buildInfo": "Build Info",
+    "shortcuts": "Shortcuts",
+    "shortcutsDesc": "Click any shortcut to enter recording mode, then press the desired key combination. Press Esc to cancel.",
+    "shortcutsReset": "Reset to Defaults",
+    "shortcutsRecording": "Press keys...",
+    "shortcutsConflict": "Already used by \"{{name}}\"",
+    "shortcutsCategory_session": "Session",
+    "shortcutsCategory_terminal": "Terminal",
+    "shortcutsCategory_application": "Application",
+    "shortcutsAction_newSession": "New Session",
+    "shortcutsAction_closeSession": "Close Current Session",
+    "shortcutsAction_nextTab": "Next Tab",
+    "shortcutsAction_prevTab": "Previous Tab",
+    "shortcutsAction_terminalSearch": "Search in Terminal",
+    "shortcutsAction_openPalette": "Open Command Palette",
+    "shortcutsAction_toggleSidebar": "Toggle Sidebar",
+    "shortcutsAction_refreshPorts": "Refresh Port List"
   },
   "statusBar": {
     "baudRate": "Baud",
@@ -301,6 +317,9 @@
   },
   "dualPane": {
     "resizeLabel": "Resize panels"
+  },
+  "terminal": {
+    "scrollToBottom": "Scroll to bottom"
   },
   "logging": {
     "systemLog": "System Log",

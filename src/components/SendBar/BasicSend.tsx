@@ -3,11 +3,13 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
 import Icon from "../common/Icon";
-import type { NewlineMode, SendMode } from "./types";
+import type { NewlineMode } from "./types";
+import { useSendBar } from "./SendBarContext";
 import styles from "./BasicSend.module.css";
 
 interface BasicSendProps {
   sessionId: string;
+  isActive: boolean;
   onSendingChange?: (sending: boolean) => void;
 }
 
@@ -24,20 +26,21 @@ const NEWLINE_MAP: Record<NewlineMode, string> = {
  * 支持文本/HEX 输入、换行符追加、重复发送、发送历史。
  * 从原 SendBar.tsx 提取，逻辑保持不变。
  */
-export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps) {
+export default function BasicSend({ sessionId, isActive, onSendingChange }: BasicSendProps) {
   const { t } = useTranslation();
   const { sendData, state } = useSession();
   const activeTab = state.tabs.find(tab => tab.id === sessionId);
 
-  const [inputText, setInputText] = useState("");
-  const [newlineMode, setNewlineMode] = useState<NewlineMode>("crlf");
-  const [sendMode, setSendMode] = useState<SendMode>(() => {
-    const stored = localStorage.getItem("tauterm-default-data-mode");
-    return stored === "hex" ? "hex" : "text";
-  });
-  const [repeatEnabled, setRepeatEnabled] = useState(false);
-  const [repeatInterval, setRepeatInterval] = useState(1000);
-  const [sendHistory, setSendHistory] = useState<string[]>([]);
+  const { state: sendBarState, dispatch } = useSendBar();
+  const {
+    inputText,
+    newlineMode,
+    sendMode,
+    repeatEnabled,
+    repeatInterval,
+    sendHistory,
+  } = sendBarState.basic;
+
   const [showOptions, setShowOptions] = useState(false);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
@@ -75,14 +78,10 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
 
     sendData(sessionId, data);
 
-    setSendHistory(prev => {
-      const entry = currentInput;
-      const next = [entry, ...prev.filter(h => h !== entry)];
-      return next.slice(0, 50);
-    });
+    dispatch({ type: "ADD_SEND_HISTORY", entry: currentInput });
 
     inputRef.current?.focus();
-  }, [newlineMode, sendMode, sessionId, sendData]);
+  }, [newlineMode, sendMode, sessionId, sendData, dispatch]);
 
   const doIntervalSend = useCallback(() => {
     const currentInput = inputRefForInterval.current;
@@ -105,12 +104,8 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
 
     sendData(sessionId, data);
 
-    setSendHistory(prev => {
-      const entry = currentInput;
-      const next = [entry, ...prev.filter(h => h !== entry)];
-      return next.slice(0, 50);
-    });
-  }, [newlineMode, sendMode, sessionId, sendData]);
+    dispatch({ type: "ADD_SEND_HISTORY", entry: currentInput });
+  }, [newlineMode, sendMode, sessionId, sendData, dispatch]);
 
   // 重复发送定时器
   useEffect(() => {
@@ -118,7 +113,7 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
-    if (!isConnected) return;
+    if (!isActive || !isConnected) return;
     const hasValidInput = sendMode === "hex"
       ? isHexValid(inputRefForInterval.current)
       : inputRefForInterval.current.trim().length > 0;
@@ -128,7 +123,7 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [isConnected, repeatEnabled, repeatInterval, sendMode]);
+  }, [isActive, isConnected, repeatEnabled, repeatInterval, sendMode]);
 
   // 断开会话时重置
   const prevConnectedRef = useRef(isConnected);
@@ -136,23 +131,20 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
     const wasConnected = prevConnectedRef.current;
     prevConnectedRef.current = isConnected;
     if (wasConnected && !isConnected) {
-      setRepeatEnabled(false);
-      setRepeatInterval(1000);
-      setInputText("");
-      setSendHistory([]);
+      dispatch({ type: "RESET_BASIC" });
       setShowOptions(false);
     }
-  }, [isConnected]);
+  }, [isConnected, dispatch]);
 
   // 通知父组件重复发送状态（用于锁定模式切换）
   const onSendingChangeRef = useRef(onSendingChange);
   onSendingChangeRef.current = onSendingChange;
   useEffect(() => {
-    if (repeatEnabled && isConnected) {
+    if (repeatEnabled && isConnected && isActive) {
       onSendingChangeRef.current?.(true);
       return () => onSendingChangeRef.current?.(false);
     }
-  }, [repeatEnabled, isConnected]);
+  }, [repeatEnabled, isConnected, isActive]);
 
   // 键盘 — Shift+Enter 发送，Enter 换行
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -167,17 +159,17 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
     const val = e.target.value;
     if (sendMode === "hex") {
       const filtered = val.replace(/[^0-9a-fA-F\s]/g, "");
-      setInputText(filtered);
+      dispatch({ type: "SET_INPUT_TEXT", text: filtered });
     } else {
-      setInputText(val);
+      dispatch({ type: "SET_INPUT_TEXT", text: val });
     }
-  }, [sendMode]);
+  }, [sendMode, dispatch]);
 
   const handleHistoryClick = useCallback((entry: string) => {
-    setInputText(entry);
+    dispatch({ type: "SET_INPUT_TEXT", text: entry });
     setShowOptions(false);
     inputRef.current?.focus();
-  }, []);
+  }, [dispatch]);
 
   // 历史下拉框 — 计算 viewport 固定定位坐标，含边界检测
   const handleToggleHistory = useCallback(() => {
@@ -253,7 +245,7 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
             <select
               className={`${styles.select} liquid-glass-input`}
               value={newlineMode}
-              onChange={(e) => setNewlineMode(e.target.value as NewlineMode)}
+              onChange={(e) => dispatch({ type: "SET_NEWLINE_MODE", mode: e.target.value as NewlineMode })}
               title={t("sendBar.appendNewline")}
               disabled={!isConnected || sendMode === "hex"}
             >
@@ -266,7 +258,7 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
 
           <button
             className={`${styles.modeBtn} liquid-glass-button ${sendMode === "hex" ? styles.modeActive : ""}`}
-            onClick={() => setSendMode(m => m === "text" ? "hex" : "text")}
+            onClick={() => dispatch({ type: "SET_SEND_MODE", mode: sendMode === "text" ? "hex" : "text" })}
             title={t("sendBar.sendMode")}
             disabled={!isConnected}
           >
@@ -281,7 +273,7 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
               type="number"
               className={`${styles.intervalInput} liquid-glass-input`}
               value={repeatInterval}
-              onChange={(e) => setRepeatInterval(Math.max(50, Number(e.target.value)))}
+              onChange={(e) => dispatch({ type: "SET_REPEAT_INTERVAL", ms: Math.max(50, Number(e.target.value)) })}
               min={50}
               step={100}
               title={t("sendBar.interval")}
@@ -295,7 +287,7 @@ export default function BasicSend({ sessionId, onSendingChange }: BasicSendProps
                 type="checkbox"
                 className={styles.repeatCheck}
                 checked={repeatEnabled}
-                onChange={(e) => setRepeatEnabled(e.target.checked)}
+                onChange={(e) => dispatch({ type: "SET_REPEAT_ENABLED", enabled: e.target.checked })}
                 disabled={!isConnected}
               />
               <div className={styles.toggleTrack} />

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import Icon from "../../common/Icon";
+import GlassButton from "../../common/GlassButton";
 import styles from "../SettingsPage.module.css";
 
 const STORAGE_KEYS = {
@@ -285,22 +286,14 @@ export default function LoggingSettings() {
               {logDir}
             </p>
             <div style={{ display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
-              <button
-                className={`${styles.optionItem}`}
-                onClick={handleOpenLogDir}
-                style={{ gap: "6px" }}
-              >
+              <GlassButton variant="secondary" size="sm" onClick={handleOpenLogDir}>
                 <Icon name="folder" size="sm" />
                 {t("logging.openLogDir") || "Open Log Directory"}
-              </button>
-              <button
-                className={`${styles.optionItem}`}
-                onClick={handleClearLogs}
-                style={{ gap: "6px" }}
-              >
+              </GlassButton>
+              <GlassButton variant="danger" size="sm" onClick={handleClearLogs}>
                 <Icon name="trash" size="sm" />
                 {t("logging.clearAllLogs") || "Clear All Logs"}
-              </button>
+              </GlassButton>
             </div>
           </>
         ) : (

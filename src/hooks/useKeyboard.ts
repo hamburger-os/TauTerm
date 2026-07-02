@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from "react";
 import { shortcutRegistry } from "../shortcuts/registry";
 import type { ShortcutActionId } from "../shortcuts/actionIds";
+import { isInputFocused } from "../utils/dom";
 
 /**
  * 全局快捷键监听 hook
@@ -22,23 +23,16 @@ export function useKeyboard() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // 忽略输入框内的快捷键（但允许终端区域）
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
-        // 如果目标是搜索栏等特定输入，允许部分快捷键通过
-        // Ctrl+F 在当前无搜索栏时触发搜索
+      if (isInputFocused()) {
         return;
       }
 
       const matched = shortcutRegistry.match(e);
       if (matched) {
-        e.preventDefault();
-        e.stopPropagation();
         const action = actionCallbacks.current.get(matched.id);
         if (action) {
+          e.preventDefault();
+          e.stopPropagation();
           action();
         }
       }

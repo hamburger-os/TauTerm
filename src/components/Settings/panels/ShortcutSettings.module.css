@@ -1,0 +1,125 @@
+/* 快捷键设置面板 */
+
+.panelDesc {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  margin: 0 0 20px 0;
+  line-height: 1.5;
+}
+
+/* 分类标题 */
+.categoryTitle {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 16px 0 8px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--glass-border-default);
+}
+
+/* 快捷键行 */
+.shortcutRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+
+.shortcutRow:hover {
+  background: var(--glass-fill);
+  border-color: var(--glass-border-hover);
+}
+
+/* 录制状态 — accent 高亮 */
+.shortcutRowRecording {
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border-color: var(--glass-border-focus);
+}
+
+.shortcutRowRecording:hover {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+/* 冲突状态 — 短暂红色闪烁 */
+.shortcutRowConflict {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  border-color: var(--color-error);
+  animation: conflictShake 0.3s ease;
+}
+
+@keyframes conflictShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(2px); }
+}
+
+/* 左侧动作描述 */
+.shortcutLabel {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+}
+
+/* 右侧按键标签 */
+.shortcutKeys {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  background: var(--glass-button-bg);
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  min-width: 80px;
+  text-align: center;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+/* 录制中 — 按键标签闪烁 */
+.shortcutKeysRecording {
+  color: var(--accent-primary);
+  border-color: var(--glass-border-focus);
+  animation: recordingPulse 1s ease-in-out infinite;
+}
+
+@keyframes recordingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* 冲突状态 — 按键标签变红 */
+.shortcutKeysConflict {
+  color: var(--color-error);
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+
+/* 重置按钮区域 */
+.resetArea {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--glass-border-default);
+}
+
+.resetBtn {
+  /* 仅保留尺寸间距，视觉样式由 liquid-glass-button 全局类提供 */
+  font-family: var(--font-ui);
+  padding: 6px 16px;
+}
+
+/* 录制模式：非录制行不显示 pointer 光标（点击无响应） */
+.recordingMode .shortcutRow {
+  cursor: default;
+}
+
+.recordingMode .shortcutRowRecording {
+  cursor: pointer;
+}

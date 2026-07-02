@@ -34,11 +34,11 @@ export default function CommandPalette({ isOpen, onClose, onExecute }: CommandPa
     const shortcuts = shortcutRegistry.getAll();
     return shortcuts.map(s => ({
       id: s.id,
-      label: s.description,
+      label: s.descriptionKey ? t(s.descriptionKey) : s.description,
       category: s.category,
       shortcut: s.keys,
     }));
-  }, []);
+  }, [t]);
 
   // 模糊搜索
   const filtered = useMemo(() => {

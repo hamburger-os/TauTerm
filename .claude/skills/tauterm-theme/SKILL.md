@@ -346,7 +346,7 @@ All layout chrome bars (toolbar, sidebar, status bar, send bar, transmission pan
 
 - Use `display: flex; align-items: center;` — children are **vertically centered**, NEVER `flex-end` or `flex-start`
 - **Fixed-height bars** use a fixed `height` (Toolbar=36px, StatusBar=26px), NOT `min-height`
-- **Flex panels** (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1` to fill the parent; sendbar additionally sets `min-height: 90px` and is user-resizable via vertical `ResizeHandle`
+- **Flex panels** (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1` to fill the parent; sendbar additionally sets `min-height: var(--sendbar-min-height)` and is user-resizable via vertical `ResizeHandle`
 - Buttons/inputs/selects inside the bar use consistent vertical `padding` (e.g., `4px 8px`) so all controls share the same height and text baselines align horizontally
 - Child groups (e.g., `.actions`) also use `align-items: center` internally
 
@@ -369,7 +369,7 @@ All layout chrome bars (toolbar, sidebar, status bar, send bar, transmission pan
   display: flex;
   align-items: center;
   flex: 1;
-  min-height: 90px;
+  min-height: var(--sendbar-min-height);
   gap: 6px;
   padding: 6px 8px;
 }
@@ -380,7 +380,24 @@ All layout chrome bars (toolbar, sidebar, status bar, send bar, transmission pan
 }
 ```
 
-> **Convention**: Toolbar=36px, StatusBar=26px (fixed height). Panels (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1` to fill the parent. Sendbar additionally enforces `min-height: 90px` and is user-resizable via vertical `ResizeHandle` drag.
+> **Convention**: Toolbar=36px, StatusBar=26px (fixed height). Panels (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1` to fill the parent. Sendbar additionally enforces `min-height: var(--sendbar-min-height)` and is user-resizable via vertical `ResizeHandle` drag.
+
+#### `--sendbar-min-height` Token (v3.2)
+
+This is a **layout constant** defined in `src/styles/tokens.css` (Level 1 — shared across all themes). JS code that needs to know the SendBar minimum height (e.g., for drag-resize calculations in `App.tsx`) MUST read it dynamically via `getComputedStyle` rather than hardcoding a numeric value:
+
+```tsx
+// [正确] Correct — read from CSS, single source of truth
+useEffect(() => {
+  const val = getComputedStyle(document.documentElement)
+    .getPropertyValue("--sendbar-min-height").trim();
+  const parsed = parseInt(val, 10);
+  if (!isNaN(parsed)) setSendbarMinHeight(parsed);
+}, []);
+
+// [错误] Wrong — hardcoded 90px/106px will drift from CSS
+const minHeight = 90;
+```
 
 ### Font-Size Token Guidance (v1.8)
 
@@ -718,6 +735,86 @@ DualPane is the dual-column ASCII/HEX display component for serial terminal data
 - Divider must carry full ARIA: `role="separator"`, `aria-orientation="vertical"`, `aria-valuenow`, `aria-valuemin/max`, `aria-label`, `tabIndex={0}`
 - Dragging state is driven by `useState` → CSS class `dividerActive` toggle (not ref)
 
+### Floating Overlay Buttons (v3.2)
+
+Floating buttons that sit on top of scrollable content (e.g., "scroll to bottom") use a circular glass variant:
+
+```css
+/* ScrollToBottomButton.module.css */
+.button {
+  position: absolute;
+  bottom: 16px;
+  right: 28px;
+  z-index: var(--z-overlay);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border-default);
+  box-shadow: var(--glass-shadow-outer), var(--glass-shadow-inner);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all var(--transition-fast);
+}
+```
+
+**Rules:**
+- Use `position: absolute` inside a `position: relative` container (e.g., `.terminalInstanceWrapper`)
+- Use `border-radius: 50%` for circular shape, `var(--glass-fill)` + `backdrop-filter` for glass effect
+- Hover: `color: var(--text-primary)`, `border-color: var(--glass-border-hover)`, `background: var(--glass-bg-hover)`, `transform: translateY(-1px)`, `box-shadow: var(--shadow-elevated), var(--glass-shadow-inner)`
+- Parent container MUST have `position: relative` (added via a wrapper `<div>` if the terminal element itself is not positioned)
+- Use `React.memo` to avoid re-renders from parent data flow (e.g., terminal data streaming)
+- Use `AnimatePresence` from framer-motion for enter/exit animations
+- `aria-label` must use i18n key (e.g., `t("terminal.scrollToBottom")`)
+- This button belongs to Category A (absolute/fixed positioned elements) for theme-review — the CSS Module must inline glass styles, NOT use global Liquid Glass classes
+
+### Settings Panel Recording/Conflict Animations (v3.2)
+
+The ShortcutSettings panel uses animation patterns for keyboard shortcut recording:
+
+**Recording state (pulse):**
+```css
+.shortcutRowRecording {
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border-color: var(--glass-border-focus);
+}
+.shortcutKeysRecording {
+  color: var(--accent-primary);
+  border-color: var(--glass-border-focus);
+  animation: recordingPulse 1s ease-in-out infinite;
+}
+@keyframes recordingPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+```
+
+**Conflict state (shake + red tint):**
+```css
+.shortcutRowConflict {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+  border-color: var(--color-error);
+  animation: conflictShake 0.3s ease;
+}
+.shortcutKeysConflict {
+  color: var(--color-error);
+  border-color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+```
+
+**Rules:**
+- All colors use `color-mix(in srgb, var(--accent-primary) N%, transparent)` for tinted backgrounds — never hardcoded accent/error hex values
+- Error states use `var(--color-error)` via `color-mix()` — never hardcoded red
+- Key badge labels (`.shortcutKeys`) use `var(--font-mono)` + 3D asymmetric border highlights (`border-top`/`border-left`) matching the Mini-Card pattern — `var(--glass-button-bg)` background + `var(--glass-border-default)` base border
+- Recording mode: set a `.recordingMode` class on the container to disable pointer cursor on non-recording rows (`cursor: default` for `.shortcutRow`, keep `cursor: pointer` for the recording row)
+- Conflict auto-clears after 1.5s (JS timer), matched to the shake animation duration (0.3s)
+
 ## Before Submitting Code
 
 Run this mental checklist for every new/changed component:
@@ -738,7 +835,7 @@ Run this mental checklist for every new/changed component:
 13. Disabled opacity: `opacity: 0.5` for buttons (`.liquid-glass-button` / `.liquid-primary-button`), `opacity: 0.4` for inputs/selects (`.liquid-glass-input`). These are managed BY the global classes — CSS Modules do not need to redefine them. (Note: `.liquid-glass-button:disabled` was added in v3.1 to close a gap where only the primary and input variants had global disabled rules.)
 14. Layout surfaces (toolbar, sidebar, statusbar, terminal viewport, sendbar, transmission panel) use `liquid-glass` global class — CSS Modules for layout chrome contain ONLY layout properties. NO hand-rolled `background` / `backdrop-filter` / `border` / `box-shadow` on chrome surfaces.
 15. No deprecated v2 tokens (`--glass-bg`, `--glass-border`, `--block-*`). Verify with: `grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'`
-16. Fixed-height layout bars use `align-items: center` + fixed `height` (Toolbar=36px, StatusBar=26px). Flex panels (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1`; sendbar additionally enforces `min-height: 90px`. Controls inside the bar use consistent vertical padding to ensure horizontal alignment.
+16. Fixed-height layout bars use `align-items: center` + fixed `height` (Toolbar=36px, StatusBar=26px). Flex panels (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1`; sendbar additionally enforces `min-height: var(--sendbar-min-height)`. Controls inside the bar use consistent vertical padding to ensure horizontal alignment.
 17. Renderer components (under `src/renderers/`) must use CSS Modules + tokens — inline `React.CSSProperties` objects with hardcoded numeric values are forbidden.
 18. No dead CSS Module classes — every class defined in a `.module.css` file must be referenced by the corresponding `.tsx` file.
 19. Card elements use `.liquid-glass-card` when nested inside a `.liquid-glass` surface — NEVER nest `.liquid-glass` inside `.liquid-glass`. Layout chrome surfaces (sidebar, toolbar, etc.) keep using `.liquid-glass`. For elements with height <50px, use the Mini-Card pattern (module-specific CSS: `var(--shadow-sm)` + `var(--glass-fill)` + 3D asymmetric borders `border-top`/`border-left`) instead of `.liquid-glass-card`. Verify with: `grep -rn 'liquid-glass"' src/components/ --include='*.tsx'` and check that no `.liquid-glass` element is a child of another `.liquid-glass` element.

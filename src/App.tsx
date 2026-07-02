@@ -30,6 +30,7 @@ const SIDEBAR_MAX = 400;
 const TRANSMISSION_MIN = 160;
 const TRANSMISSION_MAX = 500;
 const TRANSMISSION_DEFAULT = 260;
+/** SendBar 最小高度（px）：从 CSS 自定义属性 --sendbar-min-height 读取，106 为后备值 */
 const SENDBAR_MIN_PCT = 5;
 const SENDBAR_MAX_PCT = 60;
 const SENDBAR_DEFAULT_PCT = SENDBAR_MIN_PCT;
@@ -43,7 +44,7 @@ interface ToastMessage {
 
 function AppInner() {
   // Context hooks
-  const { state: sessionState, refreshEndpoints } = useSession();
+  const { state: sessionState, refreshEndpoints, disconnect, switchTab } = useSession();
   const { state: transferState, sendFiles: transferSend, setDragging } = useTransfer();
   const { registerAction } = useKeyboard();
 
@@ -54,6 +55,10 @@ function AppInner() {
   const [isResizingTransmission, setIsResizingTransmission] = useState(false);
   const [sendBarPct, setSendBarPct] = useState(SENDBAR_DEFAULT_PCT);
   const [isResizingSendBar, setIsResizingSendBar] = useState(false);
+  /** SendBar 最小高度，从 CSS 自定义属性 --sendbar-min-height 读取，避免与 SendBar.module.css 硬编码不同步 */
+  const [sendbarMinHeight, setSendbarMinHeight] = useState(106);
+  const sendbarMinHeightRef = useRef(sendbarMinHeight);
+  sendbarMinHeightRef.current = sendbarMinHeight;
   const mainContentRef = useRef<HTMLDivElement>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
@@ -78,6 +83,16 @@ function AppInner() {
   useEffect(() => {
     if (transferState.error) addToast("error", transferState.error);
   }, [transferState.error, addToast]);
+
+  // 从 CSS 自定义属性读取 SendBar 最小高度，确保 JS 与 CSS 值一致
+  useEffect(() => {
+    try {
+      const val = getComputedStyle(document.documentElement)
+        .getPropertyValue("--sendbar-min-height").trim();
+      const parsed = parseInt(val, 10);
+      if (!isNaN(parsed)) setSendbarMinHeight(parsed);
+    } catch { /* 保持默认 106 */ }
+  }, []);
 
   // Resize: sidebar
   const sidebarStartX = useRef(0); const sidebarStartWidth = useRef(0);
@@ -118,8 +133,8 @@ function AppInner() {
         if (containerHeight <= 0) return;
         // 向上拖增大 SendBar 占比
         const deltaPct = ((sendBarStartY.current - e.clientY) / containerHeight) * 100;
-        // 动态最小百分比：确保 SendBar 不小于 90px（min-height）
-        const dynamicMinPct = Math.max(SENDBAR_MIN_PCT, Math.ceil(9000 / containerHeight));
+        // 动态最小百分比：确保 SendBar 不小于 CSS 变量定义的最小高度
+        const dynamicMinPct = Math.max(SENDBAR_MIN_PCT, Math.ceil((sendbarMinHeightRef.current * 100) / containerHeight));
         const newPct = Math.min(SENDBAR_MAX_PCT, Math.max(dynamicMinPct, sendBarStartPct.current + deltaPct));
         setSendBarPct(newPct);
       }
@@ -225,13 +240,34 @@ function AppInner() {
     };
   }, []);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — stable actions (register once on mount)
   useEffect(() => {
     registerAction(ACTION_IDS.PALETTE_OPEN, () => setPaletteOpen(true));
     registerAction(ACTION_IDS.SESSION_NEW, () => { setEditSessionId(null); setConnectDialogOpen(true); });
     registerAction(ACTION_IDS.SIDEBAR_TOGGLE, () => setSidebarVisible(v => !v));
     registerAction(ACTION_IDS.SERIAL_REFRESH, refreshEndpoints);
-  }, [registerAction, refreshEndpoints]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keyboard shortcuts — session-dependent actions (re-register on tab changes)
+  useEffect(() => {
+    registerAction(ACTION_IDS.SESSION_CLOSE, () => {
+      if (sessionState.activeTabId) disconnect(sessionState.activeTabId);
+    });
+    registerAction(ACTION_IDS.SESSION_NEXT, () => {
+      const tabs = sessionState.tabs;
+      if (tabs.length === 0) return;
+      const idx = tabs.findIndex(t => t.id === sessionState.activeTabId);
+      const next = tabs[(idx + 1) % tabs.length];
+      switchTab(next.id);
+    });
+    registerAction(ACTION_IDS.SESSION_PREV, () => {
+      const tabs = sessionState.tabs;
+      if (tabs.length === 0) return;
+      const idx = tabs.findIndex(t => t.id === sessionState.activeTabId);
+      const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
+      switchTab(prev.id);
+    });
+  }, [registerAction, disconnect, switchTab, sessionState.tabs, sessionState.activeTabId]);
 
   // Command palette execution
   const handlePaletteExecute = useCallback((cmdId: string) => {
@@ -328,7 +364,7 @@ function AppInner() {
                 )}
                 {showSendBar && (
                   <div style={isActive
-                    ? { flex: `${sendBarPct} 1 ${sendBarPct}%`, minHeight: 90, display: 'flex', flexDirection: 'column' as const }
+                    ? { flex: `${sendBarPct} 1 ${sendBarPct}%`, minHeight: sendbarMinHeight, display: 'flex', flexDirection: 'column' as const }
                     : { display: 'none' as const }
                   }>
                     <SendBar sessionId={tab.id} />
