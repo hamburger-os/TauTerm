@@ -34,37 +34,11 @@
 }
 
 .configSelect {
-  appearance: none;
-  -webkit-appearance: none;
-  padding: 2px 6px;
-  padding-right: 20px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--glass-input-border);
-  background: var(--glass-input-bg);
-  background-image: var(--select-arrow);
-  background-repeat: no-repeat;
-  background-position: right 5px center;
-  color: var(--text-primary);
-  font-size: 10px;
+  padding: var(--select-padding);
+  height: var(--select-height);
+  font-size: var(--text-xs);
   font-family: var(--font-ui);
-  cursor: pointer;
   max-width: 130px;
-  outline: none;
-  transition: border-color var(--transition-fast);
-}
-
-.configSelect:hover {
-  border-color: var(--glass-border-hover);
-}
-
-.configSelect:focus {
-  border-color: var(--accent-primary);
-  box-shadow: 0 0 6px var(--accent-glow);
-}
-
-.configSelect option {
-  background: var(--select-option-bg);
-  color: var(--text-primary);
 }
 
 .renameArea {

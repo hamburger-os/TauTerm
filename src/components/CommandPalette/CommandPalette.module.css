@@ -1,11 +1,9 @@
 /* 命令面板 v3 */
 
 /* position/inset/background/display/justify-content 由 glass-overlay 全局类提供
-   .overlay 仅覆盖差异：顶部锚定 (vs 垂直居中) + z-index */
+   .overlay 仅覆盖差异：设置 z-index（面板垂直居中由 glass-overlay 的 align-items: center 提供） */
 .overlay {
   z-index: var(--z-toast);
-  align-items: flex-start;   /* 覆盖 glass-overlay 的 center → macOS Spotlight 风格顶部锚定 */
-  padding-top: 15vh;
 }
 
 .palette {

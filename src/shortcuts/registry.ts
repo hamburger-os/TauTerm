@@ -45,7 +45,8 @@ export const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   { id: ACTION_IDS.TERMINAL_SEARCH, keys: "Ctrl+F", descriptionKey: "settings.shortcutsAction_terminalSearch", description: "终端搜索", category: "Terminal" },
   // Application
   { id: ACTION_IDS.PALETTE_OPEN, keys: "Ctrl+Shift+P", descriptionKey: "settings.shortcutsAction_openPalette", description: "打开命令面板", category: "Application" },
-  { id: ACTION_IDS.SIDEBAR_TOGGLE, keys: "Ctrl+Shift+B", descriptionKey: "settings.shortcutsAction_toggleSidebar", description: "切换侧边栏", category: "Application" },
+  { id: ACTION_IDS.SIDEBAR_TOGGLE, keys: "Ctrl+Shift+B", descriptionKey: "settings.shortcutsAction_toggleSidebar", description: "切换左侧栏", category: "Application" },
+  { id: ACTION_IDS.RIGHT_SIDEBAR_TOGGLE, keys: "Ctrl+Shift+E", descriptionKey: "settings.shortcutsAction_toggleRightSidebar", description: "切换右侧栏", category: "Application" },
   { id: ACTION_IDS.SERIAL_REFRESH, keys: "Ctrl+Shift+R", descriptionKey: "settings.shortcutsAction_refreshPorts", description: "刷新端口列表", category: "Application" },
 ];
 
@@ -148,8 +149,15 @@ class ShortcutRegistry {
             hasInvalid = true;
           }
         }
-        if (hasInvalid) {
-          // 清除包含已删除 action 的旧缓存，重新保存
+        // 合并缺失的默认快捷键（如新增的快捷键尚未写入用户的 localStorage）
+        let hasMissing = false;
+        for (const defaultShortcut of DEFAULT_SHORTCUTS) {
+          if (!this.shortcuts.has(defaultShortcut.id)) {
+            this.shortcuts.set(defaultShortcut.id, { ...defaultShortcut });
+            hasMissing = true;
+          }
+        }
+        if (hasInvalid || hasMissing) {
           this.saveToStorage();
         }
         return;

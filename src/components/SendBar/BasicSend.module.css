@@ -69,24 +69,12 @@
 }
 
 .select {
-  appearance: none;
-  -webkit-appearance: none;
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 8px;
-  border-radius: var(--radius-md);
-  background-image: var(--select-arrow);
-  background-repeat: no-repeat;
-  background-position: right 7px center;
-  padding-right: 22px;
+  padding: var(--select-padding);
+  height: var(--select-height);
   font-size: var(--text-xs);
   font-family: var(--font-ui);
-  cursor: pointer;
-}
-
-.select option {
-  background: var(--select-option-bg);
-  color: var(--text-primary);
 }
 
 /* 模式切换按钮 */

@@ -480,7 +480,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
           ) : (
             <>
               <select
-                className={styles.configSelect}
+                className={`${styles.configSelect} liquid-glass-input liquid-glass-select`}
                 value={activeConfigName}
                 onChange={(e) => handleConfigChange(e.target.value)}
                 title={t("commandPanel.switchConfig") || "切换命令集"}

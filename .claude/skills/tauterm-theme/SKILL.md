@@ -174,6 +174,32 @@ color: var(--color-info);      /* blue */
 background: color-mix(in srgb, var(--color-error) 15%, transparent);
 ```
 
+**Tool panel helper tokens (RightSidebar + Tools):**
+```css
+/* These are defined per-theme in tokens.css and used by
+   RightSidebarPanel, CalculatorTool, ChecksumTool, EncodingTool,
+   BitOpsTool, and ProtocolTool components. They exist alongside
+   the main glass tokens to provide finer control over tool panel
+   appearance without coupling to layout chrome values. */
+color: var(--text-tertiary);           /* dim hint/placeholder text in tools */
+background: var(--glass-hover);        /* panel header hover state */
+background: var(--glass-fill-secondary);  /* tool result cards, mode button bg */
+background: var(--color-accent);       /* active tab/mode button — aliases accent-primary */
+
+/* --color-accent is a semantic alias for var(--accent-primary).
+   In tool panels it serves as the active-state fill for mode buttons
+   and tab selectors. Always paired with var(--text-on-accent) for
+   accessible contrast on the filled background. */
+
+/* --glass-hover and --glass-fill-secondary are subtle semi-transparent
+   overlays tuned per theme:
+   - google-glow: white 8% / 3%
+   - obsidian:     white 6% / 2%
+   - frosted:      black 5% / 2%
+   These replace ad-hoc rgba() values and automatically invert for
+   light vs dark backgrounds. */
+```
+
 **Background orbs (GoogleGlowBackground):**
 ```css
 opacity: var(--bg-orb-opacity);
@@ -255,7 +281,7 @@ These global classes from `src/styles/global.css` can be used alongside CSS Modu
 
 ### Layout Chrome Pattern (v1.6)
 
-Layout chrome surfaces (toolbar, sidebar, status bar, terminal viewport, send bar, transmission panel) MUST use the `.liquid-glass` global class. CSS Modules for layout chrome ONLY contain layout properties + `border-radius: var(--radius-lg)` (16px, Panel tier) — NEVER visual glass properties. The `app-root` provides `gap: 6px` and `padding: 6px` to create breathing room for rounded corners. Inner edges flush against adjacent surfaces get clipped by `overflow: hidden`, effectively applying the 0px edge-contact rule:
+Layout chrome surfaces (toolbar, sidebar, status bar, terminal viewport, send bar, transmission panel, right sidebar) MUST use the `.liquid-glass` global class. CSS Modules for layout chrome ONLY contain layout properties + `border-radius: var(--radius-lg)` (16px, Panel tier) — NEVER visual glass properties. The `app-root` provides `gap: 6px` and `padding: 6px` to create breathing room for rounded corners. Inner edges flush against adjacent surfaces get clipped by `overflow: hidden`, effectively applying the 0px edge-contact rule:
 
 ```css
 /* [正确] Correct — CSS Module: layout + border-radius only */
@@ -380,7 +406,97 @@ All layout chrome bars (toolbar, sidebar, status bar, send bar, transmission pan
 }
 ```
 
-> **Convention**: Toolbar=36px, StatusBar=26px (fixed height). Panels (sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1` to fill the parent. Sendbar additionally enforces `min-height: var(--sendbar-min-height)` and is user-resizable via vertical `ResizeHandle` drag.
+> **Convention**: Toolbar=36px, StatusBar=26px (fixed height). Panels (sidebar, right sidebar, transmission panel, sendbar) use `height: 100%` / `flex: 1` to fill the parent. Sendbar additionally enforces `min-height: var(--sendbar-min-height)` and is user-resizable via vertical `ResizeHandle` drag.
+
+### RightSidebar Panel Pattern (v3.5)
+
+The right sidebar uses a collapsible accordion panel system (`RightSidebarPanel`). Each panel wraps a tool or sub-component and provides a toggleable header with chevron rotation and CSS `max-height` transition animation.
+
+**Container (`RightSidebar`):**
+```tsx
+// Wraps child panels with liquid-glass styling
+<aside className={`${styles.sidebar} liquid-glass`} style={{ width }} aria-label="Right sidebar">
+  <div className={styles.scrollArea}>
+    {children}  {/* RightSidebarPanel components */}
+  </div>
+</aside>
+```
+
+**Accordion Panel (`RightSidebarPanel`):**
+```css
+/* Panel separator — matches glass border color */
+.panel {
+  border-bottom: 1px solid var(--glass-border-default);
+  overflow: hidden;
+}
+.panel:last-child {
+  border-bottom: none;
+}
+/* Header button — hover uses glass-hover token */
+.header {
+  padding: 6px var(--spacing-sm);
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  transition: background-color 0.15s ease;
+}
+.header:hover {
+  background-color: var(--glass-hover);
+}
+/* Chevron rotation animation */
+.chevron {
+  transition: transform 0.2s ease;
+}
+.chevronOpen {
+  transform: rotate(-180deg);
+}
+/* Body collapse animation via max-height */
+.body {
+  overflow: hidden;
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+}
+```
+
+**Key rules for RightSidebar panels:**
+- `.scrollArea` MUST include `padding: 4px 0` and `gap: 2px` for visual separation from glass borders and between panels
+- Panel headers MUST use `aria-expanded={expanded}` on the toggle button
+- Content height is measured via `ResizeObserver` for dynamic max-height transitions — ensure the observer is disconnected in cleanup
+- Inner tool content (`<div>` child inside `.body`) receives `padding: var(--spacing-sm)` for consistent internal spacing
+
+### Embedded Tool Panel Pattern (v3.5)
+
+Tools in the right sidebar (`ChecksumTool`, `EncodingTool`, `BitOpsTool`, `ProtocolTool`) each follow a consistent pattern:
+
+```tsx
+// Inner component — used standalone or embedded in CalculatorTool tabs
+export function ToolNameInner() {
+  const { t } = useTranslation();
+  // ... state, useMemo for computation, handlers
+  return (
+    <div className={styles.container}>
+      {/* tool-specific UI — inputs, selects, results */}
+    </div>
+  );
+}
+
+// Default export — wraps Inner in RightSidebarPanel for standalone use
+export default function ToolName() {
+  const { t } = useTranslation();
+  return (
+    <RightSidebarPanel title={t("tools.toolName")}>
+      <ToolNameInner />
+    </RightSidebarPanel>
+  );
+}
+```
+
+**Key rules for embedded tools:**
+- Input elements (textarea, input, select) MUST use `liquid-glass-input` global class
+- Result displays use `var(--color-success)` for valid results, `var(--color-error)` for error states
+- Error result strings MUST use the `[Error: ...]` prefix convention for detection and red styling
+- Monospace values use `var(--font-mono)` with `font-size: var(--text-xs)`
+- All user-facing labels, placeholders, and button text MUST use `t()` i18n — never hardcode Chinese in parse logic
 
 #### `--sendbar-min-height` Token (v3.2)
 
@@ -468,41 +584,38 @@ font-size: 11px;                 /* use var(--text-xs) */
 }
 ```
 
-### New Select Dropdown Template
+### New Select Dropdown Template (v3.6)
 
-**Preferred: combine CSS Module + global `.liquid-glass-input` class**
+**Required: combine CSS Module + TWO global classes `.liquid-glass-input` and `.liquid-glass-select`**
+
+Arrow styling, height, and padding are now provided by the global `.liquid-glass-select` class.
+Tokens `--select-height` (28px) and `--select-padding` (2px 8px) ensure all selects are consistent across the app.
 
 ```css
-/* CSS Module — select-specific + sizing only */
+/* CSS Module — layout-only: width, font-size, and any component-specific overrides */
 .select {
-  appearance: none;
-  -webkit-appearance: none;
   width: 100%;
-  padding: 6px 28px 6px 10px;
-  border-radius: var(--radius-md);  /* 12px — Control tier */
-  font-size: var(--text-sm);
+  height: var(--select-height);
+  padding: var(--select-padding);
+  font-size: var(--text-xs);
   font-family: var(--font-ui);
-  cursor: pointer;
-  background-image: var(--select-arrow);
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-}
-.select option {
-  background: var(--select-option-bg);
-  color: var(--text-primary);
+  transition: all var(--transition-input);
 }
 ```
 
 ```tsx
 // JSX — `.liquid-glass-input` provides bg/border/color/shadow/focus/hover/disabled
-<select className={`${styles.select} liquid-glass-input`}>
+//        `.liquid-glass-select` provides appearance:none, arrow, cursor, height, padding
+<select className={`${styles.select} liquid-glass-input liquid-glass-select`}>
   <option value="a">A</option>
 </select>
 ```
 
-> `.liquid-glass-input` already handles: `background`, `border`, `box-shadow`, `color`,
-> `outline`, `:focus` glow, `:hover` border, `:disabled` transparency.
-> CSS Modules only need to define select-specific props and component-level sizing.
+> `.liquid-glass-input` handles: `background-color`, `border`, `box-shadow`, `color`,
+> `outline`, `:focus` glow, `:hover` border, `:disabled` transparency, `border-radius`.
+> `.liquid-glass-select` handles: `appearance:none`, arrow SVG, `padding-right`, `cursor`,
+> `height`, `padding`, `option` bg/color.
+> CSS Modules only need to define: `width`/`flex`, component-specific overrides, and `transition`.
 
 ### Number Input Spin Button Pattern (v3.4)
 
@@ -830,7 +943,7 @@ Run this mental checklist for every new/changed component:
 9. `backdrop-filter` blur values use `var(--blur-*)` or `var(--glass-blur)` tokens
 9a. `transition` values use `var(--transition-*)` tokens — never raw `0.3s ease`, `0.2s`, etc.
 10. Modal/overlay backdrops use `var(--overlay-bg)` — not hardcoded black
-11. All `<select>` and `<input>` elements use the global `liquid-glass-input` class for base visuals (bg/border/color/shadow/focus/hover/disabled). All glass button elements (`<button>` that look like glass buttons) use `liquid-glass-button` or `GlassButton` component. CSS Modules only define layout/sizing/select-specific props (appearance, arrow, option bg). Every input/select/button in the project should look identical regardless of which component it lives in.
+11. All `<select>` elements use BOTH global classes: `liquid-glass-input` (bg/border/color/shadow/focus/hover/disabled) AND `liquid-glass-select` (appearance:none, arrow SVG, cursor, height, padding via `--select-height`/`--select-padding` tokens, option bg/color). All `<input>` and `<textarea>` elements use `liquid-glass-input`; `<textarea>` additionally uses `liquid-glass-textarea` (monospace font, font-size, resize, min-height, focus/placeholder). All glass button elements use `liquid-glass-button` or `GlassButton` component. CSS Modules only define layout props (width/flex) and component-specific overrides. Every input/select/button in the project should look identical regardless of which component it lives in.
 12. Custom SVG data URIs (select arrows, etc.) have their hardcoded fill color noted in a comment
 13. Disabled opacity: `opacity: 0.5` for buttons (`.liquid-glass-button` / `.liquid-primary-button`), `opacity: 0.4` for inputs/selects (`.liquid-glass-input`). These are managed BY the global classes — CSS Modules do not need to redefine them. (Note: `.liquid-glass-button:disabled` was added in v3.1 to close a gap where only the primary and input variants had global disabled rules.)
 14. Layout surfaces (toolbar, sidebar, statusbar, terminal viewport, sendbar, transmission panel) use `liquid-glass` global class — CSS Modules for layout chrome contain ONLY layout properties. NO hand-rolled `background` / `backdrop-filter` / `border` / `box-shadow` on chrome surfaces.

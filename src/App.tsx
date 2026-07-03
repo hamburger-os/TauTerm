@@ -10,8 +10,9 @@ import StatusBar from "./components/Layout/StatusBar";
 import ResizeHandle from "./components/Layout/ResizeHandle";
 import TabContentDispatcher from "./components/TabContentDispatcher";
 import SendBar from "./components/SendBar/SendBar";
-import TransmissionPanel from "./components/Transmission/TransmissionPanel";
 import type { ProtocolType } from "./types/transfer";
+import RightSidebar from "./components/RightSidebar/RightSidebar";
+import SessionRightSidebar from "./components/RightSidebar/SessionRightSidebar";
 import SettingsPage from "./components/Settings/SettingsPage";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
 import ConnectDialog from "./components/Layout/ConnectDialog";
@@ -27,9 +28,9 @@ import "./App.css";
 
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 400;
-const TRANSMISSION_MIN = 160;
-const TRANSMISSION_MAX = 500;
-const TRANSMISSION_DEFAULT = 260;
+const RIGHT_SIDEBAR_MIN = 160;
+const RIGHT_SIDEBAR_MAX = 500;
+const RIGHT_SIDEBAR_DEFAULT = 260;
 /** SendBar 最小高度（px）：从 CSS 自定义属性 --sendbar-min-height 读取，106 为后备值 */
 const SENDBAR_MIN_PCT = 5;
 const SENDBAR_MAX_PCT = 60;
@@ -51,8 +52,8 @@ function AppInner() {
   // Layout state
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
-  const [transmissionWidth, setTransmissionWidth] = useState(TRANSMISSION_DEFAULT);
-  const [isResizingTransmission, setIsResizingTransmission] = useState(false);
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(RIGHT_SIDEBAR_DEFAULT);
+  const [isResizingRightSidebar, setIsResizingRightSidebar] = useState(false);
   const [sendBarPct, setSendBarPct] = useState(SENDBAR_DEFAULT_PCT);
   const [isResizingSendBar, setIsResizingSendBar] = useState(false);
   /** SendBar 最小高度，从 CSS 自定义属性 --sendbar-min-height 读取，避免与 SendBar.module.css 硬编码不同步 */
@@ -63,6 +64,7 @@ function AppInner() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
+  const [rightSidebarVisible, setRightSidebarVisible] = useState(true);
   const [editSessionId, setEditSessionId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -101,12 +103,12 @@ function AppInner() {
     sidebarStartX.current = e.clientX; sidebarStartWidth.current = sidebarWidth;
   }, [sidebarWidth]);
 
-  // Resize: transmission panel
-  const transmissionStartX = useRef(0); const transmissionStartWidth = useRef(0);
-  const handleTransmissionMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault(); setIsResizingTransmission(true);
-    transmissionStartX.current = e.clientX; transmissionStartWidth.current = transmissionWidth;
-  }, [transmissionWidth]);
+  // Resize: right sidebar
+  const rightSidebarStartX = useRef(0); const rightSidebarStartWidth = useRef(0);
+  const handleRightSidebarMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); setIsResizingRightSidebar(true);
+    rightSidebarStartX.current = e.clientX; rightSidebarStartWidth.current = rightSidebarWidth;
+  }, [rightSidebarWidth]);
 
   // Resize: sendBar (flex ratio)
   const sendBarStartY = useRef(0); const sendBarStartPct = useRef(SENDBAR_DEFAULT_PCT);
@@ -116,15 +118,15 @@ function AppInner() {
   }, [sendBarPct]);
 
   useEffect(() => {
-    const resizeActive = isResizingSidebar || isResizingTransmission || isResizingSendBar;
+    const resizeActive = isResizingSidebar || isResizingRightSidebar || isResizingSendBar;
     if (!resizeActive) return;
 
     const handleMove = (e: MouseEvent) => {
       if (isResizingSidebar) {
         setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, sidebarStartWidth.current + (e.clientX - sidebarStartX.current))));
       }
-      if (isResizingTransmission) {
-        setTransmissionWidth(Math.min(TRANSMISSION_MAX, Math.max(TRANSMISSION_MIN, transmissionStartWidth.current - (e.clientX - transmissionStartX.current))));
+      if (isResizingRightSidebar) {
+        setRightSidebarWidth(Math.min(RIGHT_SIDEBAR_MAX, Math.max(RIGHT_SIDEBAR_MIN, rightSidebarStartWidth.current - (e.clientX - rightSidebarStartX.current))));
       }
       if (isResizingSendBar) {
         const container = mainContentRef.current;
@@ -141,7 +143,7 @@ function AppInner() {
     };
     const handleUp = () => {
       setIsResizingSidebar(false);
-      setIsResizingTransmission(false);
+      setIsResizingRightSidebar(false);
       setIsResizingSendBar(false);
     };
     document.addEventListener("mousemove", handleMove);
@@ -155,7 +157,7 @@ function AppInner() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isResizingSidebar, isResizingTransmission, isResizingSendBar, sendBarPct]);
+  }, [isResizingSidebar, isResizingRightSidebar, isResizingSendBar, sendBarPct]);
 
   // Global drag events for dropzone visual feedback + Tauri native drop
   useEffect(() => {
@@ -245,6 +247,7 @@ function AppInner() {
     registerAction(ACTION_IDS.PALETTE_OPEN, () => setPaletteOpen(true));
     registerAction(ACTION_IDS.SESSION_NEW, () => { setEditSessionId(null); setConnectDialogOpen(true); });
     registerAction(ACTION_IDS.SIDEBAR_TOGGLE, () => setSidebarVisible(v => !v));
+    registerAction(ACTION_IDS.RIGHT_SIDEBAR_TOGGLE, () => setRightSidebarVisible(v => !v));
     registerAction(ACTION_IDS.SERIAL_REFRESH, refreshEndpoints);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -275,6 +278,7 @@ function AppInner() {
       case ACTION_IDS.SESSION_NEW: setEditSessionId(null); setConnectDialogOpen(true); break;
       case ACTION_IDS.TERMINAL_SEARCH: break;
       case ACTION_IDS.SIDEBAR_TOGGLE: setSidebarVisible(v => !v); break;
+      case ACTION_IDS.RIGHT_SIDEBAR_TOGGLE: setRightSidebarVisible(v => !v); break;
       case ACTION_IDS.SERIAL_REFRESH: refreshEndpoints(); break;
       case ACTION_IDS.PALETTE_OPEN: setPaletteOpen(true); break;
     }
@@ -285,6 +289,7 @@ function AppInner() {
     switch (actionId) {
       case "newSession": setEditSessionId(null); setConnectDialogOpen(true); break;
       case "sidebar": setSidebarVisible(v => !v); break;
+      case "rightSidebar": setRightSidebarVisible(v => !v); break;
       case "commands": setPaletteOpen(true); break;
       case "settings": setSettingsOpen(true); break;
     }
@@ -302,27 +307,25 @@ function AppInner() {
         {/* 侧栏 — 全高 */}
         <AnimatePresence>
           {sidebarVisible && (
-            <motion.aside
-              className="sidebar liquid-glass"
-              style={{ width: sidebarWidth }}
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: sidebarWidth, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <SessionSidebar
-                onEditSession={(id) => { setEditSessionId(id); setConnectDialogOpen(true); }}
-                onNewSession={() => { setEditSessionId(null); setConnectDialogOpen(true); }}
-                onSettingsClick={() => setSettingsOpen(true)}
-              />
-            </motion.aside>
+            <>
+              <motion.aside
+                className="sidebar liquid-glass"
+                style={{ width: sidebarWidth }}
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: sidebarWidth, opacity: 1 }}
+                exit={{ width: 0, opacity: 0 }}
+                transition={{ duration: isResizingSidebar ? 0 : 0.2 }}
+              >
+                <SessionSidebar
+                  onEditSession={(id) => { setEditSessionId(id); setConnectDialogOpen(true); }}
+                  onNewSession={() => { setEditSessionId(null); setConnectDialogOpen(true); }}
+                  onSettingsClick={() => setSettingsOpen(true)}
+                />
+              </motion.aside>
+              <ResizeHandle direction="horizontal" onMouseDown={handleSidebarMouseDown} />
+            </>
           )}
         </AnimatePresence>
-
-        {/* 侧栏拖拽条 */}
-        {sidebarVisible && (
-          <ResizeHandle direction="horizontal" onMouseDown={handleSidebarMouseDown} />
-        )}
 
         {/* 主内容区：终端 + 传输面板 + 发送栏 */}
         <div className="main-content" ref={mainContentRef}>
@@ -330,29 +333,44 @@ function AppInner() {
             <main className="terminal-viewport liquid-glass">
               <TabContentDispatcher />
             </main>
-            {sessionState.tabs.map(tab => {
-                const tabPlugin = pluginRegistry.get(tab.pluginId);
-                const tabShowTransmission = tabPlugin
-                  ? (tabPlugin.manifest.transfer_protocols?.length ?? 0) > 0 && tab.transferEnabled !== false
-                  : false;
-                const isActive = tab.id === sessionState.activeTabId;
-                return (
-                  <React.Fragment key={tab.id}>
-                    {isActive && tabShowTransmission && (
-                      <ResizeHandle direction="horizontal" onMouseDown={handleTransmissionMouseDown} />
-                    )}
-                    {isActive && tabShowTransmission && (
-                      <div style={{ width: transmissionWidth }}>
-                        <TransmissionPanel
-                          sessionId={tab.id}
-                          isConnected={tab.state === "connected" || tab.state === "transferring"}
-                          initialProtocol={tab.transferProtocol as ProtocolType | undefined}
-                        />
-                      </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
+            {/* 右侧栏 (按会话隔离，每 tab 一个独立实例) */}
+            <AnimatePresence>
+              {rightSidebarVisible && (
+                <>
+                  <ResizeHandle direction="horizontal" onMouseDown={handleRightSidebarMouseDown} />
+                  <motion.div
+                    style={{ height: "100%", width: rightSidebarWidth }}
+                    initial={{ width: 0, opacity: 0 }}
+                    animate={{ width: rightSidebarWidth, opacity: 1 }}
+                    exit={{ width: 0, opacity: 0 }}
+                    transition={{ duration: isResizingRightSidebar ? 0 : 0.2 }}
+                  >
+                    <RightSidebar width={rightSidebarWidth}>
+                      {sessionState.tabs.map(tab => {
+                        const tabPlugin = pluginRegistry.get(tab.pluginId);
+                        const showTransmission = tabPlugin
+                          ? (tabPlugin.manifest.transfer_protocols?.length ?? 0) > 0 && tab.transferEnabled !== false
+                          : false;
+                        const isActive = tab.id === sessionState.activeTabId;
+                        return (
+                          <div
+                            key={tab.id}
+                            style={isActive ? undefined : { display: "none" }}
+                          >
+                            <SessionRightSidebar
+                              sessionId={tab.id}
+                              isConnected={tab.state === "connected" || tab.state === "transferring"}
+                              initialProtocol={tab.transferProtocol as ProtocolType | undefined}
+                              showTransmission={showTransmission}
+                            />
+                          </div>
+                        );
+                      })}
+                    </RightSidebar>
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </div>
           {sessionState.tabs.map(tab => {
             const isActive = tab.id === sessionState.activeTabId;

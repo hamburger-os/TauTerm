@@ -1,0 +1,55 @@
+.panel {
+  border-bottom: 1px solid var(--glass-border-default);
+  overflow: hidden;
+}
+
+.panel:last-child {
+  border-bottom: none;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  width: 100%;
+  padding: 6px var(--spacing-sm);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  text-align: left;
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+
+.header:hover {
+  background-color: var(--glass-hover);
+}
+
+.title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  display: inline-flex;
+  align-items: center;
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.chevronOpen {
+  transform: rotate(-180deg);
+}
+
+.body {
+  overflow: hidden;
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+}
+
+.body > div {
+  padding: var(--spacing-sm);
+}

@@ -180,7 +180,7 @@ body {
    6. 液态玻璃输入框
    ========================================== */
 .liquid-glass-input {
-  background: var(--glass-input-bg);
+  background-color: var(--glass-input-bg);
   border: 1px solid var(--glass-input-border);
   border-radius: var(--radius-md);
   box-shadow: var(--glass-input-shadow-inner);
@@ -248,6 +248,41 @@ body {
 .liquid-glass-input[type="number"]:disabled::-webkit-inner-spin-button {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* 统一 Select 下拉框基类 — 与 .liquid-glass-input 搭配使用
+   所有 <select> 元素应同时使用这两个 class：
+   className={`${styles.select} liquid-glass-input liquid-glass-select`}
+   CSS Module 的 .select 只需设置 padding/font-size/width 等布局属性 */
+.liquid-glass-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 26px;
+  cursor: pointer;
+  height: var(--select-height);
+  padding: var(--select-padding);
+}
+.liquid-glass-select option {
+  background: var(--select-option-bg);
+  color: var(--text-primary);
+}
+
+/* 统一 Textarea 工具输入框基类 — 与 .liquid-glass-input 搭配使用 */
+.liquid-glass-textarea {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  resize: vertical;
+  min-height: 48px;
+  outline: none;
+}
+.liquid-glass-textarea:focus {
+  border-color: var(--color-accent);
+}
+.liquid-glass-textarea::placeholder {
+  color: var(--text-tertiary);
 }
 
 /* ==========================================

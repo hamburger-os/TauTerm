@@ -219,6 +219,7 @@ graph LR
 - 🌐 **多语言** — i18next 命名空间隔离，插件自带翻译，运行时切换
 - ⚡ **命令面板** — `Ctrl+Shift+P` 模糊搜索所有命令，键盘驱动操作
 - 🔍 **终端搜索** — `Ctrl+F` 搜索 buffer，大小写切换，上下导航
+- 🧰 **嵌入式开发工具** — 可折叠右侧栏集成校验和计算（CRC8/16/32 多预设）、编码转换（Base64/HEX/浮点/大小端）、位操作与 C sizeof 计算器、Modbus RTU/ASCII 及 AT 指令协议解析器
 - 📋 **日志系统** — 系统事件日志（`TauTerm_YYYYMMDD.log`）自动记录启动/错误/警告；会话数据日志支持 text/hex/dual 格式化、自动分卷与过期清理；右键菜单一键启停、状态栏实时指示
 - 🎹 **快捷键系统** — 全局快捷键注册与匹配，localStorage 持久化自定义绑定，点击录制模式实时改键，冲突检测与动画反馈，一键重置默认值
 - 💾 **会话持久化** — 离线创建/编辑会话配置，断开会话保留重连，按会话独立传输开关
@@ -299,6 +300,8 @@ TauTerm/
 │   │   ├── CommandPalette/     # 命令面板
 │   │   ├── SendBar/            # 发送栏（基础发送 + 指令面板、循环执行、后台运行、导入/导出）
 │   │   ├── Transmission/       # 传输侧面板（协议配置 + 发送/接收 + 进度）
+│   │   ├── RightSidebar/       # 右侧栏容器（可折叠面板 + ResizeObserver 动画）
+│   │   ├── Tools/              # 嵌入式开发工具（校验和/编码/位操作/协议解析）
 │   │   ├── Settings/           # 设置页（全屏覆盖层：通用/外观/语言/编码/日志/快捷键/关于）
 │   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
 │   │   └── common/             # Icon（30+ SVG 图标）, GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
@@ -327,7 +330,8 @@ TauTerm/
 | `Ctrl+Shift+C` | 复制（终端选中文本） | xterm.js 内置（不可自定义） |
 | `Ctrl+Shift+V` | 粘贴（到终端） | xterm.js 内置（不可自定义） |
 | `Ctrl+Shift+P` | 命令面板 | 全局 |
-| `Ctrl+Shift+B` | 切换侧边栏 | 全局 |
+| `Ctrl+Shift+B` | 切换左侧栏 | 全局 |
+| `Ctrl+Shift+E` | 切换右侧栏（开发工具） | 全局 |
 | `Ctrl+Shift+R` | 刷新端口列表 | Application 作用域 |
 
 > 💡 以上可自定义快捷键均可通过 **设置 → 快捷键** 面板进行个性化修改：点击任意行进入录制模式，按下目标组合键即可改键；冲突自动检测并给出动画反馈；支持一键重置为默认值。
@@ -641,6 +645,7 @@ sudo xattr -r -d com.apple.quarantine /path/to/TauTerm.app
 | 跨平台 | Windows / Linux / macOS | Windows / Linux / macOS | Windows |
 | UI 框架 | React 18 + Framer Motion | Qt | 原生 Win32 |
 | 插件生态 | 计划中 | 无 | 有限（插件） |
+| 嵌入式工具 | CRC/编码/位操作/协议解析 | 无 | 无 |
 | 开源协议 | MIT | Apache 2.0 | 部分开源 |
 
 ---

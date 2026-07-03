@@ -31,9 +31,9 @@
 }
 
 .input {
-  padding: 6px 12px;
-  height: 34px;
-  font-size: var(--text-sm);
+  padding: var(--select-padding);
+  height: var(--select-height);
+  font-size: var(--text-xs);
   font-family: var(--font-ui);
   border-radius: var(--radius-md);
 }
@@ -65,18 +65,4 @@
   font-size: var(--text-xs);
 }
 
-/* 选择框特殊样式 */
-.select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: var(--select-arrow); /* fill color adapts per theme */
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 28px;
-  cursor: pointer;
-}
-
-.select option {
-  background: var(--select-option-bg);
-  color: var(--text-primary);
-}
+/* 选择框特殊样式 — 箭头与交互由全局 .liquid-glass-select 提供 */

@@ -73,7 +73,8 @@
     "newSession": "New Session",
     "closeSession": "Close Session",
     "openPalette": "Open Command Palette",
-    "toggleSidebar": "Toggle Sidebar",
+    "toggleSidebar": "Toggle Left Sidebar",
+    "toggleRightSidebar": "Toggle Right Panel",
     "refreshPorts": "Refresh Ports",
     "search": "Search in Terminal"
   },
@@ -85,10 +86,101 @@
   },
   "toolbar": {
     "newSession": "New Session",
-    "sidebar": "Sidebar",
+    "sidebar": "Left Sidebar",
+    "rightSidebar": "Right Panel",
     "commands": "Commands",
     "settings": "Settings",
     "searchPlaceholder": "Search files or run commands..."
+  },
+  "tools": {
+    "calculator": "Quick Tools",
+    "checksum": "Checksum Calc",
+    "stringMode": "Text",
+    "hexMode": "HEX",
+    "checksumInputPlaceholder": "Enter text...",
+    "parsedBytes": "Bytes",
+    "preset": "Preset",
+    "checksumHint": "Enter text or HEX to calculate",
+    "encoding": "Encoding Conv",
+    "encodingInputPlaceholder": "Enter data to convert...",
+    "encodingHint": "Select conversion and enter data",
+    "bitops": "Bit Operations",
+    "bitwiseMode": "Bitwise",
+    "sizeofMode": "C sizeof",
+    "operator": "Operator",
+    "result": "Result",
+    "structMember": "Member",
+    "structType": "Type",
+    "structOffset": "Offset",
+    "structSize": "Size",
+    "structPad": "Padding",
+    "structTotal": "sizeof",
+    "structParseError": "Cannot parse struct definition",
+    "protocol": "Protocol Parser",
+    "protocolPlaceholder": "Enter HEX frame, e.g.: 01 03 00 00 00 01 84 0A",
+    "protocolField": "Field",
+    "protocolOffset": "Offset",
+    "protocolValue": "Value",
+    "protocolHint": "Select protocol and enter HEX frame",
+    "protocolParseError": "Cannot parse HEX data",
+    "invalidNumber": "Please enter a valid number",
+    "checksumHexPlaceholder": "AA BB CC DD or 0xAA,0xBB...",
+    "bitwiseOperandPlaceholder": "e.g. 170 (0xAA)",
+    "copied": "Copied",
+    "encodingOps": {
+      "hex-to-string": "HEX → String",
+      "string-to-hex": "String → HEX",
+      "hex-to-dec": "HEX → DEC",
+      "dec-to-hex": "DEC → HEX",
+      "hex-to-bin": "HEX → BIN",
+      "bin-to-hex": "BIN → HEX",
+      "dec-to-bin": "DEC → BIN",
+      "bin-to-dec": "BIN → DEC",
+      "base64-encode": "Base64 Encode",
+      "base64-decode": "Base64 Decode",
+      "url-encode": "URL Encode",
+      "url-decode": "URL Decode",
+      "float-to-hex": "Float → HEX",
+      "hex-to-float": "HEX → Float",
+      "swap-endian-16": "Endian Swap 16-bit",
+      "swap-endian-32": "Endian Swap 32-bit"
+    },
+    "bitOps": {
+      "AND": "& (AND)",
+      "OR": "| (OR)",
+      "XOR": "^ (XOR)",
+      "NOT": "~ (NOT)",
+      "LSHIFT": "<< (Left Shift)",
+      "RSHIFT": ">> (Right Shift)"
+    },
+    "crcValid": "CRC Valid",
+    "crcMismatch": "CRC Mismatch (expected: {{expected}})",
+    "lrcValid": "LRC Valid",
+    "lrcMismatch": "LRC Mismatch (expected: {{expected}})",
+    "noChecksum": "AT response has no checksum",
+    "rawDataOnly": "Custom mode shows raw data only",
+    "fieldDevAddr": "Device Address",
+    "fieldFuncCode": "Function Code",
+    "fieldData": "Data",
+    "fieldCRC16": "CRC16",
+    "fieldStartDelim": "Start Delimiter",
+    "fieldAddress": "Address",
+    "fieldLRC": "LRC",
+    "fieldRespType": "Response Type",
+    "fieldLine": "Line {{n}}",
+    "fieldRawData": "Raw Data",
+    "protocolTemplateAT": "AT Response",
+    "protocolTemplateModbusRTU": "Modbus RTU",
+    "protocolTemplateModbusASCII": "Modbus ASCII",
+    "protocolTemplateCustom": "Custom",
+    "funcReadCoils": "Read Coils",
+    "funcReadDiscreteInputs": "Read Discrete Inputs",
+    "funcReadHoldingRegs": "Read Holding Registers",
+    "funcReadInputRegs": "Read Input Registers",
+    "funcWriteSingleCoil": "Write Single Coil",
+    "funcWriteSingleReg": "Write Single Register",
+    "funcWriteMultiCoils": "Write Multiple Coils",
+    "funcWriteMultiRegs": "Write Multiple Registers"
   },
   "titleBar": {
     "minimize": "Minimize",
@@ -192,6 +284,11 @@
   "sidebar": {
     "settings": "Settings"
   },
+  "rightSidebar": {
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "ariaLabel": "Right sidebar"
+  },
   "sendBar": {
     "send": "Send",
     "placeholder": "Type data to send... (Shift+Enter to send)",
@@ -287,7 +384,8 @@
     "shortcutsAction_prevTab": "Previous Tab",
     "shortcutsAction_terminalSearch": "Search in Terminal",
     "shortcutsAction_openPalette": "Open Command Palette",
-    "shortcutsAction_toggleSidebar": "Toggle Sidebar",
+    "shortcutsAction_toggleSidebar": "Toggle Left Sidebar",
+    "shortcutsAction_toggleRightSidebar": "Toggle Right Panel",
     "shortcutsAction_refreshPorts": "Refresh Port List"
   },
   "statusBar": {
@@ -313,7 +411,8 @@
     "noActiveTransfer": "No active transfer",
     "notAvailable": "Transfer not available",
     "selectFiles": "Select Files",
-    "selectDir": "Select Directory"
+    "selectDir": "Select Directory",
+    "allFiles": "All Files"
   },
   "dualPane": {
     "resizeLabel": "Resize panels"
@@ -366,6 +465,7 @@
     "confirm": "Confirm",
     "retry": "Retry",
     "save": "Save",
-    "delete": "Delete"
+    "delete": "Delete",
+    "copy": "Copy"
   }
 }

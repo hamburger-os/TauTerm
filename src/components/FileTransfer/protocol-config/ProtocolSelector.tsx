@@ -35,7 +35,7 @@ export default function ProtocolSelector({
       <select
         value={value.protocol}
         onChange={handleChange}
-        className={`${inputStyles.input} ${inputStyles.select} ${inputStyles.selectSmall} liquid-glass-input`}
+        className={`${inputStyles.input} ${inputStyles.select} ${inputStyles.selectSmall} liquid-glass-input liquid-glass-select`}
       >
         {PROTOCOL_TYPES.map((pt) => (
           <option key={pt} value={pt}>

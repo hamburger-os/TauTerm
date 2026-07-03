@@ -584,11 +584,25 @@ A liquid glass style keyboard shortcut icon, 3D glass sculpture on pure black ba
 
 ---
 
+### 44. panel-right — 右侧栏切换
+
+**中文提示词：**
+A 3D icon of three vertical parallel rounded capsule bars, pure black background (#000000), frosted translucent glass material with bright edge highlights, internal light refractions and caustics, liquid glassmorphism style, organic fluid capsule strokes, soft ambient occlusion where bars meet the glass surface, glossy specular reflections along the top edges. The three bars are evenly spaced vertically oriented cylinders arranged horizontally side by side, resembling a vertical version of a hamburger menu icon. Subtle shadow beneath each bar. Photorealistic glass sculpture, 8K render quality, product lighting, centered composition, no background elements other than pure black.
+
+**English prompt:**
+A 3D icon of three vertical parallel rounded capsule bars, pure black background (#000000), frosted translucent glass material with bright edge highlights, internal light refractions and caustics, liquid glassmorphism style, organic fluid capsule strokes, soft ambient occlusion where bars meet the glass surface, glossy specular reflections along the top edges. The three bars are evenly spaced vertically oriented cylinders arranged horizontally side by side, resembling a vertical version of a hamburger menu icon. Subtle shadow beneath each bar. Photorealistic glass sculpture, 8K render quality, product lighting, centered composition, no background elements other than pure black.
+
+**使用位置：** `src/assets/icons/panel-right.png` — 顶栏右侧栏切换按钮，与 menu.png（三条横线）配对使用，hover 显示"右侧栏"和快捷键 Ctrl+Shift+E
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
 ## 生成后检查清单 / Post-Generation Checklist
 
 ### 图标质量
 
-- [ ] 所有 43 个图标风格统一（描边粗细、圆角程度、视觉密度）
+- [ ] 所有 44 个图标风格统一（描边粗细、圆角程度、视觉密度）
 - [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
 - [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
 - [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI
@@ -596,7 +610,7 @@ A liquid glass style keyboard shortcut icon, 3D glass sculpture on pure black ba
 
 ### 部署
 
-1. 将所有 42 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
+1. 将所有 43 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
 2. 运行部署脚本，一键将 logo 同步到 App 图标位置：
 
 ```bash

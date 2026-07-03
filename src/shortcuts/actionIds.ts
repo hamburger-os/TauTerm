@@ -17,6 +17,7 @@ export const ACTION_IDS = {
   // Application
   PALETTE_OPEN: "palette.open",
   SIDEBAR_TOGGLE: "sidebar.toggle",
+  RIGHT_SIDEBAR_TOGGLE: "rightSidebar.toggle",
   SERIAL_REFRESH: "serial.refresh",
 } as const;
 

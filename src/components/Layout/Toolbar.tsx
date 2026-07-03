@@ -1,9 +1,11 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import type { ToolbarItem } from "../../core/plugin-registry";
+import { shortcutRegistry } from "../../shortcuts/registry";
+import { ACTION_IDS } from "../../shortcuts/actionIds";
 import Icon from "../common/Icon";
 import TitleBar, { needsCustomTitleBar } from "./TitleBar";
 import styles from "./Toolbar.module.css";
@@ -43,6 +45,16 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
     [onAction]
   );
 
+  // 缓存快捷键字符串，避免每次渲染都遍历查找
+  // 注意：依赖数组为空，快捷键提示仅在挂载时计算一次。
+  // 如未来支持运行时快捷键重绑定，需添加订阅机制以触发重新计算。
+  const sidebarShortcut = useMemo(() => {
+    return shortcutRegistry.getAll().find(s => s.id === ACTION_IDS.SIDEBAR_TOGGLE)?.keys;
+  }, []);
+  const rightSidebarShortcut = useMemo(() => {
+    return shortcutRegistry.getAll().find(s => s.id === ACTION_IDS.RIGHT_SIDEBAR_TOGGLE)?.keys;
+  }, []);
+
   /** 工具栏非交互区域按下鼠标 → 触发窗口拖动 / 双击最大化 */
   const handleToolbarMouseDown = useCallback((e: React.MouseEvent) => {
     // 仅当点击目标是工具栏容器自身或 spacer（非交互元素）时触发
@@ -79,7 +91,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
         <button
           className={styles.toolbarButton}
           onClick={() => handleClick("sidebar")}
-          title={t("toolbar.sidebar") + " (Ctrl+B)"}
+          title={t("toolbar.sidebar") + (sidebarShortcut ? ` (${sidebarShortcut})` : "")}
         >
           <Icon name="menu" size="sm" className={styles.icon} />
         </button>
@@ -119,6 +131,14 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
           </span>
         </div>
 
+        <button
+          className={styles.toolbarButton}
+          onClick={() => handleClick("rightSidebar")}
+          title={t("toolbar.rightSidebar") + (rightSidebarShortcut ? ` (${rightSidebarShortcut})` : "")}
+        >
+          <Icon name="panel-right" size="sm" className={styles.icon} />
+        </button>
+
         {centerItems.map(item => (
           <button
             key={item.id}
@@ -135,7 +155,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
       {/* 弹性占位 — 中央区域与右侧区域之间的空白 */}
       <div className={styles.dragSpacer} />
 
-      {/* 右侧：插件右区 + 命令面板图标按钮 + 窗口控制 — 无拖动区域，确保按钮点击生效 */}
+      {/* 右侧：插件右区 + 右侧栏切换按钮 + 命令面板图标按钮 + 窗口控制 — 无拖动区域，确保按钮点击生效 */}
       <div className={styles.rightZone}>
         {rightItems.map(item => (
           <button

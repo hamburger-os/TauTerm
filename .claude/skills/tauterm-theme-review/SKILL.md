@@ -119,8 +119,8 @@ These classes provide the unified glass-morphism effect. Missing them causes vis
 
 | ID | Check | Detection | Fix |
 |----|-------|-----------|-----|
-| **C1** | Layout chrome missing `.liquid-glass` | Check that toolbar, sidebar, statusbar, terminal viewport, sendbar, transmission panel have `liquid-glass` in className | Add `liquid-glass` to the element's className; keep CSS Module with layout properties only |
-| **C2** | Input/select missing `.liquid-glass-input` | Check all `<input>`, `<select>`, `<textarea>` elements | Add `liquid-glass-input` class; CSS Module should only define layout/sizing/sizing-specific props |
+| **C1** | Layout chrome missing `.liquid-glass` | Check that toolbar, sidebar, right sidebar, statusbar, terminal viewport, sendbar, transmission panel have `liquid-glass` in className | Add `liquid-glass` to the element's className; keep CSS Module with layout properties only |
+| **C2** | Input/select missing global glass class | Check all `<input>`, `<select>`, `<textarea>` elements | `<input>`/`<textarea>`: add `liquid-glass-input`. `<select>`: add BOTH `liquid-glass-input` + `liquid-glass-select`. CSS Module should only define layout/sizing props |
 | **C3** | Glass button missing `.liquid-glass-button` | Check `<button>` elements that render with glass visual style | Add `liquid-glass-button` class or use `GlassButton variant="secondary"` |
 | **C4** | Primary action missing `.liquid-primary-button` | Check primary CTA buttons (Connect, Send, Submit) | Add `liquid-primary-button` class or use `GlassButton variant="primary"` |
 
@@ -156,7 +156,7 @@ These are code quality concerns that don't directly break visual appearance.
 | **F2** | Inline hardcoded styles in renderers | Check `src/renderers/` files for `style={{...}}` with hardcoded numeric values | Convert to CSS Module + tokens |
 | **F3** | Dead CSS Module classes | For each `.module.css`, verify every class is referenced in the `.tsx` | Remove unused classes |
 | **F4** | `.liquid-glass` on absolute/fixed elements | Check for className containing `liquid-glass` on elements with `position: absolute` or `position: fixed` in CSS Module | Remove `.liquid-glass` and inline the glass properties in the CSS Module using v3 tokens |
-| **F5** | Select missing option background | Check `<select>` elements; their `<option>` children need explicit background | Add `.mySelect option { background: var(--select-option-bg); color: var(--text-primary); }` |
+| **F5** | Select missing option background | Check `<select>` elements — if they use `liquid-glass-select` class, option bg/color is auto-handled | If NOT using `liquid-glass-select`: add `.mySelect option { background: var(--select-option-bg); color: var(--text-primary); }`. If using `liquid-glass-select`: verify the select element has BOTH `liquid-glass-input liquid-glass-select` classes |
 | **F6** | Undocumented SVG data URI colors | Check for `url("data:image/svg+xml,...")` without a comment noting the hardcoded fill | Add comment: `/* fill color: #xxxxxx — matches --text-muted */` |
 | **F7** | `.liquid-glass` nested inside `.liquid-glass` | Manual review of component JSX tree — check if any element with `liquid-glass` class is a descendant of another `liquid-glass` element | Replace inner `.liquid-glass` with `.liquid-glass-card`. Only layout chrome surfaces (sidebar, toolbar, terminal, statusbar, sendbar, transmission panel) should use `.liquid-glass` at the outermost level |
 | **F8** | Card missing `.liquid-glass-card` or wrong shadow tier | Check inner elements nested in `.liquid-glass` surfaces that have `var(--glass-fill)` background. If height ≥50px: must use `.liquid-glass-card` (provides `--shadow-elevated`). If height <50px: must use Mini-Card pattern with `var(--shadow-sm)` — using `--shadow-elevated` on small elements is wrong. grep for `var(--glass-fill)` in CSS Modules, cross-reference with TSX className | For ≥50px elements: add `.liquid-glass-card`. For <50px elements: use Mini-Card pattern (module-specific CSS with `var(--shadow-sm)` + 3D asymmetric borders) |
@@ -249,10 +249,11 @@ These patterns trigger checks but are INTENTIONALLY allowed. Refer to this table
 
 ### Layout Chrome Surfaces (MUST use `.liquid-glass`)
 
-These 6 surfaces use the `className={styles.xxx + ' liquid-glass'}` pattern — CSS Modules contain ONLY layout properties:
+These 7 surfaces use the `className={styles.xxx + ' liquid-glass'}` pattern — CSS Modules contain ONLY layout properties:
 
 - `Toolbar.tsx` (Toolbar.module.css)
 - `SessionSidebar.tsx` (SessionSidebar.module.css)
+- `RightSidebar.tsx` (RightSidebar.module.css)
 - `StatusBar.tsx` (StatusBar.module.css)
 - `TerminalView.tsx` (Terminal.module.css — the viewport container)
 - `SendBar.tsx` (SendBar.module.css)
@@ -266,6 +267,24 @@ These elements are nested inside a `.liquid-glass` layout surface and must NOT u
 - `ConnectDialog.tsx` `.modeCard` — nested inside ConnectDialog (`.liquid-glass`), now uses `.liquid-glass-card` for consistent `shadow-elevated` + 3D borders
 - `StatsDashboardRenderer` `.card` — nested inside terminal viewport (`.liquid-glass`), now uses `.liquid-glass-card` for glass consistency (was previously `var(--bg-secondary)` solid)
 - `PerFileList.tsx` (`.row` elements) — uses Mini-Card pattern (`var(--shadow-sm)` 6px shadow + 3D asymmetric borders), consistent with other small elements in the TransmissionPanel (`.fileSummary`, `.errorBox`, etc.)
+
+### Tool Panel Components (use `--color-accent`, `--glass-hover`, `--glass-fill-secondary`, `--text-tertiary`)
+
+These components are nested inside `RightSidebar.tsx` (`.liquid-glass`) via `RightSidebarPanel` accordion wrappers. They use per-theme tool panel helper tokens defined in `tokens.css`:
+
+- `CalculatorTool.tsx` → `CalculatorTool.module.css` — 3-tab container (checksum/encoding/bitops)
+- `ChecksumTool.tsx` → `ChecksumTool.module.css` — CRC/checksum calculator with mode/algorithm buttons
+- `EncodingTool.tsx` → `EncodingTool.module.css` — 16 encoding conversion operations
+- `BitOpsTool.tsx` → `BitOpsTool.module.css` — bitwise operations + C sizeof parser
+- `ProtocolTool.tsx` → `ProtocolTool.module.css` — Modbus RTU/ASCII, AT response parser
+
+**Token usage in these components:**
+- `--color-accent` — active tab/mode button fill (with `--text-on-accent` text)
+- `--glass-hover` — panel header hover background
+- `--glass-fill-secondary` — result card backgrounds, button default state
+- `--text-tertiary` — dim hint/placeholder text
+- Inputs/selects use `liquid-glass-input` global class
+- Monospace values use `var(--font-mono)` with `var(--text-xs)`
 
 ### Floating Elements (CANNOT use `.liquid-glass`)
 

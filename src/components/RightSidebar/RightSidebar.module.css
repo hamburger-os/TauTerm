@@ -1,0 +1,45 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  flex-shrink: 0;
+  height: 100%;
+}
+
+.scrollArea {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+  min-height: 0;
+  position: relative;
+  scrollbar-width: none; /* Firefox: 隐藏滚动条但保留滚动功能 */
+}
+
+/* Chrome/Edge/Safari: 隐藏滚动条 */
+.scrollArea::-webkit-scrollbar {
+  display: none;
+}
+
+/* 底部淡出提示 — 仅内容溢出可滚动时通过 JS 添加 .scrollable 类 */
+.scrollArea::after {
+  content: "";
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: block;
+  height: 16px;
+  flex-shrink: 0;
+  background: linear-gradient(to top, var(--glass-fill), transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.scrollable::after {
+  opacity: 1;
+}

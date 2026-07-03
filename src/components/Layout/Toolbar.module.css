@@ -45,6 +45,11 @@
   background: var(--glass-bg-active);
 }
 
+.toolbarButton.active {
+  background: var(--glass-bg-active);
+  color: var(--text-primary);
+}
+
 .icon {
   font-size: var(--text-sm);
   line-height: 1;

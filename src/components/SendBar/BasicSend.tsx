@@ -243,7 +243,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
         <div className={styles.controlsRow1}>
           <div className={styles.dropdown}>
             <select
-              className={`${styles.select} liquid-glass-input`}
+              className={`${styles.select} liquid-glass-input liquid-glass-select`}
               value={newlineMode}
               onChange={(e) => dispatch({ type: "SET_NEWLINE_MODE", mode: e.target.value as NewlineMode })}
               title={t("sendBar.appendNewline")}

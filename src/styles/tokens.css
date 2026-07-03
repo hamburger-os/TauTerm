@@ -56,6 +56,10 @@
   /* 布局常量 */
   --sendbar-min-height: 106px;
 
+  /* 统一控件尺寸 — 所有下拉框/输入框使用相同高度 */
+  --select-height: 28px;
+  --select-padding: 2px 8px;
+
   /* 层级 */
   --z-sidebar: 10;
   --z-panel: 20;
@@ -117,6 +121,12 @@
   --color-warning: #ffa502;
   --color-info: #4285F4;
 
+  /* 右侧栏工具面板辅助令牌 */
+  --color-accent: var(--accent-primary);
+  --glass-hover: rgba(255, 255, 255, 0.08);
+  --glass-fill-secondary: rgba(255, 255, 255, 0.03);
+  --text-tertiary: #8888aa;
+
   /* 全息光效渐变（主按钮等） */
   --accent-holofoil-gradient: linear-gradient(-45deg,
     rgba(66, 133, 244, 0.85),
@@ -144,7 +154,7 @@
   --dialog-shadow: 0 0 30px rgba(66, 133, 244, 0.15);
   /* 下拉选项 */
   --select-option-bg: #12122a;
-  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239494b8' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%239494b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }
 
 /* Obsidian — 黑曜石暗色主题，近纯黑底 + 霓虹光球 + 磨砂黑玻璃 */
@@ -199,6 +209,12 @@
   --color-warning: #ffa502;
   --color-info: #4285F4;
 
+  /* 右侧栏工具面板辅助令牌 */
+  --color-accent: var(--accent-primary);
+  --glass-hover: rgba(255, 255, 255, 0.06);
+  --glass-fill-secondary: rgba(255, 255, 255, 0.02);
+  --text-tertiary: #888888;
+
   /* 全息光效渐变（主按钮等） */
   --accent-holofoil-gradient: linear-gradient(-45deg,
     rgba(66, 133, 244, 0.85),
@@ -226,7 +242,7 @@
   --dialog-shadow: 0 0 30px rgba(66, 133, 244, 0.12);
   /* 下拉选项 */
   --select-option-bg: #0a0a12;
-  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23909090' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23909090' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }
 
 /* Frosted — 白霜浅色主题，灰白底 + 漫反射光球 + 清透白霜玻璃 */
@@ -281,6 +297,12 @@
   --color-warning: #d97706;
   --color-info: #2563eb;
 
+  /* 右侧栏工具面板辅助令牌 */
+  --color-accent: var(--accent-primary);
+  --glass-hover: rgba(0, 0, 0, 0.05);
+  --glass-fill-secondary: rgba(0, 0, 0, 0.02);
+  --text-tertiary: #788090;
+
   /* 全息光效渐变（主按钮等 — 浅色主题使用实色渐变） */
   --accent-holofoil-gradient: linear-gradient(-45deg,
     #3b82f6, #6366f1, #8b5cf6, #3b82f6);
@@ -305,5 +327,5 @@
   --dialog-shadow: 0 0 40px rgba(0, 0, 0, 0.06);
   /* 下拉选项 */
   --select-option-bg: #ffffff;
-  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23556270' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23556270' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }

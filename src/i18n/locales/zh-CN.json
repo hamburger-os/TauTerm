@@ -73,7 +73,8 @@
     "newSession": "新建会话",
     "closeSession": "关闭当前会话",
     "openPalette": "打开命令面板",
-    "toggleSidebar": "切换侧边栏",
+    "toggleSidebar": "切换左侧栏",
+    "toggleRightSidebar": "切换右侧栏",
     "refreshPorts": "刷新端口列表",
     "search": "终端搜索"
   },
@@ -85,10 +86,101 @@
   },
   "toolbar": {
     "newSession": "新建会话",
-    "sidebar": "侧栏",
+    "sidebar": "左侧栏",
+    "rightSidebar": "右侧栏",
     "commands": "命令面板",
     "settings": "设置",
     "searchPlaceholder": "搜索文件或运行命令..."
+  },
+  "tools": {
+    "calculator": "快捷工具",
+    "checksum": "校验和计算",
+    "stringMode": "文本",
+    "hexMode": "HEX",
+    "checksumInputPlaceholder": "输入文本...",
+    "parsedBytes": "字节",
+    "preset": "预设",
+    "checksumHint": "输入文本或 HEX 后自动计算",
+    "encoding": "编码转换",
+    "encodingInputPlaceholder": "输入要转换的数据...",
+    "encodingHint": "选择转换方式并输入数据",
+    "bitops": "位操作",
+    "bitwiseMode": "位运算",
+    "sizeofMode": "C sizeof",
+    "operator": "运算符",
+    "result": "结果",
+    "structMember": "成员",
+    "structType": "类型",
+    "structOffset": "偏移",
+    "structSize": "大小",
+    "structPad": "填充",
+    "structTotal": "sizeof",
+    "structParseError": "无法解析结构体定义",
+    "protocol": "协议解析",
+    "protocolPlaceholder": "输入 HEX 帧数据，如: 01 03 00 00 00 01 84 0A",
+    "protocolField": "字段",
+    "protocolOffset": "偏移",
+    "protocolValue": "值",
+    "protocolHint": "选择协议模板并输入 HEX 帧数据",
+    "protocolParseError": "无法解析 HEX 数据，请检查格式",
+    "invalidNumber": "请输入有效数字",
+    "checksumHexPlaceholder": "AA BB CC DD 或 0xAA,0xBB...",
+    "bitwiseOperandPlaceholder": "如 170 (0xAA)",
+    "copied": "已复制",
+    "encodingOps": {
+      "hex-to-string": "HEX → 字符串",
+      "string-to-hex": "字符串 → HEX",
+      "hex-to-dec": "HEX → DEC",
+      "dec-to-hex": "DEC → HEX",
+      "hex-to-bin": "HEX → BIN",
+      "bin-to-hex": "BIN → HEX",
+      "dec-to-bin": "DEC → BIN",
+      "bin-to-dec": "BIN → DEC",
+      "base64-encode": "Base64 编码",
+      "base64-decode": "Base64 解码",
+      "url-encode": "URL 编码",
+      "url-decode": "URL 解码",
+      "float-to-hex": "浮点 → HEX",
+      "hex-to-float": "HEX → 浮点",
+      "swap-endian-16": "大小端 16 位",
+      "swap-endian-32": "大小端 32 位"
+    },
+    "bitOps": {
+      "AND": "& (与)",
+      "OR": "| (或)",
+      "XOR": "^ (异或)",
+      "NOT": "~ (非)",
+      "LSHIFT": "<< (左移)",
+      "RSHIFT": ">> (右移)"
+    },
+    "crcValid": "CRC 正确",
+    "crcMismatch": "CRC 不匹配 (期望: {{expected}})",
+    "lrcValid": "LRC 正确",
+    "lrcMismatch": "LRC 不匹配 (期望: {{expected}})",
+    "noChecksum": "AT 响应无校验和",
+    "rawDataOnly": "自定义模式仅展示原始数据",
+    "fieldDevAddr": "设备地址",
+    "fieldFuncCode": "功能码",
+    "fieldData": "数据",
+    "fieldCRC16": "CRC16",
+    "fieldStartDelim": "起始符",
+    "fieldAddress": "地址",
+    "fieldLRC": "LRC",
+    "fieldRespType": "响应类型",
+    "fieldLine": "行 {{n}}",
+    "fieldRawData": "原始数据",
+    "protocolTemplateAT": "AT 指令响应",
+    "protocolTemplateModbusRTU": "Modbus RTU",
+    "protocolTemplateModbusASCII": "Modbus ASCII",
+    "protocolTemplateCustom": "自定义",
+    "funcReadCoils": "读线圈",
+    "funcReadDiscreteInputs": "读离散输入",
+    "funcReadHoldingRegs": "读保持寄存器",
+    "funcReadInputRegs": "读输入寄存器",
+    "funcWriteSingleCoil": "写单线圈",
+    "funcWriteSingleReg": "写单寄存器",
+    "funcWriteMultiCoils": "写多线圈",
+    "funcWriteMultiRegs": "写多寄存器"
   },
   "titleBar": {
     "minimize": "最小化",
@@ -192,6 +284,11 @@
   "sidebar": {
     "settings": "设置"
   },
+  "rightSidebar": {
+    "collapse": "折叠",
+    "expand": "展开",
+    "ariaLabel": "右侧栏"
+  },
   "sendBar": {
     "send": "发送",
     "placeholder": "输入要发送的数据... (Shift+Enter 发送)",
@@ -287,7 +384,8 @@
     "shortcutsAction_prevTab": "上一个标签页",
     "shortcutsAction_terminalSearch": "终端搜索",
     "shortcutsAction_openPalette": "打开命令面板",
-    "shortcutsAction_toggleSidebar": "切换侧边栏",
+    "shortcutsAction_toggleSidebar": "切换左侧栏",
+    "shortcutsAction_toggleRightSidebar": "切换右侧栏",
     "shortcutsAction_refreshPorts": "刷新端口列表"
   },
   "statusBar": {
@@ -313,7 +411,8 @@
     "noActiveTransfer": "暂无活跃传输",
     "notAvailable": "当前会话不支持文件传输",
     "selectFiles": "选择文件",
-    "selectDir": "选择目录"
+    "selectDir": "选择目录",
+    "allFiles": "所有文件"
   },
   "dualPane": {
     "resizeLabel": "调整面板大小"
@@ -366,6 +465,7 @@
     "confirm": "确认",
     "retry": "重试",
     "save": "保存",
-    "delete": "删除"
+    "delete": "删除",
+    "copy": "复制"
   }
 }

@@ -150,11 +150,19 @@
   font-weight: 500;
 }
 
-.select, .input, .numberInput {
+.input, .numberInput {
   width: 100%;
   padding: 6px 10px;
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
+  font-family: var(--font-ui);
+}
+.select {
+  width: 100%;
+  padding: var(--select-padding);
+  height: var(--select-height);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
   font-family: var(--font-ui);
 }
 
@@ -162,22 +170,6 @@
   width: 90px;
   font-family: var(--font-mono);
   text-align: center;
-}
-
-/* Select-only: custom arrow via CSS variable */
-.select {
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: var(--select-arrow); /* fill color adapts per theme */
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 28px;
-  cursor: pointer;
-}
-
-.select option {
-  background: var(--select-option-bg);
-  color: var(--text-primary);
 }
 
 .iconBtn {

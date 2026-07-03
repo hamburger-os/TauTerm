@@ -1,0 +1,38 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tabRow {
+  display: flex;
+  gap: 4px;
+}
+
+.tabBtn {
+  flex: 1;
+  padding: 3px 8px;
+  border: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--glass-fill-secondary);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.tabBtn:hover {
+  border-color: var(--color-accent);
+  color: var(--text-primary);
+}
+
+.tabBtn.active {
+  background: var(--color-accent);
+  color: var(--text-on-accent);
+  border-color: var(--color-accent);
+}
+
+.tabBody {
+  /* 内容由各 Inner 组件自行渲染，此处仅作容器 */
+}

@@ -1,0 +1,104 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.select {
+  width: 100%;
+  padding: var(--select-padding);
+  font-size: var(--text-xs);
+  height: var(--select-height);
+  transition: all var(--transition-input);
+}
+
+.input {
+  width: 100%;
+  padding: 4px 6px;
+}
+
+.resultSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.table th,
+.table td {
+  padding: 2px 4px;
+  text-align: left;
+  border-bottom: 1px solid var(--glass-border-default);
+  vertical-align: top;
+}
+
+.table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.table td {
+  color: var(--text-primary);
+}
+
+.table code {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+}
+
+.fieldValue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hexCode {
+  color: var(--color-accent);
+  word-break: break-all;
+}
+
+.parsedVal {
+  color: var(--text-secondary);
+}
+
+.checksumResult {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.valid {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+.invalid {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+
+.checksumInfo {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.placeholder {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 8px 0;
+}
+
+.parseError {
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  text-align: center;
+  padding: 4px 0;
+}

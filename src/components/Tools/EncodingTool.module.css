@@ -1,0 +1,69 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.select {
+  width: 100%;
+  padding: var(--select-padding);
+  font-size: var(--text-xs);
+  height: var(--select-height);
+  transition: all var(--transition-input);
+}
+
+.input {
+  width: 100%;
+  padding: 4px 6px;
+}
+
+.resultRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--glass-fill-secondary);
+  word-break: break-all;
+}
+
+.resultCode {
+  flex: 1;
+  font-family: var(--font-mono, "Cascadia Code", "Fira Code", "JetBrains Mono", monospace);
+  font-size: var(--text-xs);
+  color: var(--color-success);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.resultErrorCode {
+  flex: 1;
+  font-family: var(--font-mono, "Cascadia Code", "Fira Code", "JetBrains Mono", monospace);
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.copyBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  padding: 2px;
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
+}
+
+.copyBtn:hover {
+  opacity: 1;
+}
+
+.placeholder {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 8px 0;
+}

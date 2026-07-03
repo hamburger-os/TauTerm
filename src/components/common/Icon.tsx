@@ -10,6 +10,7 @@ import pinPng from "../../assets/icons/pin.png";
 import tagPng from "../../assets/icons/tag.png";
 import settingsPng from "../../assets/icons/settings.png";
 import palettePng from "../../assets/icons/palette.png";
+import panelRightPng from "../../assets/icons/panel-right.png";
 import globePng from "../../assets/icons/globe.png";
 import fontPng from "../../assets/icons/font.png";
 import infoPng from "../../assets/icons/info.png";
@@ -58,6 +59,7 @@ const PNG_MAP: Record<string, string> = {
   tag: tagPng,
   settings: settingsPng,
   palette: palettePng,
+  "panel-right": panelRightPng,
   globe: globePng,
   font: fontPng,
   info: infoPng,
