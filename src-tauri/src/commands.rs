@@ -12,7 +12,16 @@ use crate::channel::io_loop::IoLoopCmd;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus};
 use crate::kernel::plugin_adapter::{ProtocolAdapter, TransferProtocolType};
 use crate::kernel::session_store::{SessionState, SessionStore};
+use crate::virtual_port::bridge::VirtualPortBridge;
+use crate::virtual_port::manager::{contains_elevation_indicator, PortPair, VirtualPortConfig};
 use crate::AppState;
+
+// ── 可调参数常量 ──────────────────────────────────────
+
+/// 桥接数据 channel 容量（物理端口 → 虚拟端口广播）
+const BRIDGE_DATA_CHANNEL_CAPACITY: usize = 256;
+/// 写回 channel 容量（虚拟端口 → 物理端口写入线程）
+const BRIDGE_WRITEBACK_CHANNEL_CAPACITY: usize = 128;
 
 // ── 数据结构 ────────────────────────────────────────
 
@@ -55,6 +64,8 @@ pub struct SavedSessionInfo {
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: bool,
+    pub virtual_port_enabled: bool,
+    pub virtual_port_count: u32,
 }
 
 // ── 命令：连接类型 ──────────────────────────────────
@@ -155,6 +166,16 @@ fn connect_session_serial(
 
     let params_clone = params.clone();
     let session_name = name.unwrap_or_default();
+    // 提前读取虚拟串口开关，决定是否创建桥接数据通道
+    let virtual_enabled = params_clone
+        .get("virtual_port_enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    log::info!(
+        "connect_session_serial: virtual_port_enabled={}, params keys={:?}",
+        virtual_enabled,
+        params_clone.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
     // 获取 data_mode 用于日志格式化
     let data_mode = params_clone
         .get("data_mode")
@@ -162,6 +183,19 @@ fn connect_session_serial(
         .unwrap_or("text")
         .to_string();
     let data_mode_for_log = data_mode.clone(); // clone for use after the closure
+
+    // 桥接数据通道 (容量 256): 物理端口数据 → 虚拟端口桥接线程
+    // 仅在虚拟串口启用时创建，避免不必要的通道分配
+    let mut bridge: Option<(
+        std::sync::mpsc::SyncSender<Vec<u8>>,
+        std::sync::mpsc::Receiver<Vec<u8>>,
+    )> = if virtual_enabled {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(BRIDGE_DATA_CHANNEL_CAPACITY);
+        Some((tx, rx))
+    } else {
+        None
+    };
+    let bridge_tx = bridge.as_ref().map(|(tx, _)| tx.clone());
 
     let app_data = app.clone();
     // 克隆日志发送器以注入 on_data 回调
@@ -182,14 +216,64 @@ fn connect_session_serial(
             payload: data.clone(),
             timestamp: Local::now(),
         }));
+        // 转发到虚拟端口桥接（best-effort，虚拟端口未启用时忽略）
+        if let Some(ref tx) = bridge_tx {
+            let _ = tx.try_send(data);
+        }
     });
 
     let app_disconnect = app.clone();
     let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
         let app_state: State<AppState> = app_disconnect.state();
+
+        // 1. 在 mark_disconnected 之前读取虚拟端口对
+        //    （mark_disconnected 内部关闭桥接线程，但不销毁 pairs）
+        let pairs: Vec<PortPair> = {
+            let store = match app_state.session_store.lock() {
+                Ok(s) => s,
+                Err(e) => e.into_inner(),
+            };
+            store
+                .get_session(&session_id)
+                .map(|h| h.virtual_port_pairs.clone())
+                .unwrap_or_default()
+        };
+
+        // 2. 标记断开 — 内部关闭桥接，PlugInMode 使 B 端自动隐藏
+        //    同步保存到磁盘，防止后续崩溃导致配置丢失
         if let Ok(mut store) = app_state.session_store.lock() {
             store.mark_disconnected(&session_id);
+            let path = SessionStore::sessions_file_path(&app_disconnect);
+            let _ = store.save_to_disk(&path);
         }
+
+        // 3. 从内核驱动删除端口对 → 外部工具感知 COM 端口消失
+        if !pairs.is_empty() {
+            if let Ok(mut vpm) = app_state.virtual_port_manager.lock() {
+                for pair in &pairs {
+                    let _ = vpm.destroy_pair(pair);
+                }
+
+                // 检查是否有因权限不足而写入 state 文件的残留端口
+                // UAC 弹窗推迟到下次用户主动操作（状态栏 [清理残留端口] 按钮或
+                // 下次连接的 create_pairs_elevated），避免在断开回调中突然弹窗
+                let orphan_count = vpm.pending_orphan_count();
+                if orphan_count > 0 {
+                    log::warn!(
+                        "Session {} disconnected: {} port pair(s) need admin cleanup — \
+                         deferred to next explicit user action",
+                        session_id, orphan_count
+                    );
+                }
+
+                log::info!(
+                    "已清理断开会话 {} 的虚拟端口对 ({} 对)",
+                    session_id,
+                    pairs.len()
+                );
+            }
+        }
+
         let _ = app_disconnect.emit("session-disconnected", serde_json::json!({
             "session_id": session_id,
         }));
@@ -217,6 +301,109 @@ fn connect_session_serial(
         session_id
     };
 
+    // ── 虚拟串口桥接 ──
+    // virtual_enabled 已在上面读取，这里只读取 virtual_count
+    let virtual_count = params_clone
+        .get("virtual_port_count")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .unwrap_or(0);
+
+    // vport_pairs_json declared here so it's in scope for the session-connected emit below
+    // (even when virtual ports are disabled)
+    let mut vport_pairs_json: Vec<serde_json::Value> = Vec::new();
+
+    // ── Virtual port pair creation + bridge thread setup ──
+    // TODO: Extract into setup_virtual_port_bridge() helper once the parameter
+    // surface stabilizes (currently touches vpm, session_store, app, bridge channel).
+    if virtual_enabled && virtual_count > 0 {
+        let config = VirtualPortConfig { enabled: true, count: virtual_count };
+        let mut vpm = state.virtual_port_manager.lock().map_err(|e| e.to_string())?;
+
+        let pairs: Vec<PortPair> = vpm.create_pairs(&config)
+            .or_else(|first_err| {
+                log::warn!("直接创建端口对失败: {}；尝试先安装驱动...", first_err);
+                vpm.install_driver()
+                    .and_then(|_| vpm.create_pairs(&config))
+            })
+            .unwrap_or_else(|e| {
+                let is_elevation = contains_elevation_indicator(&e);
+                if is_elevation && vpm.detect_driver() {
+                    log::info!("驱动已安装，尝试通过 UAC 提权创建端口对...");
+                    match vpm.create_pairs_elevated(&config) {
+                        Ok(pairs) => return pairs,
+                        Err(elevated_err) => log::warn!("提权创建端口对也失败: {}", elevated_err),
+                    }
+                }
+                log::warn!("虚拟端口创建失败: {}", e);
+                Vec::new()
+            });
+        drop(vpm);
+
+        // 序列化 pairs 供 session-connected 事件使用
+        vport_pairs_json = pairs.iter().map(|p| serde_json::json!({
+            "port_a": p.port_a,
+            "port_b": p.port_b,
+        })).collect();
+
+        if !pairs.is_empty() {
+            let virtual_port_names: Vec<String> = pairs.iter().map(|p| p.port_a.clone()).collect();
+            let (_bridge_tx, bridge_rx) = bridge
+                .take()
+                .expect("bridge must be Some when virtual_enabled is true");
+
+            // 桥接线程 → 物理端口写线程 channel（容量 128）
+            // 使用独立 channel 避免桥接循环内获取 SessionStore Mutex
+            let (write_tx, write_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(BRIDGE_WRITEBACK_CHANNEL_CAPACITY);
+
+            // 独立写线程：消费桥接线程的虚拟端口数据，写入物理端口
+            // 只有此线程持有 SessionStore Mutex，阻塞不影响桥接循环
+            let app_for_write = app.clone();
+            let sid = session_id.clone();
+            std::thread::spawn(move || {
+                while let Ok(data) = write_rx.recv() {
+                    if let Ok(store) = app_for_write.state::<AppState>().session_store.lock() {
+                        let _ = store.write(&sid, &data);
+                    }
+                }
+                log::trace!("桥接写线程退出: session={}", sid);
+            });
+
+            // Extract baud rate from serial config for virtual port opening
+            let vport_baud_rate = params_clone
+                .get("baud_rate")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+                .unwrap_or(115200);
+
+            let vport_bridge = VirtualPortBridge::spawn(virtual_port_names, vport_baud_rate, bridge_rx, write_tx);
+
+            {
+                let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+                if let Some(handle) = store.get_session_mut(&session_id) {
+                    handle.virtual_port_bridge = Some(vport_bridge);
+                    handle.virtual_port_pairs = pairs.clone();
+                }
+            }
+
+            // 保留独立事件供 reconnect 场景（tab 已存在时更新 VPort 信息）
+            let _ = app.emit("virtual-port-created", serde_json::json!({
+                "session_id": session_id,
+                "pairs": &vport_pairs_json,
+            }));
+        } else {
+            let reason = "com0com driver not installed — run TauTerm as administrator once, or reinstall the application";
+            log::warn!("虚拟端口创建失败 (session={}): {}", session_id, reason);
+            let _ = app.emit("virtual-port-failed", serde_json::json!({
+                "session_id": session_id,
+                "reason": reason,
+            }));
+        }
+    }
+    // virtual_enabled=true 时 bridge_rx 被 VirtualPortBridge::spawn() 消费，
+    // virtual_enabled=false 时 bridge Option 在此 drop（通道未创建）。
+    // bridge_tx 仅在 virtual_enabled=true 时存在，每个 on_data 回调检查并跳过 None 情况。
+
     let (actual_name, actual_params, connected_at) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.get_session(&session_id)
@@ -237,6 +424,10 @@ fn connect_session_serial(
         "transfer_enabled": transfer_enabled_val,
         "transfer_protocol": transfer_protocol_val,
         "send_bar_enabled": send_bar_enabled_val,
+        // 合并虚拟端口对信息到 session-connected 中，
+        // 避免 virtual-port-created 事件先于 session-connected 到达
+        // 前端时因 tab 尚未创建而丢失数据
+        "virtual_port_pairs": vport_pairs_json,
     }));
 
     Ok(session_id)
@@ -250,16 +441,55 @@ pub fn disconnect_session(
     state: State<AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let session_name = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.get_session(&session_id).map(|h| h.name.clone()).unwrap_or_default()
-    };
-    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let path = SessionStore::sessions_file_path(&app);
-    let _ = store.save_to_disk(&path);
-    store.close_session(&session_id)?;
+    // 单次锁获取：读取 → 保存 → 关闭（close_session 内部关闭桥接）
+    let (pairs_to_destroy, session_name) = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let path = SessionStore::sessions_file_path(&app);
+        let _ = store.save_to_disk(&path);
 
-    log::info!("会话已断开: {}", session_name);
+        let handle = store.get_session(&session_id)
+            .ok_or_else(|| store.session_not_found(&session_id))?;
+        let pairs = handle.virtual_port_pairs.clone();
+        let name = handle.name.clone();
+        store.close_session(&session_id)?;
+        (pairs, name)
+    };
+    // 锁已释放 — close_session 内部已关闭桥接
+
+    // 销毁虚拟端口对（从内核驱动移除 → 外部工具感知 COM 端口消失）
+    if !pairs_to_destroy.is_empty() {
+        if let Ok(mut vpm) = state.virtual_port_manager.lock() {
+            for pair in &pairs_to_destroy {
+                let _ = vpm.destroy_pair(pair);
+                // destroy_pair 对权限错误返回 Ok(()) 但通过 mark_for_deferred_cleanup
+                // 将 bus 号写入 state 文件，后续统一 UAC 清理
+            }
+
+            // 检查是否有因权限不足而写入 state 文件的残留端口
+            if vpm.pending_orphan_count() > 0 {
+                log::info!(
+                    "断开连接: {} 个端口对需要管理员权限，通过 UAC 批量清理...",
+                    vpm.pending_orphan_count()
+                );
+                match vpm.cleanup_pairs_elevated() {
+                    Ok(cleaned) => {
+                        log::info!(
+                            "断开连接: 通过 UAC 成功清理 {} 个端口对",
+                            cleaned
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "断开连接: UAC 清理失败: {} — 可通过状态栏[清理残留端口]按钮手动清理",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    log::info!("会话已断开: {} (虚拟端口已清理)", session_name);
     let _ = app.emit("session-disconnected", serde_json::json!({
         "session_id": session_id,
     }));
@@ -397,6 +627,8 @@ pub fn load_sessions(
         transfer_enabled: s.transfer_enabled,
         transfer_protocol: s.transfer_protocol.clone(),
         send_bar_enabled: s.send_bar_enabled,
+        virtual_port_enabled: s.virtual_port_enabled,
+        virtual_port_count: s.virtual_port_count,
     }).collect())
 }
 
@@ -440,6 +672,15 @@ pub fn save_session_config(
         transfer_enabled: transfer_enabled.unwrap_or(true),
         transfer_protocol: transfer_protocol.clone(),
         send_bar_enabled: send_bar_enabled.unwrap_or(true),
+        virtual_port_enabled: params
+            .get("virtual_port_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        virtual_port_count: params
+            .get("virtual_port_count")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(0),
     };
 
     SessionStore::save_config_to_disk(&app, saved)?;
@@ -1191,4 +1432,135 @@ fn transfer_receive(
         "results": batch_results,
     }));
     Ok(())
+}
+
+// ── 虚拟串口驱动管理 ────────────────────────────────
+
+/// 查询 com0com 驱动状态（前端主动拉取，解决事件在组件挂载前发射的竞态）
+#[tauri::command]
+pub fn check_virtual_port_driver(
+    state: State<AppState>,
+) -> Result<serde_json::Value, String> {
+    let vpm = state.virtual_port_manager.lock().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "files_present": vpm.are_files_present(),
+        "driver_installed": vpm.detect_driver(),
+        "orphan_count": vpm.pending_orphan_count(),
+    }))
+}
+
+/// 尝试安装 com0com 虚拟串口驱动
+///
+/// 优先直接安装（当前进程已提权时成功）；普通权限下则在 Windows 上
+/// 通过 PowerShell Start-Process -Verb RunAs 触发 UAC 提权安装。
+#[tauri::command]
+pub fn install_virtual_port_driver(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<String, String> {
+    let mut vpm = state.virtual_port_manager.lock().map_err(|e| e.to_string())?;
+
+    // 先检测是否已安装
+    if vpm.detect_driver() {
+        log::info!("com0com 驱动已安装，无需重复操作");
+        return Ok("already_installed".into());
+    }
+
+    // 检查驱动文件是否存在
+    if !vpm.are_files_present() {
+        return Err(
+            "com0com driver files missing — please reinstall TauTerm".into()
+        );
+    }
+
+    // 第 1 层: 尝试直接安装（当前进程已提权时成功）
+    log::info!("尝试直接安装 com0com 驱动...");
+    match vpm.install_driver() {
+        Ok(()) => {
+            let _ = app.emit("virtual-port-driver-ready", serde_json::json!({}));
+            return Ok("installed".into());
+        }
+        Err(direct_err) => {
+            log::info!("直接安装失败: {}；尝试提权安装...", direct_err);
+        }
+    }
+
+    // 第 2 层: 通过提权安装（UAC / sudo），逻辑下沉到 VirtualPortManager
+    //      避免 commands 层直接依赖 com0com 的 setupc_path/resource_dir
+    match vpm.install_driver_elevated() {
+        Ok(()) => {
+            log::info!("com0com 驱动提权安装成功");
+            // 重新检测确认安装成功
+            if vpm.detect_driver() {
+                let _ = app.emit("virtual-port-driver-ready", serde_json::json!({}));
+                return Ok("installed".into());
+            }
+            Err("Driver installed but detection failed — please restart TauTerm".into())
+        }
+        Err(elevated_err) => {
+            Err(format!(
+                "Driver installation failed.\n\n{}\n\n\
+                 Action: Run TauTerm as administrator once to install the driver.",
+                elevated_err
+            ))
+        }
+    }
+}
+
+/// 手动触发虚拟端口残留清理（通过 UAC 提权，单次弹窗）。
+///
+/// 收集所有已知的残留 bus 号（active_pairs + com0com_state.json + 驱动真实状态），
+/// 通过单个提权的 PowerShell 脚本批量清理。
+///
+/// 返回 `{ cleaned: N, message: "..." }`。
+#[tauri::command]
+pub fn cleanup_virtual_ports(
+    state: State<AppState>,
+) -> Result<serde_json::Value, String> {
+    let mut vpm = state.virtual_port_manager.lock().map_err(|e| e.to_string())?;
+
+    // 先尝试直接清理孤儿端口（无需管理员权限的场景）
+    let direct_cleaned = vpm.cleanup_orphans();
+
+    // 检查是否还有残留需要 UAC 提权（pending_orphan_count > 0）
+    let has_more_work = vpm.pending_orphan_count() > 0;
+
+    if !has_more_work && direct_cleaned > 0 {
+        return Ok(serde_json::json!({
+            "cleaned": direct_cleaned,
+            "message": format!("已清理 {} 个遗留端口对", direct_cleaned),
+        }));
+    }
+
+    if !has_more_work && direct_cleaned == 0 {
+        return Ok(serde_json::json!({
+            "cleaned": 0,
+            "message": "没有需要清理的端口对",
+        }));
+    }
+
+    // 有残留且需要 UAC 提权
+    log::info!(
+        "cleanup_virtual_ports: 直接清理完成 {} 个，剩余端口对需要 UAC 提权",
+        direct_cleaned
+    );
+    match vpm.cleanup_pairs_elevated() {
+        Ok(uac_cleaned) => {
+            let total = direct_cleaned + uac_cleaned;
+            Ok(serde_json::json!({
+                "cleaned": total,
+                "message": format!("已清理 {} 个端口对（含 UAC 提权清理 {} 个）", total, uac_cleaned),
+            }))
+        }
+        Err(e) => {
+            if e.contains("取消") || e.contains("cancel") {
+                Err(format!(
+                    "用户取消了 UAC 提权弹窗（已直接清理 {} 个，余下将保留至下次操作）",
+                    direct_cleaned
+                ))
+            } else {
+                Err(format!("UAC 提权清理失败: {}", e))
+            }
+        }
+    }
 }

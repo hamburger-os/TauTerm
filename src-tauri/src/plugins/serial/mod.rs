@@ -25,6 +25,12 @@ pub struct SerialConfig {
     pub flow_control: String,
     #[serde(default = "default_data_mode")]
     pub data_mode: String,
+    /// 虚拟串口是否启用（仅用于 serde 反序列化默认值，实际逻辑在 commands::connect_session_serial 中）
+    #[serde(default = "default_virtual_port_enabled")]
+    pub virtual_port_enabled: bool,
+    /// 虚拟串口设备数量（仅用于 serde 反序列化默认值，实际逻辑在 commands::connect_session_serial 中）
+    #[serde(default = "default_virtual_port_count")]
+    pub virtual_port_count: u32,
 }
 
 fn default_baud_rate() -> u32 { 115200 }
@@ -33,6 +39,8 @@ fn default_parity() -> String { "none".into() }
 fn default_stop_bits() -> String { "1".into() }
 fn default_flow_control() -> String { "none".into() }
 fn default_data_mode() -> String { "text".into() }
+fn default_virtual_port_enabled() -> bool { false }
+fn default_virtual_port_count() -> u32 { 0 }
 
 impl Default for SerialConfig {
     fn default() -> Self {
@@ -43,6 +51,8 @@ impl Default for SerialConfig {
             stop_bits: "1".into(),
             flow_control: "none".into(),
             data_mode: "text".into(),
+            virtual_port_enabled: false,
+            virtual_port_count: 0,
         }
     }
 }

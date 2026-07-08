@@ -7,5 +7,6 @@
 //! - Windows: com0com 内核驱动 → 真正的 COM 端口对
 //! - Linux/macOS: 待实现（PTY/socat 方案）
 
+pub mod backend;
 pub mod manager;
-// pub mod bridge; — Task 2 添加
+pub mod bridge;

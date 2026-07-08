@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { useSession } from "../../context/SessionContext";
+import { useCom0comStatus } from "../../hooks/useCom0comStatus";
 import { pluginRegistry } from "../../core/plugin-registry";
 import { formatBytes, formatUptime, formatPortParams } from "../../utils/format";
 import Icon from "../common/Icon";
@@ -25,6 +26,16 @@ export default function StatusBar() {
   useEffect(() => {
     getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion(""));
   }, []);
+
+  // com0com 驱动全局状态（提取为独立 hook）
+  const {
+    driverMissing,
+    driverInstalling,
+    cleaningPorts,
+    orphanCount,
+    handleRetryVPort,
+    handleCleanupVPorts,
+  } = useCom0comStatus();
 
   // 运行时间计时器
   const [uptime, setUptime] = useState(0);
@@ -103,6 +114,66 @@ export default function StatusBar() {
           <div className={styles.stats}>
             <span className={styles.statItem} title="TX"><Icon name="chevron-up" size="xs" /> {formatBytes(activeTab.stats.txBytes)}</span>
             <span className={styles.statItem} title="RX"><Icon name="chevron-down" size="xs" /> {formatBytes(activeTab.stats.rxBytes)}</span>
+          </div>
+        )}
+
+        {/* 虚拟串口指示器 */}
+        {activeTab && isConnected && activeTab.virtualPortPairs && activeTab.virtualPortPairs.length > 0 && (
+          <div className={styles.segment}>
+            <span className={styles.paramText}>
+              VPort: {activeTab.virtualPortPairs.map(p => `${p.port_a}↔${p.port_b}`).join(", ")}
+            </span>
+          </div>
+        )}
+
+        {/* 虚拟串口失败警告 */}
+        {activeTab && isConnected && activeTab.virtualPortError && (
+          <div className={styles.segment}>
+            <span className={`${styles.paramText} ${styles.vportWarning}`}>
+              <Icon name="warning" size="xs" /> {activeTab.virtualPortError}
+            </span>
+            <span
+              className={`${styles.paramText} ${styles.vportAction}`}
+              style={{ opacity: driverInstalling ? 0.5 : 1 }}
+              onClick={() => !driverInstalling && handleRetryVPort()}
+              title={t("serial.virtualPort.retryHint")}
+            >
+              [{driverInstalling ? t("serial.virtualPort.installing") : t("serial.virtualPort.retry")}]
+            </span>
+          </div>
+        )}
+
+        {/* 全局驱动未安装警告（非会话级，持续显示） */}
+        {driverMissing && !(activeTab && isConnected && activeTab.virtualPortError) && (
+          <div className={styles.segment} title={t("serial.virtualPort.retryHint")}>
+            <span className={`${styles.paramText} ${styles.vportWarning}`}>
+              <Icon name="warning" size="xs" /> {t("serial.virtualPort.notInstalled")}
+            </span>
+            <span
+              className={`${styles.paramText} ${styles.vportAction}`}
+              style={{ opacity: driverInstalling ? 0.5 : 1 }}
+              onClick={() => !driverInstalling && handleRetryVPort()}
+              title={t("serial.virtualPort.retryHint")}
+            >
+              [{driverInstalling ? t("serial.virtualPort.installing") : t("serial.virtualPort.retry")}]
+            </span>
+          </div>
+        )}
+
+        {/* 手动清理残留端口按钮（仅在检测到残留端口对时显示） */}
+        {orphanCount > 0 && (
+          <div className={styles.segment} title={t("serial.virtualPort.cleanupHint")}>
+            <span className={`${styles.paramText} ${styles.vportWarning}`}>
+              <Icon name="warning" size="xs" /> VPort {orphanCount} {t("serial.virtualPort.orphansDetected")}
+            </span>
+            <span
+              className={`${styles.paramText} ${styles.vportAction}`}
+              style={{ opacity: cleaningPorts ? 0.5 : 1 }}
+              onClick={() => !cleaningPorts && handleCleanupVPorts()}
+              title={t("serial.virtualPort.cleanupHint")}
+            >
+              [{cleaningPorts ? (t("serial.virtualPort.cleaning") || "正在清理...") : (t("serial.virtualPort.cleanup") || "清理")}]
+            </span>
           </div>
         )}
 

@@ -32,3 +32,12 @@ npm-debug.log*
 # Brainstorming / visual companion mockups
 .superpowers/
 superpowers
+
+# com0com build artifacts (copied by build.rs from x64/ or x86/)
+resources/com0com/setupc.exe
+resources/com0com/setup.dll
+resources/com0com/com0com.sys
+resources/com0com/com0com.inf
+resources/com0com/com0com.cat
+resources/com0com/cncport.inf
+resources/com0com/comport.inf

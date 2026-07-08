@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use crate::channel::Channel;
 use crate::channel::io_loop::{IoLoopCmd, spawn_sync_io_loop};
+use crate::virtual_port::bridge::VirtualPortBridge;
+use crate::virtual_port::manager::PortPair;
 
 pub type TabId = String;
 
@@ -72,6 +74,57 @@ pub struct ActiveSessionHandle {
     pub transfer_protocol: Option<String>,
     /// 是否启用发送栏（默认 true）
     pub send_bar_enabled: bool,
+    /// 虚拟端口桥接线程（None = 未启用或未创建）
+    pub virtual_port_bridge: Option<VirtualPortBridge>,
+    /// 当前会话的虚拟端口对列表
+    pub virtual_port_pairs: Vec<PortPair>,
+}
+
+impl ActiveSessionHandle {
+    pub fn virtual_port_enabled(&self) -> bool {
+        self.params.get("virtual_port_enabled")
+            .and_then(|v| v.as_bool()).unwrap_or(false)
+    }
+    pub fn virtual_port_count(&self) -> u32 {
+        self.params.get("virtual_port_count")
+            .and_then(|v| v.as_u64()).map(|v| v as u32).unwrap_or(0)
+    }
+}
+
+impl Drop for ActiveSessionHandle {
+    fn drop(&mut self) {
+        // 安全网：如果 close_session() 未被正确调用，确保桥接线程
+        // 和 I/O 线程收到取消信号。
+        // 注意：不在此处调用 bridge.shutdown() — 它会阻塞 join 最多 5 秒，
+        // 可能在 panic unwind 中触发 double-panic，或在持有 SessionStore Mutex
+        // 时阻塞调用线程。改为在独立线程中关闭，close_session() 正常路径
+        // 中已正确调用 shutdown()。
+        if let Some(bridge) = self.virtual_port_bridge.take() {
+            log::warn!(
+                "ActiveSessionHandle '{}' dropped without proper close_session — \
+                 shutting down bridge in detached thread",
+                self.id
+            );
+            std::thread::spawn(move || { bridge.shutdown(); });
+        }
+        if !self.virtual_port_pairs.is_empty() {
+            log::warn!(
+                "ActiveSessionHandle '{}' dropped with {} virtual port pair(s) still registered \
+                 — these may be cleaned up on next TauTerm startup",
+                self.id,
+                self.virtual_port_pairs.len()
+            );
+        }
+        if let Some(tx) = self.io_cancel_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(tx) = self.cancel_transfer_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(ref flag) = self.stats_cancel_flag {
+            flag.store(true, Ordering::SeqCst);
+        }
+    }
 }
 
 /// 会话存储
@@ -100,6 +153,8 @@ pub struct SavedSession {
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: bool,
+    pub virtual_port_enabled: bool,
+    pub virtual_port_count: u32,
 }
 
 /// 全局文件锁 — 保护 sessions.json 的 read-modify-write 操作。
@@ -213,13 +268,23 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
+            virtual_port_bridge: None,
+            virtual_port_pairs: Vec::new(),
         };
 
         // 防御性检查：若 id_override 指向的会话已存在且未被正确关闭，
         // 先清理旧会话，防止静默覆盖导致 I/O 线程、串口句柄、定时器等资源泄漏。
         // 显式 drop() 确保 SessionHandle 的 Drop 实现（关闭 I/O 线程/句柄）
         // 在新 session 插入前执行，避免新旧会话并发持有同一硬件资源。
-        if let Some(old_handle) = self.sessions.remove(&id) {
+        if let Some(mut old_handle) = self.sessions.remove(&id) {
+            // 先关闭虚拟端口桥接再 drop，防止 JoinHandle detach 泄漏线程
+            if let Some(bridge) = old_handle.virtual_port_bridge.take() {
+                bridge.shutdown();
+                log::warn!(
+                    "create_session 中关闭了残留桥接线程 (session: {}) — 调用方应预先调用 close_session",
+                    id
+                );
+            }
             drop(old_handle);
         }
         // 若 tab_order 中已有此 ID（例如前端未正确同步），移除旧条目
@@ -233,7 +298,16 @@ impl SessionStore {
         Ok(id)
     }
 
-    /// 关闭指定会话
+    /// 关闭指定会话。
+    ///
+    /// 立即从 HashMap 中移除会话句柄，然后关闭桥接线程、取消传输、
+    /// 发送 I/O 取消信号并 join I/O 线程。
+    ///
+    /// # 调用方约定
+    ///
+    /// **调用方必须在此调用之前 clone `virtual_port_pairs`**（如需访问），
+    /// 因为此方法一开始就 `sessions.remove(session_id)`，句柄随后被 drop。
+    /// 参考 `disconnect_session` 在 `commands.rs` 中的用法。
     pub fn close_session(&mut self, session_id: &str) -> Result<(), String> {
         let mut handle = self.sessions.remove(session_id)
             .ok_or_else(|| self.session_not_found(session_id))?;
@@ -245,6 +319,12 @@ impl SessionStore {
             if let Some(old_id) = self.removed_order.pop_front() {
                 self.session_names.remove(&old_id);
             }
+        }
+
+        // 关闭虚拟端口桥接线程
+        if let Some(bridge) = handle.virtual_port_bridge.take() {
+            bridge.shutdown();
+            log::info!("虚拟端口桥接已关闭 (session: {})", session_id);
         }
 
         // 取消正在进行的传输
@@ -357,6 +437,8 @@ impl SessionStore {
             transfer_enabled: h.transfer_enabled,
             transfer_protocol: h.transfer_protocol.clone(),
             send_bar_enabled: h.send_bar_enabled,
+            virtual_port_enabled: h.virtual_port_enabled(),
+            virtual_port_count: h.virtual_port_count(),
         }).collect()
     }
 
@@ -447,6 +529,14 @@ impl SessionStore {
             handle.io_thread = None;
             if let Some(ref flag) = handle.stats_cancel_flag {
                 flag.store(true, Ordering::SeqCst);
+            }
+            // 关闭虚拟端口桥接线程 — PlugInMode=yes 使端口 B 自动隐藏
+            if let Some(bridge) = handle.virtual_port_bridge.take() {
+                bridge.shutdown();
+                log::info!(
+                    "虚拟端口桥接已关闭（设备意外断开，session: {}）",
+                    session_id
+                );
             }
         }
     }

@@ -171,3 +171,21 @@
 }
 
 .version { color: var(--text-muted); }
+
+/* VPort 驱动/端口警告 */
+.vportWarning {
+  color: var(--color-warning);
+}
+
+.vportAction {
+  cursor: pointer;
+  text-decoration: underline;
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+}
+
+.vportAction:hover {
+  color: var(--text-primary);
+}

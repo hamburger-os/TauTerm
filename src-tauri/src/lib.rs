@@ -20,9 +20,10 @@ mod kernel;
 mod plugins;
 mod security;
 mod transfer;
+mod virtual_port;
 
 use std::sync::Mutex;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri::image::Image;
 use kernel::config_store::ConfigStore;
 use kernel::ipc_bridge::IpcBridge;
@@ -36,6 +37,8 @@ use kernel::window_manager::WindowManager;
 use kernel::log_engine::{LogEngine, LogConfig, LogBridge};
 use security::CredentialStore;
 use plugins::serial::SerialAdapter;
+use virtual_port::manager::VirtualPortManager;
+use virtual_port::backend::VirtualPortBackend;
 
 /// 全局应用状态
 pub struct AppState {
@@ -63,6 +66,8 @@ pub struct AppState {
     pub credential_store: CredentialStore,
     /// 日志引擎（生产者-消费者异步日志系统）
     pub log_engine: Mutex<LogEngine>,
+    /// 虚拟串口设备管理器（com0com 驱动 + 端口对生命周期）
+    pub virtual_port_manager: Mutex<Box<dyn VirtualPortBackend>>,
 }
 
 /// TauTerm 应用入口
@@ -137,6 +142,69 @@ pub fn run() {
             log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
             log::info!("日志目录: {:?}", log_dir);
 
+            // 初始化 VirtualPortManager（com0com 资源路径）
+            if let Some(state) = app.try_state::<AppState>() {
+                let resource_dir = app.path().resource_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+                // 检测 com0com 驱动文件路径：
+                // - 生产模式（NSIS 打包）: bundle.resources 映射 resources/com0com/* → resource_dir/
+                // - 开发模式: resource_dir = src-tauri/，com0com 文件在 ../resources/com0com/
+                let vpm_dir = if resource_dir.join("setupc.exe").exists() {
+                    resource_dir
+                } else {
+                    let dev_path = resource_dir.join("../resources/com0com");
+                    if dev_path.join("setupc.exe").exists() {
+                        log::info!(
+                            "开发模式: com0com 驱动文件位于 {:?}",
+                            dev_path.canonicalize().unwrap_or_else(|_| dev_path.clone())
+                        );
+                        dev_path
+                    } else {
+                        log::warn!("com0com 驱动文件未找到（resource_dir 和 dev_path 均无 setupc.exe）");
+                        resource_dir // 回退，后续 are_files_present() 会返回 false
+                    }
+                };
+
+                if let Ok(mut vpm) = state.virtual_port_manager.lock() {
+                    *vpm = Box::new(VirtualPortManager::new(vpm_dir));
+
+                    // 清理上次异常退出可能遗留的孤儿端口对
+                    let orphan_count = vpm.cleanup_orphans();
+                    if orphan_count > 0 {
+                        log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
+                    }
+
+                    // 分层检测 com0com 状态：
+                    // 1. 文件是否存在（由安装程序 / build.rs 打包）
+                    // 2. 驱动是否已在内核中加载
+                    if !vpm.are_files_present() {
+                        log::warn!("com0com 驱动文件缺失，虚拟串口功能不可用");
+                    } else if vpm.detect_driver() {
+                        log::info!("com0com 驱动已就绪（安装时已自动安装或先前已安装）");
+                    } else {
+                        log::info!("com0com 驱动文件已找到但驱动未安装 \u{2014} 首次连接时将通过 NSIS 安装或需管理员权限运行时安装");
+                    }
+
+                    // 启动时向前端报告驱动状态，以便主动提示用户
+                    let driver_installed = vpm.detect_driver();
+                    let files_present = vpm.are_files_present();
+                    drop(vpm);
+
+                    if files_present && !driver_installed {
+                        let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
+                            "reason": "com0com driver not installed. Run TauTerm as administrator once to install the driver.",
+                            "can_install": true,
+                        }));
+                    } else if !files_present {
+                        let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
+                            "reason": "com0com driver files missing. Virtual serial port feature unavailable.",
+                            "can_install": false,
+                        }));
+                    }
+                }
+            }
+
             Ok(())
         })
         .manage(AppState {
@@ -152,6 +220,9 @@ pub fn run() {
             window_manager: WindowManager::new(),
             credential_store: CredentialStore::new(),
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
+            // 占位 VPM — setup() 闭包中立即用正确的资源路径替换。
+            // setup() 在所有命令处理器就绪前运行，不存在竞态条件。
+            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from(".")))),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,
@@ -190,17 +261,31 @@ pub fn run() {
             commands::open_log_dir,
             commands::update_log_config,
             commands::clear_all_logs,
+            commands::install_virtual_port_driver,
+            commands::check_virtual_port_driver,
+            commands::cleanup_virtual_ports,
         ])
         .build(tauri::generate_context!())
         .expect("启动 TauTerm 时发生错误")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                let path = SessionStore::sessions_file_path(app_handle);
                 if let Some(state) = app_handle.try_state::<AppState>() {
-                    if let Ok(store) = state.session_store.lock() {
+                    // 1. 关闭所有活跃会话（释放串口 + 关闭桥接线程）
+                    if let Ok(mut store) = state.session_store.lock() {
+                        let ids: Vec<String> = store.tab_ids().iter().cloned().collect();
+                        for id in &ids {
+                            if let Err(e) = store.close_session(id) {
+                                log::warn!("退出时关闭会话 {} 失败: {}", id, e);
+                            }
+                        }
+                        let path = SessionStore::sessions_file_path(app_handle);
                         if let Err(e) = store.save_to_disk(&path) {
                             log::warn!("保存会话到磁盘失败: {}", e);
                         }
+                    }
+                    // 2. 清理 com0com 驱动和所有虚拟端口（会话已关闭，设备不再被占用）
+                    if let Ok(mut vpm) = state.virtual_port_manager.lock() {
+                        vpm.cleanup_all();
                     }
                 }
             }

@@ -54,6 +54,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [transferEnabled, setTransferEnabled] = useState(true);
   const [transferProtocol, setTransferProtocol] = useState<"ymodem" | "xmodem" | "zmodem">("ymodem");
   const [sendBarEnabled, setSendBarEnabled] = useState(true);
+  const [virtualPortEnabled, setVirtualPortEnabled] = useState(false);
+  const [virtualPortCount, setVirtualPortCount] = useState(1);
   const [sessionName, setSessionName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +105,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
         if (typeof targetTab.transferProtocol === "string") setTransferProtocol(targetTab.transferProtocol as "ymodem" | "xmodem" | "zmodem");
         if (typeof targetTab.sendBarEnabled === "boolean") setSendBarEnabled(targetTab.sendBarEnabled);
+        if (typeof targetTab.virtualPortEnabled === "boolean") setVirtualPortEnabled(targetTab.virtualPortEnabled);
+        if (typeof targetTab.virtualPortCount === "number") setVirtualPortCount(targetTab.virtualPortCount);
         return;
       }
     }
@@ -120,6 +124,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setTransferEnabled(true);
     setTransferProtocol("ymodem");
     setSendBarEnabled(true);
+    setVirtualPortEnabled(false);
+    setVirtualPortCount(1);
     setSessionName("");
   }, [isOpen, editSessionId, refreshEndpoints]);
 
@@ -157,6 +163,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       transfer_enabled: transferEnabled,
       transfer_protocol: transferProtocol,
       send_bar_enabled: sendBarEnabled,
+      virtual_port_enabled: virtualPortEnabled,
+      virtual_port_count: virtualPortCount,
     } : {};
 
     try {
@@ -191,7 +199,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose]);
+  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -401,6 +409,40 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       <span>{t("serial.enableSendBar") || "启用发送栏"}</span>
                     </label>
                   </div>
+
+                  {/* 虚拟串口开关 */}
+                  <div className={styles.field}>
+                    <label className={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={virtualPortEnabled}
+                        onChange={e => setVirtualPortEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div className={styles.toggleTrack} />
+                      <span>{t("serial.enableVirtualPort") || "启用虚拟串口"}</span>
+                    </label>
+                  </div>
+
+                  {/* 设备数量（仅启用虚拟串口时可见） */}
+                  {virtualPortEnabled && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>
+                        {t("serial.virtualPortCount") || "设备数量"}
+                      </label>
+                      <select
+                        className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                        value={virtualPortCount}
+                        onChange={e => setVirtualPortCount(Number(e.target.value))}
+                        disabled={connecting}
+                      >
+                        <option value={1}>1</option>
+                        <option value={2}>2</option>
+                        <option value={3}>3</option>
+                        <option value={4}>4</option>
+                      </select>
+                    </div>
+                  )}
                 </>
               )}
 

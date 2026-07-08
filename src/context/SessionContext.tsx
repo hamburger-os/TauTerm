@@ -32,6 +32,14 @@ export interface TabInfo {
   transferProtocol?: string;
   /** 是否启用发送栏（默认 true） */
   sendBarEnabled?: boolean;
+  /** 是否启用虚拟串口（默认 true） */
+  virtualPortEnabled?: boolean;
+  /** 虚拟端口对数量（默认 1） */
+  virtualPortCount?: number;
+  /** 虚拟端口对列表（连接成功时后端推送） */
+  virtualPortPairs?: Array<{ port_a: string; port_b: string }>;
+  /** 虚拟端口创建失败时的错误信息 */
+  virtualPortError?: string;
 }
 
 export interface ConnectionTypeInfo {
@@ -70,6 +78,9 @@ type SessionAction =
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
   | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
+  | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: Array<{ port_a: string; port_b: string }> }
+  | { type: "SET_VPORT_ERROR"; id: string; error: string }
+  | { type: "CLEAR_VPORT_ERROR"; id: string }
   | { type: "CLEAR_TABS" };
 
 const initialState: SessionState = {
@@ -149,8 +160,37 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
                 sendBarEnabled: action.sendBarEnabled ?? t.sendBarEnabled,
                 pluginId: action.pluginId ?? t.pluginId,
                 connectedAt: action.connectedAt !== undefined ? action.connectedAt : t.connectedAt,
+                virtualPortEnabled: (action.params?.virtual_port_enabled as boolean) ?? t.virtualPortEnabled,
+                virtualPortCount: (action.params?.virtual_port_count as number) ?? t.virtualPortCount,
               }
             : t
+        ),
+      };
+    case "UPDATE_TAB_VPORTS":
+      return {
+        ...state,
+        tabs: state.tabs.map(tab =>
+          tab.id === action.id
+            ? { ...tab, virtualPortPairs: action.pairs }
+            : tab
+        ),
+      };
+    case "SET_VPORT_ERROR":
+      return {
+        ...state,
+        tabs: state.tabs.map(tab =>
+          tab.id === action.id
+            ? { ...tab, virtualPortError: action.error, virtualPortPairs: undefined }
+            : tab
+        ),
+      };
+    case "CLEAR_VPORT_ERROR":
+      return {
+        ...state,
+        tabs: state.tabs.map(tab =>
+          tab.id === action.id
+            ? { ...tab, virtualPortError: undefined }
+            : tab
         ),
       };
     case "CLEAR_TABS":
@@ -301,6 +341,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferEnabled: transferEnabled ?? true,
           transferProtocol,
           sendBarEnabled: sendBarEnabled ?? true,
+          virtualPortEnabled: (params.virtual_port_enabled as boolean) ?? false,
+          virtualPortCount: (params.virtual_port_count as number) ?? 0,
         },
       });
       return sessionId;
@@ -478,6 +520,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         transfer_enabled?: boolean;
         transfer_protocol?: string;
         send_bar_enabled?: boolean;
+        virtual_port_enabled?: boolean;
+        virtual_port_count?: number;
       }>>("load_sessions");
       if (saved && saved.length > 0) {
         const tabs: TabInfo[] = saved.map((s) => ({
@@ -493,6 +537,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferEnabled: s.transfer_enabled ?? true,
           transferProtocol: s.transfer_protocol,
           sendBarEnabled: s.send_bar_enabled ?? true,
+          virtualPortEnabled: s.virtual_port_enabled ?? false,
+          virtualPortCount: s.virtual_port_count ?? 0,
         }));
         dispatch({ type: "SET_TABS", tabs });
         if (tabs.length > 0) {
@@ -530,10 +576,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }> }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
+          const vPairs = event.payload.virtual_port_pairs;
           // 检查是否已存在同 ID 的 tab（如 reconfigureSession 重连场景），避免重复添加
           const exists = tabsRef.current.some(t => t.id === sid);
           if (exists) {
@@ -551,8 +598,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               pluginId: event.payload.plugin_id || "serial",
               connectedAt: event.payload.connected_at ?? Date.now(),
             });
+            // 同步更新虚拟端口对（reconnect 场景下 virtual-port-created
+            // 可能先于 session-connected 到达，合并确保不丢失）
+            if (vPairs && vPairs.length > 0) {
+              dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: vPairs });
+            }
           } else {
-            // 真正的新会话：添加 tab
+            // 真正的新会话：添加 tab，
+            // virtual_port_pairs 由 session-connected 直接携带，
+            // 避免 virtual-port-created 事件先到达时 tab 尚未创建导致丢失
             dispatch({
               type: "ADD_TAB",
               tab: {
@@ -568,6 +622,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 transferEnabled: event.payload.transfer_enabled ?? true,
                 transferProtocol: event.payload.transfer_protocol,
                 sendBarEnabled: event.payload.send_bar_enabled ?? true,
+                virtualPortPairs: vPairs,
+                virtualPortEnabled: (event.payload.params?.virtual_port_enabled as boolean) ?? false,
+                virtualPortCount: (event.payload.params?.virtual_port_count as number) ?? 0,
               },
             });
           }
@@ -576,10 +633,50 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2(); return; }
       unlisteners.push(u2);
 
+      const u2b = await listen<{ session_id: string; pairs: Array<{ port_a: string; port_b: string }> }>(
+        "virtual-port-created",
+        (event) => {
+          dispatch({
+            type: "UPDATE_TAB_VPORTS",
+            id: event.payload.session_id,
+            pairs: event.payload.pairs,
+          });
+        }
+      );
+      if (cancelled) { u2b(); return; }
+      unlisteners.push(u2b);
+
+      const u2c = await listen<{ session_id: string; reason: string }>(
+        "virtual-port-failed",
+        (event) => {
+          console.warn(`[VirtualPort] ${event.payload.session_id}: ${event.payload.reason}`);
+          dispatch({
+            type: "SET_VPORT_ERROR",
+            id: event.payload.session_id,
+            error: event.payload.reason,
+          });
+        }
+      );
+      if (cancelled) { u2c(); return; }
+      unlisteners.push(u2c);
+
+      // 驱动安装成功时清除所有标签页的 VPort 错误状态
+      const u2d = await listen("virtual-port-driver-ready", () => {
+        tabsRef.current.forEach((tab: { id: string; virtualPortError?: string }) => {
+          if (tab.virtualPortError) {
+            dispatch({ type: "CLEAR_VPORT_ERROR", id: tab.id });
+          }
+        });
+      });
+      if (cancelled) { u2d(); return; }
+      unlisteners.push(u2d);
+
       const u3 = await listen<{ session_id: string; reason?: string }>("session-disconnected", (event) => {
         const reason = event.payload.reason;
         const sid = event.payload.session_id;
         dispatch({ type: "SET_TAB_STATE", id: sid, state: "disconnected" });
+        // 清除虚拟端口对信息（端口已在后端销毁）
+        dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: [] });
         disconnectCallbackRef.current?.(sid, reason);
         // 自动停止该会话的日志记录
         setLoggingSessions(prev => {

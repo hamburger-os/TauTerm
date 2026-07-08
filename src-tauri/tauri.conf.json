@@ -6,8 +6,9 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "beforeDevCommand": "npm run dev"
+    "beforeBuildCommand": "npm run check-com0com && npm run build",
+    "beforeDevCommand": "npm run dev",
+    "beforeBundleCommand": "node scripts/set-admin-manifest.js"
   },
   "app": {
     "windows": [
@@ -26,7 +27,16 @@
     }
   },
   "bundle": {
-    "icon": ["../src/assets/icons/logo.png"]
+    "icon": ["../src/assets/icons/logo.png"],
+    "resources": {
+      "../resources/com0com/*": "./"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
   },
   "plugins": {}
 }

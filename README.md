@@ -223,6 +223,7 @@ graph LR
 - 📋 **日志系统** — 系统事件日志（`TauTerm_YYYYMMDD.log`）自动记录启动/错误/警告；会话数据日志支持 text/hex/dual 格式化、自动分卷与过期清理；右键菜单一键启停、状态栏实时指示
 - 🎹 **快捷键系统** — 全局快捷键注册与匹配，localStorage 持久化自定义绑定，点击录制模式实时改键，冲突检测与动画反馈，一键重置默认值
 - 💾 **会话持久化** — 离线创建/编辑会话配置，断开会话保留重连，按会话独立传输开关
+- 🔄 **虚拟串口桥接** — 连接时自动创建 COM 端口对（com0com 内核驱动），物理串口数据双向桥接到外部工具（如串口调试助手、PLC 上位机），支持 1-4 对虚拟端口并发，PlugInMode 自动隐藏、三层提权策略、孤儿端口启动时自动清理
 
 ---
 
@@ -278,6 +279,12 @@ TauTerm/
 │   │
 │   ├── security/               # 安全模块
 │   │   └── credential_store.rs # 凭据存储（keyring + AES 降级）
+│   │
+│   ├── virtual_port/            # 虚拟串口模块（跨平台抽象）
+│   │   ├── mod.rs               # 模块声明与 re-export
+│   │   ├── backend.rs           # VirtualPortBackend trait（抽象接口，支持 com0com/socat/tty0tty）
+│   │   ├── manager.rs           # VirtualPortManager（com0com 生命周期管理）
+│   │   └── bridge.rs            # VirtualPortBridge（后台线程，物理串口 ↔ 虚拟端口双向 I/O）
 │   │
 │   └── plugins/                # 内建协议插件
 │       └── serial/             # 串口插件（ProtocolAdapter + Channel）
@@ -347,6 +354,8 @@ TauTerm/
 | **Node.js** | >= 18 | 前端运行时与包管理器 |
 | **Rust** | >= 1.96 (推荐) / >= 1.75 (最低) | 后端编译工具链 |
 | **npm** | >= 9 | 随 Node.js 附带 |
+| **NSIS** | >= 3.0 | Windows 安装包构建工具（仅 Windows 构建需要） |
+| **Windows SDK** | >= 10.0 | 提供 `mt.exe` 用于嵌入 `requireAdministrator` 清单（仅 Windows 构建需要，缺少时仍可构建但需手动以管理员运行） |
 
 > **注意**: Rust 1.96+ 内置 `rust-lld` 链接器，在 Windows 上**无需额外安装 Visual Studio Build Tools**。如果使用较低版本 Rust，则需要安装 VS Build Tools 提供 MSVC 链接器。
 
@@ -513,7 +522,7 @@ node --version && npm --version && rustc --version && cargo --version
 
 ```bash
 # 克隆仓库
-git clone https://github.com/your-org/TauTerm.git
+git clone https://github.com/hamburger-os/TauTerm.git
 cd TauTerm
 
 # 安装前端依赖
@@ -532,56 +541,98 @@ npm run tauri dev
 
 ### 生产构建
 
+#### Windows（生成 .exe 安装包）
+
+Windows 安装包使用 NSIS 构建，**安装 TauTerm 时会自动安装 com0com 虚拟串口驱动**。
+
+**前置条件：安装 NSIS**
+
+```powershell
+# 方式 1: winget 安装
+winget install --id NSIS.NSIS --source winget
+
+# 方式 2: 官网下载安装
+# https://nsis.sourceforge.io/Download
+```
+
+安装后**必须将 NSIS 加入系统 PATH**：
+
+```powershell
+# 将 NSIS 目录加入当前终端会话 PATH（每次新开终端需重新执行）
+$env:PATH += ";C:\Program Files (x86)\NSIS"
+
+# 永久加入用户 PATH（推荐，新终端自动生效）
+[Environment]::SetEnvironmentVariable(
+    'PATH',
+    [Environment]::GetEnvironmentVariable('PATH', 'User') + ';C:\Program Files (x86)\NSIS',
+    'User'
+)
+```
+
+验证 NSIS 可用：
+
+```powershell
+makensis -VERSION   # 应输出版本号，如 v3.10
+```
+
+**构建流程**
+
 ```bash
-# 构建生产版本
+npm run tauri:build
+```
+
+构建过程自动执行：
+
+1. `check-com0com.js` — 验证 `resources/com0com/x64/` 和 `x86/` 中驱动文件齐全（setupc.exe, com0com.sys, com0com.inf, com0com.cat）
+2. `tsc && vite build` — 前端 TypeScript 编译 + Vite 打包
+3. `build.rs` — 根据目标架构（x86_64 → x64, i686 → x86）将 7 个驱动文件复制到打包根目录
+4. `cargo build --release` — Rust 后端编译
+5. **NSIS 打包** — 生成安装程序，内含 com0com 驱动文件 + post-install hook（安装时自动执行 `setupc.exe install`）
+
+**构建产物**：
+
+```
+src-tauri/target/release/bundle/nsis/
+├── TauTerm_<version>_x64-setup.exe    # NSIS 安装程序（推荐分发）
+└── TauTerm_<version>_x64_en-US.msi    # WiX MSI 安装包
+```
+
+**安装程序行为**：
+
+- **安装时**：NSIS post-install hook 自动执行 `setupc.exe install` 安装 com0com 内核驱动（安装程序天然以管理员身份运行）
+- **卸载时**：NSIS pre-uninstall hook 自动执行 `setupc.exe uninstall` 移除驱动
+- **运行时回退**：如果因某种原因驱动未在安装时装好，首次连接串口时会尝试运行时安装（需管理员权限）
+
+> **注意**：必须使用 `npm run tauri:build`（等效于 `npx tauri build --bundles nsis`）来生成安装程序。不加 `--bundles nsis` 时 Tauri v2 可能静默跳过 NSIS 打包，只生成 `tauterm.exe`。
+
+#### Linux / macOS
+
+```bash
 npm run tauri build
 ```
 
-构建产物位于 `src-tauri/target/release/`：
-- **Windows**: `.msi` / `.exe` 安装包
-- **Linux**: `.deb` / `.rpm` / `.AppImage`
-- **macOS**: `.dmg` / `.app` 包
+构建产物位于 `src-tauri/target/release/bundle/`：`.deb` / `.rpm` / `.AppImage`（Linux），`.dmg` / `.app`（macOS）。
 
 ---
 
-### 常见问题
+### 使用虚拟串口桥接
 
-#### Windows: `error: linker 'link.exe' not found`
+> **驱动版本**：使用 com0com v3.0.0.0（GPL 开源内核驱动），支持 Windows 10/11 x64/x86。详细的 com0com 使用与故障排查请参考 [tauterm-com0com skill](.claude/skills/tauterm-com0com/SKILL.md)。
 
-**原因**: 缺少 MSVC 链接器。
+虚拟串口功能**默认开启**，连接串口时自动创建 COM 端口对。基本使用流程：
 
-**解决方案**:
-1. 确保 Rust 版本 >= 1.96，使用内置 `rust-lld` 链接器
-2. 或安装 Visual Studio Build Tools（见上方「方案 B」）
-3. 或手动指定链接器：`rustup component add llvm-tools-preview`
+1. **连接串口**：在连接对话框中，串口配置区域的"启用虚拟串口"开关默认开启，"设备数量"（1-4）决定创建多少对端口
+2. **查看端口对**：连接成功后，状态栏显示 `VPort: COM22↔COM23, …`，端口 A（COM22）由 TauTerm 占用，端口 B（COM23）供外部工具打开
+3. **外部工具读取**：用任意串口工具（如 SSCOM、Putty、Python `pyserial`）打开端口 B（COM23），即可实时接收物理串口的数据
+4. **外部工具写入**：外部工具向端口 B 写入的数据会自动转发到物理串口，实现双向桥接
+5. **断开自动清理**：断开串口或关闭 TauTerm 时，自动删除所有虚拟端口对
+6. **手动清理残留**：状态栏右侧常驻 `[清理残留端口]` 按钮，点击可触发 UAC 提权批量清理所有已知残留端口对
 
-#### Windows: `winget` 安装 VS Build Tools 后 `rustc` 仍报链接器错误
-
-VS Build Tools 安装后需**重新打开终端**以加载环境变量。或手动激活：
-
-```powershell
-& "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-```
-
-#### Linux: `libwebkit2gtk-4.1-dev` 未找到
-
-Ubuntu 20.04 及更早版本可能需要添加 PPA 或升级到 22.04+。
-
-#### macOS: 打开应用时提示「无法验证开发者」
-
-```bash
-sudo xattr -r -d com.apple.quarantine /path/to/TauTerm.app
-```
-
-#### 下载 Rust 依赖缓慢
-
-设置国内镜像：
-
-```powershell
-# Windows (PowerShell) - 设置环境变量
-[System.Environment]::SetEnvironmentVariable('RUSTUP_DIST_SERVER', 'https://mirrors.ustc.edu.cn/rust-static', 'User')
-[System.Environment]::SetEnvironmentVariable('RUSTUP_UPDATE_ROOT', 'https://mirrors.ustc.edu.cn/rust-static/rustup', 'User')
-```
+> **注意**：
+> - 首次使用需安装 com0com 内核驱动 — 安装 TauTerm 时由 NSIS 安装程序自动完成
+> - 如果驱动因故未安装，状态栏会显示 `VPort 未就绪 — 驱动未安装` 并提供 `[修复]` 按钮（点击将触发 UAC 提权安装）
+> - 日志全部写入 `TauTerm_YYYYMMDD.log`，端口对状态持久化到 `com0com_state.json`（启动时自动清理孤儿端口）
+> - **开发模式**：`npm run tauri dev` 启动的应用无管理员权限，清理操作可能需要 UAC 提权。点击状态栏 `[清理残留端口]` 手动触发，或下次连接时自动由 UAC 批量清理
 
 ---
 
@@ -594,6 +645,9 @@ sudo xattr -r -d com.apple.quarantine /path/to/TauTerm.app
 - [x] Serial 插件化重构
 - [x] 统一标签页渲染 + 内容适配器
 - [x] 三策略传输子系统
+- [x] 虚拟串口桥接
+- [x] 嵌入式开发工具（校验和/编码/位操作/协议解析）
+- [x] 自定义快捷键面板
 
 ### v0.4 — 网络协议
 - [ ] SSH 插件（密码/密钥/agent 认证、known_hosts）
@@ -646,6 +700,7 @@ sudo xattr -r -d com.apple.quarantine /path/to/TauTerm.app
 | UI 框架 | React 18 + Framer Motion | Qt | 原生 Win32 |
 | 插件生态 | 计划中 | 无 | 有限（插件） |
 | 嵌入式工具 | CRC/编码/位操作/协议解析 | 无 | 无 |
+| 串口桥接 | com0com 虚拟端口对 | 无 | 无 |
 | 开源协议 | MIT | Apache 2.0 | 部分开源 |
 
 ---
