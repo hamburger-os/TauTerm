@@ -97,7 +97,7 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
   zmodem: {
     type: "zmodem",
     i18nKey: "transfer.protocols.zmodem.name",
-    icon: "zmodem",
+    icon: "package",
     defaultConfig: {
       protocol: "zmodem",
       windowSize: 4,

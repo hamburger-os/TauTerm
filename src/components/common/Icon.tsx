@@ -4,7 +4,6 @@ import styles from "./Icon.module.css";
 // ── Tier 1: PNG mask-image imports ────────────────────────────
 // 待用户用 AI 生成真实图标后替换这些占位文件
 import logoPng from "../../assets/icons/logo.png";
-import zmodemPng from "../../assets/icons/zmodem.png";
 import plugPng from "../../assets/icons/plug.png";
 import pinPng from "../../assets/icons/pin.png";
 import tagPng from "../../assets/icons/tag.png";
@@ -56,7 +55,6 @@ import chevronRightPng from "../../assets/icons/chevron-right.png";
 
 const PNG_MAP: Record<string, string> = {
   logo: logoPng,
-  zmodem: zmodemPng,
   plug: plugPng,
   pin: pinPng,
   tag: tagPng,
@@ -104,7 +102,7 @@ const PNG_MAP: Record<string, string> = {
   "chevron-right": chevronRightPng,
 };
 
-// ── Preload: 模块加载时提前下载所有 47 个 PNG 图标到浏览器缓存 ──
+// ── Preload: 模块加载时提前下载所有 46 个 PNG 图标到浏览器缓存 ──
 // 使用 new Image() 在 JS 解析阶段立即发起下载，避免 React 渲染 <img>
 // 标签后才开始请求导致的"弹入"延迟。到渲染时图片已在缓存中，即时显示。
 for (const pngUrl of Object.values(PNG_MAP)) {
@@ -118,7 +116,7 @@ type PngIconName = keyof typeof PNG_MAP;
 
 /** 所有图标名称的联合类型 */
 export type IconName =
-  // Tier 1: PNG mask-image (keyof PNG_MAP → 47 icons)
+  // Tier 1: PNG mask-image (keyof PNG_MAP → 46 icons)
   | PngIconName
   // Tier 2: CSS status dots (4 icons)
   | "status-connected"

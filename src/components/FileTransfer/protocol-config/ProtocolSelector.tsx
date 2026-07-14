@@ -1,7 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { ProtocolType, TransferConfig } from "../../../types/transfer";
 import { PROTOCOL_TYPES, PROTOCOL_REGISTRY } from "../../../types/transfer";
-import Icon from "../../common/Icon";
 import inputStyles from "../../common/GlassInput.module.css";
 
 interface ProtocolSelectorProps {
@@ -9,7 +8,7 @@ interface ProtocolSelectorProps {
   onChange: (config: TransferConfig) => void;
 }
 
-/** 协议下拉选择器 + 描述 */
+/** 协议下拉选择器 */
 export default function ProtocolSelector({
   value,
   onChange,
@@ -22,16 +21,8 @@ export default function ProtocolSelector({
     onChange(newConfig);
   };
 
-  const meta = PROTOCOL_REGISTRY[value.protocol];
-
   return (
     <div className={inputStyles.wrapper}>
-      <div className={inputStyles.labelRow}>
-        <Icon name={meta.icon} size="sm" />
-        <span className={inputStyles.label}>
-          {t(meta.i18nKey)}
-        </span>
-      </div>
       <select
         value={value.protocol}
         onChange={handleChange}
@@ -43,10 +34,6 @@ export default function ProtocolSelector({
           </option>
         ))}
       </select>
-      <span className={inputStyles.description}>
-        {t(meta.i18nKey + "Description" as any, "") ||
-          (t(meta.i18nKey) || value.protocol.toUpperCase())}
-      </span>
     </div>
   );
 }

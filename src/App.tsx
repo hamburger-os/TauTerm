@@ -29,7 +29,7 @@ import "./App.css";
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 400;
 const RIGHT_SIDEBAR_MIN = 160;
-const RIGHT_SIDEBAR_MAX = 500;
+const RIGHT_SIDEBAR_MAX_STATIC = 1600; // 静态后备值，实际上限由主内容区宽度动态计算
 const RIGHT_SIDEBAR_DEFAULT = 260;
 /** SendBar 最小高度（px）：从 CSS 自定义属性 --sendbar-min-height 读取，128 为后备值 */
 const SENDBAR_MIN_PCT = 5;
@@ -131,7 +131,12 @@ function AppInner() {
         setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, sidebarStartWidth.current + (e.clientX - sidebarStartX.current))));
       }
       if (isResizingRightSidebar) {
-        setRightSidebarWidth(Math.min(RIGHT_SIDEBAR_MAX, Math.max(RIGHT_SIDEBAR_MIN, rightSidebarStartWidth.current - (e.clientX - rightSidebarStartX.current))));
+        // 动态上限：主内容区宽度的 80%，保留终端至少 20% 可见空间
+        const container = mainContentRef.current;
+        const dynamicMax = container
+          ? container.getBoundingClientRect().width * 0.8
+          : RIGHT_SIDEBAR_MAX_STATIC;
+        setRightSidebarWidth(Math.min(dynamicMax, Math.max(RIGHT_SIDEBAR_MIN, rightSidebarStartWidth.current - (e.clientX - rightSidebarStartX.current))));
       }
       if (isResizingSendBar) {
         const container = mainContentRef.current;
@@ -345,10 +350,10 @@ function AppInner() {
                   <ResizeHandle direction="horizontal" onMouseDown={handleRightSidebarMouseDown} />
                   <motion.div
                     style={{ height: "100%", width: rightSidebarWidth }}
-                    initial={{ width: 0, opacity: 0 }}
-                    animate={{ width: rightSidebarWidth, opacity: 1 }}
-                    exit={{ width: 0, opacity: 0 }}
-                    transition={{ duration: isResizingRightSidebar ? 0 : 0.2 }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
                   >
                     <RightSidebar width={rightSidebarWidth}>
                       {sessionState.tabs.map(tab => {

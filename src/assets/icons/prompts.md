@@ -58,19 +58,7 @@ A premium App icon for a tech terminal application "TauTerm", 256×256 pixels. S
 
 ---
 
-### 2. zmodem — ZModem 协议
-
-**中文提示词：**
-一个 3D 快速文件传输图标，纯黑背景，256×256像素。设计为一个带有速度感弧线轨迹的圆角菱形（象征快速传输）。整体以液态玻璃材质渲染，是一个具有磨砂半透明质感、明亮边缘高光与内部灰白光线折射的 3D 玻璃雕塑。整体造型柔软有机，如水滴般饱满，所有转角大幅圆角处理。高级玻璃拟态 UI 设计，高度精细的 3D 渲染。
-
-**English prompt:**
-A 3D fast file transfer icon, pure black background, 256x256. Design as a rounded diamond shape with speed arc trails. Rendered entirely in liquid glass material. The icon is a 3D glass sculpture with frosted translucency, bright edge highlights, and internal grey/white light refractions. Overall shape is soft and organic, plump like a water droplet, all corners heavily rounded. Premium glassmorphism UI design, highly detailed 3D render.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 3. plug — 串口连接 / 插件
+### 2. plug — 串口连接 / 插件
 
 **中文提示词：**
 一个液态玻璃风格的电插头图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。插头造型极简几何化但保持圆润 — 插脚为两个圆角矩形从圆润的主体中伸出，主体右侧连接一段弧线电缆。所有线条端点圆润，转角大圆角。风格参考：磨砂玻璃质感、液态胶囊描边。
@@ -648,7 +636,7 @@ A liquid glass style chevron-right arrow icon, 3D glass sculpture on pure black 
 - [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
 - [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
 - [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI
-- [ ] 文件名与上述图标名一致（logo.png, zmodem.png, ...）
+- [ ] 文件名与上述图标名一致（logo.png, ...）
 
 ### 部署
 
