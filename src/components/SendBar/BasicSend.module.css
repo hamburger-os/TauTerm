@@ -2,17 +2,17 @@
 
 .basicSend {
   display: flex;
-  flex-direction: row;
-  align-items: stretch;
+  flex-direction: column;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 6px;
   height: 100%;
   font-family: var(--font-ui);
 }
 
 /* 输入区域 */
 .inputArea {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   min-width: 0;
   display: flex;
 }
@@ -39,37 +39,29 @@
   font-size: var(--text-xs);
 }
 
-/* 右侧 3-row control column */
+/* 底部单行控件栏 */
 .controls {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
-  width: 180px;
-  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
-/* Row 1: newline selector + text/hex toggle */
-.controlsRow1 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-/* Row 2: interval input + repeat toggle + history */
-.controlsRow2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-/* Row 3: full-width send button */
-.controlsRow3 {
-  display: block;
+/* 功能组分隔线 */
+.groupSep {
+  width: 1px;
+  height: var(--select-height);
+  margin: 0 2px;
+  background: var(--glass-border-default);
+  flex-shrink: 0;
+  align-self: center;
 }
 
 .select {
-  width: 100%;
+  min-width: 82px;
+  flex-shrink: 0;
   box-sizing: border-box;
   padding: var(--select-padding);
   height: var(--select-height);
@@ -80,6 +72,7 @@
 /* 模式切换按钮 */
 .modeBtn {
   padding: 4px 8px;
+  flex-shrink: 0;
   color: var(--text-secondary);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
@@ -106,6 +99,7 @@
   gap: 4px;
   cursor: pointer;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .repeatCheck {
@@ -158,7 +152,7 @@
 }
 
 .intervalInput {
-  width: 100%;
+  width: 64px;
   box-sizing: border-box;
   padding: 4px 6px;
   border-radius: var(--radius-md);
@@ -171,24 +165,20 @@
   display: flex;
   align-items: center;
   gap: 3px;
+  flex-shrink: 0;
 }
 
 .intervalUnit {
-  flex: 1;
+  flex: 0 0 auto;
   color: var(--text-muted);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
 }
 
-.repeatAndHistory {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
 /* 发送历史 */
 .historyWrap {
   position: relative;
+  margin-left: auto;
 }
 
 .historyBtn {
@@ -255,7 +245,8 @@
 
 .sendBtn {
   display: block;
-  width: 100%;
+  width: auto;
+  flex-shrink: 0;
   box-sizing: border-box;
   padding: 5px 16px;
   font-size: var(--text-xs);

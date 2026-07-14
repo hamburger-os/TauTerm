@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { SessionProvider } from "../../context/SessionContext";
 import { ThemeProvider } from "../../context/ThemeContext";
 import { TransferProvider } from "../../context/TransferContext";
+import { ToastProvider } from "../../context/ToastContext";
 
 interface AppShellProps {
   children: ReactNode;
@@ -15,7 +16,9 @@ export default function AppShell({ children }: AppShellProps) {
     <ThemeProvider>
       <SessionProvider>
         <TransferProvider>
-          {children}
+          <ToastProvider>
+            {children}
+          </ToastProvider>
         </TransferProvider>
       </SessionProvider>
     </ThemeProvider>

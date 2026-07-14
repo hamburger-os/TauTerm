@@ -1,0 +1,348 @@
+/* 脚本编辑器 — Liquid Glass v3 */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── 工具栏 ── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--glass-border-default);
+}
+
+/* ── 工具栏左右分区 ── */
+.configActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbarActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.scriptSelect {
+  min-width: 160px;
+  max-width: 220px;
+  padding: var(--select-padding);
+  height: var(--select-height);
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  /* 基础视觉由 liquid-glass-input + liquid-glass-select 提供 */
+}
+
+.toolBtn {
+  padding: 2px 6px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* 基础视觉（背景/边框/圆角/过渡）由 liquid-glass-button 提供 */
+}
+
+.toolBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 集合级删除确认容器：警告图标+说明 与 取消按钮 并排 */
+.toolConfirm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 删除确认说明文字：主题红色，警告图标右侧 */
+.deleteHint {
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  white-space: nowrap;
+}
+
+/* ── 编辑器 ── */
+.editorContainer {
+  display: flex;
+  flex: 1;
+  min-height: 28px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--glass-border-default);
+}
+
+/* ── 空状态提示 ── */
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 60px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+/* Mini-Card 模式：行号栏 — 小元素使用 --shadow-sm + 3D 边框 */
+.lineNumbers {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 4px 6px 8px;
+  background: var(--glass-fill);
+  border-right: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  box-shadow: var(--shadow-sm);
+  text-align: right;
+  user-select: none;
+  overflow: hidden;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+
+.lineNumbers span {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-muted);
+  min-width: 24px;
+}
+
+.editor {
+  flex: 1;
+  border: none;
+  background: var(--glass-input-bg);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  padding: 6px 8px;
+  resize: none;
+  outline: none;
+  tab-size: 2;
+}
+
+/* ── Script Output 面板 ── */
+/* 展开时作为可收缩的弹性列：空间不足时内部滚动，而非把底部 .controls 挤出裁切 */
+.output {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.outputCollapsed .outputContent { display: none; }
+
+.outputHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  cursor: pointer;
+  background: var(--glass-input-bg);
+  transition: background var(--transition-fast);
+}
+
+.outputHeader:hover { background: var(--glass-bg-hover); }
+
+.outputTitle {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.outputActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.outputClearBtn {
+  padding: 1px 4px;
+  font-size: var(--text-xs);
+  display: flex;
+  align-items: center;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.outputClearBtn:hover { opacity: 1; }
+
+.outputContent {
+  flex: 1;
+  min-height: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 4px 8px;
+  background: var(--glass-input-bg);
+  border-top: 1px solid var(--glass-border-default);
+}
+
+.outputEmpty {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.outputLine {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── 执行控制 ── */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--glass-border-default);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.controlBtns { display: flex; gap: 6px; }
+
+.startBtn, .stopBtn {
+  padding: 4px 12px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* 保存按钮 — 位于顶栏右侧，尺寸与顶栏其余按钮对齐 */
+.saveBtn {
+  padding: 2px 8px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  color: var(--text-primary);
+  cursor: pointer;
+  /* 基础视觉（背景/边框/圆角/过渡）由 liquid-glass-button 提供 */
+}
+
+/* ── 导入脚本信息文本 ── */
+.importInfo {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.startBtn {
+  /* 与指令面板「开始执行」按钮统一：padding 4px 14px + liquid-primary-button */
+  padding: 4px 14px;
+}
+
+.startBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 停止按钮 — 复用 Shared.stopBtn accent 色系 */
+.stopBtn {
+  composes: stopBtn from "./Shared.module.css";
+}
+
+/* ── 删除确认弹窗 ── */
+.modalOverlay {
+  /* position/inset/background/display/align/justify 由 glass-overlay 提供 */
+  z-index: var(--z-overlay);
+}
+
+.modal {
+  min-width: 280px;
+  border-radius: var(--radius-window);
+  box-shadow: var(--dialog-shadow);
+  padding: 16px;
+  /* background/border/backdrop-filter/blur 由 liquid-glass 提供 */
+}
+
+.modal p { margin: 0 0 12px; font-size: var(--text-sm); color: var(--text-primary); }
+
+.modalBtns { display: flex; gap: 8px; justify-content: flex-end; }
+
+.modalBtn {
+  padding: 4px 12px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  /* 基础视觉由 liquid-glass-button 提供 */
+}
+
+/* ── 重命名弹窗输入框 ── */
+.renameModal {
+  width: 360px;
+  max-width: 90vw;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--dialog-shadow);
+  padding: 20px;
+  /* background/border/backdrop-filter/blur 由 liquid-glass 提供 */
+}
+
+.renameTitle {
+  margin: 0 0 16px;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.renameInput {
+  width: 100%;
+  margin-bottom: 16px;
+  padding: 6px 10px;
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  box-sizing: border-box;
+}
+
+.renameBtns {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.renameCancelBtn,
+.renameSaveBtn {
+  padding: 7px 18px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.renameCancelBtn {
+  color: var(--text-secondary);
+  /* 基础视觉由 liquid-glass-button 提供 */
+}
+
+.renameSaveBtn {
+  /* 基础视觉由 liquid-primary-button 提供 */
+}
+
+.renameSaveBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 危险操作（删除确认）— 复用 Shared.stopBtn accent 色系 */
+.dangerBtn {
+  composes: stopBtn from "./Shared.module.css";
+  padding: 4px 12px;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  cursor: pointer;
+}

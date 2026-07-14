@@ -1,6 +1,6 @@
 //! 协议无关 I/O 循环引擎
 //!
-//! 同步和异步 I/O 循环，基于 `dyn Channel` trait。
+//! 同步 I/O 循环，基于 `dyn Channel` trait。
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -107,66 +107,5 @@ pub fn spawn_sync_io_loop(
             // 4. 短暂休眠避免忙等
             std::thread::sleep(tick);
         }
-    })
-}
-
-/// 启动异步 I/O 循环（tokio 驱动）
-///
-/// 供未来网络协议插件（SSH、Telnet 等）使用，当前仅同步 I/O 循环处于活跃状态。
-#[allow(dead_code)]
-///
-/// 基础骨架——完整的异步 I/O 需要 async Channel trait，这是后续工作。
-/// 当前使用 spawn_blocking 桥接同步 Channel 到 tokio 运行时。
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_async_io_loop(
-    channel: Box<dyn Channel>,
-    session_id: String,
-    on_data: impl Fn(String, Vec<u8>) + Send + 'static,
-    on_disconnect: impl Fn(String) + Send + 'static,
-    _write_rx: tokio::sync::mpsc::Receiver<IoLoopCmd>,
-    cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    _tx_bytes: Arc<AtomicU64>,
-    rx_bytes: Arc<AtomicU64>,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let cancel_flag = Arc::new(AtomicBool::new(false));
-        let cancel_flag_inner = cancel_flag.clone();
-
-        // 取消监听 task
-        tokio::spawn(async move {
-            let _ = cancel_rx.await;
-            cancel_flag_inner.store(true, Ordering::SeqCst);
-        });
-
-        // 使用 spawn_blocking 在独立线程中运行阻塞 I/O
-        // 完整异步实现在后续版本完善
-        let _ = tokio::task::spawn_blocking(move || {
-            let mut ch = channel;
-            let sid = session_id;
-            let od = on_data;
-            let odc = on_disconnect;
-            let mut read_buf = [0u8; 4096];
-
-            loop {
-                if cancel_flag.load(Ordering::SeqCst) {
-                    break;
-                }
-
-                match ch.read(&mut read_buf) {
-                    Ok(n) if n > 0 => {
-                        rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
-                        od(sid.clone(), read_buf[..n].to_vec());
-                    }
-                    Ok(_) => {}
-                    Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
-                    Err(_) => {
-                        odc(sid.clone());
-                        break;
-                    }
-                }
-
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        }).await;
     })
 }

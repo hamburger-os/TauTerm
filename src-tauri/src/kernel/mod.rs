@@ -18,6 +18,7 @@
 //! - `log_engine`      — 生产者-消费者异步日志引擎，系统事件 + 会话数据日志
 //! - `log_writer`      — 单日志文件写入器，格式化（text/hex/dual）、自动分卷
 
+pub mod comm_handle;
 pub mod config_store;
 pub mod i18n_engine;
 pub mod ipc_bridge;
@@ -25,6 +26,7 @@ pub mod log_engine;
 pub mod log_writer;
 pub mod plugin_adapter;
 pub mod plugin_host;
+pub mod script_engine;
 pub mod session_store;
 pub mod shortcut_engine;
 pub mod tab_host;

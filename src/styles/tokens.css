@@ -54,7 +54,9 @@
   --blur-xs: 4px;
 
   /* 布局常量 */
-  --sendbar-min-height: 106px;
+  /* 发送栏最小高度：需容纳 ScriptEditor 折叠 Output 后的完整 chrome
+     （工具栏 ~37 + 编辑区 min 28 + Output header ~25 + 执行控制 ~32 ≈ 123）+ 渲染缓冲 */
+  --sendbar-min-height: 128px;
 
   /* 统一控件尺寸 — 所有下拉框/输入框使用相同高度 */
   --select-height: 28px;

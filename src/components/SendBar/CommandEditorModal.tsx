@@ -90,20 +90,20 @@ export default function CommandEditorModal({
           >
             <h3 className={styles.title}>
               {editItem
-                ? (t("commandPanel.editCommandTitle") || "编辑命令")
-                : (t("commandPanel.addCommandTitle") || "新增命令")}
+                ? (t("commandPanel.editCommandTitle"))
+                : (t("commandPanel.addCommandTitle"))}
             </h3>
 
             <div className={styles.field}>
               <label className={styles.label}>
-                {t("commandPanel.commandText") || "命令文本"}
+                {t("commandPanel.commandText")}
               </label>
               <textarea
                 className={`${styles.textarea} liquid-glass-input`}
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={t("commandPanel.commandPlaceholder") || "如: ls -la"}
+                placeholder={t("commandPanel.commandPlaceholder")}
                 rows={2}
                 autoFocus
               />
@@ -111,7 +111,7 @@ export default function CommandEditorModal({
 
             <div className={styles.field}>
               <label className={styles.label}>
-                {t("commandPanel.note") || "备注"}
+                {t("commandPanel.note")}
               </label>
               <input
                 className={`${styles.input} liquid-glass-input`}
@@ -119,13 +119,13 @@ export default function CommandEditorModal({
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={t("commandPanel.notePlaceholder") || "如: 列出目录文件"}
+                placeholder={t("commandPanel.notePlaceholder")}
               />
             </div>
 
             <div className={styles.field}>
               <label className={styles.label}>
-                {t("commandPanel.delay") || "延时 (ms)"}
+                {t("commandPanel.delay")}
               </label>
               <input
                 className={`${styles.input} liquid-glass-input`}
@@ -151,7 +151,7 @@ export default function CommandEditorModal({
                 onClick={handleSave}
                 disabled={!command.trim()}
               >
-                {t("common.save") || "保存"}
+                {t("common.save")}
               </button>
             </div>
           </motion.div>

@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use crate::channel::Channel;
 use crate::channel::io_loop::{IoLoopCmd, spawn_sync_io_loop};
+use crate::channel::serial_comm::SerialCommHandle;
+use crate::kernel::comm_handle::CommHandle;
+use crate::kernel::script_engine::{ScriptCmd, spawn_script_thread};
 use crate::virtual_port::bridge::VirtualPortBridge;
 use crate::virtual_port::manager::PortPair;
 
@@ -78,6 +81,14 @@ pub struct ActiveSessionHandle {
     pub virtual_port_bridge: Option<VirtualPortBridge>,
     /// 当前会话的虚拟端口对列表
     pub virtual_port_pairs: Vec<PortPair>,
+    /// 通信抽象句柄（供脚本引擎使用）
+    pub comm_handle: Option<Arc<dyn CommHandle>>,
+    /// 脚本引擎线程的命令发送端
+    pub script_tx: Option<mpsc::SyncSender<ScriptCmd>>,
+    /// 脚本引擎线程句柄
+    pub script_thread: Option<std::thread::JoinHandle<()>>,
+    /// 脚本线程的协作式关闭标志（停止时置位，使 Lua sleep 分片中断，join 不长时阻塞）
+    pub script_shutdown: Option<Arc<AtomicBool>>,
 }
 
 impl ActiveSessionHandle {
@@ -123,6 +134,16 @@ impl Drop for ActiveSessionHandle {
         }
         if let Some(ref flag) = self.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
+        }
+        // 脚本引擎线程清理（先置协作式关闭标志，使长睡眠及时中断）
+        if let Some(ref flag) = self.script_shutdown {
+            flag.store(true, Ordering::SeqCst);
+        }
+        if let Some(tx) = self.script_tx.take() {
+            let _ = tx.send(ScriptCmd::Shutdown);
+        }
+        if let Some(thread) = self.script_thread.take() {
+            let _ = thread.join();
         }
     }
 }
@@ -223,14 +244,29 @@ impl SessionStore {
         let (write_tx, write_rx) = mpsc::sync_channel::<IoLoopCmd>(32);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
+        // 创建通信抽象句柄（供脚本引擎使用）
+        let comm_handle: Arc<dyn CommHandle> = Arc::new(SerialCommHandle::new(write_tx.clone()));
+
         let tx_bytes = Arc::new(AtomicU64::new(0));
         let rx_bytes = Arc::new(AtomicU64::new(0));
         let tx_clone = tx_bytes.clone();
         let rx_clone = rx_bytes.clone();
 
         let sid = id.clone();
+
+        // 包装 on_data 闭包，使每条接收数据通过 CommHandle 扇出
+        // 脚本引擎等消费者通过 CommHandle::on_receive() 注册回调，
+        // 无需直接调用 SessionStore::feed_script_data()
+        let comm_for_fanout = comm_handle.clone();
+        let wrapped_on_data = Box::new(move |session_id: String, data: Vec<u8>| {
+            // 先借用扇出给脚本引擎等消费者，再把所有权移交终端/日志的 on_data，
+            // 省去每包一次 data.clone()（即便无脚本运行也在拷贝）
+            comm_for_fanout.notify_receive(&data);
+            on_data(session_id, data);
+        });
+
         let io_handle = spawn_sync_io_loop(
-            channel, sid, on_data, on_disconnect, write_rx, cancel_rx,
+            channel, sid, wrapped_on_data, on_disconnect, write_rx, cancel_rx,
             tx_clone, rx_clone,
         );
 
@@ -270,6 +306,10 @@ impl SessionStore {
             send_bar_enabled,
             virtual_port_bridge: None,
             virtual_port_pairs: Vec::new(),
+            comm_handle: Some(comm_handle),
+            script_tx: None,
+            script_thread: None,
+            script_shutdown: None,
         };
 
         // 防御性检查：若 id_override 指向的会话已存在且未被正确关闭，
@@ -319,6 +359,21 @@ impl SessionStore {
             if let Some(old_id) = self.removed_order.pop_front() {
                 self.session_names.remove(&old_id);
             }
+        }
+
+        // 关闭脚本引擎（必须在 IoLoop 关闭前执行）
+        if let Some(ref flag) = handle.script_shutdown {
+            flag.store(true, Ordering::SeqCst);
+        }
+        if let Some(tx) = handle.script_tx.take() {
+            let _ = tx.send(ScriptCmd::Shutdown);
+        }
+        if let Some(thread) = handle.script_thread.take() {
+            let _ = thread.join();
+        }
+        // 清理脚本引擎注册的接收回调，与 stop_script() 保持一致
+        if let Some(comm) = &handle.comm_handle {
+            comm.clear_receivers();
         }
 
         // 关闭虚拟端口桥接线程
@@ -403,6 +458,77 @@ impl SessionStore {
             .ok_or_else(|| self.session_not_found(session_id))?;
         handle.write_tx.send(IoLoopCmd::Write(data.to_vec()))
             .map_err(|e| format!("写入通道错误: {}", e))
+    }
+
+    /// 启动脚本引擎（首次启动创建线程，后续发送新脚本）
+    pub fn start_script(
+        &mut self,
+        session_id: &str,
+        code: &str,
+        app_handle: tauri::AppHandle,
+    ) -> Result<(), String> {
+        let not_found = self.session_not_found(session_id);
+        let handle = self.sessions.get_mut(session_id)
+            .ok_or(not_found)?;
+
+        let comm = handle.comm_handle.clone()
+            .ok_or("通信句柄不可用".to_string())?;
+
+        match &handle.script_tx {
+            Some(tx) => {
+                // 已在运行，发送新脚本
+                tx.send(ScriptCmd::LoadScript(code.to_string()))
+                    .map_err(|e| format!("发送脚本失败: {}", e))?;
+            }
+            None => {
+                // 首次启动：通过 CommHandle 注册数据接收回调（替代 feed_script_data 直传）
+                // 此后所有串口接收数据经 CommHandle::notify_receive() 扇出时自动送达
+                let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
+                let tx_for_callback = tx.clone();
+                comm.on_receive(Box::new(move |data: &[u8]| {
+                    // bounded channel (4096)：缓冲区满时丢弃旧数据。
+                    // 若脚本引擎处理速度持续落后，丢包比 OOM 更安全。
+                    let _ = tx_for_callback.try_send(ScriptCmd::FeedData(data.to_vec()));
+                }));
+                let shutdown = Arc::new(AtomicBool::new(false));
+                let thread = spawn_script_thread(
+                    comm,
+                    app_handle,
+                    rx,
+                    session_id.to_string(),
+                    shutdown.clone(),
+                );
+                tx.send(ScriptCmd::LoadScript(code.to_string()))
+                    .map_err(|e| format!("发送脚本失败: {}", e))?;
+                handle.script_tx = Some(tx);
+                handle.script_thread = Some(thread);
+                handle.script_shutdown = Some(shutdown);
+            }
+        }
+        Ok(())
+    }
+
+    /// 停止脚本引擎
+    pub fn stop_script(&mut self, session_id: &str) -> Result<(), String> {
+        let not_found = self.session_not_found(session_id);
+        let handle = self.sessions.get_mut(session_id)
+            .ok_or(not_found)?;
+
+        // 先置协作式关闭标志，使 Lua sleep 分片及时中断，join 不长时阻塞全局锁
+        if let Some(flag) = handle.script_shutdown.take() {
+            flag.store(true, Ordering::SeqCst);
+        }
+        if let Some(tx) = handle.script_tx.take() {
+            let _ = tx.send(ScriptCmd::Shutdown);
+        }
+        if let Some(thread) = handle.script_thread.take() {
+            let _ = thread.join();
+        }
+        // 清理脚本引擎注册的接收回调，避免 stop→start 循环累积持废弃 channel 的死回调
+        if let Some(comm) = &handle.comm_handle {
+            comm.clear_receivers();
+        }
+        Ok(())
     }
 
     /// 获取活跃会话 ID
@@ -491,6 +617,32 @@ impl SessionStore {
         );
 
         let params = handle.params.clone();
+
+        // 重建 comm_handle，确保重连后脚本引擎使用新的 write_tx 通道。
+        // 旧 comm_handle 持有的 write_tx 副本已随旧 I/O 线程停止而失效，
+        // 若不重建，脚本引擎 send() 会向死 channel 写入，错误被静默吞掉。
+        let new_comm: Arc<dyn CommHandle> = Arc::new(SerialCommHandle::new(write_tx.clone()));
+        // 清理旧 comm_handle 上可能残留的回调（防止 stop→reconnect→start 链路
+        // 下旧回调堆积在已失效的 CommHandle 中）
+        if let Some(old_comm) = &handle.comm_handle {
+            old_comm.clear_receivers();
+        }
+        handle.comm_handle = Some(new_comm);
+
+        // 重连后脚本引擎持有的旧 comm_handle 的 write_tx 已失效。
+        // 若脚本引擎正在运行，通知前端需要手动重启。
+        // script_shutdown 比 script_tx 语义更精确：前者表示"存在需协作关闭的后台线程"，
+        // 后者仅表示命令通道存在（stop_script 后两者均为 None，此处等价，但语义不同）。
+        if handle.script_shutdown.is_some() {
+            let _ = app_handle.emit(
+                "script-log",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "message": "[Engine] 会话已重连 — 请重新启动脚本引擎",
+                }),
+            );
+        }
+
         handle.write_tx = write_tx;
         handle.io_cancel_tx = Some(cancel_tx);
         handle.io_thread = Some(io_handle);

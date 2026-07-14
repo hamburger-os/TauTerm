@@ -75,11 +75,19 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         const tab = state.tabs.find(t => t.id === sessionId);
         if (tab?.state === "disconnected" && tab.params) {
           try {
-            const sid = await connect(tab.endpoint, tab.params as Record<string, unknown>, tab.name, undefined, tab.transferEnabled, tab.transferProtocol);
-            if (sid) {
-              await switchTab(sid);
-              await deleteSession(sessionId);
-            }
+            await connect(
+              tab.endpoint,
+              tab.params as Record<string, unknown>,
+              tab.name,
+              undefined,
+              tab.transferEnabled,
+              tab.transferProtocol,
+              tab.sendBarEnabled,
+              sessionId,
+            );
+            // session-connected 事件处理器会自动将已有 tab
+            // 的 state 更新为 "connected"（原地更新，不新增 tab），
+            // 因此无需 switchTab/deleteSession — SendBar 状态得以保留。
           } catch (_e) {
             // 错误已在 SessionContext 中处理
           }

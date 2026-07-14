@@ -206,7 +206,7 @@ interface SessionContextValue {
   state: SessionState;
   fetchConnectionTypes: () => Promise<void>;
   refreshEndpoints: () => Promise<void>;
-  connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
+  connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, sessionId?: string) => Promise<string | null>;
   createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
   disconnect: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
@@ -299,17 +299,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => {
+  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, sessionId?: string) => {
     dispatch({ type: "SET_ERROR", error: null });
     try {
-      const sessionId = await invoke<string>("connect_session", {
+      const sid = await invoke<string>("connect_session", {
         endpoint, params, name,
         pluginId: pluginId || "serial",
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
         sendBarEnabled: sendBarEnabled ?? true,
+        sessionId: sessionId || null,
       });
-      return sessionId;
+      return sid;
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `连接失败: ${e}` });
       return null;

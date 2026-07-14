@@ -7,6 +7,7 @@
 pub mod error;
 pub mod io_loop;
 pub mod serial_channel;
+pub mod serial_comm;
 
 
 use std::io::{Read, Write};

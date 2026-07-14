@@ -17,7 +17,7 @@ import SettingsPage from "./components/Settings/SettingsPage";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
 import ConnectDialog from "./components/Layout/ConnectDialog";
 import Icon from "./components/common/Icon";
-import Toast from "./components/common/Toast";
+import { useToast } from "./context/ToastContext";
 import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
 import { useKeyboard } from "./hooks/useKeyboard";
@@ -31,17 +31,11 @@ const SIDEBAR_MAX = 400;
 const RIGHT_SIDEBAR_MIN = 160;
 const RIGHT_SIDEBAR_MAX = 500;
 const RIGHT_SIDEBAR_DEFAULT = 260;
-/** SendBar 最小高度（px）：从 CSS 自定义属性 --sendbar-min-height 读取，106 为后备值 */
+/** SendBar 最小高度（px）：从 CSS 自定义属性 --sendbar-min-height 读取，128 为后备值 */
 const SENDBAR_MIN_PCT = 5;
-const SENDBAR_MAX_PCT = 60;
+const SENDBAR_MAX_PCT = 80;
 const SENDBAR_DEFAULT_PCT = SENDBAR_MIN_PCT;
 const RESIZE_DEBOUNCE_MS = 150;
-
-interface ToastMessage {
-  id: number;
-  type: "success" | "error" | "warning" | "info";
-  message: string;
-}
 
 function AppInner() {
   // Context hooks
@@ -57,7 +51,7 @@ function AppInner() {
   const [sendBarPct, setSendBarPct] = useState(SENDBAR_DEFAULT_PCT);
   const [isResizingSendBar, setIsResizingSendBar] = useState(false);
   /** SendBar 最小高度，从 CSS 自定义属性 --sendbar-min-height 读取，避免与 SendBar.module.css 硬编码不同步 */
-  const [sendbarMinHeight, setSendbarMinHeight] = useState(106);
+  const [sendbarMinHeight, setSendbarMinHeight] = useState(128);
   const sendbarMinHeightRef = useRef(sendbarMinHeight);
   sendbarMinHeightRef.current = sendbarMinHeight;
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -70,30 +64,41 @@ function AppInner() {
   const [isMaximized, setIsMaximized] = useState(false);
 
   // Toast
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const toastIdRef = useRef(0);
-  const addToast = useCallback((type: ToastMessage["type"], message: string) => {
-    const id = ++toastIdRef.current;
-    setToasts(prev => [...prev, { id, type, message }]);
-  }, []);
+  const { showToast } = useToast();
 
   // Event handlers
   useEffect(() => {
-    if (sessionState.error) addToast("error", sessionState.error);
-  }, [sessionState.error, addToast]);
+    if (sessionState.error) showToast("error", sessionState.error);
+  }, [sessionState.error, showToast]);
 
   useEffect(() => {
-    if (transferState.error) addToast("error", transferState.error);
-  }, [transferState.error, addToast]);
+    if (transferState.error) showToast("error", transferState.error);
+  }, [transferState.error, showToast]);
 
-  // 从 CSS 自定义属性读取 SendBar 最小高度，确保 JS 与 CSS 值一致
+  // 从 CSS 自定义属性读取 SendBar 最小高度，确保 JS 与 CSS 值一致；
+  // 同时修正初始 sendBarPct，避免默认百分比（5%）对应的像素值小于 CSS min-height，
+  // 导致首次拖动时 SendBar 出现"跳变高"现象。
   useEffect(() => {
     try {
       const val = getComputedStyle(document.documentElement)
         .getPropertyValue("--sendbar-min-height").trim();
       const parsed = parseInt(val, 10);
-      if (!isNaN(parsed)) setSendbarMinHeight(parsed);
-    } catch { /* 保持默认 106 */ }
+      if (!isNaN(parsed)) {
+        setSendbarMinHeight(parsed);
+        // 修正初始百分比，使其与 CSS min-height 像素值对齐
+        const container = mainContentRef.current;
+        if (container) {
+          const containerHeight = container.clientHeight;
+          if (containerHeight > 0) {
+            const minPct = Math.max(
+              SENDBAR_MIN_PCT,
+              Math.ceil((parsed * 100) / containerHeight)
+            );
+            setSendBarPct(prev => Math.max(prev, minPct));
+          }
+        }
+      }
+    } catch { /* 保持默认 128 */ }
   }, []);
 
   // Resize: sidebar
@@ -157,7 +162,7 @@ function AppInner() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isResizingSidebar, isResizingRightSidebar, isResizingSendBar, sendBarPct]);
+  }, [isResizingSidebar, isResizingRightSidebar, isResizingSendBar]);
 
   // Global drag events for dropzone visual feedback + Tauri native drop
   useEffect(() => {
@@ -195,7 +200,7 @@ function AppInner() {
               if (sessionState.activeTabId) {
                 transferSend(sessionState.activeTabId, paths);
               } else {
-                addToast("warning", "请先连接到串口设备再拖拽传输文件");
+                showToast("warning", "请先连接到串口设备再拖拽传输文件");
               }
             }
           } else if (event.payload.type === "over") {
@@ -216,7 +221,7 @@ function AppInner() {
       document.removeEventListener("drop", handleDrop);
       if (unlistenDrop) unlistenDrop();
     };
-  }, [setDragging, sessionState.activeTabId, transferSend, addToast]);
+  }, [setDragging, sessionState.activeTabId, transferSend, showToast]);
 
   // 窗口最大化/还原状态追踪
   useEffect(() => {
@@ -437,12 +442,20 @@ function AppInner() {
         )}
       </AnimatePresence>
 
-      {/* Toast 通知 */}
-      {toasts.map((toast, index) => (
-        <Toast key={toast.id} type={toast.type} message={toast.message} index={index} onClose={() => {
-          setToasts(prev => prev.filter(t => t.id !== toast.id));
-        }} />
-      ))}
+      {/* 拖拽调整大小时的全屏透明遮罩层
+          确保 mouseup 事件始终在遮罩层（而非底层可能吞事件的禁用元素）上触发，
+          同时强制显示正确的 resize 光标 */}
+      {(isResizingSidebar || isResizingRightSidebar || isResizingSendBar) && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 35,
+            cursor: isResizingSendBar ? "row-resize" : "col-resize",
+          }}
+          aria-hidden="true"
+        />
+      )}
     </div>
   );
 }

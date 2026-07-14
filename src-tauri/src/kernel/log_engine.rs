@@ -467,7 +467,7 @@ impl LogEngine {
                         }
                         // 更新活跃日志状态（每 ~10 条更新一次，减少锁竞争）
                         status_update_counter += 1;
-                        if status_update_counter % 10 == 0 {
+                        if status_update_counter.is_multiple_of(10) {
                             if let Ok(mut map) = active_logs.lock() {
                                 if let Some(status) = map.get_mut(&entry.session_id) {
                                     status.bytes_written = writer.bytes_written();

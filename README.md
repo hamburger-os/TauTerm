@@ -212,7 +212,8 @@ graph LR
 - 🖥️ **终端仿真** — 基于 xterm.js，多实例池管理，CSS opacity 无重建切换；支持 Text / HEX / Dual 三种数据模式
 - 📁 **文件传输** — 右侧竖向面板，按会话独立配置传输协议（YModem/XModem/ZModem），Inline / SideChannel / SeparateConnection 多策略自适应
 - 📊 **Dual 双模显示** — 可拖拽分栏同时展示 ASCII 文本与 HEX 十六进制，毫秒级时间戳、按 `\r\n`/`\n`/`\r` 自动分帧、TX/RX 颜色区分
-- 📤 **发送栏** — 双模式发送：基础发送 (Text/HEX, 换行符, 循环发送, 历史记录) 和指令面板 (预定义命令序列, 拖拽排序, 循环执行)；支持后台持续执行，切换会话不中断
+- 📤 **发送栏** — 四模式发送：基础发送 (Text/HEX, 换行符, 循环发送, 历史记录)、指令面板 (预定义命令序列, 拖拽排序, 循环执行)、自动应答 (可视化规则配置, 5 种匹配模式, 10 种动态宏, 定时触发)、脚本编辑器 (嵌入式 Lua 5.4 运行时, 代码生成与手写双路径)；支持后台持续执行，切换会话不中断
+- 🤖 **自动应答/脚本引擎** — 嵌入式 Lua 5.4 运行时，每会话独立 VM 沙箱隔离；可视化规则配置编译为 Lua 脚本；支持 5 种匹配模式 (contains/equals/starts_with/regex/lua_pattern)、10 种动态宏、匹配/定时触发、冷却控制、HEX 二进制匹配；"转换为脚本"一键从规则升级为脚本编辑
 - ⚙️ **设置页面** — 7 面板全屏覆盖层：通用数据模式、外观（主题 / 字体 / 行缓冲）、语言、编码、日志、快捷键、关于；字体大小和行缓冲滑块拖动即实时生效
 - 🔐 **凭据存储** — OS 原生 keyring + AES-256-GCM 降级，密码/密钥/证书/Token 类型安全
 - 🎨 **Liquid Glass v3 设计系统** — 动态炫彩光球背景、SVG 噪点磨砂纹理、不对称高光边框、Framer Motion 动画、Google Glow / Obsidian / Frosted 三主题
@@ -241,6 +242,8 @@ graph LR
 | 样式方案 | CSS Modules + CSS 自定义属性 |
 | 安全存储 | keyring-rs + AES-256-GCM |
 | 网络协议 | ssh2 (SSH/SFTP) |
+| 脚本引擎 | mlua 0.10 (Lua 5.4, vendored) |
+| 正则引擎 | regex 1 |
 
 ---
 
@@ -262,13 +265,16 @@ TauTerm/
 │   │   ├── session_store.rs    # 会话存储、I/O 生命周期、统计采集
 │   │   ├── i18n_engine.rs      # 命名空间翻译、动态语言切换
 │   │   ├── log_engine.rs       # 生产者-消费者异步日志引擎、LogBridge 桥接器
-│   │   └── log_writer.rs       # 日志文件写入器、text/hex/dual 格式化、自动分卷
+│   │   ├── log_writer.rs       # 日志文件写入器、text/hex/dual 格式化、自动分卷
+│   │   ├── comm_handle.rs      # 通信抽象 trait（CommHandle），使脚本引擎协议无关
+│   │   └── script_engine/      # Lua 5.4 脚本运行时（VM + 代码生成 + API 注入 + 沙箱）
 │   │
 │   ├── channel/                # I/O 通道抽象层
 │   │   ├── mod.rs              # Channel trait 定义
 │   │   ├── serial_channel.rs   # 串口 Channel 实现
 │   │   ├── tcp_channel.rs      # TCP Channel 实现
 │   │   ├── io_loop.rs          # 协议无关 I/O 循环引擎（sync + async）
+│   │   ├── serial_comm.rs      # CommHandle 串口适配实现
 │   │   └── error.rs            # SessionError 结构化错误
 │   │
 │   ├── transfer/               # 传输子系统
@@ -305,7 +311,7 @@ TauTerm/
 │   ├── components/             # UI 组件
 │   │   ├── Layout/             # TitleBar, Toolbar, Sidebar, StatusBar, ConnectDialog, ResizeHandle, GoogleGlowBackground
 │   │   ├── CommandPalette/     # 命令面板
-│   │   ├── SendBar/            # 发送栏（基础发送 + 指令面板、循环执行、后台运行、导入/导出）
+│   │   ├── SendBar/            # 发送栏（基础发送 + 指令面板 + 自动应答 + 脚本编辑器）
 │   │   ├── Transmission/       # 传输侧面板（协议配置 + 发送/接收 + 进度）
 │   │   ├── RightSidebar/       # 右侧栏容器（可折叠面板 + ResizeObserver 动画）
 │   │   ├── Tools/              # 嵌入式开发工具（校验和/编码/位操作/协议解析）
@@ -648,6 +654,7 @@ npm run tauri build
 - [x] 虚拟串口桥接
 - [x] 嵌入式开发工具（校验和/编码/位操作/协议解析）
 - [x] 自定义快捷键面板
+- [x] 脚本引擎 (Lua 5.4, per-session VM, 自动应答, 代码生成)
 
 ### v0.4 — 网络协议
 - [ ] SSH 插件（密码/密钥/agent 认证、known_hosts）

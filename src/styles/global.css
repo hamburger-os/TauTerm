@@ -155,6 +155,7 @@ body {
    5. 液态玻璃按钮
    ========================================== */
 .liquid-glass-button {
+  color: var(--text-primary);
   background: var(--glass-button-bg);
   border: 1px solid var(--glass-button-border);
   border-radius: var(--radius-md);
@@ -353,6 +354,7 @@ body {
 
 .liquid-primary-button:disabled {
   background: var(--glass-button-bg);
+  border-color: var(--glass-button-border);
   color: var(--text-muted);
   animation: none;
   box-shadow: none;

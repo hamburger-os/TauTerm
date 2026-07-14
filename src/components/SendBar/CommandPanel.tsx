@@ -1,8 +1,10 @@
 import { useState, useCallback, useEffect, useMemo, useRef, Fragment } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useSession } from "../../context/SessionContext";
+import { useToast } from "../../context/ToastContext";
 import { useSendBar } from "./SendBarContext";
 import Icon from "../common/Icon";
 import CommandEditorModal from "./CommandEditorModal";
@@ -44,6 +46,7 @@ function saveConfigs(configs: CommandConfig[]) {
 
 export default function CommandPanel({ sessionId, isActive, onRunningChange }: CommandPanelProps) {
   const { t } = useTranslation();
+  const { showToast } = useToast();
   const { sendData, state } = useSession();
   const activeTab = state.tabs.find(tab => tab.id === sessionId);
   const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
@@ -80,7 +83,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   // 命令集管理
-  const [renameActive, setRenameActive] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [configDeleteConfirm, setConfigDeleteConfirm] = useState(false);
 
@@ -132,13 +135,13 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
 
   const handleRenameStart = useCallback(() => {
     setRenameValue(activeConfig?.name ?? "");
-    setRenameActive(true);
+    setRenameOpen(true);
   }, [activeConfig]);
 
   const handleRenameConfirm = useCallback(() => {
     const newName = renameValue.trim();
     if (!newName || newName === activeConfigName) {
-      setRenameActive(false);
+      setRenameOpen(false);
       return;
     }
     setConfigs(prev => {
@@ -150,15 +153,14 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     });
     setActiveConfigName(newName);
     localStorage.setItem(STORAGE_KEY_ACTIVE, newName);
-    setRenameActive(false);
+    setRenameOpen(false);
   }, [renameValue, activeConfigName]);
 
   const handleRenameCancel = useCallback(() => {
-    setRenameActive(false);
+    setRenameOpen(false);
   }, []);
 
   const handleDeleteConfig = useCallback(() => {
-    if (configs.length <= 1) return;
     if (!configDeleteConfirm) {
       setConfigDeleteConfirm(true);
       return;
@@ -169,11 +171,17 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       saveConfigs(next);
       return next;
     });
-    // 切换到第一个剩余的命令集
+    // 切换到第一个剩余的命令集；若已删空则清空当前引用
     const remaining = configs.filter(c => c.name !== activeConfigName);
     if (remaining.length > 0) {
       setActiveConfigName(remaining[0].name);
       localStorage.setItem(STORAGE_KEY_ACTIVE, remaining[0].name);
+    } else {
+      // 删除最后一个命令集：清空活动引用与命令，避免 activeConfig 悬空
+      setActiveConfigName("");
+      localStorage.removeItem(STORAGE_KEY_ACTIVE);
+      setCommands([]);
+      setDefaultDelay(500);
     }
     setConfigDeleteConfirm(false);
     if (runner.isRunning) runner.stop();
@@ -181,11 +189,10 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
 
   const handleAddConfig = useCallback(() => {
     // 生成唯一名称
-    let baseName = t("commandPanel.newConfigName") || "新命令集";
-    let newName = baseName;
+    let newName = t("commandPanel.newConfigName", { n: 1 });
     let counter = 2;
     while (configs.some(c => c.name === newName)) {
-      newName = `${baseName} (${counter})`;
+      newName = t("commandPanel.newConfigName", { n: counter });
       counter++;
     }
     const newConfig: CommandConfig = {
@@ -203,7 +210,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     localStorage.setItem(STORAGE_KEY_ACTIVE, newName);
     setConfigDeleteConfirm(false);
     if (runner.isRunning) runner.stop();
-  }, [configs, runner, t]);
+  }, [configs, runner]);
 
   // 重置删除确认（切换焦点时）
   useEffect(() => {
@@ -408,8 +415,27 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       localStorage.setItem(STORAGE_KEY_ACTIVE, importName);
     } catch (e) {
       console.error("导入失败:", e);
+      showToast("error", t("commandPanel.importFailed"));
     }
-  }, [configs]);
+  }, [configs, showToast, t]);
+
+  // ── 加载内置示例 ──
+  const handleLoadExamples = useCallback(() => {
+    setConfigs(prev => {
+      const existingNames = new Set(prev.map(c => c.name));
+      if (existingNames.has(defaultCommands.name)) {
+        showToast("info", t("sendBar.noNewExamples"));
+        return prev;
+      }
+      const newConfig = { ...defaultCommands, name: defaultCommands.name } as CommandConfig;
+      const updated = [...prev, newConfig];
+      saveConfigs(updated);
+      setActiveConfigName(defaultCommands.name);
+      localStorage.setItem(STORAGE_KEY_ACTIVE, defaultCommands.name);
+      showToast("success", t("sendBar.examplesLoaded", { count: 1 }));
+      return updated;
+    });
+  }, [showToast, t]);
 
   const handleExport = useCallback(async () => {
     try {
@@ -427,8 +453,9 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       await writeTextFile(selected, JSON.stringify(config, null, 2));
     } catch (e) {
       console.error("导出失败:", e);
+      showToast("error", t("commandPanel.exportFailed"));
     }
-  }, [activeConfig, defaultDelay, commands]);
+  }, [activeConfig, defaultDelay, commands, showToast, t]);
 
   const handleDelayChange = useCallback((id: string, newDelay: number) => {
     setCommands(prev => {
@@ -448,42 +475,11 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       <div className={styles.toolbar}>
         {/* 左侧：命令集管理 */}
         <div className={styles.configActions}>
-          {renameActive ? (
-            <div className={styles.renameArea}>
-              <input
-                className={styles.renameInput}
-                value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") handleRenameConfirm();
-                  if (e.key === "Escape") handleRenameCancel();
-                }}
-                placeholder={t("commandPanel.renamePlaceholder") || "输入新名称"}
-                autoFocus
-                disabled={runner.isRunning}
-              />
-              <button
-                className={styles.renameConfirmBtn}
-                onClick={handleRenameConfirm}
-                disabled={runner.isRunning}
-              >
-                <Icon name="check-plain" size="xs" />
-              </button>
-              <button
-                className={styles.renameCancelBtn}
-                onClick={handleRenameCancel}
-                disabled={runner.isRunning}
-              >
-                <Icon name="close" size="xs" />
-              </button>
-            </div>
-          ) : (
-            <>
               <select
                 className={`${styles.configSelect} liquid-glass-input liquid-glass-select`}
                 value={activeConfigName}
                 onChange={(e) => handleConfigChange(e.target.value)}
-                title={t("commandPanel.switchConfig") || "切换命令集"}
+                title={t("commandPanel.switchConfig")}
                 disabled={runner.isRunning}
               >
                 {configs.map(c => (
@@ -491,60 +487,84 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
                 ))}
               </select>
               <button
-                className={styles.configBtn}
-                onClick={handleRenameStart}
-                title={t("commandPanel.renameConfig") || "重命名"}
-                disabled={runner.isRunning}
-              >
-                <Icon name="edit" size="xs" />
-              </button>
-              <button
-                className={`${styles.configBtn} ${configs.length > 1 ? styles.configBtnDanger : ""}`}
-                onClick={handleDeleteConfig}
-                title={configDeleteConfirm
-                  ? (t("commandPanel.deleteConfigConfirm") || "确认删除此命令集？")
-                  : (t("commandPanel.deleteConfig") || "删除命令集")}
-                disabled={runner.isRunning || configs.length <= 1}
-              >
-                {configDeleteConfirm ? <Icon name="warning" size="xs" /> : <Icon name="trash" size="xs" />}
-              </button>
-              <button
-                className={styles.configBtn}
+                className={`${styles.configBtn} liquid-glass-button`}
                 onClick={handleAddConfig}
-                title={t("commandPanel.newConfig") || "新建命令集"}
+                title={t("sendBar.new")}
                 disabled={runner.isRunning}
               >
-                <Icon name="plus" size="xs" />
+                <Icon name="plus" size="sm" />
               </button>
-            </>
-          )}
+              <button
+                className={`${styles.configBtn} liquid-glass-button`}
+                onClick={handleRenameStart}
+                title={t("sendBar.rename")}
+                disabled={runner.isRunning}
+              >
+                <Icon name="edit" size="sm" />
+              </button>
+              {configDeleteConfirm ? (
+                <div className={styles.configConfirm}>
+                  <button
+                    className={`${styles.configBtn} liquid-glass-button ${styles.configBtnDanger}`}
+                    onClick={handleDeleteConfig}
+                    title={t("commandPanel.deleteConfigConfirm")}
+                  >
+                    <Icon name="warning" size="sm" />
+                    <span className={styles.deleteHint}>{t("sendBar.confirmDeleteHint")}</span>
+                  </button>
+                  <button
+                    className={`${styles.configBtn} liquid-glass-button`}
+                    onClick={() => setConfigDeleteConfirm(false)}
+                    title={t("common.cancel")}
+                  >
+                    <Icon name="close" size="sm" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className={`${styles.configBtn} liquid-glass-button ${styles.configBtnDanger}`}
+                  onClick={handleDeleteConfig}
+                  title={t("sendBar.delete")}
+                  disabled={runner.isRunning || configs.length === 0}
+                >
+                  <Icon name="trash" size="sm" />
+                </button>
+              )}
         </div>
 
         {/* 右侧：导入/导出/新增命令 */}
         <div className={styles.toolbarActions}>
           <button
             className={`${styles.toolBtn} liquid-glass-button`}
-            onClick={handleImport}
-            title={t("commandPanel.import") || "导入"}
+            onClick={handleLoadExamples}
+            title={t("sendBar.loadBuiltinExamples")}
             disabled={runner.isRunning}
           >
-            {t("commandPanel.import") || "导入"}
+            {t("sendBar.loadBuiltinExamples")}
+          </button>
+          <button
+            className={`${styles.toolBtn} liquid-glass-button`}
+            onClick={handleImport}
+            title={t("commandPanel.import")}
+            disabled={runner.isRunning}
+          >
+            {t("commandPanel.import")}
           </button>
           <button
             className={`${styles.toolBtn} liquid-glass-button`}
             onClick={handleExport}
-            title={t("commandPanel.export") || "导出"}
+            title={t("commandPanel.export")}
             disabled={runner.isRunning}
           >
-            {t("commandPanel.export") || "导出"}
+            {t("commandPanel.export")}
           </button>
           <button
             className={`${styles.toolBtn} liquid-glass-button`}
             onClick={handleAdd}
-            title={t("commandPanel.addCommand") || "新增命令"}
+            title={t("commandPanel.addCommand")}
             disabled={runner.isRunning}
           >
-            + {t("commandPanel.addCommand") || "新增命令"}
+            + {t("commandPanel.addCommand")}
           </button>
         </div>
       </div>
@@ -554,9 +574,13 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
         ref={listRef}
         className={`${styles.commandList} ${isDragging ? styles.listDragging : ""}`}
       >
-        {commands.length === 0 && (
+        {configs.length === 0 ? (
           <div className={styles.empty}>
-            {t("commandPanel.empty") || "暂无命令，点击「+ 新增命令」添加"}
+            {t("commandPanel.noConfigs")}
+          </div>
+        ) : commands.length === 0 && (
+          <div className={styles.empty}>
+            {t("commandPanel.empty")}
           </div>
         )}
         {commands.map((cmd, i) => {
@@ -575,7 +599,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
                 {/* 拖拽把手 — 指针事件驱动拖拽 */}
                 <span
                   className={styles.dragHandle}
-                  title={t("commandPanel.dragToReorder") || "拖拽排序"}
+                  title={t("commandPanel.dragToReorder")}
                   onPointerDown={(e) => handlePointerDown(e, i)}
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
@@ -597,8 +621,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
                 </label>
                 <code
                   className={styles.commandText}
-                  title={t("commandPanel.doubleClickToEdit") || "双击编辑"}
-                  onDoubleClick={() => !runner.isRunning && handleEdit(cmd)}
+                  title={cmd.command}
                 >
                   {cmd.command}
                 </code>
@@ -611,14 +634,23 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
                   min={0}
                   max={60000}
                   step={100}
-                  title={t("commandPanel.delay") || "延时 (ms)"}
+                  title={t("commandPanel.delay")}
                   disabled={runner.isRunning}
                 />
                 <span className={styles.delayUnit}>ms</span>
 
+                <button
+                  className={`${styles.editBtn} liquid-glass-button`}
+                  onClick={() => handleEdit(cmd)}
+                  title={t("sendBar.edit")}
+                  disabled={runner.isRunning}
+                >
+                  <Icon name="edit" size="sm" />
+                </button>
+
                 {confirming ? (
                   <div className={styles.confirmBox}>
-                    <span className={styles.confirmText}>{t("commandPanel.confirmDelete") || "确认删除?"}</span>
+                    <span className={styles.confirmText}>{t("commandPanel.confirmDelete")}</span>
                     <button
                       className={`${styles.confirmBtn} liquid-glass-button`}
                       onClick={() => handleDeleteConfirmed(cmd.id)}
@@ -636,10 +668,10 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
                   <button
                     className={`${styles.deleteBtn} liquid-glass-button`}
                     onClick={() => setDeleteConfirmId(cmd.id)}
-                    title={t("common.delete") || "删除"}
+                    title={t("common.delete")}
                     disabled={runner.isRunning}
                   >
-                    <Icon name="trash" size="xs" />
+                    <Icon name="trash" size="sm" />
                   </button>
                 )}
               </div>
@@ -654,6 +686,13 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
 
       {/* 控制栏 */}
       <div className={styles.controlBar}>
+        <span className={styles.status}>
+          <Icon name={runner.isRunning ? "status-connected" : "status-idle"} size={10} />
+          {runner.isRunning ? (t("sendBar.running")) : (t("sendBar.idle"))}
+        </span>
+
+        <div className={styles.controlSep} />
+
         <label className={styles.controlLabel}>
           <input
             type="checkbox"
@@ -663,7 +702,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
             disabled={runner.isRunning}
           />
           <div className={styles.checkTrack} />
-          <span>{t("commandPanel.selectAll") || "全选"}</span>
+          <span>{t("commandPanel.selectAll")}</span>
         </label>
 
         <div className={styles.controlSep} />
@@ -704,13 +743,13 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
           disabled={!isConnected || selectedIds.size === 0}
           title={
             runner.isRunning
-              ? (t("commandPanel.stopExecution") || "停止执行")
-              : (t("commandPanel.start") || "开始执行")
+              ? (t("commandPanel.stopExecution"))
+              : (t("commandPanel.start"))
           }
         >
           {runner.isRunning
-            ? <><Icon name="stop" size="xs" /> {t("commandPanel.stopExecution") || "停止执行"}</>
-            : <><Icon name="play" size="xs" /> {t("commandPanel.start") || "开始执行"}</>
+            ? <><Icon name="stop" size="xs" /> {t("commandPanel.stopExecution")}</>
+            : <><Icon name="play" size="xs" /> {t("commandPanel.start")}</>
           }
         </button>
       </div>
@@ -722,6 +761,36 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
         onSave={handleSaveCommand}
         onClose={() => setEditorOpen(false)}
       />
+
+      {/* 重命名弹窗 */}
+      {renameOpen && createPortal(
+        <div className={`${styles.modalOverlay} glass-overlay`} onClick={handleRenameCancel}>
+          <div className={`${styles.renameModal} liquid-glass`} onClick={e => e.stopPropagation()}>
+            <h3 className={styles.renameModalTitle}>{t("sendBar.renameTitle")}</h3>
+            <input
+              className={`${styles.renameModalInput} liquid-glass-input`}
+              type="text"
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") handleRenameConfirm();
+                else if (e.key === "Escape") handleRenameCancel();
+              }}
+              placeholder={t("sendBar.renamePlaceholder")}
+              autoFocus
+            />
+            <div className={styles.renameModalBtns}>
+              <button className={`${styles.renameModalCancelBtn} liquid-glass-button`} onClick={handleRenameCancel}>
+                {t("sendBar.cancel")}
+              </button>
+              <button className={`${styles.renameModalSaveBtn} liquid-primary-button`} onClick={handleRenameConfirm} disabled={!renameValue.trim()}>
+                {t("sendBar.save")}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

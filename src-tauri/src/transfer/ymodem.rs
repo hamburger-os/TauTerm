@@ -116,7 +116,7 @@ fn ymodem_send(
     cancel: &mut dyn FnMut() -> bool,
 ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
     let total_files = files.len() as u32;
-    let user_block_size = config.block_size.max(BLOCK0_SIZE).min(DATA_BLOCK_SIZE);
+    let user_block_size = config.block_size.clamp(BLOCK0_SIZE, DATA_BLOCK_SIZE);
 
     // ── 阶段 1: 等待接收方 CRC/校验和/流模式请求 ──
     // 对齐 lrzsz getnak(): 'C' = CRC-16, NAK = 校验和, 'G' = YMODEM-g 流模式

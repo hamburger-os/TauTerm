@@ -598,11 +598,53 @@ A 3D icon of three vertical parallel rounded capsule bars, pure black background
 
 ---
 
+### 45. robot — 自动应答/AI 助手
+
+**中文提示词：**
+一个液态玻璃风格的机器人/AI 图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个圆角方形头部（象征机器人头部/AI 助手），内部有两条水平的短横线（象征"眼睛"或"传感器"），头像顶部有两条V形圆角天线向外展开。天线和头部全部使用粗壮圆润的胶囊描边，所有转角大圆角。风格参考：磨砂玻璃质感、液态胶囊描边、AI/自动回复图标。
+
+**English prompt:**
+A liquid glass style robot/AI icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a rounded square head shape (representing a robot head / AI assistant), with two short horizontal rounded capsule bars inside (representing "eyes" or sensors), and two V-shaped rounded antennae expanding outward from the top. The antennae and head all use thick, plump capsule strokes, all corners heavily rounded. Style reference: frosted glass texture, liquid pill strokes, AI/auto-reply icon.
+
+**使用位置：** `src/assets/icons/robot.png` — 发送栏自动应答模式切换按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 46. code — 代码/脚本编辑
+
+**中文提示词：**
+一个液态玻璃风格的代码/脚本图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个简约的尖括号符号 `< >` 的变体 — 左侧为一个粗壮的圆角"<"形（由两条短线以约60°相交），右侧为一个对称的粗壮圆角">"形，中间留适度间距。整体形成"代码标签"的视觉意象。所有线段端点半圆形，转交大圆角。在 18×18px 小尺寸下仍可辨识为编程/代码含义。风格参考：磨砂玻璃质感、液态胶囊描边、编程/代码符号。
+
+**English prompt:**
+A liquid glass style code/script icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a minimalist angle bracket symbol `< >` — a thick rounded "<" shape on the left (two short strokes meeting at approximately 60°), and a symmetric thick rounded ">" shape on the right, with moderate spacing between them. Forms a "code tag" visual metaphor. All stroke ends are half-circles, all corners heavily rounded. Must remain recognizable as programming/code at 18×18px. Style reference: frosted glass texture, liquid pill strokes, programming/code symbol.
+
+**使用位置：** `src/assets/icons/code.png` — 发送栏脚本编辑器模式切换按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 47. chevron-right — 右箭头/面板展开
+
+**中文提示词：**
+一个液态玻璃风格的向右箭头/三角图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个粗壮的指向右侧的 V 形/人字形，两条线段以约90°在右尖点相交，尖点为大圆角，两个左端点为饱满的半圆形。线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边、右箭头符号。
+
+**English prompt:**
+A liquid glass style chevron-right arrow icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick V/chevron shape pointing right, two line segments meeting at approximately 90° at the right point, the right point is heavily rounded, both left endpoints are plump half-circles. Strokes thick and even. Style reference: frosted glass texture, liquid pill strokes, right arrow symbol.
+
+**使用位置：** `src/assets/icons/chevron-right.png` — 脚本编辑器输出面板展开按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
 ## 生成后检查清单 / Post-Generation Checklist
 
 ### 图标质量
 
-- [ ] 所有 44 个图标风格统一（描边粗细、圆角程度、视觉密度）
+- [ ] 所有 47 个图标风格统一（描边粗细、圆角程度、视觉密度）
 - [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
 - [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
 - [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI
@@ -610,7 +652,7 @@ A 3D icon of three vertical parallel rounded capsule bars, pure black background
 
 ### 部署
 
-1. 将所有 43 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
+1. 将所有 47 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
 2. 运行部署脚本，一键将 logo 同步到 App 图标位置：
 
 ```bash

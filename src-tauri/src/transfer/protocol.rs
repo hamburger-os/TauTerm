@@ -64,7 +64,7 @@ pub fn create_protocol(
             Some(Box::new(crate::transfer::ymodem::YModem::default()))
         }
         TransferProtocolType::XModem => {
-            Some(Box::new(crate::transfer::xmodem::XModem::default()))
+            Some(Box::new(crate::transfer::xmodem::XModem))
         }
         TransferProtocolType::ZModem => {
             Some(Box::new(crate::transfer::zmodem::ZModem::default()))

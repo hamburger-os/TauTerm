@@ -10,6 +10,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::channel::Channel;
 use crate::channel::io_loop::IoLoopCmd;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus};
+use crate::kernel::script_engine::codegen::{hex_to_bytes, interpret_escape_sequences};
+use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use crate::kernel::plugin_adapter::{ProtocolAdapter, TransferProtocolType};
 use crate::kernel::session_store::{SessionState, SessionStore};
 use crate::virtual_port::bridge::VirtualPortBridge;
@@ -109,7 +111,9 @@ pub fn enumerate_endpoints(
 
 // ── 命令：会话连接 ──────────────────────────────────
 
+/// TODO: 升级 Tauri v2 → v3 后，将多个参数收束为请求结构体
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn connect_session(
     app: AppHandle,
     state: State<AppState>,
@@ -139,7 +143,12 @@ pub fn connect_session(
     }
 }
 
+/// TODO: 将串口连接参数收束为 ConnectParams 结构体，消除过多参数
+/// BridgeChannel = (tx, rx) 类型别名
+type BridgeChannel = (std::sync::mpsc::SyncSender<Vec<u8>>, std::sync::mpsc::Receiver<Vec<u8>>);
+
 /// 串口会话连接（新架构：SerialAdapter → Channel → SessionStore）
+#[allow(clippy::too_many_arguments)]
 fn connect_session_serial(
     app: AppHandle,
     state: State<AppState>,
@@ -186,10 +195,7 @@ fn connect_session_serial(
 
     // 桥接数据通道 (容量 256): 物理端口数据 → 虚拟端口桥接线程
     // 仅在虚拟串口启用时创建，避免不必要的通道分配
-    let mut bridge: Option<(
-        std::sync::mpsc::SyncSender<Vec<u8>>,
-        std::sync::mpsc::Receiver<Vec<u8>>,
-    )> = if virtual_enabled {
+    let mut bridge: Option<BridgeChannel> = if virtual_enabled {
         let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(BRIDGE_DATA_CHANNEL_CAPACITY);
         Some((tx, rx))
     } else {
@@ -220,6 +226,8 @@ fn connect_session_serial(
         if let Some(ref tx) = bridge_tx {
             let _ = tx.try_send(data);
         }
+        // 数据推送至脚本引擎由 CommHandle::notify_receive() 统一扇出，
+        // 脚本引擎通过 CommHandle::on_receive() 注册回调接收数据
     });
 
     let app_disconnect = app.clone();
@@ -634,8 +642,9 @@ pub fn load_sessions(
 
 // ── 会话配置命令 ─────────────────────────────────────
 
-/// 保存会话配置（不打开端口，仅持久化配置）
+/// TODO: 升级 Tauri v2 → v3 后，将多个参数收束为请求结构体
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn save_session_config(
     app: AppHandle,
     _state: State<AppState>,
@@ -702,6 +711,7 @@ pub fn delete_session_config(
 
 /// X/Y/ZModem 发送文件（带协议选择 + YMODEM 可选配置）
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn send_files(
     app: AppHandle,
     state: State<AppState>,
@@ -718,6 +728,7 @@ pub fn send_files(
 }
 
 /// 发送文件内部实现
+#[allow(clippy::too_many_arguments)]
 fn send_files_internal(
     app: AppHandle,
     state: State<AppState>,
@@ -753,6 +764,7 @@ fn send_files_internal(
 
 /// X/Y/ZModem 接收文件（带协议选择 + YMODEM 可选配置）
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn receive_files(
     app: AppHandle,
     state: State<AppState>,
@@ -769,6 +781,7 @@ pub fn receive_files(
 }
 
 /// 接收文件内部实现
+#[allow(clippy::too_many_arguments)]
 fn receive_files_internal(
     app: AppHandle,
     state: State<AppState>,
@@ -1231,6 +1244,7 @@ pub fn clear_all_logs(
 // ── 协议无关的传输辅助函数 ──────────────────────────
 
 /// 通过 TransferProtocol trait 发送文件
+#[allow(clippy::too_many_arguments)]
 fn transfer_send(
     port: &mut Box<dyn serialport::SerialPort>,
     app: AppHandle,
@@ -1333,6 +1347,7 @@ fn transfer_send(
 }
 
 /// 通过 TransferProtocol trait 接收文件
+#[allow(clippy::too_many_arguments)]
 fn transfer_receive(
     port: &mut Box<dyn serialport::SerialPort>,
     app: AppHandle,
@@ -1563,4 +1578,194 @@ pub fn cleanup_virtual_ports(
             }
         }
     }
+}
+
+// ── 脚本引擎命令 ────────────────────────────────────
+
+/// 启动会话的脚本引擎
+///
+/// 首次调用创建 Lua VM 线程，后续调用热加载新脚本代码。
+#[tauri::command]
+pub fn start_script_engine(
+    app: AppHandle,
+    state: State<AppState>,
+    session_id: String,
+    code: String,
+) -> Result<(), String> {
+    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+    store.start_script(&session_id, &code, app)
+}
+
+/// 停止会话的脚本引擎
+#[tauri::command]
+pub fn stop_script_engine(
+    state: State<AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+    store.stop_script(&session_id)
+}
+
+/// 将自动应答规则列表编译为 Lua 脚本代码
+#[tauri::command]
+pub fn rules_to_script(
+    rules: Vec<crate::kernel::script_engine::codegen::AutoReplyRule>,
+    name: String,
+    match_strategy: String,
+) -> String {
+    crate::kernel::script_engine::codegen::rules_to_lua_script(&rules, &name, &match_strategy)
+}
+
+/// 测试匹配表达式
+///
+/// 对应前端 MatchTester 组件，支持全部 5 种匹配模式。
+/// `match_format` 为 "hex" 时，pattern 被视为十六进制字符串进行字节级匹配。
+#[tauri::command]
+pub fn test_match(
+    pattern: String,
+    mode: String,
+    test_data: String,
+    case_sensitive: bool,
+    match_format: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let is_hex = match_format.as_deref() == Some("hex");
+    // 解释测试数据中的转义序列（\r \n \t \0 \\），保持与脚本引擎行为一致
+    let test_data = if is_hex {
+        hex_to_bytes(&test_data)?
+    } else {
+        interpret_escape_sequences(&test_data).into_bytes()
+    };
+    let test_data_str = if is_hex {
+        None
+    } else {
+        Some(String::from_utf8_lossy(&test_data).to_string())
+    };
+    match mode.as_str() {
+        "regex" => test_match_regex(&pattern, &test_data, test_data_str.as_deref(), is_hex),
+        "lua_pattern" => test_match_lua_pattern(&pattern, test_data_str.as_deref()),
+        _ => test_match_text(&pattern, mode.as_str(), &test_data, case_sensitive, is_hex),
+    }
+}
+
+/// 正则匹配测试
+fn test_match_regex(
+    pattern: &str,
+    test_data: &[u8],
+    test_data_str: Option<&str>,
+    is_hex: bool,
+) -> Result<serde_json::Value, String> {
+    let regex_data = if is_hex {
+        String::from_utf8_lossy(test_data).to_string()
+    } else {
+        test_data_str.unwrap_or("").to_string()
+    };
+    let re = regex::Regex::new(pattern)
+        .map_err(|e| format!("正则语法错误: {}", e))?;
+    let matched = if regex_data.is_empty() { None } else { Some(re.is_match(&regex_data)) };
+    let groups: Vec<String> = if !regex_data.is_empty() {
+        re.captures(&regex_data)
+            .map(|caps| caps.iter()
+                .map(|c| c.map(|m| m.as_str().to_string()).unwrap_or_default())
+                .collect())
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+    Ok(serde_json::json!({
+        "valid": true,
+        "matched": matched,
+        "groups": groups,
+    }))
+}
+
+/// 文本/HEX 匹配测试（contains / equals / starts_with）
+fn test_match_text(
+    pattern: &str,
+    mode: &str,
+    test_data: &[u8],
+    case_sensitive: bool,
+    is_hex: bool,
+) -> Result<serde_json::Value, String> {
+    let pat_bytes = if is_hex {
+        hex_to_bytes(pattern)?
+    } else {
+        interpret_escape_sequences(pattern).into_bytes()
+    };
+    if is_hex {
+        let matched = if test_data.is_empty() {
+            None
+        } else {
+            Some(match mode {
+                "contains" => test_data.windows(pat_bytes.len()).any(|w| w == pat_bytes.as_slice()),
+                "equals" => *test_data == pat_bytes,
+                "starts_with" => test_data.starts_with(&pat_bytes),
+                _ => return Err(format!("未知匹配模式: {}", mode)),
+            })
+        };
+        Ok(serde_json::json!({
+            "valid": true,
+            "matched": matched,
+            "groups": [],
+        }))
+    } else {
+        let pat_str = String::from_utf8_lossy(&pat_bytes).to_string();
+        let data_str = String::from_utf8_lossy(test_data).to_string();
+        let (data, pat) = if case_sensitive {
+            (data_str.clone(), pat_str.clone())
+        } else {
+            (data_str.to_lowercase(), pat_str.to_lowercase())
+        };
+        let matched = if data_str.is_empty() {
+            None
+        } else {
+            Some(match mode {
+                "contains" => data.contains(&pat),
+                "equals" => data == pat,
+                "starts_with" => data.starts_with(&pat),
+                _ => return Err(format!("未知匹配模式: {}", mode)),
+            })
+        };
+        Ok(serde_json::json!({
+            "valid": true,
+            "matched": matched,
+            "groups": [],
+        }))
+    }
+}
+
+/// Lua pattern 匹配测试
+///
+/// 使用沙箱化 Lua VM + 安全传值（create_string / globals.set），
+/// 避免字符串插值注入的代码执行风险。VM 已移除 os/io/require 等危险模块。
+fn test_match_lua_pattern(
+    pattern: &str,
+    test_data_str: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let data_str = test_data_str.unwrap_or("");
+    if data_str.is_empty() {
+        return Ok(serde_json::json!({
+            "valid": true,
+            "matched": null,
+            "groups": [],
+        }));
+    }
+    let lua = create_sandboxed_lua()
+        .map_err(|e| format!("创建测试 VM 失败: {}", e))?;
+    lua.globals()
+        .set("__test_data", lua.create_string(data_str.as_bytes())
+            .map_err(|e| format!("Lua 传值失败: {}", e))?)
+        .map_err(|e| format!("Lua 传值失败: {}", e))?;
+    lua.globals()
+        .set("__test_pattern", lua.create_string(pattern.as_bytes())
+            .map_err(|e| format!("Lua 传值失败: {}", e))?)
+        .map_err(|e| format!("Lua 传值失败: {}", e))?;
+    let matched: bool = lua
+        .load(r#"return string.find(__test_data, __test_pattern) ~= nil"#)
+        .eval()
+        .unwrap_or(false);
+    Ok(serde_json::json!({
+        "valid": true,
+        "matched": Some(matched),
+        "groups": [],
+    }))
 }

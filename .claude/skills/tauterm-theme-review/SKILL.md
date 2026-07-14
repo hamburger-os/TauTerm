@@ -257,6 +257,8 @@ These 7 surfaces use the `className={styles.xxx + ' liquid-glass'}` pattern — 
 - `StatusBar.tsx` (StatusBar.module.css)
 - `TerminalView.tsx` (Terminal.module.css — the viewport container)
 - `SendBar.tsx` (SendBar.module.css)
+- `AutoReplyPanel.tsx` (AutoReplyPanel.module.css) — nested inside SendBar liquid-glass surface
+- `ScriptEditor.tsx` (ScriptEditor.module.css) — nested inside SendBar liquid-glass surface
 - `TransmissionPanel.tsx` (TransmissionPanel.module.css)
 
 ### Inner Card Surfaces (use `.liquid-glass-card` or Mini-Card pattern)
@@ -296,6 +298,11 @@ These elements have `position: absolute` or `position: fixed` and must inline gl
 | `ContextMenu` | `ContextMenu.module.css` | `fixed` |
 | `SearchBar` | `SearchBar.module.css` | `absolute` |
 | `SendBar` history dropdown | `SendBar.module.css` | `absolute` |
+| `AutoReplyRuleEditor` modal | `AutoReplyRuleEditor.module.css` | `fixed` (createPortal) |
+| `AutoReplyPanel` rename/import modals | `AutoReplyPanel.module.css` | `fixed` (createPortal) |
+| `ScriptEditor` rename/import modals | `ScriptEditor.module.css` | `fixed` (createPortal) |
+| `MacroPicker` dropdown | `AutoReplyRuleEditor.module.css` | `absolute` |
+| `MatchTester` regex panel | `AutoReplyRuleEditor.module.css` | `absolute` (inside modal) |
 | `ConnectDialog` mode badges | `ConnectDialog.module.css` | `absolute` |
 | `ScrollToBottomButton` | `ScrollToBottomButton.module.css` | `absolute` |
 

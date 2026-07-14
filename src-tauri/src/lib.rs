@@ -264,6 +264,10 @@ pub fn run() {
             commands::install_virtual_port_driver,
             commands::check_virtual_port_driver,
             commands::cleanup_virtual_ports,
+            commands::start_script_engine,
+            commands::stop_script_engine,
+            commands::rules_to_script,
+            commands::test_match,
         ])
         .build(tauri::generate_context!())
         .expect("启动 TauTerm 时发生错误")
@@ -272,7 +276,7 @@ pub fn run() {
                 if let Some(state) = app_handle.try_state::<AppState>() {
                     // 1. 关闭所有活跃会话（释放串口 + 关闭桥接线程）
                     if let Ok(mut store) = state.session_store.lock() {
-                        let ids: Vec<String> = store.tab_ids().iter().cloned().collect();
+                        let ids: Vec<String> = store.tab_ids().to_vec();
                         for id in &ids {
                             if let Err(e) = store.close_session(id) {
                                 log::warn!("退出时关闭会话 {} 失败: {}", id, e);

@@ -62,7 +62,7 @@ pub struct VirtualPortManager {
 
 fn normalize_windows_path(path: &std::path::Path) -> PathBuf {
     let s = path.to_string_lossy();
-    if s.starts_with(r"\\?\") { PathBuf::from(&s[4..]) } else { path.to_path_buf() }
+    if let Some(stripped) = s.strip_prefix(r"\\?\") { PathBuf::from(stripped) } else { path.to_path_buf() }
 }
 
 /// 统一权限不足检测 — 同时用于 `Err(String)`（spawn 失败）和
@@ -368,7 +368,7 @@ impl VirtualPortManager {
             return Err("com0com driver files missing".into());
         }
 
-        let count = config.count.clamp(1, 4) as u32;
+        let count = config.count.clamp(1, 4);
 
         // ── Pre-query com0com driver internal state ──
         // setupc list is a read-only operation, no admin required.
@@ -524,7 +524,7 @@ impl VirtualPortManager {
             return Err("com0com driver files missing".into());
         }
 
-        let count = config.count.clamp(1, 4) as u32;
+        let count = config.count.clamp(1, 4);
 
         // ── Pre-query com0com driver internal state ──
         let (com0com_ports, driver_max_bus, driver_buses) = self.query_driver_state();

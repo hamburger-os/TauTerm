@@ -228,7 +228,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
           onKeyDown={handleKeyDown}
           placeholder={
             isConnected
-              ? sendMode === "hex" ? "FF 01 02..." : (t("sendBar.placeholder") || "Type data to send...")
+              ? sendMode === "hex" ? "FF 01 02..." : (t("sendBar.placeholder"))
               : t("sendBar.disconnected")
           }
           disabled={!isConnected}
@@ -237,103 +237,102 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
         />
       </div>
 
-      {/* 3 行控件区 */}
+      {/* 底部单行控件栏 */}
       <div className={styles.controls}>
-        {/* Row 1: 换行符选择 + 发送模式切换 */}
-        <div className={styles.controlsRow1}>
-          <div className={styles.dropdown}>
-            <select
-              className={`${styles.select} liquid-glass-input liquid-glass-select`}
-              value={newlineMode}
-              onChange={(e) => dispatch({ type: "SET_NEWLINE_MODE", mode: e.target.value as NewlineMode })}
-              title={t("sendBar.appendNewline")}
-              disabled={!isConnected || sendMode === "hex"}
-            >
-              <option value="crlf">{t("sendBar.newline_crlf")}</option>
-              <option value="lf">{t("sendBar.newline_lf")}</option>
-              <option value="cr">{t("sendBar.newline_cr")}</option>
-              <option value="none">{t("sendBar.newline_none")}</option>
-            </select>
-          </div>
+        {/* ── 组1: 数据格式 ── */}
+        <div className={styles.dropdown}>
+          <select
+            className={`${styles.select} liquid-glass-input liquid-glass-select`}
+            value={newlineMode}
+            onChange={(e) => dispatch({ type: "SET_NEWLINE_MODE", mode: e.target.value as NewlineMode })}
+            title={t("sendBar.appendNewline")}
+            disabled={!isConnected || sendMode === "hex"}
+          >
+            <option value="crlf">{t("sendBar.newline_crlf")}</option>
+            <option value="lf">{t("sendBar.newline_lf")}</option>
+            <option value="cr">{t("sendBar.newline_cr")}</option>
+            <option value="none">{t("sendBar.newline_none")}</option>
+          </select>
+        </div>
 
-          <button
-            className={`${styles.modeBtn} liquid-glass-button ${sendMode === "hex" ? styles.modeActive : ""}`}
-            onClick={() => dispatch({ type: "SET_SEND_MODE", mode: sendMode === "text" ? "hex" : "text" })}
-            title={t("sendBar.sendMode")}
+        <button
+          className={`${styles.modeBtn} liquid-glass-button ${sendMode === "hex" ? styles.modeActive : ""}`}
+          onClick={() => dispatch({ type: "SET_SEND_MODE", mode: sendMode === "text" ? "hex" : "text" })}
+          title={t("sendBar.sendMode")}
+          disabled={!isConnected}
+        >
+          {sendMode === "text" ? t("sendBar.sendModeText") : t("sendBar.sendModeHex")}
+        </button>
+
+        <div className={styles.groupSep} />
+
+        {/* ── 组2: 循环发送 ── */}
+        <label className={styles.repeatLabel} title={t("sendBar.repeatSend")}>
+          <input
+            type="checkbox"
+            className={styles.repeatCheck}
+            checked={repeatEnabled}
+            onChange={(e) => dispatch({ type: "SET_REPEAT_ENABLED", enabled: e.target.checked })}
             disabled={!isConnected}
-          >
-            {sendMode === "text" ? t("sendBar.sendModeText") : t("sendBar.sendModeHex")}
-          </button>
+          />
+          <div className={styles.toggleTrack} />
+        </label>
+
+        <div className={styles.intervalWrap}>
+          <input
+            type="number"
+            className={`${styles.intervalInput} liquid-glass-input`}
+            value={repeatInterval}
+            onChange={(e) => dispatch({ type: "SET_REPEAT_INTERVAL", ms: Math.max(50, Number(e.target.value)) })}
+            min={50}
+            step={100}
+            title={t("sendBar.interval")}
+            disabled={!isConnected || !repeatEnabled}
+          />
         </div>
 
-        {/* Row 2: [间隔输入] [ms + 重复开关 + 历史] */}
-        <div className={styles.controlsRow2}>
-          <div className={styles.intervalWrap}>
-            <input
-              type="number"
-              className={`${styles.intervalInput} liquid-glass-input`}
-              value={repeatInterval}
-              onChange={(e) => dispatch({ type: "SET_REPEAT_INTERVAL", ms: Math.max(50, Number(e.target.value)) })}
-              min={50}
-              step={100}
-              title={t("sendBar.interval")}
-              disabled={!isConnected || !repeatEnabled}
-            />
-          </div>
-          <div className={styles.repeatAndHistory}>
-            <span className={styles.intervalUnit}>ms</span>
-            <label className={styles.repeatLabel} title={t("sendBar.repeatSend")}>
-              <input
-                type="checkbox"
-                className={styles.repeatCheck}
-                checked={repeatEnabled}
-                onChange={(e) => dispatch({ type: "SET_REPEAT_ENABLED", enabled: e.target.checked })}
-                disabled={!isConnected}
-              />
-              <div className={styles.toggleTrack} />
-            </label>
-            <div className={styles.historyWrap}>
-              <button
-                ref={historyBtnRef}
-                className={`${styles.historyBtn} liquid-glass-button`}
-                onClick={handleToggleHistory}
-                title={t("sendBar.sendHistory")}
-                disabled={sendHistory.length === 0}
-              >
-                <Icon name="chevron-dropdown" size="xs" />
-              </button>
-            </div>
-            {showOptions && sendHistory.length > 0 && createPortal(
-              <div className={styles.historyDropdown} style={dropdownStyle}>
-                <div className={styles.historyTitle}>{t("sendBar.sendHistory")}</div>
-                <div className={styles.historyList}>
-                  {sendHistory.slice(0, 20).map((entry, i) => (
-                    <button
-                      key={i}
-                      className={styles.historyItem}
-                      onClick={() => handleHistoryClick(entry)}
-                      title={entry}
-                    >
-                      {entry.length > 40 ? entry.slice(0, 40) + "..." : entry}
-                    </button>
-                  ))}
-                </div>
-              </div>,
-              document.body
-            )}
-          </div>
-        </div>
+        <span className={styles.intervalUnit}>ms</span>
 
-        {/* Row 3: 全宽强调发送按钮 */}
-        <div className={styles.controlsRow3}>
+        <div className={styles.groupSep} />
+
+        {/* ── 组3: 发送操作 ── */}
+        <div className={styles.historyWrap}>
           <button
-            className={`${styles.sendBtn} liquid-primary-button`}
-            onClick={doSend}
-            disabled={!isConnected || (sendMode === "text" && !inputText.trim()) || (sendMode === "hex" && !isHexValid(inputText))}
+            ref={historyBtnRef}
+            className={`${styles.historyBtn} liquid-glass-button`}
+            onClick={handleToggleHistory}
+            title={t("sendBar.sendHistory")}
+            disabled={sendHistory.length === 0}
           >
-            {t("sendBar.send")}
+            <Icon name="chevron-dropdown" size="xs" />
           </button>
         </div>
+        {showOptions && sendHistory.length > 0 && createPortal(
+          <div className={styles.historyDropdown} style={dropdownStyle}>
+            <div className={styles.historyTitle}>{t("sendBar.sendHistory")}</div>
+            <div className={styles.historyList}>
+              {sendHistory.slice(0, 20).map((entry, i) => (
+                <button
+                  key={i}
+                  className={styles.historyItem}
+                  onClick={() => handleHistoryClick(entry)}
+                  title={entry}
+                >
+                  {entry.length > 40 ? entry.slice(0, 40) + "..." : entry}
+                </button>
+              ))}
+            </div>
+          </div>,
+          document.body
+        )}
+
+        <button
+          className={`${styles.sendBtn} liquid-primary-button`}
+          onClick={doSend}
+          disabled={!isConnected || (sendMode === "text" && !inputText.trim()) || (sendMode === "hex" && !isHexValid(inputText))}
+        >
+          {t("sendBar.send")}
+        </button>
       </div>
     </div>
   );

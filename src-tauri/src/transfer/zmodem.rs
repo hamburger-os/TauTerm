@@ -422,8 +422,8 @@ fn receive_binary_frame(
 
     // Read 4-byte header flags
     let mut flags = [0u8; 4];
-    for i in 0..4 {
-        flags[i] = read_byte_required(port, 2000, &format!("帧头字节 {}", i))?;
+    for (i, flag) in flags.iter_mut().enumerate() {
+        *flag = read_byte_required(port, 2000, &format!("帧头字节 {}", i))?;
     }
 
     // Read header CRC (2 bytes for ZBIN, 4 bytes for ZBIN32)

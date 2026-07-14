@@ -5,7 +5,7 @@
   flex: 1;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  min-height: var(--sendbar-min-height);
+  min-height: var(--sendbar-min-height, 128px);
 }
 
 /* ── 模式切换器 ── */

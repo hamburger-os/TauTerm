@@ -1,0 +1,541 @@
+/* 自动应答规则编辑器弹窗 — Tab 式布局 */
+
+.overlay {
+  z-index: var(--z-overlay);
+}
+
+.modal {
+  width: 520px;
+  max-width: 92vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 20px;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--dialog-shadow);
+}
+
+.title {
+  margin: 0 0 12px;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+/* ── Tabs ───────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--glass-input-border);
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: 6px 16px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: var(--text-primary);
+}
+
+.tabActive {
+  color: var(--accent-primary);
+  border-bottom-color: var(--accent-primary);
+}
+
+/* ── Body (scrollable) ──────────────────── */
+.body {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.tabContent {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Form Fields ────────────────────────── */
+.field {
+  margin-bottom: 12px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.field input {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  box-sizing: border-box;
+}
+
+.field select {
+  width: 100%;
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  box-sizing: border-box;
+}
+
+.fieldRow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.fieldRow .field {
+  flex: 1;
+}
+
+.fieldRow .field input,
+.fieldRow .field select {
+  height: var(--select-height);
+}
+
+.hint {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.hintError {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  line-height: 1.4;
+}
+
+/* ── 多条件行 ─────────────────────── */
+.conditionBlock {
+  margin-bottom: 8px;
+}
+
+.conditionRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conditionRow select {
+  flex: 0 0 auto;
+  width: 92px;
+}
+
+.conditionRow input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.conditionCheck {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.conditionCheck .checkTrack {
+  top: 0;
+}
+
+.conditionRemove {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: var(--text-sm);
+}
+
+/* ── Row & Checkbox ─────────────────────── */
+.row {
+  margin-bottom: 12px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.checkInput {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.checkTrack {
+  position: relative;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--glass-input-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-input-bg);
+  box-shadow: var(--glass-input-shadow-inner);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+  top: 1px;
+}
+
+.checkTrack::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  width: 5px;
+  height: 9px;
+  border: solid transparent;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  transition: border-color var(--transition-fast);
+}
+
+.checkInput:checked + .checkTrack {
+  background: var(--accent-gradient);
+  border-color: transparent;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.checkInput:checked + .checkTrack::after {
+  border-color: var(--text-on-accent);
+}
+
+/* ── Macro Picker ───────────────────────── */
+.macroPicker {
+  margin-top: 6px;
+}
+
+.macroLabel {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin-right: 6px;
+}
+
+.macroButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.macroBtn {
+  font-size: var(--text-xs);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  cursor: pointer;
+  white-space: nowrap;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.macroBtn:hover {
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+/* ── Regex Tester ───────────────────────── */
+.matchTesterHint {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px dashed var(--glass-input-border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.regexTester {
+  margin-top: 14px;
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.regexTesterHeader {
+  padding: 6px 10px;
+  background: var(--glass-fill);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.regexTesterBody {
+  padding: 10px;
+}
+
+.regexTesterInput {
+  display: flex;
+  gap: 6px;
+}
+
+.regexTesterInput input {
+  flex: 1;
+  padding: 6px 10px;
+  box-sizing: border-box;
+}
+
+.regexTestBtn {
+  padding: 5px 14px;
+  font-size: var(--text-sm);
+  flex-shrink: 0;
+}
+
+.regexResult {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+}
+
+.regexSuccess {
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
+  color: var(--color-success);
+}
+
+.regexNoMatch {
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--color-warning);
+}
+
+.regexError {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  color: var(--color-error);
+}
+
+.regexGroups {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.regexGroupsTitle {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.regexGroupItem {
+  font-size: var(--text-sm);
+  padding: 2px 6px;
+  background: var(--glass-fill);
+  border-radius: 2px;
+}
+
+/* ── Action Editor ──────────────────────── */
+.actionEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.actionListDragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.actionEmpty {
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  padding: 16px 0;
+}
+
+/* 动作卡片：主控件行 + 其下的宏选择器，纵向堆叠 */
+.actionRow {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 28px 10px 10px;
+  border: 1px solid var(--glass-input-border);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  border-radius: var(--radius-md);
+  background: var(--glass-fill);
+  box-shadow: var(--shadow-sm);
+}
+
+.actionRowDragging {
+  opacity: 0.4;
+}
+
+/* ── Reply Textarea ─────────────────────── */
+.replyTextarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 60px;
+  padding: 6px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  tab-size: 2;
+  box-sizing: border-box;
+}
+
+/* 拖拽把手（规则列表 .dragHandle 同款视觉） */
+.actionDragHandle {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  cursor: grab;
+  color: var(--text-secondary);
+  user-select: none;
+  touch-action: none;
+  opacity: 0.35;
+  transition: opacity var(--transition-fast);
+  border-radius: var(--radius-xs);
+}
+
+.actionDragHandle:hover {
+  opacity: 0.85;
+  background: var(--glass-bg-hover);
+}
+
+.actionDragHandle:active {
+  cursor: grabbing;
+  opacity: 1;
+}
+
+/* 放置指示线（规则列表 .dropIndicator 同款） */
+.actionDropIndicator {
+  height: 2px;
+  margin: -3px 0;
+  background: var(--accent-primary);
+  border-radius: var(--radius-xs);
+  box-shadow: 0 0 6px var(--accent-glow);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+/* 延时字段：标签在上，与数据字段等高，保证输入框水平对齐 */
+.actionField {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.actionDelayRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.actionLabel {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.actionDelayInput {
+  width: 58px;
+}
+
+.actionDelayUnit {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.actionFormat {
+  width: 8ch;
+  flex-shrink: 0;
+}
+
+.actionRemove {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--color-error);
+  border-radius: 50%;
+}
+
+.actionAdd {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: var(--text-sm);
+}
+
+/* ── Buttons Footer ─────────────────────── */
+.buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--glass-input-border);
+  flex-shrink: 0;
+}
+
+.cancelBtn {
+  padding: 7px 18px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: var(--text-primary);
+}
+
+.saveBtn {
+  padding: 7px 18px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.saveBtn:disabled { opacity: 0.4; cursor: not-allowed; }
