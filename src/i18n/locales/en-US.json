@@ -278,11 +278,8 @@
     "filterStatus": "Status",
     "directionLabel_send": "Send",
     "directionLabel_receive": "Receive",
-    "dropHere": "Drop to Transfer",
     "transferringBanner": "File transfer in progress, terminal paused...",
     "transferringStatus": "Transferring...",
-    "noActiveSession": "No active connection. Please connect to a device or server before dropping files.",
-    "uploadFailed": "Upload failed: {{error}}",
     "protocols": {
       "ymodem": {
         "name": "YMODEM",

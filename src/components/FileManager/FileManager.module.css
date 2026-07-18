@@ -12,13 +12,3 @@
   container-name: filemanager;
 }
 
-.dragOver::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 2px dashed var(--accent-primary);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
-  z-index: var(--z-overlay);
-  pointer-events: none;
-}

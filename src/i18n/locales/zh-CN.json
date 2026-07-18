@@ -278,11 +278,8 @@
     "filterStatus": "状态",
     "directionLabel_send": "发送",
     "directionLabel_receive": "接收",
-    "dropHere": "拖放到此传输",
     "transferringBanner": "文件传输进行中，终端数据暂缓...",
     "transferringStatus": "传输中...",
-    "noActiveSession": "没有活跃连接，请先连接到设备或服务器再拖拽文件。",
-    "uploadFailed": "上传失败：{{error}}",
     "protocols": {
       "ymodem": {
         "name": "YMODEM",

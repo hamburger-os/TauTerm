@@ -59,74 +59,6 @@ export default function FileManagerPanel({
   // ── Progress events ─────────────────────────────────
   const { progress, hideProgress, cancelTransfer } = useSftpProgress(sessionId);
 
-  // ── Drag-drop target tracking (for App.tsx routing) ──
-  const [isDragOver, setIsDragOver] = useState(false);
-  const dragCounterRef = useRef(0);
-
-  // 同步当前路径到全局，供 App.tsx 的 SFTP 拖放上传使用
-  useEffect(() => {
-    window.__tauterm_filemanagerPath = fm.currentPath;
-  }, [fm.currentPath]);
-
-  // 监听 App.tsx SFTP 上传完成后的刷新事件
-  useEffect(() => {
-    const handleRefresh = () => {
-      fm.refresh();
-    };
-    window.addEventListener("tauterm:sftp-refresh", handleRefresh);
-    return () => window.removeEventListener("tauterm:sftp-refresh", handleRefresh);
-  }, [fm]);
-
-  // 注册 DOM 拖放事件 — 标记拖放目标为 filemanager，供 App.tsx 区分路由
-  useEffect(() => {
-    const el = panelRef.current;
-    if (!el) return;
-
-    const handleDragEnter = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      dragCounterRef.current += 1;
-      if (dragCounterRef.current === 1) {
-        window.__tauterm_dropTarget = "filemanager";
-        setIsDragOver(true);
-      }
-    };
-
-    const handleDragLeave = (_e: DragEvent) => {
-      dragCounterRef.current -= 1;
-      if (dragCounterRef.current <= 0) {
-        dragCounterRef.current = 0;
-        window.__tauterm_dropTarget = undefined;
-        setIsDragOver(false);
-      }
-    };
-
-    const handleDragOver = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    const handleDrop = () => {
-      dragCounterRef.current = 0;
-      setIsDragOver(false);
-      // drop 由 App.tsx 的 onDragDropEvent 处理
-      // 此处仅重置状态
-    };
-
-    el.addEventListener("dragenter", handleDragEnter);
-    el.addEventListener("dragleave", handleDragLeave);
-    el.addEventListener("dragover", handleDragOver);
-    el.addEventListener("drop", handleDrop);
-
-    return () => {
-      el.removeEventListener("dragenter", handleDragEnter);
-      el.removeEventListener("dragleave", handleDragLeave);
-      el.removeEventListener("dragover", handleDragOver);
-      el.removeEventListener("drop", handleDrop);
-      window.__tauterm_dropTarget = undefined;
-    };
-  }, []);
-
   // ── 监听父级空白区域右键事件 ──
   // 文件管理器面板内按钮/列表之外的大面积空白区域可能落在
   // RightSidebarPanel 的 DOM 范围内但不在 FileManagerPanel 的 panelRef 内。
@@ -560,7 +492,7 @@ export default function FileManagerPanel({
   return (
     <div
       ref={panelRef}
-      className={`${styles.panel} ${isDragOver ? styles.dragOver : ""}`}
+      className={styles.panel}
       tabIndex={-1}
     >
       {/* 面包屑导航 */}

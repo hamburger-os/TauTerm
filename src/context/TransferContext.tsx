@@ -66,7 +66,6 @@ interface TransferState {
   progress: TransferProgress | null;
   history: TransferHistoryItem[];
   error: string | null;
-  isDragging: boolean;
   /** 批次文件追踪 Map<fileName, BatchFileEntry> */
   batchFiles: Record<string, BatchFileEntry>;
   /** 批次聚合进度 */
@@ -88,7 +87,6 @@ type TransferAction =
   | { type: "ADD_HISTORY"; item: TransferHistoryItem }
   | { type: "CLEAR_HISTORY" }
   | { type: "SET_ERROR"; error: string | null }
-  | { type: "SET_DRAGGING"; dragging: boolean }
   | { type: "INIT_BATCH"; fileNames: string[] }
   | { type: "FILE_START"; event: FileStartEvent }
   | { type: "FILE_COMPLETE"; event: FileCompleteEvent }
@@ -101,7 +99,6 @@ const initialState: TransferState = {
   progress: null,
   history: [],
   error: null,
-  isDragging: false,
   batchFiles: {},
   aggregateBytesTransferred: 0,
   aggregateTotalBytes: 0,
@@ -179,8 +176,6 @@ function transferReducer(
       return { ...state, history: [] };
     case "SET_ERROR":
       return { ...state, error: action.error };
-    case "SET_DRAGGING":
-      return { ...state, isDragging: action.dragging };
     case "SET_ACTIVE_PROTOCOL":
       return { ...state, activeProtocol: action.protocol };
     case "INIT_BATCH": {
@@ -322,7 +317,6 @@ interface TransferContextValue {
   cancelTransfer: (sessionId: string) => Promise<void>;
   clearError: () => void;
   clearHistory: () => void;
-  setDragging: (dragging: boolean) => void;
 }
 
 const TransferContext = createContext<TransferContextValue | null>(null);
@@ -469,11 +463,6 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     () => dispatch({ type: "CLEAR_HISTORY" }),
     [],
   );
-  const setDragging = useCallback(
-    (dragging: boolean) => dispatch({ type: "SET_DRAGGING", dragging }),
-    [],
-  );
-
   // ── Event listeners ─────────────────────────────────────
 
   useEffect(() => {
@@ -594,7 +583,6 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         cancelTransfer,
         clearError,
         clearHistory,
-        setDragging,
       }}
     >
       {children}

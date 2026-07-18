@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"; // 拖放事件（onDragDropEvent 仅 WebviewWindow 类型可用）
 import { getCurrentWindow } from "@tauri-apps/api/window";               // 窗口状态（最大化/还原追踪）
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -19,7 +18,6 @@ import SessionRightSidebar from "./components/RightSidebar/SessionRightSidebar";
 import SettingsPage from "./components/Settings/SettingsPage";
 import CommandPalette from "./components/CommandPalette/CommandPalette";
 import ConnectDialog from "./components/Layout/ConnectDialog";
-import Icon from "./components/common/Icon";
 import { useToast } from "./context/ToastContext";
 import { useSession } from "./context/SessionContext";
 import { useTransfer } from "./context/TransferContext";
@@ -28,14 +26,6 @@ import { pluginRegistry } from "./core/plugin-registry";
 import { ACTION_IDS } from "./shortcuts/actionIds";
 import "./i18n/index";
 import "./App.css";
-
-// 拖放目标标记 — 浏览器 DOM 事件与 Tauri 原生事件之间的桥接
-declare global {
-  interface Window {
-    __tauterm_dropTarget?: "filemanager" | "terminal" | undefined;
-    __tauterm_filemanagerPath?: string;
-  }
-}
 
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 400;
@@ -52,71 +42,8 @@ function AppInner() {
   const { t } = useTranslation();
   // Context hooks
   const { state: sessionState, refreshEndpoints, disconnect, switchTab } = useSession();
-  const { state: transferState, startTransfer, sendFiles: transferSend, setDragging } = useTransfer();
+  const { state: transferState } = useTransfer();
   const { registerAction } = useKeyboard();
-
-  // SFTP 拖放上传辅助函数 — 逐文件调用 sftp_upload_file_cmd
-  // 传输命令为非阻塞（后端 spawn 后立即返回），需监听 `sftp-transfer-finished`
-  // 事件串行化多文件上传，避免同一会话并发传输导致取消标志被覆盖。
-  const triggerSftpUpload = useCallback(
-    async (sessionId: string, filePaths: string[]) => {
-      const remoteDir = window.__tauterm_filemanagerPath || "/";
-      const pending = { unlisten: null as (() => void) | null };
-      const SFTP_TIMEOUT_MS = 30_000; // 单文件超时 30 秒
-
-      const waitForTransferFinished = (): Promise<boolean> => {
-        return new Promise(resolve => {
-          let settled = false;
-          const done = (ok: boolean) => {
-            if (settled) return;
-            settled = true;
-            pending.unlisten?.();
-            pending.unlisten = null;
-            resolve(ok);
-          };
-
-          const unlisten = listen<{ session_id: string; result: { error?: string } }>(
-            "sftp-transfer-finished",
-            (event) => {
-              if (event.payload.session_id === sessionId) {
-                done(!event.payload.result.error);
-              }
-            }
-          );
-          unlisten.then(fn => {
-            if (!settled) pending.unlisten = fn;
-          });
-
-          // 超时保护：超时后自动清理 listener，防止 Promise 永久挂起
-          setTimeout(() => done(false), SFTP_TIMEOUT_MS);
-        });
-      };
-
-      try {
-        for (const localPath of filePaths) {
-          const name = localPath.replace(/\\/g, "/").split("/").pop() || "file";
-          const remotePath =
-            remoteDir === "/" ? `/${name}` : `${remoteDir}/${name}`;
-          await invoke<void>("sftp_upload_file_cmd", {
-            sessionId,
-            localPath,
-            remotePath,
-          });
-          // 等待当前文件传输完成后再开始下一个，避免并发冲突
-          await waitForTransferFinished();
-        }
-      } finally {
-        // 如果循环提前退出（如 invoke 抛异常），清理未完成的 listener
-        if (pending.unlisten) {
-          pending.unlisten();
-          pending.unlisten = null;
-        }
-      }
-      // 上传完成后通知 FileManager 刷新
-      window.dispatchEvent(new CustomEvent("tauterm:sftp-refresh"));
-    },
-    [],
-  );
 
   // Layout state
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -243,94 +170,6 @@ function AppInner() {
       document.body.style.userSelect = "";
     };
   }, [isResizingSidebar, isResizingRightSidebar, isResizingSendBar]);
-
-  // Global drag events: 仅已连接会话时显示 overlay，drop 时按区域路由传输
-  useEffect(() => {
-    const getActiveConnectedTab = () => {
-      const tab = sessionState.tabs.find(t => t.id === sessionState.activeTabId);
-      return tab?.state === "connected" ? tab : null;
-    };
-
-    const handleDragEnter = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
-      e.preventDefault();
-      window.__tauterm_dropTarget = undefined; // 新拖放：重置目标
-      if (getActiveConnectedTab()) {
-        setDragging(true);
-      }
-    };
-    const handleDragLeave = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
-      if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
-        setDragging(false);
-      }
-    };
-    const handleDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
-      e.preventDefault();
-    };
-    const handleDrop = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
-      e.preventDefault();
-      setDragging(false);
-    };
-    document.addEventListener("dragenter", handleDragEnter);
-    document.addEventListener("dragleave", handleDragLeave);
-    document.addEventListener("dragover", handleDragOver);
-    document.addEventListener("drop", handleDrop);
-
-    let unlistenDrop: (() => void) | undefined;
-    (async () => {
-      try {
-        unlistenDrop = await getCurrentWebviewWindow().onDragDropEvent((event) => {
-          if (event.payload.type === "over") {
-            if (getActiveConnectedTab()) setDragging(true);
-          } else if (event.payload.type === "leave") {
-            setDragging(false);
-          } else if (event.payload.type === "drop") {
-            setDragging(false);
-            const paths = event.payload.paths;
-            if (!paths || paths.length === 0) return;
-
-            const activeTab = getActiveConnectedTab();
-            if (!activeTab) {
-              showToast("warning", t("transfer.noActiveSession"));
-              return;
-            }
-
-            const dropTarget = window.__tauterm_dropTarget;
-            window.__tauterm_dropTarget = undefined;
-
-            if (
-              dropTarget === "filemanager" &&
-              activeTab.fileServiceEnabled
-            ) {
-              // 拖放到 FileManager 面板 → SFTP 上传（通过 fileServiceEnabled 能力判定，
-              // 而非硬编码 pluginId，保持微内核扩展性）
-              triggerSftpUpload(activeTab.id, paths).catch((e) => {
-                showToast("error", t("transfer.uploadFailed", { error: String(e) }));
-              });
-            } else {
-              // 拖放到终端区域 → YMODEM/串口传输
-              transferSend(activeTab.id, paths).catch((e) => {
-                showToast("error", t("transfer.uploadFailed", { error: String(e) }));
-              });
-            }
-          }
-        });
-      } catch (e) {
-        console.warn("Tauri drag-drop 事件注册失败，拖拽传文件功能不可用:", e);
-      }
-    })();
-
-    return () => {
-      document.removeEventListener("dragenter", handleDragEnter);
-      document.removeEventListener("dragleave", handleDragLeave);
-      document.removeEventListener("dragover", handleDragOver);
-      document.removeEventListener("drop", handleDrop);
-      if (unlistenDrop) unlistenDrop();
-    };
-  }, [setDragging, sessionState.activeTabId, sessionState.tabs, transferSend, startTransfer, triggerSftpUpload, showToast, t]);
 
   // SSH 主机密钥验证 — 监听后端事件，弹出确认对话框
   useEffect(() => {
@@ -582,26 +421,6 @@ function AppInner() {
         onClose={() => { setConnectDialogOpen(false); setEditSessionId(null); }}
         editSessionId={editSessionId}
       />
-
-      {/* 拖拽覆盖层 */}
-      <AnimatePresence>
-        {transferState.isDragging && (
-          <motion.div
-            className="dropzone-overlay glass-overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <motion.div
-              className="dropzone-message"
-              animate={{ scale: [1, 1.05, 1] }}
-              transition={{ repeat: Infinity, duration: 1.5 }}
-            >
-              <Icon name="logo" size="lg" /> {t("transfer.dropHere")}
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* 拖拽调整大小时的全屏透明遮罩层
           确保 mouseup 事件始终在遮罩层（而非底层可能吞事件的禁用元素）上触发，
