@@ -1,8 +1,8 @@
 import type { IconName } from "../components/common/Icon";
 
 /** 协议标识 */
-export type ProtocolType = "ymodem" | "xmodem" | "zmodem";
-export const PROTOCOL_TYPES: ProtocolType[] = ["ymodem", "xmodem", "zmodem"];
+export type ProtocolType = "ymodem" | "xmodem" | "zmodem" | "sftp";
+export const PROTOCOL_TYPES: ProtocolType[] = ["ymodem", "xmodem", "zmodem", "sftp"];
 
 /** 传输方向 */
 export type TransferDirection = "send" | "receive";
@@ -57,10 +57,18 @@ export interface ZmodemTransferConfig {
   streamingMode: boolean;
 }
 
+/** SFTP 传输配置（预留） */
+export interface SftpTransferConfig {
+  protocol: "sftp";
+  /** 远程起始路径 */
+  remotePath: string;
+}
+
 export type TransferConfig =
   | YmodemTransferConfig
   | XmodemTransferConfig
-  | ZmodemTransferConfig;
+  | ZmodemTransferConfig
+  | SftpTransferConfig;
 
 // ── Protocol Registry ─────────────────────────────────────
 
@@ -104,6 +112,15 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
       resumeEnabled: true,
       compressionEnabled: false,
       streamingMode: false,
+    },
+  },
+  sftp: {
+    type: "sftp",
+    i18nKey: "transfer.protocols.sftp.name",
+    icon: "folder",
+    defaultConfig: {
+      protocol: "sftp",
+      remotePath: "/",
     },
   },
 };

@@ -6,7 +6,7 @@
   "connectionType": {
     "label": "连接类型",
     "serial": "串口 (Serial)",
-    "ssh": "SSH (安全外壳)",
+    "ssh": "SSH",
     "telnet": "Telnet",
     "tftp": "TFTP",
     "comingSoon": "(即将推出)",
@@ -281,6 +281,8 @@
     "dropHere": "拖放到此传输",
     "transferringBanner": "文件传输进行中，终端数据暂缓...",
     "transferringStatus": "传输中...",
+    "noActiveSession": "没有活跃连接，请先连接到设备或服务器再拖拽文件。",
+    "uploadFailed": "上传失败：{{error}}",
     "protocols": {
       "ymodem": {
         "name": "YMODEM",
@@ -293,6 +295,10 @@
       "zmodem": {
         "name": "ZMODEM",
         "description": "流式传输，滑动窗口，断点续传"
+      },
+      "sftp": {
+        "name": "SFTP",
+        "description": "SSH 文件传输协议，支持目录浏览与断点操作"
       }
     }
   },
@@ -567,7 +573,15 @@
     "cts": "CTS",
     "dsr": "DSR",
     "uptime": "运行时间",
-    "dataMode": "数据模式"
+    "dataMode": "数据模式",
+    "disconnected": "未连接",
+    "connected": "已连接",
+    "connecting": "连接中...",
+    "typeSerial": "串口",
+    "typeSsh": "SSH",
+    "authPassword": "密码",
+    "authKey": "密钥",
+    "fileService": "SFTP"
   },
   "transmission": {
     "title": "文件传输",
@@ -617,6 +631,7 @@
     "clearConfirm": "确定要删除所有日志文件吗？此操作不可撤销。",
     "cleared": "所有日志文件已清除。",
     "clearError": "清除日志失败",
+    "loading": "加载中...",
     "started": "已开始记录日志",
     "stopped": "日志记录已停止",
     "writing": "正在写入"
@@ -635,5 +650,76 @@
     "save": "保存",
     "delete": "删除",
     "copy": "复制"
+  },
+  "fileManager": {
+    "title": "文件管理器",
+    "upload": "上传",
+    "download": "下载",
+    "delete": "删除",
+    "rename": "重命名",
+    "newFolder": "新建文件夹",
+    "refresh": "刷新",
+    "parentDir": "上级目录",
+    "empty": "空目录",
+    "loading": "加载中...",
+    "deleteConfirm": "确认删除 {{name}}？",
+    "name": "名称",
+    "size": "大小",
+    "modified": "修改时间",
+    "permissions": "权限",
+    "newFile": "新建文件",
+    "copyPath": "复制路径",
+    "batchDownload": "批量下载（{{count}} 个文件）",
+    "batchDelete": "批量删除（{{count}} 个文件）",
+    "confirmBatchDelete": "确认删除选中的 {{count}} 个项目？",
+    "deleteDirConfirm": "确认递归删除目录 {{name}}（包含所有子目录和文件）？",
+    "confirmBatchDeleteWithDirs": "确认删除选中的 {{count}} 个项目？（目录将被递归删除）",
+    "uploading": "上传中...",
+    "downloading": "下载中...",
+    "sortBy": "按{{field}}排序",
+    "newFilePrompt": "输入文件名",
+    "open": "打开",
+    "preview": "预览",
+    "properties": "属性",
+    "propertiesTitle": "文件属性",
+    "type": "类型",
+    "typeFile": "文件",
+    "typeDir": "目录",
+    "path": "路径",
+    "previewTitle": "文件预览",
+    "previewFileTooLarge": "文件较大（{{size}}），预览可能需要一些时间，是否继续？",
+    "lines": "{{count}} 行",
+    "pathCopied": "路径已复制",
+    "selectedCount": "已选中 {{count}} 个项目",
+    "previewTruncated": "预览仅显示前 {{shown}}（文件共 {{total}}）",
+    "chmod": "修改权限",
+    "chmodInvalid": "无效的权限值（需要 3 位八进制数字，如 755）",
+    "edit": "编辑",
+    "apply": "应用",
+    "cancel": "取消",
+    "cancelTransfer": "取消传输"
+  },
+  "ssh": {
+    "host": "主机地址",
+    "port": "端口",
+    "username": "用户名",
+    "authMethod": "认证方式",
+    "authPassword": "密码",
+    "authKey": "SSH 密钥",
+    "password": "密码",
+    "sshKey": "SSH 私钥",
+    "passphrase": "密码短语",
+    "passphrasePlaceholder": "（无密码短语）",
+    "hostPlaceholder": "192.168.1.1",
+    "usernamePlaceholder": "root",
+    "passwordPlaceholder": "输入密码",
+    "keyPlaceholder": "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "enableSendBar": "启用发送栏",
+    "enableTransfer": "启用文件传输",
+    "enableFileService": "启用文件管理器",
+    "hostKeyTitle": "SSH 主机密钥验证",
+    "hostKeyFingerprint": "指纹",
+    "hostKeyPrompt": "是否信任此主机并继续连接？",
+    "hostKeyError": "主机密钥确认失败: {{error}}"
   }
 }

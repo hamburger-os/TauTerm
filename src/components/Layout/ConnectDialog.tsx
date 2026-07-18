@@ -60,8 +60,22 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // SSH 配置
+  const [sshHost, setSshHost] = useState("");
+  const [sshPort, setSshPort] = useState(22);
+  const [sshUsername, setSshUsername] = useState("");
+  const [sshAuthMethod, setSshAuthMethod] = useState<"password" | "key">("password");
+  const [sshPassword, setSshPassword] = useState("");
+  const [sshPrivateKey, setSshPrivateKey] = useState("");
+  const [sshPassphrase, setSshPassphrase] = useState("");
+  const [sshSendBarEnabled, setSshSendBarEnabled] = useState(false);
+  const [sshTransferEnabled, setSshTransferEnabled] = useState(false);
+  const [fileServiceEnabled, setFileServiceEnabled] = useState(true);
+  const [fileServiceProtocol, setFileServiceProtocol] = useState("sftp");
+
   const serialEndpoints = state.endpoints.filter(e => e.connection_type === "serial");
   const isSerial = selectedMode === "serial";
+  const isSsh = selectedMode === "ssh";
 
   // 保持最新的 tabs 引用，供 useEffect 在 editSessionId 变化时读取最新数据，
   // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
@@ -100,6 +114,20 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           if (typeof p.flow_control === "string") setFlowControl(p.flow_control);
           if (typeof p.data_mode === "string") setDataMode(p.data_mode);
           if (typeof p.dual_frame_timeout_ms === "number") setDualFrameTimeout(p.dual_frame_timeout_ms);
+          // SSH 字段回填
+          if (targetTab.connection_type === "ssh" || targetTab.pluginId === "ssh") {
+            if (typeof p.host === "string") setSshHost(p.host);
+            if (typeof p.port === "number") setSshPort(p.port);
+            if (typeof p.username === "string") setSshUsername(p.username);
+            if (typeof p.auth_method === "string") setSshAuthMethod(p.auth_method as "password" | "key");
+            if (typeof p.password === "string") setSshPassword(p.password);
+            if (typeof p.private_key === "string") setSshPrivateKey(p.private_key);
+            if (typeof p.passphrase === "string") setSshPassphrase(p.passphrase);
+            if (typeof p.file_service_enabled === "boolean") setFileServiceEnabled(p.file_service_enabled);
+            if (typeof p.send_bar_enabled === "boolean") setSshSendBarEnabled(p.send_bar_enabled);
+            if (typeof p.transfer_enabled === "boolean") setSshTransferEnabled(p.transfer_enabled);
+            if (typeof p.file_service_protocol === "string") setFileServiceProtocol(p.file_service_protocol);
+          }
         }
         if (targetTab.name) setSessionName(targetTab.name);
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
@@ -126,6 +154,18 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setSendBarEnabled(true);
     setVirtualPortEnabled(false);
     setVirtualPortCount(1);
+    // 重置 SSH 字段
+    setSshHost("");
+    setSshPort(22);
+    setSshUsername("");
+    setSshAuthMethod("password");
+    setSshPassword("");
+    setSshPrivateKey("");
+    setSshPassphrase("");
+    setSshSendBarEnabled(false);
+    setSshTransferEnabled(false);
+    setFileServiceEnabled(true);
+    setFileServiceProtocol("sftp");
     setSessionName("");
   }, [isOpen, editSessionId, refreshEndpoints]);
 
@@ -149,8 +189,12 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
   const handleCreate = useCallback(async () => {
     if (!port && isSerial) return;
+    if (!sshHost && isSsh) return;
     setError(null);
     setConnecting(true);
+
+    const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : sendBarEnabled;
+    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : transferEnabled;
 
     const params: Record<string, unknown> = isSerial ? {
       baud_rate: parseInt(baudRate),
@@ -165,30 +209,44 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       send_bar_enabled: sendBarEnabled,
       virtual_port_enabled: virtualPortEnabled,
       virtual_port_count: virtualPortCount,
+    } : isSsh ? {
+      host: sshHost,
+      port: sshPort,
+      username: sshUsername,
+      auth_method: sshAuthMethod,
+      password: sshAuthMethod === "password" ? sshPassword : undefined,
+      private_key: sshAuthMethod === "key" ? sshPrivateKey : undefined,
+      passphrase: sshAuthMethod === "key" && sshPassphrase ? sshPassphrase : undefined,
+      data_mode: dataMode,
+      send_bar_enabled: sshSendBarEnabled,
+      transfer_enabled: sshTransferEnabled,
+      file_service_enabled: fileServiceEnabled,
+      file_service_protocol: "sftp",
     } : {};
+
+    const pluginId = selectedMode; // "serial" | "ssh"
+    const endpoint = isSerial ? port : (isSsh ? sshHost : selectedMode);
 
     try {
       if (editSessionId) {
         // 编辑模式：原地更新配置，保持 UUID 连续性
-        //   - 已连接：断连 → 更新磁盘配置 → 重连
-        //   - 未连接：仅更新磁盘配置 + 前端状态
         await reconfigureSession(
           editSessionId,
-          isSerial ? port : selectedMode,
+          endpoint,
           params,
           sessionName || undefined,
-          transferEnabled,
+          effectiveTransferEnabled,
           transferProtocol,
-          sendBarEnabled,
+          effectiveSendBarEnabled,
         );
         onClose();
       } else {
-        // 新建模式：仅保存配置，不打开串口（连接由右键菜单触发）
+        // 新建模式：仅保存配置，不连接（连接由右键菜单触发）
         const sid = await createOfflineSession(
-          isSerial ? port : selectedMode, params,
-          sessionName || undefined, undefined,
-          transferEnabled, transferProtocol,
-          sendBarEnabled,
+          endpoint, params,
+          sessionName || undefined, pluginId,
+          effectiveTransferEnabled, transferProtocol,
+          effectiveSendBarEnabled,
         );
         if (sid) {
           await switchTab(sid);
@@ -199,7 +257,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose]);
+  }, [port, isSerial, isSsh, sshHost, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -446,8 +504,164 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 </>
               )}
 
+              {/* ── SSH 配置 ── */}
+              {isSsh && (
+                <>
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("ssh.host")}</label>
+                    <input
+                      className={`${styles.input} liquid-glass-input`}
+                      type="text"
+                      placeholder={t("ssh.hostPlaceholder")}
+                      value={sshHost}
+                      onChange={e => setSshHost(e.target.value)}
+                      disabled={connecting}
+                    />
+                  </div>
+
+                  <div className={styles.row2}>
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("ssh.port")}</label>
+                      <input
+                        className={`${styles.numberInput} liquid-glass-input`}
+                        type="number"
+                        value={sshPort}
+                        min={1}
+                        max={65535}
+                        onChange={e => {
+                          const raw = e.target.value;
+                          // 允许用户清空字段（中间编辑状态），重置为默认端口
+                          if (raw === "") {
+                            setSshPort(22);
+                            return;
+                          }
+                          const n = Number(raw);
+                          if (!isNaN(n) && n >= 1 && n <= 65535) {
+                            setSshPort(n);
+                          }
+                          // 非法值忽略，保持当前状态（浏览器 type="number" 会阻止大部分非法输入）
+                        }}
+                        disabled={connecting}
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("ssh.username")}</label>
+                      <input
+                        className={`${styles.input} liquid-glass-input`}
+                        type="text"
+                        placeholder={t("ssh.usernamePlaceholder")}
+                        value={sshUsername}
+                        onChange={e => setSshUsername(e.target.value)}
+                        disabled={connecting}
+                      />
+                    </div>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("ssh.authMethod")}</label>
+                    <select
+                      className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                      value={sshAuthMethod}
+                      onChange={e => setSshAuthMethod(e.target.value as "password" | "key")}
+                      disabled={connecting}
+                    >
+                      <option value="password">{t("ssh.authPassword")}</option>
+                      <option value="key">{t("ssh.authKey")}</option>
+                    </select>
+                  </div>
+
+                  {sshAuthMethod === "password" && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("ssh.password")}</label>
+                      <input
+                        className={`${styles.input} liquid-glass-input`}
+                        type="password"
+                        placeholder={t("ssh.passwordPlaceholder")}
+                        value={sshPassword}
+                        onChange={e => setSshPassword(e.target.value)}
+                        disabled={connecting}
+                      />
+                    </div>
+                  )}
+
+                  {sshAuthMethod === "key" && (
+                    <>
+                      <div className={styles.field}>
+                        <label className={styles.label}>{t("ssh.sshKey")}</label>
+                        <textarea
+                          className={`${styles.input} liquid-glass-input`}
+                          rows={5}
+                          placeholder={t("ssh.keyPlaceholder")}
+                          value={sshPrivateKey}
+                          onChange={e => setSshPrivateKey(e.target.value)}
+                          disabled={connecting}
+                          style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }}
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label className={styles.label}>{t("ssh.passphrase")}</label>
+                        <input
+                          className={`${styles.input} liquid-glass-input`}
+                          type="password"
+                          placeholder={t("ssh.passphrasePlaceholder")}
+                          value={sshPassphrase}
+                          onChange={e => setSshPassphrase(e.target.value)}
+                          disabled={connecting}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* 文件服务协议固定为 SFTP（SCP 已移除） */}
+
+
+                  {/* 启用发送栏开关 */}
+                  <div className={styles.field}>
+                    <label className={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={sshSendBarEnabled}
+                        onChange={e => setSshSendBarEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div className={styles.toggleTrack} />
+                      <span>{t("ssh.enableSendBar")}</span>
+                    </label>
+                  </div>
+
+                  {/* 启用文件传输开关 */}
+                  <div className={styles.field}>
+                    <label className={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={sshTransferEnabled}
+                        onChange={e => setSshTransferEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div className={styles.toggleTrack} />
+                      <span>{t("ssh.enableTransfer")}</span>
+                    </label>
+                  </div>
+
+                  {/* 启用文件管理器开关 */}
+                  <div className={styles.field}>
+                    <label className={styles.checkboxLabel}>
+                      <input
+                        type="checkbox"
+                        checked={fileServiceEnabled}
+                        onChange={e => setFileServiceEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div className={styles.toggleTrack} />
+                      <span>{t("ssh.enableFileService")}</span>
+                    </label>
+                  </div>
+
+                </>
+              )}
+
               {/* ── 未实现插件的占位提示 ── */}
-              {!isSerial && (
+              {!isSerial && !isSsh && (
                 <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
                   <Icon name="construction" size="lg" />{" "}
                   {t("connectionType.formNotImplemented", { pluginName: selectedMode })}
@@ -463,7 +677,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 <button
                   className={`${styles.connectBtn} liquid-primary-button`}
                   onClick={handleCreate}
-                  disabled={(!port && isSerial) || connecting}
+                  disabled={(!port && isSerial) || (!sshHost && isSsh) || connecting}
                 >
                   {connecting
                     ? t("serial.confirming")

@@ -33,3 +33,9 @@ export function formatPortParams(params: Record<string, unknown> | undefined): s
   const flow = flowMap[String(params.flow_control ?? "none")] ?? "None";
   return `${baud}·${data}${parity}${stop}·${flow}`;
 }
+
+/** 格式化 Unix 时间戳为本地化时间字符串 */
+export function formatTime(ts: number | null): string {
+  if (!ts) return "-";
+  return new Date(ts * 1000).toLocaleString();
+}

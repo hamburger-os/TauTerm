@@ -1,39 +1,35 @@
-//! 传输管理器（预留架构）
+//! 传输管理器
 //!
-//! **当前状态**: 未激活，传输策略路由已硬编码在 `commands.rs::handoff_and_spawn_transfer` 中。
-//!
-//! **未来用途**: 根据会话类型和通道能力自动选择传输策略：
+//! 根据会话类型和通道能力自动选择传输策略：
 //! - `Inline` — 串口 X/Y/ZModem（暂停 I/O 循环，直接使用传输通道）
-//! - `SideChannel` — SSH SFTP/SCP（在现有会话内打开子通道）
+//! - `SideChannel` — SSH SFTP（通过 `SshSideChannel` 在现有会话内操作）
 //! - `SeparateConnection` — FTP（建立独立数据连接）
 //!
-//! 当需要支持非串口传输协议（如 SSH/SFTP/SCP）时，此模块将替代当前的硬编码路由。
+//! 由 `commands.rs` 中的发送/接收路径调用，统一替代此前硬编码的 serial/ssh 分支路由。
 
 use crate::channel::Channel;
 use crate::kernel::plugin_adapter::TransferProtocolType;
 
-/// 传输策略（预留）
+/// 传输策略 — 控制命令层选用哪种传输执行路径
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]  // 预留，当前未激活
 pub enum TransferStrategy {
     /// Inline 策略：暂停 I/O 循环，直接使用传输通道
     /// 适用于串口的 YModem/XModem/ZModem
     Inline,
-    /// SideChannel 策略：在现有会话内打开子通道传输
-    /// 适用于 SSH 的 SFTP/SCP
+    /// SideChannel 策略：在现有会话内通过协议侧通道传输
+    /// 适用于 SSH 的 SFTP
     SideChannel,
     /// SeparateConnection 策略：建立独立数据连接
     /// 适用于 FTP
     SeparateConnection,
 }
 
-/// 传输管理器（预留）
-#[allow(dead_code)]  // 预留，当前未激活
+/// 传输管理器 — 协议 → 策略路由器
 pub struct TransferManager;
 
-#[allow(dead_code)]  // 预留，当前未激活
 impl TransferManager {
-    /// 根据通道能力和协议类型自动选择传输策略
+    /// 根据通道能力和协议类型选择传输策略（预留：调用方当前使用 select_strategy_by_protocol）
+    #[allow(dead_code)]
     pub fn select_strategy(
         channel: &mut Box<dyn Channel>,
         protocol: &TransferProtocolType,
@@ -64,7 +60,7 @@ impl TransferManager {
                     TransferStrategy::SideChannel
                 }
             }
-            TransferProtocolType::Sftp | TransferProtocolType::Scp => {
+            TransferProtocolType::Sftp => {
                 TransferStrategy::SideChannel
             }
             TransferProtocolType::Ftp => {

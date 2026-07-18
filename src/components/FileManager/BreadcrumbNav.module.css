@@ -1,0 +1,42 @@
+/* 面包屑导航 — 仅布局/尺寸/滚动，颜色使用设计 token */
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  padding: var(--spacing-xs) 0;
+  font-size: var(--text-xs);
+  flex-shrink: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  gap: 0;
+}
+
+.segmentWrapper {
+  display: inline-flex;
+  align-items: center;
+}
+
+.separator {
+  margin: 0 2px;
+  color: var(--text-tertiary);
+}
+
+.segment {
+  cursor: pointer;
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+
+.segment:hover {
+  text-decoration: underline;
+}
+
+.current {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.current:hover {
+  text-decoration: none;
+  cursor: default;
+}

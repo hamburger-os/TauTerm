@@ -1,0 +1,97 @@
+/* 传输进度条 — 固定底部，自建玻璃效果 */
+
+.bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--spacing-sm);
+  gap: var(--spacing-sm);
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-top: 1px solid var(--glass-border-default);
+  z-index: 10;
+}
+
+/* ── 左侧 ──────────────────────────────── */
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.dirIcon {
+  flex-shrink: 0;
+  font-size: var(--text-md);
+}
+
+.fileName {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* ── 进度条 ────────────────────────────── */
+
+.progressTrack {
+  flex: 1;
+  height: 4px;
+  background: var(--glass-hover);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  transition: width 0.1s linear;
+}
+
+/* ── 右侧 ──────────────────────────────── */
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.percentText {
+  font-family: var(--font-mono);
+  color: var(--accent-primary);
+  min-width: 36px;
+  text-align: right;
+}
+
+.speedText {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  min-width: 64px;
+  text-align: right;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0 4px;
+}
+
+.closeBtn:hover {
+  color: var(--text-primary);
+}

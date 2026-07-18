@@ -9,11 +9,12 @@ import Icon from "../common/Icon";
 import styles from "./StatusBar.module.css";
 
 /**
- * 底部状态栏（增强版）
+ * 底部状态栏（多协议）
  *
- * 显示连接状态、端口参数、硬件信号线（当前显示未知状态，
- * 等待后端添加信号线读取 API 后接入真实数据）、运行时间、
- * 数据模式、Tx/Rx 实时速率、插件状态项。
+ * 根据活跃会话的 pluginId（"serial" | "ssh"）条件渲染不同的状态信息：
+ * - 串口：端口参数（波特率/数据位/校验位/流控）、硬件信号线、虚拟串口
+ * - SSH：user@host:port、认证方式、文件服务状态
+ * - 通用：连接状态、运行时间、数据模式、Tx/Rx 实时速率、日志状态
  */
 export default function StatusBar() {
   const { t } = useTranslation();
@@ -59,6 +60,8 @@ export default function StatusBar() {
     : [];
 
   const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
+  const isSerial = activeTab?.pluginId === "serial";
+  const isSsh = activeTab?.pluginId === "ssh";
   const params = activeTab?.params as Record<string, unknown> | undefined;
 
   // 数据模式（使用 i18n 键确保语言切换时正确显示）
@@ -74,24 +77,50 @@ export default function StatusBar() {
             activeTab?.state === "transferring" ? styles.transferring : ""
           }`} />
           <span className={styles.text}>
-            {isConnected ? activeTab?.endpoint : t("serial.disconnected")}
+            {isConnected
+              ? (isSsh
+                  ? `${params?.username ?? ""}@${activeTab?.endpoint}:${params?.port ?? 22}`
+                  : activeTab?.endpoint)
+              : t("statusBar.disconnected")}
           </span>
         </div>
 
-        {/* 串口参数 */}
-        {isConnected && params && (
+        {/* 串口参数（仅串口会话显示） */}
+        {isConnected && isSerial && params && (
           <div className={styles.segment}>
             <span className={styles.paramText}>{formatPortParams(params)}</span>
           </div>
         )}
 
-        {/* 硬件信号线（当前显示未知，等待后端 API 接入真实信号状态） */}
-        {isConnected && (
+        {/* 硬件信号线（仅串口会话，当前显示未知，等待后端 API 接入真实信号状态） */}
+        {isConnected && isSerial && (
           <div className={styles.segment}>
             <span className={`${styles.signalDot} ${styles.signalUnknown}`} title="DTR — 等待后端 API">DTR --</span>
             <span className={`${styles.signalDot} ${styles.signalUnknown}`} title="RTS — 等待后端 API">RTS --</span>
             <span className={`${styles.signalDot} ${styles.signalUnknown}`} title="CTS — 等待后端 API">CTS --</span>
             <span className={`${styles.signalDot} ${styles.signalUnknown}`} title="DSR — 等待后端 API">DSR --</span>
+          </div>
+        )}
+
+        {/* 会话类型标签 */}
+        {isConnected && isSerial && (
+          <div className={styles.segment}>
+            <span className={styles.typeBadge}>{t("statusBar.typeSerial")}</span>
+          </div>
+        )}
+        {isConnected && isSsh && (
+          <div className={styles.segment}>
+            <span className={styles.typeBadge}>{t("statusBar.typeSsh")}</span>
+            <span className={styles.sshAuthBadge}>
+              {params?.auth_method === "key"
+                ? t("statusBar.authKey")
+                : t("statusBar.authPassword")}
+            </span>
+            {params?.file_service_enabled === true && (
+              <span className={styles.sshFsBadge}>
+                {String(params.file_service_protocol ?? "sftp").toUpperCase()}
+              </span>
+            )}
           </div>
         )}
 
@@ -118,7 +147,7 @@ export default function StatusBar() {
         )}
 
         {/* 虚拟串口指示器 */}
-        {activeTab && isConnected && activeTab.virtualPortPairs && activeTab.virtualPortPairs.length > 0 && (
+        {activeTab && isConnected && isSerial && activeTab.virtualPortPairs && activeTab.virtualPortPairs.length > 0 && (
           <div className={styles.segment}>
             <span className={styles.paramText}>
               VPort: {activeTab.virtualPortPairs.map(p => `${p.port_a}↔${p.port_b}`).join(", ")}
@@ -127,7 +156,7 @@ export default function StatusBar() {
         )}
 
         {/* 虚拟串口失败警告 */}
-        {activeTab && isConnected && activeTab.virtualPortError && (
+        {activeTab && isConnected && isSerial && activeTab.virtualPortError && (
           <div className={styles.segment}>
             <span className={`${styles.paramText} ${styles.vportWarning}`}>
               <Icon name="warning" size="xs" /> {activeTab.virtualPortError}
@@ -144,7 +173,7 @@ export default function StatusBar() {
         )}
 
         {/* 全局驱动未安装警告（非会话级，持续显示） */}
-        {driverMissing && !(activeTab && isConnected && activeTab.virtualPortError) && (
+        {isSerial && driverMissing && !(activeTab && isConnected && activeTab.virtualPortError) && (
           <div className={styles.segment} title={t("serial.virtualPort.retryHint")}>
             <span className={`${styles.paramText} ${styles.vportWarning}`}>
               <Icon name="warning" size="xs" /> {t("serial.virtualPort.notInstalled")}
@@ -161,7 +190,7 @@ export default function StatusBar() {
         )}
 
         {/* 手动清理残留端口按钮（仅在检测到残留端口对时显示） */}
-        {orphanCount > 0 && (
+        {isSerial && orphanCount > 0 && (
           <div className={styles.segment} title={t("serial.virtualPort.cleanupHint")}>
             <span className={`${styles.paramText} ${styles.vportWarning}`}>
               <Icon name="warning" size="xs" /> VPort {orphanCount} {t("serial.virtualPort.orphansDetected")}

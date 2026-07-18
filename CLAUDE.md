@@ -19,12 +19,14 @@ cd src-tauri && cargo clippy -- -D warnings
 
 ## 项目结构要点
 
-- `src-tauri/src/channel/` — I/O 通道抽象（Channel trait, io_loop, serial_comm）
+- `src-tauri/src/channel/` — I/O 通道抽象（Channel trait, io_loop, async_io_loop, serial_comm, ssh_channel）
+- `src-tauri/src/kernel/plugin_adapter.rs` — ProtocolAdapter trait + connect()/ProtocolConnection/SideChannel 扩展点
 - `src-tauri/src/kernel/comm_handle.rs` — CommHandle trait（协议无关通信抽象）
 - `src-tauri/src/kernel/script_engine/` — Lua 5.4 脚本运行时（mod/lua_api/sandbox/codegen）
   - Lua API 函数：`send(data)`, `sleep(ms)`, `log(message)`, `on_data(pattern, cb)`, `register_timer(id, ms, cb)`, `unregister_timer(id)`, `regex_find(pattern, str)`, `_time_ms()`, `_datetime_iso()`, `_datetime_format(fmt)`
   - 沙箱已移除：`os`, `io`, `require`, `dofile`, `loadfile`, `debug`
 - `src-tauri/src/kernel/session_store.rs` — 会话生命周期管理
+- `src-tauri/src/kernel/data_batcher.rs` — 数据批处理器（16ms 窗口合并 + Base64 编码，降低高频小包 IPC 开销）
 - `src-tauri/src/commands.rs` — Tauri 命令（前后端接口）
 - `src/components/SendBar/` — 发送栏 4 模式（basic/command/auto-reply/script）
   - `BasicSend.tsx` — 基础发送（Text/HEX、换行符、循环发送、历史记录）
@@ -38,14 +40,18 @@ cd src-tauri && cargo clippy -- -D warnings
   - `builtinScripts.ts` — 10 个内置 Lua 脚本示例（回显、定时器、NMEA 解析等）
   - `MatchTester.tsx` — 匹配表达式实时测试器（5 种模式 × text/hex，通过 Tauri invoke 调用后端）
   - `MacroPicker.tsx` — 回复动作宏插入器（14 种模板宏）
+  - `ReplyActionEditor.tsx` — 回复动作编辑器（宏序列构建器 UI，与 AutoReplyRuleEditor 配对使用）
 - `src/hooks/usePointerDragReorder.ts` — 通用指针事件拖拽排序 hook（AutoReplyPanel / ReplyActionEditor 共用）
-- `src-tauri/src/transfer/` — 文件传输子系统（X/Y/ZModem 协议）
+- `src-tauri/src/transfer/` — 文件传输子系统（X/Y/ZModem 协议，ssh_file_service async SFTP）
 - `src-tauri/src/security/` — 凭据存储（keyring + AES-256-GCM）
 - `src-tauri/src/virtual_port/` — 虚拟串口（com0com 驱动集成、端口对生命周期、双向桥接）
 - `src-tauri/src/plugins/serial/` — 串口插件（ProtocolAdapter trait 实现）
+- `src-tauri/src/plugins/ssh/` — SSH 插件（russh async connect + SshSideChannel，密码/密钥认证，SFTP 文件服务）
 - `src/core/` — 前端内核 API（plugin-registry, tab-host, config-store, event-bus）
 - `src/renderers/` — 内容适配器（TerminalRenderer 等）
 - `src/context/` — React Context（Session, Toast, Transfer）
+- `src/components/FileManager/` — SFTP 文件管理器（目录浏览、上传/下载、批量操作、属性编辑、文件预览）
+- `src/profiles/` — 会话 Profile 解析器（按协议类型提供身份信息与参数展示，serial.ts / ssh.ts）
 - `src/styles/tokens.css` — CSS 设计 token（主题变量）
 
 ## 代码规范
@@ -91,3 +97,5 @@ const { t } = useTranslation();
 3. **CommHandle 协议无关抽象**：脚本引擎通过 `CommHandle` trait 与底层通信，不感知协议差异。
 4. **代码生成管道**：`AutoReplyRule[]` → Tauri invoke → `codegen::rules_to_lua_script()` → Lua 字符串 → 注入 VM。
 5. **数据扇出**：`CommHandle::notify_receive()` 通过回调列表将数据同时传递给终端和脚本引擎。
+6. **双模 I/O 策略**：`ChannelKind { Sync, Async }` 枚举分离串口（同步 `std::thread` + `Channel` trait）与 SSH（异步 `tokio task` + `AsyncChannel` trait）的 I/O 循环，新协议通过 `IoStrategy::Sync` 或 `IoStrategy::Async` 声明驱动方式。
+7. **数据批处理**：`DataBatcher` 在独立线程中按 16ms 窗口 + 32KB 阈值合并高频小包数据，编码为 Base64 后通过单次事件 emit，大幅降低 Rust → JSON → IPC → JS 链路开销。

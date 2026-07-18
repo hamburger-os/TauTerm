@@ -44,6 +44,8 @@ impl CommHandle for SerialCommHandle {
     }
 
     fn notify_receive(&self, data: &[u8]) {
+        // 快速路径：无回调注册时直接返回，避免每包数据都获取 Mutex。
+        // 常见场景：未启用脚本引擎的会话（绝大多数 SSH/Serial 连接）。
         // 注意：持有 callbacks Mutex 期间调用所有回调。回调实现在 I/O 线程
         // 中同步执行 — 必须快速返回（当前仅做 mpsc::Sender::send()）。
         // 禁止在回调中调用 on_receive() 或 clear_receivers()（会获取同一 Mutex 而死锁）。
@@ -51,6 +53,9 @@ impl CommHandle for SerialCommHandle {
             log::warn!("SerialCommHandle: Mutex poisoned during notify_receive, recovering");
             e.into_inner()
         });
+        if callbacks.is_empty() {
+            return;
+        }
         for cb in callbacks.iter() {
             cb(data);
         }

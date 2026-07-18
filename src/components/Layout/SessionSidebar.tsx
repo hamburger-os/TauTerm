@@ -79,7 +79,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
               tab.endpoint,
               tab.params as Record<string, unknown>,
               tab.name,
-              undefined,
+              tab.pluginId,
               tab.transferEnabled,
               tab.transferProtocol,
               tab.sendBarEnabled,
@@ -158,7 +158,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                 <Icon
                   name={
                     tab.state === "connected" ? "status-connected" :
-                    tab.state === "transferring" ? "status-connecting" :
+                    tab.state === "connecting" || tab.state === "transferring" ? "status-connecting" :
                     "status-idle"
                   }
                   size={10}
@@ -196,7 +196,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       <ContextMenu
         state={menu}
         items={getMenuItems()}
-        onSelect={handleMenuSelect}
+        onSelect={(itemId) => handleMenuSelect(itemId, menu.session?.id || "")}
         onClose={closeMenu}
       />
     </div>

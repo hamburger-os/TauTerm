@@ -43,7 +43,7 @@ function statusIconName(state: string): IconName {
     case "connected": return "status-connected";
     case "disconnected": return "status-disconnected";
     case "connecting": return "status-connecting";
-    case "transferring": return "upload";
+    case "transferring": return "status-connecting";
     default: return "status-idle";
   }
 }

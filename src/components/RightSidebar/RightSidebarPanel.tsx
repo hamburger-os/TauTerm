@@ -8,6 +8,8 @@ export interface RightSidebarPanelProps {
   title: string;
   defaultExpanded?: boolean;
   children: ReactNode;
+  /** 根元素右键事件（用于文件管理器空白区域菜单等） */
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 /**
@@ -20,6 +22,7 @@ export default function RightSidebarPanel({
   title,
   defaultExpanded = true,
   children,
+  onContextMenu,
 }: RightSidebarPanelProps) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -57,7 +60,10 @@ export default function RightSidebarPanel({
   }, [expanded]);
 
   return (
-    <div className={`${styles.panel} ${expanded ? styles.expanded : ""}`}>
+    <div
+      className={`${styles.panel} ${expanded ? styles.expanded : ""}`}
+      onContextMenu={onContextMenu}
+    >
       <button
         className={styles.header}
         onClick={toggle}

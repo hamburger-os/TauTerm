@@ -25,13 +25,23 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use crate::channel::Channel;
 use crate::channel::io_loop::{IoLoopCmd, spawn_sync_io_loop};
-use crate::channel::serial_comm::SerialCommHandle;
+use crate::channel::async_io_loop::spawn_async_io_loop;
 use crate::kernel::comm_handle::CommHandle;
+use crate::kernel::plugin_adapter::{ChannelKind, ProtocolConnection, SideChannel};
 use crate::kernel::script_engine::{ScriptCmd, spawn_script_thread};
 use crate::virtual_port::bridge::VirtualPortBridge;
 use crate::virtual_port::manager::PortPair;
 
 pub type TabId = String;
+
+/// I/O 任务句柄枚举
+///
+/// - `Sync`：由 `spawn_sync_io_loop` 返回的 std::thread 句柄（串口）
+/// - `Async`：由 `spawn_async_io_loop` 返回的 tokio task 句柄（SSH）
+pub enum IoTaskHandle {
+    Sync(std::thread::JoinHandle<()>),
+    Async(tokio::task::JoinHandle<()>),
+}
 
 /// 会话状态
 #[derive(Debug, Clone, PartialEq)]
@@ -58,7 +68,7 @@ pub struct ActiveSessionHandle {
     pub write_tx: mpsc::SyncSender<IoLoopCmd>,
     pub io_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
     pub cancel_transfer_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    pub io_thread: Option<std::thread::JoinHandle<()>>,
+    pub io_thread: Option<IoTaskHandle>,
     pub state: SessionState,
     pub plugin_id: String,
     pub endpoint: String,
@@ -89,6 +99,20 @@ pub struct ActiveSessionHandle {
     pub script_thread: Option<std::thread::JoinHandle<()>>,
     /// 脚本线程的协作式关闭标志（停止时置位，使 Lua sleep 分片中断，join 不长时阻塞）
     pub script_shutdown: Option<Arc<AtomicBool>>,
+    /// 协议侧通道资源（如 SSH Session 供 SFTP 复用）。
+    /// 由 `ProtocolConnection::side_channel` 提供，None 表示无辅助资源。
+    /// 使用 `Arc<dyn SideChannel>` 以允许多个命令并发访问同一资源。
+    pub side_channel: Option<Arc<dyn SideChannel>>,
+    /// SFTP 传输取消标志（传输进行中置位，传输循环每块检查）。
+    /// None 表示当前无传输进行。由 SFTP 命令在传输前设置，传输结束后置 None。
+    pub sftp_cancel_flag: Option<Arc<AtomicBool>>,
+    /// SFTP 异步传输任务的 JoinHandle 集合。
+    /// 关闭会话时 join 所有 handle，确保传输 task 的 Drop 清理逻辑执行完毕，
+    /// 避免残留半成品文件（上传残留远端，下载残留本地）。
+    pub sftp_transfer_handles: Vec<tokio::task::JoinHandle<()>>,
+    /// 会话关闭后、资源完全释放前所需的额外等待时间（由协议适配器提供）。
+    /// `close_session()` 在 join I/O 线程后据此睡眠，避免内核硬编码协议特定逻辑。
+    pub teardown_delay: Duration,
 }
 
 impl ActiveSessionHandle {
@@ -197,7 +221,7 @@ impl SessionStore {
         }
     }
 
-    /// 创建新会话（使用已打开的 Channel）
+    /// 创建新会话（使用协议适配器返回的 `ProtocolConnection`）
     #[allow(clippy::too_many_arguments)]
     pub fn create_session(
         &mut self,
@@ -205,7 +229,7 @@ impl SessionStore {
         plugin_id: &str,
         endpoint: &str,
         params: serde_json::Value,
-        channel: Box<dyn Channel>,
+        conn: ProtocolConnection,
         on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
         on_disconnect: Box<dyn Fn(String) + Send>,
         app_handle: tauri::AppHandle,
@@ -241,11 +265,15 @@ impl SessionStore {
                 .as_millis() as u64,
         );
 
-        let (write_tx, write_rx) = mpsc::sync_channel::<IoLoopCmd>(32);
+        let (write_tx, write_rx) = mpsc::sync_channel::<IoLoopCmd>(256);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
-        // 创建通信抽象句柄（供脚本引擎使用）
-        let comm_handle: Arc<dyn CommHandle> = Arc::new(SerialCommHandle::new(write_tx.clone()));
+        // 通信抽象句柄：协议可自带（如未来 SSH 专用实现），否则统一使用 SerialCommHandle。
+        // 当前所有协议的 CommHandle 均仅包装 write_tx，功能等价，故统一降级。
+        let comm_handle: Arc<dyn CommHandle> = conn.comm_handle
+            .unwrap_or_else(|| {
+                Arc::new(crate::channel::serial_comm::SerialCommHandle::new(write_tx.clone()))
+            });
 
         let tx_bytes = Arc::new(AtomicU64::new(0));
         let rx_bytes = Arc::new(AtomicU64::new(0));
@@ -265,10 +293,20 @@ impl SessionStore {
             on_data(session_id, data);
         });
 
-        let io_handle = spawn_sync_io_loop(
-            channel, sid, wrapped_on_data, on_disconnect, write_rx, cancel_rx,
-            tx_clone, rx_clone,
-        );
+        let io_handle = match conn.channel {
+            ChannelKind::Sync(sync_channel) => {
+                IoTaskHandle::Sync(spawn_sync_io_loop(
+                    sync_channel, sid.clone(), wrapped_on_data, on_disconnect, write_rx, cancel_rx,
+                    tx_clone, rx_clone,
+                ))
+            }
+            ChannelKind::Async(async_channel) => {
+                IoTaskHandle::Async(spawn_async_io_loop(
+                    async_channel, sid.clone(), wrapped_on_data, on_disconnect, write_rx, cancel_rx,
+                    tx_clone, rx_clone,
+                ))
+            }
+        };
 
         // 启动 StatsCollector（使用 std thread + AtomicBool 取消，无需 tokio runtime）
         let stats_cancel_flag = Arc::new(AtomicBool::new(false));
@@ -310,6 +348,10 @@ impl SessionStore {
             script_tx: None,
             script_thread: None,
             script_shutdown: None,
+            side_channel: conn.side_channel,
+            sftp_cancel_flag: None,
+            sftp_transfer_handles: Vec::new(),
+            teardown_delay: conn.teardown_delay,
         };
 
         // 防御性检查：若 id_override 指向的会话已存在且未被正确关闭，
@@ -361,6 +403,16 @@ impl SessionStore {
             }
         }
 
+        // ── SFTP 传输取消 ──
+        // 若会话有进行中的文件传输，置位取消标志。传输线程在下次块检查时退出，
+        // 其 RAII guard (SftpTransferGuard) 的 drop 会调用 sftp_transfer_done
+        // (对已移除的 session 是 no-op)。side_channel 通过 Arc clone 保持 SSH
+        // Session 存活，直到传输线程退出，避免 use-after-free。
+        if let Some(flag) = handle.sftp_cancel_flag.take() {
+            flag.store(true, Ordering::SeqCst);
+            log::info!("已请求取消会话 {} 的进行中传输", session_id);
+        }
+
         // 关闭脚本引擎（必须在 IoLoop 关闭前执行）
         if let Some(ref flag) = handle.script_shutdown {
             flag.store(true, Ordering::SeqCst);
@@ -398,12 +450,70 @@ impl SessionStore {
             let _ = tx.send(());
         }
         let _ = handle.write_tx.send(IoLoopCmd::Shutdown);
-        if let Some(thread) = handle.io_thread.take() {
-            let _ = thread.join();
+        match handle.io_thread.take() {
+            Some(IoTaskHandle::Sync(thread)) => {
+                let _ = thread.join();
+            }
+            Some(IoTaskHandle::Async(task)) => {
+                // Join async I/O task。需在两种场景下均可工作：
+                // 1. Tauri async 命令（已在 tokio runtime 中）→ block_in_place + block_on
+                // 2. RunEvent::Exit / Drop 清理（不在 runtime 中，如 main 线程）→ 临时 runtime
+                match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => {
+                        tokio::task::block_in_place(|| {
+                            let _ = handle.block_on(task);
+                        });
+                    }
+                    Err(_) => {
+                        // 不在 tokio runtime 中（如 main 线程 Drop 清理），
+                        // 尝试创建临时 runtime 来 join async task。
+                        // 资源耗尽时创建 runtime 可能失败，此时仅记录警告，
+                        // task JoinHandle 随 drop 自然释放（best-effort 清理）。
+                        match tokio::runtime::Runtime::new() {
+                            Ok(rt) => {
+                                let _ = rt.block_on(task);
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "无法创建临时 tokio runtime 清理异步 I/O task: {}. \
+                                     task handle 将被 drop（可能导致 SSH 会话未完全关闭）",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            None => {}
         }
 
-        #[cfg(target_os = "windows")]
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        // ── 等待进行中的 SFTP 传输完成 ──
+        // tokio::spawn 的 JoinHandle 若不 join，在进程退出时强制取消可能导致
+        // Drop 清理逻辑不执行，残留半成品文件。
+        for task in handle.sftp_transfer_handles.drain(..) {
+            // 在当前线程（可能已在 tokio runtime 内）阻塞等待传输 task 完成。
+            // 传输 task 内已监听 sftp_cancel_flag，此处 join 最坏等待单块传输时间。
+            match tokio::runtime::Handle::try_current() {
+                Ok(rt) => {
+                    tokio::task::block_in_place(|| {
+                        let _ = rt.block_on(task);
+                    });
+                }
+                Err(_) => {
+                    match tokio::runtime::Runtime::new() {
+                        Ok(rt) => { let _ = rt.block_on(task); }
+                        Err(_) => {
+                            log::warn!("无法创建 tokio runtime 等待 SFTP 传输 task 完成");
+                        }
+                    }
+                }
+            }
+        }
+
+        // 协议适配器声明的关闭后等待时间（如串口驱动释放端口），避免硬编码协议判断
+        if !handle.teardown_delay.is_zero() {
+            std::thread::sleep(handle.teardown_delay);
+        }
 
         self.tab_order.retain(|id| id != session_id);
         if self.active_id.as_deref() == Some(session_id) {
@@ -594,7 +704,7 @@ impl SessionStore {
                 .as_millis() as u64,
         );
 
-        let (write_tx, write_rx) = mpsc::sync_channel::<IoLoopCmd>(32);
+        let (write_tx, write_rx) = mpsc::sync_channel::<IoLoopCmd>(256);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
         let tx_bytes = Arc::new(AtomicU64::new(0));
@@ -605,6 +715,7 @@ impl SessionStore {
             channel, sid, on_data, on_disconnect, write_rx, cancel_rx,
             tx_bytes.clone(), rx_bytes.clone(),
         );
+        let io_handle = IoTaskHandle::Sync(io_handle);
 
         let new_stats_flag = Arc::new(AtomicBool::new(false));
         Self::start_stats_collector(
@@ -621,7 +732,7 @@ impl SessionStore {
         // 重建 comm_handle，确保重连后脚本引擎使用新的 write_tx 通道。
         // 旧 comm_handle 持有的 write_tx 副本已随旧 I/O 线程停止而失效，
         // 若不重建，脚本引擎 send() 会向死 channel 写入，错误被静默吞掉。
-        let new_comm: Arc<dyn CommHandle> = Arc::new(SerialCommHandle::new(write_tx.clone()));
+        let new_comm: Arc<dyn CommHandle> = Arc::new(crate::channel::serial_comm::SerialCommHandle::new(write_tx.clone()));
         // 清理旧 comm_handle 上可能残留的回调（防止 stop→reconnect→start 链路
         // 下旧回调堆积在已失效的 CommHandle 中）
         if let Some(old_comm) = &handle.comm_handle {
@@ -668,21 +779,123 @@ impl SessionStore {
         Ok(())
     }
 
+    /// 为 SFTP/SCP 传输准备取消标志。
+    ///
+    /// 在传输开始前调用：在会话句柄上设置一个新的 `AtomicBool`（初值 false），
+    /// 返回其 `Arc` 克隆供传输循环轮询。传输结束后应调用 `sftp_transfer_done` 清理。
+    ///
+    /// 设计决策：同一会话同一时刻只允许一个 SFTP/SCP 传输进行中。
+    /// 若已有传输进行中（flag 已存在），返回错误以防止并发传输互相覆盖取消标志。
+    /// 前端应串行化多文件传输（在 `sftp-transfer-finished` 事件到达后再发起下一个）。
+    pub fn sftp_transfer_start(&mut self, session_id: &str) -> Result<Arc<AtomicBool>, String> {
+        let not_found = self.session_not_found(session_id);
+        let handle = self.sessions.get_mut(session_id)
+            .ok_or(not_found)?;
+        if handle.sftp_cancel_flag.is_some() {
+            return Err("该会话已有传输进行中，请等待完成或取消后再试".to_string());
+        }
+        let flag = Arc::new(AtomicBool::new(false));
+        handle.sftp_cancel_flag = Some(flag.clone());
+        Ok(flag)
+    }
+
+    /// 取消当前 SFTP/SCP 传输（置位取消标志，传输循环在下次块检查时退出）。
+    pub fn cancel_sftp_transfer(&mut self, session_id: &str) -> Result<(), String> {
+        let not_found = self.session_not_found(session_id);
+        let handle = self.sessions.get_mut(session_id)
+            .ok_or(not_found)?;
+        if let Some(flag) = &handle.sftp_cancel_flag {
+            flag.store(true, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    /// 清理 SFTP/SCP 传输状态（传输结束后调用，无论成功/失败/取消）。
+    pub fn sftp_transfer_done(&mut self, session_id: &str) {
+        if let Some(handle) = self.sessions.get_mut(session_id) {
+            handle.sftp_cancel_flag = None;
+        }
+    }
+
+    /// 注册 SFTP 传输 task 的 JoinHandle，供 close_session 等待完成。
+    ///
+    /// 每次 `tokio::spawn` 启动传输后调用此方法，将 handle 存入会话句柄。
+    /// `close_session()` 在 I/O 线程退出后 join 所有已注册的 handle，
+    /// 确保传输 task 的 Drop 清理逻辑（含 SftpTransferGuard）执行完毕。
+    pub fn register_sftp_handle(
+        &mut self,
+        session_id: &str,
+        handle: tokio::task::JoinHandle<()>,
+    ) -> Result<(), String> {
+        let not_found = self.session_not_found(session_id);
+        let h = self.sessions.get_mut(session_id).ok_or(not_found)?;
+        h.sftp_transfer_handles.push(handle);
+        Ok(())
+    }
+
     /// 获取会话状态
     pub fn session_state(&self, session_id: &str) -> Option<SessionState> {
         self.sessions.get(session_id).map(|h| h.state.clone())
     }
 
-    /// 标记会话为已断开
+    /// 标记会话为已断开（由 on_disconnect 回调调用）。
+    ///
+    /// 调用时机：I/O 循环检测到连接丢失。
+    /// 注意：此时 I/O 线程正在退出，不应尝试 join（会死锁）。
+    /// 但必须取消 SFTP、脚本引擎和统计采集器，避免资源泄漏。
     pub fn mark_disconnected(&mut self, session_id: &str) {
         if let Some(handle) = self.sessions.get_mut(session_id) {
             handle.state = SessionState::Disconnected;
-            handle.io_cancel_tx = None;
-            handle.io_thread = None;
+
+            // ── SFTP 传输取消 ──
+            // 连接已断开，SFTP 传输不可能完成。置位取消标志使传输循环退出。
+            if let Some(flag) = handle.sftp_cancel_flag.take() {
+                flag.store(true, Ordering::SeqCst);
+                log::info!(
+                    "已取消会话 {} 的进行中 SFTP 传输（连接已断开）",
+                    session_id
+                );
+            }
+            // 在独立 task 中 join SFTP handles，不阻塞 on_disconnect 回调
+            for task in handle.sftp_transfer_handles.drain(..) {
+                let sid = session_id.to_string();
+                tokio::spawn(async move {
+                    match tokio::time::timeout(Duration::from_secs(5), task).await {
+                        Ok(_) => {
+                            log::debug!("SFTP 传输 task 已清理 (session: {})", sid);
+                        }
+                        Err(_) => {
+                            log::warn!("SFTP 传输 task join 超时 (session: {})", sid);
+                        }
+                    }
+                });
+            }
+
+            // ── 脚本引擎关闭 ──
+            if let Some(ref flag) = handle.script_shutdown {
+                flag.store(true, Ordering::SeqCst);
+            }
+            if let Some(tx) = handle.script_tx.take() {
+                let _ = tx.send(ScriptCmd::Shutdown);
+            }
+            if let Some(thread) = handle.script_thread.take() {
+                let _ = thread.join();
+            }
+            if let Some(comm) = &handle.comm_handle {
+                comm.clear_receivers();
+            }
+
+            // ── 取消传输（X/Y/ZModem）──
+            if let Some(tx) = handle.cancel_transfer_tx.take() {
+                let _ = tx.send(());
+            }
+
+            // ── 统计采集器 ──
             if let Some(ref flag) = handle.stats_cancel_flag {
                 flag.store(true, Ordering::SeqCst);
             }
-            // 关闭虚拟端口桥接线程 — PlugInMode=yes 使端口 B 自动隐藏
+
+            // ── 虚拟端口桥接 ──
             if let Some(bridge) = handle.virtual_port_bridge.take() {
                 bridge.shutdown();
                 log::info!(
@@ -690,6 +903,11 @@ impl SessionStore {
                     session_id
                 );
             }
+
+            // ── I/O 线程 ──
+            // io_cancel_tx 置位（触发 I/O 循环退出），但保留 io_thread
+            // JoinHandle 供后续 close_session() join。
+            handle.io_cancel_tx = None;
         }
     }
 

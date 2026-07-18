@@ -1,0 +1,149 @@
+/* 文件列表 — 仅布局 */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── 列标题 ───────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--glass-border-default);
+  flex-shrink: 0;
+  padding: 0 var(--spacing-xs);
+  gap: var(--spacing-xs);
+}
+
+.headerCell {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  gap: 2px;
+}
+
+.headerCell:hover {
+  color: var(--text-primary);
+}
+
+.sortArrow {
+  font-size: var(--text-xs);
+  width: 10px;
+  text-align: center;
+}
+
+/* 列宽 */
+.colName {
+  flex: 1;
+  min-width: 0;
+}
+
+.colSize {
+  flex-shrink: 0;
+  width: 80px;
+  justify-content: flex-end;
+}
+
+.colTime {
+  flex-shrink: 0;
+  width: 140px;
+  justify-content: flex-end;
+}
+
+.colPerms {
+  flex-shrink: 0;
+  width: 90px;
+  cursor: default;
+}
+
+/* ── 错误横幅 ─────────────────────────── */
+
+.errorBanner {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  border-left: 3px solid var(--color-error);
+  color: var(--color-error);
+  padding: 4px var(--spacing-sm);
+  font-size: var(--text-xs);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.errorClose {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  padding: 0 4px;
+  opacity: 0.8;
+}
+
+.errorClose:hover {
+  opacity: 1;
+}
+
+/* ── 上级目录 ─────────────────────────── */
+
+.parentDirRow {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  border-bottom: 1px solid var(--glass-border-default);
+  user-select: none;
+}
+
+.parentDirRow:hover {
+  background: var(--glass-hover);
+}
+
+.parentDirIcon {
+  width: 24px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.parentDirName {
+  flex: 1;
+  padding-left: 4px;
+  font-weight: 500;
+}
+
+/* ── 列表体 ───────────────────────────── */
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.status {
+  text-align: center;
+  color: var(--text-tertiary);
+  padding: var(--spacing-md) var(--spacing-sm);
+  font-size: var(--text-sm);
+}
+
+/* ── 响应式列隐藏（容器查询）── 文件名始终可见 ── */
+
+@container filemanager (max-width: 400px) {
+  .colPerms { display: none; }
+}
+
+@container filemanager (max-width: 300px) {
+  .colTime { display: none; }
+}
+
+@container filemanager (max-width: 200px) {
+  .colSize { display: none; }
+}

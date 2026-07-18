@@ -628,6 +628,20 @@ A liquid glass style chevron-right arrow icon, 3D glass sculpture on pure black 
 
 ---
 
+---
+
+### 48. ssh-shell — SSH 终端会话
+
+**中文提示词：**
+一个液态玻璃风格的 SSH 远程终端图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计为终端窗口的有机流体变体 — 主体为圆角矩形（终端窗口），左上角有一个柔和弯曲的 >_ 提示符（两个圆润折角构成 >，底部一条粗壮下划线 _），右下角有 3 条放射状的小圆点（象征远程连接/网络信号）。所有线条端点半圆形，转角大圆角。风格参考：磨砂玻璃质感、液态胶囊描边、SSH 终端图标。
+
+**English prompt:**
+A liquid glass style SSH remote terminal icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Designed as an organic fluid variant of a terminal window — the body is a rounded rectangle (terminal window), with a softly curved >_ prompt in the upper left (> made of two rounded bends, _ a thick rounded underscore below), and 3 small radiating dots in the bottom right (symbolizing remote connection/network signals). All stroke ends rounded, corners heavily filleted. Style reference: frosted glass texture, liquid pill strokes, SSH terminal icon.
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
 ## 生成后检查清单 / Post-Generation Checklist
 
 ### 图标质量

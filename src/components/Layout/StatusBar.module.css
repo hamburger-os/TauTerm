@@ -135,6 +135,41 @@
   align-items: center;
 }
 
+/* 会话类型标签 */
+.typeBadge {
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent);
+  border-radius: var(--radius-xs);
+  padding: 0 3px;
+  font-size: 8px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+/* SSH 认证方式标签 */
+.sshAuthBadge {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 15%, transparent);
+  border-radius: var(--radius-xs);
+  padding: 0 3px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+}
+
+/* SSH 文件服务标签 */
+.sshFsBadge {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-success) 20%, transparent);
+  border-radius: var(--radius-xs);
+  padding: 0 3px;
+  font-size: 8px;
+  font-family: var(--font-mono);
+}
+
 /* 日志状态指示器 */
 .logDot {
   width: 8px;

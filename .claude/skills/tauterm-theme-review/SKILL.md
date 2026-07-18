@@ -270,6 +270,19 @@ These elements are nested inside a `.liquid-glass` layout surface and must NOT u
 - `StatsDashboardRenderer` `.card` — nested inside terminal viewport (`.liquid-glass`), now uses `.liquid-glass-card` for glass consistency (was previously `var(--bg-secondary)` solid)
 - `PerFileList.tsx` (`.row` elements) — uses Mini-Card pattern (`var(--shadow-sm)` 6px shadow + 3D asymmetric borders), consistent with other small elements in the TransmissionPanel (`.fileSummary`, `.errorBox`, etc.)
 
+### FileManager Components (v0.4.0 — SSH SFTP 文件管理器)
+
+FileManager 组件嵌套在 `RightSidebar.tsx` (`.liquid-glass`) 内，通过 `RightSidebarPanel` accordion 包装。各子组件 CSS Module 遵循标准 token 模式：
+
+- `FileManagerPanel.tsx` → `FileManager.module.css` — 主容器，使用 `--glass-fill` / `--glass-border-default` / `--radius-md`
+- `FileList.tsx` → `FileList.module.css` — 文件列表容器，表头使用 `--text-secondary` + `--glass-border-default` 分隔线
+- `FileRow.tsx` → `FileRow.module.css` — 文件行，hover 使用 `--glass-hover`，emoji 图标使用 `--text-md`
+- `BreadcrumbNav.tsx` → `BreadcrumbNav.module.css` — 面包屑导航，当前目录名使用 `--accent-primary`
+- `InlinePrompt.tsx` → `InlinePrompt.module.css` — 内联输入框（重命名/新建），使用 `--glass-fill` + `--radius-sm`
+- `TransferProgressBar.tsx` → `TransferProgressBar.module.css` — 传输进度条，使用 `var(--glass-blur)` 模糊 + `--glass-fill` 背景
+- `FilePropertiesModal.tsx` → `FilePropertiesModal.module.css` — 属性弹窗，使用 `--dialog-bg` + `--radius-xl`
+- `FilePreviewModal.tsx` → `FilePreviewModal.module.css` — 文件预览弹窗，使用 `--dialog-bg` + `--radius-xl`
+
 ### Tool Panel Components (use `--color-accent`, `--glass-hover`, `--glass-fill-secondary`, `--text-tertiary`)
 
 These components are nested inside `RightSidebar.tsx` (`.liquid-glass`) via `RightSidebarPanel` accordion wrappers. They use per-theme tool panel helper tokens defined in `tokens.css`:
@@ -305,6 +318,9 @@ These elements have `position: absolute` or `position: fixed` and must inline gl
 | `MatchTester` regex panel | `AutoReplyRuleEditor.module.css` | `absolute` (inside modal) |
 | `ConnectDialog` mode badges | `ConnectDialog.module.css` | `absolute` |
 | `ScrollToBottomButton` | `ScrollToBottomButton.module.css` | `absolute` |
+| `FilePreviewModal` | `FilePreviewModal.module.css` | `fixed` (createPortal) |
+| `FilePropertiesModal` | `FilePropertiesModal.module.css` | `fixed` (createPortal) |
+| `InlinePrompt` | `InlinePrompt.module.css` | `absolute` (inline rename/new file input) |
 
 ### Transparent Buttons (no `.liquid-glass-button` required)
 
@@ -318,6 +334,9 @@ These buttons intentionally use transparent/ghost styling and don't need the gla
 - GlassButton `variant="ghost"`
 - SendBar history items
 - ZmodemConfigForm toggle buttons
+- FileManager context menu buttons (`.closeBtn`, `.actionBtn`)
+- FileManager toolbar buttons (upload, download, refresh, etc.)
+- FileList column header sort buttons
 
 ### Micro-Text Exceptions (8/9/10px allowed)
 

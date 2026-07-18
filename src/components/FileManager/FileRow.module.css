@@ -1,0 +1,82 @@
+/* 文件行 — 仅布局/尺寸/列宽 */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 3px var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  user-select: none;
+  height: 28px;
+  border-left: 2px solid transparent;
+}
+
+.row:hover {
+  background: var(--glass-hover);
+}
+
+.selected {
+  background: var(--accent-primary-muted);
+  border-left-color: var(--accent-primary);
+}
+
+/* ── 列 ──────────────────────────────── */
+
+.icon {
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+  font-size: var(--text-md);
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.size {
+  flex-shrink: 0;
+  width: 80px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.time {
+  flex-shrink: 0;
+  width: 140px;
+  text-align: right;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.perms {
+  flex-shrink: 0;
+  width: 90px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* ── 响应式列隐藏（容器查询，与 FileList.header 同步）── */
+
+@container filemanager (max-width: 400px) {
+  .perms { display: none; }
+}
+
+@container filemanager (max-width: 300px) {
+  .time { display: none; }
+}
+
+@container filemanager (max-width: 200px) {
+  .size { display: none; }
+}

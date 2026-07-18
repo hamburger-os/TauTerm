@@ -53,6 +53,10 @@ const COMMAND_MAP: Record<
     send: "send_files",
     receive: "receive_files",
   },
+  sftp: {
+    send: "sftp_upload_file_cmd",
+    receive: "sftp_download_file_cmd",
+  },
 };
 
 // ── State ─────────────────────────────────────────────────
@@ -362,7 +366,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       if (!commandName) {
         dispatch({
           type: "SET_ERROR",
-          error: "transfer.error.unsupported",
+          error: "Unsupported transfer protocol or operation",
         });
         return;
       }
@@ -557,6 +561,19 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         return;
       }
       unlisteners.push(u4);
+
+      // 监听会话断开，自动重置传输状态（避免残留进度和文件列表）
+      const u5 = await listen<{ session_id: string }>(
+        "session-disconnected",
+        (_event) => {
+          dispatch({ type: "RESET_BATCH" });
+        },
+      );
+      if (cancelled) {
+        u5();
+        return;
+      }
+      unlisteners.push(u5);
     })().catch((e) => {
       console.error("TransferContext: Failed to register event listeners:", e);
     });

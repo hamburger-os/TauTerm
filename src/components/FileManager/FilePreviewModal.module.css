@@ -1,0 +1,113 @@
+/* 文件预览弹窗 — 参照 SettingsPage 主题设计 */
+
+.overlay {
+  z-index: var(--z-overlay);
+  /* position/inset/background/display/align/justify 由 glass-overlay 全局类提供 */
+}
+
+.container {
+  width: 680px;
+  max-width: 90vw;
+  height: 480px;
+  max-height: 80vh;
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 标题栏 */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--glass-border-default);
+  flex-shrink: 0;
+}
+
+.headerTitle {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.closeBtn:hover {
+  color: var(--text-primary);
+  background: var(--glass-fill);
+}
+
+/* 主体 */
+.body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+}
+
+.loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+}
+
+.error {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-error);
+  font-size: var(--text-sm);
+  padding: 16px;
+  text-align: center;
+}
+
+.previewArea {
+  flex: 1;
+  margin: 0;
+  padding: 12px 16px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-all;
+  tab-size: 4;
+}
+
+/* 底部状态栏 */
+.statusBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  border-top: 1px solid var(--glass-border-default);
+  flex-shrink: 0;
+}
+
+.statusItem {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+}

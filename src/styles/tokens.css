@@ -115,6 +115,7 @@
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #4285F4 0%, #6366f1 100%);
   --accent-glow: rgba(66, 133, 244, 0.35);
+  --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
   /* 状态颜色 */
@@ -203,6 +204,7 @@
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #4285F4 0%, #6366f1 100%);
   --accent-glow: rgba(66, 133, 244, 0.35);
+  --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
   /* 状态颜色 */
@@ -291,6 +293,7 @@
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
   --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
   /* 状态颜色 */

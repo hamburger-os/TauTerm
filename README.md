@@ -57,7 +57,7 @@ graph TB
   "icon": "ssh",
   "content_type": "terminal",
   "capabilities": ["connection", "transfer", "authentication", "credential_store", "network_outbound"],
-  "transfer_protocols": ["sftp", "scp"],
+  "transfer_protocols": ["sftp"],
   "config_schema": { /* JSON Schema */ }
 }
 ```
@@ -65,23 +65,39 @@ graph TB
 ### 后端核心 Trait
 
 ```rust
-/// 任何协议插件必须实现此 trait
+/// 任何协议插件必须实现此 trait（async，基于 #[async_trait]）
+#[async_trait]
 pub trait ProtocolAdapter: Send + Sync {
-    fn connect(&self, endpoint: &str, params: &Value) -> Result<Box<dyn Channel>, SessionError>;
-    fn disconnect(&self, channel: &mut Box<dyn Channel>) -> Result<(), SessionError>;
-    fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError>;
+    async fn connect(&self, endpoint: &str, params: &Value) -> Result<ProtocolConnection, SessionError>;
     fn content_type(&self) -> ContentType;
-    fn transfer_protocols(&self) -> Vec<TransferProtocol>;
     fn io_strategy(&self) -> IoStrategy;
+    fn transfer_protocols(&self) -> Vec<TransferProtocolType>;
+    fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError>;
+    // teardown_delay() 等其他方法
 }
 
-/// 统一 I/O 通道 —— 所有传输类型实现此 trait
+/// 同步 I/O 通道 —— 串口等阻塞式协议实现此 trait（由 spawn_sync_io_loop 驱动）
 pub trait Channel: Read + Write + Send {
     fn is_connected(&self) -> bool;
-    fn set_timeout(&mut self, dur: Duration) -> Result<(), SessionError>;
-    fn try_handoff(&mut self) -> Option<Box<dyn Any>>;
+    fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError>;
+    fn try_handoff(&mut self) -> Option<Box<dyn Any>>;  // Inline 传输所有权交出
+}
+
+/// 异步 I/O 通道 —— SSH 等 tokio 协议实现此 trait（由 spawn_async_io_loop 驱动）
+#[async_trait]
+pub trait AsyncChannel: Send {
+    async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
+    async fn write(&mut self, buf: &[u8]) -> std::io::Result<usize>;
+    async fn flush(&mut self) -> std::io::Result<()>;
+    fn is_connected(&self) -> bool;
+    fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError>;
+    async fn resize_pty(&mut self, cols: u32, rows: u32) -> Result<(), ChannelError>;
+    fn try_handoff(&mut self) -> Option<Box<dyn Any>>;  // 默认 None（SSH 用 SideChannel 策略）
 }
 ```
+
+`ProtocolConnection` 返回 `ChannelKind::Sync(Box<dyn Channel>)` 或 `ChannelKind::Async(Box<dyn AsyncChannel>)`，
+并可携带 `side_channel: Option<Arc<dyn SideChannel>>`（如 SSH 的 `SshSideChannel` 持有 russh Handle + SFTP 缓存）。
 
 ### 前端注册 API
 
@@ -136,8 +152,8 @@ stateDiagram-v2
 
 | 模式 | 运行时 | 适用协议 | 特点 |
 |------|--------|---------|------|
-| **Sync** | `std::thread` | Serial, TCP Raw, Pipe | 低延迟，无 runtime 开销 |
-| **Async** | `tokio` | SSH, Telnet, HTTP, TRDP | 高并发，天然适合网络协议 |
+| **Sync** | `std::thread` | Serial | 低延迟，无 runtime 开销（`serialport` crate 阻塞式 API + Inline 传输 `try_handoff` 模式） |
+| **Async** | `tokio` | SSH | 高并发，线程安全（russh 纯 Rust async SSH 库，SFTP 与终端 I/O 并发复用同一会话） |
 
 ### 传输子系统
 
@@ -147,7 +163,7 @@ stateDiagram-v2
 graph TD
     TM[TransferManager<br/>策略自动选择]
     TM --> Inline[Inline 策略<br/>串口移交<br/>YModem / XModem / ZModem]
-    TM --> SideChannel[SideChannel 策略<br/>SSH 子通道<br/>SFTP / SCP]
+    TM --> SideChannel[SideChannel 策略<br/>SSH 子通道<br/>SFTP]
     TM --> Separate[SeparateConnection 策略<br/>独立连接<br/>FTP]
 ```
 
@@ -192,7 +208,7 @@ graph LR
 | 协议 | 状态 | 内容类型 | 传输支持 | I/O 模式 |
 |------|------|---------|---------|---------|
 | **Serial** (RS-232/485) | ✅ 已实现 | terminal | YModem / XModem / ZModem (Inline) | Sync |
-| **SSH** | 🔨 开发中 | terminal | SFTP / SCP (SideChannel) | Async |
+| **SSH** | ✅ 已实现 | terminal | SFTP (SideChannel) | Async |
 | **Telnet** | 📋 计划中 | terminal | — | Async |
 | **TCP Raw** | 📋 计划中 | terminal | — | Async |
 | **TRDP** | 📋 计划中 | terminal | — | Async |
@@ -241,7 +257,7 @@ graph LR
 | 国际化 | i18next + react-i18next |
 | 样式方案 | CSS Modules + CSS 自定义属性 |
 | 安全存储 | keyring-rs + AES-256-GCM |
-| 网络协议 | ssh2 (SSH/SFTP) |
+| 网络协议 | russh (纯 Rust async SSH) + russh-sftp |
 | 脚本引擎 | mlua 0.10 (Lua 5.4, vendored) |
 | 正则引擎 | regex 1 |
 
@@ -267,19 +283,23 @@ TauTerm/
 │   │   ├── log_engine.rs       # 生产者-消费者异步日志引擎、LogBridge 桥接器
 │   │   ├── log_writer.rs       # 日志文件写入器、text/hex/dual 格式化、自动分卷
 │   │   ├── comm_handle.rs      # 通信抽象 trait（CommHandle），使脚本引擎协议无关
+│   │   ├── data_batcher.rs      # 数据批处理器（16ms 窗口合并高频小包 + Base64 编码优化 IPC）
 │   │   └── script_engine/      # Lua 5.4 脚本运行时（VM + 代码生成 + API 注入 + 沙箱）
 │   │
 │   ├── channel/                # I/O 通道抽象层
-│   │   ├── mod.rs              # Channel trait 定义
-│   │   ├── serial_channel.rs   # 串口 Channel 实现
+│   │   ├── mod.rs              # Channel / AsyncChannel trait + IoStrategy 枚举
+│   │   ├── serial_channel.rs   # 串口 Channel 实现（Sync 路径，serialport 阻塞 API）
+│   │   ├── ssh_channel.rs      # SSH AsyncChannel 实现（russh::Channel<client::Msg>，PTY 窗口调整）
 │   │   ├── tcp_channel.rs      # TCP Channel 实现
-│   │   ├── io_loop.rs          # 协议无关 I/O 循环引擎（sync + async）
+│   │   ├── io_loop.rs          # 同步 I/O 循环引擎（spawn_sync_io_loop）
+│   │   ├── async_io_loop.rs    # 异步 I/O 循环引擎（spawn_async_io_loop，tokio task）
 │   │   ├── serial_comm.rs      # CommHandle 串口适配实现
 │   │   └── error.rs            # SessionError 结构化错误
 │   │
 │   ├── transfer/               # 传输子系统
 │   │   ├── mod.rs              # TransferManager + 策略选择
 │   │   ├── manager.rs          # 传输策略调度
+│   │   ├── ssh_file_service.rs # SFTP 文件服务（SideChannel 策略，async russh-sftp，复用 SSH Session）
 │   │   ├── ymodem.rs           # YModem 协议实现（发送/接收引擎）
 │   │   └── types.rs            # TransferProtocolType 枚举等共享类型
 │   │
@@ -289,12 +309,13 @@ TauTerm/
 │   ├── virtual_port/            # 虚拟串口模块（跨平台抽象）
 │   │   ├── mod.rs               # 模块声明与 re-export
 │   │   ├── backend.rs           # VirtualPortBackend trait（抽象接口，支持 com0com/socat/tty0tty）
-│   │   ├── manager.rs           # VirtualPortManager（com0com 生命周期管理）
+│   │   ├── manager.rs           # VirtualPort Manager（com0com 生命周期管理）
 │   │   └── bridge.rs            # VirtualPortBridge（后台线程，物理串口 ↔ 虚拟端口双向 I/O）
 │   │
 │   └── plugins/                # 内建协议插件
-│       └── serial/             # 串口插件（ProtocolAdapter + Channel）
-│       # SSH / Telnet / TCP Raw / TRDP / Shell / FTP / iPerf3 — 计划中
+│       ├── serial/             # 串口插件（ProtocolAdapter + Channel）
+│       └── ssh/                # SSH 插件（ProtocolAdapter + SshSideChannel，密码/密钥认证，SFTP）
+│       # Telnet / TCP Raw / TRDP / Shell / FTP / iPerf3 — 计划中
 │
 ├── src/                        # React 前端
 │   ├── core/                   # 内核前端 API
@@ -317,15 +338,23 @@ TauTerm/
 │   │   ├── Tools/              # 嵌入式开发工具（校验和/编码/位操作/协议解析）
 │   │   ├── Settings/           # 设置页（全屏覆盖层：通用/外观/语言/编码/日志/快捷键/关于）
 │   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
+│   │   ├── FileManager/        # SFTP 文件管理器（目录浏览、上传/下载、批量、属性、预览、进度）
 │   │   └── common/             # Icon（30+ SVG 图标）, GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
+│   │
+│   ├── profiles/               # 会话 Profile 解析器（按协议提供身份信息与参数展示）
+│   │   ├── index.ts            # ProfileResolver 聚合 + dispatch
+│   │   ├── types.ts            # SessionProfile 类型定义
+│   │   ├── serial.ts          # 串口 Profile
+│   │   └── ssh.ts             # SSH Profile
 │   │
 │   ├── styles/                 # 全局样式
 │   │   ├── tokens.css           # CSS 自定义属性（3 套主题令牌）
 │   │   └── global.css           # 全局动画（morph/flow）和液态玻璃类
 │   │
 │   └── plugins/                # 插件前端
-│       └── serial/             # SerialConnectForm, 工具栏, 状态栏
-│       # SSH / Telnet / FTP / iPerf3 等前端插件 — 计划中
+│       ├── serial/             # SerialConnectForm, 工具栏, 状态栏
+│       └── ssh/                # SSH 插件清单、区域设置
+│       # Telnet / FTP / iPerf3 等前端插件 — 计划中
 │
 └── package.json
 ```
@@ -411,30 +440,11 @@ rustc --version   # 应输出 >= rustc 1.75.0
 cargo --version   # 应输出 >= cargo 1.75.0
 ```
 
-#### 3. 链接器（二选一）
+#### 3. 链接器
 
-**方案 A（推荐）：使用 Rust 内置的 rust-lld**
+**使用 Rust 内置的 rust-lld**
 
 Rust 1.96+ 自带 LLVM 链接器 `rust-lld`，无需额外安装，编译器会自动使用。
-
-**方案 B：安装 Visual Studio Build Tools**
-
-如果使用较低版本 Rust，或遇到链接器错误，可使用 winget 安装：
-
-```powershell
-# VS 2022 Build Tools（Windows 10 / Windows 11 早期版本）
-winget install --id Microsoft.VisualStudio.2022.BuildTools --source winget
-
-# VS 2026 Build Tools（Windows 11 最新版本，推荐）
-winget install --id Microsoft.VisualStudio.BuildTools --source winget
-```
-
-安装后运行 VS Installer 添加 C++ 工作负载：
-
-```powershell
-& "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" `
-  modify --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait
-```
 
 ---
 
@@ -451,7 +461,6 @@ sudo apt install -y \
   librsvg2-dev \
   patchelf \
   libssl-dev \
-  libssh2-dev \
   libkeyring-dev
 
 # 安装 Node.js（使用 NodeSource）
@@ -471,8 +480,7 @@ sudo dnf install -y \
   libappindicator-gtk3-devel \
   librsvg2-devel \
   patchelf \
-  openssl-devel \
-  libssh2-devel
+  openssl-devel
 
 # Node.js 和 Rust 安装同上
 ```
@@ -485,8 +493,7 @@ sudo pacman -S --needed \
   libappindicator-gtk3 \
   librsvg \
   patchelf \
-  openssl \
-  libssh2
+  openssl
 ```
 
 ---
@@ -637,7 +644,6 @@ npm run tauri build
 > **注意**：
 > - 首次使用需安装 com0com 内核驱动 — 安装 TauTerm 时由 NSIS 安装程序自动完成
 > - 如果驱动因故未安装，状态栏会显示 `VPort 未就绪 — 驱动未安装` 并提供 `[修复]` 按钮（点击将触发 UAC 提权安装）
-> - 日志全部写入 `TauTerm_YYYYMMDD.log`，端口对状态持久化到 `com0com_state.json`（启动时自动清理孤儿端口）
 > - **开发模式**：`npm run tauri dev` 启动的应用无管理员权限，清理操作可能需要 UAC 提权。点击状态栏 `[清理残留端口]` 手动触发，或下次连接时自动由 UAC 批量清理
 
 ---
@@ -657,10 +663,12 @@ npm run tauri build
 - [x] 脚本引擎 (Lua 5.4, per-session VM, 自动应答, 代码生成)
 
 ### v0.4 — 网络协议
-- [ ] SSH 插件（密码/密钥/agent 认证、known_hosts）
+- [x] SSH 插件（密码/密钥认证，SideChannel 架构）
+- [x] SFTP 文件传输（SideChannel 策略，async russh-sftp，SFTP 缓存复用）
+- [ ] SSH known_hosts 主机密钥验证
+- [ ] SSH Agent Forwarding
 - [ ] Telnet 插件（RFC 854 选项协商）
 - [ ] TCP Raw 插件
-- [ ] SFTP/SCP 文件传输（SideChannel 策略）
 
 ### v0.5 — 凭据 & 安全
 - [x] 日志基础设施（系统事件日志 + 会话数据日志）

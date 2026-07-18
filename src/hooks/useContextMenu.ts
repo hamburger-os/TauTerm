@@ -2,9 +2,13 @@ import { useState, useCallback, useEffect } from "react";
 import type { TabInfo } from "../context/SessionContext";
 
 export interface ContextMenuState {
+  /** 屏幕坐标 X（左上角原点） */
   x: number;
+  /** 屏幕坐标 Y */
   y: number;
+  /** 菜单是否可见 */
   visible: boolean;
+  /** 右键目标会话（null = 无目标，菜单不可见） */
   session: TabInfo | null;
 }
 

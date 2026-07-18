@@ -1,7 +1,9 @@
 import type { ProtocolType } from "../../types/transfer";
+import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "./RightSidebarPanel";
 import TransmissionPanel from "../Transmission/TransmissionPanel";
+import FileManagerPanel from "../FileManager/FileManagerPanel";
 import ProtocolTool from "../Tools/ProtocolTool";
 import CalculatorTool from "../Tools/CalculatorTool";
 
@@ -10,6 +12,8 @@ export interface SessionRightSidebarProps {
   isConnected: boolean;
   initialProtocol?: ProtocolType;
   showTransmission: boolean;
+  /** 是否显示文件管理器面板（SSH + fileServiceEnabled） */
+  showFileManager: boolean;
 }
 
 /**
@@ -23,10 +27,38 @@ export default function SessionRightSidebar({
   isConnected,
   initialProtocol,
   showTransmission,
+  showFileManager,
 }: SessionRightSidebarProps) {
   const { t } = useTranslation();
+
+  // 文件管理器外层空白区域右键 → 触发空白区域菜单
+  const handleFileManagerWrapperContext = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      window.dispatchEvent(
+        new CustomEvent("tauterm:filemanager-blank-context", {
+          detail: { clientX: e.clientX, clientY: e.clientY },
+        })
+      );
+    },
+    []
+  );
+
   return (
     <>
+      {/* 文件管理器（SSH 文件服务）—— onContextMenu 拦截面板内空白区域右键 */}
+      {showFileManager && (
+        <RightSidebarPanel
+          title={t("fileManager.title")}
+          defaultExpanded={true}
+          onContextMenu={handleFileManagerWrapperContext}
+        >
+          <FileManagerPanel
+            sessionId={sessionId}
+            isConnected={isConnected}
+          />
+        </RightSidebarPanel>
+      )}
       {/* 文件传输 */}
       {showTransmission && (
         <RightSidebarPanel title={t("transmission.title")}>

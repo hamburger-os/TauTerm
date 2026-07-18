@@ -1,6 +1,9 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow"; // 拖放事件（onDragDropEvent 仅 WebviewWindow 类型可用）
 import { getCurrentWindow } from "@tauri-apps/api/window";               // 窗口状态（最大化/还原追踪）
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "framer-motion";
 import AppShell from "./components/Layout/AppShell";
 import GoogleGlowBackground from "./components/Layout/GoogleGlowBackground";
@@ -26,6 +29,14 @@ import { ACTION_IDS } from "./shortcuts/actionIds";
 import "./i18n/index";
 import "./App.css";
 
+// 拖放目标标记 — 浏览器 DOM 事件与 Tauri 原生事件之间的桥接
+declare global {
+  interface Window {
+    __tauterm_dropTarget?: "filemanager" | "terminal" | undefined;
+    __tauterm_filemanagerPath?: string;
+  }
+}
+
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 400;
 const RIGHT_SIDEBAR_MIN = 160;
@@ -38,10 +49,74 @@ const SENDBAR_DEFAULT_PCT = SENDBAR_MIN_PCT;
 const RESIZE_DEBOUNCE_MS = 150;
 
 function AppInner() {
+  const { t } = useTranslation();
   // Context hooks
   const { state: sessionState, refreshEndpoints, disconnect, switchTab } = useSession();
-  const { state: transferState, sendFiles: transferSend, setDragging } = useTransfer();
+  const { state: transferState, startTransfer, sendFiles: transferSend, setDragging } = useTransfer();
   const { registerAction } = useKeyboard();
+
+  // SFTP 拖放上传辅助函数 — 逐文件调用 sftp_upload_file_cmd
+  // 传输命令为非阻塞（后端 spawn 后立即返回），需监听 `sftp-transfer-finished`
+  // 事件串行化多文件上传，避免同一会话并发传输导致取消标志被覆盖。
+  const triggerSftpUpload = useCallback(
+    async (sessionId: string, filePaths: string[]) => {
+      const remoteDir = window.__tauterm_filemanagerPath || "/";
+      const pending = { unlisten: null as (() => void) | null };
+      const SFTP_TIMEOUT_MS = 30_000; // 单文件超时 30 秒
+
+      const waitForTransferFinished = (): Promise<boolean> => {
+        return new Promise(resolve => {
+          let settled = false;
+          const done = (ok: boolean) => {
+            if (settled) return;
+            settled = true;
+            pending.unlisten?.();
+            pending.unlisten = null;
+            resolve(ok);
+          };
+
+          const unlisten = listen<{ session_id: string; result: { error?: string } }>(
+            "sftp-transfer-finished",
+            (event) => {
+              if (event.payload.session_id === sessionId) {
+                done(!event.payload.result.error);
+              }
+            }
+          );
+          unlisten.then(fn => {
+            if (!settled) pending.unlisten = fn;
+          });
+
+          // 超时保护：超时后自动清理 listener，防止 Promise 永久挂起
+          setTimeout(() => done(false), SFTP_TIMEOUT_MS);
+        });
+      };
+
+      try {
+        for (const localPath of filePaths) {
+          const name = localPath.replace(/\\/g, "/").split("/").pop() || "file";
+          const remotePath =
+            remoteDir === "/" ? `/${name}` : `${remoteDir}/${name}`;
+          await invoke<void>("sftp_upload_file_cmd", {
+            sessionId,
+            localPath,
+            remotePath,
+          });
+          // 等待当前文件传输完成后再开始下一个，避免并发冲突
+          await waitForTransferFinished();
+        }
+      } finally {
+        // 如果循环提前退出（如 invoke 抛异常），清理未完成的 listener
+        if (pending.unlisten) {
+          pending.unlisten();
+          pending.unlisten = null;
+        }
+      }
+      // 上传完成后通知 FileManager 刷新
+      window.dispatchEvent(new CustomEvent("tauterm:sftp-refresh"));
+    },
+    [],
+  );
 
   // Layout state
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -169,11 +244,20 @@ function AppInner() {
     };
   }, [isResizingSidebar, isResizingRightSidebar, isResizingSendBar]);
 
-  // Global drag events for dropzone visual feedback + Tauri native drop
+  // Global drag events: 仅已连接会话时显示 overlay，drop 时按区域路由传输
   useEffect(() => {
+    const getActiveConnectedTab = () => {
+      const tab = sessionState.tabs.find(t => t.id === sessionState.activeTabId);
+      return tab?.state === "connected" ? tab : null;
+    };
+
     const handleDragEnter = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
-      e.preventDefault(); setDragging(true);
+      e.preventDefault();
+      window.__tauterm_dropTarget = undefined; // 新拖放：重置目标
+      if (getActiveConnectedTab()) {
+        setDragging(true);
+      }
     };
     const handleDragLeave = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
@@ -187,7 +271,8 @@ function AppInner() {
     };
     const handleDrop = (e: DragEvent) => {
       if (e.dataTransfer?.types.includes("application/x-tauterm-command-reorder")) return;
-      e.preventDefault(); setDragging(false);
+      e.preventDefault();
+      setDragging(false);
     };
     document.addEventListener("dragenter", handleDragEnter);
     document.addEventListener("dragleave", handleDragLeave);
@@ -198,20 +283,39 @@ function AppInner() {
     (async () => {
       try {
         unlistenDrop = await getCurrentWebviewWindow().onDragDropEvent((event) => {
-          if (event.payload.type === "drop") {
-            setDragging(false);
-            const paths = event.payload.paths;
-            if (paths && paths.length > 0) {
-              if (sessionState.activeTabId) {
-                transferSend(sessionState.activeTabId, paths);
-              } else {
-                showToast("warning", "请先连接到串口设备再拖拽传输文件");
-              }
-            }
-          } else if (event.payload.type === "over") {
-            setDragging(true);
+          if (event.payload.type === "over") {
+            if (getActiveConnectedTab()) setDragging(true);
           } else if (event.payload.type === "leave") {
             setDragging(false);
+          } else if (event.payload.type === "drop") {
+            setDragging(false);
+            const paths = event.payload.paths;
+            if (!paths || paths.length === 0) return;
+
+            const activeTab = getActiveConnectedTab();
+            if (!activeTab) {
+              showToast("warning", t("transfer.noActiveSession"));
+              return;
+            }
+
+            const dropTarget = window.__tauterm_dropTarget;
+            window.__tauterm_dropTarget = undefined;
+
+            if (
+              dropTarget === "filemanager" &&
+              activeTab.fileServiceEnabled
+            ) {
+              // 拖放到 FileManager 面板 → SFTP 上传（通过 fileServiceEnabled 能力判定，
+              // 而非硬编码 pluginId，保持微内核扩展性）
+              triggerSftpUpload(activeTab.id, paths).catch((e) => {
+                showToast("error", t("transfer.uploadFailed", { error: String(e) }));
+              });
+            } else {
+              // 拖放到终端区域 → YMODEM/串口传输
+              transferSend(activeTab.id, paths).catch((e) => {
+                showToast("error", t("transfer.uploadFailed", { error: String(e) }));
+              });
+            }
           }
         });
       } catch (e) {
@@ -226,7 +330,57 @@ function AppInner() {
       document.removeEventListener("drop", handleDrop);
       if (unlistenDrop) unlistenDrop();
     };
-  }, [setDragging, sessionState.activeTabId, transferSend, showToast]);
+  }, [setDragging, sessionState.activeTabId, sessionState.tabs, transferSend, startTransfer, triggerSftpUpload, showToast, t]);
+
+  // SSH 主机密钥验证 — 监听后端事件，弹出确认对话框
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      const fn = await listen<{ fingerprint: string }>(
+        "ssh-host-key-verify",
+        async (event) => {
+          if (cancelled) return;
+          const fp = event.payload.fingerprint;
+          // 使用原生 OS 确认对话框（不可被 Web 内容伪造，安全性最高）
+          const ok = window.confirm(
+            `${t("ssh.hostKeyTitle")}\n\n${t("ssh.hostKeyFingerprint")}: ${fp}\n\n${t("ssh.hostKeyPrompt")}`
+          );
+          try {
+            // 显式构造布尔参数，避免 ES6 简写语法在 Tauri IPC 序列化时
+            // 可能将 boolean 误序列化为对象的问题
+            await invoke("confirm_host_key", {
+              fingerprint: fp,
+              accepted: ok ? true : false,
+            });
+          } catch (e) {
+            // 后端 oneshot 已被消费（Strict Mode 双重监听器 或 并发连接
+            // 使用相同指纹时可能发生），非真实错误，静默忽略。
+            const errStr = String(e);
+            if (
+              errStr.includes("未找到或已过期") ||
+              errStr.includes("not found") ||
+              errStr.includes("expired")
+            ) {
+              return;
+            }
+            showToast("error", t("ssh.hostKeyError", { error: errStr }));
+          }
+        }
+      );
+      // await listen 返回时 cleanup 可能已执行 — 此时 cancelled=true，
+      // 立即取消刚注册的 listener 防止泄漏
+      if (cancelled) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    })();
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [showToast, t]);
 
   // 窗口最大化/还原状态追踪
   useEffect(() => {
@@ -361,6 +515,7 @@ function AppInner() {
                         const showTransmission = tabPlugin
                           ? (tabPlugin.manifest.transfer_protocols?.length ?? 0) > 0 && tab.transferEnabled !== false
                           : false;
+                        const showFileManager = tabPlugin?.manifest.id === "ssh" && tab.fileServiceEnabled === true;
                         const isActive = tab.id === sessionState.activeTabId;
                         return (
                           <div
@@ -372,6 +527,7 @@ function AppInner() {
                               isConnected={tab.state === "connected" || tab.state === "transferring"}
                               initialProtocol={tab.transferProtocol as ProtocolType | undefined}
                               showTransmission={showTransmission}
+                              showFileManager={showFileManager}
                             />
                           </div>
                         );
@@ -441,7 +597,7 @@ function AppInner() {
               animate={{ scale: [1, 1.05, 1] }}
               transition={{ repeat: Infinity, duration: 1.5 }}
             >
-              <Icon name="logo" size="lg" /> Drop to Transfer
+              <Icon name="logo" size="lg" /> {t("transfer.dropHere")}
             </motion.div>
           </motion.div>
         )}

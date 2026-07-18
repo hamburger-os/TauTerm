@@ -136,6 +136,10 @@ export default function TerminalView() {
   const [dualLines, setDualLines] = useState<Map<string, DualLine[]>>(new Map());
   /** RAF 批量提交缓冲区：累积同一帧内的行数据，减少 setState 次数 */
   const pendingDualRef = useRef<Map<string, DualLine[]>>(new Map());
+  /** text 模式数据批量提交缓冲区：累积同一帧内多包数据，合并为一次 xterm.write */
+  const pendingTextRef = useRef<Map<string, Uint8Array[]>>(new Map());
+  /** text 模式 RAF ID：用于批量提交的去重 */
+  const textRafIdRef = useRef<number | null>(null);
   /** RAF ID：用于批量提交的去重 */
   const rafIdRef = useRef<number | null>(null);
   /** 每个 session 的单调递增行号计数器：用于生成稳定的 React key */
@@ -182,6 +186,10 @@ export default function TerminalView() {
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
         rafIdRef.current = null;
+      }
+      if (textRafIdRef.current !== null) {
+        cancelAnimationFrame(textRafIdRef.current);
+        textRafIdRef.current = null;
       }
     };
   }, []);
@@ -291,6 +299,37 @@ export default function TerminalView() {
     });
   }, []);
 
+  // ── text 模式：rAF 批处理合并多包 xterm.write 调用 ──
+  // 后端批处理器已合并 16ms 窗口内的数据，但前端可能在一帧内收到多个 emit
+  // （不同 session 或同 session 跨窗口）。此处在 rAF 中合并同 session 的多包数据
+  // 为单次 xterm.write，减少 ANSI 解析 + 渲染调度次数。
+  const flushTextBuffers = useCallback(() => {
+    textRafIdRef.current = null;
+    const pending = pendingTextRef.current;
+    if (pending.size === 0) return;
+
+    // 快照后清空，避免在合并过程中新数据到达导致迭代异常
+    const snapshot = new Map(pending);
+    pending.clear();
+
+    for (const [sessionId, chunks] of snapshot) {
+      const writeFn = writeRefs.current.get(sessionId);
+      if (!writeFn) continue;
+
+      // 合并所有 chunks 为单个 Uint8Array，一次 write
+      const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+      if (totalLen === 0) continue;
+
+      const merged = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      writeFn(merged);
+    }
+  }, []);
+
   const pushDualLine = useCallback((sessionId: string, direction: "RX" | "TX", data: Uint8Array) => {
     if (data.length === 0) return;
     const base = dataToDualLine(data, direction);
@@ -375,12 +414,21 @@ export default function TerminalView() {
           pushDualLine(sessionId, "RX", frameData);
         });
       } else {
-        writeFn!(data);
+        // ── text 模式：rAF 批处理合并多包数据 ──
+        // 后端批处理器已合并 16ms 窗口内的数据，但前端可能在一帧内收到多个 emit。
+        // 此处把数据推入 pendingTextRef，在 rAF 中合并为单次 xterm.write，
+        // 减少 ANSI 解析 + 渲染调度次数。
+        const pending = pendingTextRef.current;
+        if (!pending.has(sessionId)) pending.set(sessionId, []);
+        pending.get(sessionId)!.push(data);
+        if (textRafIdRef.current === null) {
+          textRafIdRef.current = requestAnimationFrame(flushTextBuffers);
+        }
       }
     });
     // 卸载时清除回调，避免未挂载组件的闭包响应数据事件
     return () => { onSessionData(() => {}); };
-  }, [onSessionData, pushDualLine, processIncomingFrame]);
+  }, [onSessionData, pushDualLine, processIncomingFrame, flushTextBuffers]);
 
   // 注册发送数据回调（TX），Dual 模式下推入 DualPane 渲染
   useEffect(() => {
@@ -456,6 +504,7 @@ export default function TerminalView() {
     if (fb?.timer) clearTimeout(fb.timer);
     frameBufRef.current.delete(sessionId);
     pendingDualRef.current.delete(sessionId);
+    pendingTextRef.current.delete(sessionId);
     lineIdCounterRef.current.delete(sessionId);
     setDualLines(prev => {
       const next = new Map(prev);

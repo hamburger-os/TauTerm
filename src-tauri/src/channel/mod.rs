@@ -6,8 +6,10 @@
 
 pub mod error;
 pub mod io_loop;
+pub mod async_io_loop;
 pub mod serial_channel;
 pub mod serial_comm;
+pub mod ssh_channel;
 
 
 use std::io::{Read, Write};
@@ -34,69 +36,64 @@ pub trait Channel: Read + Write + Send {
     fn try_handoff(&mut self) -> Option<Box<dyn Any>> {
         None // 默认不支持交出
     }
+
+    /// 请求 PTY 窗口大小调整（仅 SSH 等支持 PTY 的协议需要实现）。
+    ///
+    /// 默认实现为空操作，串口等无 PTY 概念的协议直接忽略。
+    /// 前端终端 resize 时通过 IoLoopCmd::ResizePty 触发。
+    fn resize_pty(&mut self, _cols: u32, _rows: u32) -> Result<(), ChannelError> {
+        Ok(())
+    }
 }
 
 /// I/O 策略枚举
 ///
 /// 插件在 `ProtocolAdapter::io_strategy()` 中声明自己需要的 I/O 模式。
-/// 由 SerialAdapter 实现，非串口协议插件在未来版本中使用。
-///
-/// 预留: 用于区分同步/异步 I/O 策略。
-/// 当前仅使用 `Sync` 变体（串口/Pipe 等阻塞式传输），
-/// `Async` 变体为 SSH/TCP/HTTP 等非阻塞网络传输插件预留。
-#[allow(dead_code)] // Async 变体为 SSH/TCP 插件预留，当前未构造
+/// - `Sync`：串口、Pipe 等阻塞式传输，由 `spawn_sync_io_loop` 驱动（std::thread）
+/// - `Async`：SSH（russh）等基于 tokio 的协议，由 `spawn_async_io_loop` 驱动（tokio task）
 #[derive(Debug, Clone, PartialEq)]
 pub enum IoStrategy {
     /// 同步模式：使用 `std::thread` 驱动 I/O 循环
     /// 适用于串口、Pipe 等阻塞式传输
     Sync,
-    /// 异步模式：使用 `tokio::spawn` 驱动 I/O 循环
-    /// 适用于 TCP、SSH、HTTP 等非阻塞网络传输（预留）
+    /// 异步模式：使用 tokio task 驱动 I/O 循环
+    /// 适用于 SSH（russh async API）等基于 tokio 的协议
     Async,
+}
+
+/// 异步 I/O 通道 trait
+///
+/// 与同步 `Channel` trait 并存。仅 SSH（russh async API）等基于 tokio 的协议实现此 trait。
+/// 串口继续实现同步 `Channel`，由 `spawn_sync_io_loop` 驱动。
+#[async_trait::async_trait]
+pub trait AsyncChannel: Send {
+    async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize>;
+    async fn write(&mut self, buf: &[u8]) -> std::io::Result<usize>;
+    async fn flush(&mut self) -> std::io::Result<()>;
+    fn is_connected(&self) -> bool;
+    fn set_timeout(&mut self, _dur: Duration) -> Result<(), ChannelError> {
+        Ok(())
+    }
+    /// 请求 PTY 窗口大小调整（仅 SSH 等支持 PTY 的协议需要实现）
+    async fn resize_pty(&mut self, _cols: u32, _rows: u32) -> Result<(), ChannelError> {
+        Ok(())
+    }
+    /// 尝试交出底层传输的所有权（用于 Inline 传输策略）
+    ///
+    /// 异步路径默认不支持（SSH 使用 SideChannel 策略）
+    fn try_handoff(&mut self) -> Option<Box<dyn Any>> {
+        None
+    }
 }
 
 /// 内容类型
 ///
 /// 由 ProtocolAdapter::content_type() 返回，前端渲染器根据此值选择视图。
-/// 各变体与前端渲染器的对应关系：
-/// - `Terminal` → `TerminalRenderer` (xterm.js 终端)
-/// - `FileBrowser` → `FileBrowserRenderer` (双栏文件浏览器，预留)
-/// - `StatsDashboard` → `StatsDashboardRenderer` (统计仪表盘，预留)
-/// - `Custom(String)` → `CustomRenderer` (插件自定义 UI，预留)
-///
-/// 当前仅 `Terminal` 变体被 Serial 插件使用，其余为多协议扩展预留。
-#[allow(dead_code)] // FileBrowser/StatsDashboard/Custom 变体为多协议扩展预留，当前未构造
+/// 当前仅 `Terminal` 变体被使用（Serial、SSH 插件），前端通过 manifest.content_type
+/// 字符串字段进行渲染器调度（见 TabContentDispatcher.tsx）。
+/// 后端 ContentType 枚举仅用于日志记录，未来多协议扩展时按需新增变体。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContentType {
     /// xterm.js 终端渲染
     Terminal,
-    /// 双栏文件浏览器（预留: SFTP/FTP 插件）
-    FileBrowser,
-    /// 统计仪表盘（预留: 网络监控/Syslog 插件）
-    StatsDashboard,
-    /// 插件自定义 UI
-    Custom(String),
-}
-
-#[allow(dead_code)] // from_str/as_str 为多协议插件预留，当前仅 Serial 插件使用硬编码 "terminal"
-impl ContentType {
-    /// 从字符串解析内容类型
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "terminal" => ContentType::Terminal,
-            "file_browser" => ContentType::FileBrowser,
-            "stats_dashboard" => ContentType::StatsDashboard,
-            other => ContentType::Custom(other.to_string()),
-        }
-    }
-
-    /// 返回内容类型的字符串表示
-    pub fn as_str(&self) -> &str {
-        match self {
-            ContentType::Terminal => "terminal",
-            ContentType::FileBrowser => "file_browser",
-            ContentType::StatsDashboard => "stats_dashboard",
-            ContentType::Custom(_) => "custom",
-        }
-    }
 }

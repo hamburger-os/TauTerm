@@ -12,13 +12,15 @@ export interface ContextMenuItem {
   icon?: IconName;
   danger?: boolean;
   disabled?: boolean;
+  type?: "item" | "separator";
 }
 
 interface ContextMenuProps {
   state: ContextMenuState;
   items: ContextMenuItem[];
-  onSelect: (itemId: string, sessionId: string) => void;
+  onSelect: (itemId: string) => void;
   onClose: () => void;
+  header?: { icon?: string; label: string } | null;
 }
 
 /**
@@ -27,7 +29,7 @@ interface ContextMenuProps {
  * 使用 createPortal 渲染到 document.body，避免被侧栏 overflow 裁剪。
  * 自动检测屏幕边界调整位置。
  */
-export default function ContextMenu({ state, items, onSelect, onClose }: ContextMenuProps) {
+export default function ContextMenu({ state, items, onSelect, onClose, header }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   // 调整位置避免溢出屏幕
@@ -50,6 +52,33 @@ export default function ContextMenu({ state, items, onSelect, onClose }: Context
     }
   }, [state]);
 
+  // 点击外部关闭
+  useEffect(() => {
+    if (!state.visible) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const timer = setTimeout(() => {
+      document.addEventListener("click", handler);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("click", handler);
+    };
+  }, [state.visible, onClose]);
+
+  // Escape 关闭
+  useEffect(() => {
+    if (!state.visible) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [state.visible, onClose]);
+
   return createPortal(
     <AnimatePresence>
       {state.visible && (
@@ -63,22 +92,34 @@ export default function ContextMenu({ state, items, onSelect, onClose }: Context
           transition={{ duration: 0.12 }}
           onClick={(e) => e.stopPropagation()}
         >
-          {items.map(item => (
-            <button
-              key={item.id}
-              className={`${styles.menuItem} ${item.danger ? styles.danger : ""} ${item.disabled ? styles.disabled : ""}`}
-              onClick={() => {
-                if (!item.disabled && state.session) {
-                  onSelect(item.id, state.session.id);
-                  onClose();
-                }
-              }}
-              disabled={item.disabled}
-            >
-              {item.icon && <Icon name={item.icon} size="sm" className={styles.itemIcon} />}
-              <span className={styles.itemLabel}>{item.label}</span>
-            </button>
-          ))}
+          {/* Header */}
+          {header && (
+            <div className={styles.header}>
+              {header.icon && <span className={styles.headerIcon}>{header.icon}</span>}
+              <span className={styles.headerLabel}>{header.label}</span>
+            </div>
+          )}
+          {items.map(item => {
+            if (item.type === "separator") {
+              return <div key={item.id} className={styles.separator} />;
+            }
+            return (
+              <button
+                key={item.id}
+                className={`${styles.menuItem} ${item.danger ? styles.danger : ""} ${item.disabled ? styles.disabled : ""}`}
+                onClick={() => {
+                  if (!item.disabled) {
+                    onSelect(item.id);
+                    onClose();
+                  }
+                }}
+                disabled={item.disabled}
+              >
+                {item.icon && <Icon name={item.icon} size="sm" className={styles.itemIcon} />}
+                <span className={styles.itemLabel}>{item.label}</span>
+              </button>
+            );
+          })}
         </motion.div>
       )}
     </AnimatePresence>,

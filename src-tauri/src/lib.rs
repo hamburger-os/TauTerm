@@ -37,6 +37,8 @@ use kernel::window_manager::WindowManager;
 use kernel::log_engine::{LogEngine, LogConfig, LogBridge};
 use security::CredentialStore;
 use plugins::serial::SerialAdapter;
+use plugins::ssh::SshAdapter;
+use plugins::ssh::HostKeyVerifier;
 use virtual_port::manager::VirtualPortManager;
 use virtual_port::backend::VirtualPortBackend;
 
@@ -46,6 +48,10 @@ pub struct AppState {
     pub session_store: Mutex<SessionStore>,
     /// 串口协议适配器
     pub serial_adapter: SerialAdapter,
+    /// SSH 协议适配器
+    pub ssh_adapter: SshAdapter,
+    /// SSH 主机密钥验证器（管理待确认的 host key）
+    pub host_key_verifier: HostKeyVerifier,
     /// 类型安全配置存储
     pub config_store: ConfigStore,
     /// IPC 桥接器
@@ -83,13 +89,22 @@ pub fn run() {
     let mut plugin_host = PluginHost::new();
     plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
         id: "serial".into(),
-        name: "Serial Port".into(),
+        name: "Serial".into(),
         version: "1.0.0".into(),
         category: "terminal".into(),
         content_type: "terminal".into(),
         capabilities: vec!["connection".into(), "transfer".into(), "endpoint_discovery".into()],
         state: kernel::plugin_host::PluginState::Ready,
     }).expect("注册 Serial 插件失败");
+    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
+        id: "ssh".into(),
+        name: "SSH".into(),
+        version: "1.0.0".into(),
+        category: "terminal".into(),
+        content_type: "terminal".into(),
+        capabilities: vec!["connection".into(), "transfer".into(), "endpoint_discovery".into()],
+        state: kernel::plugin_host::PluginState::Ready,
+    }).expect("注册 SSH 插件失败");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -210,6 +225,8 @@ pub fn run() {
         .manage(AppState {
             session_store: Mutex::new(SessionStore::new()),
             serial_adapter: SerialAdapter::new(),
+            ssh_adapter: SshAdapter::new(),
+            host_key_verifier: HostKeyVerifier::new(),
             config_store: ConfigStore::new(),
             ipc_bridge: IpcBridge::new(),
             tab_host: TabHost::new(10),
@@ -268,6 +285,22 @@ pub fn run() {
             commands::stop_script_engine,
             commands::rules_to_script,
             commands::test_match,
+            commands::sftp_list_dir_cmd,
+            commands::sftp_stat_cmd,
+            commands::sftp_read_head_cmd,
+            commands::sftp_chmod_cmd,
+            commands::sftp_download_file_cmd,
+            commands::sftp_upload_file_cmd,
+            commands::sftp_delete_cmd,
+            commands::sftp_rename_cmd,
+            commands::sftp_mkdir_cmd,
+            commands::sftp_new_file_cmd,
+            commands::sftp_delete_batch_cmd,
+            commands::sftp_delete_recursive_cmd,
+            commands::sftp_download_dir_cmd,
+            commands::cancel_sftp_transfer,
+            commands::resize_pty,
+            commands::confirm_host_key,
         ])
         .build(tauri::generate_context!())
         .expect("启动 TauTerm 时发生错误")

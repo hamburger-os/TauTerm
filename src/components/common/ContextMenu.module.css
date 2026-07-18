@@ -53,3 +53,35 @@
 .itemLabel {
   white-space: nowrap;
 }
+
+.separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--glass-border-default);
+  pointer-events: none;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 8px;
+  border-bottom: 1px solid var(--glass-border-default);
+  margin-bottom: 4px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  user-select: none;
+  cursor: default;
+}
+
+.headerIcon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.headerLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}

@@ -69,7 +69,7 @@ pub fn create_protocol(
         TransferProtocolType::ZModem => {
             Some(Box::new(crate::transfer::zmodem::ZModem::default()))
         }
-        // SFTP/SCP/FTP not implemented via this factory
-        TransferProtocolType::Sftp | TransferProtocolType::Scp | TransferProtocolType::Ftp => None,
+        // SFTP/FTP not implemented via this factory
+        TransferProtocolType::Sftp | TransferProtocolType::Ftp => None,
     }
 }

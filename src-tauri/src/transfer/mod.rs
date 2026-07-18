@@ -17,6 +17,7 @@ pub mod crc;
 pub mod io;
 pub mod manager;
 pub mod protocol;
+pub mod ssh_file_service;
 pub mod types;
 pub mod xmodem;
 pub mod ymodem;

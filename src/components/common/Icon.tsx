@@ -49,6 +49,7 @@ import keyboardPng from "../../assets/icons/keyboard.png";
 import robotPng from "../../assets/icons/robot.png";
 import codePng from "../../assets/icons/code.png";
 import chevronRightPng from "../../assets/icons/chevron-right.png";
+import sshShellPng from "../../assets/icons/ssh-shell.png";
 
 // ── PNG URL Mapping ───────────────────────────────────────────
 // Must be defined before IconName type so PNG key list can be derived
@@ -100,9 +101,10 @@ const PNG_MAP: Record<string, string> = {
   robot: robotPng,
   code: codePng,
   "chevron-right": chevronRightPng,
+  "ssh-shell": sshShellPng,
 };
 
-// ── Preload: 模块加载时提前下载所有 46 个 PNG 图标到浏览器缓存 ──
+// ── Preload: 模块加载时提前下载所有 44 个 PNG 图标到浏览器缓存 ──
 // 使用 new Image() 在 JS 解析阶段立即发起下载，避免 React 渲染 <img>
 // 标签后才开始请求导致的"弹入"延迟。到渲染时图片已在缓存中，即时显示。
 for (const pngUrl of Object.values(PNG_MAP)) {
@@ -172,7 +174,7 @@ const STATUS_CLASS_MAP: Record<string, string> = {
  * 统一图标组件
  *
  * 三种内部渲染策略：
- * - Tier 1 (47 个): CSS mask-image / <img> 渲染 PNG，通过 currentColor 自动适配主题
+ * - Tier 1 (44 个): CSS mask-image / <img> 渲染 PNG，通过 currentColor 自动适配主题
  * - Tier 2 (4 个):  纯 CSS 状态圆点 + 主题色发光
  * - Tier 3 (3 个):  内联 SVG（仅顶栏窗口控制按钮）
  *

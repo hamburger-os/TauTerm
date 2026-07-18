@@ -281,6 +281,8 @@
     "dropHere": "Drop to Transfer",
     "transferringBanner": "File transfer in progress, terminal paused...",
     "transferringStatus": "Transferring...",
+    "noActiveSession": "No active connection. Please connect to a device or server before dropping files.",
+    "uploadFailed": "Upload failed: {{error}}",
     "protocols": {
       "ymodem": {
         "name": "YMODEM",
@@ -293,6 +295,10 @@
       "zmodem": {
         "name": "ZMODEM",
         "description": "Streaming transfer, windowing, auto-resume"
+      },
+      "sftp": {
+        "name": "SFTP",
+        "description": "SSH File Transfer Protocol, directory browsing & random access"
       }
     }
   },
@@ -567,7 +573,15 @@
     "cts": "CTS",
     "dsr": "DSR",
     "uptime": "Uptime",
-    "dataMode": "Data Mode"
+    "dataMode": "Data Mode",
+    "disconnected": "Disconnected",
+    "connected": "Connected",
+    "connecting": "Connecting...",
+    "typeSerial": "Serial",
+    "typeSsh": "SSH",
+    "authPassword": "PWD",
+    "authKey": "KEY",
+    "fileService": "SFTP"
   },
   "transmission": {
     "title": "File Transfer",
@@ -617,6 +631,7 @@
     "clearConfirm": "Delete all log files? This cannot be undone.",
     "cleared": "All log files cleared.",
     "clearError": "Failed to clear logs",
+    "loading": "Loading...",
     "started": "Logging started",
     "stopped": "Logging stopped",
     "writing": "Writing"
@@ -635,5 +650,76 @@
     "save": "Save",
     "delete": "Delete",
     "copy": "Copy"
+  },
+  "fileManager": {
+    "title": "File Manager",
+    "upload": "Upload",
+    "download": "Download",
+    "delete": "Delete",
+    "rename": "Rename",
+    "newFolder": "New Folder",
+    "refresh": "Refresh",
+    "parentDir": "Parent Directory",
+    "empty": "Empty directory",
+    "loading": "Loading...",
+    "deleteConfirm": "Confirm delete {{name}}?",
+    "name": "Name",
+    "size": "Size",
+    "modified": "Modified",
+    "permissions": "Permissions",
+    "newFile": "New File",
+    "copyPath": "Copy Path",
+    "batchDownload": "Download ({{count}} files)",
+    "batchDelete": "Delete ({{count}} files)",
+    "confirmBatchDelete": "Delete {{count}} selected items?",
+    "deleteDirConfirm": "Delete directory {{name}} and all its contents?",
+    "confirmBatchDeleteWithDirs": "Delete {{count}} selected items? (directories will be recursively deleted)",
+    "uploading": "Uploading...",
+    "downloading": "Downloading...",
+    "sortBy": "Sort by {{field}}",
+    "newFilePrompt": "Enter file name",
+    "open": "Open",
+    "preview": "Preview",
+    "properties": "Properties",
+    "propertiesTitle": "File Properties",
+    "type": "Type",
+    "typeFile": "File",
+    "typeDir": "Directory",
+    "path": "Path",
+    "previewTitle": "File Preview",
+    "previewFileTooLarge": "File is large ({{size}}), preview may take some time. Continue?",
+    "lines": "{{count}} lines",
+    "pathCopied": "Path copied",
+    "selectedCount": "{{count}} items selected",
+    "previewTruncated": "Preview showing first {{shown}} of {{total}}",
+    "chmod": "Change Permissions",
+    "chmodInvalid": "Invalid permission (needs 3 octal digits, e.g. 755)",
+    "edit": "Edit",
+    "apply": "Apply",
+    "cancel": "Cancel",
+    "cancelTransfer": "Cancel transfer"
+  },
+  "ssh": {
+    "host": "Host",
+    "port": "Port",
+    "username": "Username",
+    "authMethod": "Auth Method",
+    "authPassword": "Password",
+    "authKey": "SSH Key",
+    "password": "Password",
+    "sshKey": "SSH Private Key",
+    "passphrase": "Passphrase",
+    "passphrasePlaceholder": "(no passphrase)",
+    "hostPlaceholder": "192.168.1.1",
+    "usernamePlaceholder": "root",
+    "passwordPlaceholder": "••••••••",
+    "keyPlaceholder": "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "enableSendBar": "Enable Send Bar",
+    "enableTransfer": "Enable File Transfer",
+    "enableFileService": "Enable File Manager",
+    "hostKeyTitle": "SSH Host Key Verification",
+    "hostKeyFingerprint": "Fingerprint",
+    "hostKeyPrompt": "Do you trust this host and want to continue connecting?",
+    "hostKeyError": "Host key confirmation failed: {{error}}"
   }
 }

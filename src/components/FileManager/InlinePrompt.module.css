@@ -1,0 +1,39 @@
+/* 内联输入提示 — 仅布局 */
+
+.container {
+  display: flex;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) 0;
+  flex-shrink: 0;
+}
+
+.input {
+  flex: 1;
+  background: var(--glass-fill);
+  border: 1px solid var(--accent-primary);
+  color: var(--text-primary);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-family: inherit;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.btn {
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  font-family: inherit;
+}
+
+.btn:hover {
+  background: var(--glass-hover);
+}

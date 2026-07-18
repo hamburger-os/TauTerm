@@ -1,0 +1,186 @@
+/* 文件属性弹窗 — 参照 SettingsPage 主题设计 */
+
+.overlay {
+  z-index: var(--z-overlay);
+  /* position/inset/background/display/align/justify 由 glass-overlay 全局类提供 */
+}
+
+.container {
+  width: 440px;
+  max-width: 90vw;
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 标题栏 */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--glass-border-default);
+  flex-shrink: 0;
+}
+
+.headerTitle {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.closeBtn:hover {
+  color: var(--text-primary);
+  background: var(--glass-fill);
+}
+
+/* 主体 */
+.body {
+  padding: 16px 20px;
+}
+
+.loading {
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  padding: 20px 0;
+}
+
+/* 类型标签 */
+.typeTag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--glass-fill);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  margin-bottom: 16px;
+  border: 1px solid var(--glass-border-default);
+}
+
+/* 字段列表 */
+.fieldList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.fieldRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: var(--text-sm);
+}
+
+.fieldLabel {
+  color: var(--text-secondary);
+  min-width: 70px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.fieldValue {
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.fieldValueMono {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+}
+
+.fieldValuePath {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  word-break: break-all;
+  flex: 1;
+}
+
+.fieldValueRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1;
+}
+
+.copyBtn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  opacity: 0.6;
+  transition: opacity var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.copyBtn:hover {
+  opacity: 1;
+  background: var(--glass-fill);
+}
+
+/* Chmod editor */
+.chmodRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chmodInput {
+  width: 48px;
+  padding: 2px 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm);
+  text-align: center;
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+.chmodInput:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.chmodBtn {
+  padding: 2px 8px;
+  font-size: var(--text-xs);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-button-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.chmodBtn:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-primary);
+}
+
+.chmodError {
+  color: var(--color-error);
+  font-size: var(--text-xs);
+  margin-top: 4px;
+  display: block;
+}

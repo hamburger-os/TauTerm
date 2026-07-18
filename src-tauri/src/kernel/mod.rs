@@ -20,6 +20,7 @@
 
 pub mod comm_handle;
 pub mod config_store;
+pub mod data_batcher;
 pub mod i18n_engine;
 pub mod ipc_bridge;
 pub mod log_engine;

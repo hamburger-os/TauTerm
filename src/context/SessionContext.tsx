@@ -1,6 +1,7 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { pluginRegistry } from "../core/plugin-registry";
 
 // ── Types ───────────────────────────────────────────
 
@@ -40,6 +41,10 @@ export interface TabInfo {
   virtualPortPairs?: Array<{ port_a: string; port_b: string }>;
   /** 虚拟端口创建失败时的错误信息 */
   virtualPortError?: string;
+  /** SSH 文件服务是否启用（默认 true） */
+  fileServiceEnabled?: boolean;
+  /** SSH 文件服务协议（"sftp"） */
+  fileServiceProtocol?: string;
 }
 
 export interface ConnectionTypeInfo {
@@ -82,6 +87,25 @@ type SessionAction =
   | { type: "SET_VPORT_ERROR"; id: string; error: string }
   | { type: "CLEAR_VPORT_ERROR"; id: string }
   | { type: "CLEAR_TABS" };
+
+// ── Base64 解码（与后端 data_batcher::base64_encode 配对） ───────────────────
+
+/**
+ * 解码 Base64 字符串为 Uint8Array。
+ *
+ * 使用浏览器原生 atob() + 手动字节填充，比 JSON.parse(number[]) 快 5-10 倍。
+ * 后端批处理器（DataBatcher）将 16ms 窗口内的多包数据合并后用 Base64 编码 emit，
+ * 前端在此解码后送入 xterm.write。
+ */
+function decodeBase64(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
 
 const initialState: SessionState = {
   tabs: [],
@@ -162,6 +186,8 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
                 connectedAt: action.connectedAt !== undefined ? action.connectedAt : t.connectedAt,
                 virtualPortEnabled: (action.params?.virtual_port_enabled as boolean) ?? t.virtualPortEnabled,
                 virtualPortCount: (action.params?.virtual_port_count as number) ?? t.virtualPortCount,
+                fileServiceEnabled: (action.params?.file_service_enabled as boolean) ?? t.fileServiceEnabled,
+                fileServiceProtocol: (action.params?.file_service_protocol as string) ?? t.fileServiceProtocol,
               }
             : t
         ),
@@ -213,7 +239,7 @@ interface SessionContextValue {
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
   switchTab: (sessionId: string) => Promise<void>;
   renameTab: (sessionId: string, name: string) => Promise<void>;
-  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<void>;
+  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string) => Promise<void>;
   getTabs: () => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
@@ -301,7 +327,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, sessionId?: string) => {
     dispatch({ type: "SET_ERROR", error: null });
+    // 如果已知 sessionId（已创建离线配置），立即将 tab 状态设为 connecting
+    if (sessionId) {
+      dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connecting" });
+    }
     try {
+      // 不使用前端 Promise.race 超时 —— 后端已有 TCP connect_timeout(10s) +
+      // SSH handshake timeout(10s) 等多层超时保护。前端超时会导致后端 invoke
+      // 继续运行，连接成功后 emit session-connected 造成前后端状态不一致。
       const sid = await invoke<string>("connect_session", {
         endpoint, params, name,
         pluginId: pluginId || "serial",
@@ -313,6 +346,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return sid;
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `连接失败: ${e}` });
+      // 连接失败时恢复为 disconnected 状态
+      if (sessionId) {
+        dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
+      }
       return null;
     }
   }, []);
@@ -327,15 +364,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         transferProtocol: transferProtocol || "ymodem",
         sendBarEnabled: sendBarEnabled ?? true,
       });
+      const pid = pluginId || "serial";
+      // 协议无关的默认名：从 plugin-registry 查询 manifest.name，避免硬编码 "Serial @ ..."
+      // 导致未来 telnet/tftp 等会话误显示为 "Serial"。回退为大写的 pluginId。
+      const pluginName = (pluginRegistry.get(pid)?.manifest.name) || pid.toUpperCase();
       dispatch({
         type: "ADD_TAB",
         tab: {
           id: sessionId,
-          name: name || `Serial @ ${endpoint}`,
-          connection_type: "serial",
+          name: name || `${pluginName} @ ${endpoint}`,
+          connection_type: pid,
           endpoint,
           state: "disconnected",
-          pluginId: pluginId || "serial",
+          pluginId: pid,
           params,
           stats: { txBytes: 0, rxBytes: 0 },
           connectedAt: null,
@@ -344,6 +385,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           sendBarEnabled: sendBarEnabled ?? true,
           virtualPortEnabled: (params.virtual_port_enabled as boolean) ?? false,
           virtualPortCount: (params.virtual_port_count as number) ?? 0,
+          fileServiceEnabled: (params.file_service_enabled as boolean) ?? false,
+          fileServiceProtocol: params.file_service_protocol as string | undefined,
         },
       });
       return sessionId;
@@ -432,6 +475,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     transferEnabled?: boolean,
     transferProtocol?: string,
     sendBarEnabled?: boolean,
+    pluginId?: string,
   ) => {
     const tab = state.tabs.find(t => t.id === sessionId);
     const wasConnected = tab?.state === "connected" || tab?.state === "transferring";
@@ -448,11 +492,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
 
     // 2. 更新磁盘配置（保持相同 UUID）
+    // pluginId 优先生效：调用方传入 > tab 已记录的 > 报错（不应回退到默认值）
+    const effectivePluginId = pluginId || tab?.pluginId;
+    if (!effectivePluginId) {
+      dispatch({ type: "SET_ERROR", error: "无法确定会话的协议类型 (pluginId)" });
+      return;
+    }
     try {
       await invoke("save_session_config", {
         endpoint,
         params,
         name: name || undefined,
+        pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
         sendBarEnabled: sendBarEnabled ?? true,
@@ -483,6 +534,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           endpoint,
           params,
           name: name || tab?.name || undefined,
+          pluginId: effectivePluginId,
           transferEnabled: transferEnabled ?? true,
           transferProtocol: transferProtocol || "ymodem",
           sendBarEnabled: sendBarEnabled ?? true,
@@ -540,6 +592,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           sendBarEnabled: s.send_bar_enabled ?? true,
           virtualPortEnabled: s.virtual_port_enabled ?? false,
           virtualPortCount: s.virtual_port_count ?? 0,
+          fileServiceEnabled: (s.params?.file_service_enabled as boolean) ?? false,
+          fileServiceProtocol: s.params?.file_service_protocol as string | undefined,
         }));
         dispatch({ type: "SET_TABS", tabs });
         if (tabs.length > 0) {
@@ -570,14 +624,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const unlisteners: UnlistenFn[] = [];
 
     (async () => {
-      const u1 = await listen<{ session_id: string; data: number[] }>("session-data", (event) => {
-        const data = new Uint8Array(event.payload.data);
+      const u1 = await listen<{ session_id: string; data_b64?: string; data?: number[] }>("session-data", (event) => {
+        // 支持两种数据格式：
+        // - data_b64: Base64 字符串（新格式，后端批处理后）— 用 atob 解码，性能远优于 JSON 数字数组
+        // - data: number[]（旧格式，向后兼容）
+        const data = event.payload.data_b64
+          ? decodeBase64(event.payload.data_b64)
+          : new Uint8Array(event.payload.data ?? []);
         dataCallbackRef.current?.(event.payload.session_id, data);
       });
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }> }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
@@ -626,6 +685,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 virtualPortPairs: vPairs,
                 virtualPortEnabled: (event.payload.params?.virtual_port_enabled as boolean) ?? false,
                 virtualPortCount: (event.payload.params?.virtual_port_count as number) ?? 0,
+                fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean) ?? false,
+                fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
               },
             });
           }

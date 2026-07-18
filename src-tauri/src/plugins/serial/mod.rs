@@ -3,10 +3,10 @@
 //! 实现 `ProtocolAdapter` trait，提供 RS-232/RS-485 串口终端会话。
 
 use serde::{Deserialize, Serialize};
-use crate::channel::{Channel, ContentType, IoStrategy};
+use crate::channel::{ContentType, IoStrategy};
 use crate::channel::error::SessionError;
 use crate::channel::serial_channel::SerialChannel;
-use crate::kernel::plugin_adapter::{EndpointInfo, PluginManifest, ProtocolAdapter, TransferProtocolType};
+use crate::kernel::plugin_adapter::{EndpointInfo, PluginManifest, ProtocolAdapter, ProtocolConnection, TransferProtocolType};
 
 // ── 串口配置 ────────────────────────────────────────
 
@@ -69,7 +69,7 @@ impl SerialAdapter {
     pub fn manifest() -> PluginManifest {
         PluginManifest {
             id: "serial".into(),
-            name: "Serial Port".into(),
+            name: "Serial".into(),
             version: "1.0.0".into(),
             category: "terminal".into(),
             description: "RS-232/RS-485 串口终端会话".into(),
@@ -143,16 +143,22 @@ impl SerialAdapter {
     }
 }
 
+#[async_trait::async_trait]
 impl ProtocolAdapter for SerialAdapter {
-    fn connect(
+    async fn connect(
         &self,
         endpoint: &str,
         params: &serde_json::Value,
-    ) -> Result<Box<dyn Channel>, SessionError> {
+    ) -> Result<ProtocolConnection, SessionError> {
         let config = Self::parse_params(params);
         let port = Self::open_port(endpoint, &config)?;
         let channel = SerialChannel::new(port);
-        Ok(Box::new(channel))
+        Ok(ProtocolConnection {
+            channel: crate::kernel::plugin_adapter::ChannelKind::Sync(Box::new(channel)),
+            comm_handle: None,
+            side_channel: None,
+            teardown_delay: self.teardown_delay(),
+        })
     }
 
     fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError> {
@@ -178,5 +184,13 @@ impl ProtocolAdapter for SerialAdapter {
 
     fn io_strategy(&self) -> IoStrategy {
         IoStrategy::Sync
+    }
+
+    /// Windows 上串口驱动释放端口需要短暂等待，避免立即重连时端口仍被占用。
+    fn teardown_delay(&self) -> std::time::Duration {
+        #[cfg(target_os = "windows")]
+        { std::time::Duration::from_millis(100) }
+        #[cfg(not(target_os = "windows"))]
+        { std::time::Duration::ZERO }
     }
 }

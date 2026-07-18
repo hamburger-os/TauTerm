@@ -74,7 +74,7 @@ pub struct SavedSessionInfo {
 
 #[tauri::command]
 pub fn get_connection_types(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Vec<ConnectionTypeInfo> {
     let plugin_host = state.plugin_host.lock().unwrap_or_else(|e| e.into_inner());
     plugin_host.plugins().iter().map(|p| ConnectionTypeInfo {
@@ -91,7 +91,7 @@ pub fn get_connection_types(
 
 #[tauri::command]
 pub fn enumerate_endpoints(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     plugin_id: Option<String>,
 ) -> Result<Vec<EndpointItem>, String> {
     let pid = plugin_id.unwrap_or_else(|| "serial".into());
@@ -105,6 +105,17 @@ pub fn enumerate_endpoints(
                 connection_type: "serial".to_string(),
             }).collect())
         }
+        "ssh" => {
+            // 通过适配器调用 discover_endpoints，保持与 serial 一致的插件架构。
+            // SSH 当前返回空列表（无硬件端点），但未来可扩展为发现 mDNS/Bonjour SSH 主机等。
+            let endpoints = state.ssh_adapter.discover_endpoints()
+                .map_err(|e| e.to_string())?;
+            Ok(endpoints.into_iter().map(|ep| EndpointItem {
+                name: ep.name,
+                description: ep.description,
+                connection_type: "ssh".to_string(),
+            }).collect())
+        }
         other => Err(format!("插件 '{}' 暂不支持端点枚举", other)),
     }
 }
@@ -114,9 +125,9 @@ pub fn enumerate_endpoints(
 /// TODO: 升级 Tauri v2 → v3 后，将多个参数收束为请求结构体
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn connect_session(
+pub async fn connect_session(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     endpoint: String,
     params: Value,
     name: Option<String>,
@@ -138,20 +149,59 @@ pub fn connect_session(
     }
 
     match pid.as_str() {
-        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, session_id),
+        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, session_id).await,
+        "ssh" => connect_session_ssh(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, session_id).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
 
-/// TODO: 将串口连接参数收束为 ConnectParams 结构体，消除过多参数
 /// BridgeChannel = (tx, rx) 类型别名
 type BridgeChannel = (std::sync::mpsc::SyncSender<Vec<u8>>, std::sync::mpsc::Receiver<Vec<u8>>);
 
+/// 创建 on_data 回调（含 DataBatcher + 日志记录 + 可选虚拟端口转发）。
+///
+/// DataBatcher 的所有权被移入回调闭包（通过 `batcher.push()` 消费数据），
+/// 因此只返回 `Box<dyn Fn>`；`DataBatcher::Drop` 在会话断开时自动 flush + 清理。
+///
+/// `bridge_tx` 为可选虚拟端口转发通道（仅串口会话提供）。
+/// 全部会话类型共用此函数，消除 ~60 行重复代码。
+fn create_on_data_callback(
+    app: &AppHandle,
+    log_tx: std::sync::mpsc::SyncSender<LogEntry>,
+    data_mode: String,
+    bridge_tx: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
+) -> Box<dyn Fn(String, Vec<u8>) + Send> {
+    let app_clone = app.clone();
+    let batcher = crate::kernel::data_batcher::DataBatcher::new(move |batched| {
+        let _ = app_clone.emit("session-data", serde_json::json!({
+            "session_id": batched.session_id,
+            "data_b64": batched.data_b64,
+        }));
+    });
+
+    Box::new(move |session_id, data| {
+        // 日志和桥接需克隆数据；主路径（batcher）直接获取所有权，省去一次 clone
+        let data_for_log = data.clone();
+        let data_for_bridge = bridge_tx.as_ref().map(|_| data.clone());
+        batcher.push(session_id.clone(), data);
+        let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
+            session_id: session_id.clone(),
+            direction: DataDirection::RX,
+            data_mode: data_mode.clone(),
+            payload: data_for_log,
+            timestamp: Local::now(),
+        }));
+        if let (Some(tx), Some(d)) = (bridge_tx.as_ref(), data_for_bridge) {
+            let _ = tx.try_send(d);
+        }
+    })
+}
+
 /// 串口会话连接（新架构：SerialAdapter → Channel → SessionStore）
 #[allow(clippy::too_many_arguments)]
-fn connect_session_serial(
+async fn connect_session_serial(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     endpoint: String,
     params: Value,
     name: Option<String>,
@@ -160,8 +210,8 @@ fn connect_session_serial(
     send_bar_enabled: Option<bool>,
     session_id: Option<String>,
 ) -> Result<String, String> {
-    // 通过 SerialAdapter（ProtocolAdapter trait）创建 Channel
-    let channel = state.serial_adapter.connect(&endpoint, &params)
+    // 通过 SerialAdapter（ProtocolAdapter trait）创建连接产物
+    let conn = state.serial_adapter.connect(&endpoint, &params).await
         .map_err(|e| format!("串口连接失败: {}", e))?;
 
     // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
@@ -204,35 +254,20 @@ fn connect_session_serial(
     let bridge_tx = bridge.as_ref().map(|(tx, _)| tx.clone());
 
     let app_data = app.clone();
-    // 克隆日志发送器以注入 on_data 回调
     let log_tx = {
         let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
         log_engine.sender()
     };
-    let on_data: Box<dyn Fn(String, Vec<u8>) + Send> = Box::new(move |session_id, data| {
-        let _ = app_data.emit("session-data", serde_json::json!({
-            "session_id": session_id,
-            "data": data,
-        }));
-        // 异步发送 RX 数据日志（非阻塞）
-        let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
-            session_id: session_id.clone(),
-            direction: DataDirection::RX,
-            data_mode: data_mode.clone(),
-            payload: data.clone(),
-            timestamp: Local::now(),
-        }));
-        // 转发到虚拟端口桥接（best-effort，虚拟端口未启用时忽略）
-        if let Some(ref tx) = bridge_tx {
-            let _ = tx.try_send(data);
-        }
-        // 数据推送至脚本引擎由 CommHandle::notify_receive() 统一扇出，
-        // 脚本引擎通过 CommHandle::on_receive() 注册回调接收数据
-    });
+
+    // 共享 on_data 回调：DataBatcher + 日志 + 虚拟端口转发
+    // 数据推送至脚本引擎由 CommHandle::notify_receive() 统一扇出
+    let on_data = create_on_data_callback(
+        &app_data, log_tx, data_mode.clone(), bridge_tx,
+    );
 
     let app_disconnect = app.clone();
     let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
-        let app_state: State<AppState> = app_disconnect.state();
+        let app_state: State<'_, AppState> = app_disconnect.state();
 
         // 1. 在 mark_disconnected 之前读取虚拟端口对
         //    （mark_disconnected 内部关闭桥接线程，但不销毁 pairs）
@@ -295,7 +330,7 @@ fn connect_session_serial(
     let session_id = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         let session_id = store.create_session(
-            &session_name, "serial", &endpoint, params, channel,
+            &session_name, "serial", &endpoint, params, conn,
             on_data, on_disconnect, app.clone(),
             transfer_enabled_val,
             Some(transfer_protocol_val.clone()),
@@ -441,12 +476,162 @@ fn connect_session_serial(
     Ok(session_id)
 }
 
+/// SSH 会话连接（新架构：SshAdapter::connect → ProtocolConnection → SessionStore）
+#[allow(clippy::too_many_arguments)]
+async fn connect_session_ssh(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    endpoint: String,
+    params: Value,
+    name: Option<String>,
+    transfer_enabled: Option<bool>,
+    transfer_protocol: Option<String>,
+    send_bar_enabled: Option<bool>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    let params_for_config = params.clone();
+    let ssh_config: crate::plugins::ssh::SshConfig = serde_json::from_value(params_for_config)
+        .map_err(|e| format!("SSH 配置解析失败: {}", e))?;
+
+    // 通过 SshAdapter::connect_with_config 获取 ProtocolConnection，
+    // 复用已解析的 SshConfig 实例，避免 connect() 内部二次 JSON 反序列化。
+    // 传入 AppHandle 和 HostKeyVerifier 以启用用户确认主机密钥流程。
+    let conn = state.ssh_adapter.connect_with_config(
+        ssh_config.clone(),
+        app.clone(),
+        &state.host_key_verifier,
+    ).await.map_err(|e| format!("SSH 连接失败: {}", e))?;
+
+    // 提取主机密钥指纹（供前端展示确认）
+    let host_key_fingerprint: Option<String> = conn.side_channel.as_ref()
+        .and_then(|sc| sc.as_any().downcast_ref::<crate::plugins::ssh::SshSideChannel>())
+        .and_then(|ssc| ssc.host_key_fingerprint.clone());
+
+    if let Some(ref fp) = host_key_fingerprint {
+        log::info!("SSH 主机密钥指纹: {}", fp);
+    }
+
+    let content_type = state.ssh_adapter.content_type();
+    let io_strategy = state.ssh_adapter.io_strategy();
+    let transfer_protocols_list = state.ssh_adapter.transfer_protocols();
+    log::info!(
+        "SSH 连接: content_type={:?}, io_strategy={:?}, transfer_protocols={:?}",
+        content_type, io_strategy, transfer_protocols_list
+    );
+
+    let session_name = name.unwrap_or_else(|| format!("{}@{}", ssh_config.username, ssh_config.host));
+    let data_mode = ssh_config.data_mode.clone();
+
+    let app_data = app.clone();
+    let log_tx = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        log_engine.sender()
+    };
+
+    // 共享 on_data 回调：DataBatcher + 日志（SSH 无虚拟端口桥接）
+    let on_data = create_on_data_callback(
+        &app_data, log_tx, data_mode.clone(), None,
+    );
+
+    let app_disconnect = app.clone();
+    let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
+        let app_state: State<'_, AppState> = app_disconnect.state();
+        if let Ok(mut store) = app_state.session_store.lock() {
+            store.mark_disconnected(&session_id);
+            let path = SessionStore::sessions_file_path(&app_disconnect);
+            let _ = store.save_to_disk(&path);
+        }
+        let _ = app_disconnect.emit("session-disconnected", serde_json::json!({
+            "session_id": session_id,
+        }));
+    });
+
+    let transfer_enabled_val = transfer_enabled.unwrap_or(true);
+    let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "sftp".into());
+    let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
+
+    let session_id = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        // conn 携带 side_channel（Arc<russh::client::Handle<SshHandler>> + SftpSession 缓存），由 SessionStore 保存供 SFTP 复用
+        let session_id = store.create_session(
+            &session_name, "ssh", &endpoint, params.clone(), conn,
+            on_data, on_disconnect, app.clone(),
+            transfer_enabled_val,
+            Some(transfer_protocol_val.clone()),
+            send_bar_enabled_val,
+            session_id,
+        )?;
+
+        let path = SessionStore::sessions_file_path(&app);
+        let _ = store.save_to_disk(&path);
+        session_id
+    };
+
+    let (actual_name, actual_params, connected_at) = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.get_session(&session_id)
+            .map(|h| (h.name.clone(), h.params.clone(), h.connected_at))
+            .unwrap_or((session_name, params, None))
+    };
+
+    log::info!("SSH 会话已连接: {} @ {}", actual_name, endpoint);
+
+    let _ = app.emit("session-connected", serde_json::json!({
+        "session_id": session_id,
+        "endpoint": endpoint,
+        "connection_type": "ssh",
+        "plugin_id": "ssh",
+        "name": actual_name,
+        "params": actual_params,
+        "connected_at": connected_at,
+        "transfer_enabled": transfer_enabled_val,
+        "transfer_protocol": transfer_protocol_val,
+        "send_bar_enabled": send_bar_enabled_val,
+        "file_service_enabled": ssh_config.file_service_enabled,
+        "file_service_protocol": ssh_config.file_service_protocol,
+        "host_key_fingerprint": host_key_fingerprint,
+    }));
+
+    Ok(session_id)
+}
+
+// ── 命令：SSH 主机密钥确认 ────────────────────────────
+
+/// 用户确认或拒绝 SSH 主机密钥。
+///
+/// SSH 连接过程中，`build_connection_with_config` 发现新主机密钥时
+/// 通过 `ssh-host-key-verify` 事件将指纹发送到前端。
+/// 前端展示确认对话框后调用此命令，由 `HostKeyVerifier` 将用户决策
+/// 回传给正在阻塞等待的 `build_connection_with_config`。
+#[tauri::command]
+pub async fn confirm_host_key(
+    state: tauri::State<'_, AppState>,
+    fingerprint: String,
+    accepted: bool,
+) -> Result<(), String> {
+    let ok = state.host_key_verifier.respond(&fingerprint, accepted).await;
+    if !ok {
+        // 指纹未找到：可能已超时、重复确认、或从未发起。
+        // 返回错误信息以便前端显示给用户。
+        return Err(format!(
+            "主机密钥验证请求未找到或已过期（指纹: {}）。可能已超时或重复确认。",
+            &fingerprint[..fingerprint.len().min(40)]
+        ));
+    }
+    log::info!(
+        "SSH 主机密钥 {}: {}",
+        if accepted { "已接受" } else { "已拒绝" },
+        &fingerprint[..fingerprint.len().min(40)]
+    );
+    Ok(())
+}
+
 // ── 命令：会话断开 ──────────────────────────────────
 
 #[tauri::command]
-pub fn disconnect_session(
+pub async fn disconnect_session(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
     // 单次锁获取：读取 → 保存 → 关闭（close_session 内部关闭桥接）
@@ -507,7 +692,7 @@ pub fn disconnect_session(
 /// 向指定会话写入数据
 #[tauri::command]
 pub fn write_data(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     data: Vec<u8>,
 ) -> Result<(), String> {
@@ -539,7 +724,7 @@ pub fn write_data(
 #[tauri::command]
 pub fn switch_active_session(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -554,7 +739,7 @@ pub fn switch_active_session(
 #[tauri::command]
 pub fn rename_session(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     new_name: String,
 ) -> Result<(), String> {
@@ -574,7 +759,7 @@ pub fn rename_session(
 /// 标签页重排序
 #[tauri::command]
 pub fn reorder_tabs(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_ids: Vec<String>,
 ) -> Result<(), String> {
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -585,7 +770,7 @@ pub fn reorder_tabs(
 /// 获取所有标签页信息
 #[tauri::command]
 pub fn get_tabs(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<TabInfo>, String> {
     let store = state.session_store.lock().map_err(|e| e.to_string())?;
     let tabs: Vec<TabInfo> = store.tab_ids().iter().filter_map(|id| {
@@ -611,7 +796,7 @@ pub fn get_tabs(
 #[tauri::command]
 pub fn save_sessions(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
     let store = state.session_store.lock().map_err(|e| e.to_string())?;
     let path = SessionStore::sessions_file_path(&app);
@@ -647,7 +832,7 @@ pub fn load_sessions(
 #[allow(clippy::too_many_arguments)]
 pub fn save_session_config(
     app: AppHandle,
-    _state: State<AppState>,
+    _state: State<'_, AppState>,
     endpoint: String,
     params: Value,
     name: Option<String>,
@@ -701,7 +886,7 @@ pub fn save_session_config(
 #[tauri::command]
 pub fn delete_session_config(
     app: AppHandle,
-    _state: State<AppState>,
+    _state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
     SessionStore::delete_config_from_disk(&app, &session_id)
@@ -714,7 +899,7 @@ pub fn delete_session_config(
 #[allow(clippy::too_many_arguments)]
 pub fn send_files(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     file_paths: Vec<String>,
     protocol: String,
@@ -731,7 +916,7 @@ pub fn send_files(
 #[allow(clippy::too_many_arguments)]
 fn send_files_internal(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     file_paths: Vec<String>,
     protocol_type: TransferProtocolType,
@@ -739,6 +924,15 @@ fn send_files_internal(
     checksum_mode: Option<String>,
     streaming: Option<bool>,
 ) -> Result<(), String> {
+    // 通过 TransferManager 统一路由传输策略
+    let strategy = crate::transfer::manager::TransferManager::select_strategy_by_protocol(&protocol_type);
+    if strategy != crate::transfer::manager::TransferStrategy::Inline {
+        return Err(format!(
+            "协议 {:?} 需要通过侧通道传输（SFTP 路径），请使用 sftp_upload_file_cmd",
+            protocol_type
+        ));
+    }
+
     let file_infos: Vec<crate::transfer::types::FileInfo> = file_paths
         .iter()
         .filter_map(|p| {
@@ -767,7 +961,7 @@ fn send_files_internal(
 #[allow(clippy::too_many_arguments)]
 pub fn receive_files(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     download_dir: String,
     protocol: String,
@@ -784,7 +978,7 @@ pub fn receive_files(
 #[allow(clippy::too_many_arguments)]
 fn receive_files_internal(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     download_dir: String,
     protocol_type: TransferProtocolType,
@@ -792,16 +986,45 @@ fn receive_files_internal(
     checksum_mode: Option<String>,
     streaming: Option<bool>,
 ) -> Result<(), String> {
+    // 通过 TransferManager 统一路由传输策略
+    let strategy = crate::transfer::manager::TransferManager::select_strategy_by_protocol(&protocol_type);
+    if strategy != crate::transfer::manager::TransferStrategy::Inline {
+        return Err(format!(
+            "协议 {:?} 需要通过侧通道传输，接收功能暂不支持 SFTP 自动路径",
+            protocol_type
+        ));
+    }
+
     let pt = protocol_type.clone();
     handoff_and_spawn_transfer(app, state, session_id, &protocol_type, move |port, app_handle, cancel_rx| {
         transfer_receive(port, app_handle, download_dir, pt, cancel_rx, block_size, checksum_mode, streaming)
     })
 }
 
+/// 传输初始化失败时的清理：emit `session-transfer-failed` 事件并重置会话状态。
+/// `session-transfer-started` emit 之后、后台线程 spawn 之前的所有错误路径都必须调用此函数。
+fn emit_transfer_failed_and_cleanup(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    session_id: &str,
+) {
+    let _ = app.emit("session-transfer-failed", serde_json::json!({
+        "session_id": session_id,
+        "error": "传输初始化失败：端口类型不兼容",
+    }));
+    if let Ok(mut store) = state.session_store.lock() {
+        if let Some(h) = store.get_session_mut(session_id) {
+            h.state = SessionState::Connected;
+            h.cancel_transfer_tx = None;
+            h.channel_return_tx = None;
+        }
+    }
+}
+
 /// Channel 交接 + 后台线程 — send/receive 共享实现
 fn handoff_and_spawn_transfer<F>(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     protocol_type: &TransferProtocolType,
     transfer_fn: F,
@@ -847,11 +1070,20 @@ where
         "protocol": protocol_str,
     }));
 
-    let port_any = channel.try_handoff()
-        .ok_or_else(|| "Channel 不支持端口移交".to_string())?;
-    let boxed_port = port_any
-        .downcast::<Box<dyn serialport::SerialPort>>()
-        .map_err(|_| "端口类型转换失败".to_string())?;
+    let port_any = match channel.try_handoff() {
+        Some(pa) => pa,
+        None => {
+            emit_transfer_failed_and_cleanup(&app, &state, &session_id);
+            return Err("Channel 不支持端口移交".into());
+        }
+    };
+    let boxed_port = match port_any.downcast::<Box<dyn serialport::SerialPort>>() {
+        Ok(bp) => bp,
+        Err(_raw) => {
+            emit_transfer_failed_and_cleanup(&app, &state, &session_id);
+            return Err("端口类型转换失败".into());
+        }
+    };
     let mut port = *boxed_port;
     drop(channel);
 
@@ -861,7 +1093,7 @@ where
         crate::transfer::io::flush_port_buffer(&mut port);
         let result = transfer_fn(&mut port, app_clone.clone(), cancel_rx);
 
-        let app_state: State<AppState> = app_clone.state();
+        let app_state: State<'_, AppState> = app_clone.state();
         if let Ok(mut store) = app_state.session_store.lock() {
             if let Some(h) = store.get_session_mut(&sid) {
                 h.cancel_transfer_tx = None;
@@ -895,7 +1127,7 @@ where
 /// 取消当前传输
 #[tauri::command]
 pub fn cancel_transfer(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -913,7 +1145,7 @@ pub struct CredentialInfo {
 
 #[tauri::command]
 pub fn store_credential(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     account: String,
     credential_type: String,
     value: String,
@@ -941,7 +1173,7 @@ pub fn store_credential(
 
 #[tauri::command]
 pub fn get_credential(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     account: String,
 ) -> Result<String, String> {
     let cv = state.credential_store.get_credential(&account)
@@ -956,7 +1188,7 @@ pub fn get_credential(
 
 #[tauri::command]
 pub fn list_credentials(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<CredentialInfo>, String> {
     let entries = state.credential_store.list_credentials()
         .map_err(|e| e.to_string())?;
@@ -969,7 +1201,7 @@ pub fn list_credentials(
 
 #[tauri::command]
 pub fn delete_credential(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     account: String,
 ) -> Result<(), String> {
     state.credential_store.delete_credential(&account)
@@ -980,7 +1212,7 @@ pub fn delete_credential(
 
 #[tauri::command]
 pub fn get_config(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     key: String,
 ) -> Result<Option<Value>, String> {
     Ok(state.config_store.get::<Value>(&key))
@@ -988,7 +1220,7 @@ pub fn get_config(
 
 #[tauri::command]
 pub fn set_config(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     key: String,
     value: Value,
 ) -> Result<(), String> {
@@ -998,7 +1230,7 @@ pub fn set_config(
 
 #[tauri::command]
 pub fn delete_config(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     key: String,
 ) -> Result<(), String> {
     state.config_store.delete(&key)
@@ -1009,21 +1241,21 @@ pub fn delete_config(
 
 #[tauri::command]
 pub fn get_theme_list(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Vec<String> {
     state.theme_engine.theme_names()
 }
 
 #[tauri::command]
 pub fn get_active_theme(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> String {
     state.theme_engine.active_name()
 }
 
 #[tauri::command]
 pub fn set_theme(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     name: String,
 ) -> Result<(), String> {
     state.theme_engine.apply_theme(&name)
@@ -1037,7 +1269,7 @@ pub fn set_theme(
 /// 锁顺序：session_store → log_engine（与 write_data 保持一致，避免死锁）
 #[tauri::command]
 pub fn start_session_log(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
 ) -> Result<String, String> {
     // 先锁定 session_store 读取会话信息（锁在块结束时释放）
@@ -1079,7 +1311,7 @@ pub fn start_session_log(
 /// 停止会话数据日志记录
 #[tauri::command]
 pub fn stop_session_log(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
@@ -1099,7 +1331,7 @@ pub fn stop_session_log(
 /// 前端用户操作/事件日志
 #[tauri::command]
 pub fn log_event(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     level: String,
     message: String,
 ) -> Result<(), String> {
@@ -1117,7 +1349,7 @@ pub fn log_event(
 /// 获取当前活跃日志状态
 #[tauri::command]
 pub fn get_log_status(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<LogStatus>, String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     Ok(log_engine.get_active_logs())
@@ -1126,7 +1358,7 @@ pub fn get_log_status(
 /// 更新系统日志配置（启用/禁用 + 最低日志级别）
 #[tauri::command]
 pub fn set_system_log_config(
-    _state: State<AppState>,
+    _state: State<'_, AppState>,
     enabled: bool,
     level: String,
 ) -> Result<(), String> {
@@ -1137,7 +1369,7 @@ pub fn set_system_log_config(
 /// 获取日志目录路径
 #[tauri::command]
 pub fn get_log_dir(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<String, String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     let config = log_engine.get_config();
@@ -1150,7 +1382,7 @@ pub fn get_log_dir(
 /// 前端调用此命令获取 Rust 端的当前配置，确保 UI 显示与后端一致。
 #[tauri::command]
 pub fn get_log_config(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<LogConfigResponse, String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     Ok(log_engine.get_config_response())
@@ -1159,7 +1391,7 @@ pub fn get_log_config(
 /// 在系统文件管理器中打开日志目录
 #[tauri::command]
 pub fn open_log_dir(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     let config = log_engine.get_config();
@@ -1195,7 +1427,7 @@ pub fn open_log_dir(
 /// 消费者线程下次循环自动读取新配置，无需重启。
 #[tauri::command]
 pub fn update_log_config(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     config: LogConfigUpdate,
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
@@ -1206,7 +1438,7 @@ pub fn update_log_config(
 /// 清除所有日志文件
 #[tauri::command]
 pub fn clear_all_logs(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     let config = log_engine.get_config();
@@ -1454,7 +1686,7 @@ fn transfer_receive(
 /// 查询 com0com 驱动状态（前端主动拉取，解决事件在组件挂载前发射的竞态）
 #[tauri::command]
 pub fn check_virtual_port_driver(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     let vpm = state.virtual_port_manager.lock().map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
@@ -1471,7 +1703,7 @@ pub fn check_virtual_port_driver(
 #[tauri::command]
 pub fn install_virtual_port_driver(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<String, String> {
     let mut vpm = state.virtual_port_manager.lock().map_err(|e| e.to_string())?;
 
@@ -1530,7 +1762,7 @@ pub fn install_virtual_port_driver(
 /// 返回 `{ cleaned: N, message: "..." }`。
 #[tauri::command]
 pub fn cleanup_virtual_ports(
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<serde_json::Value, String> {
     let mut vpm = state.virtual_port_manager.lock().map_err(|e| e.to_string())?;
 
@@ -1588,7 +1820,7 @@ pub fn cleanup_virtual_ports(
 #[tauri::command]
 pub fn start_script_engine(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     code: String,
 ) -> Result<(), String> {
@@ -1599,7 +1831,7 @@ pub fn start_script_engine(
 /// 停止会话的脚本引擎
 #[tauri::command]
 pub fn stop_script_engine(
-    state: State<AppState>,
+    state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -1768,4 +2000,433 @@ fn test_match_lua_pattern(
         "matched": Some(matched),
         "groups": [],
     }))
+}
+
+// ── 命令：SSH 文件服务（SFTP）────────────────────
+//
+// SFTP 命令组遵循统一模式：get_ssh_side_channel() → 委托函数。
+// 每条命令 2 行样板代码，显式优于隐式（macro 会破坏 IDE 导航和重构工具）。
+// 如需缩减，可提取 sftp_command!(name, fn, ret_type, arg_pattern) 声明宏。
+
+use crate::transfer::ssh_file_service::{
+    sftp_list_dir, sftp_stat, sftp_read_head, sftp_chmod, sftp_download, sftp_upload,
+    sftp_delete, sftp_delete_recursive, sftp_download_dir,
+    sftp_rename, sftp_mkdir, sftp_new_file, sftp_delete_batch,
+};
+use crate::plugins::ssh::SshSideChannel;
+
+/// 从 SessionStore 获取 SSH 侧通道（含 session 和 sftp 缓存）的共享句柄。
+///
+/// 通过 `SideChannel::as_any()` + `downcast_ref` 集中处理类型还原，
+/// 避免每个 SFTP 命令重复样板代码。
+///
+/// 返回 `Arc<SshSideChannel>` 的克隆——其内部 `session` 字段为
+/// `Arc<russh::client::Handle<SshHandler>>`（russh Handle 内部线程安全），
+/// `sftp` 字段为 `Arc<tokio::sync::Mutex<Option<russh_sftp::client::SftpSession>>>`（惰性缓存）。
+/// 通过 `Arc::clone` 共享同一底层资源，因此 SFTP 缓存在多次命令调用间保持有效。
+fn get_ssh_side_channel(
+    state: &State<'_, AppState>,
+    session_id: &str,
+) -> Result<std::sync::Arc<SshSideChannel>, String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    let handle = store.get_session(session_id)
+        .ok_or_else(|| store.session_not_found(session_id))?;
+    let sc = handle.side_channel.as_ref()
+        .ok_or_else(|| "此会话不包含 SSH 侧通道（可能不是 SSH 连接）".to_string())?;
+    let ssh_sc_ref = sc.as_any().downcast_ref::<SshSideChannel>()
+        .ok_or_else(|| "侧通道类型不匹配（期望 SshSideChannel）".to_string())?;
+    // 通过克隆内部 Arc 字段构造新的 SshSideChannel，
+    // 与 SessionStore 中持有的 Arc<dyn SideChannel> 共享同一 session 和 sftp 缓存。
+    Ok(std::sync::Arc::new(SshSideChannel {
+        session: ssh_sc_ref.session.clone(),
+        sftp: ssh_sc_ref.sftp.clone(),
+        host_key_fingerprint: ssh_sc_ref.host_key_fingerprint.clone(),
+    }))
+}
+
+/// SFTP 传输生命周期 RAII 守卫
+///
+/// 确保传输 tokio task 在**任何**退出路径（包括 panic）下都清理 `sftp_cancel_flag` 并 emit 完成事件，
+/// 避免标志残留导致后续传输被永久拒绝（`sftp_transfer_start` 返回"已有传输进行中"）。
+///
+/// 使用方式：在传输 tokio task 入口处构造，drop 时自动执行清理。
+///
+/// 已知限制：传输 task 使用 `tokio::spawn`（非守护），若应用在传输进行中退出，
+/// task 可能被强制终止而不执行 Drop 的清理逻辑，远端可能残留半成品文件。
+/// Tauri 目前不提供 `on_exit` 钩子来 join 所有传输 task，此为平台限制。
+struct SftpTransferGuard {
+    app: AppHandle,
+    session_id: String,
+    direction: &'static str,
+    file_name: String,
+    /// 标记是否已完成清理（手动 emit 时置 true，避免重复 emit）
+    done: bool,
+}
+
+impl SftpTransferGuard {
+    fn new(app: AppHandle, session_id: String, direction: &'static str, file_name: String) -> Self {
+        Self { app, session_id, direction, file_name, done: false }
+    }
+
+    /// 手触发完成事件并标记已清理（用于在 task 正常退出时携带传输结果）
+    fn finish(&mut self, result: &Result<u64, String>) {
+        if self.done {
+            return;
+        }
+        self.done = true;
+        if let Ok(mut store) = self.app.state::<AppState>().session_store.lock() {
+            store.sftp_transfer_done(&self.session_id);
+        }
+        let _ = self.app.emit("sftp-transfer-finished", serde_json::json!({
+            "session_id": &self.session_id,
+            "direction": self.direction,
+            "file_name": &self.file_name,
+            "result": match result {
+                Ok(bytes) => serde_json::json!({"bytes": bytes}),
+                Err(e) => serde_json::json!({"error": e}),
+            },
+        }));
+    }
+}
+
+impl Drop for SftpTransferGuard {
+    fn drop(&mut self) {
+        if !self.done {
+            // panic 或未正常 finish 的兜底清理。
+            // 使用 try_state 而非 state：应用关闭期间 AppState 可能已注销，
+            // state() 会 panic，try_state() 返回 Option 安全降级。
+            if let Some(app_state) = self.app.try_state::<AppState>() {
+                if let Ok(mut store) = app_state.session_store.lock() {
+                    store.sftp_transfer_done(&self.session_id);
+                }
+            }
+            let _ = self.app.emit("sftp-transfer-finished", serde_json::json!({
+                "session_id": &self.session_id,
+                "direction": self.direction,
+                "file_name": &self.file_name,
+                "result": {"error": "传输 task 异常终止"},
+            }));
+        }
+    }
+}
+
+/// SFTP 列出远程目录
+#[tauri::command]
+pub async fn sftp_list_dir_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+) -> Result<Vec<crate::transfer::ssh_file_service::SftpEntry>, String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_list_dir(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+}
+
+/// SFTP 获取文件信息
+#[tauri::command]
+pub async fn sftp_stat_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+) -> Result<crate::transfer::ssh_file_service::SftpFileInfo, String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_stat(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+}
+
+/// SFTP 读取文件头（用于预览）
+#[derive(serde::Serialize)]
+pub struct ReadHeadResult {
+    pub data: Vec<u8>,
+    pub total_size: u64,
+}
+
+#[tauri::command]
+pub async fn sftp_read_head_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    max_bytes: u64,
+) -> Result<ReadHeadResult, String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let (data, total_size) = sftp_read_head(&ssh_sc.session, &ssh_sc.sftp, &remote_path, max_bytes).await?;
+    Ok(ReadHeadResult { data, total_size })
+}
+
+/// SFTP 下载文件（带进度事件，可取消）
+///
+/// 后台 tokio task 执行传输，立即返回。完成/失败/取消时 emit `sftp-transfer-finished` 事件。
+/// 此设计避免阻塞 Tauri 命令，使 `cancel_sftp_transfer` 命令可在传输期间执行。
+#[tauri::command]
+pub async fn sftp_download_file_cmd(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let cancel_flag = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.sftp_transfer_start(&session_id)?
+    };
+
+    let file_name = std::path::Path::new(&remote_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| remote_path.clone());
+    let sid = session_id.clone();
+    let app_clone = app.clone();
+
+    // 启动传输 task 并注册 JoinHandle，确保 close_session 可等待其完成
+    let handle = tokio::spawn(async move {
+        // RAII 守卫：确保任何退出路径（含 panic）都清理 sftp_cancel_flag 并 emit 完成事件
+        let mut guard = SftpTransferGuard::new(app_clone, sid.clone(), "download", file_name.clone());
+
+        let result = sftp_download(
+            &ssh_sc.session, &ssh_sc.sftp, &remote_path, &local_path,
+            Some(&|done, total| {
+                let _ = app.emit("sftp-progress", serde_json::json!({
+                    "session_id": &sid,
+                    "file_name": &file_name,
+                    "direction": "download",
+                    "bytes_done": done,
+                    "bytes_total": total,
+                }));
+            }),
+            Some(&cancel_flag),
+        ).await;
+
+        guard.finish(&result);
+    });
+
+    // 注册 JoinHandle 以便 close_session 可等待传输完成
+    if let Ok(mut store) = state.session_store.lock() {
+        let _ = store.register_sftp_handle(&session_id, handle);
+    }
+
+    Ok(())
+}
+
+/// SFTP 上传文件（带进度事件，可取消）
+///
+/// 后台 tokio task 执行传输，立即返回。完成/失败/取消时 emit `sftp-transfer-finished` 事件。
+#[tauri::command]
+pub async fn sftp_upload_file_cmd(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let cancel_flag = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.sftp_transfer_start(&session_id)?
+    };
+
+    let file_name = std::path::Path::new(&local_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| local_path.clone());
+    let sid = session_id.clone();
+    let app_clone = app.clone();
+
+    let handle = tokio::spawn(async move {
+        let mut guard = SftpTransferGuard::new(app_clone, sid.clone(), "upload", file_name.clone());
+
+        let result = sftp_upload(
+            &ssh_sc.session, &ssh_sc.sftp, &local_path, &remote_path,
+            Some(&|done, total| {
+                let _ = app.emit("sftp-progress", serde_json::json!({
+                    "session_id": &sid,
+                    "file_name": &file_name,
+                    "direction": "upload",
+                    "bytes_done": done,
+                    "bytes_total": total,
+                }));
+            }),
+            Some(&cancel_flag),
+        ).await;
+
+        // 错误路径（非取消）清理远端半成品文件，避免残留不完整文件
+        // 导致下次上传同名文件大小不匹配等问题。
+        // 取消路径已在 sftp_upload 内部完成清理。
+        if let Err(ref e) = result {
+            if !crate::transfer::ssh_file_service::is_cancelled_error(e) {
+                crate::transfer::ssh_file_service::cleanup_remote_partial(
+                    &ssh_sc.session, &ssh_sc.sftp, &remote_path,
+                ).await;
+            }
+        }
+
+        guard.finish(&result);
+    });
+
+    if let Ok(mut store) = state.session_store.lock() {
+        let _ = store.register_sftp_handle(&session_id, handle);
+    }
+
+    Ok(())
+}
+
+/// SFTP 修改文件权限
+#[tauri::command]
+pub async fn sftp_chmod_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+    mode: u32,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_chmod(&ssh_sc.session, &ssh_sc.sftp, &remote_path, mode).await
+}
+
+/// SFTP 删除文件或目录
+#[tauri::command]
+pub async fn sftp_delete_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_delete(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+}
+
+/// SFTP 重命名/移动文件或目录
+#[tauri::command]
+pub async fn sftp_rename_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    from_path: String,
+    to_path: String,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_rename(&ssh_sc.session, &ssh_sc.sftp, &from_path, &to_path).await
+}
+
+/// SFTP 创建目录
+#[tauri::command]
+pub async fn sftp_mkdir_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_mkdir(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+}
+
+/// SFTP 创建空文件
+#[tauri::command]
+pub async fn sftp_new_file_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_new_file(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+}
+
+/// SFTP 批量删除
+#[tauri::command]
+pub async fn sftp_delete_batch_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_delete_batch(&ssh_sc.session, &ssh_sc.sftp, &paths).await
+}
+
+/// SFTP 递归删除目录（包括子内容）
+#[tauri::command]
+pub async fn sftp_delete_recursive_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_path: String,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    sftp_delete_recursive(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+}
+
+/// SFTP 递归下载目录（可取消）
+///
+/// 后台 tokio task 执行传输，立即返回。完成/失败/取消时 emit `sftp-transfer-finished` 事件。
+#[tauri::command]
+pub async fn sftp_download_dir_cmd(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    remote_dir: String,
+    local_dir: String,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let cancel_flag = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.sftp_transfer_start(&session_id)?
+    };
+
+    let sid = session_id.clone();
+    let local_path = std::path::PathBuf::from(&local_dir);
+    let app_clone = app.clone();
+    let dir_name = std::path::Path::new(&remote_dir)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| remote_dir.clone());
+
+    let handle = tokio::spawn(async move {
+        let mut guard = SftpTransferGuard::new(app_clone, sid.clone(), "download", dir_name.clone());
+
+        let result = sftp_download_dir(
+            &ssh_sc.session, &ssh_sc.sftp, &remote_dir, &local_path,
+            Some(&|cur_file: &str, files_done: u64, files_total: u64| {
+                let _ = app.emit("sftp-progress", serde_json::json!({
+                    "session_id": &sid,
+                    "file_name": cur_file,
+                    "direction": "download",
+                    "bytes_done": files_done,
+                    "bytes_total": files_total,
+                }));
+            }),
+            Some(&cancel_flag),
+        ).await;
+
+        guard.finish(&result);
+    });
+
+    if let Ok(mut store) = state.session_store.lock() {
+        let _ = store.register_sftp_handle(&session_id, handle);
+    }
+
+    Ok(())
+}
+
+/// 取消当前会话的 SFTP 传输
+///
+/// 置位取消标志，传输循环在下次块检查时退出并返回错误。
+/// 传输命令在退出前会自行清理取消状态。
+#[tauri::command]
+pub fn cancel_sftp_transfer(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+    store.cancel_sftp_transfer(&session_id)
+}
+
+/// 请求 SSH PTY 窗口大小调整
+///
+/// 前端终端 resize 时调用，通过 IoLoopCmd::ResizePty 转发到 I/O 循环线程，
+/// 再由 Channel::resize_pty 发送 window_change 请求到远端。
+/// 非 SSH 协议（串口等）的 Channel 默认空实现，调用无副作用。
+#[tauri::command]
+pub fn resize_pty(
+    state: State<'_, AppState>,
+    session_id: String,
+    cols: u32,
+    rows: u32,
+) -> Result<(), String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    let handle = store.get_session(&session_id)
+        .ok_or_else(|| store.session_not_found(&session_id))?;
+    handle.write_tx.send(IoLoopCmd::ResizePty { cols, rows })
+        .map_err(|e| format!("发送 resize 命令失败: {}", e))
 }
