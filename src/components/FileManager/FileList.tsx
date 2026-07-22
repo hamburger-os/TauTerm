@@ -8,15 +8,16 @@
  */
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
+import Icon from "../common/Icon";
 import type { SftpEntry, SortField, SortDirection } from "./types";
 import FileRow from "./FileRow";
 import styles from "./FileList.module.css";
 
 // ── Helpers ────────────────────────────────────────────
 
-function sortArrow(field: SortField, active: SortField | null, dir: SortDirection): string {
-  if (field !== active) return "";
-  return dir === "asc" ? "▲" : "▼";
+function sortIcon(field: SortField, active: SortField | null, dir: SortDirection): string | null {
+  if (field !== active) return null;
+  return dir === "asc" ? "chevron-up" : "chevron-down";
 }
 
 // ── Component ──────────────────────────────────────────
@@ -75,9 +76,11 @@ export default function FileList({
       }}
     >
       {label}
-      <span className={styles.sortArrow}>
-        {sortArrow(field, sortField, sortDirection)}
-      </span>
+      {sortIcon(field, sortField, sortDirection) && (
+        <span className={styles.sortArrow}>
+          <Icon name={sortIcon(field, sortField, sortDirection)!} size="xs" />
+        </span>
+      )}
     </div>
   );
 
@@ -106,7 +109,7 @@ export default function FileList({
         <div className={styles.errorBanner}>
           <span>{error}</span>
           <button className={styles.errorClose} onClick={onClearError}>
-            X
+            <Icon name="close" size="xs" />
           </button>
         </div>
       )}

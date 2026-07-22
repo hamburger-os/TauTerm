@@ -663,6 +663,7 @@
     "name": "Name",
     "size": "Size",
     "modified": "Modified",
+    "accessed": "Accessed",
     "permissions": "Permissions",
     "newFile": "New File",
     "copyPath": "Copy Path",

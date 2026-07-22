@@ -9,6 +9,7 @@
 import { useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import Icon from "../common/Icon";
 import { formatBytes } from "../../utils/format";
 import styles from "./FilePreviewModal.module.css";
 
@@ -66,7 +67,7 @@ export default function FilePreviewModal({
         <div className={styles.header}>
           <span className={styles.headerTitle}>{fileName}</span>
           <button className={styles.closeBtn} onClick={onClose}>
-            {t("common.close")}
+            <Icon name="close" size="md" />
           </button>
         </div>
 

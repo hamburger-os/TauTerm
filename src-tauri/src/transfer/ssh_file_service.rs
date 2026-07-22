@@ -115,6 +115,8 @@ pub struct SftpEntry {
     pub is_dir: bool,
     /// 文件大小（字节），目录为 0
     pub size: u64,
+    /// 访问时间（Unix 时间戳，秒）
+    pub accessed: Option<u64>,
     /// 修改时间（Unix 时间戳，秒）
     pub modified: Option<u64>,
     /// 权限字符串（如 "-rw-r--r--"）
@@ -128,6 +130,9 @@ pub struct SftpFileInfo {
     pub path: String,
     pub is_dir: bool,
     pub size: u64,
+    /// 访问时间（Unix 时间戳，秒）
+    pub accessed: Option<u64>,
+    /// 修改时间（Unix 时间戳，秒）
     pub modified: Option<u64>,
     pub permissions: Option<String>,
 }
@@ -162,6 +167,7 @@ pub async fn sftp_list_dir(
                 path: full_path,
                 is_dir: meta.is_dir(),
                 size: meta.size.unwrap_or(0),
+                accessed: meta.atime.map(|t| t as u64),
                 modified: meta.mtime.map(|t| t as u64),
                 permissions: Some(perm_str),
             }
@@ -200,6 +206,7 @@ pub async fn sftp_stat(
         path: remote_path.to_string(),
         is_dir: stat.is_dir(),
         size: stat.size.unwrap_or(0),
+        accessed: stat.atime.map(|t| t as u64),
         modified: stat.mtime.map(|t| t as u64),
         permissions: Some(permissions_to_string(stat.permissions)),
     })

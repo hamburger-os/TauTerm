@@ -19,6 +19,7 @@ export interface FileStatInfo {
   path: string;
   isDir: boolean;
   size: number;
+  accessed: number | null;
   modified: number | null;
   permissions: string | null;
 }
@@ -142,7 +143,7 @@ export default function FilePropertiesModal({
             {typeEmoji} {name}
           </span>
           <button className={styles.closeBtn} onClick={onClose}>
-            {t("common.close")}
+            <Icon name="close" size="md" />
           </button>
         </div>
 
@@ -191,6 +192,12 @@ export default function FilePropertiesModal({
                   <span className={styles.fieldValue}>{formatTime(statInfo.modified)}</span>
                 </div>
 
+                {/* 访问时间 */}
+                <div className={styles.fieldRow}>
+                  <span className={styles.fieldLabel}>{t("fileManager.accessed")}</span>
+                  <span className={styles.fieldValue}>{formatTime(statInfo.accessed)}</span>
+                </div>
+
                 {/* 权限 */}
                 <div className={styles.fieldRow}>
                   <span className={styles.fieldLabel}>{t("fileManager.permissions")}</span>
@@ -204,7 +211,7 @@ export default function FilePropertiesModal({
                     {chmodEditing ? (
                       <>
                         <input
-                          className={styles.chmodInput}
+                          className={`${styles.chmodInput} liquid-glass-input`}
                           type="text"
                           value={chmodValue}
                           maxLength={3}
@@ -224,11 +231,11 @@ export default function FilePropertiesModal({
                           }}
                           autoFocus
                         />
-                        <button className={styles.chmodBtn} onClick={handleChmodApply}>
+                        <button className={`${styles.chmodBtn} liquid-glass-button`} onClick={handleChmodApply}>
                           {t("fileManager.apply")}
                         </button>
                         <button
-                          className={styles.chmodBtn}
+                          className={`${styles.chmodBtn} liquid-glass-button`}
                           onClick={() => {
                             setChmodEditing(false);
                             setChmodError(null);
@@ -244,7 +251,7 @@ export default function FilePropertiesModal({
                       <>
                         <code className={styles.fieldValueMono}>{chmodValue}</code>
                         <button
-                          className={styles.chmodBtn}
+                          className={`${styles.chmodBtn} liquid-glass-button`}
                           onClick={() => setChmodEditing(true)}
                         >
                           {t("fileManager.edit")}

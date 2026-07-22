@@ -3,6 +3,7 @@ export interface SftpEntry {
   path: string;
   is_dir: boolean;
   size: number;
+  accessed: number | null;
   modified: number | null;
   permissions: string | null;
 }

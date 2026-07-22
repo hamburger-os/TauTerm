@@ -34,8 +34,13 @@ export function formatPortParams(params: Record<string, unknown> | undefined): s
   return `${baud}·${data}${parity}${stop}·${flow}`;
 }
 
+/** Unix 纪元（1970-01-01 00:00:00 UTC），用于过滤无效时间戳 */
+const UNIX_EPOCH = 0;
+
 /** 格式化 Unix 时间戳为本地化时间字符串 */
 export function formatTime(ts: number | null): string {
-  if (!ts) return "-";
+  if (ts === null || ts === undefined) return "-";
+  if (!isFinite(ts)) return "-";
+  if (ts <= UNIX_EPOCH) return "-";
   return new Date(ts * 1000).toLocaleString();
 }

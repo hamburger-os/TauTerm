@@ -320,6 +320,7 @@ export default function FileManagerPanel({
         path: target.path,
         isDir: target.is_dir,
         size: target.size,
+        accessed: target.accessed,
         modified: target.modified,
         permissions: target.permissions,
       });

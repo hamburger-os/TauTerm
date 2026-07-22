@@ -111,7 +111,7 @@ export default function TransferProgressBar({
           onClick={onClose}
           title={finished ? t("common.close") : t("fileManager.cancelTransfer")}
         >
-          X
+          <Icon name="close" size="sm" />
         </button>
       </span>
     </div>

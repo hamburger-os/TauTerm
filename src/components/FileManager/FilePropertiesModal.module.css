@@ -152,30 +152,23 @@
   font-family: var(--font-mono, monospace);
   font-size: var(--text-sm);
   text-align: center;
-  background: var(--glass-fill);
-  border: 1px solid var(--glass-input-border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
+  /* background/border/border-radius/color 由 liquid-glass-input 全局类提供 */
 }
 
 .chmodInput:focus {
   outline: none;
-  border-color: var(--accent-primary);
+  /* border-color 由 liquid-glass-input 全局类提供 */
 }
 
 .chmodBtn {
   padding: 2px 8px;
   font-size: var(--text-xs);
-  background: var(--glass-fill);
-  border: 1px solid var(--glass-button-border);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
   cursor: pointer;
+  /* background/border/border-radius/color 由 liquid-glass-button 全局类提供 */
 }
 
 .chmodBtn:hover {
-  background: var(--glass-bg-hover);
-  color: var(--text-primary);
+  /* hover 效果由 liquid-glass-button 全局类提供 */
 }
 
 .chmodError {
