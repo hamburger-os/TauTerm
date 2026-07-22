@@ -694,7 +694,9 @@
     "edit": "编辑",
     "apply": "应用",
     "cancel": "取消",
-    "cancelTransfer": "取消传输"
+    "cancelTransfer": "取消传输",
+    "selectDownloadRoot": "选择下载根目录",
+    "downloadDirFailed": "{{count}} 个目录下载失败: {{names}}"
   },
   "ssh": {
     "host": "主机地址",

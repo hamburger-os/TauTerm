@@ -75,14 +75,6 @@ pub fn transfer_cancelled_error() -> String {
     "传输已被用户取消".to_string()
 }
 
-/// 判断错误是否为用户主动取消（替代字符串 contains 匹配，避免脆弱判断）
-///
-/// `sftp_upload` 等返回的取消错误由 `transfer_cancelled_error()` 产生，
-/// 此函数提供语义化判断，调用方据此决定是否跳过远端清理（取消路径已自行清理）。
-pub fn is_cancelled_error(err: &str) -> bool {
-    err == transfer_cancelled_error()
-}
-
 /// 检查取消标志，若已取消则返回 true
 fn is_cancelled(cancel: Option<&Arc<AtomicBool>>) -> bool {
     cancel.map(|c| c.load(Ordering::SeqCst)).unwrap_or(false)
@@ -285,6 +277,12 @@ pub async fn sftp_download(
         (file, size)
     };
 
+    // 确保父目录存在（Windows 上 File::create 不会自动创建中间目录）
+    if let Some(parent) = std::path::Path::new(local_path).parent() {
+        tokio::fs::create_dir_all(parent).await
+            .map_err(|e| format!("创建本地目录 '{}' 失败: {}", parent.display(), e))?;
+    }
+
     let mut local_file = tokio::fs::File::create(local_path).await
         .map_err(|e| format!("创建本地文件 '{}' 失败: {}", local_path, e))?;
 
@@ -338,6 +336,7 @@ pub async fn sftp_upload(
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
     local_path: &str,
     remote_path: &str,
+    mtime: Option<u64>,
     on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<u64, String> {
@@ -404,29 +403,25 @@ pub async fn sftp_upload(
         cb(total, local_size);
     }
     remote_file.flush().await.map_err(|e| format!("刷新远程文件失败: {}", e))?;
+
+    // 同步本地文件修改时间到远程
+    if let Some(mtime_secs) = mtime {
+        let cache = sftp_cache.lock().await;
+        if let Some(sftp) = cache.as_ref() {
+            if let Ok(mut stat) = sftp.metadata(remote_path).await {
+                let ts = mtime_secs.min(u32::MAX as u64) as u32;
+                stat.mtime = Some(ts);
+                stat.atime = Some(ts);
+                let _ = sftp.set_metadata(remote_path, stat).await;
+            }
+        }
+    }
+
     log::info!(
         "SFTP 上传完成: {} -> {} ({} bytes, local_size={})",
         local_path, remote_path, total, local_size
     );
     Ok(total)
-}
-
-/// 上传出错时清理远端半成品文件。
-///
-/// 在 sftp_upload 返回 Err 的所有路径调用，避免远端残留不完整文件
-/// 导致下次上传同名文件时大小不匹配等问题。
-pub async fn cleanup_remote_partial(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    remote_path: &str,
-) {
-    let _ = session; // 保持参数签名一致，session 已由 sftp_cache 内部使用
-    // 确保 SFTP 已初始化（若 sftp_upload 在 get_or_create_sftp 前失败，缓存可能为 None）
-    let _ = get_or_create_sftp(session, sftp_cache).await;
-    let cache = sftp_cache.lock().await;
-    if let Some(sftp) = cache.as_ref() {
-        let _ = sftp.remove_file(remote_path).await;
-    }
 }
 
 /// 删除远程文件
@@ -667,161 +662,6 @@ fn delete_recursive_inner<'a>(
     })
 }
 
-/// 递归列出目录下所有文件（扁平列表，含相对路径和大小）
-/// 最大递归深度为 100 层，超过后静默跳过深层子目录（防御恶意构造的深层目录）。
-async fn list_dir_recursive(
-    sftp: &russh_sftp::client::SftpSession,
-    base_path: &str,
-    prefix: &str,
-) -> Result<Vec<(String, u64)>, String> {
-    list_dir_recursive_impl(sftp, base_path, prefix, 0).await
-}
-
-type ListDirRecursiveFut<'a> = Pin<Box<dyn Future<Output = Result<Vec<(String, u64)>, String>> + Send + 'a>>;
-
-fn list_dir_recursive_impl<'a>(
-    sftp: &'a russh_sftp::client::SftpSession,
-    base_path: &'a str,
-    prefix: &'a str,
-    depth: u32,
-) -> ListDirRecursiveFut<'a> {
-    Box::pin(async move {
-        const MAX_DEPTH: u32 = 100;
-        if depth > MAX_DEPTH {
-            log::warn!("SFTP 递归列表超过最大深度 {} 层，跳过: {}", MAX_DEPTH, base_path);
-            return Ok(Vec::new());
-        }
-        let mut files: Vec<(String, u64)> = Vec::new();
-        let read_dir = sftp.read_dir(base_path).await
-            .map_err(|e| format!("读取目录 '{}' 失败: {}", base_path, e))?;
-
-        for entry in read_dir {
-            let name = entry.file_name();
-            if name == "." || name == ".." {
-                continue;
-            }
-            let full_path = if base_path.ends_with('/') {
-                format!("{}{}", base_path, name)
-            } else {
-                format!("{}/{}", base_path, name)
-            };
-
-            let entry_stat = entry.metadata();
-            if entry_stat.is_dir() {
-                let child_prefix = if prefix.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{}/{}", prefix, name)
-                };
-                let child_files = list_dir_recursive_impl(sftp, &full_path, &child_prefix, depth + 1).await?;
-                files.extend(child_files);
-            } else {
-                let rel_path = if prefix.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{}/{}", prefix, name)
-                };
-                files.push((rel_path, entry_stat.size.unwrap_or(0)));
-            }
-        }
-        Ok(files)
-    })
-}
-
-/// 递归下载远程目录到本地
-/// - `on_progress` — 可选进度回调 (cur_file, files_done, files_total)
-/// - `cancel` — 可选取消标志，每个文件开始前及块读取循环中检查
-#[allow(clippy::type_complexity)]
-pub async fn sftp_download_dir(
-    session: &Arc<russh::client::Handle<SshHandler>>,
-    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
-    remote_dir: &str,
-    local_dir: &std::path::Path,
-    on_progress: Option<&(dyn Fn(&str, u64, u64) + Send + Sync)>,
-    cancel: Option<&Arc<AtomicBool>>,
-) -> Result<u64, String> {
-    get_or_create_sftp(session, sftp_cache).await?;
-
-    // 收集文件列表（仅在持锁期间访问 SFTP 对象）
-    let files = {
-        let cache = sftp_cache.lock().await;
-        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-        list_dir_recursive(sftp, remote_dir, "").await?
-    };
-
-    // Create local directory structure
-    let mut dirs_set = std::collections::HashSet::new();
-    for (rel_path, _) in &files {
-        if let Some(parent) = std::path::Path::new(rel_path).parent() {
-            if !parent.as_os_str().is_empty() {
-                dirs_set.insert(parent.to_path_buf());
-            }
-        }
-    }
-    for d in &dirs_set {
-        tokio::fs::create_dir_all(local_dir.join(d)).await
-            .map_err(|e| format!("创建本地目录失败: {}", e))?;
-    }
-
-    // Download each file
-    let mut total_bytes: u64 = 0;
-    let files_total = files.len() as u64;
-    let mut files_done: u64 = 0;
-
-    for (rel_path, _file_size) in &files {
-        if is_cancelled(cancel) {
-            return Err(transfer_cancelled_error());
-        }
-        let remote_path = format!("{}/{}", remote_dir, rel_path);
-        let local_path = local_dir.join(rel_path);
-
-        // 打开远程文件句柄（仅此段持锁）；后续 read 不再访问 sftp_cache
-        let mut remote_file = {
-            let cache = sftp_cache.lock().await;
-            let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-            sftp.open(&remote_path).await
-                .map_err(|e| format!("打开远程文件 '{}' 失败: {}", remote_path, e))?
-        };
-
-        let mut local_file = tokio::fs::File::create(&local_path).await
-            .map_err(|e| format!("创建本地文件 '{}' 失败: {}", local_path.display(), e))?;
-
-        let mut buf = [0u8; TRANSFER_BUF_SIZE];
-
-        loop {
-            if is_cancelled(cancel) {
-                // 清理当前正在下载的半成品文件
-                let _ = tokio::fs::remove_file(&local_path).await;
-                return Err(transfer_cancelled_error());
-            }
-            let n = remote_file.read(&mut buf).await
-                .map_err(|e| format!("读取远程文件失败: {}", e))?;
-            if n == 0 {
-                break;
-            }
-            local_file.write_all(&buf[..n]).await
-                .map_err(|e| format!("写入本地文件失败: {}", e))?;
-            total_bytes += n as u64;
-        }
-
-        local_file.flush().await.map_err(|e| format!("刷新本地文件失败: {}", e))?;
-        files_done += 1;
-
-        if let Some(cb) = on_progress {
-            cb(rel_path, files_done, files_total);
-        }
-    }
-
-    log::info!(
-        "SFTP 递归下载目录完成: {} -> {} ({} files, {} bytes)",
-        remote_dir,
-        local_dir.display(),
-        files_total,
-        total_bytes
-    );
-    Ok(total_bytes)
-}
-
 // ── 辅助函数 ───────────────────────────────────────────
 
 /// 将 Unix 权限位转换为字符串表示（如 "-rw-r--r--"）
@@ -845,4 +685,90 @@ fn permissions_to_string(perm: Option<u32>) -> String {
     s.push(if p & 0o001 != 0 { 'x' } else { '-' });
 
     s
+}
+
+// ── 递归目录列表 ────────────────────────────────────────
+
+/// 递归列出远程目录下所有文件路径（扁平列表，不含目录本身）
+///
+/// 用于目录批量下载：先通过此函数获取完整文件列表，
+/// 再传递给 `SftpFileTransfer::receive()` 逐文件下载。
+pub async fn sftp_list_dir_recursive(
+    session: &Arc<russh::client::Handle<SshHandler>>,
+    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    remote_dir: &str,
+) -> Result<Vec<String>, String> {
+    get_or_create_sftp(session, sftp_cache).await?;
+    let mut result = Vec::new();
+    list_dir_recursive_inner(sftp_cache, remote_dir, 0, &mut result).await?;
+    Ok(result)
+}
+
+type ListRecursiveFut<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+fn list_dir_recursive_inner<'a>(
+    sftp_cache: &'a Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    path: &'a str,
+    depth: u32,
+    result: &'a mut Vec<String>,
+) -> ListRecursiveFut<'a> {
+    Box::pin(async move {
+        const MAX_DEPTH: u32 = 50;
+        if depth > MAX_DEPTH {
+            log::warn!("SFTP 递归列表超过最大深度 {} 层，跳过: {}", MAX_DEPTH, path);
+            return Ok(());
+        }
+
+        let children: Vec<(String, bool)> = {
+            let cache = sftp_cache.lock().await;
+            let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+
+            let read_dir = sftp.read_dir(path).await
+                .map_err(|e| format!("读取目录 '{}' 失败: {}", path, e))?;
+
+            read_dir.into_iter()
+                .filter_map(|entry| {
+                    let name = entry.file_name();
+                    if name == "." || name == ".." {
+                        return None;
+                    }
+                    let full_path = if path.ends_with('/') {
+                        format!("{}{}", path, name)
+                    } else {
+                        format!("{}/{}", path, name)
+                    };
+                    Some((full_path, entry.metadata().is_dir()))
+                })
+                .collect()
+        }; // 锁在此释放
+
+        for (child_path, is_dir) in &children {
+            if *is_dir {
+                list_dir_recursive_inner(sftp_cache, child_path, depth + 1, result).await?;
+            } else {
+                result.push(child_path.clone());
+            }
+        }
+
+        Ok(())
+    })
+}
+
+// ── 远端清理 ────────────────────────────────────────────
+
+/// 删除远端半成品文件（上传失败时调用，避免残留不完整文件）
+///
+/// 仅在非取消失败时调用（取消路径由 `sftp_upload` 内部清理）。
+pub async fn cleanup_remote_partial(
+    session: &Arc<russh::client::Handle<SshHandler>>,
+    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    remote_path: &str,
+) {
+    let _ = session; // session 已由 sftp_cache 内部持有
+    let _ = get_or_create_sftp(session, sftp_cache).await;
+    let cache = sftp_cache.lock().await;
+    if let Some(sftp) = cache.as_ref() {
+        let _ = sftp.remove_file(remote_path).await;
+        log::info!("SFTP 已清理远端残缺文件: {}", remote_path);
+    }
 }

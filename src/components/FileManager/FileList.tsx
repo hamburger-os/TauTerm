@@ -40,6 +40,8 @@ interface FileListProps {
   onClearError: () => void;
   showParentDir: boolean;
   onGoUp: () => void;
+  /** 进度条可见时，容器底部预留空间避免遮挡文件列表 */
+  showProgress?: boolean;
 }
 
 export default function FileList({
@@ -56,6 +58,7 @@ export default function FileList({
   onClearError,
   showParentDir,
   onGoUp,
+  showProgress = false,
 }: FileListProps) {
   const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -82,11 +85,12 @@ export default function FileList({
   // FileRow 已通过 stopPropagation 阻止冒泡，所以到达这里的都是真正的空白区域点击
   const handleBlankContext = (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation(); // 阻止事件冒泡到父级 container/RightSidebarPanel，避免重复触发右键菜单
     onContextMenu(e, null, undefined);
   };
 
   return (
-    <div className={styles.container} onContextMenu={handleBlankContext}>
+    <div className={`${styles.container} ${showProgress ? styles.containerWithProgress : ""}`} onContextMenu={handleBlankContext}>
       {/* 列标题 — 右键也触发空白区域菜单 */}
       <div className={styles.header} onContextMenu={handleBlankContext}>
         {renderHeader("name", t("fileManager.name"), styles.colName)}

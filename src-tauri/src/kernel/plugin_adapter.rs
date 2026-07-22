@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::channel::{AsyncChannel, Channel, ContentType, IoStrategy};
 use crate::channel::error::SessionError;
 use crate::kernel::comm_handle::CommHandle;
+use crate::kernel::file_transfer::FileTransfer;
 
 /// 侧通道资源 trait
 ///
@@ -20,6 +21,15 @@ use crate::kernel::comm_handle::CommHandle;
 pub trait SideChannel: Send + Sync {
     /// 返回 `&dyn Any` 以供类型安全的向下转型
     fn as_any(&self) -> &dyn Any;
+
+    /// 自此侧通道创建文件传输处理器
+    ///
+    /// 默认返回 `None`。SSH 等协议覆盖此方法，从侧通道资源
+    /// （如 `SshSideChannel` 中的 `russh::client::Handle`）构建 `SftpFileTransfer`，
+    /// 消除调用方对 `downcast_ref` 的依赖。
+    fn create_file_transfer(&self) -> Option<Arc<dyn FileTransfer>> {
+        None
+    }
 }
 
 /// 端点信息
@@ -63,38 +73,70 @@ pub struct ProtocolConnection {
     pub teardown_delay: std::time::Duration,
 }
 
-/// 传输协议标识
+/// 传输协议标识 — 字符串包装类型
+///
+/// 微内核不枚举具体协议。插件声明任意协议标识，内核仅做路由。
+/// 提供知名常量工厂方法（`ymodem()`、`sftp()` 等）供内建插件使用。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum TransferProtocolType {
-    YModem,
-    XModem,
-    ZModem,
-    Sftp,
-    Ftp,
+pub struct TransferProtocolType(String);
+
+impl TransferProtocolType {
+    /// 从字符串构造（大小写规范化）
+    pub fn new(s: impl AsRef<str>) -> Self {
+        Self(s.as_ref().to_lowercase())
+    }
+
+    /// 返回内部字符串
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    // ── 知名协议常量工厂 ─────────────────────────────
+
+    pub fn ymodem() -> Self { Self("ymodem".into()) }
+    pub fn xmodem() -> Self { Self("xmodem".into()) }
+    pub fn zmodem() -> Self { Self("zmodem".into()) }
+    pub fn sftp() -> Self   { Self("sftp".into()) }
+    pub fn ftp() -> Self    { Self("ftp".into()) }
+
+    // ── 分类辅助方法 ─────────────────────────────────
+
+    /// 是否为串口内联传输协议（需要 handoff 串口）
+    pub fn is_serial_inline(&self) -> bool {
+        matches!(self.0.as_str(), "ymodem" | "xmodem" | "zmodem")
+    }
+
+    /// 是否为侧通道传输协议
+    pub fn is_side_channel(&self) -> bool {
+        self.0 == "sftp"
+    }
+
+    /// 是否为独立连接传输协议
+    pub fn is_separate_connection(&self) -> bool {
+        self.0 == "ftp"
+    }
 }
 
-/// 字符串解析为 TransferProtocolType
-///
-/// 支持大小写不敏感: "ymodem", "YMODEM", "YModem" 等
+/// 字符串解析为 TransferProtocolType（开放集合）
 impl std::str::FromStr for TransferProtocolType {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "ymodem" => Ok(TransferProtocolType::YModem),
-            "xmodem" => Ok(TransferProtocolType::XModem),
-            "zmodem" => Ok(TransferProtocolType::ZModem),
-            "sftp" => Ok(TransferProtocolType::Sftp),
-            "ftp" => Ok(TransferProtocolType::Ftp),
-            other => Err(format!("不支持的传输协议: '{}'。支持: ymodem, xmodem, zmodem, sftp, ftp", other)),
+        let lower = s.to_lowercase();
+        if lower.is_empty() {
+            return Err("传输协议标识不能为空".into());
+        }
+        // 白名单验证：拒绝未识别的协议名称，避免输入错误静默回退到 SideChannel
+        match lower.as_str() {
+            "ymodem" | "xmodem" | "zmodem" | "sftp" | "ftp" => Ok(Self(lower)),
+            _ => Err(format!("不支持的传输协议: '{}'", s)),
         }
     }
 }
 
 impl std::fmt::Display for TransferProtocolType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = format!("{:?}", self).to_lowercase();
-        write!(f, "{}", s)
+        write!(f, "{}", self.0)
     }
 }
 
@@ -174,5 +216,19 @@ pub trait ProtocolAdapter: Send + Sync {
     /// 避免立即重连时端口仍被占用。默认为 0（无需等待），由需要的插件覆盖。
     fn teardown_delay(&self) -> std::time::Duration {
         std::time::Duration::ZERO
+    }
+
+    /// 为此协议的连接创建文件传输处理器
+    ///
+    /// 默认从 `connection.side_channel` 委托。插件可覆盖以提供自定义逻辑。
+    #[allow(dead_code)]
+    fn create_file_transfer(
+        &self,
+        connection: &ProtocolConnection,
+    ) -> Option<Arc<dyn FileTransfer>> {
+        connection
+            .side_channel
+            .as_ref()
+            .and_then(|sc| sc.create_file_transfer())
     }
 }

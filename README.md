@@ -279,6 +279,7 @@ TauTerm/
 │   │   ├── shortcut_engine.rs  # 快捷键注册、冲突检测、作用域分发
 │   │   ├── plugin_adapter.rs   # ProtocolAdapter trait + ContentType/IoStrategy 定义
 │   │   ├── session_store.rs    # 会话存储、I/O 生命周期、统计采集
+│   │   ├── file_transfer.rs     # 统一文件传输 trait（FileTransfer）+ UnifiedProgress 进度事件 + 取消信号
 │   │   ├── i18n_engine.rs      # 命名空间翻译、动态语言切换
 │   │   ├── log_engine.rs       # 生产者-消费者异步日志引擎、LogBridge 桥接器
 │   │   ├── log_writer.rs       # 日志文件写入器、text/hex/dual 格式化、自动分卷
@@ -298,10 +299,15 @@ TauTerm/
 │   │
 │   ├── transfer/               # 传输子系统
 │   │   ├── mod.rs              # TransferManager + 策略选择
-│   │   ├── manager.rs          # 传输策略调度
+│   │   ├── manager.rs          # 传输策略调度（Inline / SideChannel / SeparateConnection）
+│   │   ├── orchestrator.rs     # TransferOrchestrator trait + 策略处理器（Inline / SideChannel）
+│   │   ├── panic_guard.rs      # RAII PanicGuard（传输任务 panic 时自动清理会话状态）
 │   │   ├── ssh_file_service.rs # SFTP 文件服务（SideChannel 策略，async russh-sftp，复用 SSH Session）
+│   │   ├── serial_transfer.rs  # SerialFileTransfer 适配器（spawn_blocking 桥接同步协议到 async FileTransfer trait）
+│   │   ├── sftp_transfer.rs    # SftpFileTransfer 适配器（统一 FileTransfer trait 的 async SFTP 实现）
 │   │   ├── ymodem.rs           # YModem 协议实现（发送/接收引擎）
-│   │   └── types.rs            # TransferProtocolType 枚举等共享类型
+│   │   ├── protocol.rs         # 传输协议创建工厂
+│   │   └── types.rs            # 传输共享类型
 │   │
 │   ├── security/               # 安全模块
 │   │   └── credential_store.rs # 凭据存储（keyring + AES 降级）

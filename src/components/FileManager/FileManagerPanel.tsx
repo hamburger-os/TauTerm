@@ -63,9 +63,23 @@ export default function FileManagerPanel({
   // 文件管理器面板内按钮/列表之外的大面积空白区域可能落在
   // RightSidebarPanel 的 DOM 范围内但不在 FileManagerPanel 的 panelRef 内。
   // 父级通过自定义事件通知面板触发空白区域菜单。
+  //
+  // Bug fix: 使用 ctxOpenedRef 防止同一右键事件触发两次菜单。
+  // FileList 内右键通过 showContextMenu 直接打开菜单并设置 ref=true；
+  // RightSidebarPanel 的 CustomEvent 会同步触发此 handler，通过 ref 跳过。
+  const ctxOpenedRef = useRef(false);
   useEffect(() => {
     const handler = (e: Event) => {
-      const ce = e as CustomEvent<{ clientX: number; clientY: number }>;
+      if (ctxOpenedRef.current) {
+        if (import.meta.env.DEV) console.debug("[FileManager] custom event skipped: ctxOpenedRef already set");
+        return;
+      }
+      const ce = e as CustomEvent<{ clientX: number; clientY: number; sessionId?: string }>;
+      // 多会话场景：仅响应目标 session 的事件
+      if (ce.detail.sessionId && ce.detail.sessionId !== sessionId) {
+        return;
+      }
+      if (import.meta.env.DEV) console.debug("[FileManager] custom event → opening context menu, sessionId=", sessionId);
       setCtxX(ce.detail.clientX);
       setCtxY(ce.detail.clientY);
       setCtxTarget(null);
@@ -73,7 +87,7 @@ export default function FileManagerPanel({
     };
     window.addEventListener("tauterm:filemanager-blank-context", handler);
     return () => window.removeEventListener("tauterm:filemanager-blank-context", handler);
-  }, []);
+  }, [sessionId]);
 
   // ── Context menu state ──────────────────────────────
   const [ctxVisible, setCtxVisible] = useState(false);
@@ -84,6 +98,8 @@ export default function FileManagerPanel({
   const showContextMenu = useCallback(
     (e: React.MouseEvent, entry: SftpEntry | null, _index?: number) => {
       e.preventDefault();
+      if (import.meta.env.DEV) console.debug("[FileManager] showContextMenu direct → entry=", entry?.name ?? "<blank>", "sessionId=", sessionId);
+      ctxOpenedRef.current = true; // 阻止 CustomEvent 重复触发（同步执行，先于 dispatchEvent 回调）
       if (entry !== null) {
         ms.handleRightClick(entry, e.ctrlKey);
       }
@@ -92,11 +108,12 @@ export default function FileManagerPanel({
       setCtxTarget(entry);
       setCtxVisible(true);
     },
-    [ms],
+    [ms, sessionId],
   );
 
   const closeContextMenu = useCallback(() => {
     setCtxVisible(false);
+    ctxOpenedRef.current = false;
   }, []);
 
   // ── Properties modal state ────────────────────────────
@@ -135,16 +152,22 @@ export default function FileManagerPanel({
 
   // ── Context menu actions ────────────────────────────
   const handleUpload = useCallback(async () => {
-    const selected = await open({ multiple: false });
-    if (!selected) return;
-    const localPath = typeof selected === "string" ? selected : selected;
-    const fileName = localPath.split(/[/\\]/).pop() || "file";
-    const remotePath =
-      fm.currentPath === "/"
-        ? `/${fileName}`
-        : `${fm.currentPath}/${fileName}`;
-    await fm.uploadFile(localPath, remotePath);
-  }, [fm]);
+    if (!isConnected) {
+      alert(t("fileManager.sessionDisconnected") || "会话已断开，无法上传");
+      return;
+    }
+    try {
+      const selected = await open({ multiple: true });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected as string];
+      if (paths.length === 0) return;
+      const remoteDir = fm.currentPath === "/" ? "/" : `${fm.currentPath}/`;
+      await fm.uploadFiles(paths, remoteDir);
+    } catch (e) {
+      console.error("上传失败:", e);
+      alert(`上传失败: ${e}`);
+    }
+  }, [fm, isConnected, t]);
 
   const handleNewFile = useCallback(() => {
     fm.setPromptMode("newFile");
@@ -157,28 +180,61 @@ export default function FileManagerPanel({
   }, [fm]);
 
   const handleDownload = useCallback(async () => {
+    if (!isConnected) {
+      alert(t("fileManager.sessionDisconnected") || "会话已断开，无法下载");
+      return;
+    }
     const targets =
       ms.selectedEntries.length > 0 ? ms.selectedEntries : ctxTarget ? [ctxTarget] : [];
     if (targets.length === 0) return;
 
-    // Single directory → recursive download
-    if (targets.length === 1 && targets[0].is_dir) {
+    const dirTargets = targets.filter(e => e.is_dir);
+    const fileTargets = targets.filter(e => !e.is_dir);
+
+    // Single directory → pick exact local folder, download into it
+    if (dirTargets.length === 1 && fileTargets.length === 0) {
       const selected = await open({ directory: true, multiple: false });
-      if (!selected) return;
+      if (!selected) { ms.clearSelection(); return; }
       const localDir = typeof selected === "string" ? selected : selected;
       try {
-        await fm.downloadDirectory(targets[0].path, localDir);
-      } catch (e) {
-        // Error handled by useFileManager
+        await fm.downloadDirectory(dirTargets[0].path, localDir);
+      } catch {
+        // Error handled by useFileManager error state
       }
       ms.clearSelection();
       return;
     }
 
-    // Files only
-    await fm.downloadFiles(targets.filter(e => !e.is_dir));
+    // Multiple directories → pick one local root, each dir becomes a subfolder
+    let dirsFailed: string[] = [];
+    if (dirTargets.length > 1 || (dirTargets.length >= 1 && fileTargets.length > 0)) {
+      const localRoot = await open({ directory: true, multiple: false, title: t("fileManager.selectDownloadRoot") });
+      if (!localRoot) {
+        // User cancelled — abort entirely (don't silently proceed to files only)
+        ms.clearSelection();
+        return;
+      }
+      const rootDir = typeof localRoot === "string" ? localRoot : localRoot;
+      dirsFailed = await fm.downloadDirectories(dirTargets, rootDir);
+    }
+
+    // Files (standalone or alongside dirs)
+    if (fileTargets.length > 0) {
+      await fm.downloadFiles(fileTargets);
+    }
+
+    // Report directory failures
+    if (dirsFailed.length > 0) {
+      alert(
+        t("fileManager.downloadDirFailed", {
+          count: dirsFailed.length,
+          names: dirsFailed.join(", "),
+        }),
+      );
+    }
+
     ms.clearSelection();
-  }, [fm, ms, ctxTarget]);
+  }, [fm, ms, ctxTarget, isConnected, t]);
 
   const handleRename = useCallback(() => {
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
@@ -225,9 +281,10 @@ export default function FileManagerPanel({
   }, [fm, ms, ctxTarget, t]);
 
   const handleRefresh = useCallback(async () => {
+    if (!isConnected) return;
     await fm.refresh();
     ms.clearSelection();
-  }, [fm, ms]);
+  }, [fm, ms, isConnected]);
 
   // ── 打开目录 ──────────────────────────────────────────
   const handleOpenDir = useCallback(() => {
@@ -423,7 +480,9 @@ export default function FileManagerPanel({
       if (ctxTarget.is_dir) {
         return [
           { id: "open", label: t("fileManager.open") },
-          { id: "sep2", label: "", type: "separator" },
+          { id: "sep-open-dl", label: "", type: "separator" },
+          { id: "download", label: t("fileManager.download") },
+          { id: "sep-dl", label: "", type: "separator" },
           { id: "rename", label: t("fileManager.rename") },
           { id: "copyPath", label: t("fileManager.copyPath") },
           { id: "sep3", label: "", type: "separator" },
@@ -468,6 +527,7 @@ export default function FileManagerPanel({
 
   const handleContextMenuSelect = useCallback(
     (id: string) => {
+      closeContextMenu(); // 立即关闭菜单（防御性：CommonContextMenu 也会调 onClose，但原生对话框可能阻塞渲染）
       switch (id) {
         case "upload": handleUpload(); break;
         case "newFile": handleNewFile(); break;
@@ -483,6 +543,7 @@ export default function FileManagerPanel({
       }
     },
     [
+      closeContextMenu,
       handleUpload, handleNewFile, handleNewFolder, handleRefresh,
       handleOpenDir, handleDownload, handlePreview, handleRename,
       handleCopyPath, handleProperties, handleDelete,
@@ -532,6 +593,7 @@ export default function FileManagerPanel({
         onClearError={fm.clearError}
         showParentDir={fm.currentPath !== "/"}
         onGoUp={fm.goUp}
+        showProgress={progress.visible}
       />
 
       {/* 传输进度条 */}
@@ -542,6 +604,13 @@ export default function FileManagerPanel({
         percent={progress.percent}
         finished={progress.finished}
         speed={progress.speed}
+        fileIndex={progress.fileIndex}
+        totalFiles={progress.totalFiles}
+        aggregatePercent={
+          progress.aggregateTotal > 0
+            ? Math.round((progress.aggregateBytes / progress.aggregateTotal) * 100)
+            : undefined
+        }
         onClose={() => {
           // 传输进行中：中断后端传输；已完成：仅隐藏进度条
           if (!progress.finished) {

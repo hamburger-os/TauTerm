@@ -357,22 +357,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const createOfflineSession = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => {
     dispatch({ type: "SET_ERROR", error: null });
     try {
-      const sessionId = await invoke<string>("save_session_config", {
-        endpoint, params, name,
-        pluginId: pluginId || "serial",
-        transferEnabled: transferEnabled ?? true,
-        transferProtocol: transferProtocol || "ymodem",
-        sendBarEnabled: sendBarEnabled ?? true,
-      });
       const pid = pluginId || "serial";
       // 协议无关的默认名：从 plugin-registry 查询 manifest.name，避免硬编码 "Serial @ ..."
       // 导致未来 telnet/tftp 等会话误显示为 "Serial"。回退为大写的 pluginId。
       const pluginName = (pluginRegistry.get(pid)?.manifest.name) || pid.toUpperCase();
+      // Bug fix: 始终将计算后的 effectiveName 传给后端，避免前后端大小写不一致
+      // 前端用 manifest.name ("SSH")，后端 fallback 用 pid ("ssh")，不传递会导致闪烁
+      const effectiveName = name || `${pluginName} @ ${endpoint}`;
+      const sessionId = await invoke<string>("save_session_config", {
+        endpoint, params,
+        name: effectiveName,
+        pluginId: pid,
+        transferEnabled: transferEnabled ?? true,
+        transferProtocol: transferProtocol || "ymodem",
+        sendBarEnabled: sendBarEnabled ?? true,
+      });
       dispatch({
         type: "ADD_TAB",
         tab: {
           id: sessionId,
-          name: name || `${pluginName} @ ${endpoint}`,
+          name: effectiveName,
           connection_type: pid,
           endpoint,
           state: "disconnected",
@@ -520,7 +524,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       id: sessionId,
       endpoint,
       params,
-      name: name || tab?.name || `Serial @ ${endpoint}`,
+      name: name || tab?.name || `${(tab?.pluginId && pluginRegistry.get(tab.pluginId)?.manifest.name) || tab?.pluginId?.toUpperCase() || "Serial"} @ ${endpoint}`,
       transferEnabled,
       transferProtocol,
       sendBarEnabled,
@@ -651,7 +655,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               id: sid,
               endpoint: event.payload.endpoint,
               params: event.payload.params,
-              name: event.payload.name || `Serial @ ${event.payload.endpoint}`,
+              name: event.payload.name || `${(event.payload.plugin_id && pluginRegistry.get(event.payload.plugin_id)?.manifest.name) || event.payload.plugin_id?.toUpperCase() || "Serial"} @ ${event.payload.endpoint}`,
               transferEnabled: event.payload.transfer_enabled,
               transferProtocol: event.payload.transfer_protocol,
               sendBarEnabled: event.payload.send_bar_enabled,
@@ -671,7 +675,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               type: "ADD_TAB",
               tab: {
                 id: sid,
-                name: event.payload.name || `Serial @ ${event.payload.endpoint}`,
+                name: event.payload.name || `${(event.payload.plugin_id && pluginRegistry.get(event.payload.plugin_id)?.manifest.name) || event.payload.plugin_id?.toUpperCase() || "Serial"} @ ${event.payload.endpoint}`,
                 connection_type: event.payload.connection_type,
                 endpoint: event.payload.endpoint,
                 state: "connected",
@@ -758,26 +762,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u3(); return; }
       unlisteners.push(u3);
 
-      const u4 = await listen<{ session_id: string }>("session-transfer-started", (event) => {
+      const u4 = await listen<{ session_id: string }>("file-transfer:started", (event) => {
         // 传输开始，标记为 transferring（不断开！）
         dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "transferring" });
       });
       if (cancelled) { u4(); return; }
       unlisteners.push(u4);
 
-      const u5 = await listen<{ session_id: string }>("session-transfer-finished", (event) => {
-        // 传输完成且会话已恢复
+      const u5 = await listen<{ session_id: string; success: boolean }>("file-transfer:finished", (event) => {
+        // 传输完成（含成功/失败/取消），恢复连接状态
         dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "connected" });
       });
       if (cancelled) { u5(); return; }
       unlisteners.push(u5);
-
-      const u6 = await listen<{ session_id: string; error?: string }>("session-transfer-failed", (event) => {
-        // 传输失败（如取消或异常），会话保持连接但标记错误
-        dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "connected" });
-      });
-      if (cancelled) { u6(); return; }
-      unlisteners.push(u6);
 
       const u7 = await listen<{ session_id: string }>("session-switched", (event) => {
         dispatch({ type: "SET_ACTIVE", id: event.payload.session_id });

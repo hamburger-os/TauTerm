@@ -109,8 +109,10 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
                 className={`${styles.menuItem} ${item.danger ? styles.danger : ""} ${item.disabled ? styles.disabled : ""}`}
                 onClick={() => {
                   if (!item.disabled) {
-                    onSelect(item.id);
+                    // 先关闭菜单再执行回调：原生文件对话框（open/save）会同步阻塞
+                    // JS 线程，如果先 onSelect 后 onClose，React 来不及渲染隐藏菜单
                     onClose();
+                    setTimeout(() => onSelect(item.id), 0);
                   }
                 }}
                 disabled={item.disabled}

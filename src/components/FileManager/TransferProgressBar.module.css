@@ -41,10 +41,27 @@
   color: var(--text-secondary);
 }
 
+.batchLabel {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* ── 进度条区域（支持双进度条堆叠）────── */
+
+.progressArea {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 /* ── 进度条 ────────────────────────────── */
 
 .progressTrack {
-  flex: 1;
+  width: 100%;
+  flex-shrink: 0;
   height: 4px;
   background: var(--glass-hover);
   border-radius: 2px;
@@ -56,6 +73,17 @@
   background: var(--accent-primary);
   border-radius: 2px;
   transition: width 0.1s linear;
+}
+
+.aggregateTrack {
+  height: 3px;
+  background: var(--glass-hover);
+  opacity: 0.8;
+}
+
+.aggregateFill {
+  background: var(--accent-secondary, var(--accent-primary));
+  opacity: 0.6;
 }
 
 /* ── 右侧 ──────────────────────────────── */

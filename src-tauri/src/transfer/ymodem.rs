@@ -64,15 +64,12 @@ const CPMEOF: u8 = 0x1A;
 pub struct YModem {
     /// 默认数据块大小：128 或 1024（默认 1024，对齐 lrzsz `-k` 选项）
     pub block_size: usize,
-    /// 接收端是否请求 YMODEM-g 流模式（发送 'G' 而非 'C'）
-    pub streaming: bool,
 }
 
 impl Default for YModem {
     fn default() -> Self {
         YModem {
             block_size: DATA_BLOCK_SIZE,
-            streaming: false,
         }
     }
 }
@@ -116,6 +113,9 @@ fn ymodem_send(
     cancel: &mut dyn FnMut() -> bool,
 ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
     let total_files = files.len() as u32;
+    // Bug #7 fix: 跟踪实际剩余文件数，跳过失败文件时递减
+    // 使用 remaining_files 计算 files_left 避免包含已跳过/失败的文件
+    let mut remaining_files = total_files;
     let user_block_size = config.block_size.clamp(BLOCK0_SIZE, DATA_BLOCK_SIZE);
 
     // ── 阶段 1: 等待接收方 CRC/校验和/流模式请求 ──
@@ -249,7 +249,7 @@ fn ymodem_send(
         on_file_event(FileTransferEvent::FileStart {
             file_name: file_info.name.clone(),
             file_index: fi,
-            total_files,
+            total_files: remaining_files, // Bug #7 fix: 使用实际剩余文件数
             file_size: file_info.size,
         });
 
@@ -259,6 +259,8 @@ fn ymodem_send(
             Ok(f) => f,
             Err(e) => {
                 let err_msg = format!("无法打开文件: {}", e);
+                // Bug #7 fix: 剩余文件数递减
+                remaining_files = remaining_files.saturating_sub(1);
                 // 提前修正聚合总量
                 aggregate_total -= file_info.size;
                 on_file_event(FileTransferEvent::FileComplete {
@@ -286,7 +288,7 @@ fn ymodem_send(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(&file_info.name);
-        let files_left = total_files - fi;
+        let files_left = remaining_files; // Bug #7 fix: 不包含已跳过/失败的文件
         let total_left: u64 = files[file_idx..].iter().map(|f| f.size).sum();
         let meta_str = format!(
             "{}\0{} {:o} {:o} 0 {} {}",
@@ -309,6 +311,8 @@ fn ymodem_send(
 
         if let Err(e) = send_block(port, 0, &block0, b0_block_size, cancel, use_crc, streaming) {
             let err_msg = e.to_string();
+            // Bug #7 fix: 剩余文件数递减
+            remaining_files = remaining_files.saturating_sub(1);
             aggregate_total -= file_info.size;
             on_file_event(FileTransferEvent::FileComplete {
                 file_name: file_info.name.clone(),
@@ -447,14 +451,15 @@ fn ymodem_send(
             });
 
             block_num = block_num.wrapping_add(1);
-            // 块序号 0 保留用于元数据块，回绕后必须跳过（对齐 xmodem_receive 同款修复）
-            if block_num == 0 {
-                block_num = 1;
-            }
+            // 序号自然回绕 …254→255→0→1… 符合 YModem 标准。
+            // 设备端 _rym_do_trans 用 rt_uint8_t expected_seq 同样自然回绕，
+            // 且在 TRANSMITTING 阶段接受 seq=0（不再将其视为元数据块 0 重发）
         }
 
         // 如果是读错误跳出，跳过 EOT
         if total_sent == 0 && file_info.size > 0 {
+            // Bug #7 fix: 剩余文件数递减
+            remaining_files = remaining_files.saturating_sub(1);
             continue;
         }
 
@@ -462,6 +467,8 @@ fn ymodem_send(
         let eot_result = send_eot(port, cancel);
         match eot_result {
             Ok(()) => {
+                // Bug #7 fix: 成功完成一个文件，剩余文件数递减
+                remaining_files = remaining_files.saturating_sub(1);
                 aggregate_completed += file_info.size;
                 on_file_event(FileTransferEvent::FileComplete {
                     file_name: file_info.name.clone(),
@@ -489,6 +496,8 @@ fn ymodem_send(
                 });
             }
             Err(e) => {
+                // Bug #7 fix: EOT 失败，文件算作失败
+                remaining_files = remaining_files.saturating_sub(1);
                 let err_msg = e.to_string();
                 aggregate_total -= file_info.size;
                 on_file_event(FileTransferEvent::FileComplete {
@@ -509,27 +518,30 @@ fn ymodem_send(
         }
     }
 
-    // ── 阶段 3: 发送批次结束（空块 0，不等待 ACK）──
-    // 对齐 lrzsz: wcsend() 发送空块 0 后不等待 ACK 直接返回
+    // ── 阶段 3: 发送批次结束（空块 0，fire-and-forget）──
+    // 对齐 lrzsz wcsend(): 发送空块 0 后不等待 ACK 直接返回。
+    // 使用 send_packet_only 而非 send_block，避免如下问题：
+    // 1. 设备收空块 0 → 发 ACK → 立即 rt_kprintf 输出传输结果
+    // 2. 若等待 ACK，设备输出文本被当作"意外响应"逐字节消费
+    // 3. 用户完全看不到设备的传输结果输出
     let empty_block0 = [0u8; BLOCK0_SIZE];
-    let _ = send_block(port, 0, &empty_block0, BLOCK0_SIZE, cancel, use_crc, streaming);
+    if let Err(e) = send_packet_only(port, 0, &empty_block0, BLOCK0_SIZE, use_crc) {
+        log::warn!("批次结束块发送失败（不影响已传输文件）: {}", e);
+    }
     // fire-and-forget: 即使发送失败也不影响已传输的文件结果
 
     Ok(batch_results)
 }
 
-/// 发送单个块（对齐 lrzsz wcputsec）
+/// 构建并发送 X/YModem 数据包（仅发送，不等待响应）
 ///
-/// - `crc_mode=true`: CRC-16（2 字节），`crc_mode=false`: 8 位校验和（1 字节）
-/// - `streaming=true`: YMODEM-g 流模式，发送后立即返回不等待 ACK
-fn send_block(
+/// 用于 fire-and-forget 场景（如批次结束空块 0）或作为 `send_block` 的构建部分。
+fn send_packet_only(
     port: &mut Box<dyn serialport::SerialPort>,
     block_num: u8,
     data: &[u8],
     block_size: usize,
-    cancel: &mut dyn FnMut() -> bool,
     crc_mode: bool,
-    streaming: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let header_byte = if block_size == DATA_BLOCK_SIZE { STX } else { SOH };
 
@@ -554,11 +566,27 @@ fn send_block(
         packet.push(checksum(data));
     }
 
+    port.write_all(&packet)?;
+    port.flush()?;
+    Ok(())
+}
+
+/// 发送单个块并等待 ACK（对齐 lrzsz wcputsec）
+///
+/// - `crc_mode=true`: CRC-16（2 字节），`crc_mode=false`: 8 位校验和（1 字节）
+/// - `streaming=true`: YMODEM-g 流模式，发送后立即返回不等待 ACK
+fn send_block(
+    port: &mut Box<dyn serialport::SerialPort>,
+    block_num: u8,
+    data: &[u8],
+    block_size: usize,
+    cancel: &mut dyn FnMut() -> bool,
+    crc_mode: bool,
+    streaming: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     // YMODEM-g 流模式：发送后立即返回（对齐 lrzsz wcputsec line 1405-1407）
     if streaming {
-        port.write_all(&packet)?;
-        port.flush()?;
-        return Ok(());
+        return send_packet_only(port, block_num, data, block_size, crc_mode);
     }
 
     let mut last_can = false;
@@ -567,8 +595,7 @@ fn send_block(
             return Err("传输已取消".into());
         }
 
-        port.write_all(&packet)?;
-        port.flush()?;
+        send_packet_only(port, block_num, data, block_size, crc_mode)?;
 
         match read_byte_with_timeout(port, 3000)? {
             Some(ACK) => return Ok(()),
@@ -597,17 +624,16 @@ fn send_block(
                 }
             }
             Some(other) => {
+                // 噪声字节：设备控制台输出混入协议通道（ANSI 转义码、诊断文本等）
+                // 不触发重试 — 仅消费噪声字节并继续等待有效的协议响应。
+                // 超时（None）和 NAK/C 仍正常触发重试，保证无响应时能退出。
                 last_can = false;
-                log::warn!(
-                    "send_block: block {} received unexpected byte 0x{:02X}, retrying",
-                    block_num, other
+                log::debug!(
+                    "send_block: block {} ignoring noise byte 0x{:02X} ('{}')",
+                    block_num, other,
+                    if other.is_ascii_graphic() || other == b' ' { other as char } else { '.' }
                 );
-                if retry == MAX_RETRIES - 1 {
-                    return Err(format!(
-                        "块 {} 收到意外响应 0x{:02X}，重试次数耗尽",
-                        block_num, other
-                    ).into());
-                }
+                continue;
             }
         }
     }
@@ -732,6 +758,11 @@ fn ymodem_receive(
     // 清空接收缓冲区，丢弃之前会话可能残留的杂散字节
     io::flush_port_buffer(port);
 
+    log::info!(
+        "YModem RX 开始: download_dir={}, 等待发送方启动传输 (发送 'C' 探针, 最多 {} 次)",
+        download_dir, INIT_C_RETRIES
+    );
+
     let mut current_file: Option<(String, fs::File, u64, u64)> = None;
     let mut last_block_num: Option<u8> = None;
     let mut file_index: u32 = 0;
@@ -740,6 +771,8 @@ fn ymodem_receive(
     let mut batch_results: Vec<BatchFileResult> = Vec::new();
     // 从块 0 的 filesleft 字段推导的总文件数（0 表示未知）
     let mut known_total_files: u32 = 0;
+    // 标记：block 0 全 CPMEOF 填充已被检测并记录失败，下游 EOT 处理器不重复计数
+    let mut all_padding_failure_handled: bool = false;
 
     // ── 阶段 1: 发送 'C' 启动 CRC 模式，原子化接收首个完整块 ──
     // 对齐 lrzsz wcgetsec 和 设备端 _rym_do_handshake:
@@ -1025,9 +1058,13 @@ fn ymodem_receive(
 
     // ── 阶段 2: 接收文件数据 ──
     let mut outer_iter: u32 = 0;
+    log::debug!(
+        "YModem RX: 进入数据接收阶段, current_file={:?}",
+        current_file.as_ref().map(|(n, _, s, _)| (n.as_str(), *s))
+    );
     'outer: loop {
         outer_iter += 1;
-        log::info!("YModem RX: outer loop iteration {} (waiting for header)", outer_iter);
+        log::debug!("YModem RX: outer loop iteration {} (waiting for header)", outer_iter);
         if cancel() {
             io::send_cancel(port);
             return Err("传输已取消".into());
@@ -1039,11 +1076,11 @@ fn ymodem_receive(
         let header = 'read_header: loop {
             match read_byte_with_timeout(port, 5000)? {
                 Some(SOH) => {
-                    log::info!("YModem RX: got SOH header (128B block)");
+                    log::debug!("YModem RX: got SOH header (128B block)");
                     break 'read_header SOH;
                 }
                 Some(STX) => {
-                    log::info!("YModem RX: got STX header (1024B block)");
+                    log::debug!("YModem RX: got STX header (1024B block)");
                     break 'read_header STX;
                 }
                 Some(EOT) => {
@@ -1084,17 +1121,50 @@ fn ymodem_receive(
                             error: None,
                         });
                         file_index += 1;
+                    } else if all_padding_failure_handled {
+                        // Bug #8 + all-padding fix: EOT for a file whose block 0
+                        // was all CPMEOF — failure was already recorded above.
+                        // Just consume this EOT silently; don't double-count.
+                        log::debug!(
+                            "YModem RX: EOT at file_index={} after all-padding block 0 — \
+                             failure already recorded, consuming EOT silently",
+                            file_index
+                        );
+                        all_padding_failure_handled = false;
+                    } else {
+                        // Bug #8 fix: EOT received but no current file was being tracked.
+                        // Block 0 metadata was missed (corrupted/lost), and all data blocks
+                        // for this file were silently ACKed and discarded.
+                        log::warn!(
+                            "YModem RX: EOT at file_index={} but no file was being tracked — \
+                             file data discarded (block 0 may have been missed). \
+                             The sender will proceed to the next file normally.",
+                            file_index
+                        );
+                        batch_results.push(BatchFileResult {
+                            file_name: format!("<lost_file_at_index_{}>", file_index),
+                            status: "failed".into(),
+                            size: 0,
+                            error: Some("block 0 metadata was not received — file data discarded".into()),
+                        });
+                        // file_index is NOT incremented: the next file's block 0 will use
+                        // the current index, preserving the correct batch position.
                     }
+                    // 跨文件缓冲区清理：清空残留字节再发送 ACK+C。
+                    // 前一个文件的数据块可能遗留 0x02 (STX) 等协议头字节在串口 RX 缓冲区，
+                    // 若不清理，'read_header 循环会将其误读为下一文件的块头。
+                    io::flush_port_buffer(port);
+
                     // YMODEM 批量模式：ACK EOT → 延迟 → 发送 'C' 请求下一文件
                     // 延迟确保设备逐字节读取机制正确接收两个独立字节（对齐 _rym_do_send_eot）
-                    log::info!("YModem RX: sending ACK for EOT...");
+                    log::debug!("YModem RX: sending ACK for EOT...");
                     port.write_all(&[ACK])?;
                     port.flush()?;
-                    log::info!("YModem RX: ACK sent, sleeping 10ms before 'C'");
+                    log::debug!("YModem RX: ACK sent, sleeping 10ms before 'C'");
                     std::thread::sleep(std::time::Duration::from_millis(10));
                     port.write_all(&[C])?;
                     port.flush()?;
-                    log::info!("YModem RX: 'C' sent after EOT, continuing loop");
+                    log::debug!("YModem RX: 'C' sent after EOT, continuing loop");
                     continue 'outer;
                 }
                 Some(CAN) => {
@@ -1163,8 +1233,19 @@ fn ymodem_receive(
             continue;
         }
 
-        // ── 块 0 处理 ──
-        if block_num == 0 {
+        // ── 块 0 处理（含 u8 序号回绕检测）──
+        // YModem 数据块序号为 u8，文件超过 255 × block_size 字节时
+        // 序号从 255 回绕到 0。真块 0（元数据）总是 128B SOH；
+        // 若收到 1024B STX 且 block_num=0，一定是序号回绕的数据块。
+        let is_wrapped_data_block = block_num == 0 && header == STX;
+        if is_wrapped_data_block {
+            log::debug!(
+                "YModem RX: block num 0 with STX header (1024B) — treating as wrapped data block \
+                 (file exceeds 255 blocks, u8 seq wrapped)",
+            );
+        }
+
+        if block_num == 0 && !is_wrapped_data_block {
             // 空块 0 → 批次结束
             if data[0] == 0 {
                 log::info!("YModem RX: empty block 0 -- end of batch");
@@ -1208,6 +1289,37 @@ fn ymodem_receive(
                 });
             }
 
+            // ── 全 CPMEOF 填充检测（发送方固件 Bug）：──
+            // 当 rt_snprintf 完全失败时，block 0 的 128 字节全为 0x1A（CPMEOF）。
+            // 现有 fallback（字母→数字扫描、空格分割）无法从此类数据中提取任何信息。
+            // 在此阶段主动标记文件失败，不等 EOT 到达后再做丢弃处理。
+            //
+            // 注意：file_index 不在此处递增。发送方后续仍会发送此文件的数据块和 EOT，
+            // 这些将由现有静默 ACK 逻辑（数据块：current_file=None 时丢弃；
+            // EOT：all_padding_failure_handled 标志抑制重复失败记录）消费。
+            if data.iter().all(|&b| b == CPMEOF) {
+                log::warn!(
+                    "YModem RX: block 0 at file_index={} is entirely CPMEOF padding (0x1A) — \
+                     sender firmware bug: rt_snprintf failed to format metadata. \
+                     File will be skipped.",
+                    file_index
+                );
+                batch_results.push(BatchFileResult {
+                    file_name: format!("<sender_bug_at_index_{}>", file_index),
+                    status: "failed".into(),
+                    size: 0,
+                    error: Some(
+                        "sender firmware bug: rt_snprintf failed (block 0 all 0x1A)".into(),
+                    ),
+                });
+                all_padding_failure_handled = true;
+                // 发送 ACK 保持协议流转（发送方接下来发数据块和 EOT，
+                // 这些由静默 ACK 逻辑和 EOT 标志抑制处理器消费）
+                port.write_all(&[ACK])?;
+                port.flush()?;
+                continue 'outer;
+            }
+
             // ── 解析文件元数据：lrzsz 格式 ──
             // 格式: filename\0size mtime mode serialno filesleft totalleft
             let null_pos = data.iter().position(|&b| b == 0);
@@ -1243,7 +1355,8 @@ fn ymodem_receive(
                 let total_size: u64 = tokens.first().and_then(|t| t.parse().ok()).unwrap_or(0);
                 let filesleft: u32 = tokens.get(4).and_then(|t| t.parse().ok()).unwrap_or(0);
                 // 对齐 lrzsz: filesleft 含当前文件（lrzsz sprintf 用 Filesleft 在 --Filesleft 之前）
-                known_total_files = file_index + filesleft;
+                // 使用 max 防止部分发送端最后一个文件传 filesleft=0 导致总数回退
+                known_total_files = std::cmp::max(known_total_files, file_index + filesleft);
                 log::debug!(
                     "YModem RX: block 0 parsed size={}, filesleft={}, known_total={}",
                     total_size, filesleft, known_total_files
@@ -1274,6 +1387,110 @@ fn ymodem_receive(
                     }
                     Err(e) => {
                         return Err(format!("无法创建文件 {:?}: {}", file_path, e).into());
+                    }
+                }
+            } else {
+                // Bug #8 fix: block 0 data has no NUL byte separator.
+                // The device's rt_snprintf may not write %c '\0' for specific
+                // filename/size combinations (confirmed with UG803_GW1NR-9_Pinout_en.md).
+                // CRC passed, so data is intact — attempt fallback parsing.
+
+                // Hex dump: first 64 bytes + last 64 bytes for diagnostics
+                let dump_front: String = data.iter().take(64)
+                    .map(|b| format!("{:02X}", b))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let dump_back: String = data.iter().rev().take(64)
+                    .collect::<Vec<_>>()
+                    .iter().rev()
+                    .map(|b| format!("{:02X}", b))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                log::warn!(
+                    "YModem RX: block 0 at file_index={} has no NUL separator ({} bytes). \
+                     Hex front 64: [{}] ... back 64: [{}]",
+                    file_index, data.len(), dump_front, dump_back
+                );
+
+                // Fallback: scan for letter→digit transition (filename ends with
+                // a letter, metadata starts with decimal file size).
+                let mut fallback_name: Option<String> = None;
+                for i in 1..data.len() {
+                    let prev = data[i - 1];
+                    let cur = data[i];
+                    if prev.is_ascii_alphabetic() && cur.is_ascii_digit() {
+                        fallback_name = String::from_utf8(data[..i].to_vec())
+                            .ok()
+                            .and_then(|raw| {
+                                std::path::Path::new(&raw)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .map(|s| s.to_string())
+                            });
+                        if let Some(ref name) = fallback_name {
+                            log::warn!(
+                                "YModem RX: fallback filename extracted at boundary {}: \"{}\"",
+                                i, name
+                            );
+                        }
+                        break;
+                    }
+                }
+
+                // If letter→digit scan failed, try split on first space
+                if fallback_name.is_none() {
+                    if let Some(space_pos) = data.iter().position(|&b| b == b' ') {
+                        if let Ok(raw) = String::from_utf8(data[..space_pos].to_vec()) {
+                            let safe = std::path::Path::new(&raw)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or(raw);
+                            if !safe.is_empty() {
+                                log::warn!(
+                                    "YModem RX: fallback filename via space split: \"{}\"",
+                                    safe
+                                );
+                                fallback_name = Some(safe);
+                            }
+                        }
+                    }
+                }
+
+                // Apply fallback if found
+                if let Some(ref safe_name) = fallback_name {
+                    if !safe_name.is_empty() {
+                        let file_path = std::path::Path::new(download_dir).join(safe_name);
+                        // Parse metadata from the name-size boundary
+                        let meta_start = data.iter()
+                            .position(|&b| b.is_ascii_digit())
+                            .unwrap_or(0);
+                        let rest = &data[meta_start..];
+                        let info_str = rest.iter().take_while(|&&b| b != 0 && b != 0x1A)
+                            .map(|&b| b as char).collect::<String>();
+                        let tokens: Vec<&str> = info_str.split_whitespace().collect();
+                        let total_size: u64 = tokens.first().and_then(|t| t.parse().ok()).unwrap_or(0);
+                        aggregate_total += total_size;
+
+                        match fs::File::create(&file_path) {
+                            Ok(file) => {
+                                current_file = Some((safe_name.clone(), file, total_size, 0u64));
+                                last_block_num = None;
+                                on_file_event(FileTransferEvent::FileStart {
+                                    file_name: safe_name.clone(),
+                                    file_index,
+                                    total_files: known_total_files,
+                                    file_size: total_size,
+                                });
+                                log::info!(
+                                    "YModem RX: fallback recovery OK — file \"{}\" ({} bytes, index {})",
+                                    safe_name, total_size, file_index
+                                );
+                            }
+                            Err(e) => {
+                                log::error!("YModem RX: fallback file creation failed: {}", e);
+                            }
+                        }
                     }
                 }
             }
@@ -1321,13 +1538,33 @@ fn ymodem_receive(
                     aggregate_total_bytes: aggregate_total,
                     direction: TransferDirection::Receive,
                 });
+            } else {
+                // Bug #8 fix: data block arrived with no open file — block 0 was missed.
+                // ACK to keep protocol flowing; EOT handler will report the lost file.
+                // Only warn on the first occurrence per lost file to avoid log spam
+                // (a single file can have hundreds of data blocks).
+                if last_block_num.is_none() || block_num == 1 {
+                    log::warn!(
+                        "YModem RX: data block {} at file_index={} has no open file — \
+                         discarding data (block 0 metadata may have been missed or corrupted)",
+                        block_num, file_index
+                    );
+                }
             }
             port.write_all(&[ACK])?;
             port.flush()?;
-            log::info!("YModem RX: ACK sent for data block {}", block_num);
+            log::debug!("YModem RX: ACK sent for data block {}", block_num);
             last_block_num = Some(block_num);
         }
     }
+
+    // ── 汇总日志 ──
+    let completed = batch_results.iter().filter(|r| r.status == "completed").count();
+    let failed = batch_results.iter().filter(|r| r.status == "failed").count();
+    log::info!(
+        "YModem RX 完成: {} 文件成功, {} 失败, 共 {} bytes (aggregate_total={})",
+        completed, failed, aggregate_bytes, aggregate_total
+    );
 
     Ok(batch_results)
 }

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { save } from '@tauri-apps/plugin-dialog';
+import { save, open } from '@tauri-apps/plugin-dialog';
 import { SftpEntry, PromptMode, SortField, SortDirection } from '../types';
 
 export interface UseFileManagerReturn {
@@ -21,8 +21,10 @@ export interface UseFileManagerReturn {
   goUp: () => void;
   refresh: () => Promise<void>;
   uploadFile: (localPath: string, remotePath: string) => Promise<void>;
+  uploadFiles: (localPaths: string[], remoteDir: string) => Promise<void>;
   downloadFiles: (entries: SftpEntry[]) => Promise<void>;
   downloadDirectory: (remoteDir: string, localDir: string) => Promise<void>;
+  downloadDirectories: (dirEntries: SftpEntry[], localRootDir: string) => Promise<string[]>;
   deleteEntries: (entries: SftpEntry[]) => Promise<string[]>;
   renameEntry: (entry: SftpEntry, newName: string) => Promise<void>;
   createFile: (name: string) => Promise<void>;
@@ -128,6 +130,7 @@ export function useFileManager(
   // ── Effect: reload when path changes, clear on disconnect ──
   useEffect(() => {
     if (!isConnected) {
+      setCurrentPath('/');
       setRawEntries([]);
       setLoading(false);
       setError(null);
@@ -156,80 +159,187 @@ export function useFileManager(
   }, [currentPath, loadDirectory]);
 
   // ── Upload ──
-  // 传输命令已改为非阻塞（后端 spawn 后立即返回 Ok(())）。
-  // 目录刷新由 `sftp-transfer-finished` 事件监听器统一处理（见下方 effect）。
-  const uploadFile = useCallback(
-    async (localPath: string, remotePath: string): Promise<void> => {
-      await invoke<void>('sftp_upload_file_cmd', {
+  // 使用统一传输命令（非阻塞，后端 spawn 后立即返回）。
+  // 进度由 `file-transfer:progress` 事件统一处理（见 useSftpProgress）。
+  const uploadFiles = useCallback(
+    async (localPaths: string[], remoteDir: string): Promise<void> => {
+      await invoke<void>('file_transfer_send', {
         sessionId,
-        localPath,
-        remotePath,
+        protocol: 'sftp',
+        filePaths: localPaths,
+        remoteDir,
       });
     },
     [sessionId]
   );
 
+  const uploadFile = useCallback(
+    async (localPath: string, remotePath: string): Promise<void> => {
+      const remoteDir = remotePath.substring(0, remotePath.lastIndexOf('/') + 1 || 0) || '/';
+      await uploadFiles([localPath], remoteDir);
+    },
+    [uploadFiles]
+  );
+
   // ── Download files ──
-  // 多文件串行下载：传输命令为非阻塞，需等待 `sftp-transfer-finished` 事件
-  // 后再开始下一个文件，避免同一会话并发传输导致取消标志被覆盖。
+  // 单文件：save 对话框（可重命名）；多文件：目录选择器 + 一次性批量下载
   const downloadFiles = useCallback(
     async (targetEntries: SftpEntry[]) => {
       const files = targetEntries.filter(e => !e.is_dir);
-      for (const entry of files) {
-        try {
-          const localPath = await save({ defaultPath: entry.name });
-          if (!localPath) continue;
-          await invoke<void>('sftp_download_file_cmd', {
-            sessionId,
-            remotePath: entry.path,
-            localPath,
-          });
-          // 等待当前文件传输完成
-          await new Promise<void>((resolve, reject) => {
-            const unlisten = listen<{ session_id: string; direction: string; file_name: string; result: { error?: string } }>(
-              'sftp-transfer-finished',
-              (event) => {
-                if (event.payload.session_id === sessionId
-                    && event.payload.direction === 'download'
-                    && event.payload.file_name === entry.name) {
-                  unlisten.then(fn => fn());
-                  if (event.payload.result.error) {
-                    reject(new Error(event.payload.result.error));
-                  } else {
-                    resolve();
-                  }
+      if (files.length === 0) return;
+
+      // 确定下载目标目录和远程路径列表
+      let downloadDir: string;
+      let remotePaths: string[];
+
+      if (files.length === 1) {
+        // 单文件：save 对话框（可重命名），提取父目录
+        const localPath = await save({ defaultPath: files[0].name });
+        if (!localPath) return;
+        const lastSep = Math.max(
+          (localPath as string).lastIndexOf('/'),
+          (localPath as string).lastIndexOf('\\'),
+        );
+        downloadDir = lastSep >= 0 ? (localPath as string).substring(0, lastSep) : '.';
+        remotePaths = [files[0].path];
+      } else {
+        // 多文件：一次目录选择器，全部文件批量下载
+        const dir = await open({ directory: true, multiple: false });
+        if (!dir) return;
+        downloadDir = typeof dir === 'string' ? dir : (dir as string);
+        remotePaths = files.map(f => f.path);
+      }
+
+      try {
+        // 注册监听器在 invoke 之前，避免竞态（后端 SideChannel 路径立即返回）
+        const TRANSFER_TIMEOUT_MS = 5 * 60 * 1000;
+        let unlistenFn: (() => void) | undefined;
+        const finishedPromise = new Promise<void>((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            unlistenFn?.();
+            reject(new Error('Download timed out after 5 minutes'));
+          }, TRANSFER_TIMEOUT_MS);
+
+          listen<{ session_id: string; success: boolean; error?: string }>(
+            'file-transfer:finished',
+            (event) => {
+              if (event.payload.session_id === sessionId) {
+                clearTimeout(timeoutId);
+                unlistenFn?.();
+                if (event.payload.error) {
+                  reject(new Error(event.payload.error));
+                } else {
+                  resolve();
                 }
               }
-            );
-          });
-        } catch (e) {
-          setError(`Download failed: ${e}`);
-        }
+            }
+          ).then(fn => { unlistenFn = fn; }).catch(reject);
+        });
+
+        await invoke<void>('file_transfer_receive', {
+          sessionId,
+          protocol: 'sftp',
+          downloadDir,
+          remotePaths,
+        });
+
+        await finishedPromise;
+      } catch (e) {
+        setError(`Download failed: ${e}`);
       }
     },
     [sessionId]
   );
 
   // ── Download directory ──
+  // 后端 SftpFileTransfer::receive() 检测到目录路径后自动递归列举子文件
   const downloadDirectory = useCallback(
     async (remoteDir: string, localDir: string): Promise<void> => {
-      await invoke<void>('sftp_download_dir_cmd', {
+      const dirName = remoteDir.split('/').pop() || 'download';
+      await invoke<void>('file_transfer_receive', {
         sessionId,
-        remoteDir,
-        localDir,
+        protocol: 'sftp',
+        downloadDir: `${localDir}/${dirName}`,
+        remotePaths: [remoteDir],
       });
     },
     [sessionId]
   );
 
-  // ── 传输完成后刷新当前目录（监听后端 `sftp-transfer-finished` 事件）──
-  // 上传完成后需要刷新远程目录列表；下载完成后无需刷新但刷新无副作用。
-  // 使用 Promise 引用模式避免组件卸载在 .then() 前导致 listener 泄漏。
+  // ── Download multiple directories sequentially ──
+  // 每个远程目录下载到 localRootDir/dirName/ 子文件夹中。
+  // 由于 session 级别只允许一个传输运行，采用顺序 await 模式。
+  // 在 invoke 前用 async executor 注册监听器，避免竞态。
+  const downloadDirectories = useCallback(
+    async (dirEntries: SftpEntry[], localRootDir: string): Promise<string[]> => {
+      const failed: string[] = [];
+
+      for (const entry of dirEntries) {
+        if (!entry.is_dir) continue;
+
+        const dirName = entry.path.split('/').pop() || 'download';
+
+        // 注册一次性完成监听器（invoke 前设置，避免竞态）
+        const TRANSFER_TIMEOUT_MS = 5 * 60 * 1000;
+        let unlistenFn: (() => void) | undefined;
+        const finishedPromise = new Promise<'ok' | { error: string }>(
+          (resolve, reject) => {
+            let done = false;
+            const timeoutId = setTimeout(() => {
+              unlistenFn?.();
+              reject(new Error('Download timed out after 5 minutes'));
+            }, TRANSFER_TIMEOUT_MS);
+
+            listen<{
+              session_id: string;
+              success: boolean;
+              error?: string;
+            }>('file-transfer:finished', (event) => {
+              if (event.payload.session_id !== sessionId || done) return;
+              done = true;
+              clearTimeout(timeoutId);
+              unlistenFn?.();
+              resolve(
+                event.payload.success
+                  ? ('ok' as const)
+                  : { error: event.payload.error || '传输失败' },
+              );
+            }).then(fn => { unlistenFn = fn; }).catch(reject);
+          },
+        );
+
+        try {
+          await invoke<void>('file_transfer_receive', {
+            sessionId,
+            protocol: 'sftp',
+            downloadDir: `${localRootDir}/${dirName}`,
+            remotePaths: [entry.path],
+          });
+
+          const result = await finishedPromise;
+          if (result !== 'ok') {
+            if (import.meta.env.DEV)
+              console.error(`Download directory "${entry.name}" failed:`, result.error);
+            failed.push(entry.name);
+          }
+        } catch (e) {
+          if (import.meta.env.DEV)
+            console.error(`Download directory "${entry.name}" failed:`, e);
+          failed.push(entry.name);
+        }
+      }
+
+      return failed;
+    },
+    [sessionId],
+  );
+
+  // ── 传输完成后刷新当前目录（监听统一 `file-transfer:finished` 事件）──
   useEffect(() => {
-    const p = listen<{ session_id: string; direction: string; result: { error?: string } }>(
-      'sftp-transfer-finished',
+    const p = listen<{ session_id: string; success: boolean }>(
+      'file-transfer:finished',
       (event) => {
-        if (event.payload.session_id === sessionId && event.payload.direction === 'upload') {
+        if (event.payload.session_id === sessionId && event.payload.success) {
           loadDirectory(currentPath);
         }
       }
@@ -365,8 +475,10 @@ export function useFileManager(
       goUp,
       refresh,
       uploadFile,
+      uploadFiles,
       downloadFiles,
       downloadDirectory,
+      downloadDirectories,
       deleteEntries,
       renameEntry,
       createFile,
@@ -393,6 +505,7 @@ export function useFileManager(
       goUp,
       refresh,
       uploadFile,
+      uploadFiles,
       downloadFiles,
       downloadDirectory,
       deleteEntries,

@@ -188,19 +188,15 @@ pub fn wait_for_nak_or_c(
                 }
             }
             Some(other) => {
-                log::warn!(
-                    "wait_for_nak_or_c: unexpected byte 0x{:02X}, continuing to wait",
-                    other
+                // 噪声字节：设备控制台输出混入协议通道
+                // 不触发重试 — 仅消费并继续等待有效的协议信号
+                log::debug!(
+                    "wait_for_nak_or_c: ignoring noise byte 0x{:02X} ('{}')",
+                    other,
+                    if other.is_ascii_graphic() || other == b' ' { other as char } else { '.' }
                 );
                 last_can = false;
-                retry_count += 1;
-                if retry_count >= max_retries {
-                    return Err(format!(
-                        "收到意外字节 0x{:02X}，重试 {} 次后放弃",
-                        other, retry_count
-                    )
-                    .into());
-                }
+                continue;
             }
             None => {
                 // 每次轮询超时，继续等待总超时

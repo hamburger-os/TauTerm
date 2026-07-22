@@ -37,11 +37,11 @@ export default function SessionRightSidebar({
       e.preventDefault();
       window.dispatchEvent(
         new CustomEvent("tauterm:filemanager-blank-context", {
-          detail: { clientX: e.clientX, clientY: e.clientY },
+          detail: { clientX: e.clientX, clientY: e.clientY, sessionId },
         })
       );
     },
-    []
+    [sessionId]
   );
 
   return (

@@ -694,7 +694,9 @@
     "edit": "Edit",
     "apply": "Apply",
     "cancel": "Cancel",
-    "cancelTransfer": "Cancel transfer"
+    "cancelTransfer": "Cancel transfer",
+    "selectDownloadRoot": "Select download root folder",
+    "downloadDirFailed": "Download failed for {{count}} director(ies): {{names}}"
   },
   "ssh": {
     "host": "Host",

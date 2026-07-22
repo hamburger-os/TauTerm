@@ -56,20 +56,14 @@ pub trait TransferProtocol: Send + Sync {
 /// 根据协议类型创建对应的协议处理器
 ///
 /// 工厂函数，返回 `Box<dyn TransferProtocol>` 供命令层使用。
+/// 仅串口内联协议（XModem/YModem/ZModem）通过此工厂创建。
 pub fn create_protocol(
     protocol_type: &TransferProtocolType,
 ) -> Option<Box<dyn TransferProtocol>> {
-    match protocol_type {
-        TransferProtocolType::YModem => {
-            Some(Box::new(crate::transfer::ymodem::YModem::default()))
-        }
-        TransferProtocolType::XModem => {
-            Some(Box::new(crate::transfer::xmodem::XModem))
-        }
-        TransferProtocolType::ZModem => {
-            Some(Box::new(crate::transfer::zmodem::ZModem::default()))
-        }
-        // SFTP/FTP not implemented via this factory
-        TransferProtocolType::Sftp | TransferProtocolType::Ftp => None,
+    match protocol_type.as_str() {
+        "ymodem" => Some(Box::new(crate::transfer::ymodem::YModem::default())),
+        "xmodem" => Some(Box::new(crate::transfer::xmodem::XModem)),
+        "zmodem" => Some(Box::new(crate::transfer::zmodem::ZModem::default())),
+        _ => None, // SFTP/FTP/其他协议不通过此工厂创建
     }
 }

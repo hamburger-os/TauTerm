@@ -1,10 +1,12 @@
 /**
- * 传输进度条组件
+ * 传输进度条组件（纯视觉层）
  *
  * 固定在文件管理器底部的传输进度显示条。
- * 支持上传/下载方向、进度百分比、速率计算和自动隐藏。
+ * 支持上传/下载方向、进度百分比、速率计算和批量聚合进度。
+ *
+ * **不包含任何自动隐藏逻辑**——所有状态和时序由父组件
+ * （`useSftpProgress` Hook）统一管理。× 按钮直接调用 `onClose`。
  */
-import { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import styles from "./TransferProgressBar.module.css";
 
@@ -33,6 +35,12 @@ interface TransferProgressBarProps {
   finished: boolean;
   /** EMA 平滑后的瞬时速度（字节/秒），由父组件通过进度事件计算 */
   speed: number;
+  /** 当前文件索引 (0-based, 仅多文件批次使用) */
+  fileIndex?: number;
+  /** 批次文件总数 (默认 1) */
+  totalFiles?: number;
+  /** 批次聚合百分比 (仅多文件批次使用) */
+  aggregatePercent?: number;
   onClose: () => void;
 }
 
@@ -43,38 +51,20 @@ export default function TransferProgressBar({
   percent,
   finished,
   speed,
+  fileIndex = 0,
+  totalFiles = 1,
+  aggregatePercent,
   onClose,
 }: TransferProgressBarProps) {
   const { t } = useTranslation();
-  const [autoHiding, setAutoHiding] = useState(false);
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // 完成（100%）或取消/失败（finished 且 percent < 100）后自动隐藏。
-  // 完成延迟 2s，取消/失败延迟由父组件控制（通常 1.5s）。
-  useEffect(() => {
-    const shouldAutoHide = percent >= 100 || finished;
-    if (shouldAutoHide && visible && !autoHiding) {
-      setAutoHiding(true);
-      const delay = percent >= 100 ? 2000 : 1500;
-      hideTimerRef.current = setTimeout(() => {
-        onClose();
-        setAutoHiding(false);
-      }, delay);
-    }
-    if (!shouldAutoHide) {
-      setAutoHiding(false);
-    }
-    return () => {
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
-      }
-    };
-  }, [percent, visible, onClose, autoHiding, finished]);
 
   if (!visible) return null;
 
   const directionIcon = direction === "upload" ? "⬆" : "⬇";
   const clampedPercent = Math.min(100, Math.max(0, percent));
+  const isBatch = totalFiles > 1;
+  const aggPercent = aggregatePercent ?? percent;
+  const clampedAgg = Math.min(100, Math.max(0, aggPercent));
 
   return (
     <div className={styles.bar}>
@@ -83,15 +73,30 @@ export default function TransferProgressBar({
         <span className={styles.dirIcon}>{directionIcon}</span>
         <span className={styles.fileName} title={fileName}>
           {truncateName(fileName)}
+          {isBatch && (
+            <span className={styles.batchLabel}>
+              {" "}({fileIndex + 1}/{totalFiles})
+            </span>
+          )}
         </span>
       </span>
 
-      {/* 中间：进度条 */}
-      <div className={styles.progressTrack}>
-        <div
-          className={styles.progressFill}
-          style={{ width: `${clampedPercent}%` }}
-        />
+      {/* 中间：进度条(s) */}
+      <div className={styles.progressArea}>
+        <div className={styles.progressTrack}>
+          <div
+            className={styles.progressFill}
+            style={{ width: `${clampedPercent}%` }}
+          />
+        </div>
+        {isBatch && (
+          <div className={`${styles.progressTrack} ${styles.aggregateTrack}`}>
+            <div
+              className={`${styles.progressFill} ${styles.aggregateFill}`}
+              style={{ width: `${clampedAgg}%` }}
+            />
+          </div>
+        )}
       </div>
 
       {/* 右侧：百分比 + 速率 + 关闭 */}

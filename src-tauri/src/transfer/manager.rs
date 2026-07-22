@@ -39,33 +39,26 @@ impl TransferManager {
     }
 
     /// 仅根据协议类型选择策略（不需要 Channel 实例）
+    #[allow(dead_code)]
     pub fn select_strategy_by_protocol(protocol: &TransferProtocolType) -> TransferStrategy {
-        let default_handoff = matches!(
-            protocol,
-            TransferProtocolType::YModem
-                | TransferProtocolType::XModem
-                | TransferProtocolType::ZModem
-        );
+        let default_handoff = protocol.is_serial_inline();
         Self::classify_strategy(protocol, default_handoff)
     }
 
     fn classify_strategy(protocol: &TransferProtocolType, supports_handoff: bool) -> TransferStrategy {
-        match protocol {
-            TransferProtocolType::YModem
-            | TransferProtocolType::XModem
-            | TransferProtocolType::ZModem => {
-                if supports_handoff {
-                    TransferStrategy::Inline
-                } else {
-                    TransferStrategy::SideChannel
-                }
-            }
-            TransferProtocolType::Sftp => {
+        if protocol.is_serial_inline() {
+            if supports_handoff {
+                TransferStrategy::Inline
+            } else {
                 TransferStrategy::SideChannel
             }
-            TransferProtocolType::Ftp => {
-                TransferStrategy::SeparateConnection
-            }
+        } else if protocol.is_side_channel() {
+            TransferStrategy::SideChannel
+        } else if protocol.is_separate_connection() {
+            TransferStrategy::SeparateConnection
+        } else {
+            // 未知协议默认走 SideChannel
+            TransferStrategy::SideChannel
         }
     }
 }

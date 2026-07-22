@@ -7,11 +7,11 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
-use crate::channel::Channel;
 use crate::channel::io_loop::IoLoopCmd;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus};
 use crate::kernel::script_engine::codegen::{hex_to_bytes, interpret_escape_sequences};
 use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
+use tokio::sync::mpsc;
 use crate::kernel::plugin_adapter::{ProtocolAdapter, TransferProtocolType};
 use crate::kernel::session_store::{SessionState, SessionStore};
 use crate::virtual_port::bridge::VirtualPortBridge;
@@ -892,248 +892,6 @@ pub fn delete_session_config(
     SessionStore::delete_config_from_disk(&app, &session_id)
 }
 
-// ── 文件传输命令（统一 X/Y/ZModem）────────────────────
-
-/// X/Y/ZModem 发送文件（带协议选择 + YMODEM 可选配置）
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub fn send_files(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    file_paths: Vec<String>,
-    protocol: String,
-    block_size: Option<usize>,
-    checksum_mode: Option<String>,
-    streaming: Option<bool>,
-) -> Result<(), String> {
-    let pt: TransferProtocolType = protocol.parse()
-        .map_err(|_| format!("不支持的传输协议: {}", protocol))?;
-    send_files_internal(app, state, session_id, file_paths, pt, block_size, checksum_mode, streaming)
-}
-
-/// 发送文件内部实现
-#[allow(clippy::too_many_arguments)]
-fn send_files_internal(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    file_paths: Vec<String>,
-    protocol_type: TransferProtocolType,
-    block_size: Option<usize>,
-    checksum_mode: Option<String>,
-    streaming: Option<bool>,
-) -> Result<(), String> {
-    // 通过 TransferManager 统一路由传输策略
-    let strategy = crate::transfer::manager::TransferManager::select_strategy_by_protocol(&protocol_type);
-    if strategy != crate::transfer::manager::TransferStrategy::Inline {
-        return Err(format!(
-            "协议 {:?} 需要通过侧通道传输（SFTP 路径），请使用 sftp_upload_file_cmd",
-            protocol_type
-        ));
-    }
-
-    let file_infos: Vec<crate::transfer::types::FileInfo> = file_paths
-        .iter()
-        .filter_map(|p| {
-            match crate::transfer::types::FileInfo::from_path(p) {
-                Ok(info) => Some(info),
-                Err(e) => {
-                    log::warn!("无法获取文件信息 {}: {}", p, e);
-                    None
-                }
-            }
-        })
-        .collect();
-
-    if file_infos.is_empty() {
-        return Err("没有可传输的有效文件".into());
-    }
-
-    let pt = protocol_type.clone();
-    handoff_and_spawn_transfer(app, state, session_id, &protocol_type, move |port, app_handle, cancel_rx| {
-        transfer_send(port, app_handle, file_infos, pt, cancel_rx, block_size, checksum_mode, streaming)
-    })
-}
-
-/// X/Y/ZModem 接收文件（带协议选择 + YMODEM 可选配置）
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub fn receive_files(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    download_dir: String,
-    protocol: String,
-    block_size: Option<usize>,
-    checksum_mode: Option<String>,
-    streaming: Option<bool>,
-) -> Result<(), String> {
-    let pt: TransferProtocolType = protocol.parse()
-        .map_err(|_| format!("不支持的传输协议: {}", protocol))?;
-    receive_files_internal(app, state, session_id, download_dir, pt, block_size, checksum_mode, streaming)
-}
-
-/// 接收文件内部实现
-#[allow(clippy::too_many_arguments)]
-fn receive_files_internal(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    download_dir: String,
-    protocol_type: TransferProtocolType,
-    block_size: Option<usize>,
-    checksum_mode: Option<String>,
-    streaming: Option<bool>,
-) -> Result<(), String> {
-    // 通过 TransferManager 统一路由传输策略
-    let strategy = crate::transfer::manager::TransferManager::select_strategy_by_protocol(&protocol_type);
-    if strategy != crate::transfer::manager::TransferStrategy::Inline {
-        return Err(format!(
-            "协议 {:?} 需要通过侧通道传输，接收功能暂不支持 SFTP 自动路径",
-            protocol_type
-        ));
-    }
-
-    let pt = protocol_type.clone();
-    handoff_and_spawn_transfer(app, state, session_id, &protocol_type, move |port, app_handle, cancel_rx| {
-        transfer_receive(port, app_handle, download_dir, pt, cancel_rx, block_size, checksum_mode, streaming)
-    })
-}
-
-/// 传输初始化失败时的清理：emit `session-transfer-failed` 事件并重置会话状态。
-/// `session-transfer-started` emit 之后、后台线程 spawn 之前的所有错误路径都必须调用此函数。
-fn emit_transfer_failed_and_cleanup(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
-    session_id: &str,
-) {
-    let _ = app.emit("session-transfer-failed", serde_json::json!({
-        "session_id": session_id,
-        "error": "传输初始化失败：端口类型不兼容",
-    }));
-    if let Ok(mut store) = state.session_store.lock() {
-        if let Some(h) = store.get_session_mut(session_id) {
-            h.state = SessionState::Connected;
-            h.cancel_transfer_tx = None;
-            h.channel_return_tx = None;
-        }
-    }
-}
-
-/// Channel 交接 + 后台线程 — send/receive 共享实现
-fn handoff_and_spawn_transfer<F>(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    protocol_type: &TransferProtocolType,
-    transfer_fn: F,
-) -> Result<(), String>
-where
-    F: FnOnce(&mut Box<dyn serialport::SerialPort>, AppHandle, tokio::sync::oneshot::Receiver<()>) -> Result<(), String> + Send + 'static,
-{
-    let (give_tx, give_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
-    let (return_tx, return_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-
-    {
-        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let not_found = store.session_not_found(&session_id);
-        let handle = store.get_session_mut(&session_id)
-            .ok_or(not_found)?;
-
-        if handle.state != SessionState::Connected {
-            return Err("会话未连接".into());
-        }
-        handle.state = SessionState::Transferring;
-        handle.channel_return_tx = Some(return_tx);
-        handle.cancel_transfer_tx = Some(cancel_tx);
-
-        let _ = handle.write_tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx });
-    }
-
-    let mut channel = give_rx.recv()
-        .map_err(|e| {
-            if let Ok(mut store) = state.session_store.lock() {
-                if let Some(h) = store.get_session_mut(&session_id) {
-                    h.state = SessionState::Connected;
-                    h.cancel_transfer_tx = None;
-                    h.channel_return_tx = None;
-                }
-            }
-            format!("无法从 I/O 线程获取 Channel: {}", e)
-        })?;
-
-    let protocol_str = format!("{:?}", protocol_type).to_lowercase();
-    let _ = app.emit("session-transfer-started", serde_json::json!({
-        "session_id": session_id,
-        "protocol": protocol_str,
-    }));
-
-    let port_any = match channel.try_handoff() {
-        Some(pa) => pa,
-        None => {
-            emit_transfer_failed_and_cleanup(&app, &state, &session_id);
-            return Err("Channel 不支持端口移交".into());
-        }
-    };
-    let boxed_port = match port_any.downcast::<Box<dyn serialport::SerialPort>>() {
-        Ok(bp) => bp,
-        Err(_raw) => {
-            emit_transfer_failed_and_cleanup(&app, &state, &session_id);
-            return Err("端口类型转换失败".into());
-        }
-    };
-    let mut port = *boxed_port;
-    drop(channel);
-
-    let app_clone = app.clone();
-    let sid = session_id.clone();
-    std::thread::spawn(move || {
-        crate::transfer::io::flush_port_buffer(&mut port);
-        let result = transfer_fn(&mut port, app_clone.clone(), cancel_rx);
-
-        let app_state: State<'_, AppState> = app_clone.state();
-        if let Ok(mut store) = app_state.session_store.lock() {
-            if let Some(h) = store.get_session_mut(&sid) {
-                h.cancel_transfer_tx = None;
-                h.state = SessionState::Connected;
-                if let Some(tx) = h.channel_return_tx.take() {
-                    use crate::channel::serial_channel::SerialChannel;
-                    let new_channel = SerialChannel::new(port);
-                    let _ = tx.send(Box::new(new_channel));
-                }
-            }
-        }
-
-        match result {
-            Ok(()) => {
-                let _ = app_clone.emit("session-transfer-finished", serde_json::json!({
-                    "session_id": sid,
-                }));
-            }
-            Err(e) => {
-                let _ = app_clone.emit("session-transfer-failed", serde_json::json!({
-                    "session_id": sid,
-                    "error": e,
-                }));
-            }
-        }
-    });
-
-    Ok(())
-}
-
-/// 取消当前传输
-#[tauri::command]
-pub fn cancel_transfer(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
-    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-    store.cancel_transfer(&session_id)
-}
-
 // ── 凭据存储命令 ────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1473,214 +1231,6 @@ pub fn clear_all_logs(
     Ok(())
 }
 
-// ── 协议无关的传输辅助函数 ──────────────────────────
-
-/// 通过 TransferProtocol trait 发送文件
-#[allow(clippy::too_many_arguments)]
-fn transfer_send(
-    port: &mut Box<dyn serialport::SerialPort>,
-    app: AppHandle,
-    files: Vec<crate::transfer::types::FileInfo>,
-    protocol_type: TransferProtocolType,
-    cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    block_size: Option<usize>,
-    _checksum_mode: Option<String>,  // 保留用于 API 兼容，模式由握手动态检测
-    streaming: Option<bool>,
-) -> Result<(), String> {
-    use crate::transfer::protocol::create_protocol;
-    use crate::transfer::types::{FileTransferEvent, TransferProgress};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
-    let protocol_str = format!("{:?}", protocol_type).to_lowercase();
-    let protocol: Box<dyn crate::transfer::protocol::TransferProtocol> = match &protocol_type {
-        TransferProtocolType::YModem => {
-            let mut ymodem = crate::transfer::ymodem::YModem::default();
-            if let Some(bs) = block_size {
-                ymodem.block_size = bs;
-            }
-            // checksum_mode 由握手动态检测（'C'=CRC-16, NAK=校验和），
-            // 前端参数仅保留用于 API 兼容，不再写入结构体。
-            if let Some(s) = streaming {
-                ymodem.streaming = s;
-            }
-            Box::new(ymodem)
-        }
-        _ => create_protocol(&protocol_type)
-            .ok_or_else(|| format!("{} 协议未实现", protocol_str))?,
-    };
-
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let c = cancelled.clone();
-    std::thread::spawn(move || {
-        let _ = cancel_rx.blocking_recv();
-        c.store(true, Ordering::SeqCst);
-    });
-    let cancel_fn = &mut || cancelled.load(Ordering::SeqCst);
-
-    let ac = app.clone();
-    let ac2 = app.clone();
-    let proto = protocol_str.clone();
-
-    let on_progress: &dyn Fn(TransferProgress) = &move |p: TransferProgress| {
-        let _ = ac.emit("transfer-progress", serde_json::json!({
-            "file_name": p.file_name,
-            "bytes_transferred": p.bytes_transferred,
-            "total_bytes": p.total_bytes,
-            "file_index": p.file_index,
-            "total_files": p.total_files,
-            "aggregate_bytes_transferred": p.aggregate_bytes_transferred,
-            "aggregate_total_bytes": p.aggregate_total_bytes,
-            "direction": "send",
-            "protocol": proto,
-        }));
-    };
-
-    let on_file_event: &dyn Fn(FileTransferEvent) = &move |e: FileTransferEvent| {
-        match e {
-            FileTransferEvent::FileStart { file_name, file_index, total_files, file_size } => {
-                let _ = ac2.emit("transfer-file-start", serde_json::json!({
-                    "file_name": file_name,
-                    "file_index": file_index,
-                    "total_files": total_files,
-                    "file_size": file_size,
-                }));
-            }
-            FileTransferEvent::FileComplete { file_name, file_index, total_files, bytes_transferred, success, error } => {
-                let _ = ac2.emit("transfer-file-complete", serde_json::json!({
-                    "file_name": file_name,
-                    "file_index": file_index,
-                    "total_files": total_files,
-                    "bytes_transferred": bytes_transferred,
-                    "success": success,
-                    "error": error,
-                }));
-            }
-        }
-    };
-
-    let batch_results = protocol
-        .send_files(port, &files, on_progress, on_file_event, cancel_fn)
-        .map_err(|e| e.to_string())?;
-
-    let completed = batch_results.iter().filter(|r| r.status == "completed").count();
-    let failed = batch_results.iter().filter(|r| r.status == "failed").count();
-    let skipped = batch_results.iter().filter(|r| r.status == "skipped").count();
-    let _ = app.emit("transfer-complete", serde_json::json!({
-        "success": failed == 0 && skipped == 0,
-        "files_completed": completed,
-        "files_failed": failed,
-        "files_skipped": skipped,
-        "direction": "send",
-        "protocol": protocol_str,
-        "results": batch_results,
-    }));
-    Ok(())
-}
-
-/// 通过 TransferProtocol trait 接收文件
-#[allow(clippy::too_many_arguments)]
-fn transfer_receive(
-    port: &mut Box<dyn serialport::SerialPort>,
-    app: AppHandle,
-    download_dir: String,
-    protocol_type: TransferProtocolType,
-    cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    block_size: Option<usize>,
-    _checksum_mode: Option<String>,  // 保留用于 API 兼容，模式由握手动态检测
-    streaming: Option<bool>,
-) -> Result<(), String> {
-    use crate::transfer::protocol::create_protocol;
-    use crate::transfer::types::{FileTransferEvent, TransferProgress};
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
-    let protocol_str = format!("{:?}", protocol_type).to_lowercase();
-    let protocol: Box<dyn crate::transfer::protocol::TransferProtocol> = match &protocol_type {
-        TransferProtocolType::YModem => {
-            let mut ymodem = crate::transfer::ymodem::YModem::default();
-            if let Some(bs) = block_size {
-                ymodem.block_size = bs;
-            }
-            // checksum_mode 由握手动态检测（'C'=CRC-16, NAK=校验和），
-            // 前端参数仅保留用于 API 兼容，不再写入结构体。
-            if let Some(s) = streaming {
-                ymodem.streaming = s;
-            }
-            Box::new(ymodem)
-        }
-        _ => create_protocol(&protocol_type)
-            .ok_or_else(|| format!("{} 协议未实现", protocol_str))?,
-    };
-
-    let cancelled = Arc::new(AtomicBool::new(false));
-    let c = cancelled.clone();
-    std::thread::spawn(move || {
-        let _ = cancel_rx.blocking_recv();
-        c.store(true, Ordering::SeqCst);
-    });
-    let cancel_fn = &mut || cancelled.load(Ordering::SeqCst);
-
-    let ac = app.clone();
-    let ac2 = app.clone();
-    let proto = protocol_str.clone();
-
-    let on_progress: &dyn Fn(TransferProgress) = &move |p: TransferProgress| {
-        let _ = ac.emit("transfer-progress", serde_json::json!({
-            "file_name": p.file_name,
-            "bytes_transferred": p.bytes_transferred,
-            "total_bytes": p.total_bytes,
-            "file_index": p.file_index,
-            "total_files": p.total_files,
-            "aggregate_bytes_transferred": p.aggregate_bytes_transferred,
-            "aggregate_total_bytes": p.aggregate_total_bytes,
-            "direction": "receive",
-            "protocol": proto,
-        }));
-    };
-
-    let on_file_event: &dyn Fn(FileTransferEvent) = &move |e: FileTransferEvent| {
-        match e {
-            FileTransferEvent::FileStart { file_name, file_index, total_files, file_size } => {
-                let _ = ac2.emit("transfer-file-start", serde_json::json!({
-                    "file_name": file_name,
-                    "file_index": file_index,
-                    "total_files": total_files,
-                    "file_size": file_size,
-                }));
-            }
-            FileTransferEvent::FileComplete { file_name, file_index, total_files, bytes_transferred, success, error } => {
-                let _ = ac2.emit("transfer-file-complete", serde_json::json!({
-                    "file_name": file_name,
-                    "file_index": file_index,
-                    "total_files": total_files,
-                    "bytes_transferred": bytes_transferred,
-                    "success": success,
-                    "error": error,
-                }));
-            }
-        }
-    };
-
-    let batch_results = protocol
-        .receive_files(port, &download_dir, on_progress, on_file_event, cancel_fn)
-        .map_err(|e| e.to_string())?;
-
-    let completed = batch_results.iter().filter(|r| r.status == "completed").count();
-    let failed = batch_results.iter().filter(|r| r.status == "failed").count();
-    let skipped = batch_results.iter().filter(|r| r.status == "skipped").count();
-    let _ = app.emit("transfer-complete", serde_json::json!({
-        "success": failed == 0 && skipped == 0,
-        "files_completed": completed,
-        "files_failed": failed,
-        "files_skipped": skipped,
-        "direction": "receive",
-        "protocol": protocol_str,
-        "results": batch_results,
-    }));
-    Ok(())
-}
-
 // ── 虚拟串口驱动管理 ────────────────────────────────
 
 /// 查询 com0com 驱动状态（前端主动拉取，解决事件在组件挂载前发射的竞态）
@@ -2009,8 +1559,8 @@ fn test_match_lua_pattern(
 // 如需缩减，可提取 sftp_command!(name, fn, ret_type, arg_pattern) 声明宏。
 
 use crate::transfer::ssh_file_service::{
-    sftp_list_dir, sftp_stat, sftp_read_head, sftp_chmod, sftp_download, sftp_upload,
-    sftp_delete, sftp_delete_recursive, sftp_download_dir,
+    sftp_list_dir, sftp_stat, sftp_read_head, sftp_chmod,
+    sftp_delete, sftp_delete_recursive,
     sftp_rename, sftp_mkdir, sftp_new_file, sftp_delete_batch,
 };
 use crate::plugins::ssh::SshSideChannel;
@@ -2031,6 +1581,9 @@ fn get_ssh_side_channel(
     let store = state.session_store.lock().map_err(|e| e.to_string())?;
     let handle = store.get_session(session_id)
         .ok_or_else(|| store.session_not_found(session_id))?;
+    if handle.state == SessionState::Disconnected {
+        return Err("会话已断开".to_string());
+    }
     let sc = handle.side_channel.as_ref()
         .ok_or_else(|| "此会话不包含 SSH 侧通道（可能不是 SSH 连接）".to_string())?;
     let ssh_sc_ref = sc.as_any().downcast_ref::<SshSideChannel>()
@@ -2042,72 +1595,6 @@ fn get_ssh_side_channel(
         sftp: ssh_sc_ref.sftp.clone(),
         host_key_fingerprint: ssh_sc_ref.host_key_fingerprint.clone(),
     }))
-}
-
-/// SFTP 传输生命周期 RAII 守卫
-///
-/// 确保传输 tokio task 在**任何**退出路径（包括 panic）下都清理 `sftp_cancel_flag` 并 emit 完成事件，
-/// 避免标志残留导致后续传输被永久拒绝（`sftp_transfer_start` 返回"已有传输进行中"）。
-///
-/// 使用方式：在传输 tokio task 入口处构造，drop 时自动执行清理。
-///
-/// 已知限制：传输 task 使用 `tokio::spawn`（非守护），若应用在传输进行中退出，
-/// task 可能被强制终止而不执行 Drop 的清理逻辑，远端可能残留半成品文件。
-/// Tauri 目前不提供 `on_exit` 钩子来 join 所有传输 task，此为平台限制。
-struct SftpTransferGuard {
-    app: AppHandle,
-    session_id: String,
-    direction: &'static str,
-    file_name: String,
-    /// 标记是否已完成清理（手动 emit 时置 true，避免重复 emit）
-    done: bool,
-}
-
-impl SftpTransferGuard {
-    fn new(app: AppHandle, session_id: String, direction: &'static str, file_name: String) -> Self {
-        Self { app, session_id, direction, file_name, done: false }
-    }
-
-    /// 手触发完成事件并标记已清理（用于在 task 正常退出时携带传输结果）
-    fn finish(&mut self, result: &Result<u64, String>) {
-        if self.done {
-            return;
-        }
-        self.done = true;
-        if let Ok(mut store) = self.app.state::<AppState>().session_store.lock() {
-            store.sftp_transfer_done(&self.session_id);
-        }
-        let _ = self.app.emit("sftp-transfer-finished", serde_json::json!({
-            "session_id": &self.session_id,
-            "direction": self.direction,
-            "file_name": &self.file_name,
-            "result": match result {
-                Ok(bytes) => serde_json::json!({"bytes": bytes}),
-                Err(e) => serde_json::json!({"error": e}),
-            },
-        }));
-    }
-}
-
-impl Drop for SftpTransferGuard {
-    fn drop(&mut self) {
-        if !self.done {
-            // panic 或未正常 finish 的兜底清理。
-            // 使用 try_state 而非 state：应用关闭期间 AppState 可能已注销，
-            // state() 会 panic，try_state() 返回 Option 安全降级。
-            if let Some(app_state) = self.app.try_state::<AppState>() {
-                if let Ok(mut store) = app_state.session_store.lock() {
-                    store.sftp_transfer_done(&self.session_id);
-                }
-            }
-            let _ = self.app.emit("sftp-transfer-finished", serde_json::json!({
-                "session_id": &self.session_id,
-                "direction": self.direction,
-                "file_name": &self.file_name,
-                "result": {"error": "传输 task 异常终止"},
-            }));
-        }
-    }
 }
 
 /// SFTP 列出远程目录
@@ -2149,123 +1636,6 @@ pub async fn sftp_read_head_cmd(
     let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
     let (data, total_size) = sftp_read_head(&ssh_sc.session, &ssh_sc.sftp, &remote_path, max_bytes).await?;
     Ok(ReadHeadResult { data, total_size })
-}
-
-/// SFTP 下载文件（带进度事件，可取消）
-///
-/// 后台 tokio task 执行传输，立即返回。完成/失败/取消时 emit `sftp-transfer-finished` 事件。
-/// 此设计避免阻塞 Tauri 命令，使 `cancel_sftp_transfer` 命令可在传输期间执行。
-#[tauri::command]
-pub async fn sftp_download_file_cmd(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    remote_path: String,
-    local_path: String,
-) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    let cancel_flag = {
-        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.sftp_transfer_start(&session_id)?
-    };
-
-    let file_name = std::path::Path::new(&remote_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| remote_path.clone());
-    let sid = session_id.clone();
-    let app_clone = app.clone();
-
-    // 启动传输 task 并注册 JoinHandle，确保 close_session 可等待其完成
-    let handle = tokio::spawn(async move {
-        // RAII 守卫：确保任何退出路径（含 panic）都清理 sftp_cancel_flag 并 emit 完成事件
-        let mut guard = SftpTransferGuard::new(app_clone, sid.clone(), "download", file_name.clone());
-
-        let result = sftp_download(
-            &ssh_sc.session, &ssh_sc.sftp, &remote_path, &local_path,
-            Some(&|done, total| {
-                let _ = app.emit("sftp-progress", serde_json::json!({
-                    "session_id": &sid,
-                    "file_name": &file_name,
-                    "direction": "download",
-                    "bytes_done": done,
-                    "bytes_total": total,
-                }));
-            }),
-            Some(&cancel_flag),
-        ).await;
-
-        guard.finish(&result);
-    });
-
-    // 注册 JoinHandle 以便 close_session 可等待传输完成
-    if let Ok(mut store) = state.session_store.lock() {
-        let _ = store.register_sftp_handle(&session_id, handle);
-    }
-
-    Ok(())
-}
-
-/// SFTP 上传文件（带进度事件，可取消）
-///
-/// 后台 tokio task 执行传输，立即返回。完成/失败/取消时 emit `sftp-transfer-finished` 事件。
-#[tauri::command]
-pub async fn sftp_upload_file_cmd(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    local_path: String,
-    remote_path: String,
-) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    let cancel_flag = {
-        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.sftp_transfer_start(&session_id)?
-    };
-
-    let file_name = std::path::Path::new(&local_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| local_path.clone());
-    let sid = session_id.clone();
-    let app_clone = app.clone();
-
-    let handle = tokio::spawn(async move {
-        let mut guard = SftpTransferGuard::new(app_clone, sid.clone(), "upload", file_name.clone());
-
-        let result = sftp_upload(
-            &ssh_sc.session, &ssh_sc.sftp, &local_path, &remote_path,
-            Some(&|done, total| {
-                let _ = app.emit("sftp-progress", serde_json::json!({
-                    "session_id": &sid,
-                    "file_name": &file_name,
-                    "direction": "upload",
-                    "bytes_done": done,
-                    "bytes_total": total,
-                }));
-            }),
-            Some(&cancel_flag),
-        ).await;
-
-        // 错误路径（非取消）清理远端半成品文件，避免残留不完整文件
-        // 导致下次上传同名文件大小不匹配等问题。
-        // 取消路径已在 sftp_upload 内部完成清理。
-        if let Err(ref e) = result {
-            if !crate::transfer::ssh_file_service::is_cancelled_error(e) {
-                crate::transfer::ssh_file_service::cleanup_remote_partial(
-                    &ssh_sc.session, &ssh_sc.sftp, &remote_path,
-                ).await;
-            }
-        }
-
-        guard.finish(&result);
-    });
-
-    if let Ok(mut store) = state.session_store.lock() {
-        let _ = store.register_sftp_handle(&session_id, handle);
-    }
-
-    Ok(())
 }
 
 /// SFTP 修改文件权限
@@ -2347,69 +1717,126 @@ pub async fn sftp_delete_recursive_cmd(
     sftp_delete_recursive(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
 }
 
-/// SFTP 递归下载目录（可取消）
+// ── 统一文件传输命令（协议无关）────────────────────────────
+
+/// 统一文件传输发送命令（协议无关）
 ///
-/// 后台 tokio task 执行传输，立即返回。完成/失败/取消时 emit `sftp-transfer-finished` 事件。
+/// 前端统一入口。通过 TransferOrchestrator 策略模式分发到
+/// Inline（串口 X/Y/ZModem）或 SideChannel（SSH SFTP）策略。
 #[tauri::command]
-pub async fn sftp_download_dir_cmd(
+#[allow(clippy::too_many_arguments)]
+pub async fn file_transfer_send(
     app: AppHandle,
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
     session_id: String,
-    remote_dir: String,
-    local_dir: String,
+    protocol: String,
+    file_paths: Vec<String>,
+    remote_dir: Option<String>,
+    block_size: Option<usize>,
+    checksum_mode: Option<String>,
+    streaming: Option<bool>,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    let cancel_flag = {
-        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.sftp_transfer_start(&session_id)?
-    };
+    let pt: TransferProtocolType = protocol.parse()
+        .map_err(|_| format!("无效的传输协议: {}", protocol))?;
 
-    let sid = session_id.clone();
-    let local_path = std::path::PathBuf::from(&local_dir);
-    let app_clone = app.clone();
-    let dir_name = std::path::Path::new(&remote_dir)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| remote_dir.clone());
-
-    let handle = tokio::spawn(async move {
-        let mut guard = SftpTransferGuard::new(app_clone, sid.clone(), "download", dir_name.clone());
-
-        let result = sftp_download_dir(
-            &ssh_sc.session, &ssh_sc.sftp, &remote_dir, &local_path,
-            Some(&|cur_file: &str, files_done: u64, files_total: u64| {
-                let _ = app.emit("sftp-progress", serde_json::json!({
-                    "session_id": &sid,
-                    "file_name": cur_file,
-                    "direction": "download",
-                    "bytes_done": files_done,
-                    "bytes_total": files_total,
-                }));
-            }),
-            Some(&cancel_flag),
-        ).await;
-
-        guard.finish(&result);
-    });
-
-    if let Ok(mut store) = state.session_store.lock() {
-        let _ = store.register_sftp_handle(&session_id, handle);
+    // 构建 FileInfo 列表
+    let files: Vec<crate::transfer::types::FileInfo> = file_paths.iter()
+        .filter_map(|p| match crate::transfer::types::FileInfo::from_path(p) {
+            Ok(info) => Some(info),
+            Err(e) => { log::warn!("无法获取文件信息 {}: {}", p, e); None }
+        })
+        .collect();
+    if files.is_empty() {
+        return Err("没有可传输的有效文件".into());
     }
 
-    Ok(())
+    // 创建进度通道
+    let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+
+    log::info!("文件传输发送: protocol={}, files={}", pt, files.len());
+
+    let orch = crate::transfer::orchestrator::create_orchestrator(&pt)?;
+    orch.execute_send(
+        app,
+        crate::transfer::orchestrator::SendContext {
+            session_id,
+            files,
+            remote_dir,
+            progress_tx,
+            progress_rx,
+            block_size,
+            checksum_mode,
+            streaming,
+        },
+    )
+    .await
 }
 
-/// 取消当前会话的 SFTP 传输
+/// 统一文件传输接收命令（协议无关）
 ///
-/// 置位取消标志，传输循环在下次块检查时退出并返回错误。
-/// 传输命令在退出前会自行清理取消状态。
+/// 通过 TransferOrchestrator 策略模式分发到
+/// Inline（串口 X/Y/ZModem）或 SideChannel（SSH SFTP）策略。
 #[tauri::command]
-pub fn cancel_sftp_transfer(
+#[allow(clippy::too_many_arguments)]
+pub async fn file_transfer_receive(
+    app: AppHandle,
+    _state: State<'_, AppState>,
+    session_id: String,
+    protocol: String,
+    download_dir: String,
+    remote_paths: Vec<String>,
+    block_size: Option<usize>,
+    checksum_mode: Option<String>,
+    streaming: Option<bool>,
+) -> Result<(), String> {
+    let pt: TransferProtocolType = protocol.parse()
+        .map_err(|_| format!("无效的传输协议: {}", protocol))?;
+
+    let (progress_tx, progress_rx) = mpsc::unbounded_channel();
+
+    log::info!(
+        "文件传输接收: protocol={}, session_id={}, download_dir={}, remote_paths=[{}]({} files)",
+        pt, session_id, download_dir,
+        remote_paths.iter().take(5).map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
+        remote_paths.len()
+    );
+
+    let orch = crate::transfer::orchestrator::create_orchestrator(&pt)?;
+    orch.execute_receive(
+        app,
+        crate::transfer::orchestrator::ReceiveContext {
+            session_id,
+            download_dir,
+            remote_paths,
+            progress_tx,
+            progress_rx,
+            block_size,
+            checksum_mode,
+            streaming,
+        },
+    )
+    .await
+}
+
+/// 统一文件传输取消命令（协议无关）
+#[tauri::command]
+pub fn file_transfer_cancel(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
+    log::info!("请求取消传输: session={}", session_id);
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-    store.cancel_sftp_transfer(&session_id)
+    // 尝试两种取消路径：内联传输和侧通道传输
+    let inline_result = store.cancel_transfer(&session_id);
+    let sc_result = store.cancel_transfer_op(&session_id);
+    // 只要其中一个成功即可
+    if inline_result.is_ok() || sc_result.is_ok() {
+        log::info!("传输取消已置位: session={}", session_id);
+        Ok(())
+    } else {
+        log::warn!("取消失败：未找到进行中的传输: session={}", session_id);
+        Err("取消失败：未找到进行中的传输".into())
+    }
 }
 
 /// 请求 SSH PTY 窗口大小调整

@@ -46,8 +46,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   }, [switchTab, onSelectSession]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent, tab: typeof state.tabs[0]) => {
+    switchTab(tab.id); // 右键时先切换到该会话（符合常规 UX：右键即选中）
     openMenu(e, tab);
-  }, [openMenu]);
+  }, [switchTab, openMenu]);
 
   const getMenuItems = useCallback((): ContextMenuItem[] => {
     if (!menu.session) return [];

@@ -2,7 +2,8 @@ import type { IconName } from "../components/common/Icon";
 
 /** 协议标识 */
 export type ProtocolType = "ymodem" | "xmodem" | "zmodem" | "sftp";
-export const PROTOCOL_TYPES: ProtocolType[] = ["ymodem", "xmodem", "zmodem", "sftp"];
+/** 串口内联传输协议（下拉框选项，不含 SFTP） */
+export const PROTOCOL_TYPES: ProtocolType[] = ["ymodem", "xmodem", "zmodem"];
 
 /** 传输方向 */
 export type TransferDirection = "send" | "receive";
@@ -143,41 +144,12 @@ export interface TransferProgress {
   aggregate_total_bytes?: number;
 }
 
-/** 文件开始事件 */
-export interface FileStartEvent {
-  file_name: string;
-  file_index: number;
-  total_files: number;
-  file_size: number;
-}
-
-/** 文件完成事件 */
-export interface FileCompleteEvent {
-  file_name: string;
-  file_index: number;
-  total_files: number;
-  bytes_transferred: number;
-  success: boolean;
-  error?: string | null;
-}
-
 /** 批次中单个文件的结果 */
 export interface BatchFileResult {
   file_name: string;
   status: "completed" | "failed" | "skipped";
   size: number;
   error?: string | null;
-}
-
-/** 传输完成事件 */
-export interface TransferCompleteEvent {
-  success: boolean;
-  files_completed?: number;
-  files_failed?: number;
-  files_skipped?: number;
-  /** 传输方向，由后端显式提供 */
-  direction?: TransferDirection;
-  results?: BatchFileResult[];
 }
 
 // ── Frontend State Types ──────────────────────────────────

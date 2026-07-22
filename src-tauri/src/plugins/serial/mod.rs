@@ -81,9 +81,9 @@ impl SerialAdapter {
                 "endpoint_discovery".into(),
             ],
             transfer_protocols: vec![
-                TransferProtocolType::YModem,
-                TransferProtocolType::XModem,
-                TransferProtocolType::ZModem,
+                TransferProtocolType::ymodem(),
+                TransferProtocolType::xmodem(),
+                TransferProtocolType::zmodem(),
             ],
         }
     }
@@ -176,9 +176,9 @@ impl ProtocolAdapter for SerialAdapter {
 
     fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
         vec![
-            TransferProtocolType::YModem,
-            TransferProtocolType::XModem,
-            TransferProtocolType::ZModem,
+            TransferProtocolType::ymodem(),
+            TransferProtocolType::xmodem(),
+            TransferProtocolType::zmodem(),
         ]
     }
 

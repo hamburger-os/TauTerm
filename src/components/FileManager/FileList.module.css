@@ -5,6 +5,12 @@
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  padding-bottom: 0;
+  transition: padding-bottom 0.15s ease;
+}
+
+.containerWithProgress {
+  padding-bottom: 36px;
 }
 
 /* ── 列标题 ───────────────────────────── */

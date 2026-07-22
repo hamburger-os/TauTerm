@@ -1,6 +1,6 @@
 //! TauTerm 微内核模块
 //!
-//! 12 个内核模块提供平台能力，不包含任何协议实现或业务 UI 组件。
+//! 13 个内核模块提供平台能力，不包含任何协议实现或业务 UI 组件。
 //! 所有会话类型（Serial、SSH、Telnet 等）均作为插件注册到 Plugin Host。
 //!
 //! ## 模块
@@ -10,6 +10,7 @@
 //! - `tab_host`        — 标签页 CRUD、会话关联、生命周期事件
 //! - `plugin_host`     — 插件发现/加载/初始化/停止全生命周期
 //! - `plugin_adapter`  — ProtocolAdapter trait + ContentType/IoStrategy 定义
+//! - `file_transfer`   — 统一文件传输 trait（FileTransfer）+ 进度/取消抽象
 //! - `session_store`   — 会话存储、I/O 生命周期、统计采集
 //! - `shortcut_engine` — 全局/插件作用域快捷键注册、冲突检测、作用域分发
 //! - `theme_engine`    — CSS 变量生成、运行时主题切换、插件 token 注入
@@ -21,6 +22,7 @@
 pub mod comm_handle;
 pub mod config_store;
 pub mod data_batcher;
+pub mod file_transfer;
 pub mod i18n_engine;
 pub mod ipc_bridge;
 pub mod log_engine;

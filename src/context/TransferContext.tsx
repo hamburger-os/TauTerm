@@ -17,9 +17,6 @@ import type {
   BatchFileEntry,
   BatchFileResult,
   FileTransferState,
-  FileStartEvent,
-  FileCompleteEvent,
-  TransferCompleteEvent,
   TransferConfig,
   ProtocolType,
   YmodemTransferConfig,
@@ -36,26 +33,26 @@ export type {
 
 // ── Command Routing Table ─────────────────────────────────
 
-/** 协议 → 方向 → Tauri 命令名（统一使用 send_files / receive_files） */
+/** 协议 → 方向 → Tauri 命令名（统一使用 file_transfer_send / file_transfer_receive） */
 const COMMAND_MAP: Record<
   ProtocolType,
   Record<TransferDirection, string>
 > = {
   ymodem: {
-    send: "send_files",
-    receive: "receive_files",
+    send: "file_transfer_send",
+    receive: "file_transfer_receive",
   },
   xmodem: {
-    send: "send_files",
-    receive: "receive_files",
+    send: "file_transfer_send",
+    receive: "file_transfer_receive",
   },
   zmodem: {
-    send: "send_files",
-    receive: "receive_files",
+    send: "file_transfer_send",
+    receive: "file_transfer_receive",
   },
   sftp: {
-    send: "sftp_upload_file_cmd",
-    receive: "sftp_download_file_cmd",
+    send: "file_transfer_send",
+    receive: "file_transfer_receive",
   },
 };
 
@@ -75,6 +72,8 @@ interface TransferState {
   totalFiles: number;
   /** 当前活跃传输使用的协议 */
   activeProtocol: ProtocolType | null;
+  /** 当前活跃传输所属会话 ID（用于过滤跨会话进度事件） */
+  activeSessionId: string | null;
   /** 当前传输速度（bytes/s） */
   speed: number;
   /** 传输开始时间戳（ms），用于速度计算 */
@@ -88,11 +87,10 @@ type TransferAction =
   | { type: "CLEAR_HISTORY" }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "INIT_BATCH"; fileNames: string[] }
-  | { type: "FILE_START"; event: FileStartEvent }
-  | { type: "FILE_COMPLETE"; event: FileCompleteEvent }
   | { type: "SYNC_BATCH_RESULTS"; results: BatchFileResult[] }
   | { type: "RESET_BATCH" }
-  | { type: "SET_ACTIVE_PROTOCOL"; protocol: ProtocolType | null };
+  | { type: "SET_ACTIVE_PROTOCOL"; protocol: ProtocolType | null }
+  | { type: "SET_ACTIVE_SESSION_ID"; sessionId: string | null };
 
 const initialState: TransferState = {
   status: "idle",
@@ -105,6 +103,7 @@ const initialState: TransferState = {
   currentFileIndex: 0,
   totalFiles: 0,
   activeProtocol: null,
+  activeSessionId: null,
   speed: 0,
   transferStartTime: 0,
 };
@@ -122,7 +121,19 @@ function transferReducer(
     }
     case "SET_PROGRESS": {
       const p = action.progress;
+      // Bug #1 双重防御：跳过空文件名事件，防止创建幽灵条目
       const key = p.file_name;
+      if (!key || key.trim() === "") {
+        return {
+          ...state,
+          progress: p,
+          aggregateBytesTransferred:
+            p.aggregate_bytes_transferred ?? p.bytes_transferred,
+          aggregateTotalBytes: p.aggregate_total_bytes ?? p.total_bytes,
+          currentFileIndex: p.file_index ?? 0,
+          totalFiles: p.total_files ?? 1,
+        };
+      }
       const aggregateBytes =
         p.aggregate_bytes_transferred ?? p.bytes_transferred;
       // 接收端无 INIT_BATCH，首次 progress 事件时初始化计时起点
@@ -130,10 +141,13 @@ function transferReducer(
         state.transferStartTime > 0
           ? state.transferStartTime
           : Date.now();
+      const isTerminal = state.status === "completed"
+        || state.status === "failed"
+        || state.status === "cancelled";
       const updated: TransferState = {
         ...state,
         progress: p,
-        status: "transferring" as TransferStatus,
+        status: isTerminal ? state.status : ("transferring" as TransferStatus),
         aggregateBytesTransferred: aggregateBytes,
         aggregateTotalBytes: p.aggregate_total_bytes ?? p.total_bytes,
         currentFileIndex: p.file_index ?? 0,
@@ -178,6 +192,8 @@ function transferReducer(
       return { ...state, error: action.error };
     case "SET_ACTIVE_PROTOCOL":
       return { ...state, activeProtocol: action.protocol };
+    case "SET_ACTIVE_SESSION_ID":
+      return { ...state, activeSessionId: action.sessionId };
     case "INIT_BATCH": {
       const batchFiles: Record<string, BatchFileEntry> = {};
       for (const name of action.fileNames) {
@@ -197,56 +213,6 @@ function transferReducer(
         aggregateTotalBytes: 0,
         speed: 0,
         transferStartTime: Date.now(),
-      };
-    }
-    case "FILE_START": {
-      const key = action.event.file_name;
-      const updatedBatch = { ...state.batchFiles };
-      if (updatedBatch[key]) {
-        updatedBatch[key] = {
-          ...updatedBatch[key],
-          status: "transferring",
-          totalBytes: action.event.file_size,
-        };
-      } else {
-        // 接收端按需创建条目
-        updatedBatch[key] = {
-          fileName: key,
-          status: "transferring",
-          bytesTransferred: 0,
-          totalBytes: action.event.file_size,
-        };
-      }
-      return {
-        ...state,
-        batchFiles: updatedBatch,
-        currentFileIndex: action.event.file_index,
-        totalFiles: action.event.total_files || state.totalFiles,
-      };
-    }
-    case "FILE_COMPLETE": {
-      const key = action.event.file_name;
-      const updatedBatch = { ...state.batchFiles };
-      if (updatedBatch[key]) {
-        updatedBatch[key] = {
-          ...updatedBatch[key],
-          status: action.event.success ? "completed" : "failed",
-          bytesTransferred: action.event.bytes_transferred,
-          error: action.event.error ?? undefined,
-        };
-      } else {
-        // 接收端按需创建条目
-        updatedBatch[key] = {
-          fileName: key,
-          status: action.event.success ? "completed" : "failed",
-          bytesTransferred: action.event.bytes_transferred,
-          totalBytes: action.event.bytes_transferred,
-          error: action.event.error ?? undefined,
-        };
-      }
-      return {
-        ...state,
-        batchFiles: updatedBatch,
       };
     }
     case "SYNC_BATCH_RESULTS": {
@@ -327,6 +293,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   // 使用 ref 追踪 activeProtocol，避免事件监听器闭包过期
   const activeProtocolRef = useRef(state.activeProtocol);
   activeProtocolRef.current = state.activeProtocol;
+  // 使用 ref 追踪 activeSessionId，避免事件监听器闭包过期（同 activeProtocolRef 模式）
+  const activeSessionIdRef = useRef(state.activeSessionId);
+  activeSessionIdRef.current = state.activeSessionId;
 
   const addHistory = useCallback(
     (item: Omit<TransferHistoryItem, "id">) => {
@@ -366,6 +335,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       }
 
       dispatch({ type: "SET_ACTIVE_PROTOCOL", protocol });
+      dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId });
       dispatch({ type: "SET_ERROR", error: null });
 
       if (direction === "send" && filePaths) {
@@ -385,17 +355,27 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         if (direction === "send" && filePaths) {
           args.filePaths = filePaths;
         }
-        if (direction === "receive" && downloadDir) {
-          args.downloadDir = downloadDir;
+        if (direction === "receive") {
+          args.remotePaths = []; // 串口协议由发送端决定文件列表；SFTP 路径由 FileManager 直接传参
+          if (downloadDir) {
+            args.downloadDir = downloadDir;
+          }
         }
-        // 传递 YMODEM 专属配置到 Rust 端
+        // 传递 YMODEM 专属配置
         if (config.protocol === "ymodem" && "blockSize" in config) {
           args.blockSize = config.blockSize;
           args.checksumMode = config.checksumMode;
           args.streaming = (config as YmodemTransferConfig).streaming ?? false;
         }
+        if (import.meta.env.DEV) {
+          console.log(
+            `[TransferContext] invoking ${commandName} direction=${direction} protocol=${config.protocol}`,
+            JSON.stringify(args, null, 2),
+          );
+        }
         await invoke(commandName, args);
       } catch (e) {
+        console.error(`[TransferContext] ${commandName} failed:`, e);
         dispatch({ type: "SET_STATUS", status: "failed" });
         dispatch({
           type: "SET_ERROR",
@@ -448,7 +428,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
 
   const cancelTransfer = useCallback(async (sessionId: string) => {
     try {
-      await invoke("cancel_transfer", { sessionId });
+      await invoke("file_transfer_cancel", { sessionId });
       dispatch({ type: "SET_STATUS", status: "cancelled" });
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `Cancel failed: ${e}` });
@@ -470,10 +450,13 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     const unlisteners: UnlistenFn[] = [];
 
     (async () => {
-      const u1 = await listen<TransferProgress>(
-        "transfer-progress",
+      // 监听会话断开，自动重置传输状态（避免残留进度和文件列表）
+      const u1 = await listen<{ session_id: string }>(
+        "session-disconnected",
         (event) => {
-          dispatch({ type: "SET_PROGRESS", progress: event.payload });
+          if (event.payload.session_id !== activeSessionIdRef.current) return;
+          dispatch({ type: "RESET_BATCH" });
+          dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId: null });
         },
       );
       if (cancelled) {
@@ -482,43 +465,65 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       }
       unlisteners.push(u1);
 
-      const u2 = await listen<TransferCompleteEvent>(
-        "transfer-complete",
+      // ── 统一进度事件（替代 transfer-progress + sftp-progress 双轨制）──
+      interface UnifiedProgressPayload {
+        session_id: string;
+        protocol: string;
+        file_name: string;
+        bytes_done: number;
+        bytes_total: number;
+        file_index: number;
+        total_files: number;
+        aggregate_bytes: number;
+        aggregate_total: number;
+        direction: "send" | "receive";
+        is_file_start: boolean;
+        is_file_complete: boolean;
+        file_success: boolean | null;
+        file_error: string | null;
+        is_batch_complete: boolean;
+      }
+      const u2 = await listen<UnifiedProgressPayload>(
+        "file-transfer:progress",
         (event) => {
-          const payload = event.payload;
-          if (payload.results && payload.results.length > 0) {
+          const p = event.payload;
+          // 过滤跨会话进度事件：仅处理当前活跃会话的传输进度
+          if (p.session_id !== activeSessionIdRef.current) return;
+          // 映射到现有 TransferProgress 格式
+          // batch_complete 事件只更新状态，不 dispatch SET_PROGRESS
+          // 避免空 file_name 创建幽灵条目（Bug #1）
+          if (p.is_batch_complete) {
+            // file_success 在 batch_complete 中基于 files_failed/files_skipped 设置
+            const ok = p.file_success !== false;
             dispatch({
-              type: "SYNC_BATCH_RESULTS",
-              results: payload.results,
+              type: "SET_STATUS",
+              status: ok ? "completed" : "failed",
             });
+            addHistory({
+              file_name: p.file_name !== "__batch_complete__" ? p.file_name : "batch",
+              direction: p.direction,
+              size: p.aggregate_bytes,
+              status: ok ? "completed" : "failed",
+              timestamp: Date.now(),
+              error: p.file_error ?? undefined,
+              protocol: activeProtocolRef.current ?? "unknown",
+            });
+            return;
           }
-          const hasFailures = (payload.files_failed ?? 0) > 0;
-          const hasSkippedOnly =
-            (payload.files_skipped ?? 0) > 0 && !hasFailures;
-          if (payload.success || hasSkippedOnly) {
-            dispatch({ type: "SET_STATUS", status: "completed" });
-          } else {
-            dispatch({ type: "SET_STATUS", status: "failed" });
-          }
-          // Per-file history with protocol info — 从 ref 读取避免闭包过期
-          if (payload.results && payload.results.length > 0) {
-            // use ref value; if already cleared, use state for correctness
-            const activeProtocol = activeProtocolRef.current ?? state.activeProtocol;
-            for (const r of payload.results) {
-              const direction: TransferDirection =
-                payload.direction ?? "send";
-              addHistory({
-                file_name: r.file_name,
-                direction,
-                size: r.size,
-                status:
-                  r.status === "completed" ? "completed" : "failed",
-                timestamp: Date.now(),
-                error: r.error ?? undefined,
-                protocol: activeProtocol ?? state.activeProtocol ?? "unknown",
-              });
-            }
-          }
+
+          const progress: TransferProgress = {
+            file_name: p.file_name,
+            bytes_transferred: p.bytes_done,
+            total_bytes: p.bytes_total,
+            file_index: p.file_index,
+            total_files: p.total_files,
+            aggregate_bytes_transferred: p.aggregate_bytes,
+            aggregate_total_bytes: p.aggregate_total,
+            direction: p.direction,
+          };
+          dispatch({ type: "SET_PROGRESS", progress });
+
+          // 文件级别事件通过 SET_PROGRESS 自然处理
         },
       );
       if (cancelled) {
@@ -526,43 +531,6 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         return;
       }
       unlisteners.push(u2);
-
-      const u3 = await listen<FileStartEvent>(
-        "transfer-file-start",
-        (event) => {
-          dispatch({ type: "FILE_START", event: event.payload });
-        },
-      );
-      if (cancelled) {
-        u3();
-        return;
-      }
-      unlisteners.push(u3);
-
-      const u4 = await listen<FileCompleteEvent>(
-        "transfer-file-complete",
-        (event) => {
-          dispatch({ type: "FILE_COMPLETE", event: event.payload });
-        },
-      );
-      if (cancelled) {
-        u4();
-        return;
-      }
-      unlisteners.push(u4);
-
-      // 监听会话断开，自动重置传输状态（避免残留进度和文件列表）
-      const u5 = await listen<{ session_id: string }>(
-        "session-disconnected",
-        (_event) => {
-          dispatch({ type: "RESET_BATCH" });
-        },
-      );
-      if (cancelled) {
-        u5();
-        return;
-      }
-      unlisteners.push(u5);
     })().catch((e) => {
       console.error("TransferContext: Failed to register event listeners:", e);
     });

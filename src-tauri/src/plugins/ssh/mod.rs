@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 use crate::channel::{ContentType, IoStrategy};
 use crate::channel::error::SessionError;
 use crate::channel::ssh_channel::SshChannel;
+use crate::kernel::file_transfer::FileTransfer;
 use crate::kernel::plugin_adapter::{EndpointInfo, ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType};
 use handler::SshHandler;
 
@@ -175,6 +176,13 @@ impl SshSideChannel {
 impl SideChannel for SshSideChannel {
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn create_file_transfer(&self) -> Option<Arc<dyn FileTransfer>> {
+        Some(Arc::new(crate::transfer::sftp_transfer::SftpFileTransfer::new(
+            self.session.clone(),
+            self.sftp.clone(),
+        )))
     }
 }
 
@@ -440,7 +448,7 @@ impl ProtocolAdapter for SshAdapter {
     }
 
     fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![TransferProtocolType::Sftp]
+        vec![TransferProtocolType::sftp()]
     }
 
     /// SSH 无硬件端点枚举 — 返回空列表
