@@ -425,14 +425,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
                   {/* 文件传输开关 */}
                   <div className={styles.field}>
-                    <label className={styles.checkboxLabel}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
                       <input
                         type="checkbox"
                         checked={transferEnabled}
                         onChange={e => setTransferEnabled(e.target.checked)}
                         disabled={connecting}
                       />
-                      <div className={styles.toggleTrack} />
+                      <div />
                       <span>{t("serial.enableTransfer")}</span>
                     </label>
                   </div>
@@ -456,28 +456,28 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
                   {/* 发送栏开关 */}
                   <div className={styles.field}>
-                    <label className={styles.checkboxLabel}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
                       <input
                         type="checkbox"
                         checked={sendBarEnabled}
                         onChange={e => setSendBarEnabled(e.target.checked)}
                         disabled={connecting}
                       />
-                      <div className={styles.toggleTrack} />
+                      <div />
                       <span>{t("serial.enableSendBar") || "启用发送栏"}</span>
                     </label>
                   </div>
 
                   {/* 虚拟串口开关 */}
                   <div className={styles.field}>
-                    <label className={styles.checkboxLabel}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
                       <input
                         type="checkbox"
                         checked={virtualPortEnabled}
                         onChange={e => setVirtualPortEnabled(e.target.checked)}
                         disabled={connecting}
                       />
-                      <div className={styles.toggleTrack} />
+                      <div />
                       <span>{t("serial.enableVirtualPort") || "启用虚拟串口"}</span>
                     </label>
                   </div>
@@ -617,42 +617,42 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
                   {/* 启用发送栏开关 */}
                   <div className={styles.field}>
-                    <label className={styles.checkboxLabel}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
                       <input
                         type="checkbox"
                         checked={sshSendBarEnabled}
                         onChange={e => setSshSendBarEnabled(e.target.checked)}
                         disabled={connecting}
                       />
-                      <div className={styles.toggleTrack} />
+                      <div />
                       <span>{t("ssh.enableSendBar")}</span>
                     </label>
                   </div>
 
                   {/* 启用文件传输开关 */}
                   <div className={styles.field}>
-                    <label className={styles.checkboxLabel}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
                       <input
                         type="checkbox"
                         checked={sshTransferEnabled}
                         onChange={e => setSshTransferEnabled(e.target.checked)}
                         disabled={connecting}
                       />
-                      <div className={styles.toggleTrack} />
+                      <div />
                       <span>{t("ssh.enableTransfer")}</span>
                     </label>
                   </div>
 
                   {/* 启用文件管理器开关 */}
                   <div className={styles.field}>
-                    <label className={styles.checkboxLabel}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
                       <input
                         type="checkbox"
                         checked={fileServiceEnabled}
                         onChange={e => setFileServiceEnabled(e.target.checked)}
                         disabled={connecting}
                       />
-                      <div className={styles.toggleTrack} />
+                      <div />
                       <span>{t("ssh.enableFileService")}</span>
                     </label>
                   </div>

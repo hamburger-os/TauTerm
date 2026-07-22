@@ -33,7 +33,7 @@ export default function Toast({ type, message, index = 0, onClose }: ToastProps)
 
   return (
     <div
-      className={`${styles.toast} ${styles[type]}`}
+      className={`${styles.toast} liquid-glass-float ${styles[type]}`}
       style={{ bottom: `${24 + index * 56}px` }}
     >
       <Icon name={iconMap[type]} size="sm" className={styles.icon} />

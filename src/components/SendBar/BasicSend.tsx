@@ -267,15 +267,14 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
         <div className={styles.groupSep} />
 
         {/* ── 组2: 循环发送 ── */}
-        <label className={styles.repeatLabel} title={t("sendBar.repeatSend")}>
+        <label className="liquid-glass-toggle" title={t("sendBar.repeatSend")}>
           <input
             type="checkbox"
-            className={styles.repeatCheck}
             checked={repeatEnabled}
             onChange={(e) => dispatch({ type: "SET_REPEAT_ENABLED", enabled: e.target.checked })}
             disabled={!isConnected}
           />
-          <div className={styles.toggleTrack} />
+          <div />
         </label>
 
         <div className={styles.intervalWrap}>
@@ -308,7 +307,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
           </button>
         </div>
         {showOptions && sendHistory.length > 0 && createPortal(
-          <div className={styles.historyDropdown} style={dropdownStyle}>
+          <div className={`${styles.historyDropdown} liquid-glass-float`} style={dropdownStyle}>
             <div className={styles.historyTitle}>{t("sendBar.sendHistory")}</div>
             <div className={styles.historyList}>
               {sendHistory.slice(0, 20).map((entry, i) => (

@@ -84,7 +84,7 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
       {state.visible && (
         <motion.div
           ref={menuRef}
-          className={styles.menu}
+          className={`${styles.menu} liquid-glass-float`}
           style={{ left: state.x, top: state.y }}
           initial={{ opacity: 0, scale: 0.92 }}
           animate={{ opacity: 1, scale: 1 }}

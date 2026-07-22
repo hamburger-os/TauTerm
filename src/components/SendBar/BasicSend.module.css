@@ -92,65 +92,6 @@
   background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
 }
 
-/* 重复发送 — 液态玻璃切换开关 */
-.repeatLabel {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  user-select: none;
-  flex-shrink: 0;
-}
-
-.repeatCheck {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.toggleTrack {
-  position: relative;
-  width: 30px;
-  height: 17px;
-  background: var(--glass-input-bg);
-  border: 1px solid var(--glass-input-border);
-  border-radius: var(--radius-full);
-  box-shadow: var(--glass-input-shadow-inner);
-  transition: all var(--transition-button);
-  flex-shrink: 0;
-}
-
-.toggleTrack::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 11px;
-  height: 11px;
-  border-radius: var(--radius-full);
-  background: var(--text-muted);
-  transition: all var(--transition-button);
-  box-shadow: var(--shadow-sm);
-}
-
-.repeatCheck:checked + .toggleTrack {
-  background: var(--accent-gradient);
-  border-color: transparent;
-  box-shadow: 0 0 10px var(--accent-glow);
-}
-
-.repeatCheck:checked + .toggleTrack::after {
-  left: 15px;
-  background: var(--text-primary);
-  box-shadow: var(--shadow-sm);
-}
-
-.repeatCheck:disabled + .toggleTrack {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
 .intervalInput {
   width: 64px;
   box-sizing: border-box;
@@ -188,19 +129,12 @@
   cursor: pointer;
 }
 
-/* 内联 .liquid-glass 核心玻璃属性（position:fixed 不可直接使用 .liquid-glass） */
+/* 历史下拉面板 — position:fixed 使用 .liquid-glass-float 全局类 */
 .historyDropdown {
   position: fixed;
   width: 220px;
   max-height: 180px;
-  background: var(--glass-fill);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--glass-border-default);
-  border-top: 1px solid var(--glass-border-top);
-  border-left: 1px solid var(--glass-border-left);
   border-radius: var(--radius-md);
-  box-shadow: var(--glass-shadow-outer), var(--glass-shadow-inner);
   z-index: var(--z-toast);
   overflow: hidden;
   display: flex;

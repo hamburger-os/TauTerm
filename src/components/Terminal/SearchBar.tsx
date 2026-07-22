@@ -152,7 +152,7 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
   return (
     <AnimatePresence>
       <motion.div
-        className={styles.bar}
+        className={`${styles.bar} liquid-glass-float`}
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -10 }}

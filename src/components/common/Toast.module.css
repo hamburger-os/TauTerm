@@ -9,12 +9,7 @@
   padding: 10px 16px;
   min-width: 280px;
   max-width: 420px;
-  background: var(--dialog-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--glass-border-default);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow-elevated);
   z-index: var(--z-toast);
   animation: slideIn 300ms ease-out;
 }

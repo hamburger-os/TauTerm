@@ -25,7 +25,7 @@ const ScrollToBottomButton = memo(function ScrollToBottomButton({ visible, onCli
     <AnimatePresence>
       {visible && (
         <motion.button
-          className={styles.button}
+          className={`${styles.button} liquid-glass-float`}
           onClick={onClick}
           initial={{ opacity: 0, scale: 0.8, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}

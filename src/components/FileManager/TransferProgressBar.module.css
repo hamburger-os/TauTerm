@@ -1,5 +1,4 @@
-/* 传输进度条 — 固定底部，自建玻璃效果 */
-
+/* 传输进度条 — 固定底部，使用 .liquid-glass-float 全局类 */
 .bar {
   position: absolute;
   bottom: 0;
@@ -10,9 +9,6 @@
   align-items: center;
   padding: 0 var(--spacing-sm);
   gap: var(--spacing-sm);
-  background: var(--glass-fill);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
   border-top: 1px solid var(--glass-border-default);
   z-index: 10;
 }

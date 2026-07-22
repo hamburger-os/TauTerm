@@ -5,7 +5,7 @@ description: >
 license: MIT
 metadata:
   author: tauterm
-  version: "2.0"
+  version: "2.2"
 ---
 
 # TauTerm 主题样式审查
@@ -31,34 +31,72 @@ metadata:
 
 ### Step 2: 批量扫描
 
-全量项目审计时，先跑批量 grep 快速定位问题文件：
+全量项目审计时，先跑批量 Grep 快速定位问题文件。**优先使用内置 Grep 工具**（ripgrep 引擎），注意 ripgrep 不支持 lookahead/lookbehind，需将复杂正则拆分为独立查询。并行发起所有扫描以提升效率。
 
-```bash
-# 硬编码色值
-grep -rn '#[0-9a-fA-F]\{6\}' src/components/ src/renderers/ --include='*.css'
-grep -rn 'rgba\?(' src/components/ src/renderers/ --include='*.css'
+**Scan A: 硬编码色值与废弃令牌**
 
-# 废弃令牌
-grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'
-
-# CSS Module 含视觉属性
-grep -rn 'background:' src/components/ src/renderers/ --include='*.module.css'
-grep -rn 'border:' src/components/ src/renderers/ --include='*.module.css'
-grep -rn 'box-shadow:' src/components/ src/renderers/ --include='*.module.css'
-grep -rn 'border-radius:' src/components/ src/renderers/ --include='*.module.css'
-grep -rn 'backdrop-filter:' src/components/ src/renderers/ --include='*.module.css'
-grep -rn '\bcolor:' src/components/ src/renderers/ --include='*.module.css' | grep -v '//'
-
-# 嵌套 .liquid-glass
-grep -rn 'liquid-glass"' src/components/ --include='*.tsx'
-
-# emoji 使用
-grep -rnP '[\x{1F300}-\x{1F9FF}]' src/components/ --include='*.tsx' | grep -v FileManager
 ```
+grep '#[0-9a-fA-F]{6}' --glob='*.css' src/components/ src/renderers/
+grep 'rgba?\(' --glob='*.css' src/components/ src/renderers/
+grep '\-\-block-' --glob='*.{css,tsx}' src/
+```
+
+**Scan B: CSS Module 视觉属性（逐属性独立扫描）**
+
+```
+grep 'background:' --glob='*.module.css' src/components/ src/renderers/
+grep 'box-shadow:' --glob='*.module.css' src/components/ src/renderers/
+grep 'border-radius:' --glob='*.module.css' src/components/ src/renderers/
+grep '  color:' --glob='*.module.css' src/components/ src/renderers/
+```
+
+**Scan C: 自建玻璃效果 🔑（CSS Module 中的 backdrop-filter 是高优先级信号）**
+
+```
+grep 'backdrop-filter:' --glob='*.module.css' src/components/ src/renderers/
+```
+
+> **关键判断**：如果 CSS Module 中同时出现 `position: absolute/fixed` 和 `backdrop-filter:`，该元素几乎必定应改用 `.liquid-glass-float` 全局类。
+
+**Scan D: 全局类使用情况**
+
+```
+grep 'liquid-glass' --glob='*.tsx' src/components/
+grep 'liquid-glass-float' --glob='*.tsx' src/components/
+grep 'liquid-glass-toggle' --glob='*.tsx' src/components/
+grep 'glass-overlay' --glob='*.tsx' src/
+```
+
+> **关键判断**：
+> - 如果 `liquid-glass-float` 搜索结果为零，说明所有浮动元素都在手动实现玻璃效果——这是一个系统性违规，需要逐文件排查所有 `position: absolute/fixed` + `backdrop-filter:` 的 CSS Module。
+> - 如果 `liquid-glass-toggle` 搜索结果为零，说明所有 toggle 开关都在组件中手动实现——需运行 Scan F 定位所有自定义 toggle 重实现。
+
+**Scan E: emoji 使用**
+
+```
+grep '[\x{1F300}-\x{1F9FF}]' --glob='*.tsx' src/components/ | grep -v FileManager
+```
+
+**Scan F: 自定义 Toggle 重实现 🔑（CSS Module 中手写 checkbox-hack toggle 是高优先级信号）**
+
+```
+grep 'toggleTrack\|toggleLabel\|toggleSwitch\|switchTrack\|customToggle\|repeatCheck\|repeatLabel' --glob='*.module.css' src/components/ src/renderers/
+grep 'toggleTrack\|toggleLabel\|toggleSwitch\|switchTrack\|customToggle\|repeatCheck\|repeatLabel' --glob='*.tsx' src/components/ src/renderers/
+```
+
+> **关键判断**：全局类 `.liquid-glass-toggle` 提供了完整的液态玻璃 toggle 开关样式（checkbox-hack 模式）。CSS Module 中任何 `position: absolute; opacity: 0` 隐藏原生 checkbox + 自定义 `div` 轨道 + 滑块的实现，都是对 `.liquid-glass-toggle` 的重复。这些 CSS 应全部删除，改为在 TSX 中使用 `className="liquid-glass-toggle"`，结构为 `<label className="liquid-glass-toggle"><input type="checkbox" /><div /></label>`。
+>
+> 如果组件需要在 toggle 旁显示文字标签，将文字放在 `div` 之后即可：`<label className="liquid-glass-toggle"><input /><div /><span>Label</span></label>`。如需组件级文字样式（color/font-size），可保留最小 CSS Module class 仅含文字属性，与 `liquid-glass-toggle` 组合使用。
 
 ### Step 3: 逐文件审查
 
-对扫描命中的文件，按检查清单逐项审查。
+对扫描命中的文件，按检查清单逐项审查。**优先处理以下高信号命中**：
+
+1. **Scan C 命中的文件**（自建玻璃效果）→ 检查是否可替换为 `.liquid-glass-float`。读取对应 TSX 确认该元素的 `position` 属性
+2. **Scan D 中 `liquid-glass-float` 结果为零或过少** → 说明浮动元素未使用全局类，逐个检查所有含 `backdrop-filter:` 的 CSS Module
+3. **Scan D 中 `liquid-glass-toggle` 结果为零或过少** → 说明 toggle 开关在组件中手动实现，需运行 Scan F 定位所有自定义 toggle
+4. **Scan F 命中的文件**（自定义 toggle 重实现）→ 检查 CSS Module 中是否包含 checkbox-hack 样式（隐藏原生 checkbox + 自定义轨道 + 滑块），这些应迁移到 `.liquid-glass-toggle`
+5. **Scan B 命中的文件** → 检查视觉效果是否使用了 `var(--xxx)` 令牌（使用令牌可降级为 LOW，只报告未使用令牌的 hardcoded 值）
 
 ### Step 4: 产出报告
 
@@ -83,6 +121,8 @@ grep -rnP '[\x{1F300}-\x{1F9FF}]' src/components/ --include='*.tsx' | grep -v Fi
 | **C2** | Input/Select/Textarea 缺失全局类 | `<input>`/`<textarea>` → `liquid-glass-input`；`<select>` → `liquid-glass-input liquid-glass-select` | 添加对应全局类 |
 | **C3** | 玻璃按钮缺失 `.liquid-glass-button` | 次要按钮、图标按钮未使用 `liquid-glass-button` 或 `GlassButton` | 添加 `liquid-glass-button` class |
 | **C4** | 主按钮缺失 `.liquid-primary-button` | 主 CTA 按钮（Connect/Send/Submit）未使用 `liquid-primary-button` 或 `GlassButton variant="primary"` | 添加 `liquid-primary-button` class |
+| **C5** | 浮动元素缺失 `.liquid-glass-float` | `position: absolute/fixed` 元素在 CSS Module 中手动实现了玻璃效果（`backdrop-filter` + `background` + `border` + `box-shadow`），未使用 `.liquid-glass-float` 全局类 | CSS Module 删除视觉属性（仅保留 layout），TSX 添加 `liquid-glass-float` |
+| **C6** | Toggle 开关缺失 `.liquid-glass-toggle` | CSS Module 中手写了 checkbox-hack toggle（隐藏原生 checkbox + 自定义 `div` 轨道 + 滑块 + 选中/禁用态），而未使用 `.liquid-glass-toggle` 全局类。检测方式：CSS Module 中出现 `position: absolute; opacity: 0` 用于隐藏 checkbox + `div` 元素的 `background`/`border-radius`/`box-shadow` + `::after` 滑块 | TSX 改为 `<label className="liquid-glass-toggle"><input type="checkbox" /><div /></label>`，CSS Module 删除所有 toggle 相关样式。如需内联文字，在 `div` 后加 `<span>` |
 
 ### D: Frosted（浅色）主题专项（CRITICAL）
 
@@ -101,8 +141,9 @@ grep -rnP '[\x{1F300}-\x{1F9FF}]' src/components/ --include='*.tsx' | grep -v Fi
 
 | ID | 检查项 | 检测方式 | 修复 |
 |----|--------|---------|------|
-| **E1** | `.liquid-glass` 嵌套 | 一个 `.liquid-glass` 元素是另一个 `.liquid-glass` 的后代（导致 40px 阴影叠加 + 噪点三重叠加） | 内层改用 `.liquid-glass-card` |
+| **E1** | `.liquid-glass` 嵌套 | 一个 `.liquid-glass` 元素是另一个 `.liquid-glass` 的后代（导致 40px 阴影叠加 + 噪点三重叠加） | 内层改用 `.liquid-glass-card`。**修复前必须先确认 DOM 层次**：如果该组件是 RightSidebar/SendBar 等 glass 表面内的子面板，不应添加任何 glass 类 |
 | **E2** | 浮动元素误用 `.liquid-glass` | `position: absolute/fixed` 元素使用了 `.liquid-glass`（会覆盖 position） | 改用 `.liquid-glass-float` |
+| **E3** | 子面板误用 `.liquid-glass` | 渲染在已有 `liquid-glass` 祖先内部的子面板错误添加了 `liquid-glass`（如 RightSidebar → TransmissionPanel） | 直接移除 `liquid-glass`；子面板依赖父级 glass 表面，内部仅对独立区块使用 `liquid-glass-card` |
 
 ### F: 图标与 emoji（LOW）
 
@@ -144,11 +185,26 @@ grep -rnP '[\x{1F300}-\x{1F9FF}]' src/components/ --include='*.tsx' | grep -v Fi
 ## 批量修复命令
 
 ```bash
+# 验证无残留自建玻璃效果（应返回零结果）
+grep -rn 'backdrop-filter:' src/components/ --include='*.module.css'
+
+# 验证 .liquid-glass-float 已正确使用（应返回所有浮动元素）
+grep -rn 'liquid-glass-float' src/ --include='*.tsx'
+
+# 验证布局 chrome 均有 .liquid-glass
+grep -rn 'liquid-glass"' src/components/ --include='*.tsx'
+
 # 验证无残留废弃令牌
 grep -rn '\-\-block-' src/ --include='*.css' --include='*.tsx'
-# 验证 docs/ 无引用
-grep -rn 'docs/theme-guide' .claude/
-```
+
+# 验证无残留硬编码色值
+grep -rn '#[0-9a-fA-F]\{6\}' src/components/ src/renderers/ --include='*.css'
+
+# 验证 .liquid-glass-toggle 已正确使用（应返回所有 toggle 开关）
+grep -rn 'liquid-glass-toggle' src/ --include='*.tsx'
+
+# 验证无残留自定义 toggle 重实现（应返回零结果）
+grep -rn 'toggleTrack\|toggleLabel\|toggleSwitch\|switchTrack\|repeatCheck\|repeatLabel' src/ --include='*.module.css'
 ```
 
 ## 已知例外
@@ -164,7 +220,9 @@ grep -rn 'docs/theme-guide' .claude/
 ### 布局 chrome 表面
 
 以下组件**必须**使用 `className={styles.xxx + ' liquid-glass'}`：
-Toolbar、SessionSidebar、RightSidebar、StatusBar、TerminalView、SendBar、AutoReplyPanel、ScriptEditor、TransmissionPanel。
+Toolbar、SessionSidebar、RightSidebar、StatusBar、TerminalView、SendBar。
+
+> **注意**：此列表仅包含顶层布局 chrome——即直接渲染在应用布局根节点的独立表面。子面板（如 TransmissionPanel、ProtocolTool 等）渲染在 RightSidebar 的 `liquid-glass` 内部，**不应**重复添加 `liquid-glass`，否则造成嵌套玻璃效果（阴影叠加 + 噪点双重渲染）。
 
 ### 浮动元素（使用 `.liquid-glass-float`）
 
@@ -253,6 +311,46 @@ grep -rn '#[0-9a-fA-F]\{3,6\}' src/components/ src/renderers/ --include='*.css' 
 ```
 ```tsx
 <div className="liquid-glass-float" style={{ position: 'absolute', top: 40 }}>
+```
+
+### 自定义 Toggle → `.liquid-glass-toggle`
+```tsx
+// Before — 组件手动实现 checkbox-hack toggle
+// TSX:
+<label className={styles.toggleLabel}>
+  <input type="checkbox" className={styles.hiddenCheck} checked={val} onChange={...} />
+  <div className={styles.toggleTrack} />
+</label>
+// CSS Module:
+.hiddenCheck { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggleTrack { width: 30px; height: 17px; background: var(--glass-input-bg); ... }
+.toggleTrack::after { ... }  /* 滑块 */
+.hiddenCheck:checked + .toggleTrack { ... }  /* 选中态 */
+/* ... etc */
+
+// After — 使用全局类
+// TSX:
+<label className="liquid-glass-toggle">
+  <input type="checkbox" checked={val} onChange={...} />
+  <div />
+</label>
+// CSS Module: 删除所有 toggle 相关样式
+```
+```tsx
+// 如果 toggle 旁需要文字标签（如 ConnectDialog）
+// Before:
+<label className={styles.checkboxLabel}>
+  <input type="checkbox" ... />
+  <div className={styles.toggleTrack} />
+  <span>Enable Feature</span>
+</label>
+// After — 保留最小 CSS Module class 用于文字样式：
+<label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+  <input type="checkbox" ... />
+  <div />
+  <span>Enable Feature</span>
+</label>
+// CSS Module .checkboxLabel 仅含: color: var(--text-primary); font-size: var(--text-sm);
 ```
 
 ### emoji → Icon 组件

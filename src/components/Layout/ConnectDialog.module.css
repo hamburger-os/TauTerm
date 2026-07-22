@@ -220,68 +220,8 @@
 
 /* .connectBtn 视觉由全局 .liquid-primary-button 接管 */
 
-/* ── 液态玻璃切换开关 ── */
-
+/* ── Toggle 文字样式 — 液态玻璃切换开关由全局 .liquid-glass-toggle 接管 ── */
 .checkboxLabel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   color: var(--text-primary);
   font-size: var(--text-sm);
-  cursor: pointer;
-  user-select: none;
-}
-
-/* 隐藏原生复选框 */
-.checkboxLabel input[type="checkbox"] {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-/* 自定义开关轨道 */
-.toggleTrack {
-  position: relative;
-  width: 30px;
-  height: 17px;
-  background: var(--glass-input-bg);
-  border: 1px solid var(--glass-input-border);
-  border-radius: var(--radius-full);
-  box-shadow: var(--glass-input-shadow-inner);
-  transition: all var(--transition-button);
-  flex-shrink: 0;
-}
-
-/* 开关滑块 */
-.toggleTrack::after {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 11px;
-  height: 11px;
-  border-radius: var(--radius-full);
-  background: var(--text-muted);
-  transition: all var(--transition-button);
-  box-shadow: var(--shadow-sm);
-}
-
-/* 选中态：轨道填充强调渐变 */
-.checkboxLabel input[type="checkbox"]:checked + .toggleTrack {
-  background: var(--accent-gradient);
-  border-color: transparent;
-  box-shadow: 0 0 10px var(--accent-glow);
-}
-
-/* 选中态：滑块变色并右移 */
-.checkboxLabel input[type="checkbox"]:checked + .toggleTrack::after {
-  left: 15px;
-  background: var(--text-primary);
-}
-
-/* 禁用态 */
-.checkboxLabel input[type="checkbox"]:disabled + .toggleTrack {
-  opacity: 0.35;
-  cursor: not-allowed;
 }

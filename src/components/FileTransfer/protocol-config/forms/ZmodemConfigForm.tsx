@@ -38,7 +38,7 @@ export default function ZmodemConfigForm({
         <span className={styles.rowLabel}>
           {t("transfer.configResumeEnabled")}
         </span>
-        <label className={styles.toggleLabel}>
+        <label className="liquid-glass-toggle">
           <input
             type="checkbox"
             checked={config.resumeEnabled}
@@ -46,7 +46,7 @@ export default function ZmodemConfigForm({
               onChange({ ...config, resumeEnabled: !config.resumeEnabled })
             }
           />
-          <div className={styles.toggleTrack} />
+          <div />
         </label>
       </div>
 
@@ -55,7 +55,7 @@ export default function ZmodemConfigForm({
         <span className={styles.rowLabel}>
           {t("transfer.configCompression")}
         </span>
-        <label className={styles.toggleLabel}>
+        <label className="liquid-glass-toggle">
           <input
             type="checkbox"
             checked={config.compressionEnabled}
@@ -66,7 +66,7 @@ export default function ZmodemConfigForm({
               })
             }
           />
-          <div className={styles.toggleTrack} />
+          <div />
         </label>
       </div>
 
@@ -75,7 +75,7 @@ export default function ZmodemConfigForm({
         <span className={styles.rowLabel}>
           {t("transfer.configStreaming")}
         </span>
-        <label className={styles.toggleLabel}>
+        <label className="liquid-glass-toggle">
           <input
             type="checkbox"
             checked={config.streamingMode}
@@ -86,7 +86,7 @@ export default function ZmodemConfigForm({
               })
             }
           />
-          <div className={styles.toggleTrack} />
+          <div />
         </label>
       </div>
     </div>

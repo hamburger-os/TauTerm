@@ -68,7 +68,7 @@ export default function TransferProgressBar({
   const clampedAgg = Math.min(100, Math.max(0, aggPercent));
 
   return (
-    <div className={styles.bar}>
+    <div className={`${styles.bar} liquid-glass-float`}>
       {/* 左侧：方向图标 + 文件名 */}
       <span className={styles.left}>
         <Icon name={directionIcon} size="sm" className={styles.dirIcon} />
