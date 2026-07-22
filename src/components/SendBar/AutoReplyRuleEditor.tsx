@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import Icon from "../common/Icon";
 import type {
   AutoReplyRule,
   MatchMode,
@@ -283,7 +284,7 @@ export default function AutoReplyRuleEditor({ rule, onSave, onCancel }: Props) {
                               disabled={single}
                               title={t("sendBar.removeCondition")}
                             >
-                              ✕
+                              <Icon name="close" size="xs" />
                             </button>
                           </div>
                           {cHexInvalid && (

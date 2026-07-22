@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import Icon from "../common/Icon";
 import type { MatchMode, MatchFormat } from "./types";
 import styles from "./AutoReplyRuleEditor.module.css";
 
@@ -73,12 +74,12 @@ export default function MatchTester({ pattern, mode, caseSensitive, matchFormat 
         {result && (
           <div className={`${styles.regexResult} ${result.valid && result.matched ? styles.regexSuccess : result.valid && result.matched === null ? styles.regexNoMatch : result.valid ? styles.regexNoMatch : styles.regexError}`}>
             {result.error
-              ? `✗ ${result.error}`
+              ? <><Icon name="close" size="xs" /> {result.error}</>
               : result.matched === null
-                ? `✓ ${t("sendBar.matchValid")}`
+                ? <><Icon name="check-plain" size="xs" /> {t("sendBar.matchValid")}</>
                 : result.matched
-                  ? `✓ ${t("sendBar.matchSuccess")}`
-                  : `✗ ${t("sendBar.matchFail")}`
+                  ? <><Icon name="check-plain" size="xs" /> {t("sendBar.matchSuccess")}</>
+                  : <><Icon name="close" size="xs" /> {t("sendBar.matchFail")}</>
             }
             {showCaptureGroups && (
               <div className={styles.regexGroups}>

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import type { ContextMenuState } from "../../hooks/useContextMenu";
@@ -20,7 +20,7 @@ interface ContextMenuProps {
   items: ContextMenuItem[];
   onSelect: (itemId: string) => void;
   onClose: () => void;
-  header?: { icon?: string; label: string } | null;
+  header?: { icon?: ReactNode; label: string } | null;
 }
 
 /**

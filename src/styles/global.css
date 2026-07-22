@@ -391,3 +391,130 @@ body {
   align-items: center;
   justify-content: center;
 }
+
+/* ==========================================
+   12. 液态玻璃浮动面板 — 不含 position: relative
+   适用于 position: absolute/fixed 的元素
+   （Toast、ContextMenu、SearchBar 下拉、SendBar 历史下拉等）
+   ========================================== */
+.liquid-glass-float {
+  background: var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  box-shadow: var(--glass-shadow-outer),
+              var(--glass-shadow-inner);
+}
+
+/* ==========================================
+   13. 液态玻璃切换开关 — 统一 checkbox-hack 模式
+   用法: <label className="liquid-glass-toggle">
+           <input type="checkbox" />
+           <div />
+         </label>
+   ========================================== */
+.liquid-glass-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.liquid-glass-toggle > input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* 自定义轨道 */
+.liquid-glass-toggle > div {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  background: var(--glass-input-bg);
+  border: 1px solid var(--glass-input-border);
+  border-radius: var(--radius-full);
+  box-shadow: var(--glass-input-shadow-inner);
+  transition: all var(--transition-button);
+  flex-shrink: 0;
+}
+
+/* 滑块 ::after */
+.liquid-glass-toggle > div::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+  transition: all var(--transition-button);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 选中态 */
+.liquid-glass-toggle > input:checked + div {
+  background: var(--accent-gradient);
+  border-color: transparent;
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.liquid-glass-toggle > input:checked + div::after {
+  left: 15px;
+  background: var(--text-primary);
+}
+
+/* 禁用态 */
+.liquid-glass-toggle > input:disabled + div {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.liquid-glass-toggle > input:disabled + div::after {
+  cursor: not-allowed;
+}
+
+/* ==========================================
+   14. 液态玻璃状态指示点
+   用法: <span className="liquid-glass-dot dot-success" />
+   ========================================== */
+.liquid-glass-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+
+.liquid-glass-dot.dot-success {
+  background: var(--color-success);
+  box-shadow: 0 0 6px var(--color-success);
+}
+
+.liquid-glass-dot.dot-error {
+  background: var(--color-error);
+  box-shadow: 0 0 6px var(--color-error);
+}
+
+.liquid-glass-dot.dot-warning {
+  background: var(--color-warning);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-warning) 50%, transparent);
+}
+
+/* ==========================================
+   15. 液态玻璃微型卡片 — <50px 小型元素
+   6px 轻阴影 + 3D 不对称边框高光
+   ========================================== */
+.liquid-glass-mini-card {
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
+}

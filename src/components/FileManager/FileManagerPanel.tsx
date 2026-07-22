@@ -17,6 +17,7 @@ import BreadcrumbNav from "./BreadcrumbNav";
 import FileList from "./FileList";
 import InlinePrompt from "./InlinePrompt";
 import CommonContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
+import Icon from "../common/Icon";
 import TransferProgressBar from "./TransferProgressBar";
 import FilePropertiesModal from "./FilePropertiesModal";
 import type { FileStatInfo } from "./FilePropertiesModal";
@@ -636,7 +637,7 @@ export default function FileManagerPanel({
                   label: ctxTarget.name,
                 }
               : {
-                  icon: "📋",
+                  icon: <Icon name="clipboard" size="sm" />,
                   label: t("fileManager.selectedCount", { count: contextMenuSelectedCount }),
                 }
         }

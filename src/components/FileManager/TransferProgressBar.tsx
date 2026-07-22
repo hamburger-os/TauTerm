@@ -8,6 +8,7 @@
  * （`useSftpProgress` Hook）统一管理。× 按钮直接调用 `onClose`。
  */
 import { useTranslation } from "react-i18next";
+import Icon from "../common/Icon";
 import styles from "./TransferProgressBar.module.css";
 
 // ── Helpers ────────────────────────────────────────────
@@ -60,7 +61,7 @@ export default function TransferProgressBar({
 
   if (!visible) return null;
 
-  const directionIcon = direction === "upload" ? "⬆" : "⬇";
+  const directionIcon = direction === "upload" ? "upload" : "download";
   const clampedPercent = Math.min(100, Math.max(0, percent));
   const isBatch = totalFiles > 1;
   const aggPercent = aggregatePercent ?? percent;
@@ -70,7 +71,7 @@ export default function TransferProgressBar({
     <div className={styles.bar}>
       {/* 左侧：方向图标 + 文件名 */}
       <span className={styles.left}>
-        <span className={styles.dirIcon}>{directionIcon}</span>
+        <Icon name={directionIcon} size="sm" className={styles.dirIcon} />
         <span className={styles.fileName} title={fileName}>
           {truncateName(fileName)}
           {isBatch && (

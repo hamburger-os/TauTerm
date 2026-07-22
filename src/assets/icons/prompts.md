@@ -642,11 +642,25 @@ A liquid glass style SSH remote terminal icon, 3D glass sculpture on pure black 
 
 ---
 
+### 49. clipboard — 剪贴板/复制
+
+**中文提示词：**
+一个液态玻璃风格的剪贴板/复制图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：主体为一个圆角矩形剪贴板（描边），右上角有一个饱满的小圆形（象征图钉/夹子），剪贴板表面有 2-3 条水平的粗壮圆角胶囊形横线（象征文本行），横线长度递减，底部对齐。所有转角大圆角，线条粗壮均匀。整体造型简洁现代，在 18×18px 小尺寸下仍可辨识为"剪贴板/复制"含义。风格参考：磨砂玻璃质感、液态胶囊描边、复制/剪贴板 UI 图标。
+
+**English prompt:**
+A liquid glass style clipboard/copy icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: body is a rounded rectangle clipboard (stroked outline), with a plump small circle at the upper right (symbolizing a pin/clip), and 2-3 horizontal thick rounded capsule bars on the clipboard surface (representing text lines), bars decreasing in length, bottom-aligned. All corners heavily rounded, strokes thick and even. Clean modern form, must remain recognizable as "clipboard/copy" at 18×18px. Style reference: frosted glass texture, liquid pill strokes, copy/clipboard UI icon.
+
+**使用位置：** `src/assets/icons/clipboard.png` — 文件管理器右键菜单多选计数 header、文件属性弹窗复制路径按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
 ## 生成后检查清单 / Post-Generation Checklist
 
 ### 图标质量
 
-- [ ] 所有 47 个图标风格统一（描边粗细、圆角程度、视觉密度）
+- [ ] 所有 48 个图标风格统一（描边粗细、圆角程度、视觉密度）
 - [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
 - [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
 - [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI
@@ -654,7 +668,7 @@ A liquid glass style SSH remote terminal icon, 3D glass sculpture on pure black 
 
 ### 部署
 
-1. 将所有 47 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
+1. 将所有 48 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
 2. 运行部署脚本，一键将 logo 同步到 App 图标位置：
 
 ```bash

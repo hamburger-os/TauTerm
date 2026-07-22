@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import Icon from "../common/Icon";
 import { invoke } from "@tauri-apps/api/core";
 import { formatTime } from "../../utils/format";
 import type { SftpEntry } from "./types";
@@ -165,7 +166,7 @@ export default function FilePropertiesModal({
                       onClick={handleCopyPath}
                       title={t("fileManager.copyPath")}
                     >
-                      📋
+                      <Icon name="clipboard" size="sm" />
                     </button>
                   </div>
                 </div>

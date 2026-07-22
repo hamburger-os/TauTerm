@@ -510,7 +510,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
                 </label>
                 <code className={styles.rulePatternText} title={rule.triggerType === "timer" ? `Timer ${rule.timerIntervalMs}ms` : (rule.conditions.length > 0 ? rule.conditions.map(c => c.pattern).join(rule.conditionLogic === "or" ? " | " : " & ") : "(empty)")}>
                   {rule.triggerType === "timer"
-                    ? `⏱ ${rule.timerIntervalMs}ms`
+                    ? <><Icon name="stopwatch" size="xs" /> {rule.timerIntervalMs}ms</>
                     : rule.conditions.length > 0
                       ? rule.conditions.map(c => (c.negate ? "!" : "") + (c.pattern || "(empty)")).join(rule.conditionLogic === "or" ? " | " : " & ")
                       : "(empty)"}
