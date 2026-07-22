@@ -342,13 +342,13 @@ function AppInner() {
                 <>
                   <ResizeHandle direction="horizontal" onMouseDown={handleRightSidebarMouseDown} />
                   <motion.div
-                    style={{ height: "100%", width: rightSidebarWidth }}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.2 }}
+                    style={{ height: "100%", width: rightSidebarWidth, overflow: "hidden" }}
+                    initial={{ width: 0, opacity: 0 }}
+                    animate={{ width: rightSidebarWidth, opacity: 1 }}
+                    exit={{ width: 0, opacity: 0 }}
+                    transition={{ duration: isResizingRightSidebar ? 0 : 0.2 }}
                   >
-                    <RightSidebar width={rightSidebarWidth}>
+                    <RightSidebar>
                       {sessionState.tabs.map(tab => {
                         const tabPlugin = pluginRegistry.get(tab.pluginId);
                         const showTransmission = tabPlugin

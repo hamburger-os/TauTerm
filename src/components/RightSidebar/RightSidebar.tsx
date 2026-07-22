@@ -5,7 +5,6 @@ import styles from "./RightSidebar.module.css";
 
 interface RightSidebarProps {
   children: ReactNode;
-  width: number;
 }
 
 /**
@@ -14,9 +13,9 @@ interface RightSidebarProps {
  * 使用 liquid-glass 样式，与左侧 SessionSidebar 视觉一致。
  * 内部内容支持 `overflow-y: auto` 滚动，当面板总高度超出可视区域时自动出现滚动条。
  * 溢出时通过 ResizeObserver 检测并在底部显示淡出渐变提示。
- * 宽度由父组件通过 ResizeHandle 拖拽控制。
+ * 宽度由父容器统控制（motion.div 动画宽度）。
  */
-export default function RightSidebar({ children, width }: RightSidebarProps) {
+export default function RightSidebar({ children }: RightSidebarProps) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isScrollable, setIsScrollable] = useState(false);
@@ -34,7 +33,6 @@ export default function RightSidebar({ children, width }: RightSidebarProps) {
   return (
     <aside
       className={`${styles.sidebar} liquid-glass`}
-      style={{ width }}
       aria-label={t("rightSidebar.ariaLabel")}
     >
       <div
