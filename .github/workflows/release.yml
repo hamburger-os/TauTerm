@@ -36,7 +36,8 @@ jobs:
             libgtk-3-dev \
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev \
-            libssl-dev
+            libssl-dev \
+            libudev-dev
 
       - name: Install frontend dependencies
         run: npm ci
