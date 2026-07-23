@@ -8,8 +8,9 @@
 //! - macOS: 尚未实现（可通过 Homebrew 安装 socat 后使用 Linux 路径）
 
 pub mod backend;
+#[cfg(target_os = "windows")]
 pub mod manager;
 pub mod bridge;
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "windows"))]
 pub mod socat;

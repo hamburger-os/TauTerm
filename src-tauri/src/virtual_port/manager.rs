@@ -13,10 +13,11 @@
 //! uninstall                    - 卸载驱动
 //! ```
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
+
+use super::backend::{contains_elevation_indicator, PortPair, VirtualPortConfig};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -41,19 +42,6 @@ const DESTROY_STAGE2_RETRY_DELAY_MS: u64 = 200;
 /// destroy_pair 解绑端口名后等待系统传播的间隔（毫秒）
 const DESTROY_UNBIND_WAIT_MS: u64 = 300;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PortPair {
-    pub port_a: String,
-    pub port_b: String,
-    pub bus_number: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct VirtualPortConfig {
-    pub enabled: bool,
-    pub count: u32,
-}
-
 pub struct VirtualPortManager {
     driver_installed: bool,
     active_pairs: HashSet<PortPair>,
@@ -63,33 +51,6 @@ pub struct VirtualPortManager {
 fn normalize_windows_path(path: &std::path::Path) -> PathBuf {
     let s = path.to_string_lossy();
     if let Some(stripped) = s.strip_prefix(r"\\?\") { PathBuf::from(stripped) } else { path.to_path_buf() }
-}
-
-/// 统一权限不足检测 — 同时用于 `Err(String)`（spawn 失败）和
-/// `Ok(Output)`（setupc.exe 启动成功但内核驱动拒绝操作）两个路径。
-///
-/// 返回 true 表示错误由管理员权限缺失导致，调用者应：
-/// - 仅更新本地簿记，延迟驱动级清理到下次 UAC 提权操作
-/// - 或触发 UAC 提权路径
-pub(crate) fn contains_elevation_indicator(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    lower.contains("740")
-        || lower.contains("提升")              // zh-CN
-        || lower.contains("elevation")
-        || lower.contains("elevated")
-        || lower.contains("access is denied")
-        || lower.contains("access denied")
-        || lower.contains("privilege")
-        || lower.contains("requires elevation")
-        || lower.contains("administrator")
-        // 多语言系统错误消息覆盖
-        || lower.contains("管理者")            // ja: 管理者として実行
-        || lower.contains("관리자")            // ko: 관리자 권한
-        || lower.contains("verweigert")        // de: Zugriff verweigert
-        || lower.contains("refusé")            // fr: Accès refusé
-        || lower.contains("elevación")         // es: elevación requerida
-        || lower.contains("necessária")        // pt: elevação necessária
-        || lower.contains("elevata")           // it: autorizzazione elevata
 }
 
 /// 判断错误字符串是否是 Windows 权限不足（保持向后兼容）。
@@ -1156,7 +1117,7 @@ impl VirtualPortManager {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
 

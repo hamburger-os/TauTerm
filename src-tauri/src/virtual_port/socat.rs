@@ -21,12 +21,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use super::backend::VirtualPortBackend;
-use super::manager::{PortPair, VirtualPortConfig};
+use super::backend::{PortPair, VirtualPortConfig};
 
 /// Symlink prefix for virtual port pairs in `/tmp`.
 const VPORT_SYMLINK_PREFIX: &str = "tauterm_vport_";
@@ -47,8 +47,6 @@ struct SocatProcess {
     symlink_a: PathBuf,
     /// Symlink path for port B (e.g., `/tmp/tauterm_vport_B0`).
     symlink_b: PathBuf,
-    /// The ID number used in the symlink names.
-    id: u32,
 }
 
 pub struct SocatBackend {
@@ -120,7 +118,7 @@ impl SocatBackend {
     }
 
     /// Wait for socat to create the symlinks, with retries.
-    fn wait_for_symlinks(symlink_a: &PathBuf, symlink_b: &PathBuf) -> bool {
+    fn wait_for_symlinks(symlink_a: &Path, symlink_b: &Path) -> bool {
         for _ in 0..SOCAT_PTY_MAX_RETRIES {
             if symlink_a.exists() && symlink_b.exists() {
                 return true;
@@ -235,7 +233,7 @@ impl VirtualPortBackend for SocatBackend {
             if let Some(stderr) = stderr {
                 std::thread::spawn(move || {
                     let reader = BufReader::new(stderr);
-                    for line in reader.lines().flatten() {
+                    for line in reader.lines().map_while(Result::ok) {
                         log::debug!("socat[id={}]: {}", id, line);
                     }
                 });
@@ -255,7 +253,6 @@ impl VirtualPortBackend for SocatBackend {
                     child,
                     symlink_a,
                     symlink_b,
-                    id,
                 },
             );
 

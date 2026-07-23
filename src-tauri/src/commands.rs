@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use crate::kernel::plugin_adapter::{ProtocolAdapter, TransferProtocolType};
 use crate::kernel::session_store::{SessionState, SessionStore};
 use crate::virtual_port::bridge::VirtualPortBridge;
-use crate::virtual_port::manager::{contains_elevation_indicator, PortPair, VirtualPortConfig};
+use crate::virtual_port::backend::{contains_elevation_indicator, PortPair, VirtualPortConfig};
 use crate::AppState;
 
 // ── 可调参数常量 ──────────────────────────────────────

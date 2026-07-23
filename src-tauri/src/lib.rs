@@ -39,10 +39,11 @@ use security::CredentialStore;
 use plugins::serial::SerialAdapter;
 use plugins::ssh::SshAdapter;
 use plugins::ssh::HostKeyVerifier;
+#[cfg(target_os = "windows")]
 use virtual_port::manager::VirtualPortManager;
 use virtual_port::backend::VirtualPortBackend;
 
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "windows"))]
 use virtual_port::socat::SocatBackend;
 
 /// 全局应用状态
@@ -222,7 +223,7 @@ pub fn run() {
                         }
                     }
 
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
                     {
                         *vpm = Box::new(SocatBackend::new());
 
@@ -235,18 +236,18 @@ pub fn run() {
                         if vpm.are_files_present() {
                             log::info!("socat 已就绪，虚拟串口功能可用");
                         } else {
-                            log::warn!("socat 未安装，虚拟串口功能不可用。安装: apt install socat");
+                            log::warn!("socat 未安装，虚拟串口功能不可用。安装: apt install socat (Linux) / brew install socat (macOS)");
                             let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                                "reason": "socat not installed. Install via: sudo apt install socat",
+                                "reason": "socat not installed. Install via: sudo apt install socat (Linux) or brew install socat (macOS)",
                                 "can_install": false,
                             }));
                         }
                         drop(vpm);
                     }
 
-                    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+                    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
                     {
-                        // macOS / 其他平台：虚拟串口暂未支持
+                        // 其他平台：虚拟串口暂未支持
                         log::warn!("当前平台不支持虚拟串口功能");
                         let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
                             "reason": "Virtual serial port feature not yet supported on this platform",
@@ -278,10 +279,8 @@ pub fn run() {
             // setup() 在所有命令处理器就绪前运行，不存在竞态条件。
             #[cfg(target_os = "windows")]
             virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from(".")))),
-            #[cfg(target_os = "linux")]
+            #[cfg(not(target_os = "windows"))]
             virtual_port_manager: Mutex::new(Box::new(SocatBackend::new())),
-            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from(".")))),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,

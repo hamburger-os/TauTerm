@@ -30,7 +30,7 @@ use crate::kernel::comm_handle::CommHandle;
 use crate::kernel::plugin_adapter::{ChannelKind, ProtocolConnection, SideChannel};
 use crate::kernel::script_engine::{ScriptCmd, spawn_script_thread};
 use crate::virtual_port::bridge::VirtualPortBridge;
-use crate::virtual_port::manager::PortPair;
+use crate::virtual_port::backend::PortPair;
 
 pub type TabId = String;
 
