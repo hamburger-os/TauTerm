@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHand
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { invoke } from "@tauri-apps/api/core";
 import "@xterm/xterm/css/xterm.css";
 import { useTheme } from "../../context/ThemeContext";
 import ScrollToBottomButton from "./ScrollToBottomButton";
@@ -9,6 +10,9 @@ import styles from "./Terminal.module.css";
 
 /** 视口底部容差行数：视口底边与缓冲区底部的间距小于此值即视为"在底部" */
 const SCROLL_BOTTOM_TOLERANCE = 5;
+
+/** PTY resize 防抖间隔 (ms)：避免拖拽 resize 时 IPC 风暴 */
+const RESIZE_DEBOUNCE_MS = 150;
 
 /** 深色主题终端配色 (google-glow / obsidian) */
 const DARK_TERMINAL_THEME = {
@@ -92,6 +96,8 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   const containerRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  // PTY resize 防抖定时器：避免拖拽 resize 时 IPC 风暴
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 使用 ref 持有最新的回调，避免初始化 effect 中的闭包过期问题
   const [isAtBottom, setIsAtBottom] = useState(true);
   const onTermReadyRef = useRef(onTermReady);
@@ -115,6 +121,19 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       return xtermRef.current;
     },
   }));
+
+  /** 通知后端 PTY 窗口尺寸已变更（带 150ms 防抖） */
+  const notifyResize = useCallback(() => {
+    if (resizeTimerRef.current) {
+      clearTimeout(resizeTimerRef.current);
+    }
+    resizeTimerRef.current = setTimeout(() => {
+      const term = xtermRef.current;
+      if (term && sessionId) {
+        invoke("resize_pty", { sessionId, cols: term.cols, rows: term.rows }).catch(() => {});
+      }
+    }, RESIZE_DEBOUNCE_MS);
+  }, [sessionId]);
 
   // 初始化 xterm.js
   useEffect(() => {
@@ -152,6 +171,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
     const handleResize = () => {
       try { fitAddon.fit(); } catch { /* ignore */ }
+      notifyResize();
     };
 
     const observer = new ResizeObserver(handleResize);
@@ -159,6 +179,10 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
     return () => {
       observer.disconnect();
+      if (resizeTimerRef.current) {
+        clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = null;
+      }
       term.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
@@ -204,6 +228,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     // 字体变化后重新 fit 以适配新的单元格尺寸
     if (fontSize !== undefined) {
       try { fitAddonRef.current?.fit(); } catch { /* ignore */ }
+      notifyResize();
     }
   }, [fontSize, bufferLines]);
 
@@ -216,6 +241,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
         try { fitAddonRef.current?.fit(); } catch { /* ignore */ }
+        notifyResize();
       });
     });
     return () => {
