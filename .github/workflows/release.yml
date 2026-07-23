@@ -1,0 +1,140 @@
+# TauTerm Release Workflow
+# Builds Windows, Linux, and macOS artifacts on tag push or manual trigger.
+#
+# Trigger: git push v* tag (e.g., v0.4.0) or workflow_dispatch
+# Permission: contents: write (for creating GitHub Releases)
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Quality Checks (shared, runs first) ──────────────────────
+  quality:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Rust clippy
+        run: cargo clippy --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # ── Windows Build ────────────────────────────────────────────
+  build-windows:
+    name: Windows (NSIS + MSI)
+    needs: quality
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check com0com driver files
+        run: npm run check-com0com
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'TauTerm v__VERSION__'
+          releaseBody: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.'
+          releaseDraft: true
+          prerelease: true
+          args: '--bundles nsis,msi'
+
+  # ── Linux Build ──────────────────────────────────────────────
+  build-linux:
+    name: Linux (deb + rpm + AppImage)
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            socat \
+            rpm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'TauTerm v__VERSION__'
+          releaseBody: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.'
+          releaseDraft: true
+          prerelease: true
+          args: '--bundles deb,rpm,appimage'
+
+  # ── macOS Build ──────────────────────────────────────────────
+  build-macos:
+    name: macOS (dmg + app)
+    needs: quality
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'TauTerm v__VERSION__'
+          releaseBody: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.'
+          releaseDraft: true
+          prerelease: true
+          args: '--bundles dmg,app'
