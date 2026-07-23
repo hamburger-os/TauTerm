@@ -51,10 +51,34 @@ jobs:
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
+  # ── Create Draft Release (once, before parallel builds) ──────
+  create-release:
+    name: Create Draft Release
+    needs: quality
+    runs-on: ubuntu-latest
+    outputs:
+      releaseId: ${{ steps.create-release.outputs.release_id }}
+    steps:
+      - name: Create GitHub Release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: release } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: context.ref.replace('refs/tags/', ''),
+              name: `TauTerm ${context.ref.replace('refs/tags/', '')}`,
+              body: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.',
+              draft: true,
+              prerelease: true
+            });
+            core.setOutput('release_id', release.id.toString());
+
   # ── Windows Build ────────────────────────────────────────────
   build-windows:
     name: Windows (NSIS + MSI)
-    needs: quality
+    needs: [quality, create-release]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,17 +100,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'TauTerm v__VERSION__'
-          releaseBody: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.'
-          releaseDraft: true
-          prerelease: true
+          releaseId: ${{ needs.create-release.outputs.releaseId }}
           args: '--bundles nsis,msi'
 
   # ── Linux Build ──────────────────────────────────────────────
   build-linux:
     name: Linux (deb + rpm + AppImage)
-    needs: quality
+    needs: [quality, create-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -118,17 +138,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'TauTerm v__VERSION__'
-          releaseBody: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.'
-          releaseDraft: true
-          prerelease: true
+          releaseId: ${{ needs.create-release.outputs.releaseId }}
           args: '--bundles deb,rpm,appimage'
 
   # ── macOS Build ──────────────────────────────────────────────
   build-macos:
     name: macOS (dmg + app)
-    needs: quality
+    needs: [quality, create-release]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -144,9 +160,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'TauTerm v__VERSION__'
-          releaseBody: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.'
-          releaseDraft: true
-          prerelease: true
+          releaseId: ${{ needs.create-release.outputs.releaseId }}
           args: '--bundles dmg,app'
