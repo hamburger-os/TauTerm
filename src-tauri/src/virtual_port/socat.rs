@@ -235,10 +235,8 @@ impl VirtualPortBackend for SocatBackend {
             if let Some(stderr) = stderr {
                 std::thread::spawn(move || {
                     let reader = BufReader::new(stderr);
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
-                            log::debug!("socat[id={}]: {}", id, line);
-                        }
+                    for line in reader.lines().flatten() {
+                        log::debug!("socat[id={}]: {}", id, line);
                     }
                 });
             }
