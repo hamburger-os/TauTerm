@@ -213,19 +213,21 @@ impl FileTransfer for SftpFileTransfer {
     ) -> Result<Vec<BatchFileResult>, FileTransferError> {
         use std::sync::atomic::Ordering;
 
-        // Phase 1: 解析远程路径 → (base_dir, full_path) 对
-        // base_dir 非空表示该文件来自目录递归展开，用于计算相对路径保留目录结构
-        let mut resolved_pairs: Vec<(String, String)> = Vec::new();
+        // Phase 1: 解析远程路径 → (base_dir, full_path, cached_file_size) 三元组
+        // base_dir 非空表示该文件来自目录递归展开，用于计算相对路径保留目录结构。
+        // cached_file_size 为 Option<u64>：非目录文件在 Phase 1 已获取 metadata(size)，
+        // 目录展开的子文件需 Phase 2 单独获取大小。
+        let mut resolved_pairs: Vec<(String, String, Option<u64>)> = Vec::new();
         for path in remote_paths {
-            let is_dir = {
+            let metadata = {
                 let cache = self.sftp_cache.lock().await;
                 match cache.as_ref() {
-                    Some(sftp) => sftp.metadata(path).await
-                        .map(|m| m.is_dir())
-                        .unwrap_or(false),
-                    None => false,
+                    Some(sftp) => sftp.metadata(path).await.ok(),
+                    None => None,
                 }
             };
+            let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            let file_size = metadata.and_then(|m| m.size); // None for directories
             if is_dir {
                 log::info!("SFTP 检测到目录，递归列举: {}", path);
                 let files = crate::transfer::ssh_file_service::sftp_list_dir_recursive(
@@ -233,10 +235,11 @@ impl FileTransfer for SftpFileTransfer {
                 ).await.map_err(FileTransferError::Other)?;
                 log::info!("SFTP 目录 '{}' 包含 {} 个文件", path, files.len());
                 for f in files {
-                    resolved_pairs.push((path.clone(), f));
+                    // 目录子文件大小未知 (None)，Phase 2 单独获取
+                    resolved_pairs.push((path.clone(), f, None));
                 }
             } else {
-                resolved_pairs.push((String::new(), path.clone()));
+                resolved_pairs.push((String::new(), path.clone(), file_size));
             }
         }
 
@@ -254,23 +257,27 @@ impl FileTransfer for SftpFileTransfer {
             total, download_dir
         );
 
-        // 预取所有文件大小以计算聚合总量
-        // 注：tokio::sync::Mutex 设计允许跨 .await 持锁；若频繁超大规模目录下载
-        // 导致其他 SFTP 操作阻塞，可考虑分批次获取 size 或缓存 SftpSession 句柄
+        // Phase 2: 对目录子文件（cached_file_size=None）逐文件获取大小。
+        // 非目录文件已在 Phase 1 缓存了大小，跳过网络 I/O。
+        // 每文件独立获取锁 + 释放，避免持锁跨多个 .await 阻塞其他 SFTP 操作。
         let mut file_sizes: Vec<u64> = Vec::with_capacity(total);
         let mut total_aggregate: u64 = 0;
-        {
-            let cache = self.sftp_cache.lock().await;
-            if let Some(sftp) = cache.as_ref() {
-                for (_base, remote_path) in resolved_pairs.iter() {
-                    let sz = sftp.metadata(remote_path).await
-                        .map(|m| m.size.unwrap_or(0))
-                        .unwrap_or(0);
-                    file_sizes.push(sz);
-                    total_aggregate += sz;
-                }
+        for (_base, remote_path, cached_size) in resolved_pairs.iter() {
+            if let Some(sz) = cached_size {
+                file_sizes.push(*sz);
+                total_aggregate += *sz;
             } else {
-                file_sizes.resize(total, 0);
+                let sz = {
+                    let cache = self.sftp_cache.lock().await;
+                    match cache.as_ref() {
+                        Some(sftp) => sftp.metadata(remote_path).await
+                            .map(|m| m.size.unwrap_or(0))
+                            .unwrap_or(0),
+                        None => 0,
+                    }
+                };
+                file_sizes.push(sz);
+                total_aggregate += sz;
             }
         }
         log::info!(
@@ -280,7 +287,7 @@ impl FileTransfer for SftpFileTransfer {
 
         let mut completed_bytes: u64 = 0;
 
-        for (i, (base_dir, remote_path)) in resolved_pairs.iter().enumerate() {
+        for (i, (base_dir, remote_path, _cached_size)) in resolved_pairs.iter().enumerate() {
             if cancel.load(Ordering::SeqCst) {
                 log::info!("SFTP 下载已取消 (文件 {}/{})", i + 1, total);
                 results.push(BatchFileResult {
@@ -289,7 +296,7 @@ impl FileTransfer for SftpFileTransfer {
                     size: 0,
                     error: Some("传输已取消".into()),
                 });
-                for (_b, remaining) in resolved_pairs.iter().skip(i + 1) {
+                for (_b, remaining, _cached) in resolved_pairs.iter().skip(i + 1) {
                     results.push(BatchFileResult {
                         file_name: remaining.clone(),
                         status: "skipped".into(),
@@ -407,7 +414,7 @@ impl FileTransfer for SftpFileTransfer {
                     if is_cancelled {
                         // 跳过剩余文件（使用 resolved_pairs 而非 remote_paths，
                         // 因为目录展开后条目数可能不同，索引 i 来自 resolved_pairs）
-                        for (_b, remaining) in resolved_pairs.iter().skip(i + 1) {
+                        for (_b, remaining, _cached) in resolved_pairs.iter().skip(i + 1) {
                             results.push(BatchFileResult {
                                 file_name: remaining.clone(),
                                 status: "skipped".into(),

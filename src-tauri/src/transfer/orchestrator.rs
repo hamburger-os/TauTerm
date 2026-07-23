@@ -108,13 +108,13 @@ pub fn spawn_progress_broadcaster(
     app: AppHandle,
     mut rx: UnboundedReceiver<UnifiedProgress>,
     session_id: String,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(mut progress) = rx.recv().await {
             progress.session_id = session_id.clone();
             let _ = app.emit("file-transfer:progress", &progress);
         }
-    });
+    })
 }
 
 // ── Helper: restore session state on error ─────────────────────────────────
@@ -260,7 +260,14 @@ impl InlineTransferOrchestrator {
                     if let Some(tx) = h.channel_return_tx.take() {
                         let new_channel =
                             crate::channel::serial_channel::SerialChannel::new(port);
-                        let _ = tx.send(Box::new(new_channel));
+                        if let Err(e) = tx.send(Box::new(new_channel)) {
+                            log::error!(
+                                "return_port: 无法归还端口到 I/O 线程（receiver 已断开）— \
+                                 端口已丢失 (session: {}): {:?}",
+                                session_id,
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -304,7 +311,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 4. 后台取消监听（cancel_rx 由 handoff 阶段创建，cancel_tx 已存入 session）
         let cancel = Arc::new(AtomicBool::new(false));
         let c = cancel.clone();
-        std::thread::spawn(move || {
+        let _cancel_thread = std::thread::spawn(move || {
             let _ = cancel_rx.blocking_recv();
             c.store(true, Ordering::SeqCst);
         });
@@ -344,13 +351,14 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             }
         }
 
-        // 8. 发射完成事件
+        // 8. 发射完成事件并返回结果
         match result {
             Ok(_) => {
                 let _ = app.emit(
                     "file-transfer:finished",
                     serde_json::json!({ "session_id": &sid, "protocol": &proto_str, "success": true }),
                 );
+                Ok(())
             }
             Err(e) => {
                 let _ = app.emit(
@@ -362,10 +370,9 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                         "error": e.to_string(),
                     }),
                 );
+                Err(e.to_string())
             }
         }
-
-        Ok(())
     }
 
     async fn execute_receive(
@@ -402,7 +409,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 4. 后台取消监听
         let cancel = Arc::new(AtomicBool::new(false));
         let c = cancel.clone();
-        std::thread::spawn(move || {
+        let _cancel_thread = std::thread::spawn(move || {
             let _ = cancel_rx.blocking_recv();
             c.store(true, Ordering::SeqCst);
         });
@@ -442,13 +449,14 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             }
         }
 
-        // 8. 发射完成事件
+        // 8. 发射完成事件并返回结果
         match result {
             Ok(_) => {
                 let _ = app.emit(
                     "file-transfer:finished",
                     serde_json::json!({ "session_id": &sid, "protocol": &proto_str, "success": true }),
                 );
+                Ok(())
             }
             Err(e) => {
                 let _ = app.emit(
@@ -460,10 +468,9 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                         "error": e.to_string(),
                     }),
                 );
+                Err(e.to_string())
             }
         }
-
-        Ok(())
     }
 
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
@@ -558,22 +565,17 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             rd
         );
 
-        // 5. 后台执行传输（RAII 守卫确保 panic 安全）
+        // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
         let progress_tx_clone = ctx.progress_tx.clone();
         let handle = tokio::spawn(async move {
-            let _guard = PanicGuard::new(app_for_spawn.clone(), sid.clone());
+            let mut guard = PanicGuard::new(app_for_spawn.clone(), sid.clone());
 
             let result = ft
                 .send(&files, rd.as_deref(), progress_tx_clone, cancel_flag.clone())
                 .await;
 
-            // 显式清理
-            if let Some(app_state) = app_for_spawn.try_state::<AppState>() {
-                if let Ok(mut store) = app_state.session_store.lock() {
-                    store.transfer_done(&sid);
-                }
-            }
-
+            // 传输完成（成功或失败），emit 事件后 defuse 守卫。
+            // transfer_done 由 PanicGuard::drop 统一处理，避免重复调用。
             let _ = app_for_spawn.emit(
                 "file-transfer:finished",
                 serde_json::json!({
@@ -583,6 +585,7 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
                     "error": result.as_ref().err().map(|e| e.to_string()),
                 }),
             );
+            guard.defuse();
         });
 
         // 6. 注册 task handle（供 close_session 等待）
@@ -651,10 +654,10 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             download_dir
         );
 
-        // 5. 后台执行传输
+        // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
         let progress_tx_clone = ctx.progress_tx.clone();
         let handle = tokio::spawn(async move {
-            let _guard = PanicGuard::new(app_for_spawn.clone(), sid.clone());
+            let mut guard = PanicGuard::new(app_for_spawn.clone(), sid.clone());
 
             let result = ft
                 .receive(
@@ -665,12 +668,8 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
                 )
                 .await;
 
-            if let Some(app_state) = app_for_spawn.try_state::<AppState>() {
-                if let Ok(mut store) = app_state.session_store.lock() {
-                    store.transfer_done(&sid);
-                }
-            }
-
+            // 传输完成（成功或失败），emit 事件后 defuse 守卫。
+            // transfer_done 由 PanicGuard::drop 统一处理，避免重复调用。
             let _ = app_for_spawn.emit(
                 "file-transfer:finished",
                 serde_json::json!({
@@ -680,6 +679,7 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
                     "error": result.as_ref().err().map(|e| e.to_string()),
                 }),
             );
+            guard.defuse();
         });
 
         if let Ok(mut store) = state.session_store.lock() {

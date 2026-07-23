@@ -457,6 +457,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           if (event.payload.session_id !== activeSessionIdRef.current) return;
           dispatch({ type: "RESET_BATCH" });
           dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId: null });
+          dispatch({ type: "SET_STATUS", status: "idle" });
         },
       );
       if (cancelled) {

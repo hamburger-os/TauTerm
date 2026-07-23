@@ -42,6 +42,9 @@ use plugins::ssh::HostKeyVerifier;
 use virtual_port::manager::VirtualPortManager;
 use virtual_port::backend::VirtualPortBackend;
 
+#[cfg(target_os = "linux")]
+use virtual_port::socat::SocatBackend;
+
 /// 全局应用状态
 pub struct AppState {
     /// 会话存储（管理所有活跃终端会话的 I/O 生命周期）
@@ -157,65 +160,99 @@ pub fn run() {
             log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
             log::info!("日志目录: {:?}", log_dir);
 
-            // 初始化 VirtualPortManager（com0com 资源路径）
+            // ── 虚拟串口后端初始化（按平台选择实现） ──
             if let Some(state) = app.try_state::<AppState>() {
-                let resource_dir = app.path().resource_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
-
-                // 检测 com0com 驱动文件路径：
-                // - 生产模式（NSIS 打包）: bundle.resources 映射 resources/com0com/* → resource_dir/
-                // - 开发模式: resource_dir = src-tauri/，com0com 文件在 ../resources/com0com/
-                let vpm_dir = if resource_dir.join("setupc.exe").exists() {
-                    resource_dir
-                } else {
-                    let dev_path = resource_dir.join("../resources/com0com");
-                    if dev_path.join("setupc.exe").exists() {
-                        log::info!(
-                            "开发模式: com0com 驱动文件位于 {:?}",
-                            dev_path.canonicalize().unwrap_or_else(|_| dev_path.clone())
-                        );
-                        dev_path
-                    } else {
-                        log::warn!("com0com 驱动文件未找到（resource_dir 和 dev_path 均无 setupc.exe）");
-                        resource_dir // 回退，后续 are_files_present() 会返回 false
-                    }
-                };
-
                 if let Ok(mut vpm) = state.virtual_port_manager.lock() {
-                    *vpm = Box::new(VirtualPortManager::new(vpm_dir));
+                    #[cfg(target_os = "windows")]
+                    {
+                        let resource_dir = app.path().resource_dir()
+                            .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-                    // 清理上次异常退出可能遗留的孤儿端口对
-                    let orphan_count = vpm.cleanup_orphans();
-                    if orphan_count > 0 {
-                        log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
+                        // 检测 com0com 驱动文件路径：
+                        // - 生产模式（NSIS 打包）: bundle.resources 映射 → resource_dir/
+                        // - 开发模式: resource_dir = src-tauri/，com0com 文件在 ../resources/com0com/
+                        let vpm_dir = if resource_dir.join("setupc.exe").exists() {
+                            resource_dir
+                        } else {
+                            let dev_path = resource_dir.join("../resources/com0com");
+                            if dev_path.join("setupc.exe").exists() {
+                                log::info!(
+                                    "开发模式: com0com 驱动文件位于 {:?}",
+                                    dev_path.canonicalize().unwrap_or_else(|_| dev_path.clone())
+                                );
+                                dev_path
+                            } else {
+                                log::warn!("com0com 驱动文件未找到（resource_dir 和 dev_path 均无 setupc.exe）");
+                                resource_dir // 回退，后续 are_files_present() 会返回 false
+                            }
+                        };
+
+                        *vpm = Box::new(VirtualPortManager::new(vpm_dir));
+
+                        // 清理上次异常退出可能遗留的孤儿端口对
+                        let orphan_count = vpm.cleanup_orphans();
+                        if orphan_count > 0 {
+                            log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
+                        }
+
+                        // 分层检测 com0com 状态：
+                        if !vpm.are_files_present() {
+                            log::warn!("com0com 驱动文件缺失，虚拟串口功能不可用");
+                        } else if vpm.detect_driver() {
+                            log::info!("com0com 驱动已就绪（安装时已自动安装或先前已安装）");
+                        } else {
+                            log::info!("com0com 驱动文件已找到但驱动未安装 \u{2014} 首次连接时将通过 NSIS 安装或需管理员权限运行时安装");
+                        }
+
+                        // 启动时向前端报告驱动状态
+                        let driver_installed = vpm.detect_driver();
+                        let files_present = vpm.are_files_present();
+                        drop(vpm);
+
+                        if files_present && !driver_installed {
+                            let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
+                                "reason": "com0com driver not installed. Run TauTerm as administrator once to install the driver.",
+                                "can_install": true,
+                            }));
+                        } else if !files_present {
+                            let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
+                                "reason": "com0com driver files missing. Virtual serial port feature unavailable.",
+                                "can_install": false,
+                            }));
+                        }
                     }
 
-                    // 分层检测 com0com 状态：
-                    // 1. 文件是否存在（由安装程序 / build.rs 打包）
-                    // 2. 驱动是否已在内核中加载
-                    if !vpm.are_files_present() {
-                        log::warn!("com0com 驱动文件缺失，虚拟串口功能不可用");
-                    } else if vpm.detect_driver() {
-                        log::info!("com0com 驱动已就绪（安装时已自动安装或先前已安装）");
-                    } else {
-                        log::info!("com0com 驱动文件已找到但驱动未安装 \u{2014} 首次连接时将通过 NSIS 安装或需管理员权限运行时安装");
+                    #[cfg(target_os = "linux")]
+                    {
+                        *vpm = Box::new(SocatBackend::new());
+
+                        // 清理上次异常退出可能遗留的孤儿 symlink
+                        let orphan_count = vpm.cleanup_orphans();
+                        if orphan_count > 0 {
+                            log::info!("已清理 {} 个孤儿虚拟端口对 (socat)", orphan_count);
+                        }
+
+                        if vpm.are_files_present() {
+                            log::info!("socat 已就绪，虚拟串口功能可用");
+                        } else {
+                            log::warn!("socat 未安装，虚拟串口功能不可用。安装: apt install socat");
+                            let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
+                                "reason": "socat not installed. Install via: sudo apt install socat",
+                                "can_install": false,
+                            }));
+                        }
+                        drop(vpm);
                     }
 
-                    // 启动时向前端报告驱动状态，以便主动提示用户
-                    let driver_installed = vpm.detect_driver();
-                    let files_present = vpm.are_files_present();
-                    drop(vpm);
-
-                    if files_present && !driver_installed {
+                    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+                    {
+                        // macOS / 其他平台：虚拟串口暂未支持
+                        log::warn!("当前平台不支持虚拟串口功能");
                         let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                            "reason": "com0com driver not installed. Run TauTerm as administrator once to install the driver.",
-                            "can_install": true,
-                        }));
-                    } else if !files_present {
-                        let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                            "reason": "com0com driver files missing. Virtual serial port feature unavailable.",
+                            "reason": "Virtual serial port feature not yet supported on this platform",
                             "can_install": false,
                         }));
+                        drop(vpm);
                     }
                 }
             }
@@ -237,8 +274,13 @@ pub fn run() {
             window_manager: WindowManager::new(),
             credential_store: CredentialStore::new(),
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
-            // 占位 VPM — setup() 闭包中立即用正确的资源路径替换。
+            // 占位 VPM — setup() 闭包中立即用平台正确的实现替换。
             // setup() 在所有命令处理器就绪前运行，不存在竞态条件。
+            #[cfg(target_os = "windows")]
+            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from(".")))),
+            #[cfg(target_os = "linux")]
+            virtual_port_manager: Mutex::new(Box::new(SocatBackend::new())),
+            #[cfg(not(any(target_os = "windows", target_os = "linux")))]
             virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from(".")))),
         })
         .invoke_handler(tauri::generate_handler![

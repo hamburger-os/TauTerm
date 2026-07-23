@@ -11,6 +11,12 @@ import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
+// 非 Windows 平台跳过（com0com 是 Windows 专用驱动）
+if (process.platform !== 'win32') {
+  console.log('⏭  Skipped (non-Windows platform — com0com is Windows-only)');
+  process.exit(0);
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const com0comDir = join(__dirname, '..', 'resources', 'com0com');
 

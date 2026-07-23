@@ -33,6 +33,11 @@
     "resources": {
       "../resources/com0com/*": "./"
     },
+    "linux": {
+      "deb": {
+        "depends": ["socat"]
+      }
+    },
     "windows": {
       "nsis": {
         "installMode": "perMachine",

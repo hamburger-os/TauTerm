@@ -1,5 +1,13 @@
 # com0com Virtual Serial Port Driver
 
+## 许可证
+
+com0com v3.0.0.0 使用 **GNU General Public License (GPL)** 许可证。
+
+TauTerm 本身使用 MIT 许可证，com0com 驱动作为独立的二进制组件随 TauTerm 安装包分发。com0com 由 [Vyacheslav Frolov](https://sourceforge.net/projects/com0com/) 开发，其源代码和许可证信息可在 SourceForge 项目页获取。
+
+TauTerm 不修改 com0com 的任何源代码，仅通过 `setupc.exe` 命令行工具调用其功能。
+
 ## 文件来源
 
 com0com 驱动文件提取自官方已签名的安装包（SourceForge）：

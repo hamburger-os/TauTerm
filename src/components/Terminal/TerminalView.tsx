@@ -529,7 +529,7 @@ export default function TerminalView() {
             animate={{ opacity: 1, y: 0 }}
           >
             <Icon name="upload" size="sm" className={styles.transferBannerIcon} />
-            <span>{t("transfer.transferringBanner", "File transfer in progress – terminal paused")}</span>
+            <span>{t("transfer.transferringBanner", "File transfer in progress...")}</span>
           </motion.div>
         )}
 

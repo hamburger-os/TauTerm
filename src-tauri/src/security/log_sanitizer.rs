@@ -3,8 +3,7 @@
 //! 自动过滤日志中的密码、密钥、Token 等敏感信息。
 
 /// 脱敏日志消息中的敏感信息
-/// 供未来凭据相关命令和 SSH 连接日志使用。
-#[allow(dead_code)]
+/// 在 LogEngine 消费者线程中自动应用于所有系统事件日志。
 pub fn sanitize_log(message: &str) -> String {
     let mut result = message.to_string();
 
@@ -39,7 +38,6 @@ pub fn sanitize_log(message: &str) -> String {
     result
 }
 
-#[allow(dead_code)]
 fn sanitize_json_field(text: &str, field: &str) -> String {
     let pattern = format!("\"{}\"", field);
     let mut result = text.to_string();

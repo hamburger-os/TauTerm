@@ -278,7 +278,7 @@
     "filterStatus": "Status",
     "directionLabel_send": "Send",
     "directionLabel_receive": "Receive",
-    "transferringBanner": "File transfer in progress, terminal paused...",
+    "transferringBanner": "File transfer in progress...",
     "transferringStatus": "Transferring...",
     "protocols": {
       "ymodem": {

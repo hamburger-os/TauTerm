@@ -508,24 +508,35 @@ impl SessionStore {
         }
 
         // ── 等待进行中的侧通道传输完成 ──
-        // tokio::spawn 的 JoinHandle 若不 join，在进程退出时强制取消可能导致
-        // Drop 清理逻辑不执行，残留半成品文件。
+        // 采用 mark_disconnected 中已验证的模式：drain handles 后在独立 task 中
+        // 以超时方式 join，避免持锁阻塞（传输 task 完成时需要 session_store 锁来
+        // 调用 transfer_done，若此处持锁 block_on 会形成循环死锁）。
+        //
+        // 需处理两种场景：
+        // 1. Tauri async 命令（已在 tokio runtime 中）→ tokio::spawn fire-and-forget
+        // 2. RunEvent::Exit / Drop 清理（不在 runtime 中）→ 跳过 join，task handle
+        //    随 drop 自然释放（best-effort 清理，因为此时传输 cancel flag 已置位）。
         for task in handle.transfer_tasks.drain(..) {
-            // 在当前线程（可能已在 tokio runtime 内）阻塞等待传输 task 完成。
-            // 传输 task 内已监听 transfer_cancel，此处 join 最坏等待单块传输时间。
+            let sid = session_id.to_string();
             match tokio::runtime::Handle::try_current() {
-                Ok(rt) => {
-                    tokio::task::block_in_place(|| {
-                        let _ = rt.block_on(task);
+                Ok(_) => {
+                    tokio::spawn(async move {
+                        match tokio::time::timeout(Duration::from_secs(5), task).await {
+                            Ok(_) => {
+                                log::debug!("传输 task 已清理 (session: {})", sid);
+                            }
+                            Err(_) => {
+                                log::warn!("传输 task join 超时 (session: {})", sid);
+                            }
+                        }
                     });
                 }
                 Err(_) => {
-                    match tokio::runtime::Runtime::new() {
-                        Ok(rt) => { let _ = rt.block_on(task); }
-                        Err(_) => {
-                            log::warn!("无法创建 tokio runtime 等待 SFTP 传输 task 完成");
-                        }
-                    }
+                    log::warn!(
+                        "无法 join 传输 task（无 tokio runtime），task handle 将被 drop (session: {})",
+                        sid
+                    );
+                    // transfer cancel flag 已在上面置位，task handle 随 drop 自然释放
                 }
             }
         }
@@ -888,18 +899,30 @@ impl SessionStore {
                 );
             }
             // 在独立 task 中 join SFTP handles，不阻塞 on_disconnect 回调
+            // mark_disconnected 在 I/O task 回调中调用，通常有 tokio runtime，
+            // 但仍做防护性检查以防边缘情况。
             for task in handle.transfer_tasks.drain(..) {
                 let sid = session_id.to_string();
-                tokio::spawn(async move {
-                    match tokio::time::timeout(Duration::from_secs(5), task).await {
-                        Ok(_) => {
-                            log::debug!("SFTP 传输 task 已清理 (session: {})", sid);
-                        }
-                        Err(_) => {
-                            log::warn!("SFTP 传输 task join 超时 (session: {})", sid);
-                        }
+                match tokio::runtime::Handle::try_current() {
+                    Ok(_) => {
+                        tokio::spawn(async move {
+                            match tokio::time::timeout(Duration::from_secs(5), task).await {
+                                Ok(_) => {
+                                    log::debug!("SFTP 传输 task 已清理 (session: {})", sid);
+                                }
+                                Err(_) => {
+                                    log::warn!("SFTP 传输 task join 超时 (session: {})", sid);
+                                }
+                            }
+                        });
                     }
-                });
+                    Err(_) => {
+                        log::warn!(
+                            "无法 join SFTP 传输 task（无 tokio runtime），task handle 将被 drop (session: {})",
+                            sid
+                        );
+                    }
+                }
             }
 
             // ── 脚本引擎关闭 ──

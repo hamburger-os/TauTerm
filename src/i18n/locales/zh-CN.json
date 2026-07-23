@@ -278,7 +278,7 @@
     "filterStatus": "状态",
     "directionLabel_send": "发送",
     "directionLabel_receive": "接收",
-    "transferringBanner": "文件传输进行中，终端数据暂缓...",
+    "transferringBanner": "文件传输进行中...",
     "transferringStatus": "传输中...",
     "protocols": {
       "ymodem": {

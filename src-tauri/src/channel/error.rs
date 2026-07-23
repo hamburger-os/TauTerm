@@ -30,7 +30,7 @@ pub enum ChannelError {
 #[allow(dead_code)]
 #[derive(Debug, Error)]
 pub enum SessionError {
-    #[error("连接失败: {reason}")]
+    #[error("{reason}")]
     ConnectionFailed { reason: String },
 
     #[error("认证失败: {reason}")]

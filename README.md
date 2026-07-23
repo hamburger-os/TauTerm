@@ -656,7 +656,7 @@ npm run tauri build
 
 ## 发展路线图
 
-### v0.3 — 微内核重构 ✅（当前版本）
+### v0.3 — 微内核重构 ✅
 - [x] 8 模块微内核架构
 - [x] `Channel` trait I/O 抽象
 - [x] Plugin Host + `ProtocolAdapter` trait
@@ -668,18 +668,18 @@ npm run tauri build
 - [x] 自定义快捷键面板
 - [x] 脚本引擎 (Lua 5.4, per-session VM, 自动应答, 代码生成)
 
-### v0.4 — 网络协议
+### v0.4 — 网络协议 ✅（当前版本）
 - [x] SSH 插件（密码/密钥认证，SideChannel 架构）
 - [x] SFTP 文件传输（SideChannel 策略，async russh-sftp，SFTP 缓存复用）
-- [ ] SSH known_hosts 主机密钥验证
+- [x] SSH 首次连接指纹确认（known_hosts 持久化计划 v0.5）
 - [ ] SSH Agent Forwarding
 - [ ] Telnet 插件（RFC 854 选项协商）
 - [ ] TCP Raw 插件
 
 ### v0.5 — 凭据 & 安全
 - [x] 日志基础设施（系统事件日志 + 会话数据日志）
-- [ ] Credential Store（keyring + AES 降级）
-- [ ] 日志脱敏
+- [x] 日志脱敏引擎（`sanitize_log()` 已实现，待接入生产日志管线）
+- [x] Credential Store — 完整 API + Tauri 命令，内存存储（keyring + AES 持久化计划中）
 - [ ] 权限提升确认
 
 ### v0.6 — 本地 Shell & 工具
@@ -707,24 +707,6 @@ npm run tauri build
 
 ---
 
-## 与竞品对比
-
-| 特性 | TauTerm | WindTerm | MobaXterm |
-|------|---------|----------|-----------|
-| 架构 | **微内核插件** | 单体 | 单体 |
-| 协议扩展 | `ProtocolAdapter` trait（5 个方法） | 修改源码 | 修改源码 |
-| 多会话管理 | 统一标签栏 + 内容适配器 | 标签页 | 标签页 + 侧栏 |
-| 传输策略 | Inline / SideChannel / SeparateConn | 有限 | FTP/SFTP 内置 |
-| 安全存储 | keyring + AES-256-GCM | 内置加密 | 内置加密 |
-| 主题系统 | Liquid Glass v3 + 动态光球背景 + 噪点纹理 + 三主题 | 有限主题 | 有限主题 |
-| 跨平台 | Windows / Linux / macOS | Windows / Linux / macOS | Windows |
-| UI 框架 | React 18 + Framer Motion | Qt | 原生 Win32 |
-| 插件生态 | 计划中 | 无 | 有限（插件） |
-| 嵌入式工具 | CRC/编码/位操作/协议解析 | 无 | 无 |
-| 串口桥接 | com0com 虚拟端口对 | 无 | 无 |
-| 开源协议 | MIT | Apache 2.0 | 部分开源 |
-
----
 
 ## 贡献指南
 
@@ -745,8 +727,7 @@ TauTerm 处于活跃开发阶段，欢迎贡献。
 
 所有 UI 组件遵循 **Liquid Glass v3** 设计系统。开发新组件或修改样式时，请参考：
 
-- [主题开发指南](docs/theme-guide.md) — CSS 令牌参考、组件开发规范、检查清单
-- [tauterm-theme 技能](.claude/skills/tauterm-theme/SKILL.md) — Claude Code 内强制执行的零硬编码颜色规则
+- [tauterm-theme 技能](.claude/skills/tauterm-theme/SKILL.md) — Claude Code 内强制执行的主题样式规则
 
 ---
 

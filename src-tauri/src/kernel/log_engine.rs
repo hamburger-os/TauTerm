@@ -98,6 +98,7 @@ pub fn set_system_log_config(enabled: bool, level: &str) {
     }
 }
 
+use crate::security::log_sanitizer::sanitize_log;
 use super::log_writer::LogWriter;
 
 // ── 数据结构 ────────────────────────────────────────
@@ -512,7 +513,8 @@ impl LogEngine {
 
                     if let Some(ref mut w) = system_writer {
                         let ts = timestamp.format("%Y-%m-%d %H:%M:%S%.3f");
-                        let line = format!("[{}] [{}] {}\n", ts, level.to_uppercase(), message);
+                        let sanitized_msg = sanitize_log(&message);
+                        let line = format!("[{}] [{}] {}\n", ts, level.to_uppercase(), sanitized_msg);
                         let _ = w.write_all(line.as_bytes());
                     }
                 }

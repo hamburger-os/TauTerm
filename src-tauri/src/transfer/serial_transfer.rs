@@ -67,7 +67,7 @@ impl FileTransfer for SerialFileTransfer {
         log::info!("串口发送开始: protocol={}, files={}", proto, files.len());
 
         let result = tokio::task::spawn_blocking(move || {
-            let mut port_guard = port.lock().unwrap();
+            let mut port_guard = port.lock().unwrap_or_else(|e| e.into_inner());
             crate::transfer::io::flush_port_buffer(&mut port_guard);
 
             let progress = progress;
@@ -177,7 +177,7 @@ impl FileTransfer for SerialFileTransfer {
         log::info!("串口接收开始: protocol={}, download_dir={}", proto, download_dir);
 
         let result = tokio::task::spawn_blocking(move || {
-            let mut port_guard = port.lock().unwrap();
+            let mut port_guard = port.lock().unwrap_or_else(|e| e.into_inner());
             crate::transfer::io::flush_port_buffer(&mut port_guard);
 
             let progress = progress;

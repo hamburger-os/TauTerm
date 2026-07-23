@@ -212,7 +212,7 @@ async fn connect_session_serial(
 ) -> Result<String, String> {
     // 通过 SerialAdapter（ProtocolAdapter trait）创建连接产物
     let conn = state.serial_adapter.connect(&endpoint, &params).await
-        .map_err(|e| format!("串口连接失败: {}", e))?;
+        .map_err(|e| e.to_string())?;
 
     // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
     let content_type = state.serial_adapter.content_type();
@@ -500,7 +500,7 @@ async fn connect_session_ssh(
         ssh_config.clone(),
         app.clone(),
         &state.host_key_verifier,
-    ).await.map_err(|e| format!("SSH 连接失败: {}", e))?;
+    ).await.map_err(|e| e.to_string())?;
 
     // 提取主机密钥指纹（供前端展示确认）
     let host_key_fingerprint: Option<String> = conn.side_channel.as_ref()

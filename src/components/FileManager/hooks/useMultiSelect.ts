@@ -108,7 +108,7 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
     [entries, selectedPaths]
   );
 
-  return {
+  return useMemo(() => ({
     selectedPaths,
     lastClickedIndex,
     selectedEntries,
@@ -118,5 +118,5 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
     clearSelection,
     isSelected,
     selectionCount: selectedPaths.size,
-  };
+  }), [selectedPaths, lastClickedIndex, selectedEntries, handleClick, isSelected]);
 }
