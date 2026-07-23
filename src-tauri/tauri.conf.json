@@ -28,7 +28,8 @@
   },
   "bundle": {
     "icon": [
-      "../src/assets/icons/logo.png"
+      "../src/assets/icons/logo.png",
+      "icons/icon.ico"
     ],
     "resources": {
       "../resources/com0com/*": "./"
