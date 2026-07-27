@@ -162,7 +162,7 @@ export default function FileManagerPanel({
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected as string];
       if (paths.length === 0) return;
-      const remoteDir = fm.currentPath === "/" ? "/" : `${fm.currentPath}/`;
+      const remoteDir = fm.currentPath ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`) : "/";
       await fm.uploadFiles(paths, remoteDir);
     } catch (e) {
       console.error("上传失败:", e);
@@ -593,7 +593,7 @@ export default function FileManagerPanel({
         onEntryDoubleClick={handleEntryDoubleClick}
         onContextMenu={showContextMenu}
         onClearError={fm.clearError}
-        showParentDir={fm.currentPath !== "/"}
+        showParentDir={fm.currentPath !== null && fm.currentPath !== "/"}
         onGoUp={fm.goUp}
         showProgress={progress.visible}
       />

@@ -45,6 +45,8 @@ export interface TabInfo {
   fileServiceEnabled?: boolean;
   /** SSH 文件服务协议（"sftp"） */
   fileServiceProtocol?: string;
+  /** SSH: 是否启用 journald 日志查看器（默认 false） */
+  journaldEnabled?: boolean;
 }
 
 export interface ConnectionTypeInfo {
@@ -82,7 +84,7 @@ type SessionAction =
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
-  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
+  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean }
   | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: Array<{ port_a: string; port_b: string }> }
   | { type: "SET_VPORT_ERROR"; id: string; error: string }
   | { type: "CLEAR_VPORT_ERROR"; id: string }
@@ -188,6 +190,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
                 virtualPortCount: (action.params?.virtual_port_count as number) ?? t.virtualPortCount,
                 fileServiceEnabled: (action.params?.file_service_enabled as boolean) ?? t.fileServiceEnabled,
                 fileServiceProtocol: (action.params?.file_service_protocol as string) ?? t.fileServiceProtocol,
+                journaldEnabled: action.journaldEnabled ?? (action.params?.journald_enabled as boolean) ?? t.journaldEnabled,
               }
             : t
         ),
@@ -232,7 +235,7 @@ interface SessionContextValue {
   state: SessionState;
   fetchConnectionTypes: () => Promise<void>;
   refreshEndpoints: () => Promise<void>;
-  connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, sessionId?: string) => Promise<string | null>;
+  connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, journaldEnabled?: boolean, sessionId?: string) => Promise<string | null>;
   createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
   disconnect: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
@@ -325,7 +328,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, sessionId?: string) => {
+  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, journaldEnabled?: boolean, sessionId?: string) => {
     dispatch({ type: "SET_ERROR", error: null });
     // 如果已知 sessionId（已创建离线配置），立即将 tab 状态设为 connecting
     if (sessionId) {
@@ -341,6 +344,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
         sendBarEnabled: sendBarEnabled ?? true,
+        journaldEnabled: journaldEnabled ?? false,
         sessionId: sessionId || null,
       });
       return sid;
@@ -391,6 +395,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           virtualPortCount: (params.virtual_port_count as number) ?? 0,
           fileServiceEnabled: (params.file_service_enabled as boolean) ?? false,
           fileServiceProtocol: params.file_service_protocol as string | undefined,
+          journaldEnabled: (params.journald_enabled as boolean) ?? false,
         },
       });
       return sessionId;
@@ -542,6 +547,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferEnabled: transferEnabled ?? true,
           transferProtocol: transferProtocol || "ymodem",
           sendBarEnabled: sendBarEnabled ?? true,
+          journaldEnabled: (params?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
           sessionId, // 保持 UUID 连续性
         });
         // connect_session 后端会 emit session-connected 事件，前端监听器会更新状态为 connected
@@ -598,6 +604,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           virtualPortCount: s.virtual_port_count ?? 0,
           fileServiceEnabled: (s.params?.file_service_enabled as boolean) ?? false,
           fileServiceProtocol: s.params?.file_service_protocol as string | undefined,
+          journaldEnabled: (s.params?.journald_enabled as boolean) ?? false,
         }));
         dispatch({ type: "SET_TABS", tabs });
         if (tabs.length > 0) {
@@ -640,7 +647,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
@@ -661,6 +668,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               sendBarEnabled: event.payload.send_bar_enabled,
               pluginId: event.payload.plugin_id || "serial",
               connectedAt: event.payload.connected_at ?? Date.now(),
+              journaldEnabled: event.payload.journald_enabled ?? false,
             });
             // 同步更新虚拟端口对（reconnect 场景下 virtual-port-created
             // 可能先于 session-connected 到达，合并确保不丢失）
@@ -691,6 +699,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 virtualPortCount: (event.payload.params?.virtual_port_count as number) ?? 0,
                 fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean) ?? false,
                 fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
+                journaldEnabled: event.payload.journald_enabled ?? (event.payload.params?.journald_enabled as boolean) ?? false,
               },
             });
           }

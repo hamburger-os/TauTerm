@@ -25,7 +25,7 @@ export default function CalculatorTool() {
           {TABS.map((tab) => (
             <button
               key={tab}
-              className={`${styles.tabBtn} ${activeTab === tab ? styles.active : ""}`}
+              className={`${styles.tabBtn} liquid-glass-button ${activeTab === tab ? "active" : ""}`}
               onClick={() => setActiveTab(tab)}
             >
               {t(`tools.${tab}`)}

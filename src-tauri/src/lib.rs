@@ -336,6 +336,10 @@ pub fn run() {
             commands::sftp_new_file_cmd,
             commands::sftp_delete_batch_cmd,
             commands::sftp_delete_recursive_cmd,
+            commands::start_journald_stream,
+            commands::stop_journald_stream,
+            commands::journald_query_cmd,
+            commands::get_ssh_home_dir,
             commands::resize_pty,
             commands::confirm_host_key,
         ])

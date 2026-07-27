@@ -64,17 +64,17 @@ export default function InlinePrompt({
     <div className={styles.container}>
       <input
         ref={inputRef}
-        className={styles.input}
+        className={`${styles.input} liquid-glass-input`}
         type="text"
         value={value}
         placeholder={placeholder}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
       />
-      <button className={styles.btn} onClick={handleConfirm}>
+      <button className={`${styles.btn} liquid-glass-button`} onClick={handleConfirm}>
         {t("common.ok")}
       </button>
-      <button className={styles.btn} onClick={onCancel}>
+      <button className={`${styles.btn} liquid-glass-button`} onClick={onCancel}>
         {t("common.cancel")}
       </button>
     </div>

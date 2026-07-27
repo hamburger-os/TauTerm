@@ -25,7 +25,7 @@ export default function YmodemConfigForm({
           {([1024, 128] as const).map((bs) => (
             <button
               key={bs}
-              className={`${styles.optionBtn} liquid-glass-button ${config.blockSize === bs ? styles.optionBtnActive : ""}`}
+              className={`${styles.optionBtn} liquid-glass-button ${config.blockSize === bs ? "active" : ""}`}
               onClick={() => onChange({ ...config, blockSize: bs })}
             >
               {bs === 1024
@@ -45,7 +45,7 @@ export default function YmodemConfigForm({
           {(["crc16", "checksum8"] as const).map((mode) => (
             <button
               key={mode}
-              className={`${styles.optionBtn} liquid-glass-button ${config.checksumMode === mode ? styles.optionBtnActive : ""}`}
+              className={`${styles.optionBtn} liquid-glass-button ${config.checksumMode === mode ? "active" : ""}`}
               onClick={() =>
                 onChange({ ...config, checksumMode: mode })
               }

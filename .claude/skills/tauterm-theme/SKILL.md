@@ -22,7 +22,8 @@ metadata:
 | `.liquid-glass-float` | 浮动玻璃面板 | 无 position 约束，无噪点纹理。用于 Toast、ContextMenu、SearchBar 下拉等 absolute/fixed 元素 |
 | `.liquid-glass-card` | 内层卡片 | 基于 glass-fill + 16px 阴影。用于嵌套在 `.liquid-glass` 内的卡片 |
 | `.liquid-glass-mini-card` | 微型卡片 | 基于 glass-fill + 6px 轻阴影。用于 <50px 的小型元素 |
-| `.liquid-glass-button` | 次要玻璃按钮 | hover 上浮 + 阴影增强。用于 Cancel、Close、图标按钮 |
+| `.liquid-glass-button` | 次要玻璃按钮 | hover 上浮 + 阴影增强。用于 Cancel、Close、图标按钮。**选中态**：添加 `"active"` 类（非 CSS Module）启用 accent 色相叠加 + accent 色文字 |
+| `.liquid-glass-button.active` | 按钮选中态 | 12% accent 色相叠加背景 + accent 色文字 + accent 色内边框。必须搭配 `"active"` 字符串类（非 CSS Module） |
 | `.liquid-glass-input` | 液态玻璃输入框 | 内凹底 + focus 蓝色辉光。用于所有 `<input>`、`<textarea>` |
 | `.liquid-glass-select` | Select 下拉 | 必须与 `.liquid-glass-input` 组合使用 |
 | `.liquid-glass-textarea` | 文本域 | 必须与 `.liquid-glass-input` 组合使用 |
@@ -75,6 +76,15 @@ metadata:
 **强调：**
 - `--accent-primary` / `--accent-gradient` / `--accent-glow`
 - `--text-on-accent` — 强调背景上的文字色（始终 #fff）
+- `--accent-primary-muted` — 12% 不透明度强调色（`color-mix(in srgb, var(--accent-primary) 12%, transparent)`）
+
+**全息主按钮 tokens（`.liquid-primary-button`）：**
+- `--primary-button-border` — 边框颜色（深色主题白色高光 / 浅色主题 slate）
+- `--primary-button-hover-border` — hover 边框
+- `--primary-button-shadow` — 默认阴影（高光 + 光晕）
+- `--primary-button-hover-shadow` — hover 阴影
+- `--primary-button-text-shadow` — 文字阴影（深色主题有 / 浅色主题 none）
+- `--accent-holofoil-gradient` — 全息渐变背景
 
 **状态色：**
 - `--color-success` / `--color-error` / `--color-warning` / `--color-info`

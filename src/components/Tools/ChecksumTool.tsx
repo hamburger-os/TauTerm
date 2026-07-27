@@ -85,13 +85,13 @@ export function ChecksumToolInner() {
       {/* 输入模式 */}
       <div className={styles.modeRow}>
         <button
-          className={`${styles.modeBtn} ${inputMode === "string" ? styles.active : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button ${inputMode === "string" ? "active" : ""}`}
           onClick={() => setInputMode("string")}
         >
           {t("tools.stringMode") ?? "Text"}
         </button>
         <button
-          className={`${styles.modeBtn} ${inputMode === "hex" ? styles.active : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button ${inputMode === "hex" ? "active" : ""}`}
           onClick={() => setInputMode("hex")}
         >
           {t("tools.hexMode") ?? "HEX"}
@@ -126,7 +126,7 @@ export function ChecksumToolInner() {
         {(["SUM8", "SUM16", "XOR", "CRC8", "CRC16", "CRC32"] as Algorithm[]).map((alg) => (
           <button
             key={alg}
-            className={`${styles.algBtn} ${algorithm === alg ? styles.active : ""}`}
+            className={`${styles.algBtn} liquid-glass-button ${algorithm === alg ? "active" : ""}`}
             onClick={() => setAlgorithm(alg)}
           >
             {alg === "SUM8" ? "SUM8" : alg === "SUM16" ? "SUM16" : alg}

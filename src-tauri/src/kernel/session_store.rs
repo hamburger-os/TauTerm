@@ -433,6 +433,9 @@ impl SessionStore {
             log::info!("已请求取消会话 {} 的进行中传输", session_id);
         }
 
+        // 取消 journald 实时追踪（若已启动）
+        crate::plugins::ssh::journald::stop_journald_stream(session_id);
+
         // 关闭脚本引擎（必须在 IoLoop 关闭前执行）
         if let Some(ref flag) = handle.script_shutdown {
             flag.store(true, Ordering::SeqCst);

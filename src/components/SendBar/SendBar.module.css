@@ -25,32 +25,11 @@
   justify-content: center;
   width: 32px;
   height: 32px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
   cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.modeBtn:hover {
-  background: var(--glass-bg-hover);
-  color: var(--text-primary);
-}
-
-.modeBtnActive {
-  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
-  color: var(--accent-primary);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 25%, transparent);
 }
 
 .modeBtn:disabled {
   opacity: 0.35;
-  cursor: not-allowed;
-}
-
-.modeBtnActive:disabled {
-  opacity: 0.55;
   cursor: not-allowed;
 }
 

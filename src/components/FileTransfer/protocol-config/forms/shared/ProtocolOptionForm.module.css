@@ -1,5 +1,5 @@
 /* 协议选项表单 — XModem / YModem 共享布局 */
-/* 选项按钮视觉层由全局 liquid-glass-button 接管 */
+/* 选项按钮视觉层（含 active 态）由全局 liquid-glass-button / .active 接管 */
 
 .form {
   display: flex;
@@ -23,22 +23,10 @@
   gap: 2px;
 }
 
-/* 选项按钮 — 布局尺寸，视觉层由 liquid-glass-button 接管 */
+/* 选项按钮 — 仅布局尺寸，视觉层由 liquid-glass-button 接管 */
 .optionBtn {
   flex: 1;
   padding: 3px 6px;
   font-size: var(--text-xs);
   text-align: center;
-  border-radius: var(--radius-sm);
-  opacity: 0.5;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.optionBtnActive {
-  opacity: 1;
-  background: var(--glass-bg-active);
-  border-color: var(--glass-border-focus);
-  color: var(--text-primary);
 }

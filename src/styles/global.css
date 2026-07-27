@@ -171,6 +171,18 @@ body {
               var(--glass-button-shadow-inset);
 }
 
+.liquid-glass-button.active {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--accent-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 25%, transparent);
+  transform: translateY(0);
+}
+
+.liquid-glass-button.active:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .liquid-glass-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -305,15 +317,13 @@ body {
   animation: gradient-shift 4s ease infinite;
 
   /* 玻璃边框与高光 */
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--primary-button-border);
   border-radius: var(--radius-md);
-  box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.8),
-    0 4px 15px rgba(168, 85, 247, 0.3);
+  box-shadow: var(--primary-button-shadow);
 
   /* 文字 */
   color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  text-shadow: var(--primary-button-text-shadow);
   font-weight: 600;
 
   /* 玻璃模糊 */
@@ -332,11 +342,9 @@ body {
 }
 
 .liquid-primary-button:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.9);
+  border-color: var(--primary-button-hover-border);
   transform: translateY(-1px) scale(1.02);
-  box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 1),
-    0 6px 20px rgba(236, 72, 153, 0.4);
+  box-shadow: var(--primary-button-hover-shadow);
 }
 
 .liquid-primary-button:hover:not(:disabled) svg {

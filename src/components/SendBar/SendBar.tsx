@@ -73,7 +73,7 @@ function SendBarInner({ sessionId }: SendBarProps) {
         {modeButtons.map((btn) => (
           <button
             key={btn.mode}
-            className={`${styles.modeBtn} ${mode === btn.mode ? styles.modeBtnActive : ""}`}
+            className={`${styles.modeBtn} liquid-glass-button ${mode === btn.mode ? "active" : ""}`}
             onClick={() => handleModeChange(btn.mode)}
             disabled={isChildRunning}
             title={isChildRunning ? (t("sendBar.modeLocked")) : btn.title}

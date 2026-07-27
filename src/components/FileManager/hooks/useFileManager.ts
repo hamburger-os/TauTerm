@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { SftpEntry, PromptMode, SortField, SortDirection } from '../types';
 
 export interface UseFileManagerReturn {
-  currentPath: string;
+  currentPath: string | null;
   entries: SftpEntry[];
   loading: boolean;
   error: string | null;
@@ -75,7 +75,7 @@ export function useFileManager(
   sessionId: string,
   isConnected: boolean
 ): UseFileManagerReturn {
-  const [currentPath, setCurrentPath] = useState('/');
+  const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rawEntries, setRawEntries] = useState<SftpEntry[]>([]);
@@ -85,6 +85,21 @@ export function useFileManager(
   const [promptValue, setPromptValue] = useState('');
   const [promptTarget, setPromptTarget] = useState<SftpEntry | null>(null);
 
+  // ── Resolve remote home dir on connection ──
+  const connectedRef = useRef(isConnected);
+  connectedRef.current = isConnected;
+
+  useEffect(() => {
+    if (!isConnected) return;
+    invoke<string>('get_ssh_home_dir', { sessionId })
+      .then(homeDir => {
+        if (connectedRef.current) setCurrentPath(homeDir);
+      })
+      .catch(() => {
+        if (connectedRef.current) setCurrentPath('/');
+      });
+  }, [isConnected, sessionId]);
+
   // ── Sorted entries (dirs first, then by sortField/direction) ──
   const entries = useMemo(
     () => sortEntries(rawEntries, sortField, sortDirection),
@@ -93,6 +108,9 @@ export function useFileManager(
 
   // ── Breadcrumb segments ──
   const breadcrumbSegments = useMemo((): { name: string; path: string }[] => {
+    if (currentPath === null) {
+      return [{ name: '...', path: '/' }];
+    }
     if (currentPath === '/') {
       return [{ name: '/', path: '/' }];
     }
@@ -130,12 +148,16 @@ export function useFileManager(
   // ── Effect: reload when path changes, clear on disconnect ──
   useEffect(() => {
     if (!isConnected) {
-      setCurrentPath('/');
+      setCurrentPath(null);
       setRawEntries([]);
       setLoading(false);
       setError(null);
       setPromptMode(null);
       setPromptTarget(null);
+      return;
+    }
+    if (currentPath === null) {
+      setLoading(true);
       return;
     }
     loadDirectory(currentPath);
@@ -149,12 +171,13 @@ export function useFileManager(
   }, []);
 
   const goUp = useCallback(() => {
-    if (currentPath === '/') return;
+    if (currentPath === null || currentPath === '/') return;
     const parent = currentPath.replace(/\/[^/]*$/, '') || '/';
     setCurrentPath(parent);
   }, [currentPath]);
 
   const refresh = useCallback(async () => {
+    if (currentPath === null) return;
     await loadDirectory(currentPath);
   }, [currentPath, loadDirectory]);
 
@@ -335,23 +358,34 @@ export function useFileManager(
   );
 
   // ── 传输完成后刷新当前目录（监听统一 `file-transfer:finished` 事件）──
+  // 使用 ref 保持最新 currentPath，避免监听器因目录导航反复注册/注销
+  const currentPathRef = useRef(currentPath);
+  currentPathRef.current = currentPath;
+
   useEffect(() => {
     const p = listen<{ session_id: string; success: boolean }>(
       'file-transfer:finished',
       (event) => {
-        if (event.payload.session_id === sessionId && event.payload.success) {
-          loadDirectory(currentPath);
+        const path = currentPathRef.current;
+        if (path !== null && event.payload.session_id === sessionId && event.payload.success) {
+          // 静默刷新目录（不触发 loading 闪烁），仅更新条目列表
+          invoke<SftpEntry[]>('sftp_list_dir_cmd', {
+            sessionId,
+            remotePath: path,
+          }).then(list => setRawEntries(list))
+            .catch(e => setError(String(e)));
         }
       }
     );
     return () => {
       p.then(fn => fn());
     };
-  }, [sessionId, currentPath, loadDirectory]);
+  }, [sessionId]);
 
   // ── Delete entries ──
   const deleteEntries = useCallback(
     async (targetEntries: SftpEntry[]): Promise<string[]> => {
+      if (currentPath === null) return [];
       if (targetEntries.length === 1) {
         const entry = targetEntries[0];
         if (entry.is_dir) {
@@ -396,6 +430,7 @@ export function useFileManager(
   // ── Rename ──
   const renameEntry = useCallback(
     async (entry: SftpEntry, newName: string) => {
+      if (currentPath === null) return;
       const parentPath = currentPath === '/' ? '' : currentPath;
       const toPath = `${parentPath}/${newName}`;
       await invoke<void>('sftp_rename_cmd', {
@@ -411,6 +446,7 @@ export function useFileManager(
   // ── Create file ──
   const createFile = useCallback(
     async (name: string) => {
+      if (currentPath === null) return;
       const remotePath =
         currentPath === '/'
           ? `/${name}`
@@ -427,6 +463,7 @@ export function useFileManager(
   // ── Create folder ──
   const createFolder = useCallback(
     async (name: string) => {
+      if (currentPath === null) return;
       const remotePath =
         currentPath === '/'
           ? `/${name}`

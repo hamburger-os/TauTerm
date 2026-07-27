@@ -6,6 +6,7 @@
 //! russh Handle 内部线程安全，终端 I/O 与 SFTP 可安全并发。
 
 pub mod handler;
+pub mod journald;
 
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
@@ -93,6 +94,7 @@ impl SshAdapter {
             side_channel: Some(Arc::new(SshSideChannel::new(
                 result.session,
                 result.host_key_fingerprint,
+                result.home_dir,
             ))),
             teardown_delay: self.teardown_delay(),
         })
@@ -158,17 +160,21 @@ pub struct SshSideChannel {
     /// 主机密钥 SHA256 指纹（首次连接时由 check_server_key 产生）。
     /// 由 connect_session_ssh 通过 session-connected 事件传递到前端。
     pub host_key_fingerprint: Option<String>,
+    /// SSH 连接建立时通过 `echo $HOME` 解析的远程用户 home 目录
+    pub home_dir: Option<String>,
 }
 
 impl SshSideChannel {
     pub fn new(
         session: Arc<russh::client::Handle<SshHandler>>,
         host_key_fingerprint: Option<String>,
+        home_dir: Option<String>,
     ) -> Self {
         Self {
             session,
             sftp: Arc::new(Mutex::new(None)),
             host_key_fingerprint,
+            home_dir,
         }
     }
 }
@@ -192,6 +198,8 @@ struct BuildConnectionResult {
     session: Arc<russh::client::Handle<SshHandler>>,
     /// 主机密钥 SHA256 指纹（如 "SHA256:xxxx"），供前端展示/确认
     host_key_fingerprint: Option<String>,
+    /// 远程 home 目录，连接建立时通过 `echo $HOME` 解析
+    home_dir: Option<String>,
 }
 
 /// 建立连接的核心逻辑（async）— 旧接口，解析 JSON 后委托给内部实现。
@@ -372,6 +380,46 @@ async fn build_connection_with_config(
         });
     }
 
+    // 2.5 — 解析远程 home 目录（通过 exec 通道执行 echo $HOME）
+    // 超时 5s 防止远程主机无响应时阻塞整个连接建立流程
+    let home_dir = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            match handle.channel_open_session().await {
+                Ok(mut exec_chan) => {
+                    if exec_chan.exec(true, "echo $HOME").await.is_err() {
+                        return None;
+                    }
+                    let mut output = Vec::new();
+                    loop {
+                        match exec_chan.wait().await {
+                            Some(russh::ChannelMsg::Data { data }) => {
+                                output.extend_from_slice(data.as_ref());
+                            }
+                            Some(russh::ChannelMsg::Eof)
+                            | Some(russh::ChannelMsg::Close)
+                            | None => break,
+                            _ => continue,
+                        }
+                    }
+                    String::from_utf8(output)
+                        .ok()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                }
+                Err(e) => {
+                    log::warn!("打开 SSH exec 通道失败 (home dir): {}", e);
+                    None
+                }
+            }
+        },
+    )
+    .await
+    .unwrap_or_else(|_elapsed| {
+        log::warn!("SSH home_dir exec 超时（5s），回退到默认路径");
+        None
+    });
+
     // 3. 打开交互式 shell 通道
     let channel = handle
         .channel_open_session()
@@ -411,6 +459,7 @@ async fn build_connection_with_config(
         channel: ssh_channel,
         session: handle,
         host_key_fingerprint,
+        home_dir,
     })
 }
 
@@ -433,6 +482,7 @@ impl ProtocolAdapter for SshAdapter {
             side_channel: Some(Arc::new(SshSideChannel::new(
                 result.session,
                 result.host_key_fingerprint,
+                result.home_dir,
             ))),
             teardown_delay: self.teardown_delay(),
         })

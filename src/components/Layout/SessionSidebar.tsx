@@ -84,6 +84,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
               tab.transferEnabled,
               tab.transferProtocol,
               tab.sendBarEnabled,
+              tab.journaldEnabled,
               sessionId,
             );
             // session-connected 事件处理器会自动将已有 tab

@@ -52,13 +52,13 @@ export function BitOpsToolInner() {
       {/* 模式切换 */}
       <div className={styles.modeRow}>
         <button
-          className={`${styles.modeBtn} ${mode === "bitwise" ? styles.active : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button ${mode === "bitwise" ? "active" : ""}`}
           onClick={() => setMode("bitwise")}
         >
           {t("tools.bitwiseMode") ?? "Bitwise"}
         </button>
         <button
-          className={`${styles.modeBtn} ${mode === "sizeof" ? styles.active : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button ${mode === "sizeof" ? "active" : ""}`}
           onClick={() => setMode("sizeof")}
         >
           {t("tools.sizeofMode") ?? "C sizeof"}

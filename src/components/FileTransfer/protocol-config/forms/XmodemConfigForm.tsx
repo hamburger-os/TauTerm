@@ -25,7 +25,7 @@ export default function XmodemConfigForm({
           {([128, 1024] as const).map((bs) => (
             <button
               key={bs}
-              className={`${styles.optionBtn} liquid-glass-button ${config.blockSize === bs ? styles.optionBtnActive : ""}`}
+              className={`${styles.optionBtn} liquid-glass-button ${config.blockSize === bs ? "active" : ""}`}
               onClick={() => onChange({ ...config, blockSize: bs })}
             >
               {bs === 1024
@@ -45,7 +45,7 @@ export default function XmodemConfigForm({
           {(["checksum", "crc16"] as const).map((mode) => (
             <button
               key={mode}
-              className={`${styles.optionBtn} liquid-glass-button ${config.checksumMode === mode ? styles.optionBtnActive : ""}`}
+              className={`${styles.optionBtn} liquid-glass-button ${config.checksumMode === mode ? "active" : ""}`}
               onClick={() => onChange({ ...config, checksumMode: mode })}
             >
               {mode === "checksum"
@@ -65,7 +65,7 @@ export default function XmodemConfigForm({
           {(["nak", "crc"] as const).map((init) => (
             <button
               key={init}
-              className={`${styles.optionBtn} liquid-glass-button ${config.initChar === init ? styles.optionBtnActive : ""}`}
+              className={`${styles.optionBtn} liquid-glass-button ${config.initChar === init ? "active" : ""}`}
               onClick={() => onChange({ ...config, initChar: init })}
             >
               {init === "nak"

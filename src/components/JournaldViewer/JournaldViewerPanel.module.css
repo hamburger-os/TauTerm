@@ -1,0 +1,328 @@
+/* Journald 日志查看器面板 — 仅布局样式，视觉属性由全局类接管 */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ── 子标签页 ── */
+.subTabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+}
+
+.subTab {
+  flex: 1;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+/* ── 过滤栏 ── */
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+}
+
+.filterDateLabel {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.filterDateLabelText {
+  flex-shrink: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.filterRow {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+
+.filterSelect,
+.filterInput {
+  height: 26px;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  padding: 0 6px;
+}
+
+.filterSelect {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.filterInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.filterCheckbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.filterCheckboxLabel {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+
+/* ── 工具栏 ── */
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px 4px;
+  flex-shrink: 0;
+}
+
+.modeToggle {
+  display: flex;
+  gap: 4px;
+}
+
+.modeBtn {
+  height: 24px;
+  padding: 0 8px;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: background var(--transition-fast);
+}
+
+.actionArea {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+}
+
+.actionBtn {
+  height: 24px;
+  padding: 0 10px;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.countBadge {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: 0 6px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+}
+
+/* ── 日志列表 ── */
+.logList {
+  flex: 1;
+  min-height: 100px;
+  max-height: 500px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.logListInner {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 日志条目（紧凑模式）── */
+.logEntry {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--transition-fast);
+}
+
+.logEntryCompact {
+  min-height: 22px;
+}
+
+.logLevel {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+}
+
+.logTimestamp {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.logUnit {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logMessageCompact {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── 日志条目（完整模式）── */
+.logEntryFull {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px;
+}
+
+.logEntryFullHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.logMessageFull {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.logExtra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.logExtraField {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 4px;
+}
+
+/* ── 状态显示 ── */
+.loadingContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.loadingText {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+
+.loadMoreBtn {
+  width: 100%;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.errorBanner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin: 4px 8px;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+
+.errorRetryBtn {
+  height: 22px;
+  padding: 0 8px;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.emptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.emptyText {
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+}
+
+/* ── 日志级别颜色标记 ── */
+.levelError {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  background-color: var(--color-error);
+  border-radius: 50%;
+}
+
+.levelWarning {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  background-color: var(--color-warning);
+  border-radius: 50%;
+}
+
+.levelInfo {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  background-color: var(--color-success);
+  border-radius: 50%;
+}
+
+.levelDebug {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  background-color: var(--text-tertiary);
+  border-radius: 50%;
+}

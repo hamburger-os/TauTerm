@@ -135,6 +135,7 @@ pub async fn connect_session(
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
     send_bar_enabled: Option<bool>,
+    journald_enabled: Option<bool>,
     // 可选：传入已有的 session_id 以原地重连（保留 UUID 和 I/O 统计连续性）
     session_id: Option<String>,
 ) -> Result<String, String> {
@@ -149,8 +150,8 @@ pub async fn connect_session(
     }
 
     match pid.as_str() {
-        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, session_id).await,
-        "ssh" => connect_session_ssh(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, session_id).await,
+        "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, journald_enabled, session_id).await,
+        "ssh" => connect_session_ssh(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, journald_enabled, session_id).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
@@ -208,6 +209,7 @@ async fn connect_session_serial(
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
     send_bar_enabled: Option<bool>,
+    _journald_enabled: Option<bool>,
     session_id: Option<String>,
 ) -> Result<String, String> {
     // 通过 SerialAdapter（ProtocolAdapter trait）创建连接产物
@@ -482,16 +484,31 @@ async fn connect_session_ssh(
     app: AppHandle,
     state: State<'_, AppState>,
     endpoint: String,
-    params: Value,
+    mut params: Value,
     name: Option<String>,
     transfer_enabled: Option<bool>,
     transfer_protocol: Option<String>,
     send_bar_enabled: Option<bool>,
+    journald_enabled: Option<bool>,
     session_id: Option<String>,
 ) -> Result<String, String> {
     let params_for_config = params.clone();
     let ssh_config: crate::plugins::ssh::SshConfig = serde_json::from_value(params_for_config)
         .map_err(|e| format!("SSH 配置解析失败: {}", e))?;
+
+    // 将 journald_enabled 提升为 params 的通用字段（不再耦合 SshConfig）。
+    // reconfigure/restore 时优先复用 params 中已有值，保证向前向后兼容。
+    let journald_enabled_val = if let Some(obj) = params.as_object_mut() {
+        if let Some(existing) = obj.get("journald_enabled").and_then(|v| v.as_bool()) {
+            existing
+        } else {
+            let v = journald_enabled.unwrap_or(false);
+            obj.insert("journald_enabled".to_string(), serde_json::Value::Bool(v));
+            v
+        }
+    } else {
+        journald_enabled.unwrap_or(false)
+    };
 
     // 通过 SshAdapter::connect_with_config 获取 ProtocolConnection，
     // 复用已解析的 SshConfig 实例，避免 connect() 内部二次 JSON 反序列化。
@@ -589,6 +606,7 @@ async fn connect_session_ssh(
         "send_bar_enabled": send_bar_enabled_val,
         "file_service_enabled": ssh_config.file_service_enabled,
         "file_service_protocol": ssh_config.file_service_protocol,
+        "journald_enabled": journald_enabled_val,
         "host_key_fingerprint": host_key_fingerprint,
     }));
 
@@ -1594,6 +1612,7 @@ fn get_ssh_side_channel(
         session: ssh_sc_ref.session.clone(),
         sftp: ssh_sc_ref.sftp.clone(),
         host_key_fingerprint: ssh_sc_ref.host_key_fingerprint.clone(),
+        home_dir: ssh_sc_ref.home_dir.clone(),
     }))
 }
 
@@ -1715,6 +1734,104 @@ pub async fn sftp_delete_recursive_cmd(
 ) -> Result<(), String> {
     let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
     sftp_delete_recursive(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+}
+
+/// 获取 SSH 会话的远程用户 home 目录
+///
+/// 连接建立阶段通过 `echo $HOME` 解析并缓存于 `SshSideChannel.home_dir`。
+/// 若获取失败或值为 None，回退到 `"/"`。
+#[tauri::command]
+pub fn get_ssh_home_dir(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<String, String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    Ok(ssh_sc.home_dir.clone().unwrap_or_else(|| "/".to_string()))
+}
+
+// ── Journald 日志查看器命令 ──────────────────────────
+
+/// 启动 journald 实时流式追踪
+///
+/// 在远程 SSH 会话上打开 exec 通道，执行 `journalctl -o json -f`，
+/// spawn tokio task 循环读取并为每条日志 emit `journald:entry` 事件。
+#[tauri::command]
+pub async fn start_journald_stream(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    level: Option<String>,
+    keyword: Option<String>,
+    unit: Option<String>,
+    kernel_only: Option<bool>,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
+        level,
+        keyword,
+        unit,
+        kernel_only: kernel_only.unwrap_or(false),
+        since: None,
+        until: None,
+    };
+    crate::plugins::ssh::journald::start_journald_stream(
+        &ssh_sc.session,
+        app,
+        session_id,
+        &filters,
+    )
+    .await
+}
+
+/// 停止 journald 实时追踪
+///
+/// 设置对应 session 的 cancel 标志，使 tokio 流式循环优雅退出。
+#[tauri::command]
+pub fn stop_journald_stream(
+    session_id: String,
+) -> Result<(), String> {
+    crate::plugins::ssh::journald::stop_journald_stream(&session_id);
+    Ok(())
+}
+
+/// 查询 journald 历史日志（单次请求，支持游标分页）
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn journald_query_cmd(
+    state: State<'_, AppState>,
+    session_id: String,
+    level: Option<String>,
+    keyword: Option<String>,
+    unit: Option<String>,
+    kernel_only: Option<bool>,
+    since: Option<String>,
+    until: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+) -> Result<crate::plugins::ssh::journald::JournaldQueryResponse, String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
+        level,
+        keyword,
+        unit,
+        kernel_only: kernel_only.unwrap_or(false),
+        since,
+        until,
+    };
+    let limit = limit.unwrap_or(100);
+    let (entries, next_cursor) = crate::plugins::ssh::journald::journald_query(
+        &ssh_sc.session,
+        &filters,
+        cursor.as_deref(),
+        limit,
+    )
+    .await?;
+    let has_more = entries.len() >= limit;
+    Ok(crate::plugins::ssh::journald::JournaldQueryResponse {
+        entries,
+        next_cursor,
+        has_more,
+    })
 }
 
 // ── 统一文件传输命令（协议无关）────────────────────────────

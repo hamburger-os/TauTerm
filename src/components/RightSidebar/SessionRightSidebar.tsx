@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "./RightSidebarPanel";
 import TransmissionPanel from "../Transmission/TransmissionPanel";
 import FileManagerPanel from "../FileManager/FileManagerPanel";
+import JournaldViewerPanel from "../JournaldViewer/JournaldViewerPanel";
 import ProtocolTool from "../Tools/ProtocolTool";
 import CalculatorTool from "../Tools/CalculatorTool";
 
@@ -14,6 +15,8 @@ export interface SessionRightSidebarProps {
   showTransmission: boolean;
   /** 是否显示文件管理器面板（SSH + fileServiceEnabled） */
   showFileManager: boolean;
+  /** 是否显示 journald 日志查看器面板（SSH + journaldEnabled） */
+  showJournald: boolean;
 }
 
 /**
@@ -28,6 +31,7 @@ export default function SessionRightSidebar({
   initialProtocol,
   showTransmission,
   showFileManager,
+  showJournald,
 }: SessionRightSidebarProps) {
   const { t } = useTranslation();
 
@@ -58,6 +62,13 @@ export default function SessionRightSidebar({
             isConnected={isConnected}
           />
         </RightSidebarPanel>
+      )}
+      {/* 日志查看器（SSH journald）—— 组件自行管理 RightSidebarPanel */}
+      {showJournald && (
+        <JournaldViewerPanel
+          sessionId={sessionId}
+          isConnected={isConnected}
+        />
       )}
       {/* 文件传输 */}
       {showTransmission && (

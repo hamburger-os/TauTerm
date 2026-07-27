@@ -72,6 +72,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [sshTransferEnabled, setSshTransferEnabled] = useState(false);
   const [fileServiceEnabled, setFileServiceEnabled] = useState(true);
   const [fileServiceProtocol, setFileServiceProtocol] = useState("sftp");
+  const [journaldEnabled, setJournaldEnabled] = useState(false);
 
   const serialEndpoints = state.endpoints.filter(e => e.connection_type === "serial");
   const isSerial = selectedMode === "serial";
@@ -127,6 +128,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             if (typeof p.send_bar_enabled === "boolean") setSshSendBarEnabled(p.send_bar_enabled);
             if (typeof p.transfer_enabled === "boolean") setSshTransferEnabled(p.transfer_enabled);
             if (typeof p.file_service_protocol === "string") setFileServiceProtocol(p.file_service_protocol);
+            if (typeof p.journald_enabled === "boolean") setJournaldEnabled(p.journald_enabled);
           }
         }
         if (targetTab.name) setSessionName(targetTab.name);
@@ -166,6 +168,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setSshTransferEnabled(false);
     setFileServiceEnabled(true);
     setFileServiceProtocol("sftp");
+    setJournaldEnabled(false);
     setSessionName("");
   }, [isOpen, editSessionId, refreshEndpoints]);
 
@@ -222,6 +225,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       transfer_enabled: sshTransferEnabled,
       file_service_enabled: fileServiceEnabled,
       file_service_protocol: "sftp",
+      journald_enabled: journaldEnabled,
     } : {};
 
     const pluginId = selectedMode; // "serial" | "ssh"
@@ -257,7 +261,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, sshHost, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol]);
+  }, [port, isSerial, isSsh, sshHost, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -654,6 +658,20 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       />
                       <div />
                       <span>{t("ssh.enableFileService")}</span>
+                    </label>
+                  </div>
+
+                  {/* 启用 journald 日志查看器开关 */}
+                  <div className={styles.field}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                      <input
+                        type="checkbox"
+                        checked={journaldEnabled}
+                        onChange={e => setJournaldEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div />
+                      <span>{t("journald.enableJournald")}</span>
                     </label>
                   </div>
 

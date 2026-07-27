@@ -355,6 +355,7 @@ function AppInner() {
                           ? (tabPlugin.manifest.transfer_protocols?.length ?? 0) > 0 && tab.transferEnabled !== false
                           : false;
                         const showFileManager = tabPlugin?.manifest.id === "ssh" && tab.fileServiceEnabled === true;
+                        const showJournald = tabPlugin?.manifest.id === "ssh" && tab.journaldEnabled === true;
                         const isActive = tab.id === sessionState.activeTabId;
                         return (
                           <div
@@ -367,6 +368,7 @@ function AppInner() {
                               initialProtocol={tab.transferProtocol as ProtocolType | undefined}
                               showTransmission={showTransmission}
                               showFileManager={showFileManager}
+                              showJournald={showJournald}
                             />
                           </div>
                         );
