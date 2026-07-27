@@ -13,6 +13,7 @@ import ResizeHandle from "./components/Layout/ResizeHandle";
 import TabContentDispatcher from "./components/TabContentDispatcher";
 import SendBar from "./components/SendBar/SendBar";
 import type { ProtocolType } from "./types/transfer";
+import { useUpdater } from "./hooks/useUpdater";
 import RightSidebar from "./components/RightSidebar/RightSidebar";
 import SessionRightSidebar from "./components/RightSidebar/SessionRightSidebar";
 import SettingsPage from "./components/Settings/SettingsPage";
@@ -62,8 +63,22 @@ function AppInner() {
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [rightSidebarVisible, setRightSidebarVisible] = useState(true);
   const [editSessionId, setEditSessionId] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
+
+  // ── 更新器（自定义 Hook 封装完整生命周期） ──
+  const {
+    updateInfo,
+    updateCheckFrequency,
+    handleCheckUpdate,
+    handleDownloadUpdate,
+    handleInstallUpdate,
+    handleCheckFrequencyChange,
+    handleVersionClick,
+    settingsOpen,
+    setSettingsOpen,
+    settingsInitialCategory,
+    setSettingsInitialCategory,
+  } = useUpdater(t);
 
   // Toast
   const { showToast } = useToast();
@@ -402,12 +417,25 @@ function AppInner() {
       </div>
 
       {/* 状态栏 */}
-      <StatusBar />
+      <StatusBar
+        updatePhase={updateInfo.phase}
+        latestVersion={updateInfo.latestVersion}
+        downloadedBytes={updateInfo.downloadedBytes}
+        totalBytes={updateInfo.totalBytes}
+        onVersionClick={handleVersionClick}
+      />
 
       {/* 设置页 (全屏覆盖层) */}
       <SettingsPage
         isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => { setSettingsOpen(false); setSettingsInitialCategory(null); }}
+        initialCategory={settingsInitialCategory}
+        updateInfo={updateInfo}
+        checkFrequency={updateCheckFrequency}
+        onCheckUpdate={() => handleCheckUpdate(true)}
+        onDownloadUpdate={handleDownloadUpdate}
+        onInstallUpdate={handleInstallUpdate}
+        onCheckFrequencyChange={handleCheckFrequencyChange}
       />
 
       {/* 命令面板 */}

@@ -234,6 +234,7 @@ graph LR
 - 🤖 **自动应答/脚本引擎** — 嵌入式 Lua 5.4 运行时，每会话独立 VM 沙箱隔离；可视化规则配置编译为 Lua 脚本；支持 5 种匹配模式 (contains/equals/starts_with/regex/lua_pattern)、10 种动态宏、匹配/定时触发、冷却控制、HEX 二进制匹配；"转换为脚本"一键从规则升级为脚本编辑
 - ⚙️ **设置页面** — 7 面板全屏覆盖层：通用数据模式、外观（主题 / 字体 / 行缓冲）、语言、编码、日志、快捷键、关于；字体大小和行缓冲滑块拖动即实时生效
 - 🔐 **凭据存储** — OS 原生 keyring + AES-256-GCM 降级，密码/密钥/证书/Token 类型安全
+- 🔄 **自动更新** — 基于 Tauri updater 的内置更新系统，启动时自动检查（可配置频率：每次/每日/每周/从不），一键下载安装并重启，StatusBar 版本号更新指示器 + 设置 About 页面完整更新控制面板
 - 🎨 **Liquid Glass v3 设计系统** — 动态炫彩光球背景、SVG 噪点磨砂纹理、不对称高光边框、Framer Motion 动画、Google Glow / Obsidian / Frosted 三主题
 - 🌐 **多语言** — i18next 命名空间隔离，插件自带翻译，运行时切换
 - ⚡ **命令面板** — `Ctrl+Shift+P` 模糊搜索所有命令，键盘驱动操作
@@ -259,6 +260,7 @@ graph LR
 | 国际化 | i18next + react-i18next |
 | 样式方案 | CSS Modules + CSS 自定义属性 |
 | 安全存储 | keyring-rs + AES-256-GCM |
+| 自动更新 | tauri-plugin-updater + tauri-plugin-process |
 | 网络协议 | russh (纯 Rust async SSH) + russh-sftp |
 | 脚本引擎 | mlua 0.10 (Lua 5.4, vendored) |
 | 正则引擎 | regex 1 |
@@ -698,7 +700,7 @@ npm run tauri build
 - [ ] 全平台测试通过
 - [ ] 性能优化（启动时间、内存占用、I/O 吞吐）
 - [ ] 插件 SDK 文档
-- [ ] 安装包签名与分发
+- [x] 安装包签名与分发（Tauri updater + CI 签名 + latest.json manifest）
 
 ### v1.x+ — 生态扩展
 - [ ] 动态插件加载（无需重新编译）

@@ -559,6 +559,23 @@
     "shortcutsAction_toggleRightSidebar": "Toggle Right Panel",
     "shortcutsAction_refreshPorts": "Refresh Port List"
   },
+  "updater": {
+    "checking": "Checking for updates...",
+    "checkForUpdates": "Check for Updates",
+    "downloadUpdate": "Download {{version}}",
+    "downloading": "Downloading...",
+    "installAndRelaunch": "Install & Relaunch",
+    "retry": "Retry",
+    "checkFailed": "Check failed: {{error}}",
+    "currentVersion": "Current Version",
+    "alreadyLatest": "You are up to date",
+    "releaseNotes": "Release Notes",
+    "checkFrequency": "Check Frequency",
+    "frequencyAlways": "Every Launch",
+    "frequencyDaily": "Once a Day",
+    "frequencyWeekly": "Once a Week",
+    "frequencyNever": "Never"
+  },
   "statusBar": {
     "baudRate": "Baud",
     "dataBits": "Data",
@@ -578,7 +595,8 @@
     "typeSsh": "SSH",
     "authPassword": "PWD",
     "authKey": "KEY",
-    "fileService": "SFTP"
+    "fileService": "SFTP",
+    "updateAvailable": "v{{version}} available — click to view"
   },
   "transmission": {
     "title": "File Transfer",

@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { getVersion } from "@tauri-apps/api/app";
 import { motion, AnimatePresence } from "framer-motion";
 import Icon from "../common/Icon";
 import GeneralSettings from "./panels/GeneralSettings";
@@ -9,11 +8,27 @@ import LanguageSettings from "./panels/LanguageSettings";
 import EncodingSettings from "./panels/EncodingSettings";
 import LoggingSettings from "./panels/LoggingSettings";
 import ShortcutSettings from "./panels/ShortcutSettings";
+import AboutSettings from "./panels/AboutSettings";
+import type { UpdateInfo, CheckFrequency } from "../../types/updater";
 import styles from "./SettingsPage.module.css";
 
 interface SettingsPageProps {
   isOpen: boolean;
   onClose: () => void;
+  /** 从外部指定打开的初始分类（如 "about"），为 null 时保持默认 "general" */
+  initialCategory?: string | null;
+  /** 更新器状态 */
+  updateInfo: UpdateInfo;
+  /** 当前检查频率 */
+  checkFrequency: CheckFrequency;
+  /** 手动检查更新 */
+  onCheckUpdate: () => void;
+  /** 下载更新 */
+  onDownloadUpdate: () => void;
+  /** 安装并重启 */
+  onInstallUpdate: () => void;
+  /** 修改检查频率 */
+  onCheckFrequencyChange: (freq: CheckFrequency) => void;
 }
 
 type Category = "general" | "appearance" | "language" | "encoding" | "logging" | "shortcuts" | "about";
@@ -34,15 +49,26 @@ const CATEGORIES: { id: Category; icon: import("../common/Icon").IconName; label
  * 布局：左侧分类导航 + 右侧配置内容区。
  * 关闭方式：Esc / 点击遮罩 / 关闭按钮。
  */
-export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
+export default function SettingsPage({
+  isOpen,
+  onClose,
+  initialCategory,
+  updateInfo,
+  checkFrequency,
+  onCheckUpdate,
+  onDownloadUpdate,
+  onInstallUpdate,
+  onCheckFrequencyChange,
+}: SettingsPageProps) {
   const { t } = useTranslation();
   const [activeCategory, setActiveCategory] = useState<Category>("general");
-  const [appVersion, setAppVersion] = useState("");
 
-  // 从 tauri.conf.json 动态读取版本号
+  // 外部指定初始分类时（如 StatusBar 点击版本号 → "about"）
   useEffect(() => {
-    getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion(""));
-  }, []);
+    if (isOpen && initialCategory) {
+      setActiveCategory(initialCategory as Category);
+    }
+  }, [isOpen, initialCategory]);
 
   // Esc 关闭
   useEffect(() => {
@@ -67,20 +93,17 @@ export default function SettingsPage({ isOpen, onClose }: SettingsPageProps) {
       case "logging": return <LoggingSettings />;
       case "shortcuts": return <ShortcutSettings />;
       case "about": return (
-        <div className={styles.aboutSection}>
-          <h3 className={styles.panelTitle}>TauTerm</h3>
-          {appVersion && <p className={styles.aboutVersion}>{appVersion}</p>}
-          <p className={styles.aboutDesc}>{t("app.description")}</p>
-          <div className={styles.aboutInfo}>
-            <div className={styles.aboutRow}>
-              <span className={styles.aboutLabel}>{t("settings.buildInfo")}</span>
-              <span className={styles.aboutValue}>Tauri + React + xterm.js</span>
-            </div>
-          </div>
-        </div>
+        <AboutSettings
+          updateInfo={updateInfo}
+          checkFrequency={checkFrequency}
+          onCheckUpdate={onCheckUpdate}
+          onDownloadUpdate={onDownloadUpdate}
+          onInstallUpdate={onInstallUpdate}
+          onCheckFrequencyChange={onCheckFrequencyChange}
+        />
       );
     }
-  }, [activeCategory, appVersion, t]);
+  }, [activeCategory, updateInfo, checkFrequency, onCheckUpdate, onDownloadUpdate, onInstallUpdate, onCheckFrequencyChange, t]);
 
   return (
     <AnimatePresence>

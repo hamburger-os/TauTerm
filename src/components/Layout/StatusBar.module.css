@@ -205,7 +205,60 @@
   flex-shrink: 0;
 }
 
-.version { color: var(--text-muted); }
+.version {
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.version:hover {
+  color: var(--text-primary);
+}
+
+/* 有新版本 — 绿色闪烁 */
+.versionHasUpdate {
+  color: var(--color-success) !important;
+  animation: updatePulse 2s ease-in-out infinite;
+}
+
+/* 准备安装 — 绿色常亮 */
+.versionReady {
+  color: var(--color-success) !important;
+  font-weight: 600;
+}
+
+/* 检查中 — 半透明 */
+.versionChecking {
+  color: var(--text-secondary) !important;
+  opacity: 0.6;
+}
+
+/* 更新指示圆点 */
+.updateDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  box-shadow: 0 0 6px var(--color-success);
+  flex-shrink: 0;
+}
+
+@keyframes updatePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* 下载进度 */
+.downloadProgress {
+  color: var(--accent-primary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  margin-right: 6px;
+}
 
 /* VPort 驱动/端口警告 */
 .vportWarning {

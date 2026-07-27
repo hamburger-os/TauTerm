@@ -99,6 +99,8 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.releaseId }}
           args: '--bundles nsis,msi'
@@ -137,6 +139,8 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.releaseId }}
           args: '--bundles deb,rpm,appimage'
@@ -159,6 +163,120 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.releaseId }}
           args: '--bundles dmg,app'
+
+  # ── Update Manifest ───────────────────────────────────────────
+  # 汇总所有平台的安装包信息，生成 latest.json 并签名上传
+  update-manifest:
+    name: Generate Update Manifest
+    needs: [create-release, build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Tauri CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/tauri
+          key: tauri-cli-v2-${{ runner.os }}
+
+      - name: Install Tauri CLI (if not cached)
+        run: |
+          if ! command -v tauri &>/dev/null; then
+            cargo install tauri-cli --version "^2"
+          fi
+
+      - name: Generate and sign latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          RELEASE_ID="${{ needs.create-release.outputs.releaseId }}"
+          TAG="${{ github.ref_name }}"
+          REPO="${{ github.repository }}"
+
+          # ── 获取所有 release assets（一次性解析为 JSON 数组） ──
+          ASSETS_JSON=$(gh api "repos/$REPO/releases/$RELEASE_ID" \
+            --jq '[.assets[] | {name: .name, url: .browser_download_url}]')
+
+          # ── 获取所有 .sig 文件（一次性过滤，避免循环内重复 jq） ──
+          SIG_FILES=$(echo "$ASSETS_JSON" | jq -r '[.[] | select(.name | endswith(".sig"))]')
+
+          # ── 构造 manifest 骨架 ──
+          jq -n --arg version "$TAG" --arg notes "See CHANGELOG.md for details." \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {}}' > manifest.json
+
+          # ── 遍历 .sig 文件，匹配对应安装包 ──
+          SIG_COUNT=$(echo "$SIG_FILES" | jq 'length')
+          for i in $(seq 0 $((SIG_COUNT - 1))); do
+            SIG_ENTRY=$(echo "$SIG_FILES" | jq -r ".[$i]")
+            SIG_NAME=$(echo "$SIG_ENTRY" | jq -r '.name')
+            SIG_URL=$(echo "$SIG_ENTRY" | jq -r '.url')
+
+            # 剥离 .sig 后缀得到安装包文件名
+            ASSET_NAME="${SIG_NAME%.sig}"
+
+            # 查找对应的安装包 URL
+            ASSET_URL=$(echo "$ASSETS_JSON" | jq -r --arg name "$ASSET_NAME" \
+              '.[] | select(.name == $name) | .url')
+            if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
+              echo "::warning::No matching installer found for $SIG_NAME (expected $ASSET_NAME)"
+              continue
+            fi
+
+            # 下载签名文件内容
+            SIGNATURE=$(curl -sSL --retry 3 --retry-delay 2 "$SIG_URL") || {
+              echo "::warning::Failed to download signature $SIG_NAME"
+              continue
+            }
+
+            # ── 推断平台目标 ──
+            TARGET=""
+            case "$ASSET_NAME" in
+              *_x64-setup.exe|*_x64_en-US.msi)
+                TARGET="windows-x86_64" ;;
+              *_amd64.deb|*_amd64.rpm|*_amd64.AppImage*)
+                TARGET="linux-x86_64" ;;
+              *_aarch64.dmg|*_aarch64.app.tar.gz)
+                TARGET="darwin-aarch64" ;;
+              *_x64.dmg|*_x64.app.tar.gz)
+                TARGET="darwin-x86_64" ;;
+              *)
+                echo "::warning::Unknown asset pattern: $ASSET_NAME — skipping"
+                continue ;;
+            esac
+
+            # 将平台信息写入 manifest
+            jq --arg target "$TARGET" --arg sig "$SIGNATURE" --arg url "$ASSET_URL" \
+              '.platforms[$target] = {signature: $sig, url: $url}' manifest.json > tmp.json
+            mv tmp.json manifest.json
+          done
+
+          # ── 签名 manifest ──
+          echo "$TAURI_SIGNING_PRIVATE_KEY" > private_key.key
+
+          SIGN_ARGS="sign --private-key private_key.key --sign-file manifest.json"
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
+            SIGN_ARGS="$SIGN_ARGS --password $TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          fi
+
+          MANIFEST_SIG=$(tauri signer $SIGN_ARGS 2>/dev/null || echo "")
+
+          if [ -n "$MANIFEST_SIG" ]; then
+            jq --arg sig "$MANIFEST_SIG" '. + {signature: $sig}' manifest.json > latest.json
+          else
+            echo "::warning::Manifest signing failed — uploading unsigned manifest"
+            cp manifest.json latest.json
+          fi
+
+          # ── 上传 latest.json ──
+          gh release upload "$TAG" latest.json --repo "$REPO" --clobber
+          echo "::notice::latest.json uploaded successfully"

@@ -1,12 +1,26 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { useSession } from "../../context/SessionContext";
 import { useCom0comStatus } from "../../hooks/useCom0comStatus";
 import { pluginRegistry } from "../../core/plugin-registry";
 import { formatBytes, formatUptime, formatPortParams } from "../../utils/format";
+import type { UpdatePhase } from "../../types/updater";
 import Icon from "../common/Icon";
 import styles from "./StatusBar.module.css";
+
+interface StatusBarProps {
+  /** 更新阶段 */
+  updatePhase: UpdatePhase;
+  /** 最新版本号 */
+  latestVersion?: string;
+  /** 已下载字节数 */
+  downloadedBytes?: number;
+  /** 总字节数 */
+  totalBytes?: number;
+  /** 点击版本号区域回调（跳转到 About 页） */
+  onVersionClick: () => void;
+}
 
 /**
  * 底部状态栏（多协议）
@@ -16,7 +30,13 @@ import styles from "./StatusBar.module.css";
  * - SSH：user@host:port、认证方式、文件服务状态
  * - 通用：连接状态、运行时间、数据模式、Tx/Rx 实时速率、日志状态
  */
-export default function StatusBar() {
+export default function StatusBar({
+  updatePhase,
+  latestVersion,
+  downloadedBytes,
+  totalBytes,
+  onVersionClick,
+}: StatusBarProps) {
   const { t } = useTranslation();
   const { state, loggingSessions, logStatuses } = useSession();
   const activeTab = state.tabs.find(t => t.id === state.activeTabId);
@@ -66,6 +86,24 @@ export default function StatusBar() {
 
   // 数据模式（使用 i18n 键确保语言切换时正确显示）
   const dataMode = params?.data_mode === "hex" ? t("serial.dataModeHex") : params?.data_mode === "dual" ? t("serial.dataModeDual") : t("serial.dataModeText");
+
+  // 更新下载进度百分比
+  const downloadPercent = useMemo(() => {
+    if (updatePhase !== "downloading") return null;
+    if (!totalBytes || totalBytes === 0) return null;
+    const bytes = downloadedBytes ?? 0;
+    return Math.min(Math.round((bytes / totalBytes) * 100), 99);
+  }, [updatePhase, downloadedBytes, totalBytes]);
+
+  // 下载速度（每秒刷新暂不实现，仅展示百分比）
+  const versionStyles = useMemo(() => {
+    const base: React.CSSProperties = {};
+    if (updatePhase === "available" || updatePhase === "ready") {
+      base.color = "var(--color-success)";
+      base.cursor = "pointer";
+    }
+    return base;
+  }, [updatePhase]);
 
   return (
     <div className={`${styles.bar} liquid-glass`}>
@@ -233,7 +271,40 @@ export default function StatusBar() {
       </div>
 
       <div className={styles.right}>
-        {appVersion && <span className={styles.version}>{appVersion}</span>}
+        {/* 下载进度 */}
+        {updatePhase === "downloading" && downloadPercent !== null && (
+          <span className={styles.downloadProgress}>
+            <Icon name="chevron-down" size="xs" />
+            {" "}{downloadPercent}%
+          </span>
+        )}
+        {/* 版本号（可点击，有更新时变色+闪烁） */}
+        {appVersion && (
+          <span
+            className={`${styles.version} ${
+              updatePhase === "available" ? styles.versionHasUpdate :
+              updatePhase === "ready" ? styles.versionReady :
+              updatePhase === "checking" ? styles.versionChecking :
+              ""
+            }`}
+            style={versionStyles}
+            onClick={onVersionClick}
+            title={
+              updatePhase === "available"
+                ? t("statusBar.updateAvailable", { version: latestVersion ?? "" })
+                : updatePhase === "ready"
+                  ? t("updater.installAndRelaunch")
+                  : updatePhase === "downloading"
+                    ? t("updater.downloading")
+                    : t("settings.about")
+            }
+          >
+            {appVersion}
+            {(updatePhase === "available" || updatePhase === "ready") && (
+              <span className={styles.updateDot} />
+            )}
+          </span>
+        )}
       </div>
     </div>
   );

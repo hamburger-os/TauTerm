@@ -559,6 +559,23 @@
     "shortcutsAction_toggleRightSidebar": "切换右侧栏",
     "shortcutsAction_refreshPorts": "刷新端口列表"
   },
+  "updater": {
+    "checking": "正在检查更新...",
+    "checkForUpdates": "检查更新",
+    "downloadUpdate": "下载 {{version}}",
+    "downloading": "正在下载...",
+    "installAndRelaunch": "安装并重启",
+    "retry": "重试",
+    "checkFailed": "检查失败: {{error}}",
+    "currentVersion": "当前版本",
+    "alreadyLatest": "已是最新版本",
+    "releaseNotes": "更新日志",
+    "checkFrequency": "检查频率",
+    "frequencyAlways": "每次启动",
+    "frequencyDaily": "每天一次",
+    "frequencyWeekly": "每周一次",
+    "frequencyNever": "从不检查"
+  },
   "statusBar": {
     "baudRate": "波特率",
     "dataBits": "数据位",
@@ -578,7 +595,8 @@
     "typeSsh": "SSH",
     "authPassword": "密码",
     "authKey": "密钥",
-    "fileService": "SFTP"
+    "fileService": "SFTP",
+    "updateAvailable": "新版本 v{{version}} 可用，点击查看"
   },
   "transmission": {
     "title": "文件传输",
