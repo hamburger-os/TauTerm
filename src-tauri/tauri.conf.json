@@ -5,7 +5,7 @@
   "identifier": "com.tauterm.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "npm run check-com0com && npm run build",
     "beforeDevCommand": "npm run dev",
     "beforeBundleCommand": "node scripts/set-admin-manifest.js"

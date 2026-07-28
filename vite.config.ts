@@ -65,7 +65,7 @@ export default defineConfig(async () => ({
     chunkSizeWarningLimit: 800,
   },
   server: {
-    port: 1420,
+    port: 5173,
     strictPort: true,
     watch: {
       ignored: ["**/src-tauri/**"],

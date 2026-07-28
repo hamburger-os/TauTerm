@@ -555,7 +555,7 @@ npm install
 npm run tauri dev
 ```
 
-- Vite 开发服务器运行在 `http://localhost:1420`
+- Vite 开发服务器运行在 `http://localhost:5173`
 - Tauri 窗口自动打开，支持热更新（前端）和热重载（Rust）
 
 > **首次运行**：`npm run tauri dev` 会编译所有 Rust 依赖，需要 **5-15 分钟**（视网络和 CPU 而定）。后续编译将利用缓存，通常只需几秒。
