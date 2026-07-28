@@ -20,8 +20,8 @@ metadata:
 |------|------|------|
 | `.liquid-glass` | 完整玻璃面板 | 含 position: relative + 噪点纹理。用于布局 chrome 表面和弹窗。**不可**用于 absolute/fixed 元素 |
 | `.liquid-glass-float` | 浮动玻璃面板 | 无 position 约束，无噪点纹理。用于 Toast、ContextMenu、SearchBar 下拉等 absolute/fixed 元素 |
-| `.liquid-glass-card` | 内层卡片 | 基于 glass-fill + 16px 阴影。用于嵌套在 `.liquid-glass` 内的卡片 |
-| `.liquid-glass-mini-card` | 微型卡片 | 基于 glass-fill + 6px 轻阴影。用于 <50px 的小型元素 |
+| `.liquid-glass-card` | 内层卡片 | 基于 `--glass-card-fill`（较 `--glass-fill` 更深） + 16px 阴影。用于嵌套在 `.liquid-glass` 内的卡片 |
+| `.liquid-glass-mini-card` | 微型卡片 | 基于 `--glass-card-fill` + 6px 轻阴影。用于 <50px 的小型元素 |
 | `.liquid-glass-button` | 次要玻璃按钮 | hover 上浮 + 阴影增强。用于 Cancel、Close、图标按钮。**选中态**：添加 `"active"` 类（非 CSS Module）启用 accent 色相叠加 + accent 色文字 |
 | `.liquid-glass-button.active` | 按钮选中态 | 12% accent 色相叠加背景 + accent 色文字 + accent 色内边框。必须搭配 `"active"` 字符串类（非 CSS Module） |
 | `.liquid-glass-input` | 液态玻璃输入框 | 内凹底 + focus 蓝色辉光。用于所有 `<input>`、`<textarea>` |
@@ -29,6 +29,8 @@ metadata:
 | `.liquid-glass-textarea` | 文本域 | 必须与 `.liquid-glass-input` 组合使用 |
 | `.liquid-glass-toggle` | 切换开关 | 隐藏原生 checkbox 的液态玻璃样式 |
 | `.liquid-glass-dot` | 状态指示点 | 配合 `.dot-success` / `.dot-error` / `.dot-warning` 变体 |
+| `.liquid-glass-ghost-button` | 透明幽灵按钮 | 无背景无边框，hover/active 显示底色。用于所有弹窗关闭按钮、工具栏按钮等透明控件 |
+| `.liquid-glass-status-card` | 内联状态卡片 | 成功色背景 + 边框。用于版本更新对比等内联状态横幅 |
 | `.liquid-primary-button` | 炫彩主动作按钮 | 全息渐变 + gradient-shift 动画 + 玻璃模糊 |
 | `.glass-overlay` | 模态遮罩层 | fixed 定位 + flex 居中 |
 | `.glow-orb` | 背景光球 | 用于 GoogleGlowBackground 中的 4 个流动光球 |
@@ -67,6 +69,11 @@ metadata:
 如果需要全局类未覆盖的视觉效果（如新的控件类型），在 `src/styles/global.css` 中**新增全局类**——不写组件级视觉 CSS。
 
 ## Token 速查
+
+**玻璃填充：**
+- `--glass-fill` — 玻璃表面基础填充（alpha 较低，用于大块表面如 toolbar/sidebar）
+- `--glass-card-fill` — 内层卡片填充（alpha 较高，从背景中"浮"起，用于 `.liquid-glass-card` / `.liquid-glass-mini-card`）
+- `--glass-blur` / `--glass-blur-saturate` / `--glass-noise-opacity` — 玻璃效果参数
 
 **文字：**
 - `--text-primary` — 正文、标题、活动项

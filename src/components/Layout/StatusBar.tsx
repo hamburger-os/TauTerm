@@ -301,7 +301,7 @@ export default function StatusBar({
           >
             {appVersion}
             {(updatePhase === "available" || updatePhase === "ready") && (
-              <span className={styles.updateDot} />
+              <span className="liquid-glass-dot dot-success" />
             )}
           </span>
         )}

@@ -372,7 +372,7 @@ export default function LuaHelpModal({ isOpen, onClose }: LuaHelpModalProps) {
         {/* 标题栏 */}
         <div className={styles.header}>
           <span className={styles.headerTitle}>{t("sendBar.helpTitle")}</span>
-          <button className={styles.closeBtn} onClick={onClose}>
+          <button className={`${styles.closeBtn} liquid-glass-ghost-button`} onClick={onClose}>
             <Icon name="close" size="md" />
           </button>
         </div>

@@ -120,12 +120,30 @@ function dataToDualLine(data: Uint8Array, direction: "RX" | "TX"): Omit<DualLine
  */
 export default function TerminalView() {
   const { t } = useTranslation();
-  const { state, sendData, onSessionData, onDataSent } = useSession();
+  const { state, sendData, disconnect, onSessionData, onDataSent } = useSession();
   const { fontSize, bufferLines } = useTheme();
   const { registerAction } = useKeyboard();
   const writeRefs = useRef<Map<string, (data: Uint8Array | string) => void>>(new Map());
   const terminalRefs = useRef<Map<string, any>>(new Map());
   const [searchVisible, setSearchVisible] = useState(false);
+  /** per-Tab 搜索状态持久化：key 为 tabId，在 SearchBar 关闭时写入，打开时恢复 */
+  const searchStateRef = useRef<Map<string, { query: string; caseSensitive: boolean }>>(new Map());
+  const currentSearchState = state.activeTabId ? (searchStateRef.current.get(state.activeTabId) ?? { query: "", caseSensitive: false }) : { query: "", caseSensitive: false };
+
+  // 关闭搜索栏并归还焦点到终端
+  const handleSearchClose = useCallback(() => {
+    setSearchVisible(false);
+    setTimeout(() => {
+      activeTermRef.current?.terminal?.focus();
+    }, 0);
+  }, []);
+
+  // 搜索栏关闭时保存当前搜索状态到 per-Tab Map
+  const handleSearchSaveState = useCallback((query: string, caseSensitive: boolean) => {
+    if (state.activeTabId) {
+      searchStateRef.current.set(state.activeTabId, { query, caseSensitive });
+    }
+  }, [state.activeTabId]);
   const activeTermRef = useRef<any>(null);
   const hexOffsetsRef = useRef<Map<string, number>>(new Map());
   /** HEX 模式待补行缓冲区：存不够 16 字节的剩余字节，凑满 16 后输出完整行并换行 */
@@ -150,6 +168,7 @@ export default function TerminalView() {
   const bufferLinesRef = useRef(bufferLines);
   bufferLinesRef.current = bufferLines;
   const tabsRef = useRef(state.tabs);
+  const viewportRef = useRef<HTMLDivElement>(null);
   tabsRef.current = state.tabs;
 
   // 所有已连接的标签页（需要保持终端实例存活）
@@ -179,6 +198,18 @@ export default function TerminalView() {
   useEffect(() => {
     registerAction(ACTION_IDS.TERMINAL_SEARCH, () => setSearchVisible(v => !v));
   }, [registerAction]);
+
+  // 注册 Ctrl+Shift+A 全选快捷键
+  useEffect(() => {
+    registerAction(ACTION_IDS.TERMINAL_SELECT_ALL, () => {
+      activeTermRef.current?.terminal?.selectAll();
+    });
+  }, [registerAction]);
+
+  // Tab 切换时仅关闭 SearchBar overlay，不重置 per-Tab 搜索状态（恢复由 SearchBar 通过 savedQuery 完成）
+  useEffect(() => {
+    setSearchVisible(false);
+  }, [state.activeTabId]);
 
   // 取消待处理的 RAF，避免组件卸载后触发 setState
   useEffect(() => {
@@ -520,7 +551,7 @@ export default function TerminalView() {
   const isActiveTransferring = activeTab?.state === "transferring";
 
   return (
-    <div className={styles.viewport}>
+    <div className={styles.viewport} ref={viewportRef}>
       <div className={`${styles.terminalArea} liquid-glass`}>
         {isActiveTransferring && (
           <motion.div
@@ -566,6 +597,8 @@ export default function TerminalView() {
                       onCleanup={handleTermCleanup}
                       fontSize={fontSize}
                       bufferLines={bufferLines}
+                      onShowSearch={() => setSearchVisible(true)}
+                      onDisconnectSession={() => disconnect(tab.id)}
                       ref={(node) => {
                         if (node) {
                           terminalRefs.current.set(tab.id, node);
@@ -592,12 +625,15 @@ export default function TerminalView() {
         </div>
       </div>
 
-      {searchVisible && (
-        <SearchBar
-          onClose={() => setSearchVisible(false)}
-          terminal={activeTermRef.current?.terminal ?? null}
-        />
-      )}
+      <SearchBar
+        isOpen={searchVisible}
+        onClose={handleSearchClose}
+        terminal={activeTermRef.current?.terminal ?? null}
+        savedQuery={currentSearchState.query}
+        savedCaseSensitive={currentSearchState.caseSensitive}
+        onSaveState={handleSearchSaveState}
+        viewportRef={viewportRef}
+      />
     </div>
   );
 }

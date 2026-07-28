@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import Icon from "../../common/Icon";
 import GlassButton from "../../common/GlassButton";
+import OptionButton from "../../common/OptionButton";
 import styles from "../SettingsPage.module.css";
 
 const STORAGE_KEYS = {
@@ -130,86 +131,61 @@ export default function LoggingSettings() {
       <h3 className={styles.panelTitle}>{t("settings.logging")}</h3>
 
       {/* ═══ System Log ═══ */}
+      <h4 className={styles.categoryTitle}>{t("logging.systemLog") || "System Log"}</h4>
       <div className={styles.settingGroup}>
-        <span className={styles.settingLabel}>{t("logging.systemLog") || "System Log"}</span>
         <p className={styles.settingDesc}>
           {t("logging.systemLogDesc") || "Automatically records app events (connection, disconnection, errors, warnings). File: TauTerm_YYYYMMDD.log"}
         </p>
-      </div>
 
-      <div className={styles.settingGroup}>
         <span className={styles.settingLabel}>{t("logging.systemLogStatus") || "Status"}</span>
         <div className={styles.optionList}>
-          <button
-            className={`${styles.optionItem} ${systemEnabled ? styles.optionItemActive : ""}`}
-            onClick={() => { setSystemEnabled(true); persist(STORAGE_KEYS.systemEnabled, true); }}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          <OptionButton selected={systemEnabled} onClick={() => { setSystemEnabled(true); persist(STORAGE_KEYS.systemEnabled, true); }}>
             {t("common.ok")}
-          </button>
-          <button
-            className={`${styles.optionItem} ${!systemEnabled ? styles.optionItemActive : ""}`}
-            onClick={() => { setSystemEnabled(false); persist(STORAGE_KEYS.systemEnabled, false); }}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          </OptionButton>
+          <OptionButton selected={!systemEnabled} onClick={() => { setSystemEnabled(false); persist(STORAGE_KEYS.systemEnabled, false); }}>
             {t("common.cancel")}
-          </button>
+          </OptionButton>
         </div>
-      </div>
 
-      <div className={styles.settingGroup}>
         <span className={styles.settingLabel}>{t("logging.systemLogLevel") || "Minimum Level"}</span>
         <div className={styles.optionList}>
           {LOG_LEVELS.map(lv => (
-            <button
+            <OptionButton
               key={lv.value}
-              className={`${styles.optionItem} ${systemLevel === lv.value ? styles.optionItemActive : ""}`}
+              selected={systemLevel === lv.value}
               onClick={() => { setSystemLevel(lv.value); persist(STORAGE_KEYS.systemLevel, lv.value); }}
             >
-              <Icon name="check-plain" size="sm" className={styles.optionIcon} />
               {t(lv.labelKey)}
-            </button>
+            </OptionButton>
           ))}
         </div>
       </div>
 
       {/* ═══ Session Data Log ═══ */}
-      <div className={styles.settingGroup} style={{ marginTop: "8px" }}>
-        <span className={styles.settingLabel}>{t("logging.sessionLog") || "Session Data Log"}</span>
+      <h4 className={styles.categoryTitle}>{t("logging.sessionLog") || "Session Data Log"}</h4>
+      <div className={styles.settingGroup}>
         <p className={styles.settingDesc}>
           {t("logging.sessionLogDesc") || "Right-click a session → 'Start Logging' to record all TX/RX data to file."}
         </p>
-      </div>
 
-      <div className={styles.settingGroup}>
         <span className={styles.settingLabel}>{t("logging.enableLogging") || "Enable Session Logging"}</span>
         <div className={styles.optionList}>
-          <button
-            className={`${styles.optionItem} ${enabled ? styles.optionItemActive : ""}`}
-            onClick={() => { setEnabled(true); persist(STORAGE_KEYS.enabled, true); }}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          <OptionButton selected={enabled} onClick={() => { setEnabled(true); persist(STORAGE_KEYS.enabled, true); }}>
             {t("common.ok")}
-          </button>
-          <button
-            className={`${styles.optionItem} ${!enabled ? styles.optionItemActive : ""}`}
-            onClick={() => { setEnabled(false); persist(STORAGE_KEYS.enabled, false); }}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          </OptionButton>
+          <OptionButton selected={!enabled} onClick={() => { setEnabled(false); persist(STORAGE_KEYS.enabled, false); }}>
             {t("common.cancel")}
-          </button>
+          </OptionButton>
         </div>
       </div>
 
-      {/* ═══ 通用配置（软件自身日志 + 会话数据日志共用） ═══ */}
-      <div className={styles.settingGroup} style={{ marginTop: "8px" }}>
-        <span className={styles.settingLabel}>{t("logging.commonConfig") || "Common Settings"}</span>
+      {/* ═══ Common Settings ═══ */}
+      <h4 className={styles.categoryTitle}>{t("logging.commonConfig") || "Common Settings"}</h4>
+      <div className={styles.settingGroup}>
         <p className={styles.settingDesc}>
           {t("logging.commonConfigDesc") || "These settings apply to both system log and session data log."}
         </p>
-      </div>
 
-      <div className={styles.settingGroup}>
         <span className={styles.settingLabel}>{t("logging.maxFileSize") || "Max File Size"}</span>
         <div className={styles.fontSlider}>
           <input
@@ -223,9 +199,7 @@ export default function LoggingSettings() {
           />
           <span className={styles.fontSliderValue}>{fileMaxSize} MB</span>
         </div>
-      </div>
 
-      <div className={styles.settingGroup}>
         <span className={styles.settingLabel}>{t("logging.bufferSize") || "Buffer Size"}</span>
         <div className={styles.fontSlider}>
           <input
@@ -243,9 +217,7 @@ export default function LoggingSettings() {
           />
           <span className={styles.fontSliderValue}>{Math.round(bufferSize / 1024)} KB</span>
         </div>
-      </div>
 
-      <div className={styles.settingGroup}>
         <span className={styles.settingLabel}>{t("logging.flushInterval") || "Flush Interval"}</span>
         <div className={styles.fontSlider}>
           <input
@@ -259,9 +231,7 @@ export default function LoggingSettings() {
           />
           <span className={styles.fontSliderValue}>{flushInterval} ms</span>
         </div>
-      </div>
 
-      <div className={styles.settingGroup}>
         <span className={styles.settingLabel}>{t("logging.retentionDays") || "Keep Logs For"}</span>
         <div className={styles.fontSlider}>
           <input
@@ -278,8 +248,8 @@ export default function LoggingSettings() {
       </div>
 
       {/* Log Directory */}
+      <h4 className={styles.categoryTitle}>{t("logging.logDirectory") || "Log Directory"}</h4>
       <div className={styles.settingGroup}>
-        <span className={styles.settingLabel}>{t("logging.logDirectory") || "Log Directory"}</span>
         {logDir ? (
           <>
             <p className={styles.settingDesc} style={{ fontFamily: "var(--font-mono)", fontSize: "10px", wordBreak: "break-all" }}>

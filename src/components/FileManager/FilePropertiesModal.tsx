@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { formatTime } from "../../utils/format";
 import type { SftpEntry } from "./types";
 import { formatBytes } from "../../utils/format";
+import { copyToClipboard } from "../../utils/clipboard";
 import styles from "./FilePropertiesModal.module.css";
 
 export interface FileStatInfo {
@@ -107,7 +108,7 @@ export default function FilePropertiesModal({
   const handleCopyPath = useCallback(async () => {
     if (statInfo?.path) {
       try {
-        await navigator.clipboard.writeText(statInfo.path);
+        await copyToClipboard(statInfo.path);
       } catch {
         // Clipboard API may not be available
       }
@@ -142,7 +143,7 @@ export default function FilePropertiesModal({
           <span className={styles.headerTitle}>
             {typeEmoji} {name}
           </span>
-          <button className={styles.closeBtn} onClick={onClose}>
+          <button className={`${styles.closeBtn} liquid-glass-ghost-button`} onClick={onClose}>
             <Icon name="close" size="md" />
           </button>
         </div>
@@ -163,7 +164,7 @@ export default function FilePropertiesModal({
                   <div className={styles.fieldValueRow}>
                     <code className={styles.fieldValuePath}>{statInfo.path}</code>
                     <button
-                      className={styles.copyBtn}
+                      className={`${styles.copyBtn} liquid-glass-ghost-button`}
                       onClick={handleCopyPath}
                       title={t("fileManager.copyPath")}
                     >

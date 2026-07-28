@@ -84,6 +84,7 @@
 
   /* 液态玻璃 */
   --glass-fill: linear-gradient(135deg, rgba(10, 10, 18, 0.16) 0%, rgba(8, 8, 14, 0.06) 100%);
+  --glass-card-fill: linear-gradient(135deg, rgba(15, 15, 25, 0.22) 0%, rgba(10, 10, 20, 0.13) 100%);
   --glass-noise-opacity: 0.04;
   --glass-blur: 25px;
   --glass-blur-saturate: 100%;
@@ -153,8 +154,8 @@
   --blur-medium: 16px;
   --blur-heavy: 24px;
   --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.6);
-  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.25);
+  --glass-rim-glow: 0 4px 16px rgba(255, 255, 255, 0.10);  /* 玻璃边缘高光 — 暗色底上白色半透光晕 */
+  --glass-rim-light: 0 2px 6px rgba(255, 255, 255, 0.07);   /* 玻璃边缘微光 — 小型元素的轻量高光 */
   /* 全息主按钮 — 深色主题白色高光边框 */
   --primary-button-border: rgba(255, 255, 255, 0.5);
   --primary-button-hover-border: rgba(255, 255, 255, 0.9);
@@ -179,10 +180,11 @@
 
   /* 液态玻璃 */
   --glass-fill: linear-gradient(135deg, rgba(20, 20, 25, 0.6) 0%, rgba(5, 5, 10, 0.4) 100%);
+  --glass-card-fill: linear-gradient(135deg, rgba(25, 25, 32, 0.5) 0%, rgba(12, 12, 18, 0.35) 100%);
   --glass-noise-opacity: 0.05;
   --glass-blur: 30px;
   --glass-blur-saturate: 120%;
-  --glass-border-default: rgba(255, 255, 255, 0.05);
+  --glass-border-default: rgba(255, 255, 255, 0.08);
   --glass-border-top: rgba(255, 255, 255, 0.12);
   --glass-border-left: rgba(255, 255, 255, 0.08);
   --glass-shadow-outer: 0 20px 50px 0 rgba(0, 0, 0, 0.7);
@@ -246,8 +248,8 @@
   --blur-medium: 20px;
   --blur-heavy: 30px;
   --shadow-glass: 0 20px 50px rgba(0, 0, 0, 0.7);
-  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.5);
-  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.4);
+  --glass-rim-glow: 0 4px 16px rgba(255, 255, 255, 0.08);  /* 玻璃边缘高光 — 暗色底上白色半透光晕 */
+  --glass-rim-light: 0 2px 6px rgba(255, 255, 255, 0.05);   /* 玻璃边缘微光 — 小型元素的轻量高光 */
   /* 弹窗背景 */
   --dialog-bg: rgba(8, 8, 12, 0.97);
   --dialog-shadow: 0 0 30px rgba(59, 130, 246, 0.12);
@@ -266,6 +268,7 @@
 
   /* 液态玻璃 */
   --glass-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0.4) 100%);
+  --glass-card-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0.55) 100%);
   --glass-noise-opacity: 0.03;
   --glass-blur: 35px;
   --glass-blur-saturate: 150%;
@@ -332,8 +335,8 @@
   --blur-medium: 20px;
   --blur-heavy: 35px;
   --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.06);
-  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.04);
-  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.08);
+  --glass-rim-glow: 0 4px 16px rgba(0, 0, 0, 0.04);   /* 玻璃边缘高光 — 浅色底上暗色半透阴影（模拟边缘落差） */
+  --glass-rim-light: 0 2px 6px rgba(0, 0, 0, 0.08);    /* 玻璃边缘微光 — 小型元素的轻量阴影 */
   /* 全息主按钮 — 浅色主题 slate 边框 + 蓝紫光晕 */
   --primary-button-border: rgba(148, 163, 184, 0.55);
   --primary-button-hover-border: rgba(59, 130, 246, 0.6);

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import Icon from "../../common/Icon";
+import OptionButton from "../../common/OptionButton";
 import styles from "../SettingsPage.module.css";
 
 const CHARSETS = [
@@ -37,17 +38,16 @@ export default function EncodingSettings() {
         <span className={styles.settingLabel}>{t("settings.charsetLabel")}</span>
         <div className={styles.optionList}>
           {CHARSETS.map(cs => (
-            <button
+            <OptionButton
               key={cs.id}
-              className={`${styles.optionItem} ${encoding === cs.id ? styles.optionItemActive : ""}`}
+              selected={encoding === cs.id}
               onClick={() => handleChange(cs.id)}
             >
-              <Icon name="check-plain" size="sm" className={styles.optionIcon} />
               <span>{t(cs.labelKey)}</span>
               <span className={styles.charsetCode}>
                 {cs.id.toUpperCase()}
               </span>
-            </button>
+            </OptionButton>
           ))}
         </div>
       </div>

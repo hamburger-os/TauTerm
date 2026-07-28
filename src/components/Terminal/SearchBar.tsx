@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Terminal as XTerm } from "@xterm/xterm";
@@ -6,8 +7,17 @@ import Icon from "../common/Icon";
 import styles from "./SearchBar.module.css";
 
 interface SearchBarProps {
+  isOpen: boolean;
   onClose: () => void;
   terminal: XTerm | null;
+  /** 上次会话保存的搜索关键字（由父组件管理生命周期） */
+  savedQuery?: string;
+  /** 上次会话保存的大小写标志 */
+  savedCaseSensitive?: boolean;
+  /** 搜索栏关闭时，父组件保存当前搜索状态 */
+  onSaveState?: (query: string, caseSensitive: boolean) => void;
+  /** 终端视口 DOM ref — 用于计算 portal 定位坐标 */
+  viewportRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 interface Match {
@@ -23,21 +33,53 @@ interface Match {
  * 使用 xterm.js buffer API 扫描终端内容，
  * 实现真实的高亮、导航和滚动到匹配位置。
  */
-export default function SearchBar({ onClose, terminal }: SearchBarProps) {
+export default function SearchBar({ isOpen, onClose, terminal, savedQuery = "", savedCaseSensitive = false, onSaveState, viewportRef }: SearchBarProps) {
   const { t } = useTranslation();
-  const [query, setQuery] = useState("");
-  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [query, setQuery] = useState(savedQuery);
+  const [caseSensitive, setCaseSensitive] = useState(savedCaseSensitive);
   const [matchIndex, setMatchIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const markersRef = useRef<ReturnType<XTerm["registerMarker"]>[]>([]);
+  const prevOpenRef = useRef(isOpen);
+
+  // 根据 viewportRef 计算固定定位坐标（portal 到 body 后使用 position:fixed）
+  const [barPos, setBarPos] = useState<{ top: number; right: number }>({ top: 0, right: 0 });
+
+  const updateBarPos = useCallback(() => {
+    if (!viewportRef?.current) return;
+    const rect = viewportRef.current.getBoundingClientRect();
+    setBarPos({ top: rect.top, right: window.innerWidth - rect.right });
+  }, [viewportRef]);
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    if (!isOpen) return;
+    updateBarPos();
+    let rafId: number | null = null;
+    const handleResize = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(updateBarPos);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, [isOpen, updateBarPos]);
 
-  // 查找所有匹配位置
+  useEffect(() => {
+    if (isOpen && !prevOpenRef.current) {
+      // 搜索栏刚打开：恢复父组件保存的搜索状态并聚焦
+      setQuery(savedQuery);
+      setCaseSensitive(savedCaseSensitive);
+      setMatchIndex(1);
+      inputRef.current?.focus();
+    }
+    prevOpenRef.current = isOpen;
+  }, [isOpen, savedQuery, savedCaseSensitive]);
+
+  // 查找所有匹配位置（仅在搜索栏打开时计算，避免不必要扫描）
   const matches = useMemo(() => {
-    if (!query || !terminal) return [] as Match[];
+    if (!isOpen || !query || !terminal) return [] as Match[];
     const results: Match[] = [];
     const buffer = terminal.buffer.active;
     const flags = caseSensitive ? "" : "i";
@@ -62,7 +104,7 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
       }
     }
     return results;
-  }, [query, caseSensitive, terminal]);
+  }, [query, caseSensitive, terminal, isOpen]);
 
   const totalMatches = matches.length;
 
@@ -74,19 +116,31 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
     markersRef.current.forEach(d => d.dispose());
     markersRef.current = [];
 
+    if (!isOpen) {
+      try { terminal?.select(0, 0, 0); } catch { /* ignore */ }
+      return;
+    }
+
     if (!terminal || totalMatches === 0 || !query) return;
 
     try {
+      const buffer = terminal.buffer.active;
+      const viewportTop = buffer.viewportY;
+      const viewportBottom = buffer.viewportY + terminal.rows - 1;
+
       matches.forEach((_m, i) => {
+        // 仅注册当前视口内可见行的 marker，避免大缓冲区中注册数千个标记
+        if (_m.line < viewportTop || _m.line > viewportBottom) return;
+
         const isActive = i === matchIndex - 1;
         const marker = terminal.registerMarker(
-          -(terminal.buffer.active.baseY + terminal.buffer.active.cursorY - _m.line)
+          -(buffer.baseY + buffer.cursorY - _m.line)
         );
         markersRef.current.push(marker);
 
         if (isActive && marker) {
           try {
-            terminal.select(_m.col, query.length, _m.line - terminal.buffer.active.viewportY);
+            terminal.select(_m.col, query.length, _m.line - viewportTop);
           } catch {
             // 选择可能因滚动区域外而失败
           }
@@ -95,7 +149,7 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
     } catch {
       // markers API 错误，忽略
     }
-  }, [matches, matchIndex, terminal, query, totalMatches]);
+  }, [isOpen, matches, matchIndex, terminal, query, totalMatches]);
 
   // 导航到当前匹配
   useEffect(() => {
@@ -131,10 +185,15 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
       markersRef.current = [];
       try { terminal?.select(0, 0, 0); } catch { /* ignore */ }
     };
-  }, [terminal]);
+  }, [terminal, isOpen]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
+      onSaveState?.(query, caseSensitive);
+      onClose();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      onSaveState?.(query, caseSensitive);
       onClose();
     } else if (e.key === "Enter") {
       e.preventDefault();
@@ -147,43 +206,53 @@ export default function SearchBar({ onClose, terminal }: SearchBarProps) {
         setMatchIndex(prev => (prev < totalMatches ? prev + 1 : 1));
       }
     }
-  }, [onClose, totalMatches]);
+  }, [onClose, onSaveState, query, caseSensitive, totalMatches]);
 
-  return (
+  const handleClose = useCallback(() => {
+    onSaveState?.(query, caseSensitive);
+    onClose();
+  }, [onClose, onSaveState, query, caseSensitive]);
+
+  return createPortal(
     <AnimatePresence>
-      <motion.div
-        className={`${styles.bar} liquid-glass-float`}
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -10 }}
-      >
-        <input
-          ref={inputRef}
-          className={`${styles.input} liquid-glass-input ${query && totalMatches === 0 ? styles.noMatch : ""}`}
-          type="text"
-          placeholder={t("search.placeholder") || "Search..."}
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setMatchIndex(1); }}
-          onKeyDown={handleKeyDown}
-        />
-        <span className={styles.count}>
-          {totalMatches > 0 ? `${matchIndex}/${totalMatches}` : query ? "0/0" : ""}
-        </span>
-        <button
-          className={`${styles.btn} liquid-glass-button ${caseSensitive ? styles.active : ""}`}
-          onClick={() => setCaseSensitive(!caseSensitive)}
-          title="Case sensitive"
+      {isOpen && (
+        <motion.div
+          key="search-bar"
+          className={`${styles.bar} liquid-glass-float`}
+          style={{ position: "fixed", top: barPos.top, right: barPos.right, zIndex: 100 }}
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
         >
-          Aa
-        </button>
-        <button className={`${styles.btn} liquid-glass-button`} onClick={() => setMatchIndex(prev => prev > 1 ? prev - 1 : totalMatches)}>
-          <Icon name="chevron-up" size="sm" />
-        </button>
-        <button className={`${styles.btn} liquid-glass-button`} onClick={() => setMatchIndex(prev => prev < totalMatches ? prev + 1 : 1)}>
-          <Icon name="chevron-down" size="sm" />
-        </button>
-        <button className={`${styles.btn} liquid-glass-button`} onClick={onClose}><Icon name="close" size="sm" /></button>
-      </motion.div>
-    </AnimatePresence>
+          <input
+            ref={inputRef}
+            className={`${styles.input} liquid-glass-input`}
+            type="text"
+            placeholder={t("search.terminalPlaceholder") || "Find in terminal..."}
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setMatchIndex(1); }}
+            onKeyDown={handleKeyDown}
+          />
+          <span className={styles.count}>
+            {totalMatches > 0 ? `${matchIndex}/${totalMatches}` : query ? "0/0" : ""}
+          </span>
+          <button
+            className={`${styles.btn} liquid-glass-button ${caseSensitive ? styles.active : ""}`}
+            onClick={() => setCaseSensitive(!caseSensitive)}
+            title="Case sensitive"
+          >
+            Aa
+          </button>
+          <button className={`${styles.btn} liquid-glass-button`} onClick={() => setMatchIndex(prev => prev > 1 ? prev - 1 : totalMatches)}>
+            <Icon name="chevron-up" size="sm" />
+          </button>
+          <button className={`${styles.btn} liquid-glass-button`} onClick={() => setMatchIndex(prev => prev < totalMatches ? prev + 1 : 1)}>
+            <Icon name="chevron-down" size="sm" />
+          </button>
+          <button className={`${styles.btn} liquid-glass-button`} onClick={handleClose}><Icon name="close" size="sm" /></button>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body
   );
 }

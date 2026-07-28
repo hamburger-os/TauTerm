@@ -13,6 +13,7 @@ export const ACTION_IDS = {
   SESSION_PREV: "session.prev",
   // Terminal (copy/paste handled by xterm.js natively, not via shortcut registry)
   TERMINAL_SEARCH: "terminal.search",
+  TERMINAL_SELECT_ALL: "terminal.selectAll",
 
   // Application
   PALETTE_OPEN: "palette.open",

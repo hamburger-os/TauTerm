@@ -66,7 +66,7 @@ export default function FilePreviewModal({
         {/* 标题栏 */}
         <div className={styles.header}>
           <span className={styles.headerTitle}>{fileName}</span>
-          <button className={styles.closeBtn} onClick={onClose}>
+          <button className={`${styles.closeBtn} liquid-glass-ghost-button`} onClick={onClose}>
             <Icon name="close" size="md" />
           </button>
         </div>

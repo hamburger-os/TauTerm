@@ -22,6 +22,7 @@ import TransferProgressBar from "./TransferProgressBar";
 import FilePropertiesModal from "./FilePropertiesModal";
 import type { FileStatInfo } from "./FilePropertiesModal";
 import FilePreviewModal from "./FilePreviewModal";
+import { copyToClipboard } from "../../utils/clipboard";
 import styles from "./FileManager.module.css";
 
 // ── 文本文件扩展名判定 ─────────────────────────────────
@@ -250,7 +251,7 @@ export default function FileManagerPanel({
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
     if (target) {
       try {
-        await navigator.clipboard.writeText(target.path);
+        await copyToClipboard(target.path);
       } catch {
         // Clipboard API may not be available
       }

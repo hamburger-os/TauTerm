@@ -54,18 +54,16 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
 
   // 点击外部关闭
   useEffect(() => {
-    if (!state.visible) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: PointerEvent) => {
+      if (!state.visible) return;
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
-    const timer = setTimeout(() => {
-      document.addEventListener("click", handler);
-    }, 0);
+    // pointerdown + capture: 在任何子元素（含 xterm.js canvas/textarea）拦截之前捕获
+    document.addEventListener("pointerdown", handler, true);
     return () => {
-      clearTimeout(timer);
-      document.removeEventListener("click", handler);
+      document.removeEventListener("pointerdown", handler, true);
     };
   }, [state.visible, onClose]);
 

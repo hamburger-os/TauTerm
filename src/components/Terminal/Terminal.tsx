@@ -1,10 +1,16 @@
-import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from "react";
+import { useEffect, useRef, useCallback, useMemo, useState, forwardRef, useImperativeHandle } from "react";
+import { useTranslation } from "react-i18next";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
 import "@xterm/xterm/css/xterm.css";
 import { useTheme } from "../../context/ThemeContext";
+import { shortcutRegistry } from "../../shortcuts/registry";
+import { copyToClipboard, readFromClipboard } from "../../utils/clipboard";
+import ContextMenu from "../common/ContextMenu";
+import type { ContextMenuItem } from "../common/ContextMenu";
+import type { ContextMenuState } from "../../hooks/useContextMenu";
 import ScrollToBottomButton from "./ScrollToBottomButton";
 import styles from "./Terminal.module.css";
 
@@ -81,6 +87,10 @@ interface TerminalInstanceProps {
   fontSize?: number;
   /** 终端行缓冲上限（所有模式统一），来自 context，实时更新 */
   bufferLines?: number;
+  /** 触发搜索面板显示 */
+  onShowSearch?: () => void;
+  /** 触发断开当前会话 */
+  onDisconnectSession?: () => void;
 }
 
 /**
@@ -90,7 +100,7 @@ interface TerminalInstanceProps {
  * 接受 sessionId 以区分数据路由。
  */
 const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function TerminalInstance(
-  { sessionId, onData, isConnected = false, isActive = true, onTermReady, onCleanup, fontSize, bufferLines },
+  { sessionId, onData, isConnected = false, isActive = true, onTermReady, onCleanup, fontSize, bufferLines, onShowSearch, onDisconnectSession },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -105,9 +115,21 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   const onCleanupRef = useRef(onCleanup);
   onCleanupRef.current = onCleanup;
 
+  const { t } = useTranslation();
   const { theme } = useTheme();
   const isDark = theme === "google-glow" || theme === "obsidian";
   const terminalTheme = isDark ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
+
+  // 右键上下文菜单状态
+  // 直接用 useState 管理，而非 useContextMenu hook——后者面向 Tab 标签右键菜单，强依赖 session 参数，此处不适用
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ x: 0, y: 0, visible: false, session: null });
+  // 剪贴板是否为空（异步检测）
+  const [clipboardHasText, setClipboardHasText] = useState(false);
+  // 回调 refs：避免 context menu handler 持有过期闭包
+  const onShowSearchRef = useRef(onShowSearch);
+  onShowSearchRef.current = onShowSearch;
+  const onDisconnectSessionRef = useRef(onDisconnectSession);
+  onDisconnectSessionRef.current = onDisconnectSession;
 
   // 暴露 xterm 实例和 write 方法
   useImperativeHandle(ref, () => ({
@@ -145,7 +167,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
       theme: terminalTheme,
       cursorBlink: true,
-      cursorStyle: "bar",
+      cursorStyle: "underline", // 下划线光标：不遮挡字符内容，串口/TUI 场景可读性优于 bar/block
       allowProposedApi: true,
       scrollback: bufferLines ?? Number(localStorage.getItem("tauterm-buffer-lines") || "10000"),
       cols: 80,
@@ -157,6 +179,14 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
+
+    // 拦截终端内键盘事件：已注册的全局快捷键穿透到浏览器，其余由 xterm 正常处理
+    // 这使 Ctrl+F / Ctrl+Tab / Ctrl+Shift+P 等快捷键在终端聚焦时也能正常工作
+    term.attachCustomKeyEventHandler((e) => {
+      const matched = shortcutRegistry.match(e);
+      if (matched) return false; // 穿透 → document keydown → useKeyboard hook
+      return true;               // xterm 正常处理（→ onData → PTY）
+    });
 
     term.open(containerRef.current);
     fitAddon.fit();
@@ -265,15 +295,113 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     if (text) onData(text);
   }, [onData, isConnected]);
 
-  // 右键粘贴
+  // 右键上下文菜单
+  // 始终显示自定义菜单（与 isConnected 无关），避免浏览器默认菜单弹出
   const handleContextMenu = useCallback(async (e: React.MouseEvent) => {
-    if (!onData || !isConnected) return;
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text) onData(text);
-    } catch { /* clipboard read failed */ }
     e.preventDefault();
-  }, [onData, isConnected]);
+    const { clientX, clientY } = e;
+
+    // 先立刻显示菜单（确保 useMemo 读取最新的 hasSelection() 状态）
+    setContextMenu({
+      x: clientX,
+      y: clientY,
+      visible: true,
+      session: null,
+    });
+
+    // 异步检测剪贴板内容，用于控制「粘贴」菜单项的 disabled 状态
+    const text = await readFromClipboard();
+    setClipboardHasText(text.length > 0);
+  }, []);
+
+  // 关闭右键菜单
+  const closeContextMenu = useCallback(() => {
+    setContextMenu(prev => ({ ...prev, visible: false }));
+  }, []);
+
+  // 构建菜单项：根据 isConnected / selection / clipboard 动态控制 disabled
+  const contextMenuItems = useMemo((): ContextMenuItem[] => {
+    const term = xtermRef.current;
+    const hasSel = term ? term.hasSelection() : false;
+
+    const items: ContextMenuItem[] = [
+      {
+        id: "copy",
+        label: t("terminal.copy", "Copy"),
+        icon: "clipboard",
+        disabled: !hasSel,
+      },
+      {
+        id: "paste",
+        label: t("terminal.paste", "Paste"),
+        icon: "paste",
+        disabled: !isConnected || !clipboardHasText,
+      },
+      { id: "sep1", label: "", type: "separator" },
+      {
+        id: "selectAll",
+        label: t("terminal.selectAll", "Select All"),
+        icon: "edit",
+      },
+      { id: "sep2", label: "", type: "separator" },
+      {
+        id: "search",
+        label: t("terminal.search", "Search..."),
+        icon: "search",
+      },
+      {
+        id: "clear",
+        label: t("terminal.clear", "Clear"),
+        icon: "trash",
+      },
+    ];
+
+    // 仅连接中显示「断开连接」（破坏性操作，danger 样式，放在末尾）
+    if (isConnected) {
+      items.push({ id: "sep3", label: "", type: "separator" });
+      items.push({
+        id: "disconnect",
+        label: t("contextMenu.disconnect", "Disconnect"),
+        icon: "stop",
+        danger: true,
+      });
+    }
+
+    return items;
+  }, [t, isConnected, clipboardHasText, contextMenu]);
+
+  // 菜单项点击处理
+  const handleContextMenuSelect = useCallback((itemId: string) => {
+    const term = xtermRef.current;
+    if (!term) return;
+
+    switch (itemId) {
+      case "copy": {
+        const selection = term.getSelection();
+        if (selection) copyToClipboard(selection);
+        break;
+      }
+      case "paste":
+        readFromClipboard().then(text => {
+          if (text) {
+            term.paste(text);
+          }
+        }).catch(() => {});
+        break;
+      case "selectAll":
+        term.selectAll();
+        break;
+      case "search":
+        onShowSearchRef.current?.();
+        break;
+      case "clear":
+        term.clear();
+        break;
+      case "disconnect":
+        onDisconnectSessionRef.current?.();
+        break;
+    }
+  }, []);
 
   return (
     <div className={styles.terminalInstanceWrapper}>
@@ -289,6 +417,12 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
           xtermRef.current?.scrollToBottom();
           setIsAtBottom(true);
         }}
+      />
+      <ContextMenu
+        state={contextMenu}
+        items={contextMenuItems}
+        onSelect={handleContextMenuSelect}
+        onClose={closeContextMenu}
       />
     </div>
   );

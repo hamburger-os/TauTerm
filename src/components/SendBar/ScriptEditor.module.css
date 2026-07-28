@@ -90,7 +90,7 @@
   font-size: var(--text-xs);
 }
 
-/* Mini-Card 模式：行号栏 — 小元素使用 --shadow-sm + 3D 边框 */
+/* Mini-Card 模式：行号栏 — 小元素使用 --glass-rim-light + 3D 边框 */
 .lineNumbers {
   display: flex;
   flex-direction: column;
@@ -99,7 +99,7 @@
   border-right: 1px solid var(--glass-border-default);
   border-top: 1px solid var(--glass-border-top);
   border-left: 1px solid var(--glass-border-left);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--glass-rim-light);
   text-align: right;
   user-select: none;
   overflow: hidden;

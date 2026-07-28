@@ -25,24 +25,9 @@
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
   font-size: var(--text-xs);
   font-family: inherit;
-  cursor: pointer;
   white-space: nowrap;
-  transition: background-color var(--transition-fast), color var(--transition-fast);
-}
-
-.toolbarButton:hover {
-  background: var(--glass-bg-hover);
-  color: var(--text-primary);
-}
-
-.toolbarButton:active {
-  background: var(--glass-bg-active);
 }
 
 .toolbarButton.active {

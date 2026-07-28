@@ -19,6 +19,7 @@ import {
   type Crc16Preset,
   type Crc32Preset,
 } from "../../utils/checksum";
+import { copyToClipboard } from "../../utils/clipboard";
 import styles from "./ChecksumTool.module.css";
 
 type InputMode = "string" | "hex";
@@ -73,11 +74,9 @@ export function ChecksumToolInner() {
 
   const handleCopy = useCallback(async () => {
     if (!result) return;
-    try {
-      await navigator.clipboard.writeText(result.hex);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch { /* ignore */ }
+    await copyToClipboard(result.hex);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   }, [result]);
 
   return (
@@ -184,7 +183,7 @@ export function ChecksumToolInner() {
           <div className={styles.resultLabel}>{result.label}:</div>
           <code className={styles.resultHex}>0x{result.hex}</code>
           <span className={styles.resultDec}>({result.dec})</span>
-          <button className={styles.copyBtn} onClick={handleCopy} title={t("common.copy") ?? "Copy"}>
+          <button className={`${styles.copyBtn} liquid-glass-ghost-button`} onClick={handleCopy} title={t("common.copy") ?? "Copy"}>
             {copied ? t("tools.copied") : t("common.copy")}
           </button>
         </div>

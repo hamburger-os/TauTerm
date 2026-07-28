@@ -43,6 +43,7 @@ export const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   { id: ACTION_IDS.SESSION_PREV, keys: "Ctrl+Shift+Tab", descriptionKey: "settings.shortcutsAction_prevTab", description: "上一个标签页", category: "Session" },
   // Terminal
   { id: ACTION_IDS.TERMINAL_SEARCH, keys: "Ctrl+F", descriptionKey: "settings.shortcutsAction_terminalSearch", description: "终端搜索", category: "Terminal" },
+  { id: ACTION_IDS.TERMINAL_SELECT_ALL, keys: "Ctrl+Shift+A", descriptionKey: "settings.shortcutsAction_terminalSelectAll", description: "全选", category: "Terminal" },
   // Application
   { id: ACTION_IDS.PALETTE_OPEN, keys: "Ctrl+Shift+P", descriptionKey: "settings.shortcutsAction_openPalette", description: "打开命令面板", category: "Application" },
   { id: ACTION_IDS.SIDEBAR_TOGGLE, keys: "Ctrl+Shift+B", descriptionKey: "settings.shortcutsAction_toggleSidebar", description: "切换左侧栏", category: "Application" },

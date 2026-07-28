@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import Icon from "../../common/Icon";
+import OptionButton from "../../common/OptionButton";
 import styles from "../SettingsPage.module.css";
 
 /**
@@ -19,23 +19,15 @@ export default function LanguageSettings() {
     <div>
       <h3 className={styles.panelTitle}>{t("settings.language")}</h3>
 
+      <h4 className={styles.categoryTitle}>{t("settings.languageLabel")}</h4>
       <div className={styles.settingGroup}>
-        <span className={styles.settingLabel}>{t("settings.languageLabel")}</span>
         <div className={styles.optionList}>
-          <button
-            className={`${styles.optionItem} ${i18n.language === "zh-CN" ? styles.optionItemActive : ""}`}
-            onClick={() => handleLanguageChange("zh-CN")}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          <OptionButton selected={i18n.language === "zh-CN"} onClick={() => handleLanguageChange("zh-CN")}>
             {t("settings.languageZh")}
-          </button>
-          <button
-            className={`${styles.optionItem} ${i18n.language === "en-US" ? styles.optionItemActive : ""}`}
-            onClick={() => handleLanguageChange("en-US")}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          </OptionButton>
+          <OptionButton selected={i18n.language === "en-US"} onClick={() => handleLanguageChange("en-US")}>
             {t("settings.languageEn")}
-          </button>
+          </OptionButton>
         </div>
       </div>
     </div>

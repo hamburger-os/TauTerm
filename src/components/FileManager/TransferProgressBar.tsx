@@ -107,7 +107,7 @@ export default function TransferProgressBar({
         </span>
         <span className={styles.speedText}>{formatSpeed(speed)}</span>
         <button
-          className={styles.closeBtn}
+          className={`${styles.closeBtn} liquid-glass-ghost-button`}
           onClick={onClose}
           title={finished ? t("common.close") : t("fileManager.cancelTransfer")}
         >

@@ -236,16 +236,6 @@
   opacity: 0.6;
 }
 
-/* 更新指示圆点 */
-.updateDot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-success);
-  box-shadow: 0 0 6px var(--color-success);
-  flex-shrink: 0;
-}
 
 @keyframes updatePulse {
   0%, 100% { opacity: 1; }

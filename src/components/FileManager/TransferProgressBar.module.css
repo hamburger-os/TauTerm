@@ -10,6 +10,7 @@
   padding: 0 var(--spacing-sm);
   gap: var(--spacing-sm);
   border-top: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-md);
   z-index: 10;
 }
 
@@ -108,14 +109,7 @@
 }
 
 .closeBtn {
-  background: none;
-  border: none;
-  color: var(--text-tertiary);
   cursor: pointer;
   font-size: var(--text-xs);
   padding: 0 4px;
-}
-
-.closeBtn:hover {
-  color: var(--text-primary);
 }

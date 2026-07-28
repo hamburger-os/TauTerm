@@ -78,7 +78,8 @@
   "search": {
     "placeholder": "Search sessions...",
     "noResults": "No results",
-    "caseSensitive": "Case sensitive"
+    "caseSensitive": "Case sensitive",
+    "terminalPlaceholder": "Find in terminal..."
   },
   "palette": {
     "placeholder": "Type a command...",
@@ -554,6 +555,7 @@
     "shortcutsAction_nextTab": "Next Tab",
     "shortcutsAction_prevTab": "Previous Tab",
     "shortcutsAction_terminalSearch": "Search in Terminal",
+    "shortcutsAction_terminalSelectAll": "Select All",
     "shortcutsAction_openPalette": "Open Command Palette",
     "shortcutsAction_toggleSidebar": "Toggle Left Sidebar",
     "shortcutsAction_toggleRightSidebar": "Toggle Right Panel",
@@ -615,7 +617,12 @@
     "resizeLabel": "Resize panels"
   },
   "terminal": {
-    "scrollToBottom": "Scroll to bottom"
+    "scrollToBottom": "Scroll to bottom",
+    "copy": "Copy",
+    "paste": "Paste",
+    "selectAll": "Select All",
+    "search": "Search...",
+    "clear": "Clear"
   },
   "logging": {
     "systemLog": "System Log",

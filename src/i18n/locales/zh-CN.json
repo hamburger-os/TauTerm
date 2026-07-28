@@ -78,7 +78,8 @@
   "search": {
     "placeholder": "搜索会话...",
     "noResults": "无匹配结果",
-    "caseSensitive": "区分大小写"
+    "caseSensitive": "区分大小写",
+    "terminalPlaceholder": "搜索终端内容..."
   },
   "palette": {
     "placeholder": "输入命令...",
@@ -554,6 +555,7 @@
     "shortcutsAction_nextTab": "下一个标签页",
     "shortcutsAction_prevTab": "上一个标签页",
     "shortcutsAction_terminalSearch": "终端搜索",
+    "shortcutsAction_terminalSelectAll": "全选",
     "shortcutsAction_openPalette": "打开命令面板",
     "shortcutsAction_toggleSidebar": "切换左侧栏",
     "shortcutsAction_toggleRightSidebar": "切换右侧栏",
@@ -615,7 +617,12 @@
     "resizeLabel": "调整面板大小"
   },
   "terminal": {
-    "scrollToBottom": "回到底部"
+    "scrollToBottom": "回到底部",
+    "copy": "复制",
+    "paste": "粘贴",
+    "selectAll": "全选",
+    "search": "搜索...",
+    "clear": "清屏"
   },
   "logging": {
     "systemLog": "软件自身日志",

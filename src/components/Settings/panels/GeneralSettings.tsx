@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import Icon from "../../common/Icon";
+import OptionButton from "../../common/OptionButton";
 import styles from "../SettingsPage.module.css";
 
 /**
@@ -24,30 +24,18 @@ export default function GeneralSettings() {
     <div>
       <h3 className={styles.panelTitle}>{t("settings.general")}</h3>
 
+      <h4 className={styles.categoryTitle}>{t("settings.defaultDataMode")}</h4>
       <div className={styles.settingGroup}>
-        <span className={styles.settingLabel}>{t("settings.defaultDataMode")}</span>
         <div className={styles.optionList}>
-          <button
-            className={`${styles.optionItem} ${currentMode === "text" ? styles.optionItemActive : ""}`}
-            onClick={() => handleModeChange("text")}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          <OptionButton selected={currentMode === "text"} onClick={() => handleModeChange("text")}>
             {t("serial.dataModeText")}
-          </button>
-          <button
-            className={`${styles.optionItem} ${currentMode === "hex" ? styles.optionItemActive : ""}`}
-            onClick={() => handleModeChange("hex")}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          </OptionButton>
+          <OptionButton selected={currentMode === "hex"} onClick={() => handleModeChange("hex")}>
             {t("serial.dataModeHex")}
-          </button>
-          <button
-            className={`${styles.optionItem} ${currentMode === "dual" ? styles.optionItemActive : ""}`}
-            onClick={() => handleModeChange("dual")}
-          >
-            <Icon name="check-plain" size="sm" className={styles.optionIcon} />
+          </OptionButton>
+          <OptionButton selected={currentMode === "dual"} onClick={() => handleModeChange("dual")}>
             {t("serial.dataModeDual")}
-          </button>
+          </OptionButton>
         </div>
         <p className={styles.settingDesc}>
           {t("settings.defaultDataMode")}: {

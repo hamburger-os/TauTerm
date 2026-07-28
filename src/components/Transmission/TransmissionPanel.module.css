@@ -52,7 +52,7 @@
   border-radius: var(--radius-md);
   font-size: 10px;
   color: var(--text-secondary);
-  box-shadow: var(--shadow-sm);  /* 6px — 微型元素用最轻阴影 */
+  box-shadow: var(--glass-rim-light);  /* 6px — 微型元素用最轻高光 */
 }
 
 /* 进度区 */
@@ -88,7 +88,7 @@
   border-radius: var(--radius-sm);
   font-size: 10px;
   color: var(--color-error);
-  box-shadow: var(--shadow-sm);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
+  box-shadow: var(--glass-rim-light);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
 }
 
 .errorText {
@@ -120,7 +120,7 @@
   border-radius: var(--radius-sm);
   font-size: 10px;
   color: var(--color-error);
-  box-shadow: var(--shadow-sm);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
+  box-shadow: var(--glass-rim-light);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
 }
 
 .skipSummary {
@@ -130,5 +130,5 @@
   border-radius: var(--radius-sm);
   font-size: 10px;
   color: var(--color-warning);
-  box-shadow: var(--shadow-sm);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
+  box-shadow: var(--glass-rim-light);  /* 微妙层次 — frosted 主题下区分玻璃表面 */
 }

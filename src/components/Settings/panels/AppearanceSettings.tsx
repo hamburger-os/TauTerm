@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useTheme, THEMES } from "../../../context/ThemeContext";
-import Icon from "../../common/Icon";
+import OptionButton from "../../common/OptionButton";
 import styles from "../SettingsPage.module.css";
 
 /** 行缓冲滑块步长：1,000 行一档，避免拖动时频繁重设 xterm scrollback */
@@ -20,25 +20,24 @@ export default function AppearanceSettings() {
       <h3 className={styles.panelTitle}>{t("settings.appearance")}</h3>
 
       {/* 主题选择 */}
+      <h4 className={styles.categoryTitle}>{t("settings.theme")}</h4>
       <div className={styles.settingGroup}>
-        <span className={styles.settingLabel}>{t("settings.theme")}</span>
         <div className={styles.optionList}>
           {THEMES.map(tm => (
-            <button
+            <OptionButton
               key={tm.id}
-              className={`${styles.optionItem} ${theme === tm.id ? styles.optionItemActive : ""}`}
+              selected={theme === tm.id}
               onClick={() => setTheme(tm.id)}
             >
-              <Icon name="check-plain" size="sm" className={styles.optionIcon} />
               {tm.name}
-            </button>
+            </OptionButton>
           ))}
         </div>
       </div>
 
       {/* 字体大小 */}
+      <h4 className={styles.categoryTitle}>{t("settings.fontSize")}</h4>
       <div className={styles.settingGroup}>
-        <span className={styles.settingLabel}>{t("settings.fontSize")}</span>
         <div className={styles.fontSlider}>
           <input
             type="range"
@@ -57,8 +56,8 @@ export default function AppearanceSettings() {
       </div>
 
       {/* 行缓冲上限（统一：Text / HEX / Dual） */}
+      <h4 className={styles.categoryTitle}>{t("settings.bufferLines")}</h4>
       <div className={styles.settingGroup}>
-        <span className={styles.settingLabel}>{t("settings.bufferLines")}</span>
         <div className={styles.fontSlider}>
           <input
             type="range"

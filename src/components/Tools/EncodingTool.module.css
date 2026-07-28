@@ -46,10 +46,7 @@
 }
 
 .copyBtn {
-  background: none;
-  border: none;
   cursor: pointer;
-  color: var(--text-secondary);
   font-size: var(--text-xs);
   padding: 2px;
   flex-shrink: 0;

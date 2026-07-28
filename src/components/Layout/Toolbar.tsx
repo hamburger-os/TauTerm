@@ -89,7 +89,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
         <span className={styles.logo}><Icon name="logo" size="lg" /> TauTerm</span>
 
         <button
-          className={styles.toolbarButton}
+          className={`${styles.toolbarButton} liquid-glass-ghost-button`}
           onClick={() => handleClick("sidebar")}
           title={t("toolbar.sidebar") + (sidebarShortcut ? ` (${sidebarShortcut})` : "")}
         >
@@ -100,7 +100,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
         {leftItems.map(item => (
           <button
             key={item.id}
-            className={styles.toolbarButton}
+            className={`${styles.toolbarButton} liquid-glass-ghost-button`}
             onClick={item.onClick}
             title={item.label}
           >
@@ -132,7 +132,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
         </div>
 
         <button
-          className={styles.toolbarButton}
+          className={`${styles.toolbarButton} liquid-glass-ghost-button`}
           onClick={() => handleClick("rightSidebar")}
           title={t("toolbar.rightSidebar") + (rightSidebarShortcut ? ` (${rightSidebarShortcut})` : "")}
         >
@@ -142,7 +142,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
         {centerItems.map(item => (
           <button
             key={item.id}
-            className={styles.toolbarButton}
+            className={`${styles.toolbarButton} liquid-glass-ghost-button`}
             onClick={item.onClick}
             title={item.label}
           >
@@ -160,7 +160,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
         {rightItems.map(item => (
           <button
             key={item.id}
-            className={styles.toolbarButton}
+            className={`${styles.toolbarButton} liquid-glass-ghost-button`}
             onClick={item.onClick}
             title={item.label}
           >

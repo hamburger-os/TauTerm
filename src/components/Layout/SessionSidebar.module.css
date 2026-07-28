@@ -80,7 +80,7 @@
 .item.active {
   background: var(--glass-bg-active);
   border: 1px solid var(--glass-border-hover);
-  box-shadow: var(--shadow-sm),
+  box-shadow: var(--glass-rim-light),
               inset 0 1px 0 var(--glass-border-top);
 }
 

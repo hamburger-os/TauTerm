@@ -144,11 +144,21 @@ body {
    适用于嵌套在 .liquid-glass 表面内部的小型卡片元素
    ========================================== */
 .liquid-glass-card {
-  background: var(--glass-fill);
+  background: var(--glass-card-fill);
   border: 1px solid var(--glass-border-default);
   border-top: 1px solid var(--glass-border-top);
   border-left: 1px solid var(--glass-border-left);
-  box-shadow: var(--shadow-elevated);
+  box-shadow: var(--glass-rim-glow);
+}
+
+/* ==========================================
+   4.6 液态玻璃状态提示卡片 — 内联状态横幅
+   适用于版本更新对比、状态消息等内联提示元素
+   ========================================== */
+.liquid-glass-status-card {
+  background: color-mix(in srgb, var(--color-success) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-success) 18%, transparent);
+  border-radius: var(--radius-md);
 }
 
 /* ==========================================
@@ -167,7 +177,7 @@ body {
   background: var(--glass-button-hover-bg);
   border-color: var(--glass-button-hover-border);
   transform: translateY(-2px);
-  box-shadow: var(--shadow-elevated),
+  box-shadow: var(--glass-rim-glow),
               var(--glass-button-shadow-inset);
 }
 
@@ -176,6 +186,33 @@ body {
   color: var(--accent-primary);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 25%, transparent);
   transform: translateY(0);
+}
+
+/* ==========================================
+   5.1 幽灵按钮 — 无背景无边框，hover 显示底色
+   适用于：弹窗关闭按钮、工具栏图标按钮等透明控件
+   与 GlassButton variant="ghost" 同义
+   ========================================== */
+.liquid-glass-ghost-button {
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast),
+              color var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.liquid-glass-ghost-button:hover {
+  background: var(--glass-bg-hover);
+  color: var(--text-primary);
+}
+
+.liquid-glass-ghost-button:active:not(:disabled) {
+  background: var(--glass-bg-active);
 }
 
 .liquid-glass-button.active:disabled {
@@ -463,7 +500,7 @@ body {
   border-radius: var(--radius-full);
   background: var(--text-muted);
   transition: all var(--transition-button);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--glass-rim-light);
 }
 
 /* 选中态 */
@@ -519,10 +556,10 @@ body {
    6px 轻阴影 + 3D 不对称边框高光
    ========================================== */
 .liquid-glass-mini-card {
-  background: var(--glass-fill);
+  background: var(--glass-card-fill);
   border: 1px solid var(--glass-border-default);
   border-top: 1px solid var(--glass-border-top);
   border-left: 1px solid var(--glass-border-left);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--glass-rim-light);
 }

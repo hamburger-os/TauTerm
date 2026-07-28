@@ -36,19 +36,11 @@
 }
 
 .closeBtn {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-size: var(--text-lg);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  transition: all var(--transition-fast);
-}
-
-.closeBtn:hover {
-  color: var(--text-primary);
-  background: var(--glass-fill);
 }
 
 /* 主体 */
@@ -69,40 +61,20 @@
   flex-shrink: 0;
 }
 
-.navItem {
+/* 导航按钮 — 仅布局，视觉由全局 liquid-glass-button 提供 */
+.navBtn {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-secondary);
   font-size: var(--text-base);
   font-family: var(--font-ui);
   cursor: pointer;
-  transition: all var(--transition-fast);
   text-align: left;
-}
-
-.navItem:hover {
-  background: var(--glass-fill);
-  color: var(--text-primary);
-}
-
-.navItemActive {
-  background: var(--glass-bg-active);
-  color: var(--accent-primary);
-  border: 1px solid var(--glass-border-focus);
-}
-
-.navIcon {
-  font-size: var(--text-md);
-  flex-shrink: 0;
-}
-
-.navLabel {
+  width: 100%;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 右侧内容区 */
@@ -128,6 +100,16 @@
   margin-bottom: 20px;
 }
 
+/* 分组分隔标题（参照快捷键页面） */
+.categoryTitle {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  margin: 16px 0 8px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--glass-border-default);
+}
+
 .settingLabel {
   display: block;
   color: var(--text-secondary);
@@ -149,35 +131,33 @@
   gap: 4px;
 }
 
-.optionItem {
+.optionList + .settingLabel {
+  margin-top: 12px;
+}
+
+/* 选项按钮 — 仅布局，视觉由全局 liquid-glass-button 提供 */
+.optionBtn {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border: 1px solid var(--glass-border-default);
-  border-radius: var(--radius-md);
-  background: var(--glass-button-bg);
-  color: var(--text-secondary);
   font-size: var(--text-base);
   font-family: var(--font-ui);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  width: 100%;
 }
 
-.optionItem:hover {
-  border-color: var(--glass-border-hover);
-  background: var(--glass-fill);
-}
-
-.optionItemActive {
-  border-color: var(--glass-border-focus);
-  background: var(--glass-bg-active);
-  color: var(--accent-primary);
-}
-
-.optionIcon {
-  font-size: var(--text-sm);
-  visibility: hidden;
+/* 操作按钮 — 仅布局，视觉由全局 liquid-glass-button / liquid-primary-button 提供 */
+.actionBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: var(--text-base);
+  font-family: var(--font-ui);
+  cursor: pointer;
+  width: 100%;
+  justify-content: center;
 }
 
 /* 编码简写标识（选项内的等宽后缀） */
@@ -187,21 +167,6 @@
   margin-left: auto;
 }
 
-.optionItemActive .optionIcon {
-  visibility: visible;
-}
-
-/* 操作按钮变体 — 用于日志页面的 "打开日志目录"/"清除所有日志" 等操作按钮，
-   在 optionItem 基础上添加内阴影 3D 高光，与切换/选择类按钮区分 */
-.optionItemAction {
-  background: var(--glass-button-bg);
-  box-shadow: var(--glass-button-shadow-inset);
-}
-
-.optionItemAction:hover {
-  background: var(--glass-button-hover-bg);
-  border-color: var(--glass-button-hover-border);
-}
 
 /* 关于页 */
 .aboutSection {
@@ -220,11 +185,6 @@
   font-size: var(--text-base);
   margin-bottom: 20px;
   line-height: 1.5;
-}
-
-.aboutInfo {
-  border-top: 1px solid var(--glass-border-default);
-  padding-top: 16px;
 }
 
 .aboutRow {
@@ -254,9 +214,6 @@
   gap: 8px;
   padding: 10px 14px;
   margin-bottom: 14px;
-  background: color-mix(in srgb, var(--color-success) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-success) 18%, transparent);
-  border-radius: var(--radius-md);
   font-size: var(--text-sm);
 }
 
@@ -279,45 +236,6 @@
   font-weight: 700;
 }
 
-/* 更新按钮 */
-.updateBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border: 1px solid var(--glass-border-default);
-  border-radius: var(--radius-md);
-  background: var(--glass-button-bg);
-  color: var(--text-secondary);
-  font-size: var(--text-base);
-  font-family: var(--font-ui);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-  width: 100%;
-  justify-content: center;
-}
-
-.updateBtn:hover {
-  border-color: var(--glass-border-hover);
-  background: var(--glass-button-hover-bg);
-  color: var(--text-primary);
-}
-
-.updateBtnPrimary {
-  border-color: var(--color-success);
-  background: color-mix(in srgb, var(--color-success) 10%, transparent);
-  color: var(--color-success);
-}
-
-.updateBtnPrimary:hover {
-  background: color-mix(in srgb, var(--color-success) 18%, transparent);
-  border-color: var(--color-success);
-}
-
-.updateBtnDisabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
 .updateResultMsg {
   color: var(--text-secondary);

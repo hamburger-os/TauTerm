@@ -126,7 +126,7 @@ export default function SettingsPage({
             {/* 标题栏 */}
             <div className={styles.header}>
               <span className={styles.headerTitle}>{t("settings.title")}</span>
-              <button className={styles.closeBtn} onClick={onClose}><Icon name="close" size="md" /></button>
+              <button className={`${styles.closeBtn} liquid-glass-ghost-button`} onClick={onClose}><Icon name="close" size="md" /></button>
             </div>
 
             <div className={styles.body}>
@@ -135,11 +135,11 @@ export default function SettingsPage({
                 {CATEGORIES.map(cat => (
                   <button
                     key={cat.id}
-                    className={`${styles.navItem} ${activeCategory === cat.id ? styles.navItemActive : ""}`}
+                    className={`${styles.navBtn} liquid-glass-button ${activeCategory === cat.id ? "active" : ""}`}
                     onClick={() => setActiveCategory(cat.id)}
                   >
-                    <Icon name={cat.icon} size="md" className={styles.navIcon} />
-                    <span className={styles.navLabel}>{t(cat.labelKey)}</span>
+                    <Icon name={cat.icon} size="md" />
+                    <span>{t(cat.labelKey)}</span>
                   </button>
                 ))}
               </nav>

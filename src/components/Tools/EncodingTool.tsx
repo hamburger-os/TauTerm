@@ -6,6 +6,7 @@ import {
   type EncodingOp,
   ENCODING_OP_KEYS,
 } from "../../utils/encoding";
+import { copyToClipboard } from "../../utils/clipboard";
 import styles from "./EncodingTool.module.css";
 
 export function EncodingToolInner() {
@@ -22,11 +23,9 @@ export function EncodingToolInner() {
 
   const handleCopy = useCallback(async () => {
     if (!result) return;
-    try {
-      await navigator.clipboard.writeText(result);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch { /* ignore */ }
+    await copyToClipboard(result);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   }, [result]);
 
   return (
@@ -59,7 +58,7 @@ export function EncodingToolInner() {
             {result}
           </code>
           {!result.startsWith("[Error:") && (
-            <button className={styles.copyBtn} onClick={handleCopy} title={t("common.copy") ?? "Copy"}>
+            <button className={`${styles.copyBtn} liquid-glass-ghost-button`} onClick={handleCopy} title={t("common.copy") ?? "Copy"}>
               {copied ? t("tools.copied") : t("common.copy")}
             </button>
           )}

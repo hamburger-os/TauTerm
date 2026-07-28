@@ -295,6 +295,7 @@ function AppInner() {
     switch (cmdId) {
       case ACTION_IDS.SESSION_NEW: setEditSessionId(null); setConnectDialogOpen(true); break;
       case ACTION_IDS.TERMINAL_SEARCH: break;
+      case ACTION_IDS.TERMINAL_SELECT_ALL: break;
       case ACTION_IDS.SIDEBAR_TOGGLE: setSidebarVisible(v => !v); break;
       case ACTION_IDS.RIGHT_SIDEBAR_TOGGLE: setRightSidebarVisible(v => !v); break;
       case ACTION_IDS.SERIAL_REFRESH: refreshEndpoints(); break;

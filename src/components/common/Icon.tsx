@@ -51,6 +51,7 @@ import codePng from "../../assets/icons/code.png";
 import chevronRightPng from "../../assets/icons/chevron-right.png";
 import sshShellPng from "../../assets/icons/ssh-shell.png";
 import clipboardPng from "../../assets/icons/clipboard.png";
+import pastePng from "../../assets/icons/paste.png";
 
 // ── PNG URL Mapping ───────────────────────────────────────────
 // Must be defined before IconName type so PNG key list can be derived
@@ -104,6 +105,7 @@ const PNG_MAP: Record<string, string> = {
   "chevron-right": chevronRightPng,
   "ssh-shell": sshShellPng,
   clipboard: clipboardPng,
+  paste: pastePng,
 };
 
 // ── Preload: 模块加载时提前下载所有 44 个 PNG 图标到浏览器缓存 ──

@@ -1,13 +1,10 @@
 .bar {
-  position: absolute;
-  top: 0;
-  right: 0;
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 6px 10px;
-  border-radius: 0 0 0 var(--radius-md);
-  z-index: var(--z-overlay);
+  border-radius: 0 var(--radius-lg) 0 var(--radius-md);
+  background: var(--glass-card-fill);
 }
 
 .input {
@@ -29,14 +26,10 @@
 .btn {
   width: 22px;
   height: 22px;
-  color: var(--text-secondary);
-  border-radius: var(--radius-md);
-  cursor: pointer;
   font-size: var(--text-xs);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--transition-fast);
 }
 
 .btn:hover { color: var(--text-primary); }

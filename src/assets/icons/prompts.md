@@ -650,7 +650,21 @@ A liquid glass style SSH remote terminal icon, 3D glass sculpture on pure black 
 **English prompt:**
 A liquid glass style clipboard/copy icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: body is a rounded rectangle clipboard (stroked outline), with a plump small circle at the upper right (symbolizing a pin/clip), and 2-3 horizontal thick rounded capsule bars on the clipboard surface (representing text lines), bars decreasing in length, bottom-aligned. All corners heavily rounded, strokes thick and even. Clean modern form, must remain recognizable as "clipboard/copy" at 18×18px. Style reference: frosted glass texture, liquid pill strokes, copy/clipboard UI icon.
 
-**使用位置：** `src/assets/icons/clipboard.png` — 文件管理器右键菜单多选计数 header、文件属性弹窗复制路径按钮
+**使用位置：** `src/assets/icons/clipboard.png` — 终端右键菜单「Copy（复制）」选项图标、文件管理器右键菜单多选计数 header、文件属性弹窗复制路径按钮
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 50. paste — 从剪贴板粘贴
+
+**中文提示词：**
+一个液态玻璃风格的粘贴图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：外侧为一个较大的圆角矩形剪贴板（描边），顶部中间有一个圆润的夹子/图钉凸起；剪贴板内部居中偏下位置有一个较小的圆角矩形/纸张（实心填充的朦胧玻璃片）。夹子与剪贴板外框之间通过柔和弧线自然过渡。外框和内层纸张之间有明显的空间深度关系，内层纸张带微微的内发光，与半透明液态玻璃外框形成层次对比。所有转角大圆角，线条粗壮均匀。整体造型在 14×14px 极小尺寸下仍可辨识为"粘贴"含义。与 clipboard.png（剪贴板+文本行，Copy 用）区分：clipboard 是空剪贴板表面有文本行（暗示"此处有内容可复制"），paste 是剪贴板内部有一张插入的实心纸张（暗示"内容正在被粘贴到此处"）。风格参考：磨砂玻璃质感、液态胶囊描边、粘贴/插入 UI 图标。
+
+**English prompt:**
+A liquid glass style paste icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: an outer large rounded rectangle clipboard (stroked outline) with a plump rounded clip/pin protruding from the top center; inside the clipboard, positioned slightly below center, is a smaller rounded rectangle / document sheet (solid filled, misty glass pane). The clip and clipboard outline transition naturally via a soft curved junction. There is a clear sense of spatial depth between the outer frame and the inner document — the inner sheet has subtle internal glow, creating layered contrast with the translucent liquid glass outer frame. All corners heavily rounded, strokes thick and even. The overall form must remain recognizable as "paste" at 14×14px. Distinguish from clipboard.png (clipboard + text lines, used for Copy): clipboard is an empty clipboard with text lines on the surface (implying "content is here to copy"), while paste is a clipboard with a solid document sheet being inserted (implying "content is being pasted into here"). Style reference: frosted glass texture, liquid pill strokes, paste/insert UI icon.
+
+**使用位置：** `src/assets/icons/paste.png` — 终端右键菜单「Paste（粘贴）」选项图标
 
 **技术参数：** 256×256, frosted glass, black bg, PNG-24
 
@@ -660,7 +674,7 @@ A liquid glass style clipboard/copy icon, 3D glass sculpture on pure black backg
 
 ### 图标质量
 
-- [ ] 所有 48 个图标风格统一（描边粗细、圆角程度、视觉密度）
+- [ ] 所有 49 个图标风格统一（描边粗细、圆角程度、视觉密度）
 - [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
 - [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
 - [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import Icon from "../../common/Icon";
+import OptionButton from "../../common/OptionButton";
 import type { UpdateInfo, CheckFrequency } from "../../../types/updater";
 import styles from "../SettingsPage.module.css";
 
@@ -51,32 +52,33 @@ export default function AboutSettings({
   return (
     <div className={styles.aboutSection}>
       <h3 className={styles.panelTitle}>TauTerm</h3>
-      {appVersion && <p className={styles.aboutVersion}>{appVersion}</p>}
 
-      {/* 版本对比 */}
-      {updateInfo.phase === "available" && updateInfo.latestVersion && (
-        <div className={styles.updateVersionCompare}>
-          <span className={styles.updateCurrentLabel}>
-            {t("updater.currentVersion")}
-          </span>
-          <span className={styles.updateCurrentVersion}>{appVersion}</span>
-          <span className={styles.updateArrow}>
-            <Icon name="chevron-up" size="sm" />
-          </span>
-          <span className={styles.updateLatestVersion}>
-            {updateInfo.latestVersion}
-          </span>
-        </div>
-      )}
-
-      <p className={styles.aboutDesc}>{t("app.description")}</p>
-
-      {/* 更新操作区 */}
+      {/* 版本 + 描述 + 更新操作区 */}
       <div className={styles.updateSection}>
-        {/* 检查/下载/安装按钮 */}
+        {appVersion && <p className={styles.aboutVersion}>{appVersion}</p>}
+
+        {/* 版本对比 */}
+        {updateInfo.phase === "available" && updateInfo.latestVersion && (
+          <div className={`${styles.updateVersionCompare} liquid-glass-status-card`}>
+            <span className={styles.updateCurrentLabel}>
+              {t("updater.currentVersion")}
+            </span>
+            <span className={styles.updateCurrentVersion}>{appVersion}</span>
+            <span className={styles.updateArrow}>
+              <Icon name="chevron-up" size="sm" />
+            </span>
+            <span className={styles.updateLatestVersion}>
+              {updateInfo.latestVersion}
+            </span>
+          </div>
+        )}
+
+        <p className={styles.aboutDesc}>{t("app.description")}</p>
+
+        {/* 更新按钮 */}
         {updateInfo.phase === "idle" && (
           <>
-            <button className={styles.updateBtn} onClick={onCheckUpdate}>
+            <button className={`${styles.actionBtn} liquid-glass-button`} onClick={onCheckUpdate}>
               {t("updater.checkForUpdates")}
             </button>
             {updateInfo.resultMessage && (
@@ -88,7 +90,7 @@ export default function AboutSettings({
         )}
         {updateInfo.phase === "checking" && (
           <button
-            className={`${styles.updateBtn} ${styles.updateBtnDisabled}`}
+            className={`${styles.actionBtn} liquid-glass-button`}
             disabled
           >
             <span className={styles.updateSpinner} />
@@ -97,7 +99,7 @@ export default function AboutSettings({
         )}
         {updateInfo.phase === "available" && (
           <button
-            className={`${styles.updateBtn} ${styles.updateBtnPrimary}`}
+            className={`${styles.actionBtn} liquid-primary-button`}
             onClick={onDownloadUpdate}
           >
             {t("updater.downloadUpdate", {
@@ -108,7 +110,7 @@ export default function AboutSettings({
         {updateInfo.phase === "downloading" && (
           <div className={styles.updateProgressWrap}>
             <button
-              className={`${styles.updateBtn} ${styles.updateBtnDisabled}`}
+              className={`${styles.actionBtn} liquid-glass-button`}
               disabled
             >
               {t("updater.downloading")}
@@ -124,7 +126,7 @@ export default function AboutSettings({
         )}
         {updateInfo.phase === "ready" && (
           <button
-            className={`${styles.updateBtn} ${styles.updateBtnPrimary}`}
+            className={`${styles.actionBtn} liquid-primary-button`}
             onClick={onInstallUpdate}
           >
             {t("updater.installAndRelaunch")}
@@ -137,7 +139,7 @@ export default function AboutSettings({
                 ? t("updater.checkFailed", { error: updateInfo.error })
                 : t("updater.checkFailed", { error: "" })}
             </p>
-            <button className={styles.updateBtn} onClick={onCheckUpdate}>
+            <button className={`${styles.actionBtn} liquid-glass-button`} onClick={onCheckUpdate}>
               {t("updater.retry")}
             </button>
           </div>
@@ -160,13 +162,8 @@ export default function AboutSettings({
       </div>
 
       {/* 检查频率设置 */}
-      <div className={styles.aboutInfo}>
-        <div className={styles.aboutRow}>
-          <span className={styles.aboutLabel}>
-            {t("updater.checkFrequency")}
-          </span>
-        </div>
-        <div className={styles.optionList}>
+      <h4 className={styles.categoryTitle}>{t("updater.checkFrequency")}</h4>
+      <div className={styles.optionList}>
           {(
             [
               ["always", t("updater.frequencyAlways")],
@@ -175,28 +172,20 @@ export default function AboutSettings({
               ["never", t("updater.frequencyNever")],
             ] as const
           ).map(([val, label]) => (
-            <button
+            <OptionButton
               key={val}
-              className={`${styles.optionItem} ${checkFrequency === val ? styles.optionItemActive : ""}`}
+              selected={checkFrequency === val}
               onClick={() => onCheckFrequencyChange(val)}
             >
-              <span className={styles.optionIcon}>
-                {checkFrequency === val ? "✓" : ""}
-              </span>
               {label}
-            </button>
+            </OptionButton>
           ))}
         </div>
-      </div>
 
-      <div className={styles.aboutInfo} style={{ marginTop: 8 }}>
-        <div className={styles.aboutRow}>
-          <span className={styles.aboutLabel}>
-            {t("settings.buildInfo")}
-          </span>
+      <h4 className={styles.categoryTitle}>{t("settings.buildInfo")}</h4>
+      <div className={styles.aboutRow}>
           <span className={styles.aboutValue}>Tauri + React + xterm.js</span>
         </div>
-      </div>
     </div>
   );
 }

@@ -47,7 +47,7 @@ grep '\-\-block-' --glob='*.{css,tsx}' src/
 grep 'background:' --glob='*.module.css' src/components/ src/renderers/
 grep 'box-shadow:' --glob='*.module.css' src/components/ src/renderers/
 grep 'border-radius:' --glob='*.module.css' src/components/ src/renderers/
-grep '  color:' --glob='*.module.css' src/components/ src/renderers/
+grep 'color:' --glob='*.module.css' src/components/ src/renderers/
 ```
 
 **Scan C: 自建玻璃效果 🔑（CSS Module 中的 backdrop-filter 是高优先级信号）**
@@ -135,7 +135,7 @@ grep 'toggleTrack\|toggleLabel\|toggleSwitch\|switchTrack\|customToggle\|repeatC
 | **G3** | 暗色专属 `rgba(0,0,0,x)` | 在 frosted 浅色底上产生暗色斑块 | 使用 `var(--glass-*-bg)` token 或 `color-mix()` |
 | **G4** | 硬编码 `mix-blend-mode: screen` | screen 在浅色底上效果不符预期 | 使用 `var(--bg-orb-blend)`（frosted 为 multiply） |
 | **G5** | 硬编码遮罩透明度 | 遮罩 `rgba(0,0,0,x)` 不随主题变化 | 使用 `var(--overlay-bg)` |
-| **G6** | 玻璃填充无阴影 | frosted 的 `--glass-fill` 无可见阴影 | 使用 `.liquid-glass` 或 `.liquid-glass-card`（含阴影） |
+| **G6** | 玻璃填充无阴影 | frosted 的 `--glass-fill` / `--glass-card-fill` 无可见阴影 | 使用 `.liquid-glass` 或 `.liquid-glass-card`（含阴影） |
 
 ### E: 结构问题（MEDIUM）
 
@@ -230,7 +230,7 @@ Toast、ContextMenu、SearchBar 下拉、SendBar 历史下拉、FilePreviewModal
 
 ### 透明按钮（不需要全局类）
 
-TitleBar 窗口控制按钮、SessionSidebar 会话列表项、Settings 侧边栏导航项、ConnectDialog 模式卡、CommandPalette 结果项、GlassButton `variant="ghost"`、SendBar 历史项、FileManager 上下文菜单按钮和工具栏按钮。
+TitleBar 窗口控制按钮、SessionSidebar 会话列表项、ConnectDialog 模式卡、CommandPalette 结果项、GlassButton `variant="ghost"`、SendBar 历史项、FileManager 上下文菜单按钮和工具栏按钮。
 
 ### 微文本（8/9/10px 允许使用原始 px）
 

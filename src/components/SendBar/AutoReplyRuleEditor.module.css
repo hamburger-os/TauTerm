@@ -386,7 +386,7 @@
   border-left: 1px solid var(--glass-border-left);
   border-radius: var(--radius-md);
   background: var(--glass-fill);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--glass-rim-light);
 }
 
 .actionRowDragging {
