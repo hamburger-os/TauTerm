@@ -242,6 +242,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           effectiveTransferEnabled,
           transferProtocol,
           effectiveSendBarEnabled,
+          undefined, // pluginId
+          journaldEnabled,
         );
         onClose();
       } else {

@@ -212,7 +212,10 @@
     "rename": "重命名",
     "delete": "删除",
     "startLogging": "实时监控",
-    "stopLogging": "停止监控"
+    "stopLogging": "停止监控",
+    "newTerminal": "新建终端",
+    "closeChannel": "断开连接",
+    "closeAll": "断开全部"
   },
   "bottomPanel": {
     "noSession": "无活跃会话",

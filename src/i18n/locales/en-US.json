@@ -212,7 +212,10 @@
     "rename": "Rename",
     "delete": "Delete",
     "startLogging": "Start Logging",
-    "stopLogging": "Stop Logging"
+    "stopLogging": "Stop Logging",
+    "newTerminal": "New Terminal",
+    "closeChannel": "Disconnect",
+    "closeAll": "Disconnect All"
   },
   "bottomPanel": {
     "noSession": "No active session",

@@ -294,6 +294,8 @@ pub fn run() {
             commands::rename_session,
             commands::reorder_tabs,
             commands::get_tabs,
+            commands::open_channel,
+            commands::close_channel,
             commands::save_sessions,
             commands::load_sessions,
             commands::save_session_config,

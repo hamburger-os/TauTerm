@@ -26,6 +26,7 @@ use crate::AppState;
 
 /// 发送传输上下文（upload）
 pub struct SendContext {
+    /// 内部会话 ID — 用于 SessionStore 操作
     pub session_id: String,
     pub files: Vec<FileInfo>,
     pub remote_dir: Option<String>,
@@ -38,6 +39,7 @@ pub struct SendContext {
 
 /// 接收传输上下文（download）
 pub struct ReceiveContext {
+    /// 内部会话 ID — 用于 SessionStore 操作
     pub session_id: String,
     pub download_dir: String,
     pub remote_paths: Vec<String>,
@@ -65,10 +67,12 @@ pub trait TransferOrchestrator: Send + Sync {
     fn protocol(&self) -> &str;
 
     /// 执行发送（upload）传输
-    async fn execute_send(&self, app: AppHandle, ctx: SendContext) -> Result<(), String>;
+    /// `client_session_id` — 前端传入的原始 sessionId，用于事件回传
+    async fn execute_send(&self, app: AppHandle, ctx: SendContext, client_session_id: String) -> Result<(), String>;
 
     /// 执行接收（download）传输
-    async fn execute_receive(&self, app: AppHandle, ctx: ReceiveContext) -> Result<(), String>;
+    /// `client_session_id` — 前端传入的原始 sessionId，用于事件回传
+    async fn execute_receive(&self, app: AppHandle, ctx: ReceiveContext, client_session_id: String) -> Result<(), String>;
 
     /// 取消正在进行的传输
     #[allow(dead_code)]
@@ -216,7 +220,9 @@ impl InlineTransferOrchestrator {
             handle.state = SessionState::Transferring;
             handle.channel_return_tx = Some(return_tx);
             handle.cancel_transfer_tx = Some(cancel_tx);
-            let _ = handle.write_tx.send(IoLoopCmd::HandoffPort {
+            let tx = handle.write_tx.as_ref()
+                .ok_or("容器会话不支持端口移交（HandoffPort）")?;
+            let _ = tx.send(IoLoopCmd::HandoffPort {
                 give_tx,
                 return_rx,
             });
@@ -281,7 +287,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         self.pt.as_str()
     }
 
-    async fn execute_send(&self, app: AppHandle, ctx: SendContext) -> Result<(), String> {
+    async fn execute_send(&self, app: AppHandle, ctx: SendContext, client_id: String) -> Result<(), String> {
         // 1. Handoff 端口（return_tx 和 cancel_tx 已存入 session handle）
         let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id)?;
 
@@ -305,8 +311,8 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
 
-        // 3. 广播进度
-        spawn_progress_broadcaster(app.clone(), ctx.progress_rx, sid.clone());
+        // 3. 广播进度 — client_id
+        spawn_progress_broadcaster(app.clone(), ctx.progress_rx, client_id.clone());
 
         // 4. 后台取消监听（cancel_rx 由 handoff 阶段创建，cancel_tx 已存入 session）
         let cancel = Arc::new(AtomicBool::new(false));
@@ -316,11 +322,11 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             c.store(true, Ordering::SeqCst);
         });
 
-        // 5. 发射启动事件
+        // 5. 发射启动事件 — client_id
         let _ = app.emit(
             "file-transfer:started",
             serde_json::json!({
-                "session_id": &sid,
+                "session_id": &client_id,
                 "protocol": &proto_str,
                 "direction": "send",
             }),
@@ -351,12 +357,12 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             }
         }
 
-        // 8. 发射完成事件并返回结果
+        // 8. 发射完成事件 — client_id
         match result {
             Ok(_) => {
                 let _ = app.emit(
                     "file-transfer:finished",
-                    serde_json::json!({ "session_id": &sid, "protocol": &proto_str, "success": true }),
+                    serde_json::json!({ "session_id": &client_id, "protocol": &proto_str, "success": true }),
                 );
                 Ok(())
             }
@@ -364,7 +370,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 let _ = app.emit(
                     "file-transfer:finished",
                     serde_json::json!({
-                        "session_id": &sid,
+                        "session_id": &client_id,
                         "protocol": &proto_str,
                         "success": false,
                         "error": e.to_string(),
@@ -379,6 +385,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         &self,
         app: AppHandle,
         ctx: ReceiveContext,
+        client_id: String,
     ) -> Result<(), String> {
         // 1. Handoff 端口（return_tx 和 cancel_tx 已存入 session handle）
         let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id)?;
@@ -403,8 +410,8 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
 
-        // 3. 广播进度
-        spawn_progress_broadcaster(app.clone(), ctx.progress_rx, sid.clone());
+        // 3. 广播进度 — client_id
+        spawn_progress_broadcaster(app.clone(), ctx.progress_rx, client_id.clone());
 
         // 4. 后台取消监听
         let cancel = Arc::new(AtomicBool::new(false));
@@ -414,11 +421,11 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             c.store(true, Ordering::SeqCst);
         });
 
-        // 5. 发射启动事件
+        // 5. 发射启动事件 — client_id
         let _ = app.emit(
             "file-transfer:started",
             serde_json::json!({
-                "session_id": &sid,
+                "session_id": &client_id,
                 "protocol": &proto_str,
                 "direction": "receive",
             }),
@@ -449,12 +456,12 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             }
         }
 
-        // 8. 发射完成事件并返回结果
+        // 8. 发射完成事件 — client_id
         match result {
             Ok(_) => {
                 let _ = app.emit(
                     "file-transfer:finished",
-                    serde_json::json!({ "session_id": &sid, "protocol": &proto_str, "success": true }),
+                    serde_json::json!({ "session_id": &client_id, "protocol": &proto_str, "success": true }),
                 );
                 Ok(())
             }
@@ -462,7 +469,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 let _ = app.emit(
                     "file-transfer:finished",
                     serde_json::json!({
-                        "session_id": &sid,
+                        "session_id": &client_id,
                         "protocol": &proto_str,
                         "success": false,
                         "error": e.to_string(),
@@ -511,20 +518,22 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
         self.pt.as_str()
     }
 
-    async fn execute_send(&self, app: AppHandle, ctx: SendContext) -> Result<(), String> {
+    async fn execute_send(&self, app: AppHandle, ctx: SendContext, client_id: String) -> Result<(), String> {
         let app_for_spawn = app.clone();
 
         let state = app
             .try_state::<AppState>()
             .ok_or("无法获取应用状态")?;
 
+        let internal_id = ctx.session_id.clone();
+
         // 1. 从 SideChannel 获取 FileTransfer 并设置取消标志
         //    合并为一次锁获取，消除 TOCTOU 窗口
         let (ft, cancel_flag) = {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-            let not_found = store.session_not_found(&ctx.session_id);
+            let not_found = store.session_not_found(&internal_id);
             let handle = store
-                .get_session_mut(&ctx.session_id)
+                .get_session_mut(&internal_id)
                 .ok_or(not_found)?;
             if handle.state != SessionState::Connected {
                 return Err("会话未连接".into());
@@ -537,22 +546,21 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
                 .as_ref()
                 .and_then(|sc| sc.create_file_transfer())
                 .ok_or_else(|| "此会话不支持侧通道文件传输".to_string())?;
-            let cancel_flag = store.transfer_start(&ctx.session_id)?;
+            let cancel_flag = store.transfer_start(&internal_id)?;
             (ft, cancel_flag)
         };
 
-        let sid = ctx.session_id.clone();
         let rd = ctx.remote_dir.clone();
         let files = ctx.files.clone();
 
-        // 3. 广播进度
-        spawn_progress_broadcaster(app_for_spawn.clone(), ctx.progress_rx, sid.clone());
+        // 3. 广播进度 — client_id，前端按此过滤事件
+        spawn_progress_broadcaster(app_for_spawn.clone(), ctx.progress_rx, client_id.clone());
 
-        // 4. 发射启动事件
+        // 4. 发射启动事件 — client_id
         let _ = app_for_spawn.emit(
             "file-transfer:started",
             serde_json::json!({
-                "session_id": &sid,
+                "session_id": &client_id,
                 "protocol": ft.protocol(),
                 "direction": "send",
             }),
@@ -567,19 +575,19 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
 
         // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
         let progress_tx_clone = ctx.progress_tx.clone();
+        let internal_for_guard = internal_id.clone();
         let handle = tokio::spawn(async move {
-            let mut guard = PanicGuard::new(app_for_spawn.clone(), sid.clone());
+            let mut guard = PanicGuard::new(app_for_spawn.clone(), internal_for_guard);
 
             let result = ft
                 .send(&files, rd.as_deref(), progress_tx_clone, cancel_flag.clone())
                 .await;
 
-            // 传输完成（成功或失败），emit 事件后 defuse 守卫。
-            // transfer_done 由 PanicGuard::drop 统一处理，避免重复调用。
+            // 完成事件 — client_id
             let _ = app_for_spawn.emit(
                 "file-transfer:finished",
                 serde_json::json!({
-                    "session_id": &sid,
+                    "session_id": &client_id,
                     "protocol": ft.protocol(),
                     "success": result.is_ok(),
                     "error": result.as_ref().err().map(|e| e.to_string()),
@@ -588,9 +596,9 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             guard.defuse();
         });
 
-        // 6. 注册 task handle（供 close_session 等待）
+        // 6. 注册 task handle — internal_id
         if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.register_transfer_task(&ctx.session_id, handle);
+            let _ = store.register_transfer_task(&internal_id, handle);
         }
 
         Ok(())
@@ -600,6 +608,7 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
         &self,
         app: AppHandle,
         ctx: ReceiveContext,
+        client_id: String,
     ) -> Result<(), String> {
         let app_for_spawn = app.clone();
 
@@ -607,13 +616,15 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             .try_state::<AppState>()
             .ok_or("无法获取应用状态")?;
 
+        let internal_id = ctx.session_id.clone();
+
         // 1. 从 SideChannel 获取 FileTransfer 并设置取消标志
         //    合并为一次锁获取，消除 TOCTOU 窗口
         let (ft, cancel_flag) = {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-            let not_found = store.session_not_found(&ctx.session_id);
+            let not_found = store.session_not_found(&internal_id);
             let handle = store
-                .get_session_mut(&ctx.session_id)
+                .get_session_mut(&internal_id)
                 .ok_or(not_found)?;
             if handle.state != SessionState::Connected {
                 return Err("会话未连接".into());
@@ -626,22 +637,21 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
                 .as_ref()
                 .and_then(|sc| sc.create_file_transfer())
                 .ok_or_else(|| "此会话不支持侧通道文件传输".to_string())?;
-            let cancel_flag = store.transfer_start(&ctx.session_id)?;
+            let cancel_flag = store.transfer_start(&internal_id)?;
             (ft, cancel_flag)
         };
 
-        let sid = ctx.session_id.clone();
         let download_dir = ctx.download_dir.clone();
         let remote_paths = ctx.remote_paths.clone();
 
-        // 3. 广播进度
-        spawn_progress_broadcaster(app_for_spawn.clone(), ctx.progress_rx, sid.clone());
+        // 3. 广播进度 — client_id，前端按此过滤事件
+        spawn_progress_broadcaster(app_for_spawn.clone(), ctx.progress_rx, client_id.clone());
 
-        // 4. 发射启动事件
+        // 4. 发射启动事件 — client_id
         let _ = app_for_spawn.emit(
             "file-transfer:started",
             serde_json::json!({
-                "session_id": &sid,
+                "session_id": &client_id,
                 "protocol": ft.protocol(),
                 "direction": "receive",
             }),
@@ -656,8 +666,9 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
 
         // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
         let progress_tx_clone = ctx.progress_tx.clone();
+        let internal_for_guard = internal_id.clone();
         let handle = tokio::spawn(async move {
-            let mut guard = PanicGuard::new(app_for_spawn.clone(), sid.clone());
+            let mut guard = PanicGuard::new(app_for_spawn.clone(), internal_for_guard);
 
             let result = ft
                 .receive(
@@ -668,12 +679,11 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
                 )
                 .await;
 
-            // 传输完成（成功或失败），emit 事件后 defuse 守卫。
-            // transfer_done 由 PanicGuard::drop 统一处理，避免重复调用。
+            // 完成事件 — client_id
             let _ = app_for_spawn.emit(
                 "file-transfer:finished",
                 serde_json::json!({
-                    "session_id": &sid,
+                    "session_id": &client_id,
                     "protocol": ft.protocol(),
                     "success": result.is_ok(),
                     "error": result.as_ref().err().map(|e| e.to_string()),
@@ -682,8 +692,9 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             guard.defuse();
         });
 
+        // 注册 task handle — internal_id
         if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.register_transfer_task(&ctx.session_id, handle);
+            let _ = store.register_transfer_task(&internal_id, handle);
         }
 
         Ok(())

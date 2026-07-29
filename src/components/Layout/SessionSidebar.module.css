@@ -149,3 +149,44 @@
 .settingsLabel {
   white-space: nowrap;
 }
+
+/* ===== 树形结构（多连接支持）===== */
+
+/* 子 channel 容器 */
+.children {
+  border-left: 2px solid var(--glass-border-default);
+  margin-left: 16px;  /* 从箭头位置开始 */
+  padding-left: 0;
+}
+
+/* 子 channel 条目 — 圆点与父级对齐 */
+/* 父 dot: 8(item pad)+16(arrow)+8(gap)=32px, 子 dot: 8(item pad)+16(margin)+2(border)+6(pad)=32px */
+.childItem {
+  composes: item;
+  padding-left: 6px;
+}
+
+/* 展开/折叠箭头 */
+.expandArrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+  transition: transform var(--transition-fast);
+  cursor: pointer;
+}
+
+.expandArrow.open {
+  transform: rotate(90deg);
+}
+
+/* 无子项的会话组占位 */
+.noChildren {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}

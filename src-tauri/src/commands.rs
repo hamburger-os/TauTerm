@@ -6,14 +6,16 @@
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
 use crate::channel::io_loop::IoLoopCmd;
+use crate::channel::AsyncChannel;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus};
 use crate::kernel::script_engine::codegen::{hex_to_bytes, interpret_escape_sequences};
 use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use tokio::sync::mpsc;
 use crate::kernel::plugin_adapter::{ProtocolAdapter, TransferProtocolType};
-use crate::kernel::session_store::{SessionState, SessionStore};
+use crate::kernel::session_store::{SessionState, SessionStore, IoTaskHandle};
 use crate::virtual_port::bridge::VirtualPortBridge;
 use crate::virtual_port::backend::{contains_elevation_indicator, PortPair, VirtualPortConfig};
 use crate::AppState;
@@ -537,64 +539,65 @@ async fn connect_session_ssh(
     );
 
     let session_name = name.unwrap_or_else(|| format!("{}@{}", ssh_config.username, ssh_config.host));
-    let data_mode = ssh_config.data_mode.clone();
-
-    let app_data = app.clone();
-    let log_tx = {
-        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-        log_engine.sender()
-    };
-
-    // 共享 on_data 回调：DataBatcher + 日志（SSH 无虚拟端口桥接）
-    let on_data = create_on_data_callback(
-        &app_data, log_tx, data_mode.clone(), None,
-    );
-
-    let app_disconnect = app.clone();
-    let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
-        let app_state: State<'_, AppState> = app_disconnect.state();
-        if let Ok(mut store) = app_state.session_store.lock() {
-            store.mark_disconnected(&session_id);
-            let path = SessionStore::sessions_file_path(&app_disconnect);
-            let _ = store.save_to_disk(&path);
-        }
-        let _ = app_disconnect.emit("session-disconnected", serde_json::json!({
-            "session_id": session_id,
-        }));
-    });
-
     let transfer_enabled_val = transfer_enabled.unwrap_or(true);
     let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "sftp".into());
     let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
 
-    let session_id = {
+    // 分离 side_channel（SSH Handle，供后续子连接复用）
+    let side_channel = conn.side_channel;
+    // 分离 channel（第一个 PTY，作为通道 0 的 I/O）
+    let channel_for_ch0 = match conn.channel {
+        crate::kernel::plugin_adapter::ChannelKind::Async(ch) => ch,
+        crate::kernel::plugin_adapter::ChannelKind::Sync(_) => {
+            return Err("SSH 连接期望 Async channel".to_string());
+        }
+    };
+
+    // 1. 创建容器父 session（无 I/O loop）
+    let parent_id = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        // conn 携带 side_channel（Arc<russh::client::Handle<SshHandler>> + SftpSession 缓存），由 SessionStore 保存供 SFTP 复用
-        let session_id = store.create_session(
-            &session_name, "ssh", &endpoint, params.clone(), conn,
-            on_data, on_disconnect, app.clone(),
+        let pid = store.create_container_session(
+            &session_name, "ssh", &endpoint, params.clone(),
+            side_channel,
             transfer_enabled_val,
             Some(transfer_protocol_val.clone()),
             send_bar_enabled_val,
-            session_id,
+            session_id.clone(),
         )?;
-
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
-        session_id
+        pid
     };
 
-    let (actual_name, actual_params, connected_at) = {
+    // 2. 通过共享逻辑创建通道 0（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
+    let channel0_id = create_ssh_sub_channel(
+        &app, &*state, &parent_id, channel_for_ch0,
+    ).await
+        .inspect_err(|e| {
+            // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
+            log::error!("SSH 通道 0 创建失败，回滚父容器会话 {}: {}", parent_id, e);
+            if let Ok(mut store) = state.session_store.lock() {
+                let _ = store.close_session(&parent_id);
+            }
+        })?;
+
+    // 3. 读取父会话信息 + emit 父容器 session-connected（前端不创建额外的根 tab）
+    let (actual_name, actual_params) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.get_session(&session_id)
-            .map(|h| (h.name.clone(), h.params.clone(), h.connected_at))
-            .unwrap_or((session_name, params, None))
+        store.get_session(&parent_id)
+            .map(|h| (h.name.clone(), h.params.clone()))
+            .unwrap_or((session_name, params.clone()))
     };
 
-    log::info!("SSH 会话已连接: {} @ {}", actual_name, endpoint);
+    let connected_at = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    );
+
+    log::info!("SSH 会话已连接: {} @ {} (parent: {}, channel_0: {})", actual_name, endpoint, parent_id, channel0_id);
 
     let _ = app.emit("session-connected", serde_json::json!({
-        "session_id": session_id,
+        "session_id": parent_id,
         "endpoint": endpoint,
         "connection_type": "ssh",
         "plugin_id": "ssh",
@@ -608,9 +611,10 @@ async fn connect_session_ssh(
         "file_service_protocol": ssh_config.file_service_protocol,
         "journald_enabled": journald_enabled_val,
         "host_key_fingerprint": host_key_fingerprint,
+        "is_container": true,
     }));
 
-    Ok(session_id)
+    Ok(parent_id)
 }
 
 // ── 命令：SSH 主机密钥确认 ────────────────────────────
@@ -655,14 +659,15 @@ pub async fn disconnect_session(
     // 单次锁获取：读取 → 保存 → 关闭（close_session 内部关闭桥接）
     let (pairs_to_destroy, session_name) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
 
         let handle = store.get_session(&session_id)
             .ok_or_else(|| store.session_not_found(&session_id))?;
         let pairs = handle.virtual_port_pairs.clone();
         let name = handle.name.clone();
         store.close_session(&session_id)?;
+        // 持久化：会话状态已变为 Disconnected，写入磁盘
+        let path = SessionStore::sessions_file_path(&app);
+        let _ = store.save_to_disk(&path);
         (pairs, name)
     };
     // 锁已释放 — close_session 内部已关闭桥接
@@ -718,8 +723,11 @@ pub fn write_data(
     let data_mode = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.write(&session_id, &data)?;
+        // 解析子连接 ID → 父会话以获取 data_mode
+        let resolved_id = store.resolve_parent_id(&session_id)
+            .unwrap_or(session_id.clone());
         store
-            .get_session(&session_id)
+            .get_session(&resolved_id)
             .and_then(|h| h.params.get("data_mode"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
@@ -785,13 +793,13 @@ pub fn reorder_tabs(
     Ok(())
 }
 
-/// 获取所有标签页信息
+/// 获取所有标签页信息（含子连接）
 #[tauri::command]
 pub fn get_tabs(
     state: State<'_, AppState>,
 ) -> Result<Vec<TabInfo>, String> {
     let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let tabs: Vec<TabInfo> = store.tab_ids().iter().filter_map(|id| {
+    let mut tabs: Vec<TabInfo> = store.tab_ids().iter().filter_map(|id| {
         store.get_session(id).map(|h| TabInfo {
             id: id.clone(),
             name: h.name.clone(),
@@ -806,7 +814,269 @@ pub fn get_tabs(
             plugin_id: h.plugin_id.clone(),
         })
     }).collect();
+    // 添加子连接
+    for id in store.tab_ids() {
+        if let Some(h) = store.get_session(&id) {
+            for sub in &h.sub_connections {
+                if sub.state == SessionState::Disconnected {
+                    continue; // 跳过已断开的子连接，等待 channel-closed 事件触发 REMOVE_CHILD
+                }
+                tabs.push(TabInfo {
+                    id: sub.id.clone(),
+                    name: sub.name.clone(),
+                    connection_type: h.plugin_id.clone(),
+                    endpoint: h.endpoint.clone(),
+                    state: match sub.state {
+                        SessionState::Connected => "connected".into(),
+                        SessionState::Connecting => "connecting".into(),
+                        SessionState::Disconnected => "disconnected".into(),
+                        SessionState::Transferring => "transferring".into(),
+                    },
+                    plugin_id: h.plugin_id.clone(),
+                });
+            }
+        }
+    }
     Ok(tabs)
+}
+
+// ── SSH 子通道创建（共享逻辑）───────────────────────
+
+/// 在已有 SSH 父会话上创建子通道。
+///
+/// 供 [`connect_session_ssh`]（channel-0）和 [`open_channel`]（channel-1+）共用。
+/// 所有配置均从父 [`ActiveSessionHandle`] 统一读取，确保所有通道行为完全一致。
+/// 通道名称按 `channel_index + 1` 自动生成为 `"Channel N"`。
+async fn create_ssh_sub_channel(
+    app: &tauri::AppHandle,
+    app_state: &AppState,
+    parent_id: &str,
+    channel: Box<dyn AsyncChannel>,
+) -> Result<String, String> {
+    // ── 阶段 1: 获取锁 → 检查父存活 + 预留 channel_index + 读取配置 → 释放锁 ──
+    let (endpoint, params, data_mode, channel_index, reserved_name, send_bar_enabled_val, file_service_enabled, journald_enabled, file_service_protocol) = {
+        let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
+        let not_found = store.session_not_found(parent_id);
+        let handle = store.get_session_mut(parent_id).ok_or(not_found)?;
+        if handle.state != SessionState::Connected {
+            return Err("父会话已断开，无法创建子连接".to_string());
+        }
+        let dm = handle.params.get("data_mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("text")
+            .to_string();
+        let idx = handle.sub_connections.len() as u32;
+        let ch_name = format!("Channel {}", idx + 1);
+        let sbe = handle.send_bar_enabled;
+        let fse = handle.params.get("file_service_enabled")
+            .and_then(|v| v.as_bool()).unwrap_or(false);
+        let jde = handle.params.get("journald_enabled")
+            .and_then(|v| v.as_bool()).unwrap_or(false);
+        let fsp = handle.params.get("file_service_protocol")
+            .and_then(|v| v.as_str()).unwrap_or("sftp").to_string();
+        (handle.endpoint.clone(), handle.params.clone(), dm, idx, ch_name, sbe, fse, jde, fsp)
+    };
+
+    // ── 阶段 2: 创建 I/O 资源（无锁）──
+    let channel_id = uuid::Uuid::new_v4().to_string();
+    let (write_tx, write_rx) = std::sync::mpsc::sync_channel::<IoLoopCmd>(256);
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    let tx_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let rx_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let tx_clone = tx_bytes.clone();
+    let rx_clone = rx_bytes.clone();
+
+    let log_tx = {
+        let log_engine = app_state.log_engine.lock().map_err(|e| e.to_string())?;
+        log_engine.sender()
+    };
+    let on_data = create_on_data_callback(app, log_tx, data_mode, None);
+
+    let app_disconnect = app.clone();
+    let pid = parent_id.to_string();
+    let ch_id = channel_id.clone();
+    let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |channel_id| {
+        let parent_disconnected = {
+            if let Ok(mut store) = app_disconnect.state::<AppState>().session_store.lock() {
+                store.mark_sub_disconnected(&pid, &channel_id);
+                store.get_session(&pid)
+                    .map(|h| h.state == SessionState::Disconnected)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        };
+        let _ = app_disconnect.emit("channel-closed", serde_json::json!({
+            "channel_id": channel_id,
+            "parent_id": pid,
+        }));
+        if parent_disconnected {
+            let _ = app_disconnect.emit("session-disconnected", serde_json::json!({
+                "session_id": pid,
+                "reason": "网络连接丢失",
+            }));
+        }
+    });
+
+    let io_handle = IoTaskHandle::Async(crate::channel::async_io_loop::spawn_async_io_loop(
+        channel,
+        ch_id.clone(),
+        Box::new(on_data),
+        on_disconnect,
+        write_rx,
+        cancel_rx,
+        tx_clone,
+        rx_clone,
+    ));
+
+    let stats_cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let connected_at = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    );
+
+    crate::kernel::session_store::SessionStore::spawn_stats_collector(
+        app.clone(),
+        channel_id.clone(),
+        tx_bytes.clone(),
+        rx_bytes.clone(),
+        connected_at,
+        stats_cancel_flag.clone(),
+    );
+
+    // ── 阶段 3: 获取锁 → 验证父仍存活 → push sub_connection 或回滚清理 ──
+    let (actual_index, channel_name) = {
+        let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
+        let not_found = store.session_not_found(parent_id);
+        let handle = store.get_session_mut(parent_id).ok_or(not_found)?;
+        if handle.state != SessionState::Connected {
+            // 父会话在阶段 1 和 3 之间被断开 — 回滚清理
+            stats_cancel_flag.store(true, Ordering::SeqCst);
+            let _ = cancel_tx.send(());
+            log::warn!(
+                "父会话 {} 在子通道创建中途断开，已清理 I/O 资源: {}",
+                parent_id, channel_id
+            );
+            return Err("父会话已断开，无法创建子连接".to_string());
+        }
+        // 验证 channel_index 未被其他并发请求抢占（正常不应发生，但防御性检查）
+        let actual_idx = handle.sub_connections.len() as u32;
+        let actual_name = if actual_idx == channel_index {
+            reserved_name
+        } else {
+            format!("Channel {}", actual_idx + 1)
+        };
+
+        let mut sub = crate::kernel::session_store::SubConnection::new(
+            channel_id.clone(),
+            actual_name.clone(),
+            write_tx,
+            io_handle,
+            actual_idx,
+            Some(cancel_tx),
+        );
+        sub.connected_at = connected_at;
+        sub.stats_cancel_flag = Some(stats_cancel_flag);
+        handle.sub_connections.push(sub);
+
+        let path = crate::kernel::session_store::SessionStore::sessions_file_path(app);
+        let _ = store.save_to_disk(&path);
+        (actual_idx, actual_name)
+    };
+
+    // 8. Emit session-connected — 所有字段均从父会话继承
+    let _ = app.emit("session-connected", serde_json::json!({
+        "session_id": channel_id,
+        "endpoint": endpoint,
+        "connection_type": "ssh",
+        "plugin_id": "ssh",
+        "name": channel_name,
+        "params": params,
+        "connected_at": connected_at,
+        "transfer_enabled": false,
+        "send_bar_enabled": send_bar_enabled_val,
+        "parent_id": parent_id,
+        "channel_index": actual_index,
+        "file_service_enabled": file_service_enabled,
+        "file_service_protocol": file_service_protocol,
+        "journald_enabled": journald_enabled,
+    }));
+
+    log::info!(
+        "SSH 子通道已创建: {} (parent: {}, channel_index: {})",
+        channel_id, parent_id, actual_index
+    );
+    Ok(channel_id)
+}
+
+// ── SSH 多连接命令 ─────────────────────────────────
+
+/// 在已有 SSH 会话上打开新的 PTY channel（不重复 TCP/握手/认证）。
+#[tauri::command]
+pub async fn open_channel(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<String, String> {
+    // 1. 获取 SSH side_channel（russh Handle）
+    let ssh_handle = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let side = store.get_side_channel(&session_id)
+            .ok_or_else(|| format!("会话 {} 没有 SSH side channel（可能是串口会话）", session_id))?;
+        let ssh_side = side.as_any()
+            .downcast_ref::<crate::plugins::ssh::SshSideChannel>()
+            .ok_or("无法获取 SSH 会话句柄")?;
+        ssh_side.handle().clone()
+    };
+
+    // 2. 打开新 PTY + shell
+    let ssh_channel = crate::plugins::ssh::open_pty_shell_channel(ssh_handle)
+        .await
+        .map_err(|e| format!("打开新终端失败: {}", e))?;
+
+    // 3. 通过共享逻辑创建子通道（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
+    let channel_id = create_ssh_sub_channel(
+        &app, &*state, &session_id, Box::new(ssh_channel),
+    ).await?;
+
+    log::info!("SSH 子连接已打开: {} (parent: {})", channel_id, session_id);
+    Ok(channel_id)
+}
+
+/// 关闭单个子连接（若为最后一个则自动断开父会话）。
+#[tauri::command]
+pub async fn close_channel(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    // 单次锁获取：查找父会话 → 关闭子连接 → 若最后则关闭父会话
+    let (parent_id, is_last) = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let pid = store.find_parent_of_channel(&session_id)
+            .ok_or_else(|| format!("子连接 {} 未找到", session_id))?;
+        let last = store.close_sub_connection(&pid, &session_id)?;
+        if last {
+            store.close_session(&pid)?;
+            // 持久化：父会话已断开
+            let path = SessionStore::sessions_file_path(&app);
+            let _ = store.save_to_disk(&path);
+        }
+        (pid, last)
+    };
+
+    // 通知前端（仅 session-disconnected；channel-closed 由 on_disconnect 回调单独发出）
+    if is_last {
+        let _ = app.emit("session-disconnected", serde_json::json!({
+            "session_id": parent_id,
+            "reason": "所有终端已关闭",
+        }));
+    }
+
+    log::info!("SSH 子连接已关闭: {}", session_id);
+    Ok(())
 }
 
 // ── 会话持久化命令 ─────────────────────────────────
@@ -1051,9 +1321,12 @@ pub fn start_session_log(
     // 先锁定 session_store 读取会话信息（锁在块结束时释放）
     let (session_name, port_name, data_mode) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        // 解析子连接 ID → 父会话（子连接不在 HashMap 中）
+        let resolved_id = store.resolve_parent_id(&session_id)
+            .unwrap_or(session_id.clone());
         let handle = store
-            .get_session(&session_id)
-            .ok_or_else(|| store.session_not_found(&session_id))?;
+            .get_session(&resolved_id)
+            .ok_or_else(|| store.session_not_found(&resolved_id))?;
         (
             handle.name.clone(),
             handle.endpoint.clone(),
@@ -1597,13 +1870,17 @@ fn get_ssh_side_channel(
     session_id: &str,
 ) -> Result<std::sync::Arc<SshSideChannel>, String> {
     let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let handle = store.get_session(session_id)
+    // 支持子连接路由：若 session_id 是子连接，通过父会话获取 side_channel
+    let parent_id = store.resolve_parent_id(session_id)
         .ok_or_else(|| store.session_not_found(session_id))?;
-    if handle.state == SessionState::Disconnected {
-        return Err("会话已断开".to_string());
+    let sc = store.get_side_channel(&parent_id)
+        .ok_or_else(|| format!("会话 {} 不包含 SSH 侧通道（可能不是 SSH 连接）", parent_id))?;
+    // 检查父会话状态
+    if let Some(h) = store.get_session(&parent_id) {
+        if h.state == SessionState::Disconnected {
+            return Err("会话已断开".to_string());
+        }
     }
-    let sc = handle.side_channel.as_ref()
-        .ok_or_else(|| "此会话不包含 SSH 侧通道（可能不是 SSH 连接）".to_string())?;
     let ssh_sc_ref = sc.as_any().downcast_ref::<SshSideChannel>()
         .ok_or_else(|| "侧通道类型不匹配（期望 SshSideChannel）".to_string())?;
     // 通过克隆内部 Arc 字段构造新的 SshSideChannel，
@@ -1844,7 +2121,7 @@ pub async fn journald_query_cmd(
 #[allow(clippy::too_many_arguments)]
 pub async fn file_transfer_send(
     app: AppHandle,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     protocol: String,
     file_paths: Vec<String>,
@@ -1853,6 +2130,13 @@ pub async fn file_transfer_send(
     checksum_mode: Option<String>,
     streaming: Option<bool>,
 ) -> Result<(), String> {
+    // 解析子通道 ID → 父会话 ID（SSH 多连接支持）。
+    let internal_id = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.resolve_parent_id(&session_id)
+            .ok_or_else(|| store.session_not_found(&session_id))?
+    };
+
     let pt: TransferProtocolType = protocol.parse()
         .map_err(|_| format!("无效的传输协议: {}", protocol))?;
 
@@ -1870,13 +2154,14 @@ pub async fn file_transfer_send(
     // 创建进度通道
     let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-    log::info!("文件传输发送: protocol={}, files={}", pt, files.len());
+    log::info!("文件传输发送: protocol={}, client={}→internal={}, files={}",
+        pt, session_id, internal_id, files.len());
 
     let orch = crate::transfer::orchestrator::create_orchestrator(&pt)?;
     orch.execute_send(
         app,
         crate::transfer::orchestrator::SendContext {
-            session_id,
+            session_id: internal_id,
             files,
             remote_dir,
             progress_tx,
@@ -1885,6 +2170,7 @@ pub async fn file_transfer_send(
             checksum_mode,
             streaming,
         },
+        session_id, // client_session_id — 前端原始 ID，用于事件回传
     )
     .await
 }
@@ -1897,7 +2183,7 @@ pub async fn file_transfer_send(
 #[allow(clippy::too_many_arguments)]
 pub async fn file_transfer_receive(
     app: AppHandle,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     session_id: String,
     protocol: String,
     download_dir: String,
@@ -1906,14 +2192,21 @@ pub async fn file_transfer_receive(
     checksum_mode: Option<String>,
     streaming: Option<bool>,
 ) -> Result<(), String> {
+    // 解析子通道 ID → 父会话 ID（SSH 多连接支持）。
+    let internal_id = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.resolve_parent_id(&session_id)
+            .ok_or_else(|| store.session_not_found(&session_id))?
+    };
+
     let pt: TransferProtocolType = protocol.parse()
         .map_err(|_| format!("无效的传输协议: {}", protocol))?;
 
     let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
     log::info!(
-        "文件传输接收: protocol={}, session_id={}, download_dir={}, remote_paths=[{}]({} files)",
-        pt, session_id, download_dir,
+        "文件传输接收: protocol={}, client={}→internal={}, download_dir={}, remote_paths=[{}]({} files)",
+        pt, session_id, internal_id, download_dir,
         remote_paths.iter().take(5).map(|s| s.as_str()).collect::<Vec<_>>().join(", "),
         remote_paths.len()
     );
@@ -1922,7 +2215,7 @@ pub async fn file_transfer_receive(
     orch.execute_receive(
         app,
         crate::transfer::orchestrator::ReceiveContext {
-            session_id,
+            session_id: internal_id,
             download_dir,
             remote_paths,
             progress_tx,
@@ -1931,6 +2224,7 @@ pub async fn file_transfer_receive(
             checksum_mode,
             streaming,
         },
+        session_id, // client_session_id — 前端原始 ID，用于事件回传
     )
     .await
 }
@@ -1941,17 +2235,21 @@ pub fn file_transfer_cancel(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    log::info!("请求取消传输: session={}", session_id);
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+    // 解析子通道 ID → 父会话 ID（SSH 多连接支持）
+    let resolved_id = store.resolve_parent_id(&session_id)
+        .ok_or_else(|| store.session_not_found(&session_id))?;
+
+    log::info!("请求取消传输: session={}", resolved_id);
     // 尝试两种取消路径：内联传输和侧通道传输
-    let inline_result = store.cancel_transfer(&session_id);
-    let sc_result = store.cancel_transfer_op(&session_id);
+    let inline_result = store.cancel_transfer(&resolved_id);
+    let sc_result = store.cancel_transfer_op(&resolved_id);
     // 只要其中一个成功即可
     if inline_result.is_ok() || sc_result.is_ok() {
-        log::info!("传输取消已置位: session={}", session_id);
+        log::info!("传输取消已置位: session={}", resolved_id);
         Ok(())
     } else {
-        log::warn!("取消失败：未找到进行中的传输: session={}", session_id);
+        log::warn!("取消失败：未找到进行中的传输: session={}", resolved_id);
         Err("取消失败：未找到进行中的传输".into())
     }
 }
@@ -1961,6 +2259,7 @@ pub fn file_transfer_cancel(
 /// 前端终端 resize 时调用，通过 IoLoopCmd::ResizePty 转发到 I/O 循环线程，
 /// 再由 Channel::resize_pty 发送 window_change 请求到远端。
 /// 非 SSH 协议（串口等）的 Channel 默认空实现，调用无副作用。
+/// 支持子连接路由：若 session_id 属于 SSH 子通道，命令通过子通道的 write_tx 发送。
 #[tauri::command]
 pub fn resize_pty(
     state: State<'_, AppState>,
@@ -1969,8 +2268,8 @@ pub fn resize_pty(
     rows: u32,
 ) -> Result<(), String> {
     let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let handle = store.get_session(&session_id)
+    let tx = store.get_write_tx(&session_id)
         .ok_or_else(|| store.session_not_found(&session_id))?;
-    handle.write_tx.send(IoLoopCmd::ResizePty { cols, rows })
+    tx.send(IoLoopCmd::ResizePty { cols, rows })
         .map_err(|e| format!("发送 resize 命令失败: {}", e))
 }

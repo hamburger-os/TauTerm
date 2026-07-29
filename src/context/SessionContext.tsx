@@ -47,6 +47,27 @@ export interface TabInfo {
   fileServiceProtocol?: string;
   /** SSH: 是否启用 journald 日志查看器（默认 false） */
   journaldEnabled?: boolean;
+  /**
+   * 父会话 ID（多连接支持）。
+   * - null/undefined = 根会话（Serial 或 SSH 父会话）
+   * - 非空 = 隶属于某 SSH 父会话的子 channel
+   */
+  parentId?: string | null;
+  /** 子 channel 在父会话中的自动编号（从 0 开始） */
+  channelIndex?: number;
+}
+
+/** connect() 参数对象 */
+export interface ConnectOptions {
+  endpoint: string;
+  params: Record<string, unknown>;
+  name?: string;
+  pluginId?: string;
+  transferEnabled?: boolean;
+  transferProtocol?: string;
+  sendBarEnabled?: boolean;
+  journaldEnabled?: boolean;
+  sessionId?: string;
 }
 
 export interface ConnectionTypeInfo {
@@ -84,11 +105,13 @@ type SessionAction =
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
-  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean }
+  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean; fileServiceEnabled?: boolean; fileServiceProtocol?: string }
   | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: Array<{ port_a: string; port_b: string }> }
   | { type: "SET_VPORT_ERROR"; id: string; error: string }
   | { type: "CLEAR_VPORT_ERROR"; id: string }
-  | { type: "CLEAR_TABS" };
+  | { type: "CLEAR_TABS" }
+  | { type: "REMOVE_CHILD"; id: string; parentId: string }
+  | { type: "REMOVE_ALL_CHILDREN"; parentId: string };
 
 // ── Base64 解码（与后端 data_batcher::base64_encode 配对） ───────────────────
 
@@ -129,14 +152,20 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         activeTabId: action.tab.id,
       };
     }
-    case "REMOVE_TAB":
-      return {
-        ...state,
-        tabs: state.tabs.filter(t => t.id !== action.id),
-        activeTabId: state.activeTabId === action.id
-          ? state.tabs.find(t => t.id !== action.id)?.id ?? null
-          : state.activeTabId,
-      };
+    case "REMOVE_TAB": {
+      // 级联删除所有子 channel
+      const childIds = state.tabs
+        .filter(t => t.parentId === action.id)
+        .map(t => t.id);
+      const allRemoved = new Set([action.id, ...childIds]);
+      const remaining = state.tabs.filter(t => !allRemoved.has(t.id));
+      // 选择下一活跃 tab：优先相邻根节点
+      let nextActive = state.activeTabId;
+      if (nextActive && allRemoved.has(nextActive)) {
+        nextActive = remaining.find(t => !t.parentId)?.id ?? null;
+      }
+      return { ...state, tabs: remaining, activeTabId: nextActive };
+    }
     case "RENAME_TAB":
       return {
         ...state,
@@ -188,8 +217,8 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
                 connectedAt: action.connectedAt !== undefined ? action.connectedAt : t.connectedAt,
                 virtualPortEnabled: (action.params?.virtual_port_enabled as boolean) ?? t.virtualPortEnabled,
                 virtualPortCount: (action.params?.virtual_port_count as number) ?? t.virtualPortCount,
-                fileServiceEnabled: (action.params?.file_service_enabled as boolean) ?? t.fileServiceEnabled,
-                fileServiceProtocol: (action.params?.file_service_protocol as string) ?? t.fileServiceProtocol,
+                fileServiceEnabled: action.fileServiceEnabled ?? (action.params?.file_service_enabled as boolean) ?? t.fileServiceEnabled,
+                fileServiceProtocol: action.fileServiceProtocol ?? (action.params?.file_service_protocol as string) ?? t.fileServiceProtocol,
                 journaldEnabled: action.journaldEnabled ?? (action.params?.journald_enabled as boolean) ?? t.journaldEnabled,
               }
             : t
@@ -222,6 +251,35 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
             : tab
         ),
       };
+    case "REMOVE_CHILD": {
+      const remaining = state.tabs.filter(t => t.id !== action.id);
+      let nextActive = state.activeTabId;
+      if (nextActive === action.id) {
+        // 优先切换到同一父会话的其他子 channel，否则切换到父会话
+        const siblings = remaining.filter(t => t.parentId === action.parentId);
+        nextActive = siblings[0]?.id ?? action.parentId ?? remaining.find(t => !t.parentId)?.id ?? null;
+      }
+      // 如果删除后父会话没有子 channel 了，断开父会话
+      const hasOtherChildren = remaining.some(t => t.parentId === action.parentId);
+      if (!hasOtherChildren) {
+        const parentTab = remaining.find(t => t.id === action.parentId);
+        if (parentTab) {
+          return {
+            ...state,
+            tabs: remaining.map(t =>
+              t.id === action.parentId ? { ...t, state: "disconnected" as ConnectionStatus } : t
+            ),
+            activeTabId: nextActive,
+          };
+        }
+      }
+      return { ...state, tabs: remaining, activeTabId: nextActive };
+    }
+    case "REMOVE_ALL_CHILDREN":
+      return {
+        ...state,
+        tabs: state.tabs.filter(t => t.parentId !== action.parentId),
+      };
     case "CLEAR_TABS":
       return { ...state, tabs: [], activeTabId: null };
     default:
@@ -235,14 +293,18 @@ interface SessionContextValue {
   state: SessionState;
   fetchConnectionTypes: () => Promise<void>;
   refreshEndpoints: () => Promise<void>;
-  connect: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, journaldEnabled?: boolean, sessionId?: string) => Promise<string | null>;
+  connect: (opts: ConnectOptions) => Promise<string | null>;
   createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
   disconnect: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
   switchTab: (sessionId: string) => Promise<void>;
   renameTab: (sessionId: string, name: string) => Promise<void>;
-  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string) => Promise<void>;
+  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string, journaldEnabled?: boolean) => Promise<void>;
+  /** 在已有 SSH 会话上打开新 channel */
+  openChannel: (parentSessionId: string) => Promise<string | null>;
+  /** 关闭单个子 channel */
+  closeChannel: (channelId: string, parentId: string) => Promise<void>;
   getTabs: () => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
@@ -328,7 +390,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const connect = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, journaldEnabled?: boolean, sessionId?: string) => {
+  const connect = useCallback(async (opts: ConnectOptions) => {
+    const { endpoint, params, name, pluginId, transferEnabled, transferProtocol, sendBarEnabled, journaldEnabled, sessionId } = opts;
     dispatch({ type: "SET_ERROR", error: null });
     // 如果已知 sessionId（已创建离线配置），立即将 tab 状态设为 connecting
     if (sessionId) {
@@ -448,6 +511,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [state.tabs]);
 
   const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
+    // 保护：连接已断开时不发送，避免触发后端 "sending on a closed channel" 错误
+    const tab = tabsRef.current.find(t => t.id === sessionId);
+    if (!tab || tab.state === "disconnected") return;
     try {
       const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
       await invoke("write_data", { sessionId, data: Array.from(bytes) });
@@ -459,13 +525,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const switchTab = useCallback(async (sessionId: string) => {
+    // 如果选中的是父 session，自动路由到第一个子 channel
+    const targetTab = state.tabs.find(t => t.id === sessionId);
+    if (targetTab && !targetTab.parentId) {
+      // 这是一个根节点（父 session）
+      const firstChild = state.tabs.find(t => t.parentId === sessionId);
+      if (firstChild) {
+        dispatch({ type: "SET_ACTIVE", id: firstChild.id });
+        try { await invoke("switch_active_session", { sessionId: firstChild.id }); } catch (_e) {}
+        return;
+      }
+    }
     dispatch({ type: "SET_ACTIVE", id: sessionId });
     try {
       await invoke("switch_active_session", { sessionId });
     } catch (_e) {
       // 恢复的会话在后端不存在，静默忽略
     }
-  }, []);
+  }, [state.tabs]);
 
   const renameTab = useCallback(async (sessionId: string, name: string) => {
     dispatch({ type: "RENAME_TAB", id: sessionId, name });
@@ -485,12 +562,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     transferProtocol?: string,
     sendBarEnabled?: boolean,
     pluginId?: string,
+    journaldEnabled?: boolean,
   ) => {
     const tab = state.tabs.find(t => t.id === sessionId);
     const wasConnected = tab?.state === "connected" || tab?.state === "transferring";
 
-    // 1. 如果已连接，先断连
+    // 1. 如果已连接，先清理子通道再断连
     if (wasConnected) {
+      // 先清除前端子通道 UI 状态
+      dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sessionId });
       try {
         await invoke("disconnect_session", { sessionId });
         dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
@@ -534,6 +614,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       transferProtocol,
       sendBarEnabled,
       pluginId: tab?.pluginId, // 保持原有 pluginId，为将来插件切换预留
+      journaldEnabled: journaldEnabled ?? (params?.journald_enabled as boolean) ?? tab?.journaldEnabled,
+      fileServiceEnabled: (params?.file_service_enabled as boolean) ?? tab?.fileServiceEnabled,
+      fileServiceProtocol: (params?.file_service_protocol as string) ?? tab?.fileServiceProtocol,
     });
 
     // 4. 如果之前是连接状态，重新连接
@@ -565,6 +648,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_TABS", tabs });
     } catch (e) {
       // tabs may not exist yet, ignore
+    }
+  }, []);
+
+  const openChannel = useCallback(async (parentSessionId: string): Promise<string | null> => {
+    // 通道名称由后端 create_ssh_sub_channel 按 channel_index + 1 自动生成 "Channel N"
+    try {
+      const channelId = await invoke<string>("open_channel", {
+        sessionId: parentSessionId,
+      });
+      return channelId;
+    } catch (e) {
+      dispatch({ type: "SET_ERROR", error: `创建通道失败: ${e}` });
+      return null;
+    }
+  }, []);
+
+  const closeChannel = useCallback(async (channelId: string, parentId: string) => {
+    try {
+      await invoke("close_channel", { sessionId: channelId });
+      dispatch({ type: "REMOVE_CHILD", id: channelId, parentId });
+    } catch (e) {
+      dispatch({ type: "SET_ERROR", error: `关闭终端失败: ${e}` });
     }
   }, []);
 
@@ -647,12 +752,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; is_container?: boolean }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
           const vPairs = event.payload.virtual_port_pairs;
-          // 检查是否已存在同 ID 的 tab（如 reconfigureSession 重连场景），避免重复添加
+          const parentId = event.payload.parent_id ?? null;
+          const isContainer = event.payload.is_container ?? false;
+          // 检查是否已存在同 ID 的 tab
           const exists = tabsRef.current.some(t => t.id === sid);
           if (exists) {
             // 已存在：更新状态和配置，不新增 tab
@@ -669,16 +776,45 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               pluginId: event.payload.plugin_id || "serial",
               connectedAt: event.payload.connected_at ?? Date.now(),
               journaldEnabled: event.payload.journald_enabled ?? false,
+              fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean),
+              fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
             });
-            // 同步更新虚拟端口对（reconnect 场景下 virtual-port-created
-            // 可能先于 session-connected 到达，合并确保不丢失）
             if (vPairs && vPairs.length > 0) {
               dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: vPairs });
             }
+          } else if (parentId) {
+            // 子 channel 连接成功（connect_session_ssh 的 channel-0 或 open_channel）
+            // tab 不存在时直接 ADD_TAB，避免 SET_TAB_STATE 对不存在的 ID 无操作
+            const chIdx = (event.payload.channel_index ?? 0) + 1;
+            const chName = `Channel ${chIdx}`;
+            dispatch({
+              type: "ADD_TAB",
+              tab: {
+                id: sid,
+                name: chName,
+                connection_type: event.payload.connection_type,
+                endpoint: event.payload.endpoint,
+                state: "connected",
+                pluginId: event.payload.plugin_id || "ssh",
+                params: event.payload.params,
+                stats: { txBytes: 0, rxBytes: 0 },
+                connectedAt: event.payload.connected_at ?? Date.now(),
+                transferEnabled: event.payload.transfer_enabled ?? false,
+                transferProtocol: event.payload.transfer_protocol,
+                sendBarEnabled: event.payload.send_bar_enabled ?? true,
+                parentId,
+                channelIndex: event.payload.channel_index,
+                fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean) ?? false,
+                fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
+                journaldEnabled: event.payload.journald_enabled ?? (event.payload.params?.journald_enabled as boolean) ?? false,
+              },
+            });
+          } else if (isContainer) {
+            // SSH 容器会话 — 不创建独立的根 tab。实际的终端 tab
+            // 由后续的 channel-0 session-connected 事件（带 parentId）创建。
+            // 仅在重连场景（tab 已存在）时更新状态。
           } else {
-            // 真正的新会话：添加 tab，
-            // virtual_port_pairs 由 session-connected 直接携带，
-            // 避免 virtual-port-created 事件先到达时 tab 尚未创建导致丢失
+            // 真正的新根会话：添加 tab
             dispatch({
               type: "ADD_TAB",
               tab: {
@@ -746,10 +882,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2d(); return; }
       unlisteners.push(u2d);
 
+      // 子通道关闭事件（后端 on_disconnect 或 close_channel 命令触发）
+      const u2e = await listen<{ channel_id: string; parent_id: string }>("channel-closed", (event) => {
+        dispatch({ type: "REMOVE_CHILD", id: event.payload.channel_id, parentId: event.payload.parent_id });
+      });
+      if (cancelled) { u2e(); return; }
+      unlisteners.push(u2e);
+
       const u3 = await listen<{ session_id: string; reason?: string }>("session-disconnected", (event) => {
         const reason = event.payload.reason;
         const sid = event.payload.session_id;
         dispatch({ type: "SET_TAB_STATE", id: sid, state: "disconnected" });
+        // 父 session 断开时级联移除所有子 channel
+        dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sid });
         // 清除虚拟端口对信息（端口已在后端销毁）
         dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: [] });
         disconnectCallbackRef.current?.(sid, reason);
@@ -858,6 +1003,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       switchTab,
       renameTab,
       reconfigureSession,
+      openChannel,
+      closeChannel,
       getTabs,
       onSessionData,
       onDataSent,

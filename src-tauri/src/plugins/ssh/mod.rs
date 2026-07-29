@@ -9,6 +9,7 @@ pub mod handler;
 pub mod journald;
 
 use std::sync::Arc;
+use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tokio::sync::Mutex;
@@ -177,6 +178,11 @@ impl SshSideChannel {
             home_dir,
         }
     }
+
+    /// 获取 russh client Handle（用于 SSH 多连接：复用已有 session 打开新 channel）。
+    pub fn handle(&self) -> Arc<russh::client::Handle<SshHandler>> {
+        self.session.clone()
+    }
 }
 
 impl SideChannel for SshSideChannel {
@@ -230,7 +236,11 @@ async fn build_connection_with_config(
 
     // 1. SSH 连接（russh 内部处理 TCP + 握手）
     let addr = format!("{}:{}", config.host, config.port);
-    let russh_config = Arc::new(russh::client::Config::default());
+    let mut russh_config = russh::client::Config::default();
+    russh_config.keepalive_interval = Some(Duration::from_secs(30));
+    russh_config.inactivity_timeout = Some(Duration::from_secs(300));
+    russh_config.nodelay = true;
+    let russh_config = Arc::new(russh_config);
     /// TCP 连接 + SSH 握手超时（秒），不含用户主机密钥确认时间
     const SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
     /// 主机密钥用户确认超时（秒）。前端弹出确认对话框后，用户需在此时间内响应。
@@ -420,7 +430,26 @@ async fn build_connection_with_config(
         None
     });
 
-    // 3. 打开交互式 shell 通道
+    // 3. 打开远端 PTY + shell（共享函数，供 open_channel 复用）
+    let handle = Arc::new(handle);
+    let ssh_channel = open_pty_shell_channel(handle.clone()).await?;
+
+    Ok(BuildConnectionResult {
+        channel: ssh_channel,
+        session: handle,
+        host_key_fingerprint,
+        home_dir,
+    })
+}
+
+/// 在已有 SSH Handle 上打开新的 PTY + shell 通道。
+///
+/// 由 `build_connection_with_config`（首次连接）和 `open_channel`
+/// Tauri 命令（SSH 多连接）共用。跳过了 TCP 连接、密钥验证和认证步骤。
+pub async fn open_pty_shell_channel(
+    handle: Arc<russh::client::Handle<SshHandler>>,
+) -> Result<SshChannel, SessionError> {
+    // 1. 打开交互式 shell 通道
     let channel = handle
         .channel_open_session()
         .await
@@ -428,7 +457,7 @@ async fn build_connection_with_config(
             reason: format!("打开 SSH 通道失败: {}", e),
         })?;
 
-    // 4. 请求 PTY（终端）
+    // 2. 请求 PTY（终端）
     channel
         .request_pty(
             true,
@@ -444,7 +473,7 @@ async fn build_connection_with_config(
             reason: format!("请求 PTY 失败: {}", e),
         })?;
 
-    // 5. 启动 shell
+    // 3. 启动 shell
     channel
         .request_shell(true)
         .await
@@ -452,15 +481,9 @@ async fn build_connection_with_config(
             reason: format!("启动 shell 失败: {}", e),
         })?;
 
-    let handle = Arc::new(handle);
-    let ssh_channel = SshChannel::new(channel, handle.clone());
+    let ssh_channel = SshChannel::new(channel, handle);
 
-    Ok(BuildConnectionResult {
-        channel: ssh_channel,
-        session: handle,
-        host_key_fingerprint,
-        home_dir,
-    })
+    Ok(ssh_channel)
 }
 
 #[async_trait::async_trait]
