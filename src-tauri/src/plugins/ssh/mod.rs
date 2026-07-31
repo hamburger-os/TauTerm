@@ -90,7 +90,7 @@ impl SshAdapter {
     ) -> Result<ProtocolConnection, SessionError> {
         let result = build_connection_with_config(config, Some(app_handle), Some(verifier)).await?;
         Ok(ProtocolConnection {
-            channel: crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(result.channel)),
+            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(result.channel))),
             comm_handle: None,
             side_channel: Some(Arc::new(SshSideChannel::new(
                 result.session,
@@ -500,7 +500,7 @@ impl ProtocolAdapter for SshAdapter {
         // 主机密钥指纹（result.host_key_fingerprint）由 connect_session_ssh
         // 通过 SSH 连接的 session-connected 事件传递给前端。
         Ok(ProtocolConnection {
-            channel: crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(result.channel)),
+            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(result.channel))),
             comm_handle: None,
             side_channel: Some(Arc::new(SshSideChannel::new(
                 result.session,

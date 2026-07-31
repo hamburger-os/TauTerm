@@ -20,15 +20,16 @@ graph TB
 
     Registry --> S1[Serial<br/>Plugin]
     Registry --> S2[SSH<br/>Plugin]
-    Registry --> S3[Telnet<br/>Plugin]
-    Registry --> S4[TCP Raw<br/>Plugin]
-    Registry --> S5[TRDP<br/>Plugin]
-    Registry --> S6[Shell Local<br/>Plugin]
-    Registry --> S7[FTP<br/>Plugin]
-    Registry --> S8[iPerf3<br/>Plugin]
+    Registry --> S3[TFTP<br/>Plugin]
+    Registry --> S4[Telnet<br/>Plugin]
+    Registry --> S5[TCP Raw<br/>Plugin]
+    Registry --> S6[TRDP<br/>Plugin]
+    Registry --> S7[Shell Local<br/>Plugin]
+    Registry --> S8[FTP<br/>Plugin]
+    Registry --> S9[iPerf3<br/>Plugin]
 
     S1 ~~~ S2 ~~~ S3 ~~~ S4
-    S5 ~~~ S6 ~~~ S7 ~~~ S8
+    S5 ~~~ S6 ~~~ S7 ~~~ S8 ~~~ S9
 ```
 
 ### 设计原则
@@ -98,6 +99,7 @@ pub trait AsyncChannel: Send {
 
 `ProtocolConnection` 返回 `ChannelKind::Sync(Box<dyn Channel>)` 或 `ChannelKind::Async(Box<dyn AsyncChannel>)`，
 并可携带 `side_channel: Option<Arc<dyn SideChannel>>`（如 SSH 的 `SshSideChannel` 持有 russh Handle + SFTP 缓存）。
+当 `channel` 为 `None` 时，`SessionStore` 使用容器会话模式（无终端 I/O loop），适用于纯侧通道协议（如 TFTP）。
 
 ### 前端注册 API
 
@@ -148,12 +150,13 @@ stateDiagram-v2
 
 ### 双模 I/O 策略
 
-不是所有协议都需要 async runtime。内核提供两种 I/O 执行器，插件声明自己需要的模式：
+不是所有协议都需要 async runtime——有些甚至不需要终端 I/O。内核提供三种会话模式：
 
 | 模式 | 运行时 | 适用协议 | 特点 |
 |------|--------|---------|------|
 | **Sync** | `std::thread` | Serial | 低延迟，无 runtime 开销（`serialport` crate 阻塞式 API + Inline 传输 `try_handoff` 模式） |
 | **Async** | `tokio` | SSH | 高并发，线程安全（russh 纯 Rust async SSH 库，SFTP 与终端 I/O 并发复用同一会话） |
+| **Headless** | 无 I/O loop | TFTP | 容器会话模式 — `ProtocolConnection.channel = None`，不创建 I/O loop/StatsCollector/CommHandle，所有数据传输通过 `SideChannel` 在独立线程中完成 |
 
 ### 传输子系统
 
@@ -178,7 +181,7 @@ graph TD
 | `terminal` | xterm.js 实例池（CSS opacity 切换） | Serial, SSH, Telnet, TCP Raw, TRDP, Shell Local |
 | `file_browser` | 双栏文件树 + 传输进度 | FTP, NFS |
 | `stats_dashboard` | 实时图表/仪表盘 | iPerf3, UDP Monitor |
-| `custom` | 插件自定义组件 | 任意 |
+| `custom` | 插件自定义组件 | TFTP, 任意 |
 
 ---
 
@@ -209,6 +212,7 @@ graph LR
 |------|------|---------|---------|---------|
 | **Serial** (RS-232/485) | ✅ 已实现 | terminal | YModem / XModem / ZModem (Inline) | Sync |
 | **SSH** | ✅ 已实现 | terminal | SFTP (SideChannel) | Async |
+| **TFTP** | ✅ 已实现 | custom | —（独立 UDP 传输引擎）| —（无终端 I/O）|
 | **Telnet** | 📋 计划中 | terminal | — | Async |
 | **TCP Raw** | 📋 计划中 | terminal | — | Async |
 | **TRDP** | 📋 计划中 | terminal | — | Async |
@@ -228,6 +232,7 @@ graph LR
 - 🖥️ **终端仿真** — 基于 xterm.js，多实例池管理，CSS opacity 无重建切换；支持 Text / HEX / Dual 三种数据模式
 - 📁 **文件传输** — 右侧竖向面板，按会话独立配置传输协议（YModem/XModem/ZModem），Inline / SideChannel / SeparateConnection 多策略自适应
 - 📄 **文件管理器** — SSH SFTP 远端文件浏览器，目录树导航、文件上传/下载、批量删除、重命名、属性查看，支持 breadcrumb 路径跳转
+- 📡 **TFTP 服务器/客户端** — 内置 TFTP 服务端监听（RRQ/WRQ），客户端 GET/PUT 操作；可调传输参数（blksize/timeout/windowsize/rollover/repeat）；CRC32 校验 + 实时进度；并发传输限制与指数退避重传；UDP socket 容器模式（无终端 I/O loop）
 - 📜 **Journald 日志查看器** — SSH remote journald 实时流式追踪与历史查询，支持日志级别/关键字/服务单元/内核日志过滤，游标分页，紧凑/完整两种显示模式，连接对话框启用开关
 - 📊 **Dual 双模显示** — 可拖拽分栏同时展示 ASCII 文本与 HEX 十六进制，毫秒级时间戳、按 `\r\n`/`\n`/`\r` 自动分帧、TX/RX 颜色区分
 - 📤 **发送栏** — 四模式发送：基础发送 (Text/HEX, 换行符, 循环发送, 历史记录)、指令面板 (预定义命令序列, 拖拽排序, 循环执行)、自动应答 (可视化规则配置, 5 种匹配模式, 10 种动态宏, 定时触发)、脚本编辑器 (嵌入式 Lua 5.4 运行时, 代码生成与手写双路径)；支持后台持续执行，切换会话不中断
@@ -324,7 +329,8 @@ TauTerm/
 │   │
 │   └── plugins/                # 内建协议插件
 │       ├── serial/             # 串口插件（ProtocolAdapter + Channel）
-│       └── ssh/                # SSH 插件（ProtocolAdapter + SshSideChannel，密码/密钥认证，SFTP）
+│       ├── ssh/                # SSH 插件（ProtocolAdapter + SshSideChannel，密码/密钥认证，SFTP）
+│       └── tftp/               # TFTP 插件（ProtocolAdapter + TftpSideChannel，容器模式，服务端+客户端）
 │       # Telnet / TCP Raw / TRDP / Shell / FTP / iPerf3 — 计划中
 │
 ├── src/                        # React 前端
@@ -349,13 +355,15 @@ TauTerm/
 │   │   ├── Settings/           # 设置页（全屏覆盖层：通用/外观/语言/编码/日志/快捷键/关于）
 │   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
 │   │   ├── FileManager/        # SFTP 文件管理器（目录浏览、上传/下载、批量、属性、预览、进度）
+│   │   ├── Tftp/               # TFTP 会话视图（服务端面板 + 客户端面板 + 传输列表 + 参数网格）
 │   │   └── common/             # Icon（30+ SVG 图标）, GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
 │   │
 │   ├── profiles/               # 会话 Profile 解析器（按协议提供身份信息与参数展示）
 │   │   ├── index.ts            # ProfileResolver 聚合 + dispatch
 │   │   ├── types.ts            # SessionProfile 类型定义
 │   │   ├── serial.ts          # 串口 Profile
-│   │   └── ssh.ts             # SSH Profile
+│   │   ├── ssh.ts             # SSH Profile
+│   │   └── tftp.ts            # TFTP Profile
 │   │
 │   ├── styles/                 # 全局样式
 │   │   ├── tokens.css           # CSS 自定义属性（3 套主题令牌）
@@ -363,7 +371,8 @@ TauTerm/
 │   │
 │   └── plugins/                # 插件前端
 │       ├── serial/             # SerialConnectForm, 工具栏, 状态栏
-│       └── ssh/                # SSH 插件清单、区域设置
+│       ├── ssh/                # SSH 插件清单、区域设置
+│       └── tftp/               # TFTP 插件清单（customView 注册）
 │       # Telnet / FTP / iPerf3 等前端插件 — 计划中
 │
 └── package.json
@@ -676,6 +685,7 @@ npm run tauri build
 - [x] SSH 插件（密码/密钥认证，SideChannel 架构）
 - [x] SFTP 文件传输（SideChannel 策略，async russh-sftp，SFTP 缓存复用）
 - [x] SSH 首次连接指纹确认（known_hosts 持久化计划 v0.5）
+- [x] TFTP 插件（容器模式无终端 I/O，服务端监听 + 客户端 GET/PUT，CRC32 校验，实时进度）
 - [ ] SSH Agent Forwarding
 - [ ] Telnet 插件（RFC 854 选项协商）
 - [ ] TCP Raw 插件

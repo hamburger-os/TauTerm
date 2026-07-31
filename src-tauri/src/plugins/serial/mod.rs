@@ -154,7 +154,7 @@ impl ProtocolAdapter for SerialAdapter {
         let port = Self::open_port(endpoint, &config)?;
         let channel = SerialChannel::new(port);
         Ok(ProtocolConnection {
-            channel: crate::kernel::plugin_adapter::ChannelKind::Sync(Box::new(channel)),
+            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Sync(Box::new(channel))),
             comm_handle: None,
             side_channel: None,
             teardown_delay: self.teardown_delay(),

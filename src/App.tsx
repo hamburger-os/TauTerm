@@ -352,9 +352,23 @@ function AppInner() {
             <main className="terminal-viewport liquid-glass">
               <TabContentDispatcher />
             </main>
-            {/* 右侧栏 (按会话隔离，每 tab 一个独立实例) */}
+            {/* 右侧栏 (按会话隔离，每 tab 一个独立实例；TFTP custom 内容类型无右侧栏) */}
             <AnimatePresence>
-              {rightSidebarVisible && (
+              {rightSidebarVisible && (() => {
+                // 仅为活跃 tab 计算是否有侧栏内容；custom 类型（TFTP）不显示
+                const activeTab = sessionState.tabs.find(t => t.id === sessionState.activeTabId);
+                const activePlugin = activeTab ? pluginRegistry.get(activeTab.pluginId) : null;
+                const isCustomContent = activePlugin?.manifest.content_type === "custom";
+                const hasAnyPanel = activeTab
+                  ? ((activePlugin?.manifest.transfer_protocols?.length ?? 0) > 0 && activeTab.transferEnabled !== false)
+                    || (activePlugin?.manifest.id === "ssh" && activeTab.fileServiceEnabled === true)
+                    || (activePlugin?.manifest.id === "ssh" && activeTab.journaldEnabled === true)
+                  : false;
+
+                // custom 内容类型无侧栏面板时完全隐藏右侧栏
+                if (isCustomContent && !hasAnyPanel) return null;
+
+                return (
                 <>
                   <ResizeHandle direction="horizontal" onMouseDown={handleRightSidebarMouseDown} />
                   <motion.div
@@ -392,7 +406,8 @@ function AppInner() {
                     </RightSidebar>
                   </motion.div>
                 </>
-              )}
+                );
+              })()}
             </AnimatePresence>
           </div>
           {sessionState.tabs.map(tab => {

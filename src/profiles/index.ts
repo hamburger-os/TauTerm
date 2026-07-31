@@ -2,13 +2,13 @@ import type { TabInfo } from "../context/SessionContext";
 import type { ProfileResolver, SessionProfile } from "./types";
 import { serialProfile } from "./serial";
 import { sshProfile } from "./ssh";
+import { tftpProfile } from "./tftp";
 
 /** Profile 注册表：连接类型 -> ProfileResolver */
 const registry: Record<string, ProfileResolver> = {
   serial: serialProfile,
   ssh: sshProfile,
-  // telnet: telnetProfile,
-  // tftp: tftpProfile,
+  tftp: tftpProfile,
 };
 
 /**

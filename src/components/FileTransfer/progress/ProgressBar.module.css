@@ -14,7 +14,19 @@
   /* width 和 border-radius 由组件通过内联 style 动态设置 */
 }
 
+@keyframes progress-flow {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .indeterminate {
-  width: 30%;
-  animation: shimmer 1.5s ease-in-out infinite;
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-primary) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: progress-flow 1.8s linear infinite;
 }

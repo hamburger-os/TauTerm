@@ -1,0 +1,347 @@
+/* ── 根容器：左右布局 ────────── */
+.container {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  padding: var(--spacing-sm);
+  gap: var(--spacing-sm);
+  overflow: hidden;
+}
+
+/* ── 左列 ─────────────────────── */
+.leftColumn {
+  flex: 6;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  overflow-y: auto;
+}
+
+/* ── 右列 ─────────────────────── */
+.rightColumn {
+  flex: 4;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rightColumn > * {
+  height: 100%;
+}
+
+/* ── 传输参数网格 ──────────────── */
+.paramsCard {
+  border-radius: var(--radius-md);
+  padding: 14px;
+  flex-shrink: 0;
+}
+
+.paramsCard h3 {
+  margin: 0 0 12px 0;
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.paramGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.paramLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.paramGrid input[type="number"] {
+  width: 100%;
+  height: var(--select-height, 28px);
+  padding: var(--select-padding, 2px 8px);
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  text-align: center;
+}
+
+.paramGrid select {
+  width: 100%;
+  height: var(--select-height, 28px);
+  padding: var(--select-padding, 2px 8px);
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+}
+
+.paramToggle {
+  display: flex;
+  align-items: center;
+}
+
+/* ── 面板样式 ──────────────────── */
+.panel {
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+}
+
+.panel h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.panel h4 {
+  margin: var(--spacing-sm) 0 4px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ── 表单字段 ──────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.field input {
+  padding: 6px 10px;
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+}
+
+.field select {
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+}
+
+.fileRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.fileRow input {
+  flex: 1;
+}
+
+.fileRow button {
+  padding: 4px 6px;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.browseBtn {
+  width: 32px;
+  height: 32px;
+}
+
+/* ── 操作按钮 ──────────────────── */
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.actions button {
+  flex: 1;
+  padding: 7px 12px;
+  font-size: var(--text-sm);
+}
+
+/* ── 配置展示项 ──────────────────── */
+.configItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+
+.configLabel {
+  color: var(--text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.configValue {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* ── 状态指示 ──────────────────── */
+.status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-base);
+  padding: 4px 0;
+  line-height: 1;
+}
+
+.status > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.running {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.stopped {
+  color: var(--text-muted);
+}
+
+/* ── 请求列表 ──────────────────── */
+.requests {
+  margin-top: 4px;
+}
+
+.requestItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  background: var(--glass-hover);
+  border-radius: var(--radius-xs);
+}
+
+/* ── 传输列表 (Mini-Card 模式，对齐 YMODEM PerFileList) ── */
+.transferTable {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.transferRow {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  box-shadow: var(--glass-rim-light);
+}
+
+/* 状态图标单元格 */
+.tfIconCell {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+}
+
+/* 文件信息区（文件名 + 元信息 + 进度条） */
+.tfFileInfo {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+/* 文件名 */
+.tfFilename {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 元信息行：方向图标 + 角色 + 远端地址 */
+.tfMetaLine {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 进度条占位 —— 始终保留高度，避免卡片切换时尺寸跳动 */
+.tfProgressSlot {
+  min-height: 3px;
+  margin-top: 2px;
+}
+
+/* 错误信息（保留供服务端请求列表等场景使用） */
+.tfErrorText {
+  font-size: var(--text-xs);
+  color: var(--color-error);
+}
+
+/* 错误提示框（客户端面板内） */
+.tfErrorBox {
+  margin-top: 8px;
+  padding: 8px 12px;
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  background: rgb(from var(--color-error) r g b / 0.08);
+  border: 1px solid rgb(from var(--color-error) r g b / 0.25);
+  border-radius: var(--radius-sm);
+  word-break: break-all;
+}
+
+/* 校验值标签 */
+.tfChecksum {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+/* 字节数 */
+.tfFileSize {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.empty {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  text-align: center;
+  padding: 16px;
+}
+
+/* ── 一行两列 ──────────────────── */
+.row2 {
+  display: flex;
+  gap: 10px;
+}
+
+.row2 .field {
+  flex: 1;
+}

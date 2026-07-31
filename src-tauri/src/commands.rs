@@ -54,6 +54,8 @@ pub struct TabInfo {
     pub endpoint: String,
     pub state: String,
     pub plugin_id: String,
+    pub send_bar_enabled: bool,
+    pub transfer_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,6 +156,7 @@ pub async fn connect_session(
     match pid.as_str() {
         "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, journald_enabled, session_id).await,
         "ssh" => connect_session_ssh(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, journald_enabled, session_id).await,
+        "tftp" => connect_session_tftp(app, state, endpoint, params, name, session_id).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
@@ -547,9 +550,12 @@ async fn connect_session_ssh(
     let side_channel = conn.side_channel;
     // 分离 channel（第一个 PTY，作为通道 0 的 I/O）
     let channel_for_ch0 = match conn.channel {
-        crate::kernel::plugin_adapter::ChannelKind::Async(ch) => ch,
-        crate::kernel::plugin_adapter::ChannelKind::Sync(_) => {
+        Some(crate::kernel::plugin_adapter::ChannelKind::Async(ch)) => ch,
+        Some(crate::kernel::plugin_adapter::ChannelKind::Sync(_)) => {
             return Err("SSH 连接期望 Async channel".to_string());
+        }
+        None => {
+            return Err("SSH 连接缺少 I/O channel".to_string());
         }
     };
 
@@ -656,19 +662,20 @@ pub async fn disconnect_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 单次锁获取：读取 → 保存 → 关闭（close_session 内部关闭桥接）
-    let (pairs_to_destroy, session_name) = {
+    // 单次锁获取：读取 → 保存 → 关闭（close_session 内部调用 shutdown() 清理侧通道）
+    let (pairs_to_destroy, session_name, is_tftp) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
 
         let handle = store.get_session(&session_id)
             .ok_or_else(|| store.session_not_found(&session_id))?;
         let pairs = handle.virtual_port_pairs.clone();
         let name = handle.name.clone();
+        let is_tftp = handle.plugin_id == "tftp";
         store.close_session(&session_id)?;
         // 持久化：会话状态已变为 Disconnected，写入磁盘
         let path = SessionStore::sessions_file_path(&app);
         let _ = store.save_to_disk(&path);
-        (pairs, name)
+        (pairs, name, is_tftp)
     };
     // 锁已释放 — close_session 内部已关闭桥接
 
@@ -706,6 +713,13 @@ pub async fn disconnect_session(
     }
 
     log::info!("会话已断开: {} (虚拟端口已清理)", session_name);
+    // TFTP 会话断开后通知前端服务端已停止
+    if is_tftp {
+        let _ = app.emit("tftp-server-status", serde_json::json!({
+            "session_id": session_id,
+            "running": false,
+        }));
+    }
     let _ = app.emit("session-disconnected", serde_json::json!({
         "session_id": session_id,
     }));
@@ -812,6 +826,8 @@ pub fn get_tabs(
                 SessionState::Transferring => "transferring".into(),
             },
             plugin_id: h.plugin_id.clone(),
+            send_bar_enabled: h.send_bar_enabled,
+            transfer_enabled: h.transfer_enabled,
         })
     }).collect();
     // 添加子连接
@@ -833,6 +849,8 @@ pub fn get_tabs(
                         SessionState::Transferring => "transferring".into(),
                     },
                     plugin_id: h.plugin_id.clone(),
+                    send_bar_enabled: h.send_bar_enabled,
+                    transfer_enabled: h.transfer_enabled,
                 });
             }
         }
@@ -2273,3 +2291,306 @@ pub fn resize_pty(
     tx.send(IoLoopCmd::ResizePty { cols, rows })
         .map_err(|e| format!("发送 resize 命令失败: {}", e))
 }
+
+// ═══════════════════════════════════════════════════════════════
+// TFTP 协议命令
+// ═══════════════════════════════════════════════════════════════
+
+use crate::plugins::tftp::{
+    self, TftpDynamicParams, TftpStatus,
+};
+
+/// TFTP 会话连接
+///
+/// 创建容器会话（无终端 I/O loop），然后自动启动服务端。
+/// 侧通道 `TftpSideChannel` 持有 UDP socket，由独立线程处理所有传输。
+async fn connect_session_tftp(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    endpoint: String,
+    params: Value,
+    name: Option<String>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    // 通过 TftpAdapter 创建连接产物（channel=None，仅包含 side_channel）
+    let conn = state.tftp_adapter.connect(&endpoint, &params).await
+        .map_err(|e| e.to_string())?;
+
+    let session_name = name.unwrap_or_else(|| {
+        format!("TFTP :{}", endpoint)
+    });
+
+    let side_channel = conn.side_channel
+        .ok_or_else(|| "TFTP 适配器未返回侧通道".to_string())?;
+
+    // 使用容器会话模式（无 I/O loop — TFTP 无终端数据流）
+    let sid = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let sid = store.create_container_session(
+            &session_name, "tftp", &endpoint, params.clone(),
+            Some(side_channel.clone()),
+            false,  // transfer_enabled
+            None,   // transfer_protocol
+            false,  // send_bar_enabled
+            session_id,
+        )?;
+        let path = SessionStore::sessions_file_path(&app);
+        let _ = store.save_to_disk(&path);
+        sid
+    };
+
+    log::info!("TFTP 会话已创建（容器模式）: {}", sid);
+
+    // 自动启动服务端
+    if let Err(e) = tftp::try_start_server(&app, &side_channel, &sid) {
+        log::warn!("[TFTP] 服务端自动启动失败 (session={}): {}", sid, e);
+    }
+
+    let _ = app.emit("session-connected", serde_json::json!({
+        "session_id": sid,
+        "plugin_id": "tftp",
+        "content_type": "custom",
+        "endpoint": endpoint,
+        "name": session_name,
+        "connection_type": "tftp",
+        "params": params,
+        "send_bar_enabled": false,
+        "transfer_enabled": false,
+    }));
+
+    // 延迟查询 server_running 真实状态，而非硬编码假设成功
+    {
+        let app_clone = app.clone();
+        let sid_clone = sid.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let running = app_clone
+                .state::<AppState>()
+                .session_store
+                .lock()
+                .ok()
+                .and_then(|store| {
+                    store.get_session(&sid_clone)
+                        .and_then(|h| h.side_channel.as_ref())
+                        .and_then(|sc| sc.as_any().downcast_ref::<tftp::TftpSideChannel>())
+                        .map(|tsc| tsc.server_running.load(std::sync::atomic::Ordering::Relaxed))
+                })
+                .unwrap_or(false);
+            let _ = app_clone.emit("tftp-server-status", serde_json::json!({
+                "session_id": sid_clone,
+                "running": running,
+            }));
+            if !running {
+                log::warn!(
+                    "[TFTP] 服务端启动失败 (session={}), abort_flag 可能已置位或端口绑定失败",
+                    sid_clone
+                );
+            }
+        });
+    }
+
+    Ok(sid)
+}
+
+/// 启动 TFTP 服务端
+#[tauri::command]
+pub async fn tftp_server_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let sc_arc = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.get_side_channel(&session_id)
+            .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?
+    };
+
+    tftp::try_start_server(&app, &sc_arc, &session_id)?;
+
+    let _ = app.emit("tftp-server-status", serde_json::json!({
+        "session_id": session_id,
+        "running": true,
+    }));
+
+    Ok(())
+}
+
+/// 停止 TFTP 服务端
+#[tauri::command]
+pub async fn tftp_server_stop(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    let sc_arc = store.get_side_channel(&session_id)
+        .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?;
+
+    let tftp_sc = sc_arc.as_any()
+        .downcast_ref::<tftp::TftpSideChannel>()
+        .ok_or_else(|| "侧通道不是 TFTP 类型".to_string())?;
+
+    tftp_sc.abort_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    tftp_sc.server_running.store(false, std::sync::atomic::Ordering::Relaxed);
+
+    let _ = app.emit("tftp-server-status", serde_json::json!({
+        "session_id": session_id,
+        "running": false,
+    }));
+
+    Ok(())
+}
+
+/// TFTP 客户端 GET（下载）——自给自足，不依赖 side_channel
+///
+/// 每次调用生成独立的 UUID 作为 transfer_id，绑定临时 UDP socket 完成传输。
+/// 在会话未连接（无 side_channel）时也能正常工作。
+///
+/// 调用前先同步服务端的 dynamic_params，消除前端 500ms 防抖导致的竞态窗口。
+#[tauri::command]
+pub async fn tftp_client_get(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    session_id: String,
+    remote_ip: String,
+    remote_port: u16,
+    remote_filename: String,
+    local_path: String,
+    params: Value,
+) -> Result<String, String> {
+    log::info!("[TFTP Client] GET 请求: session={}, file={}, remote={}:{} → {}",
+        session_id, remote_filename, remote_ip, remote_port, local_path);
+    let params: TftpDynamicParams = serde_json::from_value(params)
+        .map_err(|e| format!("参数解析失败: {}", e))?;
+
+    // 同步服务端参数：避免前端防抖延迟导致服务端使用旧参数协商
+    sync_tftp_server_params(&state, &session_id, &params);
+
+    // 客户端操作自给自足：使用 UUID 生成全局唯一 transfer_id，
+    // 不依赖会话的 side_channel（后者在断连后被释放）
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+
+    tftp::client::tftp_client_get(
+        app, session_id, transfer_id.clone(), remote_ip, remote_port, remote_filename,
+        std::path::PathBuf::from(local_path), params,
+    ).await?;
+
+    Ok(transfer_id)
+}
+
+/// TFTP 客户端 PUT（上传）——自给自足，不依赖 side_channel
+///
+/// 每次调用生成独立的 UUID 作为 transfer_id，绑定临时 UDP socket 完成传输。
+/// 在会话未连接（无 side_channel）时也能正常工作。
+///
+/// 调用前先同步服务端的 dynamic_params，消除前端 500ms 防抖导致的竞态窗口。
+#[tauri::command]
+pub async fn tftp_client_put(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    session_id: String,
+    remote_ip: String,
+    remote_port: u16,
+    remote_filename: String,
+    local_path: String,
+    params: Value,
+) -> Result<String, String> {
+    log::info!("[TFTP Client] PUT 请求: session={}, file={}, remote={}:{} ← {}",
+        session_id, remote_filename, remote_ip, remote_port, local_path);
+    let params: TftpDynamicParams = serde_json::from_value(params)
+        .map_err(|e| format!("参数解析失败: {}", e))?;
+
+    // 同步服务端参数：避免前端防抖延迟导致服务端使用旧参数协商
+    sync_tftp_server_params(&state, &session_id, &params);
+
+    // 客户端操作自给自足：使用 UUID 生成全局唯一 transfer_id，
+    // 不依赖会话的 side_channel（后者在断连后被释放）
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+
+    tftp::client::tftp_client_put(
+        app, session_id, transfer_id.clone(), remote_ip, remote_port, remote_filename,
+        std::path::PathBuf::from(local_path), params,
+    ).await?;
+
+    Ok(transfer_id)
+}
+
+/// 同步 TFTP 服务端参数到 side_channel（客户端 GET/PUT 前调用）。
+/// 若 side_channel 不存在（会话未连接），静默跳过。
+fn sync_tftp_server_params(state: &AppState, session_id: &str, params: &TftpDynamicParams) {
+    if let Ok(store) = state.session_store.lock() {
+        if let Some(sc_arc) = store.get_side_channel(session_id) {
+            if let Some(tftp_sc) = sc_arc.as_any().downcast_ref::<tftp::TftpSideChannel>() {
+                *tftp_sc.dynamic_params.lock().unwrap() = params.clone();
+                log::info!("[TFTP] 服务端参数已同步 (session={}, blksize={})", session_id, params.blksize);
+            }
+        }
+    }
+}
+
+/// 更新 TFTP 动态参数
+///
+/// 若会话已连接（side_channel 存在），更新服务端的共享参数。
+/// 若会话未连接，仅记录日志后返回 Ok——客户端操作从前端传参，不依赖此处。
+#[tauri::command]
+pub async fn tftp_update_params(
+    state: State<'_, AppState>,
+    session_id: String,
+    params: Value,
+) -> Result<(), String> {
+    let new_params: TftpDynamicParams = serde_json::from_value(params)
+        .map_err(|e| format!("参数解析失败: {}", e))?;
+
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    if let Some(sc_arc) = store.get_side_channel(&session_id) {
+        if let Some(tftp_sc) = sc_arc.as_any().downcast_ref::<tftp::TftpSideChannel>() {
+            *tftp_sc.dynamic_params.lock().unwrap() = new_params;
+            log::info!("TFTP 参数已更新 (session={})", session_id);
+        }
+    } else {
+        log::warn!("TFTP 参数更新跳过：会话 {} 未连接（无 side_channel）", session_id);
+    }
+    Ok(())
+}
+
+/// 获取 TFTP 状态
+///
+/// 若会话已连接（side_channel 存在），从侧通道读取实时状态。
+/// 若会话未连接，返回默认值（server_running=false，其余字段为空/默认）。
+#[tauri::command]
+pub async fn tftp_get_status(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<TftpStatus, String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+
+    if let Some(sc_arc) = store.get_side_channel(&session_id) {
+        if let Some(tftp_sc) = sc_arc.as_any().downcast_ref::<tftp::TftpSideChannel>() {
+            let server_running = tftp_sc.server_running.load(std::sync::atomic::Ordering::Relaxed);
+            let listen_addr = Some(tftp_sc.config.listen_ip.clone());
+            let listen_port = Some(tftp_sc.config.listen_port);
+            let file_root = tftp_sc.config.file_root.clone();
+            let dynamic_params = tftp_sc.get_params();
+            drop(store);
+            return Ok(TftpStatus {
+                server_running,
+                listen_addr,
+                listen_port,
+                file_root,
+                dynamic_params,
+            });
+        }
+    }
+    drop(store);
+
+    // 会话未连接（无 side_channel），返回默认值
+    log::debug!("TFTP get_status: 会话 {} 未连接，返回默认状态", session_id);
+    Ok(TftpStatus {
+        server_running: false,
+        listen_addr: None,
+        listen_port: None,
+        file_root: String::new(),
+        dynamic_params: TftpDynamicParams::default(),
+    })
+}
+

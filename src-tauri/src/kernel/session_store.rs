@@ -377,17 +377,24 @@ impl SessionStore {
         });
 
         let io_handle = match conn.channel {
-            ChannelKind::Sync(sync_channel) => {
+            Some(ChannelKind::Sync(sync_channel)) => {
                 IoTaskHandle::Sync(spawn_sync_io_loop(
                     sync_channel, sid.clone(), wrapped_on_data, on_disconnect, write_rx, cancel_rx,
                     tx_clone, rx_clone,
                 ))
             }
-            ChannelKind::Async(async_channel) => {
+            Some(ChannelKind::Async(async_channel)) => {
                 IoTaskHandle::Async(spawn_async_io_loop(
                     async_channel, sid.clone(), wrapped_on_data, on_disconnect, write_rx, cancel_rx,
                     tx_clone, rx_clone,
                 ))
+            }
+            None => {
+                return Err(
+                    "create_session requires an I/O channel; \
+                     use create_container_session for headless (no terminal I/O) protocols"
+                        .into(),
+                );
             }
         };
 
@@ -751,6 +758,13 @@ impl SessionStore {
             self.active_id = self.tab_order.first().cloned();
         }
 
+        // 通知侧通道即将释放，执行清理（如中止 TFTP 后台线程）
+        if let Some(ref sc) = handle.side_channel {
+            sc.shutdown();
+        }
+
+        // 断开连接后释放侧通道资源（如 TFTP 的 UDP socket）
+        handle.side_channel = None;
         // 以 Disconnected 状态放回 HashMap，使并发传输命令可获取到句柄并返回明确的"已断开"错误
         handle.state = SessionState::Disconnected;
         self.sessions.insert(session_id.to_string(), handle);

@@ -30,6 +30,10 @@ pub trait SideChannel: Send + Sync {
     fn create_file_transfer(&self) -> Option<Arc<dyn FileTransfer>> {
         None
     }
+
+    /// 通知侧通道资源即将被释放，执行清理（如中止后台线程）。
+    /// 默认实现为空。需要清理的插件覆盖此方法。
+    fn shutdown(&self) {}
 }
 
 /// 端点信息
@@ -61,7 +65,11 @@ pub enum ChannelKind {
 /// 复合协议（如 SSH）可额外提供侧通道资源供文件服务复用。
 pub struct ProtocolConnection {
     /// 双向 I/O 通道（Sync 或 Async）
-    pub channel: ChannelKind,
+    ///
+    /// `None` 表示此会话无终端 I/O 流（如 TFTP 使用 SideChannel 完成所有数据传输）。
+    /// 调用方（`SessionStore::create_session`）检测到 `None` 时会退化为容器会话模式，
+    /// 不创建 I/O loop、StatsCollector 和 CommHandle。
+    pub channel: Option<ChannelKind>,
     /// 协议特定的通信句柄（None 表示使用调用方默认实现）
     pub comm_handle: Option<Arc<dyn CommHandle>>,
     /// 侧通道资源句柄（None 表示无辅助资源）
@@ -118,6 +126,10 @@ impl TransferProtocolType {
 }
 
 /// 字符串解析为 TransferProtocolType（开放集合）
+///
+/// 不做白名单限制——任何有效标识符均可接受。
+/// 策略分类由 `is_serial_inline()` / `is_side_channel()` / `is_separate_connection()`
+/// 完成；未识别的协议自然不匹配任何策略，无静默回退风险。
 impl std::str::FromStr for TransferProtocolType {
     type Err = String;
 
@@ -126,11 +138,11 @@ impl std::str::FromStr for TransferProtocolType {
         if lower.is_empty() {
             return Err("传输协议标识不能为空".into());
         }
-        // 白名单验证：拒绝未识别的协议名称，避免输入错误静默回退到 SideChannel
-        match lower.as_str() {
-            "ymodem" | "xmodem" | "zmodem" | "sftp" | "ftp" => Ok(Self(lower)),
-            _ => Err(format!("不支持的传输协议: '{}'", s)),
+        // 格式验证：仅允许小写字母、数字和下划线
+        if !lower.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+            return Err(format!("无效的传输协议标识: '{}'（仅允许 a-z、0-9、_）", s));
         }
+        Ok(Self(lower))
     }
 }
 

@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import Icon from "../common/Icon";
@@ -75,8 +76,17 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [journaldEnabled, setJournaldEnabled] = useState(false);
 
   const serialEndpoints = state.endpoints.filter(e => e.connection_type === "serial");
+  // TFTP 配置
+  const [tftpListenIp, setTftpListenIp] = useState("0.0.0.0");
+  const [tftpListenPort, setTftpListenPort] = useState(69);
+  const [tftpFileRoot, setTftpFileRoot] = useState("");
+  const [tftpWriteEnabled, setTftpWriteEnabled] = useState(true);
+  const [tftpOverwrite, setTftpOverwrite] = useState(true);
+  const [tftpSinglePort, setTftpSinglePort] = useState(false);
+
   const isSerial = selectedMode === "serial";
   const isSsh = selectedMode === "ssh";
+  const isTftp = selectedMode === "tftp";
 
   // 保持最新的 tabs 引用，供 useEffect 在 editSessionId 变化时读取最新数据，
   // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
@@ -130,6 +140,15 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             if (typeof p.file_service_protocol === "string") setFileServiceProtocol(p.file_service_protocol);
             if (typeof p.journald_enabled === "boolean") setJournaldEnabled(p.journald_enabled);
           }
+          // TFTP 字段回填
+          if (targetTab.connection_type === "tftp" || targetTab.pluginId === "tftp") {
+            if (typeof p.listen_ip === "string") setTftpListenIp(p.listen_ip);
+            if (typeof p.listen_port === "number") setTftpListenPort(p.listen_port);
+            if (typeof p.file_root === "string") setTftpFileRoot(p.file_root);
+            if (typeof p.write_enabled === "boolean") setTftpWriteEnabled(p.write_enabled);
+            if (typeof p.overwrite === "boolean") setTftpOverwrite(p.overwrite);
+            if (typeof p.single_port === "boolean") setTftpSinglePort(p.single_port);
+          }
         }
         if (targetTab.name) setSessionName(targetTab.name);
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
@@ -169,6 +188,13 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setFileServiceEnabled(true);
     setFileServiceProtocol("sftp");
     setJournaldEnabled(false);
+    // 重置 TFTP 字段
+    setTftpListenIp("0.0.0.0");
+    setTftpListenPort(69);
+    setTftpFileRoot("");
+    setTftpWriteEnabled(true);
+    setTftpOverwrite(true);
+    setTftpSinglePort(false);
     setSessionName("");
   }, [isOpen, editSessionId, refreshEndpoints]);
 
@@ -193,11 +219,12 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const handleCreate = useCallback(async () => {
     if (!port && isSerial) return;
     if (!sshHost && isSsh) return;
+    if (!tftpFileRoot && isTftp) return;
     setError(null);
     setConnecting(true);
 
-    const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : sendBarEnabled;
-    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : transferEnabled;
+    const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : (isTftp ? false : sendBarEnabled);
+    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp ? false : transferEnabled);
 
     const params: Record<string, unknown> = isSerial ? {
       baud_rate: parseInt(baudRate),
@@ -226,10 +253,17 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       file_service_enabled: fileServiceEnabled,
       file_service_protocol: "sftp",
       journald_enabled: journaldEnabled,
+    } : isTftp ? {
+      listen_ip: tftpListenIp,
+      listen_port: tftpListenPort,
+      file_root: tftpFileRoot,
+      write_enabled: tftpWriteEnabled,
+      overwrite: tftpOverwrite,
+      single_port: tftpSinglePort,
     } : {};
 
-    const pluginId = selectedMode; // "serial" | "ssh"
-    const endpoint = isSerial ? port : (isSsh ? sshHost : selectedMode);
+    const pluginId = selectedMode; // "serial" | "ssh" | "tftp"
+    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : selectedMode));
 
     try {
       if (editSessionId) {
@@ -263,7 +297,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, sshHost, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled]);
+  }, [port, isSerial, isSsh, isTftp, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -680,8 +714,105 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 </>
               )}
 
+              {/* ── TFTP 配置表单 ── */}
+              {isTftp && (
+                <>
+                  <div className={styles.row2}>
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("tftp.listenIp")}</label>
+                      <input
+                        className={`${styles.input} liquid-glass-input`}
+                        type="text"
+                        value={tftpListenIp}
+                        onChange={e => setTftpListenIp(e.target.value)}
+                        disabled={connecting}
+                        placeholder="0.0.0.0"
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("tftp.listenPort")}</label>
+                      <input
+                        className={`${styles.input} liquid-glass-input`}
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={tftpListenPort}
+                        onChange={e => setTftpListenPort(Number(e.target.value))}
+                        disabled={connecting}
+                        placeholder="69"
+                      />
+                    </div>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("tftp.fileRoot")}</label>
+                    <div className={styles.row}>
+                      <input
+                        className={`${styles.input} liquid-glass-input`}
+                        style={{ flex: 1 }}
+                        type="text"
+                        value={tftpFileRoot}
+                        onChange={e => setTftpFileRoot(e.target.value)}
+                        disabled={connecting}
+                        placeholder="C:\tftp-root\"
+                      />
+                      <button
+                        className={`${styles.iconBtn} liquid-glass-button`}
+                        onClick={async () => {
+                          const dir = await open({ directory: true, multiple: false });
+                          if (dir && typeof dir === "string") setTftpFileRoot(dir);
+                        }}
+                        title={t("tftp.selectDir")}
+                        disabled={connecting}
+                      >
+                        <Icon name="folder" size="md" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                      <input
+                        type="checkbox"
+                        checked={tftpWriteEnabled}
+                        onChange={e => setTftpWriteEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div />
+                      <span>{t("tftp.writeEnabled")}</span>
+                    </label>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                      <input
+                        type="checkbox"
+                        checked={tftpOverwrite}
+                        onChange={e => setTftpOverwrite(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div />
+                      <span>{t("tftp.overwrite")}</span>
+                    </label>
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                      <input
+                        type="checkbox"
+                        checked={tftpSinglePort}
+                        onChange={e => setTftpSinglePort(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div />
+                      <span>{t("tftp.singlePort")}</span>
+                    </label>
+                  </div>
+                </>
+              )}
+
               {/* ── 未实现插件的占位提示 ── */}
-              {!isSerial && !isSsh && (
+              {!isSerial && !isSsh && !isTftp && (
                 <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
                   <Icon name="construction" size="lg" />{" "}
                   {t("connectionType.formNotImplemented", { pluginName: selectedMode })}
@@ -697,7 +828,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 <button
                   className={`${styles.connectBtn} liquid-primary-button`}
                   onClick={handleCreate}
-                  disabled={(!port && isSerial) || (!sshHost && isSsh) || connecting}
+                  disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || connecting}
                 >
                   {connecting
                     ? t("serial.confirming")

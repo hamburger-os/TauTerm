@@ -152,10 +152,11 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       ];
     }
 
-    // ── 父级 SSH 会话 ──
+    // ── 父级 SSH / TFTP / Serial 会话 ──
     if (sessionState === "connected" || sessionState === "transferring") {
       const isLogging = loggingSessions.has(menu.session.id);
       const isSsh = pluginId === "ssh";
+      const isTftp = pluginId === "tftp";
       const items: ContextMenuItem[] = [];
       if (isSsh) {
         items.push({ id: "connect", label: t("contextMenu.connect") || "Connect", icon: "plus" });
@@ -163,7 +164,14 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       items.push(
         { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect All", icon: "stop" },
         { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "settings" },
-        { id: "toggle_log", label: isLogging ? (t("contextMenu.stopLogging") || "Stop Logging") : (t("contextMenu.startLogging") || "Start Logging"), icon: "log" },
+      );
+      // TFTP 无终端数据流，不需要日志/实时监控功能
+      if (!isTftp) {
+        items.push(
+          { id: "toggle_log", label: isLogging ? (t("contextMenu.stopLogging") || "Stop Logging") : (t("contextMenu.startLogging") || "Start Logging"), icon: "log" },
+        );
+      }
+      items.push(
         { id: "delete", label: t("contextMenu.delete") || "Delete", icon: "trash", danger: true },
       );
       return items;

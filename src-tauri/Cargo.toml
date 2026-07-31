@@ -32,4 +32,6 @@ regex = "1"
 russh = { version = "0.62", default-features = false, features = ["ring"] }
 russh-sftp = "2.0"
 
+tftpd = "1.0"
 async-trait = "0.1"
+crc32fast = "1.5.0"
