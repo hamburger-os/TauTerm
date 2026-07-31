@@ -240,11 +240,7 @@ fn handle_rrq(
     // 发送 OACK（如果有选项）或直接开始
     let has_options = !options.is_empty();
     if has_options {
-        let oack = vec![
-            tftpd::TransferOption { option: tftpd::OptionType::BlockSize, value: params.blksize as u64 },
-            tftpd::TransferOption { option: tftpd::OptionType::TransferSize, value: file_size },
-            tftpd::TransferOption { option: tftpd::OptionType::Timeout, value: params.timeout_secs as u64 },
-        ];
+        let oack = super::build_oack_options(&params, Some(file_size));
         if tftpd::Socket::send_to(&transfer_socket, &Packet::Oack(oack), &remote).is_err() {
             return;
         }
@@ -357,12 +353,15 @@ fn handle_wrq(
         log::warn!("[TFTP Server] transfer socket connect({}) 失败: {} (将继续使用 send_to)", remote, e);
     }
 
+    // 设置读超时，使用协商后的 timeout_secs（对齐 handle_rrq）
+    let oack_wait = Duration::from_secs(params.timeout_secs.max(1) as u64);
+    if let Err(e) = transfer_socket.set_read_timeout(Some(oack_wait)) {
+        log::warn!("[TFTP Server] 设置传输 socket 读超时失败: {}", e);
+    }
+
     let has_options = !options.is_empty();
     if has_options {
-        let oack = vec![
-            tftpd::TransferOption { option: tftpd::OptionType::BlockSize, value: params.blksize as u64 },
-            tftpd::TransferOption { option: tftpd::OptionType::Timeout, value: params.timeout_secs as u64 },
-        ];
+        let oack = super::build_oack_options(&params, None);
         let _ = tftpd::Socket::send_to(&transfer_socket, &Packet::Oack(oack), &remote);
     } else {
         let _ = tftpd::Socket::send_to(&transfer_socket, &Packet::Ack(0), &remote);

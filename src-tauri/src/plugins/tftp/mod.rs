@@ -104,7 +104,7 @@ fn default_max_retries() -> usize {
     6
 }
 fn default_rollover() -> TftpRollover {
-    TftpRollover::None
+    TftpRollover::Enforce0
 }
 fn default_repeat_count() -> u8 {
     1
@@ -125,16 +125,23 @@ impl Default for TftpDynamicParams {
     }
 }
 
-/// Block 号回绕策略
+/// Block 号 16-bit 回绕策略（RFC 1350 未规定，tftpd crate RFC 7440 参考实现定义）
+///
+/// TFTP 块号为 u16（0–65535），大文件传输必然 wraparound。
+/// 此枚举控制溢出后的块号选择行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TftpRollover {
-    /// 不允许回绕
+    /// 禁止回绕 — 块号溢出时报错退出。
+    /// 严格合规模式，仅适用于确认文件小于 65535 × blksize 的场景。
     None,
-    /// 强制回绕到 0（默认）
+    /// 允许回绕，自然使用块号 0（默认）。
+    /// 对齐 tftpd crate 的 `Rollover::Enforce0`，支持任意大小文件。
     Enforce0,
-    /// 强制回绕到 1
+    /// 跳过块号 0，回绕后从块号 1 开始。
+    /// 兼容某些严格禁止块号 0 的 TFTP 实现。
     Enforce1,
-    /// 不关心
+    /// 允许回绕，发送端使用块号 0，接收端兼容 0 或 1。
+    /// 最大兼容性，与 `Enforce0` 行为几乎一致。
     DontCare,
 }
 
@@ -364,6 +371,66 @@ impl ProtocolAdapter for TftpAdapter {
 }
 
 // ── 共享辅助函数 ────────────────────────────────────────────
+
+/// 从 OACK options 中解析 RFC 7440 窗口参数并更新 dynamic params。
+///
+/// 客户端 GET/PUT 在收到服务端 OACK 后调用，更新协商后的
+/// windowsize 和 window_wait。
+pub fn apply_oack_window_options(
+    options: &[tftpd::TransferOption],
+    params: &mut TftpDynamicParams,
+) {
+    if let Some(ws) = options
+        .iter()
+        .find(|o| o.option == tftpd::OptionType::WindowSize)
+        .map(|o| o.value as u16)
+    {
+        params.windowsize = ws;
+    }
+    if let Some(ww) = options
+        .iter()
+        .find(|o| o.option == tftpd::OptionType::WindowWait)
+        .map(|o| o.value)
+    {
+        params.window_wait = ww;
+    }
+}
+
+/// 构建服务端 OACK 选项列表。
+///
+/// `transfer_size`: 文件总大小（RRQ 响应时提供，WRQ 响应时传 `None`）。
+pub fn build_oack_options(
+    params: &TftpDynamicParams,
+    transfer_size: Option<u64>,
+) -> Vec<tftpd::TransferOption> {
+    let mut opts = vec![
+        tftpd::TransferOption {
+            option: tftpd::OptionType::BlockSize,
+            value: params.blksize as u64,
+        },
+        tftpd::TransferOption {
+            option: tftpd::OptionType::Timeout,
+            value: params.timeout_secs as u64,
+        },
+        tftpd::TransferOption {
+            option: tftpd::OptionType::WindowSize,
+            value: params.windowsize as u64,
+        },
+    ];
+    if let Some(ts) = transfer_size {
+        opts.push(tftpd::TransferOption {
+            option: tftpd::OptionType::TransferSize,
+            value: ts,
+        });
+    }
+    if params.window_wait > 0 {
+        opts.push(tftpd::TransferOption {
+            option: tftpd::OptionType::WindowWait,
+            value: params.window_wait,
+        });
+    }
+    opts
+}
 
 /// 尝试从会话的 side_channel 启动 TFTP 服务端。
 ///

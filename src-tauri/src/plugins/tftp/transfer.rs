@@ -1,25 +1,29 @@
 //! TFTP 传输引擎
 //!
-//! 实现核心传输循环（send/receive），替代 `tftpd::Worker`（因其内部类型未公开导出）。
-//! 复用 `tftpd::Packet`、`tftpd::Socket`、`tftpd::ErrorCode`、`tftpd::OptionType`、`tftpd::TransferOption`。
+//! 实现核心传输循环（send/receive），对齐 `tftpd::Worker` 的设计。
+//! 复用 `tftpd::Packet`、`tftpd::Socket`、`tftpd::ErrorCode`、
+//! `tftpd::WindowRead`、`tftpd::WindowWrite`。
 //!
 //! RFC 1350: 基本 send/receive + SAS 修复 — ✅ 已实现
 //! RFC 2347/2348/2349: 选项协商 (OACK) — ✅ 已实现（由调用方处理）
-//! RFC 7440: 滑动窗口 — ❌ 未实现（windowsize 参数预留）
+//! RFC 7440: 滑动窗口 — ✅ 已实现（WindowRead/WindowWrite）
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use tftpd::{Packet, Socket};
+use tftpd::{ErrorCode, Packet, Socket, WindowRead, WindowWrite};
 
 use super::counting_socket::CountingSocket;
 use super::TftpDynamicParams;
 use super::TftpRollover;
+
+/// 错误响应包最大字节数（TFTP 头 + 消息最小缓冲）
+const MAX_ERROR_PACKET_SIZE: usize = 128;
 
 /// 传输结果
 #[derive(Debug)]
@@ -33,7 +37,11 @@ pub struct TransferResult {
 
 /// 发送文件（服务端 RRQ 响应 / 客户端 PUT）
 ///
-/// 读取本地文件，分块发送 DATA 包，等待 ACK。
+/// 对齐 `tftpd::Worker::send_file` 的 RFC 7440 滑动窗口算法：
+/// 1. 使用 `WindowRead` 预读 `windowsize` 块
+/// 2. 非阻塞模式发送块并穿插收集 ACK（管道化）
+/// 3. 窗口耗尽后切换阻塞模式等待 ACK
+/// 4. 单计时器（最新未确认包超时），超时后从窗口起点重发
 pub fn send_file(
     counting: &mut CountingSocket,
     file_path: PathBuf,
@@ -41,131 +49,281 @@ pub fn send_file(
     params: &TftpDynamicParams,
     abort: &Arc<AtomicBool>,
 ) -> Result<TransferResult, String> {
-    // 使用 CountingSocket 中存储的协商后 blksize，而非 params.blksize。
-    // params 可能在传输开始前被前端更新（防抖竞态），导致协商值 ≠ 本地参数值。
     let block_size = counting.blksize();
+    let window_size = params.windowsize.max(1);
     let timeout = Duration::from_secs(params.timeout_secs.max(1) as u64);
     let max_retries = params.max_retries.max(1);
     let repeat_count = params.repeat_count.max(1) as usize;
+    let window_wait = if params.window_wait > 0 {
+        Some(Duration::from_millis(params.window_wait))
+    } else {
+        None
+    };
 
-    let mut file = fs::File::open(&file_path)
+    let file = fs::File::open(&file_path)
         .map_err(|e| format!("无法打开文件: {}", e))?;
     let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
     counting.set_total_size(file_size);
 
-    log::info!("[TFTP send_file] 开始: file={}, size={} bytes, blksize={}, timeout={}s, max_retries={}, rollover={:?}",
-        file_path.display(), file_size, block_size, params.timeout_secs, max_retries, params.rollover);
+    log::info!(
+        "[TFTP send_file] 开始: file={}, size={} bytes, blksize={}, windowsize={}, timeout={}s, rollover={:?}",
+        file_path.display(), file_size, block_size, window_size, params.timeout_secs, params.rollover
+    );
 
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let mut hasher = crc32fast::Hasher::new();
-    let mut block_num: u16 = 1;
+
+    // 空文件快速返回
+    if file_size == 0 {
+        return Ok(TransferResult {
+            bytes_transferred: 0,
+            checksum: Some(0),
+            duration_ms: 0,
+        });
+    }
+
+    // ── RFC 7440: 窗口读缓冲 ──
+    let mut window = WindowRead::new(window_size, block_size as u16, file);
+    let mut more = window.fill().map_err(|e| format!("窗口填充失败: {}", e))?;
+
+    // wr_idx: 窗口内发送偏移（从 0 起）
+    // block_seq_win: 窗口基块号（最老未确认块的前一个块号）
+    let mut block_seq_win: u16 = 0;
+    let mut wr_idx: u16 = 0;
     let mut bytes_sent: u64 = 0;
+    let mut retry_cnt = 0;
+    let mut timeout_end = Instant::now() + timeout;
+
+    // 设置读超时（对齐 Worker：Windows 额外 +15ms 弥补早期返回）
+    #[cfg(windows)]
+    counting
+        .set_read_timeout(timeout + Duration::from_millis(15))
+        .map_err(|e| format!("设置读超时失败: {}", e))?;
+    #[cfg(not(windows))]
+    counting
+        .set_read_timeout(timeout)
+        .map_err(|e| format!("设置读超时失败: {}", e))?;
+
+    // 初始非阻塞模式——先管道化发送再收集 ACK
+    counting
+        .set_nonblocking(true)
+        .map_err(|e| format!("设置非阻塞失败: {}", e))?;
 
     loop {
         if abort.load(Ordering::Relaxed) {
             return Err("传输已取消".into());
         }
 
-        // 读一块
-        let mut buf = vec![0u8; block_size];
-        let n = file.read(&mut buf).map_err(|e| format!("文件读取失败: {}", e))?;
-        buf.truncate(n);
-        hasher.update(&buf);
-        counting.record_data_bytes(n as u64);
+        // ── 发送阶段：从窗口发送一个包 ──
+        if let Some(frame) = window.get_elements().get(wr_idx as usize) {
+            let mut block_seq_tx = block_seq_win.wrapping_add(wr_idx + 1);
 
-        let data_pkt = Packet::Data {
-            block_num,
-            data: buf.clone(),
-        };
+            // Block 号回绕处理（对齐 tftpd Worker 语义）
+            if block_seq_tx < block_seq_win {
+                match params.rollover {
+                    TftpRollover::None => {
+                        // 禁止回绕 — 块号溢出时报错退出
+                        return send_rollover_error(counting, remote, abort);
+                    }
+                    TftpRollover::Enforce0 | TftpRollover::DontCare => {
+                        // 允许回绕，自然使用块号 0
+                    }
+                    TftpRollover::Enforce1 => {
+                        // 跳过块号 0，使用块号 1
+                        block_seq_tx = block_seq_tx.wrapping_add(1);
+                    }
+                }
+            }
 
-        // 发送 DATA 并等待 ACK
-        let mut retries = 0;
+            hasher.update(frame);
+            counting.record_data_bytes(frame.len() as u64);
+
+            let data_pkt = Packet::Data {
+                block_num: block_seq_tx,
+                data: frame.to_vec(),
+            };
+
+            // 带 repeat_count 的发送
+            for i in 0..repeat_count {
+                if i > 0 {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                counting
+                    .send_to(&data_pkt, &remote)
+                    .map_err(|e| format!("发送失败: {}", e))?;
+            }
+
+            bytes_sent += frame.len() as u64;
+            wr_idx += 1;
+
+            if wr_idx < window.len() {
+                // 窗口内有更多数据→可选延迟→进入 ACK 阶段（非阻塞 peek）
+                if let Some(wait) = window_wait {
+                    std::thread::sleep(wait);
+                }
+            } else {
+                // 窗口已耗尽→检查 abort→预读下批数据→切换阻塞模式等待 ACK
+                if abort.load(Ordering::Relaxed) {
+                    return Err("传输已取消".into());
+                }
+                window
+                    .prefill()
+                    .map_err(|e| format!("预读失败: {}", e))?;
+                counting
+                    .set_nonblocking(false)
+                    .map_err(|e| format!("设置阻塞失败: {}", e))?;
+            }
+
+            timeout_end = Instant::now() + timeout;
+        }
+
+        // ── ACK 收集阶段（非阻塞，排空 socket 缓冲）──
+        let mut last_ack: Option<u16> = None;
         loop {
             if abort.load(Ordering::Relaxed) {
                 return Err("传输已取消".into());
             }
 
-            // 发送 DATA（重复发包以提高不可靠网络下的可靠性）
-            for i in 0..repeat_count {
-                if i > 0 {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-                counting.send_to(&data_pkt, &remote)
-                    .map_err(|e| format!("发送失败: {}", e))?;
-            }
-
-            // 等待 ACK
-            counting.set_read_timeout(timeout)
-                .map_err(|e| format!("设置超时失败: {}", e))?;
-
             match counting.recv() {
                 Ok(Packet::Ack(ack_num)) => {
-                    if ack_num == block_num {
-                        bytes_sent += n as u64;
-                        break; // ACK 匹配，继续下一块
+                    if last_ack.is_none() {
+                        // 收到第一个 ACK 时切换非阻塞以继续排空后续 ACK
+                        counting
+                            .set_nonblocking(true)
+                            .map_err(|e| format!("设置非阻塞失败: {}", e))?;
                     }
-                    // 重复 ACK — SAS 修复：忽略
+                    last_ack = Some(ack_num);
+                    continue; // 继续收集
                 }
                 Ok(Packet::Error { code, msg }) => {
                     return Err(format!("远端错误: {} - {}", code, msg));
                 }
                 Ok(_) => {
-                    // 意外包类型，重试
+                    log::warn!("[TFTP send_file] 收到意外包");
                 }
-                Err(_) => {
-                    // 超时，重试
+                Err(e) => {
+                    if let Some(io_e) = e.downcast_ref::<std::io::Error>() {
+                        match io_e.kind() {
+                            ErrorKind::WouldBlock | ErrorKind::TimedOut => {
+                                if let Some(ack) = last_ack {
+                                    // 计算窗口推进量（带回绕感知）
+                                    let mut diff = ack.wrapping_sub(block_seq_win);
+                                    if ack < block_seq_win
+                                        && params.rollover == TftpRollover::Enforce1
+                                    {
+                                        // Enforce1 跳过了块号 0，实际发送量比 diff 少 1
+                                        diff = diff.wrapping_sub(1);
+                                    }
+
+                                    if diff == 0 {
+                                        // 窗口完全确认——回到发送阶段
+                                        break;
+                                    } else if diff <= window_size {
+                                        // 部分确认——滑动窗口
+                                        block_seq_win = ack;
+                                        window
+                                            .remove(diff)
+                                            .map_err(|_| "窗口移除超出范围")?;
+                                        if !more && window.is_empty() {
+                                            let duration_ms =
+                                                started.elapsed().as_millis() as u64;
+                                            return Ok(TransferResult {
+                                                bytes_transferred: bytes_sent,
+                                                checksum: Some(hasher.finalize()),
+                                                duration_ms,
+                                            });
+                                        }
+                                        more = more
+                                            && window
+                                                .fill()
+                                                .map_err(|e| format!("窗口填充失败: {}", e))?;
+                                        wr_idx = 0;
+                                        break;
+                                    } else {
+                                        log::warn!(
+                                            "[TFTP send_file] 意外 ACK: ack={}, win_base={}",
+                                            ack,
+                                            block_seq_win
+                                        );
+                                    }
+                                }
+
+                                // 无 ACK、窗口仍有数据、未超时→继续发送
+                                if wr_idx < window.len()
+                                    && Instant::now() < timeout_end
+                                {
+                                    break;
+                                }
+                            }
+                            ErrorKind::ConnectionReset => {
+                                log::warn!("[TFTP send_file] 连接重置");
+                            }
+                            _ => {
+                                log::warn!("[TFTP send_file] IO 错误: {io_e:?}");
+                            }
+                        }
+                    } else {
+                        log::warn!("[TFTP send_file] 未知错误: {e:?}");
+                    }
                 }
             }
 
-            retries += 1;
-            if retries >= max_retries {
-                log::error!("[TFTP send_file] 超过最大重试次数 block={}, retries={}, bytes_sent={}", block_num, retries, bytes_sent);
-                return Err(format!("超过最大重试次数 ({})", max_retries));
+            // 超时检查
+            if Instant::now() >= timeout_end {
+                log::warn!(
+                    "[TFTP send_file] ACK 超时 {}/{}",
+                    retry_cnt,
+                    max_retries
+                );
+                if retry_cnt >= max_retries {
+                    return Err(format!("超过最大重试次数 ({})", max_retries));
+                }
+                retry_cnt += 1;
+                // 指数退避：每次重试等待时间翻倍（上限 30s）
+                let backoff = timeout * 2u32.pow(retry_cnt as u32).min(60);
+                std::thread::sleep(backoff.min(Duration::from_secs(30)));
+                timeout_end = Instant::now() + timeout;
+                // 从窗口起点重新发送
+                wr_idx = 0;
+                counting
+                    .set_nonblocking(true)
+                    .map_err(|e| format!("设置非阻塞失败: {}", e))?;
+                break;
             }
-
-            log::warn!("[TFTP send_file] 重试 block={}, retry={}/{}, bytes_sent={}", block_num, retries, max_retries, bytes_sent);
-
-            // 指数退避
-            let backoff = timeout * 2u32.pow(retries as u32).min(60);
-            std::thread::sleep(backoff.min(Duration::from_secs(30)));
-        }
-
-        // 最后一块
-        if n < block_size {
-            log::info!("[TFTP send_file] 最后一块 block={}, size={}, bytes_sent={}", block_num, n, bytes_sent);
-            break;
-        }
-
-        // Block 号回绕
-        let prev_block = block_num;
-        block_num = block_num.wrapping_add(1);
-        let after_wrap = block_num;
-        block_num = match params.rollover {
-            TftpRollover::None => block_num, // allow 0
-            TftpRollover::Enforce0 => if block_num == 0 { 1 } else { block_num },
-            TftpRollover::Enforce1 => match block_num { 0 => 2, 1 => 2, n => n },
-            TftpRollover::DontCare => block_num,
-        };
-        if after_wrap != block_num {
-            log::info!("[TFTP send_file] 块号回绕: {} → wrapping={} → {} (policy={:?}), bytes_sent={}",
-                prev_block, after_wrap, block_num, params.rollover, bytes_sent);
         }
     }
+}
 
-    let duration_ms = started.elapsed().as_millis() as u64;
-    Ok(TransferResult {
-        bytes_transferred: bytes_sent,
-        checksum: Some(hasher.finalize()),
-        duration_ms,
-    })
+/// 发送块号回绕错误（仅 `TftpRollover::None` 触发）并返回 Err
+fn send_rollover_error(
+    counting: &mut CountingSocket,
+    remote: SocketAddr,
+    abort: &Arc<AtomicBool>,
+) -> Result<TransferResult, String> {
+    if !abort.load(Ordering::Relaxed) {
+        counting
+            .send_to(
+                &Packet::Error {
+                    code: ErrorCode::IllegalOperation,
+                    msg: "Block counter rollover error".to_string(),
+                },
+                &remote,
+            )
+            .ok();
+    }
+    Err("Block counter rollover error".into())
 }
 
 /// 接收文件（服务端 WRQ 响应 / 客户端 GET）
 ///
-/// 接收 DATA 包，发送 ACK，写入本地文件。
+/// 对齐 `tftpd::Worker::receive_file` 的 RFC 7440 滑坡算法：
+/// 1. 使用 `WindowWrite` 缓冲乱序到达的块
+/// 2. 收到窗口内任意块立即 ACK 最后连续块号
+/// 3. 窗口满或最终块时写盘
+/// 4. 块号匹配时才加入窗口，不匹配则 re-ACK 已有的 block_number
 ///
 /// `start_block`: 起始块号，默认 1。当客户端 GET 已在 OACK 协商阶段
-/// 处理了 DATA[1] 时传入 2，文件以追加模式打开，跳过块 1 的接收。
+/// 处理了 DATA[1] 时传入 2，文件以追加模式打开。
 pub fn receive_file(
     counting: &mut CountingSocket,
     file_path: PathBuf,
@@ -174,106 +332,217 @@ pub fn receive_file(
     abort: &Arc<AtomicBool>,
     start_block: u16,
 ) -> Result<TransferResult, String> {
-    // 使用 CountingSocket 中存储的协商后 blksize，而非 params.blksize。
     let block_size = counting.blksize();
-    let timeout = Duration::from_secs(params.timeout_secs.max(1) as u64);
-
+    let window_size = params.windowsize.max(1);
+    let max_retries = params.max_retries.max(1);
     let repeat_count = params.repeat_count.max(1) as usize;
+    // 接收缓冲区取错误包和最大数据包中的较大值
+    let max_pkt_size = std::cmp::max(MAX_ERROR_PACKET_SIZE, block_size);
 
     // 根据起始块号选择文件打开模式
-    let mut file = if start_block <= 1 {
+    let file = if start_block <= 1 {
         fs::File::create(&file_path)
             .map_err(|e| format!("无法创建文件: {}", e))?
     } else {
-        std::fs::OpenOptions::new().append(true).open(&file_path)
-            .map_err(|e| format!("无法以追加模式打开文件（start_block={}）: {}", start_block, e))?
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file_path)
+            .map_err(|e| {
+                format!(
+                    "无法以追加模式打开文件（start_block={}）: {}",
+                    start_block, e
+                )
+            })?
     };
 
-    log::info!("[TFTP receive_file] 开始: file={}, blksize={}, timeout={}s, rollover={:?}, start_block={}",
-        file_path.display(), block_size, params.timeout_secs, params.rollover, start_block);
+    log::info!(
+        "[TFTP receive_file] 开始: file={}, blksize={}, windowsize={}, timeout={}s, rollover={:?}, start_block={}",
+        file_path.display(), block_size, window_size, params.timeout_secs, params.rollover, start_block
+    );
 
-    let started = std::time::Instant::now();
+    let started = Instant::now();
+    let rcv_timeout = Duration::from_secs(params.timeout_secs.max(1) as u64);
+
     // start_block > 1 时 CRC32 由调用方负责（首块已由调用方处理）
-    let mut hasher = if start_block <= 1 { Some(crc32fast::Hasher::new()) } else { None };
-    let mut expected_block: u16 = start_block.max(1);
+    let mut hasher = if start_block <= 1 {
+        Some(crc32fast::Hasher::new())
+    } else {
+        None
+    };
+
+    // ── RFC 7440: 窗口写缓冲 ──
+    let mut window = WindowWrite::new(window_size, file);
+    // block_number: 最后写入的连续块号（最近发出的 ACK 号）
+    let mut block_number: u16 = start_block.wrapping_sub(1);
     let mut bytes_received: u64 = 0;
+    let mut retry_cnt = 0;
+    let mut last = false;
+    let mut listen_all = false;
+    let mut send_ack = false;
 
-    loop {
-        if abort.load(Ordering::Relaxed) {
-            // 清理不完整文件
-            if params.clean_on_error {
-                let _ = fs::remove_file(&file_path);
+    // 设置读超时（对齐 send_file：Windows 额外 +15ms 弥补早期返回）
+    #[cfg(windows)]
+    counting
+        .set_read_timeout(rcv_timeout + Duration::from_millis(15))
+        .map_err(|e| format!("设置读超时失败: {}", e))?;
+    #[cfg(not(windows))]
+    counting
+        .set_read_timeout(rcv_timeout)
+        .map_err(|e| format!("设置读超时失败: {}", e))?;
+    // 初始阻塞模式
+    counting
+        .set_nonblocking(false)
+        .map_err(|e| format!("设置阻塞失败: {}", e))?;
+
+    while !last {
+        // ── 内层循环：收集 DATA 直到需要发送 ACK ──
+        while !send_ack {
+            if abort.load(Ordering::Relaxed) {
+                if params.clean_on_error {
+                    let _ = fs::remove_file(&file_path);
+                }
+                return Err("传输已取消".into());
             }
-            return Err("传输已取消".into());
-        }
 
-        counting.set_read_timeout(timeout)
-            .map_err(|e| format!("设置超时失败: {}", e))?;
-
-        match counting.recv_with_size(block_size) {
-            Ok(Packet::Data { block_num, data }) => {
-                if block_num == expected_block {
-                    // 正确块
-                    file.write_all(&data).map_err(|e| format!("文件写入失败: {}", e))?;
-                    if let Some(ref mut h) = hasher { h.update(&data); }
-                    counting.record_data_bytes(data.len() as u64);
-                    bytes_received += data.len() as u64;
-
-                    // 发送 ACK（重复发包以提高可靠性）
-                    for i in 0..repeat_count {
-                        if i > 0 {
-                            std::thread::sleep(Duration::from_millis(1));
+            match counting.recv_with_size(max_pkt_size) {
+                Ok(Packet::Data {
+                    block_num: received_block,
+                    data,
+                }) => {
+                    // 计算期望的下一连续块号
+                    let mut expected = block_number.wrapping_add(1);
+                    if expected == 0 {
+                        // 块号回绕处理（对齐 tftpd Worker 语义）
+                        match params.rollover {
+                            TftpRollover::None => {
+                                // 禁止回绕 — 报错退出
+                                if !abort.load(Ordering::Relaxed) {
+                                    counting
+                                        .send_to(
+                                            &Packet::Error {
+                                                code: ErrorCode::IllegalOperation,
+                                                msg: "Block counter rollover error"
+                                                    .to_string(),
+                                            },
+                                            &remote,
+                                        )
+                                        .ok();
+                                }
+                                return Err("Block counter rollover error".into());
+                            }
+                            TftpRollover::Enforce0 | TftpRollover::DontCare => {
+                                // 允许块号 0，自然 wrapping
+                            }
+                            TftpRollover::Enforce1 => {
+                                // 跳过块号 0，期望块号从 1 开始
+                                expected = 1;
+                                if received_block == 0 {
+                                    return Err("Block counter rollover error".into());
+                                }
+                            }
                         }
-                        counting.send_to(&Packet::Ack(block_num), &remote)
-                            .map_err(|e| format!("ACK 发送失败: {}", e))?;
                     }
 
-                    // 最后一块（DATA 长度 < block_size）
-                    if data.len() < block_size {
-                        log::info!("[TFTP receive_file] 最后一块 block={}, size={}, bytes_received={}", block_num, data.len(), bytes_received);
-                        break;
-                    }
-
-                    // Block 号回绕
-                    let prev = expected_block;
-                    expected_block = expected_block.wrapping_add(1);
-                    let after_wrap = expected_block;
-                    expected_block = match params.rollover {
-                        TftpRollover::None => expected_block, // allow 0
-                        TftpRollover::Enforce0 => if expected_block == 0 { 1 } else { expected_block },
-                        TftpRollover::Enforce1 => match expected_block { 0 => 2, 1 => 2, n => n },
-                        TftpRollover::DontCare => expected_block,
-                    };
-                    if after_wrap != expected_block {
-                        log::info!("[TFTP receive_file] 块号回绕: {} → wrapping={} → {} (policy={:?}), bytes_received={}",
-                            prev, after_wrap, expected_block, params.rollover, bytes_received);
-                    }
-                } else if block_num == expected_block.wrapping_sub(1) {
-                    // 重复包（SAS 修复）：重发 ACK
-                    for i in 0..repeat_count {
-                        if i > 0 {
-                            std::thread::sleep(Duration::from_millis(1));
+                    if received_block == expected {
+                        // ── 顺序块：加入窗口 ──
+                        block_number = received_block;
+                        last = data.len() < block_size;
+                        window
+                            .add(data.clone())
+                            .map_err(|_| "窗口已满")?;
+                        if let Some(ref mut h) = hasher {
+                            h.update(&data);
                         }
-                        counting.send_to(&Packet::Ack(block_num), &remote)
-                            .map_err(|e| format!("ACK 重发失败: {}", e))?;
+                        counting.record_data_bytes(data.len() as u64);
+                        bytes_received += data.len() as u64;
+                        // 窗口满或最后一块时发送 ACK
+                        send_ack = window.is_full() || last;
+                    } else {
+                        // ── 乱序 / 重复块 ──
+                        log::debug!(
+                            "[TFTP receive_file] 块号不匹配: 收到 {}，期望 {}",
+                            received_block,
+                            expected
+                        );
+                        send_ack = true; // 重发 ACK 通知发送端当前进度
                     }
-                } else {
-                    // 意外块号 — 忽略
+
+                    // 收到数据后切换非阻塞以排空后续包
+                    counting
+                        .set_nonblocking(true)
+                        .map_err(|e| format!("设置非阻塞失败: {}", e))?;
+                    listen_all = true;
+                }
+                Ok(Packet::Error { code, msg }) => {
+                    return Err(format!("远端错误: {} - {}", code, msg));
+                }
+                Ok(_) => {
+                    log::warn!("[TFTP receive_file] 收到意外包");
+                }
+                Err(e) => {
+                    if let Some(io_e) = e.downcast_ref::<std::io::Error>() {
+                        match io_e.kind() {
+                            ErrorKind::WouldBlock | ErrorKind::TimedOut => {
+                                if listen_all {
+                                    // 排空完成，切回阻塞模式等待新数据
+                                    counting
+                                        .set_nonblocking(false)
+                                        .map_err(|e| {
+                                            format!("设置阻塞失败: {}", e)
+                                        })?;
+                                    listen_all = false;
+                                } else {
+                                    // 阻塞模式下超时——重试
+                                    log::debug!(
+                                        "[TFTP receive_file] ACK 超时 {}/{}",
+                                        retry_cnt,
+                                        max_retries
+                                    );
+                                    if retry_cnt >= max_retries {
+                                        return Err(format!(
+                                            "超过最大重试次数 ({})",
+                                            max_retries
+                                        ));
+                                    }
+                                    retry_cnt += 1;
+                                    send_ack = true;
+                                }
+                            }
+                            ErrorKind::ConnectionReset => {
+                                log::warn!("[TFTP receive_file] 连接重置");
+                                counting
+                                    .set_nonblocking(false)
+                                    .map_err(|e| {
+                                        format!("设置阻塞失败: {}", e)
+                                    })?;
+                            }
+                            _ => {
+                                log::warn!("[TFTP receive_file] IO 错误: {io_e:?}");
+                            }
+                        }
+                    } else {
+                        log::warn!("[TFTP receive_file] 未知错误: {e:?}");
+                    }
                 }
             }
-            Ok(Packet::Error { code, msg }) => {
-                return Err(format!("远端错误: {} - {}", code, msg));
-            }
-            Err(_) => {
-                // 超时 — 继续等待（超时恢复由发送端负责）
-            }
-            Ok(_) => {
-                // 意外包类型 — 忽略
-            }
         }
-    }
 
-    file.flush().map_err(|e| format!("文件刷新失败: {}", e))?;
+        // ── 发送 ACK（重复以提高可靠性）──
+        for i in 0..repeat_count {
+            if i > 0 {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            counting
+                .send_to(&Packet::Ack(block_number), &remote)
+                .map_err(|e| format!("ACK 发送失败: {}", e))?;
+        }
+        send_ack = false;
+
+        // ── 窗口写盘 ──
+        window
+            .empty()
+            .map_err(|e| format!("窗口写盘失败: {}", e))?;
+    }
 
     let duration_ms = started.elapsed().as_millis() as u64;
     Ok(TransferResult {

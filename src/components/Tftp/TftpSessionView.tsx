@@ -86,7 +86,7 @@ function ensure(sessionId: string): CachedState {
       serverRunning: false,
       fileRoot: "",
       listenAddr: "",
-      params: { blksize: 512, timeout_secs: 5, windowsize: 1, max_retries: 6, rollover: "None", window_wait: 0, clean_on_error: true, repeat_count: 1 },
+      params: { blksize: 512, timeout_secs: 5, windowsize: 1, max_retries: 6, rollover: "Enforce0", window_wait: 0, clean_on_error: true, repeat_count: 1 },
       clientForm: { remoteIp: "", remotePort: 69, remoteFile: "", localPath: "" },
     });
   }
@@ -306,8 +306,7 @@ export default function TftpSessionView({ sessionId }: Props) {
             {/* 行2 */}
             <span className={styles.paramLabel}>{t("tftp.windowsize")}</span>
             <select className="liquid-glass-input liquid-glass-select"
-              value={params.windowsize} onChange={(e) => handleParamChange("windowsize", Number(e.target.value))}
-              disabled title={t("tftp.notYetImplemented")}>
+              value={params.windowsize} onChange={(e) => handleParamChange("windowsize", Number(e.target.value))}>
               <option value={1}>1</option>
               <option value={2}>2</option>
               <option value={4}>4</option>
@@ -316,8 +315,7 @@ export default function TftpSessionView({ sessionId }: Props) {
             </select>
             <span className={styles.paramLabel}>{t("tftp.windowWait")}</span>
             <input type="number" className="liquid-glass-input" min={0}
-              value={params.window_wait} onChange={(e) => handleParamChange("window_wait", Number(e.target.value))}
-              disabled title={t("tftp.notYetImplemented")} />
+              value={params.window_wait} onChange={(e) => handleParamChange("window_wait", Number(e.target.value))} />
             {/* 行3 */}
             <span className={styles.paramLabel}>{t("tftp.maxRetries")}</span>
             <input type="number" className="liquid-glass-input" min={1} max={255}

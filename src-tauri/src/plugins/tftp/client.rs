@@ -82,6 +82,7 @@ pub async fn tftp_client_get(
 
     let handle = tokio::task::spawn_blocking(move || {
         let xfer_started = std::time::Instant::now();
+        let mut params = params;
 
         // ── 阶段 1：绑定 socket 并发送 RRQ ──
         let socket = UdpSocket::bind("0.0.0.0:0")
@@ -95,6 +96,7 @@ pub async fn tftp_client_get(
             options: vec![
                 TransferOption { option: tftpd::OptionType::BlockSize, value: params.blksize as u64 },
                 TransferOption { option: tftpd::OptionType::Timeout, value: params.timeout_secs as u64 },
+                TransferOption { option: tftpd::OptionType::WindowSize, value: params.windowsize as u64 },
             ],
         };
         tftpd::Socket::send_to(&socket, &rrq, &remote)
@@ -113,7 +115,10 @@ pub async fn tftp_client_get(
                     .find(|o| o.option == tftpd::OptionType::TransferSize)
                     .map(|o| o.value)
                     .unwrap_or(0);
-                log::info!("[TFTP Client GET] OACK tsize={}, blksize={}", tsize, blksize);
+                // RFC 7440: 解析协商后的 windowsize/window_wait
+                super::apply_oack_window_options(&options, &mut params);
+                log::info!("[TFTP Client GET] OACK tsize={}, blksize={}, windowsize={}, window_wait={}",
+                    tsize, blksize, params.windowsize, params.window_wait);
                 socket.connect(from).map_err(|e| format!("connect 失败: {}", e))?;
                 // 发送 ACK[0] 确认 OACK
                 tftpd::Socket::send(&socket, &Packet::Ack(0))
@@ -265,6 +270,7 @@ pub async fn tftp_client_put(
     let fname_inner = fname.clone();
 
     let handle = tokio::task::spawn_blocking(move || {
+        let mut params = params;
         let socket = UdpSocket::bind("0.0.0.0:0")
             .map_err(|e| format!("绑定失败: {}", e))?;
         socket.set_read_timeout(Some(REQUEST_TIMEOUT))
@@ -278,6 +284,7 @@ pub async fn tftp_client_put(
                 TransferOption { option: tftpd::OptionType::BlockSize, value: params.blksize as u64 },
                 TransferOption { option: tftpd::OptionType::TransferSize, value: file_size },
                 TransferOption { option: tftpd::OptionType::Timeout, value: params.timeout_secs as u64 },
+                TransferOption { option: tftpd::OptionType::WindowSize, value: params.windowsize as u64 },
             ],
         };
         tftpd::Socket::send_to(&socket, &wrq, &remote)
@@ -296,6 +303,8 @@ pub async fn tftp_client_put(
                     .find(|o| o.option == tftpd::OptionType::BlockSize)
                     .map(|o| o.value as u16)
                     .unwrap_or(params.blksize);
+                super::apply_oack_window_options(&options, &mut params);
+                log::info!("[TFTP Client PUT] OACK windowsize={}, window_wait={}", params.windowsize, params.window_wait);
                 socket.connect(from).map_err(|e| format!("connect 失败: {}", e))?;
                 (from, blksize)
             }
