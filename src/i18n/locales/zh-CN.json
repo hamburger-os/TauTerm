@@ -788,7 +788,12 @@
     "hostname": "主机名",
     "startTracking": "开始",
     "stopTracking": "停止",
-    "query": "查询"
+    "query": "查询",
+    "exportAll": "导出全部",
+    "exportProgress": "导出中… {{loaded}} 条",
+    "exportComplete": "导出完成: {{total}} 条",
+    "exportError": "导出失败: {{error}}",
+    "exportCancel": "取消"
   },
   "tftp": {
     "listenAddr": "监听地址",

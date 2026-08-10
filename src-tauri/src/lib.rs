@@ -356,6 +356,8 @@ pub fn run() {
             commands::start_journald_stream,
             commands::stop_journald_stream,
             commands::journald_query_cmd,
+            commands::start_journald_export,
+            commands::stop_journald_export,
             commands::get_ssh_home_dir,
             commands::resize_pty,
             commands::confirm_host_key,

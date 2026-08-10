@@ -44,3 +44,13 @@ export function formatTime(ts: number | null): string {
   if (ts <= UNIX_EPOCH) return "-";
   return new Date(ts * 1000).toLocaleString();
 }
+
+/** 格式化日期为紧凑文件名时间戳（YYYYMMDD_HHmm），用于默认导出文件名 */
+export function formatDateCompact(date: Date): string {
+  const Y = date.getFullYear();
+  const M = String(date.getMonth() + 1).padStart(2, "0");
+  const D = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const m = String(date.getMinutes()).padStart(2, "0");
+  return `${Y}${M}${D}_${h}${m}`;
+}

@@ -788,7 +788,12 @@
     "hostname": "Host",
     "startTracking": "Start Tracking",
     "stopTracking": "Stop",
-    "query": "Query"
+    "query": "Query",
+    "exportAll": "Export All",
+    "exportProgress": "Exporting… {{loaded}} entries",
+    "exportComplete": "Export done: {{total}} entries",
+    "exportError": "Export failed: {{error}}",
+    "exportCancel": "Cancel"
   },
   "tftp": {
     "listenAddr": "Listen Address",

@@ -64,7 +64,7 @@ export function priorityToLevelClass(priority: string | undefined): string {
   return "levelDebug";
 }
 
-/** 将微秒时间戳转换为可读本地时间（locale-independent 格式：YYYY-MM-DD HH:mm:ss） */
+/** 将微秒时间戳转换为可读本地时间（locale-independent 格式：YYYY-MM-DD HH:mm:ss.SSS） */
 export function formatTimestamp(microTimestamp: string | undefined): string {
   if (!microTimestamp) return "";
   const micro = parseInt(microTimestamp, 10);
@@ -76,10 +76,11 @@ export function formatTimestamp(microTimestamp: string | undefined): string {
   const h = String(d.getHours()).padStart(2, "0");
   const m = String(d.getMinutes()).padStart(2, "0");
   const s = String(d.getSeconds()).padStart(2, "0");
-  return `${Y}-${M}-${D} ${h}:${m}:${s}`;
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return `${Y}-${M}-${D} ${h}:${m}:${s}.${ms}`;
 }
 
-/** 从微秒时间戳中仅提取时间部分 (HH:mm:ss) */
+/** 从微秒时间戳中仅提取时间部分 (HH:mm:ss.SSS) */
 export function formatTimestampTime(microTimestamp: string | undefined): string {
   if (!microTimestamp) return "";
   const micro = parseInt(microTimestamp, 10);
@@ -88,7 +89,8 @@ export function formatTimestampTime(microTimestamp: string | undefined): string 
   const h = String(d.getHours()).padStart(2, "0");
   const m = String(d.getMinutes()).padStart(2, "0");
   const s = String(d.getSeconds()).padStart(2, "0");
-  return `${h}:${m}:${s}`;
+  const ms = String(d.getMilliseconds()).padStart(3, "0");
+  return `${h}:${m}:${s}.${ms}`;
 }
 
 /** 优先级数字转可读标签 */

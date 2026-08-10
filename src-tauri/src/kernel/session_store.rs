@@ -638,6 +638,9 @@ impl SessionStore {
         // 取消 journald 实时追踪（若已启动）
         crate::plugins::ssh::journald::stop_journald_stream(session_id);
 
+        // 取消 journald 日志导出（若已启动，幂等操作）
+        crate::plugins::ssh::journald::stop_journald_export(session_id);
+
         // 关闭脚本引擎（必须在 IoLoop 关闭前执行）
         if let Some(ref flag) = handle.script_shutdown {
             flag.store(true, Ordering::SeqCst);

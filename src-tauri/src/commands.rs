@@ -2082,10 +2082,12 @@ pub async fn start_journald_stream(
 ///
 /// 设置对应 session 的 cancel 标志，使 tokio 流式循环优雅退出。
 #[tauri::command]
-pub fn stop_journald_stream(
+pub async fn stop_journald_stream(
     session_id: String,
 ) -> Result<(), String> {
-    crate::plugins::ssh::journald::stop_journald_stream(&session_id);
+    // 确认式停止：等待后端任务真正退出并释放注册表，
+    // 保证返回后前端可立即重新开始（消除"已在运行中"窗口期）
+    crate::plugins::ssh::journald::stop_journald_stream_confirm(&session_id).await;
     Ok(())
 }
 
@@ -2127,6 +2129,55 @@ pub async fn journald_query_cmd(
         next_cursor,
         has_more,
     })
+}
+
+/// 启动 journald 日志导出
+///
+/// 在远程 SSH 会话上循环分页拉取所有匹配过滤条件的日志条目，
+/// 序列化为 JSON 后写入指定文件路径。spawn tokio task 异步执行，
+/// 通过事件 `journald:export-progress` / `journald:export-complete` /
+/// `journald:export-error` 向前端报告进度。
+#[tauri::command]
+pub async fn start_journald_export(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    file_path: String,
+    level: Option<String>,
+    keyword: Option<String>,
+    unit: Option<String>,
+    kernel_only: Option<bool>,
+    since: Option<String>,
+    until: Option<String>,
+) -> Result<(), String> {
+    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
+        level,
+        keyword,
+        unit,
+        kernel_only: kernel_only.unwrap_or(false),
+        since,
+        until,
+    };
+    crate::plugins::ssh::journald::start_journald_export(
+        &ssh_sc.session,
+        app,
+        session_id,
+        &filters,
+        file_path,
+    )
+    .await
+}
+
+/// 停止 journald 日志导出
+///
+/// 设置对应 session 的 cancel 标志，使导出循循环优雅退出。
+#[tauri::command]
+pub fn stop_journald_export(
+    session_id: String,
+) -> Result<(), String> {
+    crate::plugins::ssh::journald::stop_journald_export(&session_id);
+    Ok(())
 }
 
 // ── 统一文件传输命令（协议无关）────────────────────────────

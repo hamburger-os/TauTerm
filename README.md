@@ -233,7 +233,7 @@ graph LR
 - 📁 **文件传输** — 右侧竖向面板，按会话独立配置传输协议（YModem/XModem/ZModem），Inline / SideChannel / SeparateConnection 多策略自适应
 - 📄 **文件管理器** — SSH SFTP 远端文件浏览器，目录树导航、文件上传/下载、批量删除、重命名、属性查看，支持 breadcrumb 路径跳转
 - 📡 **TFTP 服务器/客户端** — 内置 TFTP 服务端监听（RRQ/WRQ），客户端 GET/PUT 操作；可调传输参数（blksize/timeout/windowsize/rollover/repeat）；CRC32 校验 + 实时进度；并发传输限制与指数退避重传；UDP socket 容器模式（无终端 I/O loop）
-- 📜 **Journald 日志查看器** — SSH remote journald 实时流式追踪与历史查询，支持日志级别/关键字/服务单元/内核日志过滤，游标分页，紧凑/完整两种显示模式，连接对话框启用开关
+- 📜 **Journald 日志查看器** — SSH remote journald 实时流式追踪与历史查询，支持日志级别/关键字/服务单元/内核日志过滤，游标分页，紧凑/完整两种显示模式，分页导出 JSON 文件（进度通知/可取消），连接对话框启用开关
 - 📊 **Dual 双模显示** — 可拖拽分栏同时展示 ASCII 文本与 HEX 十六进制，毫秒级时间戳、按 `\r\n`/`\n`/`\r` 自动分帧、TX/RX 颜色区分
 - 📤 **发送栏** — 四模式发送：基础发送 (Text/HEX, 换行符, 循环发送, 历史记录)、指令面板 (预定义命令序列, 拖拽排序, 循环执行)、自动应答 (可视化规则配置, 5 种匹配模式, 10 种动态宏, 定时触发)、脚本编辑器 (嵌入式 Lua 5.4 运行时, 代码生成与手写双路径)；支持后台持续执行，切换会话不中断
 - 🤖 **自动应答/脚本引擎** — 嵌入式 Lua 5.4 运行时，每会话独立 VM 沙箱隔离；可视化规则配置编译为 Lua 脚本；支持 5 种匹配模式 (contains/equals/starts_with/regex/lua_pattern)、10 种动态宏、匹配/定时触发、冷却控制、HEX 二进制匹配；"转换为脚本"一键从规则升级为脚本编辑

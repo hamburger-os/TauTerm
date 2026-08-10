@@ -20,7 +20,6 @@ export default function JournaldViewerPanel({
   const jvd = useJournaldViewer(sessionId, isConnected);
   const logListRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
-
   // ── 自动滚动（实时模式）──
   useEffect(() => {
     if (jvd.subTab === "realtime" && autoScrollRef.current && logListRef.current) {
@@ -120,24 +119,53 @@ export default function JournaldViewerPanel({
   // ── 工具栏 ──
   const renderToolbar = () => (
     <div className={styles.toolbar}>
-      <div className={styles.modeToggle}>
+      <div className={styles.toolbarLeft}>
+        {/* 模式切换 Toggle — 显示当前模式，点击切换 */}
         <button
-          className={`${styles.modeBtn} liquid-glass-button ${
-            jvd.displayMode === "compact" ? "active" : ""
-          }`}
-          onClick={() => jvd.setDisplayMode("compact")}
+          className={`${styles.modeToggleBtn} liquid-glass-button`}
+          onClick={() =>
+            jvd.setDisplayMode(jvd.displayMode === "compact" ? "full" : "compact")
+          }
+          title={
+            jvd.displayMode === "compact"
+              ? (t("journald.displayFull") as string)
+              : (t("journald.displayCompact") as string)
+          }
         >
-          {t("journald.displayCompact")}
+          <span>
+            {jvd.displayMode === "compact"
+              ? (t("journald.displayCompact") as string)
+              : (t("journald.displayFull") as string)}
+          </span>
         </button>
-        <button
-          className={`${styles.modeBtn} liquid-glass-button ${
-            jvd.displayMode === "full" ? "active" : ""
-          }`}
-          onClick={() => jvd.setDisplayMode("full")}
-        >
-          {t("journald.displayFull")}
-        </button>
+
+        {/* 导出按钮（仅历史查询模式） */}
+        {jvd.subTab === "history" &&
+          (jvd.exporting ? (
+            /* 导出中：进度 + 取消 */
+            <div className={styles.exportProgress}>
+              <span className={`liquid-glass-dot dot-success`} />
+              <span>
+                {t("journald.exportProgress", { loaded: jvd.exportLoaded })}
+              </span>
+              <button
+                className={`${styles.cancelExportBtn} liquid-glass-button`}
+                onClick={() => jvd.cancelExport()}
+              >
+                {t("journald.exportCancel")}
+              </button>
+            </div>
+          ) : (
+            <button
+              className={`${styles.exportBtn} liquid-glass-button`}
+              onClick={() => jvd.startExport()}
+            >
+              <Icon name="download" size="sm" />
+              <span>{t("journald.exportAll")}</span>
+            </button>
+          ))}
       </div>
+
       <div className={styles.actionArea}>
         {jvd.subTab === "realtime" ? (
           <>
@@ -160,14 +188,21 @@ export default function JournaldViewerPanel({
             )}
           </>
         ) : (
-          <button
-            className={`${styles.actionBtn} liquid-glass-button`}
-            onClick={() => jvd.runHistoryQuery()}
-            disabled={jvd.loading}
-          >
-            <Icon name="search" size="sm" />
-            {jvd.loading ? t("journald.loading") : t("journald.query")}
-          </button>
+          <>
+            <button
+              className={`${styles.actionBtn} liquid-glass-button`}
+              onClick={() => jvd.runHistoryQuery()}
+              disabled={jvd.loading}
+            >
+              <Icon name="search" size="sm" />
+              {jvd.loading ? t("journald.loading") : t("journald.query")}
+            </button>
+            {jvd.totalLoaded > 0 && (
+              <span className={`${styles.countBadge} liquid-glass-mini-card`}>
+                {jvd.totalLoaded}
+              </span>
+            )}
+          </>
         )}
       </div>
     </div>
