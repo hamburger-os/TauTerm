@@ -113,6 +113,31 @@ function dataToDualLine(data: Uint8Array, direction: "RX" | "TX"): Omit<DualLine
 }
 
 /**
+ * 规范化按会话编码解码后的帧文本（Dual 模式文本栏）。
+ *
+ * 与字节版 dataToDualLine 的展示语义对齐：
+ * - 剥离尾部帧分隔符 \r\n（hex 栏 cleanData 已剥离，避免每帧多出 ␍␊）
+ * - 控制字符映射：\r → ␍、\n → ␊、其余 <0x20 → .
+ */
+function normalizeDecodedText(text: string): string {
+  let end = text.length;
+  while (end > 0) {
+    const c = text.charCodeAt(end - 1);
+    if (c !== 0x0d && c !== 0x0a) break;
+    end--;
+  }
+  let out = "";
+  for (let i = 0; i < end; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 0x0d) out += "␍";
+    else if (c === 0x0a) out += "␊";
+    else if (c < 0x20) out += ".";
+    else out += text[i];
+  }
+  return out;
+}
+
+/**
  * 终端区域管理器
  *
  * 同时渲染所有已连接标签页的终端实例，使用 CSS opacity 控制可见性。
@@ -154,10 +179,16 @@ export default function TerminalView() {
   const [dualLines, setDualLines] = useState<Map<string, DualLine[]>>(new Map());
   /** RAF 批量提交缓冲区：累积同一帧内的行数据，减少 setState 次数 */
   const pendingDualRef = useRef<Map<string, DualLine[]>>(new Map());
-  /** text 模式数据批量提交缓冲区：累积同一帧内多包数据，合并为一次 xterm.write */
-  const pendingTextRef = useRef<Map<string, Uint8Array[]>>(new Map());
+  /** text 模式数据批量提交缓冲区：累积同一帧内多包数据（已按会话编码解码为文本），合并为一次 xterm.write */
+  const pendingTextRef = useRef<Map<string, string[]>>(new Map());
   /** text 模式 RAF ID：用于批量提交的去重 */
   const textRafIdRef = useRef<number | null>(null);
+  /**
+   * 每会话流式解码器：按包 decode({stream:true})，自动处理跨包被切断的多字节字符。
+   * label 用于校验会话编码是否变更（编辑编码后重连时缓存失效，避免旧解码器产生乱码）。
+   * 生命周期与连接绑定（断连/删除时在 cleanup effect 中终结）。
+   */
+  const decodersRef = useRef<Map<string, { label: string; decoder: TextDecoder }>>(new Map());
   /** RAF ID：用于批量提交的去重 */
   const rafIdRef = useRef<number | null>(null);
   /** 每个 session 的单调递增行号计数器：用于生成稳定的 React key */
@@ -334,6 +365,7 @@ export default function TerminalView() {
   // 后端批处理器已合并 16ms 窗口内的数据，但前端可能在一帧内收到多个 emit
   // （不同 session 或同 session 跨窗口）。此处在 rAF 中合并同 session 的多包数据
   // 为单次 xterm.write，减少 ANSI 解析 + 渲染调度次数。
+  // 数据包已在事件回调中按会话编码流式解码为文本（处理跨包多字节字符）。
   const flushTextBuffers = useCallback(() => {
     textRafIdRef.current = null;
     const pending = pendingTextRef.current;
@@ -347,23 +379,23 @@ export default function TerminalView() {
       const writeFn = writeRefs.current.get(sessionId);
       if (!writeFn) continue;
 
-      // 合并所有 chunks 为单个 Uint8Array，一次 write
-      const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
-      if (totalLen === 0) continue;
-
-      const merged = new Uint8Array(totalLen);
-      let offset = 0;
-      for (const chunk of chunks) {
-        merged.set(chunk, offset);
-        offset += chunk.length;
-      }
+      // 合并所有解码后的文本 chunk 为单次 write
+      const merged = chunks.join("");
+      if (merged.length === 0) continue;
       writeFn(merged);
     }
   }, []);
 
-  const pushDualLine = useCallback((sessionId: string, direction: "RX" | "TX", data: Uint8Array) => {
+  const pushDualLine = useCallback((
+    sessionId: string,
+    direction: "RX" | "TX",
+    data: Uint8Array,
+    decodedText?: string,
+  ) => {
     if (data.length === 0) return;
-    const base = dataToDualLine(data, direction);
+    const base = decodedText !== undefined
+      ? { ...dataToDualLine(data, direction), text: normalizeDecodedText(decodedText) }
+      : dataToDualLine(data, direction);
     // 跳过空帧（纯分隔符 \r\n 剥离后无内容）
     if (base.text.length === 0 && base.hex.length === 0) return;
 
@@ -382,6 +414,27 @@ export default function TerminalView() {
       rafIdRef.current = requestAnimationFrame(flushDualLines);
     }
   }, [flushDualLines]);
+
+  // 获取（惰性创建）指定会话的流式解码器，编码取自会话参数（连接时确定）。
+  // 缓存条目记录创建时的编码 label：会话编码变更（编辑会话后重连）时，
+  // label 不一致则丢弃旧解码器重建，避免旧编码解码器处理新编码字节产生乱码。
+  const getSessionDecoder = useCallback((sessionId: string): TextDecoder => {
+    const tab = tabsRef.current.find(t => t.id === sessionId);
+    const label = typeof tab?.params?.encoding === "string"
+      ? tab.params.encoding
+      : "utf-8";
+    const cached = decodersRef.current.get(sessionId);
+    if (cached && cached.label === label) return cached.decoder;
+    let decoder: TextDecoder;
+    try {
+      decoder = new TextDecoder(label);
+    } catch {
+      // 未知编码标签防御性回退（旧会话参数残留）
+      decoder = new TextDecoder("utf-8");
+    }
+    decodersRef.current.set(sessionId, { label, decoder });
+    return decoder;
+  }, []);
 
   // 注册数据回调，将每个 session 的数据路由到对应终端
   useEffect(() => {
@@ -442,16 +495,20 @@ export default function TerminalView() {
           ? tab.params.dual_frame_timeout_ms
           : DUAL_FRAME_TIMEOUT_DEFAULT_MS;
         processIncomingFrame(sessionId, data, timeout, (frameData) => {
-          pushDualLine(sessionId, "RX", frameData);
+          // 文本栏按会话编码流式解码；hex 栏保持原始字节（dataToDualLine 内部生成）
+          const decoded = getSessionDecoder(sessionId).decode(frameData, { stream: true });
+          pushDualLine(sessionId, "RX", frameData, decoded);
         });
       } else {
         // ── text 模式：rAF 批处理合并多包数据 ──
         // 后端批处理器已合并 16ms 窗口内的数据，但前端可能在一帧内收到多个 emit。
-        // 此处把数据推入 pendingTextRef，在 rAF 中合并为单次 xterm.write，
+        // 每个包先按会话编码流式解码（处理跨包被切断的多字节字符），
+        // 再推入 pendingTextRef，在 rAF 中合并为单次 xterm.write，
         // 减少 ANSI 解析 + 渲染调度次数。
+        const text = getSessionDecoder(sessionId).decode(data, { stream: true });
         const pending = pendingTextRef.current;
         if (!pending.has(sessionId)) pending.set(sessionId, []);
-        pending.get(sessionId)!.push(data);
+        pending.get(sessionId)!.push(text);
         if (textRafIdRef.current === null) {
           textRafIdRef.current = requestAnimationFrame(flushTextBuffers);
         }
@@ -461,6 +518,18 @@ export default function TerminalView() {
     return () => { onSessionData(() => {}); };
   }, [onSessionData, pushDualLine, processIncomingFrame, flushTextBuffers]);
 
+  /**
+   * 终结会话流式解码器：调用最终 decode() 冲刷内部缓冲的不完整多字节序列
+   * （结果为 U+FFFD 标记，断连时无法展示，直接丢弃；仅正确终结生命周期）。
+   */
+  const flushSessionDecoder = useCallback((sessionId: string) => {
+    const entry = decodersRef.current.get(sessionId);
+    if (entry) {
+      try { entry.decoder.decode(); } catch { /* 终结失败不影响清理流程 */ }
+      decodersRef.current.delete(sessionId);
+    }
+  }, []);
+
   // 注册发送数据回调（TX）：Dual 模式推入 DualPane；Telnet 本地回显写回终端
   useEffect(() => {
     onDataSent((sessionId, data) => {
@@ -468,15 +537,43 @@ export default function TerminalView() {
       if (!tab) return;
       // ── Dual 模式：TX 帧推入 DualPane 渲染 ──
       if (tab.params?.data_mode === "dual") {
-        pushDualLine(sessionId, "TX", data);
+        // data 为后端实际写入设备的字节（文本路径已按会话编码转码）。
+        // 一次性解码（TX 帧是完整数据，非字节流）；不复用 RX 流式解码器，
+        // 避免双方共享流状态导致跨方向多字节序列污染。
+        const label = typeof tab?.params?.encoding === "string"
+          ? tab.params.encoding
+          : "utf-8";
+        let decoded: string;
+        try {
+          decoded = new TextDecoder(label).decode(data);
+        } catch {
+          // 未知编码标签防御性回退（旧会话参数残留）
+          decoded = new TextDecoder("utf-8").decode(data);
+        }
+        pushDualLine(sessionId, "TX", data, decoded);
         return;
       }
       // ── Telnet 本地回显：服务器 WONT ECHO 时客户端回显输入 ──
       // 覆盖全部发送路径（键盘 / SendBar 各模式 / Lua 脚本均经 sendData）；
       // 服务器回显时 localEcho=false，天然跳过，无双显。
+      // data 为后端实际写入设备的字节（文本路径已按会话编码转码），
+      // 需先按会话编码解码回文本再写 xterm，否则非 UTF-8 会话回显乱码。
+      // 与上方 Dual 分支一致：用一次性解码器（TX 帧为完整数据），
+      // 不复用 RX 流式解码器，避免共享流状态污染。
       if (tab.localEcho) {
         const writeFn = writeRefs.current.get(sessionId);
-        if (writeFn) writeFn(data);
+        if (writeFn) {
+          const label = typeof tab?.params?.encoding === "string"
+            ? tab.params.encoding
+            : "utf-8";
+          let echoText: string;
+          try {
+            echoText = new TextDecoder(label).decode(data);
+          } catch {
+            echoText = new TextDecoder("utf-8").decode(data);
+          }
+          writeFn(echoText);
+        }
       }
     });
     // 卸载时清除回调，避免未挂载组件的闭包响应 TX 事件
@@ -514,6 +611,7 @@ export default function TerminalView() {
       frameBufRef.current.delete(id);
       pendingDualRef.current.delete(id);
       lineIdCounterRef.current.delete(id);
+      flushSessionDecoder(id);
     }
     for (const id of dualDisconnected) {
       const fb = frameBufRef.current.get(id);
@@ -521,6 +619,7 @@ export default function TerminalView() {
       frameBufRef.current.delete(id);
       pendingDualRef.current.delete(id);
       lineIdCounterRef.current.delete(id);
+      flushSessionDecoder(id);
     }
 
     // Phase 4: 纯 state 更新（无副作用）
@@ -532,7 +631,7 @@ export default function TerminalView() {
         return next;
       });
     }
-  }, [connectedTabIds]);
+  }, [connectedTabIds, flushSessionDecoder]);
 
   const handleTermReady = useCallback((sessionId: string, writeFn: (data: Uint8Array | string) => void) => {
     writeRefs.current.set(sessionId, writeFn);
@@ -548,12 +647,13 @@ export default function TerminalView() {
     pendingDualRef.current.delete(sessionId);
     pendingTextRef.current.delete(sessionId);
     lineIdCounterRef.current.delete(sessionId);
+    flushSessionDecoder(sessionId);
     setDualLines(prev => {
       const next = new Map(prev);
       next.delete(sessionId);
       return next;
     });
-  }, []);
+  }, [flushSessionDecoder]);
 
   const handleData = useCallback((sessionId: string, data: string) => {
     sendData(sessionId, data);

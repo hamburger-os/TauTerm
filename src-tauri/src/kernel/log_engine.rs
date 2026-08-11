@@ -136,6 +136,8 @@ pub struct DataLogEntry {
     pub session_id: String,
     pub direction: DataDirection,
     pub data_mode: String,
+    /// 会话字符编码：text 格式日志按此将 payload 解码回 UTF-8 再写入
+    pub encoding: String,
     pub payload: Vec<u8>,
     pub timestamp: chrono::DateTime<Local>,
 }

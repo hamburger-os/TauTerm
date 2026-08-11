@@ -6,6 +6,7 @@
 use std::sync::{mpsc, Mutex};
 
 use crate::channel::io_loop::IoLoopCmd;
+use crate::kernel::charset::transcode_utf8_to_encoding;
 use crate::kernel::comm_handle::{CommError, CommHandle, DataCallback};
 
 /// 串口通信句柄
@@ -14,15 +15,18 @@ use crate::kernel::comm_handle::{CommError, CommHandle, DataCallback};
 pub struct SerialCommHandle {
     /// I/O 循环写入通道（写入串口）
     write_tx: mpsc::SyncSender<IoLoopCmd>,
+    /// 会话字符编码（连接时确定）：`send_text` 按此转码 UTF-8 文本
+    encoding: String,
     /// 已注册的接收回调列表
     callbacks: Mutex<Vec<DataCallback>>,
 }
 
 impl SerialCommHandle {
     /// 创建新的串口通信句柄
-    pub fn new(write_tx: mpsc::SyncSender<IoLoopCmd>) -> Self {
+    pub fn new(write_tx: mpsc::SyncSender<IoLoopCmd>, encoding: String) -> Self {
         Self {
             write_tx,
+            encoding,
             callbacks: Mutex::new(Vec::new()),
         }
     }
@@ -34,6 +38,20 @@ impl CommHandle for SerialCommHandle {
         self.write_tx
             .send(IoLoopCmd::Write(data.to_vec()))
             .map_err(|e| CommError::SendError(e.to_string()))
+    }
+
+    fn send_text(&self, data: &[u8]) -> Result<Vec<u8>, CommError> {
+        // 文本路径：UTF-8 → 会话编码转码（与前端文本发送路径一致）。
+        // 非 UTF-8 输入或未知编码时 transcode 返回 None，原样透传。
+        let out = if self.encoding.eq_ignore_ascii_case("utf-8") {
+            data.to_vec()
+        } else {
+            transcode_utf8_to_encoding(data, &self.encoding).unwrap_or_else(|| data.to_vec())
+        };
+        self.write_tx
+            .send(IoLoopCmd::Write(out.clone()))
+            .map_err(|e| CommError::SendError(e.to_string()))?;
+        Ok(out)
     }
 
     fn on_receive(&self, callback: DataCallback) {

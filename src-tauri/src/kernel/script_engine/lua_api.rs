@@ -36,7 +36,7 @@ pub fn inject_lua_api(
     let timers_table = lua.create_table()?;
     globals.set("__timers", timers_table)?;
 
-    // ── send(data) ──
+    // ── send(data) ── 原始字节透传（可含任意字节，含 \0）
     let comm_send = comm.clone();
     let send_fn = lua.create_function(move |_, data: mlua::String| {
         let bytes: Vec<u8> = data.as_bytes().to_vec();
@@ -45,6 +45,18 @@ pub fn inject_lua_api(
             .map_err(|e| mlua::Error::RuntimeError(format!("send 失败: {}", e)))
     })?;
     globals.set("send", send_fn)?;
+
+    // ── send_text(text) ── 文本路径：按会话编码转码后发送（UTF-8 → GBK 等），
+    // 与前端 SendBar 文本发送行为一致；发送中文到非 UTF-8 设备不再产生乱码。
+    let comm_send_text = comm.clone();
+    let send_text_fn = lua.create_function(move |_, data: mlua::String| {
+        let bytes: Vec<u8> = data.as_bytes().to_vec();
+        comm_send_text
+            .send_text(&bytes)
+            .map(|_| ())
+            .map_err(|e| mlua::Error::RuntimeError(format!("send_text 失败: {}", e)))
+    })?;
+    globals.set("send_text", send_text_fn)?;
 
     // ── sleep(ms) ──
     // 协作式分片睡眠：每 50ms 检查一次 shutdown 标志，使停止脚本时能及时中断，

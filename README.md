@@ -230,6 +230,7 @@ graph LR
 - 🗂️ **统一标签页管理** — 串口、SSH、FTP、iPerf 共享同一标签栏，拖拽排序，右键菜单
 - 🗂️ **离线会话配置** — 不连接即可创建/编辑会话参数，持久化保存，右键菜单一键连接
 - 🖥️ **终端仿真** — 基于 xterm.js，多实例池管理，CSS opacity 无重建切换；支持 Text / HEX / Dual 三种数据模式
+- 🔤 **会话字符编码** — 连接时按会话选择编码（UTF-8 / GBK / GB18030 / Big5 / Shift-JIS / EUC-JP / EUC-KR / ISO-8859-1），终端接收流式解码、SendBar / 键盘 / Lua / 自动应答发送方向自动转码，Dual 模式按编码解码显示，文本日志恒为可读 UTF-8；状态栏实时显示当前编码
 - 📁 **文件传输** — 右侧竖向面板，按会话独立配置传输协议（YModem/XModem/ZModem），Inline / SideChannel / SeparateConnection 多策略自适应
 - 📄 **文件管理器** — SSH SFTP 远端文件浏览器，目录树导航、文件上传/下载、批量删除、重命名、属性查看，支持 breadcrumb 路径跳转
 - 📡 **TFTP 服务器/客户端** — 内置 TFTP 服务端监听（RRQ/WRQ），客户端 GET/PUT 操作；可调传输参数（blksize/timeout/windowsize/rollover/repeat）；CRC32 校验 + 实时进度；并发传输限制与指数退避重传；UDP socket 容器模式（无终端 I/O loop）
@@ -237,8 +238,8 @@ graph LR
 - 📜 **Journald 日志查看器** — SSH remote journald 实时流式追踪与历史查询，支持日志级别/关键字/服务单元/内核日志过滤，游标分页，紧凑/完整两种显示模式，分页导出 JSON 文件（进度通知/可取消），连接对话框启用开关
 - 📊 **Dual 双模显示** — 可拖拽分栏同时展示 ASCII 文本与 HEX 十六进制，毫秒级时间戳、按 `\r\n`/`\n`/`\r` 自动分帧、TX/RX 颜色区分
 - 📤 **发送栏** — 四模式发送：基础发送 (Text/HEX, 换行符, 循环发送, 历史记录)、指令面板 (预定义命令序列, 拖拽排序, 循环执行)、自动应答 (可视化规则配置, 5 种匹配模式, 10 种动态宏, 定时触发)、脚本编辑器 (嵌入式 Lua 5.4 运行时, 代码生成与手写双路径)；支持后台持续执行，切换会话不中断
-- 🤖 **自动应答/脚本引擎** — 嵌入式 Lua 5.4 运行时，每会话独立 VM 沙箱隔离；可视化规则配置编译为 Lua 脚本；支持 5 种匹配模式 (contains/equals/starts_with/regex/lua_pattern)、10 种动态宏、匹配/定时触发、冷却控制、HEX 二进制匹配；"转换为脚本"一键从规则升级为脚本编辑
-- ⚙️ **设置页面** — 7 面板全屏覆盖层：通用数据模式、外观（主题 / 字体 / 行缓冲）、语言、编码、日志、快捷键、关于；字体大小和行缓冲滑块拖动即实时生效
+- 🤖 **自动应答/脚本引擎** — 嵌入式 Lua 5.4 运行时，每会话独立 VM 沙箱隔离；可视化规则配置编译为 Lua 脚本；支持 5 种匹配模式 (contains/equals/starts_with/regex/lua_pattern)、10 种动态宏、匹配/定时触发、冷却控制、HEX 二进制匹配；"转换为脚本"一键从规则升级为脚本编辑；脚本 API 提供 `send()`（原始字节透传）与 `send_text()`（按会话编码转码，非 UTF-8 设备发送中文不乱码），自动应答文本回复自动走 `send_text`
+- ⚙️ **设置页面** — 5 面板全屏覆盖层：外观（主题 / 字体 / 行缓冲）、语言、日志、快捷键、关于；字体大小和行缓冲滑块拖动即实时生效
 - 🔐 **凭据存储** — OS 原生 keyring + AES-256-GCM 降级，密码/密钥/证书/Token 类型安全
 - 🔄 **自动更新** — 基于 Tauri updater 的内置更新系统，启动时自动检查（可配置频率：每次/每日/每周/从不），一键下载安装并重启，StatusBar 版本号更新指示器 + 设置 About 页面完整更新控制面板
 - 🎨 **Liquid Glass v3 设计系统** — 动态炫彩光球背景、SVG 噪点磨砂纹理、不对称高光边框、Framer Motion 动画、Google Glow / Obsidian / Frosted 三主题
@@ -293,6 +294,7 @@ TauTerm/
 │   │   ├── i18n_engine.rs      # 命名空间翻译、动态语言切换
 │   │   ├── log_engine.rs       # 生产者-消费者异步日志引擎、LogBridge 桥接器
 │   │   ├── log_writer.rs       # 日志文件写入器、text/hex/dual 格式化、自动分卷
+│   │   ├── charset.rs          # 字符编码转码（发送转码 + 日志按会话编码解码）
 │   │   ├── comm_handle.rs      # 通信抽象 trait（CommHandle），使脚本引擎协议无关
 │   │   ├── data_batcher.rs      # 数据批处理器（16ms 窗口合并高频小包 + Base64 编码优化 IPC）
 │   │   └── script_engine/      # Lua 5.4 脚本运行时（VM + 代码生成 + API 注入 + 沙箱）
@@ -354,7 +356,7 @@ TauTerm/
 │   │   ├── Transmission/       # 传输侧面板（协议配置 + 发送/接收 + 进度）
 │   │   ├── RightSidebar/       # 右侧栏容器（可折叠面板 + ResizeObserver 动画）
 │   │   ├── Tools/              # 嵌入式开发工具（校验和/编码/位操作/协议解析）
-│   │   ├── Settings/           # 设置页（全屏覆盖层：通用/外观/语言/编码/日志/快捷键/关于）
+│   │   ├── Settings/           # 设置页（全屏覆盖层：外观/语言/日志/快捷键/关于）
 │   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
 │   │   ├── FileManager/        # SFTP 文件管理器（目录浏览、上传/下载、批量、属性、预览、进度）
 │   │   ├── Tftp/               # TFTP 会话视图（服务端面板 + 客户端面板 + 传输列表 + 参数网格）

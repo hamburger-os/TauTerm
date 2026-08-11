@@ -140,8 +140,11 @@ impl LogWriter {
 
         match self.data_mode.as_str() {
             "text" => {
-                // 所见即所得：原始字节转为文本
-                let text = String::from_utf8_lossy(&entry.payload);
+                // 所见即所得：按会话编码解码为 UTF-8 文本再写入。
+                // 非 UTF-8 会话（GBK 等）的 payload 为设备原始字节，直接
+                // from_utf8_lossy 会产生乱码；未知编码回退旧行为。
+                let text = crate::kernel::charset::decode_to_utf8(&entry.payload, &entry.encoding)
+                    .unwrap_or_else(|| String::from_utf8_lossy(&entry.payload).into_owned());
                 format!("{} {} {}\n", ts, dir, text)
             }
             "hex" => {
@@ -196,8 +199,9 @@ impl LogWriter {
                 format!("{} {} {}  |  {}\n", ts, dir, text, hex_str)
             }
             _ => {
-                // 未知模式，回退为原始文本
-                let text = String::from_utf8_lossy(&entry.payload);
+                // 未知模式，回退为原始文本（同样按会话编码解码，保持日志可读）
+                let text = crate::kernel::charset::decode_to_utf8(&entry.payload, &entry.encoding)
+                    .unwrap_or_else(|| String::from_utf8_lossy(&entry.payload).into_owned());
                 format!("{} {} {}\n", ts, dir, text)
             }
         }

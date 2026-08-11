@@ -2,10 +2,8 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import Icon from "../common/Icon";
-import GeneralSettings from "./panels/GeneralSettings";
 import AppearanceSettings from "./panels/AppearanceSettings";
 import LanguageSettings from "./panels/LanguageSettings";
-import EncodingSettings from "./panels/EncodingSettings";
 import LoggingSettings from "./panels/LoggingSettings";
 import ShortcutSettings from "./panels/ShortcutSettings";
 import AboutSettings from "./panels/AboutSettings";
@@ -15,7 +13,7 @@ import styles from "./SettingsPage.module.css";
 interface SettingsPageProps {
   isOpen: boolean;
   onClose: () => void;
-  /** 从外部指定打开的初始分类（如 "about"），为 null 时保持默认 "general" */
+  /** 从外部指定打开的初始分类（如 "about"），为 null 时保持默认 "appearance" */
   initialCategory?: string | null;
   /** 更新器状态 */
   updateInfo: UpdateInfo;
@@ -31,13 +29,11 @@ interface SettingsPageProps {
   onCheckFrequencyChange: (freq: CheckFrequency) => void;
 }
 
-type Category = "general" | "appearance" | "language" | "encoding" | "logging" | "shortcuts" | "about";
+type Category = "appearance" | "language" | "logging" | "shortcuts" | "about";
 
 const CATEGORIES: { id: Category; icon: import("../common/Icon").IconName; labelKey: string }[] = [
-  { id: "general", icon: "settings" as const, labelKey: "settings.general" },
   { id: "appearance", icon: "palette" as const, labelKey: "settings.appearance" },
   { id: "language", icon: "globe" as const, labelKey: "settings.language" },
-  { id: "encoding", icon: "font" as const, labelKey: "settings.encoding" },
   { id: "logging", icon: "log" as const, labelKey: "settings.logging" },
   { id: "shortcuts", icon: "keyboard" as const, labelKey: "settings.shortcuts" },
   { id: "about", icon: "info" as const, labelKey: "settings.about" },
@@ -61,12 +57,15 @@ export default function SettingsPage({
   onCheckFrequencyChange,
 }: SettingsPageProps) {
   const { t } = useTranslation();
-  const [activeCategory, setActiveCategory] = useState<Category>("general");
+  const [activeCategory, setActiveCategory] = useState<Category>("appearance");
 
-  // 外部指定初始分类时（如 StatusBar 点击版本号 → "about"）
+  // 外部指定初始分类时（如 StatusBar 点击版本号 → "about"）。
+  // 运行时校验：未知分类（如已移除的 "general"/"encoding"）回退默认，
+  // 避免 switch 无匹配分支渲染空白面板。
   useEffect(() => {
     if (isOpen && initialCategory) {
-      setActiveCategory(initialCategory as Category);
+      const valid = CATEGORIES.some(c => c.id === initialCategory);
+      setActiveCategory(valid ? initialCategory as Category : "appearance");
     }
   }, [isOpen, initialCategory]);
 
@@ -86,10 +85,8 @@ export default function SettingsPage({
 
   const panelContent = useMemo(() => {
     switch (activeCategory) {
-      case "general": return <GeneralSettings />;
       case "appearance": return <AppearanceSettings />;
       case "language": return <LanguageSettings />;
-      case "encoding": return <EncodingSettings />;
       case "logging": return <LoggingSettings />;
       case "shortcuts": return <ShortcutSettings />;
       case "about": return (

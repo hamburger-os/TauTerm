@@ -4,6 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useSession } from "../../context/SessionContext";
 import { useCom0comStatus } from "../../hooks/useCom0comStatus";
 import { pluginRegistry } from "../../core/plugin-registry";
+import { charsetLabel, DEFAULT_ENCODING } from "../../utils/charsets";
 import { formatBytes, formatUptime, formatPortParams } from "../../utils/format";
 import type { UpdatePhase } from "../../types/updater";
 import Icon from "../common/Icon";
@@ -173,6 +174,15 @@ export default function StatusBar({
         {isConnected && params && (
           <div className={styles.segment}>
             <span className={styles.modeBadge}>{dataMode}</span>
+          </div>
+        )}
+
+        {/* 字符编码（纯显示，连接后不可变） */}
+        {isConnected && params && (
+          <div className={styles.segment}>
+            <span className={styles.paramText}>
+              {charsetLabel(typeof params.encoding === "string" ? params.encoding : DEFAULT_ENCODING)}
+            </span>
           </div>
         )}
 

@@ -37,11 +37,10 @@ export interface SendBarState {
 }
 
 const initialBasicState = (): SendBarState["basic"] => {
-  const stored = localStorage.getItem("tauterm-default-data-mode");
   return {
     inputText: "",
     newlineMode: "crlf",
-    sendMode: stored === "hex" ? "hex" : "text",
+    sendMode: "text",
     repeatEnabled: false,
     repeatInterval: 1000,
     sendHistory: [],

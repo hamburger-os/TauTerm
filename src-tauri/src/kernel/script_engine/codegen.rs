@@ -764,7 +764,11 @@ fn generate_handler_body(idx: usize, rule: &AutoReplyRule, indent: &str, is_firs
     code
 }
 
-/// 生成 send() 调用，自动判断是否包含宏
+/// 生成发送调用，自动判断是否包含宏。
+///
+/// - hex 格式：原始字节 → `send()`（不做字符转码）
+/// - 文本格式：`send_text()` — 按会话编码转码（UTF-8 → GBK 等），
+///   与 SendBar 文本发送行为一致；UTF-8 会话下等价 `send()`（短路透传）
 fn generate_send_call(idx: usize, data: &str, format: &str, indent: &str) -> String {
     let has_macros = data.contains("{{");
 
@@ -786,17 +790,15 @@ fn generate_send_call(idx: usize, data: &str, format: &str, indent: &str) -> Str
                 ),
             }
         }
+    } else if has_macros {
+        format!(
+            "{}send_text(_expand_reply(\"{}\", {}, caps or {{}}))",
+            indent,
+            escape_lua_string(data),
+            idx,
+        )
     } else {
-        if has_macros {
-            format!(
-                "{}send(_expand_reply(\"{}\", {}, caps or {{}}))",
-                indent,
-                escape_lua_string(data),
-                idx,
-            )
-        } else {
-            format!("{}send(\"{}\")", indent, escape_lua_string(data))
-        }
+        format!("{}send_text(\"{}\")", indent, escape_lua_string(data))
     }
 }
 
@@ -1067,7 +1069,7 @@ mod tests {
         assert!(code.contains("on_data(\"\""));
         assert!(code.contains("match_data(data, \"AT\", \"contains\", false)"));
         assert!(code.contains("sleep(10)"));
-        assert!(code.contains("send(\"OK\\r\\n\")"));
+        assert!(code.contains("send_text(\"OK\\r\\n\")"));
     }
 
     #[test]
@@ -1076,7 +1078,7 @@ mod tests {
         let code = rules_to_lua_script(&[rule], "test", "all");
         assert!(code.contains("match_data(data, \"*IDN?\", \"equals\", false)"));
         assert!(!code.contains("sleep(")); // delay=0 → no sleep
-        assert!(code.contains("send(\"TauTerm v1.0\\r\\n\")"));
+        assert!(code.contains("send_text(\"TauTerm v1.0\\r\\n\")"));
     }
 
     #[test]
@@ -1106,7 +1108,7 @@ mod tests {
         let code = rules_to_lua_script(&[rule], "test", "all");
         assert!(code.contains("regex_find"));
         // 无宏 → 不使用 _expand_reply
-        assert!(code.contains("send(\"OK\\r\\n\")"));
+        assert!(code.contains("send_text(\"OK\\r\\n\")"));
     }
 
     #[test]
@@ -1137,7 +1139,7 @@ mod tests {
         eprintln!("=== SEQUENCE CODE ===\n{}\n=== END ===", code);
         assert!(code.contains("-- Action 1"));
         assert!(code.contains("sleep(50)"));
-        assert!(code.contains("send(\"ACK\\r\\n\")"));
+        assert!(code.contains("send_text(\"ACK\\r\\n\")"));
         assert!(code.contains("-- Action 2"));
         assert!(code.contains("sleep(200)"));
         assert!(code.contains("_expand_reply"));
@@ -1269,6 +1271,7 @@ mod tests {
             __sent = {}
             __handlers = {}
             function send(d) __sent[#__sent + 1] = d end
+            function send_text(d) __sent[#__sent + 1] = d end
             function log(_) end
             function sleep(_) end
             function _time_ms() return 0 end
@@ -1378,7 +1381,7 @@ mod tests {
         let code = rules_to_lua_script(&[rule], "test", "all");
         eprintln!("=== TIMER ===\n{}\n=== END ===", code);
         assert!(code.contains("register_timer(\"__timer_rule_1\", 1000, function()"));
-        assert!(code.contains("send(\"HEARTBEAT\\r\\n\")"));
+        assert!(code.contains("send_text(\"HEARTBEAT\\r\\n\")"));
         // 定时器规则不应生成 on_data
         assert!(!code.contains("on_data("));
     }
@@ -1649,6 +1652,7 @@ mod tests {
             function on_data(pattern, cb) __handlers[#__handlers + 1] = { pattern = pattern, callback = cb } end
             sent = {}
             function send(d) sent[#sent + 1] = d end
+            function send_text(d) sent[#sent + 1] = d end
         "#).exec().unwrap();
 
         // 生成完整脚本并执行

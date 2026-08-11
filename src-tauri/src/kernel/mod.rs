@@ -18,7 +18,9 @@
 //! - `window_manager`  — 窗口创建/关闭、布局持久化、分屏状态管理
 //! - `log_engine`      — 生产者-消费者异步日志引擎，系统事件 + 会话数据日志
 //! - `log_writer`      — 单日志文件写入器，格式化（text/hex/dual）、自动分卷
+//! - `charset`         — 字符编码转码（UTF-8 ↔ GBK/Big5/Shift-JIS 等，发送转码 + 日志解码）
 
+pub mod charset;
 pub mod comm_handle;
 pub mod config_store;
 pub mod data_batcher;

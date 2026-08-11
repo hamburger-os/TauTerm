@@ -353,9 +353,15 @@ impl SessionStore {
 
         // 通信抽象句柄：协议可自带（如未来 SSH 专用实现），否则统一使用 SerialCommHandle。
         // 当前所有协议的 CommHandle 均仅包装 write_tx，功能等价，故统一降级。
+        // 传入会话编码：使 Lua `send_text` 文本路径按会话编码转码（与前端一致）。
         let comm_handle: Arc<dyn CommHandle> = conn.comm_handle
             .unwrap_or_else(|| {
-                Arc::new(crate::channel::serial_comm::SerialCommHandle::new(write_tx.clone()))
+                let encoding = params
+                    .get("encoding")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("utf-8")
+                    .to_string();
+                Arc::new(crate::channel::serial_comm::SerialCommHandle::new(write_tx.clone(), encoding))
             });
 
         let tx_bytes = Arc::new(AtomicU64::new(0));
@@ -1169,7 +1175,15 @@ impl SessionStore {
         // 重建 comm_handle，确保重连后脚本引擎使用新的 write_tx 通道。
         // 旧 comm_handle 持有的 write_tx 副本已随旧 I/O 线程停止而失效，
         // 若不重建，脚本引擎 send() 会向死 channel 写入，错误被静默吞掉。
-        let new_comm: Arc<dyn CommHandle> = Arc::new(crate::channel::serial_comm::SerialCommHandle::new(write_tx.clone()));
+        // 会话编码在重连时可能已变更（编辑会话后重连），从新 params 重新解析。
+        let new_comm: Arc<dyn CommHandle> = Arc::new(crate::channel::serial_comm::SerialCommHandle::new(
+            write_tx.clone(),
+            params
+                .get("encoding")
+                .and_then(|v| v.as_str())
+                .unwrap_or("utf-8")
+                .to_string(),
+        ));
         // 清理旧 comm_handle 上可能残留的回调（防止 stop→reconnect→start 链路
         // 下旧回调堆积在已失效的 CommHandle 中）
         if let Some(old_comm) = &handle.comm_handle {

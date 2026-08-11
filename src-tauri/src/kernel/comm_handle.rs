@@ -22,6 +22,17 @@ pub trait CommHandle: Send + Sync {
     /// 向通信接口写入原始字节
     fn send(&self, data: &[u8]) -> Result<(), CommError>;
 
+    /// 按会话编码发送文本：UTF-8 字节转码为目标编码后写入。
+    ///
+    /// 默认实现与 `send()` 等价（不转码），协议实现可按需覆盖；
+    /// 内置 `SerialCommHandle` 构造时持有会话编码，实现真实转码。
+    /// 返回实际写入设备的字节（文本路径为转码后字节），供日志与
+    /// TX 显示使用，保证面板所见与线上字节一致。
+    fn send_text(&self, data: &[u8]) -> Result<Vec<u8>, CommError> {
+        self.send(data)?;
+        Ok(data.to_vec())
+    }
+
     /// 注册接收数据回调
     ///
     /// 可多次调用以注册多个回调（并行通知）。

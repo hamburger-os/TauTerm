@@ -45,8 +45,14 @@ const helpContent: HelpContent = {
     {
       name: "send",
       signature: "send(data: string)",
-      desc: "通过当前连接的串口发送原始字节数据。data 可以是任意字符串（含 \\0 等二进制字节）。",
+      desc: "通过当前连接的串口发送原始字节数据。data 可以是任意字符串（含 \\0 等二进制字节），不做字符编码转换。",
       example: `send("AT\\r\\n")\nsend("\\x01\\x03\\x00\\x00\\x00\\x0A")`,
+    },
+    {
+      name: "send_text",
+      signature: "send_text(text: string)",
+      desc: "按会话编码发送文本：UTF-8 文本自动转码为目标编码（如 GBK）后发送，与 SendBar 文本发送行为一致。向非 UTF-8 设备发送中文时使用此函数；发送二进制帧请用 send()。",
+      example: `send_text("AT+CFUN=1\\r\\n")\nsend_text("设备ID: 测试")`,
     },
     {
       name: "sleep",
@@ -215,7 +221,8 @@ const helpContent: HelpContent = {
 
 const enContent: HelpContent = {
   functions: [
-    { name: "send", signature: "send(data: string)", desc: "Send raw bytes through the connected serial port. data can contain any bytes including \\0.", example: `send("AT\\r\\n")\nsend("\\x01\\x03\\x00\\x00\\x00\\x0A")` },
+    { name: "send", signature: "send(data: string)", desc: "Send raw bytes through the connected serial port. data can contain any bytes including \\0; no charset transcoding is applied.", example: `send("AT\\r\\n")\nsend("\\x01\\x03\\x00\\x00\\x00\\x0A")` },
+    { name: "send_text", signature: "send_text(text: string)", desc: "Send text transcoded to the session charset (e.g. GBK): UTF-8 input is converted like SendBar text mode. Use this for non-UTF-8 devices; use send() for binary frames.", example: `send_text("AT+CFUN=1\\r\\n")\nsend_text("Device ID: 测试")` },
     { name: "sleep", signature: "sleep(ms: number)", desc: "Pause script execution for ms milliseconds. Uses cooperative 50ms-slice sleep for responsive shutdown.", example: `sleep(1000)  -- wait 1 second` },
     { name: "log", signature: "log(message: string)", desc: "Output a log message to the Script Output panel. Timestamp auto-prepended (HH:MM:SS.mmm).", example: `log("Device response: " .. data)` },
     { name: "on_data", signature: "on_data(pattern: string, callback: function)", desc: "Register a data receive handler. When received data contains pattern (Lua pattern match), callback(data) is invoked. Call multiple times for multiple handlers.", example: `on_data("OK", function(data)\n    log("Got OK: " .. data)\nend)` },

@@ -188,6 +188,7 @@ fn create_on_data_callback(
     app: &AppHandle,
     log_tx: std::sync::mpsc::SyncSender<LogEntry>,
     data_mode: String,
+    encoding: String,
     bridge_tx: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
 ) -> Box<dyn Fn(String, Vec<u8>) + Send> {
     let app_clone = app.clone();
@@ -207,6 +208,7 @@ fn create_on_data_callback(
             session_id: session_id.clone(),
             direction: DataDirection::RX,
             data_mode: data_mode.clone(),
+            encoding: encoding.clone(),
             payload: data_for_log,
             timestamp: Local::now(),
         }));
@@ -262,6 +264,12 @@ async fn connect_session_serial(
         .unwrap_or("text")
         .to_string();
     let data_mode_for_log = data_mode.clone(); // clone for use after the closure
+    // 会话字符编码（用于日志按编码解码为 UTF-8）
+    let encoding_for_log = params_clone
+        .get("encoding")
+        .and_then(|v| v.as_str())
+        .unwrap_or("utf-8")
+        .to_string();
 
     // 桥接数据通道 (容量 256): 物理端口数据 → 虚拟端口桥接线程
     // 仅在虚拟串口启用时创建，避免不必要的通道分配
@@ -282,7 +290,7 @@ async fn connect_session_serial(
     // 共享 on_data 回调：DataBatcher + 日志 + 虚拟端口转发
     // 数据推送至脚本引擎由 CommHandle::notify_receive() 统一扇出
     let on_data = create_on_data_callback(
-        &app_data, log_tx, data_mode.clone(), bridge_tx,
+        &app_data, log_tx, data_mode.clone(), encoding_for_log, bridge_tx,
     );
 
     let app_disconnect = app.clone();
@@ -535,9 +543,15 @@ async fn connect_session_telnet(
         .and_then(|v| v.as_str())
         .unwrap_or("text")
         .to_string();
+    // 会话字符编码（用于日志按编码解码为 UTF-8）
+    let encoding = params
+        .get("encoding")
+        .and_then(|v| v.as_str())
+        .unwrap_or("utf-8")
+        .to_string();
 
     // 共享 on_data 回调：DataBatcher + 日志（无虚拟端口桥接）
-    let on_data = create_on_data_callback(&app_data, log_tx, data_mode, None);
+    let on_data = create_on_data_callback(&app_data, log_tx, data_mode, encoding, None);
 
     let app_disconnect = app.clone();
     let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
@@ -841,37 +855,64 @@ pub async fn disconnect_session(
 }
 
 /// 向指定会话写入数据
+///
+/// `transcode` 为 true 时（文本发送路径），将前端 UTF-8 字节委托会话
+/// `CommHandle::send_text` 按会话编码转码后写设备；false 时（HEX 发送 /
+/// 脚本原始字节路径）原样透传。转码策略只存在于 CommHandle（单一知识源），
+/// 未来协议原生 handle 可自行覆盖。
+/// 返回实际写入设备的字节（文本路径为转码后字节），供前端 TX 显示与
+/// 日志面板使用，保证面板所见与线上字节一致。
 #[tauri::command]
 pub fn write_data(
     state: State<'_, AppState>,
     session_id: String,
     data: Vec<u8>,
-) -> Result<(), String> {
-    // 单次锁定 session_store：写入数据并获取 data_mode
-    let data_mode = {
+    transcode: bool,
+) -> Result<Vec<u8>, String> {
+    // 锁内仅解析会话参数（O(1)）；转码（encoding_rs 编码）与通道写入在锁外执行，
+    // 避免 CPU 密集的转码阻塞其他会话的写入
+    let (encoding, data_mode, comm) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.write(&session_id, &data)?;
-        // 解析子连接 ID → 父会话以获取 data_mode
+        // 解析子连接 ID → 父会话以获取会话参数
         let resolved_id = store.resolve_parent_id(&session_id)
-            .unwrap_or(session_id.clone());
-        store
-            .get_session(&resolved_id)
+            .unwrap_or_else(|| session_id.clone());
+        let handle = store.get_session(&resolved_id);
+        let encoding = handle
+            .and_then(|h| h.params.get("encoding"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("utf-8")
+            .to_string();
+        let data_mode = handle
             .and_then(|h| h.params.get("data_mode"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "text".to_string())
+            .map(str::to_string)
+            .unwrap_or_else(|| "text".to_string());
+        // 克隆 Arc 后释放锁；send_text 内部完成转码（含 UTF-8 短路与未知编码透传）
+        (encoding, data_mode, handle.and_then(|h| h.comm_handle.clone()))
+    };
+    // 文本路径：委托会话 CommHandle::send_text（单一转码策略点）；
+    // 字节路径或会话无 comm_handle（SSH 容器）：直接写入原样透传
+    let data_out = match (transcode, comm) {
+        (true, Some(handle)) => handle.send_text(&data).map_err(|e| e.to_string())?,
+        (true, None) | (false, _) => {
+            let store = state.session_store.lock().map_err(|e| e.to_string())?;
+            store.write(&session_id, &data)?;
+            data
+        }
     };
     // 异步发送 TX 数据日志（非阻塞，best-effort：失败不影响主流程）
+    // 日志记录实际写入设备的字节（转码后），text 格式按会话编码解码回 UTF-8
     if let Ok(log_engine) = state.log_engine.lock() {
         let _ = log_engine.sender().try_send(LogEntry::SessionData(DataLogEntry {
             session_id,
             direction: DataDirection::TX,
             data_mode,
-            payload: data,
+            encoding,
+            payload: data_out.clone(),
             timestamp: Local::now(),
         }));
     }
-    Ok(())
+    Ok(data_out)
 }
 
 /// 切换活跃标签页
@@ -986,7 +1027,7 @@ async fn create_ssh_sub_channel(
     channel: Box<dyn AsyncChannel>,
 ) -> Result<String, String> {
     // ── 阶段 1: 获取锁 → 检查父存活 + 预留 channel_index + 读取配置 → 释放锁 ──
-    let (endpoint, params, data_mode, channel_index, reserved_name, send_bar_enabled_val, file_service_enabled, journald_enabled, file_service_protocol) = {
+    let (endpoint, params, data_mode, encoding, channel_index, reserved_name, send_bar_enabled_val, file_service_enabled, journald_enabled, file_service_protocol) = {
         let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
         let not_found = store.session_not_found(parent_id);
         let handle = store.get_session_mut(parent_id).ok_or(not_found)?;
@@ -997,6 +1038,10 @@ async fn create_ssh_sub_channel(
             .and_then(|v| v.as_str())
             .unwrap_or("text")
             .to_string();
+        let enc = handle.params.get("encoding")
+            .and_then(|v| v.as_str())
+            .unwrap_or("utf-8")
+            .to_string();
         let idx = handle.sub_connections.len() as u32;
         let ch_name = format!("Channel {}", idx + 1);
         let sbe = handle.send_bar_enabled;
@@ -1006,7 +1051,7 @@ async fn create_ssh_sub_channel(
             .and_then(|v| v.as_bool()).unwrap_or(false);
         let fsp = handle.params.get("file_service_protocol")
             .and_then(|v| v.as_str()).unwrap_or("sftp").to_string();
-        (handle.endpoint.clone(), handle.params.clone(), dm, idx, ch_name, sbe, fse, jde, fsp)
+        (handle.endpoint.clone(), handle.params.clone(), dm, enc, idx, ch_name, sbe, fse, jde, fsp)
     };
 
     // ── 阶段 2: 创建 I/O 资源（无锁）──
@@ -1022,7 +1067,7 @@ async fn create_ssh_sub_channel(
         let log_engine = app_state.log_engine.lock().map_err(|e| e.to_string())?;
         log_engine.sender()
     };
-    let on_data = create_on_data_callback(app, log_tx, data_mode, None);
+    let on_data = create_on_data_callback(app, log_tx, data_mode, encoding, None);
 
     let app_disconnect = app.clone();
     let pid = parent_id.to_string();

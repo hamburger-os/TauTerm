@@ -527,10 +527,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const tab = tabsRef.current.find(t => t.id === sessionId);
     if (!tab || tab.state === "disconnected") return;
     try {
-      const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
-      await invoke("write_data", { sessionId, data: Array.from(bytes) });
+      // 文本路径（键盘 / SendBar 文本 / 脚本字符串）：UTF-8 字节交给后端按会话编码转码；
+      // 字节路径（HEX 发送 / 脚本原始字节）：原样透传，不做字符转码
+      const isText = typeof data === "string";
+      const bytes = isText ? new TextEncoder().encode(data) : data;
+      // 返回值为实际写入设备的字节：文本路径按会话编码转码（如 GBK），
+      // 用作 TX 通知/日志时保证面板显示与线上字节一致
+      const written = await invoke<number[]>("write_data", { sessionId, data: Array.from(bytes), transcode: isText });
       // 通知 Dual 模式终端：数据已发送
-      sentDataCallbackRef.current?.(sessionId, bytes);
+      sentDataCallbackRef.current?.(sessionId, new Uint8Array(written));
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${e}` });
     }

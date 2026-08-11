@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
+import { CHARSETS, DEFAULT_ENCODING } from "../../utils/charsets";
 import Icon from "../common/Icon";
 import styles from "./ConnectDialog.module.css";
 
@@ -51,6 +52,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [stopBits, setStopBits] = useState("1");
   const [flowControl, setFlowControl] = useState("none");
   const [dataMode, setDataMode] = useState("text");
+  /** 数据字符编码（仅终端类协议：serial/ssh/telnet；连接后不可变，改需重连） */
+  const [encoding, setEncoding] = useState(DEFAULT_ENCODING);
   const [dualFrameTimeout, setDualFrameTimeout] = useState(50);
   const [transferEnabled, setTransferEnabled] = useState(true);
   const [transferProtocol, setTransferProtocol] = useState<"ymodem" | "xmodem" | "zmodem">("ymodem");
@@ -129,6 +132,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           if (typeof p.stop_bits === "string") setStopBits(p.stop_bits);
           if (typeof p.flow_control === "string") setFlowControl(p.flow_control);
           if (typeof p.data_mode === "string") setDataMode(p.data_mode);
+          if (typeof p.encoding === "string") setEncoding(p.encoding);
           if (typeof p.dual_frame_timeout_ms === "number") setDualFrameTimeout(p.dual_frame_timeout_ms);
           // SSH 字段回填
           if (targetTab.connection_type === "ssh" || targetTab.pluginId === "ssh") {
@@ -180,6 +184,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setStopBits("1");
     setFlowControl("none");
     setDataMode("text");
+    setEncoding(DEFAULT_ENCODING);
     setDualFrameTimeout(50);
     setTransferEnabled(true);
     setTransferProtocol("ymodem");
@@ -250,6 +255,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       flow_control: flowControl,
       data_mode: dataMode,
       dual_frame_timeout_ms: dualFrameTimeout,
+      encoding,
       transfer_enabled: transferEnabled,
       transfer_protocol: transferProtocol,
       send_bar_enabled: sendBarEnabled,
@@ -264,6 +270,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       private_key: sshAuthMethod === "key" ? sshPrivateKey : undefined,
       passphrase: sshAuthMethod === "key" && sshPassphrase ? sshPassphrase : undefined,
       data_mode: dataMode,
+      encoding,
       send_bar_enabled: sshSendBarEnabled,
       transfer_enabled: sshTransferEnabled,
       file_service_enabled: fileServiceEnabled,
@@ -279,6 +286,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     } : isTelnet ? {
       host: telnetHost,
       port: telnetPort,
+      encoding,
       send_bar_enabled: telnetSendBarEnabled,
     } : {};
 
@@ -320,7 +328,22 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, isTelnet, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled]);
+
+  // 数据字符编码下拉（终端类协议共用：serial / ssh / telnet）
+  const encodingField = (
+    <div className={styles.field}>
+      <label className={styles.label}>{t("serial.encoding")}</label>
+      <select
+        className={`${styles.select} liquid-glass-input liquid-glass-select`}
+        value={encoding}
+        onChange={e => setEncoding(e.target.value)}
+        disabled={connecting}
+      >
+        {CHARSETS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+      </select>
+    </div>
+  );
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -468,6 +491,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       <option value="dual">{t("serial.dataModeDual")}</option>
                     </select>
                   </div>
+
+                  {/* 数据字符编码（连接后不可变，改需重连） */}
+                  {encodingField}
 
                   {/* Dual 模式分帧超时（仅 Dual 模式可见） */}
                   {dataMode === "dual" && (
@@ -619,6 +645,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       />
                     </div>
                   </div>
+
+                  {/* 数据字符编码（连接后不可变，改需重连） */}
+                  {encodingField}
 
                   <div className={styles.field}>
                     <label className={styles.label}>{t("ssh.authMethod")}</label>
@@ -873,6 +902,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       disabled={connecting}
                     />
                   </div>
+
+                  {/* 数据字符编码（连接后不可变，改需重连） */}
+                  {encodingField}
 
                   {/* 发送栏开关（默认开启） */}
                   <div className={styles.field}>

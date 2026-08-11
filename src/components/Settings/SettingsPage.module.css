@@ -160,13 +160,6 @@
   justify-content: center;
 }
 
-/* 编码简写标识（选项内的等宽后缀） */
-.charsetCode {
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  margin-left: auto;
-}
-
 
 /* 关于页 */
 .aboutSection {
@@ -336,17 +329,6 @@
   background: var(--glass-input-bg);
 }
 
-/* 编码提示 */
-.encodingNote {
-  margin-top: 12px;
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--color-warning) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-warning) 15%, transparent);
-  border-radius: var(--radius-sm);
-  color: var(--color-warning);
-  font-size: var(--text-xs);
-  line-height: 1.4;
-}
 
 /* 字体大小滑块 */
 .fontSlider {
