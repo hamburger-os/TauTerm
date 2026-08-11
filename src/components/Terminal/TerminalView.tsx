@@ -461,12 +461,23 @@ export default function TerminalView() {
     return () => { onSessionData(() => {}); };
   }, [onSessionData, pushDualLine, processIncomingFrame, flushTextBuffers]);
 
-  // 注册发送数据回调（TX），Dual 模式下推入 DualPane 渲染
+  // 注册发送数据回调（TX）：Dual 模式推入 DualPane；Telnet 本地回显写回终端
   useEffect(() => {
     onDataSent((sessionId, data) => {
       const tab = tabsRef.current.find(t => t.id === sessionId);
-      if (tab?.params?.data_mode !== "dual") return;
-      pushDualLine(sessionId, "TX", data);
+      if (!tab) return;
+      // ── Dual 模式：TX 帧推入 DualPane 渲染 ──
+      if (tab.params?.data_mode === "dual") {
+        pushDualLine(sessionId, "TX", data);
+        return;
+      }
+      // ── Telnet 本地回显：服务器 WONT ECHO 时客户端回显输入 ──
+      // 覆盖全部发送路径（键盘 / SendBar 各模式 / Lua 脚本均经 sendData）；
+      // 服务器回显时 localEcho=false，天然跳过，无双显。
+      if (tab.localEcho) {
+        const writeFn = writeRefs.current.get(sessionId);
+        if (writeFn) writeFn(data);
+      }
     });
     // 卸载时清除回调，避免未挂载组件的闭包响应 TX 事件
     return () => { onDataSent(() => {}); };

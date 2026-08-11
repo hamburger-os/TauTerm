@@ -120,6 +120,18 @@ pub fn enumerate_endpoints(
                 connection_type: "ssh".to_string(),
             }).collect())
         }
+        "telnet" => {
+            // 通过适配器调用 discover_endpoints，保持与 serial 一致的插件架构。
+            // Telnet 当前返回空列表（无硬件端点），但未来可扩展为发现
+            // 已知设备的 Telnet 服务等。
+            let endpoints = state.telnet_adapter.discover_endpoints()
+                .map_err(|e| e.to_string())?;
+            Ok(endpoints.into_iter().map(|ep| EndpointItem {
+                name: ep.name,
+                description: ep.description,
+                connection_type: "telnet".to_string(),
+            }).collect())
+        }
         other => Err(format!("插件 '{}' 暂不支持端点枚举", other)),
     }
 }
@@ -157,6 +169,7 @@ pub async fn connect_session(
         "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, journald_enabled, session_id).await,
         "ssh" => connect_session_ssh(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, journald_enabled, session_id).await,
         "tftp" => connect_session_tftp(app, state, endpoint, params, name, session_id).await,
+        "telnet" => connect_session_telnet(app, state, endpoint, params, name, send_bar_enabled, session_id).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
@@ -478,6 +491,107 @@ async fn connect_session_serial(
         // 避免 virtual-port-created 事件先于 session-connected 到达
         // 前端时因 tab 尚未创建而丢失数据
         "virtual_port_pairs": vport_pairs_json,
+    }));
+
+    Ok(session_id)
+}
+
+/// Telnet 会话连接（TelnetAdapter → Channel → SessionStore）
+///
+/// 单连接/标签页模式（serial 式 Sync I/O），无文件传输、无容器/子会话。
+/// 回显状态事件由通道内回调直接 emit（适配器持有 AppHandle，session_id
+/// 经 `Channel::on_session_started` 注入），无需 relay 线程。
+#[allow(clippy::too_many_arguments)]
+async fn connect_session_telnet(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    endpoint: String,
+    params: Value,
+    name: Option<String>,
+    send_bar_enabled: Option<bool>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    let conn = state.telnet_adapter.connect(&endpoint, &params).await
+        .map_err(|e| e.to_string())?;
+
+    // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
+    let content_type = state.telnet_adapter.content_type();
+    let io_strategy = state.telnet_adapter.io_strategy();
+    let transfer_protocols = state.telnet_adapter.transfer_protocols();
+    log::info!(
+        "Telnet 连接: content_type={:?}, io_strategy={:?}, transfer_protocols={:?}",
+        content_type, io_strategy, transfer_protocols
+    );
+
+    let session_name = name.unwrap_or_else(|| format!("Telnet {}", endpoint));
+
+    let app_data = app.clone();
+    let log_tx = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        log_engine.sender()
+    };
+    let data_mode = params
+        .get("data_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("text")
+        .to_string();
+
+    // 共享 on_data 回调：DataBatcher + 日志（无虚拟端口桥接）
+    let on_data = create_on_data_callback(&app_data, log_tx, data_mode, None);
+
+    let app_disconnect = app.clone();
+    let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
+        let app_state: State<'_, AppState> = app_disconnect.state();
+        if let Ok(mut store) = app_state.session_store.lock() {
+            store.mark_disconnected(&session_id);
+            let path = SessionStore::sessions_file_path(&app_disconnect);
+            let _ = store.save_to_disk(&path);
+        }
+        let _ = app_disconnect.emit("session-disconnected", serde_json::json!({
+            "session_id": session_id,
+        }));
+    });
+
+    let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
+    // Telnet 无文件传输
+    let transfer_enabled_val = false;
+
+    let session_id = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let sid = store.create_session(
+            &session_name, "telnet", &endpoint, params, conn,
+            on_data, on_disconnect, app.clone(),
+            transfer_enabled_val,
+            None,
+            send_bar_enabled_val,
+            session_id,
+        )?;
+
+        // 自动保存
+        let path = SessionStore::sessions_file_path(&app);
+        let _ = store.save_to_disk(&path);
+        sid
+    };
+
+    let (actual_name, actual_params, connected_at) = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.get_session(&session_id)
+            .map(|h| (h.name.clone(), h.params.clone(), h.connected_at))
+            .unwrap_or((session_name, Value::Null, None))
+    };
+
+    log::info!("Telnet 会话已连接: {} @ {}", actual_name, endpoint);
+
+    let _ = app.emit("session-connected", serde_json::json!({
+        "session_id": session_id,
+        "endpoint": endpoint,
+        "connection_type": "telnet",
+        "plugin_id": "telnet",
+        "name": actual_name,
+        "params": actual_params,
+        "connected_at": connected_at,
+        "transfer_enabled": transfer_enabled_val,
+        "send_bar_enabled": send_bar_enabled_val,
     }));
 
     Ok(session_id)

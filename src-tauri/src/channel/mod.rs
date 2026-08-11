@@ -29,6 +29,12 @@ pub trait Channel: Read + Write + Send {
     /// 设置读写超时
     fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError>;
 
+    /// I/O 循环启动回调：在数据读循环开始前通知通道其 session_id。
+    ///
+    /// 默认空实现。需要会话标识的协议（如 Telnet 回显事件回调需
+    /// 附带 session_id 发射事件）覆盖此方法，保证首条数据到达前注入完成。
+    fn on_session_started(&mut self, _session_id: &str) {}
+
     /// 尝试交出底层传输的所有权（用于 Inline 传输策略）
     ///
     /// 返回 `Some(Box<dyn Any>)` 如果传输支持所有权交出。

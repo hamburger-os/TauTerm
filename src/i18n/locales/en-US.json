@@ -750,6 +750,12 @@
     "hostKeyPrompt": "Do you trust this host and want to continue connecting?",
     "hostKeyError": "Host key confirmation failed: {{error}}"
   },
+  "telnet": {
+    "host": "Host",
+    "hostPlaceholder": "192.168.1.1",
+    "port": "Port",
+    "enableSendBar": "Enable Send Bar"
+  },
   "journald": {
     "title": "Journald Viewer",
     "enableJournald": "Enable journald Log Viewer",

@@ -750,6 +750,12 @@
     "hostKeyPrompt": "是否信任此主机并继续连接？",
     "hostKeyError": "主机密钥确认失败: {{error}}"
   },
+  "telnet": {
+    "host": "主机地址",
+    "hostPlaceholder": "192.168.1.1",
+    "port": "端口",
+    "enableSendBar": "启用发送栏"
+  },
   "journald": {
     "title": "日志查看器",
     "enableJournald": "启用 journald 日志查看器",

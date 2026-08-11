@@ -1,6 +1,6 @@
 //! 串口协议插件
 //!
-//! 实现 `ProtocolAdapter` trait，提供 RS-232/RS-485 串口终端会话。
+//! 实现 `ProtocolAdapter` trait，提供 串口终端会话。
 
 use serde::{Deserialize, Serialize};
 use crate::channel::{ContentType, IoStrategy};
@@ -72,7 +72,7 @@ impl SerialAdapter {
             name: "Serial".into(),
             version: "1.0.0".into(),
             category: "terminal".into(),
-            description: "RS-232/RS-485 串口终端会话".into(),
+            description: "串口终端会话".into(),
             icon: "serial".into(),
             content_type: "terminal".into(),
             capabilities: vec![

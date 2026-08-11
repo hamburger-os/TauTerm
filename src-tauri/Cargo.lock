@@ -5054,17 +5054,25 @@ dependencies = [
  "serde",
  "serde_json",
  "serialport",
+ "socket2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "telnet",
  "tftpd",
  "thiserror 1.0.69",
  "tokio",
  "uuid",
 ]
+
+[[package]]
+name = "telnet"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01b97995bb05d87c31d04870a7b5393228017d12971d446e30d0739f484c5968"
 
 [[package]]
 name = "tempfile"

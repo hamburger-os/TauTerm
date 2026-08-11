@@ -83,10 +83,15 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [tftpWriteEnabled, setTftpWriteEnabled] = useState(true);
   const [tftpOverwrite, setTftpOverwrite] = useState(true);
   const [tftpSinglePort, setTftpSinglePort] = useState(false);
+  // Telnet 配置
+  const [telnetHost, setTelnetHost] = useState("");
+  const [telnetPort, setTelnetPort] = useState(23);
+  const [telnetSendBarEnabled, setTelnetSendBarEnabled] = useState(true);
 
   const isSerial = selectedMode === "serial";
   const isSsh = selectedMode === "ssh";
   const isTftp = selectedMode === "tftp";
+  const isTelnet = selectedMode === "telnet";
 
   // 保持最新的 tabs 引用，供 useEffect 在 editSessionId 变化时读取最新数据，
   // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
@@ -149,6 +154,12 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             if (typeof p.overwrite === "boolean") setTftpOverwrite(p.overwrite);
             if (typeof p.single_port === "boolean") setTftpSinglePort(p.single_port);
           }
+          // Telnet 字段回填
+          if (targetTab.connection_type === "telnet" || targetTab.pluginId === "telnet") {
+            if (typeof p.host === "string") setTelnetHost(p.host);
+            if (typeof p.port === "number") setTelnetPort(p.port);
+            if (typeof p.send_bar_enabled === "boolean") setTelnetSendBarEnabled(p.send_bar_enabled);
+          }
         }
         if (targetTab.name) setSessionName(targetTab.name);
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
@@ -195,6 +206,10 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setTftpWriteEnabled(true);
     setTftpOverwrite(true);
     setTftpSinglePort(false);
+    // 重置 Telnet 字段
+    setTelnetHost("");
+    setTelnetPort(23);
+    setTelnetSendBarEnabled(true);
     setSessionName("");
   }, [isOpen, editSessionId, refreshEndpoints]);
 
@@ -220,11 +235,12 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     if (!port && isSerial) return;
     if (!sshHost && isSsh) return;
     if (!tftpFileRoot && isTftp) return;
+    if (!telnetHost && isTelnet) return;
     setError(null);
     setConnecting(true);
 
-    const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : (isTftp ? false : sendBarEnabled);
-    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp ? false : transferEnabled);
+    const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : (isTftp ? false : (isTelnet ? telnetSendBarEnabled : sendBarEnabled));
+    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp || isTelnet ? false : transferEnabled);
 
     const params: Record<string, unknown> = isSerial ? {
       baud_rate: parseInt(baudRate),
@@ -260,10 +276,17 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       write_enabled: tftpWriteEnabled,
       overwrite: tftpOverwrite,
       single_port: tftpSinglePort,
+    } : isTelnet ? {
+      host: telnetHost,
+      port: telnetPort,
+      send_bar_enabled: telnetSendBarEnabled,
     } : {};
 
-    const pluginId = selectedMode; // "serial" | "ssh" | "tftp"
-    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : selectedMode));
+    const pluginId = selectedMode; // "serial" | "ssh" | "tftp" | "telnet"
+    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isTelnet ? telnetHost : selectedMode)));
+    // Telnet/TFTP 无文件传输：不保存 transfer_protocol，避免无意义的 "ymodem" 默认值
+    // 污染会话配置（传输能力由 effectiveTransferEnabled=false 表达）
+    const effectiveTransferProtocol = isTelnet || isTftp ? undefined : transferProtocol;
 
     try {
       if (editSessionId) {
@@ -274,7 +297,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           params,
           sessionName || undefined,
           effectiveTransferEnabled,
-          transferProtocol,
+          effectiveTransferProtocol,
           effectiveSendBarEnabled,
           undefined, // pluginId
           journaldEnabled,
@@ -285,7 +308,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         const sid = await createOfflineSession(
           endpoint, params,
           sessionName || undefined, pluginId,
-          effectiveTransferEnabled, transferProtocol,
+          effectiveTransferEnabled, effectiveTransferProtocol,
           effectiveSendBarEnabled,
         );
         if (sid) {
@@ -297,7 +320,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled]);
 
   const handleOverlayClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -811,8 +834,64 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 </>
               )}
 
+              {/* ── Telnet 配置 ── */}
+              {isTelnet && (
+                <>
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("telnet.host")}</label>
+                    <input
+                      className={`${styles.input} liquid-glass-input`}
+                      type="text"
+                      placeholder={t("telnet.hostPlaceholder")}
+                      value={telnetHost}
+                      onChange={e => setTelnetHost(e.target.value)}
+                      disabled={connecting}
+                    />
+                  </div>
+
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("telnet.port")}</label>
+                    <input
+                      className={`${styles.numberInput} liquid-glass-input`}
+                      type="number"
+                      value={telnetPort}
+                      min={1}
+                      max={65535}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        // 允许用户清空字段（中间编辑状态），重置为默认端口
+                        if (raw === "") {
+                          setTelnetPort(23);
+                          return;
+                        }
+                        const n = Number(raw);
+                        if (!isNaN(n) && n >= 1 && n <= 65535) {
+                          setTelnetPort(n);
+                        }
+                        // 非法值忽略，保持当前状态
+                      }}
+                      disabled={connecting}
+                    />
+                  </div>
+
+                  {/* 发送栏开关（默认开启） */}
+                  <div className={styles.field}>
+                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                      <input
+                        type="checkbox"
+                        checked={telnetSendBarEnabled}
+                        onChange={e => setTelnetSendBarEnabled(e.target.checked)}
+                        disabled={connecting}
+                      />
+                      <div />
+                      <span>{t("telnet.enableSendBar") || "启用发送栏"}</span>
+                    </label>
+                  </div>
+                </>
+              )}
+
               {/* ── 未实现插件的占位提示 ── */}
-              {!isSerial && !isSsh && !isTftp && (
+              {!isSerial && !isSsh && !isTftp && !isTelnet && (
                 <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
                   <Icon name="construction" size="lg" />{" "}
                   {t("connectionType.formNotImplemented", { pluginName: selectedMode })}
@@ -828,7 +907,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 <button
                   className={`${styles.connectBtn} liquid-primary-button`}
                   onClick={handleCreate}
-                  disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || connecting}
+                  disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || connecting}
                 >
                   {connecting
                     ? t("serial.confirming")

@@ -33,6 +33,8 @@ export interface TabInfo {
   transferProtocol?: string;
   /** 是否启用发送栏（默认 true） */
   sendBarEnabled?: boolean;
+  /** Telnet: 本地回显状态（服务器 WONT ECHO 时客户端回显输入，由后端协商推送） */
+  localEcho?: boolean;
   /** 是否启用虚拟串口（默认 true） */
   virtualPortEnabled?: boolean;
   /** 虚拟端口对数量（默认 1） */
@@ -105,6 +107,7 @@ type SessionAction =
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
+  | { type: "UPDATE_TAB_ECHO"; id: string; localEcho: boolean }
   | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean; fileServiceEnabled?: boolean; fileServiceProtocol?: string }
   | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: Array<{ port_a: string; port_b: string }> }
   | { type: "SET_VPORT_ERROR"; id: string; error: string }
@@ -199,6 +202,11 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
             ? { ...t, stats: action.stats, connectedAt: action.connectedAt ?? t.connectedAt }
             : t
         ),
+      };
+    case "UPDATE_TAB_ECHO":
+      return {
+        ...state,
+        tabs: state.tabs.map(t => t.id === action.id ? { ...t, localEcho: action.localEcho } : t),
       };
     case "UPDATE_TAB_CONFIG":
       return {
@@ -330,6 +338,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // 保持最新的 tabs 引用，供事件监听器（闭包中 state 可能过期）使用
   const tabsRef = useRef(state.tabs);
   tabsRef.current = state.tabs;
+  // Telnet 回显状态暂存：telnet-echo-state 早于 session-connected 到达
+  // （tab 尚未创建）时暂存于此，session-connected 创建/更新 tab 时取出
+  // 初始化 localEcho，避免事件被静默丢弃导致输入不可见
+  const pendingEchoRef = useRef<Map<string, boolean>>(new Map());
 
   // ── Logging state ────────────────────────────────
 
@@ -752,6 +764,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
+      // Telnet 回显状态（服务器 ECHO 协商结果 → 本地回显开关）
+      const u1b = await listen<{ session_id: string; local_echo: boolean }>(
+        "telnet-echo-state",
+        (event) => {
+          const sid = event.payload.session_id;
+          // tab 尚未创建（事件早于 session-connected 到达）时暂存，
+          // 由 session-connected 处理路径取出初始化 localEcho
+          if (!tabsRef.current.some(t => t.id === sid)) {
+            pendingEchoRef.current.set(sid, event.payload.local_echo);
+            return;
+          }
+          dispatch({
+            type: "UPDATE_TAB_ECHO",
+            id: sid,
+            localEcho: event.payload.local_echo,
+          });
+        }
+      );
+      if (cancelled) { u1b(); return; }
+      unlisteners.push(u1b);
+
       const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; is_container?: boolean }>(
         "session-connected",
         (event) => {
@@ -779,6 +812,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean),
               fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
             });
+            // 若回显状态事件曾早于本事件暂存，补发（tab 已存在则正常路径已直达）
+            const pendingEcho = pendingEchoRef.current.get(sid);
+            if (pendingEcho !== undefined) {
+              pendingEchoRef.current.delete(sid);
+              dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: pendingEcho });
+            }
             if (vPairs && vPairs.length > 0) {
               dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: vPairs });
             }
@@ -815,6 +854,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             // 仅在重连场景（tab 已存在）时更新状态。
           } else {
             // 真正的新根会话：添加 tab
+            const pendingEcho = pendingEchoRef.current.get(sid);
+            if (pendingEcho !== undefined) {
+              pendingEchoRef.current.delete(sid);
+            }
             dispatch({
               type: "ADD_TAB",
               tab: {
@@ -824,6 +867,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 endpoint: event.payload.endpoint,
                 state: "connected",
                 pluginId: event.payload.plugin_id || "serial",
+                // 早于本事件到达的回显状态（telnet-echo-state 暂存）；非 telnet 会话为 undefined
+                localEcho: pendingEcho,
                 params: event.payload.params,
                 stats: { txBytes: 0, rxBytes: 0 },
                 connectedAt: event.payload.connected_at ?? Date.now(),
@@ -893,6 +938,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const reason = event.payload.reason;
         const sid = event.payload.session_id;
         dispatch({ type: "SET_TAB_STATE", id: sid, state: "disconnected" });
+        // 重置 Telnet 回显状态（重连时重新协商）
+        dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: false });
         // 父 session 断开时级联移除所有子 channel
         dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sid });
         // 清除虚拟端口对信息（端口已在后端销毁）

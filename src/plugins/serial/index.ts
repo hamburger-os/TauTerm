@@ -11,7 +11,7 @@ registerPlugin({
     name: "Serial",
     version: "1.0.0",
     category: "terminal",
-    description: "RS-232/RS-485 串口终端",
+    description: "串口终端",
     icon: "plug",
     content_type: "terminal",
     capabilities: ["connection", "transfer", "endpoint_discovery"],

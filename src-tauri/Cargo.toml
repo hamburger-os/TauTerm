@@ -33,5 +33,7 @@ russh = { version = "0.62", default-features = false, features = ["ring"] }
 russh-sftp = "2.0"
 
 tftpd = "1.0"
+telnet = "0.2.5"
+socket2 = "0.6"
 async-trait = "0.1"
 crc32fast = "1.5.0"

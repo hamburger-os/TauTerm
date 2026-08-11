@@ -39,6 +39,7 @@ use security::CredentialStore;
 use plugins::serial::SerialAdapter;
 use plugins::ssh::SshAdapter;
 use plugins::ssh::HostKeyVerifier;
+use plugins::telnet::TelnetAdapter;
 use plugins::tftp::TftpAdapter;
 #[cfg(target_os = "windows")]
 use virtual_port::manager::VirtualPortManager;
@@ -57,6 +58,8 @@ pub struct AppState {
     pub ssh_adapter: SshAdapter,
     /// TFTP 协议适配器
     pub tftp_adapter: TftpAdapter,
+    /// Telnet 协议适配器
+    pub telnet_adapter: TelnetAdapter,
     /// SSH 主机密钥验证器（管理待确认的 host key）
     pub host_key_verifier: HostKeyVerifier,
     /// 类型安全配置存储
@@ -112,6 +115,15 @@ pub fn run() {
         capabilities: vec!["connection".into(), "transfer".into(), "endpoint_discovery".into()],
         state: kernel::plugin_host::PluginState::Ready,
     }).expect("注册 SSH 插件失败");
+    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
+        id: "telnet".into(),
+        name: "Telnet".into(),
+        version: "1.0.0".into(),
+        category: "terminal".into(),
+        content_type: "terminal".into(),
+        capabilities: vec!["connection".into()],
+        state: kernel::plugin_host::PluginState::Ready,
+    }).expect("注册 Telnet 插件失败");
     plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
         id: "tftp".into(),
         name: "TFTP".into(),
@@ -177,6 +189,10 @@ pub fn run() {
 
             // ── 虚拟串口后端初始化（按平台选择实现） ──
             if let Some(state) = app.try_state::<AppState>() {
+                // Telnet 回显事件回调 emit 需要 AppHandle：setup 在所有命令
+                // 处理器就绪前运行，任何 connect 命令执行前必然完成注入，无竞态。
+                state.telnet_adapter.inject_app_handle(app.handle().clone());
+
                 if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                     #[cfg(target_os = "windows")]
                     {
@@ -279,6 +295,7 @@ pub fn run() {
             serial_adapter: SerialAdapter::new(),
             ssh_adapter: SshAdapter::new(),
             tftp_adapter: TftpAdapter::new(),
+            telnet_adapter: TelnetAdapter::new(),
             host_key_verifier: HostKeyVerifier::new(),
             config_store: ConfigStore::new(),
             ipc_bridge: IpcBridge::new(),

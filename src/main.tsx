@@ -5,6 +5,7 @@ import ErrorBoundary from "./components/common/ErrorBoundary";
 // 注册内建插件（必须在 App 渲染前注册）
 import "./plugins/serial";
 import "./plugins/ssh";
+import "./plugins/telnet";
 import "./plugins/tftp";
 import "./styles/global.css";
 

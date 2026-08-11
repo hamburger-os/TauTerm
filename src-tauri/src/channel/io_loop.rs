@@ -55,6 +55,9 @@ pub fn spawn_sync_io_loop(
     let idle_wait = Duration::from_millis(5);
 
     std::thread::spawn(move || {
+        // 读循环开始前通知通道其 session_id（如 Telnet 回显事件回调
+        // 据此附带正确标识；其余协议走默认空实现）。
+        channel.on_session_started(&session_id);
         let mut read_buf = [0u8; 16384];
         let mut last_data_time: Option<Instant> = None;
 
