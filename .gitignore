@@ -46,3 +46,11 @@ resources/com0com/com0com.inf
 resources/com0com/com0com.cat
 resources/com0com/cncport.inf
 resources/com0com/comport.inf
+
+# vendored fork 的独立测试构建产物
+src-tauri/vendor/riperf3/target/
+src-tauri/vendor/riperf3/Cargo.lock
+
+# cargo 缓存标记（从 registry 拷贝时带入，非源文件）
+src-tauri/vendor/**/.cargo-ok
+src-tauri/vendor/**/.cargo_vcs_info.json

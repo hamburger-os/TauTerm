@@ -4,10 +4,11 @@
  * 左右布局：左列（传输参数 + 服务端 + 客户端）+ 右列（传输列表）
  * content_type: "custom" → CustomRenderer → TftpSessionView
  */
-import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
+import { usePluginSessionStore, type SessionStoreApi } from "../../hooks/usePluginSessionStore";
 import TftpClientPanel from "./TftpClientPanel";
 import TftpServerPanel from "./TftpServerPanel";
 import TftpTransferList from "./TftpTransferList";
@@ -59,11 +60,10 @@ interface Props {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 模块级持久事件系统
-//
-// 事件监听器在模块首次加载时注册，存活于整个进程生命周期。
-// 组件卸载时监听器不注销——传输在后台持续进行，done 事件永不丢失。
-// useSyncExternalStore 驱动 React 在缓存变更时重新渲染。
+// 会话级持久状态（usePluginSessionStore，keepAlive：监听器存活于进程
+// 生命周期——组件卸载后传输在后台持续进行，done 事件永不丢失；
+// 断连时仅清空状态、不注销监听器，重连复用（修复旧实现"断连删
+// inited 后重复注册监听器"的缺陷）
 // ═══════════════════════════════════════════════════════════════════
 
 interface CachedState {
@@ -75,33 +75,21 @@ interface CachedState {
   clientForm: ClientFormState;
 }
 
-const store = new Map<string, CachedState>();
-const subscribers = new Map<string, Set<() => void>>();
-const inited = new Set<string>();
-
-function ensure(sessionId: string): CachedState {
-  if (!store.has(sessionId)) {
-    store.set(sessionId, {
-      transfers: [],
-      serverRunning: false,
-      fileRoot: "",
-      listenAddr: "",
-      params: { blksize: 512, timeout_secs: 5, windowsize: 1, max_retries: 6, rollover: "Enforce0", window_wait: 0, clean_on_error: true, repeat_count: 1 },
-      clientForm: { remoteIp: "", remotePort: 69, remoteFile: "", localPath: "" },
-    });
-  }
-  return store.get(sessionId)!;
+function createState(): CachedState {
+  return {
+    transfers: [],
+    serverRunning: false,
+    fileRoot: "",
+    listenAddr: "",
+    params: { blksize: 512, timeout_secs: 5, windowsize: 1, max_retries: 6, rollover: "Enforce0", window_wait: 0, clean_on_error: true, repeat_count: 1 },
+    clientForm: { remoteIp: "", remotePort: 69, remoteFile: "", localPath: "" },
+  };
 }
 
-function emit(sessionId: string) {
-  subscribers.get(sessionId)?.forEach((cb) => cb());
-}
-
-function initListeners(sessionId: string) {
-  if (inited.has(sessionId)) return;
-  inited.add(sessionId);
-  ensure(sessionId);
-
+async function initListeners(
+  sessionId: string,
+  api: SessionStoreApi<CachedState>
+) {
   // ── 事件匹配：按 transfer_id 精确查找 ──
   // 每个传输（客户端 GET/PUT 或服务端 RRQ/WRQ）使用全局唯一 transfer_id。
   // 客户端和服务端事件各自创建独立条目（isServer 区分），不再合并。
@@ -109,13 +97,12 @@ function initListeners(sessionId: string) {
     return s.transfers.findIndex((t) => t.id === transferId);
   }
 
-  listen("tftp-transfer-progress", (event: any) => {
+  const unProgress = await listen("tftp-transfer-progress", (event: any) => {
     const e = event.payload as any;
     if (e.session_id !== sessionId) return;
     const tid = e.transfer_id;
     if (!tid) return;
-    const s = store.get(sessionId);
-    if (!s) return;
+    const s = api.getState();
     const ix = findMatch(s, tid);
     const entry: TransferState = {
       id: tid,
@@ -132,17 +119,15 @@ function initListeners(sessionId: string) {
     const transfers = ix >= 0
       ? s.transfers.map((t, i) => i === ix ? entry : t)
       : [...s.transfers, entry];
-    store.set(sessionId, { ...s, transfers });
-    emit(sessionId);
+    api.setState({ transfers });
   });
 
-  listen("tftp-transfer-done", (event: any) => {
+  const unDone = await listen("tftp-transfer-done", (event: any) => {
     const e = event.payload as any;
     if (e.session_id !== sessionId) return;
     const tid = e.transfer_id;
     if (!tid) return;
-    const s = store.get(sessionId);
-    if (!s) return;
+    const s = api.getState();
     const ix = findMatch(s, tid);
     if (ix < 0) return; // 无匹配条目则忽略
     const transfers = s.transfers.map((t, i) =>
@@ -150,46 +135,29 @@ function initListeners(sessionId: string) {
         ? { ...t, status: e.success ? "completed" as const : "failed" as const, error: e.error, checksum: e.checksum, avgBytesPerSecond: e.avg_bytes_per_second ?? 0 }
         : t
     );
-    store.set(sessionId, { ...s, transfers });
-    emit(sessionId);
+    api.setState({ transfers });
   });
 
-  listen("tftp-server-status", (event: any) => {
+  const unStatus = await listen("tftp-server-status", (event: any) => {
     const e = event.payload as any;
     if (e.session_id !== sessionId) return;
-    const s = store.get(sessionId);
-    if (!s) return;
-    store.set(sessionId, { ...s, serverRunning: e.running });
-    emit(sessionId);
+    api.setState({ serverRunning: e.running });
   });
 
-  listen("session-connected", (event: any) => {
+  const unConnected = await listen("session-connected", (event: any) => {
     const e = event.payload as any;
     if (e.session_id !== sessionId) return;
-    const s = store.get(sessionId);
-    if (!s) return;
+    const s = api.getState();
     const p = e.params || {};
-    store.set(sessionId, {
-      ...s,
+    api.setState({
       fileRoot: p.file_root || s.fileRoot,
       listenAddr: p.listen_ip ? `${p.listen_ip}:${p.listen_port ?? 69}` : s.listenAddr,
     });
-    emit(sessionId);
   });
 
-  listen("session-disconnected", (event: any) => {
-    const e = event.payload as any;
-    if (e.session_id !== sessionId) return;
-    store.delete(sessionId);
-    inited.delete(sessionId);
-    emit(sessionId);
-  });
-}
-
-function sub(sessionId: string, cb: () => void): () => void {
-  if (!subscribers.has(sessionId)) subscribers.set(sessionId, new Set());
-  subscribers.get(sessionId)!.add(cb);
-  return () => { subscribers.get(sessionId)?.delete(cb); };
+  // session-disconnected 由 hook 的全局监听按会话分发（keepAlive：
+  // 不注销监听器，仅由 onSessionDisconnected 清空状态）
+  return [unProgress, unDone, unStatus, unConnected];
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -199,14 +167,32 @@ function sub(sessionId: string, cb: () => void): () => void {
 export default function TftpSessionView({ sessionId }: Props) {
   const { t } = useTranslation();
 
-  // 初始化持久监听器（仅首次）
-  initListeners(sessionId);
-
-  // 订阅缓存 → React
-  const snap = useSyncExternalStore(
-    useCallback((cb: () => void) => sub(sessionId, cb), [sessionId]),
-    useCallback(() => store.get(sessionId) ?? ensure(sessionId), [sessionId]),
-  );
+  const { state: snap, api } = usePluginSessionStore<CachedState>(sessionId, {
+    createState,
+    init: (api) => initListeners(sessionId, api),
+    keepAlive: true,
+    onSessionDisconnected: () => ({
+      // 断连清空会话状态（参数/表单为本地 React 状态，经回写效果保留）
+      transfers: [],
+      serverRunning: false,
+      fileRoot: "",
+      listenAddr: "",
+    }),
+    getStatus: async (sid, api) => {
+      try {
+        const status = await invoke<any>("tftp_get_status", { sessionId: sid });
+        const s = api.getState();
+        return {
+          fileRoot: status.file_root || "",
+          listenAddr: (status.listen_addr != null && status.listen_port != null)
+            ? `${status.listen_addr}:${status.listen_port}` : "",
+          serverRunning: status.server_running ?? s.serverRunning,
+        };
+      } catch {
+        return undefined;
+      }
+    },
+  });
 
   const transfers = snap.transfers;
   const serverRunning = snap.serverRunning;
@@ -221,30 +207,8 @@ export default function TftpSessionView({ sessionId }: Props) {
 
   // 本地专属状态回写缓存
   useEffect(() => {
-    const s = ensure(sessionId);
-    s.params = params;
-    s.clientForm = clientForm;
-  }, [sessionId, params, clientForm]);
-
-  // 获取服务端配置（不可变写入 store）
-  useEffect(() => {
-    let cancelled = false;
-    invoke("tftp_get_status", { sessionId })
-      .then((status: any) => {
-        if (cancelled) return;
-        const s = ensure(sessionId);
-        store.set(sessionId, {
-          ...s,
-          fileRoot: status.file_root || "",
-          listenAddr: (status.listen_addr != null && status.listen_port != null)
-            ? `${status.listen_addr}:${status.listen_port}` : "",
-          serverRunning: status.server_running ?? s.serverRunning,
-        });
-        emit(sessionId);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [sessionId]);
+    api.setState({ params, clientForm });
+  }, [sessionId, params, clientForm, api]);
 
   useEffect(() => {
     return () => {

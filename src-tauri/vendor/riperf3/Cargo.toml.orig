@@ -1,0 +1,45 @@
+[package]
+name = "riperf3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Wire-compatible Rust implementation of iperf3 — safe, cross-platform network performance testing library"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories = ["network-programming", "command-line-utilities"]
+license = "MIT OR Apache-2.0"
+readme = "../README.md"
+
+[dependencies]
+base64.workspace = true
+libc.workspace = true
+log.workspace = true
+rpassword.workspace = true
+rand.workspace = true
+rsa.workspace = true
+serde.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+# raw_value enabled at the crate level (not just the workspace) so it flattens
+# into the PUBLISHED manifest: #57 emits cJSON-formatted number tokens via
+# serde_json::value::RawValue. A workspace-only feature does NOT flatten on
+# publish, which would leave the published crate free-riding on a consumer to
+# enable raw_value — the same socket2 #92 trap as `all` below.
+serde_json = { workspace = true, features = ["raw_value"] }
+socket2 = { workspace = true, features = ["all"] }
+thiserror.workspace = true
+tokio.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+# test-util enables tokio's paused virtual clock (`start_paused`) so
+# timeout-budget tests run instantly instead of waiting real seconds. Test-only.
+tokio = { workspace = true, features = ["test-util"] }
+riperf3-test-support = { path = "../riperf3-test-support" }

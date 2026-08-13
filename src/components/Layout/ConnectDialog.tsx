@@ -90,11 +90,16 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [telnetHost, setTelnetHost] = useState("");
   const [telnetPort, setTelnetPort] = useState(23);
   const [telnetSendBarEnabled, setTelnetSendBarEnabled] = useState(true);
+  // iperf 配置（服务端生命周期跟随会话：连接即按此监听参数自动启动）
+  const [iperfVersion, setIperfVersion] = useState<"iperf2" | "iperf3">("iperf2");
+  const [iperfListenIp, setIperfListenIp] = useState("0.0.0.0");
+  const [iperfListenPort, setIperfListenPort] = useState(5001);
 
   const isSerial = selectedMode === "serial";
   const isSsh = selectedMode === "ssh";
   const isTftp = selectedMode === "tftp";
   const isTelnet = selectedMode === "telnet";
+  const isIperf = selectedMode === "iperf";
 
   // 保持最新的 tabs 引用，供 useEffect 在 editSessionId 变化时读取最新数据，
   // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
@@ -164,6 +169,12 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             if (typeof p.port === "number") setTelnetPort(p.port);
             if (typeof p.send_bar_enabled === "boolean") setTelnetSendBarEnabled(p.send_bar_enabled);
           }
+          // iperf 字段回填
+          if (targetTab.connection_type === "iperf" || targetTab.pluginId === "iperf") {
+            if (p.version === "iperf2" || p.version === "iperf3") setIperfVersion(p.version);
+            if (typeof p.listen_ip === "string") setIperfListenIp(p.listen_ip);
+            if (typeof p.listen_port === "number") setIperfListenPort(p.listen_port);
+          }
         }
         if (targetTab.name) setSessionName(targetTab.name);
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
@@ -215,6 +226,10 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setTelnetHost("");
     setTelnetPort(23);
     setTelnetSendBarEnabled(true);
+    // 重置 iperf 字段
+    setIperfVersion("iperf2");
+    setIperfListenIp("0.0.0.0");
+    setIperfListenPort(5001);
     setSessionName("");
   }, [isOpen, editSessionId, refreshEndpoints]);
 
@@ -236,6 +251,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setError(null);
   }, []);
 
+
   const handleCreate = useCallback(async () => {
     if (!port && isSerial) return;
     if (!sshHost && isSsh) return;
@@ -244,8 +260,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setError(null);
     setConnecting(true);
 
-    const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : (isTftp ? false : (isTelnet ? telnetSendBarEnabled : sendBarEnabled));
-    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp || isTelnet ? false : transferEnabled);
+    const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : (isTftp || isIperf ? false : (isTelnet ? telnetSendBarEnabled : sendBarEnabled));
+    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp || isTelnet || isIperf ? false : transferEnabled);
 
     const params: Record<string, unknown> = isSerial ? {
       baud_rate: parseInt(baudRate),
@@ -288,13 +304,19 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       port: telnetPort,
       encoding,
       send_bar_enabled: telnetSendBarEnabled,
+    } : isIperf ? {
+      version: iperfVersion,
+      listen_ip: iperfListenIp,
+      listen_port: iperfListenPort,
     } : {};
 
-    const pluginId = selectedMode; // "serial" | "ssh" | "tftp" | "telnet"
-    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isTelnet ? telnetHost : selectedMode)));
-    // Telnet/TFTP 无文件传输：不保存 transfer_protocol，避免无意义的 "ymodem" 默认值
+    const pluginId = selectedMode; // "serial" | "ssh" | "tftp" | "telnet" | "iperf"
+    // iperf 无单一连接目标（客户端目标每测可变、监听地址是配置项）——
+    // endpoint 用字面量，默认名 `iperf @ iperf` 不携带易变的端口/版本
+    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isIperf ? "iperf" : (isTelnet ? telnetHost : selectedMode))));
+    // Telnet/TFTP/iperf 无文件传输：不保存 transfer_protocol，避免无意义的 "ymodem" 默认值
     // 污染会话配置（传输能力由 effectiveTransferEnabled=false 表达）
-    const effectiveTransferProtocol = isTelnet || isTftp ? undefined : transferProtocol;
+    const effectiveTransferProtocol = isTelnet || isTftp || isIperf ? undefined : transferProtocol;
 
     try {
       if (editSessionId) {
@@ -328,7 +350,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, isTelnet, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort]);
 
   // 数据字符编码下拉（终端类协议共用：serial / ssh / telnet）
   const encodingField = (
@@ -863,6 +885,67 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 </>
               )}
 
+              {/* ── iperf 配置 ── */}
+              {isIperf && (
+                <>
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("iperf.version")}</label>
+                    <select
+                      className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                      value={iperfVersion}
+                      onChange={e => {
+                        const v = e.target.value as "iperf2" | "iperf3";
+                        setIperfVersion(v);
+                        // 端口联动（对齐版本切换规则：iperf2 默认 5001，iperf3 默认
+                        // 5201）。仅当端口仍为默认值（用户未自定义）时切换默认；
+                        // 自定义端口（如 9000）在来回切换版本后保留，不被静默覆盖
+                        setIperfListenPort(prev =>
+                          prev === 5001 || prev === 5201
+                            ? (v === "iperf2" ? 5001 : 5201)
+                            : prev
+                        );
+                      }}
+                      disabled={connecting}
+                    >
+                      <option value="iperf2">iperf2</option>
+                      <option value="iperf3">iperf3</option>
+                    </select>
+                  </div>
+                  <div className={styles.row2}>
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("iperf.listenIp")}</label>
+                      <input
+                        className={`${styles.input} liquid-glass-input`}
+                        type="text"
+                        value={iperfListenIp}
+                        onChange={e => setIperfListenIp(e.target.value)}
+                        disabled={connecting}
+                        placeholder="0.0.0.0"
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("iperf.listenPort")}</label>
+                      <input
+                        className={`${styles.input} liquid-glass-input`}
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={iperfListenPort}
+                        onChange={e => {
+                          // 空输入忽略（Number("") === 0 会污染保存的配置）
+                          if (e.target.value === "") return;
+                          const n = Number(e.target.value);
+                          if (!Number.isInteger(n) || n < 1 || n > 65535) return;
+                          setIperfListenPort(n);
+                        }}
+                        disabled={connecting}
+                        placeholder="5001"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
               {/* ── Telnet 配置 ── */}
               {isTelnet && (
                 <>
@@ -923,7 +1006,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               )}
 
               {/* ── 未实现插件的占位提示 ── */}
-              {!isSerial && !isSsh && !isTftp && !isTelnet && (
+              {!isSerial && !isSsh && !isTftp && !isTelnet && !isIperf && (
                 <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
                   <Icon name="construction" size="lg" />{" "}
                   {t("connectionType.formNotImplemented", { pluginName: selectedMode })}

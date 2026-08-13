@@ -156,7 +156,7 @@ stateDiagram-v2
 |------|--------|---------|------|
 | **Sync** | `std::thread` | Serial, Telnet | 低延迟，无 runtime 开销（`serialport`/`telnet` crate 阻塞式 API + Inline 传输 `try_handoff` 模式） |
 | **Async** | `tokio` | SSH | 高并发，线程安全（russh 纯 Rust async SSH 库，SFTP 与终端 I/O 并发复用同一会话） |
-| **Headless** | 无 I/O loop | TFTP | 容器会话模式 — `ProtocolConnection.channel = None`，不创建 I/O loop/StatsCollector/CommHandle，所有数据传输通过 `SideChannel` 在独立线程中完成 |
+| **Headless** | 无 I/O loop | TFTP, iPerf | 容器会话模式 — `ProtocolConnection.channel = None`，不创建 I/O loop/StatsCollector/CommHandle，所有数据传输通过 `SideChannel` 在独立线程中完成 |
 
 ### 传输子系统
 
@@ -180,8 +180,8 @@ graph TD
 |-------------|--------|---------|
 | `terminal` | xterm.js 实例池（CSS opacity 切换） | Serial, SSH, Telnet, TCP Raw, TRDP, Shell Local |
 | `file_browser` | 双栏文件树 + 传输进度 | FTP, NFS |
-| `stats_dashboard` | 实时图表/仪表盘 | iPerf3, UDP Monitor |
-| `custom` | 插件自定义组件 | TFTP, 任意 |
+| `stats_dashboard` | 实时图表/仪表盘 | UDP Monitor |
+| `custom` | 插件自定义组件 | TFTP, iPerf2/iPerf3, 任意 |
 
 ---
 
@@ -218,7 +218,7 @@ graph LR
 | **TRDP** | 📋 计划中 | terminal | — | Async |
 | **Shell Local** (PTY) | 📋 计划中 | terminal | — | Sync |
 | **FTP** | 📋 计划中 | file_browser | FTP (SeparateConnection) | Async |
-| **iPerf3** | 📋 计划中 | stats_dashboard | — | Async |
+| **iPerf2 / iPerf3** | ✅ 已实现 | custom | —（独立测速引擎）| Async |
 | **NFS** | 🔮 远期 | file_browser | NFS (SeparateConnection) | Async |
 | **UDP Monitor** | 🔮 远期 | stats_dashboard | — | Async |
 
@@ -235,6 +235,7 @@ graph LR
 - 📄 **文件管理器** — SSH SFTP 远端文件浏览器，目录树导航、文件上传/下载、批量删除、重命名、属性查看，支持 breadcrumb 路径跳转
 - 📡 **TFTP 服务器/客户端** — 内置 TFTP 服务端监听（RRQ/WRQ），客户端 GET/PUT 操作；可调传输参数（blksize/timeout/windowsize/rollover/repeat）；CRC32 校验 + 实时进度；并发传输限制与指数退避重传；UDP socket 容器模式（无终端 I/O loop）
 - 📶 **Telnet 终端** — RFC 854 选项协商（ECHO / SGA / BINARY / NAWS），本地回显自适应（服务器 WONT ECHO 时客户端回显输入，避免双显）；窗口尺寸实时同步（RFC 1073）；TCP keepalive 保活与 10s 连接超时
+- 📈 **iPerf 网络测速** — iperf2（自研协议实现，wire-compatible）+ iperf3（vendored riperf3 fork）双协议；客户端发起测速 + 服务端常驻监听；TCP/UDP、-t/-b/-P/-i/-w、-d（双连接双向同时）/-r（同连接顺序反向）；实时速率曲线、历史记录列表、命令预览；容器会话模式（无终端 I/O）
 - 📜 **Journald 日志查看器** — SSH remote journald 实时流式追踪与历史查询，支持日志级别/关键字/服务单元/内核日志过滤，游标分页，紧凑/完整两种显示模式，分页导出 JSON 文件（进度通知/可取消），连接对话框启用开关
 - 📊 **Dual 双模显示** — 可拖拽分栏同时展示 ASCII 文本与 HEX 十六进制，毫秒级时间戳、按 `\r\n`/`\n`/`\r` 自动分帧、TX/RX 颜色区分
 - 📤 **发送栏** — 四模式发送：基础发送 (Text/HEX, 换行符, 循环发送, 历史记录)、指令面板 (预定义命令序列, 拖拽排序, 循环执行)、自动应答 (可视化规则配置, 5 种匹配模式, 10 种动态宏, 定时触发)、脚本编辑器 (嵌入式 Lua 5.4 运行时, 代码生成与手写双路径)；支持后台持续执行，切换会话不中断
@@ -268,7 +269,7 @@ graph LR
 | 样式方案 | CSS Modules + CSS 自定义属性 |
 | 安全存储 | keyring-rs + AES-256-GCM |
 | 自动更新 | tauri-plugin-updater + tauri-plugin-process |
-| 网络协议 | russh (纯 Rust async SSH) + russh-sftp + telnet (RFC 854) + tftpd |
+| 网络协议 | russh (纯 Rust async SSH) + russh-sftp + telnet (RFC 854) + tftpd + riperf3（vendored fork，iperf3，见 src-tauri/vendor/riperf3/VENDOR-NOTES.md）|
 | 脚本引擎 | mlua 0.10 (Lua 5.4, vendored) |
 | 正则引擎 | regex 1 |
 
@@ -335,7 +336,8 @@ TauTerm/
 │       ├── ssh/                # SSH 插件（ProtocolAdapter + SshSideChannel，密码/密钥认证，SFTP）
 │       ├── telnet/             # Telnet 插件（ProtocolAdapter + Channel，Sync I/O，RFC 854 协商）
 │       └── tftp/               # TFTP 插件（ProtocolAdapter + TftpSideChannel，容器模式，服务端+客户端）
-│       # TCP Raw / TRDP / Shell / FTP / iPerf3 — 计划中
+│       └── iperf/              # iPerf 插件（iperf2 自研协议引擎 + iperf3 vendored riperf3，容器模式，服务端+客户端）
+│       # TCP Raw / TRDP / Shell / FTP — 计划中
 │
 ├── src/                        # React 前端
 │   ├── core/                   # 内核前端 API
@@ -378,7 +380,8 @@ TauTerm/
 │       ├── ssh/                # SSH 插件清单、区域设置
 │       ├── telnet/             # Telnet 插件清单（manifest + locales）
 │       └── tftp/               # TFTP 插件清单（customView 注册）
-│       # FTP / iPerf3 等前端插件 — 计划中
+│       └── iperf/              # iPerf 插件清单（customView 注册）
+│       # FTP 等前端插件 — 计划中
 │
 └── package.json
 ```
@@ -692,6 +695,7 @@ npm run tauri build
 - [x] SSH 首次连接指纹确认（known_hosts 持久化计划 v0.5）
 - [x] TFTP 插件（容器模式无终端 I/O，服务端监听 + 客户端 GET/PUT，CRC32 校验，实时进度）
 - [x] Telnet 插件（RFC 854 选项协商，NAWS 窗口尺寸，本地回显自适应）
+- [x] iPerf 插件（iperf2 自研协议引擎（TCP/UDP、-d/-r/-w）+ iperf3 vendored riperf3；客户端/服务端、实时统计与记录列表）
 - [ ] SSH Agent Forwarding
 - [ ] TCP Raw 插件
 
@@ -708,7 +712,6 @@ npm run tauri build
 
 ### v0.7 — 文件管理 & 网络诊断
 - [ ] FTP 插件（Active/Passive 模式、文件浏览器视图）
-- [ ] iPerf3 插件（客户端/服务器、实时统计仪表盘）
 - [ ] 终端会话录制
 
 ### v1.0 — 正式版

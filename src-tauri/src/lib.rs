@@ -41,6 +41,7 @@ use plugins::ssh::SshAdapter;
 use plugins::ssh::HostKeyVerifier;
 use plugins::telnet::TelnetAdapter;
 use plugins::tftp::TftpAdapter;
+use plugins::iperf::IperfAdapter;
 #[cfg(target_os = "windows")]
 use virtual_port::manager::VirtualPortManager;
 use virtual_port::backend::VirtualPortBackend;
@@ -60,6 +61,8 @@ pub struct AppState {
     pub tftp_adapter: TftpAdapter,
     /// Telnet 协议适配器
     pub telnet_adapter: TelnetAdapter,
+    /// iperf 协议适配器
+    pub iperf_adapter: IperfAdapter,
     /// SSH 主机密钥验证器（管理待确认的 host key）
     pub host_key_verifier: HostKeyVerifier,
     /// 类型安全配置存储
@@ -133,6 +136,15 @@ pub fn run() {
         capabilities: vec!["connection".into(), "transfer".into()],
         state: kernel::plugin_host::PluginState::Ready,
     }).expect("注册 TFTP 插件失败");
+    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
+        id: "iperf".into(),
+        name: "iperf".into(),
+        version: "1.0.0".into(),
+        category: "network_tool".into(),
+        content_type: "custom".into(),
+        capabilities: vec!["connection".into()],
+        state: kernel::plugin_host::PluginState::Ready,
+    }).expect("注册 iperf 插件失败");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -296,6 +308,7 @@ pub fn run() {
             ssh_adapter: SshAdapter::new(),
             tftp_adapter: TftpAdapter::new(),
             telnet_adapter: TelnetAdapter::new(),
+            iperf_adapter: IperfAdapter::new(),
             host_key_verifier: HostKeyVerifier::new(),
             config_store: ConfigStore::new(),
             ipc_bridge: IpcBridge::new(),
@@ -384,6 +397,12 @@ pub fn run() {
             commands::tftp_client_put,
             commands::tftp_update_params,
             commands::tftp_get_status,
+            commands::iperf_server_start,
+            commands::iperf_server_stop,
+            commands::iperf_client_run,
+            commands::iperf_client_stop,
+            commands::iperf_update_params,
+            commands::iperf_get_status,
         ])
         .build(tauri::generate_context!())
         .expect("启动 TauTerm 时发生错误")

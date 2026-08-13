@@ -1,0 +1,421 @@
+/* iperf Session 视图布局
+   视觉样式由全局 liquid-glass 类与主题 CSS 变量（var(--xxx)）提供，
+   遵循 tauterm-theme skill：零硬编码颜色；卡片/输入框样式对齐 TFTP */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* ── 顶部版本切换器 ── */
+
+.versionBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.versionLabel {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.versionHint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-left: auto;
+  opacity: 0.85;
+}
+
+/* ── 左右分栏 ── */
+
+.columns {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.leftCol {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 5;
+  min-width: 320px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.rightCol {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 4;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+/* ── 面板通用（对齐 TFTP .panel） ── */
+
+.panel {
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.panel h3 {
+  margin: 0;
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panelHeader h3 {
+  margin-right: auto;
+}
+
+.statusRunning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.statusStopped {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.statusFailed {
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+/* ── 表单布局（输入框高度统一 var(--select-height)） ── */
+
+.row2 {
+  display: flex;
+  gap: 8px;
+}
+
+.row2 .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.field input,
+.field select {
+  height: var(--select-height);
+  padding: var(--select-padding);
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 监听地址只读展示（连接对话框配置，会话内不可编辑） */
+.listenAddrValue {
+  display: inline-flex;
+  align-items: center;
+  height: var(--select-height);
+  padding: var(--select-padding);
+  font-size: var(--text-sm);
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  box-sizing: border-box;
+}
+
+.checkboxRow {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.checkboxLabel {
+  font-size: var(--text-xs);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.primaryBtn {
+  flex: 1;
+  padding: 7px 12px;
+  font-size: var(--text-sm);
+}
+
+.dangerBtn {
+  flex: 1;
+  padding: 7px 12px;
+  font-size: var(--text-sm);
+}
+
+/* ── 命令预览 ── */
+
+.commandPreview {
+  margin-top: 4px;
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  background: var(--glass-fill);
+}
+
+.commandHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.commandLabel {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.copyBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  padding: 2px 8px;
+}
+
+.commandText {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  user-select: text;
+}
+
+/* ── 记录列表 ── */
+
+.recordList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.recordItem {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 10px;
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  border-radius: var(--radius-md);
+  background: var(--glass-fill);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  font-family: inherit;
+}
+
+.recordItem:hover {
+  border-color: var(--glass-border-hover);
+}
+
+.recordItemActive {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary-muted);
+}
+
+.recordRow1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.roleBadge {
+  font-size: var(--text-xs);
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  color: var(--text-on-accent);
+}
+
+.roleServer {
+  background: var(--color-info);
+}
+
+.roleClient {
+  background: var(--color-success);
+}
+
+.directionBadge {
+  font-size: var(--text-xs);
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  border: 1px solid var(--glass-border-default);
+}
+
+.recordVersion {
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.recordProtocol {
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.recordStatus {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.recordRow2 {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+}
+
+.recordTime {
+  color: var(--text-muted);
+}
+
+.recordBw {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* ── 记录详情 ── */
+
+.logSection h4,
+.summarySection h4,
+.chartSection h4 {
+  margin: 0 0 4px 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.logSection,
+.summarySection,
+.chartSection {
+  margin-top: 8px;
+}
+
+.logBox {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-border-default);
+  border-top: 1px solid var(--glass-border-top);
+  border-left: 1px solid var(--glass-border-left);
+  border-radius: var(--radius-md);
+  padding: 6px 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  color: var(--text-primary);
+  line-height: 1.6;
+}
+
+.logLine {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.summaryTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.summaryTable td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--glass-border-default);
+}
+
+.summaryKey {
+  color: var(--text-muted);
+  width: 45%;
+}
+
+.summaryValue {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  text-align: right;
+}
+
+.chartContainer {
+  width: 100%;
+}
+
+.noData {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  opacity: 0.7;
+  padding: 4px 0;
+}
+
+.errorText {
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  padding: 4px 8px;
+  border: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-md);
+  background: var(--glass-fill);
+  word-break: break-all;
+  user-select: text;
+}

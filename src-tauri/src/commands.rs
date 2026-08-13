@@ -6,7 +6,9 @@
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::atomic::Ordering;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use crate::channel::io_loop::IoLoopCmd;
 use crate::channel::AsyncChannel;
@@ -169,6 +171,7 @@ pub async fn connect_session(
         "serial" => connect_session_serial(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, journald_enabled, session_id).await,
         "ssh" => connect_session_ssh(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, journald_enabled, session_id).await,
         "tftp" => connect_session_tftp(app, state, endpoint, params, name, session_id).await,
+        "iperf" => connect_session_iperf(app, state, endpoint, params, name, session_id).await,
         "telnet" => connect_session_telnet(app, state, endpoint, params, name, send_bar_enabled, session_id).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
@@ -791,7 +794,7 @@ pub async fn disconnect_session(
     session_id: String,
 ) -> Result<(), String> {
     // 单次锁获取：读取 → 保存 → 关闭（close_session 内部调用 shutdown() 清理侧通道）
-    let (pairs_to_destroy, session_name, is_tftp) = {
+    let (pairs_to_destroy, session_name, is_tftp, is_iperf) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
 
         let handle = store.get_session(&session_id)
@@ -799,11 +802,12 @@ pub async fn disconnect_session(
         let pairs = handle.virtual_port_pairs.clone();
         let name = handle.name.clone();
         let is_tftp = handle.plugin_id == "tftp";
+        let is_iperf = handle.plugin_id == "iperf";
         store.close_session(&session_id)?;
         // 持久化：会话状态已变为 Disconnected，写入磁盘
         let path = SessionStore::sessions_file_path(&app);
         let _ = store.save_to_disk(&path);
-        (pairs, name, is_tftp)
+        (pairs, name, is_tftp, is_iperf)
     };
     // 锁已释放 — close_session 内部已关闭桥接
 
@@ -844,6 +848,14 @@ pub async fn disconnect_session(
     // TFTP 会话断开后通知前端服务端已停止
     if is_tftp {
         let _ = app.emit("tftp-server-status", serde_json::json!({
+            "session_id": session_id,
+            "running": false,
+        }));
+    }
+    // iperf 会话断开 = 服务端生命周期结束（shutdown() 已复位 server_running，
+    // 此处显式通知前端刷新右侧面板状态）
+    if is_iperf {
+        let _ = app.emit("iperf-server-status", serde_json::json!({
             "session_id": session_id,
             "running": false,
         }));
@@ -1279,6 +1291,8 @@ pub fn load_sessions(
         name: s.name,
         connection_type: s.plugin_id.clone(),
         endpoint: s.endpoint,
+        // 原样返回 params：会话配置（含 iperf 的 version/listen_ip/listen_port）
+        // 持久化记忆——版本在连接对话框中配置，重启后必须保持用户选择
         params: s.params,
         timestamp: s.timestamp,
         plugin_id: s.plugin_id,
@@ -2533,6 +2547,31 @@ async fn connect_session_tftp(
     let side_channel = conn.side_channel
         .ok_or_else(|| "TFTP 适配器未返回侧通道".to_string())?;
 
+    // 重连保留上一轮动态参数（blksize/window 等会话内调整不因重连丢失）：
+    // 新侧通道 dynamic_params 归默认值且无重同步，UI 显示与后端实际协商
+    // 参数会永久分叉。快照须在 create_container_session 替换旧会话之前读取
+    let prev_params: Option<tftp::TftpDynamicParams> = match session_id.as_deref() {
+        Some(prev_sid) => state.session_store.lock().ok().and_then(|store| {
+            store
+                .get_session(prev_sid)
+                .and_then(|h| h.side_channel.as_ref())
+                .and_then(|sc| sc.as_any().downcast_ref::<tftp::TftpSideChannel>())
+                .map(|tsc| tsc.get_params())
+        }),
+        None => None,
+    };
+    if let Some(prev) = prev_params {
+        if let Some(tsc) = side_channel.as_any().downcast_ref::<tftp::TftpSideChannel>() {
+            match tsc.dynamic_params.lock() {
+                Ok(mut p) => *p = prev,
+                Err(poisoned) => {
+                    log::warn!("[TFTP] dynamic_params 锁中毒，恢复后写入重连参数");
+                    *poisoned.into_inner() = prev;
+                }
+            }
+        }
+    }
+
     // 使用容器会话模式（无 I/O loop — TFTP 无终端数据流）
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -2568,36 +2607,9 @@ async fn connect_session_tftp(
         "transfer_enabled": false,
     }));
 
-    // 延迟查询 server_running 真实状态，而非硬编码假设成功
-    {
-        let app_clone = app.clone();
-        let sid_clone = sid.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            let running = app_clone
-                .state::<AppState>()
-                .session_store
-                .lock()
-                .ok()
-                .and_then(|store| {
-                    store.get_session(&sid_clone)
-                        .and_then(|h| h.side_channel.as_ref())
-                        .and_then(|sc| sc.as_any().downcast_ref::<tftp::TftpSideChannel>())
-                        .map(|tsc| tsc.server_running.load(std::sync::atomic::Ordering::Relaxed))
-                })
-                .unwrap_or(false);
-            let _ = app_clone.emit("tftp-server-status", serde_json::json!({
-                "session_id": sid_clone,
-                "running": running,
-            }));
-            if !running {
-                log::warn!(
-                    "[TFTP] 服务端启动失败 (session={}), abort_flag 可能已置位或端口绑定失败",
-                    sid_clone
-                );
-            }
-        });
-    }
+    // 不再用 200ms 延迟探测：服务端线程进入监听后权威 emit running:true
+    //（socket 在连接时已同步绑定，bind 失败直接使连接失败）；
+    // 挂载期首次 getStatus 兜底错过事件的情况
 
     Ok(sid)
 }
@@ -2617,11 +2629,10 @@ pub async fn tftp_server_start(
 
     tftp::try_start_server(&app, &sc_arc, &session_id)?;
 
-    let _ = app.emit("tftp-server-status", serde_json::json!({
-        "session_id": session_id,
-        "running": true,
-    }));
-
+    // 状态由服务端线程权威 emit（真实进入监听后 running:true）；此处不再
+    // 无条件乐观 emit——Start 与 Stop 交错时线程在启动前 abort 检查处退出，
+    // 乐观的 running:true 会永久失真（keepAlive 会话 getStatus 只查一次、
+    // 服务端线程无其他状态事件可纠正）
     Ok(())
 }
 
@@ -2632,16 +2643,20 @@ pub async fn tftp_server_stop(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let sc_arc = store.get_side_channel(&session_id)
-        .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?;
+    // 全局锁只用于取 Arc（对齐 disconnect_session 先例：emit 期间不得持有
+    // session_store 锁）
+    let sc_arc = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.get_side_channel(&session_id)
+            .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?
+    };
 
     let tftp_sc = sc_arc.as_any()
         .downcast_ref::<tftp::TftpSideChannel>()
         .ok_or_else(|| "侧通道不是 TFTP 类型".to_string())?;
 
-    tftp_sc.abort_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-    tftp_sc.server_running.store(false, std::sync::atomic::Ordering::Relaxed);
+    tftp_sc.abort_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    tftp_sc.server_running.store(false, std::sync::atomic::Ordering::SeqCst);
 
     let _ = app.emit("tftp-server-status", serde_json::json!({
         "session_id": session_id,
@@ -2801,6 +2816,495 @@ pub async fn tftp_get_status(
         listen_port: None,
         file_root: String::new(),
         dynamic_params: TftpDynamicParams::default(),
+    })
+}
+
+// ═══════════════════════════════════════════════════════════════
+// iperf 协议命令（iperf2 + iperf3）
+// ═══════════════════════════════════════════════════════════════
+
+use crate::plugins::iperf::{
+    self, IperfDynamicParams, IperfStatus,
+};
+
+/// iperf 客户端测速任务注册表（keyed by session_id）。
+///
+/// 断连状态下的客户端测速任务注册表条目。
+///
+/// `abort` 供 `iperf_client_stop` 中止；`running` 是重跑守卫的事实源
+/// （client 角色事件无 seq，两轮并发会在前端错配，必须串行）。
+/// 条目按会话存续：任务结束不删除（运行标志跨 run 复用），会话重连
+/// （侧通道接管）时由 `iperf_client_run` 清除。
+#[derive(Clone)]
+struct RegisteredClientRun {
+    abort: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+}
+
+static IPERF_CLIENT_REGISTRY: LazyLock<Mutex<HashMap<String, RegisteredClientRun>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// iperf 会话连接
+///
+/// 创建容器会话（无终端 I/O loop）。侧通道 `IperfSideChannel` 持有
+/// 服务端监听线程句柄与测试状态。
+/// 对齐 TFTP：连接即自动启动服务端（配置于 ConnectDialog 表单），
+/// 断开自动停止；服务端生命周期跟随会话生命周期。
+async fn connect_session_iperf(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    endpoint: String,
+    params: Value,
+    name: Option<String>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    // 通过 IperfAdapter 创建连接产物（channel=None，仅包含 side_channel）
+    let conn = state.iperf_adapter.connect(&endpoint, &params).await
+        .map_err(|e| e.to_string())?;
+
+    let session_name = name.unwrap_or_else(|| {
+        format!("iperf :{}", endpoint)
+    });
+
+    let side_channel = conn.side_channel
+        .ok_or_else(|| "iperf 适配器未返回侧通道".to_string())?;
+
+    // 重连保留上一轮动态参数：会话内调整的客户端目标端口/协议/时长等不因
+    // 重连丢失（此前新侧通道回落到 config 播种值，用户 -p 编辑静默丢失）。
+    // 快照须在 create_container_session 替换旧会话之前读取
+    let prev_params: Option<iperf::IperfDynamicParams> =
+        match session_id.as_deref() {
+            Some(prev_sid) => state
+                .session_store
+                .lock()
+                .ok()
+                .and_then(|store| {
+                    store
+                        .get_session(prev_sid)
+                        .and_then(|h| h.side_channel.as_ref())
+                        .and_then(|sc| sc.as_any().downcast_ref::<iperf::IperfSideChannel>())
+                        .map(|isc| isc.get_params())
+                }),
+            None => None,
+        };
+    if let Some(prev) = prev_params {
+        if let Some(isc) = side_channel.as_any().downcast_ref::<iperf::IperfSideChannel>() {
+            // version/listen_ip/listen_port 属会话配置，以本次连接解析结果
+            // 为准（重配置可修改）；其余为会话内可调参数，跨重连保留。
+            // 客户端目标端口联动：仅当旧端口仍是其版本的默认值（未自定义）
+            // 时跟随新的监听端口——版本切换 5001↔5201 联动；自定义端口保留。
+            // 注意必须按"旧版本默认值"判定（不能简单判定 ∈{5001,5201}）：
+            // iperf2 下用户特意把 -p 设为 5201 测外部服务器时属于自定义，
+            // 重连不得被改回监听端口（D1 修复保护的场景）
+            let current = isc.get_params();
+            let merged = iperf::IperfDynamicParams {
+                version: current.version,
+                listen_ip: current.listen_ip,
+                listen_port: current.listen_port,
+                port: if prev.port == iperf::default_client_port(prev.version) {
+                    current.listen_port
+                } else {
+                    prev.port
+                },
+                ..prev
+            };
+            match isc.dynamic_params.lock() {
+                Ok(mut p) => *p = merged,
+                Err(poisoned) => {
+                    log::warn!("[iperf] dynamic_params 锁中毒，恢复后写入重连参数");
+                    *poisoned.into_inner() = merged;
+                }
+            }
+        }
+    }
+
+    // 重连前有界 join 旧服务端线程：断开置位 abort 后线程 ≤10s 退出（正常
+    // 瞬时返回）；不 join 则新线程与仍持有监听端口的僵尸线程抢端口，
+    // 自动启动失败"端口被占用"
+    if let Some(prev_sid) = session_id.as_deref() {
+        let old_handle = state.session_store.lock().ok().and_then(|store| {
+            store
+                .get_session(prev_sid)
+                .and_then(|h| h.side_channel.as_ref())
+                .and_then(|sc| sc.as_any().downcast_ref::<iperf::IperfSideChannel>())
+                .map(|isc| isc.server_handle.clone())
+        });
+        if let Some(handle) = old_handle {
+            let joined = tokio::task::spawn_blocking(move || {
+                iperf::join_server_handle(&handle, std::time::Duration::from_secs(10))
+            })
+            .await
+            .unwrap_or(false);
+            if !joined {
+                log::warn!(
+                    "[iperf] 重连时旧服务端线程 join 超时，端口可能仍被占用 (session={})",
+                    prev_sid
+                );
+            }
+        }
+    }
+
+    // 解析后的配置作为会话/事件参数（唯一事实源）：前端 store 播种与右键重连
+    // 均以此为准，避免空 params 回落到默认 Iperf2（会话参数恒镜像后端解析结果）
+    let resolved_params = {
+        let iperf_sc = side_channel
+            .as_any()
+            .downcast_ref::<iperf::IperfSideChannel>()
+            .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
+        serde_json::to_value(&iperf_sc.config).unwrap_or_else(|_| params.clone())
+    };
+
+    // 使用容器会话模式（无 I/O loop — iperf 无终端数据流）
+    let sid = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let sid = store.create_container_session(
+            &session_name, "iperf", &endpoint, resolved_params.clone(),
+            Some(side_channel.clone()),
+            false,  // transfer_enabled
+            None,   // transfer_protocol
+            false,  // send_bar_enabled
+            session_id,
+        )?;
+        let path = SessionStore::sessions_file_path(&app);
+        let _ = store.save_to_disk(&path);
+        sid
+    };
+
+    log::info!("iperf 会话已创建（容器模式）: {}", sid);
+
+    // 自动启动服务端（对齐 TFTP 语义：连接 = 服务端生命周期开始）。
+    // 失败不得静默吞掉——emit 错误状态事件（前端已有该事件处理，展示错误
+    // 而非误以为服务端在运行）；成功状态由服务端线程绑定后权威 emit
+    //（不再用 200ms 延迟探测——与服务端线程事件重复且 bind 超时会先发
+    // 假 running:false 造成"先绿后红"）
+    if let Err(e) = iperf::try_start_server(&app, &side_channel, &sid).await {
+        log::warn!("[iperf] 服务端自动启动失败 (session={}): {}", sid, e);
+        let _ = app.emit("iperf-server-status", serde_json::json!({
+            "session_id": sid,
+            "running": false,
+            "error": e,
+        }));
+    }
+
+    let _ = app.emit("session-connected", serde_json::json!({
+        "session_id": sid,
+        "plugin_id": "iperf",
+        "content_type": "custom",
+        "endpoint": endpoint,
+        "name": session_name,
+        "connection_type": "iperf",
+        "params": resolved_params,
+        "send_bar_enabled": false,
+        "transfer_enabled": false,
+    }));
+
+    Ok(sid)
+}
+
+/// 启动 iperf 服务端
+///
+/// 不乐观置 running——真实状态由服务端线程绑定成功后自行 emit
+///（iperf2/iperf3 引擎均在线程内发 running:true + listen_addr；
+/// 失败时线程侧 emit running=false + error，避免"先绿后红"闪烁）。
+#[tauri::command]
+pub async fn iperf_server_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let sc_arc = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.get_side_channel(&session_id)
+            .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?
+    };
+
+    iperf::try_start_server(&app, &sc_arc, &session_id).await?;
+
+    Ok(())
+}
+
+/// 停止 iperf 服务端
+#[tauri::command]
+pub async fn iperf_server_stop(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    // 全局锁只用于取 Arc（对齐 disconnect_session 先例：emit 期间不得持有
+    // session_store 锁，webview 卡顿时会阻塞全部会话命令）
+    let sc_arc = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.get_side_channel(&session_id)
+            .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?
+    };
+
+    let iperf_sc = sc_arc.as_any()
+        .downcast_ref::<iperf::IperfSideChannel>()
+        .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
+
+    // 与 try_start_server 互斥：Stop 不会落在 start 的 join/复位窗口内被
+    // 覆盖（start 先完成则线程循环感知 abort；stop 先完成则 start 入口检查放弃）
+    let _lifecycle = iperf_sc.lifecycle.lock().await;
+
+    iperf_sc.server_abort_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    iperf_sc.server_running.store(false, std::sync::atomic::Ordering::SeqCst);
+
+    let _ = app.emit("iperf-server-status", serde_json::json!({
+        "session_id": session_id,
+        "running": false,
+    }));
+
+    Ok(())
+}
+
+/// 运行 iperf 客户端测速（瞬态任务）
+///
+/// 配置 → 运行 → 实时出结果 → 结束。不建立常驻连接。
+/// **fire-and-forget**：invoke 立即返回，进度/结果完全由事件驱动
+/// （iperf-test-started → iperf-interval-report × N → iperf-test-done）。
+#[tauri::command]
+pub async fn iperf_client_run(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    target_host: String,
+    params: Value,
+) -> Result<(), String> {
+    let mut params: IperfDynamicParams = serde_json::from_value(params)
+        .map_err(|e| format!("参数解析失败: {}", e))?;
+    sanitize_iperf_params(&mut params);
+
+    // 客户端自给自足（对齐 TFTP）：侧通道存在时复用其状态（停止按钮可中断）；
+    // 会话未连接（无 side_channel）时命令内自建一次性状态，测速照常可用。
+    // 注意：客户端中止标志独立于服务端监听标志（client_abort_flag vs
+    // server_abort_flag）——客户端测速结束/被停止不得杀死会话内的服务端。
+    let (client_abort_flag, client_test_running, last_summary) = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        match store.get_side_channel(&session_id) {
+            Some(sc_arc) => {
+                // 已连接：注册表条目（若有）失效，侧通道状态接管
+                if let Ok(mut reg) = IPERF_CLIENT_REGISTRY.lock() {
+                    reg.remove(&session_id);
+                }
+                let iperf_sc = sc_arc.as_any()
+                    .downcast_ref::<iperf::IperfSideChannel>()
+                    .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
+                (
+                    iperf_sc.client_abort_flag.clone(),
+                    iperf_sc.client_test_running.clone(),
+                    iperf_sc.last_summary.clone(),
+                )
+            }
+            None => {
+                // 注册/复用断连任务条目：运行标志跨 run 存续，重跑守卫据此
+                // 生效（此前每次新建标志导致守卫恒 false、两轮并发错配事件）
+                if let Ok(mut reg) = IPERF_CLIENT_REGISTRY.lock() {
+                    if !reg.contains_key(&session_id) {
+                        reg.insert(session_id.clone(), RegisteredClientRun {
+                            abort: Arc::new(AtomicBool::new(false)),
+                            running: Arc::new(AtomicBool::new(false)),
+                        });
+                    }
+                    let entry = reg.get(&session_id).expect("注册表条目已存在");
+                    (
+                        entry.abort.clone(),
+                        entry.running.clone(),
+                        Arc::new(Mutex::new(None)),
+                    )
+                } else {
+                    // 注册表锁中毒等极端情况：退化为一次性独立状态（守卫失效但可用）
+                    (
+                        Arc::new(AtomicBool::new(false)),
+                        Arc::new(AtomicBool::new(false)),
+                        Arc::new(Mutex::new(None)),
+                    )
+                }
+            }
+        }
+    };
+
+    // 重复 run 防护：上一轮测速未结束时先中止并等待其收尾（有界）——client
+    // 角色事件无 seq，两轮并发交错发事件时前端无法区分（服务端角色已用 seq 配对）
+    if client_test_running.load(Ordering::Relaxed) {
+        client_abort_flag.store(true, Ordering::Relaxed);
+        log::info!("[iperf] 中止上一轮客户端测速后重跑 (session={})", session_id);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while client_test_running.load(Ordering::Relaxed) && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        if client_test_running.load(Ordering::Relaxed) {
+            // 等待超时：上一轮仍未收尾。强行重跑会让两轮无 seq 事件在前端
+            // 错配（旧 done 标失败新记录），故拒绝本次 run
+            log::warn!(
+                "[iperf] 上一轮客户端测速未在 10s 内收尾，拒绝重跑 (session={})",
+                session_id
+            );
+            return Err("上一轮客户端测速仍在收尾，请稍后重试".into());
+        }
+    }
+    // 到达此处时上一轮已收尾（done 已发出，或从未运行）：复位中止标志安全。
+    // 同步置位运行标志：闭合"守卫检查与任务置位之间"的 TOCTOU 窗口
+    // （此前在 run_iperf_client 内部置位，双击可穿透守卫）
+    client_abort_flag.store(false, Ordering::Relaxed);
+    client_test_running.store(true, Ordering::Relaxed);
+
+    // 同步动态参数到 side_channel（服务端与客户端共享，含版本与监听参数）；
+    // 会话未连接时静默跳过（sync_iperf_params 已容忍）
+    sync_iperf_params(&state, &session_id, &params);
+
+    // fire-and-forget：后台任务，invoke 立即返回。
+    // run_iperf_client 内部保证 iperf-test-done 一定发出（含 panic 兜底），
+    // 并在 done 之后复位运行标志。注册表条目跨 run 存续（运行标志是守卫
+    // 的事实源），不在此清理——会话重连时由侧通道分支清除。
+    tokio::spawn(async move {
+        let result = iperf::client::run_iperf_client(
+            app, session_id, target_host, params,
+            client_abort_flag, client_test_running, last_summary,
+        ).await;
+        if let Err(e) = result {
+            log::warn!("[iperf] 客户端测速任务失败: {}", e);
+        }
+    });
+
+    Ok(())
+}
+
+/// 参数防御性 clamp：并行流数决定线程/task 数、时长决定 force-end 窗口——
+/// 上限防本地资源耗尽（1e9 流会炸线程）与恶意客户端滞留
+fn sanitize_iperf_params(params: &mut IperfDynamicParams) {
+    params.parallel_streams = params.parallel_streams.clamp(1, 64);
+    params.duration_secs = params.duration_secs.clamp(1, 86_400);
+    params.report_interval_secs = params.report_interval_secs.clamp(1, 60);
+}
+
+/// 同步 iperf 动态参数到 side_channel（客户端测速前调用）。
+/// 若 side_channel 不存在（会话未连接），静默跳过。
+fn sync_iperf_params(state: &AppState, session_id: &str, params: &IperfDynamicParams) {
+    if let Ok(store) = state.session_store.lock() {
+        if let Some(sc_arc) = store.get_side_channel(session_id) {
+            if let Some(iperf_sc) = sc_arc.as_any().downcast_ref::<iperf::IperfSideChannel>() {
+                let mut p = iperf::lock_or_recover(&iperf_sc.dynamic_params, "dynamic_params");
+                *p = params.clone();
+                log::info!("[iperf] 动态参数已同步 (session={}, duration={}s, port={})",
+                    session_id, params.duration_secs, params.port);
+            }
+        }
+    }
+}
+
+/// 中止进行中的客户端测速
+///
+/// 会话已连接时置位侧通道中止标志；会话未连接时查任务注册表
+///（`iperf_client_run` 无 side_channel 时注册的一次性任务）。
+/// 两者皆无则静默返回——任务已完成或从未启动。
+#[tauri::command]
+pub async fn iperf_client_stop(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    let Some(sc_arc) = store.get_side_channel(&session_id) else {
+        // 断开状态：查任务注册表（条目跨 run 存续，中止标志可随时置位）
+        if let Ok(reg) = IPERF_CLIENT_REGISTRY.lock() {
+            if let Some(entry) = reg.get(&session_id) {
+                entry.abort.store(true, Ordering::Relaxed);
+                log::info!("[iperf] 已通过任务注册表中止客户端测速 (session={})", session_id);
+                return Ok(());
+            }
+        }
+        log::debug!("[iperf] 停止跳过：会话 {} 未连接且无注册任务", session_id);
+        return Ok(());
+    };
+
+    let iperf_sc = sc_arc.as_any()
+        .downcast_ref::<iperf::IperfSideChannel>()
+        .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
+
+    iperf_sc.client_abort_flag.store(true, Ordering::Relaxed);
+    log::info!("[iperf] 已请求中止客户端测速 (session={})", session_id);
+    Ok(())
+}
+
+/// 更新 iperf 动态参数（服务端与客户端共享）
+#[tauri::command]
+pub async fn iperf_update_params(
+    state: State<'_, AppState>,
+    session_id: String,
+    params: Value,
+) -> Result<(), String> {
+    let mut new_params: IperfDynamicParams = serde_json::from_value(params)
+        .map_err(|e| format!("参数解析失败: {}", e))?;
+    sanitize_iperf_params(&mut new_params);
+
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    if let Some(sc_arc) = store.get_side_channel(&session_id) {
+        if let Some(iperf_sc) = sc_arc.as_any().downcast_ref::<iperf::IperfSideChannel>() {
+            let mut p = iperf::lock_or_recover(&iperf_sc.dynamic_params, "dynamic_params");
+            *p = new_params;
+            log::info!("iperf 参数已更新 (session={})", session_id);
+        }
+    } else {
+        log::warn!("iperf 参数更新跳过：会话 {} 未连接（无 side_channel）", session_id);
+    }
+    Ok(())
+}
+
+/// 获取 iperf 状态
+///
+/// 若会话已连接（side_channel 存在），从侧通道读取实时状态。
+/// 若会话未连接，返回默认值。
+#[tauri::command]
+pub async fn iperf_get_status(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<IperfStatus, String> {
+    // 全局锁只用于取 Arc：dynamic_params/last_summary 在侧通道自有锁下克隆，
+    // 长摘要克隆不占用 session_store 锁（其他会话命令无谓排队）
+    let sc_arc = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.get_side_channel(&session_id)
+    };
+
+    if let Some(sc_arc) = sc_arc {
+        if let Some(iperf_sc) = sc_arc.as_any().downcast_ref::<iperf::IperfSideChannel>() {
+            let server_running = iperf_sc.server_running.load(std::sync::atomic::Ordering::Relaxed);
+            let test_running = iperf_sc.test_running.load(std::sync::atomic::Ordering::Relaxed);
+            let client_test_running = iperf_sc
+                .client_test_running
+                .load(std::sync::atomic::Ordering::Relaxed);
+            // 动态参数为准：版本/监听可在会话内实时修改（config 为创建时不可变快照，
+            // 读取它会导致状态报告与用户当前选择不一致）
+            let dynamic_params = iperf_sc.get_params();
+            let listen_addr = Some(dynamic_params.listen_ip.clone());
+            let listen_port = Some(dynamic_params.listen_port);
+            let version = dynamic_params.version;
+            let last_summary =
+                iperf::lock_or_recover(&iperf_sc.last_summary, "last_summary").clone();
+            return Ok(IperfStatus {
+                server_running,
+                test_running,
+                client_test_running,
+                listen_addr,
+                listen_port,
+                version,
+                dynamic_params,
+                last_summary,
+            });
+        }
+    }
+
+    // 会话未连接（无 side_channel），返回默认值
+    log::debug!("iperf get_status: 会话 {} 未连接，返回默认状态", session_id);
+    Ok(IperfStatus {
+        server_running: false,
+        test_running: false,
+        client_test_running: false,
+        listen_addr: None,
+        listen_port: None,
+        version: iperf::IperfVersion::Iperf2,
+        dynamic_params: IperfDynamicParams::default(),
+        last_summary: None,
     })
 }
 

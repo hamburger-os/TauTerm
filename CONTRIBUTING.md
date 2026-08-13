@@ -31,7 +31,7 @@ The project follows a microkernel plugin architecture:
 - `src-tauri/src/kernel/` — Microkernel modules (plugin host, session store, config store, etc.)
 - `src-tauri/src/channel/` — I/O abstraction layer (`Channel` / `AsyncChannel` traits)
 - `src-tauri/src/transfer/` — File transfer subsystem (three strategies)
-- `src-tauri/src/plugins/` — Built-in protocol plugins (Serial, SSH)
+- `src-tauri/src/plugins/` — Built-in protocol plugins (Serial, SSH, TFTP, Telnet, iperf)
 - `src-tauri/src/virtual_port/` — Virtual serial port bridge (com0com on Windows, socat on Linux)
 - `src-tauri/src/security/` — Credential store (keyring + AES-256-GCM)
 - `src/` — React frontend (TypeScript)

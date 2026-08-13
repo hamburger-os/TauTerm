@@ -46,6 +46,11 @@ pub fn spawn_tftp_server(
     if let Err(e) = socket.set_read_timeout(Some(Duration::from_secs(1))) {
         log::error!("[TFTP Server] 设置读超时失败: {}", e);
         server_running.store(false, std::sync::atomic::Ordering::Relaxed);
+        let _ = app.emit("tftp-server-status", serde_json::json!({
+            "session_id": session_id,
+            "running": false,
+            "error": format!("设置读超时失败: {}", e),
+        }));
         return;
     }
 
@@ -55,6 +60,15 @@ pub fn spawn_tftp_server(
             return;
         }
         server_running.store(true, std::sync::atomic::Ordering::Relaxed);
+        // 权威状态发布：socket 在连接时已绑定成功，此处线程真实进入监听。
+        // tftp_server_start 不再无条件乐观 emit——Start/Stop 交错导致线程在
+        // 启动前 abort 检查处退出时，乐观的 running:true 会永久失真
+        //（keepAlive 会话 getStatus 只查一次，无事件可纠正）
+        let _ = app.emit("tftp-server-status", serde_json::json!({
+            "session_id": session_id,
+            "running": true,
+            "listen_addr": socket.local_addr().map(|a| a.to_string()).ok(),
+        }));
         log::info!("[TFTP Server] 开始监听 (session={})", session_id);
 
         // 复用缓冲区，避免每次循环分配 64 KB
@@ -174,6 +188,9 @@ pub fn spawn_tftp_server(
         }
 
         server_running.store(false, std::sync::atomic::Ordering::Relaxed);
+        // 不在此 emit running:false：退出仅由 abort 触发，断开/停止路径已
+        // 各自权威 emit；重连后旧线程（≤1s 收尾窗口）的迟到 emit 反而会
+        // 翻转新服务器的状态
         log::info!("[TFTP Server] 已停止 (session={})", session_id);
     });
 }

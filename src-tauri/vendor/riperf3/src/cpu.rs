@@ -1,0 +1,108 @@
+use std::time::Instant;
+
+/// A snapshot of process resource usage for computing CPU utilization.
+#[derive(Clone)]
+pub struct CpuSnapshot {
+    wall_time: Instant,
+    user_usec: i64,
+    system_usec: i64,
+}
+
+impl CpuSnapshot {
+    /// Take a snapshot of current wall time and process CPU usage.
+    pub fn now() -> Self {
+        #[cfg(unix)]
+        {
+            use nix::sys::resource::{getrusage, UsageWho};
+            match getrusage(UsageWho::RUSAGE_SELF) {
+                Ok(usage) => {
+                    let user = usage.user_time();
+                    let system = usage.system_time();
+                    #[allow(clippy::useless_conversion)]
+                    // tv_sec/tv_usec return i32 on macOS, i64 on Linux
+                    Self {
+                        wall_time: Instant::now(),
+                        user_usec: i64::from(user.tv_sec()) * 1_000_000 + i64::from(user.tv_usec()),
+                        system_usec: i64::from(system.tv_sec()) * 1_000_000
+                            + i64::from(system.tv_usec()),
+                    }
+                }
+                Err(_) => Self {
+                    wall_time: Instant::now(),
+                    user_usec: 0,
+                    system_usec: 0,
+                },
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            Self {
+                wall_time: Instant::now(),
+                user_usec: 0,
+                system_usec: 0,
+            }
+        }
+    }
+
+    /// Compute CPU utilization between this snapshot and an earlier one.
+    pub fn utilization_since(&self, earlier: &CpuSnapshot) -> CpuUtilization {
+        let wall_usec = self.wall_time.duration_since(earlier.wall_time).as_micros() as f64;
+
+        if wall_usec == 0.0 {
+            return CpuUtilization::default();
+        }
+
+        let user_diff = (self.user_usec - earlier.user_usec) as f64;
+        let system_diff = (self.system_usec - earlier.system_usec) as f64;
+
+        CpuUtilization {
+            host_total: (user_diff + system_diff) / wall_usec * 100.0,
+            host_user: user_diff / wall_usec * 100.0,
+            host_system: system_diff / wall_usec * 100.0,
+        }
+    }
+}
+
+/// This process's CPU utilization percentages. The peer's figures never pass
+/// through here — they flow from the results exchange straight into
+/// `json_report::CpuUtilization` (#139).
+#[derive(Debug, Clone, Default)]
+pub struct CpuUtilization {
+    pub host_total: f64,
+    pub host_user: f64,
+    pub host_system: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_returns_non_negative() {
+        let snap = CpuSnapshot::now();
+        assert!(snap.user_usec >= 0);
+        assert!(snap.system_usec >= 0);
+    }
+
+    #[test]
+    fn utilization_over_interval() {
+        let before = CpuSnapshot::now();
+        let mut x: u64 = 0;
+        for i in 0..1_000_000u64 {
+            x = x.wrapping_add(i);
+        }
+        std::hint::black_box(x);
+        let after = CpuSnapshot::now();
+
+        let util = after.utilization_since(&before);
+        assert!(util.host_user >= 0.0);
+        assert!(util.host_total >= 0.0);
+    }
+
+    #[test]
+    fn utilization_zero_interval() {
+        let snap = CpuSnapshot::now();
+        let util = snap.utilization_since(&snap);
+        assert_eq!(util.host_total, 0.0);
+    }
+}

@@ -2,6 +2,7 @@ import { createContext, useContext, useReducer, useCallback, useEffect, useRef, 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginRegistry } from "../core/plugin-registry";
+import { releaseSessionStore } from "../hooks/usePluginSessionStore";
 
 // ── Types ───────────────────────────────────────────
 
@@ -520,6 +521,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // 删除失败不影响前端移除
     }
     dispatch({ type: "REMOVE_TAB", id: sessionId });
+    // 释放插件会话 store 的全部资源（keepAlive 会话的 Tauri 监听器与
+    // Map 条目按设计常驻，会话删除后不再有存续意义——不清理则永久泄漏）
+    releaseSessionStore(sessionId);
   }, [state.tabs]);
 
   const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
@@ -1055,6 +1059,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       switchTab,
       renameTab,
       reconfigureSession,
+
       openChannel,
       closeChannel,
       getTabs,

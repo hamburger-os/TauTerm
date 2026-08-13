@@ -1,0 +1,188 @@
+use std::fmt;
+
+use thiserror::Error;
+
+/// Configuration errors — validation failures when building Client/Server.
+/// Kept separate so existing tests that match on these variants continue to work.
+#[derive(Error, Debug, PartialEq)]
+#[non_exhaustive] // future validation variants must be additive, not breaking (#100, #45)
+pub enum ConfigError {
+    #[error("missing field: {0}")]
+    MissingField(&'static str),
+
+    #[error("invalid value for {0}: {1}")]
+    InvalidValue(&'static str, String),
+
+    #[error("{0}")]
+    Unsupported(String),
+}
+
+/// Runtime errors covering I/O, protocol, and JSON failures.
+#[derive(Error, Debug)]
+#[non_exhaustive] // future error variants must be additive, not breaking
+pub enum RiperfError {
+    #[error("{0}")]
+    Config(#[from] ConfigError),
+
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("cookie mismatch")]
+    CookieMismatch,
+
+    #[error("access denied by server")]
+    AccessDenied,
+
+    #[error("connection timed out")]
+    ConnectionTimeout,
+
+    #[error("protocol violation: {0}")]
+    Protocol(String),
+
+    #[error("test aborted: {0}")]
+    Aborted(String),
+
+    /// iperf3's IECTRLCLOSE: the control connection died mid-test (#170).
+    #[error("control socket has closed unexpectedly")]
+    ControlSocketClosed,
+
+    /// iperf3's IESERVERTERM: the server sent SERVER_TERMINATE mid-test; a
+    /// partial summary is rendered from local data before this surfaces (#170).
+    #[error("the server has terminated")]
+    ServerTerminated,
+
+    /// iperf3's IECLIENTTERM: the client sent CLIENT_TERMINATE mid-test; the
+    /// server dumps its partial results before this surfaces (#210). iperf3
+    /// prints it WITHOUT the "error - " prefix ("iperf3: the client has
+    /// terminated").
+    #[error("the client has terminated")]
+    ClientTerminated,
+
+    #[error("peer disconnected")]
+    PeerDisconnected,
+
+    /// iperf3's SERVER_ERROR relay (#224): the server failed mid-test and
+    /// sent its (i_errno, errno) pair on the control connection; the client
+    /// ADOPTS the mapped iperf_strerror text as its own error, exactly like
+    /// iperf_handle_message_client (iperf_client_api.c:392). The Display is
+    /// the mapped message alone — the CLI prefixes it ("riperf3: error - …"),
+    /// matching iperf3's errexit line.
+    #[error("{0}")]
+    ServerErrorRelayed(String),
+}
+
+/// iperf3's SERVER_ERROR relay rendering, client side (#224). The errno
+/// append follows iperf_handle_message_client (iperf_client_api.c:403-404),
+/// which appends ", errno: <strerror>" UNCONDITIONALLY whenever the relayed
+/// os errno is non-zero — for any code (r1 review, live-verified; real
+/// iperf3 servers relay stale/live errno from the bitrate and
+/// cleanup_server sites). Rendered via io::Error, whose "(os error N)"
+/// suffix is the convention riperf3's raw os errors already carry (#151).
+/// PERR SUFFIX (#248): iperf_strerror's perr-class codes emit a dangling ": "
+/// even at errno==0 (live: "server test duration expired: "). Mirrored per-code
+/// from the d39cf41 iperf_error.c switch — 160 and the int_errno default are
+/// perr=1 (they get the suffix); 27/37/120 are perr=0 (snprintf-only, stay
+/// bare). Unknown codes use iperf3's literal "int_errno=%d" fallback (the
+/// default case, which is perr=1).
+pub(crate) fn iperf3_strerror(i_errno: u32, os_errno: u32) -> String {
+    // `perr` is iperf_error.c's per-code flag: when set, GT dangles a trailing
+    // ": " even at errno==0.
+    let (base, perr) = match i_errno {
+        // IETOTALRATE — the --server-bitrate-limit breach (perr=0)
+        27 => (
+            "total required bandwidth is larger than server limit".to_string(),
+            false,
+        ),
+        // IEMAXSERVERTESTDURATIONEXCEEDED — the upfront param-exchange
+        // reject modern iperf3 servers send for over-limit or unbounded
+        // requests. riperf3's own upfront check is #230, but a real iperf3
+        // server can relay this TODAY, so the client must render it. (perr=0)
+        37 => (
+            "client's requested duration exceeds the server's maximum permitted limit".to_string(),
+            false,
+        ),
+        // IESERVERTERM — a server relaying its own terminate as an error (perr=0)
+        120 => ("the server has terminated".to_string(), false),
+        // IESERVERTESTDURATIONEXPIRED — the --server-max-duration timer (perr=1)
+        160 => ("server test duration expired".to_string(), true),
+        // iperf3's default case is perr=1.
+        other => (format!("int_errno={other}"), true),
+    };
+    if os_errno > 0 {
+        // Unchanged r1 decision (#248 out of scope): append ", errno: <strerror>"
+        // for any code at errno>0. Unreachable from a riperf3 server, which
+        // always relays errno 0.
+        format!(
+            "{base}, errno: {}",
+            std::io::Error::from_raw_os_error(os_errno as i32)
+        )
+    } else if perr {
+        // GT's dangling ": " for the perr-class codes at errno==0 (#248).
+        format!("{base}: ")
+    } else {
+        base
+    }
+}
+
+#[cfg(test)]
+mod strerror_tests {
+    use super::iperf3_strerror;
+
+    /// The #224 relay codes, pinned to iperf 3.21's iperf_error.c strings.
+    #[test]
+    fn maps_the_relay_codes() {
+        assert_eq!(
+            iperf3_strerror(27, 0),
+            "total required bandwidth is larger than server limit"
+        );
+        assert_eq!(iperf3_strerror(120, 0), "the server has terminated");
+        // #248: 160 is perr=1, so GT dangles a trailing ": " even at errno==0;
+        // 27/120 above are perr=0 and stay bare.
+        assert_eq!(iperf3_strerror(160, 0), "server test duration expired: ");
+    }
+
+    /// The errno append is UNCONDITIONAL on errno > 0 for every code
+    /// (iperf_client_api.c:403-404 — the r1 review corrected the earlier
+    /// perr-gated model with a live probe). At errno == 0, perr-class codes
+    /// (160 and the int_errno default) get GT's dangling ": " (#248); perr=0
+    /// codes (27/37/120) stay bare. Unknown codes fall back to int_errno=%d.
+    #[test]
+    fn errno_append_and_fallback() {
+        // #248: the int_errno default is perr=1 → trailing ": " at errno==0.
+        assert_eq!(iperf3_strerror(9999, 0), "int_errno=9999: ");
+        for (code, base) in [
+            (160u32, "server test duration expired"),
+            (
+                27u32,
+                "total required bandwidth is larger than server limit",
+            ),
+        ] {
+            let with_errno = iperf3_strerror(code, 104);
+            assert!(
+                with_errno.starts_with(&format!("{base}, errno: ")),
+                "{with_errno}"
+            );
+        }
+        assert_eq!(
+            iperf3_strerror(37, 0),
+            "client's requested duration exceeds the server's maximum permitted limit"
+        );
+    }
+}
+
+/// Result alias used throughout the library.
+pub type Result<T> = std::result::Result<T, RiperfError>;
+
+/// The wire protocol transmits test state as a single signed byte.
+/// Unknown values are captured here for forward compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnknownState(pub i8);
+
+impl fmt::Display for UnknownState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown state byte: {}", self.0)
+    }
+}
