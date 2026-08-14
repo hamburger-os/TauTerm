@@ -1,7 +1,6 @@
 ---
 name: tauterm-com0com
-description: >
-  com0com virtual serial port driver reference for Windows. Use this skill whenever the user asks about com0com, setupc.exe, virtual COM port pairs, driver installation/uninstallation, UAC/elevation issues (error 740), ghost port cleanup, orphan port recovery, CNCA/CNCB port management. Triggers on Chinese queries too: com0com 驱动, 虚拟串口, 端口对, 驱动安装, 权限不足, setupc 命令, COM 端口对, CNCA, CNCB. Covers the full lifecycle: driver files (7 required), setupc CLI, port pair creation/deletion, UAC elevation patterns, and troubleshooting common issues.
+description: "com0com virtual serial port driver reference for Windows. Use this skill whenever the user asks about com0com, setupc.exe, virtual COM port pairs, driver installation/uninstallation, UAC/elevation issues (error 740), ghost port cleanup, orphan port recovery, CNCA/CNCB port management. Triggers on Chinese queries too: com0com 驱动, 虚拟串口, 端口对, 驱动安装, 权限不足, setupc 命令, COM 端口对, CNCA, CNCB. Covers the full lifecycle: driver files (7 required), setupc CLI, port pair creation/deletion, UAC elevation patterns, and troubleshooting common issues."
 license: MIT
 metadata:
   author: tauterm

@@ -1,7 +1,6 @@
 ---
 name: tauterm-theme-review
-description: >
-  Audit and review TauTerm UI components for theme consistency across all 3 themes (google-glow, obsidian, frosted). Use this skill whenever the user asks to review, audit, check, or verify theme compatibility — including "review styles", "check theme consistency", "audit cross-theme", "verify frosted/light theme", "检查主题" (check theme), "审查样式" (review styles), "主题兼容性" (theme compatibility), or any request to ensure components look correct across themes. This is a QA/audit skill that examines EXISTING code and produces structured fix reports — distinct from tauterm-theme which enforces rules when writing NEW code. The light (frosted) theme is the most common source of hidden bugs since developers primarily work in dark mode.
+description: "Audit and review TauTerm UI components for theme consistency across all 3 themes (google-glow, obsidian, frosted). Use this skill whenever the user asks to review, audit, check, or verify theme compatibility — including \"review styles\", \"check theme consistency\", \"audit cross-theme\", \"verify frosted/light theme\", \"检查主题\" (check theme), \"审查样式\" (review styles), \"主题兼容性\" (theme compatibility), or any request to ensure components look correct across themes. This is a QA/audit skill that examines EXISTING code and produces structured fix reports — distinct from tauterm-theme which enforces rules when writing NEW code. The light (frosted) theme is the most common source of hidden bugs since developers primarily work in dark mode."
 license: MIT
 metadata:
   author: tauterm
@@ -31,7 +30,7 @@ metadata:
 
 ### Step 2: 批量扫描
 
-全量项目审计时，先跑批量 Grep 快速定位问题文件。**优先使用内置 Grep 工具**（ripgrep 引擎），注意 ripgrep 不支持 lookahead/lookbehind，需将复杂正则拆分为独立查询。并行发起所有扫描以提升效率。
+全量项目审计时，先跑批量 Grep 快速定位问题文件。**优先使用内置的 ripgrep 搜索工具**（主流 AI 编码工具与编辑器均内置），注意 ripgrep 不支持 lookahead/lookbehind，需将复杂正则拆分为独立查询。并行发起所有扫描以提升效率。
 
 **Scan A: 硬编码色值与废弃令牌**
 
@@ -252,7 +251,7 @@ ConnectDialog `.modeIcon` 28px、Terminal `.emptyIcon` 32px — 需注释 `/* �
 
 1. **`src/styles/tokens.css`** — 所有 CSS 自定义属性（~60 per theme）
 2. **`src/styles/global.css`** — 全局类定义
-3. **`.claude/skills/tauterm-theme/SKILL.md`** — 编写规范（核心规则 + 全局类目录）
+3. **`.agents/skills/tauterm-theme/SKILL.md`** — 编写规范（核心规则 + 全局类目录）
 
 ### 快速 token 查询
 

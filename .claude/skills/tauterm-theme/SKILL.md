@@ -1,7 +1,6 @@
 ---
 name: tauterm-theme
-description: >
-  Enforce TauTerm's Liquid Glass v3 theme system when writing UI code. Use this skill whenever the user asks to create, modify, or style any React component, CSS Module, or visual element in the TauTerm project. Covers all UI work — dialogs, panels, buttons, inputs, sidebars, toolbars, status bars, toggles, indicator dots, and any visual element. Also use when the user asks about theme tokens, CSS variables, dark/light mode, or wants to ensure a component looks correct across themes. This skill ensures zero hardcoded colors and full theme compatibility across google-glow, obsidian, and frosted themes.
+description: "Enforce TauTerm's Liquid Glass v3 theme system when writing UI code. Use this skill whenever the user asks to create, modify, or style any React component, CSS Module, or visual element in the TauTerm project. Covers all UI work — dialogs, panels, buttons, inputs, sidebars, toolbars, status bars, toggles, indicator dots, and any visual element. Also use when the user asks about theme tokens, CSS variables, dark/light mode, or wants to ensure a component looks correct across themes. This skill ensures zero hardcoded colors and full theme compatibility across google-glow, obsidian, and frosted themes."
 license: MIT
 metadata:
   author: tauterm

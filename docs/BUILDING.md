@@ -250,7 +250,7 @@ npm run tauri build
 
 ## 使用虚拟串口桥接
 
-> **驱动版本**：使用 com0com v3.0.0.0（GPL 开源内核驱动），支持 Windows 10/11 x64/x86。详细的 com0com 使用与故障排查请参考 [tauterm-com0com skill](../.claude/skills/tauterm-com0com/SKILL.md)。
+> **驱动版本**：使用 com0com v3.0.0.0（GPL 开源内核驱动），支持 Windows 10/11 x64/x86。详细的 com0com 使用与故障排查请参考 [tauterm-com0com skill](../.agents/skills/tauterm-com0com/SKILL.md)。
 
 虚拟串口功能**默认开启**，连接串口时自动创建 COM 端口对。基本使用流程：
 

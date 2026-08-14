@@ -1,7 +1,6 @@
 ---
 name: tauterm-docs
-description: >
-  Maintain TauTerm's documentation system — README.md (English, user-facing), README.zh-CN.md (Chinese mirror), docs/ARCHITECTURE.md, docs/BUILDING.md, CHANGELOG.md. Use this skill whenever making ANY code change to the TauTerm project (new features, plugin/protocol changes, commands, UI, config, build or driver changes) — the change is NOT complete until the docs are synced. Also use when the user asks to update, fix, or check documentation consistency, or mentions the roadmap, protocol matrix, or CHANGELOG, even if they don't explicitly say "docs".
+description: "Maintain TauTerm's documentation system — README.md (English, user-facing), README.zh-CN.md (Chinese mirror), docs/ARCHITECTURE.md, docs/BUILDING.md, CHANGELOG.md. Use this skill whenever making ANY code change to the TauTerm project (new features, plugin/protocol changes, commands, UI, config, build or driver changes) — the change is NOT complete until the docs are synced. Also use when the user asks to update, fix, or check documentation consistency, or mentions the roadmap, protocol matrix, or CHANGELOG, even if they don't explicitly say \"docs\"."
 license: MIT
 metadata:
   author: tauterm

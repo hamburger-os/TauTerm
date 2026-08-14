@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create *)",
+      "Bash(cargo --version)",
+      "Bash(npm --version)",
+      "Bash(npm install *)"
+    ]
+  }
+}
