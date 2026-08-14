@@ -4,7 +4,7 @@ TauTerm is under active development. Contributions are welcome!
 
 ## Development Environment Setup
 
-See the [Build & Run section in README.md](README.md#构建与运行) for platform-specific setup instructions.
+See [docs/BUILDING.md](docs/BUILDING.md) for platform-specific setup instructions.
 
 Quick start:
 
@@ -43,7 +43,7 @@ The project follows a microkernel plugin architecture:
 ## How to Add a New Protocol Plugin
 
 1. Create a plugin directory under `src-tauri/src/plugins/`
-2. Implement the `ProtocolAdapter` trait (see [Backend Core Traits in README.md](README.md#后端核心-trait))
+2. Implement the `ProtocolAdapter` trait (see [Backend Core Traits in docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#后端核心-trait))
 3. Write a `manifest.json` declaring metadata and capabilities
 4. Register frontend components via `registerPlugin()` in `src/plugins/`
 5. Register the plugin in Plugin Host (`src-tauri/src/lib.rs` → `plugin_host.register_plugin()`)
@@ -78,4 +78,4 @@ All UI components follow the **Liquid Glass v3** design system. When creating or
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing, you agree that your contributions will be licensed under the MIT License or the Apache License, Version 2.0, at the option of the user.

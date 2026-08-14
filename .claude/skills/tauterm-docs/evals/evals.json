@@ -1,0 +1,23 @@
+{
+  "skill_name": "tauterm-docs",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "给 SSH 插件加了一个 keepalive 配置项（默认 30 秒，超时自动重连），代码已经改完了（src-tauri/src/plugins/ssh/）。把这次改动需要的文档更新补上。",
+      "expected_output": "README.md 与 README.zh-CN.md 的 SSH 相关功能条目同步新增 keepalive 说明；CHANGELOG.md 新增英文条目；node scripts/check-docs.js 通过。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "会话树分组功能已经做完了，把 roadmap 里 v0.6 的那项更新掉，其他相关文档也一并同步。",
+      "expected_output": "README.md 与 README.zh-CN.md 的 Roadmap 章节同步标记完成/移除该项；CHANGELOG.md 新增英文条目；node scripts/check-docs.js 通过。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "把主窗口默认尺寸从 1200x800 改成 1400x900（改 src-tauri/tauri.conf.json）。",
+      "expected_output": "tauri.conf.json 的窗口尺寸改好；用户文档（README 两版 / docs / CHANGELOG）无无关改动（纯内部配置调整不值得记录）。",
+      "files": []
+    }
+  ]
+}
