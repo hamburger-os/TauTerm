@@ -1,0 +1,86 @@
+name: Bug report
+description: Report a reproducible problem in TauTerm
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve TauTerm. Please remove secrets, credentials, private keys and sensitive host information from logs or screenshots before posting.
+  - type: input
+    id: version
+    attributes:
+      label: TauTerm version
+      description: Release version or commit SHA.
+      placeholder: v0.4.0 or 8bed67c
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: workflow
+    attributes:
+      label: Affected workflow
+      options:
+        - SSH
+        - SFTP
+        - Serial
+        - TCP/UDP Network Debug
+        - TFTP
+        - Telnet
+        - iPerf
+        - Lua / Auto Reply
+        - UI / Settings
+        - Install / Update
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Give the smallest reliable sequence that triggers the problem.
+      placeholder: |
+        1. Open ...
+        2. Connect to ...
+        3. Click ...
+        4. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Optional. Redact credentials, tokens, private keys, hostnames/IPs and other sensitive information.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed sensitive information from logs and screenshots.
+          required: true

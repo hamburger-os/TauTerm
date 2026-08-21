@@ -1,152 +1,160 @@
 # TauTerm
 
-> **A fast, modern, cross-platform terminal emulator — built for network engineers and embedded developers.**
+> **One terminal for the server room and the lab bench.**  
+> Open-source SSH/SFTP, serial and network-debugging workspace built with Rust + Tauri.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Release](https://img.shields.io/badge/release-v0.4.0-brightgreen.svg)](https://github.com/hamburger-os/TauTerm/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#)
-[![Framework](https://img.shields.io/badge/Tauri-v2-67D6F8.svg)](https://tauri.app)
+[![Release](https://img.shields.io/github/v/release/hamburger-os/TauTerm?include_prereleases)](https://github.com/hamburger-os/TauTerm/releases)
+[![Windows](https://img.shields.io/badge/Windows-download-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Tauri v2](https://img.shields.io/badge/Tauri-v2-67D6F8.svg)](https://tauri.app)
+[![Rust](https://img.shields.io/badge/Rust-powered-000000.svg)](https://www.rust-lang.org/)
 
-Built on **Tauri v2** (Rust + React + TypeScript), TauTerm combines a modern native-feeling UI with a microkernel plugin architecture: the kernel ships no protocol logic — every session type (Serial, SSH, Telnet, TFTP, FTP, iPerf…) is an independent plugin.
+**[Download for Windows](https://github.com/hamburger-os/TauTerm/releases)** · **[Build on macOS/Linux](docs/BUILDING.md)** · **[中文 README](README.zh-CN.md)**
 
-**中文用户请见 [README.zh-CN.md](README.zh-CN.md)。**
+TauTerm is for engineers who are tired of switching between an SSH client, an SFTP client, a serial terminal and separate TCP/UDP debugging tools. It brings those workflows into one lightweight desktop app with a microkernel plugin architecture.
 
-<!-- TODO(screenshots): hero screenshot of the main window -->
+> **Release status:** Windows binaries are available now. macOS/Linux can be built from source while prebuilt packages are being prepared. Feature descriptions below track the current `master` branch; the latest packaged release may lag behind `master`.
+
+<!-- Showcase wanted: replace this comment with a real TauTerm hero screenshot/GIF before the next public launch. -->
 
 ---
 
 ## Why TauTerm?
 
-If you spend your day in terminals — jumping between production servers over SSH, flashing firmware over a serial port, or both — TauTerm is built for you:
-
-- **Free and open source** — dual-licensed MIT / Apache-2.0, actively maintained
-- **Lightweight native feel** — Tauri v2 (Rust + WebView2), an 8.0 MB installer
-- **Two workflows, one app** — production-grade SSH/SFTP/TFTP/iPerf for ops; serial/YModem/Modbus/Lua for embedded
-- **Extensible by design** — microkernel plugin architecture; every protocol is an independent plugin
-- **Security-first defaults** — OS-native keyring, host-key fingerprint confirmation, log redaction
-- **Modern design** — Liquid Glass v3 design system, three themes, fluid animations
-
----
-
-## Features
-
-### 🖥️ For Network Engineers
-
-- **SSH + SFTP in one connection** — terminal and file transfer multiplexed over a single session (SideChannel architecture, no second login)
-- **SFTP file manager** — remote directory browsing, upload/download, batch delete, rename, properties, breadcrumb navigation
-- **TFTP server & client** — RRQ/WRQ serving, GET/PUT client, RFC 7440 windowing, CRC32 verification, tunable timeouts, exponential-backoff retry
-- **Telnet** — RFC 854 option negotiation (ECHO/SGA/BINARY/NAWS), local-echo adaptation, live window-size sync, keepalive
-- **iPerf speed testing** — iperf2 (own wire-compatible implementation) + iperf3 (vendored riperf3); TCP/UDP, `-t/-b/-P/-i/-w`, bidirectional modes, live rate curves and history
-- **Remote journald viewer** — streaming follow and history query over SSH, level/keyword/unit filters, cursor pagination, JSON export with progress and cancel
-- **Network debug session (TCP/UDP)** — TCP client / TCP server (multi-client cap) / UDP client & server (unicast, broadcast, multicast) in one session; TCP peers are isolated channels with their own I/O loop, stats, encoding/auto-reply/Lua scripts, logging and data stream; UDP is a single connectionless session with a per-datagram HEX+ASCII grid; TCP per-peer Dual/Text/Hex view, a unified send-target bar across all four send modes (per-peer / all-clients broadcast / UDP manual address with recent-source quick reply), TEXT/HEX manual send, `max_clients` cap
-- *Planned (v0.6–v0.7): SSH tunnel & port-forwarding UI, jump hosts, session tree with groups, local shell, FTP, session recording*
-
-### 🔌 For Embedded Developers
-
-- **Serial (RS-232/485)** with a **virtual COM bridge** — auto-created port pairs (com0com) let external tools tap the physical link live; orphan-port auto-cleanup
-- **XModem / YModem / ZModem** transfers, protocol chosen per session, inline handoff from the live serial port
-- **Session charset transcoding** — UTF-8, GBK, GB18030, Big5, Shift-JIS, EUC-JP, EUC-KR, ISO-8859-1; receive stream decode, send-direction auto-encode, Dual-mode decode, always-readable UTF-8 logs
-- **Dual text/HEX display** — draggable split with ASCII + HEX side by side, millisecond timestamps, `\r\n`/`\n`/`\r` auto-framing, TX/RX color coding
-- **Four-mode send bar** — basic send (text/HEX, line endings, loop, history), command panel (predefined sequences, drag-sort, loop), auto-reply (visual rules, 5 match modes, 10 dynamic macros, timers), script editor
-- **Embedded Lua 5.4 scripting** — per-session isolated VMs, sandboxed; `send()` raw byte passthrough, `send_text()` session-encoding-aware (Chinese text over GBK devices stays intact), and `send_to()`/`send_to_text()` for explicit UDP targets (broadcast/multicast)
-- **Embedded toolbox** — CRC8/16/32 with presets, Base64/HEX/float/endianness conversion, bit ops, C `sizeof` calculator, Modbus RTU/ASCII and AT-command parsers
-- *Planned (v1.1): waveform plotting engine with FFT, FireWater/JustFloat protocol compatible — works with existing firmware data formats out of the box*
-
-### ⚡ For Everyone
-
-- **Liquid Glass v3 design system** — three themes (Google Glow / Obsidian / Frosted), Framer Motion animations
-- **Unified tabbed sessions** — serial, SSH, FTP, iPerf share one tab bar; offline session profiles, right-click reconnect
-- **Credential store** — OS-native keyring (Windows Credential Manager / macOS Keychain / Secret Service) with AES-256-GCM file fallback
-- **Security-first defaults** — SSH host-key fingerprint confirmation on first connect, key-change warnings, log redaction of passwords/keys/tokens, agent forwarding off by default
-- **Auto-update** — Tauri updater, configurable check frequency, one-click install & restart
-- **Command palette, searchable terminal, fully rebindable shortcuts** — `Ctrl+Shift+P` palette, `Ctrl+F` buffer search, click-to-record key rebinding
-- **Session data logging** — text/hex/dual formats, rotation and expiry cleanup, one-click start/stop, live status-bar indicator
-- **i18n** — zh-CN / en-US, plugin namespaces, runtime switching
-
----
-
-## Performance
-
-A lightweight footprint is a first-class goal — every release is validated against a performance budget (cold start, idle memory, scroll throughput).
-
-| Metric | v0.4.0 (measured) |
+| If you need… | TauTerm gives you… |
 |---|---|
-| Windows installer (`x64-setup.exe`, incl. com0com driver) | **8.0 MB** |
-| App binary | **25.7 MB** |
-| Cold start & idle memory | Benchmarks published with the v0.8 performance-acceptance milestone |
+| Server access | SSH terminal + SFTP in one connection |
+| Embedded bring-up | Serial RS-232/485, HEX/Text/Dual views, X/Y/ZModem |
+| Network debugging | TCP/UDP client & server, TFTP, Telnet, iPerf |
+| Automation | Per-session Lua 5.4 scripting and auto-reply rules |
+| One consistent workspace | Unified sessions, logging, command palette and shortcuts |
+| Extensibility | Microkernel architecture with protocol plugins |
 
-*Measured on Windows 11 x64. The installer includes the com0com virtual serial driver.*
+**Small footprint.** The v0.4.0 Windows installer is about **8 MB** (including the bundled com0com virtual serial driver).
+
+**Built for two worlds.** TauTerm deliberately serves both network engineers and embedded developers instead of treating serial communication as an afterthought.
+
+**Open by default.** TauTerm is dual-licensed under MIT / Apache-2.0 and is designed to grow through independent protocol plugins.
 
 ---
 
-## Quick Install
+## Highlights
+
+### 🖥️ Network engineering
+
+- **SSH + SFTP in one session** — terminal and file transfer share a single authenticated connection.
+- **SFTP file manager** — browse, upload/download, rename, batch delete and inspect remote files.
+- **Network Debug (TCP/UDP)** — TCP client/server and UDP client/server with multi-peer handling, TEXT/HEX views, target selection and per-peer statistics.
+- **TFTP** — server/client workflows with RFC 7440 windowing, CRC32 verification and retry controls.
+- **Telnet** — RFC 854 negotiation, live window-size sync and keepalive.
+- **iPerf2 / iPerf3** — TCP/UDP testing, bidirectional modes, live rate curves and history.
+- **Remote journald viewer** — stream or query logs over SSH with filters and JSON export.
+
+### 🔌 Embedded development
+
+- **Serial RS-232/485** with an optional **virtual COM bridge** on Windows via com0com.
+- **XModem / YModem / ZModem** transfers directly from an active serial session.
+- **Text / HEX / Dual display** with timestamps, framing and TX/RX differentiation.
+- **Character-set transcoding** — UTF-8, GBK, GB18030, Big5, Shift-JIS, EUC-JP, EUC-KR and ISO-8859-1.
+- **Four-mode send bar** — manual send, command panel, auto-reply rules and scripts.
+- **Embedded Lua 5.4** — isolated per-session VMs with raw-byte and encoding-aware send APIs.
+- **Developer toolbox** — CRC, Base64/HEX, float/endianness conversion, bit operations, C `sizeof`, Modbus and AT-command parsers.
+
+### ⚡ Everyday workflow
+
+- Unified tabbed sessions and offline connection profiles.
+- OS-native credential storage with encrypted fallback.
+- SSH host-key verification and log redaction.
+- Searchable terminal, command palette and fully rebindable shortcuts.
+- Session logging with rotation/expiry cleanup.
+- zh-CN / en-US runtime language switching.
+- Three Liquid Glass themes with a native-feeling Tauri v2 shell.
+
+---
+
+## Install
 
 ### Windows
 
-Download the latest installer from [GitHub Releases](https://github.com/hamburger-os/TauTerm/releases) (`TauTerm_x.x.x_x64-setup.exe`).
+Download the newest installer from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**.
 
-The installer bundles and auto-installs the open-source [com0com](https://com0com.sourceforge.net/) virtual serial driver (GPL v3.0.0.0, source available) so the virtual COM bridge works out of the box. Uninstalling TauTerm removes the driver as well.
+The Windows installer bundles the open-source [com0com](https://com0com.sourceforge.net/) virtual serial driver so TauTerm's virtual COM bridge works out of the box. The driver is a separate GPL component.
 
 ### macOS / Linux
 
-Prebuilt packages are on the way. For now, build from source — see [docs/BUILDING.md](docs/BUILDING.md).
+Prebuilt packages are in progress. For now, build from source using **[docs/BUILDING.md](docs/BUILDING.md)**.
 
 ---
 
-## Protocol Support
+## What is released vs. what is on `master`?
 
-| Protocol | Status | Content | Transfer | I/O |
-|---|---|---|---|---|
-| **Serial** (RS-232/485) | ✅ | terminal | YModem / XModem / ZModem (inline) | Sync |
-| **SSH** | ✅ | terminal | SFTP (side-channel) | Async |
-| **TFTP** | ✅ | custom | Standalone UDP engine | Headless |
-| **Telnet** | ✅ | terminal | — | Sync |
-| **iPerf2 / iPerf3** | ✅ | custom | Standalone engine | Async |
-| **Network Debug** (TCP/UDP) | ✅ | custom | — | Sync |
-| **Shell Local** (PTY) | 📋 v0.6 | terminal | — | Sync |
-| **FTP** | 📋 v0.7 | file_browser | FTP (separate connection) | Async |
-| **TRDP** | 📋 v1.0 | terminal | — | Async |
-| **NFS** | 🔮 | file_browser | NFS (separate connection) | Async |
+TauTerm moves quickly. The packaged release is the safest way to try the project; `master` contains newer work that may not have shipped yet.
+
+- **v0.4.0 — First Public Tech Preview:** serial, SSH/SFTP, transfer subsystem, Lua/auto-reply workflow, terminal/search, logging, settings, i18n and the core microkernel/plugin architecture.
+- **Current `master`:** continues expanding networking, security and workflow features, including the TCP/UDP Network Debug session.
+- **Roadmap:** local shell, SSH tunnels/jump hosts, session grouping, FTP, recording/split panes, plugin SDK work and more.
+
+See **[CHANGELOG.md](CHANGELOG.md)** for release-by-release details.
+
+---
+
+## Protocol matrix
+
+| Protocol | Current `master` | Content | Transfer / role |
+|---|---:|---|---|
+| **Serial** (RS-232/485) | ✅ | terminal | X/Y/ZModem inline |
+| **SSH** | ✅ | terminal | SFTP side-channel |
+| **TFTP** | ✅ | custom | client + server |
+| **Telnet** | ✅ | terminal | RFC 854 |
+| **iPerf2 / iPerf3** | ✅ | custom | network benchmark |
+| **Network Debug** (TCP/UDP) | ✅ | custom | client + server |
+| **Local Shell** (PTY) | 📋 planned | terminal | v0.6 target |
+| **FTP** | 📋 planned | file browser | v0.7 target |
+| **TRDP** | 📋 planned | terminal | v1.0 target |
 
 ---
 
 ## Roadmap
 
+```text
+v0.5  Credential/security hardening
+v0.6  Local shell, session groups, SSH tunnels + jump hosts
+v0.7  Network-debug polish, FTP, recording, split panes
+v1.0  GA: Windows validation, macOS/Linux core availability,
+      performance budget, plugin SDK docs, TRDP
+v1.1  "Terminal + oscilloscope": WebGL plotting, FFT,
+      FireWater/JustFloat compatibility
 ```
-v0.5  Credentials & security wrap-up: keyring persistence,
-      log redaction in the production pipeline
-v0.6  Ops essentials: Shell Local (PTY), session tree & grouping,
-      SSH tunnel UI + jump hosts, Agent Forwarding,
-      asInvoker privilege downgrade + UAC elevation helper
-v0.7  Network debug session polish, FTP,
-      session recording, split panes
-v1.0  GA: full Windows validation, macOS/Linux core availability,
-      performance budget met, plugin SDK docs, TRDP
-v1.1  Waveform engine — "terminal + oscilloscope": WebGL plotting,
-      FFT, FireWater/JustFloat compatible
-v1.x  Horizon (priority order): multi-window, dynamic plugin loading,
-      plugin marketplace, NFS, cloud session sync
-```
+
+Roadmap versions are targets, not promises; priorities may change based on real user feedback.
 
 ---
 
-## Development
+## Contributing & feedback
 
-- **[docs/BUILDING.md](docs/BUILDING.md)** — environment setup, dev mode, production builds for all three platforms
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — microkernel design, plugin architecture, I/O strategies, security model
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — contribution guide
+TauTerm is still early, which makes feedback especially valuable.
+
+- Found a reproducible bug? **[Open a bug report](https://github.com/hamburger-os/TauTerm/issues/new/choose)**.
+- Missing the one feature that keeps you on another terminal? **[Request it](https://github.com/hamburger-os/TauTerm/issues/new/choose)**.
+- Want to contribute code? Read **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[docs/BUILDING.md](docs/BUILDING.md)**.
+- Interested in the internals? See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+If TauTerm is useful to you, starring the repository helps other network and embedded engineers discover it.
+
+---
+
+## For maintainers: launching TauTerm
+
+A reusable release/promotion checklist lives in **[docs/LAUNCH.md](docs/LAUNCH.md)**. It covers screenshots, release notes, GitHub metadata, Show HN, Reddit, V2EX and post-launch feedback loops.
+
+---
 
 ## License
 
-TauTerm is licensed under either of:
+TauTerm is available under either the **MIT License** or **Apache License 2.0**, at your option.
 
-- [MIT License](LICENSE)
-- [Apache License, Version 2.0](LICENSE-APACHE)
-
-at your option.
-
-The Windows installer bundles the [com0com](https://com0com.sourceforge.net/) kernel driver as a separate third-party GPL component — its license is unaffected by TauTerm's dual licensing.
+The Windows installer bundles [com0com](https://com0com.sourceforge.net/) as a separate third-party GPL component; its license is unaffected by TauTerm's dual licensing.
 
 ---
 
-**TauTerm** — one terminal for the server room and the lab bench.
+**TauTerm — one terminal for the server room and the lab bench.**
