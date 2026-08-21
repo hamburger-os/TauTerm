@@ -38,6 +38,7 @@
 - **Telnet** —— RFC 854 选项协商（ECHO/SGA/BINARY/NAWS）、本地回显自适应、窗口尺寸实时同步、keepalive 保活
 - **iPerf 网络测速** —— iperf2（自研 wire-compatible 实现）+ iperf3（vendored riperf3）；TCP/UDP、`-t/-b/-P/-i/-w`、双向模式、实时速率曲线与历史记录
 - **远端 journald 查看器** —— SSH 流式追踪与历史查询、级别/关键字/单元过滤、游标分页、JSON 导出（进度显示/可取消）
+- **网络调试会话（TCP/UDP）** —— TCP 客户端 / TCP 服务端（多客户端上限）/ UDP 客户端与服务端（单播、广播、组播）合一；TCP 对端是隔离通道，拥有独立 I/O 循环、统计、编码/自动应答/Lua 脚本、日志与数据流；UDP 为单会话无连接模式，逐数据报 HEX+ASCII 表格；TCP 对端级 Dual/Text/Hex 视图、横跨四种发送模式的统一发送目标栏（选中对端 / 全部客户端群发 / UDP 手动地址含最近来源快捷回发）、TEXT/HEX 手动发送、`max_clients` 上限
 - *规划中（v0.6–v0.7）：SSH 隧道与端口转发 UI、跳板机、会话树分组、本地 Shell、FTP、会话录制*
 
 ### 🔌 面向嵌入式开发者
@@ -47,7 +48,7 @@
 - **会话级字符编码转码** —— UTF-8、GBK、GB18030、Big5、Shift-JIS、EUC-JP、EUC-KR、ISO-8859-1；接收流式解码、发送方向自动转码、Dual 模式按编码解码、日志恒为可读 UTF-8
 - **Dual 双模显示** —— 可拖拽分栏并排 ASCII 文本 + HEX，毫秒级时间戳、`\r\n`/`\n`/`\r` 自动分帧、TX/RX 颜色区分
 - **四模式发送栏** —— 基础发送（文本/HEX、换行符、循环、历史）、指令面板（预定义序列、拖拽排序、循环执行）、自动应答（可视化规则、5 种匹配模式、10 种动态宏、定时触发）、脚本编辑器
-- **嵌入式 Lua 5.4 脚本** —— 每会话独立 VM 沙箱隔离；`send()` 原始字节透传、`send_text()` 按会话编码转码（GBK 设备发送中文不乱码）
+- **嵌入式 Lua 5.4 脚本** —— 每会话独立 VM 沙箱隔离；`send()` 原始字节透传、`send_text()` 按会话编码转码（GBK 设备发送中文不乱码）、`send_to()`/`send_to_text()` 显式 UDP 目标发送（广播/组播）
 - **嵌入式开发工具箱** —— CRC8/16/32 多预设、Base64/HEX/浮点/大小端转换、位操作、C `sizeof` 计算器、Modbus RTU/ASCII 与 AT 指令解析器
 - *规划中（v1.1）：波形绘图引擎 + FFT，兼容 FireWater/JustFloat 协议——现有固件数据格式开箱即用*
 
@@ -101,12 +102,11 @@
 | **TFTP** | ✅ 已实现 | custom | 独立 UDP 传输引擎 | Headless |
 | **Telnet** | ✅ 已实现 | terminal | — | Sync |
 | **iPerf2 / iPerf3** | ✅ 已实现 | custom | 独立测速引擎 | Async |
-| **TCP Raw** | 📋 v0.6 | terminal | — | Async |
+| **网络调试（TCP/UDP）** | ✅ 已实现 | custom | — | Sync |
 | **Shell Local**（PTY） | 📋 v0.6 | terminal | — | Sync |
 | **FTP** | 📋 v0.7 | file_browser | FTP（SeparateConnection） | Async |
-| **TRDP** | 📋 v0.7 | terminal | — | Async |
+| **TRDP** | 📋 v1.0 | terminal | — | Async |
 | **NFS** | 🔮 远期 | file_browser | NFS（SeparateConnection） | Async |
-| **UDP Monitor** | 🔮 远期 | stats_dashboard | — | Async |
 
 ---
 
@@ -115,11 +115,11 @@
 ```
 v0.5  凭据&安全收尾：keyring 持久化、日志脱敏接入生产管线
 v0.6  运维可用性：Shell Local（PTY）、会话树分组管理、
-      SSH 隧道 UI + 跳板机、Agent Forwarding、TCP Raw、
+      SSH 隧道 UI + 跳板机、Agent Forwarding、
       asInvoker 权限降级 + UAC 提权助手
-v0.7  运维增强+嵌入式收尾：FTP、会话录制、终端分屏、TRDP
+v0.7  网络调试会话完善、FTP、会话录制、终端分屏
 v1.0  正式版：Windows 完整验证、macOS/Linux 核心可用、
-      性能指标达标、插件 SDK 文档
+      性能指标达标、插件 SDK 文档、TRDP
 v1.1  波形引擎 ——「终端+示波器」：WebGL 绘图、FFT、
       兼容 FireWater/JustFloat
 v1.x  远期（按优先级）：多窗口、动态插件加载、

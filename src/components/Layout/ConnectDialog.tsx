@@ -94,12 +94,28 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [iperfVersion, setIperfVersion] = useState<"iperf2" | "iperf3">("iperf2");
   const [iperfListenIp, setIperfListenIp] = useState("0.0.0.0");
   const [iperfListenPort, setIperfListenPort] = useState(5001);
+  // 网络调试配置（TCP/UDP 调试助手）
+  const [netTransport, setNetTransport] = useState<"tcp" | "udp">("tcp");
+  const [netRole, setNetRole] = useState<"client" | "server">("client");
+  const [netRemoteHost, setNetRemoteHost] = useState("");
+  const [netRemotePort, setNetRemotePort] = useState(8080);
+  const [netLocalHost, setNetLocalHost] = useState("0.0.0.0");
+  const [netLocalPort, setNetLocalPort] = useState(8080);
+  const [netMaxClients, setNetMaxClients] = useState(16);
+  const [netConnectTimeoutMs, setNetConnectTimeoutMs] = useState(5000);
+  const [netNodelay, setNetNodelay] = useState(true);
+  const [netBroadcast, setNetBroadcast] = useState(false);
+  const [netMulticastGroup, setNetMulticastGroup] = useState("");
+  const [netTtl, setNetTtl] = useState(64);
+  const [netMulticastInterface, setNetMulticastInterface] = useState("0.0.0.0");
+  const [netSelfReceive, setNetSelfReceive] = useState(true);
 
   const isSerial = selectedMode === "serial";
   const isSsh = selectedMode === "ssh";
   const isTftp = selectedMode === "tftp";
   const isTelnet = selectedMode === "telnet";
   const isIperf = selectedMode === "iperf";
+  const isNetwork = selectedMode === "network";
 
   // 保持最新的 tabs 引用，供 useEffect 在 editSessionId 变化时读取最新数据，
   // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
@@ -111,8 +127,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     id: p.manifest.id,
     icon: p.manifest.icon,
     description: p.manifest.description || p.manifest.name,
-    available: true, // 所有已注册插件均可选
-    content_type: p.manifest.content_type,
   }));
 
   // 每次打开对话框时重置
@@ -175,6 +189,23 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             if (typeof p.listen_ip === "string") setIperfListenIp(p.listen_ip);
             if (typeof p.listen_port === "number") setIperfListenPort(p.listen_port);
           }
+          // 网络调试字段回填
+          if (targetTab.connection_type === "network" || targetTab.pluginId === "network") {
+            if (p.transport === "tcp" || p.transport === "udp") setNetTransport(p.transport);
+            if (p.role === "client" || p.role === "server") setNetRole(p.role);
+            if (typeof p.remote_host === "string") setNetRemoteHost(p.remote_host);
+            if (typeof p.remote_port === "number") setNetRemotePort(p.remote_port);
+            if (typeof p.local_host === "string") setNetLocalHost(p.local_host);
+            if (typeof p.local_port === "number") setNetLocalPort(p.local_port);
+            if (typeof p.max_clients === "number") setNetMaxClients(p.max_clients);
+            if (typeof p.connect_timeout_ms === "number") setNetConnectTimeoutMs(p.connect_timeout_ms);
+            if (typeof p.nodelay === "boolean") setNetNodelay(p.nodelay);
+            if (typeof p.broadcast === "boolean") setNetBroadcast(p.broadcast);
+            if (typeof p.multicast_group === "string") setNetMulticastGroup(p.multicast_group);
+            if (typeof p.ttl === "number") setNetTtl(p.ttl);
+            if (typeof p.multicast_interface === "string") setNetMulticastInterface(p.multicast_interface);
+            if (typeof p.self_receive === "boolean") setNetSelfReceive(p.self_receive);
+          }
         }
         if (targetTab.name) setSessionName(targetTab.name);
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
@@ -230,6 +261,21 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setIperfVersion("iperf2");
     setIperfListenIp("0.0.0.0");
     setIperfListenPort(5001);
+    // 重置网络调试字段
+    setNetTransport("tcp");
+    setNetRole("client");
+    setNetRemoteHost("");
+    setNetRemotePort(8080);
+    setNetLocalHost("0.0.0.0");
+    setNetLocalPort(8080);
+    setNetMaxClients(16);
+    setNetConnectTimeoutMs(5000);
+    setNetNodelay(true);
+    setNetBroadcast(false);
+    setNetMulticastGroup("");
+    setNetTtl(64);
+    setNetMulticastInterface("0.0.0.0");
+    setNetSelfReceive(true);
     setSessionName("");
   }, [isOpen, editSessionId, refreshEndpoints]);
 
@@ -257,11 +303,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     if (!sshHost && isSsh) return;
     if (!tftpFileRoot && isTftp) return;
     if (!telnetHost && isTelnet) return;
+    // 网络调试：Client（TCP/UDP）必须有远端主机；Server 由本地绑定端口即可
+    if (isNetwork && netRole === "client" && !netRemoteHost) return;
     setError(null);
     setConnecting(true);
 
+    // 网络调试启用全局发送栏（发送目标由发送栏内 TargetBar 选择）
     const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : (isTftp || isIperf ? false : (isTelnet ? telnetSendBarEnabled : sendBarEnabled));
-    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp || isTelnet || isIperf ? false : transferEnabled);
+    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp || isTelnet || isIperf || isNetwork ? false : transferEnabled);
 
     const params: Record<string, unknown> = isSerial ? {
       baud_rate: parseInt(baudRate),
@@ -308,15 +357,44 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       version: iperfVersion,
       listen_ip: iperfListenIp,
       listen_port: iperfListenPort,
+    } : isNetwork ? {
+      transport: netTransport,
+      role: netRole,
+      remote_host: netRemoteHost,
+      remote_port: netRemotePort,
+      local_host: netLocalHost,
+      // 只有 server 角色需要绑定固定的本地端口；client（UDP）应绑定临时端口(0)，
+      // 否则 UDP client 会继承默认的 8080，与同机 UDP server 的 0.0.0.0:8080 冲突（os error 10048）
+      local_port: netRole === "server" ? netLocalPort : 0,
+      max_clients: netMaxClients,
+      connect_timeout_ms: netConnectTimeoutMs,
+      nodelay: netNodelay,
+      broadcast: netBroadcast,
+      multicast_group: netMulticastGroup || undefined,
+      ttl: netTtl,
+      multicast_interface: netMulticastInterface,
+      self_receive: netSelfReceive,
+      // data_mode 仅 TCP 流视图使用；UDP 恒为报文网格双栏，不写 data_mode
+      ...(netTransport === "tcp" ? { data_mode: dataMode } : {}),
+      encoding,
     } : {};
 
-    const pluginId = selectedMode; // "serial" | "ssh" | "tftp" | "telnet" | "iperf"
+    const pluginId = selectedMode; // "serial" | "ssh" | "tftp" | "telnet" | "iperf" | "network"
     // iperf 无单一连接目标（客户端目标每测可变、监听地址是配置项）——
     // endpoint 用字面量，默认名 `iperf @ iperf` 不携带易变的端口/版本
-    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isIperf ? "iperf" : (isTelnet ? telnetHost : selectedMode))));
-    // Telnet/TFTP/iperf 无文件传输：不保存 transfer_protocol，避免无意义的 "ymodem" 默认值
+    // 网络调试：所有角色的 endpoint 统一带传输层前缀（tcp:// / udp://），
+    // 使侧栏/状态栏/详情页自描述（网络会话状态栏无类型徽标，前缀即传输层标识）
+    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isIperf ? "iperf" : (isTelnet ? telnetHost : (isNetwork
+      ? `${netTransport}://${netRole === "client"
+          ? `${netRemoteHost}:${netRemotePort}`
+          : `${netLocalHost || "0.0.0.0"}:${netLocalPort}`}`
+      : selectedMode)))));
+    // 网络调试默认会话名：带传输层与角色（"Network Debug @ TCP Client"），
+    // 避免多个网络调试会话在左侧树里无法区分 server/client
+    const networkDefaultName = `${pluginRegistry.get("network")?.manifest.name || "Network Debug"} @ ${netTransport.toUpperCase()} ${netRole === "server" ? "Server" : "Client"}`;
+    // Telnet/TFTP/iperf/网络调试 无文件传输：不保存 transfer_protocol，避免无意义的 "ymodem" 默认值
     // 污染会话配置（传输能力由 effectiveTransferEnabled=false 表达）
-    const effectiveTransferProtocol = isTelnet || isTftp || isIperf ? undefined : transferProtocol;
+    const effectiveTransferProtocol = isTelnet || isTftp || isIperf || isNetwork ? undefined : transferProtocol;
 
     try {
       if (editSessionId) {
@@ -337,7 +415,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         // 新建模式：仅保存配置，不连接（连接由右键菜单触发）
         const sid = await createOfflineSession(
           endpoint, params,
-          sessionName || undefined, pluginId,
+          isNetwork ? (sessionName || networkDefaultName) : sessionName || undefined, pluginId,
           effectiveTransferEnabled, effectiveTransferProtocol,
           effectiveSendBarEnabled,
         );
@@ -350,7 +428,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive]);
 
   // 数据字符编码下拉（终端类协议共用：serial / ssh / telnet）
   const encodingField = (
@@ -1005,8 +1083,224 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 </>
               )}
 
+              {/* ── 网络调试配置（TCP/UDP 调试助手） ── */}
+              {isNetwork && (
+                <>
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("network.transport")}</label>
+                    <select
+                      className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                      value={netTransport}
+                      onChange={e => setNetTransport(e.target.value as "tcp" | "udp")}
+                      disabled={connecting}
+                    >
+                      <option value="tcp">{t("network.transportTcp")}</option>
+                      <option value="udp">{t("network.transportUdp")}</option>
+                    </select>
+                  </div>
+
+                  {/* TCP/UDP 均有 Client/Server 角色（UDP client = 固定远端单对端，UDP server = 绑本地多对端） */}
+                  <div className={styles.field}>
+                    <label className={styles.label}>{t("network.role")}</label>
+                    <select
+                      className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                      value={netRole}
+                      onChange={e => setNetRole(e.target.value as "client" | "server")}
+                      disabled={connecting}
+                    >
+                      <option value="client">{t("network.roleClient")}</option>
+                      <option value="server">{t("network.roleServer")}</option>
+                    </select>
+                  </div>
+
+                  {netRole === "client" && (
+                    <>
+                      <div className={styles.field}>
+                        <label className={styles.label}>{t("network.remoteHost")}</label>
+                        <input
+                          className={`${styles.input} liquid-glass-input`}
+                          type="text"
+                          placeholder={t("network.remoteHostPlaceholder")}
+                          value={netRemoteHost}
+                          onChange={e => setNetRemoteHost(e.target.value)}
+                          disabled={connecting}
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label className={styles.label}>{t("network.remotePort")}</label>
+                        <input
+                          className={`${styles.numberInput} liquid-glass-input`}
+                          type="number"
+                          value={netRemotePort}
+                          min={1}
+                          max={65535}
+                          onChange={e => {
+                            const n = Number(e.target.value);
+                            if (!isNaN(n)) setNetRemotePort(n);
+                          }}
+                          disabled={connecting}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {netRole === "server" && (
+                    <>
+                      <div className={styles.field}>
+                        <label className={styles.label}>{t("network.localHost")}</label>
+                        <input
+                          className={`${styles.input} liquid-glass-input`}
+                          type="text"
+                          value={netLocalHost}
+                          onChange={e => setNetLocalHost(e.target.value)}
+                          disabled={connecting}
+                        />
+                      </div>
+                      <div className={styles.field}>
+                        <label className={styles.label}>{t("network.localPort")}</label>
+                        <input
+                          className={`${styles.numberInput} liquid-glass-input`}
+                          type="number"
+                          value={netLocalPort}
+                          min={1}
+                          max={65535}
+                          onChange={e => {
+                            const n = Number(e.target.value);
+                            if (!isNaN(n)) setNetLocalPort(n);
+                          }}
+                          disabled={connecting}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {netTransport === "tcp" && netRole === "server" && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("network.maxClients")}</label>
+                      <input
+                        className={`${styles.numberInput} liquid-glass-input`}
+                        type="number"
+                        value={netMaxClients}
+                        min={1}
+                        max={1024}
+                        onChange={e => {
+                          const n = Number(e.target.value);
+                          if (!isNaN(n)) setNetMaxClients(n);
+                        }}
+                        disabled={connecting}
+                      />
+                    </div>
+                  )}
+
+                  {netTransport === "tcp" && netRole === "client" && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("network.connectTimeoutMs")}</label>
+                      <input
+                        className={`${styles.numberInput} liquid-glass-input`}
+                        type="number"
+                        value={netConnectTimeoutMs}
+                        min={100}
+                        onChange={e => {
+                          const n = Number(e.target.value);
+                          if (!isNaN(n)) setNetConnectTimeoutMs(n);
+                        }}
+                        disabled={connecting}
+                      />
+                    </div>
+                  )}
+
+                  {netTransport === "udp" && netRole === "server" && (
+                    <>
+                      <div className={styles.field}>
+                        <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                          <input
+                            type="checkbox"
+                            checked={netBroadcast}
+                            onChange={e => setNetBroadcast(e.target.checked)}
+                            disabled={connecting}
+                          />
+                          <div />
+                          <span>{t("network.broadcast")}</span>
+                        </label>
+                      </div>
+                      <div className={styles.field}>
+                        <label className={styles.label}>{t("network.multicastGroup")}</label>
+                        <input
+                          className={`${styles.input} liquid-glass-input`}
+                          type="text"
+                          placeholder={t("network.multicastGroupPlaceholder")}
+                          value={netMulticastGroup}
+                          onChange={e => setNetMulticastGroup(e.target.value)}
+                          disabled={connecting}
+                        />
+                        {/* IP_ADD_MEMBERSHIP 仅支持 IPv4 组播组（kernel IPv4-only），提前提示 */}
+                        {netMulticastGroup && !/^2(2[4-9]|3\d)(\.\d{1,3}){3}$/.test(netMulticastGroup.trim()) && (
+                          <div className={styles.hint}>{t("network.multicastIpv4Only")}</div>
+                        )}
+                      </div>
+                      {netMulticastGroup && (
+                        <>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("network.ttl")}</label>
+                            <input
+                              className={`${styles.numberInput} liquid-glass-input`}
+                              type="number"
+                              value={netTtl}
+                              min={1}
+                              max={255}
+                              onChange={e => {
+                                const n = Number(e.target.value);
+                                if (!isNaN(n)) setNetTtl(n);
+                              }}
+                              disabled={connecting}
+                            />
+                          </div>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("network.multicastInterface")}</label>
+                            <input
+                              className={`${styles.input} liquid-glass-input`}
+                              type="text"
+                              value={netMulticastInterface}
+                              onChange={e => setNetMulticastInterface(e.target.value)}
+                              disabled={connecting}
+                            />
+                          </div>
+                          <div className={styles.field}>
+                            <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                              <input
+                                type="checkbox"
+                                checked={netSelfReceive}
+                                onChange={e => setNetSelfReceive(e.target.checked)}
+                                disabled={connecting}
+                              />
+                              <div />
+                              <span>{t("network.selfReceive")}</span>
+                            </label>
+                          </div>
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {/* 数据模式（连接后不可变，改需重连）：仅 TCP 流视图的 Dual/Text/Hex 渲染，UDP 恒为报文网格双栏 */}
+                  {netTransport !== "udp" && (
+                    <div className={styles.field}>
+                      <label className={styles.label}>{t("serial.dataMode")}</label>
+                      <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
+                        <option value="text">{t("serial.dataModeText")}</option>
+                        <option value="hex">{t("serial.dataModeHex")}</option>
+                        <option value="dual">{t("serial.dataModeDual")}</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* 数据字符编码（连接后不可变，改需重连） */}
+                  {encodingField}
+                </>
+              )}
+
               {/* ── 未实现插件的占位提示 ── */}
-              {!isSerial && !isSsh && !isTftp && !isTelnet && !isIperf && (
+              {!isSerial && !isSsh && !isTftp && !isTelnet && !isIperf && !isNetwork && (
                 <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
                   <Icon name="construction" size="lg" />{" "}
                   {t("connectionType.formNotImplemented", { pluginName: selectedMode })}
@@ -1022,7 +1316,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 <button
                   className={`${styles.connectBtn} liquid-primary-button`}
                   onClick={handleCreate}
-                  disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || connecting}
+                  disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || (isNetwork && netRole === "client" && !netRemoteHost) || connecting}
                 >
                   {connecting
                     ? t("serial.confirming")

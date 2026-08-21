@@ -90,12 +90,6 @@ impl DataBatcher {
         }
     }
 
-    /// 返回因通道满而丢弃的数据包总数（用于监控/诊断）
-    #[allow(dead_code)]
-    pub fn dropped_count(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
-    }
-
     /// 关闭批处理器（flush 残留数据后退出线程）
     pub fn shutdown(&self) {
         let _ = self.tx.send(BatchCmd::Shutdown);

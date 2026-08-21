@@ -1,0 +1,37 @@
+/* TargetBar — 发送目标栏（仅布局，视觉由全局类接管） */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-lg);
+}
+
+.label {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+  white-space: nowrap;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: var(--select-height);
+  padding: var(--select-padding);
+  box-sizing: border-box;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+}
+
+.select {
+  flex: 1;
+  min-width: 0;
+  height: var(--select-height);
+  padding: var(--select-padding);
+  box-sizing: border-box;
+  font-size: var(--text-xs);
+  font-family: var(--font-ui);
+}

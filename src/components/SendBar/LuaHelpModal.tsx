@@ -55,6 +55,18 @@ const helpContent: HelpContent = {
       example: `send_text("AT+CFUN=1\\r\\n")\nsend_text("设备ID: 测试")`,
     },
     {
+      name: "send_to",
+      signature: "send_to(target: string, data: string)",
+      desc: "向显式目标地址发送原始字节（UDP server 会话可用：单播 / 广播 / 组播）。target 形如 \"192.168.1.100:5000\"。",
+      example: `send_to("255.255.255.255:5000", "\\x01\\x02")`,
+    },
+    {
+      name: "send_to_text",
+      signature: "send_to_text(target: string, text: string)",
+      desc: "向显式目标地址按会话编码发送文本（UDP server 会话可用），与 send_to 对应。",
+      example: `send_to_text("192.168.1.100:5000", "hello\\r\\n")`,
+    },
+    {
       name: "sleep",
       signature: "sleep(ms: number)",
       desc: "暂停脚本执行指定毫秒数。采用协作式分片睡眠（50ms 片），停止脚本时可及时中断。",
@@ -223,6 +235,8 @@ const enContent: HelpContent = {
   functions: [
     { name: "send", signature: "send(data: string)", desc: "Send raw bytes through the connected serial port. data can contain any bytes including \\0; no charset transcoding is applied.", example: `send("AT\\r\\n")\nsend("\\x01\\x03\\x00\\x00\\x00\\x0A")` },
     { name: "send_text", signature: "send_text(text: string)", desc: "Send text transcoded to the session charset (e.g. GBK): UTF-8 input is converted like SendBar text mode. Use this for non-UTF-8 devices; use send() for binary frames.", example: `send_text("AT+CFUN=1\\r\\n")\nsend_text("Device ID: 测试")` },
+    { name: "send_to", signature: "send_to(target: string, data: string)", desc: "Send raw bytes to an explicit target address (UDP server sessions: unicast / broadcast / multicast). target like \"192.168.1.100:5000\".", example: `send_to("255.255.255.255:5000", "\\x01\\x02")` },
+    { name: "send_to_text", signature: "send_to_text(target: string, text: string)", desc: "Send text transcoded to the session charset to an explicit target address (UDP server sessions), mirroring send_to.", example: `send_to_text("192.168.1.100:5000", "hello\\r\\n")` },
     { name: "sleep", signature: "sleep(ms: number)", desc: "Pause script execution for ms milliseconds. Uses cooperative 50ms-slice sleep for responsive shutdown.", example: `sleep(1000)  -- wait 1 second` },
     { name: "log", signature: "log(message: string)", desc: "Output a log message to the Script Output panel. Timestamp auto-prepended (HH:MM:SS.mmm).", example: `log("Device response: " .. data)` },
     { name: "on_data", signature: "on_data(pattern: string, callback: function)", desc: "Register a data receive handler. When received data contains pattern (Lua pattern match), callback(data) is invoked. Call multiple times for multiple handlers.", example: `on_data("OK", function(data)\n    log("Got OK: " .. data)\nend)` },

@@ -19,7 +19,6 @@
   align-items: center;
   gap: 10px;
   padding: 8px 14px;
-  border-radius: var(--radius-md);
   flex-shrink: 0;
 }
 
@@ -67,7 +66,6 @@
 /* ── 面板通用（对齐 TFTP .panel） ── */
 
 .panel {
-  border-radius: var(--radius-md);
   padding: 14px;
   display: flex;
   flex-direction: column;

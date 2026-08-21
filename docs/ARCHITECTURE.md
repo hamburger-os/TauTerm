@@ -2,7 +2,7 @@
 
 > 面向插件开发者与贡献者。终端用户的特性介绍见 [README.md](../README.md)。
 
-TauTerm 基于 **Tauri v2**（Rust + React + TypeScript）构建的微内核架构跨平台终端模拟器。内核不包含任何协议实现——所有会话类型（串口、SSH、Telnet、TCP Raw、TRDP、本地 Shell、FTP、iPerf3 等）均作为**独立插件**注册到内核，实现真正的协议无关架构。
+TauTerm 基于 **Tauri v2**（Rust + React + TypeScript）构建的微内核架构跨平台终端模拟器。内核不包含任何协议实现——所有会话类型（串口、SSH、Telnet、网络调试、TRDP、本地 Shell、FTP、iPerf3 等）均作为**独立插件**注册到内核，实现真正的协议无关架构。
 
 ---
 
@@ -22,7 +22,7 @@ graph TB
     Registry --> S2[SSH<br/>Plugin]
     Registry --> S3[TFTP<br/>Plugin]
     Registry --> S4[Telnet<br/>Plugin]
-    Registry --> S5[TCP Raw<br/>Plugin]
+    Registry --> S5[Network Debug<br/>Plugin]
     Registry --> S6[TRDP<br/>Plugin]
     Registry --> S7[Shell Local<br/>Plugin]
     Registry --> S8[FTP<br/>Plugin]
@@ -158,6 +158,24 @@ stateDiagram-v2
 | **Async** | `tokio` | SSH | 高并发，线程安全（russh 纯 Rust async SSH 库，SFTP 与终端 I/O 并发复用同一会话） |
 | **Headless** | 无 I/O loop | TFTP, iPerf | 容器会话模式 — `ProtocolConnection.channel = None`，不创建 I/O loop/StatsCollector/CommHandle，所有数据传输通过 `SideChannel` 在独立线程中完成 |
 
+### 容器会话与对端通道（网络调试）
+
+部分协议天然一对多（TCP Server 多客户端）。内核在"一会话一通道"之外提供**容器会话 + 对端通道**模型，供 TCP 使用；UDP 因无连接语义走单会话、无对端。
+
+- **容器会话**：`ProtocolConnection.channel = None`（Headless），自身不承载 I/O；TCP 的监听器 / accept 循环、UDP 的 recv 循环由插件 `SideChannel` 在独立线程中驱动（`connect()` 同步初始化，`start()` 启动线程）。容器持有 `NetworkCommHandle`（路由 CommHandle）承载脚本/自动应答引擎，按「当前目标」把 `send()` 路由到 UDP 手动地址/固定远端，或经 TCP 对端写通道注册表（`peer_writers`）扇出到选中对端/全部客户端。
+- **TCP 对端通道**：`SessionStore::register_peer_channel` 把每个客户端注册为 `SubConnection`（`tabbed = false`，不占标签页），获得与普通会话同级的独立 I/O loop、统计采集、CommHandle（文本转码 / 自动应答 / Lua 脚本按对端生效）、日志路由与 `session-data` 数据流（对端 UUID 即 session_id）。
+- **UDP 无对端**：单 `UdpSocket` 直接 `recv_from`，每收到一个数据报即 emit `session-data`（session_id = 容器，payload 带 `source_addr`），不注册对端、不建 per-source 通道、无 `udp_max_peers`；UDP Client 不 connect，仅记录固定远端作为发送目标（`recv_from` 可接收任意来源含广播/组播）并记录本地绑定地址供前端展示；Server 发送走 `send_to`（手动目标 / 广播 / 组播）。
+- **角色模型**：TCP Client 固定远端、单对端；TCP Server 本地监听、多对端；UDP Client 固定远端单会话；UDP Server 本地绑定、任意来源时间线。
+- **事件契约**：`netdbg-peer-joined` / `netdbg-peer-left` / `session-stats`（对端 UUID）仅 TCP 触发，由 `SessionContext` 全局监听一次，维护 `networkPeers`（容器 → 对端条目）与 `selectedNetworkPeer`（容器 → 选中对端）；数据复用 `session-data`（TCP 按对端 UUID 路由，UDP 按容器 + source_addr 路由）。
+- **前端导航**：TCP server 对端显示为左侧会话树（SessionSidebar）的非标签页子节点（状态圆点），点击路由到容器视图并选中、点击容器节点取消选择；右键提供断开 / 移除墓碑。TCP client 是单会话形态——无对端树，唯一对端自动选中，对端断开时前端将容器置为断开。UDP 无对端树，报文网格显示全部来源时间线。
+- **视图形态**：网络会话为裸视图（与串口一致）——无自定义头部/工具条，身份信息在左侧树、TX/RX 统计在状态栏；TCP 数据模式（Dual/Text/Hex）来自连接参数 `params.data_mode`，会话内不可切换；UDP 恒为报文网格（序号/时间/方向/地址/长度/HEX/ASCII 双栏）。
+- **发送栏**：全局底部位置渲染（App.tsx），跨四种发送模式（基础 / 指令 / 自动应答 / 脚本）共享统一**发送目标栏（`TargetBar`）**；目标栏按 transport/role 渲染——TCP Server 为对端下拉（含「全部客户端」群发伪目标）、UDP Server 为手动 `IP:port` 输入 + 最近来源快捷回发下拉，其余场景隐藏（单一固定目标）。前端主动发送统一走 `SessionContext.sendToTarget`（选中对端 / 全部扇出 / UDP 手动地址）；脚本引擎（auto-reply / script）绑定会话后，`send()`/`send_text()` 按同步到后端的「当前目标」路由（新增 `set_network_send_target` 命令），并提供 `send_to(target, data)` / `send_to_text(target, data)` 显式 UDP 目标发送。
+- **生命周期**：TCP 对端断开不级联容器（监听器保持监听）；对端断开先在 `on_disconnect` 持锁落 `state=Disconnected`、停止统计采集，再 emit `netdbg-peer-left`（携带最终 TX/RX 字节）。父容器状态仅由显式 `close_session`（用户关闭会话）改变，与「对端断开/关闭均不级联」一致。
+- **两段式关闭**：`close_sub_connection` 持锁阶段仅发信号并移除、返回 `SubConnectionCleanup` 句柄（类型级不变式：持有期间不得获取 session_store 锁），锁外 join——解除「I/O 回调等锁 × 持锁 join」的循环死锁。
+- **背压与上限**：TCP Server `max_clients` 只统计 Connected 对端（断开墓碑不占名额）；UDP 无对端上限，逐数据报 emit 不背压（高频 UDP 由前端缓冲上限裁剪）。
+
+> 标准依据：RFC 4254 Channel Mechanism——一个连接承载多个动态开/关的通道。`SubConnection` 由此泛化为通用对端注册 API，SSH 子通道与网络对端共用同一骨架。
+
 ### 传输子系统
 
 根据会话协议自动选择传输策略：
@@ -178,10 +196,9 @@ graph TD
 
 | content_type | 渲染器 | 典型插件 |
 |-------------|--------|---------|
-| `terminal` | xterm.js 实例池（CSS opacity 切换） | Serial, SSH, Telnet, TCP Raw, TRDP, Shell Local |
+| `terminal` | xterm.js 实例池（CSS opacity 切换） | Serial, SSH, Telnet, TRDP, Shell Local |
 | `file_browser` | 双栏文件树 + 传输进度 | FTP, NFS |
-| `stats_dashboard` | 实时图表/仪表盘 | UDP Monitor |
-| `custom` | 插件自定义组件 | TFTP, iPerf2/iPerf3, 任意 |
+| `custom` | 插件自定义组件 | TFTP, iPerf2/iPerf3, 网络调试, 任意 |
 
 ---
 
@@ -255,7 +272,6 @@ TauTerm/
 │   │   ├── mod.rs              # Channel / AsyncChannel trait + IoStrategy 枚举
 │   │   ├── serial_channel.rs   # 串口 Channel 实现（Sync 路径，serialport 阻塞 API）
 │   │   ├── ssh_channel.rs      # SSH AsyncChannel 实现（russh::Channel<client::Msg>，PTY 窗口调整）
-│   │   ├── tcp_channel.rs      # TCP Channel 实现
 │   │   ├── io_loop.rs          # 同步 I/O 循环引擎（spawn_sync_io_loop）
 │   │   ├── async_io_loop.rs    # 异步 I/O 循环引擎（spawn_async_io_loop，tokio task）
 │   │   ├── serial_comm.rs      # CommHandle 串口适配实现
@@ -286,9 +302,10 @@ TauTerm/
 │       ├── serial/             # 串口插件（ProtocolAdapter + Channel）
 │       ├── ssh/                # SSH 插件（ProtocolAdapter + SshSideChannel，密码/密钥认证，SFTP）
 │       ├── telnet/             # Telnet 插件（ProtocolAdapter + Channel，Sync I/O，RFC 854 协商）
-│       └── tftp/               # TFTP 插件（ProtocolAdapter + TftpSideChannel，容器模式，服务端+客户端）
-│       └── iperf/              # iPerf 插件（iperf2 自研协议引擎 + iperf3 vendored riperf3，容器模式，服务端+客户端）
-│       # TCP Raw / TRDP / Shell / FTP — 计划中
+│       ├── tftp/               # TFTP 插件（ProtocolAdapter + TftpSideChannel，容器模式，服务端+客户端）
+│       ├── iperf/              # iPerf 插件（iperf2 自研协议引擎 + iperf3 vendored riperf3，容器模式，服务端+客户端）
+│       └── network/            # 网络调试插件（ProtocolAdapter + NetworkSideChannel，容器模式，TCP/UDP 全角色）
+│       # TRDP / Shell / FTP — 规划中
 │
 ├── src/                        # React 前端
 │   ├── core/                   # 内核前端 API

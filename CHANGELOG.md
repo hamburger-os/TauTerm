@@ -5,6 +5,34 @@ All notable changes to TauTerm will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Protocols
+- **Network Debug (TCP/UDP)** — merges the planned TCP Raw and UDP Monitor into a single network debug session:
+  - TCP Client / TCP Server (multi-client with configurable cap); UDP Client = fixed send target on an unconnected socket (sends to a fixed remote, receives from any source incl. broadcast/multicast), UDP Server = single connectionless session (local bind, unicast / broadcast / multicast with IGMP join, TTL, interface, self-receive)
+  - TCP uses a container session + per-peer channel model (RFC 4254 Channel Mechanism): each client gets its own I/O loop, stats, CommHandle (encoding / auto-reply / Lua scripts isolated per peer), logging and `session-data` stream; **UDP is peerless** — a single socket `recv_from` emits each datagram as a `session-data` event carrying the source address
+  - **Peer navigation (TCP) moved into the left session tree** (non-tab child nodes with status dot); peers are auto-named "Peer N" like SSH's "Channel N" (address shown as the second line); clicking a peer routes to the container view and selects it; clicking the container deselects; right-click offers Disconnect / Remove tombstone
+  - Endpoint addresses are uniform across roles with a transport prefix (`tcp://host:port` / `udp://host:port`); disconnected sessions show a blank data area like terminal sessions (state conveyed by the status bar)
+  - TCP Client is a plain single session (auto-selects its only peer, disconnects when the peer leaves); UDP Client is a fixed-remote single session with no peer tree and shows its own bound ip:port in the endpoint line
+  - **Bare view (serial-like)**: no in-view header or toolbar — identity lives in the sidebar, TX/RX stats in the status bar; **data mode (Dual/Text/Hex) is TCP-only** (connect-time `data_mode` param, no in-session switch); UDP always shows a dual HEX+ASCII per-datagram grid
+  - **SendBar moved to the global bottom position**, with a **unified send-target bar (`TargetBar`) shared across all four send modes** (basic / command / auto-reply / script); TCP Server shows a peer dropdown with an "all clients" pseudo-target for broadcast, UDP Server shows a manual-target address input with a recent-source quick-reply dropdown; broadcast / multicast addresses are typed manually (e.g. `255.255.255.255:port`); `SessionContext.sendToTarget` routes the current target for frontend sends
+  - **Broadcast-to-all (TCP) is now a send-target value** (the "all clients" option in the target bar) rather than a separate mode-switcher toggle; `sendData` fan-out remains for SSH multi-channel sessions; UDP broadcast/multicast is network-layer via the manual target address; the script engine's `send()`/`send_text()` route to the synced current target, with new `send_to(target, data)` / `send_to_text(target, data)` Lua functions for explicit UDP targets
+  - Dual / Text / Hex display for TCP streams (delimiter + timeout framing), per-datagram packet grid for UDP showing the full source/target timeline (datagram boundaries preserved, no per-source filtering)
+  - Peer lifecycle hardening (TCP): two-phase `close_sub_connection` (signal under lock, join outside) eliminating a lock-cycle deadlock; peer disconnects settle state + final stats and emit `netdbg-peer-left` with final TX/RX bytes; TCP Server cap counts only connected peers (disconnected tombstones free their slots)
+  - `max_clients` configurable in the connect dialog (TCP Server)
+  - Manual send supports TEXT/HEX toggle; TX bytes counted into session stats; send failures surfaced via toast
+  - Multicast group validated as IPv4 multicast (224.0.0.0–239.255.255.255) with inline hint
+  - No file transfer (by design), no auto-reconnect / heartbeat (debugger must observe disconnects)
+
+### UI
+- **Sidebar session cards: clearer separation & tighter left alignment** — unselected cards now carry a persistent subtle border (`--glass-border-default`) so long session lists read as distinct items instead of one text block (hover/active states unchanged); left-side whitespace trimmed (expand-arrow placeholder 16px → 10px, list/container padding reduced, text starts ~15px closer to the panel edge); card vertical spacing 2px → 4px; endpoint line font-size tokenized (`--text-xs`); header/search/cards/settings-button left edges unified on one alignment baseline; child-tree indent 16px → 12px
+- **New-session dialog: responsive mode grid** — the connection-type card grid switches from a fixed 2 columns to `auto-fit` so it flows to 3 columns (and more as space allows); the dialog width is now adaptive (`min(560px, 100vw - 32px)`); card labels reserve two lines so every card keeps a uniform size when a label wraps
+
+### Fixed
+- **Network Debug: background receive lost for inactive sessions** — the `session-data` listener resolved peers from a ref that is only refreshed while the view renders; an inactive (unmounted) session froze that ref to an empty list, so all data arriving in the background was dropped and the data area appeared empty on switch. The listener now resolves peers from `SessionContext.stateRef` (always fresh), so frames accumulate per session even while inactive and are visible immediately on switch.
+- **Network Debug: server data area stays empty after tab switching** — the `session-data` listener was registered once per session by the plugin session store, so its closure kept the peer refs from the first mount; after remounting (tab switch) those refs froze at the initial empty list and the server view never matched its peers. The listener now resolves the current refs from a per-render registry, so incoming data is routed to the correct container's frame store again.
+- **Network Debug: client shows its own bound address** — peers now carry a `local_addr` (client's OS-assigned socket address after connecting); a TCP/UDP client session card appends it to the endpoint line (`tcp://127.0.0.1:8080 · 127.0.0.1:56780`, single line with ellipsis), letting you map the client to the matching "Peer N" row on the server side without changing the card height.
+
 ## [0.4.0] — 2026-07-22 (First Public Tech Preview)
 
 This is the first public release of TauTerm, a cross-platform terminal emulator built with Tauri v2 featuring a microkernel plugin architecture.

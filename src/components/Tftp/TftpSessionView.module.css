@@ -32,7 +32,6 @@
 
 /* ── 传输参数网格 ──────────────── */
 .paramsCard {
-  border-radius: var(--radius-md);
   padding: 14px;
   flex-shrink: 0;
 }
@@ -83,7 +82,6 @@
 
 /* ── 面板样式 ──────────────────── */
 .panel {
-  border-radius: var(--radius-md);
   padding: 14px;
   display: flex;
   flex-direction: column;

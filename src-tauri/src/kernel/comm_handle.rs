@@ -33,6 +33,21 @@ pub trait CommHandle: Send + Sync {
         Ok(data.to_vec())
     }
 
+    /// 向显式目标地址发送原始字节（UDP server 等无连接语义）。
+    ///
+    /// 默认实现返回错误；仅支持显式目标地址的协议（如网络调试 UDP）
+    /// 覆盖此方法。连接型协议（串口 / TCP）无需实现。
+    fn send_to(&self, _target: &str, _data: &[u8]) -> Result<(), CommError> {
+        Err(CommError::SendError(
+            "当前会话不支持按目标地址发送".to_string(),
+        ))
+    }
+
+    /// 按会话编码向显式目标地址发送文本（与 `send_to` 对应）。
+    fn send_to_text(&self, target: &str, data: &[u8]) -> Result<(), CommError> {
+        self.send_to(target, data)
+    }
+
     /// 注册接收数据回调
     ///
     /// 可多次调用以注册多个回调（并行通知）。

@@ -8,6 +8,7 @@ import "./plugins/ssh";
 import "./plugins/telnet";
 import "./plugins/tftp";
 import "./plugins/iperf";
+import "./plugins/network";
 import "./styles/global.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

@@ -38,6 +38,7 @@ If you spend your day in terminals — jumping between production servers over S
 - **Telnet** — RFC 854 option negotiation (ECHO/SGA/BINARY/NAWS), local-echo adaptation, live window-size sync, keepalive
 - **iPerf speed testing** — iperf2 (own wire-compatible implementation) + iperf3 (vendored riperf3); TCP/UDP, `-t/-b/-P/-i/-w`, bidirectional modes, live rate curves and history
 - **Remote journald viewer** — streaming follow and history query over SSH, level/keyword/unit filters, cursor pagination, JSON export with progress and cancel
+- **Network debug session (TCP/UDP)** — TCP client / TCP server (multi-client cap) / UDP client & server (unicast, broadcast, multicast) in one session; TCP peers are isolated channels with their own I/O loop, stats, encoding/auto-reply/Lua scripts, logging and data stream; UDP is a single connectionless session with a per-datagram HEX+ASCII grid; TCP per-peer Dual/Text/Hex view, a unified send-target bar across all four send modes (per-peer / all-clients broadcast / UDP manual address with recent-source quick reply), TEXT/HEX manual send, `max_clients` cap
 - *Planned (v0.6–v0.7): SSH tunnel & port-forwarding UI, jump hosts, session tree with groups, local shell, FTP, session recording*
 
 ### 🔌 For Embedded Developers
@@ -47,7 +48,7 @@ If you spend your day in terminals — jumping between production servers over S
 - **Session charset transcoding** — UTF-8, GBK, GB18030, Big5, Shift-JIS, EUC-JP, EUC-KR, ISO-8859-1; receive stream decode, send-direction auto-encode, Dual-mode decode, always-readable UTF-8 logs
 - **Dual text/HEX display** — draggable split with ASCII + HEX side by side, millisecond timestamps, `\r\n`/`\n`/`\r` auto-framing, TX/RX color coding
 - **Four-mode send bar** — basic send (text/HEX, line endings, loop, history), command panel (predefined sequences, drag-sort, loop), auto-reply (visual rules, 5 match modes, 10 dynamic macros, timers), script editor
-- **Embedded Lua 5.4 scripting** — per-session isolated VMs, sandboxed; `send()` raw byte passthrough and `send_text()` session-encoding-aware (Chinese text over GBK devices stays intact)
+- **Embedded Lua 5.4 scripting** — per-session isolated VMs, sandboxed; `send()` raw byte passthrough, `send_text()` session-encoding-aware (Chinese text over GBK devices stays intact), and `send_to()`/`send_to_text()` for explicit UDP targets (broadcast/multicast)
 - **Embedded toolbox** — CRC8/16/32 with presets, Base64/HEX/float/endianness conversion, bit ops, C `sizeof` calculator, Modbus RTU/ASCII and AT-command parsers
 - *Planned (v1.1): waveform plotting engine with FFT, FireWater/JustFloat protocol compatible — works with existing firmware data formats out of the box*
 
@@ -101,12 +102,11 @@ Prebuilt packages are on the way. For now, build from source — see [docs/BUILD
 | **TFTP** | ✅ | custom | Standalone UDP engine | Headless |
 | **Telnet** | ✅ | terminal | — | Sync |
 | **iPerf2 / iPerf3** | ✅ | custom | Standalone engine | Async |
-| **TCP Raw** | 📋 v0.6 | terminal | — | Async |
+| **Network Debug** (TCP/UDP) | ✅ | custom | — | Sync |
 | **Shell Local** (PTY) | 📋 v0.6 | terminal | — | Sync |
 | **FTP** | 📋 v0.7 | file_browser | FTP (separate connection) | Async |
-| **TRDP** | 📋 v0.7 | terminal | — | Async |
+| **TRDP** | 📋 v1.0 | terminal | — | Async |
 | **NFS** | 🔮 | file_browser | NFS (separate connection) | Async |
-| **UDP Monitor** | 🔮 | stats_dashboard | — | Async |
 
 ---
 
@@ -116,12 +116,12 @@ Prebuilt packages are on the way. For now, build from source — see [docs/BUILD
 v0.5  Credentials & security wrap-up: keyring persistence,
       log redaction in the production pipeline
 v0.6  Ops essentials: Shell Local (PTY), session tree & grouping,
-      SSH tunnel UI + jump hosts, Agent Forwarding, TCP Raw,
+      SSH tunnel UI + jump hosts, Agent Forwarding,
       asInvoker privilege downgrade + UAC elevation helper
-v0.7  Ops polish + embedded wrap-up: FTP, session recording,
-      split panes, TRDP
+v0.7  Network debug session polish, FTP,
+      session recording, split panes
 v1.0  GA: full Windows validation, macOS/Linux core availability,
-      performance budget met, plugin SDK docs
+      performance budget met, plugin SDK docs, TRDP
 v1.1  Waveform engine — "terminal + oscilloscope": WebGL plotting,
       FFT, FireWater/JustFloat compatible
 v1.x  Horizon (priority order): multi-window, dynamic plugin loading,

@@ -4,6 +4,7 @@ import { serialProfile } from "./serial";
 import { sshProfile } from "./ssh";
 import { telnetProfile } from "./telnet";
 import { tftpProfile } from "./tftp";
+import { networkProfile } from "./network";
 
 /** Profile 注册表：连接类型 -> ProfileResolver */
 const registry: Record<string, ProfileResolver> = {
@@ -11,6 +12,7 @@ const registry: Record<string, ProfileResolver> = {
   ssh: sshProfile,
   telnet: telnetProfile,
   tftp: tftpProfile,
+  network: networkProfile,
 };
 
 /**

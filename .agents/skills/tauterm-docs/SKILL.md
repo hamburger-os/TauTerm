@@ -23,6 +23,7 @@ README 是获客入口（营销文档），docs/ 是开发者文档，CHANGELOG 
 | 协议插件 / 内核 / 架构变化 | docs/ARCHITECTURE.md + README 协议支持矩阵与功能列表同步 |
 | 构建 / 环境 / 驱动 / 安装变化 | docs/BUILDING.md（影响终端用户时同步 README Quick Install 章节） |
 | Roadmap 状态变化（完成 / 新增里程碑） | 两版 README 的 Roadmap 章节同步 |
+| 新增 / 修改 UI 文案、命令名、提示语 | src/i18n/locales/en-US.json + zh-CN.json（key 一一对应，无死 key） |
 | 纯内部重构（无用户可见变化） | 不更新用户文档；必要时仅 CHANGELOG.md |
 
 ## 铁律
@@ -33,6 +34,7 @@ README 是获客入口（营销文档），docs/ 是开发者文档，CHANGELOG 
 4. **CHANGELOG**：Keep a Changelog 格式、英文、按类别分条目（如 ### Protocols / ### Terminal Engine）；未发布的改动进入下一版本段。
 5. **链接有效**：所有相对链接必须指向存在的文件；移动章节后同步修正引用它的链接。
 6. **不编造数据**：性能表实测数据、截图（TODO 占位）不得虚构；没有实测就标注待测，不要填编出来的数字。
+7. **i18n 双文件镜像**：任何 UI 文案 / 命令名 / 提示语的增改，必须同步更新 `en-US.json` 与 `zh-CN.json`，key 集合一一对应；删除文案时同步删除两文件中的对应 key（不留死 key）。`node scripts/check-docs.js` 已含 key 对齐校验。
 
 ## 完成标准
 

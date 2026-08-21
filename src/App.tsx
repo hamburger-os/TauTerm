@@ -359,14 +359,16 @@ function AppInner() {
                 const activeTab = sessionState.tabs.find(t => t.id === sessionState.activeTabId);
                 const activePlugin = activeTab ? pluginRegistry.get(activeTab.pluginId) : null;
                 const isCustomContent = activePlugin?.manifest.content_type === "custom";
+                // 网络调试会话（custom）保留右侧栏：提供校验和/编码/协议解析等开发工具
+                const isNetworkDebug = activePlugin?.manifest.id === "network";
                 const hasAnyPanel = activeTab
                   ? ((activePlugin?.manifest.transfer_protocols?.length ?? 0) > 0 && activeTab.transferEnabled !== false)
                     || (activePlugin?.manifest.id === "ssh" && activeTab.fileServiceEnabled === true)
                     || (activePlugin?.manifest.id === "ssh" && activeTab.journaldEnabled === true)
                   : false;
 
-                // custom 内容类型无侧栏面板时完全隐藏右侧栏
-                if (isCustomContent && !hasAnyPanel) return null;
+                // custom 内容类型无侧栏面板时完全隐藏右侧栏（网络调试除外）
+                if (isCustomContent && !hasAnyPanel && !isNetworkDebug) return null;
 
                 return (
                 <>
@@ -412,7 +414,14 @@ function AppInner() {
           </div>
           {sessionState.tabs.map(tab => {
             const isActive = tab.id === sessionState.activeTabId;
-            const showSendBar = tab.sendBarEnabled !== false;
+            const isNetwork = tab.pluginId === "network";
+            let showSendBar = tab.sendBarEnabled !== false;
+            if (isNetwork) {
+              // 网络调试：发送栏与脚本引擎统一绑定容器会话，目标由 SendBar 内 TargetBar 选择
+              const containerConnected = tab.state === "connected" || tab.state === "transferring";
+              // 连接后即显示发送栏：目标栏对 TCP server（含 0 对端等待接入）也常驻可见
+              showSendBar = containerConnected;
+            }
             return (
               <React.Fragment key={tab.id}>
                 {(showSendBar && isActive) && (
@@ -420,10 +429,10 @@ function AppInner() {
                 )}
                 {showSendBar && (
                   <div style={isActive
-                    ? { flex: `${sendBarPct} 1 ${sendBarPct}%`, minHeight: sendbarMinHeight, display: 'flex', flexDirection: 'column' as const }
+                    ? { flex: `${sendBarPct} 1 ${sendBarPct}%`, display: 'flex', flexDirection: 'column' as const }
                     : { display: 'none' as const }
                   }>
-                    <SendBar sessionId={tab.id} />
+                    <SendBar containerId={tab.id} />
                   </div>
                 )}
               </React.Fragment>

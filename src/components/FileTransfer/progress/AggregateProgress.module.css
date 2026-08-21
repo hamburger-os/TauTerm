@@ -4,7 +4,6 @@
 /* 卡片容器 */
 .container {
   padding: var(--spacing-xs) var(--spacing-sm);
-  border-radius: var(--radius-md);  /* 12px — Control tier */
   flex-shrink: 0;
 }
 

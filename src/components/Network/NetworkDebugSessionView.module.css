@@ -1,0 +1,167 @@
+/* NetworkDebugSessionView — 网络调试会话面板（裸视图）
+ *
+ * 只承载数据展示区域：TCP 流视图（Dual/Text/Hex，模式来自连接参数）或
+ * UDP 报文网格。会话身份/统计由左侧会话树与底部状态栏承载。
+ * 视觉全部由全局类与 CSS 变量接管（无硬编码色值）
+ */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 8px;
+  gap: 8px;
+  min-height: 0;
+}
+
+.dataArea {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* TCP 单栏（Text / Hex） */
+
+.singleList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 4px 8px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass-border-default) transparent;
+}
+
+.singleList::-webkit-scrollbar {
+  width: 6px;
+}
+
+.singleList::-webkit-scrollbar-thumb {
+  background: var(--glass-border-default);
+  border-radius: 3px;
+}
+
+.singleMeta {
+  opacity: 0.6;
+  margin-right: 8px;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.singleText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.singleHex {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.txLine {
+  color: var(--accent-secondary);
+}
+
+.rxLine {
+  color: inherit;
+}
+
+/* UDP 报文网格 */
+
+.gridContainer {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.gridHeader,
+.gridRow {
+  display: flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.gridHeader {
+  flex-shrink: 0;
+  opacity: 0.6;
+  font-weight: 600;
+  border-bottom: 1px solid var(--glass-border-default);
+}
+
+.gridBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass-border-default) transparent;
+}
+
+.gridBody::-webkit-scrollbar {
+  width: 6px;
+}
+
+.gridBody::-webkit-scrollbar-thumb {
+  background: var(--glass-border-default);
+  border-radius: 3px;
+}
+
+.gridEmpty {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+.colSeq { width: 40px; flex-shrink: 0; }
+.colTime { width: 82px; flex-shrink: 0; }
+.colDir { width: 34px; flex-shrink: 0; }
+.colPeer { width: 132px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.colLen { width: 48px; flex-shrink: 0; text-align: right; }
+.colHex { flex: 1.15; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.colAscii { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* TX/RX 行着色（与 TCP 流视图一致） */
+.txRow {
+  color: var(--accent-secondary);
+}
+
+.rxRow {
+  color: inherit;
+}
+
+/* 空状态（与终端会话的标准空状态一致） */
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  text-shadow: var(--glass-shadow-text);
+}
+
+.emptyIcon {
+  font-size: 32px;
+  opacity: 0.5;
+}
+
+.emptyHint {
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  opacity: 0.6;
+}

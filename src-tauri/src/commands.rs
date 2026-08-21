@@ -13,6 +13,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::channel::io_loop::IoLoopCmd;
 use crate::channel::AsyncChannel;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus};
+use crate::kernel::charset::transcode_utf8_to_encoding;
 use crate::kernel::script_engine::codegen::{hex_to_bytes, interpret_escape_sequences};
 use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use tokio::sync::mpsc;
@@ -173,6 +174,7 @@ pub async fn connect_session(
         "tftp" => connect_session_tftp(app, state, endpoint, params, name, session_id).await,
         "iperf" => connect_session_iperf(app, state, endpoint, params, name, session_id).await,
         "telnet" => connect_session_telnet(app, state, endpoint, params, name, send_bar_enabled, session_id).await,
+        "network" => connect_session_network(app, state, endpoint, params, name, transfer_enabled, transfer_protocol, send_bar_enabled, session_id).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
@@ -696,6 +698,7 @@ async fn connect_session_ssh(
         let pid = store.create_container_session(
             &session_name, "ssh", &endpoint, params.clone(),
             side_channel,
+            None,
             transfer_enabled_val,
             Some(transfer_protocol_val.clone()),
             send_bar_enabled_val,
@@ -899,8 +902,9 @@ pub fn write_data(
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .unwrap_or_else(|| "text".to_string());
-        // 克隆 Arc 后释放锁；send_text 内部完成转码（含 UTF-8 短路与未知编码透传）
-        (encoding, data_mode, handle.and_then(|h| h.comm_handle.clone()))
+        // 克隆 Arc 后释放锁；send_text 内部完成转码（含 UTF-8 短路与未知编码透传）。
+        // 对端（网络调试）拥有各自 CommHandle，文本路径按对端编码转码。
+        (encoding, data_mode, store.get_comm_handle_for(&session_id))
     };
     // 文本路径：委托会话 CommHandle::send_text（单一转码策略点）；
     // 字节路径或会话无 comm_handle（SSH 容器）：直接写入原样透传
@@ -1003,6 +1007,9 @@ pub fn get_tabs(
             for sub in &h.sub_connections {
                 if sub.state == SessionState::Disconnected {
                     continue; // 跳过已断开的子连接，等待 channel-closed 事件触发 REMOVE_CHILD
+                }
+                if !sub.tabbed {
+                    continue; // 会话内对端（网络调试）不占标签页，由自定义视图展示
                 }
                 tabs.push(TabInfo {
                     id: sub.id.clone(),
@@ -1241,20 +1248,23 @@ pub async fn close_channel(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 单次锁获取：查找父会话 → 关闭子连接 → 若最后则关闭父会话
-    let (parent_id, is_last) = {
+    // 两段式关闭：锁内发信号并取出 join 句柄，锁外 join I/O 线程
+    // （I/O 线程退出路径可能触发 on_disconnect 回调，回调需获取 store 锁）
+    let (parent_id, is_last, cleanup) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         let pid = store.find_parent_of_channel(&session_id)
             .ok_or_else(|| format!("子连接 {} 未找到", session_id))?;
-        let last = store.close_sub_connection(&pid, &session_id)?;
+        let (last, cleanup) = store.close_sub_connection(&pid, &session_id)?;
         if last {
             store.close_session(&pid)?;
             // 持久化：父会话已断开
             let path = SessionStore::sessions_file_path(&app);
             let _ = store.save_to_disk(&path);
         }
-        (pid, last)
+        (pid, last, cleanup)
     };
+    // 锁外等待 I/O 线程与脚本线程真实退出
+    cleanup.join();
 
     // 通知前端（仅 session-disconnected；channel-closed 由 on_disconnect 回调单独发出）
     if is_last {
@@ -1265,6 +1275,233 @@ pub async fn close_channel(
     }
 
     log::info!("SSH 子连接已关闭: {}", session_id);
+    Ok(())
+}
+
+// ── 网络调试会话命令 ────────────────────────────────
+
+/// 获取网络调试会话的对端列表（自定义视图初始化用）
+#[tauri::command]
+pub fn list_network_peers(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<crate::kernel::session_store::PeerInfo>, String> {
+    let store = state.session_store.lock().map_err(|e| e.to_string())?;
+    Ok(store.list_peers(&session_id))
+}
+
+/// 关闭单个对端（网络调试）。
+///
+/// 与 `close_channel` 不同：关闭对端不级联断开父会话（监听器保持监听）。
+#[tauri::command]
+pub fn close_network_peer(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    // 两段式：锁内信号 + 移除，锁外 join（同 close_channel）
+    let cleanup = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let pid = store.find_parent_of_channel(&session_id)
+            .ok_or_else(|| format!("对端 {} 未找到", session_id))?;
+        let (_is_last, cleanup) = store.close_sub_connection(&pid, &session_id)?;
+        cleanup
+    };
+    cleanup.join();
+    Ok(())
+}
+
+/// 网络调试会话连接（容器会话 + NetworkSideChannel）
+#[tauri::command]
+pub async fn connect_session_network(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    endpoint: String,
+    params: Value,
+    name: Option<String>,
+    transfer_enabled: Option<bool>,
+    transfer_protocol: Option<String>,
+    send_bar_enabled: Option<bool>,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    let conn = state
+        .network_adapter
+        .connect(&endpoint, &params)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let sid = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.create_container_session(
+            name.as_deref().unwrap_or("网络调试"),
+            "network",
+            &endpoint,
+            params.clone(),
+            conn.side_channel.clone(),
+            conn.comm_handle.clone(),
+            transfer_enabled.unwrap_or(false),
+            transfer_protocol,
+            // 网络调试启用全局发送栏（目标由 TargetBar 选择）
+            send_bar_enabled.unwrap_or(true),
+            session_id,
+        )?
+    };
+
+    // 启动监听 / 接收线程（TCP Client 注册对端、TCP Server accept、UDP recv 路由）
+    if let Some(sc) = &conn.side_channel {
+        if let Some(net) = sc
+            .as_any()
+            .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
+        {
+            net.start(app.clone(), &sid).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // 与其它协议一致：emit session-connected（网络调试容器会话本身是根标签页）。
+    // 前端据此把 tab 状态从 connecting 置为 connected 并回填配置。
+    let (actual_name, connected_at) = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let handle = store
+            .get_session(&sid)
+            .ok_or_else(|| "网络调试会话创建失败".to_string())?;
+        (handle.name.clone(), handle.connected_at)
+    };
+    // UDP Client 本地绑定地址（前端展示本机 ip:port 用；其它角色为 null）
+    let udp_local_addr = conn
+        .side_channel
+        .as_ref()
+        .and_then(|sc| sc.as_any().downcast_ref::<crate::plugins::network::NetworkSideChannel>())
+        .and_then(|net| net.udp_client_local_addr())
+        .map(|a| a.to_string());
+
+    let _ = app.emit("session-connected", serde_json::json!({
+        "session_id": sid,
+        "endpoint": endpoint,
+        "connection_type": "network",
+        "plugin_id": "network",
+        "name": actual_name,
+        "params": params,
+        "connected_at": connected_at,
+        "transfer_enabled": false,
+        "transfer_protocol": Value::Null,
+        "send_bar_enabled": send_bar_enabled.unwrap_or(true),
+        "local_addr": udp_local_addr,
+    }));
+    Ok(sid)
+}
+
+/// UDP 发送公共实现：解析侧通道 + 文本转码 + 发送 + TX 日志。
+/// `target` 为 `Some` 时按目标地址 `send_to`（server 手动/广播/组播），
+/// 为 `None` 时按固定远端 `send_to`（client，不 connect）。
+/// 返回实际写入的字节（文本路径为按会话编码转码后的字节），供前端 TX 显示。
+fn udp_send_impl(
+    state: &State<'_, AppState>,
+    session_id: String,
+    data: Vec<u8>,
+    target: Option<&str>,
+    transcode: bool,
+) -> Result<Vec<u8>, String> {
+    // 锁内：取侧通道 Arc + 会话编码/数据模式（转码 + TX 日志用），随后立即释放锁
+    let (net, encoding, data_mode) = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let sc = store
+            .get_side_channel(&session_id)
+            .ok_or("会话无网络侧通道".to_string())?;
+        // 校验确为网络调试会话（锁外 downcast 使用）
+        sc.as_any()
+            .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
+            .ok_or("会话不是网络调试会话".to_string())?;
+        let handle = store.get_session(&session_id);
+        let encoding = handle
+            .and_then(|h| h.params.get("encoding"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("utf-8")
+            .to_string();
+        let data_mode = handle
+            .and_then(|h| h.params.get("data_mode"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("dual")
+            .to_string();
+        // 锁内借用完成发送所需的全部引用值，Arc clone 保活到锁外
+        (sc.clone(), encoding, data_mode)
+    };
+    let net = net
+        .as_any()
+        .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
+        .ok_or("会话不是网络调试会话".to_string())?;
+    // 文本路径：UTF-8 → 会话编码转码（与 write_data 的 CommHandle::send_text 一致）；
+    // 字节路径（HEX 发送）原样透传
+    let out = if transcode {
+        if encoding.eq_ignore_ascii_case("utf-8") {
+            data
+        } else {
+            transcode_utf8_to_encoding(&data, &encoding).unwrap_or(data)
+        }
+    } else {
+        data
+    };
+    match target {
+        Some(addr) => net.udp_send_to(addr, &out)?,
+        None => net.udp_send(&out)?,
+    }
+    // TX 数据日志（非阻塞，best-effort：失败不影响主流程），
+    // 记录实际写入设备的字节（转码后），与 send_data 命令的 TX 记账保持同一模式
+    if let Ok(log_engine) = state.log_engine.lock() {
+        let _ = log_engine.sender().try_send(LogEntry::SessionData(DataLogEntry {
+            session_id,
+            direction: DataDirection::TX,
+            data_mode,
+            encoding,
+            payload: out.clone(),
+            timestamp: Local::now(),
+        }));
+    }
+    Ok(out)
+}
+
+/// UDP 手动目标发送（指定任意目标地址，含广播地址）
+#[tauri::command]
+pub fn network_udp_send_to(
+    state: State<'_, AppState>,
+    session_id: String,
+    target_addr: String,
+    data: Vec<u8>,
+    transcode: bool,
+) -> Result<Vec<u8>, String> {
+    udp_send_impl(&state, session_id, data, Some(&target_addr), transcode)
+}
+
+/// UDP 固定远端发送（client：不 connect，按记录的固定远端 `send_to`）
+#[tauri::command]
+pub fn network_udp_send(
+    state: State<'_, AppState>,
+    session_id: String,
+    data: Vec<u8>,
+    transcode: bool,
+) -> Result<Vec<u8>, String> {
+    udp_send_impl(&state, session_id, data, None, transcode)
+}
+
+/// 同步网络调试会话的「当前发送目标」到后端脚本引擎。
+///
+/// 前端 TargetBar 变化时调用：UDP server 传手动地址字符串；TCP server 传
+/// 对端 id 或 `__all__`（全部客户端）；其余场景传 null（引擎走会话自然对端）。
+#[tauri::command]
+pub fn set_network_send_target(
+    state: State<'_, AppState>,
+    session_id: String,
+    target: Option<String>,
+) -> Result<(), String> {
+    let sc = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store
+            .get_side_channel(&session_id)
+            .ok_or("会话无网络侧通道".to_string())?
+    };
+    let net = sc
+        .as_any()
+        .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
+        .ok_or("会话不是网络调试会话".to_string())?;
+    net.set_send_target(target);
     Ok(())
 }
 
@@ -2578,6 +2815,7 @@ async fn connect_session_tftp(
         let sid = store.create_container_session(
             &session_name, "tftp", &endpoint, params.clone(),
             Some(side_channel.clone()),
+            None,  // comm_handle
             false,  // transfer_enabled
             None,   // transfer_protocol
             false,  // send_bar_enabled
@@ -2960,6 +3198,7 @@ async fn connect_session_iperf(
         let sid = store.create_container_session(
             &session_name, "iperf", &endpoint, resolved_params.clone(),
             Some(side_channel.clone()),
+            None,  // comm_handle
             false,  // transfer_enabled
             None,   // transfer_protocol
             false,  // send_bar_enabled

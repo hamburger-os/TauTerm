@@ -47,9 +47,9 @@ function saveConfigs(configs: CommandConfig[]) {
 export default function CommandPanel({ sessionId, isActive, onRunningChange }: CommandPanelProps) {
   const { t } = useTranslation();
   const { showToast } = useToast();
-  const { sendData, state } = useSession();
-  const activeTab = state.tabs.find(tab => tab.id === sessionId);
-  const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
+  const { sendToTarget, isSessionConnected } = useSession();
+  // 网络调试对端经 peerSessions 注册表判定；普通会话走 tabs
+  const isConnected = isSessionConnected(sessionId);
 
   const [configs, setConfigs] = useState<CommandConfig[]>(() => loadConfigs());
   const [activeConfigName, setActiveConfigName] = useState(() => {
@@ -97,8 +97,8 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   const runner = useCommandRunner({
     onSend: useCallback(async (cmd: CommandItem) => {
       if (!isConnected) return;
-      await sendData(sessionId, cmd.command + "\r\n");
-    }, [sessionId, sendData, isConnected]),
+      await sendToTarget(sessionId, cmd.command + "\r\n");
+    }, [sessionId, sendToTarget, isConnected]),
   });
 
   // 通知父组件执行状态（用于锁定模式切换）

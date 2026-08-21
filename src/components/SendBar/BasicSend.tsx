@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
+import { useToast } from "../../context/ToastContext";
 import Icon from "../common/Icon";
 import type { NewlineMode } from "./types";
 import { useSendBar } from "./SendBarContext";
@@ -28,8 +29,8 @@ const NEWLINE_MAP: Record<NewlineMode, string> = {
  */
 export default function BasicSend({ sessionId, isActive, onSendingChange }: BasicSendProps) {
   const { t } = useTranslation();
-  const { sendData, state } = useSession();
-  const activeTab = state.tabs.find(tab => tab.id === sessionId);
+  const { sendToTarget, isSessionConnected } = useSession();
+  const { showToast } = useToast();
 
   const { state: sendBarState, dispatch } = useSendBar();
   const {
@@ -50,7 +51,8 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
   const inputRefForInterval = useRef(inputText);
   inputRefForInterval.current = inputText;
 
-  const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
+  // 网络调试对端经 peerSessions 注册表判定；普通会话走 tabs
+  const isConnected = isSessionConnected(sessionId);
 
   const isHexValid = (value: string): boolean => {
     const hex = value.replace(/\s/g, "");
@@ -76,12 +78,15 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
       data = currentInput + NEWLINE_MAP[newlineMode];
     }
 
-    sendData(sessionId, data);
+    // 统一发送路由：网络容器按当前目标路由，非网络会话走默认 sendData
+    sendToTarget(sessionId, data).catch((e) => {
+      showToast("error", String(e));
+    });
 
     dispatch({ type: "ADD_SEND_HISTORY", entry: currentInput });
 
     inputRef.current?.focus();
-  }, [newlineMode, sendMode, sessionId, sendData, dispatch]);
+  }, [newlineMode, sendMode, sessionId, sendToTarget, showToast, dispatch]);
 
   const doIntervalSend = useCallback(() => {
     const currentInput = inputRefForInterval.current;
@@ -102,10 +107,13 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
       data = currentInput + NEWLINE_MAP[newlineMode];
     }
 
-    sendData(sessionId, data);
+    // 统一发送路由：网络容器按当前目标路由，非网络会话走默认 sendData
+    sendToTarget(sessionId, data).catch((e) => {
+      showToast("error", String(e));
+    });
 
     dispatch({ type: "ADD_SEND_HISTORY", entry: currentInput });
-  }, [newlineMode, sendMode, sessionId, sendData, dispatch]);
+  }, [newlineMode, sendMode, sessionId, sendToTarget, showToast, dispatch]);
 
   // 重复发送定时器
   useEffect(() => {

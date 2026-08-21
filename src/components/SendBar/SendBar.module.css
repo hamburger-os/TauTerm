@@ -1,11 +1,18 @@
-/* 发送栏容器 */
-
+/* 发送栏容器：纵向布局，目标栏卡片 + 主发送栏卡片 上下两张卡（紧挨无间隙） */
 .container {
   display: flex;
+  flex-direction: column;
   flex: 1;
+}
+
+/* 主体：模式切换器（左） + 内容区（右），作为主发送栏卡片 */
+.body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: var(--sendbar-min-height, 128px);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  min-height: var(--sendbar-min-height, 128px);
 }
 
 /* ── 模式切换器 ── */
@@ -31,6 +38,11 @@
 .modeBtn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+/* 群发开关：推到模式切换器底部，与模式按钮区隔 */
+.broadcastBtn {
+  margin-top: auto;
 }
 
 .modeIcon {

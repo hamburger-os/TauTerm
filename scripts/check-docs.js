@@ -8,6 +8,7 @@
  *  3. 所有文档的相对 markdown 链接指向存在的文件
  *  4. CHANGELOG.md 为 Keep a Changelog 格式且含版本段
  *  5. README 篇幅警告（> 400 行）
+ *  6. i18n 语言文件 en-US.json / zh-CN.json 的 key 集合一一对应
  *
  * 用法：node scripts/check-docs.js [--root <repo-root>]
  * 退出码：0 = 通过，1 = 存在错误
@@ -95,6 +96,42 @@ function checkLinks(md, rel) {
   }
 }
 
+/** 递归展平 JSON 对象为点分 key 列表（用于 i18n key 对齐） */
+function flatten(obj, prefix = '') {
+  const out = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const full = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      out.push(...flatten(v, full));
+    } else {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+function checkI18n() {
+  const files = ['src/i18n/locales/en-US.json', 'src/i18n/locales/zh-CN.json'];
+  const parsed = files.map((f) => {
+    const raw = read(f);
+    if (raw == null) return null;
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      fail(`${f}: JSON 解析失败: ${e.message}`);
+      return null;
+    }
+  });
+  const [en, zh] = parsed;
+  if (!en || !zh) return;
+  const enSet = new Set(flatten(en));
+  const zhSet = new Set(flatten(zh));
+  const onlyEn = [...enSet].filter((k) => !zhSet.has(k)).sort();
+  const onlyZh = [...zhSet].filter((k) => !enSet.has(k)).sort();
+  if (onlyEn.length) fail(`en-US.json 存在 zh-CN.json 缺失的 key（${onlyEn.length}）: ${onlyEn.join(', ')}`);
+  if (onlyZh.length) fail(`zh-CN.json 存在 en-US.json 缺失的 key（${onlyZh.length}）: ${onlyZh.join(', ')}`);
+}
+
 function main() {
   // 1. 镜像对齐（结构对齐：标题数量一致；标题文本按语言翻译，不要求逐字相同）
   const en = read('README.md');
@@ -145,9 +182,12 @@ function main() {
     if (lines > 400) warn(`${rel}: ${lines} 行，超出营销文档精简目标（≤ ~350 行）`);
   }
 
+  // 6. i18n 语言文件 key 对齐
+  checkI18n();
+
   // 输出
-  const passCount = 5 - errors.length;
-  console.log(`check-docs: ${passCount}/5 项通过`);
+  const passCount = 6 - errors.length;
+  console.log(`check-docs: ${passCount}/6 项通过`);
   for (const e of errors) console.log(`  ✗ ${e}`);
   for (const w of warnings) console.log(`  ⚠ ${w}`);
   if (errors.length === 0) {

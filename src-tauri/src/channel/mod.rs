@@ -102,4 +102,6 @@ pub trait AsyncChannel: Send {
 pub enum ContentType {
     /// xterm.js 终端渲染
     Terminal,
+    /// 插件自定义视图（TFTP / iPerf / 网络调试）
+    Custom,
 }

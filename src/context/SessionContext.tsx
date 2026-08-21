@@ -12,6 +12,10 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "tr
 export interface SessionStats {
   txBytes: number;
   rxBytes: number;
+  /** UDP 会话级累计 RX 报文数（无对端模型，报文计数语义明确） */
+  rxPackets?: number;
+  /** UDP 会话级累计 TX 报文数 */
+  txPackets?: number;
 }
 
 export interface TabInfo {
@@ -88,12 +92,46 @@ export interface EndpointInfo {
   connection_type: string;
 }
 
+/** 网络调试会话的对端条目（左侧会话树 / 视图共用） */
+export interface NetworkPeerEntry {
+  peerId: string;
+  /** 对端名称（后端按序号自动生成，如 "Peer 1"） */
+  name: string;
+  /** 对端地址（IP:Port） */
+  addr: string;
+  /** 本端地址（TCP client 连接后本机分配的 ip:port，与服务端对端条目对应） */
+  localAddr?: string;
+  state: "connected" | "disconnected";
+  txBytes: number;
+  rxBytes: number;
+}
+
 interface SessionState {
   tabs: TabInfo[];
   activeTabId: string | null;
   connectionTypes: ConnectionTypeInfo[];
   endpoints: EndpointInfo[];
   error: string | null;
+  /**
+   * 网络调试会话的对端注册表：peerId → 是否已连接。
+   * 对端不占标签页（后端 sub_connection, tabbed=false），但 SendBar 各面板
+   * 与 sendData 需要据此判定连接态并放行发送（按对端 UUID 路由）。
+   */
+  peerSessions: Record<string, boolean>;
+  /** 网络调试容器会话 → 对端列表（netdbg-peer-joined/left 驱动，左侧树/视图共用） */
+  networkPeers: Record<string, NetworkPeerEntry[]>;
+  /** 网络调试容器会话 → 当前选中的对端 id（null = 未选中；client 模式自动选中） */
+  selectedNetworkPeer: Record<string, string | null>;
+  /** 网络调试容器会话 → UDP 手动目标地址（发送栏目标覆盖输入） */
+  networkManualTarget: Record<string, string>;
+  /** 网络调试容器会话 → 最近 RX 来源地址（UDP server 发送栏快捷回发，去重 + 上限） */
+  networkUdpSources: Record<string, string[]>;
+  /** 网络调试容器会话 → 本端地址（UDP client 连接后本机 ip:port，前端展示用） */
+  networkLocalAddrs: Record<string, string>;
+  /** 群发开关：sessionId（对端/子通道）→ 是否扇出到同组 sibling（网络对端 / SSH 子通道） */
+  broadcastSessions: Record<string, boolean>;
+  /** 网络调试容器会话 → 是否群发到全部对端（目标栏「全部客户端」伪目标） */
+  networkBroadcast: Record<string, boolean>;
 }
 
 type SessionAction =
@@ -115,7 +153,21 @@ type SessionAction =
   | { type: "CLEAR_VPORT_ERROR"; id: string }
   | { type: "CLEAR_TABS" }
   | { type: "REMOVE_CHILD"; id: string; parentId: string }
-  | { type: "REMOVE_ALL_CHILDREN"; parentId: string };
+  | { type: "REMOVE_ALL_CHILDREN"; parentId: string }
+  | { type: "SET_PEER_CONNECTED"; id: string; connected: boolean }
+  | { type: "REMOVE_PEER"; id: string }
+  | { type: "SET_NETWORK_PEER"; containerId: string; peer: NetworkPeerEntry }
+  | { type: "SET_NETWORK_PEERS_BATCH"; containerId: string; entries: NetworkPeerEntry[] }
+  | { type: "SET_NETWORK_PEER_STATE"; containerId: string; peerId: string; state: NetworkPeerEntry["state"]; txBytes?: number; rxBytes?: number }
+  | { type: "SET_NETWORK_PEER_STATS"; containerId: string; peerId: string; txBytes: number; rxBytes: number }
+  | { type: "REMOVE_NETWORK_PEER"; containerId: string; peerId: string }
+  | { type: "CLEAR_NETWORK_PEERS"; containerId: string }
+  | { type: "SELECT_NETWORK_PEER"; containerId: string; peerId: string | null }
+  | { type: "SET_NETWORK_MANUAL_TARGET"; containerId: string; target: string }
+  | { type: "ADD_NETWORK_UDP_SOURCE"; containerId: string; addr: string }
+  | { type: "SET_NETWORK_LOCAL_ADDR"; containerId: string; addr: string }
+  | { type: "SET_BROADCAST"; sessionId: string; on: boolean }
+  | { type: "SET_NETWORK_BROADCAST"; containerId: string; on: boolean };
 
 // ── Base64 解码（与后端 data_batcher::base64_encode 配对） ───────────────────
 
@@ -142,6 +194,14 @@ const initialState: SessionState = {
   connectionTypes: [],
   endpoints: [],
   error: null,
+  peerSessions: {},
+  networkPeers: {},
+  selectedNetworkPeer: {},
+  networkManualTarget: {},
+  networkUdpSources: {},
+  networkLocalAddrs: {},
+  broadcastSessions: {},
+  networkBroadcast: {},
 };
 
 function sessionReducer(state: SessionState, action: SessionAction): SessionState {
@@ -291,6 +351,91 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       };
     case "CLEAR_TABS":
       return { ...state, tabs: [], activeTabId: null };
+    case "SET_PEER_CONNECTED":
+      return { ...state, peerSessions: { ...state.peerSessions, [action.id]: action.connected } };
+    case "REMOVE_PEER": {
+      const next = { ...state.peerSessions };
+      delete next[action.id];
+      return { ...state, peerSessions: next };
+    }
+    case "SET_NETWORK_PEER": {
+      const list = state.networkPeers[action.containerId] ?? [];
+      const ix = list.findIndex(p => p.peerId === action.peer.peerId);
+      const nextList = ix >= 0
+        ? list.map(p => p.peerId === action.peer.peerId ? { ...p, ...action.peer } : p)
+        : [...list, action.peer];
+      return { ...state, networkPeers: { ...state.networkPeers, [action.containerId]: nextList } };
+    }
+    case "SET_NETWORK_PEERS_BATCH": {
+      const list = state.networkPeers[action.containerId] ?? [];
+      const merged = [...list];
+      for (const e of action.entries) {
+        const ix = merged.findIndex(p => p.peerId === e.peerId);
+        if (ix >= 0) merged[ix] = { ...merged[ix], ...e, txBytes: e.txBytes || merged[ix].txBytes, rxBytes: e.rxBytes || merged[ix].rxBytes };
+        else merged.push(e);
+      }
+      return { ...state, networkPeers: { ...state.networkPeers, [action.containerId]: merged } };
+    }
+    case "SET_NETWORK_PEER_STATE": {
+      const list = state.networkPeers[action.containerId] ?? [];
+      return {
+        ...state,
+        networkPeers: {
+          ...state.networkPeers,
+          [action.containerId]: list.map(p =>
+            p.peerId === action.peerId
+              ? { ...p, state: action.state, txBytes: action.txBytes ?? p.txBytes, rxBytes: action.rxBytes ?? p.rxBytes }
+              : p
+          ),
+        },
+      };
+    }
+    case "SET_NETWORK_PEER_STATS": {
+      const list = state.networkPeers[action.containerId] ?? [];
+      return {
+        ...state,
+        networkPeers: {
+          ...state.networkPeers,
+          [action.containerId]: list.map(p =>
+            p.peerId === action.peerId ? { ...p, txBytes: action.txBytes, rxBytes: action.rxBytes } : p
+          ),
+        },
+      };
+    }
+    case "REMOVE_NETWORK_PEER": {
+      const list = state.networkPeers[action.containerId] ?? [];
+      return {
+        ...state,
+        networkPeers: {
+          ...state.networkPeers,
+          [action.containerId]: list.filter(p => p.peerId !== action.peerId),
+        },
+      };
+    }
+    case "CLEAR_NETWORK_PEERS": {
+      const nextPeers = { ...state.networkPeers };
+      delete nextPeers[action.containerId];
+      const nextSel = { ...state.selectedNetworkPeer };
+      delete nextSel[action.containerId];
+      return { ...state, networkPeers: nextPeers, selectedNetworkPeer: nextSel };
+    }
+    case "SELECT_NETWORK_PEER":
+      return { ...state, selectedNetworkPeer: { ...state.selectedNetworkPeer, [action.containerId]: action.peerId } };
+    case "SET_NETWORK_MANUAL_TARGET":
+      return { ...state, networkManualTarget: { ...state.networkManualTarget, [action.containerId]: action.target } };
+    case "ADD_NETWORK_UDP_SOURCE": {
+      const list = state.networkUdpSources[action.containerId] ?? [];
+      if (list.includes(action.addr)) return state;
+      const next = [...list, action.addr];
+      if (next.length > 32) next.splice(0, next.length - 32);
+      return { ...state, networkUdpSources: { ...state.networkUdpSources, [action.containerId]: next } };
+    }
+    case "SET_NETWORK_LOCAL_ADDR":
+      return { ...state, networkLocalAddrs: { ...state.networkLocalAddrs, [action.containerId]: action.addr } };
+    case "SET_BROADCAST":
+      return { ...state, broadcastSessions: { ...state.broadcastSessions, [action.sessionId]: action.on } };
+    case "SET_NETWORK_BROADCAST":
+      return { ...state, networkBroadcast: { ...state.networkBroadcast, [action.containerId]: action.on } };
     default:
       return state;
   }
@@ -317,6 +462,41 @@ interface SessionContextValue {
   getTabs: () => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
+  /** 订阅 TX 通知（多监听者；网络调试对端 TX 显示用），返回取消订阅函数 */
+  subscribeDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => () => void;
+  /** 判定会话或对端是否处于连接态（SendBar 面板共用；对端经 peerSessions 注册） */
+  isSessionConnected: (sessionId: string) => boolean;
+  /** 网络调试：选中容器会话的对端（null = 取消选中；client 模式自动选中唯一对端） */
+  selectNetworkPeer: (containerId: string, peerId: string | null) => void;
+  /** 网络调试：读取容器会话的当前对端列表（读 stateRef，非活跃会话也始终新鲜；数据监听路由用） */
+  getNetworkPeers: (containerId: string) => NetworkPeerEntry[];
+  /** 网络调试：断开指定对端（后端 close_network_peer + 乐观置灰） */
+  disconnectNetworkPeer: (containerId: string, peerId: string) => Promise<void>;
+  /** 网络调试：移除已关闭对端墓碑（后端真实释放 + 前端清列表） */
+  clearNetworkPeer: (containerId: string, peerId: string) => Promise<void>;
+  /** 网络调试：按后端快照合并对端列表（getStatus 兜底，保留既有统计） */
+  mergeNetworkPeers: (containerId: string, entries: NetworkPeerEntry[]) => void;
+  /** 网络调试：设置 UDP 手动目标地址（目标栏手动目标输入） */
+  setNetworkManualTarget: (containerId: string, target: string) => void;
+  /** 网络调试：记录一个 UDP RX 来源地址（发送栏快捷回发用，去重 + 上限） */
+  registerNetworkUdpSource: (containerId: string, addr: string) => void;
+  /** 订阅 UDP 手动目标发送（报文网格 TX 行用），返回取消订阅函数 */
+  subscribeNetworkManualSent: (callback: (containerId: string, target: string, bytes: Uint8Array) => void) => () => void;
+  /** 群发目标枚举：SSH 子通道 → 同父会话其它已连接子通道 */
+  getSiblingTargets: (sessionId: string) => string[];
+  /** 群发开关状态（SSH 子通道 id） */
+  isBroadcast: (sessionId: string) => boolean;
+  /** 切换群发开关 */
+  toggleBroadcast: (sessionId: string) => void;
+  /** 网络调试：切换容器会话的「全部客户端」群发目标 */
+  setNetworkBroadcast: (containerId: string, on: boolean) => void;
+  /**
+   * 统一发送路由：网络容器按「当前目标」（选中对端 / 全部 / 手动地址）路由，
+   * 非网络会话走默认 sendData(sessionId)。基本发送与指令面板共用。
+   */
+  sendToTarget: (containerId: string, data: string | Uint8Array) => Promise<void>;
+  /** 更新指定会话的 I/O 统计（网络调试容器汇总对端统计到状态栏用） */
+  updateSessionStats: (sessionId: string, txBytes: number, rxBytes: number, rxPackets?: number, txPackets?: number) => void;
   onSessionDisconnect: (callback: (sessionId: string, reason?: string) => void) => void;
   clearError: () => void;
   /** 日志：启动会话数据日志记录 */
@@ -335,10 +515,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
   const dataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
   const sentDataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
+  /** 多监听者 TX 通知（网络调试对端视图订阅；单槽 sentDataCallbackRef 保留给终端） */
+  const sentDataSubscribersRef = useRef<Set<(sessionId: string, data: Uint8Array) => void>>(new Set());
+  /** 对端注册表 Ref 镜像（sendData 闭包读取；state.peerSessions 提供响应式渲染） */
+  const peerSessionsRef = useRef<Record<string, boolean>>({});
+  /** 对端 → 所属容器会话的反向映射（session-stats 路由用；netdbg 事件维护） */
+  const networkPeerContainerRef = useRef<Record<string, string>>({});
+  /** UDP 手动目标发送订阅者（网络调试报文网格 TX 行用） */
+  const networkManualSentSubscribersRef = useRef<Set<(containerId: string, target: string, bytes: Uint8Array) => void>>(new Set());
+  /** 群发开关 Ref 镜像（sendData 闭包读取；state.broadcastSessions 提供响应式渲染） */
+  const broadcastSessionsRef = useRef<Record<string, boolean>>({});
   const disconnectCallbackRef = useRef<((sessionId: string, reason?: string) => void) | null>(null);
   // 保持最新的 tabs 引用，供事件监听器（闭包中 state 可能过期）使用
   const tabsRef = useRef(state.tabs);
   tabsRef.current = state.tabs;
+  // 完整 state 镜像（网络对端清理等全局监听器需读取最新 networkPeers）
+  const stateRef = useRef(state);
+  stateRef.current = state;
   // Telnet 回显状态暂存：telnet-echo-state 早于 session-connected 到达
   // （tab 尚未创建）时暂存于此，session-connected 创建/更新 tab 时取出
   // 初始化 localEcho，避免事件被静默丢弃导致输入不可见
@@ -526,10 +719,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     releaseSessionStore(sessionId);
   }, [state.tabs]);
 
-  const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
-    // 保护：连接已断开时不发送，避免触发后端 "sending on a closed channel" 错误
+  /**
+   * 群发目标枚举：给定 sessionId（SSH 子通道），返回同组其它可发送目标。
+   * - SSH 子通道 → 同父会话的其它已连接子通道；
+   * - 其余（根会话 / 普通会话 / 网络容器）→ 空。
+   *
+   * 网络调试的群发不再走此枚举，而由目标栏「全部客户端」伪目标 + sendToTarget 处理。
+   */
+  const getSiblingTargets = useCallback((sessionId: string): string[] => {
     const tab = tabsRef.current.find(t => t.id === sessionId);
-    if (!tab || tab.state === "disconnected") return;
+    if (tab?.parentId) {
+      return tabsRef.current
+        .filter(t => t.parentId === tab.parentId && t.id !== sessionId)
+        .filter(t => t.state === "connected" || t.state === "transferring")
+        .map(t => t.id);
+    }
+    return [];
+  }, []);
+
+  const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
+    // 保护：连接已断开时不发送，避免触发后端 "sending on a closed channel" 错误。
+    // 网络调试对端不在 tabs 中，通过 peerSessions 注册表判定连接态并放行。
+    const tab = tabsRef.current.find(t => t.id === sessionId);
+    const isPeer = peerSessionsRef.current[sessionId] === true;
+    if ((!tab || tab.state === "disconnected") && !isPeer) return;
     try {
       // 文本路径（键盘 / SendBar 文本 / 脚本字符串）：UTF-8 字节交给后端按会话编码转码；
       // 字节路径（HEX 发送 / 脚本原始字节）：原样透传，不做字符转码
@@ -540,10 +753,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const written = await invoke<number[]>("write_data", { sessionId, data: Array.from(bytes), transcode: isText });
       // 通知 Dual 模式终端：数据已发送
       sentDataCallbackRef.current?.(sessionId, new Uint8Array(written));
+      // 多监听者 TX 通知（网络调试对端视图）
+      sentDataSubscribersRef.current.forEach(cb => cb(sessionId, new Uint8Array(written)));
+      // 群发：同组 sibling 扇出（网络对端 / SSH 子通道；所有发送路径统一生效）
+      if (broadcastSessionsRef.current[sessionId]) {
+        for (const sid of getSiblingTargets(sessionId)) {
+          try {
+            // 每个 sibling 按各自会话编码转码，回显使用实际写入字节，保证与线上字节一致
+            const sibWritten = await invoke<number[]>("write_data", { sessionId: sid, data: Array.from(bytes), transcode: isText });
+            sentDataCallbackRef.current?.(sid, new Uint8Array(sibWritten));
+            sentDataSubscribersRef.current.forEach(cb => cb(sid, new Uint8Array(sibWritten)));
+          } catch {
+            // 单个 sibling 发送失败不中断其余对端
+          }
+        }
+      }
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${e}` });
     }
-  }, []);
+  }, [getSiblingTargets]);
 
   const switchTab = useCallback(async (sessionId: string) => {
     // 如果选中的是父 session，自动路由到第一个子 channel
@@ -750,6 +978,156 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sentDataCallbackRef.current = callback;
   }, []);
 
+  const subscribeDataSent = useCallback((callback: (sessionId: string, data: Uint8Array) => void) => {
+    sentDataSubscribersRef.current.add(callback);
+    return () => { sentDataSubscribersRef.current.delete(callback); };
+  }, []);
+
+  const isSessionConnected = useCallback((sessionId: string): boolean => {
+    const tab = tabsRef.current.find(t => t.id === sessionId);
+    if (tab) return tab.state === "connected" || tab.state === "transferring";
+    return peerSessionsRef.current[sessionId] === true;
+  }, []);
+
+  const selectNetworkPeer = useCallback((containerId: string, peerId: string | null) => {
+    dispatch({ type: "SELECT_NETWORK_PEER", containerId, peerId });
+  }, []);
+
+  const getNetworkPeers = useCallback((containerId: string): NetworkPeerEntry[] => {
+    return stateRef.current.networkPeers[containerId] ?? [];
+  }, []);
+
+  const disconnectNetworkPeer = useCallback(async (containerId: string, peerId: string) => {
+    try {
+      await invoke("close_network_peer", { sessionId: peerId });
+    } catch (e) {
+      console.error("网络调试: 断开对端失败:", e);
+    }
+    // 乐观置灰：后端 I/O loop 断开后仍会发 netdbg-peer-left（带最终统计），此处先行避免闪烁
+    dispatch({ type: "SET_NETWORK_PEER_STATE", containerId, peerId, state: "disconnected" });
+    peerSessionsRef.current[peerId] = false;
+    dispatch({ type: "SET_PEER_CONNECTED", id: peerId, connected: false });
+  }, []);
+
+  const clearNetworkPeer = useCallback(async (containerId: string, peerId: string) => {
+    try {
+      await invoke("close_network_peer", { sessionId: peerId }).catch(() => {
+        // 后端可能已清理（如容器断开级联），忽略
+      });
+    } catch (_e) { /* 忽略 */ }
+    delete peerSessionsRef.current[peerId];
+    if (networkPeerContainerRef.current[peerId] === containerId) {
+      delete networkPeerContainerRef.current[peerId];
+    }
+    dispatch({ type: "REMOVE_NETWORK_PEER", containerId, peerId });
+    dispatch({ type: "REMOVE_PEER", id: peerId });
+  }, []);
+
+  const mergeNetworkPeers = useCallback((containerId: string, entries: NetworkPeerEntry[]) => {
+    // 与实时事件去重合并：后端快照可能早于/晚于 joined 事件，按 peerId 取并集，
+    // 已存在条目保留既有统计（后端快照的 0 值不覆盖运行中的累计值）
+    dispatch({ type: "SET_NETWORK_PEERS_BATCH", containerId, entries });
+  }, []);
+
+  const setNetworkManualTarget = useCallback((containerId: string, target: string) => {
+    dispatch({ type: "SET_NETWORK_MANUAL_TARGET", containerId, target });
+  }, []);
+
+  const registerNetworkUdpSource = useCallback((containerId: string, addr: string) => {
+    dispatch({ type: "ADD_NETWORK_UDP_SOURCE", containerId, addr });
+  }, []);
+
+  const subscribeNetworkManualSent = useCallback((
+    callback: (containerId: string, target: string, bytes: Uint8Array) => void,
+  ) => {
+    networkManualSentSubscribersRef.current.add(callback);
+    return () => { networkManualSentSubscribersRef.current.delete(callback); };
+  }, []);
+
+  const isBroadcast = useCallback((sessionId: string): boolean => {
+    return broadcastSessionsRef.current[sessionId] === true;
+  }, []);
+
+  const toggleBroadcast = useCallback((sessionId: string) => {
+    const next = !broadcastSessionsRef.current[sessionId];
+    broadcastSessionsRef.current[sessionId] = next;
+    dispatch({ type: "SET_BROADCAST", sessionId, on: next });
+  }, []);
+
+  const setNetworkBroadcast = useCallback((containerId: string, on: boolean) => {
+    dispatch({ type: "SET_NETWORK_BROADCAST", containerId, on });
+  }, []);
+
+  /**
+   * 统一发送路由。
+   *
+   * 网络容器按「当前目标」路由：TCP server → 选中对端 / 全部扇出；
+   * UDP server → 手动目标地址；UDP client → 固定远端。非网络会话回退
+   * 到 sendData(sessionId)。基本发送与指令面板共用此入口。
+   */
+  const sendToTarget = useCallback(async (containerId: string, data: string | Uint8Array) => {
+    const tab = tabsRef.current.find(t => t.id === containerId);
+    const params = (tab?.params ?? {}) as Record<string, unknown>;
+    const transport = params.transport as string | undefined;
+    if (transport !== "tcp" && transport !== "udp") {
+      await sendData(containerId, data);
+      return;
+    }
+
+    const role = (params.role as string | undefined) ?? "client";
+    const isText = typeof data === "string";
+    const bytes = isText ? new TextEncoder().encode(data) : data;
+    const byteArr = Array.from(bytes);
+    const transcode = isText;
+
+    if (transport === "udp") {
+      if (role === "server") {
+        const target = (stateRef.current.networkManualTarget[containerId] ?? "").trim();
+        if (!target) throw new Error("无可用发送目标");
+        const written = await invoke<number[]>("network_udp_send_to", {
+          sessionId: containerId, targetAddr: target, data: byteArr, transcode,
+        });
+        networkManualSentSubscribersRef.current.forEach(cb => cb(containerId, target, new Uint8Array(written)));
+      } else {
+        const written = await invoke<number[]>("network_udp_send", {
+          sessionId: containerId, data: byteArr, transcode,
+        });
+        const remote = `${params.remote_host ?? "127.0.0.1"}:${params.remote_port ?? 0}`;
+        networkManualSentSubscribersRef.current.forEach(cb => cb(containerId, remote, new Uint8Array(written)));
+      }
+      return;
+    }
+
+    // TCP：按当前目标路由（群发为容器级「全部客户端」）
+    const peers = (stateRef.current.networkPeers[containerId] ?? [])
+      .filter(p => p.state === "connected");
+    if (stateRef.current.networkBroadcast[containerId] === true) {
+      for (const p of peers) {
+        await sendData(p.peerId, data);
+      }
+      return;
+    }
+    const selected = stateRef.current.selectedNetworkPeer[containerId];
+    const peer = peers.find(p => p.peerId === selected);
+    if (peer) { await sendData(peer.peerId, data); return; }
+    if (peers.length === 1) { await sendData(peers[0].peerId, data); return; }
+    throw new Error("无可用发送目标");
+  }, [sendData]);
+
+  const updateSessionStats = useCallback((sessionId: string, txBytes: number, rxBytes: number, rxPackets?: number, txPackets?: number) => {
+    dispatch({
+      type: "UPDATE_TAB_STATS",
+      id: sessionId,
+      stats: {
+        txBytes,
+        rxBytes,
+        ...(rxPackets !== undefined ? { rxPackets } : {}),
+        ...(txPackets !== undefined ? { txPackets } : {}),
+      },
+      connectedAt: undefined,
+    });
+  }, []);
+
   const onSessionDisconnect = useCallback((callback: (sessionId: string, reason?: string) => void) => {
     disconnectCallbackRef.current = callback;
   }, []);
@@ -794,13 +1172,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1b(); return; }
       unlisteners.push(u1b);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; is_container?: boolean }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; is_container?: boolean; local_addr?: string | null }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
           const vPairs = event.payload.virtual_port_pairs;
           const parentId = event.payload.parent_id ?? null;
           const isContainer = event.payload.is_container ?? false;
+          // UDP client 本端地址（连接后本机 ip:port）→ 独立状态，供侧栏端点行展示
+          if (typeof event.payload.local_addr === "string") {
+            dispatch({ type: "SET_NETWORK_LOCAL_ADDR", containerId: sid, addr: event.payload.local_addr });
+          }
           // 检查是否已存在同 ID 的 tab
           const exists = tabsRef.current.some(t => t.id === sid);
           if (exists) {
@@ -943,10 +1325,73 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2e(); return; }
       unlisteners.push(u2e);
 
+      // 网络调试对端加入（后端 register_peer_channel 成功后广播）
+      const u2f = await listen<{ session_id: string; peer_id: string; peer_name: string; peer_addr: string; local_addr?: string }>(
+        "netdbg-peer-joined",
+        (event) => {
+          const { session_id: cid, peer_id, peer_name, peer_addr, local_addr } = event.payload;
+          peerSessionsRef.current[peer_id] = true;
+          networkPeerContainerRef.current[peer_id] = cid;
+          dispatch({ type: "SET_PEER_CONNECTED", id: peer_id, connected: true });
+          dispatch({
+            type: "SET_NETWORK_PEER",
+            containerId: cid,
+            peer: { peerId: peer_id, name: peer_name, addr: peer_addr, localAddr: local_addr, state: "connected", txBytes: 0, rxBytes: 0 },
+          });
+        }
+      );
+      if (cancelled) { u2f(); return; }
+      unlisteners.push(u2f);
+
+      // 网络调试对端断开（后端 on_disconnect 广播，附带最终统计）
+      const u2g = await listen<{ session_id: string; peer_id: string; tx_bytes?: number | null; rx_bytes?: number | null }>(
+        "netdbg-peer-left",
+        (event) => {
+          const { session_id: cid, peer_id, tx_bytes, rx_bytes } = event.payload;
+          // client 单连接语义：唯一对端断开 → 会话整体断开（无监听器可继续等待）。
+          // 容器级清理由 session-disconnected 事件路径完成（CLEAR_NETWORK_PEERS）。
+          const containerTab = tabsRef.current.find(t => t.id === cid);
+          const isNetClient = containerTab?.pluginId === "network"
+            && ((containerTab.params as Record<string, unknown> | undefined)?.role ?? "client") === "client";
+          if (isNetClient) {
+            invoke("disconnect_session", { sessionId: cid }).catch(() => { /* 后端可能已自行清理 */ });
+            dispatch({ type: "SET_TAB_STATE", id: cid, state: "disconnected" });
+            return;
+          }
+          peerSessionsRef.current[peer_id] = false;
+          dispatch({ type: "SET_PEER_CONNECTED", id: peer_id, connected: false });
+          dispatch({
+            type: "SET_NETWORK_PEER_STATE",
+            containerId: cid,
+            peerId: peer_id,
+            state: "disconnected",
+            txBytes: typeof tx_bytes === "number" ? tx_bytes : undefined,
+            rxBytes: typeof rx_bytes === "number" ? rx_bytes : undefined,
+          });
+        }
+      );
+      if (cancelled) { u2g(); return; }
+      unlisteners.push(u2g);
+
       const u3 = await listen<{ session_id: string; reason?: string }>("session-disconnected", (event) => {
         const reason = event.payload.reason;
         const sid = event.payload.session_id;
         dispatch({ type: "SET_TAB_STATE", id: sid, state: "disconnected" });
+        // 网络调试容器断开：级联清理对端注册（后端通道已随容器关闭）
+        const peers = stateRef.current.networkPeers[sid];
+        if (peers) {
+          for (const p of peers) {
+            delete peerSessionsRef.current[p.peerId];
+            delete broadcastSessionsRef.current[p.peerId];
+            if (networkPeerContainerRef.current[p.peerId] === sid) {
+              delete networkPeerContainerRef.current[p.peerId];
+            }
+            dispatch({ type: "REMOVE_PEER", id: p.peerId });
+          }
+          dispatch({ type: "CLEAR_NETWORK_PEERS", containerId: sid });
+        }
+        delete broadcastSessionsRef.current[sid];
+        dispatch({ type: "SET_BROADCAST", sessionId: sid, on: false });
         // 重置 Telnet 回显状态（重连时重新协商）
         dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: false });
         // 父 session 断开时级联移除所有子 channel
@@ -1001,6 +1446,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const u9 = await listen<{ tab_id: string; tx_bytes: number; rx_bytes: number; connected_at?: number | null }>(
         "session-stats",
         (event) => {
+          const cid = networkPeerContainerRef.current[event.payload.tab_id];
+          if (cid) {
+            // 对端统计 → 网络调试容器对端条目
+            dispatch({
+              type: "SET_NETWORK_PEER_STATS",
+              containerId: cid,
+              peerId: event.payload.tab_id,
+              txBytes: event.payload.tx_bytes,
+              rxBytes: event.payload.rx_bytes,
+            });
+            return;
+          }
           dispatch({
             type: "UPDATE_TAB_STATS",
             id: event.payload.tab_id,
@@ -1065,6 +1522,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       getTabs,
       onSessionData,
       onDataSent,
+      subscribeDataSent,
+      isSessionConnected,
+      selectNetworkPeer,
+      getNetworkPeers,
+      disconnectNetworkPeer,
+      clearNetworkPeer,
+      mergeNetworkPeers,
+      setNetworkManualTarget,
+      registerNetworkUdpSource,
+      subscribeNetworkManualSent,
+      getSiblingTargets,
+      isBroadcast,
+      toggleBroadcast,
+      setNetworkBroadcast,
+      sendToTarget,
+      updateSessionStats,
       onSessionDisconnect,
       clearError,
       startSessionLog,

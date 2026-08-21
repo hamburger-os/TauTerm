@@ -10,6 +10,8 @@ export interface ContextMenuState {
   visible: boolean;
   /** 右键目标会话（null = 无目标，菜单不可见） */
   session: TabInfo | null;
+  /** 网络调试对端目标（右键对端树节点时设置；session 为所属容器 tab） */
+  peer?: { containerId: string; peerId: string } | null;
 }
 
 /**
@@ -24,6 +26,7 @@ export function useContextMenu() {
     y: 0,
     visible: false,
     session: null,
+    peer: null,
   });
 
   const openMenu = useCallback((e: React.MouseEvent, session: TabInfo) => {
@@ -33,6 +36,19 @@ export function useContextMenu() {
       y: e.clientY,
       visible: true,
       session,
+      peer: null,
+    });
+  }, []);
+
+  /** 右键网络调试对端树节点：session = 所属容器 tab，peer = 对端标识 */
+  const openPeerMenu = useCallback((e: React.MouseEvent, session: TabInfo, containerId: string, peerId: string) => {
+    e.preventDefault();
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      visible: true,
+      session,
+      peer: { containerId, peerId },
     });
   }, []);
 
@@ -59,5 +75,5 @@ export function useContextMenu() {
     };
   }, [menu.visible, closeMenu]);
 
-  return { menu, openMenu, closeMenu };
+  return { menu, openMenu, openPeerMenu, closeMenu };
 }

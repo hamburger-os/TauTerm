@@ -36,8 +36,7 @@
 
 .card {
   padding: var(--spacing-lg);
-  border-radius: var(--radius-md);
-  /* background, border, box-shadow 由全局 .liquid-glass-card 提供 */
+  /* background, border, box-shadow, border-radius 由全局 .liquid-glass-card 提供 */
 }
 
 .cardTitle {

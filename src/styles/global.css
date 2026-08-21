@@ -149,6 +149,9 @@ body {
   border-top: 1px solid var(--glass-border-top);
   border-left: 1px solid var(--glass-border-left);
   box-shadow: var(--glass-rim-glow);
+  /* 卡片统一圆角（12px Control tier）——单点真理：
+     组件不再各自补写 border-radius */
+  border-radius: var(--radius-md);
 }
 
 /* ==========================================

@@ -13,6 +13,14 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+/** 格式化速率（字节/秒，自适应单位 B/s → KB/s → MB/s） */
+export function formatRate(bytesPerSecond: number): string {
+  if (!isFinite(bytesPerSecond) || bytesPerSecond < 0) return "0 B/s";
+  if (bytesPerSecond < 1024) return `${Math.round(bytesPerSecond)} B/s`;
+  if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
 /** 格式化秒数为 HH:MM:SS */
 export function formatUptime(totalSeconds: number): string {
   const h = Math.floor(totalSeconds / 3600);

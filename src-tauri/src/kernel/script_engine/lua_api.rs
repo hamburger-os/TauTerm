@@ -58,6 +58,29 @@ pub fn inject_lua_api(
     })?;
     globals.set("send_text", send_text_fn)?;
 
+    // ── send_to(target, data) ── 向显式目标地址发送原始字节（UDP server 广播/组播/任意地址）
+    let comm_send_to = comm.clone();
+    let send_to_fn = lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
+        let target = target.to_str()?.to_string();
+        let bytes: Vec<u8> = data.as_bytes().to_vec();
+        comm_send_to
+            .send_to(&target, &bytes)
+            .map_err(|e| mlua::Error::RuntimeError(format!("send_to 失败: {}", e)))
+    })?;
+    globals.set("send_to", send_to_fn)?;
+
+    // ── send_to_text(target, text) ── 向显式目标地址按会话编码转码后发送文本
+    let comm_send_to_text = comm.clone();
+    let send_to_text_fn = lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
+        let target = target.to_str()?.to_string();
+        let bytes: Vec<u8> = data.as_bytes().to_vec();
+        comm_send_to_text
+            .send_to_text(&target, &bytes)
+            .map(|_| ())
+            .map_err(|e| mlua::Error::RuntimeError(format!("send_to_text 失败: {}", e)))
+    })?;
+    globals.set("send_to_text", send_to_text_fn)?;
+
     // ── sleep(ms) ──
     // 协作式分片睡眠：每 50ms 检查一次 shutdown 标志，使停止脚本时能及时中断，
     // 避免长睡眠期间无法响应 Shutdown 导致 join 阻塞（并卡住 SessionStore 全局锁）。

@@ -41,10 +41,10 @@ function defaultConfig(): AutoReplyConfig {
 
 export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }: AutoReplyPanelProps) {
   const { t } = useTranslation();
-  const { state: sessionState } = useSession();
+  const { isSessionConnected } = useSession();
   const { showToast } = useToast();
-  const activeTab = sessionState.tabs.find(tab => tab.id === sessionId);
-  const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
+  // 网络调试对端经 peerSessions 注册表判定；普通会话走 tabs
+  const isConnected = isSessionConnected(sessionId);
 
   const { state: sendBarState, dispatch } = useSendBar();
   const { configs, activeConfigName, rules, isRunning, matchStrategy } = sendBarState.autoReply;

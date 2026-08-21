@@ -62,8 +62,42 @@ export interface BottomPanelDef {
   component: ComponentType<{ sessionId: string }>;
 }
 
+/** 状态栏渲染上下文 */
+export interface StatusBarContext {
+  /** 活跃会话 ID（无活跃会话时为空串） */
+  sessionId: string;
+  /** 活跃会话（无活跃会话时为 null） */
+  activeTab: StatusBarTab | null;
+}
+
+/**
+ * 状态栏可见性/渲染所需的最小会话信息（结构化子集）。
+ * 用独立结构而非直接引用 SessionContext 的 TabInfo，避免 plugin-registry
+ * 与 SessionContext 形成循环依赖（SessionContext 反向 import 了本模块）。
+ */
+export interface StatusBarTab {
+  id: string;
+  pluginId: string;
+  state: string;
+  endpoint: string;
+  params?: Record<string, unknown>;
+}
+
+/** 状态栏项（声明式描述符） */
+export interface StatusBarItem {
+  id: string;
+  /** 对齐：左 / 右 */
+  align: "left" | "right";
+  /** 排序优先级：左对齐时数值越大越靠左，右对齐时数值越大越靠右 */
+  priority: number;
+  /** 可见性谓词：返回 false 则不渲染 */
+  when?: (context: StatusBarContext) => boolean;
+  /** 渲染函数：返回一个 React 元素（可在内部使用 hooks） */
+  render: (context: StatusBarContext) => ReactNode;
+}
+
 /** 状态栏项渲染函数 */
-export type StatusBarRenderer = (context: { sessionId: string }) => ReactNode;
+export type StatusBarRenderer = (context: StatusBarContext) => ReactNode;
 
 /** 翻译资源映射 */
 export type LocaleMap = Record<string, Record<string, string>>;
@@ -75,7 +109,7 @@ export interface PluginRegistration {
   toolbarItems?: ToolbarItem[];
   contextMenuItems?: ContextMenuItem[];
   bottomPanels?: BottomPanelDef[];
-  statusBarItems?: Array<{ id: string; render: StatusBarRenderer }>;
+  statusBarItems?: StatusBarItem[];
   locales?: LocaleMap;
   /** 自定义内容视图组件（content_type === "custom" 时使用） */
   customView?: ComponentType<{ sessionId: string }>;

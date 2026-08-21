@@ -38,9 +38,9 @@ function defaultScript(name: string): ScriptRecord {
 
 export default function ScriptEditor({ sessionId, isActive, onRunningChange }: ScriptEditorProps) {
   const { t } = useTranslation();
-  const { state: sessionState } = useSession();
-  const activeTab = sessionState.tabs.find(tab => tab.id === sessionId);
-  const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
+  const { isSessionConnected } = useSession();
+  // 网络调试对端经 peerSessions 注册表判定；普通会话走 tabs
+  const isConnected = isSessionConnected(sessionId);
 
   const { state: sendBarState, dispatch } = useSendBar();
   const { scripts, activeScriptId, code, isRunning } = sendBarState.script;

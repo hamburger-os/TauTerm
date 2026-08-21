@@ -19,14 +19,16 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use crate::channel::Channel;
 use crate::channel::io_loop::{IoLoopCmd, spawn_sync_io_loop};
 use crate::channel::async_io_loop::spawn_async_io_loop;
-use crate::kernel::comm_handle::CommHandle;
+use crate::kernel::comm_handle::{CommHandle, DataCallback};
+use crate::kernel::data_batcher::DataBatcher;
+use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
 use crate::kernel::plugin_adapter::{ChannelKind, ProtocolConnection, SideChannel};
 use crate::kernel::script_engine::{ScriptCmd, spawn_script_thread};
 use crate::virtual_port::bridge::VirtualPortBridge;
@@ -52,6 +54,72 @@ pub enum SessionState {
     Transferring,
 }
 
+/// 子连接关闭的第二阶段句柄（锁外 join）。
+///
+/// 由 [`SessionStore::close_sub_connection`] 在持锁阶段返回。
+/// **不变式**：持有本句柄期间不得获取 session_store 锁 —— I/O 线程的
+/// on_disconnect 回调可能正在等待该锁，join 前取锁 = 死锁。
+///
+/// - `Sync` I/O 线程：读超时 50ms 轮询 + Shutdown 命令驱动退出，join 快速返回；
+/// - `Async` I/O task：在 tokio runtime 中限时 join，超时 abort（远程僵死防御）；
+/// - 脚本线程：协作式关闭标志 + Shutdown 命令，join 快速返回。
+pub struct SubConnectionCleanup {
+    channel_id: String,
+    io_thread: Option<IoTaskHandle>,
+    script_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SubConnectionCleanup {
+    /// 阶段 2：在 **锁外** join I/O 线程/任务与脚本线程，等待资源真实释放。
+    ///
+    /// 必须在释放 session_store 锁后调用（见类型级不变式）。
+    pub fn join(self) {
+        let ch_id = self.channel_id;
+        if let Some(io_thread) = self.io_thread {
+            match io_thread {
+                IoTaskHandle::Sync(thread) => {
+                    // 读超时 50ms 轮询 + Shutdown 命令驱动退出，join 快速返回
+                    let _ = thread.join();
+                }
+                IoTaskHandle::Async(mut task) => {
+                    // 与 close_session 相同的双场景处理：
+                    // 1. tokio runtime 内（Tauri async 命令）→ block_in_place + block_on
+                    // 2. runtime 外（同步命令 / Drop 清理）→ 临时 runtime
+                    //    限时 join：远程 TCP 僵死时超时 abort，防御性释放
+                    let wait = async {
+                        match tokio::time::timeout(Duration::from_secs(3), &mut task).await {
+                            Ok(_) => log::debug!("子连接 I/O task 已清理: {}", ch_id),
+                            Err(_elapsed) => {
+                                task.abort();
+                                // 等待 abort 完成，确保 Drop 析构执行
+                                let _ = tokio::time::timeout(
+                                    Duration::from_secs(5), task,
+                                ).await;
+                                log::warn!("子连接 I/O task 已强制中止: {}", ch_id);
+                            }
+                        }
+                    };
+                    match tokio::runtime::Handle::try_current() {
+                        Ok(handle) => {
+                            tokio::task::block_in_place(|| handle.block_on(wait));
+                        }
+                        Err(_) => match tokio::runtime::Runtime::new() {
+                            Ok(rt) => rt.block_on(wait),
+                            Err(e) => log::warn!(
+                                "无法创建临时 tokio runtime 清理子连接 I/O task: {} ({})",
+                                e, ch_id
+                            ),
+                        },
+                    }
+                }
+            }
+        }
+        if let Some(thread) = self.script_thread {
+            let _ = thread.join();
+        }
+    }
+}
+
 /// I/O 统计快照
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionStats {
@@ -61,14 +129,32 @@ pub struct SessionStats {
     pub connected_at: Option<u64>,
 }
 
-/// 子连接句柄（SSH 多连接：一个 SSH session 复用多个 PTY channel）。
+/// 会话内对端信息（网络调试会话的自定义视图用）
+#[derive(Debug, Clone, Serialize)]
+pub struct PeerInfo {
+    pub peer_id: String,
+    pub name: String,
+    pub addr: String,
+    /// 本端地址（TCP client 连接后本机分配的 ip:port，可与服务端对端条目对应）
+    pub local_addr: String,
+    pub state: String,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+    pub connected_at: Option<u64>,
+}
+
+/// 子连接句柄（SSH 多连接 / 网络调试会话多对端）。
 ///
 /// 每个子连接有独立的 I/O loop、write channel 和统计信息。
 /// 关闭子连接不影响父 session，关闭父 session 级联清理所有子连接。
+///
+/// 两种用途：
+/// - SSH 通道（`tabbed = true`）：前端表现为独立标签页；
+/// - 网络调试对端（`tabbed = false`）：会话内实体，前端在自定义视图中展示。
 pub struct SubConnection {
     /// 子连接唯一 ID（UUID v4）
     pub id: TabId,
-    /// 显示名称（"Shell 1", "Shell 2", ...）
+    /// 显示名称（"Shell 1" / "Peer 1" / 对端地址）
     pub name: String,
     /// 发送 I/O 命令的 channel
     pub write_tx: mpsc::SyncSender<IoLoopCmd>,
@@ -84,6 +170,24 @@ pub struct SubConnection {
     pub stats_cancel_flag: Option<Arc<AtomicBool>>,
     /// 通道自动编号（从 0 开始）
     pub channel_index: u32,
+    /// 发送字节计数（网络调试对端统计用）
+    pub tx_bytes: Arc<AtomicU64>,
+    /// 接收字节计数（网络调试对端统计用）
+    pub rx_bytes: Arc<AtomicU64>,
+    /// 通信抽象句柄（网络调试对端拥有各自实例，使自动应答/脚本按对端生效）
+    pub comm_handle: Option<Arc<dyn CommHandle>>,
+    /// 脚本引擎线程的命令发送端（对端级脚本/自动应答）
+    pub script_tx: Option<mpsc::SyncSender<ScriptCmd>>,
+    /// 脚本引擎线程句柄
+    pub script_thread: Option<std::thread::JoinHandle<()>>,
+    /// 脚本线程的协作式关闭标志
+    pub script_shutdown: Option<Arc<AtomicBool>>,
+    /// 是否为独立标签页子连接（SSH 通道 = true）；false = 会话内对端（网络调试，不占标签页）
+    pub tabbed: bool,
+    /// 对端地址描述（网络调试：`ip:port`；SSH：无）
+    pub peer_addr: Option<String>,
+    /// 本端地址（网络调试：TCP client 的连接本地地址 / server 的监听地址）
+    pub local_addr: Option<String>,
 }
 
 /// 单个会话句柄（协议无关）
@@ -163,6 +267,15 @@ impl SubConnection {
             connected_at: None, // 由调用方设置（SubConnection 自身不感知真实连接时刻）
             stats_cancel_flag: None,
             channel_index,
+            tx_bytes: Arc::new(AtomicU64::new(0)),
+            rx_bytes: Arc::new(AtomicU64::new(0)),
+            comm_handle: None,
+            script_tx: None,
+            script_thread: None,
+            script_shutdown: None,
+            tabbed: true, // SSH 通道默认为独立标签页
+            peer_addr: None,
+            local_addr: None,
         }
     }
 }
@@ -502,6 +615,7 @@ impl SessionStore {
         endpoint: &str,
         params: serde_json::Value,
         side_channel: Option<Arc<dyn SideChannel>>,
+        comm_handle: Option<Arc<dyn CommHandle>>,
         transfer_enabled: bool,
         transfer_protocol: Option<String>,
         send_bar_enabled: bool,
@@ -572,7 +686,7 @@ impl SessionStore {
             send_bar_enabled,
             virtual_port_bridge: None,
             virtual_port_pairs: Vec::new(),
-            comm_handle: None,
+            comm_handle,
             script_tx: None,
             script_thread: None,
             script_shutdown: None,
@@ -867,12 +981,275 @@ impl SessionStore {
         Ok(())
     }
 
-    /// 关闭单个子连接（若为最后一个子连接则自动断开父会话）
+    /// 注册一个"对端通道"到容器会话（网络调试等协议使用）。
+    ///
+    /// 与 `commands::create_ssh_sub_channel` 的通道创建流程等价，但面向会话内
+    /// 多对端模型：对端不占独立标签页（`tabbed = false`），拥有独立的 I/O loop、
+    /// 统计采集、CommHandle（自动应答/脚本按对端生效）与日志路由。
+    ///
+    /// 对端 I/O loop 断开时广播 `netdbg-peer-left` 事件；本方法广播
+    /// `netdbg-peer-joined` 事件，供前端对端列表刷新。
+    #[allow(clippy::too_many_arguments)]
+    pub fn register_peer_channel(
+        &mut self,
+        app: &tauri::AppHandle,
+        log_tx: mpsc::SyncSender<LogEntry>,
+        parent_id: &str,
+        peer_name: &str,
+        peer_addr: &str,
+        local_addr: &str,
+        channel: ChannelKind,
+        encoding: &str,
+        data_mode: &str,
+        peer_writers: Arc<Mutex<HashMap<String, mpsc::SyncSender<IoLoopCmd>>>>,
+        container_receivers: Arc<Mutex<Vec<DataCallback>>>,
+    ) -> Result<String, String> {
+        let not_found = self.session_not_found(parent_id);
+        if let Some(h) = self.sessions.get(parent_id) {
+            if h.state != SessionState::Connected {
+                return Err("父会话已断开，无法注册对端".to_string());
+            }
+        } else {
+            return Err(not_found);
+        }
+
+        let channel_id = uuid::Uuid::new_v4().to_string();
+        let (write_tx, write_rx) = mpsc::sync_channel::<IoLoopCmd>(256);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let tx_bytes = Arc::new(AtomicU64::new(0));
+        let rx_bytes = Arc::new(AtomicU64::new(0));
+        let tx_clone = tx_bytes.clone();
+        let rx_clone = rx_bytes.clone();
+
+        // 登记对端写通道：容器级脚本引擎按「当前目标」路由/群发用
+        if let Ok(mut writers) = peer_writers.lock() {
+            writers.insert(channel_id.clone(), write_tx.clone());
+        }
+
+        // 对端级 CommHandle：文本路径按对端编码转码；同时是对端脚本引擎的扇出目标
+        let comm_handle: Arc<dyn CommHandle> = Arc::new(
+            crate::channel::serial_comm::SerialCommHandle::new(
+                write_tx.clone(),
+                encoding.to_string(),
+            ),
+        );
+
+        let app_clone = app.clone();
+        let batcher = DataBatcher::new(move |batched| {
+            let _ = app_clone.emit("session-data", serde_json::json!({
+                "session_id": batched.session_id,
+                "data_b64": batched.data_b64,
+            }));
+        });
+        let comm_for_fanout = comm_handle.clone();
+        let encoding_owned = encoding.to_string();
+        let data_mode_owned = data_mode.to_string();
+        let on_data = Box::new(move |session_id: String, data: Vec<u8>| {
+            comm_for_fanout.notify_receive(&data);
+            // 容器级脚本引擎（TCP 目标路由/群发）也感知该对端数据
+            if let Ok(rx) = container_receivers.lock() {
+                for cb in rx.iter() {
+                    cb(&data);
+                }
+            }
+            let data_for_log = data.clone();
+            batcher.push(session_id.clone(), data);
+            let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
+                session_id,
+                direction: DataDirection::RX,
+                data_mode: data_mode_owned.clone(),
+                encoding: encoding_owned.clone(),
+                payload: data_for_log,
+                timestamp: chrono::Local::now(),
+            }));
+        });
+
+        let app_disconnect = app.clone();
+        let pid = parent_id.to_string();
+        let ch_id = channel_id.clone();
+        let ch_id_for_evt = ch_id.clone();
+        let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |_channel_id| {
+            // 对端退出：从容器写通道注册表移除，避免群发写入失效通道
+            if let Ok(mut writers) = peer_writers.lock() {
+                writers.remove(&ch_id_for_evt);
+            }
+            // I/O 线程退出路径：先持锁落状态（Disconnected + 停 stats collector），
+            // 再发事件。锁内不 join 任何线程（mark_sub_disconnected 保证）。
+            let mut final_tx: Option<u64> = None;
+            let mut final_rx: Option<u64> = None;
+            if let Ok(mut store) = app_disconnect
+                .state::<crate::AppState>()
+                .session_store
+                .lock()
+            {
+                store.mark_sub_disconnected(&pid, &ch_id_for_evt);
+                // R4: 附带最终统计，前端据此更新对端末值（stats collector 已停）
+                if let Some(h) = store.get_session(&pid) {
+                    if let Some(sub) = h.sub_connections.iter().find(|s| s.id == ch_id_for_evt) {
+                        final_tx = Some(sub.tx_bytes.load(Ordering::Relaxed));
+                        final_rx = Some(sub.rx_bytes.load(Ordering::Relaxed));
+                    }
+                }
+            }
+            let _ = app_disconnect.emit("netdbg-peer-left", serde_json::json!({
+                "session_id": pid,
+                "peer_id": ch_id_for_evt,
+                "tx_bytes": final_tx,
+                "rx_bytes": final_rx,
+            }));
+        });
+
+        let io_handle = match channel {
+            ChannelKind::Sync(sync_channel) => IoTaskHandle::Sync(spawn_sync_io_loop(
+                sync_channel, ch_id.clone(), on_data, on_disconnect, write_rx, cancel_rx,
+                tx_clone, rx_clone,
+            )),
+            ChannelKind::Async(async_channel) => IoTaskHandle::Async(spawn_async_io_loop(
+                async_channel, ch_id.clone(), on_data, on_disconnect, write_rx, cancel_rx,
+                tx_clone, rx_clone,
+            )),
+        };
+
+        let stats_cancel_flag = Arc::new(AtomicBool::new(false));
+        let connected_at = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        );
+        Self::spawn_stats_collector(
+            app.clone(),
+            channel_id.clone(),
+            tx_bytes.clone(),
+            rx_bytes.clone(),
+            connected_at,
+            stats_cancel_flag.clone(),
+        );
+
+        // 对端序号仅统计非标签页子连接（网络对端），SSH 通道不占号
+        let (actual_index, actual_name) = {
+            let handle = self.sessions.get_mut(parent_id).ok_or(not_found.clone())?;
+            let idx = handle.sub_connections.iter()
+                .filter(|s| !s.tabbed)
+                .count() as u32;
+            let name = if peer_name.is_empty() {
+                format!("Peer {}", idx + 1)
+            } else {
+                peer_name.to_string()
+            };
+            (idx, name)
+        };
+
+        let sub = SubConnection {
+            id: channel_id.clone(),
+            name: actual_name.clone(),
+            write_tx,
+            io_cancel_tx: Some(cancel_tx),
+            io_thread: Some(io_handle),
+            state: SessionState::Connected,
+            connected_at,
+            stats_cancel_flag: Some(stats_cancel_flag),
+            channel_index: actual_index,
+            tx_bytes,
+            rx_bytes,
+            comm_handle: Some(comm_handle),
+            script_tx: None,
+            script_thread: None,
+            script_shutdown: None,
+            tabbed: false,
+            peer_addr: Some(peer_addr.to_string()),
+            local_addr: Some(local_addr.to_string()),
+        };
+
+        {
+            let handle = self.sessions.get_mut(parent_id).ok_or(not_found)?;
+            handle.sub_connections.push(sub);
+        }
+
+        let _ = app.emit("netdbg-peer-joined", serde_json::json!({
+            "session_id": parent_id,
+            "peer_id": channel_id,
+            "peer_name": actual_name,
+            "peer_addr": peer_addr,
+            "local_addr": local_addr,
+        }));
+        Ok(channel_id)
+    }
+
+    /// 查找子连接（对端）所属的父会话与下标
+    fn find_sub_connection_index(&self, channel_id: &str) -> Option<(TabId, usize)> {
+        for (pid, handle) in self.sessions.iter() {
+            for (i, sub) in handle.sub_connections.iter().enumerate() {
+                if sub.id == channel_id {
+                    return Some((pid.clone(), i));
+                }
+            }
+        }
+        None
+    }
+
+    /// 列出容器会话内所有对端（网络调试视图初始化用）
+    pub fn list_peers(&self, parent_id: &str) -> Vec<PeerInfo> {
+        let mut out = Vec::new();
+        if let Some(handle) = self.sessions.get(parent_id) {
+            for sub in &handle.sub_connections {
+                if sub.tabbed {
+                    continue;
+                }
+                out.push(PeerInfo {
+                    peer_id: sub.id.clone(),
+                    name: sub.name.clone(),
+                    addr: sub.peer_addr.clone().unwrap_or_default(),
+                    local_addr: sub.local_addr.clone().unwrap_or_default(),
+                    state: match sub.state {
+                        SessionState::Connected => "connected".into(),
+                        SessionState::Connecting => "connecting".into(),
+                        SessionState::Disconnected => "disconnected".into(),
+                        SessionState::Transferring => "transferring".into(),
+                    },
+                    tx_bytes: sub.tx_bytes.load(Ordering::Relaxed),
+                    rx_bytes: sub.rx_bytes.load(Ordering::Relaxed),
+                    connected_at: sub.connected_at,
+                });
+            }
+        }
+        out
+    }
+
+    /// 获取通信句柄（支持对端路由）。
+    ///
+    /// 先尝试匹配会话；否则搜索对端（网络调试）。对端拥有各自的 CommHandle，
+    /// 使文本转码、脚本、自动应答按对端生效。
+    pub fn get_comm_handle_for(&self, session_id: &str) -> Option<Arc<dyn CommHandle>> {
+        if let Some(handle) = self.sessions.get(session_id) {
+            return handle.comm_handle.clone();
+        }
+        for (_, handle) in self.sessions.iter() {
+            for sub in &handle.sub_connections {
+                if sub.id == session_id {
+                    return sub.comm_handle.clone();
+                }
+            }
+        }
+        None
+    }
+
+    /// 关闭单个子连接（两段式）。
+    ///
+    /// **阶段 1（本方法，持 store 锁）**：向脚本引擎 / 统计采集器 / I/O loop
+    /// 发送全部关闭信号，并从 `sub_connections` 移除，返回待 join 的句柄。
+    /// **不在锁内 join** —— I/O 线程退出路径可能触发 on_disconnect 回调，
+    /// 回调需获取本 store 锁，持锁 join 会形成循环死锁。
+    ///
+    /// **阶段 2（调用方，锁外）**：调用 [`SubConnectionCleanup::join`]。
+    ///
+    /// 返回 `(是否为最后一个子连接, 清理句柄)`；若为最后一个子连接，
+    /// 调用方应级联关闭父会话。
     pub fn close_sub_connection(
         &mut self,
         parent_id: &str,
         channel_id: &str,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, SubConnectionCleanup), String> {
         let not_found = self.session_not_found(parent_id);
         let handle = self.sessions.get_mut(parent_id).ok_or(not_found)?;
 
@@ -883,7 +1260,20 @@ impl SessionStore {
 
         let mut sub = handle.sub_connections.remove(idx);
 
-        // 关闭子连接的 I/O loop
+        // ── 阶段 1a：对端级脚本引擎信号（网络调试对端；SSH 通道此处为 None 空操作）──
+        // 锁内仅置协作式关闭标志 + 发 Shutdown 命令，线程句柄留待锁外 join
+        if let Some(flag) = sub.script_shutdown.take() {
+            flag.store(true, Ordering::SeqCst);
+        }
+        if let Some(tx) = sub.script_tx.take() {
+            let _ = tx.send(ScriptCmd::Shutdown);
+        }
+        let script_thread = sub.script_thread.take();
+        if let Some(comm) = &sub.comm_handle {
+            comm.clear_receivers();
+        }
+
+        // ── 阶段 1b：统计采集器 + I/O loop 关闭信号 ──
         if let Some(ref flag) = sub.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
         }
@@ -891,52 +1281,21 @@ impl SessionStore {
             let _ = tx.send(());
         }
         let _ = sub.write_tx.send(IoLoopCmd::Shutdown);
-        // 子连接 I/O task 完成时可能触发 on_disconnect 回调，
-        // 该回调需要获取 session_store 锁。若此处持锁 block_on 会形成循环死锁。
-        // 采用与传输任务相同的 tokio::spawn + timeout 模式，在锁外 join。
-        if let Some(io_thread) = sub.io_thread.take() {
-            let ch_id = channel_id.to_string();
-            match io_thread {
-                IoTaskHandle::Sync(thread) => {
-                    // Sync 线程无异步回调，可安全 join（close_sub_connection 已在锁外）
-                    let _ = thread.join();
-                }
-                IoTaskHandle::Async(mut task) => {
-                    match tokio::runtime::Handle::try_current() {
-                        Ok(_) => {
-                            tokio::spawn(async move {
-                                // 阶段 1：优雅退出（task 已收到 Shutdown + cancel_tx）
-                                match tokio::time::timeout(Duration::from_secs(3), &mut task).await {
-                                    Ok(_) => log::debug!("子连接 I/O task 已清理: {}", ch_id),
-                                    Err(_elapsed) => {
-                                        // 阶段 2：远程 TCP 僵死，强制 abort
-                                        task.abort();
-                                        // 阶段 3：等待 abort 完成（确保 Drop 析构执行）
-                                        let _ = tokio::time::timeout(
-                                            Duration::from_secs(5), task,
-                                        ).await;
-                                        log::warn!("子连接 I/O task 已强制中止: {}", ch_id);
-                                    }
-                                }
-                            });
-                        }
-                        Err(_) => {
-                            log::warn!(
-                                "无法 join/abort 子连接 I/O task（无 tokio runtime），\
-                                 依赖 300s inactivity_timeout 自动清理: {}", ch_id
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        let io_thread = sub.io_thread.take();
 
-        // 如果最后一个子连接被关闭，自动断开父会话
+        // 是否最后一个子连接（由调用方决定是否级联断开父会话；网络调试不级联）
         let is_last = handle.sub_connections.is_empty();
         if is_last {
-            log::info!("最后一个子连接已关闭，自动断开父会话 {}", parent_id);
+            log::info!("最后一个子连接已关闭 (parent: {})", parent_id);
         }
-        Ok(is_last)
+        Ok((
+            is_last,
+            SubConnectionCleanup {
+                channel_id: channel_id.to_string(),
+                io_thread,
+                script_thread,
+            },
+        ))
     }
 
     /// 获取会话的 side_channel（用于 SSH 多连接复用）
@@ -1014,27 +1373,66 @@ impl SessionStore {
         code: &str,
         app_handle: tauri::AppHandle,
     ) -> Result<(), String> {
-        let not_found = self.session_not_found(session_id);
-        let handle = self.sessions.get_mut(session_id)
-            .ok_or(not_found)?;
+        // 主会话路径
+        if let Some(handle) = self.sessions.get_mut(session_id) {
+            let comm = handle.comm_handle.clone()
+                .ok_or("通信句柄不可用".to_string())?;
 
-        let comm = handle.comm_handle.clone()
+            match &handle.script_tx {
+                Some(tx) => {
+                    // 已在运行，发送新脚本
+                    tx.send(ScriptCmd::LoadScript(code.to_string()))
+                        .map_err(|e| format!("发送脚本失败: {}", e))?;
+                }
+                None => {
+                    // 首次启动：通过 CommHandle 注册数据接收回调（替代 feed_script_data 直传）
+                    // 此后所有接收数据经 CommHandle::notify_receive() 扇出时自动送达
+                    let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
+                    let tx_for_callback = tx.clone();
+                    comm.on_receive(Box::new(move |data: &[u8]| {
+                        // bounded channel (4096)：缓冲区满时丢弃旧数据。
+                        // 若脚本引擎处理速度持续落后，丢包比 OOM 更安全。
+                        let _ = tx_for_callback.try_send(ScriptCmd::FeedData(data.to_vec()));
+                    }));
+                    let shutdown = Arc::new(AtomicBool::new(false));
+                    let thread = spawn_script_thread(
+                        comm,
+                        app_handle,
+                        rx,
+                        session_id.to_string(),
+                        shutdown.clone(),
+                    );
+                    tx.send(ScriptCmd::LoadScript(code.to_string()))
+                        .map_err(|e| format!("发送脚本失败: {}", e))?;
+                    handle.script_tx = Some(tx);
+                    handle.script_thread = Some(thread);
+                    handle.script_shutdown = Some(shutdown);
+                }
+            }
+            return Ok(());
+        }
+
+        // 对端（网络调试子连接）路径：对端拥有各自的 CommHandle 与脚本状态
+        let not_found = self.session_not_found(session_id);
+        let (parent_id, sub_idx) = self
+            .find_sub_connection_index(session_id)
+            .ok_or(not_found)?;
+        let parent_not_found = self.session_not_found(&parent_id);
+        let handle = self.sessions.get_mut(&parent_id)
+            .ok_or(parent_not_found)?;
+        let sub = &mut handle.sub_connections[sub_idx];
+        let comm = sub.comm_handle.clone()
             .ok_or("通信句柄不可用".to_string())?;
 
-        match &handle.script_tx {
+        match &sub.script_tx {
             Some(tx) => {
-                // 已在运行，发送新脚本
                 tx.send(ScriptCmd::LoadScript(code.to_string()))
                     .map_err(|e| format!("发送脚本失败: {}", e))?;
             }
             None => {
-                // 首次启动：通过 CommHandle 注册数据接收回调（替代 feed_script_data 直传）
-                // 此后所有串口接收数据经 CommHandle::notify_receive() 扇出时自动送达
                 let (tx, rx) = mpsc::sync_channel::<ScriptCmd>(4096);
                 let tx_for_callback = tx.clone();
                 comm.on_receive(Box::new(move |data: &[u8]| {
-                    // bounded channel (4096)：缓冲区满时丢弃旧数据。
-                    // 若脚本引擎处理速度持续落后，丢包比 OOM 更安全。
                     let _ = tx_for_callback.try_send(ScriptCmd::FeedData(data.to_vec()));
                 }));
                 let shutdown = Arc::new(AtomicBool::new(false));
@@ -1047,9 +1445,9 @@ impl SessionStore {
                 );
                 tx.send(ScriptCmd::LoadScript(code.to_string()))
                     .map_err(|e| format!("发送脚本失败: {}", e))?;
-                handle.script_tx = Some(tx);
-                handle.script_thread = Some(thread);
-                handle.script_shutdown = Some(shutdown);
+                sub.script_tx = Some(tx);
+                sub.script_thread = Some(thread);
+                sub.script_shutdown = Some(shutdown);
             }
         }
         Ok(())
@@ -1057,6 +1455,35 @@ impl SessionStore {
 
     /// 停止脚本引擎
     pub fn stop_script(&mut self, session_id: &str) -> Result<(), String> {
+        // 对端（网络调试子连接）路径
+        if !self.sessions.contains_key(session_id) {
+            let not_found = self.session_not_found(session_id);
+            let (parent_id, sub_idx) = self
+                .find_sub_connection_index(session_id)
+                .ok_or(not_found)?;
+            let parent_not_found = self.session_not_found(&parent_id);
+            let handle = self.sessions.get_mut(&parent_id)
+                .ok_or(parent_not_found)?;
+            let sub = &mut handle.sub_connections[sub_idx];
+
+            // 先置协作式关闭标志，使 Lua sleep 分片及时中断，join 不长时阻塞全局锁
+            if let Some(flag) = sub.script_shutdown.take() {
+                flag.store(true, Ordering::SeqCst);
+            }
+            if let Some(tx) = sub.script_tx.take() {
+                let _ = tx.send(ScriptCmd::Shutdown);
+            }
+            if let Some(thread) = sub.script_thread.take() {
+                let _ = thread.join();
+            }
+            // 清理脚本引擎注册的接收回调，避免 stop→start 循环累积持废弃 channel 的死回调
+            if let Some(comm) = &sub.comm_handle {
+                comm.clear_receivers();
+            }
+            return Ok(());
+        }
+
+        // 主会话路径
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id)
             .ok_or(not_found)?;
@@ -1406,13 +1833,8 @@ impl SessionStore {
                     break;
                 }
             }
-            // 检查是否所有子连接都已断开，若是且父会话为容器（无 I/O loop）则标记父会话
-            let all_disconnected = !handle.sub_connections.is_empty()
-                && handle.sub_connections.iter().all(|s| s.state == SessionState::Disconnected);
-            if all_disconnected && handle.io_thread.is_none() {
-                handle.state = SessionState::Disconnected;
-                log::info!("所有子连接已断开，父会话 {} 标记为 Disconnected", parent_id);
-            }
+            // 对端断开不级联父容器：TCP Server 监听器 / UDP bind 保持监听，
+            // 父会话状态仅由显式 close_session 改变（见 network/mod.rs 模块注释）。
         }
     }
 
