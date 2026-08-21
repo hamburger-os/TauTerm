@@ -42,15 +42,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Skill shims in sync with canonical
-        run: |
-          npm run skills:sync
-          if ! git diff --exit-code -- .claude/skills/; then
-            echo "::error::.claude/skills/ is out of sync with .agents/skills/. Run 'npm run skills:sync' and commit the result."
-            git diff --stat -- .claude/skills/
-            exit 1
-          fi
-
       - name: TypeScript type check
         run: npx tsc --noEmit
 

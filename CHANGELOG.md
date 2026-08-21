@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Network Debug: server data area stays empty after tab switching** — the `session-data` listener was registered once per session by the plugin session store, so its closure kept the peer refs from the first mount; after remounting (tab switch) those refs froze at the initial empty list and the server view never matched its peers. The listener now resolves the current refs from a per-render registry, so incoming data is routed to the correct container's frame store again.
 - **Network Debug: client shows its own bound address** — peers now carry a `local_addr` (client's OS-assigned socket address after connecting); a TCP/UDP client session card appends it to the endpoint line (`tcp://127.0.0.1:8080 · 127.0.0.1:56780`, single line with ellipsis), letting you map the client to the matching "Peer N" row on the server side without changing the card height.
 
+### Developer Experience
+- Remove Claude Code skill shims — `.agents/skills/` is now the sole canonical skill location. Deleted `scripts/gen-skill-shims.mjs`, the `skills:sync` npm script, the `.claude/` directory (including `settings.json`), and the CI drift check.
+
 ## [0.4.0] — 2026-07-22 (First Public Tech Preview)
 
 This is the first public release of TauTerm, a cross-platform terminal emulator built with Tauri v2 featuring a microkernel plugin architecture.
