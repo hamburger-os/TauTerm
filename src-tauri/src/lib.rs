@@ -178,6 +178,42 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             let _ = window.set_shadow(true);
 
+            // ── 窗口尺寸钳制：默认 1440×900 在小屏（如 1366×768）上会溢出屏幕，
+            // 启动时按主显示器工作区钳制并居中，避免无边框窗口的控制按钮/边角跑到屏幕外。
+            // 尺寸取自窗口当前值（由 tauri.conf.json 定义），避免在 Rust 侧重复硬编码。
+            #[cfg(target_os = "windows")]
+            let work_area: Option<(u32, u32)> = {
+                use windows_sys::Win32::Foundation::RECT;
+                use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
+                let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                let ok = unsafe {
+                    SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut RECT as *mut core::ffi::c_void, 0)
+                };
+                if ok != 0 && rect.right > rect.left && rect.bottom > rect.top {
+                    Some(((rect.right - rect.left) as u32, (rect.bottom - rect.top) as u32))
+                } else {
+                    None
+                }
+            };
+            #[cfg(not(target_os = "windows"))]
+            let work_area: Option<(u32, u32)> = app
+                .primary_monitor()
+                .ok()
+                .flatten()
+                .map(|m| {
+                    let s = m.size();
+                    (s.width, s.height)
+                });
+
+            if let (Some((work_w, work_h)), Ok(current)) = (work_area, window.outer_size()) {
+                let w = current.width.min(work_w);
+                let h = current.height.min(work_h);
+                if w != current.width || h != current.height {
+                    let _ = window.set_size(tauri::PhysicalSize::new(w, h));
+                }
+            }
+            let _ = window.center();
+
             // 初始化日志目录
             // 优先使用 exe 同级目录；不可写时回退到应用数据目录
             let log_dir = {
