@@ -1,0 +1,119 @@
+/* 文件网格（Windows 平铺）— 仅布局与尺寸 */
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  padding-bottom: 0;
+  transition: padding-bottom 0.15s ease;
+}
+
+.containerWithProgress {
+  padding-bottom: 36px;
+}
+
+/* ── 错误横幅 ─────────────────────────── */
+
+.errorBanner {
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  border-left: 3px solid var(--color-error);
+  color: var(--color-error);
+  padding: 4px var(--spacing-sm);
+  font-size: var(--text-xs);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.errorClose {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  line-height: 1;
+  padding: 0 4px;
+  opacity: 0.8;
+}
+
+.errorClose:hover {
+  opacity: 1;
+}
+
+/* ── 网格体 ───────────────────────────── */
+
+.body {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs);
+  align-content: start;
+}
+
+.status {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--text-tertiary);
+  padding: var(--spacing-md) var(--spacing-sm);
+  font-size: var(--text-sm);
+}
+
+/* ── 平铺卡片 ─────────────────────────── */
+
+.tile {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+  height: 44px;
+}
+
+.tile:hover {
+  background: var(--glass-hover);
+}
+
+.selected {
+  background: var(--accent-primary-muted);
+  border-left-color: var(--accent-primary);
+}
+
+.tileIcon {
+  flex-shrink: 0;
+  width: 28px;
+  text-align: center;
+  font-size: var(--text-xl);
+  line-height: 1;
+}
+
+.tileMeta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.tileName {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tileSub {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

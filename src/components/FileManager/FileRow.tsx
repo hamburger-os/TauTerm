@@ -8,6 +8,7 @@
 import { memo } from "react";
 import type { SftpEntry } from "./types";
 import { formatBytes, formatTime } from "../../utils/format";
+import { getEntryIcon } from "./entryIcon";
 import styles from "./FileRow.module.css";
 
 // ── Component ──────────────────────────────────────────
@@ -41,20 +42,25 @@ const FileRow = memo(function FileRow({
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       role="row"
+      aria-selected={isSelected}
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === "Enter") onDoubleClick();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onDoubleClick();
+        } else if (e.key === " ") {
+          e.preventDefault();
+          onClick({ ctrlKey: false, shiftKey: false } as React.MouseEvent);
+        }
       }}
     >
-      <span className={styles.icon}>
-        {entry.is_dir ? "\u{1F4C1}" : "\u{1F4C4}"}
-      </span>
-      <span className={styles.name}>{entry.name}</span>
-      <span className={styles.size}>
+      <span className={styles.icon} role="gridcell">{getEntryIcon(entry)}</span>
+      <span className={styles.name} role="gridcell">{entry.name}</span>
+      <span className={styles.size} role="gridcell">
         {entry.is_dir ? "-" : formatBytes(entry.size)}
       </span>
-      <span className={styles.time}>{formatTime(entry.modified)}</span>
-      <span className={styles.perms}>{entry.permissions || "-"}</span>
+      <span className={styles.time} role="gridcell">{formatTime(entry.modified)}</span>
+      <span className={styles.perms} role="gridcell">{entry.permissions || "-"}</span>
     </div>
   );
 });

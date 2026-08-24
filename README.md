@@ -43,7 +43,7 @@ TauTerm is for engineers who are tired of switching between an SSH client, an SF
 ### 🖥️ Network engineering
 
 - **SSH + SFTP in one session** — terminal and file transfer share a single authenticated connection.
-- **SFTP file manager** — browse, upload/download, rename, batch delete and inspect remote files.
+- **SFTP file manager** — browse, upload/download, rename, batch delete and inspect remote files, with list and grid views switched from an inline toolbar.
 - **Network Debug (TCP/UDP)** — TCP client/server and UDP client/server with multi-peer handling, TEXT/HEX views, target selection and per-peer statistics.
 - **TFTP** — server/client workflows with RFC 7440 windowing, CRC32 verification and retry controls.
 - **Telnet** — RFC 854 negotiation, live window-size sync and keepalive.

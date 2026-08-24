@@ -75,6 +75,7 @@ grep 'glass-overlay' --glob='*.tsx' src/
 ```
 grep '[\x{1F300}-\x{1F9FF}]' --glob='*.tsx' src/components/ | grep -v FileManager
 ```
+> 命中 `FileManager/` 的文件条目 emoji（`entryIcon.ts` 的 8 类）不违规，仅需确认它们集中在该模块内、且没有在 `FileManager/` 之外的组件里使用 emoji。
 
 **Scan F: 自定义 Toggle 重实现 🔑（CSS Module 中手写 checkbox-hack toggle 是高优先级信号）**
 
@@ -148,7 +149,7 @@ grep 'toggleTrack\|toggleLabel\|toggleSwitch\|switchTrack\|customToggle\|repeatC
 
 | ID | 检查项 | 检测方式 | 修复 |
 |----|--------|---------|------|
-| **I1** | UI 控件使用 emoji | grep emoji Unicode 范围。例外：文件管理器文件类型（📁📄📂 等） | 替换为 `Icon` 组件 + PNG。提示词见 `src/assets/icons/prompts.md` |
+| **I1** | UI 控件使用 emoji | grep emoji Unicode 范围。例外：文件管理器文件类型（`src/components/FileManager/entryIcon.ts` 的 8 类：📁📜📄📦🖼️🎵⚙️❓） | 替换为 `Icon` 组件 + PNG。提示词见 `src/assets/icons/prompts.md` |
 
 ---
 

@@ -5,9 +5,13 @@ export interface UseMultiSelectReturn {
   selectedPaths: Set<string>;
   lastClickedIndex: number | null;
   selectedEntries: SftpEntry[];
+  /** 上级目录（`..`）是否处于选中态；与文件路径选择互斥 */
+  parentSelected: boolean;
   handleClick: (entry: SftpEntry, index: number, ctrlKey: boolean, shiftKey: boolean) => void;
   handleRightClick: (entry: SftpEntry, ctrlKey: boolean) => void;
   selectAll: (entries: SftpEntry[]) => void;
+  /** 选中上级目录（清除文件选择） */
+  selectParent: () => void;
   clearSelection: () => void;
   isSelected: (path: string) => boolean;
   selectionCount: number;
@@ -16,9 +20,11 @@ export interface UseMultiSelectReturn {
 export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  const [parentSelected, setParentSelected] = useState(false);
 
   const handleClick = useCallback(
     (entry: SftpEntry, index: number, ctrlKey: boolean, shiftKey: boolean) => {
+      setParentSelected(false);
       setSelectedPaths(prev => {
         const next = new Set(prev);
 
@@ -57,11 +63,19 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
   );
 
   const selectAll = useCallback((allEntries: SftpEntry[]) => {
+    setParentSelected(false);
     setSelectedPaths(new Set(allEntries.map(e => e.path)));
     setLastClickedIndex(null);
   }, []);
 
+  const selectParent = useCallback(() => {
+    setParentSelected(true);
+    setSelectedPaths(new Set());
+    setLastClickedIndex(null);
+  }, []);
+
   const clearSelection = useCallback(() => {
+    setParentSelected(false);
     setSelectedPaths(new Set());
     setLastClickedIndex(null);
   }, []);
@@ -74,6 +88,7 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
   // - Ctrl+right-click → toggle file in/out of selection
   const handleRightClick = useCallback(
     (entry: SftpEntry, ctrlKey: boolean) => {
+      setParentSelected(false);
       setSelectedPaths(prev => {
         const next = new Set(prev);
 
@@ -112,11 +127,13 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
     selectedPaths,
     lastClickedIndex,
     selectedEntries,
+    parentSelected,
     handleClick,
     handleRightClick,
     selectAll,
+    selectParent,
     clearSelection,
     isSelected,
     selectionCount: selectedPaths.size,
-  }), [selectedPaths, lastClickedIndex, selectedEntries, handleClick, isSelected]);
+  }), [selectedPaths, lastClickedIndex, selectedEntries, parentSelected, handleClick, isSelected]);
 }

@@ -15,6 +15,7 @@ import { useMultiSelect } from "./hooks/useMultiSelect";
 import { useSftpProgress } from "./hooks/useSftpProgress";
 import BreadcrumbNav from "./BreadcrumbNav";
 import FileList from "./FileList";
+import FileGrid from "./FileGrid";
 import InlinePrompt from "./InlinePrompt";
 import CommonContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
 import Icon from "../common/Icon";
@@ -23,6 +24,7 @@ import FilePropertiesModal from "./FilePropertiesModal";
 import type { FileStatInfo } from "./FilePropertiesModal";
 import FilePreviewModal from "./FilePreviewModal";
 import { copyToClipboard } from "../../utils/clipboard";
+import { getEntryIcon } from "./entryIcon";
 import styles from "./FileManager.module.css";
 
 // ── 文本文件扩展名判定 ─────────────────────────────────
@@ -40,6 +42,17 @@ function isTextFile(name: string): boolean {
   return TEXT_EXTENSIONS.has(name.slice(dot).toLowerCase());
 }
 
+type ViewMode = "list" | "grid";
+const VIEW_MODE_STORAGE_KEY = "tauterm-file-manager-view-mode";
+
+function readStoredViewMode(): ViewMode {
+  try {
+    return localStorage.getItem(VIEW_MODE_STORAGE_KEY) === "grid" ? "grid" : "list";
+  } catch {
+    return "list";
+  }
+}
+
 interface FileManagerPanelProps {
   sessionId: string;
   isConnected: boolean;
@@ -51,6 +64,17 @@ export default function FileManagerPanel({
 }: FileManagerPanelProps) {
   const { t } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // ── View mode (list / grid) ─────────────────────────
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
+  const changeViewMode = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+    } catch {
+      // localStorage 不可用时静默忽略
+    }
+  }, []);
 
   // ── Core file manager state ────────────────────────
   const fm = useFileManager(sessionId, isConnected);
@@ -151,6 +175,16 @@ export default function FileManagerPanel({
     },
     [fm, ms],
   );
+
+  // ── Parent directory interactions ──────────────────
+  const handleParentClick = useCallback(() => {
+    ms.selectParent();
+  }, [ms]);
+
+  const handleGoUp = useCallback(() => {
+    ms.clearSelection();
+    fm.goUp();
+  }, [fm, ms]);
 
   // ── Context menu actions ────────────────────────────
   const handleUpload = useCallback(async () => {
@@ -568,6 +602,55 @@ export default function FileManagerPanel({
         }}
       />
 
+      {/* 工具栏 */}
+      <div className={styles.toolbar}>
+        <div className={styles.toolbarActions}>
+          <button
+            className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
+            onClick={handleRefresh}
+            title={t("fileManager.refresh")}
+            aria-label={t("fileManager.refresh")}
+          >
+            <Icon name="refresh" size="sm" />
+          </button>
+          <button
+            className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
+            onClick={handleNewFile}
+            title={t("fileManager.newFile")}
+            aria-label={t("fileManager.newFile")}
+          >
+            <Icon name="file" size="sm" />
+          </button>
+          <button
+            className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
+            onClick={handleNewFolder}
+            title={t("fileManager.newFolder")}
+            aria-label={t("fileManager.newFolder")}
+          >
+            <Icon name="folder" size="sm" />
+          </button>
+          <button
+            className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
+            onClick={handleUpload}
+            title={t("fileManager.upload")}
+            aria-label={t("fileManager.upload")}
+          >
+            <Icon name="upload" size="sm" />
+          </button>
+        </div>
+        <button
+          className={`${styles.toolbarBtn} ${styles.viewToggleBtn} liquid-glass-ghost-button`}
+          onClick={() => changeViewMode(viewMode === "list" ? "grid" : "list")}
+          title={viewMode === "list" ? t("fileManager.switchToGrid") : t("fileManager.switchToList")}
+          aria-label={viewMode === "list" ? t("fileManager.switchToGrid") : t("fileManager.switchToList")}
+        >
+          <Icon name="drag-handle" size="sm" />
+          <span className={styles.viewToggleIndicator}>
+            {viewMode === "list" ? "\u{2630}" : "\u{229E}"}
+          </span>
+        </button>
+      </div>
+
       {/* 内联输入提示（新建/重命名） */}
       <InlinePrompt
         visible={fm.promptMode !== null}
@@ -581,23 +664,43 @@ export default function FileManagerPanel({
         onCancel={handlePromptCancel}
       />
 
-      {/* 文件列表 */}
-      <FileList
-        entries={fm.entries}
-        loading={fm.loading}
-        error={fm.error}
-        selectedPaths={ms.selectedPaths}
-        sortField={fm.sortField}
-        sortDirection={fm.sortDirection}
-        onSortChange={fm.setSortField}
-        onEntryClick={handleEntryClick}
-        onEntryDoubleClick={handleEntryDoubleClick}
-        onContextMenu={showContextMenu}
-        onClearError={fm.clearError}
-        showParentDir={fm.currentPath !== null && fm.currentPath !== "/"}
-        onGoUp={fm.goUp}
-        showProgress={progress.visible}
-      />
+      {/* 文件列表 / 网格 */}
+      {viewMode === "list" ? (
+        <FileList
+          entries={fm.entries}
+          loading={fm.loading}
+          error={fm.error}
+          selectedPaths={ms.selectedPaths}
+          sortField={fm.sortField}
+          sortDirection={fm.sortDirection}
+          onSortChange={fm.setSortField}
+          onEntryClick={handleEntryClick}
+          onEntryDoubleClick={handleEntryDoubleClick}
+          onContextMenu={showContextMenu}
+          onClearError={fm.clearError}
+          showParentDir={fm.currentPath !== null && fm.currentPath !== "/"}
+          onGoUp={handleGoUp}
+          parentSelected={ms.parentSelected}
+          onParentClick={handleParentClick}
+          showProgress={progress.visible}
+        />
+      ) : (
+        <FileGrid
+          entries={fm.entries}
+          loading={fm.loading}
+          error={fm.error}
+          selectedPaths={ms.selectedPaths}
+          onEntryClick={handleEntryClick}
+          onEntryDoubleClick={handleEntryDoubleClick}
+          onContextMenu={showContextMenu}
+          onClearError={fm.clearError}
+          showParentDir={fm.currentPath !== null && fm.currentPath !== "/"}
+          onGoUp={handleGoUp}
+          parentSelected={ms.parentSelected}
+          onParentClick={handleParentClick}
+          showProgress={progress.visible}
+        />
+      )}
 
       {/* 传输进度条 */}
       <TransferProgressBar
@@ -635,7 +738,7 @@ export default function FileManagerPanel({
             ? null
             : contextMenuSelectedCount <= 1
               ? {
-                  icon: ctxTarget.is_dir ? "\u{1F4C1}" : "\u{1F4C4}",
+                  icon: getEntryIcon(ctxTarget),
                   label: ctxTarget.name,
                 }
               : {

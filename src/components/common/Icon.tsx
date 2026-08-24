@@ -52,6 +52,7 @@ import chevronRightPng from "../../assets/icons/chevron-right.png";
 import sshShellPng from "../../assets/icons/ssh-shell.png";
 import clipboardPng from "../../assets/icons/clipboard.png";
 import pastePng from "../../assets/icons/paste.png";
+import filePng from "../../assets/icons/file.png";
 
 // ── PNG URL Mapping ───────────────────────────────────────────
 // Must be defined before IconName type so PNG key list can be derived
@@ -77,6 +78,7 @@ const PNG_MAP: Record<string, string> = {
   play: playPng,
   construction: constructionPng,
   folder: folderPng,
+  file: filePng,
   chart: chartPng,
   warning: warningPng,
   stopwatch: stopwatchPng,

@@ -716,7 +716,17 @@
     "cancel": "Cancel",
     "cancelTransfer": "Cancel transfer",
     "selectDownloadRoot": "Select download root folder",
-    "downloadDirFailed": "Download failed for {{count}} director(ies): {{names}}"
+    "downloadDirFailed": "Download failed for {{count}} director(ies): {{names}}",
+    "switchToGrid": "Switch to grid view",
+    "switchToList": "Switch to list view",
+    "catFolder": "Folder",
+    "catCode": "Code",
+    "catText": "Text",
+    "catArchive": "Archive",
+    "catImage": "Image",
+    "catMedia": "Media",
+    "catBinary": "Binary",
+    "catGeneric": "File"
   },
   "ssh": {
     "host": "Host",
