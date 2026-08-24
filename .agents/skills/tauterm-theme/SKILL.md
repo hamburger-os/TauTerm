@@ -61,7 +61,7 @@ metadata:
 
 ### 4. 无 emoji
 
-除文件管理器文件类型图标（📁📄📂 等）外，**不使用 emoji** 作为 UI 元素。所有图标通过 `Icon` 组件从 `src/assets/icons/` 加载 PNG。图标提示词在 `src/assets/icons/prompts.md`。
+除文件管理器文件类型图标（仅限 `src/components/FileManager/entryIcon.ts` 的 8 类：📁 文件夹、📜 代码、📄 文本、📦 压缩包、🖼️ 图片、🎵 音视频、⚙️ 二进制、❓ 通用）外，**不使用 emoji** 作为 UI 元素。所有图标通过 `Icon` 组件从 `src/assets/icons/` 加载 PNG。图标提示词在 `src/assets/icons/prompts.md`。
 
 ### 5. 全局类不够用 → 新建全局类
 

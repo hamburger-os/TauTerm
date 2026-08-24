@@ -9,8 +9,10 @@
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
-import type { SftpEntry, SortField, SortDirection } from "./types";
+import type { SortField, SortDirection } from "./types";
+import type { FileViewProps } from "./FileViewProps";
 import FileRow from "./FileRow";
+import { getFolderIcon } from "./entryIcon";
 import styles from "./FileList.module.css";
 
 // ── Helpers ────────────────────────────────────────────
@@ -22,27 +24,10 @@ function sortIcon(field: SortField, active: SortField | null, dir: SortDirection
 
 // ── Component ──────────────────────────────────────────
 
-interface FileListProps {
-  entries: SftpEntry[];
-  loading: boolean;
-  error: string | null;
-  selectedPaths: Set<string>;
+interface FileListProps extends FileViewProps {
   sortField: SortField;
   sortDirection: SortDirection;
   onSortChange: (field: SortField) => void;
-  onEntryClick: (
-    entry: SftpEntry,
-    index: number,
-    ctrlKey: boolean,
-    shiftKey: boolean
-  ) => void;
-  onEntryDoubleClick: (entry: SftpEntry) => void;
-  onContextMenu: (e: React.MouseEvent, entry: SftpEntry | null, index?: number) => void;
-  onClearError: () => void;
-  showParentDir: boolean;
-  onGoUp: () => void;
-  /** 进度条可见时，容器底部预留空间避免遮挡文件列表 */
-  showProgress?: boolean;
 }
 
 export default function FileList({
@@ -59,6 +44,8 @@ export default function FileList({
   onClearError,
   showParentDir,
   onGoUp,
+  parentSelected,
+  onParentClick,
   showProgress = false,
 }: FileListProps) {
   const { t } = useTranslation();
@@ -115,12 +102,18 @@ export default function FileList({
       )}
 
       {/* 文件列表体 */}
-      <div ref={bodyRef} className={styles.body} onContextMenu={handleBlankContext}>
+      <div
+        ref={bodyRef}
+        className={styles.body}
+        role="grid"
+        aria-multiselectable="true"
+        onContextMenu={handleBlankContext}
+      >
         {/* Parent directory entry */}
         {showParentDir && !loading && (
           <div
-            className={styles.parentDirRow}
-            onClick={onGoUp}
+            className={`${styles.parentDirRow} ${parentSelected ? styles.parentDirSelected : ""}`}
+            onClick={onParentClick}
             onDoubleClick={onGoUp}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -128,13 +121,20 @@ export default function FileList({
               onContextMenu(e, null, undefined);
             }}
             role="row"
+            aria-selected={parentSelected}
             tabIndex={0}
             onKeyDown={(e) => {
-              if (e.key === "Enter") onGoUp();
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onGoUp();
+              } else if (e.key === " ") {
+                e.preventDefault();
+                onParentClick();
+              }
             }}
           >
-            <span className={styles.parentDirIcon}>📁</span>
-            <span className={styles.parentDirName}>..</span>
+            <span className={styles.parentDirIcon} role="gridcell">{getFolderIcon()}</span>
+            <span className={styles.parentDirName} role="gridcell">..</span>
           </div>
         )}
         {loading && (

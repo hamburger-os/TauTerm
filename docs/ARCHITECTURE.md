@@ -328,9 +328,9 @@ TauTerm/
 │   │   ├── Tools/              # 嵌入式开发工具（校验和/编码/位操作/协议解析）
 │   │   ├── Settings/           # 设置页（全屏覆盖层：外观/语言/日志/快捷键/关于）
 │   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
-│   │   ├── FileManager/        # SFTP 文件管理器（目录浏览、上传/下载、批量、属性、预览、进度）
+│   │   ├── FileManager/        # SFTP 文件管理器（目录浏览、上传/下载、批量、属性、预览、进度、列表/网格视图切换、图标工具栏、扩展名分类图标）
 │   │   ├── Tftp/               # TFTP 会话视图（服务端面板 + 客户端面板 + 传输列表 + 参数网格）
-│   │   └── common/             # Icon（30+ SVG 图标）, GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
+│   │   └── common/             # Icon（三层渲染：PNG mask-image / CSS 状态点 / 内联 SVG）, GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
 │   │
 │   ├── profiles/               # 会话 Profile 解析器（按协议提供身份信息与参数展示）
 │   │   ├── index.ts            # ProfileResolver 聚合 + dispatch

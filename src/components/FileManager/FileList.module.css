@@ -114,6 +114,12 @@
   background: var(--glass-hover);
 }
 
+.parentDirSelected,
+.parentDirSelected:hover {
+  background: var(--accent-primary-muted);
+  color: var(--text-primary);
+}
+
 .parentDirIcon {
   width: 24px;
   flex-shrink: 0;

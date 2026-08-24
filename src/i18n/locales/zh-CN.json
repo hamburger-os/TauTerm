@@ -716,7 +716,17 @@
     "cancel": "取消",
     "cancelTransfer": "取消传输",
     "selectDownloadRoot": "选择下载根目录",
-    "downloadDirFailed": "{{count}} 个目录下载失败: {{names}}"
+    "downloadDirFailed": "{{count}} 个目录下载失败: {{names}}",
+    "switchToGrid": "切换到网格视图",
+    "switchToList": "切换到列表视图",
+    "catFolder": "文件夹",
+    "catCode": "代码",
+    "catText": "文本",
+    "catArchive": "压缩包",
+    "catImage": "图片",
+    "catMedia": "音视频",
+    "catBinary": "二进制",
+    "catGeneric": "文件"
   },
   "ssh": {
     "host": "主机地址",
