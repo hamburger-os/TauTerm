@@ -128,8 +128,6 @@ interface SessionState {
   networkUdpSources: Record<string, string[]>;
   /** 网络调试容器会话 → 本端地址（UDP client 连接后本机 ip:port，前端展示用） */
   networkLocalAddrs: Record<string, string>;
-  /** 群发开关：sessionId（对端/子通道）→ 是否扇出到同组 sibling（网络对端 / SSH 子通道） */
-  broadcastSessions: Record<string, boolean>;
   /** 网络调试容器会话 → 是否群发到全部对端（目标栏「全部客户端」伪目标） */
   networkBroadcast: Record<string, boolean>;
 }
@@ -166,7 +164,6 @@ type SessionAction =
   | { type: "SET_NETWORK_MANUAL_TARGET"; containerId: string; target: string }
   | { type: "ADD_NETWORK_UDP_SOURCE"; containerId: string; addr: string }
   | { type: "SET_NETWORK_LOCAL_ADDR"; containerId: string; addr: string }
-  | { type: "SET_BROADCAST"; sessionId: string; on: boolean }
   | { type: "SET_NETWORK_BROADCAST"; containerId: string; on: boolean };
 
 // ── Base64 解码（与后端 data_batcher::base64_encode 配对） ───────────────────
@@ -200,7 +197,6 @@ const initialState: SessionState = {
   networkManualTarget: {},
   networkUdpSources: {},
   networkLocalAddrs: {},
-  broadcastSessions: {},
   networkBroadcast: {},
 };
 
@@ -432,8 +428,6 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
     }
     case "SET_NETWORK_LOCAL_ADDR":
       return { ...state, networkLocalAddrs: { ...state.networkLocalAddrs, [action.containerId]: action.addr } };
-    case "SET_BROADCAST":
-      return { ...state, broadcastSessions: { ...state.broadcastSessions, [action.sessionId]: action.on } };
     case "SET_NETWORK_BROADCAST":
       return { ...state, networkBroadcast: { ...state.networkBroadcast, [action.containerId]: action.on } };
     default:
@@ -482,12 +476,6 @@ interface SessionContextValue {
   registerNetworkUdpSource: (containerId: string, addr: string) => void;
   /** 订阅 UDP 手动目标发送（报文网格 TX 行用），返回取消订阅函数 */
   subscribeNetworkManualSent: (callback: (containerId: string, target: string, bytes: Uint8Array) => void) => () => void;
-  /** 群发目标枚举：SSH 子通道 → 同父会话其它已连接子通道 */
-  getSiblingTargets: (sessionId: string) => string[];
-  /** 群发开关状态（SSH 子通道 id） */
-  isBroadcast: (sessionId: string) => boolean;
-  /** 切换群发开关 */
-  toggleBroadcast: (sessionId: string) => void;
   /** 网络调试：切换容器会话的「全部客户端」群发目标 */
   setNetworkBroadcast: (containerId: string, on: boolean) => void;
   /**
@@ -523,8 +511,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const networkPeerContainerRef = useRef<Record<string, string>>({});
   /** UDP 手动目标发送订阅者（网络调试报文网格 TX 行用） */
   const networkManualSentSubscribersRef = useRef<Set<(containerId: string, target: string, bytes: Uint8Array) => void>>(new Set());
-  /** 群发开关 Ref 镜像（sendData 闭包读取；state.broadcastSessions 提供响应式渲染） */
-  const broadcastSessionsRef = useRef<Record<string, boolean>>({});
   const disconnectCallbackRef = useRef<((sessionId: string, reason?: string) => void) | null>(null);
   // 保持最新的 tabs 引用，供事件监听器（闭包中 state 可能过期）使用
   const tabsRef = useRef(state.tabs);
@@ -720,23 +706,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [state.tabs]);
 
   /**
-   * 群发目标枚举：给定 sessionId（SSH 子通道），返回同组其它可发送目标。
-   * - SSH 子通道 → 同父会话的其它已连接子通道；
-   * - 其余（根会话 / 普通会话 / 网络容器）→ 空。
-   *
-   * 网络调试的群发不再走此枚举，而由目标栏「全部客户端」伪目标 + sendToTarget 处理。
+   * 统一发送：将数据写入指定会话（文本按会话编码转码，字节原样透传）。
    */
-  const getSiblingTargets = useCallback((sessionId: string): string[] => {
-    const tab = tabsRef.current.find(t => t.id === sessionId);
-    if (tab?.parentId) {
-      return tabsRef.current
-        .filter(t => t.parentId === tab.parentId && t.id !== sessionId)
-        .filter(t => t.state === "connected" || t.state === "transferring")
-        .map(t => t.id);
-    }
-    return [];
-  }, []);
-
   const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
     // 保护：连接已断开时不发送，避免触发后端 "sending on a closed channel" 错误。
     // 网络调试对端不在 tabs 中，通过 peerSessions 注册表判定连接态并放行。
@@ -755,23 +726,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       sentDataCallbackRef.current?.(sessionId, new Uint8Array(written));
       // 多监听者 TX 通知（网络调试对端视图）
       sentDataSubscribersRef.current.forEach(cb => cb(sessionId, new Uint8Array(written)));
-      // 群发：同组 sibling 扇出（网络对端 / SSH 子通道；所有发送路径统一生效）
-      if (broadcastSessionsRef.current[sessionId]) {
-        for (const sid of getSiblingTargets(sessionId)) {
-          try {
-            // 每个 sibling 按各自会话编码转码，回显使用实际写入字节，保证与线上字节一致
-            const sibWritten = await invoke<number[]>("write_data", { sessionId: sid, data: Array.from(bytes), transcode: isText });
-            sentDataCallbackRef.current?.(sid, new Uint8Array(sibWritten));
-            sentDataSubscribersRef.current.forEach(cb => cb(sid, new Uint8Array(sibWritten)));
-          } catch {
-            // 单个 sibling 发送失败不中断其余对端
-          }
-        }
-      }
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${e}` });
     }
-  }, [getSiblingTargets]);
+  }, []);
 
   const switchTab = useCallback(async (sessionId: string) => {
     // 如果选中的是父 session，自动路由到第一个子 channel
@@ -1042,16 +1000,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   ) => {
     networkManualSentSubscribersRef.current.add(callback);
     return () => { networkManualSentSubscribersRef.current.delete(callback); };
-  }, []);
-
-  const isBroadcast = useCallback((sessionId: string): boolean => {
-    return broadcastSessionsRef.current[sessionId] === true;
-  }, []);
-
-  const toggleBroadcast = useCallback((sessionId: string) => {
-    const next = !broadcastSessionsRef.current[sessionId];
-    broadcastSessionsRef.current[sessionId] = next;
-    dispatch({ type: "SET_BROADCAST", sessionId, on: next });
   }, []);
 
   const setNetworkBroadcast = useCallback((containerId: string, on: boolean) => {
@@ -1382,7 +1330,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (peers) {
           for (const p of peers) {
             delete peerSessionsRef.current[p.peerId];
-            delete broadcastSessionsRef.current[p.peerId];
             if (networkPeerContainerRef.current[p.peerId] === sid) {
               delete networkPeerContainerRef.current[p.peerId];
             }
@@ -1390,8 +1337,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           }
           dispatch({ type: "CLEAR_NETWORK_PEERS", containerId: sid });
         }
-        delete broadcastSessionsRef.current[sid];
-        dispatch({ type: "SET_BROADCAST", sessionId: sid, on: false });
         // 重置 Telnet 回显状态（重连时重新协商）
         dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: false });
         // 父 session 断开时级联移除所有子 channel
@@ -1532,9 +1477,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setNetworkManualTarget,
       registerNetworkUdpSource,
       subscribeNetworkManualSent,
-      getSiblingTargets,
-      isBroadcast,
-      toggleBroadcast,
       setNetworkBroadcast,
       sendToTarget,
       updateSessionStats,

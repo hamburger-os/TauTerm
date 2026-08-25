@@ -5,7 +5,8 @@
   flex-direction: column;
   gap: 6px;
   padding: 6px;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   font-family: var(--font-ui);
 }
 

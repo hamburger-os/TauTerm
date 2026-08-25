@@ -4,7 +4,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
+  padding: var(--targetbar-vertical-padding) 8px;
   flex-shrink: 0;
   border-radius: var(--radius-lg);
 }
