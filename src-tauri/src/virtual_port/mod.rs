@@ -5,7 +5,7 @@
 //! ## 平台支持
 //! - Windows: com0com 内核驱动 → 真正的 COM 端口对
 //! - Linux: socat 用户态 PTY → 虚拟终端对
-//! - macOS: 尚未实现（可通过 Homebrew 安装 socat 后使用 Linux 路径）
+//! - macOS: socat 用户态 PTY → 虚拟终端对（`brew install socat`，与 Linux 共用同一后端）
 
 pub mod backend;
 #[cfg(target_os = "windows")]

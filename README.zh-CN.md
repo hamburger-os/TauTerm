@@ -5,15 +5,17 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/hamburger-os/TauTerm?include_prereleases)](https://github.com/hamburger-os/TauTerm/releases)
-[![Windows](https://img.shields.io/badge/Windows-download-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20MSI-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20AppImage-FCC624)](https://github.com/hamburger-os/TauTerm/releases)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20dmg-333333)](https://github.com/hamburger-os/TauTerm/releases)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-67D6F8.svg)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-powered-000000.svg)](https://www.rust-lang.org/)
 
-**[下载 Windows 版](https://github.com/hamburger-os/TauTerm/releases)** · **[macOS/Linux 从源码构建](docs/BUILDING.md)** · **[English README](README.md)**
+**[下载](https://github.com/hamburger-os/TauTerm/releases)** —— Windows · Linux · macOS · **[从源码构建](docs/BUILDING.md)** · **[English README](README.md)**
 
 TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP 调试器之间来回切换的工程师。它把这些工作流放进一个轻量桌面应用，并通过微内核插件架构持续扩展。
 
-> **发布状态：** Windows 已提供安装包；macOS/Linux 当前可从源码构建，预编译包正在准备。下方功能描述以当前 `master` 为准，最新打包版本可能会落后于 `master`。
+> **发布状态：** Windows（NSIS/MSI）、Linux（deb/rpm/AppImage）与 macOS（Apple Silicon 和 Intel dmg/app）安装包均已发布在 GitHub Releases 上。下方功能描述以当前 `master` 为准，最新打包版本可能会落后于 `master`。
 
 <!-- 下一次公开发布前，请用真实 TauTerm 主界面截图/GIF 替换这条注释。 -->
 
@@ -52,7 +54,7 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 
 ### 🔌 嵌入式开发
 
-- **RS-232/485 串口**，Windows 下可选 **虚拟 COM 桥接**（com0com）——应用本身以普通用户权限运行，特权操作由后台服务代理执行。
+- **RS-232/485 串口**，可选 **虚拟串口桥接**——Windows 使用 com0com，Linux/macOS 使用 `socat`。Windows 下应用本身以普通用户权限运行，特权操作由后台服务代理执行。
 - **XModem / YModem / ZModem**，可直接从活动串口会话执行传输。
 - **Text / HEX / Dual 显示**，支持时间戳、分帧和 TX/RX 区分。
 - **字符集转码** —— UTF-8、GBK、GB18030、Big5、Shift-JIS、EUC-JP、EUC-KR、ISO-8859-1。
@@ -80,9 +82,17 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 
 Windows 安装包会附带并自动安装开源 [com0com](https://com0com.sourceforge.net/) 虚拟串口驱动，因此虚拟 COM 桥可以开箱即用。com0com 是独立的第三方 GPL 组件。
 
-### macOS / Linux
+### Linux
 
-预编译包正在准备中。当前请按 **[docs/BUILDING.md](docs/BUILDING.md)** 从源码构建。
+在 **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)** 中选择：`.deb`（Debian/Ubuntu）、`.rpm`（Fedora/RHEL）或 `.AppImage`（通用便携版）。
+
+Linux 虚拟串口桥使用 `socat`——请先安装 `sudo apt install socat`（`.deb` 包已声明该依赖）。
+
+### macOS
+
+在 **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)** 下载 **Apple Silicon** 或 **Intel (x86_64)** 的 `.dmg` 或 `.app` 包。
+
+macOS 虚拟串口桥同样使用 `socat`——请先安装 `brew install socat`。macOS 构建属于技术预览且未经公证（notarization），若被 Gatekeeper 拦截，可右键 → 打开 一次以放行。
 
 ---
 

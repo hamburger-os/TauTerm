@@ -129,6 +129,9 @@ brew install node
 # 安装 Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
+
+# 虚拟串口桥接依赖（socat）
+brew install socat
 ```
 
 ---
@@ -253,9 +256,11 @@ npm run tauri build
 
 ## 使用虚拟串口桥接
 
-> **驱动版本**：使用 com0com v3.0.0.0（GPL 开源内核驱动），支持 Windows 10/11 x64/x86。详细的 com0com 使用与故障排查请参考 [tauterm-com0com skill](../.agents/skills/tauterm-com0com/SKILL.md)。
+> **驱动版本**：Windows 使用 com0com v3.0.0.0（GPL 开源内核驱动），支持 Windows 10/11 x64/x86。详细的 com0com 使用与故障排查请参考 [tauterm-com0com skill](../.agents/skills/tauterm-com0com/SKILL.md)。
 
-虚拟串口功能**默认开启**，连接串口时自动创建 COM 端口对。基本使用流程：
+> **非 Windows 平台**：Linux/macOS 使用用户态 `socat` 创建虚拟 PTY 对（无需内核驱动）。Linux 安装 `sudo apt install socat`；macOS 安装 `brew install socat`。缺失时应用会提示安装命令。
+
+虚拟串口功能**默认开启**，连接串口时自动创建端口对。基本使用流程：
 
 1. **连接串口**：在连接对话框中，串口配置区域的"启用虚拟串口"开关默认开启，"设备数量"（1-4）决定创建多少对端口
 2. **查看端口对**：连接成功后，状态栏显示 `VPort: COM22↔COM23, …`，端口 A（COM22）由 TauTerm 占用，端口 B（COM23）供外部工具打开
