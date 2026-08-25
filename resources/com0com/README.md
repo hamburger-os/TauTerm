@@ -65,41 +65,39 @@ resources/com0com/
 1. `build.rs` 根据目标架构（`CARGO_CFG_TARGET_ARCH`）将 7 个必需文件复制到 `resources/com0com/` 根目录
 2. `tauri.conf.json` 的 `bundle.resources` 将根目录下的文件打包到安装程序（glob: `../resources/com0com/*`）
 3. NSIS 安装程序配置为 `installMode: "perMachine"`，在安装时强制请求 UAC 管理员提权
-4. NSIS post-install hook 在提权环境下执行 `setupc.exe install` 完成驱动安装
-5. 卸载时 pre-uninstall hook 执行 `setupc.exe uninstall` 移除驱动
+4. NSIS post-install hook 在提权环境下执行 `setupc.exe install` 完成驱动安装，并注册/启动 `TauTermService`（LocalSystem 特权服务）
+5. 卸载时 pre-uninstall hook 停止并删除 `TauTermService`，再执行 `setupc.exe uninstall` 移除驱动
 
 ## 运行时回退
 
 如果 NSIS 安装时驱动安装失败（如用户拒绝了 UAC 提权），TauTerm 提供多层恢复路径：
 
-1. **首次连接串口**：后端自动尝试运行时安装（当前进程已提权时成功）
+1. **服务模式**：已注册的 `TauTermService` 以 LocalSystem 运行，可在运行时安装/修复驱动（无 UAC）
 2. **状态栏一键修复**：VPort 失败时状态栏显示"修复"按钮，点击后：
-   - 先尝试直接安装（已提权进程）
-   - 若失败则在 Windows 上通过 PowerShell `Start-Process -Verb RunAs` 触发 UAC 提权安装
+   - 服务模式下由服务安装驱动
+   - 回退模式下通过 `ShellExecuteEx("runas")` 触发 UAC 提权执行 setupc 序列
 3. **启动时主动提醒**：应用启动时若检测到驱动未安装，向前端发送事件，状态栏持续显示警告和修复入口
 
 ## 管理员权限说明
 
 com0com 是 Windows 内核驱动，驱动安装、端口对创建/销毁均需要管理员权限。
 
-TauTerm 采用**双层提权**策略确保虚拟串口功能始终可用：
+TauTerm 采用**最小权限**策略：主程序以普通用户（asInvoker）运行，特权操作委托给后台服务：
 
-### 1. 启动即提权（Manifest）
-- `build.rs` 在 Windows 可执行文件中嵌入 `requireAdministrator` 清单（`src-tauri/windows/manifest.xml`）
-- 用户每次启动 TauTerm 时 Windows 自动弹出 UAC 提权提示
-- 因为运行时创建/销毁虚拟端口对也需要管理员权限，这种方式比每次操作都弹 UAC 体验更好
-- 用户拒绝 UAC 提权 → 应用无法启动（与内核驱动操作需求一致）
-
-### 2. 安装时提权（NSIS）
+### 1. 安装时提权（NSIS）
 - `tauri.conf.json` 配置 `installMode: "perMachine"` → NSIS 安装程序在安装时请求提权
-- NSIS post-install hook 在提权环境下执行 `setupc.exe install` 完成驱动安装
-- 卸载时 NSIS pre-uninstall hook 执行 `setupc.exe uninstall` 移除驱动
+- NSIS post-install hook 在提权环境下执行 `setupc.exe install` 完成驱动安装，并注册 `TauTermService`
+- 卸载时 NSIS pre-uninstall hook 先删除服务，再执行 `setupc.exe uninstall` 移除驱动
+
+### 2. 运行时特权服务（TauTermService）
+- `tauterm-service.exe` 以 `LocalSystem` 运行（`delayed-auto` 启动），通过命名管道 `\\.\pipe\TauTermService` 接收主程序的窄类型化请求
+- 驱动安装、端口对创建/删除/清理全部由服务代理执行，主程序全程不弹 UAC
+- 服务按客户端记账，客户端连接关闭（含崩溃）时自动清理其端口对；服务启动时清理孤儿端口对
 
 ### 3. 运行时回退（故障恢复）
-若驱动被意外卸载或损坏，TauTerm 提供多层恢复路径：
-1. **首次连接串口**：后端自动尝试运行时安装（当前进程已提权时成功）
-2. **状态栏一键修复**：VPort 失败时状态栏显示"修复"按钮，在当前已提权进程中直接安装
-3. **启动时主动提醒**：应用启动时若检测到驱动未安装，向前端发送事件，状态栏持续显示警告和修复入口
+若服务不可用（如开发模式未注册服务），应用回退到按需 UAC 路径：
+1. **状态栏一键修复**：VPort 失败时状态栏显示"修复"按钮，通过 `ShellExecuteEx("runas")` 提权执行安装
+2. **启动时主动提醒**：应用启动时若检测到驱动未安装，向前端发送事件，状态栏持续显示警告和修复入口
 
 ## setupc 命令行说明
 

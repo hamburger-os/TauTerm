@@ -1,4 +1,17 @@
 fn main() {
+    // 服务二进制 tauterm-service.exe 由 cargo 在同一构建中产出，但 tauri-build
+    // 会在构建脚本阶段校验 bundle.resources 路径必须存在。这里先创建占位文件，
+    // 真正的二进制由 scripts/prepare-service-bin.js 在 beforeBundleCommand
+    // （cargo build 之后）覆盖为实际产物。
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::fs::create_dir_all("binaries");
+        let placeholder = std::path::Path::new("binaries").join("tauterm-service.exe");
+        if !placeholder.exists() {
+            let _ = std::fs::write(&placeholder, b"placeholder");
+        }
+    }
+
     tauri_build::build();
 
     // com0com 驱动文件仅在 Windows 上存在和需要
@@ -46,10 +59,6 @@ fn main() {
         } else {
             println!("cargo:warning=com0com: {} driver files copied successfully", arch_dir);
         }
-
-        // Windows 管理员权限清单由 scripts/set-admin-manifest.js 在构建后通过 mt.exe 嵌入
-        // 原因: Tauri 内部已生成 Windows 资源（含 VERSION + asInvoker manifest），
-        // 无法在 build.rs 中叠加第二个资源。mt.exe 可直接替换 PE 中已有的 manifest。
     }
 
     #[cfg(not(target_os = "windows"))]

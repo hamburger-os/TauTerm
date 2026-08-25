@@ -1,0 +1,8 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicehash/tauri/v2/crates/tauri-utils/schema.json",
+  "bundle": {
+    "resources": {
+      "binaries/tauterm-service.exe": "./"
+    }
+  }
+}

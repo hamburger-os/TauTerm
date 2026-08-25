@@ -220,6 +220,7 @@ graph LR
 - **TLS 证书固定**: TRDP / Telnet TLS 连接证书校验（规划中）
 - **日志脱敏**: 自动过滤密码、私钥、Token，输出 `[REDACTED]`
 - **代理转发控制**: SSH Agent Forwarding 默认禁用，需要显式确认
+- **最小权限模型（Windows 虚拟串口）**: 主程序以 `asInvoker`（普通用户）运行，特权 com0com 操作委托给 `LocalSystem` 服务 `TauTermService`；命名管道采用 SDDL 安全描述符，并通过 `GetNamedPipeClientProcessId` + `QueryFullProcessImageNameW` 校验调用方必须为 `tauterm.exe`，且只接受固定窄操作集（不透传任意 `setupc` 参数）
 
 ---
 
@@ -295,8 +296,12 @@ TauTerm/
 │   ├── virtual_port/            # 虚拟串口模块（跨平台抽象）
 │   │   ├── mod.rs               # 模块声明与 re-export
 │   │   ├── backend.rs           # VirtualPortBackend trait（抽象接口，支持 com0com/socat/tty0tty）
-│   │   ├── manager.rs           # VirtualPort Manager（com0com 生命周期管理）
+│   │   ├── manager.rs           # VirtualPort Manager（com0com 生命周期管理，直连/回退实现）
+│   │   ├── service_backend.rs   # ServiceBackend（Windows 特权服务客户端，named pipe 委托）
 │   │   └── bridge.rs            # VirtualPortBridge（后台线程，物理串口 ↔ 虚拟端口双向 I/O）
+│   │
+│   ├── bin/                     # 独立可执行二进制
+│   │   └── tauterm-service.rs   # Windows 特权服务（LocalSystem，named pipe + 窄类型化 API）
 │   │
 │   └── plugins/                # 内建协议插件
 │       ├── serial/             # 串口插件（ProtocolAdapter + Channel）

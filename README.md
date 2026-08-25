@@ -52,7 +52,7 @@ TauTerm is for engineers who are tired of switching between an SSH client, an SF
 
 ### 🔌 Embedded development
 
-- **Serial RS-232/485** with an optional **virtual COM bridge** on Windows via com0com.
+- **Serial RS-232/485** with an optional **virtual COM bridge** on Windows via com0com — the app itself runs as a standard (non-admin) user; privileged virtual-port operations are handled by a background service.
 - **XModem / YModem / ZModem** transfers directly from an active serial session.
 - **Text / HEX / Dual display** with timestamps, framing and TX/RX differentiation.
 - **Character-set transcoding** — UTF-8, GBK, GB18030, Big5, Shift-JIS, EUC-JP, EUC-KR and ISO-8859-1.

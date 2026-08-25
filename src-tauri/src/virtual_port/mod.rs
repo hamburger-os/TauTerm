@@ -10,6 +10,8 @@
 pub mod backend;
 #[cfg(target_os = "windows")]
 pub mod manager;
+#[cfg(target_os = "windows")]
+pub mod service_backend;
 pub mod bridge;
 
 #[cfg(not(target_os = "windows"))]

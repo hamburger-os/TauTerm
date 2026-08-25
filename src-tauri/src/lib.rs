@@ -20,7 +20,7 @@ mod kernel;
 mod plugins;
 mod security;
 mod transfer;
-mod virtual_port;
+pub mod virtual_port;
 
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -282,7 +282,20 @@ pub fn run() {
                             }
                         };
 
-                        *vpm = Box::new(VirtualPortManager::new(vpm_dir));
+                        let state_dir = app.path().app_data_dir()
+                            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                        let _ = std::fs::create_dir_all(&state_dir);
+
+                        // 优先使用特权服务（asInvoker 下零 UAC、崩溃无孤儿）；
+                        // 服务不可用时回退到直连模式（按需 UAC）。
+                        let service_backend = virtual_port::service_backend::ServiceBackend::new();
+                        if service_backend.connect().is_ok() {
+                            log::info!("虚拟串口特权服务已连接");
+                            *vpm = Box::new(service_backend);
+                        } else {
+                            log::warn!("虚拟串口特权服务不可用，回退到直连模式（按需 UAC）");
+                            *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
+                        }
 
                         // 清理上次异常退出可能遗留的孤儿端口对
                         let orphan_count = vpm.cleanup_orphans();
@@ -376,7 +389,7 @@ pub fn run() {
             // 占位 VPM — setup() 闭包中立即用平台正确的实现替换。
             // setup() 在所有命令处理器就绪前运行，不存在竞态条件。
             #[cfg(target_os = "windows")]
-            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from(".")))),
+            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from("."), std::path::PathBuf::from(".")))),
             #[cfg(not(target_os = "windows"))]
             virtual_port_manager: Mutex::new(Box::new(SocatBackend::new())),
         })
