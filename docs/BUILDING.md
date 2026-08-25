@@ -10,7 +10,6 @@
 | **Rust** | >= 1.96 (推荐) / >= 1.75 (最低) | 后端编译工具链 |
 | **npm** | >= 9 | 随 Node.js 附带 |
 | **NSIS** | >= 3.0 | Windows 安装包构建工具（仅 Windows 构建需要） |
-| **Windows SDK** | >= 10.0 | 提供 `mt.exe` 用于嵌入 `requireAdministrator` 清单（仅 Windows 构建需要，缺少时仍可构建但需手动以管理员运行） |
 
 > **注意**: Rust 1.96+ 内置 `rust-lld` 链接器，在 Windows 上**无需额外安装 Visual Studio Build Tools**。如果使用较低版本 Rust，则需要安装 VS Build Tools 提供 MSVC 链接器。
 
@@ -218,9 +217,12 @@ npm run tauri:build
 
 1. `check-com0com.js` — 验证 `resources/com0com/x64/` 和 `x86/` 中驱动文件齐全（setupc.exe, com0com.sys, com0com.inf, com0com.cat）
 2. `tsc && vite build` — 前端 TypeScript 编译 + Vite 打包
-3. `build.rs` — 根据目标架构（x86_64 → x64, i686 → x86）将 7 个驱动文件复制到打包根目录
-4. `cargo build --release` — Rust 后端编译
-5. **NSIS 打包** — 生成安装程序，内含 com0com 驱动文件 + post-install hook（安装时自动执行 `setupc.exe install`）
+3. `build.rs` — 根据目标架构（x86_64 → x64, i686 → x86）将 7 个驱动文件复制到打包根目录；同时为服务二进制创建占位文件（满足 tauri-build 对资源路径的校验）
+4. `cargo build --release` — Rust 后端编译（产出主程序 `tauterm.exe` 与特权服务 `tauterm-service.exe`）
+5. `prepare-service-bin.js` — 将 `target/release/tauterm-service.exe` 复制到 `src-tauri/binaries/`（打包资源）
+6. **NSIS 打包** — 生成安装程序，内含 com0com 驱动文件 + 服务二进制 + post-install hook（安装时自动执行 `setupc.exe install` 并注册 `TauTermService`）
+
+> **平台差异**：服务二进制资源（`binaries/tauterm-service.exe`）仅声明在 `tauri.windows.conf.json` 的 `bundle.resources` 中（与基础 `tauri.conf.json` 合并），Linux/macOS 构建不会引用该文件，`build.rs` 的占位文件也只在 Windows 创建，因此非 Windows 平台可正常构建。
 
 **构建产物**：
 
@@ -232,9 +234,10 @@ src-tauri/target/release/bundle/nsis/
 
 **安装程序行为**：
 
-- **安装时**：NSIS post-install hook 自动执行 `setupc.exe install` 安装 com0com 内核驱动（安装程序天然以管理员身份运行）
-- **卸载时**：NSIS pre-uninstall hook 自动执行 `setupc.exe uninstall` 移除驱动
-- **运行时回退**：如果因某种原因驱动未在安装时装好，首次连接串口时会尝试运行时安装（需管理员权限）
+- **安装时**：NSIS post-install hook 自动执行 `setupc.exe install` 安装 com0com 内核驱动（安装程序天然以管理员身份运行），并注册/启动 `TauTermService`（LocalSystem 特权服务，负责虚拟端口对的创建/删除/清理）
+- **卸载时**：NSIS pre-uninstall hook 停止并删除 `TauTermService`，再执行 `setupc.exe uninstall` 移除驱动
+- **运行时权限**：主程序 `tauterm.exe` 以普通用户权限（asInvoker）运行——驱动安装、端口对创建/删除等特权操作通过命名管道委托给 `TauTermService`，不弹 UAC
+- **运行时回退**：如果服务不可用（如开发模式未注册服务），应用回退到按需 UAC 路径（`ShellExecuteEx("runas")` 执行 setupc 序列）
 
 > **注意**：必须使用 `npm run tauri:build`（等效于 `npx tauri build --bundles nsis`）来生成安装程序。不加 `--bundles nsis` 时 Tauri v2 可能静默跳过 NSIS 打包，只生成 `tauterm.exe`。
 
@@ -262,6 +265,5 @@ npm run tauri build
 6. **手动清理残留**：状态栏右侧常驻 `[清理残留端口]` 按钮，点击可触发 UAC 提权批量清理所有已知残留端口对
 
 > **注意**：
-> - 首次使用需安装 com0com 内核驱动 — 安装 TauTerm 时由 NSIS 安装程序自动完成
-> - 如果驱动因故未安装，状态栏会显示 `VPort 未就绪 — 驱动未安装` 并提供 `[修复]` 按钮（点击将触发 UAC 提权安装）
-> - **开发模式**：`npm run tauri dev` 启动的应用无管理员权限，清理操作可能需要 UAC 提权。点击状态栏 `[清理残留端口]` 手动触发，或下次连接时自动由 UAC 批量清理
+> - 首次使用需安装 com0com 内核驱动 — 安装 TauTerm 时由 NSIS 安装程序自动完成；若驱动被意外卸载，状态栏会显示 `VPort 未就绪 — 驱动未安装` 并提供 `[修复]` 按钮（服务模式下由服务安装，无 UAC；回退模式下触发 UAC 提权安装）
+> - **开发模式**：`npm run tauri dev` 启动的应用通常没有注册服务，虚拟端口操作走 UAC 回退路径。点击状态栏 `[清理残留端口]` 手动触发清理，或下次连接时自动由 UAC 批量清理

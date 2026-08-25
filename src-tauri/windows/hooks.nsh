@@ -39,9 +39,37 @@
       "com0com driver files not found in $INSTDIR.$\n\
        Virtual serial port feature will not be available."
   ${EndIf}
+
+  ; ── 注册并启动 TauTerm 特权服务（虚拟串口后端，LocalSystem） ──
+  DetailPrint "TauTerm: Registering TauTermService..."
+  ; 若服务已存在（升级中断/残留注册），其 binPath 可能指向旧版本或已删除的
+  ; 二进制。先 stop + delete 重建，确保指向当前安装目录。
+  ExecWait 'sc.exe query TauTermService' $2
+  ${If} $2 == 0
+    ExecWait 'sc.exe stop TauTermService' $2
+    ExecWait 'sc.exe delete TauTermService' $2
+  ${EndIf}
+  ExecWait 'sc.exe create TauTermService binPath= "$INSTDIR\tauterm-service.exe" start= delayed-auto' $2
+  ${If} $2 != 0
+    MessageBox MB_ICONEXCLAMATION \
+      "Failed to register TauTermService (exit code $2).$\n\
+       Virtual serial port feature will not be available."
+  ${Else}
+    ExecWait 'sc.exe failure TauTermService reset= 86400 actions= restart/5000/restart/5000/restart/5000' $2
+    ExecWait 'sc.exe start TauTermService' $2
+    ${If} $2 != 0
+      MessageBox MB_ICONEXCLAMATION \
+        "Failed to start TauTermService (exit code $2).$\n\
+         Virtual serial port feature will not be available."
+    ${EndIf}
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
+  ; ── 停止并删除特权服务 ──
+  ExecWait 'sc.exe stop TauTermService' $0
+  ExecWait 'sc.exe delete TauTermService' $0
+
   ${If} ${FileExists} "$INSTDIR\setupc.exe"
     DetailPrint "TauTerm: Removing com0com virtual serial port driver..."
     SetOutPath "$INSTDIR"

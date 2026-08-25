@@ -52,7 +52,7 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 
 ### 🔌 嵌入式开发
 
-- **RS-232/485 串口**，Windows 下可选 **虚拟 COM 桥接**（com0com）。
+- **RS-232/485 串口**，Windows 下可选 **虚拟 COM 桥接**（com0com）——应用本身以普通用户权限运行，特权操作由后台服务代理执行。
 - **XModem / YModem / ZModem**，可直接从活动串口会话执行传输。
 - **Text / HEX / Dual 显示**，支持时间戳、分帧和 TX/RX 区分。
 - **字符集转码** —— UTF-8、GBK、GB18030、Big5、Shift-JIS、EUC-JP、EUC-KR、ISO-8859-1。

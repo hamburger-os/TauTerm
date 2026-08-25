@@ -7,6 +7,8 @@ build/
 
 # Rust
 src-tauri/target/
+# 服务二进制构建产物（build.rs 占位 + prepare-service-bin.js 覆盖）
+src-tauri/binaries/
 
 # IDE
 .vscode/

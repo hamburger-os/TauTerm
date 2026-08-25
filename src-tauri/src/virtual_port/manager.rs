@@ -20,10 +20,30 @@ use std::process::Command;
 use super::backend::{contains_elevation_indicator, PortPair, VirtualPortConfig};
 
 #[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::Threading::{
+    GetExitCodeProcess, TerminateProcess, WaitForSingleObject,
+};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(target_os = "windows")]
+const ERROR_CANCELLED: u32 = 1223;
+#[cfg(target_os = "windows")]
+const WAIT_OBJECT_0: u32 = 0;
+#[cfg(target_os = "windows")]
+const WAIT_TIMEOUT: u32 = 258;
+/// 批处理最长执行时间。批处理中每个失败 remove 会触发一次 `ping -n 2`
+/// （约 1 秒延迟），大量残留端口对时总耗时可能较长，故放宽到 120s。
+#[cfg(target_os = "windows")]
+const ELEVATED_TIMEOUT_MS: u32 = 120_000;
 
 // ── 可调参数常量 ──────────────────────────────────────
 
@@ -46,6 +66,7 @@ pub struct VirtualPortManager {
     driver_installed: bool,
     active_pairs: HashSet<PortPair>,
     resource_dir: PathBuf,
+    state_dir: PathBuf,
 }
 
 fn normalize_windows_path(path: &std::path::Path) -> PathBuf {
@@ -120,12 +141,84 @@ fn run_setupc(resource_dir: &PathBuf, args: &[&str]) -> Result<std::process::Out
     }
 }
 
+/// 通过 UAC 提权执行一段 `cmd.exe` 批处理命令。
+///
+/// 使用 `ShellExecuteExW` 的 `runas` 动词触发 UAC，拉起独立的 `cmd.exe`
+/// 执行写入临时 `.cmd` 文件的 setupc 序列——不依赖 PowerShell。
+/// 通过 `SEE_MASK_NOCLOSEPROCESS` + `WaitForSingleObject` + `GetExitCodeProcess`
+/// 正确透传提权子进程的真实退出码。
+#[cfg(target_os = "windows")]
+fn wide(s: &str) -> Vec<u16> {
+    std::ffi::OsStr::new(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn run_elevated(batch: &str) -> Result<(), String> {
+    // 写入临时批处理文件（UTF-8；内容以 `chcp 65001` 声明编码，路径可含非 ASCII）
+    let dir = std::env::temp_dir();
+    let name = format!("tauterm-elev-{}.cmd", uuid::Uuid::new_v4().simple());
+    let batch_path = dir.join(&name);
+    std::fs::write(&batch_path, batch).map_err(|e| format!("写入临时批处理失败: {}", e))?;
+
+    let verb = wide("runas");
+    let file = wide("cmd.exe");
+    let params = wide(&format!("/c \"{}\"", batch_path.display()));
+
+    let mut sei: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.lpVerb = verb.as_ptr();
+    sei.lpFile = file.as_ptr();
+    sei.lpParameters = params.as_ptr();
+    sei.nShow = 0; // SW_HIDE
+
+    let ok = unsafe { ShellExecuteExW(&mut sei) };
+    if ok == 0 {
+        let err = unsafe { GetLastError() };
+        let _ = std::fs::remove_file(&batch_path);
+        if err == ERROR_CANCELLED {
+            return Err("User cancelled the UAC elevation prompt".into());
+        }
+        return Err(format!("提权启动失败 (win32 error {})", err));
+    }
+
+    let wait = if sei.hProcess.is_null() {
+        WAIT_OBJECT_0
+    } else {
+        unsafe { WaitForSingleObject(sei.hProcess, ELEVATED_TIMEOUT_MS) }
+    };
+
+    if wait == WAIT_TIMEOUT && !sei.hProcess.is_null() {
+        // 超时：强制终止被提权的 cmd.exe，避免其继续在后台执行批处理，
+        // 造成「界面报错但端口对实际被创建/删除」的状态不一致。
+        unsafe { TerminateProcess(sei.hProcess, 1) };
+    }
+    let mut exit_code = 0u32;
+    if !sei.hProcess.is_null() {
+        unsafe { GetExitCodeProcess(sei.hProcess, &mut exit_code) };
+        unsafe { CloseHandle(sei.hProcess) };
+    }
+    let _ = std::fs::remove_file(&batch_path);
+
+    if wait == WAIT_TIMEOUT {
+        return Err("提权操作超时".into());
+    }
+    if exit_code != 0 {
+        return Err(format!("提权操作失败 (exit code {})", exit_code));
+    }
+    Ok(())
+}
+
 impl VirtualPortManager {
-    pub fn new(resource_dir: PathBuf) -> Self {
+    pub fn new(resource_dir: PathBuf, state_dir: PathBuf) -> Self {
         Self {
             driver_installed: false,
             active_pairs: HashSet::new(),
             resource_dir: normalize_windows_path(&resource_dir),
+            state_dir: normalize_windows_path(&state_dir),
         }
     }
 
@@ -250,7 +343,17 @@ impl VirtualPortManager {
         // 查询驱动中已用的 bus 号，选择第一个空闲 bus 创建临时端口对
         let (_, driver_max_bus, _) = self.query_driver_state();
         let free_bus = driver_max_bus.map_or(0, |m| m + 1);
-        run_setupc(&self.resource_dir, &["install", &free_bus.to_string(), "-", "-"])?;
+        let install_out = run_setupc(&self.resource_dir, &["install", &free_bus.to_string(), "-", "-"])?;
+        if !install_out.status.success() {
+            let stderr = String::from_utf8_lossy(&install_out.stderr);
+            let stdout = String::from_utf8_lossy(&install_out.stdout);
+            let detail = if stderr.trim().is_empty() { stdout.to_string() } else { stderr.to_string() };
+            return Err(format!(
+                "com0com driver install failed (exit {:?}): {}",
+                install_out.status.code(),
+                detail.trim()
+            ));
+        }
         // 删除临时端口对，驱动保留
         let _ = run_setupc(&self.resource_dir, &["remove", &free_bus.to_string()]);
 
@@ -508,16 +611,14 @@ impl VirtualPortManager {
             }
         }
 
-        // 构建 PowerShell 脚本：先清理所有旧端口对，再创建新端口对
-        let mut cmds = String::new();
+        // 批处理：先清理所有旧端口对（两阶段），再创建新端口对
+        let mut batch = format!("@echo off\r\nchcp 65001 >nul\r\ncd /d \"{}\"\r\n", resource_str);
 
         // 阶段 0: 清理所有已知端口对（先删 → 失败则解绑端口名后再删）
         for bus in &stale_buses {
-            let cnc_a = format!("CNCA{}", bus);
-            let cnc_b = format!("CNCB{}", bus);
-            cmds.push_str(&format!(
-                "& '{}' remove {} *>$null; if ($LASTEXITCODE -ne 0) {{ & '{}' change {} PortName=- *>$null; & '{}' change {} PortName=- *>$null; Start-Sleep -Milliseconds 300; & '{}' remove {} *>$null }}; ",
-                setupc_str, bus, setupc_str, cnc_a, setupc_str, cnc_b, setupc_str, bus
+            batch.push_str(&format!(
+                "\"{setupc}\" remove {bus} >nul 2>&1\r\nif errorlevel 1 (\r\n  \"{setupc}\" change CNCA{bus} PortName=- >nul 2>&1\r\n  \"{setupc}\" change CNCB{bus} PortName=- >nul 2>&1\r\n  ping -n 2 127.0.0.1 >nul\r\n  \"{setupc}\" remove {bus} >nul 2>&1\r\n)\r\n",
+                setupc = setupc_str, bus = bus
             ));
         }
 
@@ -525,39 +626,25 @@ impl VirtualPortManager {
         let first_bus = driver_max_bus.map_or(0, |m| m + 1);
         for (i, (port_a_num, port_b_num)) in candidates.iter().enumerate() {
             let bus = first_bus + i as u32;
-            let port_a = format!("COM{}", port_a_num);
-            let port_b = format!("COM{}", port_b_num);
-            cmds.push_str(&format!(
-                "& '{}' install {} PortName={} 'PortName={},PlugInMode=yes'; ",
-                setupc_str, bus, port_a, port_b
+            batch.push_str(&format!(
+                "\"{setupc}\" install {bus} PortName=COM{pa} PortName=COM{pb},PlugInMode=yes\r\nif errorlevel 1 exit /b 1\r\n",
+                setupc = setupc_str, bus = bus, pa = port_a_num, pb = port_b_num
             ));
         }
-
-        let ps_script = format!(
-            "Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-Command','Set-Location ''{}''; {}'",
-            resource_str.replace('\'', "''"), cmds.replace('\'', "''")
-        );
+        batch.push_str("exit /b 0\r\n");
 
         log::info!(
             "Elevated cleanup of {} stale port pairs + creation of {} new pairs",
             stale_buses.len(), candidates.len()
         );
 
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| format!("Failed to launch elevated install script: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let detail = if stderr.is_empty() { stdout } else { stderr };
-            if detail.contains("cancel") || detail.contains("denied") {
-                return Err("User cancelled the UAC elevation prompt".into());
+        run_elevated(&batch).map_err(|e| {
+            if e.contains("cancel") {
+                "User cancelled the UAC elevation prompt".to_string()
+            } else {
+                format!("Elevated port pair creation failed: {}", e)
             }
-            return Err(format!("Elevated port pair creation failed: {}", detail.trim()));
-        }
+        })?;
 
         // 清理旧的追踪记录
         self.active_pairs.clear();
@@ -605,42 +692,28 @@ impl VirtualPortManager {
         let setupc_str = setupc.display().to_string();
         let resource_str = self.resource_dir.display().to_string();
 
-        // 构建 PowerShell 脚本：逐对执行 remove，失败则解绑端口名后重试
-        let mut cmds = String::new();
+        // 批处理：逐对 remove，失败则解绑端口名后重试（两阶段清理）
+        let mut batch = format!("@echo off\r\nchcp 65001 >nul\r\ncd /d \"{}\"\r\n", resource_str);
         for bus in &stale_buses {
-            let cnc_a = format!("CNCA{}", bus);
-            let cnc_b = format!("CNCB{}", bus);
-            cmds.push_str(&format!(
-                "& '{}' remove {} *>$null; if ($LASTEXITCODE -ne 0) {{ & '{}' change {} PortName=- *>$null; & '{}' change {} PortName=- *>$null; Start-Sleep -Milliseconds 300; & '{}' remove {} *>$null }}; ",
-                setupc_str, bus, setupc_str, cnc_a, setupc_str, cnc_b, setupc_str, bus
+            batch.push_str(&format!(
+                "\"{setupc}\" remove {bus} >nul 2>&1\r\nif errorlevel 1 (\r\n  \"{setupc}\" change CNCA{bus} PortName=- >nul 2>&1\r\n  \"{setupc}\" change CNCB{bus} PortName=- >nul 2>&1\r\n  ping -n 2 127.0.0.1 >nul\r\n  \"{setupc}\" remove {bus} >nul 2>&1\r\n)\r\n",
+                setupc = setupc_str, bus = bus
             ));
         }
-
-        let ps_script = format!(
-            "Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-Command','Set-Location ''{}''; {}'",
-            resource_str.replace('\'', "''"), cmds.replace('\'', "''")
-        );
+        batch.push_str("exit /b 0\r\n");
 
         log::info!(
             "cleanup_pairs_elevated: batch cleaning {} port pairs via UAC",
             stale_buses.len()
         );
 
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| format!("Failed to launch elevated cleanup script: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let detail = if stderr.is_empty() { stdout } else { stderr };
-            if detail.contains("cancel") || detail.contains("denied") {
-                return Err("User cancelled the UAC elevation prompt".into());
+        run_elevated(&batch).map_err(|e| {
+            if e.contains("cancel") {
+                "User cancelled the UAC elevation prompt".to_string()
+            } else {
+                format!("Elevated port pair cleanup failed: {}", e)
             }
-            return Err(format!("Elevated port pair cleanup failed: {}", detail.trim()));
-        }
+        })?;
 
         // Cleanup succeeded — clear all bookkeeping
         let cleaned = stale_buses.len() as u32;
@@ -834,7 +907,7 @@ impl VirtualPortManager {
     // ── 孤儿端口对持久化追踪 ─────────────────────────
 
     fn state_path(&self) -> PathBuf {
-        self.resource_dir.join("com0com_state.json")
+        self.state_dir.join("com0com_state.json")
     }
 
     fn load_active_buses(&self) -> Vec<u32> {
@@ -1077,38 +1150,29 @@ impl VirtualPortManager {
     /// 创建临时端口对以触发驱动安装，随后删除。
     #[cfg(target_os = "windows")]
     pub fn install_driver_elevated(&mut self) -> Result<(), String> {
-        use std::os::windows::process::CommandExt;
+        if !self.are_files_present() {
+            return Err("com0com driver files missing".into());
+        }
+
         let setupc_str = self.setupc_path().display().to_string();
         let resource_str = self.resource_dir().display().to_string();
 
-        let ps_script = format!(
-            "Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList '-NoProfile','-Command','Set-Location ''{}''; & ''{}'' install 0 - -; & ''{}'' remove 0'",
-            resource_str.replace('\'', "''"),
-            setupc_str.replace('\'', "''"),
-            setupc_str.replace('\'', "''")
+        // 选择空闲 bus，避免硬编码 bus 0 与已有端口对冲突
+        let (_, driver_max_bus, _) = self.query_driver_state();
+        let free_bus = driver_max_bus.map_or(0, |m| m + 1);
+        let bus_str = free_bus.to_string();
+
+        // 批处理：创建临时端口对触发驱动安装，成功后删除临时端口对（驱动保留）。
+        let batch = format!(
+            "@echo off\r\nchcp 65001 >nul\r\ncd /d \"{res}\"\r\n\"{setupc}\" install {bus} - -\r\nif errorlevel 1 exit /b 1\r\n\"{setupc}\" remove {bus}\r\nexit /b 0\r\n",
+            res = resource_str, setupc = setupc_str, bus = bus_str
         );
 
-        log::info!("Elevated install of com0com driver: {}", ps_script);
-
-        let output = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| format!("Failed to launch elevated install script: {}", e))?;
-
-        if output.status.success() {
-            log::info!("com0com driver elevated install succeeded");
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let detail = if stderr.is_empty() { stdout } else { stderr };
-            if detail.contains("cancel") || detail.contains("denied") {
-                Err("User cancelled the UAC elevation prompt".into())
-            } else {
-                Err(format!("Elevated install failed: {}", detail.trim()))
-            }
-        }
+        log::info!("Elevated install of com0com driver (bus {})", free_bus);
+        run_elevated(&batch)?;
+        self.driver_installed = true;
+        log::info!("com0com driver elevated install succeeded");
+        Ok(())
     }
 
     #[cfg(not(target_os = "windows"))]

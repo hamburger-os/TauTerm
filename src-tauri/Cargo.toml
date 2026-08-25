@@ -5,6 +5,7 @@ description = "TauTerm - 跨平台全功能终端模拟器"
 authors = ["TauTerm"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
+default-run = "tauterm"
 
 [lib]
 name = "tauterm_lib"
@@ -42,4 +43,17 @@ encoding_rs = "0.8"
 riperf3 = { path = "vendor/riperf3" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_Services",
+  "Win32_System_Threading",
+] }
