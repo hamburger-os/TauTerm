@@ -103,6 +103,18 @@ impl SocatBackend {
             .unwrap_or(false)
     }
 
+    /// Platform-specific install hint for the missing `socat` error message.
+    fn install_hint() -> &'static str {
+        #[cfg(target_os = "macos")]
+        {
+            "Install it via: brew install socat"
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            "Install it via: sudo apt install socat (Debian/Ubuntu) or sudo dnf install socat (Fedora/RHEL)"
+        }
+    }
+
     /// Generate symlink paths for a port pair with the given ID.
     fn symlink_paths(id: u32) -> (PathBuf, PathBuf) {
         let a = PathBuf::from(format!("/tmp/{}A{}", VPORT_SYMLINK_PREFIX, id));
@@ -169,7 +181,7 @@ impl VirtualPortBackend for SocatBackend {
             log::info!("socat is already installed");
             Ok(())
         } else {
-            Err("socat is not installed. Install it via: sudo apt install socat".into())
+            Err(format!("socat is not installed. {}", Self::install_hint()))
         }
     }
 
@@ -180,7 +192,7 @@ impl VirtualPortBackend for SocatBackend {
 
     fn create_pairs(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String> {
         if !Self::socat_available() {
-            return Err("socat is not installed. Install it via: sudo apt install socat".into());
+            return Err(format!("socat is not installed. {}", Self::install_hint()));
         }
 
         let count = config.count.clamp(1, MAX_PAIR_COUNT);

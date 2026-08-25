@@ -5,15 +5,17 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/hamburger-os/TauTerm?include_prereleases)](https://github.com/hamburger-os/TauTerm/releases)
-[![Windows](https://img.shields.io/badge/Windows-download-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20MSI-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20AppImage-FCC624)](https://github.com/hamburger-os/TauTerm/releases)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20dmg-333333)](https://github.com/hamburger-os/TauTerm/releases)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-67D6F8.svg)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-powered-000000.svg)](https://www.rust-lang.org/)
 
-**[Download for Windows](https://github.com/hamburger-os/TauTerm/releases)** · **[Build on macOS/Linux](docs/BUILDING.md)** · **[中文 README](README.zh-CN.md)**
+**[Download](https://github.com/hamburger-os/TauTerm/releases)** — Windows · Linux · macOS · **[Build from source](docs/BUILDING.md)** · **[中文 README](README.zh-CN.md)**
 
 TauTerm is for engineers who are tired of switching between an SSH client, an SFTP client, a serial terminal and separate TCP/UDP debugging tools. It brings those workflows into one lightweight desktop app with a microkernel plugin architecture.
 
-> **Release status:** Windows binaries are available now. macOS/Linux can be built from source while prebuilt packages are being prepared. Feature descriptions below track the current `master` branch; the latest packaged release may lag behind `master`.
+> **Release status:** Windows (NSIS/MSI), Linux (deb/rpm/AppImage) and macOS (Apple Silicon and Intel dmg/app) installers are published on GitHub Releases. Feature descriptions below track the current `master` branch; the latest packaged release may lag behind `master`.
 
 <!-- Showcase wanted: replace this comment with a real TauTerm hero screenshot/GIF before the next public launch. -->
 
@@ -52,7 +54,7 @@ TauTerm is for engineers who are tired of switching between an SSH client, an SF
 
 ### 🔌 Embedded development
 
-- **Serial RS-232/485** with an optional **virtual COM bridge** on Windows via com0com — the app itself runs as a standard (non-admin) user; privileged virtual-port operations are handled by a background service.
+- **Serial RS-232/485** with an optional **virtual serial bridge** — com0com on Windows, `socat` on Linux/macOS. On Windows the app itself runs as a standard (non-admin) user; privileged virtual-port operations are handled by a background service.
 - **XModem / YModem / ZModem** transfers directly from an active serial session.
 - **Text / HEX / Dual display** with timestamps, framing and TX/RX differentiation.
 - **Character-set transcoding** — UTF-8, GBK, GB18030, Big5, Shift-JIS, EUC-JP, EUC-KR and ISO-8859-1.
@@ -80,9 +82,17 @@ Download the newest installer from **[GitHub Releases](https://github.com/hambur
 
 The Windows installer bundles the open-source [com0com](https://com0com.sourceforge.net/) virtual serial driver so TauTerm's virtual COM bridge works out of the box. The driver is a separate GPL component.
 
-### macOS / Linux
+### Linux
 
-Prebuilt packages are in progress. For now, build from source using **[docs/BUILDING.md](docs/BUILDING.md)**.
+Pick from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**: `.deb` (Debian/Ubuntu), `.rpm` (Fedora/RHEL) or `.AppImage` (portable).
+
+The Linux virtual serial bridge uses `socat` — install it with `sudo apt install socat` (the `.deb` package already declares this dependency).
+
+### macOS
+
+Download the `.dmg` or `.app` bundle for **Apple Silicon** or **Intel (x86_64)** from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**.
+
+The macOS virtual serial bridge also uses `socat` — install it with `brew install socat`. The macOS build is a tech preview and is not notarized, so Gatekeeper may require a one-time right-click → Open to launch it.
 
 ---
 

@@ -3,6 +3,11 @@
 #
 # Trigger: git push v* tag (e.g., v0.4.0) or workflow_dispatch
 # Permission: contents: write (for creating GitHub Releases)
+#
+# Note: tag-push releases are STABLE by default so that the tauri updater
+# endpoint (releases/latest/download/latest.json) resolves. Mark a release as
+# a pre-release only via workflow_dispatch (prerelease input) — pre-releases
+# are NOT served by GitHub's /releases/latest.
 
 name: Release
 
@@ -10,6 +15,12 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: 'Mark this release as a pre-release (pre-releases are not served by /releases/latest, so auto-update requires a stable release)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -64,6 +75,8 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // Tag pushes default to a STABLE release; workflow_dispatch can opt into a pre-release.
+            const prerelease = (context.payload.inputs && context.payload.inputs.prerelease === 'true') || false;
             const { data: release } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -71,7 +84,7 @@ jobs:
               name: `TauTerm ${context.ref.replace('refs/tags/', '')}`,
               body: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.',
               draft: true,
-              prerelease: true
+              prerelease
             });
             core.setOutput('release_id', release.id.toString());
 
@@ -145,11 +158,35 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.releaseId }}
           args: '--bundles deb,rpm,appimage'
 
-  # ── macOS Build ──────────────────────────────────────────────
+  # ── macOS Build (Apple Silicon) ─────────────────────────────
   build-macos:
-    name: macOS (dmg + app)
+    name: macOS Apple Silicon (dmg + app)
     needs: [quality, create-release]
     runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.releaseId }}
+          args: '--bundles dmg,app'
+
+  # ── macOS Build (Intel x86_64) ──────────────────────────────
+  build-macos-intel:
+    name: macOS Intel (dmg + app)
+    needs: [quality, create-release]
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -173,7 +210,7 @@ jobs:
   # 汇总所有平台的安装包信息，生成 latest.json 并签名上传
   update-manifest:
     name: Generate Update Manifest
-    needs: [create-release, build-windows, build-linux, build-macos]
+    needs: [create-release, build-windows, build-linux, build-macos, build-macos-intel]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -190,6 +227,11 @@ jobs:
           if ! command -v tauri &>/dev/null; then
             cargo install tauri-cli --version "^2"
           fi
+          if ! command -v tauri &>/dev/null; then
+            echo "::error::tauri CLI is still unavailable after install attempt"
+            exit 1
+          fi
+          tauri --version
 
       - name: Generate and sign latest.json
         env:
@@ -206,44 +248,44 @@ jobs:
           ASSETS_JSON=$(gh api "repos/$REPO/releases/$RELEASE_ID" \
             --jq '[.assets[] | {name: .name, url: .browser_download_url}]')
 
-          # ── 获取所有 .sig 文件（一次性过滤，避免循环内重复 jq） ──
-          SIG_FILES=$(echo "$ASSETS_JSON" | jq -r '[.[] | select(.name | endswith(".sig"))]')
+          # ── 所有安装包资产（排除 .sig 与 latest.json 本身） ──
+          # 每个平台只保留一个 entry（后写覆盖先写），因此按 updater 首选项
+          # 升序排列：rpm → deb → msi → dmg → app.tar.gz → AppImage → exe。
+          # 即 Windows 保留 NSIS .exe、Linux 保留 .AppImage、macOS 保留 .app.tar.gz。
+          INSTALLER_FILES=$(echo "$ASSETS_JSON" | jq -c '
+            [.[] | select(.name != "latest.json" and (.name | endswith(".sig") | not))]
+            | sort_by(
+                if .name | test("_x64-setup.exe$") then 6
+                elif .name | test("_amd64.AppImage") then 5
+                elif .name | test("\\.app.tar.gz$") then 4
+                elif .name | test("_aarch64.dmg$|_x64.dmg$") then 3
+                elif .name | test("\\.msi$") then 2
+                elif .name | test("\\.deb$") then 1
+                elif .name | test("\\.rpm$") then 0
+                else -1
+                end
+              )')
+          COUNT=$(echo "$INSTALLER_FILES" | jq 'length')
+          echo "::notice::Found $COUNT installer asset(s)"
 
           # ── 构造 manifest 骨架 ──
           jq -n --arg version "$TAG" --arg notes "See CHANGELOG.md for details." \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {}}' > manifest.json
 
-          # ── 遍历 .sig 文件，匹配对应安装包 ──
-          SIG_COUNT=$(echo "$SIG_FILES" | jq 'length')
-          for i in $(seq 0 $((SIG_COUNT - 1))); do
-            SIG_ENTRY=$(echo "$SIG_FILES" | jq -r ".[$i]")
-            SIG_NAME=$(echo "$SIG_ENTRY" | jq -r '.name')
-            SIG_URL=$(echo "$SIG_ENTRY" | jq -r '.url')
+          SIGNED_COUNT=0
 
-            # 剥离 .sig 后缀得到安装包文件名
-            ASSET_NAME="${SIG_NAME%.sig}"
+          for i in $(seq 0 $((COUNT - 1))); do
+            ENTRY=$(echo "$INSTALLER_FILES" | jq -c ".[$i]")
+            ASSET_NAME=$(echo "$ENTRY" | jq -r '.name')
+            ASSET_URL=$(echo "$ENTRY" | jq -r '.url')
 
-            # 查找对应的安装包 URL
-            ASSET_URL=$(echo "$ASSETS_JSON" | jq -r --arg name "$ASSET_NAME" \
-              '.[] | select(.name == $name) | .url')
-            if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
-              echo "::warning::No matching installer found for $SIG_NAME (expected $ASSET_NAME)"
-              continue
-            fi
-
-            # 下载签名文件内容
-            SIGNATURE=$(curl -sSL --retry 3 --retry-delay 2 "$SIG_URL") || {
-              echo "::warning::Failed to download signature $SIG_NAME"
-              continue
-            }
-
-            # ── 推断平台目标 ──
+            # ── 推断平台目标（注意 Tauri 的 RPM 命名为 <product>-<ver>-1.<arch>.rpm） ──
             TARGET=""
             case "$ASSET_NAME" in
               *_x64-setup.exe|*_x64_en-US.msi)
                 TARGET="windows-x86_64" ;;
-              *_amd64.deb|*_amd64.rpm|*_amd64.AppImage*)
+              *_amd64.deb|*.x86_64.rpm|*_amd64.AppImage*)
                 TARGET="linux-x86_64" ;;
               *_aarch64.dmg|*_aarch64.app.tar.gz)
                 TARGET="darwin-aarch64" ;;
@@ -254,26 +296,50 @@ jobs:
                 continue ;;
             esac
 
+            # ── 查找对应 .sig 签名文件（若存在） ──
+            SIGNATURE=""
+            SIG_URL=$(echo "$ASSETS_JSON" | jq -r --arg name "$ASSET_NAME.sig" \
+              '.[] | select(.name == $name) | .url')
+            if [ -n "$SIG_URL" ] && [ "$SIG_URL" != "null" ]; then
+              SIGNATURE=$(curl -sSL --retry 3 --retry-delay 2 "$SIG_URL") || {
+                echo "::warning::Failed to download signature for $ASSET_NAME"
+              }
+              if [ -n "$SIGNATURE" ]; then
+                SIGNED_COUNT=$((SIGNED_COUNT + 1))
+              fi
+            else
+              echo "::warning::No signature file for $ASSET_NAME — installer is unsigned; auto-update will reject it"
+            fi
+
             # 将平台信息写入 manifest
             jq --arg target "$TARGET" --arg sig "$SIGNATURE" --arg url "$ASSET_URL" \
               '.platforms[$target] = {signature: $sig, url: $url}' manifest.json > tmp.json
             mv tmp.json manifest.json
           done
 
-          # ── 签名 manifest ──
-          echo "$TAURI_SIGNING_PRIVATE_KEY" > private_key.key
-
-          SIGN_ARGS="sign --private-key private_key.key --sign-file manifest.json"
-          if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
-            SIGN_ARGS="$SIGN_ARGS --password $TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          if [ "$SIGNED_COUNT" -eq 0 ]; then
+            echo "::error::No signed installers found (0 .sig files). Auto-update will not work. Add TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD to repository secrets."
           fi
 
-          MANIFEST_SIG=$(tauri signer $SIGN_ARGS 2>/dev/null || echo "")
+          # ── 签名 manifest（无密钥时退化为未签名 latest.json） ──
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "$TAURI_SIGNING_PRIVATE_KEY" > private_key.key
 
-          if [ -n "$MANIFEST_SIG" ]; then
-            jq --arg sig "$MANIFEST_SIG" '. + {signature: $sig}' manifest.json > latest.json
+            SIGN_ARGS="sign --private-key private_key.key --sign-file manifest.json"
+            if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
+              SIGN_ARGS="$SIGN_ARGS --password $TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            fi
+
+            MANIFEST_SIG=$(tauri signer $SIGN_ARGS 2>/dev/null || echo "")
+
+            if [ -n "$MANIFEST_SIG" ]; then
+              jq --arg sig "$MANIFEST_SIG" '. + {signature: $sig}' manifest.json > latest.json
+            else
+              echo "::warning::Manifest signing failed — uploading unsigned manifest"
+              cp manifest.json latest.json
+            fi
           else
-            echo "::warning::Manifest signing failed — uploading unsigned manifest"
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set — uploading unsigned manifest"
             cp manifest.json latest.json
           fi
 
