@@ -12,6 +12,17 @@ interface Props {
 const ALL_PEERS = "__all__";
 
 /**
+ * 判断会话参数是否需要显示目标栏（TargetBar）。
+ * 仅 TCP/UDP server 角色存在可路由的多目标（对端下拉 / 手动 IP:port），其余返回 false。
+ * 该判定与 App.tsx 的发送栏高度计算共用，需保持一致。
+ */
+export function isTargetBarVisible(params: Record<string, unknown> | undefined): boolean {
+  const transport = params?.transport as string | undefined;
+  const role = params?.role as string | undefined;
+  return (transport === "tcp" || transport === "udp") && role === "server";
+}
+
+/**
  * 发送目标栏 — 横跨四个发送模式的共享目标选择器。
  *
  * 按会话 transport/role 渲染：
@@ -29,7 +40,7 @@ export default function TargetBar({ containerId }: Props) {
   const tab = state.tabs.find(t => t.id === containerId);
   const params = (tab?.params ?? {}) as Record<string, unknown>;
   const transport = params.transport as string | undefined;
-  const role = params.role as string | undefined;
+  const targetBarVisible = isTargetBarVisible(params);
 
   const peers = (state.networkPeers[containerId] ?? []).filter(p => p.state === "connected");
   const selectedPeerId = state.selectedNetworkPeer[containerId] ?? null;
@@ -39,15 +50,16 @@ export default function TargetBar({ containerId }: Props) {
 
   // 同步「当前目标」到后端脚本引擎（仅 server 角色存在可路由目标）
   useEffect(() => {
-    if (transport !== "tcp" && transport !== "udp") return;
-    if (role !== "server") return;
+    if (!targetBarVisible) return;
     const target = transport === "udp"
       ? (manualTarget.trim() || null)
       : (broadcast ? ALL_PEERS : selectedPeerId);
     invoke("set_network_send_target", { sessionId: containerId, target }).catch(() => { /* 后端尚未就绪时静默 */ });
-  }, [containerId, transport, role, manualTarget, broadcast, selectedPeerId]);
+  }, [containerId, targetBarVisible, transport, manualTarget, broadcast, selectedPeerId]);
 
-  if (transport === "tcp" && role === "server") {
+  if (!targetBarVisible) return null;
+
+  if (transport === "tcp") {
     const value = broadcast ? ALL_PEERS : (selectedPeerId ?? "");
     return (
       <div className={`${styles.bar} liquid-glass`}>
@@ -75,7 +87,7 @@ export default function TargetBar({ containerId }: Props) {
     );
   }
 
-  if (transport === "udp" && role === "server") {
+  if (transport === "udp") {
     return (
       <div className={`${styles.bar} liquid-glass`}>
         <span className={styles.label}>{t("network.targetLabel")}</span>

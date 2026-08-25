@@ -336,8 +336,6 @@
     "importScriptOverwrite": "Overwrite Current",
     "send": "Send",
     "placeholder": "Type data to send... (Shift+Enter to send)",
-    "broadcastOn": "Broadcasting: send to all sibling peers/channels",
-    "broadcastOff": "Broadcast: send to all sibling peers/channels",
     "repeatSend": "Repeat Send",
     "appendNewline": "Append Newline",
     "sendMode": "Send Mode",

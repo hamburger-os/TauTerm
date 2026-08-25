@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";               // 窗口状态（最大化/还原追踪）
 import { invoke } from "@tauri-apps/api/core";
@@ -12,6 +12,7 @@ import StatusBar from "./components/Layout/StatusBar";
 import ResizeHandle from "./components/Layout/ResizeHandle";
 import TabContentDispatcher from "./components/TabContentDispatcher";
 import SendBar from "./components/SendBar/SendBar";
+import { isTargetBarVisible } from "./components/SendBar/TargetBar";
 import type { ProtocolType } from "./types/transfer";
 import { useUpdater } from "./hooks/useUpdater";
 import RightSidebar from "./components/RightSidebar/RightSidebar";
@@ -33,11 +34,20 @@ const SIDEBAR_MAX = 400;
 const RIGHT_SIDEBAR_MIN = 160;
 const RIGHT_SIDEBAR_MAX_STATIC = 1600; // 静态后备值，实际上限由主内容区宽度动态计算
 const RIGHT_SIDEBAR_DEFAULT = 260;
-/** SendBar 最小高度（px）：从 CSS 自定义属性 --sendbar-min-height 读取，128 为后备值 */
 const SENDBAR_MIN_PCT = 5;
 const SENDBAR_MAX_PCT = 80;
 const SENDBAR_DEFAULT_PCT = SENDBAR_MIN_PCT;
 const RESIZE_DEBOUNCE_MS = 150;
+
+/** 将 CSS 长度自定义属性（支持 calc()）解析为像素数值；失败返回 null */
+function resolveCssLengthPx(varName: string): number | null {
+  const probe = document.createElement("div");
+  probe.style.cssText = `position:absolute;visibility:hidden;height:var(${varName});`;
+  document.body.appendChild(probe);
+  const height = probe.getBoundingClientRect().height;
+  document.body.removeChild(probe);
+  return Number.isFinite(height) && height > 0 ? height : null;
+}
 
 function AppInner() {
   const { t } = useTranslation();
@@ -54,7 +64,9 @@ function AppInner() {
   const [sendBarPct, setSendBarPct] = useState(SENDBAR_DEFAULT_PCT);
   const [isResizingSendBar, setIsResizingSendBar] = useState(false);
   /** SendBar 最小高度，从 CSS 自定义属性 --sendbar-min-height 读取，避免与 SendBar.module.css 硬编码不同步 */
-  const [sendbarMinHeight, setSendbarMinHeight] = useState(128);
+  const [sendbarMinHeight, setSendbarMinHeight] = useState(0);
+  /** 顶部目标栏（TargetBar）固定一行高度，从 --sendbar-targetbar-height 读取；发送栏整体最小高度 = sendbarMinHeight + targetBarHeight */
+  const [targetBarHeight, setTargetBarHeight] = useState(0);
   const sendbarMinHeightRef = useRef(sendbarMinHeight);
   sendbarMinHeightRef.current = sendbarMinHeight;
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -92,30 +104,27 @@ function AppInner() {
     if (transferState.error) showToast("error", transferState.error);
   }, [transferState.error, showToast]);
 
-  // 从 CSS 自定义属性读取 SendBar 最小高度，确保 JS 与 CSS 值一致；
-  // 同时修正初始 sendBarPct，避免默认百分比（5%）对应的像素值小于 CSS min-height，
-  // 导致首次拖动时 SendBar 出现"跳变高"现象。
-  useEffect(() => {
-    try {
-      const val = getComputedStyle(document.documentElement)
-        .getPropertyValue("--sendbar-min-height").trim();
-      const parsed = parseInt(val, 10);
-      if (!isNaN(parsed)) {
-        setSendbarMinHeight(parsed);
-        // 修正初始百分比，使其与 CSS min-height 像素值对齐
-        const container = mainContentRef.current;
-        if (container) {
-          const containerHeight = container.clientHeight;
-          if (containerHeight > 0) {
-            const minPct = Math.max(
-              SENDBAR_MIN_PCT,
-              Math.ceil((parsed * 100) / containerHeight)
-            );
-            setSendBarPct(prev => Math.max(prev, minPct));
-          }
-        }
+  // 从 CSS 自定义属性读取 SendBar 最小高度与目标栏高度，确保 JS 与 CSS 值一致。
+  // 使用 useLayoutEffect 在首次绘制前完成解析，并修正初始 sendBarPct，
+  // 避免默认百分比对应的像素值小于 CSS min-height 导致首次拖动时 SendBar 出现"跳变高"现象。
+  useLayoutEffect(() => {
+    const minHeight = resolveCssLengthPx("--sendbar-min-height");
+    const targetHeight = resolveCssLengthPx("--sendbar-targetbar-height");
+    if (minHeight !== null) setSendbarMinHeight(minHeight);
+    if (targetHeight !== null) setTargetBarHeight(targetHeight);
+
+    // 修正初始百分比，使其与 CSS min-height 像素值对齐
+    const container = mainContentRef.current;
+    if (minHeight !== null && container) {
+      const containerHeight = container.clientHeight;
+      if (containerHeight > 0) {
+        const minPct = Math.max(
+          SENDBAR_MIN_PCT,
+          Math.ceil((minHeight * 100) / containerHeight)
+        );
+        setSendBarPct(prev => Math.max(prev, minPct));
       }
-    } catch { /* 保持默认 128 */ }
+    }
   }, []);
 
   // Resize: sidebar
@@ -314,6 +323,12 @@ function AppInner() {
     }
   }, []);
 
+  // 活跃会话是否显示目标栏（TargetBar）。用于终端行 flex 计算：
+  // 发送栏主体（body）高度由 sendBarPct 控制，目标栏为额外固定高度，
+  // 使 body 高度在有无目标栏时保持一致（而非被目标栏挤占 42px）。
+  const activeTabForBar = sessionState.tabs.find(t => t.id === sessionState.activeTabId);
+  const activeShowTargetBar = isTargetBarVisible(activeTabForBar?.params);
+
   return (
     <div className="app-root">
       {/* 动态光球背景层 (z-index: 0) */}
@@ -348,7 +363,7 @@ function AppInner() {
 
         {/* 主内容区：终端 + 传输面板 + 发送栏 */}
         <div className="main-content" ref={mainContentRef}>
-          <div className="terminal-transmission-row" style={{ flex: `${100 - sendBarPct} 1 ${100 - sendBarPct}%` }}>
+          <div className="terminal-transmission-row" style={{ flex: `${100 - sendBarPct} 1 calc(${100 - sendBarPct}% - ${activeShowTargetBar ? targetBarHeight : 0}px)` }}>
             <main className="terminal-viewport liquid-glass">
               <TabContentDispatcher />
             </main>
@@ -415,6 +430,8 @@ function AppInner() {
           {sessionState.tabs.map(tab => {
             const isActive = tab.id === sessionState.activeTabId;
             const isNetwork = tab.pluginId === "network";
+            // 顶部目标栏（TargetBar）仅 TCP/UDP server 显示；其高度需计入发送栏最小高度
+            const showTargetBar = isTargetBarVisible(tab.params);
             let showSendBar = tab.sendBarEnabled !== false;
             if (isNetwork) {
               // 网络调试：发送栏与脚本引擎统一绑定容器会话，目标由 SendBar 内 TargetBar 选择
@@ -429,7 +446,7 @@ function AppInner() {
                 )}
                 {showSendBar && (
                   <div style={isActive
-                    ? { flex: `${sendBarPct} 1 ${sendBarPct}%`, display: 'flex', flexDirection: 'column' as const }
+                    ? { flex: `${sendBarPct} 1 calc(${sendBarPct}% + ${showTargetBar ? targetBarHeight : 0}px)`, minHeight: sendbarMinHeight + (showTargetBar ? targetBarHeight : 0), display: 'flex', flexDirection: 'column' as const }
                     : { display: 'none' as const }
                   }>
                     <SendBar containerId={tab.id} />

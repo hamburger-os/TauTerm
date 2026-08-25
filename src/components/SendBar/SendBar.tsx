@@ -8,7 +8,6 @@ import AutoReplyPanel from "./AutoReplyPanel";
 import ScriptEditor from "./ScriptEditor";
 import TargetBar from "./TargetBar";
 import Icon from "../common/Icon";
-import { useSession } from "../../context/SessionContext";
 import type { SendBarMode } from "./types";
 import styles from "./SendBar.module.css";
 
@@ -39,14 +38,9 @@ function SendBarInner({ containerId, engineSessionId }: SendBarProps) {
   const { t } = useTranslation();
   const { state, dispatch } = useSendBar();
   const { mode } = state;
-  const { getSiblingTargets, isBroadcast, toggleBroadcast } = useSession();
 
   // 引擎绑定会话：TCP 网络为选中对端，其余为容器
   const engineId = engineSessionId ?? containerId;
-
-  // 群发：存在同组 sibling（SSH 子通道）时显示开关；网络目标由 TargetBar 选择
-  const siblingCount = getSiblingTargets(engineId).length;
-  const broadcastOn = isBroadcast(engineId);
 
   const [isChildRunning, setIsChildRunning] = useState(false);
 
@@ -96,20 +90,9 @@ function SendBarInner({ containerId, engineSessionId }: SendBarProps) {
               disabled={isChildRunning}
               title={isChildRunning ? (t("sendBar.modeLocked")) : btn.title}
             >
-              <Icon name={btn.icon} size="sm" />
+              <Icon name={btn.icon} size="md" />
             </button>
           ))}
-          {/* 群发开关（仅 SSH 子通道等非网络 sibling 会话显示；网络目标由 TargetBar 选择） */}
-          {siblingCount > 0 && (
-            <button
-              className={`${styles.modeBtn} ${styles.broadcastBtn} liquid-glass-button ${broadcastOn ? "active" : ""}`}
-              onClick={() => toggleBroadcast(engineId)}
-              disabled={isChildRunning}
-              title={broadcastOn ? t("sendBar.broadcastOn") : t("sendBar.broadcastOff")}
-            >
-              <Icon name="antenna" size="sm" />
-            </button>
-          )}
         </div>
 
         {/* 内容区 — 四个视图始终挂载，CSS 显隐切换 */}

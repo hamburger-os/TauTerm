@@ -1,8 +1,12 @@
-/* 发送栏容器：纵向布局，目标栏卡片 + 主发送栏卡片 上下两张卡（紧挨无间隙） */
+/* 发送栏容器：纵向布局，目标栏卡片 + 主发送栏卡片 上下两张卡（紧挨无间隙）。
+   min-height:0 确保卡片主体高度由包裹层（wrapper）分配，内容再多也只会在卡片内部滚动/裁切，
+   而不会把卡片本体撑出包裹层下边缘（杜绝底部顶出）。 */
 .container {
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* 主体：模式切换器（左） + 内容区（右），作为主发送栏卡片 */
@@ -10,7 +14,7 @@
   display: flex;
   flex: 1;
   min-width: 0;
-  min-height: var(--sendbar-min-height, 128px);
+  min-height: var(--sendbar-min-height);
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
@@ -19,30 +23,25 @@
 .modeSwitcher {
   display: flex;
   flex-direction: column;
-  width: 36px;
+  width: 42px;
   flex-shrink: 0;
   border-right: 1px solid var(--glass-border-default);
-  padding: 4px 2px;
-  gap: 2px;
+  padding: var(--sendbar-mode-switcher-padding);
+  gap: var(--sendbar-mode-btn-gap);
 }
 
 .modeBtn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: var(--sendbar-mode-btn-size);
+  height: var(--sendbar-mode-btn-size);
   cursor: pointer;
 }
 
 .modeBtn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
-}
-
-/* 群发开关：推到模式切换器底部，与模式按钮区隔 */
-.broadcastBtn {
-  margin-top: auto;
 }
 
 .modeIcon {

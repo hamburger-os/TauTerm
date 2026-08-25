@@ -54,10 +54,25 @@
   --blur-xs: 4px;
 
   /* 布局常量 */
-  /* 发送栏主体（下方卡片）最小高度：需容纳 ScriptEditor 折叠 Output 后的完整 chrome
-     （工具栏 ~37 + 编辑区 min 28 + Output header ~25 + 执行控制 ~32 ≈ 123）+ 渲染缓冲。
-     顶部目标栏卡片为固定一行高度，不计入此最小值。 */
-  --sendbar-min-height: 128px;
+  /* 发送模式按钮尺寸 / 间距 / 切换器 padding，供 .modeBtn / .modeSwitcher 与最小高度派生共用 */
+  --sendbar-mode-btn-size: 36px;
+  --sendbar-mode-btn-gap: 2px;
+  --sendbar-mode-switcher-padding: 2px;
+  /* 发送模式数量：基本 / 指令 / 自动应答 / 脚本（新增或删除模式时同步此值） */
+  --sendbar-mode-count: 4;
+  /* 发送栏主体（下方卡片）最小高度 = 模式切换器内容高度（N 按钮 + N-1 gap + 上下 padding）
+     + .body 的 liquid-glass 上下边框 2px；顶部目标栏卡片为固定一行高度，不计入此最小值。 */
+  --sendbar-min-height: calc(
+    var(--sendbar-mode-count) * var(--sendbar-mode-btn-size)
+    + (var(--sendbar-mode-count) - 1) * var(--sendbar-mode-btn-gap)
+    + 2 * var(--sendbar-mode-switcher-padding)
+    + 2px
+  );
+  /* 顶部目标栏（TargetBar）垂直 padding，供 TargetBar.module.css 与下方高度派生共用 */
+  --targetbar-vertical-padding: 6px;
+  /* 顶部目标栏卡片（TargetBar）固定一行高度 = --select-height + 2×--targetbar-vertical-padding + 上下 border(2px)，
+     不计入 --sendbar-min-height；发送栏整体最小高度 = 两者之和。 */
+  --sendbar-targetbar-height: calc(var(--select-height) + 2 * var(--targetbar-vertical-padding) + 2px);
 
   /* 统一控件尺寸 — 所有下拉框/输入框使用相同高度 */
   --select-height: 28px;
