@@ -1,0 +1,152 @@
+name: Release v0.5.0 Once
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    if: github.event.head_commit.message == 'chore(release): trigger v0.5.0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '.version == "0.5.0"' package.json >/dev/null
+          jq -e '.version == "0.5.0"' src-tauri/tauri.conf.json >/dev/null
+          grep -q '^version = "0.5.0"$' src-tauri/Cargo.toml
+          test -f docs/RELEASE_NOTES_v0.5.0.md
+
+      - name: Finalize changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('CHANGELOG.md')
+          text = p.read_text(encoding='utf-8')
+          heading = '## [0.5.0] — 2026-08-26'
+          if heading not in text:
+              marker = '## [Unreleased]\n'
+              if marker not in text:
+                  raise SystemExit('CHANGELOG.md has no [Unreleased] heading')
+              text = text.replace(marker, marker + '\n' + heading + '\n', 1)
+              p.write_text(text, encoding='utf-8')
+          PY
+
+          if ! git diff --quiet -- CHANGELOG.md; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add CHANGELOG.md
+            git commit -m "docs(changelog): finalize v0.5.0"
+            git push origin HEAD:master
+          fi
+
+      - name: Create v0.5.0 tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          if git rev-parse -q --verify refs/tags/v0.5.0 >/dev/null; then
+            echo "v0.5.0 already exists; refusing to move an existing release tag."
+            exit 1
+          fi
+          git tag -a v0.5.0 -m "TauTerm v0.5.0"
+          git push origin v0.5.0
+
+      - name: Dispatch release workflow
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --ref v0.5.0 -f prerelease=false
+
+          RUN_ID=""
+          for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list \
+              --workflow release.yml \
+              --branch v0.5.0 \
+              --event workflow_dispatch \
+              --limit 5 \
+              --json databaseId,createdAt \
+              --jq '.[0].databaseId // empty')
+            if [ -n "$RUN_ID" ]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [ -z "$RUN_ID" ]; then
+            echo "Could not find the dispatched release workflow run."
+            exit 1
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Release workflow run: $RUN_ID"
+
+      - name: Wait for release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh run watch "${{ steps.dispatch.outputs.run_id }}" --exit-status
+
+      - name: Validate draft release and updater manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/tauterm-release-check
+          mkdir -p /tmp/tauterm-release-check
+
+          gh release view v0.5.0 --json isDraft,isPrerelease,assets > /tmp/tauterm-release-check/release.json
+          jq -e '.isDraft == true' /tmp/tauterm-release-check/release.json >/dev/null
+          jq -e '.isPrerelease == false' /tmp/tauterm-release-check/release.json >/dev/null
+
+          for pattern in '*_x64-setup.exe' '*.msi' '*.deb' '*.rpm' '*.AppImage' '*_aarch64.dmg' '*_x64.dmg' 'latest.json'; do
+            jq -e --arg p "$pattern" '
+              [.assets[].name] |
+              any(.[]; if $p == "latest.json" then . == $p
+                elif $p == "*.msi" then endswith(".msi")
+                elif $p == "*.deb" then endswith(".deb")
+                elif $p == "*.rpm" then endswith(".rpm")
+                elif $p == "*.AppImage" then endswith(".AppImage")
+                elif $p == "*_x64-setup.exe" then endswith("_x64-setup.exe")
+                elif $p == "*_aarch64.dmg" then endswith("_aarch64.dmg")
+                elif $p == "*_x64.dmg" then endswith("_x64.dmg")
+                else false end)' /tmp/tauterm-release-check/release.json >/dev/null
+          done
+
+          gh release download v0.5.0 --pattern latest.json --dir /tmp/tauterm-release-check
+          jq -e '
+            .version == "v0.5.0" and
+            (.platforms | length >= 4) and
+            ([.platforms[] | select((.signature | length) == 0 or (.url | length) == 0)] | length == 0)
+          ' /tmp/tauterm-release-check/latest.json >/dev/null
+
+      - name: Publish v0.5.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit v0.5.0 \
+            --notes-file docs/RELEASE_NOTES_v0.5.0.md \
+            --draft=false \
+            --prerelease=false \
+            --latest
+
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)" = "v0.5.0"
+          echo "TauTerm v0.5.0 published successfully."
