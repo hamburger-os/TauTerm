@@ -92,6 +92,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          BASE_SHA=$(git rev-parse HEAD)
 
           cat > rust-toolchain.toml <<'EOF'
           [toolchain]
@@ -127,8 +128,14 @@ jobs:
             echo '::error::Expected release-finalization changes are missing.'
             exit 1
           fi
+
+          git fetch origin master
+          if [ "$(git rev-parse origin/master)" != "$BASE_SHA" ]; then
+            echo '::error::master advanced during release validation; refusing to publish unvalidated rebased content.'
+            exit 1
+          fi
+
           git commit -m 'chore(release): finalize v0.5.0'
-          git pull --rebase origin master
           git push origin HEAD:master
           FINAL_SHA=$(git rev-parse HEAD)
           echo "final_sha=$FINAL_SHA" >> "$GITHUB_OUTPUT"
