@@ -23,6 +23,11 @@ replace(
     "use crate::channel::io_loop::IoLoopCmd;",
 )
 replace(
+    "src-tauri/src/plugins/network/mod.rs",
+    "    use crate::channel::Channel;",
+    "    use crate::channel::io_loop::IoLoopContext;\n    use crate::channel::Channel;",
+)
+replace(
     "src-tauri/src/kernel/session_store.rs",
     "            plugin_id: plugin_id,",
     "            plugin_id,",
@@ -129,12 +134,18 @@ old = '''  build: {
 new = '''  build: {
     rollupOptions: {
       output: {
-        // Split large dependency families and feature domains instead of hiding warnings.
+        // Split dependency families and a few coherent app domains without forcing
+        // mutually-dependent component folders into separate circular chunks.
         manualChunks(id) {
           const normalized = id.replace(/\\\\/g, "/");
-          const componentMatch = normalized.match(/\\/src\\/components\\/([^/]+)\\//);
-          if (componentMatch) return `ui-${componentMatch[1].toLowerCase()}`;
-          if (normalized.includes("/src/context/")) return "app-context";
+          if (normalized.includes("/src/context/") || /\\/src\\/components\\/(Common|Settings|Layout|Terminal)\\//.test(normalized)) {
+            return "ui-core";
+          }
+          if (/\\/src\\/components\\/(RightSidebar|JournaldViewer|Tools)\\//.test(normalized)) {
+            return "ui-sidebar";
+          }
+          if (normalized.includes("/src/components/SendBar/")) return "ui-sendbar";
+          if (normalized.includes("/src/components/FileManager/")) return "ui-filemanager";
           if (!normalized.includes("node_modules")) return undefined;
           if (normalized.includes("@xterm/")) return "xterm";
           if (normalized.includes("framer-motion") || normalized.includes("motion-dom") || normalized.includes("motion-utils")) return "motion";
