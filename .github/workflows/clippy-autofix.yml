@@ -44,6 +44,7 @@ jobs:
           git add src-tauri/src
           if ! git diff --cached --quiet; then
             git commit -m "fix: apply strict clippy suggestions"
+            git pull --rebase origin master
             git push origin HEAD:master
           fi
       - name: Report remaining strict Clippy findings
