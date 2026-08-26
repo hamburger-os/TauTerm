@@ -134,15 +134,13 @@ old = '''  build: {
 new = '''  build: {
     rollupOptions: {
       output: {
-        // Split dependency families and coherent app domains while keeping mutually
-        // dependent UI component folders together in one non-circular chunk.
+        // Split dependency families while keeping the strongly-connected application UI
+        // in one chunk. This avoids circular manual chunks and stays below Vite's 500KB limit.
         manualChunks(id) {
           const normalized = id.replace(/\\\\/g, "/");
-          if (normalized.includes("/src/context/") || /\\/src\\/components\\/(Common|Settings|Layout|Terminal|RightSidebar|JournaldViewer|Tools)\\//.test(normalized)) {
+          if (normalized.includes("/src/context/") || /\\/src\\/components\\/(Common|Settings|Layout|Terminal|RightSidebar|JournaldViewer|Tools|FileManager|SendBar)\\//.test(normalized)) {
             return "ui-core";
           }
-          if (normalized.includes("/src/components/SendBar/")) return "ui-sendbar";
-          if (normalized.includes("/src/components/FileManager/")) return "ui-filemanager";
           if (!normalized.includes("node_modules")) return undefined;
           if (normalized.includes("@xterm/")) return "xterm";
           if (normalized.includes("framer-motion") || normalized.includes("motion-dom") || normalized.includes("motion-utils")) return "motion";
