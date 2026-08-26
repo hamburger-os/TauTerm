@@ -92,8 +92,8 @@ jobs:
           )
           replace(
               "src-tauri/src/transfer/serial_transfer.rs",
-              "                            aggregate_total: aggregate_total,",
-              "                            aggregate_total,",
+              "aggregate_total: aggregate_total,",
+              "aggregate_total,",
               2,
           )
           replace(
