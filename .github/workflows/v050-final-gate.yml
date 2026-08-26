@@ -123,12 +123,25 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add src src-tauri/src src-tauri/build.rs vite.config.ts
           git diff --cached --check
           if git diff --cached --quiet; then
             echo '::error::Strict refactor produced no source changes.'
             exit 1
           fi
+
+          if ! git diff --quiet; then
+            echo '::error::Unexpected unstaged changes remain outside the validated source set.'
+            git status --short
+            exit 1
+          fi
+
+          git fetch origin master
+          if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master)" ]; then
+            echo '::error::master advanced during validation; rerun the strict gate on the new HEAD.'
+            exit 1
+          fi
+
           git commit -m 'refactor: eliminate all clippy warnings for v0.5.0'
-          git pull --rebase origin master
           git push origin HEAD:master
