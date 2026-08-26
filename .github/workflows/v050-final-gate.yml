@@ -14,7 +14,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.head_commit.message == 'chore(ci): run v0.5.0 strict final gate'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
         with:
