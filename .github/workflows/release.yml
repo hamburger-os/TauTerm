@@ -1,13 +1,6 @@
-# TauTerm Release Workflow
-# Builds Windows, Linux, and macOS artifacts on tag push or manual trigger.
-#
-# Trigger: git push v* tag (e.g., v0.4.0) or workflow_dispatch
-# Permission: contents: write (for creating GitHub Releases)
-#
-# Note: tag-push releases are STABLE by default so that the tauri updater
-# endpoint (releases/latest/download/latest.json) resolves. Mark a release as
-# a pre-release only via workflow_dispatch (prerelease input) — pre-releases
-# are NOT served by GitHub's /releases/latest.
+# TauTerm release workflow.
+# Creates a draft release only after strict quality checks, builds all supported
+# desktop targets, verifies updater signatures, and uploads a signed latest.json.
 
 name: Release
 
@@ -17,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       prerelease:
-        description: 'Mark this release as a pre-release (pre-releases are not served by /releases/latest, so auto-update requires a stable release)'
+        description: 'Mark this release as a pre-release'
         type: boolean
         required: false
         default: false
@@ -26,23 +19,27 @@ permissions:
   contents: write
 
 jobs:
-  # ── Quality Checks (shared, runs first) ──────────────────────
   quality:
     name: Quality Checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+          cache: npm
 
-      - name: Install system dependencies (Tauri)
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy,rustfmt
+
+      - name: Install Tauri system dependencies
+        shell: bash
         run: |
-          sudo apt update
-          sudo apt install -y \
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libsoup-3.0-dev \
@@ -51,60 +48,84 @@ jobs:
             libudev-dev
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: TypeScript type check
         run: npx tsc --noEmit
 
-      - name: Rust clippy
-        run: cargo clippy --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Frontend production build without warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee /tmp/frontend-build.log
+          if grep -E 'Some chunks are larger than|Circular chunk:' /tmp/frontend-build.log; then
+            echo '::error::Vite/Rollup emitted a production-build warning.'
+            exit 1
+          fi
+
+      - name: Reject Clippy suppressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE '#!?\[[[:space:]]*(allow|expect)[[:space:]]*\([[:space:]]*clippy::' src-tauri/src; then
+            echo '::error::Clippy allow/expect suppression found.'
+            exit 1
+          fi
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Strict Clippy all targets
+        run: cargo clippy --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
 
       - name: Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
-  # ── Create Draft Release (once, before parallel builds) ──────
+      - name: Diff hygiene
+        run: git diff --check
+
   create-release:
     name: Create Draft Release
     needs: quality
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       releaseId: ${{ steps.create-release.outputs.release_id }}
     steps:
       - name: Create GitHub Release
         id: create-release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9.0.0
         with:
           script: |
-            // Tag pushes default to a STABLE release; workflow_dispatch can opt into a pre-release.
             const prerelease = (context.payload.inputs && context.payload.inputs.prerelease === 'true') || false;
+            const tag = context.ref.replace('refs/tags/', '');
             const { data: release } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag_name: context.ref.replace('refs/tags/', ''),
-              name: `TauTerm ${context.ref.replace('refs/tags/', '')}`,
+              tag_name: tag,
+              name: `TauTerm ${tag}`,
               body: 'See [CHANGELOG.md](https://github.com/hamburger-os/TauTerm/blob/master/CHANGELOG.md) for details.',
               draft: true,
               prerelease
             });
             core.setOutput('release_id', release.id.toString());
 
-  # ── Windows Build ────────────────────────────────────────────
   build-windows:
-    name: Windows (NSIS + MSI)
+    name: Windows x64 (NSIS + MSI)
     needs: [quality, create-release]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - name: Install NSIS
         run: choco install nsis -y
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Check com0com driver files
         run: npm run check-com0com
@@ -112,31 +133,41 @@ jobs:
       - name: Check com0com reserved-region sync
         run: npm run check-reserved-region
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Require updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+
+      - uses: tauri-apps/tauri-action@action-v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.releaseId }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
           args: '--bundles nsis,msi'
 
-  # ── Linux Build ──────────────────────────────────────────────
   build-linux:
-    name: Linux (deb + rpm + AppImage)
+    name: Linux x64 (DEB + RPM + AppImage)
     needs: [quality, create-release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - name: Install system dependencies
+        shell: bash
         run: |
-          sudo apt update
-          sudo apt install -y \
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
@@ -150,202 +181,173 @@ jobs:
             rpm
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Require updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+
+      - uses: tauri-apps/tauri-action@action-v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.releaseId }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
           args: '--bundles deb,rpm,appimage'
 
-  # ── macOS Build (Apple Silicon) ─────────────────────────────
   build-macos:
-    name: macOS Apple Silicon (dmg + app)
+    name: macOS Apple Silicon (DMG + app)
     needs: [quality, create-release]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Require updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+
+      - uses: tauri-apps/tauri-action@action-v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.releaseId }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
           args: '--bundles dmg,app'
 
-  # ── macOS Build (Intel x86_64) ──────────────────────────────
   build-macos-intel:
-    name: macOS Intel (dmg + app)
+    name: macOS Intel x86_64 (DMG + app)
     needs: [quality, create-release]
     runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
-      - uses: dtolnay/rust-toolchain@stable
+          cache: npm
+      - uses: dtolnay/rust-toolchain@1.98.0
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Require updater signing key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+
+      - uses: tauri-apps/tauri-action@action-v1.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.releaseId }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
           args: '--bundles dmg,app'
 
-  # ── Update Manifest ───────────────────────────────────────────
-  # 汇总所有平台的安装包信息，生成 latest.json 并签名上传
   update-manifest:
-    name: Generate Update Manifest
+    name: Generate and Sign Update Manifest
     needs: [create-release, build-windows, build-linux, build-macos, build-macos-intel]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Tauri CLI
-        uses: actions/cache@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
-          path: ~/.cargo/bin/tauri
-          key: tauri-cli-v2-${{ runner.os }}
+          node-version: 22
+          cache: npm
 
-      - name: Install Tauri CLI (if not cached)
-        run: |
-          if ! command -v tauri &>/dev/null; then
-            cargo install tauri-cli --version "^2"
-          fi
-          if ! command -v tauri &>/dev/null; then
-            echo "::error::tauri CLI is still unavailable after install attempt"
-            exit 1
-          fi
-          tauri --version
+      - name: Install local Tauri CLI
+        run: npm ci --no-audit --no-fund
 
-      - name: Generate and sign latest.json
+      - name: Generate strict latest.json and detached signature
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        shell: bash
         run: |
           set -euo pipefail
           RELEASE_ID="${{ needs.create-release.outputs.releaseId }}"
           TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
           REPO="${{ github.repository }}"
 
-          # ── 获取所有 release assets（一次性解析为 JSON 数组） ──
+          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
+
           ASSETS_JSON=$(gh api "repos/$REPO/releases/$RELEASE_ID" \
             --jq '[.assets[] | {name: .name, url: .browser_download_url}]')
 
-          # ── 所有安装包资产（排除 .sig 与 latest.json 本身） ──
-          # 每个平台只保留一个 entry（后写覆盖先写），因此按 updater 首选项
-          # 升序排列：rpm → deb → msi → dmg → app.tar.gz → AppImage → exe。
-          # 即 Windows 保留 NSIS .exe、Linux 保留 .AppImage、macOS 保留 .app.tar.gz。
-          INSTALLER_FILES=$(echo "$ASSETS_JSON" | jq -c '
-            [.[] | select(.name != "latest.json" and (.name | endswith(".sig") | not))]
-            | sort_by(
-                if .name | test("_x64-setup.exe$") then 6
-                elif .name | test("_amd64.AppImage") then 5
-                elif .name | test("\\.app.tar.gz$") then 4
-                elif .name | test("_aarch64.dmg$|_x64.dmg$") then 3
-                elif .name | test("\\.msi$") then 2
-                elif .name | test("\\.deb$") then 1
-                elif .name | test("\\.rpm$") then 0
-                else -1
-                end
-              )')
-          COUNT=$(echo "$INSTALLER_FILES" | jq 'length')
-          echo "::notice::Found $COUNT installer asset(s)"
-
-          # ── 构造 manifest 骨架 ──
-          jq -n --arg version "$TAG" --arg notes "See CHANGELOG.md for details." \
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "See CHANGELOG.md for details." \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {}}' > manifest.json
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {}}' > latest.json
 
-          SIGNED_COUNT=0
+          add_platform() {
+            local target="$1"
+            local suffix="$2"
+            local entry name url sig_entry sig_url signature count
 
-          for i in $(seq 0 $((COUNT - 1))); do
-            ENTRY=$(echo "$INSTALLER_FILES" | jq -c ".[$i]")
-            ASSET_NAME=$(echo "$ENTRY" | jq -r '.name')
-            ASSET_URL=$(echo "$ENTRY" | jq -r '.url')
-
-            # ── 推断平台目标（注意 Tauri 的 RPM 命名为 <product>-<ver>-1.<arch>.rpm） ──
-            TARGET=""
-            case "$ASSET_NAME" in
-              *_x64-setup.exe|*_x64_en-US.msi)
-                TARGET="windows-x86_64" ;;
-              *_amd64.deb|*.x86_64.rpm|*_amd64.AppImage*)
-                TARGET="linux-x86_64" ;;
-              *_aarch64.dmg|*_aarch64.app.tar.gz)
-                TARGET="darwin-aarch64" ;;
-              *_x64.dmg|*_x64.app.tar.gz)
-                TARGET="darwin-x86_64" ;;
-              *)
-                echo "::warning::Unknown asset pattern: $ASSET_NAME — skipping"
-                continue ;;
-            esac
-
-            # ── 查找对应 .sig 签名文件（若存在） ──
-            SIGNATURE=""
-            SIG_URL=$(echo "$ASSETS_JSON" | jq -r --arg name "$ASSET_NAME.sig" \
-              '.[] | select(.name == $name) | .url')
-            if [ -n "$SIG_URL" ] && [ "$SIG_URL" != "null" ]; then
-              SIGNATURE=$(curl -sSL --retry 3 --retry-delay 2 "$SIG_URL") || {
-                echo "::warning::Failed to download signature for $ASSET_NAME"
-              }
-              if [ -n "$SIGNATURE" ]; then
-                SIGNED_COUNT=$((SIGNED_COUNT + 1))
-              fi
-            else
-              echo "::warning::No signature file for $ASSET_NAME — installer is unsigned; auto-update will reject it"
+            count=$(echo "$ASSETS_JSON" | jq --arg suffix "$suffix" '[.[] | select(.name | endswith($suffix))] | length')
+            if [ "$count" -ne 1 ]; then
+              echo "::error::Expected exactly one release asset ending with $suffix, found $count"
+              exit 1
             fi
 
-            # 将平台信息写入 manifest
-            jq --arg target "$TARGET" --arg sig "$SIGNATURE" --arg url "$ASSET_URL" \
-              '.platforms[$target] = {signature: $sig, url: $url}' manifest.json > tmp.json
-            mv tmp.json manifest.json
-          done
+            entry=$(echo "$ASSETS_JSON" | jq -c --arg suffix "$suffix" '[.[] | select(.name | endswith($suffix))][0]')
+            name=$(echo "$entry" | jq -r '.name')
+            url=$(echo "$entry" | jq -r '.url')
 
-          if [ "$SIGNED_COUNT" -eq 0 ]; then
-            echo "::error::No signed installers found (0 .sig files). Auto-update will not work. Add TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD to repository secrets."
-          fi
-
-          # ── 签名 manifest（无密钥时退化为未签名 latest.json） ──
-          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            echo "$TAURI_SIGNING_PRIVATE_KEY" > private_key.key
-
-            SIGN_ARGS="sign --private-key private_key.key --sign-file manifest.json"
-            if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
-              SIGN_ARGS="$SIGN_ARGS --password $TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            sig_entry=$(echo "$ASSETS_JSON" | jq -c --arg sig_name "$name.sig" '[.[] | select(.name == $sig_name)]')
+            if [ "$(echo "$sig_entry" | jq 'length')" -ne 1 ]; then
+              echo "::error::Missing unique updater signature asset: $name.sig"
+              exit 1
+            fi
+            sig_url=$(echo "$sig_entry" | jq -r '.[0].url')
+            signature=$(curl -fsSL --retry 3 --retry-delay 2 "$sig_url")
+            if [ -z "$signature" ]; then
+              echo "::error::Updater signature is empty: $name.sig"
+              exit 1
             fi
 
-            MANIFEST_SIG=$(tauri signer $SIGN_ARGS 2>/dev/null || echo "")
+            jq --arg target "$target" --arg sig "$signature" --arg url "$url" \
+              '.platforms[$target] = {signature: $sig, url: $url}' latest.json > latest.tmp.json
+            mv latest.tmp.json latest.json
+          }
 
-            if [ -n "$MANIFEST_SIG" ]; then
-              jq --arg sig "$MANIFEST_SIG" '. + {signature: $sig}' manifest.json > latest.json
-            else
-              echo "::warning::Manifest signing failed — uploading unsigned manifest"
-              cp manifest.json latest.json
-            fi
-          else
-            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set — uploading unsigned manifest"
-            cp manifest.json latest.json
-          fi
+          add_platform windows-x86_64 '_x64-setup.exe'
+          add_platform linux-x86_64 '_amd64.AppImage'
+          add_platform darwin-aarch64 '_aarch64.app.tar.gz'
+          add_platform darwin-x86_64 '_x64.app.tar.gz'
 
-          # ── 上传 latest.json ──
-          gh release upload "$TAG" latest.json --repo "$REPO" --clobber
-          echo "::notice::latest.json uploaded successfully"
+          jq -e '
+            (.version == "0.5.0") and
+            ((.platforms | keys | sort) == ["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"]) and
+            (all(.platforms[]; ((.signature | length) > 0) and ((.url | length) > 0)))
+          ' latest.json >/dev/null
+
+          rm -f latest.json.sig
+          npx tauri signer sign latest.json
+          test -s latest.json.sig
+
+          gh release upload "$TAG" latest.json latest.json.sig --repo "$REPO" --clobber
+          echo '::notice::Strict signed updater manifest uploaded successfully.'
