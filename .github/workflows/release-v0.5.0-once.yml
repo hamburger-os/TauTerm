@@ -76,7 +76,7 @@ jobs:
           fi
 
       - name: Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
       - name: Strict Clippy all targets
         run: cargo clippy --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
