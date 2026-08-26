@@ -4,3 +4,4 @@ strict final gate unique push trigger
 strict final gate after obsolete writer workflows were removed
 strict final gate on ubuntu-22.04 runner pool
 strict final gate from latest master after Actions event recovery
+strict final gate after rustfmt path-dependency scope fix
