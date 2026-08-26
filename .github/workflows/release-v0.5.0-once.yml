@@ -2,6 +2,12 @@
 name: Release v0.5.0 Once
 
 on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type v0.5.0 to confirm the stable release'
+        required: true
+        type: string
   push:
     branches: [master]
 
@@ -11,7 +17,9 @@ permissions:
 
 jobs:
   publish:
-    if: "${{ github.event.head_commit.message == 'chore(release): publish v0.5.0' }}"
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.confirm == 'v0.5.0') ||
+      (github.event_name == 'push' && github.event.head_commit.message == 'chore(release): publish v0.5.0')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
