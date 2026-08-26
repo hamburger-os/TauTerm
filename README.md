@@ -100,8 +100,9 @@ The macOS virtual serial bridge also uses `socat` — install it with `brew inst
 
 TauTerm moves quickly. The packaged release is the safest way to try the project; `master` contains newer work that may not have shipped yet.
 
+- **v0.5.0 — Networking & least-privilege security:** TCP/UDP Network Debug session, Telnet, iPerf2/iPerf3, session-level character-set transcoding and a remote journald viewer. On Windows the app now runs as a standard (non-admin) user with privileged virtual-port operations delegated to a LocalSystem service.
 - **v0.4.0 — First Public Tech Preview:** serial, SSH/SFTP, transfer subsystem, Lua/auto-reply workflow, terminal/search, logging, settings, i18n and the core microkernel/plugin architecture.
-- **Current `master`:** continues expanding networking, security and workflow features, including the TCP/UDP Network Debug session.
+- **Current `master`:** continues expanding networking, security and workflow features beyond v0.5.
 - **Roadmap:** local shell, SSH tunnels/jump hosts, session grouping, FTP, recording/split panes, plugin SDK work and more.
 
 See **[CHANGELOG.md](CHANGELOG.md)** for release-by-release details.
@@ -127,8 +128,11 @@ See **[CHANGELOG.md](CHANGELOG.md)** for release-by-release details.
 ## Roadmap
 
 ```text
-v0.5  Credential/security hardening
-v0.6  Local shell, session groups, SSH tunnels + jump hosts
+v0.5  Shipped: TCP/UDP network debugging, Telnet, iPerf2/3,
+      character-set transcoding, remote journald, least-privilege
+      Windows virtual-port service
+v0.6  Credential/security hardening (keyring + AES-256-GCM fallback),
+      local shell, session groups, SSH tunnels + jump hosts
 v0.7  Network-debug polish, FTP, recording, split panes
 v1.0  GA: Windows validation, macOS/Linux core availability,
       performance budget, plugin SDK docs, TRDP

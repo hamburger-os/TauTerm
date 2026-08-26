@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicehash/tauri/v2/crates/tauri-utils/schema.json",
   "productName": "TauTerm",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "com.tauterm.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -37,7 +37,9 @@
     },
     "linux": {
       "deb": {
-        "depends": ["socat"]
+        "depends": [
+          "socat"
+        ]
       }
     },
     "windows": {
