@@ -60,6 +60,11 @@ replace(
     "    if let Ok(mut h) = server_handle.lock() {\n        *h = Some(handle);\n    }\n}",
     "    if let Ok(mut h) = server_handle.lock() {\n        *h = Some(handle);\n    };\n}",
 )
+replace(
+    "src-tauri/src/transfer/crc.rs",
+    "crc = crc << 1;",
+    "crc <<= 1;",
+)
 
 Path("src-tauri/build.rs").write_text(
     '''fn main() {
