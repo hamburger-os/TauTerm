@@ -84,6 +84,6 @@ impl Channel for TcpChannel {
     fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError> {
         self.stream
             .set_read_timeout(Some(dur))
-            .map_err(|e| ChannelError::Io(e.into()))
+            .map_err(|e| ChannelError::Io(e))
     }
 }

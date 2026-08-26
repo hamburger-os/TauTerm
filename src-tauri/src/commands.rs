@@ -716,7 +716,8 @@ async fn connect_session_ssh(
     // 1. 创建容器父 session（无 I/O loop）
     let parent_id = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let pid = store.create_container_session(
+        
+        store.create_container_session(
             &session_name, "ssh", &endpoint, params.clone(),
             side_channel,
             None,
@@ -724,13 +725,12 @@ async fn connect_session_ssh(
             Some(transfer_protocol_val.clone()),
             send_bar_enabled_val,
             session_id.clone(),
-        )?;
-        pid
+        )?
     };
 
     // 2. 通过共享逻辑创建通道 0（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
     let channel0_id = create_ssh_sub_channel(
-        &app, &*state, &parent_id, channel_for_ch0,
+        &app, &state, &parent_id, channel_for_ch0,
     ).await
         .inspect_err(|e| {
             // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
@@ -1255,7 +1255,7 @@ pub async fn open_channel(
 
     // 3. 通过共享逻辑创建子通道（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
     let channel_id = create_ssh_sub_channel(
-        &app, &*state, &session_id, Box::new(ssh_channel),
+        &app, &state, &session_id, Box::new(ssh_channel),
     ).await?;
 
     log::info!("SSH 子连接已打开: {} (parent: {})", channel_id, session_id);

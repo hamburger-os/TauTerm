@@ -227,7 +227,7 @@ impl Channel for TelnetChannel {
     fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError> {
         self.probe
             .set_read_timeout(Some(dur))
-            .map_err(|e| ChannelError::Io(e.into()))
+            .map_err(|e| ChannelError::Io(e))
     }
 
     /// 发送 NAWS 窗口尺寸（RFC 1073）：
