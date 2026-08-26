@@ -10,24 +10,27 @@ permissions:
 jobs:
   validate-and-commit:
     if: "${{ github.event.head_commit.message == 'chore(ci): validate strict v0.5.0 refactor' }}"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
 
       - uses: dtolnay/rust-toolchain@1.98.0
         with:
           components: clippy,rustfmt
 
       - name: Install Tauri system dependencies
+        shell: bash
         run: |
-          sudo apt update
-          sudo apt install -y \
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
             libsoup-3.0-dev \
@@ -35,12 +38,18 @@ jobs:
             libssl-dev \
             libudev-dev
 
-      - name: Apply strict refactor patch
+      - name: Reassemble and verify strict refactor patch
         shell: bash
         run: |
           set -euo pipefail
-          base64 -d .github/v050-strict-refactor.patch.gz.b64 | gzip -dc | git apply --check -
-          base64 -d .github/v050-strict-refactor.patch.gz.b64 | gzip -dc | git apply -
+          cat .github/refactor-parts/part* > /tmp/refactor.patch.gz.b64
+          test "$(wc -c < /tmp/refactor.patch.gz.b64)" = "25348"
+          echo "bf7742896f247fc54dc91c250a38e7aa7276c5cdc344e90f9f618245f772e79f  /tmp/refactor.patch.gz.b64" | sha256sum -c -
+          base64 -d /tmp/refactor.patch.gz.b64 | gzip -dc > /tmp/refactor.patch
+          test "$(wc -c < /tmp/refactor.patch)" = "98326"
+          echo "27a45fa4fc00007b7e85747787724231684e00739ef529b92145bccbc212520f  /tmp/refactor.patch" | sha256sum -c -
+          patch --dry-run -p1 < /tmp/refactor.patch
+          patch -p1 < /tmp/refactor.patch
 
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
@@ -55,7 +64,7 @@ jobs:
           fi
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: TypeScript type check
         run: npx tsc --noEmit
@@ -72,6 +81,15 @@ jobs:
       - name: Verify rustfmt is clean
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
+      - name: Verify source diff hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          if grep -RInE '#!?\[[[:space:]]*(allow|expect)[[:space:]]*\([[:space:]]*clippy::' src-tauri/src; then
+            exit 1
+          fi
+
       - name: Commit validated source
         shell: bash
         run: |
@@ -84,6 +102,6 @@ jobs:
             echo '::error::Strict refactor produced no source changes.'
             exit 1
           fi
-          git commit -m 'refactor: eliminate clippy warnings for v0.5.0'
+          git commit -m 'refactor: eliminate all clippy warnings for v0.5.0'
           git pull --rebase origin master
           git push origin HEAD:master
