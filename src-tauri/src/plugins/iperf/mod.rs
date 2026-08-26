@@ -9,8 +9,8 @@
 //!
 //! 注意：iperf2 与 iperf3 协议互不互通，两端的版本必须一致。
 
-pub mod server;
 pub mod client;
+pub mod server;
 
 mod iperf2;
 mod iperf3;
@@ -27,7 +27,6 @@ use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
 };
-
 
 // ── 基础枚举 ─────────────────────────────────────────────
 
@@ -369,12 +368,17 @@ impl ProtocolAdapter for IperfAdapter {
         params: &serde_json::Value,
     ) -> Result<ProtocolConnection, SessionError> {
         // 解析配置
-        let config: IperfConfig = serde_json::from_value(params.clone())
-            .map_err(|e| SessionError::ConnectionFailed {
+        let config: IperfConfig =
+            serde_json::from_value(params.clone()).map_err(|e| SessionError::ConnectionFailed {
                 reason: format!("iperf 配置解析失败: {}", e),
             })?;
 
-        log::info!("iperf 配置已解析: version={:?}, listen={}:{}", config.version, config.listen_ip, config.listen_port);
+        log::info!(
+            "iperf 配置已解析: version={:?}, listen={}:{}",
+            config.version,
+            config.listen_ip,
+            config.listen_port
+        );
 
         let side_channel = Arc::new(IperfSideChannel::new(config));
 
@@ -481,11 +485,10 @@ pub async fn try_start_server<R: tauri::Runtime>(
 
     // 有界 join 上一次的线程句柄（停止/断开流程置位 abort 后线程自行退出）
     let handle = iperf_sc.server_handle.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        join_server_handle(&handle, Duration::from_secs(15))
-    })
-    .await
-    .unwrap_or(false);
+    let _ =
+        tokio::task::spawn_blocking(move || join_server_handle(&handle, Duration::from_secs(15)))
+            .await
+            .unwrap_or(false);
 
     // 等待期间收到新的停止请求：尊重之，放弃启动（running 已被 Stop 复位）
     if !abort_at_entry && iperf_sc.server_abort_flag.load(Ordering::SeqCst) {
@@ -500,19 +503,19 @@ pub async fn try_start_server<R: tauri::Runtime>(
     // 递增代际：作废旧线程（join 超时仍存活者）的退出写回；新线程持有
     // 新代际，其退出写回对后续 shutdown/restart 生效
     let my_epoch = iperf_sc.server_epoch.fetch_add(1, Ordering::SeqCst) + 1;
-    server::spawn_iperf_server(
-        app.clone(),
-        iperf_sc.config.clone(),
-        iperf_sc.dynamic_params.clone(),
-        iperf_sc.server_abort_flag.clone(),
-        iperf_sc.server_running.clone(),
-        iperf_sc.test_running.clone(),
-        iperf_sc.last_summary.clone(),
-        iperf_sc.server_handle.clone(),
-        iperf_sc.server_epoch.clone(),
+    server::spawn_iperf_server(server::IperfServerContext {
+        app: app.clone(),
+        config: iperf_sc.config.clone(),
+        dynamic_params: iperf_sc.dynamic_params.clone(),
+        abort_flag: iperf_sc.server_abort_flag.clone(),
+        server_running: iperf_sc.server_running.clone(),
+        test_running: iperf_sc.test_running.clone(),
+        last_summary: iperf_sc.last_summary.clone(),
+        server_handle: iperf_sc.server_handle.clone(),
+        server_epoch: iperf_sc.server_epoch.clone(),
         my_epoch,
-        session_id.to_string(),
-    );
+        session_id: session_id.to_string(),
+    });
 
     log::info!("[iperf] 服务端已启动 (session={})", session_id);
     Ok(())

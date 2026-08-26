@@ -60,25 +60,27 @@ pub fn inject_lua_api(
 
     // ── send_to(target, data) ── 向显式目标地址发送原始字节（UDP server 广播/组播/任意地址）
     let comm_send_to = comm.clone();
-    let send_to_fn = lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
-        let target = target.to_str()?.to_string();
-        let bytes: Vec<u8> = data.as_bytes().to_vec();
-        comm_send_to
-            .send_to(&target, &bytes)
-            .map_err(|e| mlua::Error::RuntimeError(format!("send_to 失败: {}", e)))
-    })?;
+    let send_to_fn =
+        lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
+            let target = target.to_str()?.to_string();
+            let bytes: Vec<u8> = data.as_bytes().to_vec();
+            comm_send_to
+                .send_to(&target, &bytes)
+                .map_err(|e| mlua::Error::RuntimeError(format!("send_to 失败: {}", e)))
+        })?;
     globals.set("send_to", send_to_fn)?;
 
     // ── send_to_text(target, text) ── 向显式目标地址按会话编码转码后发送文本
     let comm_send_to_text = comm.clone();
-    let send_to_text_fn = lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
-        let target = target.to_str()?.to_string();
-        let bytes: Vec<u8> = data.as_bytes().to_vec();
-        comm_send_to_text
-            .send_to_text(&target, &bytes)
-            .map(|_| ())
-            .map_err(|e| mlua::Error::RuntimeError(format!("send_to_text 失败: {}", e)))
-    })?;
+    let send_to_text_fn =
+        lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
+            let target = target.to_str()?.to_string();
+            let bytes: Vec<u8> = data.as_bytes().to_vec();
+            comm_send_to_text
+                .send_to_text(&target, &bytes)
+                .map(|_| ())
+                .map_err(|e| mlua::Error::RuntimeError(format!("send_to_text 失败: {}", e)))
+        })?;
     globals.set("send_to_text", send_to_text_fn)?;
 
     // ── sleep(ms) ──
@@ -120,8 +122,8 @@ pub fn inject_lua_api(
 
     // ── on_data(pattern, callback) ──
     // 存储 { pattern = pattern_str, callback = callback_fn } 到 __handlers 表中
-    let on_data_fn = lua.create_function(
-        |lua, (pattern, callback): (mlua::String, Function)| {
+    let on_data_fn =
+        lua.create_function(|lua, (pattern, callback): (mlua::String, Function)| {
             let pattern_str = pattern.to_str()?.to_string();
             let globals = lua.globals();
             let handlers: Table = globals.get("__handlers")?;
@@ -135,8 +137,7 @@ pub fn inject_lua_api(
             handlers.set(len + 1, entry)?;
 
             Ok(())
-        },
-    )?;
+        })?;
     globals.set("on_data", on_data_fn)?;
 
     // ── register_timer(id, interval_ms, callback) ──
@@ -185,14 +186,13 @@ pub fn inject_lua_api(
     // ── regex_find(pattern, data) → captures table or nil ──
     // 使用 Rust regex crate 提供完整的正则表达式支持。
     // 返回的捕获组表是 0-indexed（[0] = 完整匹配, [1] = 第一个捕获组...）
-    let regex_find_fn = lua.create_function(
-        |lua, (pattern, data): (mlua::String, mlua::String)| {
+    let regex_find_fn =
+        lua.create_function(|lua, (pattern, data): (mlua::String, mlua::String)| {
             let pat_str = pattern.to_str()?;
             let data_str = data.to_str()?;
 
-            let re = regex::Regex::new(&pat_str).map_err(|e| {
-                mlua::Error::RuntimeError(format!("正则表达式语法错误: {}", e))
-            })?;
+            let re = regex::Regex::new(&pat_str)
+                .map_err(|e| mlua::Error::RuntimeError(format!("正则表达式语法错误: {}", e)))?;
 
             if let Some(caps) = re.captures(&data_str) {
                 let result = lua.create_table()?;
@@ -205,8 +205,7 @@ pub fn inject_lua_api(
             } else {
                 Ok(mlua::Value::Nil)
             }
-        },
-    )?;
+        })?;
     globals.set("regex_find", regex_find_fn)?;
 
     // ── _time_ms() → Unix 毫秒时间戳 ──

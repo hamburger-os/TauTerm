@@ -24,9 +24,7 @@ use std::time::{Duration, Instant};
 use socket2::{Domain, Protocol, Socket, Type};
 
 use super::stats::{IntervalAccumulator, SharedByteCounter};
-use super::test_hdr::{
-    udp_packet_header, ClientHdrExt, ClientHdrV1, ServerHdrV1, UdpDatagram,
-};
+use super::test_hdr::{udp_packet_header, ClientHdrExt, ClientHdrV1, ServerHdrV1, UdpDatagram};
 use super::types::Iperf2Interval;
 use crate::plugins::iperf::{IperfDirection, IperfProtocol, IperfRole, IperfSummary, IperfVersion};
 use tauri::Emitter;
@@ -152,9 +150,13 @@ pub fn run_udp_client(
         let _ = sock.set_recv_buffer_size(w as usize);
     }
     let bind_addr: SocketAddr = if server_sa.is_ipv4() {
-        "0.0.0.0:0".parse().map_err(|e| format!("UDP 绑定地址无效: {}", e))?
+        "0.0.0.0:0"
+            .parse()
+            .map_err(|e| format!("UDP 绑定地址无效: {}", e))?
     } else {
-        "[::]:0".parse().map_err(|e| format!("UDP 绑定地址无效: {}", e))?
+        "[::]:0"
+            .parse()
+            .map_err(|e| format!("UDP 绑定地址无效: {}", e))?
     };
     let bind_sock_addr: socket2::SockAddr = bind_addr.into();
     sock.bind(&bind_sock_addr)
@@ -188,8 +190,9 @@ pub fn run_udp_client(
                         counter.add(n as u64);
                         packet_counter.fetch_add(1, Ordering::Relaxed);
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::TimedOut
-                        || e.kind() == std::io::ErrorKind::WouldBlock =>
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::TimedOut
+                            || e.kind() == std::io::ErrorKind::WouldBlock =>
                     {
                         // 发送缓冲满（SO_SNDTIMEO 触发）：等待后重试，而非放弃
                         // 整个测试——与 TCP 写循环的语义一致
@@ -398,7 +401,14 @@ impl UdpClientState {
     }
 
     /// 累积一个数据包（抖动/丢包统计 + 字节计数）
-    fn record<R: tauri::Runtime>(&mut self, n: usize, seqno: i64, send_ms: f64, app: &tauri::AppHandle<R>, session_id: &str) {
+    fn record<R: tauri::Runtime>(
+        &mut self,
+        n: usize,
+        seqno: i64,
+        send_ms: f64,
+        app: &tauri::AppHandle<R>,
+        session_id: &str,
+    ) {
         self.last_activity = Instant::now();
         self.counter.add(n as u64);
         self.acc.record_udp(false, seqno, send_ms);
@@ -407,7 +417,11 @@ impl UdpClientState {
     }
 
     /// 区间边界检查 + 实时上报（每 -i 边界一次）
-    fn maybe_report_interval<R: tauri::Runtime>(&mut self, app: &tauri::AppHandle<R>, session_id: &str) {
+    fn maybe_report_interval<R: tauri::Runtime>(
+        &mut self,
+        app: &tauri::AppHandle<R>,
+        session_id: &str,
+    ) {
         const INTERVAL_SECS: f64 = 1.0;
         let elapsed_secs = self.start.elapsed().as_secs_f64();
         if elapsed_secs < self.next_report_secs {
@@ -502,19 +516,24 @@ pub fn run_udp_server_loop<R: tauri::Runtime>(
                         let st = UdpClientState::new(seq, &buf[..n]);
                         log::info!(
                             "[iperf2] UDP 客户端开始测试 #{}: {} (session={})",
-                            seq, addr, session_id
+                            seq,
+                            addr,
+                            session_id
                         );
                         // test_running 经 TcpSession 锁派生（TCP||UDP），
                         // 避免两引擎独立清空误伤并发中的另一方
                         super::update_test_running(session, test_running, true);
-                        let _ = app.emit("iperf-test-started", serde_json::json!({
-                            "session_id": session_id,
-                            "role": "server",
-                            "direction": "fwd",
-                            "target": null,
-                            "protocol": "udp",
-                            "seq": seq,
-                        }));
+                        let _ = app.emit(
+                            "iperf-test-started",
+                            serde_json::json!({
+                                "session_id": session_id,
+                                "role": "server",
+                                "direction": "fwd",
+                                "target": null,
+                                "protocol": "udp",
+                                "seq": seq,
+                            }),
+                        );
                         clients.insert(addr, st);
                     }
                 } else {
@@ -522,7 +541,13 @@ pub fn run_udp_server_loop<R: tauri::Runtime>(
                     // 其余 → 残留排水（对齐上游 drainstalepkts）
                     if let Some(st) = clients.remove(&addr) {
                         finalize_udp_client(
-                            socket, app, session_id, addr, st, last_summary, &mut closing,
+                            socket,
+                            app,
+                            session_id,
+                            addr,
+                            st,
+                            last_summary,
+                            &mut closing,
                         );
                         if clients.is_empty() {
                             super::update_test_running(session, test_running, false);
@@ -534,8 +559,9 @@ pub fn run_udp_server_loop<R: tauri::Runtime>(
                     }
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
             {
                 let now = Instant::now();
                 // 空闲扫描：客户端不发 FIN 也不发包 → 强制收尾
@@ -548,7 +574,13 @@ pub fn run_udp_server_loop<R: tauri::Runtime>(
                 for addr in expired {
                     if let Some(st) = clients.remove(&addr) {
                         finalize_udp_client(
-                            socket, app, session_id, addr, st, last_summary, &mut closing,
+                            socket,
+                            app,
+                            session_id,
+                            addr,
+                            st,
+                            last_summary,
+                            &mut closing,
                         );
                     }
                 }
@@ -562,7 +594,15 @@ pub fn run_udp_server_loop<R: tauri::Runtime>(
                 // 致命接收错误：收尾所有进行中的客户端（done 必发）后上报
                 let msg = format!("UDP 接收失败: {}", e);
                 for (addr, st) in clients.drain() {
-                    finalize_udp_client(socket, app, session_id, addr, st, last_summary, &mut closing);
+                    finalize_udp_client(
+                        socket,
+                        app,
+                        session_id,
+                        addr,
+                        st,
+                        last_summary,
+                        &mut closing,
+                    );
                 }
                 super::update_test_running(session, test_running, false);
                 return Err(msg);
@@ -572,7 +612,15 @@ pub fn run_udp_server_loop<R: tauri::Runtime>(
 
     // abort：收尾所有剩余客户端（保持 done 必发契约）
     for (addr, st) in clients.drain() {
-        finalize_udp_client(socket, app, session_id, addr, st, last_summary, &mut closing);
+        finalize_udp_client(
+            socket,
+            app,
+            session_id,
+            addr,
+            st,
+            last_summary,
+            &mut closing,
+        );
     }
     super::update_test_running(session, test_running, false);
     Ok(())
@@ -633,7 +681,11 @@ fn finalize_udp_client<R: tauri::Runtime>(
     let bytes_received = st.counter.total();
     let packets_total = st.acc.packets();
     let lost_total = st.acc.lost();
-    let jitter_ms = if packets_total > 0 { Some(st.acc.jitter_ms()) } else { None };
+    let jitter_ms = if packets_total > 0 {
+        Some(st.acc.jitter_ms())
+    } else {
+        None
+    };
     let lost_pct = if packets_total > 0 {
         Some(lost_total as f64 * 100.0 / packets_total as f64)
     } else {
@@ -642,7 +694,12 @@ fn finalize_udp_client<R: tauri::Runtime>(
 
     log::info!(
         "[iperf2] UDP 服务端接待完成 #{}: {} bytes, {} packets, lost={} (client={}, session={})",
-        st.seq, bytes_received, packets_total, lost_total, addr, session_id
+        st.seq,
+        bytes_received,
+        packets_total,
+        lost_total,
+        addr,
+        session_id
     );
 
     let summary = IperfSummary {
@@ -667,8 +724,16 @@ fn finalize_udp_client<R: tauri::Runtime>(
             })
             .collect(),
         jitter_ms,
-        lost_packets: if packets_total > 0 { Some(lost_total) } else { None },
-        total_packets: if packets_total > 0 { Some(packets_total) } else { None },
+        lost_packets: if packets_total > 0 {
+            Some(lost_total)
+        } else {
+            None
+        },
+        total_packets: if packets_total > 0 {
+            Some(packets_total)
+        } else {
+            None
+        },
         lost_percent: lost_pct,
     };
     // 兜底诊断：有字节传输但汇总区间带宽全 0 → 区间数据源回归时开发期可见
@@ -683,15 +748,18 @@ fn finalize_udp_client<R: tauri::Runtime>(
     }
     let mut last = super::lock_or_recover(last_summary, "last_summary");
     *last = Some(summary.clone());
-    let _ = app.emit("iperf-test-done", serde_json::json!({
-        "session_id": session_id,
-        "success": true,
-        "role": "server",
-        "direction": "fwd",
-        "protocol": "udp",
-        "seq": st.seq,
-        "summary": summary,
-    }));
+    let _ = app.emit(
+        "iperf-test-done",
+        serde_json::json!({
+            "session_id": session_id,
+            "success": true,
+            "role": "server",
+            "direction": "fwd",
+            "protocol": "udp",
+            "seq": st.seq,
+            "summary": summary,
+        }),
+    );
 
     // 服务器统计回报（UDP_datagram 全零 + server_hdr 40B）：立即发出一次；
     // 客户端 FIN 重传窗口内按需重发（≤TRYCOUNT，不阻塞 reader）

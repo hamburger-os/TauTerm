@@ -46,7 +46,8 @@ impl ConfigStore {
     /// 设置配置值，触发 watcher 回调
     pub fn set<T: Serialize>(&self, key: &str, value: &T) -> Result<(), ConfigStoreError> {
         let (ns, k) = Self::parse_key(key).ok_or(ConfigStoreError::InvalidKey(key.to_string()))?;
-        let json_value = serde_json::to_value(value).map_err(|e| ConfigStoreError::Serialization(e.to_string()))?;
+        let json_value = serde_json::to_value(value)
+            .map_err(|e| ConfigStoreError::Serialization(e.to_string()))?;
 
         {
             let mut data = self.data.write().map_err(|_| ConfigStoreError::LockError)?;
@@ -75,7 +76,10 @@ impl ConfigStore {
     where
         F: Fn(&serde_json::Value) + Send + Sync + 'static,
     {
-        let mut watchers = self.watchers.write().map_err(|_| ConfigStoreError::LockError)?;
+        let mut watchers = self
+            .watchers
+            .write()
+            .map_err(|_| ConfigStoreError::LockError)?;
         let entry = watchers.entry(key.to_string()).or_default();
         entry.push(Box::new(callback));
         // 简化版：返回 dummy 取消函数
@@ -92,7 +96,11 @@ impl ConfigStore {
 
     fn parse_key(key: &str) -> Option<(&str, &str)> {
         let (ns, k) = key.split_once('.')?;
-        if ns.is_empty() || k.is_empty() { None } else { Some((ns, k)) }
+        if ns.is_empty() || k.is_empty() {
+            None
+        } else {
+            Some((ns, k))
+        }
     }
 
     fn notify_watchers(&self, key: &str, value: &serde_json::Value) {
@@ -107,7 +115,9 @@ impl ConfigStore {
 }
 
 impl Default for ConfigStore {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 配置存储错误

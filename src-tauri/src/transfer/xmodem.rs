@@ -258,7 +258,11 @@ fn xmodem_send(
     // ── 阶段 3: 发送 EOT ──
     if let Err(e) = send_eot(port, cancel) {
         let err_msg = e.to_string();
-        log::warn!("XModem send: EOT failed for \"{}\": {}", file_info.name, err_msg);
+        log::warn!(
+            "XModem send: EOT failed for \"{}\": {}",
+            file_info.name,
+            err_msg
+        );
         on_file_event(FileTransferEvent::FileComplete {
             file_name: file_info.name.clone(),
             file_index: 0,
@@ -355,9 +359,10 @@ fn send_block(
     let header_byte = variant.header_byte();
 
     // 构建完整数据包
-    let packet_size = 3 + block_size
+    let packet_size = 3
+        + block_size
         + match variant {
-            XModemVariant::Standard => 1, // 1 字节校验和
+            XModemVariant::Standard => 1,                  // 1 字节校验和
             XModemVariant::Crc | XModemVariant::OneK => 2, // 2 字节 CRC-16
         };
 
@@ -395,7 +400,9 @@ fn send_block(
             Some(CAN) => return Err("接收方取消了传输".into()),
             Some(NAK) | None => {
                 if retry == MAX_RETRIES - 1 {
-                    return Err(format!("块 {} 重试次数耗尽（{} 次）", block_num, MAX_RETRIES).into());
+                    return Err(
+                        format!("块 {} 重试次数耗尽（{} 次）", block_num, MAX_RETRIES).into(),
+                    );
                 }
                 log::debug!(
                     "XModem send: block {} NAK/timeout, retry {}/{}",
@@ -413,11 +420,9 @@ fn send_block(
                     MAX_RETRIES
                 );
                 if retry == MAX_RETRIES - 1 {
-                    return Err(format!(
-                        "块 {} 收到意外响应 0x{:02X}，重试耗尽",
-                        block_num, other
-                    )
-                    .into());
+                    return Err(
+                        format!("块 {} 收到意外响应 0x{:02X}，重试耗尽", block_num, other).into(),
+                    );
                 }
             }
         }
@@ -445,7 +450,10 @@ fn send_eot(
                 return Ok(());
             }
             Some(NAK) => {
-                log::info!("XModem EOT: received NAK, retransmitting (retry {})", retry + 1);
+                log::info!(
+                    "XModem EOT: received NAK, retransmitting (retry {})",
+                    retry + 1
+                );
                 continue;
             }
             Some(CAN) => return Err("接收方取消了传输".into()),
@@ -728,7 +736,11 @@ fn xmodem_receive(
 
         // ── 数据块处理 ──
         // 根据实际收到的块头确定块大小（协议鲁棒性：防止变体与头字节不匹配）
-        let actual_block_size = if header == STX { BLOCK_SIZE_1K } else { BLOCK_SIZE_128 };
+        let actual_block_size = if header == STX {
+            BLOCK_SIZE_1K
+        } else {
+            BLOCK_SIZE_128
+        };
 
         // 读取块序号和反码
         let bnum = read_or_fail(port)?;
@@ -765,10 +777,7 @@ fn xmodem_receive(
         };
 
         if !valid {
-            log::debug!(
-                "XModem RX: block {} checksum/CRC failed, sending NAK",
-                bnum
-            );
+            log::debug!("XModem RX: block {} checksum/CRC failed, sending NAK", bnum);
             port.write_all(&[NAK])?;
             port.flush()?;
             continue;
@@ -778,7 +787,10 @@ fn xmodem_receive(
         if Some(bnum) == last_received_block_num {
             // 重复块（我们的 ACK 丢失，发送方重传）
             // 对齐 lrzsz: ACK 但不写入数据
-            log::debug!("XModem RX: duplicate block {}, ACKing without writing", bnum);
+            log::debug!(
+                "XModem RX: duplicate block {}, ACKing without writing",
+                bnum
+            );
             port.write_all(&[ACK])?;
             port.flush()?;
             continue;

@@ -187,11 +187,13 @@ export function useFileManager(
   const uploadFiles = useCallback(
     async (localPaths: string[], remoteDir: string): Promise<void> => {
       await invoke<void>('file_transfer_send', {
+        request: {
         sessionId,
         protocol: 'sftp',
         filePaths: localPaths,
         remoteDir,
-      });
+
+        },});
     },
     [sessionId]
   );
@@ -260,11 +262,13 @@ export function useFileManager(
         });
 
         await invoke<void>('file_transfer_receive', {
+        request: {
           sessionId,
           protocol: 'sftp',
           downloadDir,
           remotePaths,
-        });
+
+        },});
 
         await finishedPromise;
       } catch (e) {
@@ -280,11 +284,13 @@ export function useFileManager(
     async (remoteDir: string, localDir: string): Promise<void> => {
       const dirName = remoteDir.split('/').pop() || 'download';
       await invoke<void>('file_transfer_receive', {
+        request: {
         sessionId,
         protocol: 'sftp',
         downloadDir: `${localDir}/${dirName}`,
         remotePaths: [remoteDir],
-      });
+
+        },});
     },
     [sessionId]
   );
@@ -333,11 +339,13 @@ export function useFileManager(
 
         try {
           await invoke<void>('file_transfer_receive', {
+        request: {
             sessionId,
             protocol: 'sftp',
             downloadDir: `${localRootDir}/${dirName}`,
             remotePaths: [entry.path],
-          });
+
+        },});
 
           const result = await finishedPromise;
           if (result !== 'ok') {

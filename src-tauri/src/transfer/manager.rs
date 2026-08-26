@@ -45,7 +45,10 @@ impl TransferManager {
         Self::classify_strategy(protocol, default_handoff)
     }
 
-    fn classify_strategy(protocol: &TransferProtocolType, supports_handoff: bool) -> TransferStrategy {
+    fn classify_strategy(
+        protocol: &TransferProtocolType,
+        supports_handoff: bool,
+    ) -> TransferStrategy {
         if protocol.is_serial_inline() {
             if supports_handoff {
                 TransferStrategy::Inline

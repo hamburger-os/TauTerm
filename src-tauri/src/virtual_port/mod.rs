@@ -8,11 +8,11 @@
 //! - macOS: socat 用户态 PTY → 虚拟终端对（`brew install socat`，与 Linux 共用同一后端）
 
 pub mod backend;
+pub mod bridge;
 #[cfg(target_os = "windows")]
 pub mod manager;
 #[cfg(target_os = "windows")]
 pub mod service_backend;
-pub mod bridge;
 
 #[cfg(not(target_os = "windows"))]
 pub mod socat;

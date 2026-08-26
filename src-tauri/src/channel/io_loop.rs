@@ -2,11 +2,20 @@
 //!
 //! 同步 I/O 循环，基于 `dyn Channel` trait。
 
+use crate::channel::Channel;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
-use crate::channel::Channel;
+
+/// I/O 循环共享运行上下文。
+pub struct IoLoopContext {
+    pub session_id: String,
+    pub write_rx: mpsc::Receiver<IoLoopCmd>,
+    pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    pub tx_bytes: Arc<AtomicU64>,
+    pub rx_bytes: Arc<AtomicU64>,
+}
 
 /// I/O 循环命令
 #[derive(Debug)]
@@ -19,24 +28,29 @@ pub enum IoLoopCmd {
         return_rx: mpsc::Receiver<Box<dyn Channel>>,
     },
     /// 请求 PTY 窗口大小调整（SSH 专用，其他协议忽略）
-    ResizePty { cols: u32, rows: u32 },
+    ResizePty {
+        cols: u32,
+        rows: u32,
+    },
 }
 
 /// 启动同步 I/O 循环（std::thread 驱动）
 ///
 /// 适用于串口、Pipe 等阻塞式传输。
 /// 返回 `JoinHandle`。
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_sync_io_loop(
     mut channel: Box<dyn Channel>,
-    session_id: String,
     mut on_data: impl FnMut(String, Vec<u8>) + Send + 'static,
     mut on_disconnect: impl FnMut(String) + Send + 'static,
-    write_rx: mpsc::Receiver<IoLoopCmd>,
-    cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    tx_bytes: Arc<AtomicU64>,
-    rx_bytes: Arc<AtomicU64>,
+    context: IoLoopContext,
 ) -> std::thread::JoinHandle<()> {
+    let IoLoopContext {
+        session_id,
+        write_rx,
+        cancel_rx,
+        tx_bytes,
+        rx_bytes,
+    } = context;
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let cancel_flag_clone = cancel_flag.clone();
 
@@ -90,7 +104,8 @@ pub fn spawn_sync_io_loop(
             // 3. 处理排队的写操作
             // - 有数据时：try_recv 快速排空，让 read 尽快重入
             // - 无数据且 should_idle 时：recv_timeout 阻塞等待写命令（带超时）
-            let need_blocking_wait = matches!(read_outcome, ReadOutcome::Empty { should_idle: true });
+            let need_blocking_wait =
+                matches!(read_outcome, ReadOutcome::Empty { should_idle: true });
             if need_blocking_wait {
                 match write_rx.recv_timeout(idle_wait) {
                     Ok(cmd) => {
@@ -154,7 +169,6 @@ fn should_idle_now(last_data_time: &Option<Instant>, spin_window: Duration) -> b
 }
 
 /// 处理一条 IoLoopCmd。返回 false 表示应退出循环（断开 / Shutdown / HandoffPort 已迁移）。
-#[allow(clippy::too_many_arguments)]
 fn handle_cmd(
     cmd: IoLoopCmd,
     channel: &mut Box<dyn Channel>,
@@ -208,16 +222,22 @@ struct StubChannel;
 
 impl Read for StubChannel {
     fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-        Err(std::io::Error::other("StubChannel: read during handoff (bug)"))
+        Err(std::io::Error::other(
+            "StubChannel: read during handoff (bug)",
+        ))
     }
 }
 
 impl Write for StubChannel {
     fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
-        Err(std::io::Error::other("StubChannel: write during handoff (bug)"))
+        Err(std::io::Error::other(
+            "StubChannel: write during handoff (bug)",
+        ))
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        Err(std::io::Error::other("StubChannel: flush during handoff (bug)"))
+        Err(std::io::Error::other(
+            "StubChannel: flush during handoff (bug)",
+        ))
     }
 }
 

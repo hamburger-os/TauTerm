@@ -88,14 +88,20 @@ impl ThemeEngine {
         if !themes.contains_key(name) {
             return Err(ThemeError::ThemeNotFound(name.to_string()));
         }
-        let mut active = self.active_theme.write().map_err(|_| ThemeError::LockError)?;
+        let mut active = self
+            .active_theme
+            .write()
+            .map_err(|_| ThemeError::LockError)?;
         *active = name.to_string();
         Ok(())
     }
 
     /// 注册插件自定义 token
     pub fn register_tokens(&self, plugin_id: &str, tokens: TokenSet) -> Result<(), ThemeError> {
-        let mut plugin_tokens = self.plugin_tokens.write().map_err(|_| ThemeError::LockError)?;
+        let mut plugin_tokens = self
+            .plugin_tokens
+            .write()
+            .map_err(|_| ThemeError::LockError)?;
         plugin_tokens.insert(plugin_id.to_string(), tokens);
         Ok(())
     }
@@ -109,17 +115,25 @@ impl ThemeEngine {
 
     /// 获取当前活跃主题名
     pub fn active_name(&self) -> String {
-        self.active_theme.read().map(|n| n.clone()).unwrap_or_default()
+        self.active_theme
+            .read()
+            .map(|n| n.clone())
+            .unwrap_or_default()
     }
 
     /// 获取可用主题列表
     pub fn theme_names(&self) -> Vec<String> {
-        self.themes.read().map(|t| t.keys().cloned().collect()).unwrap_or_default()
+        self.themes
+            .read()
+            .map(|t| t.keys().cloned().collect())
+            .unwrap_or_default()
     }
 }
 
 impl Default for ThemeEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 主题引擎错误

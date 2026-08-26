@@ -47,7 +47,7 @@ pub fn contains_elevation_indicator(text: &str) -> bool {
         || lower.contains("refusé")            // fr: Accès refusé
         || lower.contains("elevación")         // es: elevación requerida
         || lower.contains("necessária")        // pt: elevação necessária
-        || lower.contains("elevata")           // it: autorizzazione elevata
+        || lower.contains("elevata") // it: autorizzazione elevata
 }
 
 /// 虚拟串口后端的统一接口。
@@ -94,7 +94,10 @@ pub trait VirtualPortBackend: Send {
     fn create_pairs(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String>;
 
     /// 通过管理员提权创建端口对（UAC / sudo），一并清理残留。
-    fn create_pairs_elevated(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String>;
+    fn create_pairs_elevated(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<PortPair>, String>;
 
     /// 销毁一个虚拟端口对（含优雅降级策略）。
     fn destroy_pair(&mut self, pair: &PortPair) -> Result<(), String>;

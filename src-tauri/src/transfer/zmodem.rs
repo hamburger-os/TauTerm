@@ -20,7 +20,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 
-use crate::transfer::crc::{crc16_ccitt, crc32_zmodem, crc32_verify};
+use crate::transfer::crc::{crc16_ccitt, crc32_verify, crc32_zmodem};
 use crate::transfer::io::{self, read_byte_with_timeout, CAN};
 use crate::transfer::protocol::TransferProtocol;
 use crate::transfer::types::{
@@ -31,43 +31,43 @@ use crate::transfer::types::{
 //  ZMODEM 协议常量（对齐 lrzsz zmodem.h）
 // ═══════════════════════════════════════════════════════════════════
 
-const ZPAD: u8 = b'*';         // 0x2A — 帧开始填充
-const ZDLE: u8 = 0x18;         // Ctrl-X — 转义字节（也是 CAN）
-const ZBIN: u8 = b'A';         // 二进制帧
-const ZHEX: u8 = b'B';         // 十六进制帧
-const ZBIN32: u8 = b'C';       // 二进制帧（32 位 CRC）
+const ZPAD: u8 = b'*'; // 0x2A — 帧开始填充
+const ZDLE: u8 = 0x18; // Ctrl-X — 转义字节（也是 CAN）
+const ZBIN: u8 = b'A'; // 二进制帧
+const ZHEX: u8 = b'B'; // 十六进制帧
+const ZBIN32: u8 = b'C'; // 二进制帧（32 位 CRC）
 
 // ── 帧类型 ──
-const ZRQINIT: u8 = 0;    // 请求接收初始化
-const ZRINIT: u8 = 1;     // 接收初始化
-const ZSINIT: u8 = 2;     // 发送初始化（忽略）
-const ZACK: u8 = 3;       // 确认
-const ZFILE: u8 = 4;      // 文件信息
-const ZSKIP: u8 = 5;      // 跳过文件
-const ZNAK: u8 = 6;       // 否定确认
-const ZABORT: u8 = 7;     // 中止批次
-const ZFIN: u8 = 8;       // 会话结束
-const ZRPOS: u8 = 9;      // 续传位置
-const ZDATA: u8 = 10;     // 数据帧
-const ZEOF: u8 = 11;      // 文件结束
-const ZFERR: u8 = 12;     // 致命错误
+const ZRQINIT: u8 = 0; // 请求接收初始化
+const ZRINIT: u8 = 1; // 接收初始化
+const ZSINIT: u8 = 2; // 发送初始化（忽略）
+const ZACK: u8 = 3; // 确认
+const ZFILE: u8 = 4; // 文件信息
+const ZSKIP: u8 = 5; // 跳过文件
+const ZNAK: u8 = 6; // 否定确认
+const ZABORT: u8 = 7; // 中止批次
+const ZFIN: u8 = 8; // 会话结束
+const ZRPOS: u8 = 9; // 续传位置
+const ZDATA: u8 = 10; // 数据帧
+const ZEOF: u8 = 11; // 文件结束
+const ZFERR: u8 = 12; // 致命错误
 #[allow(dead_code)]
-const ZCRC: u8 = 13;      // 请求文件 CRC
+const ZCRC: u8 = 13; // 请求文件 CRC
 const ZCHALLENGE: u8 = 14; // 挑战（忽略）
 #[allow(dead_code)]
-const ZCOMPL: u8 = 15;    // 完成
-const ZCAN: u8 = 16;      // 远端取消
-const ZFREECNT: u8 = 17;  // 可用空间（忽略）
+const ZCOMPL: u8 = 15; // 完成
+const ZCAN: u8 = 16; // 远端取消
+const ZFREECNT: u8 = 17; // 可用空间（忽略）
 #[allow(dead_code)]
-const ZCOMMAND: u8 = 18;  // 命令（忽略）
+const ZCOMMAND: u8 = 18; // 命令（忽略）
 #[allow(dead_code)]
-const ZSTDERR: u8 = 19;   // stderr（忽略）
+const ZSTDERR: u8 = 19; // stderr（忽略）
 
 // ── ZDLE 转义序列：数据帧结束标记 ──
-const ZCRCE: u8 = b'h';   // CRC next, frame ends, header follows
-const ZCRCG: u8 = b'i';   // CRC next, frame continues
-const ZCRCQ: u8 = b'j';   // CRC next, ZACK expected
-const ZCRCW: u8 = b'k';   // CRC next, ZACK expected, end of frame
+const ZCRCE: u8 = b'h'; // CRC next, frame ends, header follows
+const ZCRCG: u8 = b'i'; // CRC next, frame continues
+const ZCRCQ: u8 = b'j'; // CRC next, ZACK expected
+const ZCRCW: u8 = b'k'; // CRC next, ZACK expected, end of frame
 
 // ── 帧头字节位置 ──
 const ZF0: usize = 3;
@@ -77,7 +77,7 @@ const ZF3: usize = 0;
 
 // ── 能力标志位 ──
 const CANFC32: u8 = 0x20; // 能使用 32 位 CRC
-const CANFDX: u8 = 0x01;  // 全双工
+const CANFDX: u8 = 0x01; // 全双工
 
 // ── XON / XOFF ──
 const XON: u8 = 0x11;
@@ -108,10 +108,7 @@ const DATA_TIMEOUT_S: u32 = 60;
 #[derive(Debug, Clone)]
 enum ZFrame {
     /// 帧头帧（无数据载荷）
-    Header {
-        frame_type: u8,
-        flags: [u8; 4],
-    },
+    Header { frame_type: u8, flags: [u8; 4] },
     /// 数据帧（ZDATA / ZFILE）
     Data {
         /// 帧类型（ZDATA=10 或 ZFILE=4）
@@ -158,7 +155,15 @@ impl TransferProtocol for ZModem {
         on_file_event: &dyn Fn(FileTransferEvent),
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
-        zmodem_send(port, files, self.use_crc32, self.max_block_size, on_progress, on_file_event, cancel)
+        zmodem_send(
+            port,
+            files,
+            self.use_crc32,
+            self.max_block_size,
+            on_progress,
+            on_file_event,
+            cancel,
+        )
     }
 
     fn receive_files(
@@ -169,7 +174,14 @@ impl TransferProtocol for ZModem {
         on_file_event: &dyn Fn(FileTransferEvent),
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
-        zmodem_receive(port, download_dir, self.use_crc32, on_progress, on_file_event, cancel)
+        zmodem_receive(
+            port,
+            download_dir,
+            self.use_crc32,
+            on_progress,
+            on_file_event,
+            cancel,
+        )
     }
 }
 
@@ -192,19 +204,18 @@ fn send_hex_header(
 
     let hex_frame = format!(
         "**{}{:02X}{:02X}{:02X}{:02X}{:02X}{:04X}\r\n\x11",
-        ZHEX as char,
+        ZHEX as char, frame_type, hdr[ZF0], hdr[ZF1], hdr[ZF2], hdr[ZF3], crc
+    );
+    port.write_all(hex_frame.as_bytes())?;
+    port.flush()?;
+    log::debug!(
+        "ZHEX frame sent: type={} hdr=[{:02X},{:02X},{:02X},{:02X}] crc={:04X}",
         frame_type,
         hdr[ZF0],
         hdr[ZF1],
         hdr[ZF2],
         hdr[ZF3],
         crc
-    );
-    port.write_all(hex_frame.as_bytes())?;
-    port.flush()?;
-    log::debug!(
-        "ZHEX frame sent: type={} hdr=[{:02X},{:02X},{:02X},{:02X}] crc={:04X}",
-        frame_type, hdr[ZF0], hdr[ZF1], hdr[ZF2], hdr[ZF3], crc
     );
     Ok(())
 }
@@ -235,14 +246,24 @@ fn send_binary_header(
         port.write_all(&crc.to_le_bytes())?;
         log::debug!(
             "ZBIN32 header sent: type={} hdr=[{:02X},{:02X},{:02X},{:02X}] crc32={:08X}",
-            frame_type, hdr[ZF0], hdr[ZF1], hdr[ZF2], hdr[ZF3], crc
+            frame_type,
+            hdr[ZF0],
+            hdr[ZF1],
+            hdr[ZF2],
+            hdr[ZF3],
+            crc
         );
     } else {
         let crc = crc16_ccitt(&crc_data);
         port.write_all(&crc.to_le_bytes())?;
         log::debug!(
             "ZBIN header sent: type={} hdr=[{:02X},{:02X},{:02X},{:02X}] crc16={:04X}",
-            frame_type, hdr[ZF0], hdr[ZF1], hdr[ZF2], hdr[ZF3], crc
+            frame_type,
+            hdr[ZF0],
+            hdr[ZF1],
+            hdr[ZF2],
+            hdr[ZF3],
+            crc
         );
     }
 
@@ -397,8 +418,7 @@ fn receive_frame(
     match frame_kind {
         ZDLE => {
             // Binary frame: read the fourth byte for ZBIN/ZBIN32
-            let bin_type = read_byte_with_timeout(port, 2000)?
-                .ok_or("二进制帧子类型超时")?;
+            let bin_type = read_byte_with_timeout(port, 2000)?.ok_or("二进制帧子类型超时")?;
             match bin_type {
                 ZBIN | ZBIN32 => receive_binary_frame(port, bin_type),
                 ZCAN => Ok(ZFrame::Cancel),
@@ -465,7 +485,10 @@ fn receive_binary_frame(
 
                         let crc_valid = if use_crc32 && crc_bytes.len() == 4 {
                             let expected = u32::from_le_bytes([
-                                crc_bytes[0], crc_bytes[1], crc_bytes[2], crc_bytes[3]
+                                crc_bytes[0],
+                                crc_bytes[1],
+                                crc_bytes[2],
+                                crc_bytes[3],
                             ]);
                             crc32_verify(data_part, expected)
                         } else if !use_crc32 && crc_bytes.len() == 2 {
@@ -478,7 +501,11 @@ fn receive_binary_frame(
                         if !crc_valid {
                             log::warn!(
                                 "{} data CRC mismatch ({} bytes, end={:02X})",
-                                if frame_type == ZFILE { "ZFILE" } else { "ZDATA" },
+                                if frame_type == ZFILE {
+                                    "ZFILE"
+                                } else {
+                                    "ZDATA"
+                                },
                                 data_part.len(),
                                 next
                             );
@@ -537,18 +564,22 @@ fn receive_hex_frame(
     let hex_str = String::from_utf8_lossy(&hex_buf);
     let frame_type = u8::from_str_radix(&hex_str[0..2], 16)
         .map_err(|e| format!("ZHEX 帧类型解析失败: {}", e))?;
-    let f0 = u8::from_str_radix(&hex_str[2..4], 16)
-        .map_err(|e| format!("ZHEX f0 解析失败: {}", e))?;
-    let f1 = u8::from_str_radix(&hex_str[4..6], 16)
-        .map_err(|e| format!("ZHEX f1 解析失败: {}", e))?;
-    let f2 = u8::from_str_radix(&hex_str[6..8], 16)
-        .map_err(|e| format!("ZHEX f2 解析失败: {}", e))?;
-    let f3 = u8::from_str_radix(&hex_str[8..10], 16)
-        .map_err(|e| format!("ZHEX f3 解析失败: {}", e))?;
+    let f0 =
+        u8::from_str_radix(&hex_str[2..4], 16).map_err(|e| format!("ZHEX f0 解析失败: {}", e))?;
+    let f1 =
+        u8::from_str_radix(&hex_str[4..6], 16).map_err(|e| format!("ZHEX f1 解析失败: {}", e))?;
+    let f2 =
+        u8::from_str_radix(&hex_str[6..8], 16).map_err(|e| format!("ZHEX f2 解析失败: {}", e))?;
+    let f3 =
+        u8::from_str_radix(&hex_str[8..10], 16).map_err(|e| format!("ZHEX f3 解析失败: {}", e))?;
 
     log::debug!(
         "ZHEX frame received: type={} f3={:02X} f2={:02X} f1={:02X} f0={:02X}",
-        frame_type, f3, f2, f1, f0
+        frame_type,
+        f3,
+        f2,
+        f1,
+        f0
     );
 
     Ok(ZFrame::Header {
@@ -611,14 +642,19 @@ fn zmodem_send(
         }
 
         match receive_frame(port, FRAME_TIMEOUT_S) {
-            Ok(ZFrame::Header { frame_type: ZRINIT, .. }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZRINIT, ..
+            }) => {
                 log::info!("ZMODEM send: received ZRINIT");
                 // Negotiate CRC32: if we can and receiver can, use CRC32
                 // rf[ZF0] & CANFC32 tells us if receiver supports it
                 // We'll use use_crc32 for simplicity
                 break;
             }
-            Ok(ZFrame::Header { frame_type: ZCAN, .. }) | Ok(ZFrame::Cancel) => {
+            Ok(ZFrame::Header {
+                frame_type: ZCAN, ..
+            })
+            | Ok(ZFrame::Cancel) => {
                 return Err("接收方取消了传输".into());
             }
             Ok(_) => {
@@ -686,38 +722,35 @@ fn zmodem_send(
         // "remaining" = total size
         let zfile_data = format!(
             "{}\0{} {} {:o} 0 {}",
-            file_info.name,
-            file_info.size,
-            file_info.mtime,
-            0o100644u32,
-            file_info.size
+            file_info.name, file_info.size, file_info.mtime, 0o100644u32, file_info.size
         );
 
         log::debug!("ZMODEM send: ZFILE data: {:?}", zfile_data);
 
         // Send ZFILE as a data frame
         let zfile_bytes = zfile_data.as_bytes();
-        send_data_frame_with_header(
-            port,
-            ZFILE,
-            zfile_bytes,
-            ZCRCW,
-            use_crc32,
-        )?;
+        send_data_frame_with_header(port, ZFILE, zfile_bytes, ZCRCW, use_crc32)?;
 
         // ── 等待 ZRPOS 或 ZSKIP ──
         match receive_frame(port, FRAME_TIMEOUT_S) {
-            Ok(ZFrame::Header { frame_type: ZRPOS, flags }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZRPOS,
+                flags,
+            }) => {
                 // Receiver wants this file — ZRPOS tells us where to start
                 // For simplified implementation, we always start from 0
-                let resume_pos = u32::from_le_bytes([flags[ZF0], flags[ZF1], flags[ZF2], flags[ZF3]]) as u64;
+                let resume_pos =
+                    u32::from_le_bytes([flags[ZF0], flags[ZF1], flags[ZF2], flags[ZF3]]) as u64;
                 log::debug!(
                     "ZMODEM send: received ZRPOS for file {} (resume at {})",
-                    file_info.name, resume_pos
+                    file_info.name,
+                    resume_pos
                 );
                 // resume_pos is ignored — we always send from the beginning
             }
-            Ok(ZFrame::Header { frame_type: ZSKIP, .. }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZSKIP, ..
+            }) => {
                 // Receiver doesn't want this file
                 log::info!("ZMODEM send: receiver skipped file {}", file_info.name);
                 on_file_event(FileTransferEvent::FileComplete {
@@ -737,12 +770,20 @@ fn zmodem_send(
                 aggregate_total -= file_info.size;
                 continue 'file_loop;
             }
-            Ok(ZFrame::Header { frame_type: ZCAN, .. }) | Ok(ZFrame::Cancel) => {
+            Ok(ZFrame::Header {
+                frame_type: ZCAN, ..
+            })
+            | Ok(ZFrame::Cancel) => {
                 return Err("接收方取消了传输".into());
             }
-            Ok(ZFrame::Header { frame_type: ZRINIT, .. }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZRINIT, ..
+            }) => {
                 // Receiver might send ZRINIT instead of ZRPOS (resume at 0)
-                log::debug!("ZMODEM send: received ZRINIT instead of ZRPOS for file {}", file_info.name);
+                log::debug!(
+                    "ZMODEM send: received ZRINIT instead of ZRPOS for file {}",
+                    file_info.name
+                );
             }
             Ok(other) => {
                 log::warn!("ZMODEM send: unexpected frame after ZFILE: {:?}", other);
@@ -821,9 +862,9 @@ fn zmodem_send(
 
             // Choose frame end marker
             let frameend = if is_last_block {
-                ZCRCW  // Wait for ZACK
+                ZCRCW // Wait for ZACK
             } else {
-                ZCRCG  // Continue immediately
+                ZCRCG // Continue immediately
             };
 
             // Send data with retry
@@ -839,21 +880,25 @@ fn zmodem_send(
                 // If we used ZCRCW, wait for ZACK; if ZCRCG, just continue
                 if frameend == ZCRCW {
                     match receive_frame(port, DATA_TIMEOUT_S) {
-                        Ok(ZFrame::Header { frame_type: ZACK, .. }) => {
+                        Ok(ZFrame::Header {
+                            frame_type: ZACK, ..
+                        }) => {
                             sent_ok = true;
                             break;
                         }
-                        Ok(ZFrame::Header { frame_type: ZNAK, .. }) => {
-                            log::warn!(
-                                "ZDATA NAK (retry {}/{})",
-                                retry + 1, MAX_RETRIES
-                            );
+                        Ok(ZFrame::Header {
+                            frame_type: ZNAK, ..
+                        }) => {
+                            log::warn!("ZDATA NAK (retry {}/{})", retry + 1, MAX_RETRIES);
                             // Adaptive: halve block size on error (min 512)
                             block_size = (block_size / 2).max(512);
                             consecutive_ok = 0;
                             continue;
                         }
-                        Ok(ZFrame::Cancel) | Ok(ZFrame::Header { frame_type: ZCAN, .. }) => {
+                        Ok(ZFrame::Cancel)
+                        | Ok(ZFrame::Header {
+                            frame_type: ZCAN, ..
+                        }) => {
                             return Err("接收方取消了传输".into());
                         }
                         _ => {
@@ -918,10 +963,14 @@ fn zmodem_send(
 
         // Wait for ZRINIT (receiver is ready for next file)
         match receive_frame(port, FRAME_TIMEOUT_S) {
-            Ok(ZFrame::Header { frame_type: ZRINIT, .. }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZRINIT, ..
+            }) => {
                 log::info!("ZMODEM send: received ZRINIT, ready for next file");
             }
-            Ok(ZFrame::Header { frame_type: ZFIN, .. }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZFIN, ..
+            }) => {
                 // Receiver says "I'm done" — all remaining files are skipped
                 log::info!("ZMODEM send: received ZFIN, finishing batch early");
                 on_file_event(FileTransferEvent::FileComplete {
@@ -952,14 +1001,19 @@ fn zmodem_send(
                 // Send ZFIN, wait for ZFIN response, send "OO"
                 send_binary_header(port, ZFIN, &[0; 4], use_crc32)?;
                 match receive_frame(port, FRAME_TIMEOUT_S) {
-                    Ok(ZFrame::Header { frame_type: ZFIN, .. }) => {}
+                    Ok(ZFrame::Header {
+                        frame_type: ZFIN, ..
+                    }) => {}
                     _ => log::warn!("Expected ZFIN response"),
                 }
                 port.write_all(b"OO")?;
                 port.flush()?;
                 return Ok(batch_results);
             }
-            Ok(ZFrame::Header { frame_type: ZCAN, .. }) | Ok(ZFrame::Cancel) => {
+            Ok(ZFrame::Header {
+                frame_type: ZCAN, ..
+            })
+            | Ok(ZFrame::Cancel) => {
                 return Err("接收方取消了传输".into());
             }
             Ok(_) | Err(_) => {
@@ -993,11 +1047,16 @@ fn zmodem_send(
         }
         send_binary_header(port, ZFIN, &[0; 4], use_crc32)?;
         match receive_frame(port, FRAME_TIMEOUT_S) {
-            Ok(ZFrame::Header { frame_type: ZFIN, .. }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZFIN, ..
+            }) => {
                 log::info!("ZMODEM send: received ZFIN response");
                 break;
             }
-            Ok(ZFrame::Cancel) | Ok(ZFrame::Header { frame_type: ZCAN, .. }) => {
+            Ok(ZFrame::Cancel)
+            | Ok(ZFrame::Header {
+                frame_type: ZCAN, ..
+            }) => {
                 return Err("接收方取消了传输".into());
             }
             _ => {
@@ -1123,15 +1182,23 @@ fn zmodem_receive(
         }
 
         match receive_frame(port, 60) {
-            Ok(ZFrame::Header { frame_type: ZRQINIT, .. }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZRQINIT,
+                ..
+            }) => {
                 log::info!("ZMODEM receive: received ZRQINIT");
                 break;
             }
-            Ok(ZFrame::Header { frame_type: ZSINIT, .. }) => {
+            Ok(ZFrame::Header {
+                frame_type: ZSINIT, ..
+            }) => {
                 log::info!("ZMODEM receive: received ZSINIT (sender-initiated), sending ZRINIT");
                 break; // Can also accept ZSINIT
             }
-            Ok(ZFrame::Cancel) | Ok(ZFrame::Header { frame_type: ZCAN, .. }) => {
+            Ok(ZFrame::Cancel)
+            | Ok(ZFrame::Header {
+                frame_type: ZCAN, ..
+            }) => {
                 return Err("发送方取消了传输".into());
             }
             Ok(_) => continue, // Ignore other frames while waiting
@@ -1161,7 +1228,11 @@ fn zmodem_receive(
         let frame = receive_frame(port, FRAME_TIMEOUT_S)?;
 
         match frame {
-            ZFrame::Data { frame_type, data, frameend } => {
+            ZFrame::Data {
+                frame_type,
+                data,
+                frameend,
+            } => {
                 if frame_type == ZFILE {
                     // ─── ZFILE: File metadata ───
                     // Parse ZFILE data: filename\0size mtime mode sent remaining
@@ -1170,7 +1241,8 @@ fn zmodem_receive(
 
                     log::info!(
                         "ZMODEM receive: ZFILE name={}, size={}",
-                        file_name, file_size
+                        file_name,
+                        file_size
                     );
 
                     // Close previous file if any
@@ -1222,7 +1294,11 @@ fn zmodem_receive(
                             send_binary_header(port, ZRPOS, &[0; 4], use_crc32)?;
                         }
                         Err(e) => {
-                            log::error!("ZMODEM receive: cannot create file {:?}: {}", file_path, e);
+                            log::error!(
+                                "ZMODEM receive: cannot create file {:?}: {}",
+                                file_path,
+                                e
+                            );
                             send_binary_header(port, ZSKIP, &[0; 4], use_crc32)?;
                         }
                     }
@@ -1275,9 +1351,7 @@ fn zmodem_receive(
                         // Send ZACK for flow control
                         if frameend == ZCRCW || frameend == ZCRCQ {
                             let ack_pos = (*bytes_written).to_le_bytes();
-                            let ack_flags = [
-                                ack_pos[0], ack_pos[1], ack_pos[2], ack_pos[3]
-                            ];
+                            let ack_flags = [ack_pos[0], ack_pos[1], ack_pos[2], ack_pos[3]];
                             send_binary_header(port, ZACK, &ack_flags, use_crc32)?;
                         }
                     } else {
@@ -1291,7 +1365,8 @@ fn zmodem_receive(
                     ZEOF => {
                         // ─── End of current file ───
                         // flags contain the file offset (LSB first)
-                        let _eof_pos = u32::from_le_bytes([flags[0], flags[1], flags[2], flags[3]]) as u64;
+                        let _eof_pos =
+                            u32::from_le_bytes([flags[0], flags[1], flags[2], flags[3]]) as u64;
 
                         if let Some((ref file_name, ref mut _file, _total, ref bytes_written)) =
                             current_file
@@ -1424,10 +1499,7 @@ fn zmodem_receive(
                     }
 
                     _ => {
-                        log::debug!(
-                            "ZMODEM receive: unhandled frame type {}",
-                            frame_type
-                        );
+                        log::debug!("ZMODEM receive: unhandled frame type {}", frame_type);
                     }
                 }
             }
@@ -1480,10 +1552,10 @@ mod tests {
 
     #[test]
     fn test_needs_escaping() {
-        assert!(needs_escaping(ZDLE));    // 0x18
-        assert!(needs_escaping(XON));     // 0x11
-        assert!(needs_escaping(XOFF));    // 0x13
-        assert!(needs_escaping(CR));      // 0x0D
+        assert!(needs_escaping(ZDLE)); // 0x18
+        assert!(needs_escaping(XON)); // 0x11
+        assert!(needs_escaping(XOFF)); // 0x13
+        assert!(needs_escaping(CR)); // 0x0D
         assert!(needs_escaping(0x7f));
         assert!(needs_escaping(0xff));
         assert!(!needs_escaping(b'A'));
@@ -1492,13 +1564,13 @@ mod tests {
 
     #[test]
     fn test_parse_zfile_name() {
-        let data = b"test.txt\000100 1234567890 100644 0 100";
+        let data = b"test.txt\x0000100 1234567890 100644 0 100";
         assert_eq!(parse_zfile_name(data), "test.txt");
     }
 
     #[test]
     fn test_parse_zfile_size() {
-        let data = b"test.txt\000100 1234567890";
+        let data = b"test.txt\x0000100 1234567890";
         assert_eq!(parse_zfile_size(data), 100);
     }
 

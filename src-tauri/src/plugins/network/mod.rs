@@ -29,7 +29,10 @@ use crate::channel::io_loop::IoLoopCmd;
 use crate::kernel::comm_handle::{CommHandle, DataCallback};
 use crate::kernel::data_batcher::base64_encode;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
-use crate::kernel::plugin_adapter::{ChannelKind, ProtocolAdapter, ProtocolConnection, SideChannel};
+use crate::kernel::plugin_adapter::{
+    ChannelKind, ProtocolAdapter, ProtocolConnection, SideChannel,
+};
+use crate::kernel::session_store::PeerChannelRegistration;
 
 mod comm;
 mod tcp_channel;
@@ -99,7 +102,12 @@ impl NetworkSideChannel {
 
         let mut spawned = 0;
         // TCP Client：取走已连接流并注册为单个对端
-        if let Some(stream) = self.tcp_client_stream.lock().map_err(|e| e.to_string())?.take() {
+        if let Some(stream) = self
+            .tcp_client_stream
+            .lock()
+            .map_err(|e| e.to_string())?
+            .take()
+        {
             let app_c = app.clone();
             let sid_c = sid.clone();
             let encoding_c = encoding.clone();
@@ -121,10 +129,18 @@ impl NetworkSideChannel {
                     Ok(ch) => {
                         // peer_name 留空：内核按序号自动命名（"Peer N"，与 SSH "Channel N" 一致）
                         if let Err(e) = register_peer(
-                            &app_c, &sid_c, "", &addr_s, &local_s,
-                            ChannelKind::Sync(Box::new(ch)), &encoding_c, &data_mode_c,
-                            peer_writers,
-                            container_receivers,
+                            &app_c,
+                            PeerChannelRegistration {
+                                parent_id: sid_c.clone(),
+                                peer_name: String::new(),
+                                peer_addr: addr_s.clone(),
+                                local_addr: local_s.clone(),
+                                channel: ChannelKind::Sync(Box::new(ch)),
+                                encoding: encoding_c.clone(),
+                                data_mode: data_mode_c.clone(),
+                                peer_writers,
+                                container_receivers,
+                            },
                         ) {
                             log::error!("网络调试: TCP Client 对端注册失败: {}", e);
                         }
@@ -183,10 +199,18 @@ impl NetworkSideChannel {
                                 Ok(ch) => {
                                     // peer_name 留空：内核按序号自动命名（"Peer N"）
                                     if let Err(e) = register_peer(
-                                        &app_c, &sid_c, "", &addr_s, &local_s,
-                                        ChannelKind::Sync(Box::new(ch)), &encoding_c, &data_mode_c,
-                                        peer_writers.clone(),
-                                        container_receivers.clone(),
+                                        &app_c,
+                                        PeerChannelRegistration {
+                                            parent_id: sid_c.clone(),
+                                            peer_name: String::new(),
+                                            peer_addr: addr_s.clone(),
+                                            local_addr: local_s.clone(),
+                                            channel: ChannelKind::Sync(Box::new(ch)),
+                                            encoding: encoding_c.clone(),
+                                            data_mode: data_mode_c.clone(),
+                                            peer_writers: peer_writers.clone(),
+                                            container_receivers: container_receivers.clone(),
+                                        },
                                     ) {
                                         log::error!("网络调试: TCP Server 对端注册失败: {}", e);
                                     }
@@ -219,14 +243,20 @@ impl NetworkSideChannel {
             let receivers = self.receivers.clone();
             let _ = std::thread::spawn(move || {
                 // 200ms 读超时轮询 running 标志（Windows SO_RCVTIMEO 最小 1ms）
-                socket.set_read_timeout(Some(Duration::from_millis(200))).ok();
+                socket
+                    .set_read_timeout(Some(Duration::from_millis(200)))
+                    .ok();
                 let mut buf = vec![0u8; 65535];
                 while running_c.load(Ordering::SeqCst) {
                     match socket.recv_from(&mut buf) {
                         Ok((n, src)) => {
                             emit_udp_datagram(
-                                &app_c, &sid_c, &encoding_c, &data_mode_c,
-                                src, &buf[..n],
+                                &app_c,
+                                &sid_c,
+                                &encoding_c,
+                                &data_mode_c,
+                                src,
+                                &buf[..n],
                             );
                             // 脚本引擎消费者（auto-reply / script 的 on_data）
                             if let Ok(rx) = receivers.lock() {
@@ -292,10 +322,7 @@ impl NetworkSideChannel {
 
     /// UDP Client 本地绑定地址（前端展示本机 ip:port 用）
     pub fn udp_client_local_addr(&self) -> Option<SocketAddr> {
-        self.udp_client_local_addr
-            .lock()
-            .ok()
-            .and_then(|v| *v)
+        self.udp_client_local_addr.lock().ok().and_then(|v| *v)
     }
 
     /// 读取当前发送目标（前端目标栏同步）。
@@ -352,20 +379,25 @@ fn emit_udp_datagram(
     src: SocketAddr,
     datagram: &[u8],
 ) {
-    let _ = app.emit("session-data", serde_json::json!({
-        "session_id": sid,
-        "data_b64": base64_encode(datagram),
-        "source_addr": src.to_string(),
-    }));
+    let _ = app.emit(
+        "session-data",
+        serde_json::json!({
+            "session_id": sid,
+            "data_b64": base64_encode(datagram),
+            "source_addr": src.to_string(),
+        }),
+    );
     if let Ok(engine) = app.state::<crate::AppState>().log_engine.lock() {
-        let _ = engine.sender().try_send(LogEntry::SessionData(DataLogEntry {
-            session_id: sid.to_string(),
-            direction: DataDirection::RX,
-            data_mode: data_mode.to_string(),
-            encoding: encoding.to_string(),
-            payload: datagram.to_vec(),
-            timestamp: chrono::Local::now(),
-        }));
+        let _ = engine
+            .sender()
+            .try_send(LogEntry::SessionData(DataLogEntry {
+                session_id: sid.to_string(),
+                direction: DataDirection::RX,
+                data_mode: data_mode.to_string(),
+                encoding: encoding.to_string(),
+                payload: datagram.to_vec(),
+                timestamp: chrono::Local::now(),
+            }));
     }
 }
 
@@ -394,18 +426,9 @@ fn client_limit_reached(max_clients: usize, connected_peers: usize) -> bool {
 }
 
 /// 将已连接的对端通道注册到内核会话
-#[allow(clippy::too_many_arguments)]
 fn register_peer(
     app: &tauri::AppHandle,
-    session_id: &str,
-    peer_name: &str,
-    peer_addr: &str,
-    local_addr: &str,
-    channel: ChannelKind,
-    encoding: &str,
-    data_mode: &str,
-    peer_writers: Arc<Mutex<HashMap<String, mpsc::SyncSender<IoLoopCmd>>>>,
-    container_receivers: Arc<Mutex<Vec<DataCallback>>>,
+    registration: PeerChannelRegistration,
 ) -> Result<String, String> {
     let app_state = app.state::<crate::AppState>();
     let log_tx = {
@@ -413,19 +436,7 @@ fn register_peer(
         engine.sender()
     };
     let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
-    store.register_peer_channel(
-        app,
-        log_tx,
-        session_id,
-        peer_name,
-        peer_addr,
-        local_addr,
-        channel,
-        encoding,
-        data_mode,
-        peer_writers,
-        container_receivers,
-    )
+    store.register_peer_channel(app, log_tx, registration)
 }
 
 /// 网络调试协议适配器
@@ -509,8 +520,8 @@ impl ProtocolAdapter for NetworkAdapter {
                     })?;
                 let stream = TcpStream::connect_timeout(&addr, Duration::from_millis(timeout_ms))
                     .map_err(|e| SessionError::ConnectionFailed {
-                        reason: format!("连接 {} 失败: {}", addr, e),
-                    })?;
+                    reason: format!("连接 {} 失败: {}", addr, e),
+                })?;
                 let _ = stream.set_nodelay(nodelay);
                 *side
                     .tcp_client_stream
@@ -526,10 +537,11 @@ impl ProtocolAdapter for NetworkAdapter {
                     .get("local_port")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as u16;
-                let listener = TcpListener::bind((local_host, local_port))
-                    .map_err(|e| SessionError::ConnectionFailed {
+                let listener = TcpListener::bind((local_host, local_port)).map_err(|e| {
+                    SessionError::ConnectionFailed {
                         reason: format!("监听 {}:{} 失败: {}", local_host, local_port, e),
-                    })?;
+                    }
+                })?;
                 *side
                     .tcp_listener
                     .lock()
@@ -561,17 +573,22 @@ impl ProtocolAdapter for NetworkAdapter {
                     .ok_or_else(|| SessionError::ConnectionFailed {
                         reason: format!("无法解析 {}:{}（无可用地址）", remote_host, remote_port),
                     })?;
-                let socket = UdpSocket::bind((local_host, local_port))
-                    .map_err(|e| SessionError::ConnectionFailed {
+                let socket = UdpSocket::bind((local_host, local_port)).map_err(|e| {
+                    SessionError::ConnectionFailed {
                         reason: format!("绑定 UDP {}:{} 失败: {}", local_host, local_port, e),
-                    })?;
-                // 不 connect：仅固定发送目标，recv_from 仍可接收任意来源（含广播/组播）
-                let local_addr = socket.local_addr().map_err(|e| SessionError::ConnectionFailed {
-                    reason: format!("获取 UDP 本地地址失败: {}", e),
+                    }
                 })?;
+                // 不 connect：仅固定发送目标，recv_from 仍可接收任意来源（含广播/组播）
+                let local_addr =
+                    socket
+                        .local_addr()
+                        .map_err(|e| SessionError::ConnectionFailed {
+                            reason: format!("获取 UDP 本地地址失败: {}", e),
+                        })?;
                 log::info!(
                     "网络调试: UDP Client 目标 {}（本地绑定 {}）",
-                    remote, local_addr
+                    remote,
+                    local_addr
                 );
                 *side
                     .udp_client_target
@@ -603,10 +620,7 @@ impl ProtocolAdapter for NetworkAdapter {
                     .get("multicast_group")
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty());
-                let ttl = params
-                    .get("ttl")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(64) as u32;
+                let ttl = params.get("ttl").and_then(|v| v.as_u64()).unwrap_or(64) as u32;
                 let multicast_interface = params
                     .get("multicast_interface")
                     .and_then(|v| v.as_str())
@@ -616,17 +630,17 @@ impl ProtocolAdapter for NetworkAdapter {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
 
-                let socket = UdpSocket::bind((local_host, local_port))
-                    .map_err(|e| SessionError::ConnectionFailed {
+                let socket = UdpSocket::bind((local_host, local_port)).map_err(|e| {
+                    SessionError::ConnectionFailed {
                         reason: format!("绑定 UDP {}:{} 失败: {}", local_host, local_port, e),
-                    })?;
+                    }
+                })?;
                 if broadcast {
                     socket.set_broadcast(true).map_err(SessionError::IoError)?;
                 }
                 if let Some(group) = multicast_group {
-                    let g: Ipv4Addr = group
-                        .parse()
-                        .map_err(|e| SessionError::ConnectionFailed {
+                    let g: Ipv4Addr =
+                        group.parse().map_err(|e| SessionError::ConnectionFailed {
                             reason: format!("无效的组播组地址 {}: {}", group, e),
                         })?;
                     // join_multicast_v4 仅支持 IPv4 组播范围（224.0.0.0 ~ 239.255.255.255）；
@@ -639,16 +653,16 @@ impl ProtocolAdapter for NetworkAdapter {
                             ),
                         });
                     }
-                    let iface: Ipv4Addr = multicast_interface
-                        .parse()
-                        .map_err(|e| SessionError::ConnectionFailed {
+                    let iface: Ipv4Addr = multicast_interface.parse().map_err(|e| {
+                        SessionError::ConnectionFailed {
                             reason: format!("无效的组播接口 {}: {}", multicast_interface, e),
-                        })?;
-                    socket
-                        .join_multicast_v4(&g, &iface)
-                        .map_err(|e| SessionError::ConnectionFailed {
+                        }
+                    })?;
+                    socket.join_multicast_v4(&g, &iface).map_err(|e| {
+                        SessionError::ConnectionFailed {
                             reason: format!("加入组播组 {} 失败: {}", group, e),
-                        })?;
+                        }
+                    })?;
                     socket
                         .set_multicast_ttl_v4(ttl)
                         .map_err(SessionError::IoError)?;
@@ -665,8 +679,7 @@ impl ProtocolAdapter for NetworkAdapter {
                 *side
                     .udp_socket
                     .lock()
-                    .map_err(|e| SessionError::Other(e.to_string()))? =
-                    Some(Arc::new(socket));
+                    .map_err(|e| SessionError::Other(e.to_string()))? = Some(Arc::new(socket));
             }
             (t, r) => {
                 return Err(SessionError::InvalidParameter(format!(
@@ -708,10 +721,11 @@ impl ProtocolAdapter for NetworkAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::io_loop::IoLoopContext;
+    use crate::channel::Channel;
     use std::io::Read;
     use std::sync::atomic::AtomicU64;
     use std::sync::mpsc;
-    use crate::channel::Channel;
 
     // ── 测试辅助 ─────────────────────────────────────
 
@@ -780,8 +794,18 @@ mod tests {
         // 容器会话（无 I/O loop），close_sub_connection 的目标形态
         let sid = store
             .create_container_session(
-                "netdbg-test", "network", "udp://127.0.0.1:0", serde_json::json!({}),
-                None, None, false, None, false, None,
+                crate::kernel::session_store::ContainerSessionCreateOptions {
+                    name: "netdbg-test".into(),
+                    plugin_id: "network".into(),
+                    endpoint: "udp://127.0.0.1:0".into(),
+                    params: serde_json::json!({}),
+                    transfer_enabled: false,
+                    transfer_protocol: None,
+                    send_bar_enabled: false,
+                    id_override: None,
+                },
+                None,
+                None,
             )
             .unwrap();
 
@@ -809,10 +833,16 @@ mod tests {
         });
 
         let io_thread = crate::channel::io_loop::spawn_sync_io_loop(
-            Box::new(ch), sid.clone(),
+            Box::new(ch),
             Box::new(|_, _| {}),
-            on_disconnect, write_rx, cancel_rx,
-            tx_bytes.clone(), rx_bytes.clone(),
+            on_disconnect,
+            IoLoopContext {
+                session_id: sid.clone(),
+                write_rx,
+                cancel_rx,
+                tx_bytes: tx_bytes.clone(),
+                rx_bytes: rx_bytes.clone(),
+            },
         );
 
         let sub = crate::kernel::session_store::SubConnection {
@@ -845,11 +875,12 @@ mod tests {
         std::thread::sleep(Duration::from_millis(200));
 
         // 阶段 1（持锁语义）：发信号 + 移除 + 返回句柄；阶段 2（锁外）：join
-        let (_is_last, cleanup) = {
-            store.close_sub_connection(&sid, "sub-test-1").unwrap()
-        };
+        let (_is_last, cleanup) = { store.close_sub_connection(&sid, "sub-test-1").unwrap() };
         cleanup.join();
-        assert!(disconnect_latch.load(Ordering::SeqCst), "I/O 线程应已退出并执行回调");
+        assert!(
+            disconnect_latch.load(Ordering::SeqCst),
+            "I/O 线程应已退出并执行回调"
+        );
     }
 
     // ── 5. 上限闸门（max_clients） ─────

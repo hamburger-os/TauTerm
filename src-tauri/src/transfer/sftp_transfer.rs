@@ -4,11 +4,13 @@
 //! 通过 `SshSideChannel::create_file_transfer()` 创建，消除 commands.rs 中的
 //! `downcast_ref::<SshSideChannel>()` 类型不安全转换。
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
-use crate::kernel::file_transfer::{FileTransfer, FileTransferError, TransferDirection, UnifiedProgress};
+use crate::kernel::file_transfer::{
+    FileTransfer, FileTransferError, ProgressPosition, TransferDirection, UnifiedProgress,
+};
 use crate::transfer::types::{BatchFileResult, FileInfo};
 
 /// SFTP 文件传输处理器
@@ -25,7 +27,10 @@ impl SftpFileTransfer {
         session: Arc<russh::client::Handle<crate::plugins::ssh::handler::SshHandler>>,
         sftp_cache: Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
     ) -> Self {
-        Self { session, sftp_cache }
+        Self {
+            session,
+            sftp_cache,
+        }
     }
 
     /// 获取内部 SSH session（保留用于未来扩展，当前所有操作通过 FileTransfer trait）
@@ -66,7 +71,9 @@ impl FileTransfer for SftpFileTransfer {
 
         log::info!(
             "SFTP 批量上传开始: {} 个文件 → {} (合计 {} bytes)",
-            total, rd, total_aggregate
+            total,
+            rd,
+            total_aggregate
         );
 
         for (i, file) in files.iter().enumerate() {
@@ -93,23 +100,39 @@ impl FileTransfer for SftpFileTransfer {
             let fname = display_name.clone();
             let on_progress = move |done: u64, total_bytes: u64| {
                 let _ = pt.send(UnifiedProgress::chunk(
-                    "sftp", &fname, done, total_bytes,
-                    i, total,
-                    completed_bytes + done,
-                    total_aggregate,
+                    "sftp",
+                    &fname,
+                    done,
+                    total_bytes,
+                    ProgressPosition {
+                        file_index: i,
+                        total_files: total,
+                        aggregate_bytes: completed_bytes + done,
+                        aggregate_total: total_aggregate,
+                    },
                     TransferDirection::Send,
                 ));
             };
 
             log::debug!(
                 "SFTP 上传文件 {}/{}: {} → {} ({} bytes)",
-                i + 1, total, file.path, remote_path, file.size
+                i + 1,
+                total,
+                file.path,
+                remote_path,
+                file.size
             );
 
             let _ = progress.send(UnifiedProgress::file_start(
-                "sftp", &display_name, file.size,
-                i, total,
-                completed_bytes, total_aggregate,
+                "sftp",
+                &display_name,
+                file.size,
+                ProgressPosition {
+                    file_index: i,
+                    total_files: total,
+                    aggregate_bytes: completed_bytes,
+                    aggregate_total: total_aggregate,
+                },
                 TransferDirection::Send,
             ));
 
@@ -121,21 +144,34 @@ impl FileTransfer for SftpFileTransfer {
                 Some(file.mtime).filter(|&t| t > 0),
                 Some(&on_progress),
                 Some(&cancel),
-            ).await;
+            )
+            .await;
 
             match result {
                 Ok(bytes) => {
                     completed_bytes += bytes;
                     log::info!(
                         "SFTP 上传完成 {}/{}: {} ({} bytes, 聚合 {}/{})",
-                        i + 1, total, display_name, bytes,
-                        completed_bytes, total_aggregate
+                        i + 1,
+                        total,
+                        display_name,
+                        bytes,
+                        completed_bytes,
+                        total_aggregate
                     );
                     let _ = progress.send(UnifiedProgress::file_complete(
-                        "sftp", &display_name, bytes,
-                        i, total,
-                        completed_bytes, total_aggregate,
-                        TransferDirection::Send, true, None,
+                        "sftp",
+                        &display_name,
+                        bytes,
+                        ProgressPosition {
+                            file_index: i,
+                            total_files: total,
+                            aggregate_bytes: completed_bytes,
+                            aggregate_total: total_aggregate,
+                        },
+                        TransferDirection::Send,
+                        true,
+                        None,
                     ));
                     results.push(BatchFileResult {
                         file_name: display_name.clone(),
@@ -148,13 +184,23 @@ impl FileTransfer for SftpFileTransfer {
                     let is_cancelled = cancel.load(Ordering::SeqCst);
                     log::error!(
                         "SFTP 上传失败 {}/{}: {} — {}",
-                        i + 1, total, display_name, e
+                        i + 1,
+                        total,
+                        display_name,
+                        e
                     );
                     let _ = progress.send(UnifiedProgress::file_complete(
-                        "sftp", &display_name, 0,
-                        i, total,
-                        completed_bytes, total_aggregate,
-                        TransferDirection::Send, false,
+                        "sftp",
+                        &display_name,
+                        0,
+                        ProgressPosition {
+                            file_index: i,
+                            total_files: total,
+                            aggregate_bytes: completed_bytes,
+                            aggregate_total: total_aggregate,
+                        },
+                        TransferDirection::Send,
+                        false,
                         Some(e.clone()),
                     ));
                     results.push(BatchFileResult {
@@ -173,7 +219,8 @@ impl FileTransfer for SftpFileTransfer {
                         &self.session,
                         &self.sftp_cache,
                         &remote_path,
-                    ).await;
+                    )
+                    .await;
                 }
             }
         }
@@ -184,17 +231,25 @@ impl FileTransfer for SftpFileTransfer {
 
         log::info!(
             "SFTP 批量上传完成: {} 成功, {} 失败, {} 跳过 (共 {} 个, 合计 {} bytes)",
-            completed, failed, skipped, total, completed_bytes
+            completed,
+            failed,
+            skipped,
+            total,
+            completed_bytes
         );
 
         let _ = progress.send(UnifiedProgress::batch_complete(
-            "sftp", TransferDirection::Send,
-            completed, failed, skipped,
+            "sftp",
+            TransferDirection::Send,
+            completed,
+            failed,
+            skipped,
         ));
 
         // 如果有失败且没有成功（排除纯取消场景），向上传播错误
         if failed > 0 && completed == 0 {
-            let first_err = results.iter()
+            let first_err = results
+                .iter()
                 .filter_map(|r| r.error.as_deref())
                 .next()
                 .unwrap_or("所有文件传输失败");
@@ -231,8 +286,12 @@ impl FileTransfer for SftpFileTransfer {
             if is_dir {
                 log::info!("SFTP 检测到目录，递归列举: {}", path);
                 let files = crate::transfer::ssh_file_service::sftp_list_dir_recursive(
-                    &self.session, &self.sftp_cache, path,
-                ).await.map_err(FileTransferError::Other)?;
+                    &self.session,
+                    &self.sftp_cache,
+                    path,
+                )
+                .await
+                .map_err(FileTransferError::Other)?;
                 log::info!("SFTP 目录 '{}' 包含 {} 个文件", path, files.len());
                 for f in files {
                     // 目录子文件大小未知 (None)，Phase 2 单独获取
@@ -252,10 +311,7 @@ impl FileTransfer for SftpFileTransfer {
         let mut results = Vec::new();
         let total = resolved_pairs.len();
 
-        log::info!(
-            "SFTP 批量下载开始: {} 个文件 → {}",
-            total, download_dir
-        );
+        log::info!("SFTP 批量下载开始: {} 个文件 → {}", total, download_dir);
 
         // Phase 2: 对目录子文件（cached_file_size=None）逐文件获取大小。
         // 非目录文件已在 Phase 1 缓存了大小，跳过网络 I/O。
@@ -270,7 +326,9 @@ impl FileTransfer for SftpFileTransfer {
                 let sz = {
                     let cache = self.sftp_cache.lock().await;
                     match cache.as_ref() {
-                        Some(sftp) => sftp.metadata(remote_path).await
+                        Some(sftp) => sftp
+                            .metadata(remote_path)
+                            .await
                             .map(|m| m.size.unwrap_or(0))
                             .unwrap_or(0),
                         None => 0,
@@ -282,7 +340,8 @@ impl FileTransfer for SftpFileTransfer {
         }
         log::info!(
             "SFTP 下载聚合总量: {} bytes ({} 个文件)",
-            total_aggregate, total
+            total_aggregate,
+            total
         );
 
         let mut completed_bytes: u64 = 0;
@@ -337,8 +396,13 @@ impl FileTransfer for SftpFileTransfer {
 
             log::debug!(
                 "SFTP 下载文件 {}/{}: {} → {} ({} bytes, 聚合 {}/{})",
-                i + 1, total, remote_path, local_file_path, file_size,
-                completed_bytes, total_aggregate
+                i + 1,
+                total,
+                remote_path,
+                local_file_path,
+                file_size,
+                completed_bytes,
+                total_aggregate
             );
 
             let pt = progress.clone();
@@ -347,18 +411,30 @@ impl FileTransfer for SftpFileTransfer {
             let ta = total_aggregate;
             let on_progress = move |done: u64, total_bytes: u64| {
                 let _ = pt.send(UnifiedProgress::chunk(
-                    "sftp", &fname, done, total_bytes,
-                    i, total,
-                    cb + done,
-                    ta,
+                    "sftp",
+                    &fname,
+                    done,
+                    total_bytes,
+                    ProgressPosition {
+                        file_index: i,
+                        total_files: total,
+                        aggregate_bytes: cb + done,
+                        aggregate_total: ta,
+                    },
                     TransferDirection::Receive,
                 ));
             };
 
             let _ = progress.send(UnifiedProgress::file_start(
-                "sftp", &file_name, file_size,
-                i, total,
-                completed_bytes, total_aggregate,
+                "sftp",
+                &file_name,
+                file_size,
+                ProgressPosition {
+                    file_index: i,
+                    total_files: total,
+                    aggregate_bytes: completed_bytes,
+                    aggregate_total: total_aggregate,
+                },
                 TransferDirection::Receive,
             ));
 
@@ -369,21 +445,34 @@ impl FileTransfer for SftpFileTransfer {
                 &local_file_path,
                 Some(&on_progress),
                 Some(&cancel),
-            ).await;
+            )
+            .await;
 
             match result {
                 Ok(bytes) => {
                     completed_bytes += bytes;
                     log::info!(
                         "SFTP 下载完成 {}/{}: {} ({} bytes, 聚合 {}/{})",
-                        i + 1, total, file_name, bytes,
-                        completed_bytes, total_aggregate
+                        i + 1,
+                        total,
+                        file_name,
+                        bytes,
+                        completed_bytes,
+                        total_aggregate
                     );
                     let _ = progress.send(UnifiedProgress::file_complete(
-                        "sftp", &file_name, bytes,
-                        i, total,
-                        completed_bytes, total_aggregate,
-                        TransferDirection::Receive, true, None,
+                        "sftp",
+                        &file_name,
+                        bytes,
+                        ProgressPosition {
+                            file_index: i,
+                            total_files: total,
+                            aggregate_bytes: completed_bytes,
+                            aggregate_total: total_aggregate,
+                        },
+                        TransferDirection::Receive,
+                        true,
+                        None,
                     ));
                     results.push(BatchFileResult {
                         file_name: file_name.clone(),
@@ -394,15 +483,19 @@ impl FileTransfer for SftpFileTransfer {
                 }
                 Err(e) => {
                     let is_cancelled = cancel.load(Ordering::SeqCst);
-                    log::error!(
-                        "SFTP 下载失败 {}/{}: {} — {}",
-                        i + 1, total, file_name, e
-                    );
+                    log::error!("SFTP 下载失败 {}/{}: {} — {}", i + 1, total, file_name, e);
                     let _ = progress.send(UnifiedProgress::file_complete(
-                        "sftp", &file_name, 0,
-                        i, total,
-                        completed_bytes, total_aggregate,
-                        TransferDirection::Receive, false,
+                        "sftp",
+                        &file_name,
+                        0,
+                        ProgressPosition {
+                            file_index: i,
+                            total_files: total,
+                            aggregate_bytes: completed_bytes,
+                            aggregate_total: total_aggregate,
+                        },
+                        TransferDirection::Receive,
+                        false,
                         Some(e.clone()),
                     ));
                     results.push(BatchFileResult {
@@ -434,17 +527,24 @@ impl FileTransfer for SftpFileTransfer {
 
         log::info!(
             "SFTP 批量下载完成: {} 成功, {} 失败, {} 跳过 (共 {} 个)",
-            completed, failed, skipped, total
+            completed,
+            failed,
+            skipped,
+            total
         );
 
         let _ = progress.send(UnifiedProgress::batch_complete(
-            "sftp", TransferDirection::Receive,
-            completed, failed, skipped,
+            "sftp",
+            TransferDirection::Receive,
+            completed,
+            failed,
+            skipped,
         ));
 
         // 如果有失败且没有成功（排除纯取消场景），向上传播错误
         if failed > 0 && completed == 0 {
-            let first_err = results.iter()
+            let first_err = results
+                .iter()
                 .filter_map(|r| r.error.as_deref())
                 .next()
                 .unwrap_or("所有文件下载失败");

@@ -87,20 +87,23 @@ fn emit_interval_event<R: tauri::Runtime>(
     protocol: IperfProtocol,
     iv: &IperfIntervalReport,
 ) {
-    let _ = app.emit("iperf-interval-report", serde_json::json!({
-        "session_id": session_id,
-        "role": role,
-        "direction": "fwd",
-        "protocol": protocol,
-        "start_secs": iv.start_secs,
-        "end_secs": iv.end_secs,
-        "transferred_bytes": iv.transferred_bytes,
-        "bandwidth_bps": iv.bandwidth_bps,
-        "jitter_ms": iv.jitter_ms,
-        "lost_packets": iv.lost_packets,
-        "total_packets": iv.total_packets,
-        "lost_percent": iv.lost_percent,
-    }));
+    let _ = app.emit(
+        "iperf-interval-report",
+        serde_json::json!({
+            "session_id": session_id,
+            "role": role,
+            "direction": "fwd",
+            "protocol": protocol,
+            "start_secs": iv.start_secs,
+            "end_secs": iv.end_secs,
+            "transferred_bytes": iv.transferred_bytes,
+            "bandwidth_bps": iv.bandwidth_bps,
+            "jitter_ms": iv.jitter_ms,
+            "lost_packets": iv.lost_packets,
+            "total_packets": iv.total_packets,
+            "lost_percent": iv.lost_percent,
+        }),
+    );
 }
 
 // ── Report → IperfSummary 转换 ─────────────────────────
@@ -133,8 +136,7 @@ fn summary_from_report(report: &Report, role: IperfRole) -> IperfSummary {
         //（≈0），反向测试汇总恒显示 0 bytes/0 bps，与实时图表矛盾
         if bidir {
             let sent = end.sum_sent.as_ref().or(end.sum.as_ref());
-            let bytes = sent.map(|s| s.bytes).unwrap_or(0)
-                + received.map(|s| s.bytes).unwrap_or(0);
+            let bytes = sent.map(|s| s.bytes).unwrap_or(0) + received.map(|s| s.bytes).unwrap_or(0);
             let secs = sent
                 .map(|s| s.seconds)
                 .or(received.map(|s| s.seconds))
@@ -169,7 +171,10 @@ fn summary_from_report(report: &Report, role: IperfRole) -> IperfSummary {
         }
     } else if bidir {
         // 服务端双向：正向接收（sum_received）+ 反向发送（sum_sent_bidir_reverse）
-        let rev = end.sum_sent_bidir_reverse.as_ref().or(end.sum_bidir_reverse.as_ref());
+        let rev = end
+            .sum_sent_bidir_reverse
+            .as_ref()
+            .or(end.sum_bidir_reverse.as_ref());
         let bytes = received.map(|s| s.bytes).unwrap_or(0) + rev.map(|s| s.bytes).unwrap_or(0);
         let secs = received
             .map(|s| s.seconds)
@@ -287,8 +292,7 @@ pub fn run_client<R: tauri::Runtime>(
         builder = builder.omit(params.omit_secs);
     }
     // 逐秒区间通道（TauTerm fork 补丁）：reporter 每统计周期推送 Interval
-    let (interval_tx, interval_rx) =
-        std::sync::mpsc::channel::<riperf3::json_report::Interval>();
+    let (interval_tx, interval_rx) = std::sync::mpsc::channel::<riperf3::json_report::Interval>();
     builder = builder.interval_channel(interval_tx);
 
     let client: Client = builder
@@ -303,7 +307,13 @@ pub fn run_client<R: tauri::Runtime>(
     let protocol = params.protocol;
     let consumer = std::thread::spawn(move || {
         while let Ok(interval) = interval_rx.recv() {
-            emit_interval_event(&app_c, &sid, "client", protocol, &interval_report(&interval));
+            emit_interval_event(
+                &app_c,
+                &sid,
+                "client",
+                protocol,
+                &interval_report(&interval),
+            );
         }
     });
 
@@ -358,8 +368,7 @@ pub fn run_server<R: tauri::Runtime>(
     // 1 条区间，开销可忽略）。ping 屏障仅在区间队列排空时应答——run_once()
     // 返回前 reporter 已 flush 全部区间入队，消费线程发出全部区间后主线程
     // 才发 done，事件顺序可靠
-    let (interval_tx, interval_rx) =
-        std::sync::mpsc::channel::<riperf3::json_report::Interval>();
+    let (interval_tx, interval_rx) = std::sync::mpsc::channel::<riperf3::json_report::Interval>();
     let (ping_tx, ping_rx) = std::sync::mpsc::channel::<()>();
     let (ack_tx, ack_rx) = std::sync::mpsc::channel::<()>();
     // 消费线程逐区间 emit 计数：Err/abort 路径用它判断本轮是否已产生区间
@@ -377,7 +386,13 @@ pub fn run_server<R: tauri::Runtime>(
                 } else {
                     IperfProtocol::Tcp
                 };
-                emit_interval_event(&app_c, &sid, "server", protocol, &interval_report(&interval));
+                emit_interval_event(
+                    &app_c,
+                    &sid,
+                    "server",
+                    protocol,
+                    &interval_report(&interval),
+                );
                 emitted.fetch_add(1, Ordering::Relaxed);
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
@@ -420,12 +435,19 @@ pub fn run_server<R: tauri::Runtime>(
         .local_addr()
         .map(|a| a.to_string())
         .unwrap_or_else(|_| format!("{}:{}", config.listen_ip, config.listen_port));
-    let _ = app.emit("iperf-server-status", serde_json::json!({
-        "session_id": session_id,
-        "running": true,
-        "listen_addr": listen_addr,
-    }));
-    log::info!("[iperf3] 服务端监听中 (session={}, {})", session_id, listen_addr);
+    let _ = app.emit(
+        "iperf-server-status",
+        serde_json::json!({
+            "session_id": session_id,
+            "running": true,
+            "listen_addr": listen_addr,
+        }),
+    );
+    log::info!(
+        "[iperf3] 服务端监听中 (session={}, {})",
+        session_id,
+        listen_addr
+    );
 
     loop {
         if abort_flag.load(Ordering::Relaxed) {
@@ -434,13 +456,16 @@ pub fn run_server<R: tauri::Runtime>(
         // 接待轮次开始：置 test_running + 通知前端（协议未知——客户端接入前
         // 不可知，前端以客户端参数兜底）
         test_running.store(true, Ordering::Relaxed);
-        let _ = app.emit("iperf-test-started", serde_json::json!({
-            "session_id": session_id,
-            "role": "server",
-            "direction": "fwd",
-            "pending": true,
-            "protocol": null,
-        }));
+        let _ = app.emit(
+            "iperf-test-started",
+            serde_json::json!({
+                "session_id": session_id,
+                "role": "server",
+                "direction": "fwd",
+                "pending": true,
+                "protocol": null,
+            }),
+        );
         // 本轮区间计数基线（消费线程已排空上一轮——见排水屏障）
         let round_base = emitted_count.load(Ordering::Relaxed);
         match rt.block_on(server.run_once_with_listener(&listener)) {
@@ -453,14 +478,17 @@ pub fn run_server<R: tauri::Runtime>(
                 let _ = ack_rx.recv();
                 let mut last = super::lock_or_recover(last_summary, "last_summary");
                 *last = Some(summary.clone());
-                let _ = app.emit("iperf-test-done", serde_json::json!({
-                    "session_id": session_id,
-                    "success": true,
-                    "role": "server",
-                    "direction": "fwd",
-                    "protocol": summary.protocol,
-                    "summary": summary,
-                }));
+                let _ = app.emit(
+                    "iperf-test-done",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "success": true,
+                        "role": "server",
+                        "direction": "fwd",
+                        "protocol": summary.protocol,
+                        "summary": summary,
+                    }),
+                );
                 log::info!(
                     "[iperf3] 服务端接待测试完成 (session={}, avg={:.2} Mbps)",
                     session_id,
@@ -475,14 +503,17 @@ pub fn run_server<R: tauri::Runtime>(
                 let _ = ping_tx.send(());
                 let _ = ack_rx.recv();
                 if emitted_count.load(Ordering::Relaxed) > round_base {
-                    let _ = app.emit("iperf-test-done", serde_json::json!({
-                        "session_id": session_id,
-                        "success": false,
-                        "role": "server",
-                        "direction": "fwd",
-                        "error": "服务端已停止（测试中止）",
-                        "summary": null,
-                    }));
+                    let _ = app.emit(
+                        "iperf-test-done",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "success": false,
+                            "role": "server",
+                            "direction": "fwd",
+                            "error": "服务端已停止（测试中止）",
+                            "summary": null,
+                        }),
+                    );
                 }
                 break;
             }
@@ -496,16 +527,23 @@ pub fn run_server<R: tauri::Runtime>(
                 let _ = ping_tx.send(());
                 let _ = ack_rx.recv();
                 if emitted_count.load(Ordering::Relaxed) > round_base {
-                    let _ = app.emit("iperf-test-done", serde_json::json!({
-                        "session_id": session_id,
-                        "success": false,
-                        "role": "server",
-                        "direction": "fwd",
-                        "error": err_msg.clone(),
-                        "summary": null,
-                    }));
+                    let _ = app.emit(
+                        "iperf-test-done",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "success": false,
+                            "role": "server",
+                            "direction": "fwd",
+                            "error": err_msg.clone(),
+                            "summary": null,
+                        }),
+                    );
                 }
-                log::warn!("[iperf3] 接待测试异常 (session={}): {}", session_id, err_msg);
+                log::warn!(
+                    "[iperf3] 接待测试异常 (session={}): {}",
+                    session_id,
+                    err_msg
+                );
                 std::thread::sleep(Duration::from_millis(200));
             }
         }

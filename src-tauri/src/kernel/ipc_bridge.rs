@@ -65,5 +65,7 @@ impl IpcBridge {
 }
 
 impl Default for IpcBridge {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

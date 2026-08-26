@@ -3,13 +3,13 @@
 //! 定义 `ProtocolAdapter` trait——任何协议插件必须实现此 trait。
 //! 定义 `PluginManifest`——插件的元数据描述。
 
-use std::any::Any;
-use std::sync::Arc;
-use serde::{Deserialize, Serialize};
-use crate::channel::{AsyncChannel, Channel, ContentType, IoStrategy};
 use crate::channel::error::SessionError;
+use crate::channel::{AsyncChannel, Channel, ContentType, IoStrategy};
 use crate::kernel::comm_handle::CommHandle;
 use crate::kernel::file_transfer::FileTransfer;
+use serde::{Deserialize, Serialize};
+use std::any::Any;
+use std::sync::Arc;
 
 /// 侧通道资源 trait
 ///
@@ -101,11 +101,21 @@ impl TransferProtocolType {
 
     // ── 知名协议常量工厂 ─────────────────────────────
 
-    pub fn ymodem() -> Self { Self("ymodem".into()) }
-    pub fn xmodem() -> Self { Self("xmodem".into()) }
-    pub fn zmodem() -> Self { Self("zmodem".into()) }
-    pub fn sftp() -> Self   { Self("sftp".into()) }
-    pub fn ftp() -> Self    { Self("ftp".into()) }
+    pub fn ymodem() -> Self {
+        Self("ymodem".into())
+    }
+    pub fn xmodem() -> Self {
+        Self("xmodem".into())
+    }
+    pub fn zmodem() -> Self {
+        Self("zmodem".into())
+    }
+    pub fn sftp() -> Self {
+        Self("sftp".into())
+    }
+    pub fn ftp() -> Self {
+        Self("ftp".into())
+    }
 
     // ── 分类辅助方法 ─────────────────────────────────
 
@@ -139,7 +149,10 @@ impl std::str::FromStr for TransferProtocolType {
             return Err("传输协议标识不能为空".into());
         }
         // 格式验证：仅允许小写字母、数字和下划线
-        if !lower.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        if !lower
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
             return Err(format!("无效的传输协议标识: '{}'（仅允许 a-z、0-9、_）", s));
         }
         Ok(Self(lower))

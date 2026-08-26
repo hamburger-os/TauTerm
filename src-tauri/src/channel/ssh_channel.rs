@@ -5,8 +5,8 @@
 //! russh Handle 内部线程安全，无需 Mutex——终端 I/O 与 SFTP 可安全并发。
 
 use std::any::Any;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::channel::error::ChannelError;
@@ -134,7 +134,9 @@ impl AsyncChannel for SshChannel {
         self.channel
             .window_change(cols, rows, 0, 0)
             .await
-            .map_err(|e| ChannelError::Io(std::io::Error::other(format!("PTY resize 失败: {}", e))))?;
+            .map_err(|e| {
+                ChannelError::Io(std::io::Error::other(format!("PTY resize 失败: {}", e)))
+            })?;
         Ok(())
     }
 

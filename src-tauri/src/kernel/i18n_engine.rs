@@ -56,7 +56,11 @@ impl I18nEngine {
             None => ("", key),
         };
 
-        let locale = self.current_locale.read().map(|l| l.clone()).unwrap_or_default();
+        let locale = self
+            .current_locale
+            .read()
+            .map(|l| l.clone())
+            .unwrap_or_default();
 
         if let Ok(resources) = self.resources.read() {
             if let Some(ns_map) = resources.get(namespace) {
@@ -89,12 +93,17 @@ impl I18nEngine {
 
     /// 获取当前语言
     pub fn current_locale(&self) -> String {
-        self.current_locale.read().map(|l| l.clone()).unwrap_or_default()
+        self.current_locale
+            .read()
+            .map(|l| l.clone())
+            .unwrap_or_default()
     }
 }
 
 impl Default for I18nEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 国际化引擎错误

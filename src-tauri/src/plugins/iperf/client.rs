@@ -22,7 +22,6 @@ use super::{IperfClientResult, IperfDynamicParams, IperfSummary, IperfVersion};
 ///
 /// 返回后测试已结束。全程通过事件向前端推送进度。
 /// 引擎按 `params.version` 路由（iperf2 / iperf3）。
-#[allow(clippy::too_many_arguments)]
 pub async fn run_iperf_client<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     session_id: String,
@@ -37,15 +36,23 @@ pub async fn run_iperf_client<R: tauri::Runtime>(
     // TOCTOU 窗口）；中止标志亦由调用方在确认上一轮收尾后复位（若在此复位，
     // 10s 等待超时后仍存活的上一轮任务会被静默"解除中止"）
 
-    let _ = app.emit("iperf-test-started", serde_json::json!({
-        "session_id": session_id,
-        "role": "client",
-        "direction": "fwd",
-        "protocol": params.protocol,
-        "target": target_host,
-        "params": params,
-    }));
-    log::info!("[iperf] 客户端测速开始 (session={}, target={}, version={:?})", session_id, target_host, version);
+    let _ = app.emit(
+        "iperf-test-started",
+        serde_json::json!({
+            "session_id": session_id,
+            "role": "client",
+            "direction": "fwd",
+            "protocol": params.protocol,
+            "target": target_host,
+            "params": params,
+        }),
+    );
+    log::info!(
+        "[iperf] 客户端测速开始 (session={}, target={}, version={:?})",
+        session_id,
+        target_host,
+        version
+    );
 
     let app2 = app.clone();
     let sid = session_id.clone();
@@ -56,12 +63,15 @@ pub async fn run_iperf_client<R: tauri::Runtime>(
             IperfVersion::Iperf2 => {
                 super::iperf2::run_client(&app2, &sid, &target, &params, &abort_flag)
             }
-            IperfVersion::Iperf3 => super::iperf3::run_client(&app2, &sid, &target, &params, &abort_flag)
-                .map(|summary| IperfClientResult {
-                    fwd: summary,
-                    rev: None,
-                    warning: None,
-                }),
+            IperfVersion::Iperf3 => {
+                super::iperf3::run_client(&app2, &sid, &target, &params, &abort_flag).map(
+                    |summary| IperfClientResult {
+                        fwd: summary,
+                        rev: None,
+                        warning: None,
+                    },
+                )
+            }
         }))
     })
     .await;
@@ -97,14 +107,17 @@ pub async fn run_iperf_client<R: tauri::Runtime>(
             let _ = app.emit("iperf-test-done", done);
             // rev done（-d/-r 反向相，紧随 fwd done 发出）
             if let Some(rev) = result.rev {
-                let _ = app.emit("iperf-test-done", serde_json::json!({
-                    "session_id": session_id,
-                    "success": true,
-                    "role": "client",
-                    "direction": "rev",
-                    "protocol": rev.protocol,
-                    "summary": rev,
-                }));
+                let _ = app.emit(
+                    "iperf-test-done",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "success": true,
+                        "role": "client",
+                        "direction": "rev",
+                        "protocol": rev.protocol,
+                        "summary": rev,
+                    }),
+                );
             }
             // done 全部发出后才复位：重跑守卫的等待循环只在本轮事件
             // 完整送达后才放行下一轮
@@ -113,14 +126,17 @@ pub async fn run_iperf_client<R: tauri::Runtime>(
             Ok(())
         }
         Err(e) => {
-            let _ = app.emit("iperf-test-done", serde_json::json!({
-                "session_id": session_id,
-                "success": false,
-                "error": e,
-                "role": "client",
-                "direction": "fwd",
-                "summary": null,
-            }));
+            let _ = app.emit(
+                "iperf-test-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "success": false,
+                    "error": e,
+                    "role": "client",
+                    "direction": "fwd",
+                    "summary": null,
+                }),
+            );
             client_test_running.store(false, Ordering::Relaxed);
             log::warn!("[iperf] 客户端测速失败 (session={}): {}", session_id, e);
             Err(e)

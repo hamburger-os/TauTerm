@@ -22,8 +22,8 @@ mod service {
     use std::sync::Mutex;
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
     use windows_sys::Win32::System::Pipes::{
         ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
@@ -148,7 +148,9 @@ mod service {
         // 仅校验文件名可被轻易绕过（把任意程序改名成 tauterm.exe 即可冒充）。
         // 客户端 exe 必须与服务自身位于同一目录（安装目录）：安装目录普通用户
         // 无写权限，无法在其中放置伪造的 tauterm.exe。
-        let client_dir = client_path.parent().map(|d| d.to_string_lossy().to_lowercase());
+        let client_dir = client_path
+            .parent()
+            .map(|d| d.to_string_lossy().to_lowercase());
         let service_dir = std::env::current_exe()
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_string_lossy().to_lowercase()));
@@ -157,7 +159,8 @@ mod service {
             (Some(c), Some(s)) => {
                 log::warn!(
                     "pipe client rejected: dir mismatch (client={}, service={})",
-                    c, s
+                    c,
+                    s
                 );
                 false
             }
@@ -251,17 +254,18 @@ mod service {
 
     impl Response {
         fn err(id: u64, e: String) -> Self {
-            Response { id, ok: false, data: None, error: Some(e) }
+            Response {
+                id,
+                ok: false,
+                data: None,
+                error: Some(e),
+            }
         }
     }
 
     type Clients = HashMap<String, Vec<PortPair>>;
 
-    fn dispatch(
-        vpm: &mut VirtualPortManager,
-        clients: &mut Clients,
-        req: &Request,
-    ) -> Response {
+    fn dispatch(vpm: &mut VirtualPortManager, clients: &mut Clients, req: &Request) -> Response {
         let id = req.id;
         let data = match req.op.as_str() {
             "hello" => {
@@ -278,8 +282,15 @@ mod service {
                 Err(e) => return Response::err(id, e),
             },
             "create_pairs" => {
-                let count = req.payload.get("count").and_then(|c| c.as_u64()).unwrap_or(1) as u32;
-                let config = VirtualPortConfig { enabled: true, count };
+                let count = req
+                    .payload
+                    .get("count")
+                    .and_then(|c| c.as_u64())
+                    .unwrap_or(1) as u32;
+                let config = VirtualPortConfig {
+                    enabled: true,
+                    count,
+                };
                 match vpm.create_pairs(&config) {
                     Ok(pairs) => {
                         let entry = clients.entry(req.client_id.clone()).or_default();
@@ -292,7 +303,11 @@ mod service {
                 }
             }
             "remove_pair" => {
-                let bus = req.payload.get("bus").and_then(|b| b.as_u64()).map(|b| b as u32);
+                let bus = req
+                    .payload
+                    .get("bus")
+                    .and_then(|b| b.as_u64())
+                    .map(|b| b as u32);
                 match bus {
                     Some(bus) => {
                         if let Some(list) = clients.get_mut(&req.client_id) {
@@ -318,14 +333,15 @@ mod service {
             }
             other => return Response::err(id, format!("unknown op: {}", other)),
         };
-        Response { id, ok: true, data, error: None }
+        Response {
+            id,
+            ok: true,
+            data,
+            error: None,
+        }
     }
 
-    fn handle_client(
-        pipe: HANDLE,
-        vpm: &Mutex<VirtualPortManager>,
-        clients: &Mutex<Clients>,
-    ) {
+    fn handle_client(pipe: HANDLE, vpm: &Mutex<VirtualPortManager>, clients: &Mutex<Clients>) {
         let mut client_id: Option<String> = None;
         loop {
             let frame = match read_frame(pipe) {

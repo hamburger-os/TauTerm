@@ -13,6 +13,21 @@ use tauri::Emitter;
 
 use super::{IperfConfig, IperfDynamicParams, IperfSummary};
 
+/// iperf 服务端线程运行上下文。
+pub struct IperfServerContext<R: tauri::Runtime> {
+    pub app: tauri::AppHandle<R>,
+    pub config: IperfConfig,
+    pub dynamic_params: Arc<Mutex<IperfDynamicParams>>,
+    pub abort_flag: Arc<AtomicBool>,
+    pub server_running: Arc<AtomicBool>,
+    pub test_running: Arc<AtomicBool>,
+    pub last_summary: Arc<Mutex<Option<IperfSummary>>>,
+    pub server_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
+    pub server_epoch: Arc<AtomicU64>,
+    pub my_epoch: u64,
+    pub session_id: String,
+}
+
 /// 启动 iperf 服务端监听线程。
 ///
 /// 线程启动即置 `server_running = true`（启动占位由 try_start_server 以
@@ -23,31 +38,34 @@ use super::{IperfConfig, IperfDynamicParams, IperfSummary};
 /// 所有退出写回都经代际门控：`my_epoch` 为 spawn 前 try_start_server 递增
 /// 后代际；会话关闭/重启换代后，本线程（含 join 超时的僵尸）的迟到写回
 /// 一律跳过——不得覆盖新一代服务器的状态。
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_iperf_server<R: tauri::Runtime>(
-    app: tauri::AppHandle<R>,
-    config: IperfConfig,
-    dynamic_params: Arc<Mutex<IperfDynamicParams>>,
-    abort_flag: Arc<AtomicBool>,
-    server_running: Arc<AtomicBool>,
-    test_running: Arc<AtomicBool>,
-    last_summary: Arc<Mutex<Option<IperfSummary>>>,
-    server_handle: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
-    server_epoch: Arc<AtomicU64>,
-    my_epoch: u64,
-    session_id: String,
-) {
+pub fn spawn_iperf_server<R: tauri::Runtime>(context: IperfServerContext<R>) {
+    let IperfServerContext {
+        app,
+        config,
+        dynamic_params,
+        abort_flag,
+        server_running,
+        test_running,
+        last_summary,
+        server_handle,
+        server_epoch,
+        my_epoch,
+        session_id,
+    } = context;
     let handle = std::thread::spawn(move || {
         // 启动前检查 abort 标志，防止 shutdown() 在 spawn 返回后线程尚未开始执行时误判；
         // running 占位已在 try_start_server 置位——取消须复位并 emit，避免卡死状态
         if abort_flag.load(Ordering::Relaxed) {
             if server_epoch.load(Ordering::SeqCst) == my_epoch {
                 server_running.store(false, Ordering::Relaxed);
-                let _ = app.emit("iperf-server-status", serde_json::json!({
-                    "session_id": session_id,
-                    "running": false,
-                    "error": "启动前已取消",
-                }));
+                let _ = app.emit(
+                    "iperf-server-status",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "running": false,
+                        "error": "启动前已取消",
+                    }),
+                );
             }
             return;
         }
@@ -61,27 +79,23 @@ pub fn spawn_iperf_server<R: tauri::Runtime>(
         cfg.listen_port = dyn_params.listen_port;
         let version = dyn_params.version;
         let result = match version {
-            super::IperfVersion::Iperf2 => {
-                super::iperf2::run_server(
-                    &app,
-                    &session_id,
-                    &cfg,
-                    &dynamic_params,
-                    &abort_flag,
-                    &test_running,
-                    &last_summary,
-                )
-            }
-            super::IperfVersion::Iperf3 => {
-                super::iperf3::run_server(
-                    &app,
-                    &session_id,
-                    &cfg,
-                    &abort_flag,
-                    &test_running,
-                    &last_summary,
-                )
-            }
+            super::IperfVersion::Iperf2 => super::iperf2::run_server(
+                &app,
+                &session_id,
+                &cfg,
+                &dynamic_params,
+                &abort_flag,
+                &test_running,
+                &last_summary,
+            ),
+            super::IperfVersion::Iperf3 => super::iperf3::run_server(
+                &app,
+                &session_id,
+                &cfg,
+                &abort_flag,
+                &test_running,
+                &last_summary,
+            ),
         };
 
         if let Err(e) = &result {
@@ -114,5 +128,5 @@ pub fn spawn_iperf_server<R: tauri::Runtime>(
     // 保存线程句柄供停止时 join（避免 JoinHandle 被 drop 时 detach）
     if let Ok(mut h) = server_handle.lock() {
         *h = Some(handle);
-    }
+    };
 }

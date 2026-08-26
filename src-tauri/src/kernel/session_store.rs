@@ -17,22 +17,22 @@
 //! ├── io_thread: Option<JoinHandle>
 //! └── state: SessionState
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
-use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Manager};
-use crate::channel::Channel;
-use crate::channel::io_loop::{IoLoopCmd, spawn_sync_io_loop};
 use crate::channel::async_io_loop::spawn_async_io_loop;
+use crate::channel::io_loop::{spawn_sync_io_loop, IoLoopCmd, IoLoopContext};
+use crate::channel::Channel;
 use crate::kernel::comm_handle::{CommHandle, DataCallback};
 use crate::kernel::data_batcher::DataBatcher;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
 use crate::kernel::plugin_adapter::{ChannelKind, ProtocolConnection, SideChannel};
-use crate::kernel::script_engine::{ScriptCmd, spawn_script_thread};
-use crate::virtual_port::bridge::VirtualPortBridge;
+use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
 use crate::virtual_port::backend::PortPair;
+use crate::virtual_port::bridge::VirtualPortBridge;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
+use tauri::{Emitter, Manager};
 
 pub type TabId = String;
 
@@ -92,9 +92,7 @@ impl SubConnectionCleanup {
                             Err(_elapsed) => {
                                 task.abort();
                                 // 等待 abort 完成，确保 Drop 析构执行
-                                let _ = tokio::time::timeout(
-                                    Duration::from_secs(5), task,
-                                ).await;
+                                let _ = tokio::time::timeout(Duration::from_secs(5), task).await;
                                 log::warn!("子连接 I/O task 已强制中止: {}", ch_id);
                             }
                         }
@@ -107,7 +105,8 @@ impl SubConnectionCleanup {
                             Ok(rt) => rt.block_on(wait),
                             Err(e) => log::warn!(
                                 "无法创建临时 tokio runtime 清理子连接 I/O task: {} ({})",
-                                e, ch_id
+                                e,
+                                ch_id
                             ),
                         },
                     }
@@ -282,12 +281,17 @@ impl SubConnection {
 
 impl ActiveSessionHandle {
     pub fn virtual_port_enabled(&self) -> bool {
-        self.params.get("virtual_port_enabled")
-            .and_then(|v| v.as_bool()).unwrap_or(false)
+        self.params
+            .get("virtual_port_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
     }
     pub fn virtual_port_count(&self) -> u32 {
-        self.params.get("virtual_port_count")
-            .and_then(|v| v.as_u64()).map(|v| v as u32).unwrap_or(0)
+        self.params
+            .get("virtual_port_count")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or(0)
     }
 }
 
@@ -305,7 +309,9 @@ impl Drop for ActiveSessionHandle {
                  shutting down bridge in detached thread",
                 self.id
             );
-            std::thread::spawn(move || { bridge.shutdown(); });
+            std::thread::spawn(move || {
+                bridge.shutdown();
+            });
         }
         if !self.virtual_port_pairs.is_empty() {
             log::warn!(
@@ -390,6 +396,43 @@ pub struct SavedSession {
 /// 目前 Tauri 命令串行执行，但该锁为未来的并行调用（如批量删除）提供安全保证。
 static SESSIONS_FILE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// 普通会话创建参数。
+pub struct SessionCreateOptions {
+    pub name: String,
+    pub plugin_id: String,
+    pub endpoint: String,
+    pub params: serde_json::Value,
+    pub transfer_enabled: bool,
+    pub transfer_protocol: Option<String>,
+    pub send_bar_enabled: bool,
+    pub id_override: Option<String>,
+}
+
+/// 容器会话创建参数。
+pub struct ContainerSessionCreateOptions {
+    pub name: String,
+    pub plugin_id: String,
+    pub endpoint: String,
+    pub params: serde_json::Value,
+    pub transfer_enabled: bool,
+    pub transfer_protocol: Option<String>,
+    pub send_bar_enabled: bool,
+    pub id_override: Option<String>,
+}
+
+/// 网络对端通道注册参数。
+pub struct PeerChannelRegistration {
+    pub parent_id: String,
+    pub peer_name: String,
+    pub peer_addr: String,
+    pub local_addr: String,
+    pub channel: ChannelKind,
+    pub encoding: String,
+    pub data_mode: String,
+    pub peer_writers: Arc<Mutex<HashMap<String, mpsc::SyncSender<IoLoopCmd>>>>,
+    pub container_receivers: Arc<Mutex<Vec<DataCallback>>>,
+}
+
 impl SessionStore {
     /// 保留最近关闭会话名称的数量上限（LRU 淘汰）
     const MAX_REMOVED_SESSION_NAMES: usize = 50;
@@ -406,23 +449,24 @@ impl SessionStore {
     }
 
     /// 创建新会话（使用协议适配器返回的 `ProtocolConnection`）
-    #[allow(clippy::too_many_arguments)]
     pub fn create_session(
         &mut self,
-        name: &str,
-        plugin_id: &str,
-        endpoint: &str,
-        params: serde_json::Value,
+        options: SessionCreateOptions,
         conn: ProtocolConnection,
         on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
         on_disconnect: Box<dyn Fn(String) + Send>,
         app_handle: tauri::AppHandle,
-        transfer_enabled: bool,
-        transfer_protocol: Option<String>,
-        send_bar_enabled: bool,
-        // 可选：传入已有的 session_id 以原地重连（保留 UUID）
-        id_override: Option<String>,
     ) -> Result<TabId, String> {
+        let SessionCreateOptions {
+            name,
+            plugin_id,
+            endpoint,
+            params,
+            transfer_enabled,
+            transfer_protocol,
+            send_bar_enabled,
+            id_override,
+        } = options;
         // 若以已有 ID 重连，先清理上一个 Disconnected 僵尸句柄
         if let Some(ref raw) = id_override {
             if let Some(zombie) = self.sessions.get(raw) {
@@ -451,7 +495,7 @@ impl SessionStore {
         let tab_name = if name.is_empty() {
             format!("{} @ {}", plugin_id, endpoint)
         } else {
-            name.to_string()
+            name.clone()
         };
 
         let connected_at = Some(
@@ -467,15 +511,17 @@ impl SessionStore {
         // 通信抽象句柄：协议可自带（如未来 SSH 专用实现），否则统一使用 SerialCommHandle。
         // 当前所有协议的 CommHandle 均仅包装 write_tx，功能等价，故统一降级。
         // 传入会话编码：使 Lua `send_text` 文本路径按会话编码转码（与前端一致）。
-        let comm_handle: Arc<dyn CommHandle> = conn.comm_handle
-            .unwrap_or_else(|| {
-                let encoding = params
-                    .get("encoding")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("utf-8")
-                    .to_string();
-                Arc::new(crate::channel::serial_comm::SerialCommHandle::new(write_tx.clone(), encoding))
-            });
+        let comm_handle: Arc<dyn CommHandle> = conn.comm_handle.unwrap_or_else(|| {
+            let encoding = params
+                .get("encoding")
+                .and_then(|v| v.as_str())
+                .unwrap_or("utf-8")
+                .to_string();
+            Arc::new(crate::channel::serial_comm::SerialCommHandle::new(
+                write_tx.clone(),
+                encoding,
+            ))
+        });
 
         let tx_bytes = Arc::new(AtomicU64::new(0));
         let rx_bytes = Arc::new(AtomicU64::new(0));
@@ -496,24 +542,34 @@ impl SessionStore {
         });
 
         let io_handle = match conn.channel {
-            Some(ChannelKind::Sync(sync_channel)) => {
-                IoTaskHandle::Sync(spawn_sync_io_loop(
-                    sync_channel, sid.clone(), wrapped_on_data, on_disconnect, write_rx, cancel_rx,
-                    tx_clone, rx_clone,
-                ))
-            }
-            Some(ChannelKind::Async(async_channel)) => {
-                IoTaskHandle::Async(spawn_async_io_loop(
-                    async_channel, sid.clone(), wrapped_on_data, on_disconnect, write_rx, cancel_rx,
-                    tx_clone, rx_clone,
-                ))
-            }
+            Some(ChannelKind::Sync(sync_channel)) => IoTaskHandle::Sync(spawn_sync_io_loop(
+                sync_channel,
+                wrapped_on_data,
+                on_disconnect,
+                IoLoopContext {
+                    session_id: sid.clone(),
+                    write_rx,
+                    cancel_rx,
+                    tx_bytes: tx_clone,
+                    rx_bytes: rx_clone,
+                },
+            )),
+            Some(ChannelKind::Async(async_channel)) => IoTaskHandle::Async(spawn_async_io_loop(
+                async_channel,
+                wrapped_on_data,
+                on_disconnect,
+                IoLoopContext {
+                    session_id: sid.clone(),
+                    write_rx,
+                    cancel_rx,
+                    tx_bytes: tx_clone,
+                    rx_bytes: rx_clone,
+                },
+            )),
             None => {
-                return Err(
-                    "create_session requires an I/O channel; \
+                return Err("create_session requires an I/O channel; \
                      use create_container_session for headless (no terminal I/O) protocols"
-                        .into(),
-                );
+                    .into());
             }
         };
 
@@ -539,8 +595,8 @@ impl SessionStore {
             cancel_transfer_tx: None,
             io_thread: Some(io_handle),
             state: SessionState::Connected,
-            plugin_id: plugin_id.to_string(),
-            endpoint: endpoint.to_string(),
+            plugin_id,
+            endpoint,
             params,
             channel_return_tx: None,
             tx_bytes,
@@ -592,7 +648,9 @@ impl SessionStore {
 
     /// 清理所有 Disconnected 状态的僵尸会话，以免占用 max_sessions 名额。
     fn purge_zombies(&mut self) {
-        let zombie_ids: Vec<String> = self.sessions.iter()
+        let zombie_ids: Vec<String> = self
+            .sessions
+            .iter()
             .filter(|(_, h)| h.state == SessionState::Disconnected)
             .map(|(id, _)| id.clone())
             .collect();
@@ -610,17 +668,20 @@ impl SessionStore {
     /// 实际终端通过 `add_sub_connection` 添加。
     pub fn create_container_session(
         &mut self,
-        name: &str,
-        plugin_id: &str,
-        endpoint: &str,
-        params: serde_json::Value,
+        options: ContainerSessionCreateOptions,
         side_channel: Option<Arc<dyn SideChannel>>,
         comm_handle: Option<Arc<dyn CommHandle>>,
-        transfer_enabled: bool,
-        transfer_protocol: Option<String>,
-        send_bar_enabled: bool,
-        id_override: Option<String>,
     ) -> Result<TabId, String> {
+        let ContainerSessionCreateOptions {
+            name,
+            plugin_id,
+            endpoint,
+            params,
+            transfer_enabled,
+            transfer_protocol,
+            send_bar_enabled,
+            id_override,
+        } = options;
         let id = if let Some(ref raw) = id_override {
             if uuid::Uuid::parse_str(raw).is_err() {
                 return Err(format!("无效的 session_id 格式: {}", raw));
@@ -661,7 +722,7 @@ impl SessionStore {
         let session_name = if name.is_empty() {
             format!("{} @ {}", plugin_id, endpoint)
         } else {
-            name.to_string()
+            name.clone()
         };
 
         let handle = ActiveSessionHandle {
@@ -672,8 +733,8 @@ impl SessionStore {
             cancel_transfer_tx: None,
             io_thread: None,
             state: SessionState::Connected,
-            plugin_id: plugin_id.to_string(),
-            endpoint: endpoint.to_string(),
+            plugin_id,
+            endpoint,
             params,
             channel_return_tx: None,
             tx_bytes,
@@ -711,7 +772,9 @@ impl SessionStore {
     /// 参考 `disconnect_session` 在 `commands.rs` 中的用法。
     pub fn close_session(&mut self, session_id: &str) -> Result<(), String> {
         // 临时取出句柄以解除借用，关闭后再以 Disconnected 状态放回
-        let mut handle = self.sessions.remove(session_id)
+        let mut handle = self
+            .sessions
+            .remove(session_id)
             .ok_or_else(|| self.session_not_found(session_id))?;
 
         // ── 先关闭所有子连接 ──
@@ -736,7 +799,8 @@ impl SessionStore {
             }
         }
         // 保存名称（create_session 中已保存，此处作为保障）
-        self.session_names.insert(session_id.to_string(), handle.name.clone());
+        self.session_names
+            .insert(session_id.to_string(), handle.name.clone());
         // LRU 淘汰：推入关闭队列，超出上限时移除最旧条目
         self.removed_order.push_back(session_id.to_string());
         while self.removed_order.len() > Self::MAX_REMOVED_SESSION_NAMES {
@@ -897,7 +961,8 @@ impl SessionStore {
 
     /// 格式化"会话不存在"错误消息，优先使用已保存的会话名称
     pub(crate) fn session_not_found(&self, session_id: &str) -> String {
-        let display_name = self.session_names
+        let display_name = self
+            .session_names
             .get(session_id)
             .map(|n| n.as_str())
             .unwrap_or(session_id);
@@ -927,10 +992,10 @@ impl SessionStore {
     /// 重命名会话
     pub fn rename_session(&mut self, session_id: &str, new_name: &str) -> Result<(), String> {
         let not_found = self.session_not_found(session_id);
-        let handle = self.sessions.get_mut(session_id)
-            .ok_or(not_found)?;
+        let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
         handle.name = new_name.to_string();
-        self.session_names.insert(session_id.to_string(), new_name.to_string());
+        self.session_names
+            .insert(session_id.to_string(), new_name.to_string());
         Ok(())
     }
 
@@ -951,17 +1016,23 @@ impl SessionStore {
         if let Some(handle) = self.sessions.get(session_id) {
             // 普通会话（serial 等有 I/O loop 的会话）
             if let Some(ref tx) = handle.write_tx {
-                return tx.send(IoLoopCmd::Write(data.to_vec()))
+                return tx
+                    .send(IoLoopCmd::Write(data.to_vec()))
                     .map_err(|e| format!("写入通道错误: {}", e));
             }
             // 容器会话（SSH 父容器，无 I/O loop）— 不自动路由，调用方应传子连接 ID
-            return Err(format!("容器会话 {} 不可直接写入，请指定子连接 ID", session_id));
+            return Err(format!(
+                "容器会话 {} 不可直接写入，请指定子连接 ID",
+                session_id
+            ));
         }
         // 搜索子连接
         for handle in self.sessions.values() {
             for sub in &handle.sub_connections {
                 if sub.id == session_id {
-                    return sub.write_tx.send(IoLoopCmd::Write(data.to_vec()))
+                    return sub
+                        .write_tx
+                        .send(IoLoopCmd::Write(data.to_vec()))
                         .map_err(|e| format!("子连接写入通道错误: {}", e));
                 }
             }
@@ -989,23 +1060,25 @@ impl SessionStore {
     ///
     /// 对端 I/O loop 断开时广播 `netdbg-peer-left` 事件；本方法广播
     /// `netdbg-peer-joined` 事件，供前端对端列表刷新。
-    #[allow(clippy::too_many_arguments)]
     pub fn register_peer_channel(
         &mut self,
         app: &tauri::AppHandle,
         log_tx: mpsc::SyncSender<LogEntry>,
-        parent_id: &str,
-        peer_name: &str,
-        peer_addr: &str,
-        local_addr: &str,
-        channel: ChannelKind,
-        encoding: &str,
-        data_mode: &str,
-        peer_writers: Arc<Mutex<HashMap<String, mpsc::SyncSender<IoLoopCmd>>>>,
-        container_receivers: Arc<Mutex<Vec<DataCallback>>>,
+        registration: PeerChannelRegistration,
     ) -> Result<String, String> {
-        let not_found = self.session_not_found(parent_id);
-        if let Some(h) = self.sessions.get(parent_id) {
+        let PeerChannelRegistration {
+            parent_id,
+            peer_name,
+            peer_addr,
+            local_addr,
+            channel,
+            encoding,
+            data_mode,
+            peer_writers,
+            container_receivers,
+        } = registration;
+        let not_found = self.session_not_found(&parent_id);
+        if let Some(h) = self.sessions.get(&parent_id) {
             if h.state != SessionState::Connected {
                 return Err("父会话已断开，无法注册对端".to_string());
             }
@@ -1028,22 +1101,22 @@ impl SessionStore {
 
         // 对端级 CommHandle：文本路径按对端编码转码；同时是对端脚本引擎的扇出目标
         let comm_handle: Arc<dyn CommHandle> = Arc::new(
-            crate::channel::serial_comm::SerialCommHandle::new(
-                write_tx.clone(),
-                encoding.to_string(),
-            ),
+            crate::channel::serial_comm::SerialCommHandle::new(write_tx.clone(), encoding.clone()),
         );
 
         let app_clone = app.clone();
         let batcher = DataBatcher::new(move |batched| {
-            let _ = app_clone.emit("session-data", serde_json::json!({
-                "session_id": batched.session_id,
-                "data_b64": batched.data_b64,
-            }));
+            let _ = app_clone.emit(
+                "session-data",
+                serde_json::json!({
+                    "session_id": batched.session_id,
+                    "data_b64": batched.data_b64,
+                }),
+            );
         });
         let comm_for_fanout = comm_handle.clone();
-        let encoding_owned = encoding.to_string();
-        let data_mode_owned = data_mode.to_string();
+        let encoding_owned = encoding.clone();
+        let data_mode_owned = data_mode.clone();
         let on_data = Box::new(move |session_id: String, data: Vec<u8>| {
             comm_for_fanout.notify_receive(&data);
             // 容器级脚本引擎（TCP 目标路由/群发）也感知该对端数据
@@ -1065,7 +1138,7 @@ impl SessionStore {
         });
 
         let app_disconnect = app.clone();
-        let pid = parent_id.to_string();
+        let pid = parent_id.clone();
         let ch_id = channel_id.clone();
         let ch_id_for_evt = ch_id.clone();
         let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |_channel_id| {
@@ -1091,22 +1164,41 @@ impl SessionStore {
                     }
                 }
             }
-            let _ = app_disconnect.emit("netdbg-peer-left", serde_json::json!({
-                "session_id": pid,
-                "peer_id": ch_id_for_evt,
-                "tx_bytes": final_tx,
-                "rx_bytes": final_rx,
-            }));
+            let _ = app_disconnect.emit(
+                "netdbg-peer-left",
+                serde_json::json!({
+                    "session_id": pid,
+                    "peer_id": ch_id_for_evt,
+                    "tx_bytes": final_tx,
+                    "rx_bytes": final_rx,
+                }),
+            );
         });
 
         let io_handle = match channel {
             ChannelKind::Sync(sync_channel) => IoTaskHandle::Sync(spawn_sync_io_loop(
-                sync_channel, ch_id.clone(), on_data, on_disconnect, write_rx, cancel_rx,
-                tx_clone, rx_clone,
+                sync_channel,
+                on_data,
+                on_disconnect,
+                IoLoopContext {
+                    session_id: ch_id.clone(),
+                    write_rx,
+                    cancel_rx,
+                    tx_bytes: tx_clone,
+                    rx_bytes: rx_clone,
+                },
             )),
             ChannelKind::Async(async_channel) => IoTaskHandle::Async(spawn_async_io_loop(
-                async_channel, ch_id.clone(), on_data, on_disconnect, write_rx, cancel_rx,
-                tx_clone, rx_clone,
+                async_channel,
+                on_data,
+                on_disconnect,
+                IoLoopContext {
+                    session_id: ch_id.clone(),
+                    write_rx,
+                    cancel_rx,
+                    tx_bytes: tx_clone,
+                    rx_bytes: rx_clone,
+                },
             )),
         };
 
@@ -1128,14 +1220,12 @@ impl SessionStore {
 
         // 对端序号仅统计非标签页子连接（网络对端），SSH 通道不占号
         let (actual_index, actual_name) = {
-            let handle = self.sessions.get_mut(parent_id).ok_or(not_found.clone())?;
-            let idx = handle.sub_connections.iter()
-                .filter(|s| !s.tabbed)
-                .count() as u32;
+            let handle = self.sessions.get_mut(&parent_id).ok_or(not_found.clone())?;
+            let idx = handle.sub_connections.iter().filter(|s| !s.tabbed).count() as u32;
             let name = if peer_name.is_empty() {
                 format!("Peer {}", idx + 1)
             } else {
-                peer_name.to_string()
+                peer_name.clone()
             };
             (idx, name)
         };
@@ -1157,22 +1247,25 @@ impl SessionStore {
             script_thread: None,
             script_shutdown: None,
             tabbed: false,
-            peer_addr: Some(peer_addr.to_string()),
-            local_addr: Some(local_addr.to_string()),
+            peer_addr: Some(peer_addr.clone()),
+            local_addr: Some(local_addr.clone()),
         };
 
         {
-            let handle = self.sessions.get_mut(parent_id).ok_or(not_found)?;
+            let handle = self.sessions.get_mut(&parent_id).ok_or(not_found)?;
             handle.sub_connections.push(sub);
         }
 
-        let _ = app.emit("netdbg-peer-joined", serde_json::json!({
-            "session_id": parent_id,
-            "peer_id": channel_id,
-            "peer_name": actual_name,
-            "peer_addr": peer_addr,
-            "local_addr": local_addr,
-        }));
+        let _ = app.emit(
+            "netdbg-peer-joined",
+            serde_json::json!({
+                "session_id": parent_id,
+                "peer_id": channel_id,
+                "peer_name": actual_name,
+                "peer_addr": peer_addr,
+                "local_addr": local_addr,
+            }),
+        );
         Ok(channel_id)
     }
 
@@ -1254,7 +1347,9 @@ impl SessionStore {
         let handle = self.sessions.get_mut(parent_id).ok_or(not_found)?;
 
         // 找到并移除目标子连接
-        let idx = handle.sub_connections.iter()
+        let idx = handle
+            .sub_connections
+            .iter()
             .position(|s| s.id == channel_id)
             .ok_or_else(|| format!("子连接 {} 在会话 {} 中不存在", channel_id, parent_id))?;
 
@@ -1300,7 +1395,8 @@ impl SessionStore {
 
     /// 获取会话的 side_channel（用于 SSH 多连接复用）
     pub fn get_side_channel(&self, session_id: &str) -> Option<Arc<dyn SideChannel>> {
-        self.sessions.get(session_id)
+        self.sessions
+            .get(session_id)
             .and_then(|h| h.side_channel.clone())
     }
 
@@ -1320,11 +1416,17 @@ impl SessionStore {
     /// 则通过子连接的父会话查找。SSH 父会话持有 `russh::client::Handle`，
     /// 供 SFTP 文件服务和 journald 日志查看器复用。
     pub fn get_side_channel_for(&self, session_id: &str) -> Option<Arc<dyn SideChannel>> {
-        if let Some(sc) = self.sessions.get(session_id).and_then(|h| h.side_channel.clone()) {
+        if let Some(sc) = self
+            .sessions
+            .get(session_id)
+            .and_then(|h| h.side_channel.clone())
+        {
             return Some(sc);
         }
         let parent_id = self.find_parent_of_channel(session_id)?;
-        self.sessions.get(&parent_id).and_then(|h| h.side_channel.clone())
+        self.sessions
+            .get(&parent_id)
+            .and_then(|h| h.side_channel.clone())
     }
 
     /// 获取 write_tx（支持子连接路由）。
@@ -1375,7 +1477,9 @@ impl SessionStore {
     ) -> Result<(), String> {
         // 主会话路径
         if let Some(handle) = self.sessions.get_mut(session_id) {
-            let comm = handle.comm_handle.clone()
+            let comm = handle
+                .comm_handle
+                .clone()
                 .ok_or("通信句柄不可用".to_string())?;
 
             match &handle.script_tx {
@@ -1418,10 +1522,11 @@ impl SessionStore {
             .find_sub_connection_index(session_id)
             .ok_or(not_found)?;
         let parent_not_found = self.session_not_found(&parent_id);
-        let handle = self.sessions.get_mut(&parent_id)
-            .ok_or(parent_not_found)?;
+        let handle = self.sessions.get_mut(&parent_id).ok_or(parent_not_found)?;
         let sub = &mut handle.sub_connections[sub_idx];
-        let comm = sub.comm_handle.clone()
+        let comm = sub
+            .comm_handle
+            .clone()
             .ok_or("通信句柄不可用".to_string())?;
 
         match &sub.script_tx {
@@ -1462,8 +1567,7 @@ impl SessionStore {
                 .find_sub_connection_index(session_id)
                 .ok_or(not_found)?;
             let parent_not_found = self.session_not_found(&parent_id);
-            let handle = self.sessions.get_mut(&parent_id)
-                .ok_or(parent_not_found)?;
+            let handle = self.sessions.get_mut(&parent_id).ok_or(parent_not_found)?;
             let sub = &mut handle.sub_connections[sub_idx];
 
             // 先置协作式关闭标志，使 Lua sleep 分片及时中断，join 不长时阻塞全局锁
@@ -1485,8 +1589,7 @@ impl SessionStore {
 
         // 主会话路径
         let not_found = self.session_not_found(session_id);
-        let handle = self.sessions.get_mut(session_id)
-            .ok_or(not_found)?;
+        let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
 
         // 先置协作式关闭标志，使 Lua sleep 分片及时中断，join 不长时阻塞全局锁
         if let Some(flag) = handle.script_shutdown.take() {
@@ -1560,8 +1663,7 @@ impl SessionStore {
         app_handle: tauri::AppHandle,
     ) -> Result<serde_json::Value, String> {
         let not_found = self.session_not_found(session_id);
-        let handle = self.sessions.get_mut(session_id)
-            .ok_or(not_found)?;
+        let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
 
         if let Some(ref flag) = handle.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
@@ -1582,8 +1684,16 @@ impl SessionStore {
 
         let sid = session_id.to_string();
         let io_handle = spawn_sync_io_loop(
-            channel, sid, on_data, on_disconnect, write_rx, cancel_rx,
-            tx_bytes.clone(), rx_bytes.clone(),
+            channel,
+            on_data,
+            on_disconnect,
+            IoLoopContext {
+                session_id: sid,
+                write_rx,
+                cancel_rx,
+                tx_bytes: tx_bytes.clone(),
+                rx_bytes: rx_bytes.clone(),
+            },
         );
         let io_handle = IoTaskHandle::Sync(io_handle);
 
@@ -1603,14 +1713,15 @@ impl SessionStore {
         // 旧 comm_handle 持有的 write_tx 副本已随旧 I/O 线程停止而失效，
         // 若不重建，脚本引擎 send() 会向死 channel 写入，错误被静默吞掉。
         // 会话编码在重连时可能已变更（编辑会话后重连），从新 params 重新解析。
-        let new_comm: Arc<dyn CommHandle> = Arc::new(crate::channel::serial_comm::SerialCommHandle::new(
-            write_tx.clone(),
-            params
-                .get("encoding")
-                .and_then(|v| v.as_str())
-                .unwrap_or("utf-8")
-                .to_string(),
-        ));
+        let new_comm: Arc<dyn CommHandle> =
+            Arc::new(crate::channel::serial_comm::SerialCommHandle::new(
+                write_tx.clone(),
+                params
+                    .get("encoding")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("utf-8")
+                    .to_string(),
+            ));
         // 清理旧 comm_handle 上可能残留的回调（防止 stop→reconnect→start 链路
         // 下旧回调堆积在已失效的 CommHandle 中）
         if let Some(old_comm) = &handle.comm_handle {
@@ -1649,8 +1760,7 @@ impl SessionStore {
     /// 取消传输
     pub fn cancel_transfer(&mut self, session_id: &str) -> Result<(), String> {
         let not_found = self.session_not_found(session_id);
-        let handle = self.sessions.get_mut(session_id)
-            .ok_or(not_found)?;
+        let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
         if let Some(tx) = handle.cancel_transfer_tx.take() {
             let _ = tx.send(());
         }
@@ -1666,8 +1776,7 @@ impl SessionStore {
     /// 若已有传输进行中（flag 已存在），返回错误以防止并发传输互相覆盖取消标志。
     pub fn transfer_start(&mut self, session_id: &str) -> Result<Arc<AtomicBool>, String> {
         let not_found = self.session_not_found(session_id);
-        let handle = self.sessions.get_mut(session_id)
-            .ok_or(not_found)?;
+        let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
         if handle.transfer_cancel.is_some() {
             return Err("该会话已有传输进行中，请等待完成或取消后再试".to_string());
         }
@@ -1679,8 +1788,7 @@ impl SessionStore {
     /// 取消当前侧通道传输（置位取消标志，传输循环在下次块检查时退出）。
     pub fn cancel_transfer_op(&mut self, session_id: &str) -> Result<(), String> {
         let not_found = self.session_not_found(session_id);
-        let handle = self.sessions.get_mut(session_id)
-            .ok_or(not_found)?;
+        let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
         if let Some(flag) = &handle.transfer_cancel {
             flag.store(true, Ordering::SeqCst);
         }
@@ -1743,10 +1851,7 @@ impl SessionStore {
             // 连接已断开，SFTP 传输不可能完成。置位取消标志使传输循环退出。
             if let Some(flag) = handle.transfer_cancel.take() {
                 flag.store(true, Ordering::SeqCst);
-                log::info!(
-                    "已取消会话 {} 的进行中 SFTP 传输（连接已断开）",
-                    session_id
-                );
+                log::info!("已取消会话 {} 的进行中 SFTP 传输（连接已断开）", session_id);
             }
             // 在独立 task 中 join SFTP handles，不阻塞 on_disconnect 回调
             // mark_disconnected 在 I/O task 回调中调用，通常有 tokio runtime，
@@ -1848,7 +1953,14 @@ impl SessionStore {
         connected_at: Option<u64>,
         cancel_flag: Arc<AtomicBool>,
     ) {
-        Self::spawn_stats_collector(app_handle, tab_id, tx_bytes, rx_bytes, connected_at, cancel_flag);
+        Self::spawn_stats_collector(
+            app_handle,
+            tab_id,
+            tx_bytes,
+            rx_bytes,
+            connected_at,
+            cancel_flag,
+        );
     }
 
     /// 启动 I/O 统计采集器（用于子连接，与 [`Self::start_stats_collector`] 共享实现）
@@ -1865,17 +1977,23 @@ impl SessionStore {
             let mut last_rx: u64 = 0;
             loop {
                 std::thread::sleep(Duration::from_secs(1));
-                if cancel_flag.load(Ordering::SeqCst) { break; }
+                if cancel_flag.load(Ordering::SeqCst) {
+                    break;
+                }
                 let tx = tx_bytes.load(Ordering::Relaxed);
                 let rx = rx_bytes.load(Ordering::Relaxed);
                 if tx != last_tx || rx != last_rx {
-                    last_tx = tx; last_rx = rx;
-                    let _ = app_handle.emit("session-stats", SessionStats {
-                        tab_id: tab_id.clone(),
-                        tx_bytes: tx,
-                        rx_bytes: rx,
-                        connected_at,
-                    });
+                    last_tx = tx;
+                    last_rx = rx;
+                    let _ = app_handle.emit(
+                        "session-stats",
+                        SessionStats {
+                            tab_id: tab_id.clone(),
+                            tx_bytes: tx,
+                            rx_bytes: rx,
+                            connected_at,
+                        },
+                    );
                 }
             }
         });
@@ -1884,7 +2002,9 @@ impl SessionStore {
     /// 获取会话持久化文件路径
     pub fn sessions_file_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
         use tauri::Manager;
-        let mut path = app_handle.path().app_data_dir()
+        let mut path = app_handle
+            .path()
+            .app_data_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."));
         std::fs::create_dir_all(&path).ok();
         path.push("sessions.json");
@@ -1893,7 +2013,9 @@ impl SessionStore {
 
     /// 保存会话到磁盘
     pub fn save_to_disk(&self, path: &std::path::Path) -> Result<(), String> {
-        let _guard = SESSIONS_FILE_MUTEX.lock().map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let _guard = SESSIONS_FILE_MUTEX
+            .lock()
+            .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let current: Vec<SavedSession> = self.get_saved_sessions();
         let existing = Self::load_from_disk(path).unwrap_or_default();
 
@@ -1919,10 +2041,9 @@ impl SessionStore {
         }
         let merged: Vec<SavedSession> = dedup.into_values().collect();
 
-        let json = serde_json::to_string_pretty(&merged)
-            .map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(path, json)
-            .map_err(|e| format!("写入文件失败: {}", e))
+        let json =
+            serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化失败: {}", e))?;
+        std::fs::write(path, json).map_err(|e| format!("写入文件失败: {}", e))
     }
 
     /// 从磁盘加载会话
@@ -1930,8 +2051,7 @@ impl SessionStore {
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?;
         if content.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -1951,16 +2071,17 @@ impl SessionStore {
         app_handle: &tauri::AppHandle,
         session: SavedSession,
     ) -> Result<(), String> {
-        let _guard = SESSIONS_FILE_MUTEX.lock().map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let _guard = SESSIONS_FILE_MUTEX
+            .lock()
+            .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
         let mut existing = Self::load_from_disk(&path).unwrap_or_default();
         // 用新配置覆盖同 ID 的旧记录
         existing.retain(|s| s.id != session.id);
         existing.push(session);
-        let json = serde_json::to_string_pretty(&existing)
-            .map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("写入文件失败: {}", e))
+        let json =
+            serde_json::to_string_pretty(&existing).map_err(|e| format!("序列化失败: {}", e))?;
+        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))
     }
 
     /// 从磁盘删除指定会话配置
@@ -1969,14 +2090,18 @@ impl SessionStore {
         app_handle: &tauri::AppHandle,
         session_id: &str,
     ) -> Result<(), String> {
-        let _guard = SESSIONS_FILE_MUTEX.lock().map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let _guard = SESSIONS_FILE_MUTEX
+            .lock()
+            .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
         let existing = Self::load_from_disk(&path).unwrap_or_default();
-        let filtered: Vec<_> = existing.into_iter().filter(|s| s.id != session_id).collect();
-        let json = serde_json::to_string_pretty(&filtered)
-            .map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("写入文件失败: {}", e))
+        let filtered: Vec<_> = existing
+            .into_iter()
+            .filter(|s| s.id != session_id)
+            .collect();
+        let json =
+            serde_json::to_string_pretty(&filtered).map_err(|e| format!("序列化失败: {}", e))?;
+        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))
     }
 }
 

@@ -106,7 +106,8 @@ impl SharedByteCounter {
     }
 
     pub fn add(&self, n: u64) {
-        self.bytes.fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+        self.bytes
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn total(&self) -> u64 {

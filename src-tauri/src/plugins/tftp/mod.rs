@@ -8,10 +8,10 @@
 //! - 客户端：用户主动 GET/PUT 文件到远程 TFTP 服务器
 //! - 服务端：监听端口响应外部设备的 RRQ/WRQ 请求
 
-pub mod counting_socket;
-pub mod transfer;
-pub mod server;
 pub mod client;
+pub mod counting_socket;
+pub mod server;
+pub mod transfer;
 
 use std::any::Any;
 use std::net::SocketAddr;
@@ -145,7 +145,6 @@ pub enum TftpRollover {
     DontCare,
 }
 
-
 // ── 传输状态（保留供未来 transfer 注册表使用）────────────────
 
 /// 传输方向
@@ -253,10 +252,7 @@ pub struct TftpSideChannel {
 
 impl TftpSideChannel {
     /// 创建新的 TFTP 侧通道。
-    pub fn new(
-        socket: Arc<std::net::UdpSocket>,
-        config: TftpConfig,
-    ) -> Self {
+    pub fn new(socket: Arc<std::net::UdpSocket>, config: TftpConfig) -> Self {
         Self {
             socket,
             config,
@@ -283,7 +279,8 @@ impl SideChannel for TftpSideChannel {
         // 置位取消标志。Server 线程在下个循环迭代检测到后退出。
         // 无需阻塞等待——server 线程持有的 Arc<UdpSocket> clone 在线程退出前
         // 保持 socket 存活，不会发生 "socket 先释放、线程后访问" 的 use-after-free。
-        self.abort_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.abort_flag
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         log::info!("[TFTP] 已请求服务端停止");
     }
 }
@@ -312,8 +309,8 @@ impl ProtocolAdapter for TftpAdapter {
         params: &serde_json::Value,
     ) -> Result<ProtocolConnection, SessionError> {
         // 解析配置
-        let config: TftpConfig = serde_json::from_value(params.clone())
-            .map_err(|e| SessionError::ConnectionFailed {
+        let config: TftpConfig =
+            serde_json::from_value(params.clone()).map_err(|e| SessionError::ConnectionFailed {
                 reason: format!("TFTP 配置解析失败: {}", e),
             })?;
 
@@ -332,18 +329,16 @@ impl ProtocolAdapter for TftpAdapter {
                 reason: format!("TFTP 监听地址无效: {}", e),
             })?;
 
-        let socket = std::net::UdpSocket::bind(listen_addr)
-            .map_err(|e| SessionError::IoError(std::io::Error::new(
+        let socket = std::net::UdpSocket::bind(listen_addr).map_err(|e| {
+            SessionError::IoError(std::io::Error::new(
                 e.kind(),
                 format!("无法绑定 TFTP 端口 {}: {}", listen_addr, e),
-            )))?;
+            ))
+        })?;
 
         log::info!("TFTP socket 已绑定到 {}", listen_addr);
 
-        let side_channel = Arc::new(TftpSideChannel::new(
-            Arc::new(socket),
-            config,
-        ));
+        let side_channel = Arc::new(TftpSideChannel::new(Arc::new(socket), config));
 
         Ok(ProtocolConnection {
             channel: None,
@@ -448,24 +443,28 @@ pub fn try_start_server(
         .downcast_ref::<TftpSideChannel>()
         .ok_or_else(|| "侧通道不是 TFTP 类型".to_string())?;
 
-    if tftp_sc.server_running.load(std::sync::atomic::Ordering::Relaxed) {
+    if tftp_sc
+        .server_running
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
         return Err("TFTP 服务端已在运行".into());
     }
 
-    tftp_sc.abort_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-    server::spawn_tftp_server(
-        app.clone(),
-        tftp_sc.socket.clone(),
-        tftp_sc.config.clone(),
-        tftp_sc.dynamic_params.clone(),
-        tftp_sc.abort_flag.clone(),
-        tftp_sc.server_running.clone(),
-        tftp_sc.next_transfer_id.clone(),
-        tftp_sc.active_server_transfers.clone(),
-        session_id.to_string(),
-    );
+    tftp_sc
+        .abort_flag
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    server::spawn_tftp_server(server::TftpServerContext {
+        app: app.clone(),
+        socket: tftp_sc.socket.clone(),
+        config: tftp_sc.config.clone(),
+        params: tftp_sc.dynamic_params.clone(),
+        abort: tftp_sc.abort_flag.clone(),
+        server_running: tftp_sc.server_running.clone(),
+        next_transfer_id: tftp_sc.next_transfer_id.clone(),
+        active_server_transfers: tftp_sc.active_server_transfers.clone(),
+        session_id: session_id.to_string(),
+    });
 
     log::info!("[TFTP] 服务端已启动 (session={})", session_id);
     Ok(())
 }
-

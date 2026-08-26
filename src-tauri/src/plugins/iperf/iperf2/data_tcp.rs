@@ -70,8 +70,8 @@ pub fn run_tcp_client(
     // -d：先绑定反向监听端口（端口号写入测试头 mPort；对齐 2.2.1 客户端
     // Settings_GenerateListenerSettings——监听先于客户端启动）
     let reverse_listener: Option<(TcpListener, u16)> = if direction == TestDirection::DualTest {
-        let listener = TcpListener::bind("0.0.0.0:0")
-            .map_err(|e| format!("反向监听绑定失败: {}", e))?;
+        let listener =
+            TcpListener::bind("0.0.0.0:0").map_err(|e| format!("反向监听绑定失败: {}", e))?;
         let port = listener
             .local_addr()
             .map_err(|e| format!("读取反向监听端口失败: {}", e))?
@@ -89,7 +89,9 @@ pub fn run_tcp_client(
     // -d 反向接待线程：accept 服务端回连（每条连接先握手再接收，计入 rev 计数）
     let mut rev_handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
     if let Some((listener, _)) = reverse_listener.as_ref() {
-        let listener = listener.try_clone().map_err(|e| format!("克隆反向监听失败: {}", e))?;
+        let listener = listener
+            .try_clone()
+            .map_err(|e| format!("克隆反向监听失败: {}", e))?;
         let rev_counter = rev_counter.clone();
         let abort = abort.clone();
         let duration = params.duration_secs.max(1);
@@ -134,10 +136,10 @@ pub fn run_tcp_client(
             let _ = stream.shutdown(Shutdown::Write);
             // -r：同一连接反向接收（服务端读 EOF 后回发；deadline 防御挂死）
             if direction == TestDirection::TradeOff {
-                let deadline =
-                    Instant::now() + Duration::from_secs(p.duration_secs.max(1) as u64)
-                        + Duration::from_secs(REVERSE_SLOPSECS as u64)
-                        + REVERSE_DEADLINE_MARGIN;
+                let deadline = Instant::now()
+                    + Duration::from_secs(p.duration_secs.max(1) as u64)
+                    + Duration::from_secs(REVERSE_SLOPSECS as u64)
+                    + REVERSE_DEADLINE_MARGIN;
                 let _ = recv_tcp_stream(stream, &abort, &abort, &rev_counter, Some(deadline));
             }
         }));
@@ -431,8 +433,9 @@ pub fn recv_tcp_stream(
                 counter.add(n);
                 total += n;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
             {
                 // 客户端停发但连接存活：由会话级 force-end 置 test_abort 结束；
                 // 反向接收相由 deadline 界定（防御对端不 close 的挂死）

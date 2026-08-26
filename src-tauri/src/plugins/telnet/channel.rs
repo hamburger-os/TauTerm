@@ -75,16 +75,24 @@ impl TelnetChannel {
                 let _ = self.telnet.negotiate(&Action::Wont, TelnetOption::Echo);
             }
             (Action::Will, TelnetOption::SuppressGoAhead) => {
-                let _ = self.telnet.negotiate(&Action::Do, TelnetOption::SuppressGoAhead);
+                let _ = self
+                    .telnet
+                    .negotiate(&Action::Do, TelnetOption::SuppressGoAhead);
             }
             (Action::Do, TelnetOption::SuppressGoAhead) => {
-                let _ = self.telnet.negotiate(&Action::Will, TelnetOption::SuppressGoAhead);
+                let _ = self
+                    .telnet
+                    .negotiate(&Action::Will, TelnetOption::SuppressGoAhead);
             }
             (Action::Will, TelnetOption::TransmitBinary) => {
-                let _ = self.telnet.negotiate(&Action::Do, TelnetOption::TransmitBinary);
+                let _ = self
+                    .telnet
+                    .negotiate(&Action::Do, TelnetOption::TransmitBinary);
             }
             (Action::Do, TelnetOption::TransmitBinary) => {
-                let _ = self.telnet.negotiate(&Action::Will, TelnetOption::TransmitBinary);
+                let _ = self
+                    .telnet
+                    .negotiate(&Action::Will, TelnetOption::TransmitBinary);
             }
             // NAWS：服务器 DO NAWS 是对我们 WILL NAWS 的应答 → 确认；
             // 服务器 WILL NAWS（倒置用法）→ 拒绝
@@ -170,9 +178,7 @@ impl Read for TelnetChannel {
                     }
                     return Err(std::io::Error::other(format!("Telnet 协议错误: {e}")));
                 }
-                Err(e)
-                    if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock =>
-                {
+                Err(e) if e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock => {
                     break;
                 }
                 Err(e) => {
@@ -227,7 +233,7 @@ impl Channel for TelnetChannel {
     fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError> {
         self.probe
             .set_read_timeout(Some(dur))
-            .map_err(|e| ChannelError::Io(e))
+            .map_err(ChannelError::Io)
     }
 
     /// 发送 NAWS 窗口尺寸（RFC 1073）：

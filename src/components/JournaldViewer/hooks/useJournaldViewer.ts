@@ -286,6 +286,7 @@ export function useJournaldViewer(
         const response = await invoke<JournaldQueryResponse>(
           "journald_query_cmd",
           {
+            request: {
             sessionId,
             level: filter.level ?? null,
             keyword: filter.keyword || null,
@@ -295,7 +296,8 @@ export function useJournaldViewer(
             until: filter.until ?? null,
             cursor: append ? nextCursorRef.current : null,
             limit: 100,
-          },
+
+            },},
         );
         if (append) {
           setEntries((prev) => sortEntriesDesc([...prev, ...response.entries]));
@@ -364,6 +366,7 @@ export function useJournaldViewer(
     try {
       await setupExportListeners();
       await invoke<void>("start_journald_export", {
+            request: {
         sessionId,
         filePath,
         level: filter.level ?? null,
@@ -372,7 +375,8 @@ export function useJournaldViewer(
         kernelOnly: filter.kernelOnly ?? false,
         since: filter.since ?? null,
         until: filter.until ?? null,
-      });
+
+            },});
     } catch (e) {
       setError(String(e));
       setExportingState(false);

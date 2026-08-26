@@ -373,7 +373,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
             JSON.stringify(args, null, 2),
           );
         }
-        await invoke(commandName, args);
+        await invoke(commandName, { request: args });
       } catch (e) {
         console.error(`[TransferContext] ${commandName} failed:`, e);
         dispatch({ type: "SET_STATUS", status: "failed" });

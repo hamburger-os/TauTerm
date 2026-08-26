@@ -2,11 +2,13 @@
 //!
 //! 实现 `ProtocolAdapter` trait，提供 串口终端会话。
 
-use serde::{Deserialize, Serialize};
-use crate::channel::{ContentType, IoStrategy};
 use crate::channel::error::SessionError;
 use crate::channel::serial_channel::SerialChannel;
-use crate::kernel::plugin_adapter::{EndpointInfo, PluginManifest, ProtocolAdapter, ProtocolConnection, TransferProtocolType};
+use crate::channel::{ContentType, IoStrategy};
+use crate::kernel::plugin_adapter::{
+    EndpointInfo, PluginManifest, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
+};
+use serde::{Deserialize, Serialize};
 
 // ── 串口配置 ────────────────────────────────────────
 
@@ -33,14 +35,30 @@ pub struct SerialConfig {
     pub virtual_port_count: u32,
 }
 
-fn default_baud_rate() -> u32 { 115200 }
-fn default_data_bits() -> u8 { 8 }
-fn default_parity() -> String { "none".into() }
-fn default_stop_bits() -> String { "1".into() }
-fn default_flow_control() -> String { "none".into() }
-fn default_data_mode() -> String { "text".into() }
-fn default_virtual_port_enabled() -> bool { false }
-fn default_virtual_port_count() -> u32 { 0 }
+fn default_baud_rate() -> u32 {
+    115200
+}
+fn default_data_bits() -> u8 {
+    8
+}
+fn default_parity() -> String {
+    "none".into()
+}
+fn default_stop_bits() -> String {
+    "1".into()
+}
+fn default_flow_control() -> String {
+    "none".into()
+}
+fn default_data_mode() -> String {
+    "text".into()
+}
+fn default_virtual_port_enabled() -> bool {
+    false
+}
+fn default_virtual_port_count() -> u32 {
+    0
+}
 
 impl Default for SerialConfig {
     fn default() -> Self {
@@ -63,7 +81,9 @@ impl Default for SerialConfig {
 pub struct SerialAdapter;
 
 impl SerialAdapter {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     /// 创建串口插件清单
     pub fn manifest() -> PluginManifest {
@@ -94,7 +114,10 @@ impl SerialAdapter {
     }
 
     /// 打开串口端口（带重试）
-    fn open_port(endpoint: &str, config: &SerialConfig) -> Result<Box<dyn serialport::SerialPort>, SessionError> {
+    fn open_port(
+        endpoint: &str,
+        config: &SerialConfig,
+    ) -> Result<Box<dyn serialport::SerialPort>, SessionError> {
         let db = match config.data_bits {
             5 => serialport::DataBits::Five,
             6 => serialport::DataBits::Six,
@@ -154,7 +177,9 @@ impl ProtocolAdapter for SerialAdapter {
         let port = Self::open_port(endpoint, &config)?;
         let channel = SerialChannel::new(port);
         Ok(ProtocolConnection {
-            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Sync(Box::new(channel))),
+            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Sync(Box::new(
+                channel,
+            ))),
             comm_handle: None,
             side_channel: None,
             teardown_delay: self.teardown_delay(),
@@ -162,12 +187,16 @@ impl ProtocolAdapter for SerialAdapter {
     }
 
     fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError> {
-        let ports = serialport::available_ports()
-            .map_err(|e| SessionError::ConnectionFailed { reason: e.to_string() })?;
-        Ok(ports.into_iter().map(|p| EndpointInfo {
-            name: p.port_name.clone(),
-            description: p.port_name,
-        }).collect())
+        let ports = serialport::available_ports().map_err(|e| SessionError::ConnectionFailed {
+            reason: e.to_string(),
+        })?;
+        Ok(ports
+            .into_iter()
+            .map(|p| EndpointInfo {
+                name: p.port_name.clone(),
+                description: p.port_name,
+            })
+            .collect())
     }
 
     fn content_type(&self) -> ContentType {
@@ -189,8 +218,12 @@ impl ProtocolAdapter for SerialAdapter {
     /// Windows 上串口驱动释放端口需要短暂等待，避免立即重连时端口仍被占用。
     fn teardown_delay(&self) -> std::time::Duration {
         #[cfg(target_os = "windows")]
-        { std::time::Duration::from_millis(100) }
+        {
+            std::time::Duration::from_millis(100)
+        }
         #[cfg(not(target_os = "windows"))]
-        { std::time::Duration::ZERO }
+        {
+            std::time::Duration::ZERO
+        }
     }
 }

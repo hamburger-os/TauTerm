@@ -12,10 +12,10 @@
 //! - 旧 trait 使用闭包回调传递进度，新 trait 使用 channel 广播
 //! - 旧 trait 同步，新 trait async（统一 tokio 运行时调度）
 
-use std::any::Any;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use serde::Serialize;
+use std::any::Any;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// 传输方向
@@ -65,19 +65,29 @@ pub struct UnifiedProgress {
     pub is_batch_complete: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Debug, Clone, Copy)]
+pub struct ProgressPosition {
+    pub file_index: usize,
+    pub total_files: usize,
+    pub aggregate_bytes: u64,
+    pub aggregate_total: u64,
+}
+
 impl UnifiedProgress {
     /// 构造文件开始事件
     pub fn file_start(
         protocol: &str,
         file_name: &str,
         file_size: u64,
-        file_index: usize,
-        total_files: usize,
-        aggregate_bytes: u64,
-        aggregate_total: u64,
+        position: ProgressPosition,
         direction: TransferDirection,
     ) -> Self {
+        let ProgressPosition {
+            file_index,
+            total_files,
+            aggregate_bytes,
+            aggregate_total,
+        } = position;
         Self {
             session_id: String::new(),
             protocol: protocol.to_string(),
@@ -103,12 +113,15 @@ impl UnifiedProgress {
         file_name: &str,
         bytes_done: u64,
         bytes_total: u64,
-        file_index: usize,
-        total_files: usize,
-        aggregate_bytes: u64,
-        aggregate_total: u64,
+        position: ProgressPosition,
         direction: TransferDirection,
     ) -> Self {
+        let ProgressPosition {
+            file_index,
+            total_files,
+            aggregate_bytes,
+            aggregate_total,
+        } = position;
         Self {
             session_id: String::new(),
             protocol: protocol.to_string(),
@@ -133,14 +146,17 @@ impl UnifiedProgress {
         protocol: &str,
         file_name: &str,
         bytes_transferred: u64,
-        file_index: usize,
-        total_files: usize,
-        aggregate_bytes: u64,
-        aggregate_total: u64,
+        position: ProgressPosition,
         direction: TransferDirection,
         success: bool,
         error: Option<String>,
     ) -> Self {
+        let ProgressPosition {
+            file_index,
+            total_files,
+            aggregate_bytes,
+            aggregate_total,
+        } = position;
         Self {
             session_id: String::new(),
             protocol: protocol.to_string(),
@@ -231,7 +247,6 @@ pub trait FileTransfer: Send + Sync {
 
     /// 返回 `&dyn Any` 以供向下转型到具体实现类型
     fn as_any(&self) -> &dyn Any;
-
 
     /// 发送文件
     ///

@@ -30,5 +30,3 @@ pub mod types;
 pub mod xmodem;
 pub mod ymodem;
 pub mod zmodem;
-
-

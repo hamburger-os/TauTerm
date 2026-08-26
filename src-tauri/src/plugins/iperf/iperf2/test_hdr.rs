@@ -241,7 +241,11 @@ impl ClientHdrExt {
     #[allow(dead_code)] // 预留：服务端解析 TCP 首包
     pub fn deserialize(data: &[u8]) -> Result<Self, String> {
         if data.len() < Self::SIZE {
-            return Err(format!("client_hdrext 长度不足: {} < {}", data.len(), Self::SIZE));
+            return Err(format!(
+                "client_hdrext 长度不足: {} < {}",
+                data.len(),
+                Self::SIZE
+            ));
         }
         let rd = |off: usize| i32::from_be_bytes(data[off..off + 4].try_into().unwrap());
         Ok(Self {
@@ -316,7 +320,11 @@ impl ClientHdrAck {
 
     pub fn deserialize(data: &[u8]) -> Result<Self, String> {
         if data.len() < Self::SIZE {
-            return Err(format!("client_hdr_ack 长度不足: {} < {}", data.len(), Self::SIZE));
+            return Err(format!(
+                "client_hdr_ack 长度不足: {} < {}",
+                data.len(),
+                Self::SIZE
+            ));
         }
         let rd = |off: usize| i32::from_be_bytes(data[off..off + 4].try_into().unwrap());
         Ok(Self {
@@ -378,7 +386,11 @@ impl UdpDatagram {
 
     pub fn deserialize(data: &[u8]) -> Result<Self, String> {
         if data.len() < Self::SIZE {
-            return Err(format!("UDP_datagram 长度不足: {} < {}", data.len(), Self::SIZE));
+            return Err(format!(
+                "UDP_datagram 长度不足: {} < {}",
+                data.len(),
+                Self::SIZE
+            ));
         }
         let rd = |off: usize| u32::from_be_bytes(data[off..off + 4].try_into().unwrap());
         Ok(Self {
@@ -453,7 +465,11 @@ impl ServerHdrV1 {
 
     pub fn deserialize(data: &[u8]) -> Result<Self, String> {
         if data.len() < Self::SIZE {
-            return Err(format!("server_hdr 长度不足: {} < {}", data.len(), Self::SIZE));
+            return Err(format!(
+                "server_hdr 长度不足: {} < {}",
+                data.len(),
+                Self::SIZE
+            ));
         }
         let rd = |off: usize| i32::from_be_bytes(data[off..off + 4].try_into().unwrap());
         Ok(Self {
@@ -620,13 +636,19 @@ mod tests {
     fn hdr_len_fallback() {
         // 无 LEN_BIT:EXTEND → 24+40=64;EXTEND|VERSION1 → 64
         assert_eq!(client_test_hdr_len(HEADER_EXTEND), Some(64));
-        assert_eq!(client_test_hdr_len(HEADER_EXTEND | HEADER_VERSION1), Some(64));
+        assert_eq!(
+            client_test_hdr_len(HEADER_EXTEND | HEADER_VERSION1),
+            Some(64)
+        );
         // 非法/探测连接（无任何版本/扩展标志）
         assert_eq!(client_test_hdr_len(0), None);
         // UDP 头含 EXTEND+LEN_BIT → 按长度字段还原 80（TCP 服务端不会收到）
         assert_eq!(client_test_hdr_len(0x4801_00A0), Some(80));
         // 长度字段上限:mask 仅 8 位,最大可表达 255(MAX_HEADER_LEN 守卫为防御性)
-        assert_eq!(client_test_hdr_len(HEADER_EXTEND | HEADER_LEN_BIT | (0x1FE)), Some(255));
+        assert_eq!(
+            client_test_hdr_len(HEADER_EXTEND | HEADER_LEN_BIT | (0x1FE)),
+            Some(255)
+        );
         // LEN_BIT 置位但长度字段为 0 → 非法
         assert_eq!(client_test_hdr_len(HEADER_EXTEND | HEADER_LEN_BIT), None);
     }
@@ -683,7 +705,10 @@ mod tests {
         // 对齐 2.2.1 Settings.cpp:2689：非普通模式 VERSION1；DualTest 另加 RUN_NOW
         let normal = ClientHdrV1::new_client(false, 1, 5001, 10);
         assert_eq!(normal.flags & HEADER_VERSION1, 0);
-        assert_eq!(normal.server_mode(), super::super::types::ServerTestMode::Normal);
+        assert_eq!(
+            normal.server_mode(),
+            super::super::types::ServerTestMode::Normal
+        );
 
         let tradeoff = ClientHdrV1::new_client(false, 1, 5001, 10)
             .with_direction(super::super::types::TestDirection::TradeOff);

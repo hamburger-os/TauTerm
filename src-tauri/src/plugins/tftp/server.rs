@@ -22,35 +22,78 @@ use super::counting_socket::CountingSocket;
 use super::transfer;
 use super::{TftpConfig, TftpDynamicParams};
 
+/// TFTP 服务端线程运行上下文。
+pub struct TftpServerContext {
+    pub app: AppHandle,
+    pub socket: Arc<UdpSocket>,
+    pub config: TftpConfig,
+    pub params: Arc<Mutex<TftpDynamicParams>>,
+    pub abort: Arc<AtomicBool>,
+    pub server_running: Arc<AtomicBool>,
+    pub next_transfer_id: Arc<AtomicU64>,
+    pub active_server_transfers: Arc<AtomicU64>,
+    pub session_id: String,
+}
+
+#[derive(Clone)]
+struct ServerTransferContext {
+    app: AppHandle,
+    session_id: String,
+    root: PathBuf,
+    params: Arc<Mutex<TftpDynamicParams>>,
+    abort: Arc<AtomicBool>,
+    next_transfer_id: Arc<AtomicU64>,
+}
+
+struct ServerProgressMeta {
+    app: AppHandle,
+    session_id: String,
+    transfer_id: String,
+    filename: String,
+    direction: String,
+}
+
 /// 启动 TFTP 服务端 listen 循环。
 ///
 /// 在独立的 `std::thread` 中运行阻塞 UDP 循环。
 /// 通过 `abort` 标志实现优雅停止。
 /// `server_running` 在 listen loop 启动/停止时自动设置。
-pub fn spawn_tftp_server(
-    app: AppHandle,
-    socket: Arc<UdpSocket>,
-    config: TftpConfig,
-    params: Arc<Mutex<TftpDynamicParams>>,
-    abort: Arc<AtomicBool>,
-    server_running: Arc<AtomicBool>,
-    next_transfer_id: Arc<AtomicU64>,
-    active_server_transfers: Arc<AtomicU64>,
-    session_id: String,
-) {
+pub fn spawn_tftp_server(context: TftpServerContext) {
+    let TftpServerContext {
+        app,
+        socket,
+        config,
+        params,
+        abort,
+        server_running,
+        next_transfer_id,
+        active_server_transfers,
+        session_id,
+    } = context;
     let root = PathBuf::from(&config.file_root);
     let write_enabled = config.write_enabled;
     let overwrite = config.overwrite;
+    let transfer_context = ServerTransferContext {
+        app: app.clone(),
+        session_id: session_id.clone(),
+        root: root.clone(),
+        params: params.clone(),
+        abort: abort.clone(),
+        next_transfer_id: next_transfer_id.clone(),
+    };
 
     // 设置超时以便定期检查 abort flag
     if let Err(e) = socket.set_read_timeout(Some(Duration::from_secs(1))) {
         log::error!("[TFTP Server] 设置读超时失败: {}", e);
         server_running.store(false, std::sync::atomic::Ordering::Relaxed);
-        let _ = app.emit("tftp-server-status", serde_json::json!({
-            "session_id": session_id,
-            "running": false,
-            "error": format!("设置读超时失败: {}", e),
-        }));
+        let _ = app.emit(
+            "tftp-server-status",
+            serde_json::json!({
+                "session_id": session_id,
+                "running": false,
+                "error": format!("设置读超时失败: {}", e),
+            }),
+        );
         return;
     }
 
@@ -64,11 +107,14 @@ pub fn spawn_tftp_server(
         // tftp_server_start 不再无条件乐观 emit——Start/Stop 交错导致线程在
         // 启动前 abort 检查处退出时，乐观的 running:true 会永久失真
         //（keepAlive 会话 getStatus 只查一次，无事件可纠正）
-        let _ = app.emit("tftp-server-status", serde_json::json!({
-            "session_id": session_id,
-            "running": true,
-            "listen_addr": socket.local_addr().map(|a| a.to_string()).ok(),
-        }));
+        let _ = app.emit(
+            "tftp-server-status",
+            serde_json::json!({
+                "session_id": session_id,
+                "running": true,
+                "listen_addr": socket.local_addr().map(|a| a.to_string()).ok(),
+            }),
+        );
         log::info!("[TFTP Server] 开始监听 (session={})", session_id);
 
         // 复用缓冲区，避免每次循环分配 64 KB
@@ -82,8 +128,9 @@ pub fn spawn_tftp_server(
 
             let (len, from) = match socket.recv_from(&mut buf) {
                 Ok(result) => result,
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
                 {
                     continue;
                 }
@@ -102,11 +149,21 @@ pub fn spawn_tftp_server(
             };
 
             match packet {
-                Packet::Rrq { ref filename, ref mode, ref options } => {
+                Packet::Rrq {
+                    ref filename,
+                    ref mode,
+                    ref options,
+                } => {
                     log::info!("[TFTP Server] RRQ from {}: {} ({})", from, filename, mode);
                     // 并发限制检查
-                    if active_server_transfers.load(Ordering::Relaxed) >= MAX_CONCURRENT_SERVER_TRANSFERS {
-                        log::warn!("[TFTP Server] 并发传输数已达上限 ({})，拒绝 RRQ from {}", MAX_CONCURRENT_SERVER_TRANSFERS, from);
+                    if active_server_transfers.load(Ordering::Relaxed)
+                        >= MAX_CONCURRENT_SERVER_TRANSFERS
+                    {
+                        log::warn!(
+                            "[TFTP Server] 并发传输数已达上限 ({})，拒绝 RRQ from {}",
+                            MAX_CONCURRENT_SERVER_TRANSFERS,
+                            from
+                        );
                         let _ = TftpSocket::send_to(
                             socket.as_ref(),
                             &Packet::Error {
@@ -118,25 +175,21 @@ pub fn spawn_tftp_server(
                         continue;
                     }
                     // 在独立线程处理传输，不阻塞 listen loop
-                    let app = app.clone();
-                    let session_id = session_id.clone();
-                    let root = root.clone();
-                    let params = params.clone();
-                    let abort = abort.clone();
-                    let next_xfer_id = next_transfer_id.clone();
+                    let transfer_context = transfer_context.clone();
                     let active_xfer = active_server_transfers.clone();
                     let filename = filename.clone();
                     let options = options.to_vec();
                     active_server_transfers.fetch_add(1, Ordering::Relaxed);
                     std::thread::spawn(move || {
-                        handle_rrq(
-                            &app, &session_id, &root, &params,
-                            from, &filename, &options, &abort, &next_xfer_id,
-                        );
+                        handle_rrq(&transfer_context, from, &filename, &options);
                         active_xfer.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
-                Packet::Wrq { ref filename, ref mode, ref options } => {
+                Packet::Wrq {
+                    ref filename,
+                    ref mode,
+                    ref options,
+                } => {
                     log::info!("[TFTP Server] WRQ from {}: {} ({})", from, filename, mode);
                     if !write_enabled {
                         let _ = TftpSocket::send_to(
@@ -150,8 +203,14 @@ pub fn spawn_tftp_server(
                         continue;
                     }
                     // 并发限制检查
-                    if active_server_transfers.load(Ordering::Relaxed) >= MAX_CONCURRENT_SERVER_TRANSFERS {
-                        log::warn!("[TFTP Server] 并发传输数已达上限 ({})，拒绝 WRQ from {}", MAX_CONCURRENT_SERVER_TRANSFERS, from);
+                    if active_server_transfers.load(Ordering::Relaxed)
+                        >= MAX_CONCURRENT_SERVER_TRANSFERS
+                    {
+                        log::warn!(
+                            "[TFTP Server] 并发传输数已达上限 ({})，拒绝 WRQ from {}",
+                            MAX_CONCURRENT_SERVER_TRANSFERS,
+                            from
+                        );
                         let _ = TftpSocket::send_to(
                             socket.as_ref(),
                             &Packet::Error {
@@ -163,21 +222,13 @@ pub fn spawn_tftp_server(
                         continue;
                     }
                     // 在独立线程处理传输，不阻塞 listen loop
-                    let app = app.clone();
-                    let session_id = session_id.clone();
-                    let root = root.clone();
-                    let params = params.clone();
-                    let abort = abort.clone();
-                    let next_xfer_id = next_transfer_id.clone();
+                    let transfer_context = transfer_context.clone();
                     let active_xfer = active_server_transfers.clone();
                     let filename = filename.clone();
                     let options = options.to_vec();
                     active_server_transfers.fetch_add(1, Ordering::Relaxed);
                     std::thread::spawn(move || {
-                        handle_wrq(
-                            &app, &session_id, &root, overwrite, &params,
-                            from, &filename, &options, &abort, &next_xfer_id,
-                        );
+                        handle_wrq(&transfer_context, from, &filename, &options, overwrite);
                         active_xfer.fetch_sub(1, Ordering::Relaxed);
                     });
                 }
@@ -196,16 +247,19 @@ pub fn spawn_tftp_server(
 }
 
 fn handle_rrq(
-    app: &AppHandle,
-    session_id: &str,
-    root: &Path,
-    params_lock: &Arc<Mutex<TftpDynamicParams>>,
+    context: &ServerTransferContext,
     remote: SocketAddr,
     filename: &str,
     options: &[tftpd::TransferOption],
-    abort: &Arc<AtomicBool>,
-    next_transfer_id: &Arc<AtomicU64>,
 ) {
+    let ServerTransferContext {
+        app,
+        session_id,
+        root,
+        params: params_lock,
+        abort,
+        next_transfer_id,
+    } = context;
     let transfer_id = next_transfer_id.fetch_add(1, Ordering::Relaxed).to_string();
 
     let file_path = sanitize_filename(filename);
@@ -214,7 +268,14 @@ fn handle_rrq(
     // 创建一个临时 socket 用于发送错误响应
     let send_error = |code: ErrorCode, msg: &str| {
         if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
-            let _ = TftpSocket::send_to(&sock, &Packet::Error { code, msg: msg.to_string() }, &remote);
+            let _ = TftpSocket::send_to(
+                &sock,
+                &Packet::Error {
+                    code,
+                    msg: msg.to_string(),
+                },
+                &remote,
+            );
         }
     };
 
@@ -245,7 +306,11 @@ fn handle_rrq(
         }
     };
     if let Err(e) = transfer_socket.connect(remote) {
-        log::warn!("[TFTP Server] transfer socket connect({}) 失败: {} (将继续使用 send_to)", remote, e);
+        log::warn!(
+            "[TFTP Server] transfer socket connect({}) 失败: {} (将继续使用 send_to)",
+            remote,
+            e
+        );
     }
 
     // 设置读超时，使用协商后的 timeout_secs（而非硬编码 3s）
@@ -286,55 +351,78 @@ fn handle_rrq(
     }
 
     let mut counting = setup_counting_socket(
-        app, session_id, &transfer_id, filename, "upload", transfer_socket, remote, Some(file_size), params.blksize,
+        transfer_socket,
+        remote,
+        Some(file_size),
+        params.blksize,
+        ServerProgressMeta {
+            app: app.clone(),
+            session_id: session_id.clone(),
+            transfer_id: transfer_id.clone(),
+            filename: filename.to_string(),
+            direction: "upload".into(),
+        },
     );
 
     match transfer::send_file(&mut counting, full_path, remote, &params, abort) {
         Ok(result) => {
             let cksum = result.checksum.map(|c| format!("{:08X}", c));
-            let avg_bps = if result.duration_ms > 0 {
-                (result.bytes_transferred * 1000) / result.duration_ms
-            } else { 0 };
-            log::info!("[TFTP Server] RRQ 完成 [{}]: {} ({} bytes, CRC32={})",
-                transfer_id, filename, result.bytes_transferred,
-                cksum.as_deref().unwrap_or("N/A"));
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": filename,
-                "success": true,
-                "bytes": result.bytes_transferred,
-                "checksum": cksum,
-                "avg_bytes_per_second": avg_bps,
-                "is_server": true,
-            }));
+            let avg_bps = (result.bytes_transferred * 1000)
+                .checked_div(result.duration_ms)
+                .unwrap_or(0);
+            log::info!(
+                "[TFTP Server] RRQ 完成 [{}]: {} ({} bytes, CRC32={})",
+                transfer_id,
+                filename,
+                result.bytes_transferred,
+                cksum.as_deref().unwrap_or("N/A")
+            );
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": filename,
+                    "success": true,
+                    "bytes": result.bytes_transferred,
+                    "checksum": cksum,
+                    "avg_bytes_per_second": avg_bps,
+                    "is_server": true,
+                }),
+            );
         }
         Err(e) => {
             log::error!("[TFTP Server] RRQ 失败 [{}]: {}", transfer_id, e);
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": filename,
-                "success": false,
-                "error": e,
-                "is_server": true,
-            }));
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": filename,
+                    "success": false,
+                    "error": e,
+                    "is_server": true,
+                }),
+            );
         }
     }
 }
 
 fn handle_wrq(
-    app: &AppHandle,
-    session_id: &str,
-    root: &Path,
-    overwrite: bool,
-    params_lock: &Arc<Mutex<TftpDynamicParams>>,
+    context: &ServerTransferContext,
     remote: SocketAddr,
     filename: &str,
     options: &[tftpd::TransferOption],
-    abort: &Arc<AtomicBool>,
-    next_transfer_id: &Arc<AtomicU64>,
+    overwrite: bool,
 ) {
+    let ServerTransferContext {
+        app,
+        session_id,
+        root,
+        params: params_lock,
+        abort,
+        next_transfer_id,
+    } = context;
     let transfer_id = next_transfer_id.fetch_add(1, Ordering::Relaxed).to_string();
 
     let file_path = sanitize_filename(filename);
@@ -342,7 +430,14 @@ fn handle_wrq(
 
     let send_error = |code: ErrorCode, msg: &str| {
         if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
-            let _ = TftpSocket::send_to(&sock, &Packet::Error { code, msg: msg.to_string() }, &remote);
+            let _ = TftpSocket::send_to(
+                &sock,
+                &Packet::Error {
+                    code,
+                    msg: msg.to_string(),
+                },
+                &remote,
+            );
         }
     };
 
@@ -352,7 +447,10 @@ fn handle_wrq(
         return;
     }
     if full_path.exists() && !overwrite {
-        log::warn!("[TFTP Server] 文件已存在（不允许覆盖）: {}", full_path.display());
+        log::warn!(
+            "[TFTP Server] 文件已存在（不允许覆盖）: {}",
+            full_path.display()
+        );
         send_error(ErrorCode::FileExists, "file already exists");
         return;
     }
@@ -367,7 +465,11 @@ fn handle_wrq(
         }
     };
     if let Err(e) = transfer_socket.connect(remote) {
-        log::warn!("[TFTP Server] transfer socket connect({}) 失败: {} (将继续使用 send_to)", remote, e);
+        log::warn!(
+            "[TFTP Server] transfer socket connect({}) 失败: {} (将继续使用 send_to)",
+            remote,
+            e
+        );
     }
 
     // 设置读超时，使用协商后的 timeout_secs（对齐 handle_rrq）
@@ -385,33 +487,51 @@ fn handle_wrq(
     }
 
     // 从 WRQ options 中提取 TransferSize（客户端 PUT 时告知文件大小）
-    let tsize = options.iter()
+    let tsize = options
+        .iter()
         .find(|o| o.option == tftpd::OptionType::TransferSize)
         .map(|o| o.value);
 
     let mut counting = setup_counting_socket(
-        app, session_id, &transfer_id, filename, "download", transfer_socket, remote, tsize, params.blksize,
+        transfer_socket,
+        remote,
+        tsize,
+        params.blksize,
+        ServerProgressMeta {
+            app: app.clone(),
+            session_id: session_id.clone(),
+            transfer_id: transfer_id.clone(),
+            filename: filename.to_string(),
+            direction: "download".into(),
+        },
     );
 
     match transfer::receive_file(&mut counting, full_path, remote, &params, abort, 1) {
         Ok(result) => {
             let cksum = result.checksum.map(|c| format!("{:08X}", c));
-            let avg_bps = if result.duration_ms > 0 {
-                (result.bytes_transferred * 1000) / result.duration_ms
-            } else { 0 };
-            log::info!("[TFTP Server] WRQ 完成 [{}]: {} ({} bytes, CRC32={})",
-                transfer_id, filename, result.bytes_transferred,
-                cksum.as_deref().unwrap_or("N/A"));
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": filename,
-                "success": true,
-                "bytes": result.bytes_transferred,
-                "checksum": cksum,
-                "avg_bytes_per_second": avg_bps,
-                "is_server": true,
-            }));
+            let avg_bps = (result.bytes_transferred * 1000)
+                .checked_div(result.duration_ms)
+                .unwrap_or(0);
+            log::info!(
+                "[TFTP Server] WRQ 完成 [{}]: {} ({} bytes, CRC32={})",
+                transfer_id,
+                filename,
+                result.bytes_transferred,
+                cksum.as_deref().unwrap_or("N/A")
+            );
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": filename,
+                    "success": true,
+                    "bytes": result.bytes_transferred,
+                    "checksum": cksum,
+                    "avg_bytes_per_second": avg_bps,
+                    "is_server": true,
+                }),
+            );
         }
         Err(e) => {
             log::error!("[TFTP Server] WRQ 失败 [{}]: {}", transfer_id, e);
@@ -420,14 +540,17 @@ fn handle_wrq(
                 let file_path = root.join(sanitize_filename(filename));
                 let _ = std::fs::remove_file(&file_path);
             }
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": filename,
-                "success": false,
-                "error": e,
-                "is_server": true,
-            }));
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": filename,
+                    "success": false,
+                    "error": e,
+                    "is_server": true,
+                }),
+            );
         }
     }
 }
@@ -438,40 +561,41 @@ fn handle_wrq(
 /// `socket` 应当已经 `bind` 并 `connect` 到对端。
 /// `total_size` 传入文件大小以支持进度百分比（WRQ 传 `None`）。
 fn setup_counting_socket(
-    app: &AppHandle,
-    session_id: &str,
-    transfer_id: &str,
-    filename: &str,
-    direction: &str,
     socket: UdpSocket,
     remote: SocketAddr,
     total_size: Option<u64>,
     blksize: u16,
+    meta: ServerProgressMeta,
 ) -> CountingSocket {
-    let app_clone = app.clone();
-    let sid = session_id.to_string();
-    let xfer_id = transfer_id.to_string();
-    let fname = filename.to_string();
+    let ServerProgressMeta {
+        app: app_clone,
+        session_id: sid,
+        transfer_id: xfer_id,
+        filename: fname,
+        direction: dir,
+    } = meta;
     let remote_str = remote.to_string();
-    let dir = direction.to_string();
 
     let counting = CountingSocket::new(socket, remote, blksize as usize);
     if let Some(size) = total_size {
         counting.set_total_size(size);
     }
     counting.set_progress_callback(Box::new(move |p| {
-        let _ = app_clone.emit("tftp-transfer-progress", serde_json::json!({
-            "session_id": sid,
-            "transfer_id": xfer_id,
-            "filename": fname,
-            "bytes_transferred": p.bytes_transferred,
-            "total_bytes": p.total_bytes,
-            "blocks_transferred": p.blocks_transferred,
-            "bytes_per_second": p.bytes_per_second,
-            "is_server": true,
-            "remote_addr": remote_str,
-            "direction": dir,
-        }));
+        let _ = app_clone.emit(
+            "tftp-transfer-progress",
+            serde_json::json!({
+                "session_id": sid,
+                "transfer_id": xfer_id,
+                "filename": fname,
+                "bytes_transferred": p.bytes_transferred,
+                "total_bytes": p.total_bytes,
+                "blocks_transferred": p.blocks_transferred,
+                "bytes_per_second": p.bytes_per_second,
+                "is_server": true,
+                "remote_addr": remote_str,
+                "direction": dir,
+            }),
+        );
     }));
 
     counting

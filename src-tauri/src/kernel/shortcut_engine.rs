@@ -48,7 +48,10 @@ impl ShortcutEngine {
         action: ShortcutAction,
     ) -> Result<(), ShortcutError> {
         let normalized = Self::normalize_keys(keys);
-        let mut shortcuts = self.shortcuts.write().map_err(|_| ShortcutError::LockError)?;
+        let mut shortcuts = self
+            .shortcuts
+            .write()
+            .map_err(|_| ShortcutError::LockError)?;
         let entry = ShortcutEntry {
             _keys: keys.to_string(),
             description: description.to_string(),
@@ -73,11 +76,7 @@ impl ShortcutEngine {
     }
 
     /// 查找匹配的快捷键
-    pub fn find(
-        &self,
-        keys: &str,
-        active_plugin_id: Option<&str>,
-    ) -> Option<ShortcutAction> {
+    pub fn find(&self, keys: &str, active_plugin_id: Option<&str>) -> Option<ShortcutAction> {
         let normalized = Self::normalize_keys(keys);
         let shortcuts = self.shortcuts.read().ok()?;
         let entries = shortcuts.get(&normalized)?;
@@ -108,7 +107,9 @@ impl ShortcutEngine {
 }
 
 impl Default for ShortcutEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 快捷键错误

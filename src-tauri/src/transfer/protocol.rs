@@ -57,9 +57,7 @@ pub trait TransferProtocol: Send + Sync {
 ///
 /// 工厂函数，返回 `Box<dyn TransferProtocol>` 供命令层使用。
 /// 仅串口内联协议（XModem/YModem/ZModem）通过此工厂创建。
-pub fn create_protocol(
-    protocol_type: &TransferProtocolType,
-) -> Option<Box<dyn TransferProtocol>> {
+pub fn create_protocol(protocol_type: &TransferProtocolType) -> Option<Box<dyn TransferProtocol>> {
     match protocol_type.as_str() {
         "ymodem" => Some(Box::new(crate::transfer::ymodem::YModem::default())),
         "xmodem" => Some(Box::new(crate::transfer::xmodem::XModem)),
