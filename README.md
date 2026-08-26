@@ -17,9 +17,53 @@ TauTerm is for engineers who are tired of switching between an SSH client, an SF
 
 > **Release status:** Windows (NSIS/MSI), Linux (deb/rpm/AppImage) and macOS (Apple Silicon and Intel dmg/app) installers are published on GitHub Releases. Feature descriptions below track the current `master` branch; the latest packaged release may lag behind `master`.
 
-<!-- Showcase wanted: replace this comment with a real TauTerm hero screenshot/GIF before the next public launch. -->
+![TauTerm SSH terminal and SFTP file manager in one session](docs/assets/hero-en.png)
 
 ---
+
+## Real workflows
+
+[Watch the 64-second silent walkthrough](docs/assets/tauterm-demo.mp4).
+
+### SSH and SFTP, side by side
+
+![SSH terminal and SFTP workflow](docs/assets/ssh-sftp.gif)
+
+One authenticated SSH session keeps the terminal, remote files and journald viewer together.
+
+### RT-Thread over serial
+
+![RT-Thread serial terminal with file transfer and protocol tools](docs/assets/serial-rtthread-dual-en.png)
+
+![RT-Thread serial workflow](docs/assets/serial-dual.gif)
+
+Inspect live RT-Thread output while keeping file transfer, protocol parsing and quick tools close at hand.
+
+### TCP, UDP and throughput tests
+
+![TCP loopback receive log](docs/assets/network-tcp-loopback-en.png)
+
+![UDP peer packet table](docs/assets/network-udp-peers-en.png)
+
+![Live iPerf2 test record and bandwidth chart](docs/assets/iperf-live-en.png)
+
+Run client and server workflows in the same app, then inspect live traffic and iPerf results without a separate tool.
+
+### Telnet
+
+![Telnet mock server session](docs/assets/telnet-linux-en.png)
+
+Use the same workspace for legacy Telnet hosts.
+
+### Themes
+
+![Google Glow theme](docs/assets/theme-google-glow-en.png)
+
+![Obsidian theme](docs/assets/theme-obsidian-en.png)
+
+![Frosted theme](docs/assets/theme-frosted-en.png)
+
+Choose a workspace appearance that fits the environment.
 
 ## Why TauTerm?
 

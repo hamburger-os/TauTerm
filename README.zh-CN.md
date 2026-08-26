@@ -17,9 +17,53 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 
 > **发布状态：** Windows（NSIS/MSI）、Linux（deb/rpm/AppImage）与 macOS（Apple Silicon 和 Intel dmg/app）安装包均已发布在 GitHub Releases 上。下方功能描述以当前 `master` 为准，最新打包版本可能会落后于 `master`。
 
-<!-- 下一次公开发布前，请用真实 TauTerm 主界面截图/GIF 替换这条注释。 -->
+![TauTerm：同一会话中的 SSH 终端与 SFTP 文件管理器](docs/assets/hero-zh-CN.png)
 
 ---
+
+## 实际工作流
+
+[观看 64 秒静音演示视频](docs/assets/tauterm-demo.mp4)。
+
+### SSH 与 SFTP 并排协作
+
+![SSH 终端与 SFTP 工作流](docs/assets/ssh-sftp.gif)
+
+一条已认证的 SSH 连接即可同时承载终端、远程文件与 journald 查看器。
+
+### RT-Thread 串口工作流
+
+![包含文件传输和协议工具的 RT-Thread 串口终端](docs/assets/serial-rtthread-dual-en.png)
+
+![RT-Thread 串口工作流](docs/assets/serial-dual.gif)
+
+查看实时 RT-Thread 输出时，文件传输、协议解析与快捷工具始终近在手边。
+
+### TCP、UDP 与吞吐测试
+
+![TCP 回环收发日志](docs/assets/network-tcp-loopback-en.png)
+
+![UDP 对端报文表](docs/assets/network-udp-peers-en.png)
+
+![实时 iPerf2 测试记录与带宽图](docs/assets/iperf-live-en.png)
+
+在同一个应用中运行客户端和服务器工作流，并直接查看实时流量与 iPerf 结果。
+
+### Telnet
+
+![Telnet 模拟服务器会话](docs/assets/telnet-linux-en.png)
+
+使用同一工作区连接遗留 Telnet 主机。
+
+### 主题
+
+![炫彩流光主题](docs/assets/theme-google-glow-en.png)
+
+![黑曜石主题](docs/assets/theme-obsidian-en.png)
+
+![白霜主题](docs/assets/theme-frosted-en.png)
+
+按环境选择合适的工作区外观。
 
 ## 为什么是 TauTerm？
 
