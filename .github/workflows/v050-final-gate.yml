@@ -46,7 +46,7 @@ jobs:
           patch -p1 < /tmp/refactor.patch
 
       - name: Normalize patched Rust
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
 
       - name: Apply strict follow-up fixes
         run: python3 .github/apply-v050-followup.py
@@ -76,7 +76,7 @@ jobs:
           PY
 
       - name: Format final Rust
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
 
       - name: Reject Clippy suppressions
         shell: bash
@@ -120,7 +120,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
           git diff --check
 
       - name: Commit validated source
