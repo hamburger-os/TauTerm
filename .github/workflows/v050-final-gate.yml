@@ -1,4 +1,4 @@
-# Strict rerun after merging the complete strongly connected UI group.
+# Strict rerun after the final CRC assign-op cleanup.
 name: v0.5.0 Strict Final Gate
 
 on:
