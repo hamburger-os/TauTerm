@@ -1,4 +1,4 @@
-# Strict rerun after the final CRC assign-op cleanup.
+# Strict rerun after the final CRC assign-op cleanup and deterministic whitespace normalization.
 name: v0.5.0 Strict Final Gate
 
 on:
@@ -44,6 +44,30 @@ jobs:
 
       - name: Apply strict follow-up fixes
         run: python3 .github/apply-v050-followup.py
+
+      - name: Normalize trailing whitespace in patched text
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only", "--diff-filter=ACM"], text=True
+          ).splitlines()
+          text_suffixes = {".ts", ".tsx", ".js", ".jsx", ".css", ".rs", ".toml", ".json"}
+          for name in changed:
+              path = Path(name)
+              if not path.is_file() or path.suffix not in text_suffixes:
+                  continue
+              data = path.read_bytes()
+              cleaned = re.sub(rb"[ \t]+(?=\r?$)", b"", data, flags=re.MULTILINE)
+              if cleaned != data:
+                  path.write_bytes(cleaned)
+                  print(f"normalized trailing whitespace: {name}")
+          PY
 
       - name: Format final Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
