@@ -1,0 +1,27 @@
+name: Source Snapshot
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    if: "${{ github.event.head_commit.message == 'chore(ci): snapshot source for v0.5.0 fixes' }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-snapshot
+          path: |
+            src
+            src-tauri/src
+            src-tauri/Cargo.toml
+            src-tauri/Cargo.lock
+            package.json
+            package-lock.json
+            tsconfig.json
+            .github/workflows/release.yml
