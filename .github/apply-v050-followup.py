@@ -129,15 +129,19 @@ old = '''  build: {
 new = '''  build: {
     rollupOptions: {
       output: {
-        // Split the largest runtime families instead of hiding Vite's chunk-size warning.
+        // Split large dependency families and feature domains instead of hiding warnings.
         manualChunks(id) {
-          if (!id.includes("node_modules")) return undefined;
-          if (id.includes("@xterm/")) return "xterm";
-          if (id.includes("framer-motion") || id.includes("motion-dom") || id.includes("motion-utils")) return "motion";
-          if (id.includes("react") || id.includes("scheduler")) return "react";
-          if (id.includes("i18next")) return "i18n";
-          if (id.includes("@tauri-apps/")) return "tauri";
-          return "vendor";
+          const normalized = id.replace(/\\\\/g, "/");
+          const componentMatch = normalized.match(/\\/src\\/components\\/([^/]+)\\//);
+          if (componentMatch) return `ui-${componentMatch[1].toLowerCase()}`;
+          if (normalized.includes("/src/context/")) return "app-context";
+          if (!normalized.includes("node_modules")) return undefined;
+          if (normalized.includes("@xterm/")) return "xterm";
+          if (normalized.includes("framer-motion") || normalized.includes("motion-dom") || normalized.includes("motion-utils")) return "motion";
+          if (normalized.includes("react") || normalized.includes("scheduler")) return "react";
+          if (normalized.includes("i18next")) return "i18n";
+          if (normalized.includes("@tauri-apps/")) return "tauri";
+          return undefined;
         },
       },
     },
