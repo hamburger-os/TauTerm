@@ -596,6 +596,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // SSH handshake timeout(10s) 等多层超时保护。前端超时会导致后端 invoke
       // 继续运行，连接成功后 emit session-connected 造成前后端状态不一致。
       const sid = await invoke<string>("connect_session", {
+        request: {
         endpoint, params, name,
         pluginId: pluginId || "serial",
         transferEnabled: transferEnabled ?? true,
@@ -603,7 +604,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sendBarEnabled: sendBarEnabled ?? true,
         journaldEnabled: journaldEnabled ?? false,
         sessionId: sessionId || null,
-      });
+
+        },});
       return sid;
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `连接失败: ${e}` });
@@ -626,13 +628,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // 前端用 manifest.name ("SSH")，后端 fallback 用 pid ("ssh")，不传递会导致闪烁
       const effectiveName = name || `${pluginName} @ ${endpoint}`;
       const sessionId = await invoke<string>("save_session_config", {
+        request: {
         endpoint, params,
         name: effectiveName,
         pluginId: pid,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
         sendBarEnabled: sendBarEnabled ?? true,
-      });
+
+        },});
       dispatch({
         type: "ADD_TAB",
         tab: {
@@ -798,6 +802,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     try {
       await invoke("save_session_config", {
+        request: {
         endpoint,
         params,
         name: name || undefined,
@@ -806,7 +811,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         transferProtocol: transferProtocol || "ymodem",
         sendBarEnabled: sendBarEnabled ?? true,
         sessionId, // 复用已有 UUID
-      });
+
+        },});
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `保存配置失败: ${e}` });
       return;
@@ -832,6 +838,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (wasConnected) {
       try {
         const newSessionId = await invoke<string>("connect_session", {
+        request: {
           endpoint,
           params,
           name: name || tab?.name || undefined,
@@ -841,7 +848,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           sendBarEnabled: sendBarEnabled ?? true,
           journaldEnabled: (params?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
           sessionId, // 保持 UUID 连续性
-        });
+
+        },});
         // connect_session 后端会 emit session-connected 事件，前端监听器会更新状态为 connected
         // 但我们也需要同步更新（事件可能异步到达）
         dispatch({ type: "SET_TAB_STATE", id: newSessionId, state: "connected" });

@@ -18,6 +18,17 @@ use super::TftpDynamicParams;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Debug)]
+pub struct TftpClientTransferRequest {
+    pub session_id: String,
+    pub transfer_id: String,
+    pub remote_ip: String,
+    pub remote_port: u16,
+    pub remote_filename: String,
+    pub local_path: PathBuf,
+    pub params: TftpDynamicParams,
+}
+
 /// 辅助：为 CountingSocket 设置客户端进度回调
 fn setup_client_progress(
     counting: &CountingSocket,
@@ -36,18 +47,21 @@ fn setup_client_progress(
     let dir = direction.to_string();
 
     counting.set_progress_callback(Box::new(move |p| {
-        let _ = app.emit("tftp-transfer-progress", serde_json::json!({
-            "session_id": sid,
-            "transfer_id": xid,
-            "filename": fname,
-            "bytes_transferred": p.bytes_transferred,
-            "total_bytes": p.total_bytes,
-            "blocks_transferred": p.blocks_transferred,
-            "bytes_per_second": p.bytes_per_second,
-            "is_server": false,
-            "direction": dir,
-            "remote_addr": raddr,
-        }));
+        let _ = app.emit(
+            "tftp-transfer-progress",
+            serde_json::json!({
+                "session_id": sid,
+                "transfer_id": xid,
+                "filename": fname,
+                "bytes_transferred": p.bytes_transferred,
+                "total_bytes": p.total_bytes,
+                "blocks_transferred": p.blocks_transferred,
+                "bytes_per_second": p.bytes_per_second,
+                "is_server": false,
+                "direction": dir,
+                "remote_addr": raddr,
+            }),
+        );
     }));
 }
 
@@ -59,19 +73,29 @@ fn setup_client_progress(
 /// 3. 写入首块 → 发送 ACK[1] → 通过 `transfer::receive_file` 完成剩余块
 pub async fn tftp_client_get(
     app: AppHandle,
-    session_id: String,
-    transfer_id: String,
-    remote_ip: String,
-    remote_port: u16,
-    remote_filename: String,
-    local_path: PathBuf,
-    params: TftpDynamicParams,
+    request: TftpClientTransferRequest,
 ) -> Result<(), String> {
-    let remote: SocketAddr = format!("{}:{}", remote_ip, remote_port).parse()
+    let TftpClientTransferRequest {
+        session_id,
+        transfer_id,
+        remote_ip,
+        remote_port,
+        remote_filename,
+        local_path,
+        params,
+    } = request;
+    let remote: SocketAddr = format!("{}:{}", remote_ip, remote_port)
+        .parse()
         .map_err(|e| format!("无效地址: {}", e))?;
 
-    log::info!("[TFTP Client GET] 开始: transfer_id={}, session={}, remote={}, file={}, dest={}",
-        transfer_id, session_id, remote, remote_filename, local_path.display());
+    log::info!(
+        "[TFTP Client GET] 开始: transfer_id={}, session={}, remote={}, file={}, dest={}",
+        transfer_id,
+        session_id,
+        remote,
+        remote_filename,
+        local_path.display()
+    );
 
     let fname = remote_filename.clone();
     let sid = session_id.clone();
@@ -85,18 +109,27 @@ pub async fn tftp_client_get(
         let mut params = params;
 
         // ── 阶段 1：绑定 socket 并发送 RRQ ──
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("绑定失败: {}", e))?;
-        socket.set_read_timeout(Some(REQUEST_TIMEOUT))
+        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("绑定失败: {}", e))?;
+        socket
+            .set_read_timeout(Some(REQUEST_TIMEOUT))
             .map_err(|e| format!("设置超时失败: {}", e))?;
 
         let rrq = Packet::Rrq {
             filename: fname_inner.clone(),
             mode: "octet".into(),
             options: vec![
-                TransferOption { option: tftpd::OptionType::BlockSize, value: params.blksize as u64 },
-                TransferOption { option: tftpd::OptionType::Timeout, value: params.timeout_secs as u64 },
-                TransferOption { option: tftpd::OptionType::WindowSize, value: params.windowsize as u64 },
+                TransferOption {
+                    option: tftpd::OptionType::BlockSize,
+                    value: params.blksize as u64,
+                },
+                TransferOption {
+                    option: tftpd::OptionType::Timeout,
+                    value: params.timeout_secs as u64,
+                },
+                TransferOption {
+                    option: tftpd::OptionType::WindowSize,
+                    value: params.windowsize as u64,
+                },
             ],
         };
         tftpd::Socket::send_to(&socket, &rrq, &remote)
@@ -105,21 +138,35 @@ pub async fn tftp_client_get(
         // ── 阶段 2：接收初始响应（OACK 或 DATA[1]）──
         // 使用 recv_from_with_size 而非 recv_from，因为 recv_from 默认缓冲区仅 512 字节，
         // blksize > 512 时服务器直接发送 DATA[1] 会导致 Windows WSAEMSGSIZE (10040)。
-        let (transfer_addr, file_size, first_data, negotiated_blksize): (SocketAddr, u64, Vec<u8>, u16) = match tftpd::Socket::recv_from_with_size(&socket, params.blksize as usize) {
+        let (transfer_addr, file_size, first_data, negotiated_blksize): (
+            SocketAddr,
+            u64,
+            Vec<u8>,
+            u16,
+        ) = match tftpd::Socket::recv_from_with_size(&socket, params.blksize as usize) {
             Ok((Packet::Oack(options), from)) => {
-                let blksize = options.iter()
+                let blksize = options
+                    .iter()
                     .find(|o| o.option == tftpd::OptionType::BlockSize)
                     .map(|o| o.value as u16)
                     .unwrap_or(params.blksize);
-                let tsize = options.iter()
+                let tsize = options
+                    .iter()
                     .find(|o| o.option == tftpd::OptionType::TransferSize)
                     .map(|o| o.value)
                     .unwrap_or(0);
                 // RFC 7440: 解析协商后的 windowsize/window_wait
                 super::apply_oack_window_options(&options, &mut params);
-                log::info!("[TFTP Client GET] OACK tsize={}, blksize={}, windowsize={}, window_wait={}",
-                    tsize, blksize, params.windowsize, params.window_wait);
-                socket.connect(from).map_err(|e| format!("connect 失败: {}", e))?;
+                log::info!(
+                    "[TFTP Client GET] OACK tsize={}, blksize={}, windowsize={}, window_wait={}",
+                    tsize,
+                    blksize,
+                    params.windowsize,
+                    params.window_wait
+                );
+                socket
+                    .connect(from)
+                    .map_err(|e| format!("connect 失败: {}", e))?;
                 // 发送 ACK[0] 确认 OACK
                 tftpd::Socket::send(&socket, &Packet::Ack(0))
                     .map_err(|e| format!("ACK(0) 发送失败: {}", e))?;
@@ -135,7 +182,9 @@ pub async fn tftp_client_get(
                 }
             }
             Ok((Packet::Data { block_num: 1, data }, from)) => {
-                socket.connect(from).map_err(|e| format!("connect 失败: {}", e))?;
+                socket
+                    .connect(from)
+                    .map_err(|e| format!("connect 失败: {}", e))?;
                 (from, 0, data, params.blksize)
             }
             Ok((Packet::Error { code, msg }, _)) => {
@@ -150,9 +199,10 @@ pub async fn tftp_client_get(
         let first_block_len = first_data.len() as u64;
         {
             use std::io::Write;
-            let mut file = std::fs::File::create(&local_path)
-                .map_err(|e| format!("创建文件失败: {}", e))?;
-            file.write_all(&first_data).map_err(|e| format!("写入首块失败: {}", e))?;
+            let mut file =
+                std::fs::File::create(&local_path).map_err(|e| format!("创建文件失败: {}", e))?;
+            file.write_all(&first_data)
+                .map_err(|e| format!("写入首块失败: {}", e))?;
         }
 
         // CRC32: 计算首块哈希
@@ -167,16 +217,29 @@ pub async fn tftp_client_get(
         counting.record_data_bytes(first_block_len);
 
         setup_client_progress(
-            &counting, &app_inner, &sid, &xid, &fname_inner,
-            &transfer_addr.to_string(), "download",
+            &counting,
+            &app_inner,
+            &sid,
+            &xid,
+            &fname_inner,
+            &transfer_addr.to_string(),
+            "download",
         );
 
         // 发送 ACK[1] 确认首块
-        counting.send_to(&Packet::Ack(1), &transfer_addr)
+        counting
+            .send_to(&Packet::Ack(1), &transfer_addr)
             .map_err(|e| format!("ACK(1) 发送失败: {}", e))?;
 
         // ── 阶段 4：通过 transfer 引擎接收剩余块（start_block=2）──
-        match transfer::receive_file(&mut counting, local_path.clone(), transfer_addr, &params, &abort, 2) {
+        match transfer::receive_file(
+            &mut counting,
+            local_path.clone(),
+            transfer_addr,
+            &params,
+            &abort,
+            2,
+        ) {
             Ok(result) => {
                 // 合并 CRC32：首块 + receive_file 处理的所有后续块
                 let total_bytes = first_block_len + result.bytes_transferred;
@@ -191,7 +254,7 @@ pub async fn tftp_client_get(
                 };
                 let cksum_str = checksum.map(|c| format!("{:08X}", c));
                 let duration_ms = xfer_started.elapsed().as_millis() as u64;
-                let avg_bps = if duration_ms > 0 { (total_bytes * 1000) / duration_ms } else { 0 };
+                let avg_bps = (total_bytes * 1000).checked_div(duration_ms).unwrap_or(0);
                 Ok((total_bytes, cksum_str, avg_bps, duration_ms))
             }
             Err(e) => Err(e),
@@ -200,40 +263,55 @@ pub async fn tftp_client_get(
 
     match handle.await {
         Ok(Ok((bytes, checksum, avg_bps, _duration_ms))) => {
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": fname,
-                "success": true,
-                "bytes": bytes,
-                "checksum": checksum,
-                "avg_bytes_per_second": avg_bps,
-                "is_server": false,
-            }));
-            log::info!("[TFTP] GET 完成 [{}]: {} ({} bytes, CRC32={})", transfer_id, fname, bytes, checksum.as_deref().unwrap_or("N/A"));
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": fname,
+                    "success": true,
+                    "bytes": bytes,
+                    "checksum": checksum,
+                    "avg_bytes_per_second": avg_bps,
+                    "is_server": false,
+                }),
+            );
+            log::info!(
+                "[TFTP] GET 完成 [{}]: {} ({} bytes, CRC32={})",
+                transfer_id,
+                fname,
+                bytes,
+                checksum.as_deref().unwrap_or("N/A")
+            );
             Ok(())
         }
         Ok(Err(e)) => {
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": fname,
-                "success": false,
-                "error": e,
-                "is_server": false,
-            }));
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": fname,
+                    "success": false,
+                    "error": e,
+                    "is_server": false,
+                }),
+            );
             Err(e)
         }
         Err(e) => {
             let msg = format!("TFTP GET panic: {}", e);
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": fname,
-                "success": false,
-                "error": msg,
-                "is_server": false,
-            }));
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": fname,
+                    "success": false,
+                    "error": msg,
+                    "is_server": false,
+                }),
+            );
             Err(msg)
         }
     }
@@ -246,23 +324,32 @@ pub async fn tftp_client_get(
 /// 2. 通过 `transfer::send_file` 完成数据传输
 pub async fn tftp_client_put(
     app: AppHandle,
-    session_id: String,
-    transfer_id: String,
-    remote_ip: String,
-    remote_port: u16,
-    remote_filename: String,
-    local_path: PathBuf,
-    params: TftpDynamicParams,
+    request: TftpClientTransferRequest,
 ) -> Result<(), String> {
-    let remote: SocketAddr = format!("{}:{}", remote_ip, remote_port).parse()
+    let TftpClientTransferRequest {
+        session_id,
+        transfer_id,
+        remote_ip,
+        remote_port,
+        remote_filename,
+        local_path,
+        params,
+    } = request;
+    let remote: SocketAddr = format!("{}:{}", remote_ip, remote_port)
+        .parse()
         .map_err(|e| format!("无效地址: {}", e))?;
 
-    log::info!("[TFTP Client PUT] 开始: transfer_id={}, session={}, remote={}, file={}, src={}",
-        transfer_id, session_id, remote, remote_filename, local_path.display());
+    log::info!(
+        "[TFTP Client PUT] 开始: transfer_id={}, session={}, remote={}, file={}, src={}",
+        transfer_id,
+        session_id,
+        remote,
+        remote_filename,
+        local_path.display()
+    );
 
     let fname = remote_filename.clone();
-    let file_size = std::fs::metadata(&local_path)
-        .map(|m| m.len()).unwrap_or(0);
+    let file_size = std::fs::metadata(&local_path).map(|m| m.len()).unwrap_or(0);
 
     let sid = session_id.clone();
     let xid = transfer_id.clone();
@@ -271,9 +358,9 @@ pub async fn tftp_client_put(
 
     let handle = tokio::task::spawn_blocking(move || {
         let mut params = params;
-        let socket = UdpSocket::bind("0.0.0.0:0")
-            .map_err(|e| format!("绑定失败: {}", e))?;
-        socket.set_read_timeout(Some(REQUEST_TIMEOUT))
+        let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("绑定失败: {}", e))?;
+        socket
+            .set_read_timeout(Some(REQUEST_TIMEOUT))
             .map_err(|e| format!("设置超时失败: {}", e))?;
 
         // 发送 WRQ
@@ -281,10 +368,22 @@ pub async fn tftp_client_put(
             filename: remote_filename,
             mode: "octet".into(),
             options: vec![
-                TransferOption { option: tftpd::OptionType::BlockSize, value: params.blksize as u64 },
-                TransferOption { option: tftpd::OptionType::TransferSize, value: file_size },
-                TransferOption { option: tftpd::OptionType::Timeout, value: params.timeout_secs as u64 },
-                TransferOption { option: tftpd::OptionType::WindowSize, value: params.windowsize as u64 },
+                TransferOption {
+                    option: tftpd::OptionType::BlockSize,
+                    value: params.blksize as u64,
+                },
+                TransferOption {
+                    option: tftpd::OptionType::TransferSize,
+                    value: file_size,
+                },
+                TransferOption {
+                    option: tftpd::OptionType::Timeout,
+                    value: params.timeout_secs as u64,
+                },
+                TransferOption {
+                    option: tftpd::OptionType::WindowSize,
+                    value: params.windowsize as u64,
+                },
             ],
         };
         tftpd::Socket::send_to(&socket, &wrq, &remote)
@@ -295,17 +394,26 @@ pub async fn tftp_client_put(
         // send_file 使用的块大小与服务端一致
         let (transfer_addr, negotiated_blksize) = match tftpd::Socket::recv_from(&socket) {
             Ok((Packet::Ack(0), from)) => {
-                socket.connect(from).map_err(|e| format!("connect 失败: {}", e))?;
+                socket
+                    .connect(from)
+                    .map_err(|e| format!("connect 失败: {}", e))?;
                 (from, params.blksize)
             }
             Ok((Packet::Oack(options), from)) => {
-                let blksize = options.iter()
+                let blksize = options
+                    .iter()
                     .find(|o| o.option == tftpd::OptionType::BlockSize)
                     .map(|o| o.value as u16)
                     .unwrap_or(params.blksize);
                 super::apply_oack_window_options(&options, &mut params);
-                log::info!("[TFTP Client PUT] OACK windowsize={}, window_wait={}", params.windowsize, params.window_wait);
-                socket.connect(from).map_err(|e| format!("connect 失败: {}", e))?;
+                log::info!(
+                    "[TFTP Client PUT] OACK windowsize={}, window_wait={}",
+                    params.windowsize,
+                    params.window_wait
+                );
+                socket
+                    .connect(from)
+                    .map_err(|e| format!("connect 失败: {}", e))?;
                 (from, blksize)
             }
             Ok((Packet::Error { code, msg }, _)) => {
@@ -323,8 +431,13 @@ pub async fn tftp_client_put(
         counting.set_total_size(file_size);
 
         setup_client_progress(
-            &counting, &app_inner, &sid, &xid, &fname_inner,
-            &transfer_addr.to_string(), "upload",
+            &counting,
+            &app_inner,
+            &sid,
+            &xid,
+            &fname_inner,
+            &transfer_addr.to_string(),
+            "upload",
         );
 
         transfer::send_file(&mut counting, local_path, transfer_addr, &params, &abort)
@@ -333,45 +446,58 @@ pub async fn tftp_client_put(
     match handle.await {
         Ok(Ok(result)) => {
             let cksum = result.checksum.map(|c| format!("{:08X}", c));
-            let avg_bps = if result.duration_ms > 0 {
-                (result.bytes_transferred * 1000) / result.duration_ms
-            } else { 0 };
-            log::info!("[TFTP] PUT 完成 [{}]: {} ({} bytes, CRC32={})",
-                transfer_id, fname, result.bytes_transferred,
-                cksum.as_deref().unwrap_or("N/A"));
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": fname,
-                "success": true,
-                "bytes": result.bytes_transferred,
-                "checksum": cksum,
-                "avg_bytes_per_second": avg_bps,
-                "is_server": false,
-            }));
+            let avg_bps = (result.bytes_transferred * 1000)
+                .checked_div(result.duration_ms)
+                .unwrap_or(0);
+            log::info!(
+                "[TFTP] PUT 完成 [{}]: {} ({} bytes, CRC32={})",
+                transfer_id,
+                fname,
+                result.bytes_transferred,
+                cksum.as_deref().unwrap_or("N/A")
+            );
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": fname,
+                    "success": true,
+                    "bytes": result.bytes_transferred,
+                    "checksum": cksum,
+                    "avg_bytes_per_second": avg_bps,
+                    "is_server": false,
+                }),
+            );
             Ok(())
         }
         Ok(Err(e)) => {
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": fname,
-                "success": false,
-                "error": e,
-                "is_server": false,
-            }));
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": fname,
+                    "success": false,
+                    "error": e,
+                    "is_server": false,
+                }),
+            );
             Err(e)
         }
         Err(e) => {
             let msg = format!("TFTP PUT panic: {}", e);
-            let _ = app.emit("tftp-transfer-done", serde_json::json!({
-                "session_id": session_id,
-                "transfer_id": transfer_id,
-                "filename": fname,
-                "success": false,
-                "error": msg,
-                "is_server": false,
-            }));
+            let _ = app.emit(
+                "tftp-transfer-done",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "transfer_id": transfer_id,
+                    "filename": fname,
+                    "success": false,
+                    "error": msg,
+                    "is_server": false,
+                }),
+            );
             Err(msg)
         }
     }

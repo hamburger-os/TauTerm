@@ -106,19 +106,35 @@ fn to_test_params(params: &IperfDynamicParams) -> Iperf2TestParams {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct LossStats {
+    jitter_ms: Option<f64>,
+    lost_packets: Option<u64>,
+    total_packets: Option<u64>,
+    lost_percent: Option<f64>,
+}
+
+struct ReverseSenderSignals<'a> {
+    abort: &'a Arc<AtomicBool>,
+    test_running: &'a Arc<AtomicBool>,
+    last_summary: &'a Arc<Mutex<Option<IperfSummary>>>,
+}
+
 /// 构造 iperf2 汇总（fwd/rev 共用；UDP 抖动/丢包由调用方传入）
-#[allow(clippy::too_many_arguments)] // 汇总字段一一对应 IperfSummary，显式传递
 fn build_summary(
     role: IperfRole,
     protocol: IperfProtocol,
     duration_secs: f64,
     total_bytes: u64,
     intervals: Vec<Iperf2Interval>,
-    jitter_ms: Option<f64>,
-    lost_packets: Option<u64>,
-    total_packets: Option<u64>,
-    lost_percent: Option<f64>,
+    loss: LossStats,
 ) -> IperfSummary {
+    let LossStats {
+        jitter_ms,
+        lost_packets,
+        total_packets,
+        lost_percent,
+    } = loss;
     IperfSummary {
         version: IperfVersion::Iperf2,
         role,
@@ -163,24 +179,26 @@ pub(super) fn emit_interval<R: tauri::Runtime>(
     protocol: IperfProtocol,
     r: &Iperf2Interval,
 ) {
-    let _ = app.emit("iperf-interval-report", serde_json::json!({
-        "session_id": session_id,
-        "role": role,
-        "direction": direction,
-        "protocol": protocol,
-        "start_secs": r.start_secs,
-        "end_secs": r.end_secs,
-        "transferred_bytes": r.transferred_bytes,
-        "bandwidth_bps": r.bandwidth_bps,
-        "jitter_ms": r.jitter_ms,
-        "lost_packets": r.lost_packets,
-        "total_packets": r.total_packets,
-        "lost_percent": r.lost_percent,
-    }));
+    let _ = app.emit(
+        "iperf-interval-report",
+        serde_json::json!({
+            "session_id": session_id,
+            "role": role,
+            "direction": direction,
+            "protocol": protocol,
+            "start_secs": r.start_secs,
+            "end_secs": r.end_secs,
+            "transferred_bytes": r.transferred_bytes,
+            "bandwidth_bps": r.bandwidth_bps,
+            "jitter_ms": r.jitter_ms,
+            "lost_packets": r.lost_packets,
+            "total_packets": r.total_packets,
+            "lost_percent": r.lost_percent,
+        }),
+    );
 }
 
 /// 区间实时上报（带 seq 配对键：UDP 服务端多路复用下并发记录按 seq 归位）
-#[allow(clippy::too_many_arguments)] // 事件字段显式展开（对齐 emit_interval）
 pub fn emit_interval_seq<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     session_id: &str,
@@ -190,21 +208,24 @@ pub fn emit_interval_seq<R: tauri::Runtime>(
     r: &Iperf2Interval,
     seq: u64,
 ) {
-    let _ = app.emit("iperf-interval-report", serde_json::json!({
-        "session_id": session_id,
-        "role": role,
-        "direction": direction,
-        "protocol": protocol,
-        "seq": seq,
-        "start_secs": r.start_secs,
-        "end_secs": r.end_secs,
-        "transferred_bytes": r.transferred_bytes,
-        "bandwidth_bps": r.bandwidth_bps,
-        "jitter_ms": r.jitter_ms,
-        "lost_packets": r.lost_packets,
-        "total_packets": r.total_packets,
-        "lost_percent": r.lost_percent,
-    }));
+    let _ = app.emit(
+        "iperf-interval-report",
+        serde_json::json!({
+            "session_id": session_id,
+            "role": role,
+            "direction": direction,
+            "protocol": protocol,
+            "seq": seq,
+            "start_secs": r.start_secs,
+            "end_secs": r.end_secs,
+            "transferred_bytes": r.transferred_bytes,
+            "bandwidth_bps": r.bandwidth_bps,
+            "jitter_ms": r.jitter_ms,
+            "lost_packets": r.lost_packets,
+            "total_packets": r.total_packets,
+            "lost_percent": r.lost_percent,
+        }),
+    );
 }
 
 // ── 客户端引擎 ─────────────────────────────────────────
@@ -236,10 +257,12 @@ pub fn run_client<R: tauri::Runtime>(
                 p.duration_secs as f64,
                 s.bytes_sent,
                 s.intervals,
-                None,
-                None,
-                None,
-                None,
+                LossStats {
+                    jitter_ms: None,
+                    lost_packets: None,
+                    total_packets: None,
+                    lost_percent: None,
+                },
             );
             let rev = if s.rev_active {
                 let rev_duration = s.rev_intervals.last().map(|i| i.end_secs).unwrap_or(0.0);
@@ -249,10 +272,12 @@ pub fn run_client<R: tauri::Runtime>(
                     rev_duration,
                     s.rev_bytes_received,
                     s.rev_intervals,
-                    None,
-                    None,
-                    None,
-                    None,
+                    LossStats {
+                        jitter_ms: None,
+                        lost_packets: None,
+                        total_packets: None,
+                        lost_percent: None,
+                    },
                 ))
             } else {
                 None
@@ -271,10 +296,12 @@ pub fn run_client<R: tauri::Runtime>(
                     p.duration_secs as f64,
                     s.bytes_sent,
                     s.intervals,
-                    s.jitter_ms,
-                    s.lost_packets,
-                    s.total_packets,
-                    s.lost_percent,
+                    LossStats {
+                        jitter_ms: s.jitter_ms,
+                        lost_packets: s.lost_packets,
+                        total_packets: s.total_packets,
+                        lost_percent: s.lost_percent,
+                    },
                 ),
                 None,
                 warning,
@@ -437,11 +464,14 @@ pub fn run_server<R: tauri::Runtime>(
 
     // 实际绑定地址（解析后的 SocketAddr，IPv6 呈 [::1]:port 形式）
     let listen_str = listen_addr.to_string();
-    let _ = app.emit("iperf-server-status", serde_json::json!({
-        "session_id": session_id,
-        "running": true,
-        "listen_addr": listen_str,
-    }));
+    let _ = app.emit(
+        "iperf-server-status",
+        serde_json::json!({
+            "session_id": session_id,
+            "running": true,
+            "listen_addr": listen_str,
+        }),
+    );
     log::info!(
         "[iperf2] 服务端监听中 (session={}, {}, TCP+UDP)",
         session_id,
@@ -467,7 +497,13 @@ pub fn run_server<R: tauri::Runtime>(
             .map_err(|e| format!("克隆 UDP socket 失败: {}", e))?;
         std::thread::spawn(move || {
             if let Err(e) = data_udp::run_udp_server_loop(
-                &udp_socket, &abort, &running, &last, &app, &sid, &session,
+                &udp_socket,
+                &abort,
+                &running,
+                &last,
+                &app,
+                &sid,
+                &session,
             ) {
                 log::warn!("[iperf2] UDP 接待线程退出: {}", e);
             }
@@ -601,21 +637,33 @@ fn handle_tcp_connection<R: tauri::Runtime>(
 
     if first {
         test_running.store(true, Ordering::Relaxed);
-        let _ = app.emit("iperf-test-started", serde_json::json!({
-            "session_id": session_id,
-            "role": "server",
-            "direction": "fwd",
-            "target": null,
-            "protocol": "tcp",
-            // 看门狗提示：前端据此计算 done 兜底超时（-d/-r 总时长约为 fwd 两倍）
-            "duration_secs": hdr.time_secs(),
-            "bidirectional": mode != ServerTestMode::Normal,
-        }));
+        let _ = app.emit(
+            "iperf-test-started",
+            serde_json::json!({
+                "session_id": session_id,
+                "role": "server",
+                "direction": "fwd",
+                "target": null,
+                "protocol": "tcp",
+                // 看门狗提示：前端据此计算 done 兜底超时（-d/-r 总时长约为 fwd 两倍）
+                "duration_secs": hdr.time_secs(),
+                "bidirectional": mode != ServerTestMode::Normal,
+            }),
+        );
         // -d：反向发送线程组（对齐 2.2.1：服务端收到 RUN_NOW 头后立即反向
         // connect 客户端监听端口；线程数 = 头部 numThreads）
         if mode == ServerTestMode::DualTest {
             spawn_reverse_senders(
-                app, session_id, session, &hdr, &peer_addr, abort, test_running, last_summary,
+                app,
+                session_id,
+                session,
+                &hdr,
+                &peer_addr,
+                ReverseSenderSignals {
+                    abort,
+                    test_running,
+                    last_summary,
+                },
             );
         }
     }
@@ -624,7 +672,11 @@ fn handle_tcp_connection<R: tauri::Runtime>(
     // -r 需在 EOF 后复用原 socket 回发：克隆一份给接收循环，原流留给回发
     let (counter, test_abort, send_counter) = {
         let s = lock_or_recover(session, "TcpSession");
-        (s.counter.clone(), s.test_abort.clone(), s.send_counter.clone())
+        (
+            s.counter.clone(),
+            s.test_abort.clone(),
+            s.send_counter.clone(),
+        )
     };
     match stream.try_clone() {
         Ok(recv_stream) => {
@@ -683,17 +735,19 @@ fn handle_tcp_connection<R: tauri::Runtime>(
 /// （时长 = 头部声明时长 + 2s slop；新连接先发 64B 测试头，对齐 2.2.1 反向客户端）。
 ///
 /// 线程全部结束后若 fwd 已收尾则补触发会话收尾（反向线程通常是最后结束方）。
-#[allow(clippy::too_many_arguments)] // 线程上下文显式传递（对齐 handle_tcp_connection）
 fn spawn_reverse_senders<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     session_id: &str,
     session: &Arc<Mutex<TcpSession>>,
     hdr: &ClientHdrV1,
     peer_addr: &SocketAddr,
-    abort: &Arc<AtomicBool>,
-    test_running: &Arc<AtomicBool>,
-    last_summary: &Arc<Mutex<Option<IperfSummary>>>,
+    signals: ReverseSenderSignals<'_>,
 ) {
+    let ReverseSenderSignals {
+        abort,
+        test_running,
+        last_summary,
+    } = signals;
     let n = hdr.num_threads.clamp(1, 64) as usize;
     let listen_port = i64::from(hdr.m_port).clamp(1, 65535) as u16;
     let duration = hdr.time_secs().clamp(1, 3600) + REVERSE_SLOPSECS;
@@ -758,11 +812,7 @@ fn spawn_reverse_senders<R: tauri::Runtime>(
 /// TCP 与 UDP 引擎共享一个标志但此前各自独立清空——一方收尾会误清掉
 /// 并发中的另一方（前端 serverTestRunning 中途翻 false）。读写均在
 /// TcpSession 锁内进行，消除 check-then-act 竞态。
-fn update_test_running(
-    session: &Mutex<TcpSession>,
-    test_running: &AtomicBool,
-    udp_active: bool,
-) {
+fn update_test_running(session: &Mutex<TcpSession>, test_running: &AtomicBool, udp_active: bool) {
     let mut s = lock_or_recover(session, "TcpSession");
     s.udp_active = udp_active;
     test_running.store(s.started || s.udp_active, Ordering::Relaxed);
@@ -817,10 +867,12 @@ fn build_tcp_finalize_payload(
         duration,
         total,
         std::mem::take(&mut s.intervals),
-        None,
-        None,
-        None,
-        None,
+        LossStats {
+            jitter_ms: None,
+            lost_packets: None,
+            total_packets: None,
+            lost_percent: None,
+        },
     );
 
     // rev 汇总（-d/-r）
@@ -850,17 +902,23 @@ fn build_tcp_finalize_payload(
             s.rev_intervals.push(interval.clone());
             rev_interval = Some(interval);
         }
-        let rev_duration = s.rev_intervals.last().map(|i| i.end_secs).unwrap_or(rev_elapsed);
+        let rev_duration = s
+            .rev_intervals
+            .last()
+            .map(|i| i.end_secs)
+            .unwrap_or(rev_elapsed);
         let rev_summary = build_summary(
             IperfRole::Server,
             IperfProtocol::Tcp,
             rev_duration,
             rev_total,
             std::mem::take(&mut s.rev_intervals),
-            None,
-            None,
-            None,
-            None,
+            LossStats {
+                jitter_ms: None,
+                lost_packets: None,
+                total_packets: None,
+                lost_percent: None,
+            },
         );
         (rev_interval, Some(rev_summary), rev_total)
     } else {
@@ -902,14 +960,17 @@ fn emit_tcp_finalize<R: tauri::Runtime>(
     }
     let mut last = lock_or_recover(last_summary, "last_summary");
     *last = Some(payload.summary.clone());
-    let _ = app.emit("iperf-test-done", serde_json::json!({
-        "session_id": session_id,
-        "success": true,
-        "role": "server",
-        "direction": "fwd",
-        "protocol": "tcp",
-        "summary": payload.summary,
-    }));
+    let _ = app.emit(
+        "iperf-test-done",
+        serde_json::json!({
+            "session_id": session_id,
+            "success": true,
+            "role": "server",
+            "direction": "fwd",
+            "protocol": "tcp",
+            "summary": payload.summary,
+        }),
+    );
     log::info!(
         "[iperf2] 服务端接待测试完成 (session={}, {} bytes)",
         session_id,
@@ -927,14 +988,17 @@ fn emit_tcp_finalize<R: tauri::Runtime>(
                 interval,
             );
         }
-        let _ = app.emit("iperf-test-done", serde_json::json!({
-            "session_id": session_id,
-            "success": true,
-            "role": "server",
-            "direction": "rev",
-            "protocol": "tcp",
-            "summary": rev_summary,
-        }));
+        let _ = app.emit(
+            "iperf-test-done",
+            serde_json::json!({
+                "session_id": session_id,
+                "success": true,
+                "role": "server",
+                "direction": "rev",
+                "protocol": "tcp",
+                "summary": rev_summary,
+            }),
+        );
         log::info!(
             "[iperf2] 服务端反向回发完成 (session={}, {} bytes)",
             session_id,
@@ -1050,9 +1114,9 @@ fn tick_session<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod lifecycle_tests {
-    use super::*;
     use super::stats::SharedByteCounter;
     use super::test_hdr::{tcp_first_payload, ClientHdrExt, ClientHdrV1};
+    use super::*;
 
     fn no_op_emit(_dir: IperfDirection, _r: &Iperf2Interval) {}
 
@@ -1080,9 +1144,8 @@ mod lifecycle_tests {
         };
         let abort = Arc::new(AtomicBool::new(false));
         let start = Instant::now();
-        let s =
-            data_tcp::run_tcp_client(&format!("127.0.0.1:{}", port), &p, &abort, &no_op_emit)
-                .expect("客户端应返回（而非无限阻塞）");
+        let s = data_tcp::run_tcp_client(&format!("127.0.0.1:{}", port), &p, &abort, &no_op_emit)
+            .expect("客户端应返回（而非无限阻塞）");
         let elapsed = start.elapsed();
         assert!(
             elapsed < Duration::from_secs(18),

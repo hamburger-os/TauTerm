@@ -132,11 +132,7 @@ impl ScriptEngine {
         self.lua.load(code).exec()?;
 
         // 获取 handler 数量
-        let count: i64 = self
-            .lua
-            .load("return #__handlers")
-            .eval()
-            .unwrap_or(0);
+        let count: i64 = self.lua.load("return #__handlers").eval().unwrap_or(0);
 
         log::info!("脚本已加载，注册了 {} 个数据处理器", count);
         self.emit_log(&format!("脚本已加载（{} 个处理器）", count));

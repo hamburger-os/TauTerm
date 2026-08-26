@@ -61,8 +61,25 @@ export default defineConfig(async () => ({
   // Prevent vite from obscuring Rust errors
   clearScreen: false,
   build: {
-    // xterm.js + framer-motion 总体积超过默认 500KB 限制，提高阈值
-    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        // Split dependency families while keeping the strongly-connected application UI
+        // in one chunk. This avoids circular manual chunks and stays below Vite's 500KB limit.
+        manualChunks(id) {
+          const normalized = id.replace(/\\/g, "/");
+          if (normalized.includes("/src/context/") || /\/src\/components\/(Common|Settings|Layout|Terminal|RightSidebar|JournaldViewer|Tools|FileManager|SendBar)\//.test(normalized)) {
+            return "ui-core";
+          }
+          if (!normalized.includes("node_modules")) return undefined;
+          if (normalized.includes("@xterm/")) return "xterm";
+          if (normalized.includes("framer-motion") || normalized.includes("motion-dom") || normalized.includes("motion-utils")) return "motion";
+          if (normalized.includes("react") || normalized.includes("scheduler")) return "react";
+          if (normalized.includes("i18next")) return "i18n";
+          if (normalized.includes("@tauri-apps/")) return "tauri";
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     port: 5173,

@@ -3,10 +3,10 @@
 //! 管理单个日志文件的 BufWriter、格式化、自动分卷和安全的句柄关闭。
 //! 配合 LogEngine 的消费者线程使用，每个活跃的日志会话对应一个 LogWriter。
 
+use chrono::Local;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use chrono::Local;
 
 use super::log_engine::{DataDirection, DataLogEntry};
 
@@ -44,10 +44,7 @@ impl LogWriter {
         std::fs::create_dir_all(log_dir)?;
         let path = log_dir.join(&filename);
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
         let mut buf_writer = BufWriter::with_capacity(buffer_size, file);
 
         // 写入文件头
@@ -181,20 +178,19 @@ impl LogWriter {
             }
             "dual" => {
                 // Dual 模式：ASCII 文本 + HEX 双栏
-                let text: String = entry.payload.iter().map(|&b| {
-                    match b {
+                let text: String = entry
+                    .payload
+                    .iter()
+                    .map(|&b| match b {
                         b'\r' => '␍',
                         b'\n' => '␊',
                         b'\t' => '␉',
                         _ if b < 0x20 => '·',
                         _ => b as char,
-                    }
-                }).collect();
-                let hex_part: Vec<String> = entry
-                    .payload
-                    .iter()
-                    .map(|b| format!("{:02X}", b))
+                    })
                     .collect();
+                let hex_part: Vec<String> =
+                    entry.payload.iter().map(|b| format!("{:02X}", b)).collect();
                 let hex_str = hex_part.join(" ");
                 format!("{} {} {}  |  {}\n", ts, dir, text, hex_str)
             }

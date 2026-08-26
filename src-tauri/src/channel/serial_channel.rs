@@ -3,10 +3,10 @@
 //! 包装 `Box<dyn SerialPort>` 实现 `Channel` trait。
 //! 支持端口所有权交出（用于 YModem 等 Inline 传输策略）。
 
+use crate::channel::{error::ChannelError, Channel};
 use std::any::Any;
 use std::io::{Read, Write};
 use std::time::Duration;
-use crate::channel::{Channel, error::ChannelError};
 
 /// 串口通道
 ///

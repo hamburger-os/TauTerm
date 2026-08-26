@@ -23,7 +23,7 @@ pub struct SplitPane {
 /// 分屏内容
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PaneContent {
-    Tab(String),          // 包含的标签页 ID
+    Tab(String),           // 包含的标签页 ID
     Split(Box<SplitPane>), // 递归分屏
 }
 
@@ -55,7 +55,10 @@ impl WindowManager {
 
     /// 保存当前窗口布局
     pub fn save_layout(&self, layout: &WindowLayout) -> Result<(), WindowManagerError> {
-        let mut current = self.current_layout.write().map_err(|_| WindowManagerError::LockError)?;
+        let mut current = self
+            .current_layout
+            .write()
+            .map_err(|_| WindowManagerError::LockError)?;
         *current = Some(layout.clone());
         Ok(())
     }
@@ -74,7 +77,10 @@ impl WindowManager {
         direction: SplitDirection,
     ) -> Result<(), WindowManagerError> {
         // 基础骨架实现——完整分屏逻辑在后续版本完善
-        let mut layout = self.current_layout.write().map_err(|_| WindowManagerError::LockError)?;
+        let mut layout = self
+            .current_layout
+            .write()
+            .map_err(|_| WindowManagerError::LockError)?;
 
         if let Some(ref mut l) = *layout {
             let new_content = PaneContent::Tab(tab_id.to_string());
@@ -91,7 +97,10 @@ impl WindowManager {
             l.root_pane = SplitPane {
                 direction,
                 sizes: vec![0.5, 0.5],
-                children: vec![PaneContent::Split(Box::new(old_root)), PaneContent::Tab(tab_id.to_string())],
+                children: vec![
+                    PaneContent::Split(Box::new(old_root)),
+                    PaneContent::Tab(tab_id.to_string()),
+                ],
             };
         }
 
@@ -100,7 +109,9 @@ impl WindowManager {
 }
 
 impl Default for WindowManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 窗口管理器错误

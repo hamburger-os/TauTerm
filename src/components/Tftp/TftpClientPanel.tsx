@@ -49,13 +49,15 @@ export default function TftpClientPanel({ sessionId, params, form, onFormChange,
     console.log("[TFTP] invoking tftp_client_get:", { sessionId, remoteIp, remotePort, remoteFile, localPath });
     try {
       const transferId = await invoke<string>("tftp_client_get", {
+        request: {
         sessionId,
         remoteIp,
         remotePort,
         remoteFilename: remoteFile,
         localPath,
         params,
-      });
+
+        },});
       console.log("[TFTP] GET 已启动, transfer_id:", transferId);
     } catch (e) {
       const msg = String(e);
@@ -73,13 +75,15 @@ export default function TftpClientPanel({ sessionId, params, form, onFormChange,
     console.log("[TFTP] invoking tftp_client_put:", { sessionId, remoteIp, remotePort, remoteFile, localPath });
     try {
       const transferId = await invoke<string>("tftp_client_put", {
+        request: {
         sessionId,
         remoteIp,
         remotePort,
         remoteFilename: remoteFile,
         localPath,
         params,
-      });
+
+        },});
       console.log("[TFTP] PUT 已启动, transfer_id:", transferId);
     } catch (e) {
       const msg = String(e);

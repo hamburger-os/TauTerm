@@ -8,17 +8,19 @@
 pub mod handler;
 pub mod journald;
 
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
-use crate::channel::{ContentType, IoStrategy};
 use crate::channel::error::SessionError;
 use crate::channel::ssh_channel::SshChannel;
+use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::file_transfer::FileTransfer;
-use crate::kernel::plugin_adapter::{EndpointInfo, ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType};
+use crate::kernel::plugin_adapter::{
+    EndpointInfo, ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
+};
 use handler::SshHandler;
 
 /// SSH 连接配置
@@ -54,10 +56,18 @@ pub struct SshConfig {
     pub file_service_protocol: String,
 }
 
-fn default_ssh_port() -> u16 { 22 }
-fn default_auth_method() -> String { "password".into() }
-fn default_data_mode() -> String { "text".into() }
-fn default_file_service_protocol() -> String { "sftp".into() }
+fn default_ssh_port() -> u16 {
+    22
+}
+fn default_auth_method() -> String {
+    "password".into()
+}
+fn default_data_mode() -> String {
+    "text".into()
+}
+fn default_file_service_protocol() -> String {
+    "sftp".into()
+}
 
 /// SSH 协议适配器
 ///
@@ -90,7 +100,9 @@ impl SshAdapter {
     ) -> Result<ProtocolConnection, SessionError> {
         let result = build_connection_with_config(config, Some(app_handle), Some(verifier)).await?;
         Ok(ProtocolConnection {
-            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(result.channel))),
+            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(
+                result.channel,
+            ))),
             comm_handle: None,
             side_channel: Some(Arc::new(SshSideChannel::new(
                 result.session,
@@ -111,17 +123,15 @@ impl SshAdapter {
 /// 使用 `tokio::sync::Mutex` 而非 `std::sync::Mutex`，
 /// 因为 `build_connection_with_config` 在 async 上下文中持有锁时需 `.await`。
 pub struct HostKeyVerifier {
-    inner: std::sync::Arc<tokio::sync::Mutex<
-        std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>
-    >>,
+    inner: std::sync::Arc<
+        tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>>,
+    >,
 }
 
 impl HostKeyVerifier {
     pub fn new() -> Self {
         Self {
-            inner: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
+            inner: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -191,10 +201,12 @@ impl SideChannel for SshSideChannel {
     }
 
     fn create_file_transfer(&self) -> Option<Arc<dyn FileTransfer>> {
-        Some(Arc::new(crate::transfer::sftp_transfer::SftpFileTransfer::new(
-            self.session.clone(),
-            self.sftp.clone(),
-        )))
+        Some(Arc::new(
+            crate::transfer::sftp_transfer::SftpFileTransfer::new(
+                self.session.clone(),
+                self.sftp.clone(),
+            ),
+        ))
     }
 }
 
@@ -212,8 +224,8 @@ struct BuildConnectionResult {
 async fn build_connection(
     params: &serde_json::Value,
 ) -> Result<BuildConnectionResult, SessionError> {
-    let config: SshConfig = serde_json::from_value(params.clone())
-        .map_err(|e| SessionError::ConnectionFailed {
+    let config: SshConfig =
+        serde_json::from_value(params.clone()).map_err(|e| SessionError::ConnectionFailed {
             reason: format!("SSH 配置解析失败: {}", e),
         })?;
     build_connection_with_config(config, None, None).await
@@ -233,14 +245,14 @@ async fn build_connection_with_config(
     app_handle: Option<tauri::AppHandle>,
     verifier: Option<&HostKeyVerifier>,
 ) -> Result<BuildConnectionResult, SessionError> {
-
     // 1. SSH 连接（russh 内部处理 TCP + 握手）
     let addr = format!("{}:{}", config.host, config.port);
-    let mut russh_config = russh::client::Config::default();
-    russh_config.keepalive_interval = Some(Duration::from_secs(30));
-    russh_config.inactivity_timeout = Some(Duration::from_secs(300));
-    russh_config.nodelay = true;
-    let russh_config = Arc::new(russh_config);
+    let russh_config = Arc::new(russh::client::Config {
+        keepalive_interval: Some(Duration::from_secs(30)),
+        inactivity_timeout: Some(Duration::from_secs(300)),
+        nodelay: true,
+        ..Default::default()
+    });
     /// TCP 连接 + SSH 握手超时（秒），不含用户主机密钥确认时间
     const SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
     /// 主机密钥用户确认超时（秒）。前端弹出确认对话框后，用户需在此时间内响应。
@@ -349,9 +361,11 @@ async fn build_connection_with_config(
             let private_key_str = config.private_key.as_deref().unwrap_or("");
             // russh::keys::PrivateKey 与 russh 0.62 内部的 ssh-key 版本一致，
             // 使用 russh::keys::PrivateKey（与 russh 0.62 同一 ssh-key 版本树），避免版本不匹配
-            let mut key_pair = russh::keys::PrivateKey::from_openssh(private_key_str)
-                .map_err(|e| SessionError::AuthFailed {
-                    reason: format!("私钥解析失败: {}", e),
+            let mut key_pair =
+                russh::keys::PrivateKey::from_openssh(private_key_str).map_err(|e| {
+                    SessionError::AuthFailed {
+                        reason: format!("私钥解析失败: {}", e),
+                    }
                 })?;
             // 若密钥已加密，使用 passphrase 尝试解密
             if key_pair.is_encrypted() {
@@ -361,7 +375,8 @@ async fn build_connection_with_config(
                         reason: "私钥已加密但未提供密码短语".into(),
                     });
                 }
-                key_pair = key_pair.decrypt(pass)
+                key_pair = key_pair
+                    .decrypt(pass)
                     .map_err(|e| SessionError::AuthFailed {
                         reason: format!("私钥解密失败（密码短语错误或密钥损坏）: {}", e),
                     })?;
@@ -392,38 +407,35 @@ async fn build_connection_with_config(
 
     // 2.5 — 解析远程 home 目录（通过 exec 通道执行 echo $HOME）
     // 超时 5s 防止远程主机无响应时阻塞整个连接建立流程
-    let home_dir = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        async {
-            match handle.channel_open_session().await {
-                Ok(mut exec_chan) => {
-                    if exec_chan.exec(true, "echo $HOME").await.is_err() {
-                        return None;
-                    }
-                    let mut output = Vec::new();
-                    loop {
-                        match exec_chan.wait().await {
-                            Some(russh::ChannelMsg::Data { data }) => {
-                                output.extend_from_slice(data.as_ref());
-                            }
-                            Some(russh::ChannelMsg::Eof)
-                            | Some(russh::ChannelMsg::Close)
-                            | None => break,
-                            _ => continue,
+    let home_dir = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        match handle.channel_open_session().await {
+            Ok(mut exec_chan) => {
+                if exec_chan.exec(true, "echo $HOME").await.is_err() {
+                    return None;
+                }
+                let mut output = Vec::new();
+                loop {
+                    match exec_chan.wait().await {
+                        Some(russh::ChannelMsg::Data { data }) => {
+                            output.extend_from_slice(data.as_ref());
                         }
+                        Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {
+                            break
+                        }
+                        _ => continue,
                     }
-                    String::from_utf8(output)
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
                 }
-                Err(e) => {
-                    log::warn!("打开 SSH exec 通道失败 (home dir): {}", e);
-                    None
-                }
+                String::from_utf8(output)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
             }
-        },
-    )
+            Err(e) => {
+                log::warn!("打开 SSH exec 通道失败 (home dir): {}", e);
+                None
+            }
+        }
+    })
     .await
     .unwrap_or_else(|_elapsed| {
         log::warn!("SSH home_dir exec 超时（5s），回退到默认路径");
@@ -450,24 +462,17 @@ pub async fn open_pty_shell_channel(
     handle: Arc<russh::client::Handle<SshHandler>>,
 ) -> Result<SshChannel, SessionError> {
     // 1. 打开交互式 shell 通道
-    let channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| SessionError::ConnectionFailed {
-            reason: format!("打开 SSH 通道失败: {}", e),
-        })?;
+    let channel =
+        handle
+            .channel_open_session()
+            .await
+            .map_err(|e| SessionError::ConnectionFailed {
+                reason: format!("打开 SSH 通道失败: {}", e),
+            })?;
 
     // 2. 请求 PTY（终端）
     channel
-        .request_pty(
-            true,
-            "xterm-256color",
-            80,
-            24,
-            0,
-            0,
-            &[],
-        )
+        .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
         .await
         .map_err(|e| SessionError::ConnectionFailed {
             reason: format!("请求 PTY 失败: {}", e),
@@ -500,7 +505,9 @@ impl ProtocolAdapter for SshAdapter {
         // 主机密钥指纹（result.host_key_fingerprint）由 connect_session_ssh
         // 通过 SSH 连接的 session-connected 事件传递给前端。
         Ok(ProtocolConnection {
-            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(result.channel))),
+            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(
+                result.channel,
+            ))),
             comm_handle: None,
             side_channel: Some(Arc::new(SshSideChannel::new(
                 result.session,

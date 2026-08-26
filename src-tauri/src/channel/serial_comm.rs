@@ -55,10 +55,13 @@ impl CommHandle for SerialCommHandle {
     }
 
     fn on_receive(&self, callback: DataCallback) {
-        self.callbacks.lock().unwrap_or_else(|e| {
-            log::warn!("SerialCommHandle: Mutex poisoned during on_receive, recovering");
-            e.into_inner()
-        }).push(callback);
+        self.callbacks
+            .lock()
+            .unwrap_or_else(|e| {
+                log::warn!("SerialCommHandle: Mutex poisoned during on_receive, recovering");
+                e.into_inner()
+            })
+            .push(callback);
     }
 
     fn notify_receive(&self, data: &[u8]) {
@@ -80,9 +83,12 @@ impl CommHandle for SerialCommHandle {
     }
 
     fn clear_receivers(&self) {
-        self.callbacks.lock().unwrap_or_else(|e| {
-            log::warn!("SerialCommHandle: Mutex poisoned during clear_receivers, recovering");
-            e.into_inner()
-        }).clear();
+        self.callbacks
+            .lock()
+            .unwrap_or_else(|e| {
+                log::warn!("SerialCommHandle: Mutex poisoned during clear_receivers, recovering");
+                e.into_inner()
+            })
+            .clear();
     }
 }

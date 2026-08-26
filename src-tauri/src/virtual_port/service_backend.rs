@@ -16,8 +16,8 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_IO_PENDING, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
-use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
 use super::backend::{PortPair, VirtualPortBackend, VirtualPortConfig};
 
@@ -103,7 +103,9 @@ fn read_exact(handle: RawHandle, buf: &mut [u8]) -> bool {
                     return false;
                 }
                 let mut transferred = 0u32;
-                let ok2 = unsafe { GetOverlappedResult(handle as HANDLE, &overlapped, &mut transferred, 0) };
+                let ok2 = unsafe {
+                    GetOverlappedResult(handle as HANDLE, &overlapped, &mut transferred, 0)
+                };
                 unsafe { CloseHandle(overlapped.hEvent) };
                 if ok2 == 0 {
                     return false;
@@ -150,7 +152,9 @@ fn write_exact(handle: RawHandle, buf: &[u8]) -> bool {
                     return false;
                 }
                 let mut transferred = 0u32;
-                let ok2 = unsafe { GetOverlappedResult(handle as HANDLE, &overlapped, &mut transferred, 0) };
+                let ok2 = unsafe {
+                    GetOverlappedResult(handle as HANDLE, &overlapped, &mut transferred, 0)
+                };
                 unsafe { CloseHandle(overlapped.hEvent) };
                 if ok2 == 0 {
                     return false;
@@ -243,7 +247,8 @@ impl ServiceBackend {
         if !write_frame(raw, &body) {
             return Err("virtual port service handshake write failed".into());
         }
-        let frame = read_frame(raw).ok_or_else(|| "virtual port service handshake read failed".to_string())?;
+        let frame = read_frame(raw)
+            .ok_or_else(|| "virtual port service handshake read failed".to_string())?;
         let resp: Response = serde_json::from_slice(&frame).map_err(|e| e.to_string())?;
         if !resp.ok {
             return Err(resp.error.unwrap_or_else(|| "handshake rejected".into()));
@@ -267,7 +272,8 @@ impl ServiceBackend {
             if !write_frame(raw, &serde_json::to_vec(&hello).map_err(|e| e.to_string())?) {
                 return Err("virtual port service handshake write failed".into());
             }
-            let frame = read_frame(raw).ok_or_else(|| "virtual port service handshake read failed".to_string())?;
+            let frame = read_frame(raw)
+                .ok_or_else(|| "virtual port service handshake read failed".to_string())?;
             let resp: Response = serde_json::from_slice(&frame).map_err(|e| e.to_string())?;
             if !resp.ok {
                 return Err(resp.error.unwrap_or_else(|| "handshake rejected".into()));
@@ -320,7 +326,8 @@ impl VirtualPortBackend for ServiceBackend {
     }
 
     fn install_driver(&mut self) -> Result<(), String> {
-        self.call("install_driver", serde_json::json!({})).map(|_| ())
+        self.call("install_driver", serde_json::json!({}))
+            .map(|_| ())
     }
 
     fn install_driver_elevated(&mut self) -> Result<(), String> {
@@ -329,14 +336,14 @@ impl VirtualPortBackend for ServiceBackend {
     }
 
     fn create_pairs(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String> {
-        let data = self.call(
-            "create_pairs",
-            serde_json::json!({ "count": config.count }),
-        )?;
+        let data = self.call("create_pairs", serde_json::json!({ "count": config.count }))?;
         serde_json::from_value(data).map_err(|e| format!("invalid create_pairs response: {}", e))
     }
 
-    fn create_pairs_elevated(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String> {
+    fn create_pairs_elevated(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<PortPair>, String> {
         self.create_pairs(config)
     }
 
@@ -355,7 +362,8 @@ impl VirtualPortBackend for ServiceBackend {
     }
 
     fn cleanup_pairs_elevated(&mut self) -> Result<u32, String> {
-        self.call("cleanup_client", serde_json::json!({})).map(|_| 0)
+        self.call("cleanup_client", serde_json::json!({}))
+            .map(|_| 0)
     }
 
     fn pending_orphan_count(&self) -> u32 {

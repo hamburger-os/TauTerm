@@ -259,7 +259,9 @@ impl VirtualPortBackend for SocatBackend {
 
             log::info!(
                 "socat port pair created: {} ↔ {} (id={})",
-                port_a, port_b, id
+                port_a,
+                port_b,
+                id
             );
 
             self.symlink_paths.insert(symlink_a.clone());
@@ -284,7 +286,10 @@ impl VirtualPortBackend for SocatBackend {
         Ok(pairs)
     }
 
-    fn create_pairs_elevated(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String> {
+    fn create_pairs_elevated(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<PortPair>, String> {
         // socat runs in user space — no elevation needed
         self.create_pairs(config)
     }
@@ -297,7 +302,9 @@ impl VirtualPortBackend for SocatBackend {
             self.symlink_paths.remove(&proc.symlink_b);
             log::info!(
                 "socat port pair destroyed: {} ↔ {} (id={})",
-                pair.port_a, pair.port_b, id
+                pair.port_a,
+                pair.port_b,
+                id
             );
         } else {
             // Port pair already gone — just clean up symlinks if they exist
@@ -306,7 +313,9 @@ impl VirtualPortBackend for SocatBackend {
             let _ = std::fs::remove_file(&symlink_b);
             log::info!(
                 "socat port pair already gone: {} ↔ {} (id={})",
-                pair.port_a, pair.port_b, id
+                pair.port_a,
+                pair.port_b,
+                id
             );
         }
         Ok(())
@@ -404,10 +413,7 @@ impl VirtualPortBackend for SocatBackend {
         dir.flatten()
             .filter(|entry| {
                 let path = entry.path();
-                let file_name = entry
-                    .file_name()
-                    .to_string_lossy()
-                    .to_string();
+                let file_name = entry.file_name().to_string_lossy().to_string();
                 file_name.starts_with(VPORT_SYMLINK_PREFIX)
                     && !self.symlink_paths.contains(&path)
                     && path.is_symlink()

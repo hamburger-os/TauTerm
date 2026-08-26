@@ -4,18 +4,17 @@
 //! 所有传输类型（串口、TCP、SSH channel、Pipe、UDP socket）通过实现 `Channel` trait
 //! 成为可被 I/O 循环引擎驱动的统一接口。
 
+pub mod async_io_loop;
 pub mod error;
 pub mod io_loop;
-pub mod async_io_loop;
 pub mod serial_channel;
 pub mod serial_comm;
 pub mod ssh_channel;
 
-
+use error::ChannelError;
+use std::any::Any;
 use std::io::{Read, Write};
 use std::time::Duration;
-use std::any::Any;
-use error::ChannelError;
 
 /// 统一 I/O 通道 trait
 ///

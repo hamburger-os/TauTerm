@@ -16,8 +16,11 @@
 //! 所有活动会话通过 `ActiveSessions` 注册表管理，提供统一的注册、取消、
 //! 注销接口。每个活跃操作以 RAII Drop 守卫自动清理注册表，panic 安全。
 
-use std::collections::{HashMap, hash_map::Entry};
-use std::sync::{Arc, LazyLock, atomic::{AtomicBool, Ordering}, Mutex};
+use std::collections::{hash_map::Entry, HashMap};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, LazyLock, Mutex,
+};
 
 use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
@@ -37,7 +40,10 @@ pub(crate) struct ActiveSessions {
 
 impl ActiveSessions {
     fn new(label: &'static str) -> Self {
-        Self { label, inner: Mutex::new(HashMap::new()) }
+        Self {
+            label,
+            inner: Mutex::new(HashMap::new()),
+        }
     }
 
     /// 注册 session，返回 cancel flag。如果 session 已存在返回错误。
@@ -57,7 +63,11 @@ impl ActiveSessions {
             Entry::Vacant(entry) => {
                 let cancel = Arc::new(AtomicBool::new(false));
                 entry.insert(cancel.clone());
-                log::info!("[{label}:{sid}] 已注册", label = self.label, sid = session_id);
+                log::info!(
+                    "[{label}:{sid}] 已注册",
+                    label = self.label,
+                    sid = session_id
+                );
                 Ok(cancel)
             }
         }
@@ -69,7 +79,11 @@ impl ActiveSessions {
             Ok(map) => {
                 if let Some(cancel) = map.get(session_id) {
                     cancel.store(true, Ordering::SeqCst);
-                    log::info!("[{label}:{sid}] 发送取消信号", label = self.label, sid = session_id);
+                    log::info!(
+                        "[{label}:{sid}] 发送取消信号",
+                        label = self.label,
+                        sid = session_id
+                    );
                 }
             }
             Err(poisoned) => {
@@ -139,10 +153,12 @@ impl<'a> Drop for RegistrationGuard<'a> {
 }
 
 /// 全局活跃流注册表
-static ACTIVE_STREAMS: LazyLock<ActiveSessions> = LazyLock::new(|| ActiveSessions::new("journald:stream"));
+static ACTIVE_STREAMS: LazyLock<ActiveSessions> =
+    LazyLock::new(|| ActiveSessions::new("journald:stream"));
 
 /// 全局活跃导出注册表
-static ACTIVE_EXPORTS: LazyLock<ActiveSessions> = LazyLock::new(|| ActiveSessions::new("journald:export"));
+static ACTIVE_EXPORTS: LazyLock<ActiveSessions> =
+    LazyLock::new(|| ActiveSessions::new("journald:export"));
 
 /// 单次查询批大小上限（防止超大响应）
 const MAX_QUERY_LIMIT: usize = 500;
@@ -218,12 +234,12 @@ pub struct JournaldQueryResponse {
 ///
 /// 内部常量参数（`-o`、`-f` 等）原样拼接；用户提供的值（level/unit/时间/关键字）
 /// 在此处经 [`shell_escape`] 单引号转义，防止 shell 元字符被解释为命令。
-fn build_journalctl_args(filters: &JournaldQueryFilters, limit: usize, follow: bool) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "-o".into(),
-        "json".into(),
-        "--no-pager".into(),
-    ];
+fn build_journalctl_args(
+    filters: &JournaldQueryFilters,
+    limit: usize,
+    follow: bool,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec!["-o".into(), "json".into(), "--no-pager".into()];
 
     // 日志级别
     if let Some(ref level) = filters.level {
@@ -299,7 +315,8 @@ pub async fn start_journald_stream(
     filters: &JournaldQueryFilters,
 ) -> Result<(), String> {
     // 1. 原子地检查并预留注册表位置（防止 TOCTOU 竞态）
-    let cancel = ACTIVE_STREAMS.register(&session_id)
+    let cancel = ACTIVE_STREAMS
+        .register(&session_id)
         .map_err(|e| format!("Journald 实时追踪已在运行中: {}", e))?;
 
     // 2. 打开 exec 通道（失败时回滚注册表）
@@ -417,10 +434,13 @@ fn flush_line_buffer(line: &[u8], app_handle: &AppHandle, session_id: &str) {
     }
     // 直接反序列化为 JournalEntry，避免经过 Value 中间层的双重解析
     if let Ok(entry) = serde_json::from_str::<JournalEntry>(trimmed) {
-        let _ = app_handle.emit("journald:entry", serde_json::json!({
-            "session_id": session_id,
-            "entry": entry,
-        }));
+        let _ = app_handle.emit(
+            "journald:entry",
+            serde_json::json!({
+                "session_id": session_id,
+                "entry": entry,
+            }),
+        );
     }
 }
 
@@ -486,17 +506,14 @@ pub async fn journald_query(
         .await
         .map_err(|e| format!("打开 SSH exec 通道失败: {}", e))?;
 
-    channel
-        .exec(true, cmd.as_str())
-        .await
-        .map_err(|e| {
-            let err_str = e.to_string();
-            if err_str.contains("command not found") || err_str.contains("No such file") {
-                "远程主机上 journald (journalctl) 不可用".to_string()
-            } else {
-                format!("执行 journalctl 查询失败: {}", e)
-            }
-        })?;
+    channel.exec(true, cmd.as_str()).await.map_err(|e| {
+        let err_str = e.to_string();
+        if err_str.contains("command not found") || err_str.contains("No such file") {
+            "远程主机上 journald (journalctl) 不可用".to_string()
+        } else {
+            format!("执行 journalctl 查询失败: {}", e)
+        }
+    })?;
 
     // 读取所有 stdout（通过 wait() 收集 ChannelMsg::Data）
     let mut stdout_buf = Vec::new();
@@ -536,7 +553,8 @@ pub async fn journald_query(
             Err(e) => {
                 log::warn!(
                     "[journald:query] JSON 解析失败: {} (raw: {:.100})",
-                    e, trimmed
+                    e,
+                    trimmed
                 );
             }
         }
@@ -595,7 +613,8 @@ pub async fn start_journald_export(
     file_path: String,
 ) -> Result<(), String> {
     // 1. 原子地检查并预留注册表位置
-    let cancel = ACTIVE_EXPORTS.register(&session_id)
+    let cancel = ACTIVE_EXPORTS
+        .register(&session_id)
         .map_err(|_| "导出已在运行中".to_string())?;
 
     // 2. 克隆 session 和 filters 供 tokio task 使用
@@ -625,7 +644,10 @@ pub async fn start_journald_export(
                 }
             }
         }
-        let mut tmp_cleaner = TmpCleanup { path: tmp_path.clone(), keep: false };
+        let mut tmp_cleaner = TmpCleanup {
+            path: tmp_path.clone(),
+            keep: false,
+        };
 
         // 异步打开/写入，避免阻塞 tokio worker 线程
         let mut file = match tokio::fs::File::create(&tmp_path).await {
@@ -654,9 +676,12 @@ pub async fn start_journald_export(
             // 检查取消标志
             if cancel.load(Ordering::SeqCst) {
                 log::info!("[journald:export:{}] 导出被用户取消", sid);
-                let _ = app_handle.emit("journald:export-cancelled", serde_json::json!({
-                    "session_id": sid,
-                }));
+                let _ = app_handle.emit(
+                    "journald:export-cancelled",
+                    serde_json::json!({
+                        "session_id": sid,
+                    }),
+                );
                 return; // TmpCleanup Drop 删除临时文件
             }
 
@@ -676,7 +701,11 @@ pub async fn start_journald_export(
                     for entry in &entries {
                         if !first_entry {
                             if let Err(e) = file.write_all(b",\n").await {
-                                emit_export_error(&app_handle, &sid, &format!("写入导出文件失败: {}", e));
+                                emit_export_error(
+                                    &app_handle,
+                                    &sid,
+                                    &format!("写入导出文件失败: {}", e),
+                                );
                                 return;
                             }
                         }
@@ -684,12 +713,20 @@ pub async fn start_journald_export(
                         match serde_json::to_string(entry) {
                             Ok(json) => {
                                 if let Err(e) = file.write_all(json.as_bytes()).await {
-                                    emit_export_error(&app_handle, &sid, &format!("写入导出文件失败: {}", e));
+                                    emit_export_error(
+                                        &app_handle,
+                                        &sid,
+                                        &format!("写入导出文件失败: {}", e),
+                                    );
                                     return;
                                 }
                             }
                             Err(e) => {
-                                emit_export_error(&app_handle, &sid, &format!("序列化日志条目失败: {}", e));
+                                emit_export_error(
+                                    &app_handle,
+                                    &sid,
+                                    &format!("序列化日志条目失败: {}", e),
+                                );
                                 return;
                             }
                         }
@@ -703,11 +740,16 @@ pub async fn start_journald_export(
 
                     // 节流进度事件
                     let now = std::time::Instant::now();
-                    if now.duration_since(last_emit) >= std::time::Duration::from_millis(200) || is_final {
-                        let _ = app_handle.emit("journald:export-progress", serde_json::json!({
-                            "session_id": sid,
-                            "loaded": total,
-                        }));
+                    if now.duration_since(last_emit) >= std::time::Duration::from_millis(200)
+                        || is_final
+                    {
+                        let _ = app_handle.emit(
+                            "journald:export-progress",
+                            serde_json::json!({
+                                "session_id": sid,
+                                "loaded": total,
+                            }),
+                        );
                         last_emit = now;
                     }
 
@@ -735,7 +777,11 @@ pub async fn start_journald_export(
 
         // 原子改名（同目录，跨平台安全）。目标已存在时先删除再重试（正常由保存对话框保证不存在）。
         if let Err(e) = tokio::fs::rename(&tmp_path, &fp).await {
-            log::warn!("[journald:export:{}] rename 失败（目标可能已存在），尝试覆盖: {}", sid, e);
+            log::warn!(
+                "[journald:export:{}] rename 失败（目标可能已存在），尝试覆盖: {}",
+                sid,
+                e
+            );
             let _ = tokio::fs::remove_file(&fp).await;
             if let Err(e2) = tokio::fs::rename(&tmp_path, &fp).await {
                 emit_export_error(&app_handle, &sid, &format!("保存导出文件失败: {}", e2));
@@ -746,11 +792,14 @@ pub async fn start_journald_export(
         tmp_cleaner.keep = true; // 已改名成功，保留目标文件
 
         log::info!("[journald:export:{}] 导出完成: {} 条 → {}", sid, total, fp);
-        let _ = app_handle.emit("journald:export-complete", serde_json::json!({
-            "session_id": sid,
-            "file_path": fp,
-            "total": total,
-        }));
+        let _ = app_handle.emit(
+            "journald:export-complete",
+            serde_json::json!({
+                "session_id": sid,
+                "file_path": fp,
+                "total": total,
+            }),
+        );
         // _guard Drop 自动清理注册表
     });
 
@@ -760,10 +809,13 @@ pub async fn start_journald_export(
 /// 导出失败统一处理：日志 + 发送 `journald:export-error` 事件
 fn emit_export_error(app: &AppHandle, sid: &str, msg: &str) {
     log::error!("[journald:export:{}] {}", sid, msg);
-    let _ = app.emit("journald:export-error", serde_json::json!({
-        "session_id": sid,
-        "error": msg,
-    }));
+    let _ = app.emit(
+        "journald:export-error",
+        serde_json::json!({
+            "session_id": sid,
+            "error": msg,
+        }),
+    );
 }
 
 /// 停止 journald 导出

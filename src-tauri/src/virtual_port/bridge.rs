@@ -51,7 +51,13 @@ impl VirtualPortBridge {
         let cancel_clone = cancel_flag.clone();
 
         let bridge_thread = std::thread::spawn(move || {
-            bridge_loop(virtual_port_names, baud_rate, data_rx, write_tx, &cancel_clone);
+            bridge_loop(
+                virtual_port_names,
+                baud_rate,
+                data_rx,
+                write_tx,
+                &cancel_clone,
+            );
         });
 
         Self {
@@ -114,10 +120,7 @@ fn bridge_loop(
     let mut virtual_ports: Vec<Box<dyn SerialPort>> = Vec::new();
     let timeout = Duration::from_millis(VPORT_READ_TIMEOUT_MS);
     for name in &virtual_port_names {
-        match serialport::new(name, baud_rate)
-            .timeout(timeout)
-            .open()
-        {
+        match serialport::new(name, baud_rate).timeout(timeout).open() {
             Ok(port) => {
                 let _ = port.clear(serialport::ClearBuffer::All);
                 virtual_ports.push(port);
@@ -219,7 +222,12 @@ mod tests {
     }
 
     impl MockPort {
-        fn new() -> Self { Self { buffer: Vec::new(), read_pos: 0 } }
+        fn new() -> Self {
+            Self {
+                buffer: Vec::new(),
+                read_pos: 0,
+            }
+        }
     }
 
     impl Read for MockPort {
@@ -240,7 +248,9 @@ mod tests {
             self.buffer.extend_from_slice(buf);
             Ok(buf.len())
         }
-        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
 
     #[test]

@@ -170,8 +170,13 @@ impl DataBatcher {
                     let expired: Vec<String> = pending_map
                         .iter()
                         .filter_map(|(sid, p)| {
-                            p.window_start
-                                .and_then(|s| if s + window <= now { Some(sid.clone()) } else { None })
+                            p.window_start.and_then(|s| {
+                                if s + window <= now {
+                                    Some(sid.clone())
+                                } else {
+                                    None
+                                }
+                            })
                         })
                         .collect();
 
@@ -220,8 +225,8 @@ const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst
 pub fn base64_encode(input: &[u8]) -> String {
     let mut out = Vec::with_capacity(input.len().div_ceil(3) * 4);
 
-    let mut chunks = input.chunks_exact(3);
-    for chunk in &mut chunks {
+    let (chunks, rem) = input.as_chunks::<3>();
+    for chunk in chunks {
         let b0 = chunk[0] as u32;
         let b1 = chunk[1] as u32;
         let b2 = chunk[2] as u32;
@@ -233,7 +238,6 @@ pub fn base64_encode(input: &[u8]) -> String {
         out.push(B64_ALPHABET[(n & 0x3F) as usize]);
     }
 
-    let rem = chunks.remainder();
     match rem.len() {
         1 => {
             let b0 = rem[0] as u32;

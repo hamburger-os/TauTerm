@@ -3,10 +3,10 @@
 //! 基于 tokio task 驱动，适用于 russh 等 async SSH 库。
 //! 与同步 `io_loop::spawn_sync_io_loop` 并存：串口用 Sync，SSH 用 Async。
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
 use crate::channel::AsyncChannel;
-use crate::channel::io_loop::IoLoopCmd;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 /// 启动异步 I/O 循环（tokio task 驱动）
 ///
@@ -18,17 +18,19 @@ use crate::channel::io_loop::IoLoopCmd;
 /// - 同样的 `on_data`/`on_disconnect` 回调
 /// - 同样的取消机制（`tokio::sync::oneshot`）
 /// - 同样的 `tx_bytes`/`rx_bytes` 计数
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_async_io_loop(
     mut channel: Box<dyn AsyncChannel>,
-    session_id: String,
     mut on_data: impl FnMut(String, Vec<u8>) + Send + 'static,
     mut on_disconnect: impl FnMut(String) + Send + 'static,
-    write_rx: mpsc::Receiver<IoLoopCmd>,
-    cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    tx_bytes: Arc<AtomicU64>,
-    rx_bytes: Arc<AtomicU64>,
+    context: IoLoopContext,
 ) -> tokio::task::JoinHandle<()> {
+    let IoLoopContext {
+        session_id,
+        write_rx,
+        cancel_rx,
+        tx_bytes,
+        rx_bytes,
+    } = context;
     tokio::spawn(async move {
         // 将 std::sync::mpsc::Receiver 包成异步流。
         // 使用 tokio::task::spawn_blocking 避免在 async 上下文中阻塞 recv。
@@ -104,7 +106,9 @@ pub fn spawn_async_io_loop(
                 &session_id,
                 &tx_bytes,
                 &mut on_disconnect,
-            ).await {
+            )
+            .await
+            {
                 return;
             }
         }

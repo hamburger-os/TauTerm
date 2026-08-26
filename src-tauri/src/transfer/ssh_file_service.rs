@@ -6,13 +6,16 @@
 //!
 //! SCP 已移除（用户决策：全面迁移到 russh，不保留 SCP）。
 
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use std::time::Instant;
-use std::pin::Pin;
-use std::future::Future;
-use tokio::sync::Mutex;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use serde::Serialize;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Instant;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex;
 
 use crate::plugins::ssh::handler::SshHandler;
 
@@ -92,11 +95,16 @@ async fn get_or_create_sftp(
 ) -> Result<(), String> {
     let mut cache = sftp_cache.lock().await;
     if cache.is_none() {
-        let channel = session.channel_open_session().await
+        let channel = session
+            .channel_open_session()
+            .await
             .map_err(|e| format!("打开 SFTP 通道失败: {}", e))?;
-        channel.request_subsystem(true, "sftp").await
+        channel
+            .request_subsystem(true, "sftp")
+            .await
             .map_err(|e| format!("请求 SFTP 子系统失败: {}", e))?;
-        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream()).await
+        let sftp = russh_sftp::client::SftpSession::new(channel.into_stream())
+            .await
             .map_err(|e| format!("初始化 SFTP 会话失败: {}", e))?;
         *cache = Some(sftp);
         log::info!("SFTP 子系统通道已建立并缓存");
@@ -147,8 +155,14 @@ pub async fn sftp_list_dir(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    let path = if remote_path.is_empty() { "." } else { remote_path };
-    let read_dir = sftp.read_dir(path).await
+    let path = if remote_path.is_empty() {
+        "."
+    } else {
+        remote_path
+    };
+    let read_dir = sftp
+        .read_dir(path)
+        .await
         .map_err(|e| format!("读取目录 '{}' 失败: {}", path, e))?;
 
     let mut result: Vec<SftpEntry> = read_dir
@@ -176,7 +190,8 @@ pub async fn sftp_list_dir(
 
     // 排序：目录优先，然后按名称字母序
     result.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir)
+        b.is_dir
+            .cmp(&a.is_dir)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
@@ -193,7 +208,9 @@ pub async fn sftp_stat(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    let stat = sftp.metadata(remote_path).await
+    let stat = sftp
+        .metadata(remote_path)
+        .await
         .map_err(|e| format!("获取文件信息 '{}' 失败: {}", remote_path, e))?;
 
     let name = std::path::Path::new(remote_path)
@@ -223,11 +240,15 @@ pub async fn sftp_read_head(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    let stat = sftp.metadata(remote_path).await
+    let stat = sftp
+        .metadata(remote_path)
+        .await
         .map_err(|e| format!("获取文件信息 '{}' 失败: {}", remote_path, e))?;
     let total_size = stat.size.unwrap_or(0);
 
-    let mut remote_file = sftp.open(remote_path).await
+    let mut remote_file = sftp
+        .open(remote_path)
+        .await
         .map_err(|e| format!("打开远程文件 '{}' 失败: {}", remote_path, e))?;
 
     let read_len = std::cmp::min(max_bytes, total_size);
@@ -237,7 +258,9 @@ pub async fn sftp_read_head(
     while total_read < read_len {
         let remaining = (read_len - total_read) as usize;
         let start = total_read as usize;
-        let n = remote_file.read(&mut buf[start..start + remaining]).await
+        let n = remote_file
+            .read(&mut buf[start..start + remaining])
+            .await
             .map_err(|e| format!("读取远程文件失败: {}", e))?;
         if n == 0 {
             break;
@@ -248,7 +271,9 @@ pub async fn sftp_read_head(
     buf.truncate(total_read as usize);
     log::info!(
         "SFTP 读取文件头: {} (读取 {} / 共 {} bytes)",
-        remote_path, total_read, total_size
+        remote_path,
+        total_read,
+        total_size
     );
     Ok((buf, total_size))
 }
@@ -275,10 +300,14 @@ pub async fn sftp_download(
     let (mut remote_file, remote_size): (russh_sftp::client::fs::File, u64) = {
         let cache = sftp_cache.lock().await;
         let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-        let file = sftp.open(remote_path).await
+        let file = sftp
+            .open(remote_path)
+            .await
             .map_err(|e| format!("打开远程文件 '{}' 失败: {}", remote_path, e))?;
         // 使用已打开句柄的 metadata，避免再次 sftp.metadata() 的额外 RTT
-        let meta = file.metadata().await
+        let meta = file
+            .metadata()
+            .await
             .map_err(|e| format!("获取远程文件信息 '{}' 失败: {}", remote_path, e))?;
         let size = meta.size.unwrap_or(0);
         (file, size)
@@ -286,11 +315,13 @@ pub async fn sftp_download(
 
     // 确保父目录存在（Windows 上 File::create 不会自动创建中间目录）
     if let Some(parent) = std::path::Path::new(local_path).parent() {
-        tokio::fs::create_dir_all(parent).await
+        tokio::fs::create_dir_all(parent)
+            .await
             .map_err(|e| format!("创建本地目录 '{}' 失败: {}", parent.display(), e))?;
     }
 
-    let mut local_file = tokio::fs::File::create(local_path).await
+    let mut local_file = tokio::fs::File::create(local_path)
+        .await
         .map_err(|e| format!("创建本地文件 '{}' 失败: {}", local_path, e))?;
 
     let mut buf = [0u8; TRANSFER_BUF_SIZE];
@@ -303,12 +334,16 @@ pub async fn sftp_download(
             let _ = tokio::fs::remove_file(local_path).await;
             return Err(transfer_cancelled_error());
         }
-        let n = remote_file.read(&mut buf).await
+        let n = remote_file
+            .read(&mut buf)
+            .await
             .map_err(|e| format!("读取远程文件失败: {}", e))?;
         if n == 0 {
             break;
         }
-        local_file.write_all(&buf[..n]).await
+        local_file
+            .write_all(&buf[..n])
+            .await
             .map_err(|e| format!("写入本地文件失败: {}", e))?;
         total += n as u64;
         if let Some(cb) = on_progress {
@@ -322,10 +357,16 @@ pub async fn sftp_download(
     if let Some(cb) = on_progress {
         cb(total, remote_size);
     }
-    local_file.flush().await.map_err(|e| format!("刷新本地文件失败: {}", e))?;
+    local_file
+        .flush()
+        .await
+        .map_err(|e| format!("刷新本地文件失败: {}", e))?;
     log::info!(
         "SFTP 下载完成: {} -> {} ({} bytes, remote_size={})",
-        remote_path, local_path, total, remote_size
+        remote_path,
+        local_path,
+        total,
+        remote_size
     );
     Ok(total)
 }
@@ -349,18 +390,18 @@ pub async fn sftp_upload(
 ) -> Result<u64, String> {
     get_or_create_sftp(session, sftp_cache).await?;
 
-    let mut local_file = tokio::fs::File::open(local_path).await
+    let mut local_file = tokio::fs::File::open(local_path)
+        .await
         .map_err(|e| format!("打开本地文件 '{}' 失败: {}", local_path, e))?;
 
-    let local_size = local_file.metadata().await
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let local_size = local_file.metadata().await.map(|m| m.len()).unwrap_or(0);
 
     // 仅在创建远程文件句柄时持锁，之后释放
     let mut remote_file: russh_sftp::client::fs::File = {
         let cache = sftp_cache.lock().await;
         let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-        sftp.create(remote_path).await
+        sftp.create(remote_path)
+            .await
             .map_err(|e| format!("创建远程文件 '{}' 失败: {}", remote_path, e))?
     };
 
@@ -387,7 +428,9 @@ pub async fn sftp_upload(
             }
             return Err(transfer_cancelled_error());
         }
-        let n = local_file.read(&mut buf).await
+        let n = local_file
+            .read(&mut buf)
+            .await
             .map_err(|e| format!("读取本地文件失败: {}", e))?;
         if n == 0 {
             break;
@@ -395,7 +438,9 @@ pub async fn sftp_upload(
         // 分块 write：使用 write_all 写入整块。
         // 注意：russh-sftp 的 File::write 是 async，write_all 内部循环直到全部写入。
         // 为支持取消，这里不做分片，依靠循环顶部的取消检查。
-        remote_file.write_all(&buf[..n]).await
+        remote_file
+            .write_all(&buf[..n])
+            .await
             .map_err(|e| format!("写入远程文件失败: {}", e))?;
         total += n as u64;
         if let Some(cb) = on_progress {
@@ -409,7 +454,10 @@ pub async fn sftp_upload(
     if let Some(cb) = on_progress {
         cb(total, local_size);
     }
-    remote_file.flush().await.map_err(|e| format!("刷新远程文件失败: {}", e))?;
+    remote_file
+        .flush()
+        .await
+        .map_err(|e| format!("刷新远程文件失败: {}", e))?;
 
     // 同步本地文件修改时间到远程
     if let Some(mtime_secs) = mtime {
@@ -426,7 +474,10 @@ pub async fn sftp_upload(
 
     log::info!(
         "SFTP 上传完成: {} -> {} ({} bytes, local_size={})",
-        local_path, remote_path, total, local_size
+        local_path,
+        remote_path,
+        total,
+        local_size
     );
     Ok(total)
 }
@@ -441,7 +492,9 @@ pub async fn sftp_delete(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    let stat = sftp.metadata(remote_path).await
+    let stat = sftp
+        .metadata(remote_path)
+        .await
         .map_err(|e| format!("获取文件信息 '{}' 失败: {}", remote_path, e))?;
 
     if stat.is_dir() {
@@ -451,11 +504,15 @@ pub async fn sftp_delete(
                 log::info!("SFTP 已删除目录: {}", remote_path);
             }
             Err(e) => {
-                return Err(format!("删除目录 '{}' 失败（可能非空）: {}", remote_path, e));
+                return Err(format!(
+                    "删除目录 '{}' 失败（可能非空）: {}",
+                    remote_path, e
+                ));
             }
         }
     } else {
-        sftp.remove_file(remote_path).await
+        sftp.remove_file(remote_path)
+            .await
             .map_err(|e| format!("删除文件 '{}' 失败: {}", remote_path, e))?;
         log::info!("SFTP 已删除文件: {}", remote_path);
     }
@@ -474,7 +531,8 @@ pub async fn sftp_rename(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    sftp.rename(from_path, to_path).await
+    sftp.rename(from_path, to_path)
+        .await
         .map_err(|e| format!("重命名 '{}' -> '{}' 失败: {}", from_path, to_path, e))?;
 
     log::info!("SFTP 重命名: {} -> {}", from_path, to_path);
@@ -491,7 +549,8 @@ pub async fn sftp_mkdir(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    sftp.create_dir(remote_path).await
+    sftp.create_dir(remote_path)
+        .await
         .map_err(|e| format!("创建目录 '{}' 失败: {}", remote_path, e))?;
 
     log::info!("SFTP 已创建目录: {}", remote_path);
@@ -508,9 +567,13 @@ pub async fn sftp_new_file(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    let mut file = sftp.create(remote_path).await
+    let mut file = sftp
+        .create(remote_path)
+        .await
         .map_err(|e| format!("创建文件 '{}' 失败: {}", remote_path, e))?;
-    file.flush().await.map_err(|e| format!("刷新文件 '{}' 失败: {}", remote_path, e))?;
+    file.flush()
+        .await
+        .map_err(|e| format!("刷新文件 '{}' 失败: {}", remote_path, e))?;
 
     log::info!("SFTP 已创建空文件: {}", remote_path);
     Ok(())
@@ -527,10 +590,13 @@ pub async fn sftp_chmod(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    let mut stat = sftp.metadata(remote_path).await
+    let mut stat = sftp
+        .metadata(remote_path)
+        .await
         .map_err(|e| format!("获取文件信息 '{}' 失败: {}", remote_path, e))?;
     stat.permissions = Some(mode);
-    sftp.set_metadata(remote_path, stat).await
+    sftp.set_metadata(remote_path, stat)
+        .await
         .map_err(|e| format!("修改权限 '{}' 失败: {}", remote_path, e))?;
 
     log::info!("SFTP chmod: {} -> {:o}", remote_path, mode);
@@ -569,9 +635,13 @@ pub async fn sftp_delete_batch(
                 }
             };
             if stat.is_dir() {
-                sftp.remove_dir(remote_path).await.map_err(|e| format!("删除目录失败: {}", e))
+                sftp.remove_dir(remote_path)
+                    .await
+                    .map_err(|e| format!("删除目录失败: {}", e))
             } else {
-                sftp.remove_file(remote_path).await.map_err(|e| format!("删除文件失败: {}", e))
+                sftp.remove_file(remote_path)
+                    .await
+                    .map_err(|e| format!("删除文件失败: {}", e))
             }
         }; // sftp_cache 锁在此释放，允许其他 SFTP 操作穿插
 
@@ -621,21 +691,27 @@ fn delete_recursive_inner<'a>(
             let cache = sftp_cache.lock().await;
             let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-            let stat = sftp.metadata(path).await
+            let stat = sftp
+                .metadata(path)
+                .await
                 .map_err(|e| format!("获取 '{}' 信息失败: {}", path, e))?;
 
             if !stat.is_dir() {
                 // 文件：持锁删除后释放
-                sftp.remove_file(path).await
+                sftp.remove_file(path)
+                    .await
                     .map_err(|e| format!("删除文件 '{}' 失败: {}", path, e))?;
                 log::info!("SFTP 递归删除文件: {}", path);
                 return Ok(());
             }
 
-            let read_dir = sftp.read_dir(path).await
+            let read_dir = sftp
+                .read_dir(path)
+                .await
                 .map_err(|e| format!("读取目录 '{}' 失败: {}", path, e))?;
 
-            let children: Vec<String> = read_dir.into_iter()
+            let children: Vec<String> = read_dir
+                .into_iter()
                 .filter_map(|entry| {
                     let name = entry.file_name();
                     if name == "." || name == ".." {
@@ -661,7 +737,8 @@ fn delete_recursive_inner<'a>(
         {
             let cache = sftp_cache.lock().await;
             let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-            sftp.remove_dir(path).await
+            sftp.remove_dir(path)
+                .await
                 .map_err(|e| format!("删除目录 '{}' 失败: {}", path, e))?;
         }
         log::info!("SFTP 递归删除目录: {}", path);
@@ -730,10 +807,13 @@ fn list_dir_recursive_inner<'a>(
             let cache = sftp_cache.lock().await;
             let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-            let read_dir = sftp.read_dir(path).await
+            let read_dir = sftp
+                .read_dir(path)
+                .await
                 .map_err(|e| format!("读取目录 '{}' 失败: {}", path, e))?;
 
-            read_dir.into_iter()
+            read_dir
+                .into_iter()
                 .filter_map(|entry| {
                     let name = entry.file_name();
                     if name == "." || name == ".." {

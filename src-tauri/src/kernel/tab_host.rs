@@ -57,11 +57,7 @@ impl TabHost {
     }
 
     /// 创建标签页
-    pub fn create_tab(
-        &self,
-        plugin_id: PluginId,
-        name: String,
-    ) -> Result<TabId, TabHostError> {
+    pub fn create_tab(&self, plugin_id: PluginId, name: String) -> Result<TabId, TabHostError> {
         let mut tabs = self.tabs.write().map_err(|_| TabHostError::LockError)?;
         if tabs.len() >= self.max_tabs {
             return Err(TabHostError::MaxTabsReached(self.max_tabs));
@@ -79,12 +75,18 @@ impl TabHost {
         drop(tabs);
 
         {
-            let mut order = self.tab_order.write().map_err(|_| TabHostError::LockError)?;
+            let mut order = self
+                .tab_order
+                .write()
+                .map_err(|_| TabHostError::LockError)?;
             order.push(id.clone());
         }
 
         {
-            let mut active = self.active_id.write().map_err(|_| TabHostError::LockError)?;
+            let mut active = self
+                .active_id
+                .write()
+                .map_err(|_| TabHostError::LockError)?;
             *active = Some(id.clone());
         }
 
@@ -96,10 +98,16 @@ impl TabHost {
         let mut tabs = self.tabs.write().map_err(|_| TabHostError::LockError)?;
         tabs.remove(tab_id);
 
-        let mut order = self.tab_order.write().map_err(|_| TabHostError::LockError)?;
+        let mut order = self
+            .tab_order
+            .write()
+            .map_err(|_| TabHostError::LockError)?;
         order.retain(|id| id != tab_id);
 
-        let mut active = self.active_id.write().map_err(|_| TabHostError::LockError)?;
+        let mut active = self
+            .active_id
+            .write()
+            .map_err(|_| TabHostError::LockError)?;
         if active.as_deref() == Some(tab_id) {
             *active = order.first().cloned();
         }
@@ -113,7 +121,10 @@ impl TabHost {
         if !tabs.contains_key(tab_id) {
             return Err(TabHostError::TabNotFound(tab_id.to_string()));
         }
-        let mut active = self.active_id.write().map_err(|_| TabHostError::LockError)?;
+        let mut active = self
+            .active_id
+            .write()
+            .map_err(|_| TabHostError::LockError)?;
         *active = Some(tab_id.to_string());
         Ok(())
     }
@@ -126,7 +137,10 @@ impl TabHost {
                 return Err(TabHostError::TabNotFound(id.clone()));
             }
         }
-        let mut order = self.tab_order.write().map_err(|_| TabHostError::LockError)?;
+        let mut order = self
+            .tab_order
+            .write()
+            .map_err(|_| TabHostError::LockError)?;
         *order = new_order;
         Ok(())
     }
@@ -134,7 +148,9 @@ impl TabHost {
     /// 更新标签页状态
     pub fn update_tab_state(&self, tab_id: &str, state: TabState) -> Result<(), TabHostError> {
         let mut tabs = self.tabs.write().map_err(|_| TabHostError::LockError)?;
-        let tab = tabs.get_mut(tab_id).ok_or_else(|| TabHostError::TabNotFound(tab_id.to_string()))?;
+        let tab = tabs
+            .get_mut(tab_id)
+            .ok_or_else(|| TabHostError::TabNotFound(tab_id.to_string()))?;
         tab.state = state;
         Ok(())
     }
@@ -142,7 +158,9 @@ impl TabHost {
     /// 重命名标签页
     pub fn rename_tab(&self, tab_id: &str, new_name: &str) -> Result<(), TabHostError> {
         let mut tabs = self.tabs.write().map_err(|_| TabHostError::LockError)?;
-        let tab = tabs.get_mut(tab_id).ok_or_else(|| TabHostError::TabNotFound(tab_id.to_string()))?;
+        let tab = tabs
+            .get_mut(tab_id)
+            .ok_or_else(|| TabHostError::TabNotFound(tab_id.to_string()))?;
         tab.name = new_name.to_string();
         Ok(())
     }
@@ -156,7 +174,10 @@ impl TabHost {
     pub fn tabs(&self) -> Result<Vec<TabInfo>, TabHostError> {
         let tabs = self.tabs.read().map_err(|_| TabHostError::LockError)?;
         let order = self.tab_order.read().map_err(|_| TabHostError::LockError)?;
-        Ok(order.iter().filter_map(|id| tabs.get(id).cloned()).collect())
+        Ok(order
+            .iter()
+            .filter_map(|id| tabs.get(id).cloned())
+            .collect())
     }
 
     /// 获取标签页信息

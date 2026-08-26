@@ -3,8 +3,8 @@
 //! 管理插件的发现、加载、初始化、激活、停用和卸载全生命周期。
 //! 插件注册表存储所有已注册的插件及其 ProtocolAdapter。
 
-use std::collections::HashMap;
 use crate::kernel::tab_host::PluginId;
+use std::collections::HashMap;
 
 /// 插件状态
 #[derive(Debug, Clone, PartialEq)]
@@ -65,21 +65,25 @@ impl PluginHost {
 
     /// 检查插件是否声明了某个能力
     pub fn has_capability(&self, plugin_id: &str, capability: &str) -> bool {
-        self.plugins.get(plugin_id)
+        self.plugins
+            .get(plugin_id)
             .map(|p| p.capabilities.contains(&capability.to_string()))
             .unwrap_or(false)
     }
 
     /// 注销插件
     pub fn unregister_plugin(&mut self, plugin_id: &str) -> Result<(), PluginHostError> {
-        self.plugins.remove(plugin_id)
+        self.plugins
+            .remove(plugin_id)
             .map(|_| ())
             .ok_or_else(|| PluginHostError::PluginNotFound(plugin_id.to_string()))
     }
 }
 
 impl Default for PluginHost {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 插件宿主错误

@@ -585,7 +585,11 @@ fn generate_rule_handler(rule_index: usize, rule: &AutoReplyRule, is_first_match
             .map(|c| (c.pattern.as_str(), c.mode.as_str()))
             .unwrap_or(("", ""));
         let multi = if rule.conditions.len() > 1 {
-            format!(" +{} conds ({})", rule.conditions.len() - 1, rule.condition_logic)
+            format!(
+                " +{} conds ({})",
+                rule.conditions.len() - 1,
+                rule.condition_logic
+            )
         } else {
             String::new()
         };
@@ -685,7 +689,12 @@ fn generate_inline_handler(idx: usize, rule: &AutoReplyRule) -> String {
 ///
 /// `is_first_match` 为 true 时，在动作执行后生成 `return`，使 first-match 调度器
 /// 在首条命中规则后跳出回调，不再检查后续规则。
-fn generate_handler_body(idx: usize, rule: &AutoReplyRule, indent: &str, is_first_match: bool) -> String {
+fn generate_handler_body(
+    idx: usize,
+    rule: &AutoReplyRule,
+    indent: &str,
+    is_first_match: bool,
+) -> String {
     let mut code = String::new();
 
     // ── 匹配逻辑 ──
@@ -739,11 +748,7 @@ fn generate_handler_body(idx: usize, rule: &AutoReplyRule, indent: &str, is_firs
     let indent2 = format!("{}    ", indent);
     if !rule.actions.is_empty() {
         for (i, action) in rule.actions.iter().enumerate() {
-            code.push_str(&format!(
-                "{}-- Action {}\n",
-                indent2,
-                i + 1
-            ));
+            code.push_str(&format!("{}-- Action {}\n", indent2, i + 1));
             if action.delay_ms > 0 {
                 code.push_str(&format!("{}sleep({})\n", indent2, action.delay_ms));
             }
@@ -823,7 +828,10 @@ fn condition_expr(c: &MatchCondition) -> String {
     }
 
     match c.mode.as_str() {
-        "regex" => format!("(regex_find(\"{}\", data) ~= nil)", escape_lua_string(&c.pattern)),
+        "regex" => format!(
+            "(regex_find(\"{}\", data) ~= nil)",
+            escape_lua_string(&c.pattern)
+        ),
         // contains/equals/starts_with：解释 \r\n\t\0 转义序列为实际控制字符
         "contains" | "equals" | "starts_with" => {
             let interpreted = interpret_escape_sequences(&c.pattern);
@@ -890,8 +898,7 @@ pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::with_capacity(clean.len() / 2);
     for chunk in clean.chunks(2) {
         let s: String = chunk.iter().collect();
-        let byte = u8::from_str_radix(&s, 16)
-            .map_err(|_| format!("无效的 HEX 字符: \"{}\"", s))?;
+        let byte = u8::from_str_radix(&s, 16).map_err(|_| format!("无效的 HEX 字符: \"{}\"", s))?;
         bytes.push(byte);
     }
     Ok(bytes)
@@ -949,13 +956,7 @@ fn hex_to_lua_escapes(hex: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
-    fn make_rule(
-        id: &str,
-        pattern: &str,
-        mode: &str,
-        reply: &str,
-        delay: u64,
-    ) -> AutoReplyRule {
+    fn make_rule(id: &str, pattern: &str, mode: &str, reply: &str, delay: u64) -> AutoReplyRule {
         let actions = if reply.is_empty() && delay == 0 {
             vec![]
         } else {
@@ -1113,7 +1114,13 @@ mod tests {
 
     #[test]
     fn test_macro_in_reply() {
-        let rule = make_rule("1", "GET_TEMP", "contains", "TEMP:{{RANDOM(20,30)}}C\r\n", 0);
+        let rule = make_rule(
+            "1",
+            "GET_TEMP",
+            "contains",
+            "TEMP:{{RANDOM(20,30)}}C\r\n",
+            0,
+        );
         let code = rules_to_lua_script(&[rule], "test", "all");
         eprintln!("=== MACRO CODE ===\n{}\n=== END ===", code);
         assert!(code.contains("_expand_reply"));
@@ -1365,8 +1372,20 @@ mod tests {
     fn test_conditions_or_logic() {
         let mut rule = make_rule("1", "", "contains", "OK\r\n", 0);
         rule.conditions = vec![
-            MatchCondition { pattern: "A".into(), mode: "contains".into(), case_sensitive: false, negate: false, match_format: "text".into() },
-            MatchCondition { pattern: "B".into(), mode: "contains".into(), case_sensitive: false, negate: false, match_format: "text".into() },
+            MatchCondition {
+                pattern: "A".into(),
+                mode: "contains".into(),
+                case_sensitive: false,
+                negate: false,
+                match_format: "text".into(),
+            },
+            MatchCondition {
+                pattern: "B".into(),
+                mode: "contains".into(),
+                case_sensitive: false,
+                negate: false,
+                match_format: "text".into(),
+            },
         ];
         rule.condition_logic = "or".into();
         let code = rules_to_lua_script(&[rule], "test", "all");
@@ -1540,8 +1559,10 @@ mod tests {
         lua.load(super::SCRIPT_HEADER).exec().unwrap();
 
         // CRC(01 03 00 00 00 01, 16, 0x8005) → "840A"
-        let result: String = lua.load(r#"return _crc_compute("\x01\x03\x00\x00\x00\x01", 16, 0x8005)"#)
-            .eval().unwrap();
+        let result: String = lua
+            .load(r#"return _crc_compute("\x01\x03\x00\x00\x00\x01", 16, 0x8005)"#)
+            .eval()
+            .unwrap();
         assert_eq!(result, "840A");
     }
 
@@ -1551,8 +1572,10 @@ mod tests {
         lua.load(super::SCRIPT_HEADER).exec().unwrap();
 
         // CRC-16/CCITT("123456789") → 0x31C3
-        let result: String = lua.load(r#"return _crc_compute("123456789", 16, 0x1021)"#)
-            .eval().unwrap();
+        let result: String = lua
+            .load(r#"return _crc_compute("123456789", 16, 0x1021)"#)
+            .eval()
+            .unwrap();
         assert_eq!(result, "31C3");
     }
 
@@ -1562,8 +1585,10 @@ mod tests {
         lua.load(super::SCRIPT_HEADER).exec().unwrap();
 
         // CRC-32("123456789") → 0xCBF43926
-        let result: String = lua.load(r#"return _crc_compute("123456789", 32, 0x04C11DB7)"#)
-            .eval().unwrap();
+        let result: String = lua
+            .load(r#"return _crc_compute("123456789", 32, 0x04C11DB7)"#)
+            .eval()
+            .unwrap();
         assert_eq!(result, "CBF43926");
     }
 
@@ -1574,8 +1599,10 @@ mod tests {
         lua.load(super::SCRIPT_HEADER).exec().unwrap();
 
         // XOR of "GPGGA" = 0x47^0x50^0x47^0x47^0x41 = 0x56
-        let result: String = lua.load(r#"return __test._xor_checksum("GPGGA")"#)
-            .eval().unwrap();
+        let result: String = lua
+            .load(r#"return __test._xor_checksum("GPGGA")"#)
+            .eval()
+            .unwrap();
         assert_eq!(result, "56");
     }
 
@@ -1585,8 +1612,7 @@ mod tests {
         lua.load(super::SCRIPT_HEADER).exec().unwrap();
 
         // SUM8 of "GPGGA": 0x47+0x50+0x47+0x47+0x41 = 0x166, low byte = 0x66
-        let result: String = lua.load(r#"return __test._sum8("GPGGA")"#)
-            .eval().unwrap();
+        let result: String = lua.load(r#"return __test._sum8("GPGGA")"#).eval().unwrap();
         assert_eq!(result, "66");
     }
 
@@ -1609,28 +1635,43 @@ mod tests {
     fn test_hexval_lua_execution() {
         let lua = mlua::Lua::new();
         // Test: 255 with width 2 → "FF"
-        let result: String = lua.load(r#"
+        let result: String = lua
+            .load(
+                r#"
             local n = 255
             local w = 2
             return string.format("%0" .. w .. "X", math.floor(n))
-        "#).eval().unwrap();
+        "#,
+            )
+            .eval()
+            .unwrap();
         assert_eq!(result, "FF");
 
         // Test: 0 with width 4 → "0000"
-        let result: String = lua.load(r#"
+        let result: String = lua
+            .load(
+                r#"
             local n = 0
             local w = 4
             return string.format("%0" .. w .. "X", math.floor(n))
-        "#).eval().unwrap();
+        "#,
+            )
+            .eval()
+            .unwrap();
         assert_eq!(result, "0000");
 
         // Test: 4095 auto width → "0FFF" → "FFF"? No, auto width rounds to even hex digits
-        let result: String = lua.load(r#"
+        let result: String = lua
+            .load(
+                r#"
             local n = 4095
             local w = math.ceil(math.log(n + 1, 16))
             if w % 2 ~= 0 then w = w + 1 end
             return string.format("%0" .. w .. "X", math.floor(n))
-        "#).eval().unwrap();
+        "#,
+            )
+            .eval()
+            .unwrap();
         assert_eq!(result, "0FFF");
     }
 
@@ -1657,29 +1698,33 @@ mod tests {
 
         // 生成完整脚本并执行
         let mut rule = make_rule("1", "GO", "contains", "", 0);
-        rule.actions = vec![
-            ReplyAction {
-                delay_ms: 0,
-                data: "VAL:{{HEXVAL({{COUNTER}},4)}}".into(),
-                format: "text".into(),
-            },
-        ];
+        rule.actions = vec![ReplyAction {
+            delay_ms: 0,
+            data: "VAL:{{HEXVAL({{COUNTER}},4)}}".into(),
+            format: "text".into(),
+        }];
         let code = rules_to_lua_script(&[rule], "nest", "all");
         eprintln!("=== NESTED CODE ===\n{}\n=== END ===", code);
 
         lua.load(&code).exec().unwrap();
 
         // 模拟 feed_data：手动调用 handler
-        lua.load(r#"
+        lua.load(
+            r#"
             local data = "GO"
             for _, h in ipairs(__handlers) do
                 local ok, m = pcall(string.find, data, h.pattern)
                 if ok and m then h.callback(data) end
             end
-        "#).exec().unwrap();
+        "#,
+        )
+        .exec()
+        .unwrap();
 
-        let sent: Vec<String> = lua.globals()
-            .get::<mlua::Table>("sent").unwrap()
+        let sent: Vec<String> = lua
+            .globals()
+            .get::<mlua::Table>("sent")
+            .unwrap()
             .sequence_values::<String>()
             .collect::<mlua::Result<_>>()
             .unwrap();

@@ -72,7 +72,7 @@ pub fn send_cancel(port: &mut Box<dyn serialport::SerialPort>) {
     // lrzsz canit(): 10 × CAN (0x18) + 8 × BS (0x08)
     let sequence: [u8; 18] = [
         CAN, CAN, CAN, CAN, CAN, CAN, CAN, CAN, CAN, CAN, // 10 CAN
-        0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08,  // 8 backspace
+        0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, // 8 backspace
     ];
     if let Err(e) = port.write_all(&sequence) {
         log::warn!("发送 CAN 序列失败: {}", e);
@@ -193,7 +193,11 @@ pub fn wait_for_nak_or_c(
                 log::debug!(
                     "wait_for_nak_or_c: ignoring noise byte 0x{:02X} ('{}')",
                     other,
-                    if other.is_ascii_graphic() || other == b' ' { other as char } else { '.' }
+                    if other.is_ascii_graphic() || other == b' ' {
+                        other as char
+                    } else {
+                        '.'
+                    }
                 );
                 last_can = false;
                 continue;
@@ -238,10 +242,10 @@ pub fn read_eot_response(
     timeout_ms: u64,
 ) -> Result<EotResponse, Box<dyn std::error::Error>> {
     match read_byte_with_timeout(port, timeout_ms)? {
-        Some(0x06) => Ok(EotResponse::Ack),       // ACK
-        Some(NAK)  => Ok(EotResponse::Nak),        // 0x15
-        Some(CAN)  => Ok(EotResponse::Can),        // 0x18
-        Some(C)    => Ok(EotResponse::WantCrc),    // 0x43
+        Some(0x06) => Ok(EotResponse::Ack),  // ACK
+        Some(NAK) => Ok(EotResponse::Nak),   // 0x15
+        Some(CAN) => Ok(EotResponse::Can),   // 0x18
+        Some(C) => Ok(EotResponse::WantCrc), // 0x43
         Some(other) => Ok(EotResponse::Other(other)),
         None => Ok(EotResponse::Timeout),
     }

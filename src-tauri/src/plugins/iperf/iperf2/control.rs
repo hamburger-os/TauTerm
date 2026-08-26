@@ -16,8 +16,8 @@ use std::time::Duration;
 use socket2::{Domain, Protocol, Socket, Type};
 
 use super::test_hdr::{
-    client_test_hdr_len, tcp_first_payload, ClientHdrAck, ClientHdrExt, ClientHdrV1,
-    HEADER_EXTEND, HEADER_VERSION2, MAX_HEADER_LEN,
+    client_test_hdr_len, tcp_first_payload, ClientHdrAck, ClientHdrExt, ClientHdrV1, HEADER_EXTEND,
+    HEADER_VERSION2, MAX_HEADER_LEN,
 };
 use super::types::ServerTestMode;
 
@@ -90,7 +90,11 @@ pub fn client_handshake(
             if let Err(e) = sock.set_send_buffer_size(w as usize) {
                 log::debug!("[iperf2] SO_SNDBUF({}) 设置失败（忽略）: {}", w, e);
             } else if let Ok(effective) = sock.send_buffer_size() {
-                log::debug!("[iperf2] SO_SNDBUF 请求 {} 实际 {}（OS 可能钳制）", w, effective);
+                log::debug!(
+                    "[iperf2] SO_SNDBUF 请求 {} 实际 {}（OS 可能钳制）",
+                    w,
+                    effective
+                );
             }
         }
         match sock.connect_timeout(&addr.into(), CONTROL_TIMEOUT) {
@@ -101,7 +105,10 @@ pub fn client_handshake(
             Err(e) => last_err = format!("{}: {}", addr, e),
         }
     }
-    Err(format!("无法连接 iperf2 服务端 {}: {}", server_addr, last_err))
+    Err(format!(
+        "无法连接 iperf2 服务端 {}: {}",
+        server_addr, last_err
+    ))
 }
 
 /// 发送测试头 + 读 ack（连接成功后）
@@ -151,8 +158,9 @@ fn read_server_ack(stream: &mut TcpStream) -> Result<(), String> {
         match stream.read(&mut buf[got..]) {
             Ok(0) => break,
             Ok(n) => got += n,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
             {
                 break;
             }
@@ -204,7 +212,10 @@ pub fn server_handshake(
 
     // 2. 按 flags 推导测试头总长度（Settings_ClientTestHdrLen）
     let Some(hdr_len) = client_test_hdr_len(flags) else {
-        return Err(format!("非 v1/v2 测试头 flags=0x{:08X}（可能为端口探测）", flags));
+        return Err(format!(
+            "非 v1/v2 测试头 flags=0x{:08X}（可能为端口探测）",
+            flags
+        ));
     };
 
     // 3. 读完剩余部分（received 为绝对偏移，须传入完整切片）
@@ -252,13 +263,19 @@ fn read_with_stall(
     while *received < target {
         check_abort(abort)?;
         match stream.read(&mut buf[*received..target]) {
-            Ok(0) => return Err(format!("客户端提前关闭（仅收到 {}/{}B）", *received, target)),
+            Ok(0) => {
+                return Err(format!(
+                    "客户端提前关闭（仅收到 {}/{}B）",
+                    *received, target
+                ))
+            }
             Ok(n) => {
                 *received += n;
                 stalled = 0;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
             {
                 stalled += 1;
                 if stalled >= MAX_STALLED_TIMEOUTS {

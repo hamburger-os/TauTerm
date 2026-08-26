@@ -32,7 +32,9 @@ pub struct TelnetConfig {
     pub port: u16,
 }
 
-fn default_port() -> u16 { 23 }
+fn default_port() -> u16 {
+    23
+}
 
 impl Default for TelnetConfig {
     fn default() -> Self {
@@ -54,7 +56,11 @@ pub struct TelnetAdapter {
 }
 
 impl TelnetAdapter {
-    pub fn new() -> Self { Self { app: Mutex::new(None) } }
+    pub fn new() -> Self {
+        Self {
+            app: Mutex::new(None),
+        }
+    }
 
     /// 注入全局 AppHandle（lib.rs setup 调用）。
     /// setup 在所有命令处理器就绪前运行，`connect()` 必然在注入之后执行。
@@ -90,20 +96,32 @@ impl TelnetAdapter {
     }
 
     /// 建立 TCP 连接并完成初始选项协商
-    fn open_connection(config: &TelnetConfig) -> Result<(Telnet, std::net::TcpStream), SessionError> {
-        let host = if config.host.is_empty() { "127.0.0.1".to_string() } else { config.host.clone() };
+    fn open_connection(
+        config: &TelnetConfig,
+    ) -> Result<(Telnet, std::net::TcpStream), SessionError> {
+        let host = if config.host.is_empty() {
+            "127.0.0.1".to_string()
+        } else {
+            config.host.clone()
+        };
         // connect_timeout 要求 &SocketAddr，先解析（取第一个解析结果）
         let socket_addrs = (host.as_str(), config.port)
             .to_socket_addrs()
             .map_err(|e| SessionError::ConnectionFailed {
                 reason: format!("解析地址 {}:{} 失败: {}", host, config.port, e),
             })?;
-        let addr = *socket_addrs.as_slice().first().ok_or_else(|| SessionError::ConnectionFailed {
-            reason: format!("地址 {}:{} 未解析出结果", host, config.port),
-        })?;
-        let stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(10))
-            .map_err(|e| SessionError::ConnectionFailed {
-                reason: format!("无法连接 {}:{}: {}", host, config.port, e),
+        let addr =
+            *socket_addrs
+                .as_slice()
+                .first()
+                .ok_or_else(|| SessionError::ConnectionFailed {
+                    reason: format!("地址 {}:{} 未解析出结果", host, config.port),
+                })?;
+        let stream =
+            std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(10)).map_err(|e| {
+                SessionError::ConnectionFailed {
+                    reason: format!("无法连接 {}:{}: {}", host, config.port, e),
+                }
             })?;
         stream.set_nodelay(true).ok();
         // TCP keepalive（长连设备场景保活；std 暂无 set_keepalive，用 socket2）
@@ -113,11 +131,11 @@ impl TelnetAdapter {
                 reason: format!("设置 TCP keepalive 失败: {}", e),
             })?;
         // 读超时驱动通道 read() 空闲检测（与串口 50ms 策略一致）
-        stream
-            .set_read_timeout(Some(READ_TIMEOUT))
-            .map_err(|e| SessionError::ConnectionFailed {
+        stream.set_read_timeout(Some(READ_TIMEOUT)).map_err(|e| {
+            SessionError::ConnectionFailed {
                 reason: format!("设置读超时失败: {}", e),
-            })?;
+            }
+        })?;
         let probe = stream
             .try_clone()
             .map_err(|e| SessionError::ConnectionFailed {
@@ -168,10 +186,13 @@ impl ProtocolAdapter for TelnetAdapter {
             let sid = slot.lock().ok().and_then(|s| s.clone());
             match sid {
                 Some(sid) => {
-                    let _ = app.emit("telnet-echo-state", serde_json::json!({
-                        "session_id": sid,
-                        "local_echo": local_echo,
-                    }));
+                    let _ = app.emit(
+                        "telnet-echo-state",
+                        serde_json::json!({
+                            "session_id": sid,
+                            "local_echo": local_echo,
+                        }),
+                    );
                 }
                 None => log::trace!(
                     "Telnet 回显事件在 session_id 注入前到达，忽略: local_echo={local_echo}"
@@ -251,8 +272,7 @@ mod tests {
         let on_echo_change = Box::new(move |local_echo: bool| {
             let _ = events_tx.send(local_echo);
         });
-        let channel =
-            TelnetChannel::new(telnet, probe, on_echo_change, Arc::new(Mutex::new(None)));
+        let channel = TelnetChannel::new(telnet, probe, on_echo_change, Arc::new(Mutex::new(None)));
         let peer = peer_handle.join().expect("对端线程失败");
         (channel, peer, events_rx)
     }
@@ -293,12 +313,19 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(contains(&out, needle), "对端未收到目标字节 {:02X?}，实际: {:02X?}", needle, out);
+        assert!(
+            contains(&out, needle),
+            "对端未收到目标字节 {:02X?}，实际: {:02X?}",
+            needle,
+            out
+        );
         out
     }
 
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-        if needle.is_empty() { return true; }
+        if needle.is_empty() {
+            return true;
+        }
         haystack.windows(needle.len()).any(|w| w == needle)
     }
 
@@ -328,10 +355,26 @@ mod tests {
             }
             out
         };
-        assert!(contains(&received, &[0xFF, 0xFB, 0x1F]), "缺少 WILL NAWS: {:02X?}", received);
-        assert!(contains(&received, &[0xFF, 0xFD, 0x03]), "缺少 DO SGA: {:02X?}", received);
-        assert!(contains(&received, &[0xFF, 0xFB, 0x00]), "缺少 WILL BINARY: {:02X?}", received);
-        assert!(contains(&received, &[0xFF, 0xFD, 0x00]), "缺少 DO BINARY: {:02X?}", received);
+        assert!(
+            contains(&received, &[0xFF, 0xFB, 0x1F]),
+            "缺少 WILL NAWS: {:02X?}",
+            received
+        );
+        assert!(
+            contains(&received, &[0xFF, 0xFD, 0x03]),
+            "缺少 DO SGA: {:02X?}",
+            received
+        );
+        assert!(
+            contains(&received, &[0xFF, 0xFB, 0x00]),
+            "缺少 WILL BINARY: {:02X?}",
+            received
+        );
+        assert!(
+            contains(&received, &[0xFF, 0xFD, 0x00]),
+            "缺少 DO BINARY: {:02X?}",
+            received
+        );
     }
 
     /// 服务器 WILL ECHO → 客户端应答 DO ECHO，本地回显保持关闭（无事件）
@@ -343,7 +386,11 @@ mod tests {
         let _ = peer.write_all(&[0xFF, 0xFB, 0x01]); // IAC WILL ECHO
         let _ = channel.read(&mut [0u8; 64]).unwrap();
         let received = read_until(&mut peer, &[0xFF, 0xFD, 0x01]); // IAC DO ECHO
-        assert!(contains(&received, &[0xFF, 0xFD, 0x01]), "缺少 DO ECHO 应答: {:02X?}", received);
+        assert!(
+            contains(&received, &[0xFF, 0xFD, 0x01]),
+            "缺少 DO ECHO 应答: {:02X?}",
+            received
+        );
         // 本地回显保持关闭：不应有事件
         assert!(rx.try_recv().is_err(), "WILL ECHO 不应触发回显事件");
     }
@@ -357,7 +404,11 @@ mod tests {
         let _ = peer.write_all(&[0xFF, 0xFC, 0x01]); // IAC WONT ECHO
         let _ = channel.read(&mut [0u8; 64]).unwrap();
         let received = read_until(&mut peer, &[0xFF, 0xFE, 0x01]); // IAC DONT ECHO
-        assert!(contains(&received, &[0xFF, 0xFE, 0x01]), "缺少 DONT ECHO 应答: {:02X?}", received);
+        assert!(
+            contains(&received, &[0xFF, 0xFE, 0x01]),
+            "缺少 DONT ECHO 应答: {:02X?}",
+            received
+        );
         // 回显状态变化事件（回调注入 bool）
         let event = rx.try_recv().expect("应收到回显事件");
         assert!(event, "回显事件应为 true");
@@ -372,7 +423,11 @@ mod tests {
         let _ = peer.write_all(&[0xFF, 0xFD, 0x01]); // IAC DO ECHO
         let _ = channel.read(&mut [0u8; 64]).unwrap();
         let received = read_until(&mut peer, &[0xFF, 0xFC, 0x01]); // IAC WONT ECHO
-        assert!(contains(&received, &[0xFF, 0xFC, 0x01]), "缺少 WONT ECHO 应答: {:02X?}", received);
+        assert!(
+            contains(&received, &[0xFF, 0xFC, 0x01]),
+            "缺少 WONT ECHO 应答: {:02X?}",
+            received
+        );
     }
 
     /// 未知选项 → 拒绝（WONT/DONT）
@@ -384,7 +439,11 @@ mod tests {
         let _ = peer.write_all(&[0xFF, 0xFB, 0x2A]); // IAC WILL 42（未知选项）
         let _ = channel.read(&mut [0u8; 64]).unwrap();
         let received = read_until(&mut peer, &[0xFF, 0xFE, 0x2A]); // IAC DONT 42
-        assert!(contains(&received, &[0xFF, 0xFE, 0x2A]), "缺少 DONT 应答: {:02X?}", received);
+        assert!(
+            contains(&received, &[0xFF, 0xFE, 0x2A]),
+            "缺少 DONT 应答: {:02X?}",
+            received
+        );
     }
 
     /// NAWS 编码：132×43 → FF FA 1F 00 84 00 2B FF F0
@@ -398,7 +457,8 @@ mod tests {
         assert_eq!(
             received,
             vec![0xFF, 0xFA, 0x1F, 0x00, 0x84, 0x00, 0x2B, 0xFF, 0xF0],
-            "NAWS 字节序列错误: {:02X?}", received
+            "NAWS 字节序列错误: {:02X?}",
+            received
         );
     }
 
@@ -441,7 +501,12 @@ mod tests {
             assert_eq!(&buf[..n], &payload[total..total + n], "数据错位");
             total += n;
         }
-        assert_eq!(total, payload.len(), "数据被截断: {total}/{}", payload.len());
+        assert_eq!(
+            total,
+            payload.len(),
+            "数据被截断: {total}/{}",
+            payload.len()
+        );
     }
 
     /// 尾包交付：服务器发送数据后立即关闭连接 →
@@ -493,6 +558,11 @@ mod tests {
         consume_initial_negotiation(&mut peer);
         let _ = channel.write(&[0x41, 0xFF, 0x42]).expect("write 失败");
         let received = read_exact(&mut peer, 4);
-        assert_eq!(received, vec![0x41, 0xFF, 0xFF, 0x42], "写入转义错误: {:02X?}", received);
+        assert_eq!(
+            received,
+            vec![0x41, 0xFF, 0xFF, 0x42],
+            "写入转义错误: {:02X?}",
+            received
+        );
     }
 }

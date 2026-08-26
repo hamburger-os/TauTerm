@@ -16,15 +16,15 @@
 //! - 消费者线程互斥访问 LogWriter HashMap
 //! - LogWriter 的 BufWriter 在 Drop 时自动 flush + 关闭文件句柄
 
+use chrono::Local;
+use log::{Log, Metadata, Record};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
-use chrono::Local;
-use log::{Log, Metadata, Record};
-use serde::{Deserialize, Serialize};
 
 // ── log crate 桥接器 ─────────────────────────────────
 
@@ -56,7 +56,10 @@ impl Log for LogBridge {
             return false;
         }
         // 检查级别过滤
-        let min_level = SYSTEM_LOG_MIN_LEVEL.lock().map(|s| s.clone()).unwrap_or_default();
+        let min_level = SYSTEM_LOG_MIN_LEVEL
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default();
         let min = match min_level.as_str() {
             "error" => log::Level::Error,
             "warn" => log::Level::Warn,
@@ -98,8 +101,8 @@ pub fn set_system_log_config(enabled: bool, level: &str) {
     }
 }
 
-use crate::security::log_sanitizer::sanitize_log;
 use super::log_writer::LogWriter;
+use crate::security::log_sanitizer::sanitize_log;
 
 // ── 数据结构 ────────────────────────────────────────
 
@@ -121,9 +124,7 @@ pub enum LogCommand {
         data_mode: String,
     },
     /// 停止会话日志
-    StopSession {
-        session_id: String,
-    },
+    StopSession { session_id: String },
     /// 优雅关闭消费者线程
     Shutdown,
     /// 清除日志文件后重新打开所有写入器（系统日志 + 会话日志）
@@ -178,7 +179,7 @@ impl Default for LogConfig {
             enabled: true,
             log_dir: PathBuf::from("logs"),
             file_max_size: 10 * 1024 * 1024, // 10 MB
-            buffer_size: 4096,                // 4 KB
+            buffer_size: 4096,               // 4 KB
             flush_interval_ms: 500,
             retention_days: 7,
         }
@@ -328,8 +329,7 @@ impl LogEngine {
     /// 清理过期日志文件
     pub fn cleanup_old_logs(config: &LogConfig) {
         let retention_secs = config.retention_days * 86400;
-        let cutoff = std::time::SystemTime::now()
-            .checked_sub(Duration::from_secs(retention_secs));
+        let cutoff = std::time::SystemTime::now().checked_sub(Duration::from_secs(retention_secs));
 
         if let Some(cutoff) = cutoff {
             if let Ok(entries) = std::fs::read_dir(&config.log_dir) {
@@ -385,7 +385,8 @@ impl LogEngine {
             }
 
             // 动态读取配置获取最新超时
-            let current_timeout = config_arc.lock()
+            let current_timeout = config_arc
+                .lock()
                 .map(|c| get_timeout(&c))
                 .unwrap_or(timeout);
 
@@ -393,7 +394,12 @@ impl LogEngine {
                 Ok(LogEntry::Command(cmd)) => {
                     let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
                     match cmd {
-                        LogCommand::StartSession { session_id, session_name, port_name, data_mode } => {
+                        LogCommand::StartSession {
+                            session_id,
+                            session_name,
+                            port_name,
+                            data_mode,
+                        } => {
                             if !cfg.enabled {
                                 continue;
                             }
@@ -409,14 +415,19 @@ impl LogEngine {
                                     let file_name = writer.file_name();
                                     log::info!(
                                         "日志记录已启动: {} (会话: {}, 端口: {})",
-                                        file_name, session_name, port_name
+                                        file_name,
+                                        session_name,
+                                        port_name
                                     );
                                     if let Ok(mut map) = active_logs.lock() {
-                                        map.insert(session_id.clone(), LogStatus {
-                                            session_id: session_id.clone(),
-                                            file_name,
-                                            bytes_written: 0,
-                                        });
+                                        map.insert(
+                                            session_id.clone(),
+                                            LogStatus {
+                                                session_id: session_id.clone(),
+                                                file_name,
+                                                bytes_written: 0,
+                                            },
+                                        );
                                     }
                                     writers.insert(session_id, writer);
                                 }
@@ -430,10 +441,7 @@ impl LogEngine {
                                 let file_name = writer.file_name();
                                 let bytes = writer.bytes_written();
                                 let _ = writer.flush();
-                                log::info!(
-                                    "日志记录已停止: {} (写入 {} 字节)",
-                                    file_name, bytes
-                                );
+                                log::info!("日志记录已停止: {} (写入 {} 字节)", file_name, bytes);
                             }
                             if let Ok(mut map) = active_logs.lock() {
                                 map.remove(&session_id);
@@ -479,7 +487,11 @@ impl LogEngine {
                         }
                     }
                 }
-                Ok(LogEntry::SystemEvent { level, message, timestamp }) => {
+                Ok(LogEntry::SystemEvent {
+                    level,
+                    message,
+                    timestamp,
+                }) => {
                     let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
                     if !cfg.enabled {
                         continue;
@@ -516,7 +528,8 @@ impl LogEngine {
                     if let Some(ref mut w) = system_writer {
                         let ts = timestamp.format("%Y-%m-%d %H:%M:%S%.3f");
                         let sanitized_msg = sanitize_log(&message);
-                        let line = format!("[{}] [{}] {}\n", ts, level.to_uppercase(), sanitized_msg);
+                        let line =
+                            format!("[{}] [{}] {}\n", ts, level.to_uppercase(), sanitized_msg);
                         let _ = w.write_all(line.as_bytes());
                     }
                 }

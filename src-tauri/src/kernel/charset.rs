@@ -118,7 +118,10 @@ mod tests {
         let upper = transcode_utf8_to_encoding("你好".as_bytes(), "GBK").unwrap();
         let mixed = transcode_utf8_to_encoding("你好".as_bytes(), "Shift_JIS").unwrap();
         assert_eq!(lower, upper);
-        assert_eq!(mixed, transcode_utf8_to_encoding("你好".as_bytes(), "shift-jis").unwrap());
+        assert_eq!(
+            mixed,
+            transcode_utf8_to_encoding("你好".as_bytes(), "shift-jis").unwrap()
+        );
     }
 
     #[test]

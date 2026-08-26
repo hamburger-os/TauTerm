@@ -40,14 +40,19 @@ impl CommHandle for NetworkCommHandle {
                     .side
                     .current_target()
                     .ok_or_else(|| CommError::SendError("无可用发送目标".to_string()))?;
-                self.side.udp_send_to(&target, data).map_err(CommError::SendError)
+                self.side
+                    .udp_send_to(&target, data)
+                    .map_err(CommError::SendError)
             }
             ("udp", "client") => self.side.udp_send(data).map_err(CommError::SendError),
             ("tcp", _) => {
                 // TCP 容器级路由：按「当前目标」（选中对端 / 全部客户端 / 唯一对端）写入对端通道。
                 // 先快照目标与发送端，锁外发送——避免持 peer_writers 锁阻塞在 send 上，
                 // 与对端 on_disconnect（同样取该锁移除对端）形成死锁。
-                let (target, senders): (Option<String>, Vec<(String, mpsc::SyncSender<IoLoopCmd>)>) = {
+                let (target, senders): (
+                    Option<String>,
+                    Vec<(String, mpsc::SyncSender<IoLoopCmd>)>,
+                ) = {
                     let writers = self
                         .side
                         .peer_writers
@@ -80,7 +85,9 @@ impl CommHandle for NetworkCommHandle {
                             .iter()
                             .find(|(id, _)| id == peer_id)
                             .map(|(_, tx)| tx)
-                            .ok_or_else(|| CommError::SendError("目标对端不存在或已断开".to_string()))?;
+                            .ok_or_else(|| {
+                                CommError::SendError("目标对端不存在或已断开".to_string())
+                            })?;
                         tx.send(IoLoopCmd::Write(data.to_vec()))
                             .map_err(|e| CommError::SendError(e.to_string()))
                     }
@@ -117,7 +124,9 @@ impl CommHandle for NetworkCommHandle {
                 "仅 UDP 会话支持按目标地址发送".to_string(),
             ));
         }
-        self.side.udp_send_to(target, data).map_err(CommError::SendError)
+        self.side
+            .udp_send_to(target, data)
+            .map_err(CommError::SendError)
     }
 
     fn send_to_text(&self, target: &str, data: &[u8]) -> Result<(), CommError> {

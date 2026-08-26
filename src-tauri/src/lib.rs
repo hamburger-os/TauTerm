@@ -22,30 +22,30 @@ mod security;
 mod transfer;
 pub mod virtual_port;
 
-use std::sync::Mutex;
-use tauri::{Emitter, Manager};
-use tauri::image::Image;
 use kernel::config_store::ConfigStore;
+use kernel::i18n_engine::I18nEngine;
 use kernel::ipc_bridge::IpcBridge;
-use kernel::tab_host::TabHost;
+use kernel::log_engine::{LogBridge, LogConfig, LogEngine};
 use kernel::plugin_host::PluginHost;
 use kernel::session_store::SessionStore;
 use kernel::shortcut_engine::ShortcutEngine;
+use kernel::tab_host::TabHost;
 use kernel::theme_engine::ThemeEngine;
-use kernel::i18n_engine::I18nEngine;
 use kernel::window_manager::WindowManager;
-use kernel::log_engine::{LogEngine, LogConfig, LogBridge};
-use security::CredentialStore;
-use plugins::serial::SerialAdapter;
-use plugins::ssh::SshAdapter;
-use plugins::ssh::HostKeyVerifier;
-use plugins::telnet::TelnetAdapter;
-use plugins::tftp::TftpAdapter;
 use plugins::iperf::IperfAdapter;
 use plugins::network::NetworkAdapter;
+use plugins::serial::SerialAdapter;
+use plugins::ssh::HostKeyVerifier;
+use plugins::ssh::SshAdapter;
+use plugins::telnet::TelnetAdapter;
+use plugins::tftp::TftpAdapter;
+use security::CredentialStore;
+use std::sync::Mutex;
+use tauri::image::Image;
+use tauri::{Emitter, Manager};
+use virtual_port::backend::VirtualPortBackend;
 #[cfg(target_os = "windows")]
 use virtual_port::manager::VirtualPortManager;
-use virtual_port::backend::VirtualPortBackend;
 
 #[cfg(not(target_os = "windows"))]
 use virtual_port::socat::SocatBackend;
@@ -103,64 +103,84 @@ pub fn run() {
 
     // 初始化 Plugin Host 并注册内建插件
     let mut plugin_host = PluginHost::new();
-    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
-        id: "serial".into(),
-        name: "Serial".into(),
-        version: "1.0.0".into(),
-        category: "terminal".into(),
-        content_type: "terminal".into(),
-        capabilities: vec!["connection".into(), "transfer".into(), "endpoint_discovery".into()],
-        state: kernel::plugin_host::PluginState::Ready,
-    }).expect("注册 Serial 插件失败");
-    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
-        id: "ssh".into(),
-        name: "SSH".into(),
-        version: "1.0.0".into(),
-        category: "terminal".into(),
-        content_type: "terminal".into(),
-        capabilities: vec!["connection".into(), "transfer".into(), "endpoint_discovery".into()],
-        state: kernel::plugin_host::PluginState::Ready,
-    }).expect("注册 SSH 插件失败");
-    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
-        id: "telnet".into(),
-        name: "Telnet".into(),
-        version: "1.0.0".into(),
-        category: "terminal".into(),
-        content_type: "terminal".into(),
-        capabilities: vec!["connection".into()],
-        state: kernel::plugin_host::PluginState::Ready,
-    }).expect("注册 Telnet 插件失败");
-    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
-        id: "tftp".into(),
-        name: "TFTP".into(),
-        version: "1.0.0".into(),
-        category: "file_transfer".into(),
-        content_type: "custom".into(),
-        capabilities: vec!["connection".into(), "transfer".into()],
-        state: kernel::plugin_host::PluginState::Ready,
-    }).expect("注册 TFTP 插件失败");
-    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
-        id: "iperf".into(),
-        name: "iperf".into(),
-        version: "1.0.0".into(),
-        category: "network_tool".into(),
-        content_type: "custom".into(),
-        capabilities: vec!["connection".into()],
-        state: kernel::plugin_host::PluginState::Ready,
-    }).expect("注册 iperf 插件失败");
-    plugin_host.register_plugin(kernel::plugin_host::PluginDescriptor {
-        id: "network".into(),
-        name: "Network Debug".into(),
-        version: "1.0.0".into(),
-        category: "network_tool".into(),
-        content_type: "custom".into(),
-        capabilities: vec![
-            "connection".into(),
-            "network_outbound".into(),
-            "network_listen".into(),
-        ],
-        state: kernel::plugin_host::PluginState::Ready,
-    }).expect("注册 network 插件失败");
+    plugin_host
+        .register_plugin(kernel::plugin_host::PluginDescriptor {
+            id: "serial".into(),
+            name: "Serial".into(),
+            version: "1.0.0".into(),
+            category: "terminal".into(),
+            content_type: "terminal".into(),
+            capabilities: vec![
+                "connection".into(),
+                "transfer".into(),
+                "endpoint_discovery".into(),
+            ],
+            state: kernel::plugin_host::PluginState::Ready,
+        })
+        .expect("注册 Serial 插件失败");
+    plugin_host
+        .register_plugin(kernel::plugin_host::PluginDescriptor {
+            id: "ssh".into(),
+            name: "SSH".into(),
+            version: "1.0.0".into(),
+            category: "terminal".into(),
+            content_type: "terminal".into(),
+            capabilities: vec![
+                "connection".into(),
+                "transfer".into(),
+                "endpoint_discovery".into(),
+            ],
+            state: kernel::plugin_host::PluginState::Ready,
+        })
+        .expect("注册 SSH 插件失败");
+    plugin_host
+        .register_plugin(kernel::plugin_host::PluginDescriptor {
+            id: "telnet".into(),
+            name: "Telnet".into(),
+            version: "1.0.0".into(),
+            category: "terminal".into(),
+            content_type: "terminal".into(),
+            capabilities: vec!["connection".into()],
+            state: kernel::plugin_host::PluginState::Ready,
+        })
+        .expect("注册 Telnet 插件失败");
+    plugin_host
+        .register_plugin(kernel::plugin_host::PluginDescriptor {
+            id: "tftp".into(),
+            name: "TFTP".into(),
+            version: "1.0.0".into(),
+            category: "file_transfer".into(),
+            content_type: "custom".into(),
+            capabilities: vec!["connection".into(), "transfer".into()],
+            state: kernel::plugin_host::PluginState::Ready,
+        })
+        .expect("注册 TFTP 插件失败");
+    plugin_host
+        .register_plugin(kernel::plugin_host::PluginDescriptor {
+            id: "iperf".into(),
+            name: "iperf".into(),
+            version: "1.0.0".into(),
+            category: "network_tool".into(),
+            content_type: "custom".into(),
+            capabilities: vec!["connection".into()],
+            state: kernel::plugin_host::PluginState::Ready,
+        })
+        .expect("注册 iperf 插件失败");
+    plugin_host
+        .register_plugin(kernel::plugin_host::PluginDescriptor {
+            id: "network".into(),
+            name: "Network Debug".into(),
+            version: "1.0.0".into(),
+            category: "network_tool".into(),
+            content_type: "custom".into(),
+            capabilities: vec![
+                "connection".into(),
+                "network_outbound".into(),
+                "network_listen".into(),
+            ],
+            state: kernel::plugin_host::PluginState::Ready,
+        })
+        .expect("注册 network 插件失败");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

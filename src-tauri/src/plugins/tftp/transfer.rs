@@ -60,8 +60,7 @@ pub fn send_file(
         None
     };
 
-    let file = fs::File::open(&file_path)
-        .map_err(|e| format!("无法打开文件: {}", e))?;
+    let file = fs::File::open(&file_path).map_err(|e| format!("无法打开文件: {}", e))?;
     let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
     counting.set_total_size(file_size);
 
@@ -166,9 +165,7 @@ pub fn send_file(
                 if abort.load(Ordering::Relaxed) {
                     return Err("传输已取消".into());
                 }
-                window
-                    .prefill()
-                    .map_err(|e| format!("预读失败: {}", e))?;
+                window.prefill().map_err(|e| format!("预读失败: {}", e))?;
                 counting
                     .set_nonblocking(false)
                     .map_err(|e| format!("设置阻塞失败: {}", e))?;
@@ -221,12 +218,9 @@ pub fn send_file(
                                     } else if diff <= window_size {
                                         // 部分确认——滑动窗口
                                         block_seq_win = ack;
-                                        window
-                                            .remove(diff)
-                                            .map_err(|_| "窗口移除超出范围")?;
+                                        window.remove(diff).map_err(|_| "窗口移除超出范围")?;
                                         if !more && window.is_empty() {
-                                            let duration_ms =
-                                                started.elapsed().as_millis() as u64;
+                                            let duration_ms = started.elapsed().as_millis() as u64;
                                             return Ok(TransferResult {
                                                 bytes_transferred: bytes_sent,
                                                 checksum: Some(hasher.finalize()),
@@ -249,9 +243,7 @@ pub fn send_file(
                                 }
 
                                 // 无 ACK、窗口仍有数据、未超时→继续发送
-                                if wr_idx < window.len()
-                                    && Instant::now() < timeout_end
-                                {
+                                if wr_idx < window.len() && Instant::now() < timeout_end {
                                     break;
                                 }
                             }
@@ -270,11 +262,7 @@ pub fn send_file(
 
             // 超时检查
             if Instant::now() >= timeout_end {
-                log::warn!(
-                    "[TFTP send_file] ACK 超时 {}/{}",
-                    retry_cnt,
-                    max_retries
-                );
+                log::warn!("[TFTP send_file] ACK 超时 {}/{}", retry_cnt, max_retries);
                 if retry_cnt >= max_retries {
                     return Err(format!("超过最大重试次数 ({})", max_retries));
                 }
@@ -341,8 +329,7 @@ pub fn receive_file(
 
     // 根据起始块号选择文件打开模式
     let file = if start_block <= 1 {
-        fs::File::create(&file_path)
-            .map_err(|e| format!("无法创建文件: {}", e))?
+        fs::File::create(&file_path).map_err(|e| format!("无法创建文件: {}", e))?
     } else {
         std::fs::OpenOptions::new()
             .append(true)
@@ -421,8 +408,7 @@ pub fn receive_file(
                                         .send_to(
                                             &Packet::Error {
                                                 code: ErrorCode::IllegalOperation,
-                                                msg: "Block counter rollover error"
-                                                    .to_string(),
+                                                msg: "Block counter rollover error".to_string(),
                                             },
                                             &remote,
                                         )
@@ -447,9 +433,7 @@ pub fn receive_file(
                         // ── 顺序块：加入窗口 ──
                         block_number = received_block;
                         last = data.len() < block_size;
-                        window
-                            .add(data.clone())
-                            .map_err(|_| "窗口已满")?;
+                        window.add(data.clone()).map_err(|_| "窗口已满")?;
                         if let Some(ref mut h) = hasher {
                             h.update(&data);
                         }
@@ -487,9 +471,7 @@ pub fn receive_file(
                                     // 排空完成，切回阻塞模式等待新数据
                                     counting
                                         .set_nonblocking(false)
-                                        .map_err(|e| {
-                                            format!("设置阻塞失败: {}", e)
-                                        })?;
+                                        .map_err(|e| format!("设置阻塞失败: {}", e))?;
                                     listen_all = false;
                                 } else {
                                     // 阻塞模式下超时——重试
@@ -499,10 +481,7 @@ pub fn receive_file(
                                         max_retries
                                     );
                                     if retry_cnt >= max_retries {
-                                        return Err(format!(
-                                            "超过最大重试次数 ({})",
-                                            max_retries
-                                        ));
+                                        return Err(format!("超过最大重试次数 ({})", max_retries));
                                     }
                                     retry_cnt += 1;
                                     send_ack = true;
@@ -512,9 +491,7 @@ pub fn receive_file(
                                 log::warn!("[TFTP receive_file] 连接重置");
                                 counting
                                     .set_nonblocking(false)
-                                    .map_err(|e| {
-                                        format!("设置阻塞失败: {}", e)
-                                    })?;
+                                    .map_err(|e| format!("设置阻塞失败: {}", e))?;
                             }
                             _ => {
                                 log::warn!("[TFTP receive_file] IO 错误: {io_e:?}");
@@ -539,9 +516,7 @@ pub fn receive_file(
         send_ack = false;
 
         // ── 窗口写盘 ──
-        window
-            .empty()
-            .map_err(|e| format!("窗口写盘失败: {}", e))?;
+        window.empty().map_err(|e| format!("窗口写盘失败: {}", e))?;
     }
 
     let duration_ms = started.elapsed().as_millis() as u64;
@@ -551,4 +526,3 @@ pub fn receive_file(
         duration_ms,
     })
 }
-

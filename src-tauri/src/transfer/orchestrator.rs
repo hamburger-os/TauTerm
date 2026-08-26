@@ -68,11 +68,21 @@ pub trait TransferOrchestrator: Send + Sync {
 
     /// 执行发送（upload）传输
     /// `client_session_id` — 前端传入的原始 sessionId，用于事件回传
-    async fn execute_send(&self, app: AppHandle, ctx: SendContext, client_session_id: String) -> Result<(), String>;
+    async fn execute_send(
+        &self,
+        app: AppHandle,
+        ctx: SendContext,
+        client_session_id: String,
+    ) -> Result<(), String>;
 
     /// 执行接收（download）传输
     /// `client_session_id` — 前端传入的原始 sessionId，用于事件回传
-    async fn execute_receive(&self, app: AppHandle, ctx: ReceiveContext, client_session_id: String) -> Result<(), String>;
+    async fn execute_receive(
+        &self,
+        app: AppHandle,
+        ctx: ReceiveContext,
+        client_session_id: String,
+    ) -> Result<(), String>;
 
     /// 取消正在进行的传输
     #[allow(dead_code)]
@@ -176,9 +186,7 @@ impl InlineTransferOrchestrator {
             if streaming.unwrap_or(false) {
                 log::info!("YModem streaming 模式请求（协议自行协商）");
             }
-            Ok(Box::new(crate::transfer::ymodem::YModem {
-                block_size: bs,
-            }))
+            Ok(Box::new(crate::transfer::ymodem::YModem { block_size: bs }))
         } else {
             crate::transfer::protocol::create_protocol(&self.pt)
                 .ok_or_else(|| format!("{} 协议未实现", self.pt))
@@ -198,16 +206,12 @@ impl InlineTransferOrchestrator {
         ),
         String,
     > {
-        let (give_tx, give_rx) =
-            std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
-        let (return_tx, return_rx) =
-            std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
+        let (give_tx, give_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
+        let (return_tx, return_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
         {
-            let app_state = app
-                .try_state::<AppState>()
-                .ok_or("无法获取应用状态")?;
+            let app_state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
             let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(session_id);
             let handle = store.get_session_mut(session_id).ok_or(not_found)?;
@@ -220,12 +224,11 @@ impl InlineTransferOrchestrator {
             handle.state = SessionState::Transferring;
             handle.channel_return_tx = Some(return_tx);
             handle.cancel_transfer_tx = Some(cancel_tx);
-            let tx = handle.write_tx.as_ref()
+            let tx = handle
+                .write_tx
+                .as_ref()
                 .ok_or("容器会话不支持端口移交（HandoffPort）")?;
-            let _ = tx.send(IoLoopCmd::HandoffPort {
-                give_tx,
-                return_rx,
-            });
+            let _ = tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx });
         }
 
         let mut channel = give_rx.recv().map_err(|e| {
@@ -264,8 +267,7 @@ impl InlineTransferOrchestrator {
                     h.cancel_transfer_tx = None;
                     h.state = SessionState::Connected;
                     if let Some(tx) = h.channel_return_tx.take() {
-                        let new_channel =
-                            crate::channel::serial_channel::SerialChannel::new(port);
+                        let new_channel = crate::channel::serial_channel::SerialChannel::new(port);
                         if let Err(e) = tx.send(Box::new(new_channel)) {
                             log::error!(
                                 "return_port: 无法归还端口到 I/O 线程（receiver 已断开）— \
@@ -287,26 +289,27 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         self.pt.as_str()
     }
 
-    async fn execute_send(&self, app: AppHandle, ctx: SendContext, client_id: String) -> Result<(), String> {
+    async fn execute_send(
+        &self,
+        app: AppHandle,
+        ctx: SendContext,
+        client_id: String,
+    ) -> Result<(), String> {
         // 1. Handoff 端口（return_tx 和 cancel_tx 已存入 session handle）
         let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id)?;
 
         // 2. 创建协议处理器 + SerialFileTransfer
         //    若协议处理器创建失败，必须归还端口，否则 I/O 线程永久阻塞
-        let protocol_handler = match self.create_protocol_handler(
-            ctx.block_size,
-            ctx.checksum_mode,
-            ctx.streaming,
-        ) {
-            Ok(h) => h,
-            Err(e) => {
-                self.return_port(&app, &ctx.session_id, port);
-                emit_transfer_failed(&app, &ctx.session_id, self.pt.as_str());
-                return Err(e);
-            }
-        };
-        let transfer =
-            SerialFileTransfer::new(self.pt.clone(), protocol_handler, port);
+        let protocol_handler =
+            match self.create_protocol_handler(ctx.block_size, ctx.checksum_mode, ctx.streaming) {
+                Ok(h) => h,
+                Err(e) => {
+                    self.return_port(&app, &ctx.session_id, port);
+                    emit_transfer_failed(&app, &ctx.session_id, self.pt.as_str());
+                    return Err(e);
+                }
+            };
+        let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, port);
 
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
@@ -392,20 +395,16 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
 
         // 2. 创建协议处理器 + SerialFileTransfer
         //    若协议处理器创建失败，必须归还端口，否则 I/O 线程永久阻塞
-        let protocol_handler = match self.create_protocol_handler(
-            ctx.block_size,
-            ctx.checksum_mode,
-            ctx.streaming,
-        ) {
-            Ok(h) => h,
-            Err(e) => {
-                self.return_port(&app, &ctx.session_id, port);
-                emit_transfer_failed(&app, &ctx.session_id, self.pt.as_str());
-                return Err(e);
-            }
-        };
-        let transfer =
-            SerialFileTransfer::new(self.pt.clone(), protocol_handler, port);
+        let protocol_handler =
+            match self.create_protocol_handler(ctx.block_size, ctx.checksum_mode, ctx.streaming) {
+                Ok(h) => h,
+                Err(e) => {
+                    self.return_port(&app, &ctx.session_id, port);
+                    emit_transfer_failed(&app, &ctx.session_id, self.pt.as_str());
+                    return Err(e);
+                }
+            };
+        let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, port);
 
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
@@ -481,14 +480,10 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
     }
 
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
-        let state = app
-            .try_state::<AppState>()
-            .ok_or("无法获取应用状态")?;
+        let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         let not_found = store.session_not_found(session_id);
-        let handle = store
-            .get_session_mut(session_id)
-            .ok_or(not_found)?;
+        let handle = store.get_session_mut(session_id).ok_or(not_found)?;
 
         if let Some(tx) = handle.cancel_transfer_tx.take() {
             let _ = tx.send(());
@@ -518,12 +513,15 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
         self.pt.as_str()
     }
 
-    async fn execute_send(&self, app: AppHandle, ctx: SendContext, client_id: String) -> Result<(), String> {
+    async fn execute_send(
+        &self,
+        app: AppHandle,
+        ctx: SendContext,
+        client_id: String,
+    ) -> Result<(), String> {
         let app_for_spawn = app.clone();
 
-        let state = app
-            .try_state::<AppState>()
-            .ok_or("无法获取应用状态")?;
+        let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
 
         let internal_id = ctx.session_id.clone();
 
@@ -532,9 +530,7 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
         let (ft, cancel_flag) = {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(&internal_id);
-            let handle = store
-                .get_session_mut(&internal_id)
-                .ok_or(not_found)?;
+            let handle = store.get_session_mut(&internal_id).ok_or(not_found)?;
             if handle.state != SessionState::Connected {
                 return Err("会话未连接".into());
             }
@@ -580,7 +576,12 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             let mut guard = PanicGuard::new(app_for_spawn.clone(), internal_for_guard);
 
             let result = ft
-                .send(&files, rd.as_deref(), progress_tx_clone, cancel_flag.clone())
+                .send(
+                    &files,
+                    rd.as_deref(),
+                    progress_tx_clone,
+                    cancel_flag.clone(),
+                )
                 .await;
 
             // 完成事件 — client_id
@@ -612,9 +613,7 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
     ) -> Result<(), String> {
         let app_for_spawn = app.clone();
 
-        let state = app
-            .try_state::<AppState>()
-            .ok_or("无法获取应用状态")?;
+        let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
 
         let internal_id = ctx.session_id.clone();
 
@@ -623,9 +622,7 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
         let (ft, cancel_flag) = {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(&internal_id);
-            let handle = store
-                .get_session_mut(&internal_id)
-                .ok_or(not_found)?;
+            let handle = store.get_session_mut(&internal_id).ok_or(not_found)?;
             if handle.state != SessionState::Connected {
                 return Err("会话未连接".into());
             }
@@ -701,9 +698,7 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
     }
 
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
-        let state = app
-            .try_state::<AppState>()
-            .ok_or("无法获取应用状态")?;
+        let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.cancel_transfer_op(session_id)
     }

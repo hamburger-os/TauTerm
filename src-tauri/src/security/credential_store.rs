@@ -29,8 +29,14 @@ pub struct CredentialEntry {
 #[derive(Debug, Clone)]
 pub enum CredentialValue {
     Password(String),
-    SshKey { private_key: String, passphrase: Option<String> },
-    Certificate { cert_data: Vec<u8>, key_data: Vec<u8> },
+    SshKey {
+        private_key: String,
+        passphrase: Option<String>,
+    },
+    Certificate {
+        cert_data: Vec<u8>,
+        key_data: Vec<u8>,
+    },
     Token(String),
 }
 
@@ -60,14 +66,23 @@ impl CredentialStore {
         value: CredentialValue,
         description: &str,
     ) -> Result<(), CredentialStoreError> {
-        let mut entries = self.entries.write().map_err(|_| CredentialStoreError::LockError)?;
-        let mut secrets = self.secrets.write().map_err(|_| CredentialStoreError::LockError)?;
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| CredentialStoreError::LockError)?;
+        let mut secrets = self
+            .secrets
+            .write()
+            .map_err(|_| CredentialStoreError::LockError)?;
 
-        entries.insert(account.to_string(), CredentialEntry {
-            account: account.to_string(),
-            credential_type: credential_type.clone(),
-            description: description.to_string(),
-        });
+        entries.insert(
+            account.to_string(),
+            CredentialEntry {
+                account: account.to_string(),
+                credential_type: credential_type.clone(),
+                description: description.to_string(),
+            },
+        );
         secrets.insert(account.to_string(), value);
 
         Ok(())
@@ -75,22 +90,35 @@ impl CredentialStore {
 
     /// 获取凭据
     pub fn get_credential(&self, account: &str) -> Result<CredentialValue, CredentialStoreError> {
-        let secrets = self.secrets.read().map_err(|_| CredentialStoreError::LockError)?;
-        secrets.get(account)
+        let secrets = self
+            .secrets
+            .read()
+            .map_err(|_| CredentialStoreError::LockError)?;
+        secrets
+            .get(account)
             .cloned()
             .ok_or_else(|| CredentialStoreError::NotFound(account.to_string()))
     }
 
     /// 列出所有凭据（仅元数据，不包含密钥值）
     pub fn list_credentials(&self) -> Result<Vec<CredentialEntry>, CredentialStoreError> {
-        let entries = self.entries.read().map_err(|_| CredentialStoreError::LockError)?;
+        let entries = self
+            .entries
+            .read()
+            .map_err(|_| CredentialStoreError::LockError)?;
         Ok(entries.values().cloned().collect())
     }
 
     /// 删除凭据
     pub fn delete_credential(&self, account: &str) -> Result<(), CredentialStoreError> {
-        let mut entries = self.entries.write().map_err(|_| CredentialStoreError::LockError)?;
-        let mut secrets = self.secrets.write().map_err(|_| CredentialStoreError::LockError)?;
+        let mut entries = self
+            .entries
+            .write()
+            .map_err(|_| CredentialStoreError::LockError)?;
+        let mut secrets = self
+            .secrets
+            .write()
+            .map_err(|_| CredentialStoreError::LockError)?;
         entries.remove(account);
         secrets.remove(account);
         Ok(())
@@ -98,7 +126,9 @@ impl CredentialStore {
 }
 
 impl Default for CredentialStore {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 凭据存储错误
