@@ -1,3 +1,4 @@
+# Strict rerun after merging the last circular UI chunk group.
 name: v0.5.0 Strict Final Gate
 
 on:
