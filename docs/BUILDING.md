@@ -219,11 +219,12 @@ npm run tauri:build
 构建过程自动执行：
 
 1. `check-com0com.js` — 验证 `resources/com0com/x64/` 和 `x86/` 中驱动文件齐全（setupc.exe, com0com.sys, com0com.inf, com0com.cat）
-2. `tsc && vite build` — 前端 TypeScript 编译 + Vite 打包
-3. `build.rs` — 根据目标架构（x86_64 → x64, i686 → x86）将 7 个驱动文件复制到打包根目录；同时为服务二进制创建占位文件（满足 tauri-build 对资源路径的校验）
-4. `cargo build --release` — Rust 后端编译（产出主程序 `tauterm.exe` 与特权服务 `tauterm-service.exe`）
-5. `prepare-service-bin.js` — 将 `target/release/tauterm-service.exe` 复制到 `src-tauri/binaries/`（打包资源）
-6. **NSIS 打包** — 生成安装程序，内含 com0com 驱动文件 + 服务二进制 + post-install hook（安装时自动执行 `setupc.exe install` 并注册 `TauTermService`）
+2. `check-reserved-region.js` — 校验 `scripts/test-serial-session.py` 与 `src-tauri/src/virtual_port/manager.rs` 的 com0com 预留端口/bus 段常量一致，避免测试脚本与产品的虚拟串口互占/互删
+3. `tsc && vite build` — 前端 TypeScript 编译 + Vite 打包
+4. `build.rs` — 根据目标架构（x86_64 → x64, i686 → x86）将 7 个驱动文件复制到打包根目录；同时为服务二进制创建占位文件（满足 tauri-build 对资源路径的校验）
+5. `cargo build --release` — Rust 后端编译（产出主程序 `tauterm.exe` 与特权服务 `tauterm-service.exe`）
+6. `prepare-service-bin.js` — 将 `target/release/tauterm-service.exe` 复制到 `src-tauri/binaries/`（打包资源）
+7. **NSIS 打包** — 生成安装程序，内含 com0com 驱动文件 + 服务二进制 + post-install hook（安装时自动执行 `setupc.exe install` 并注册 `TauTermService`）
 
 > **平台差异**：服务二进制资源（`binaries/tauterm-service.exe`）仅声明在 `tauri.windows.conf.json` 的 `bundle.resources` 中（与基础 `tauri.conf.json` 合并），Linux/macOS 构建不会引用该文件，`build.rs` 的占位文件也只在 Windows 创建，因此非 Windows 平台可正常构建。
 

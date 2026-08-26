@@ -38,6 +38,8 @@
       "installed": "Driver installed successfully",
       "installFailed": "Driver installation failed",
       "filesMissing": "Driver files missing — please reinstall TauTerm",
+      "permissionRequired": "Administrator privileges required to create virtual port pairs",
+      "createFailed": "Virtual port creation failed — see log for details",
       "cleanup": "Clean",
       "cleanupHint": "Remove leftover virtual port pairs (requires admin)",
       "cleaning": "Cleaning...",

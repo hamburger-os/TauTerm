@@ -48,6 +48,8 @@ export interface TabInfo {
   virtualPortPairs?: Array<{ port_a: string; port_b: string }>;
   /** 虚拟端口创建失败时的错误信息 */
   virtualPortError?: string;
+  /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed），供前端本地化 */
+  virtualPortErrorKind?: string;
   /** SSH 文件服务是否启用（默认 true） */
   fileServiceEnabled?: boolean;
   /** SSH 文件服务协议（"sftp"） */
@@ -147,7 +149,7 @@ type SessionAction =
   | { type: "UPDATE_TAB_ECHO"; id: string; localEcho: boolean }
   | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean; fileServiceEnabled?: boolean; fileServiceProtocol?: string }
   | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: Array<{ port_a: string; port_b: string }> }
-  | { type: "SET_VPORT_ERROR"; id: string; error: string }
+  | { type: "SET_VPORT_ERROR"; id: string; error: string; kind?: string }
   | { type: "CLEAR_VPORT_ERROR"; id: string }
   | { type: "CLEAR_TABS" }
   | { type: "REMOVE_CHILD"; id: string; parentId: string }
@@ -303,7 +305,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         ...state,
         tabs: state.tabs.map(tab =>
           tab.id === action.id
-            ? { ...tab, virtualPortError: action.error, virtualPortPairs: undefined }
+            ? { ...tab, virtualPortError: action.error, virtualPortErrorKind: action.kind, virtualPortPairs: undefined }
             : tab
         ),
       };
@@ -312,7 +314,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         ...state,
         tabs: state.tabs.map(tab =>
           tab.id === action.id
-            ? { ...tab, virtualPortError: undefined }
+            ? { ...tab, virtualPortError: undefined, virtualPortErrorKind: undefined }
             : tab
         ),
       };
@@ -1241,7 +1243,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2b(); return; }
       unlisteners.push(u2b);
 
-      const u2c = await listen<{ session_id: string; reason: string }>(
+      const u2c = await listen<{ session_id: string; kind?: string; reason: string }>(
         "virtual-port-failed",
         (event) => {
           console.warn(`[VirtualPort] ${event.payload.session_id}: ${event.payload.reason}`);
@@ -1249,6 +1251,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             type: "SET_VPORT_ERROR",
             id: event.payload.session_id,
             error: event.payload.reason,
+            kind: event.payload.kind,
           });
         }
       );

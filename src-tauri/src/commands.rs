@@ -396,6 +396,9 @@ async fn connect_session_serial(
         let config = VirtualPortConfig { enabled: true, count: virtual_count };
         let mut vpm = state.virtual_port_manager.lock().map_err(|e| e.to_string())?;
 
+        // 记录虚拟端口创建失败的真实原因，用于 `virtual-port-failed` 事件，避免
+        // 用一句写死的 "driver not installed" 掩盖真实问题（如端口耗尽、UAC 被取消）。
+        let mut vport_error: Option<String> = None;
         let pairs: Vec<PortPair> = vpm.create_pairs(&config)
             .or_else(|first_err| {
                 log::warn!("直接创建端口对失败: {}；尝试先安装驱动...", first_err);
@@ -412,6 +415,7 @@ async fn connect_session_serial(
                     }
                 }
                 log::warn!("虚拟端口创建失败: {}", e);
+                vport_error = Some(e);
                 Vec::new()
             });
         drop(vpm);
@@ -468,11 +472,28 @@ async fn connect_session_serial(
                 "pairs": &vport_pairs_json,
             }));
         } else {
-            let reason = "com0com driver not installed — run TauTerm as administrator once, or reinstall the application";
-            log::warn!("虚拟端口创建失败 (session={}): {}", session_id, reason);
+            // 使用真实失败原因，避免用一句写死的 "driver not installed" 掩盖
+            // 端口耗尽 / UAC 被取消等真实问题。
+            let detail = vport_error.clone().unwrap_or_else(|| {
+                "com0com driver not installed. Run TauTerm as administrator once to install the driver."
+                    .to_string()
+            });
+            // 粗略分类，供前端映射到 i18n 文案（而非把英文错误直接展示给用户）
+            let detail_lower = detail.to_lowercase();
+            let kind = if detail_lower.contains("driver files missing") {
+                "files_missing"
+            } else if detail_lower.contains("driver not installed") {
+                "driver_missing"
+            } else if contains_elevation_indicator(&detail) || detail_lower.contains("cancel") {
+                "permission"
+            } else {
+                "create_failed"
+            };
+            log::warn!("虚拟端口创建失败 (session={}): {}", session_id, detail);
             let _ = app.emit("virtual-port-failed", serde_json::json!({
                 "session_id": session_id,
-                "reason": reason,
+                "kind": kind,
+                "reason": detail,
             }));
         }
     }

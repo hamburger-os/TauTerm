@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "npm run check-com0com && npm run build",
+    "beforeBuildCommand": "npm run check-com0com && npm run check-reserved-region && npm run build",
     "beforeDevCommand": "npm run dev",
     "beforeBundleCommand": "node scripts/prepare-service-bin.js"
   },

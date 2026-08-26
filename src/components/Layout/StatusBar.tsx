@@ -297,9 +297,16 @@ export default function StatusBar({
           key: "vportError",
           priority: PRI.vport,
           node: (
-            <div className={styles.segment}>
+            <div className={styles.segment} title={activeTab.virtualPortError}>
               <span className={`${styles.paramText} ${styles.vportWarning}`}>
-                <Icon name="warning" size="xs" /> {activeTab.virtualPortError}
+                <Icon name="warning" size="xs" />
+                {activeTab.virtualPortErrorKind === "files_missing"
+                  ? t("serial.virtualPort.filesMissing")
+                  : activeTab.virtualPortErrorKind === "permission"
+                    ? t("serial.virtualPort.permissionRequired")
+                    : activeTab.virtualPortErrorKind === "create_failed"
+                      ? t("serial.virtualPort.createFailed")
+                      : t("serial.virtualPort.notInstalled")}
               </span>
               <span
                 className={`${styles.paramText} ${styles.vportAction}`}

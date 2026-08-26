@@ -76,13 +76,6 @@ mod service {
             .collect()
     }
 
-    fn program_data_dir() -> PathBuf {
-        std::env::var_os("ProgramData")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-            .join("TauTerm")
-    }
-
     // ── 命名管道 + 帧协议 ──────────────────────────────
 
     fn build_security_descriptor() -> *mut core::ffi::c_void {
@@ -405,9 +398,11 @@ mod service {
         })
     }
 
-    fn run_server(resource_dir: PathBuf, state_dir: PathBuf) {
-        let _ = std::fs::create_dir_all(&state_dir);
-        let vpm = Mutex::new(VirtualPortManager::new(resource_dir, state_dir));
+    fn run_server(resource_dir: PathBuf) {
+        // 无状态模式：服务不落盘 com0com 簿记，也不创建 ProgramData 目录。
+        // 各客户端端口对在内存中按 client_id 管理，断开/崩溃时自动清理；
+        // 孤儿/总线号以驱动真实状态（setupc list）为准，避免卸载残留目录。
+        let vpm = Mutex::new(VirtualPortManager::new_stateless(resource_dir));
         let clients: Mutex<Clients> = Mutex::new(HashMap::new());
 
         // 启动时清理上次异常退出遗留的孤儿端口对
@@ -514,8 +509,7 @@ mod service {
             .ok()
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
             .unwrap_or_else(|| PathBuf::from("."));
-        let state_dir = program_data_dir();
-        run_server(resource_dir, state_dir);
+        run_server(resource_dir);
 
         report_status(handle, SERVICE_STOPPED, 0);
     }
@@ -545,8 +539,7 @@ mod service {
                 .ok()
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()))
                 .unwrap_or_else(|| PathBuf::from("."));
-            let state_dir = program_data_dir();
-            run_server(resource_dir, state_dir);
+            run_server(resource_dir);
         }
     }
 }

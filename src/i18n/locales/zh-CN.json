@@ -38,6 +38,8 @@
       "installed": "驱动安装成功",
       "installFailed": "驱动安装失败",
       "filesMissing": "驱动文件缺失，请重新安装 TauTerm",
+      "permissionRequired": "需要管理员权限才能创建虚拟串口端口对",
+      "createFailed": "虚拟串口创建失败，请查看日志详情",
       "cleanup": "清理",
       "cleanupHint": "以管理员权限清理残留的虚拟端口对",
       "cleaning": "正在清理...",

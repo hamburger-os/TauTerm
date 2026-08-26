@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "tauri:build": "tauri build --config src-tauri/tauri.dev.conf.json --bundles nsis",
     "check-com0com": "node scripts/check-com0com.js",
+    "check-reserved-region": "node scripts/check-reserved-region.js",
     "postversion": "node scripts/sync-version.js",
     "version:sync": "node scripts/sync-version.js"
   },
