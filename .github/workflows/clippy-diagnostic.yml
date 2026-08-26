@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
         with:
           components: clippy
       - name: Install system dependencies
@@ -44,3 +44,5 @@ jobs:
       - name: Fail if clippy failed
         if: steps.clippy.outputs.status != '0'
         run: exit 1
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
