@@ -134,15 +134,12 @@ old = '''  build: {
 new = '''  build: {
     rollupOptions: {
       output: {
-        // Split dependency families and a few coherent app domains without forcing
-        // mutually-dependent component folders into separate circular chunks.
+        // Split dependency families and coherent app domains while keeping mutually
+        // dependent UI component folders together in one non-circular chunk.
         manualChunks(id) {
           const normalized = id.replace(/\\\\/g, "/");
-          if (normalized.includes("/src/context/") || /\\/src\\/components\\/(Common|Settings|Layout|Terminal)\\//.test(normalized)) {
+          if (normalized.includes("/src/context/") || /\\/src\\/components\\/(Common|Settings|Layout|Terminal|RightSidebar|JournaldViewer|Tools)\\//.test(normalized)) {
             return "ui-core";
-          }
-          if (/\\/src\\/components\\/(RightSidebar|JournaldViewer|Tools)\\//.test(normalized)) {
-            return "ui-sidebar";
           }
           if (normalized.includes("/src/components/SendBar/")) return "ui-sendbar";
           if (normalized.includes("/src/components/FileManager/")) return "ui-filemanager";
