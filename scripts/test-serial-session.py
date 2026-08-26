@@ -3,11 +3,16 @@
 """
 TauTerm 串口会话集成测试假服务器 — 模拟 RT-Thread 设备
 
-本脚本在 Windows 上通过 com0com 虚拟串口驱动创建一个端口对（默认 COM22 ↔ COM23），
-其一端（近端 COM22）由本脚本用 pyserial 打开，作为"RT-Thread 设备"；
-另一端（远端 COM23）由 TauTerm 的串口会话连接，作为"上位机终端"。
+本脚本在 Windows 上通过 com0com 虚拟串口驱动创建一个端口对（默认 COM200 ↔ COM201），
+其一端（近端 COM200）由本脚本用 pyserial 打开，作为"RT-Thread 设备"；
+另一端（远端 COM201）由 TauTerm 的串口会话连接，作为"上位机终端"。
 
-    脚本 (pyserial) ──> 近端 COM22 ══ com0com 内核桥 ══ 远端 COM23 ──> TauTerm
+    脚本 (pyserial) ──> 近端 COM200 ══ com0com 内核桥 ══ 远端 COM201 ──> TauTerm
+
+注意（预留区约定）：本脚本固定使用预留端口段 COM200-COM255 与预留 bus 段 200-255，
+与产品/TauTermService 使用的端口/bus 天然隔离，可与之同时运行而不互删、不互占。
+这两段常量与 src-tauri/src/virtual_port/manager.rs 的 RESERVED_* 必须一致
+（由 scripts/check-reserved-region.js 校验）。
 
 连接后脚本会向 TauTerm 输出 RT-Thread 启动横幅并进入 FinSH(msh) 交互 Shell，
 模拟真实 RT-Thread 设备的串口输入输出，用于手动验证 TauTerm 串口会话功能。
@@ -26,30 +31,32 @@ TauTerm 串口会话集成测试假服务器 — 模拟 RT-Thread 设备
   · zmodem 库在 PyPI 无稳定包 —— ZModem 传输使用内置标准实现（单文件 rz/sz，独立于 TauTerm）
 
 用法示例：
-  # 只清理此前残留的所有 com0com 端口对（需管理员）
+  # 只清理预留段内残留的 com0com 端口对（需管理员；不影响产品端口对）
   python scripts/test-serial-session.py --teardown-all
 
-  # 自动创建端口对 COM22/COM23（需管理员）并以高仿真模式启动
-  python scripts/test-serial-session.py --setup --near COM22 --far COM23
+  # 自动创建端口对 COM200/COM201（需管理员）并以高仿真模式启动
+  python scripts/test-serial-session.py --setup --near COM200 --far COM201
 
   # 端口对已手动创建好，直接连接近端启动（无需管理员）
-  python scripts/test-serial-session.py --near COM22
+  python scripts/test-serial-session.py --near COM200
 
   # 打开 HEX 调试视图，记录所有收/发字节的十六进制
-  python scripts/test-serial-session.py --near COM22 --hex
+  python scripts/test-serial-session.py --near COM200 --hex
 
   # 加载自动应答规则文件（模拟 Lua/脚本驱动测试）
-  python scripts/test-serial-session.py --near COM22 --respond rules.txt
+  python scripts/test-serial-session.py --near COM200 --respond rules.txt
 
   # 用 Anaconda 自带的 python 启动
-  C:\\ProgramData\\anaconda3\\python.exe scripts/test-serial-session.py --near COM22
+  C:\\ProgramData\\anaconda3\\python.exe scripts/test-serial-session.py --near COM200
 
-在 TauTerm 中新建"串口"会话，选择远端端口（如 COM23），波特率与本脚本默认一致（115200），
+在 TauTerm 中新建"串口"会话，选择远端端口（如 COM201），波特率与本脚本默认一致（115200），
 即可看到 RT-Thread 启动横幅与 `msh />` 提示符。
 
 注意：
   · com0com 端口对的创建/删除需要管理员权限；仅打开已存在的端口不需要。
-  · 本脚本退出时会自动清理它创建的端口对（若以 --setup 创建）。
+  · 本脚本固定使用预留端口段 COM200-COM255 与预留 bus 段 200-255，产品/TauTermService
+    会主动避开该段，两者可同时运行而不互删、不互占。
+  · 本脚本退出时会自动清理它在预留段创建的端口对（若以 --setup 创建）。
   · 若上次清理失败（如对端仍被 TauTerm 占用），可能残留"僵尸"端口对或导致内核驱动
     停止；--setup 会在创建前自动修复（启动已停止的驱动、清理未绑定端口名的残留对）。
   · Windows 上本脚本依赖 com0com 虚拟串口驱动；非 Windows 平台请改用 socat / tty0tty 等其他方案。
@@ -87,6 +94,18 @@ SETUPC = os.path.join(COM0COM_DIR, "setupc.exe")
 
 DEFAULT_BAUD = 115200
 FINSH_VERSION = "5.2.2"
+
+# ── 预留区（与 src-tauri/src/virtual_port/manager.rs 的 RESERVED_* 保持一致）──
+# 约定：预留段仅供本测试脚本使用。产品扫描端口/bus 时须避开，且 TauTermService
+# 启动的孤儿清理不得触碰预留 bus 段。两边常量由 scripts/check-reserved-region.js
+# 在构建时校验一致性，修改时务必同步更新 Rust 侧。
+RESERVED_PORT_BASE = 200
+RESERVED_PORT_END = 255
+RESERVED_BUS_BASE = 200
+RESERVED_BUS_END = 255
+# 测试脚本固定的近端/远端端口
+NEAR_PORT = "COM200"
+FAR_PORT = "COM201"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -195,9 +214,14 @@ def com_create_pair(near, far):
     if used_near or used_far:
         return None, f"端口被占用: {near}({'占用' if used_near else '空闲'}) {far}({'占用' if used_far else '空闲'})"
 
-    bus = 0
-    for p in com_list_pairs():
-        bus = max(bus, p["bus"] + 1)
+    # 测试脚本固定使用预留 bus 段，且只占用该段内的 bus —— 与产品（其 bus 始终
+    # 低于预留段）天然隔离，杜绝与产品并发抢占同一 bus。若指定端口已被占用，
+    # 前面的 used_near/used_far 已提前返回错误。
+    used_buses = {p["bus"] for p in com_list_pairs()}
+    bus = next((b for b in range(RESERVED_BUS_BASE, RESERVED_BUS_END + 1)
+                if b not in used_buses), None)
+    if bus is None:
+        return None, f"预留 bus 段 ({RESERVED_BUS_BASE}-{RESERVED_BUS_END}) 已用尽"
 
     a_param = f"PortName={near}"
     b_param = f"PortName={far},PlugInMode=yes"
@@ -244,10 +268,15 @@ def _remove_bus(bus):
 
 
 def com_teardown_all():
-    """删除所有 com0com 端口对。"""
-    for p in com_list_pairs():
-        _remove_bus(p["bus"])
-    print("[信息] 已清理所有 com0com 端口对。")
+    """删除预留段内全部 com0com 端口对（产品/TauTerm 的端口对不受影响）。"""
+    targets = [p["bus"] for p in com_list_pairs()
+               if RESERVED_BUS_BASE <= p["bus"] <= RESERVED_BUS_END]
+    if not targets:
+        print(f"[信息] 预留段 ({RESERVED_BUS_BASE}-{RESERVED_BUS_END}) 内没有 com0com 端口对，无需清理。")
+        return
+    for bus in targets:
+        _remove_bus(bus)
+    print(f"[信息] 已清理预留段 com0com 端口对: {targets}。产品端口对未受影响。")
 
 
 def com_driver_state():
@@ -326,8 +355,9 @@ def com_dump_plan(near, far):
         print(f"#   [{'√' if ok else '×'}] {f}")
     a_param = f"PortName={near}"
     b_param = f"PortName={far},PlugInMode=yes"
-    print(f"# 创建端口对:")
-    print(f'  cd {COM0COM_DIR} && .\\setupc.exe install 0 {a_param} "{b_param}"')
+    # --dry-run 仅示意：实际创建时在预留 bus 段内取一个空闲 bus（见 com_create_pair）
+    print(f"# 创建端口对（bus 取预留段 {RESERVED_BUS_BASE}-{RESERVED_BUS_END} 内空闲值，示例用 {RESERVED_BUS_BASE}）:")
+    print(f'  cd {COM0COM_DIR} && .\\setupc.exe install {RESERVED_BUS_BASE} {a_param} "{b_param}"')
     print(f"# 查询/占用检查:")
     print(f"  cd {COM0COM_DIR} && .\\setupc.exe busynames COM*")
     print(f"  cd {COM0COM_DIR} && .\\setupc.exe list")
@@ -1627,16 +1657,18 @@ class RTTDevice:
 def parse_args(argv):
     p = argparse.ArgumentParser(
         description="TauTerm 串口会话测试假服务器（模拟 RT-Thread 设备）",
-        epilog="示例: python scripts/test-serial-session.py --setup --near COM22\n"
-               "      在 TauTerm 中连接远端端口 COM23",
+        epilog="示例: python scripts/test-serial-session.py --setup --near COM200\n"
+               "      在 TauTerm 中连接远端端口 COM201",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--near", default="COM22", help="本脚本连接的近端端口（默认 COM22）")
-    p.add_argument("--far", default="COM23", help="TauTerm 连接的远端端口（默认 COM23）")
+    p.add_argument("--near", default=NEAR_PORT, help=f"本脚本连接的近端端口（默认 {NEAR_PORT}）")
+    p.add_argument("--far", default=FAR_PORT, help=f"TauTerm 连接的远端端口（默认 {FAR_PORT}）")
     p.add_argument("--baud", type=int, default=DEFAULT_BAUD, help="波特率（默认 115200）")
     p.add_argument("--setup", action="store_true", help="启动前先创建 com0com 端口对（需管理员）")
     p.add_argument("--teardown-port", metavar="PORT", help="删除指定端点所在端口对并退出")
-    p.add_argument("--teardown-all", action="store_true", help="删除所有 com0com 端口对并退出")
+    p.add_argument("--teardown-all", action="store_true",
+                   help=f"删除预留段 ({RESERVED_BUS_BASE}-{RESERVED_BUS_END}) 内的 com0com "
+                        "端口对并退出（不影响产品端口对）")
     p.add_argument("--dry-run", action="store_true", help="仅打印将执行的 setupc 命令，不实际执行")
     p.add_argument("--hex", action="store_true", help="以 HEX 视图打印所有收/发字节")
     p.add_argument("--respond", metavar="FILE", help="自动应答规则文件（模拟 Lua/脚本驱动）")

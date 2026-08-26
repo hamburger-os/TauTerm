@@ -109,6 +109,9 @@ jobs:
       - name: Check com0com driver files
         run: npm run check-com0com
 
+      - name: Check com0com reserved-region sync
+        run: npm run check-reserved-region
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

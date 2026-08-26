@@ -62,11 +62,34 @@ const DESTROY_STAGE2_RETRY_DELAY_MS: u64 = 200;
 /// destroy_pair 解绑端口名后等待系统传播的间隔（毫秒）
 const DESTROY_UNBIND_WAIT_MS: u64 = 300;
 
+// ── 预留区（测试脚本 test-serial-session.py 专用，两边需保持一致） ──
+// 约定：预留段仅供测试脚本使用，产品扫描端口/bus 时须避开，且服务启动的
+// 孤儿清理不得触碰预留 bus 段。对应常量需与 scripts/test-serial-session.py
+// 中的 RESERVED_* 完全一致（由 scripts/check-reserved-region.js 在构建时校验）。
+/// 预留端口段下限（含）——测试脚本固定使用 COM200/COM201
+pub(crate) const RESERVED_PORT_BASE: u32 = 200;
+/// 预留端口段上限（含）
+pub(crate) const RESERVED_PORT_END: u32 = 255;
+/// 预留 bus 段下限（含）——测试脚本固定使用预留段内的某个 bus
+pub(crate) const RESERVED_BUS_BASE: u32 = 200;
+/// 预留 bus 段上限（含）
+pub(crate) const RESERVED_BUS_END: u32 = 255;
+
+/// 是否为预留 bus 段（测试脚本专用，产品不得分配、孤儿清理不得触碰）。
+fn is_reserved_bus(bus: u32) -> bool {
+    (RESERVED_BUS_BASE..=RESERVED_BUS_END).contains(&bus)
+}
+
+/// 是否为预留端口段（测试脚本专用，产品端口扫描须跳过）。
+fn is_reserved_port(port: u32) -> bool {
+    (RESERVED_PORT_BASE..=RESERVED_PORT_END).contains(&port)
+}
+
 pub struct VirtualPortManager {
     driver_installed: bool,
     active_pairs: HashSet<PortPair>,
     resource_dir: PathBuf,
-    state_dir: PathBuf,
+    state_dir: Option<PathBuf>,
 }
 
 fn normalize_windows_path(path: &std::path::Path) -> PathBuf {
@@ -218,7 +241,21 @@ impl VirtualPortManager {
             driver_installed: false,
             active_pairs: HashSet::new(),
             resource_dir: normalize_windows_path(&resource_dir),
-            state_dir: normalize_windows_path(&state_dir),
+            state_dir: Some(normalize_windows_path(&state_dir)),
+        }
+    }
+
+    /// 无状态模式：不创建、不读取 `com0com_state.json`，也不落盘任何簿记。
+    ///
+    /// 供特权服务使用：服务按客户端在内存中管理端口对，并依据驱动真实状态
+    /// （`setupc list`）清理孤儿，不再需要在 ProgramData 里持久化 bookkeeping——
+    /// 那正是卸载时难以删除、导致空目录残留的来源。
+    pub fn new_stateless(resource_dir: PathBuf) -> Self {
+        Self {
+            driver_installed: false,
+            active_pairs: HashSet::new(),
+            resource_dir: normalize_windows_path(&resource_dir),
+            state_dir: None,
         }
     }
 
@@ -285,6 +322,12 @@ impl VirtualPortManager {
                             if let Ok(n) = rest.split_whitespace().next()
                                 .unwrap_or("").parse::<u32>()
                             {
+                                // 预留 bus 段仅供测试脚本使用：产品分配 bus（max+1）
+                                // 与启动时的孤儿清理都要避开，故不纳入 max_bus/active_buses，
+                                // 但其 PortName 仍会走下面的解析进入 occupied_ports 供端口避让。
+                                if is_reserved_bus(n) {
+                                    continue;
+                                }
                                 max_bus = Some(max_bus.map_or(n, |m| m.max(n)));
                                 if !active_buses.contains(&n) {
                                     active_buses.push(n);
@@ -396,8 +439,27 @@ impl VirtualPortManager {
         let start = (max_in_use + 2).max(COM_PORT_SCAN_START);
         let mut pairs = Vec::new();
         let mut candidate = start;
+        // 是否已完成一次"高位扫尽后回绕到低位再扫"。当起点被测试脚本的预留端口
+        // （COM200/201）推到预留段内时，高位扫描会被预留段整体跳过而扫不到端口，
+        // 需回绕到低位区段继续找，避免预留段让产品无可用端口。
+        let mut wrapped = false;
 
-        while pairs.len() < count as usize && candidate < MAX_COM_PORT {
+        while pairs.len() < count as usize {
+            if candidate >= MAX_COM_PORT {
+                if wrapped {
+                    break;
+                }
+                wrapped = true;
+                candidate = COM_PORT_SCAN_START;
+                continue;
+            }
+            // 预留端口段仅供测试脚本使用：即便驱动中暂无该段端口（测试未运行），
+            // 产品也绝不占用，否则会在测试运行时与其冲突。
+            if is_reserved_port(candidate) || is_reserved_port(candidate + 1) {
+                // 跳过整个预留段，继续向上（高位扫尽后由上面的 wrapped 回绕到低位）。
+                candidate = RESERVED_PORT_END + 1;
+                continue;
+            }
             if !in_use.contains(&candidate) && !in_use.contains(&(candidate + 1)) {
                 pairs.push((candidate, candidate + 1));
                 // 标记为已预留，避免后续迭代选中同一端口
@@ -906,12 +968,12 @@ impl VirtualPortManager {
 
     // ── 孤儿端口对持久化追踪 ─────────────────────────
 
-    fn state_path(&self) -> PathBuf {
-        self.state_dir.join("com0com_state.json")
+    fn state_path(&self) -> Option<PathBuf> {
+        self.state_dir.as_ref().map(|d| d.join("com0com_state.json"))
     }
 
     fn load_active_buses(&self) -> Vec<u32> {
-        let path = self.state_path();
+        let Some(path) = self.state_path() else { return Vec::new(); };
         if !path.exists() {
             return Vec::new();
         }
@@ -933,7 +995,7 @@ impl VirtualPortManager {
     }
 
     fn persist_active_buses(&self, buses: &[u32]) {
-        let path = self.state_path();
+        let Some(path) = self.state_path() else { return; };
         let tmp_path = path.with_extension("json.tmp");
         let json = match serde_json::to_string(buses) {
             Ok(s) => s,
@@ -993,15 +1055,24 @@ impl VirtualPortManager {
 
     /// 启动时清理上次异常退出遗留的端口对（仅直接清理，不弹 UAC）。
     ///
-    /// 读取 `com0com_state.json` 中记录的 bus 编号，逐一尝试
-    /// `setupc remove <n>`。如果 remove 失败（端口被占用），
-    /// 则先解绑两侧端口名再重试。
+    /// 无状态模式（特权服务）：无 `com0com_state.json` 可读，改为通过 `setupc list`
+    /// 枚举驱动真机状态，剔除当前仍活跃的 bus 后逐一尝试 `setupc remove <n>`。
+    /// 有状态模式：仍从 `com0com_state.json` 读取记录的 bus 编号。
     ///
+    /// 如果 remove 失败（端口被占用），则先解绑两侧端口名再重试。
     /// 权限不足时保留 bus 号到 state 文件，由前端"清理残留端口"按钮
     /// 或下次连接的 `create_pairs_elevated` 统一处理。
     /// 返回成功清理的端口对数量。
     pub fn cleanup_orphans(&mut self) -> u32 {
-        let orphans = self.load_active_buses();
+        let orphans: Vec<u32> = if self.state_dir.is_none() {
+            // 无状态模式：以驱动真机状态（setupc list）为准，剔除当前仍活跃的 bus
+            self.query_driver_state().2
+                .into_iter()
+                .filter(|b| !self.active_pairs.iter().any(|p| p.bus_number == *b))
+                .collect()
+        } else {
+            self.load_active_buses()
+        };
         if orphans.is_empty() {
             return 0;
         }
@@ -1199,6 +1270,22 @@ mod tests {
         let pairs = VirtualPortManager::find_available_port_pairs(1, &extra);
         // 不崩溃即可 — 空集和单对都是合法结果
         assert!(pairs.len() <= 1);
+    }
+
+    #[test]
+    fn test_find_port_pairs_excludes_reserved() {
+        // 预留端口段仅供测试脚本使用：无论扫描起点被推到哪（模拟测试脚本占用
+        // COM200/201 把起点顶入预留段），产品都不应返回预留段内的端口。
+        let extra: HashSet<u32> = [200u32, 201u32, 240u32].into_iter().collect();
+        let pairs = VirtualPortManager::find_available_port_pairs(4, &extra);
+        for (a, b) in &pairs {
+            assert!(
+                !is_reserved_port(*a) && !is_reserved_port(*b),
+                "reserved port leaked into product allocation: {}↔{}",
+                a,
+                b
+            );
+        }
     }
 
     // ── elevation 检测单元测试 ────────────────────────
