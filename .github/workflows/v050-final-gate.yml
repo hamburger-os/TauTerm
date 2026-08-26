@@ -74,8 +74,8 @@ jobs:
         run: |
           set -euo pipefail
           npm run build 2>&1 | tee /tmp/frontend-build.log
-          if grep -F "Some chunks are larger than" /tmp/frontend-build.log; then
-            echo '::error::Vite emitted a large-chunk warning.'
+          if grep -E "Some chunks are larger than|Circular chunk:" /tmp/frontend-build.log; then
+            echo '::error::Vite/Rollup emitted a production-build warning.'
             exit 1
           fi
 
