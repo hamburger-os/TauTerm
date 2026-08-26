@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-26
+
 ### Security
 - **On-demand elevation for com0com (Windows)** — the app no longer requests full administrator rights on every launch: the `requireAdministrator` manifest is removed (the app now runs `asInvoker`), and privileged com0com operations (driver install, virtual COM port pair create/remove/cleanup) are delegated to a new LocalSystem Windows service (`tauterm-service`) over a named pipe with a narrow typed API and caller identity verification. The main app stays non-elevated and exits cleanly without leaving orphaned port pairs — the service tracks per-client ownership and auto-cleans on pipe close / crash. When the service is unavailable (dev / portable), the app falls back to the previous on-demand UAC path, with fixes for unreliable success detection and the hardcoded bus-0 driver install.
 - **Privileged service pipe client verification hardened** — `TauTermService` now requires the connecting client to reside in the same directory as the service (the install directory) in addition to the `tauterm.exe` name check, closing a rename-based spoofing vector where any binary renamed to `tauterm.exe` could issue narrow SYSTEM operations.
