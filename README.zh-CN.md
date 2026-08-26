@@ -100,8 +100,9 @@ macOS 虚拟串口桥同样使用 `socat`——请先安装 `brew install socat`
 
 TauTerm 迭代较快。想稳定体验请优先使用打包版本；`master` 会包含尚未正式发布的新功能。
 
+- **v0.5.0 — 网络与最小权限安全：** TCP/UDP 网络调试会话、Telnet、iPerf2/iPerf3、会话级字符集转码、远程 journald 日志查看器。Windows 下应用现以普通用户权限运行，特权虚拟串口操作委托给 LocalSystem 服务。
 - **v0.4.0 — First Public Tech Preview：** 串口、SSH/SFTP、传输子系统、Lua/自动应答工作流、终端搜索、日志、设置、国际化，以及核心微内核/插件架构。
-- **当前 `master`：** 持续增加网络、安全与工作流能力，包括 TCP/UDP 网络调试会话。
+- **当前 `master`：** 在 v0.5 基础上持续增加网络、安全与工作流能力。
 - **路线图：** 本地 Shell、SSH 隧道/跳板机、会话分组、FTP、录制/分屏、插件 SDK 等。
 
 每个版本的准确变化请查看 **[CHANGELOG.md](CHANGELOG.md)**。
@@ -127,8 +128,10 @@ TauTerm 迭代较快。想稳定体验请优先使用打包版本；`master` 会
 ## 路线图
 
 ```text
-v0.5  凭据与安全强化
-v0.6  本地 Shell、会话分组、SSH 隧道 + 跳板机
+v0.5  已发布：TCP/UDP 网络调试、Telnet、iPerf2/3、
+      字符集转码、远程 journald、Windows 最小权限虚拟串口服务
+v0.6  凭据与安全强化（keyring + AES-256-GCM 降级）、
+      本地 Shell、会话分组、SSH 隧道 + 跳板机
 v0.7  网络调试完善、FTP、录制、分屏
 v1.0  GA：Windows 完整验证、macOS/Linux 核心可用、
       性能预算、插件 SDK 文档、TRDP
