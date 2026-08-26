@@ -5,6 +5,8 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+  issues:
+    types: [opened]
 
 permissions:
   contents: write
@@ -13,7 +15,8 @@ jobs:
   validate-and-commit:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.head_commit.message == 'chore(ci): run v0.5.0 strict final gate'
+      github.event.head_commit.message == 'chore(ci): run v0.5.0 strict final gate' ||
+      (github.event_name == 'issues' && github.event.issue.title == 'RUN v0.5.0 STRICT FINAL GATE')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
