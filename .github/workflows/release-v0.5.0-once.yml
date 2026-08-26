@@ -1,3 +1,4 @@
+# One-shot, fail-closed v0.5.0 publisher. This workflow deletes itself during finalization.
 name: Release v0.5.0 Once
 
 on:
@@ -9,166 +10,274 @@ permissions:
   actions: write
 
 jobs:
-  release:
-    if: "${{ github.event.head_commit.message == 'chore(release): retry v0.5.0' }}"
-    runs-on: ubuntu-latest
+  publish:
+    if: "${{ github.event.head_commit.message == 'chore(release): publish v0.5.0' }}"
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Verify release version
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy,rustfmt
+
+      - name: Verify release metadata
         shell: bash
         run: |
           set -euo pipefail
           jq -e '.version == "0.5.0"' package.json >/dev/null
           jq -e '.version == "0.5.0"' src-tauri/tauri.conf.json >/dev/null
           grep -q '^version = "0.5.0"$' src-tauri/Cargo.toml
-          test -f docs/RELEASE_NOTES_v0.5.0.md
+          grep -q '^## \[0.5.0\] — 2026-08-26$' CHANGELOG.md
+          test -s docs/RELEASE_NOTES_v0.5.0.md
 
-      - name: Finalize changelog
+      - name: Install Tauri system dependencies
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('CHANGELOG.md')
-          text = p.read_text(encoding='utf-8')
-          heading = '## [0.5.0] — 2026-08-26'
-          if heading not in text:
-              marker = '## [Unreleased]\n'
-              if marker not in text:
-                  raise SystemExit('CHANGELOG.md has no [Unreleased] heading')
-              text = text.replace(marker, marker + '\n' + heading + '\n', 1)
-              p.write_text(text, encoding='utf-8')
-          PY
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libssl-dev \
+            libudev-dev
 
-      - name: Freeze release toolchain and quality policy
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Production build with zero known warnings
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('.github/workflows/release.yml')
-          text = p.read_text(encoding='utf-8')
-          text = text.replace('dtolnay/rust-toolchain@stable', 'dtolnay/rust-toolchain@1.98.0')
-          strict = 'cargo clippy --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings'
-          advisory = 'cargo clippy --no-deps --manifest-path src-tauri/Cargo.toml'
-          if strict not in text and advisory not in text:
-              raise SystemExit('Expected clippy command not found in release.yml')
-          text = text.replace(strict, advisory)
-          p.write_text(text, encoding='utf-8')
-          PY
+          npm run build 2>&1 | tee /tmp/frontend-build.log
+          if grep -E 'Some chunks are larger than|Circular chunk:' /tmp/frontend-build.log; then
+            echo '::error::Vite/Rollup emitted a production-build warning.'
+            exit 1
+          fi
+
+      - name: Reject Clippy suppressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE '#!?\[[[:space:]]*(allow|expect)[[:space:]]*\([[:space:]]*clippy::' src-tauri/src; then
+            echo '::error::Clippy allow/expect suppression found.'
+            exit 1
+          fi
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Strict Clippy all targets
+        run: cargo clippy --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Freeze toolchain and remove temporary release/refactor machinery
+        id: finalize
+        shell: bash
+        run: |
+          set -euo pipefail
 
           cat > rust-toolchain.toml <<'EOF'
           [toolchain]
           channel = "1.98.0"
-          components = ["clippy"]
+          components = ["clippy", "rustfmt"]
           profile = "minimal"
           EOF
 
-          rm -f .github/workflows/clippy-diagnostic.yml .github/release-v0.5.0-trigger
+          rm -f \
+            .github/apply-v050-followup.py \
+            .github/clippy-autofix-trigger \
+            .github/refactor-context-trigger \
+            .github/release-v0.5.0-trigger \
+            .github/v050-refactor-trigger \
+            .github/v050-strict-refactor-trigger \
+            .github/v050-strict-refactor.patch.gz.b64 \
+            .github/workflows/clippy-autofix.yml \
+            .github/workflows/clippy-diagnostic.yml \
+            .github/workflows/clippy-unsuppressed-audit.yml \
+            .github/workflows/refactor-context.yml \
+            .github/workflows/source-snapshot.yml \
+            .github/workflows/v050-final-gate.yml \
+            .github/workflows/v050-strict-refactor-final.yml \
+            .github/workflows/v050-strict-refactor.yml \
+            .github/workflows/release-v0.5.0-once.yml
+          rm -rf .github/refactor-parts
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md .github/workflows/release.yml rust-toolchain.toml .github/workflows/clippy-diagnostic.yml .github/release-v0.5.0-trigger
-          if ! git diff --cached --quiet; then
-            git commit -m "chore(release): freeze v0.5.0 toolchain"
-            git push origin HEAD:master
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo '::error::Expected release-finalization changes are missing.'
+            exit 1
           fi
+          git commit -m 'chore(release): finalize v0.5.0'
+          git pull --rebase origin master
+          git push origin HEAD:master
+          FINAL_SHA=$(git rev-parse HEAD)
+          echo "final_sha=$FINAL_SHA" >> "$GITHUB_OUTPUT"
+          echo "Final release commit: $FINAL_SHA"
 
-      - name: Recreate v0.5.0 tag on final release commit
+      - name: Recreate annotated v0.5.0 tag on final commit
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          FINAL_SHA='${{ steps.finalize.outputs.final_sha }}'
           git fetch --tags --force
-          if git rev-parse -q --verify refs/tags/v0.5.0 >/dev/null; then
-            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v0.5.0" >/dev/null 2>&1; then
-              echo "A GitHub Release already exists for v0.5.0; refusing to move its tag."
+
+          if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v0.5.0" >/tmp/existing-release.json 2>/dev/null; then
+            if [ "$(jq -r '.draft' /tmp/existing-release.json)" != "true" ]; then
+              echo '::error::A non-draft v0.5.0 release already exists; refusing to move its tag.'
               exit 1
             fi
+            gh release delete v0.5.0 --yes
+          fi
+
+          if git rev-parse -q --verify refs/tags/v0.5.0 >/dev/null; then
             git tag -d v0.5.0
+          fi
+          if git ls-remote --exit-code --tags origin refs/tags/v0.5.0 >/dev/null 2>&1; then
             git push origin :refs/tags/v0.5.0
           fi
-          git tag -a v0.5.0 -m "TauTerm v0.5.0"
-          git push origin v0.5.0
 
-      - name: Dispatch release workflow
+          git tag -a v0.5.0 "$FINAL_SHA" -m 'TauTerm v0.5.0'
+          git push origin refs/tags/v0.5.0
+
+          TAG_OBJECT=$(git rev-parse refs/tags/v0.5.0)
+          TAG_TARGET=$(git rev-parse 'refs/tags/v0.5.0^{}')
+          test "$TAG_TARGET" = "$FINAL_SHA"
+          test "$TAG_OBJECT" != "$TAG_TARGET"
+
+      - name: Dispatch hardened release workflow
         id: dispatch
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          FINAL_SHA='${{ steps.finalize.outputs.final_sha }}'
           gh workflow run release.yml --ref v0.5.0 -f prerelease=false
 
-          RUN_ID=""
-          for _ in $(seq 1 30); do
+          RUN_ID=''
+          for _ in $(seq 1 60); do
             RUN_ID=$(gh run list \
               --workflow release.yml \
-              --branch v0.5.0 \
               --event workflow_dispatch \
-              --limit 5 \
-              --json databaseId,createdAt \
-              --jq '.[0].databaseId // empty')
+              --limit 20 \
+              --json databaseId,headSha \
+              --jq ".[] | select(.headSha == \"$FINAL_SHA\") | .databaseId" | head -n1)
             if [ -n "$RUN_ID" ]; then
               break
             fi
-            sleep 5
+            sleep 3
           done
-
           if [ -z "$RUN_ID" ]; then
-            echo "Could not find the dispatched release workflow run."
+            echo '::error::Could not locate the dispatched release workflow run.'
             exit 1
           fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "Release workflow run: $RUN_ID"
 
-      - name: Wait for release build
+      - name: Require all release jobs to succeed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh run watch '${{ steps.dispatch.outputs.run_id }}' --exit-status
+
+      - name: Validate draft release assets, updater signatures, and manifest
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          gh run watch "${{ steps.dispatch.outputs.run_id }}" --exit-status
+          ROOT=/tmp/tauterm-release-check
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"
 
-      - name: Validate draft release and updater manifest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf /tmp/tauterm-release-check
-          mkdir -p /tmp/tauterm-release-check
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v0.5.0" > "$ROOT/release.json"
+          jq -e '.draft == true and .prerelease == false and .tag_name == "v0.5.0"' "$ROOT/release.json" >/dev/null
+          jq -e 'all(.assets[]; .size > 0)' "$ROOT/release.json" >/dev/null
 
-          gh release view v0.5.0 --json isDraft,isPrerelease,assets > /tmp/tauterm-release-check/release.json
-          jq -e '.isDraft == true' /tmp/tauterm-release-check/release.json >/dev/null
-          jq -e '.isPrerelease == false' /tmp/tauterm-release-check/release.json >/dev/null
+          require_suffix() {
+            local suffix="$1"
+            local count
+            count=$(jq --arg suffix "$suffix" '[.assets[] | select(.name | endswith($suffix))] | length' "$ROOT/release.json")
+            if [ "$count" -ne 1 ]; then
+              echo "::error::Expected exactly one non-empty asset ending in $suffix, found $count"
+              exit 1
+            fi
+          }
 
-          for pattern in '*_x64-setup.exe' '*.msi' '*.deb' '*.rpm' '*.AppImage' '*_aarch64.dmg' '*_x64.dmg' 'latest.json'; do
-            jq -e --arg p "$pattern" '
-              [.assets[].name] |
-              any(.[]; if $p == "latest.json" then . == $p
-                elif $p == "*.msi" then endswith(".msi")
-                elif $p == "*.deb" then endswith(".deb")
-                elif $p == "*.rpm" then endswith(".rpm")
-                elif $p == "*.AppImage" then endswith(".AppImage")
-                elif $p == "*_x64-setup.exe" then endswith("_x64-setup.exe")
-                elif $p == "*_aarch64.dmg" then endswith("_aarch64.dmg")
-                elif $p == "*_x64.dmg" then endswith("_x64.dmg")
-                else false end)' /tmp/tauterm-release-check/release.json >/dev/null
-          done
+          require_suffix '_x64-setup.exe'
+          require_suffix '.msi'
+          require_suffix '.deb'
+          require_suffix '.rpm'
+          require_suffix '.AppImage'
+          require_suffix '_aarch64.dmg'
+          require_suffix '_x64.dmg'
+          require_suffix '_x64-setup.exe.sig'
+          require_suffix '_amd64.AppImage.sig'
+          require_suffix '_aarch64.app.tar.gz'
+          require_suffix '_aarch64.app.tar.gz.sig'
+          require_suffix '_x64.app.tar.gz'
+          require_suffix '_x64.app.tar.gz.sig'
+          require_suffix 'latest.json'
+          require_suffix 'latest.json.sig'
 
-          gh release download v0.5.0 --pattern latest.json --dir /tmp/tauterm-release-check
+          gh release download v0.5.0 --pattern latest.json --pattern latest.json.sig --dir "$ROOT"
+          test -s "$ROOT/latest.json"
+          test -s "$ROOT/latest.json.sig"
+
           jq -e '
-            .version == "v0.5.0" and
-            (.platforms | length >= 4) and
-            ([.platforms[] | select((.signature | length) == 0 or (.url | length) == 0)] | length == 0)
-          ' /tmp/tauterm-release-check/latest.json >/dev/null
+            .version == "0.5.0" and
+            ((.platforms | keys | sort) == ["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"]) and
+            (all(.platforms[]; ((.signature | length) > 0) and ((.url | length) > 0)))
+          ' "$ROOT/latest.json" >/dev/null
 
-      - name: Publish v0.5.0
+          verify_platform() {
+            local target="$1"
+            local suffix="$2"
+            local name sig_name url embedded downloaded
+            name=$(jq -r --arg suffix "$suffix" '[.assets[] | select(.name | endswith($suffix))][0].name' "$ROOT/release.json")
+            sig_name="$name.sig"
+            url=$(jq -r --arg target "$target" '.platforms[$target].url' "$ROOT/latest.json")
+            case "$url" in
+              */"$name") ;;
+              *) echo "::error::Manifest URL for $target does not point to $name"; exit 1 ;;
+            esac
+            gh release download v0.5.0 --pattern "$sig_name" --dir "$ROOT"
+            embedded=$(jq -r --arg target "$target" '.platforms[$target].signature' "$ROOT/latest.json")
+            downloaded=$(cat "$ROOT/$sig_name")
+            if [ -z "$embedded" ] || [ "$embedded" != "$downloaded" ]; then
+              echo "::error::Manifest signature mismatch for $target"
+              exit 1
+            fi
+          }
+
+          verify_platform windows-x86_64 '_x64-setup.exe'
+          verify_platform linux-x86_64 '_amd64.AppImage'
+          verify_platform darwin-aarch64 '_aarch64.app.tar.gz'
+          verify_platform darwin-x86_64 '_x64.app.tar.gz'
+
+      - name: Publish stable v0.5.0 and verify latest
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -179,6 +288,5 @@ jobs:
             --draft=false \
             --prerelease=false \
             --latest
-
-          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)" = "v0.5.0"
-          echo "TauTerm v0.5.0 published successfully."
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)" = 'v0.5.0'
+          echo 'TauTerm v0.5.0 published successfully.'
