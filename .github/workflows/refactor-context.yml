@@ -19,11 +19,11 @@ jobs:
           set -euo pipefail
           {
             echo '=== call sites ==='
-            rg -n -C 4 'create_container_session|connect_session_network|start_journald_export|tftp_client_get|tftp_client_put|spawn_tftp_server|setup_counting_socket|file_transfer_send' src src-tauri || true
+            grep -RIn -C 4 -E 'create_container_session|connect_session_network|start_journald_export|tftp_client_get|tftp_client_put|spawn_tftp_server|setup_counting_socket|file_transfer_send' src src-tauri || true
             echo
             echo '=== clippy allow/expect attributes ==='
-            rg -n -C 2 '#\[(allow|expect)\(clippy' src-tauri/src || true
-          } > refactor-context.txt
+            grep -RIn -C 2 -E '#\[(allow|expect)\(clippy' src-tauri/src || true
+          } > refactor-context.txt 2>&1
           cat refactor-context.txt
       - uses: actions/upload-artifact@v4
         with:
