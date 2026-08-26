@@ -915,7 +915,7 @@ impl SessionStore {
             return Ok(());
         }
         // 搜索子连接
-        for (_, handle) in self.sessions.iter() {
+        for handle in self.sessions.values() {
             if handle.sub_connections.iter().any(|s| s.id == session_id) {
                 self.active_id = Some(session_id.to_string());
                 return Ok(());
@@ -958,7 +958,7 @@ impl SessionStore {
             return Err(format!("容器会话 {} 不可直接写入，请指定子连接 ID", session_id));
         }
         // 搜索子连接
-        for (_, handle) in self.sessions.iter() {
+        for handle in self.sessions.values() {
             for sub in &handle.sub_connections {
                 if sub.id == session_id {
                     return sub.write_tx.send(IoLoopCmd::Write(data.to_vec()))
@@ -1224,7 +1224,7 @@ impl SessionStore {
         if let Some(handle) = self.sessions.get(session_id) {
             return handle.comm_handle.clone();
         }
-        for (_, handle) in self.sessions.iter() {
+        for handle in self.sessions.values() {
             for sub in &handle.sub_connections {
                 if sub.id == session_id {
                     return sub.comm_handle.clone();
@@ -1335,7 +1335,7 @@ impl SessionStore {
         if let Some(handle) = self.sessions.get(session_id) {
             return handle.write_tx.as_ref();
         }
-        for (_, handle) in self.sessions.iter() {
+        for handle in self.sessions.values() {
             for sub in &handle.sub_connections {
                 if sub.id == session_id {
                     return Some(&sub.write_tx);

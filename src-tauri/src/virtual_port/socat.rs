@@ -58,6 +58,12 @@ pub struct SocatBackend {
     next_id: u32,
 }
 
+impl Default for SocatBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SocatBackend {
     pub fn new() -> Self {
         // 扫描 /tmp 中已有符号链接，从 max_id + 1 开始分配，

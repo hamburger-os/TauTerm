@@ -98,9 +98,9 @@ impl TelnetAdapter {
             .map_err(|e| SessionError::ConnectionFailed {
                 reason: format!("解析地址 {}:{} 失败: {}", host, config.port, e),
             })?;
-        let addr = socket_addrs.as_slice().first().ok_or_else(|| SessionError::ConnectionFailed {
+        let addr = *socket_addrs.as_slice().first().ok_or_else(|| SessionError::ConnectionFailed {
             reason: format!("地址 {}:{} 未解析出结果", host, config.port),
-        })?.clone();
+        })?;
         let stream = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(10))
             .map_err(|e| SessionError::ConnectionFailed {
                 reason: format!("无法连接 {}:{}: {}", host, config.port, e),
