@@ -1,12 +1,8 @@
-//! TFTP 协议插件
+//! TFTP protocol plugin.
 //!
-//! 基于 `tftpd` crate 提供完整的 TFTP 客户端 + 服务端支持。
-//! 采用 SideChannel 模式（对齐 SSH SFTP），UDP socket 在侧通道中管理，
-//! 不占用终端 I/O 循环。
-//!
-//! 一个 TFTP Session 同时承担客户端和服务端角色：
-//! - 客户端：用户主动 GET/PUT 文件到远程 TFTP 服务器
-//! - 服务端：监听端口响应外部设备的 RRQ/WRQ 请求
+//! The session owns one UDP listener and exposes client/server transfers through a
+//! side channel. Defaults are kept for compatibility, while validation and
+//! diagnostics are deliberately fail-closed around filesystem and bind errors.
 
 pub mod client;
 pub mod counting_socket;
@@ -14,7 +10,7 @@ pub mod server;
 pub mod transfer;
 
 use std::any::Any;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex};
@@ -28,26 +24,17 @@ use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
 };
 
-// ── 配置类型 ─────────────────────────────────────────────────
-
-/// TFTP Session 配置（ConnectDialog 创建时设定，不可变）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TftpConfig {
-    /// 服务端绑定 IP 地址
     #[serde(default = "default_listen_ip")]
     pub listen_ip: String,
-    /// 服务端绑定端口（默认 69）
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
-    /// 文件根目录（必须为绝对路径）
     pub file_root: String,
-    /// 允许远程 PUT（WRQ）
     #[serde(default = "default_true")]
     pub write_enabled: bool,
-    /// 允许覆盖已存在文件
     #[serde(default = "default_true")]
     pub overwrite: bool,
-    /// 单端口模式
     #[serde(default)]
     pub single_port: bool,
 }
@@ -62,31 +49,22 @@ fn default_true() -> bool {
     true
 }
 
-/// TFTP 动态参数（Session 内实时可调）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TftpDynamicParams {
-    /// 传输块大小（512–65464，默认 512）
     #[serde(default = "default_blksize")]
     pub blksize: u16,
-    /// 每块重传超时秒数（1–255，默认 5）
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u8,
-    /// 滑动窗口块数（1–65535，默认 1 = 停等方式）
     #[serde(default = "default_windowsize")]
     pub windowsize: u16,
-    /// 每块最大重传次数（默认 6）
     #[serde(default = "default_max_retries")]
     pub max_retries: usize,
-    /// Block 号回绕策略
     #[serde(default = "default_rollover")]
     pub rollover: TftpRollover,
-    /// 窗口间发包延迟（ms，0 = 不延迟）
     #[serde(default)]
     pub window_wait: u64,
-    /// 传输失败时删除不完整文件
     #[serde(default = "default_true")]
     pub clean_on_error: bool,
-    /// 每个包重复发送次数（1–4，默认 1 = 不重复，用于不可靠网络）
     #[serde(default = "default_repeat_count")]
     pub repeat_count: u8,
 }
@@ -125,65 +103,38 @@ impl Default for TftpDynamicParams {
     }
 }
 
-/// Block 号 16-bit 回绕策略（RFC 1350 未规定，tftpd crate RFC 7440 参考实现定义）
-///
-/// TFTP 块号为 u16（0–65535），大文件传输必然 wraparound。
-/// 此枚举控制溢出后的块号选择行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TftpRollover {
-    /// 禁止回绕 — 块号溢出时报错退出。
-    /// 严格合规模式，仅适用于确认文件小于 65535 × blksize 的场景。
     None,
-    /// 允许回绕，自然使用块号 0（默认）。
-    /// 对齐 tftpd crate 的 `Rollover::Enforce0`，支持任意大小文件。
     Enforce0,
-    /// 跳过块号 0，回绕后从块号 1 开始。
-    /// 兼容某些严格禁止块号 0 的 TFTP 实现。
     Enforce1,
-    /// 允许回绕，发送端使用块号 0，接收端兼容 0 或 1。
-    /// 最大兼容性，与 `Enforce0` 行为几乎一致。
     DontCare,
 }
 
-// ── 传输状态（保留供未来 transfer 注册表使用）────────────────
-
-/// 传输方向
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransferDirection {
-    /// 发送（本地→远程）
     Send,
-    /// 接收（远程→本地）
     Receive,
 }
 
-/// 传输角色
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransferRole {
-    /// 客户端发起
     Client,
-    /// 服务端响应
     Server,
 }
 
-/// 传输状态
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TransferStatus {
-    /// 等待中
     Pending,
-    /// 传输中
     Transferring,
-    /// 已完成
     Completed,
-    /// 失败
     Failed,
-    /// 已取消
     Cancelled,
 }
 
-/// 活跃传输记录（保留供未来 transfer 注册表使用）
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActiveTransfer {
@@ -201,23 +152,16 @@ pub struct ActiveTransfer {
     pub started_at_ms: u64,
 }
 
-// ── 服务端请求 ───────────────────────────────────────────────
-
-/// 待审批的服务端请求（保留供未来审批流程使用）
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingRequest {
     pub id: String,
     pub remote_addr: String,
     pub filename: String,
-    /// 请求类型：read（RRQ，GET）或 write（WRQ，PUT）
     pub is_write: bool,
     pub file_size: Option<u64>,
 }
 
-// ── 状态查询 ─────────────────────────────────────────────────
-
-/// TFTP 状态查询响应
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TftpStatus {
     pub server_running: bool,
@@ -227,31 +171,17 @@ pub struct TftpStatus {
     pub dynamic_params: TftpDynamicParams,
 }
 
-// ── TftpSideChannel ──────────────────────────────────────────
-
-/// TFTP 侧通道资源
-///
-/// 持有共享 UDP socket 和所有传输状态。
-/// 通过 `ProtocolConnection::side_channel` 传递给 `SessionStore`。
 pub struct TftpSideChannel {
-    /// 共享监听 UDP socket（使用 std::net::UdpSocket 因为 tftpd::Worker 需要同步 I/O）
     pub socket: Arc<std::net::UdpSocket>,
-    /// Session 配置（不可变）
     pub config: TftpConfig,
-    /// 动态参数（可实时修改）
     pub dynamic_params: Arc<Mutex<TftpDynamicParams>>,
-    /// 服务端运行状态（由 server 线程在启动/退出时设置）
     pub server_running: Arc<AtomicBool>,
-    /// 取消标志
     pub abort_flag: Arc<AtomicBool>,
-    /// 传输 ID 计数器（session 内单调递增，从 1 开始，客户端和服务端共用）
     pub next_transfer_id: Arc<AtomicU64>,
-    /// 服务端活跃传输计数（用于并发限制）
     pub active_server_transfers: Arc<AtomicU64>,
 }
 
 impl TftpSideChannel {
-    /// 创建新的 TFTP 侧通道。
     pub fn new(socket: Arc<std::net::UdpSocket>, config: TftpConfig) -> Self {
         Self {
             socket,
@@ -264,7 +194,6 @@ impl TftpSideChannel {
         }
     }
 
-    /// 获取动态参数快照。
     pub fn get_params(&self) -> TftpDynamicParams {
         self.dynamic_params.lock().unwrap().clone()
     }
@@ -276,29 +205,50 @@ impl SideChannel for TftpSideChannel {
     }
 
     fn shutdown(&self) {
-        // 置位取消标志。Server 线程在下个循环迭代检测到后退出。
-        // 无需阻塞等待——server 线程持有的 Arc<UdpSocket> clone 在线程退出前
-        // 保持 socket 存活，不会发生 "socket 先释放、线程后访问" 的 use-after-free。
         self.abort_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        log::info!("[TFTP] 已请求服务端停止");
+        log::info!("[TFTP] server shutdown requested");
     }
 }
 
-// ── TftpAdapter ──────────────────────────────────────────────
-
-/// TFTP 协议适配器
-///
-/// 无状态结构体——每次 `connect()` 绑定一个新的 UDP socket 并创建侧通道。
-/// 通过 `connect()` 返回 `ProtocolConnection`，携带：
-/// - `channel`: `None`（无终端 I/O — 会话使用容器模式，不创建 I/O loop）
-/// - `side_channel`: `TftpSideChannel`（UDP socket + 传输管理）
 pub struct TftpAdapter;
 
 impl TftpAdapter {
     pub fn new() -> Self {
         Self
     }
+}
+
+/// Returns a warning for configurations that intentionally expose a writable
+/// server to non-loopback interfaces. The defaults are not changed; callers can
+/// surface this warning before starting the session.
+pub fn exposure_warning(config: &TftpConfig) -> Option<&'static str> {
+    let ip: IpAddr = config.listen_ip.parse().ok()?;
+    if !ip.is_loopback() && config.write_enabled && config.overwrite {
+        Some(
+            "TFTP is listening on a non-loopback interface with remote writes and overwrite enabled. Use only on trusted networks.",
+        )
+    } else {
+        None
+    }
+}
+
+fn bind_error(listen_addr: SocketAddr, error: std::io::Error) -> SessionError {
+    #[cfg(target_os = "linux")]
+    if error.kind() == std::io::ErrorKind::PermissionDenied && listen_addr.port() < 1024 {
+        return SessionError::IoError(std::io::Error::new(
+            error.kind(),
+            format!(
+                "cannot bind privileged TFTP port {} as a normal Linux user: {}. Choose a port >= 1024 or grant only the required bind capability; do not run the whole application as root",
+                listen_addr.port(), error
+            ),
+        ));
+    }
+
+    SessionError::IoError(std::io::Error::new(
+        error.kind(),
+        format!("cannot bind TFTP address {}: {}", listen_addr, error),
+    ))
 }
 
 #[async_trait::async_trait]
@@ -308,36 +258,46 @@ impl ProtocolAdapter for TftpAdapter {
         _endpoint: &str,
         params: &serde_json::Value,
     ) -> Result<ProtocolConnection, SessionError> {
-        // 解析配置
-        let config: TftpConfig =
+        let mut config: TftpConfig =
             serde_json::from_value(params.clone()).map_err(|e| SessionError::ConnectionFailed {
-                reason: format!("TFTP 配置解析失败: {}", e),
+                reason: format!("TFTP configuration parse failed: {}", e),
             })?;
 
-        // 验证文件根目录
         let root = PathBuf::from(&config.file_root);
         if !root.is_absolute() {
             return Err(SessionError::ConnectionFailed {
-                reason: "TFTP 文件根目录必须是绝对路径".into(),
+                reason: "TFTP file root must be an absolute path".into(),
             });
         }
-
-        // 绑定 UDP socket
-        let listen_addr: SocketAddr = format!("{}:{}", config.listen_ip, config.listen_port)
-            .parse()
+        let canonical_root = root
+            .canonicalize()
             .map_err(|e| SessionError::ConnectionFailed {
-                reason: format!("TFTP 监听地址无效: {}", e),
+                reason: format!("TFTP file root is unavailable or cannot be resolved: {}", e),
             })?;
+        if !canonical_root.is_dir() {
+            return Err(SessionError::ConnectionFailed {
+                reason: "TFTP file root must be an existing directory".into(),
+            });
+        }
+        config.file_root = canonical_root.to_string_lossy().to_string();
 
-        let socket = std::net::UdpSocket::bind(listen_addr).map_err(|e| {
-            SessionError::IoError(std::io::Error::new(
-                e.kind(),
-                format!("无法绑定 TFTP 端口 {}: {}", listen_addr, e),
-            ))
-        })?;
+        let listen_ip: IpAddr =
+            config
+                .listen_ip
+                .parse()
+                .map_err(|e| SessionError::ConnectionFailed {
+                    reason: format!("invalid TFTP listen IP '{}': {}", config.listen_ip, e),
+                })?;
+        let listen_addr = SocketAddr::new(listen_ip, config.listen_port);
 
-        log::info!("TFTP socket 已绑定到 {}", listen_addr);
+        if let Some(warning) = exposure_warning(&config) {
+            log::warn!("[TFTP] {}", warning);
+        }
 
+        let socket = std::net::UdpSocket::bind(listen_addr)
+            .map_err(|error| bind_error(listen_addr, error))?;
+
+        log::info!("TFTP socket bound to {}", listen_addr);
         let side_channel = Arc::new(TftpSideChannel::new(Arc::new(socket), config));
 
         Ok(ProtocolConnection {
@@ -349,7 +309,7 @@ impl ProtocolAdapter for TftpAdapter {
     }
 
     fn content_type(&self) -> ContentType {
-        ContentType::Terminal // 前端通过 manifest.content_type="custom" 路由
+        ContentType::Terminal
     }
 
     fn io_strategy(&self) -> IoStrategy {
@@ -365,12 +325,6 @@ impl ProtocolAdapter for TftpAdapter {
     }
 }
 
-// ── 共享辅助函数 ────────────────────────────────────────────
-
-/// 从 OACK options 中解析 RFC 7440 窗口参数并更新 dynamic params。
-///
-/// 客户端 GET/PUT 在收到服务端 OACK 后调用，更新协商后的
-/// windowsize 和 window_wait。
 pub fn apply_oack_window_options(
     options: &[tftpd::TransferOption],
     params: &mut TftpDynamicParams,
@@ -391,9 +345,6 @@ pub fn apply_oack_window_options(
     }
 }
 
-/// 构建服务端 OACK 选项列表。
-///
-/// `transfer_size`: 文件总大小（RRQ 响应时提供，WRQ 响应时传 `None`）。
 pub fn build_oack_options(
     params: &TftpDynamicParams,
     transfer_size: Option<u64>,
@@ -427,12 +378,6 @@ pub fn build_oack_options(
     opts
 }
 
-/// 尝试从会话的 side_channel 启动 TFTP 服务端。
-///
-/// 供 `connect_session_tftp` 和 `tftp_server_start` 共用，
-/// 消除命令层对 `TftpSideChannel` 内部字段的直接操作。
-///
-/// 若 side_channel 不存在、非 TFTP 类型、或已在运行，返回 `Err`。
 pub fn try_start_server(
     app: &tauri::AppHandle,
     side_channel: &Arc<dyn crate::kernel::plugin_adapter::SideChannel>,
@@ -441,13 +386,13 @@ pub fn try_start_server(
     let tftp_sc = side_channel
         .as_any()
         .downcast_ref::<TftpSideChannel>()
-        .ok_or_else(|| "侧通道不是 TFTP 类型".to_string())?;
+        .ok_or_else(|| "side channel is not TFTP".to_string())?;
 
     if tftp_sc
         .server_running
         .load(std::sync::atomic::Ordering::Relaxed)
     {
-        return Err("TFTP 服务端已在运行".into());
+        return Err("TFTP server is already running".into());
     }
 
     tftp_sc
@@ -465,6 +410,33 @@ pub fn try_start_server(
         session_id: session_id.to_string(),
     });
 
-    log::info!("[TFTP] 服务端已启动 (session={})", session_id);
+    log::info!("[TFTP] server started (session={})", session_id);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exposure_warning_only_for_writable_non_loopback() {
+        let mut config = TftpConfig {
+            listen_ip: "0.0.0.0".into(),
+            listen_port: 69,
+            file_root: "/tmp".into(),
+            write_enabled: true,
+            overwrite: true,
+            single_port: false,
+        };
+        assert!(exposure_warning(&config).is_some());
+        config.listen_ip = "127.0.0.1".into();
+        assert!(exposure_warning(&config).is_none());
+    }
+
+    #[test]
+    fn ipv6_listen_address_is_constructed_without_string_concatenation() {
+        let ip: IpAddr = "::1".parse().unwrap();
+        let addr = SocketAddr::new(ip, 69);
+        assert_eq!(addr.to_string(), "[::1]:69");
+    }
 }
