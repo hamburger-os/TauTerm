@@ -1,6 +1,6 @@
 //! Persistent credential storage: native OS keyring first, authenticated encrypted vault fallback.
-use aes_gcm::aead::{Aead, KeyInit, Payload};
-use aes_gcm::{Aes256Gcm, Nonce};
+use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload};
+use aes_gcm::Aes256Gcm;
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use directories::ProjectDirs;
@@ -347,7 +347,7 @@ impl CredentialStore {
         let c = Aes256Gcm::new_from_slice(key)
             .map_err(|_| CredentialStoreError::Backend("invalid vault key".into()))?;
         let aad = aad(&kdf);
-        let nonce = <&Nonce>::try_from(n.as_slice())
+        let nonce = <&Nonce<Aes256Gcm>>::try_from(n.as_slice())
             .map_err(|_| CredentialStoreError::Backend("invalid nonce length".into()))?;
         let ct = c
             .encrypt(
@@ -426,7 +426,8 @@ fn decrypt(e: &Envelope, key: &[u8]) -> Result<BTreeMap<String, Stored>, Credent
     let ct = B64.decode(&e.ciphertext_b64).map_err(be)?;
     let c = Aes256Gcm::new_from_slice(key).map_err(|_| be("invalid vault key"))?;
     let a = aad(&e.kdf);
-    let nonce = <&Nonce>::try_from(n.as_slice()).map_err(|_| be("invalid nonce length"))?;
+    let nonce = <&Nonce<Aes256Gcm>>::try_from(n.as_slice())
+        .map_err(|_| be("invalid nonce length"))?;
     let mut p = c
         .decrypt(
             nonce,
@@ -450,14 +451,18 @@ fn private_atomic_write(path: &Path, b: &[u8]) -> Result<(), CredentialStoreErro
     let parent = path.parent().ok_or_else(|| be("vault has no parent"))?;
     fs::create_dir_all(parent).map_err(be)?;
 
-    let mut options = atomic_write_file::OpenOptions::new();
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
+    let options = {
         use atomic_write_file::unix::OpenOptionsExt as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let mut options = atomic_write_file::OpenOptions::new();
+        options.mode(0o600);
         options.preserve_mode(true);
-    }
+        options
+    };
+    #[cfg(not(unix))]
+    let options = atomic_write_file::OpenOptions::new();
 
     let mut file = options.open(path).map_err(be)?;
     file.write_all(b).map_err(be)?;
