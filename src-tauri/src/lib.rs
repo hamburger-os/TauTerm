@@ -48,7 +48,7 @@ use virtual_port::backend::VirtualPortBackend;
 use virtual_port::manager::VirtualPortManager;
 
 #[cfg(not(target_os = "windows"))]
-use virtual_port::socat::PtyBackend;
+use virtual_port::pty::PtyBackend;
 
 /// 全局应用状态
 pub struct AppState {
@@ -88,7 +88,7 @@ pub struct AppState {
     pub credential_store: CredentialStore,
     /// 日志引擎（生产者-消费者异步日志系统）
     pub log_engine: Mutex<LogEngine>,
-    /// 虚拟串口设备管理器（com0com 驱动 + 端口对生命周期）
+    /// 虚拟端点后端（平台差异封装在 VirtualPortBackend 内）
     pub virtual_port_manager: Mutex<Box<dyn VirtualPortBackend>>,
 }
 
@@ -354,7 +354,7 @@ pub fn run() {
                     {
                         *vpm = Box::new(PtyBackend::new());
 
-                        // 清理上次异常退出可能遗留的孤儿 symlink
+                        // 原生 PTY 随文件描述符自动释放；统一调用保持后端生命周期接口一致。
                         let orphan_count = vpm.cleanup_orphans();
                         if orphan_count > 0 {
                             log::info!("已清理 {} 个孤儿虚拟端口对 (socat)", orphan_count);
