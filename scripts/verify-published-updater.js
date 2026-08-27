@@ -20,23 +20,12 @@ if (tag !== `v${version}`) {
 
 const expectedTargets = new Map([
   ["windows-x86_64-nsis", "_x64-setup.exe"],
-  ["windows-x86_64", "_x64-setup.exe"],
   ["linux-x86_64-deb", "_amd64.deb"],
   ["linux-x86_64-rpm", ".rpm"],
   ["linux-x86_64-appimage", "_amd64.AppImage"],
-  ["linux-x86_64", "_amd64.AppImage"],
   ["darwin-aarch64-app", "_aarch64.app.tar.gz"],
-  ["darwin-aarch64", "_aarch64.app.tar.gz"],
   ["darwin-x86_64-app", "_x64.app.tar.gz"],
-  ["darwin-x86_64", "_x64.app.tar.gz"],
 ]);
-
-const aliases = [
-  ["windows-x86_64-nsis", "windows-x86_64"],
-  ["linux-x86_64-appimage", "linux-x86_64"],
-  ["darwin-aarch64-app", "darwin-aarch64"],
-  ["darwin-x86_64-app", "darwin-x86_64"],
-];
 
 const config = JSON.parse(readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf8"));
 const decodedKey = Buffer.from(config.plugins?.updater?.pubkey ?? "", "base64").toString("utf8");
@@ -134,27 +123,12 @@ for (const [target, suffix] of expectedTargets) {
   }
 }
 
-for (const [specific, fallback] of aliases) {
-  const a = manifest.platforms[specific];
-  const b = manifest.platforms[fallback];
-  if (a.url !== b.url || a.signature.trim() !== b.signature.trim()) {
-    throw new Error(`Updater alias mismatch: ${specific} and ${fallback} must reference the same signed artifact.`);
-  }
-}
-
 const tempDir = mkdtempSync(join(tmpdir(), "tauterm-updater-verify-"));
 try {
-  const byUrl = new Map();
-  for (const target of expectedTargets.keys()) {
+  for (const [target] of expectedTargets) {
     const entry = manifest.platforms[target];
-    const previous = byUrl.get(entry.url);
-    if (previous && previous.signature.trim() !== entry.signature.trim()) {
-      throw new Error(`One updater artifact URL has inconsistent signatures: ${entry.url}`);
-    }
-    byUrl.set(entry.url, { signature: entry.signature.trim(), target });
-  }
-
-  for (const [url, { signature, target }] of byUrl) {
+    const url = entry.url;
+    const signature = entry.signature.trim();
     const name = basename(new URL(url).pathname);
     const artifactPath = join(tempDir, name);
     const signaturePath = `${artifactPath}.sig`;
