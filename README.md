@@ -5,7 +5,7 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/hamburger-os/TauTerm?include_prereleases)](https://github.com/hamburger-os/TauTerm/releases)
-[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20MSI-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20NSIS-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
 [![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20AppImage-FCC624)](https://github.com/hamburger-os/TauTerm/releases)
 [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20dmg-333333)](https://github.com/hamburger-os/TauTerm/releases)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-67D6F8.svg)](https://tauri.app)
@@ -15,7 +15,7 @@
 
 TauTerm is for engineers who are tired of switching between an SSH client, an SFTP client, a serial terminal and separate TCP/UDP debugging tools. It brings those workflows into one lightweight desktop app with a microkernel plugin architecture.
 
-> **Release status:** Windows (NSIS/MSI), Linux (deb/rpm/AppImage) and macOS (Apple Silicon and Intel dmg/app) installers are published on GitHub Releases. Feature descriptions below track the current `master` branch; the latest packaged release may lag behind `master`.
+> **Release status:** Windows (NSIS), Linux (deb/rpm/AppImage) and macOS (Apple Silicon and Intel dmg/app) installers are published on GitHub Releases. Feature descriptions below track the current `master` branch; the latest packaged release may lag behind `master`.
 
 ![TauTerm SSH terminal and SFTP file manager in one session](docs/assets/hero-en.png)
 
