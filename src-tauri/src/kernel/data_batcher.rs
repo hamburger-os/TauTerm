@@ -257,7 +257,9 @@ mod tests {
     fn test_batcher_aggregates_within_window() {
         let (emit_tx, emit_rx) = mpsc::channel();
         let batcher = DataBatcher::new(move |batch| {
-            emit_tx.send(batch).expect("test receiver should stay alive");
+            emit_tx
+                .send(batch)
+                .expect("test receiver should stay alive");
         });
 
         batcher.push("s1".into(), b"hello".to_vec());
