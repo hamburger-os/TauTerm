@@ -76,7 +76,9 @@ jobs:
           fi
 
           PRERELEASE=false
-          [[ "$VERSION" == *-* ]] && PRERELEASE=true
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE=true
+          fi
           NOTES_FILE="docs/RELEASE_NOTES_${TAG}.md"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -338,8 +340,12 @@ jobs:
           cleanup() {
             code=$?
             if [ "$code" -ne 0 ] && [ "$PUBLISHED" != "true" ]; then
-              [ "$CREATED_RELEASE" = "true" ] && gh release delete "$TAG" --yes --cleanup-tag=false >/dev/null 2>&1 || true
-              [ "$CREATED_TAG" = "true" ] && git push origin ":refs/tags/$TAG" >/dev/null 2>&1 || true
+              if [ "$CREATED_RELEASE" = "true" ]; then
+                gh release delete "$TAG" --yes --cleanup-tag=false >/dev/null 2>&1 || true
+              fi
+              if [ "$CREATED_TAG" = "true" ]; then
+                git push origin ":refs/tags/$TAG" >/dev/null 2>&1 || true
+              fi
             fi
             exit "$code"
           }
@@ -347,11 +353,18 @@ jobs:
 
           REMOTE_MASTER="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
           test "$REMOTE_MASTER" = "$SOURCE_SHA" || { echo '::error::master advanced during release builds.'; exit 1; }
-          ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1 || { echo "::error::$TAG already exists."; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists."
+            exit 1
+          fi
 
           gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | \
             jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .draft == true and (.assets | length) == 0) | .id' | \
-            while read -r id; do [ -n "$id" ] && gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$id"; done
+            while read -r id; do
+              if [ -n "$id" ]; then
+                gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$id"
+              fi
+            done
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -360,7 +373,9 @@ jobs:
           CREATED_TAG=true
 
           CREATE_ARGS=("$TAG" --target "$SOURCE_SHA" --title "TauTerm $TAG" --notes-file "$NOTES_FILE" --draft)
-          [ "$PRERELEASE" = "true" ] && CREATE_ARGS+=(--prerelease)
+          if [ "$PRERELEASE" = "true" ]; then
+            CREATE_ARGS+=(--prerelease)
+          fi
           gh release create "${CREATE_ARGS[@]}"
           CREATED_RELEASE=true
           gh release upload "$TAG" release-assets/*
