@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "description": "Rust stable is qualified locally by npm run build:release before being pinned",
+      "matchManagers": [
+        "rust-toolchain"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Group GitHub Actions maintenance",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "groupName": "GitHub Actions"
+    }
+  ]
+}
