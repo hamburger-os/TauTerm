@@ -26,7 +26,7 @@ function same(label, actual, expected) {
 const pkg = readJson("package.json");
 const expected = (explicitVersion ?? pkg.version).replace(/^v/, "");
 
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(expected)) {
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(expected)) {
   fail(`invalid semantic version: ${expected}`);
   process.exit(1);
 }
