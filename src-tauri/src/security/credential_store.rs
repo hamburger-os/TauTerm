@@ -7,6 +7,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use zeroize::{Zeroize, Zeroizing};
@@ -443,20 +444,21 @@ fn dec_fixed<const N: usize>(s: &str, name: &str) -> Result<[u8; N], CredentialS
         .map_err(|_| be(format!("invalid {name} length")))
 }
 fn private_atomic_write(path: &Path, b: &[u8]) -> Result<(), CredentialStoreError> {
-    let p = path.parent().ok_or_else(|| be("vault has no parent"))?;
-    fs::create_dir_all(p).map_err(be)?;
-    let t = p.join(format!(".{VAULT}.{}.tmp", uuid::Uuid::new_v4().simple()));
-    fs::write(&t, b).map_err(be)?;
+    let parent = path.parent().ok_or_else(|| be("vault has no parent"))?;
+    fs::create_dir_all(parent).map_err(be)?;
+
+    let mut options = atomic_write_file::OpenOptions::new();
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&t, fs::Permissions::from_mode(0o600)).map_err(be)?;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+        use atomic_write_file::unix::OpenOptionsExt as _;
+        options.preserve_mode(true);
     }
-    #[cfg(target_os = "windows")]
-    if path.exists() {
-        fs::remove_file(path).map_err(be)?;
-    }
-    fs::rename(t, path).map_err(be)
+
+    let mut file = options.open(path).map_err(be)?;
+    file.write_all(b).map_err(be)?;
+    file.commit().map_err(be)
 }
 #[derive(Debug, thiserror::Error)]
 pub enum CredentialStoreError {
