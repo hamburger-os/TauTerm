@@ -774,7 +774,7 @@ fn ymodem_receive(
 ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
     fs::create_dir_all(download_dir)?;
     // 清空接收缓冲区，丢弃之前会话可能残留的杂散字节
-    io::flush_port_buffer(port);
+    io::flush_external_pathuffer(port);
 
     log::info!(
         "YModem RX 开始: download_dir={}, 等待发送方启动传输 (发送 'C' 探针, 最多 {} 次)",
@@ -1187,7 +1187,7 @@ fn ymodem_receive(
                         // 跨文件缓冲区清理：清空残留字节再发送 ACK+C。
                         // 前一个文件的数据块可能遗留 0x02 (STX) 等协议头字节在串口 RX 缓冲区，
                         // 若不清理，'read_header 循环会将其误读为下一文件的块头。
-                        io::flush_port_buffer(port);
+                        io::flush_external_pathuffer(port);
 
                         // YMODEM 批量模式：ACK EOT → 延迟 → 发送 'C' 请求下一文件
                         // 延迟确保设备逐字节读取机制正确接收两个独立字节（对齐 _rym_do_send_eot）

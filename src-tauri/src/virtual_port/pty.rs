@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use serialport::{SerialPort, TTYPort};
 
-use super::backend::{PortPair, VirtualPortBackend, VirtualPortConfig};
+use super::backend::{VirtualEndpoint, VirtualPortBackend, VirtualPortConfig};
 
 const MAX_ENDPOINT_COUNT: u32 = 4;
 const PTY_READ_TIMEOUT_MS: u64 = 5;
@@ -57,7 +57,7 @@ impl PtyBackend {
         }
     }
 
-    fn create_endpoint(&mut self) -> Result<PortPair, String> {
+    fn create_endpoint(&mut self) -> Result<VirtualEndpoint, String> {
         let (mut master, mut slave) =
             TTYPort::pair().map_err(|e| format!("failed to create native PTY pair: {e}"))?;
 
@@ -81,10 +81,10 @@ impl PtyBackend {
         // Compatibility representation: Unix has one externally visible endpoint,
         // not a kernel COM null-modem pair. Both metadata fields identify the same
         // slave device until the frontend migrates to VirtualEndpoint metadata.
-        Ok(PortPair {
-            port_a: slave_path.clone(),
-            port_b: slave_path,
-            bus_number: id,
+        Ok(VirtualEndpoint {
+            bridge_path: slave_path.clone(),
+            external_path: slave_path,
+            resource_id: id,
         })
     }
 
@@ -113,7 +113,10 @@ impl VirtualPortBackend for PtyBackend {
         Ok(())
     }
 
-    fn create_pairs(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String> {
+    fn create_endpoints(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, String> {
         let count = config.count.clamp(1, MAX_ENDPOINT_COUNT);
         let mut created = Vec::with_capacity(count as usize);
 
@@ -122,7 +125,7 @@ impl VirtualPortBackend for PtyBackend {
                 Ok(endpoint) => created.push(endpoint),
                 Err(error) => {
                     for endpoint in &created {
-                        self.remove_endpoint(&endpoint.port_a);
+                        self.remove_endpoint(&endpoint.bridge_path);
                     }
                     return Err(error);
                 }
@@ -131,15 +134,15 @@ impl VirtualPortBackend for PtyBackend {
         Ok(created)
     }
 
-    fn create_pairs_elevated(
+    fn create_endpoints_elevated(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<PortPair>, String> {
-        self.create_pairs(config)
+    ) -> Result<Vec<VirtualEndpoint>, String> {
+        self.create_endpoints(config)
     }
 
-    fn destroy_pair(&mut self, pair: &PortPair) -> Result<(), String> {
-        self.remove_endpoint(&pair.port_a);
+    fn destroy_endpoint(&mut self, pair: &VirtualEndpoint) -> Result<(), String> {
+        self.remove_endpoint(&pair.bridge_path);
         Ok(())
     }
 
@@ -156,7 +159,7 @@ impl VirtualPortBackend for PtyBackend {
         0
     }
 
-    fn cleanup_pairs_elevated(&mut self) -> Result<u32, String> {
+    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
         self.cleanup_all();
         Ok(0)
     }
@@ -167,7 +170,7 @@ impl VirtualPortBackend for PtyBackend {
 }
 
 /// Compatibility alias for the existing AppState initialization.
-pub type SocatBackend = PtyBackend;
+pub type PtyBackend = PtyBackend;
 
 #[cfg(test)]
 mod tests {
@@ -178,15 +181,15 @@ mod tests {
     fn native_pty_round_trip() {
         let mut backend = PtyBackend::new();
         let endpoints = backend
-            .create_pairs(&VirtualPortConfig {
+            .create_endpoints(&VirtualPortConfig {
                 enabled: true,
                 count: 1,
             })
             .expect("create PTY endpoint");
         let endpoint = &endpoints[0];
 
-        let mut master = take_master_for_slave(&endpoint.port_a).expect("registered master");
-        let mut slave = serialport::new(&endpoint.port_b, 0)
+        let mut master = take_master_for_slave(&endpoint.bridge_path).expect("registered master");
+        let mut slave = serialport::new(&endpoint.external_path, 0)
             .timeout(Duration::from_millis(100))
             .open()
             .expect("open slave");

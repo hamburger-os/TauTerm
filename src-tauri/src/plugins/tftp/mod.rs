@@ -37,6 +37,8 @@ pub struct TftpConfig {
     pub overwrite: bool,
     #[serde(default)]
     pub single_port: bool,
+    #[serde(default)]
+    pub exposure_confirmed: bool,
 }
 
 fn default_listen_ip() -> String {

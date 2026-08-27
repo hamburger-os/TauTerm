@@ -34,7 +34,7 @@ mod service {
     };
     use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW};
 
-    use tauterm_lib::virtual_port::backend::{PortPair, VirtualPortConfig};
+    use tauterm_lib::virtual_port::backend::{VirtualEndpoint, VirtualPortConfig};
     use tauterm_lib::virtual_port::manager::VirtualPortManager;
 
     // ── Win32 常量（硬编码避免依赖 feature 导出名差异） ──
@@ -263,7 +263,7 @@ mod service {
         }
     }
 
-    type Clients = HashMap<String, Vec<PortPair>>;
+    type Clients = HashMap<String, Vec<VirtualEndpoint>>;
 
     fn dispatch(vpm: &mut VirtualPortManager, clients: &mut Clients, req: &Request) -> Response {
         let id = req.id;
@@ -281,7 +281,7 @@ mod service {
                 Ok(()) => Some(serde_json::json!({})),
                 Err(e) => return Response::err(id, e),
             },
-            "create_pairs" => {
+            "create_endpoints" => {
                 let count = req
                     .payload
                     .get("count")
@@ -291,7 +291,7 @@ mod service {
                     enabled: true,
                     count,
                 };
-                match vpm.create_pairs(&config) {
+                match vpm.create_endpoints(&config) {
                     Ok(pairs) => {
                         let entry = clients.entry(req.client_id.clone()).or_default();
                         for p in &pairs {
@@ -311,9 +311,9 @@ mod service {
                 match bus {
                     Some(bus) => {
                         if let Some(list) = clients.get_mut(&req.client_id) {
-                            if let Some(pos) = list.iter().position(|p| p.bus_number == bus) {
+                            if let Some(pos) = list.iter().position(|p| p.resource_id == bus) {
                                 let pair = list.remove(pos);
-                                if let Err(e) = vpm.destroy_pair(&pair) {
+                                if let Err(e) = vpm.destroy_endpoint(&pair) {
                                     log::warn!("remove_pair bus {} failed: {}", bus, e);
                                 }
                             }
@@ -326,7 +326,7 @@ mod service {
             "cleanup_client" => {
                 if let Some(list) = clients.remove(&req.client_id) {
                     for p in &list {
-                        let _ = vpm.destroy_pair(p);
+                        let _ = vpm.destroy_endpoint(p);
                     }
                 }
                 Some(serde_json::json!({}))
@@ -368,7 +368,7 @@ mod service {
                 if let Ok(mut c) = clients.lock() {
                     if let Some(list) = c.remove(&cid) {
                         for p in &list {
-                            let _ = v.destroy_pair(p);
+                            let _ = v.destroy_endpoint(p);
                         }
                     }
                 }

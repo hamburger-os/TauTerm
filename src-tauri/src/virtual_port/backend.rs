@@ -2,7 +2,7 @@
 //!
 //! 定义虚拟串口后端（如 com0com、socat、tty0tty）需要实现的操作。
 //! 当前实现：com0com（通过 `VirtualPortManager`）。
-//! 未来可扩展：`SocatBackend`（Linux/macOS）、`Tty0ttyBackend` 等。
+//! 未来可扩展：`PtyBackend`（Linux/macOS）、`Tty0ttyBackend` 等。
 
 use serde::{Deserialize, Serialize};
 
@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// 表示一对已创建且保持连接的虚拟 COM 端口。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PortPair {
-    pub port_a: String,
-    pub port_b: String,
-    pub bus_number: u32,
+pub struct VirtualEndpoint {
+    pub bridge_path: String,
+    pub external_path: String,
+    pub resource_id: u32,
 }
 
 /// 用于创建虚拟端口对的配置。
@@ -67,8 +67,8 @@ pub fn contains_elevation_indicator(text: &str) -> bool {
 /// impl VirtualPortBackend for VirtualPortManager { ... }
 ///
 /// // socat (Linux/macOS) — 未来扩展
-/// struct SocatBackend { ... }
-/// impl VirtualPortBackend for SocatBackend { ... }
+/// struct PtyBackend { ... }
+/// impl VirtualPortBackend for PtyBackend { ... }
 /// ```
 /// Send supertrait 是必需的：AppState 通过 Tauri State 在线程间共享。
 pub trait VirtualPortBackend: Send {
@@ -91,16 +91,19 @@ pub trait VirtualPortBackend: Send {
     fn install_driver_elevated(&mut self) -> Result<(), String>;
 
     /// 创建 `count` 个虚拟串口端口对（普通权限路径）。
-    fn create_pairs(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String>;
-
-    /// 通过管理员提权创建端口对（UAC / sudo），一并清理残留。
-    fn create_pairs_elevated(
+    fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<PortPair>, String>;
+    ) -> Result<Vec<VirtualEndpoint>, String>;
+
+    /// 通过管理员提权创建端口对（UAC / sudo），一并清理残留。
+    fn create_endpoints_elevated(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, String>;
 
     /// 销毁一个虚拟端口对（含优雅降级策略）。
-    fn destroy_pair(&mut self, pair: &PortPair) -> Result<(), String>;
+    fn destroy_endpoint(&mut self, pair: &VirtualEndpoint) -> Result<(), String>;
 
     /// 退出时清理所有活跃端口对。
     fn cleanup_all(&mut self);
@@ -109,7 +112,7 @@ pub trait VirtualPortBackend: Send {
     fn cleanup_orphans(&mut self) -> u32;
 
     /// 通过提权批量清理残留端口对。
-    fn cleanup_pairs_elevated(&mut self) -> Result<u32, String>;
+    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String>;
 
     /// 返回持久化文件中记录的待清理 bus 数量。
     fn pending_orphan_count(&self) -> u32;

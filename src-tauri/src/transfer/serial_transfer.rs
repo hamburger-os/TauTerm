@@ -76,7 +76,7 @@ impl FileTransfer for SerialFileTransfer {
 
         let result = tokio::task::spawn_blocking(move || {
             let mut port_guard = port.lock().unwrap_or_else(|e| e.into_inner());
-            crate::transfer::io::flush_port_buffer(&mut port_guard);
+            crate::transfer::io::flush_external_pathuffer(&mut port_guard);
 
             let progress = progress;
             let proto = proto;
@@ -253,7 +253,7 @@ impl FileTransfer for SerialFileTransfer {
 
         let result = tokio::task::spawn_blocking(move || {
             let mut port_guard = port.lock().unwrap_or_else(|e| e.into_inner());
-            crate::transfer::io::flush_port_buffer(&mut port_guard);
+            crate::transfer::io::flush_external_pathuffer(&mut port_guard);
 
             let progress = progress;
             let proto = proto;

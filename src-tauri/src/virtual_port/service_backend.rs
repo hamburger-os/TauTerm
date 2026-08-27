@@ -19,7 +19,7 @@ use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
 use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
-use super::backend::{PortPair, VirtualPortBackend, VirtualPortConfig};
+use super::backend::{VirtualEndpoint, VirtualPortBackend, VirtualPortConfig};
 
 const PIPE_NAME: &str = r"\\.\pipe\TauTermService";
 
@@ -335,21 +335,31 @@ impl VirtualPortBackend for ServiceBackend {
         self.install_driver()
     }
 
-    fn create_pairs(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String> {
-        let data = self.call("create_pairs", serde_json::json!({ "count": config.count }))?;
-        serde_json::from_value(data).map_err(|e| format!("invalid create_pairs response: {}", e))
-    }
-
-    fn create_pairs_elevated(
+    fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<PortPair>, String> {
-        self.create_pairs(config)
+    ) -> Result<Vec<VirtualEndpoint>, String> {
+        let data = self.call(
+            "create_endpoints",
+            serde_json::json!({ "count": config.count }),
+        )?;
+        serde_json::from_value(data)
+            .map_err(|e| format!("invalid create_endpoints response: {}", e))
     }
 
-    fn destroy_pair(&mut self, pair: &PortPair) -> Result<(), String> {
-        self.call("remove_pair", serde_json::json!({ "bus": pair.bus_number }))
-            .map(|_| ())
+    fn create_endpoints_elevated(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, String> {
+        self.create_endpoints(config)
+    }
+
+    fn destroy_endpoint(&mut self, pair: &VirtualEndpoint) -> Result<(), String> {
+        self.call(
+            "remove_pair",
+            serde_json::json!({ "bus": pair.resource_id }),
+        )
+        .map(|_| ())
     }
 
     fn cleanup_all(&mut self) {
@@ -361,7 +371,7 @@ impl VirtualPortBackend for ServiceBackend {
         0
     }
 
-    fn cleanup_pairs_elevated(&mut self) -> Result<u32, String> {
+    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
         self.call("cleanup_client", serde_json::json!({}))
             .map(|_| 0)
     }

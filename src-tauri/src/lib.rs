@@ -48,7 +48,7 @@ use virtual_port::backend::VirtualPortBackend;
 use virtual_port::manager::VirtualPortManager;
 
 #[cfg(not(target_os = "windows"))]
-use virtual_port::socat::SocatBackend;
+use virtual_port::socat::PtyBackend;
 
 /// 全局应用状态
 pub struct AppState {
@@ -352,7 +352,7 @@ pub fn run() {
 
                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                     {
-                        *vpm = Box::new(SocatBackend::new());
+                        *vpm = Box::new(PtyBackend::new());
 
                         // 清理上次异常退出可能遗留的孤儿 symlink
                         let orphan_count = vpm.cleanup_orphans();
@@ -361,11 +361,11 @@ pub fn run() {
                         }
 
                         if vpm.are_files_present() {
-                            log::info!("socat 已就绪，虚拟串口功能可用");
+                            log::info!("原生 PTY 后端已就绪，虚拟串口功能可用");
                         } else {
-                            log::warn!("socat 未安装，虚拟串口功能不可用。安装: apt install socat (Linux) / brew install socat (macOS)");
+                            log::warn!("原生 PTY 后端不可用");
                             let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                                "reason": "socat not installed. Install via: sudo apt install socat (Linux) or brew install socat (macOS)",
+                                "reason": "Native PTY backend unavailable",
                                 "can_install": false,
                             }));
                         }
@@ -411,7 +411,7 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from("."), std::path::PathBuf::from(".")))),
             #[cfg(not(target_os = "windows"))]
-            virtual_port_manager: Mutex::new(Box::new(SocatBackend::new())),
+            virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,
@@ -442,6 +442,9 @@ pub fn run() {
             commands::get_credential,
             commands::list_credentials,
             commands::delete_credential,
+            commands::credential_storage_status,
+            commands::unlock_credential_vault,
+            commands::lock_credential_vault,
             commands::get_config,
             commands::set_config,
             commands::delete_config,

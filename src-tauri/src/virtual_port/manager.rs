@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::backend::{contains_elevation_indicator, PortPair, VirtualPortConfig};
+use super::backend::{contains_elevation_indicator, VirtualEndpoint, VirtualPortConfig};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt;
@@ -55,11 +55,11 @@ const MAX_COM_PORT: u32 = 256;
 const COM_PORT_SCAN_START: u32 = 20;
 /// 候选端口对倍数（count * N 个候选对）
 const CANDIDATE_MULTIPLIER: u32 = 2;
-/// destroy_pair Stage 2 最大重试次数
+/// destroy_endpoint Stage 2 最大重试次数
 const DESTROY_STAGE2_RETRY_COUNT: u32 = 3;
-/// destroy_pair Stage 2 重试间隔（毫秒）
+/// destroy_endpoint Stage 2 重试间隔（毫秒）
 const DESTROY_STAGE2_RETRY_DELAY_MS: u64 = 200;
-/// destroy_pair 解绑端口名后等待系统传播的间隔（毫秒）
+/// destroy_endpoint 解绑端口名后等待系统传播的间隔（毫秒）
 const DESTROY_UNBIND_WAIT_MS: u64 = 300;
 
 // ── 预留区（测试脚本 test-serial-session.py 专用，两边需保持一致） ──
@@ -87,7 +87,7 @@ fn is_reserved_port(port: u32) -> bool {
 
 pub struct VirtualPortManager {
     driver_installed: bool,
-    active_pairs: HashSet<PortPair>,
+    active_endpoints: HashSet<VirtualEndpoint>,
     resource_dir: PathBuf,
     state_dir: Option<PathBuf>,
 }
@@ -249,7 +249,7 @@ impl VirtualPortManager {
     pub fn new(resource_dir: PathBuf, state_dir: PathBuf) -> Self {
         Self {
             driver_installed: false,
-            active_pairs: HashSet::new(),
+            active_endpoints: HashSet::new(),
             resource_dir: normalize_windows_path(&resource_dir),
             state_dir: Some(normalize_windows_path(&state_dir)),
         }
@@ -263,7 +263,7 @@ impl VirtualPortManager {
     pub fn new_stateless(resource_dir: PathBuf) -> Self {
         Self {
             driver_installed: false,
-            active_pairs: HashSet::new(),
+            active_endpoints: HashSet::new(),
             resource_dir: normalize_windows_path(&resource_dir),
             state_dir: None,
         }
@@ -435,7 +435,7 @@ impl VirtualPortManager {
     /// 通过 `serialport::available_ports()` 枚举当前被占用的所有 COM 端口，
     /// 同时合并 `extra_occupied`（来自 com0com 内部状态的端口号），
     /// 从 `max(20, 最高已用端口+2)` 开始向上扫描，找到未占用的连续端口对。
-    /// 返回值: Vec<(port_a_num, port_b_num)>，例如 [(22, 23), (24, 25)]。
+    /// 返回值: Vec<(bridge_path_num, external_path_num)>，例如 [(22, 23), (24, 25)]。
     pub fn find_available_port_pairs(count: u32, extra_occupied: &HashSet<u32>) -> Vec<(u32, u32)> {
         let mut in_use: HashSet<u32> = match serialport::available_ports() {
             Ok(ports) => ports
@@ -519,7 +519,10 @@ impl VirtualPortManager {
     /// （幽灵设备，`available_ports()` 检测不到），自动跳过该端口
     /// 并尝试下一个候选，而非立即失败。
     /// 仅在所有候选端口都失败时才返回错误。
-    pub fn create_pairs(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String> {
+    pub fn create_endpoints(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, String> {
         if !self.are_files_present() {
             return Err("com0com driver files missing".into());
         }
@@ -538,33 +541,33 @@ impl VirtualPortManager {
         }
 
         // 起始 bus = 所有已知来源的最大值 + 1
-        // （active_pairs / com0com_state.json / 驱动真实状态）
-        let active_max = self.active_pairs.iter().map(|p| p.bus_number).max();
+        // （active_endpoints / com0com_state.json / 驱动真实状态）
+        let active_max = self.active_endpoints.iter().map(|p| p.resource_id).max();
         let state_max = self.load_active_buses().iter().max().copied();
         let mut bus = [active_max, state_max, driver_max_bus]
             .iter()
             .filter_map(|&m| m)
             .max()
             .map_or(0, |m| m + 1);
-        let mut pairs: Vec<PortPair> = Vec::new();
+        let mut pairs: Vec<VirtualEndpoint> = Vec::new();
         let mut skipped_ports: Vec<String> = Vec::new();
 
-        for (port_a_num, port_b_num) in &candidates {
+        for (bridge_path_num, external_path_num) in &candidates {
             // 已创建足够数量的端口对
             if pairs.len() >= count as usize {
                 break;
             }
 
-            let port_a = format!("COM{}", port_a_num);
-            let port_b = format!("COM{}", port_b_num);
+            let bridge_path = format!("COM{}", bridge_path_num);
+            let external_path = format!("COM{}", external_path_num);
 
             let output = run_setupc(
                 &self.resource_dir,
                 &[
                     "install",
                     &bus.to_string(),
-                    &format!("PortName={}", port_a),
-                    &format!("PortName={},PlugInMode=yes", port_b),
+                    &format!("PortName={}", bridge_path),
+                    &format!("PortName={},PlugInMode=yes", external_path),
                 ],
             );
 
@@ -572,8 +575,8 @@ impl VirtualPortManager {
                 Ok(out) if out.status.success() => {
                     log::info!(
                         "  Virtual port pair created: {} ↔ {} (bus {})",
-                        port_a,
-                        port_b,
+                        bridge_path,
+                        external_path,
                         bus
                     );
                 }
@@ -581,8 +584,8 @@ impl VirtualPortManager {
                     // exit code 1 → port pair with same name already exists, reuse it
                     log::info!(
                         "  Reusing existing port pair: {} ↔ {} (bus {})",
-                        port_a,
-                        port_b,
+                        bridge_path,
+                        external_path,
                         bus
                     );
                 }
@@ -600,11 +603,12 @@ impl VirtualPortManager {
                     {
                         log::warn!(
                             "  Skipping port COM{}/COM{}: {}",
-                            port_a_num,
-                            port_b_num,
+                            bridge_path_num,
+                            external_path_num,
                             detail.trim()
                         );
-                        skipped_ports.push(format!("COM{}/COM{}", port_a_num, port_b_num));
+                        skipped_ports
+                            .push(format!("COM{}/COM{}", bridge_path_num, external_path_num));
                         // bus 不递增 — 当前 bus 上 install 已完整失败，
                         // 下一个候选端口重用同一 bus（com0com install 是原子的）
                         continue;
@@ -613,12 +617,12 @@ impl VirtualPortManager {
                     // Non-recoverable error: roll back created pairs and return error
                     for p in &pairs {
                         let _ =
-                            run_setupc(&self.resource_dir, &["remove", &p.bus_number.to_string()]);
+                            run_setupc(&self.resource_dir, &["remove", &p.resource_id.to_string()]);
                     }
                     return Err(format!(
                         "Failed to create port pair {}↔{} (exit {:?}): {}",
-                        port_a,
-                        port_b,
+                        bridge_path,
+                        external_path,
                         out.status.code(),
                         detail.trim()
                     ));
@@ -626,16 +630,16 @@ impl VirtualPortManager {
                 Err(e) => {
                     for p in &pairs {
                         let _ =
-                            run_setupc(&self.resource_dir, &["remove", &p.bus_number.to_string()]);
+                            run_setupc(&self.resource_dir, &["remove", &p.resource_id.to_string()]);
                     }
                     return Err(format!("Failed to spawn setupc.exe: {}", e));
                 }
             }
 
-            pairs.push(PortPair {
-                port_a,
-                port_b,
-                bus_number: bus,
+            pairs.push(VirtualEndpoint {
+                bridge_path,
+                external_path,
+                resource_id: bus,
             });
             bus += 1;
         }
@@ -665,7 +669,7 @@ impl VirtualPortManager {
 
         self.driver_installed = true;
         for p in &pairs {
-            self.active_pairs.insert(p.clone());
+            self.active_endpoints.insert(p.clone());
         }
         self.sync_state_file();
         Ok(pairs)
@@ -673,18 +677,18 @@ impl VirtualPortManager {
 
     /// 通过 UAC 提权创建端口对，同时一并清理所有已知的残留端口对（同一 UAC 内先删后建）。
     ///
-    /// 当普通权限下 `create_pairs()` 因 os error 740 失败且驱动已安装时调用。
+    /// 当普通权限下 `create_endpoints()` 因 os error 740 失败且驱动已安装时调用。
     /// 单个提权的 PowerShell 脚本完成以下操作：
-    /// 1. 读取 `com0com_state.json` + 当前 active_pairs 中的所有 bus 号
+    /// 1. 读取 `com0com_state.json` + 当前 active_endpoints 中的所有 bus 号
     /// 2. 逐一 `remove <bus>` + 解绑端口名重试
     /// 3. 创建新的端口对
     ///
     /// 仅触发一次 UAC 弹窗。
     #[cfg(target_os = "windows")]
-    pub fn create_pairs_elevated(
+    pub fn create_endpoints_elevated(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<PortPair>, String> {
+    ) -> Result<Vec<VirtualEndpoint>, String> {
         if !self.are_files_present() {
             return Err("com0com driver files missing".into());
         }
@@ -704,7 +708,11 @@ impl VirtualPortManager {
 
         // 收集所有需要清理的 bus 号
         // = 簿记中的 bus ∪ 驱动中真实存在的 bus ∪ com0com_state.json 中的 orphans
-        let mut stale_buses: Vec<u32> = self.active_pairs.iter().map(|p| p.bus_number).collect();
+        let mut stale_buses: Vec<u32> = self
+            .active_endpoints
+            .iter()
+            .map(|p| p.resource_id)
+            .collect();
         let orphans = self.load_active_buses();
         for bus in driver_buses.iter().chain(orphans.iter()) {
             if !stale_buses.contains(bus) {
@@ -728,11 +736,11 @@ impl VirtualPortManager {
 
         // 阶段 1: 创建新端口对（bus 号从驱动真实最大值之后开始）
         let first_bus = driver_max_bus.map_or(0, |m| m + 1);
-        for (i, (port_a_num, port_b_num)) in candidates.iter().enumerate() {
+        for (i, (bridge_path_num, external_path_num)) in candidates.iter().enumerate() {
             let bus = first_bus + i as u32;
             batch.push_str(&format!(
                 "\"{setupc}\" install {bus} PortName=COM{pa} PortName=COM{pb},PlugInMode=yes\r\nif errorlevel 1 exit /b 1\r\n",
-                setupc = setupc_str, bus = bus, pa = port_a_num, pb = port_b_num
+                setupc = setupc_str, bus = bus, pa = bridge_path_num, pb = external_path_num
             ));
         }
         batch.push_str("exit /b 0\r\n");
@@ -752,23 +760,23 @@ impl VirtualPortManager {
         })?;
 
         // 清理旧的追踪记录
-        self.active_pairs.clear();
+        self.active_endpoints.clear();
         self.persist_active_buses(&[]);
 
-        // 构建返回的 PortPair 列表
-        let pairs: Vec<PortPair> = candidates
+        // 构建返回的 VirtualEndpoint 列表
+        let pairs: Vec<VirtualEndpoint> = candidates
             .iter()
             .enumerate()
-            .map(|(i, (a, b))| PortPair {
-                port_a: format!("COM{}", a),
-                port_b: format!("COM{}", b),
-                bus_number: (first_bus + i as u32),
+            .map(|(i, (a, b))| VirtualEndpoint {
+                bridge_path: format!("COM{}", a),
+                external_path: format!("COM{}", b),
+                resource_id: (first_bus + i as u32),
             })
             .collect();
 
         self.driver_installed = true;
         for p in &pairs {
-            self.active_pairs.insert(p.clone());
+            self.active_endpoints.insert(p.clone());
         }
         self.sync_state_file();
         log::info!(
@@ -779,29 +787,29 @@ impl VirtualPortManager {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn create_pairs_elevated(
+    pub fn create_endpoints_elevated(
         &mut self,
         _config: &VirtualPortConfig,
-    ) -> Result<Vec<PortPair>, String> {
+    ) -> Result<Vec<VirtualEndpoint>, String> {
         Err("UAC elevation is only supported on Windows".into())
     }
 
     /// 通过 UAC 提权批量清理残留的虚拟端口对。
     ///
-    /// 收集所有已知 bus 号（active_pairs + com0com_state.json + 驱动真实状态），
+    /// 收集所有已知 bus 号（active_endpoints + com0com_state.json + 驱动真实状态），
     /// 构建单个 PowerShell 脚本逐对清理（remove → 失败则解绑端口名后重试），
     /// 仅触发**一次** UAC 弹窗。
     ///
     /// 返回成功清理的端口对数量。
     #[cfg(target_os = "windows")]
-    pub fn cleanup_pairs_elevated(&mut self) -> Result<u32, String> {
+    pub fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
         if !self.are_files_present() {
             return Err("com0com driver files missing".into());
         }
 
         let stale_buses = self.collect_stale_buses();
         if stale_buses.is_empty() {
-            log::info!("cleanup_pairs_elevated: no port pairs to clean up");
+            log::info!("cleanup_endpoints_elevated: no port pairs to clean up");
             return Ok(0);
         }
 
@@ -823,7 +831,7 @@ impl VirtualPortManager {
         batch.push_str("exit /b 0\r\n");
 
         log::info!(
-            "cleanup_pairs_elevated: batch cleaning {} port pairs via UAC",
+            "cleanup_endpoints_elevated: batch cleaning {} port pairs via UAC",
             stale_buses.len()
         );
 
@@ -837,17 +845,17 @@ impl VirtualPortManager {
 
         // Cleanup succeeded — clear all bookkeeping
         let cleaned = stale_buses.len() as u32;
-        self.active_pairs.clear();
+        self.active_endpoints.clear();
         self.persist_active_buses(&[]);
         log::info!(
-            "cleanup_pairs_elevated: successfully cleaned up {} port pairs",
+            "cleanup_endpoints_elevated: successfully cleaned up {} port pairs",
             cleaned
         );
         Ok(cleaned)
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn cleanup_pairs_elevated(&mut self) -> Result<u32, String> {
+    pub fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
         Err("UAC elevation is only supported on Windows".into())
     }
 
@@ -858,22 +866,22 @@ impl VirtualPortManager {
     ///    端口名变更后外部工具的 COM 引用失效，使 remove 成功。
     ///
     /// 如果当前进程没有管理员权限（os error 740），两阶段都会失败。
-    /// 此时仅更新本地簿记（移除 active_pairs，保留 state 文件），
-    /// 实际的驱动级清理由下次 `create_pairs_elevated()` 在同一次 UAC 中完成。
-    pub fn destroy_pair(&mut self, pair: &PortPair) -> Result<(), String> {
-        let bus = pair.bus_number.to_string();
-        let cnc_a = format!("CNCA{}", pair.bus_number);
-        let cnc_b = format!("CNCB{}", pair.bus_number);
+    /// 此时仅更新本地簿记（移除 active_endpoints，保留 state 文件），
+    /// 实际的驱动级清理由下次 `create_endpoints_elevated()` 在同一次 UAC 中完成。
+    pub fn destroy_endpoint(&mut self, pair: &VirtualEndpoint) -> Result<(), String> {
+        let bus = pair.resource_id.to_string();
+        let cnc_a = format!("CNCA{}", pair.resource_id);
+        let cnc_b = format!("CNCB{}", pair.resource_id);
 
         // ── Stage 1: 直接删除 ──
         match run_setupc(&self.resource_dir, &["remove", &bus]) {
             Ok(out) if out.status.success() => {
                 log::info!(
                     "Virtual port pair destroyed: {} ↔ {}",
-                    pair.port_a,
-                    pair.port_b
+                    pair.bridge_path,
+                    pair.external_path
                 );
-                self.active_pairs.remove(pair);
+                self.active_endpoints.remove(pair);
                 self.sync_state_file();
                 return Ok(());
             }
@@ -882,11 +890,11 @@ impl VirtualPortManager {
             Ok(out) if out.status.code() == Some(1) => {
                 log::info!(
                     "Port pair already gone (exit code 1): {} ↔ {} (bus {})",
-                    pair.port_a,
-                    pair.port_b,
-                    pair.bus_number
+                    pair.bridge_path,
+                    pair.external_path,
+                    pair.resource_id
                 );
-                self.active_pairs.remove(pair);
+                self.active_endpoints.remove(pair);
                 self.sync_state_file();
                 return Ok(());
             }
@@ -895,9 +903,9 @@ impl VirtualPortManager {
                 // deferred to next UAC operation
                 log::warn!(
                     "Cannot destroy {}↔{} (elevation required) — deferred to next elevated operation",
-                    pair.port_a, pair.port_b
+                    pair.bridge_path, pair.external_path
                 );
-                self.mark_for_deferred_cleanup(pair.bus_number);
+                self.mark_for_deferred_cleanup(pair.resource_id);
                 return Ok(());
             }
             Ok(ref out) if is_elevation_output(out) => {
@@ -905,9 +913,9 @@ impl VirtualPortManager {
                 // (stderr contains elevation error) — defer
                 log::warn!(
                     "Cannot destroy {}↔{} (elevation required, stderr detection) — deferred to next elevated operation",
-                    pair.port_a, pair.port_b
+                    pair.bridge_path, pair.external_path
                 );
-                self.mark_for_deferred_cleanup(pair.bus_number);
+                self.mark_for_deferred_cleanup(pair.resource_id);
                 return Ok(());
             }
             Ok(_) => {
@@ -925,8 +933,8 @@ impl VirtualPortManager {
         // remove to succeed
         log::info!(
             "Port {} ↔ {} is in use, attempting unbind + remove...",
-            pair.port_a,
-            pair.port_b
+            pair.bridge_path,
+            pair.external_path
         );
         let _ = run_setupc(&self.resource_dir, &["change", &cnc_a, "PortName=-"]);
         let _ = run_setupc(&self.resource_dir, &["change", &cnc_b, "PortName=-"]);
@@ -939,27 +947,27 @@ impl VirtualPortManager {
                 Ok(out2) if out2.status.success() => {
                     log::info!(
                         "Virtual port pair destroyed (unbind + remove): {} ↔ {}",
-                        pair.port_a,
-                        pair.port_b
+                        pair.bridge_path,
+                        pair.external_path
                     );
-                    self.active_pairs.remove(pair);
+                    self.active_endpoints.remove(pair);
                     self.sync_state_file();
                     return Ok(());
                 }
                 Err(ref e) if is_elevation_error(e) => {
                     log::warn!(
                         "Stage 2 destroy {}↔{} elevation required — deferred to next elevated operation",
-                        pair.port_a, pair.port_b
+                        pair.bridge_path, pair.external_path
                     );
-                    self.mark_for_deferred_cleanup(pair.bus_number);
+                    self.mark_for_deferred_cleanup(pair.resource_id);
                     return Ok(());
                 }
                 Ok(ref out2) if is_elevation_output(out2) => {
                     log::warn!(
                         "Stage 2 destroy {}↔{} elevation required (stderr detection) — deferred to next elevated operation",
-                        pair.port_a, pair.port_b
+                        pair.bridge_path, pair.external_path
                     );
-                    self.mark_for_deferred_cleanup(pair.bus_number);
+                    self.mark_for_deferred_cleanup(pair.resource_id);
                     return Ok(());
                 }
                 Ok(_) | Err(_) => {
@@ -982,36 +990,36 @@ impl VirtualPortManager {
         log::error!(
             "Cannot destroy {}↔{} (bus {}) — both cleanup stages failed, \
              deferred to next startup or elevated operation",
-            pair.port_a,
-            pair.port_b,
-            pair.bus_number
+            pair.bridge_path,
+            pair.external_path,
+            pair.resource_id
         );
-        self.mark_for_deferred_cleanup(pair.bus_number);
+        self.mark_for_deferred_cleanup(pair.resource_id);
         Ok(())
     }
 
     /// 退出时清理端口对（驱动保留供下次快速复用）。
     ///
     /// 优先尝试直接删除（当前进程已提权时立即生效）。
-    /// 如果 `destroy_pair` 将 bus 号写入了 state 文件（`mark_for_deferred_cleanup`），
+    /// 如果 `destroy_endpoint` 将 bus 号写入了 state 文件（`mark_for_deferred_cleanup`），
     /// 说明权限不足 → 通过 UAC 提权批量清理（单次弹窗）。
     /// UAC 被取消时保留 bus 号到 state 文件供下次启动处理。
     pub fn cleanup_all(&mut self) {
-        let pairs: Vec<PortPair> = self.active_pairs.iter().cloned().collect();
+        let pairs: Vec<VirtualEndpoint> = self.active_endpoints.iter().cloned().collect();
 
         for pair in &pairs {
-            if let Err(e) = self.destroy_pair(pair) {
+            if let Err(e) = self.destroy_endpoint(pair) {
                 log::warn!(
                     "cleanup_all: failed to destroy {}↔{} (bus {}): {}",
-                    pair.port_a,
-                    pair.port_b,
-                    pair.bus_number,
+                    pair.bridge_path,
+                    pair.external_path,
+                    pair.resource_id,
                     e
                 );
             }
         }
 
-        // destroy_pair returns Ok(()) for elevation errors but writes bus
+        // destroy_endpoint returns Ok(()) for elevation errors but writes bus
         // numbers to state file via mark_for_deferred_cleanup →
         // check state file to determine if UAC is needed
         let remaining = self.load_active_buses();
@@ -1020,13 +1028,13 @@ impl VirtualPortManager {
                 "cleanup_all: {} port pair(s) require admin, attempting UAC batch cleanup...",
                 remaining.len()
             );
-            match self.cleanup_pairs_elevated() {
+            match self.cleanup_endpoints_elevated() {
                 Ok(cleaned) => {
                     log::info!(
                         "cleanup_all: UAC batch cleanup succeeded: {} port pair(s)",
                         cleaned
                     );
-                    return; // cleanup_pairs_elevated already cleared state file
+                    return; // cleanup_endpoints_elevated already cleared state file
                 }
                 Err(e) => {
                     log::warn!(
@@ -1100,34 +1108,43 @@ impl VirtualPortManager {
         }
     }
 
-    /// 将当前 active_pairs 的 bus 编号写入持久化文件。
+    /// 将当前 active_endpoints 的 bus 编号写入持久化文件。
     fn sync_state_file(&self) {
-        let buses: Vec<u32> = self.active_pairs.iter().map(|p| p.bus_number).collect();
+        let buses: Vec<u32> = self
+            .active_endpoints
+            .iter()
+            .map(|p| p.resource_id)
+            .collect();
         self.persist_active_buses(&buses);
     }
 
-    /// 权限不足时：从 active_pairs 移除端口对，但将 bus 号追加到持久化文件，
-    /// 确保下次 UAC 提权操作（`create_pairs_elevated` / `cleanup_pairs_elevated`）
+    /// 权限不足时：从 active_endpoints 移除端口对，但将 bus 号追加到持久化文件，
+    /// 确保下次 UAC 提权操作（`create_endpoints_elevated` / `cleanup_endpoints_elevated`）
     /// 能找到并清理该端口对。
     ///
     /// 与 `sync_state_file()` 的区别：
-    /// - `sync_state_file()` 从 active_pairs 重建 state 文件（覆盖式）
+    /// - `sync_state_file()` 从 active_endpoints 重建 state 文件（覆盖式）
     /// - 本方法在 state 文件中**保留**已知的残留 bus 号（追加式）
-    fn mark_for_deferred_cleanup(&mut self, bus_number: u32) {
-        self.active_pairs.retain(|p| p.bus_number != bus_number);
+    fn mark_for_deferred_cleanup(&mut self, resource_id: u32) {
+        self.active_endpoints
+            .retain(|p| p.resource_id != resource_id);
         let mut buses = self.load_active_buses();
-        if !buses.contains(&bus_number) {
-            buses.push(bus_number);
+        if !buses.contains(&resource_id) {
+            buses.push(resource_id);
         }
         self.persist_active_buses(&buses);
     }
 
     /// 收集所有已知需要清理的 bus 号。
     ///
-    /// 来源：active_pairs ∪ com0com_state.json 中的 orphans ∪ 驱动中真实存在的 bus
+    /// 来源：active_endpoints ∪ com0com_state.json 中的 orphans ∪ 驱动中真实存在的 bus
     fn collect_stale_buses(&self) -> Vec<u32> {
         let (_, _, driver_buses) = self.query_driver_state();
-        let mut buses: Vec<u32> = self.active_pairs.iter().map(|p| p.bus_number).collect();
+        let mut buses: Vec<u32> = self
+            .active_endpoints
+            .iter()
+            .map(|p| p.resource_id)
+            .collect();
         let orphans = self.load_active_buses();
         for bus in driver_buses.iter().chain(orphans.iter()) {
             if !buses.contains(bus) {
@@ -1145,7 +1162,7 @@ impl VirtualPortManager {
     ///
     /// 如果 remove 失败（端口被占用），则先解绑两侧端口名再重试。
     /// 权限不足时保留 bus 号到 state 文件，由前端"清理残留端口"按钮
-    /// 或下次连接的 `create_pairs_elevated` 统一处理。
+    /// 或下次连接的 `create_endpoints_elevated` 统一处理。
     /// 返回成功清理的端口对数量。
     pub fn cleanup_orphans(&mut self) -> u32 {
         let orphans: Vec<u32> = if self.state_dir.is_none() {
@@ -1153,7 +1170,7 @@ impl VirtualPortManager {
             self.query_driver_state()
                 .2
                 .into_iter()
-                .filter(|b| !self.active_pairs.iter().any(|p| p.bus_number == *b))
+                .filter(|b| !self.active_endpoints.iter().any(|p| p.resource_id == *b))
                 .collect()
         } else {
             self.load_active_buses()
@@ -1265,19 +1282,22 @@ impl VirtualPortBackend for VirtualPortManager {
         self.install_driver_elevated()
     }
 
-    fn create_pairs(&mut self, config: &VirtualPortConfig) -> Result<Vec<PortPair>, String> {
-        self.create_pairs(config)
-    }
-
-    fn create_pairs_elevated(
+    fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,
-    ) -> Result<Vec<PortPair>, String> {
-        self.create_pairs_elevated(config)
+    ) -> Result<Vec<VirtualEndpoint>, String> {
+        self.create_endpoints(config)
     }
 
-    fn destroy_pair(&mut self, pair: &PortPair) -> Result<(), String> {
-        self.destroy_pair(pair)
+    fn create_endpoints_elevated(
+        &mut self,
+        config: &VirtualPortConfig,
+    ) -> Result<Vec<VirtualEndpoint>, String> {
+        self.create_endpoints_elevated(config)
+    }
+
+    fn destroy_endpoint(&mut self, pair: &VirtualEndpoint) -> Result<(), String> {
+        self.destroy_endpoint(pair)
     }
 
     fn cleanup_all(&mut self) {
@@ -1288,8 +1308,8 @@ impl VirtualPortBackend for VirtualPortManager {
         self.cleanup_orphans()
     }
 
-    fn cleanup_pairs_elevated(&mut self) -> Result<u32, String> {
-        self.cleanup_pairs_elevated()
+    fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
+        self.cleanup_endpoints_elevated()
     }
 
     fn pending_orphan_count(&self) -> u32 {

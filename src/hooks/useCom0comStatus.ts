@@ -52,7 +52,7 @@ export function useCom0comStatus() {
   }, []);
 
   // Re-check driver/orphan status after session disconnect
-  // (destroy_pair may leave orphans when lacking admin privileges)
+  // (destroy_endpoint may leave orphans when lacking admin privileges)
   useEffect(() => {
     let cancelled = false;
     const unlistenPromise = listen("session-disconnected", () => {

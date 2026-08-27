@@ -19,4 +19,4 @@ pub mod service_backend;
 // Historical module name kept temporarily for source compatibility; its
 // implementation is now the native in-process PTY backend.
 #[cfg(not(target_os = "windows"))]
-pub mod socat;
+pub mod pty;
