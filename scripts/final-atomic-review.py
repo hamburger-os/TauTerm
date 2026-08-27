@@ -1,3 +1,4 @@
+# One-shot final review migration. Removed after the generated commit lands.
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
