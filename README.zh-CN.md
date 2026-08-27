@@ -5,7 +5,7 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/hamburger-os/TauTerm?include_prereleases)](https://github.com/hamburger-os/TauTerm/releases)
-[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20MSI-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20NSIS-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
 [![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20AppImage-FCC624)](https://github.com/hamburger-os/TauTerm/releases)
 [![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20dmg-333333)](https://github.com/hamburger-os/TauTerm/releases)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-67D6F8.svg)](https://tauri.app)
@@ -15,7 +15,7 @@
 
 TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP 调试器之间来回切换的工程师。它把这些工作流放进一个轻量桌面应用，并通过微内核插件架构持续扩展。
 
-> **发布状态：** Windows（NSIS/MSI）、Linux（deb/rpm/AppImage）与 macOS（Apple Silicon 和 Intel dmg/app）安装包均已发布在 GitHub Releases 上。下方功能描述以当前 `master` 为准，最新打包版本可能会落后于 `master`。
+> **发布状态：** Windows（NSIS）、Linux（deb/rpm/AppImage）与 macOS（Apple Silicon 和 Intel dmg/app）安装包均已发布在 GitHub Releases 上。下方功能描述以当前 `master` 为准，最新打包版本可能会落后于 `master`。
 
 ![TauTerm：同一会话中的 SSH 终端与 SFTP 文件管理器](docs/assets/hero-zh-CN.png)
 
