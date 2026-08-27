@@ -17,13 +17,14 @@ On Windows, TauTerm no longer needs to run fully elevated just to support the op
 - **Session-level character-set transcoding** — UTF-8, GBK, GB18030, Big5, Shift-JIS, EUC-JP, EUC-KR and ISO-8859-1/windows-1252 workflows without changing raw HEX paths.
 - **Least-privilege Windows virtual serial support** — the main app runs as a normal user; privileged com0com operations are delegated to `TauTermService`, with fallback to on-demand UAC when needed.
 - **SFTP usability improvements** — list/grid views, inline toolbar actions and shared file-category icons.
+- **Signed in-app updater baseline** — v0.5.0 establishes the updater baseline for future stable releases. Release publication verifies the updater manifest and the exact public GitHub-hosted artifacts before promoting a release to the stable update channel.
 - **Cross-platform packaging work** — Windows, Linux and macOS release jobs are prepared in GitHub Actions, including Apple Silicon and Intel macOS builds.
 
 ## Install
 
 Download the assets attached to the GitHub Release.
 
-- **Windows:** NSIS `.exe` or MSI package.
+- **Windows:** NSIS `.exe` installer.
 - **Linux:** `.deb`, `.rpm` or `.AppImage`.
 - **macOS:** `.dmg` / `.app` for Apple Silicon or Intel.
 
