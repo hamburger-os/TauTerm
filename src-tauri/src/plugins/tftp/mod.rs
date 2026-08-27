@@ -434,6 +434,7 @@ mod tests {
             write_enabled: true,
             overwrite: true,
             single_port: false,
+            exposure_confirmed: false,
         };
         assert!(exposure_warning(&config).is_some());
         config.listen_ip = "127.0.0.1".into();
