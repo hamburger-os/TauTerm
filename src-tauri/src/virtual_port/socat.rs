@@ -58,8 +58,8 @@ impl PtyBackend {
     }
 
     fn create_endpoint(&mut self) -> Result<PortPair, String> {
-        let (mut master, mut slave) = TTYPort::pair()
-            .map_err(|e| format!("failed to create native PTY pair: {e}"))?;
+        let (mut master, mut slave) =
+            TTYPort::pair().map_err(|e| format!("failed to create native PTY pair: {e}"))?;
 
         let _ = slave.set_exclusive(false);
         let _ = master.set_timeout(Duration::from_millis(PTY_READ_TIMEOUT_MS));
