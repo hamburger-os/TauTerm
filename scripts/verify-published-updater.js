@@ -72,11 +72,37 @@ async function fetchWithRetry(url, label, attempts = 12) {
   throw lastError ?? new Error(`${label} could not be fetched`);
 }
 
-const manifestResponse = await fetchWithRetry(manifestUrl, "Updater manifest");
-const manifest = await manifestResponse.json();
-if (manifest.version !== version) {
-  throw new Error(`Published updater version mismatch: expected ${version}, found ${manifest.version}`);
+async function fetchExpectedManifest(url, expectedVersion, attempts = 12) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        redirect: "follow",
+        cache: "no-store",
+        headers: { "user-agent": "TauTerm-release-verifier" },
+      });
+      if (!response.ok) {
+        lastError = new Error(`Updater manifest returned HTTP ${response.status}`);
+      } else {
+        const candidate = await response.json();
+        if (candidate.version === expectedVersion) return candidate;
+        lastError = new Error(
+          `Updater manifest has version ${candidate.version ?? "missing"}; waiting for ${expectedVersion}`,
+        );
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts) {
+      console.log(`⏳ Updater manifest not current (attempt ${attempt}/${attempts}); retrying...`);
+      await sleep(5000);
+    }
+  }
+  throw lastError ?? new Error("Updater manifest could not be fetched");
 }
+
+const manifest = await fetchExpectedManifest(manifestUrl, version);
 if (!manifest.platforms || typeof manifest.platforms !== "object" || Array.isArray(manifest.platforms)) {
   throw new Error("Published updater manifest has no valid platforms object.");
 }
