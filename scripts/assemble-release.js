@@ -13,6 +13,9 @@ if (!/^v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/.test(tag ?? "")) {
 if (tag !== `v${version}`) {
   throw new Error(`Tag/version mismatch: ${tag} vs ${version}`);
 }
+if (!process.env.GITHUB_REPOSITORY) {
+  throw new Error("GITHUB_REPOSITORY is required to assemble updater URLs.");
+}
 
 function files() {
   return readdirSync(assetsDir)
@@ -33,14 +36,15 @@ function findOne(suffix) {
 
 for (const suffix of [
   "_x64-setup.exe",
-  ".msi",
+  "_x64-setup.exe.sig",
   ".deb",
+  ".deb.sig",
   ".rpm",
+  ".rpm.sig",
   ".AppImage",
+  ".AppImage.sig",
   "_aarch64.dmg",
   "_x64.dmg",
-  "_x64-setup.exe.sig",
-  "_amd64.AppImage.sig",
   "_aarch64.app.tar.gz",
   "_aarch64.app.tar.gz.sig",
   "_x64.app.tar.gz",
@@ -56,15 +60,35 @@ if (!publicKey?.startsWith("RW")) {
   throw new Error("Invalid Tauri updater public key.");
 }
 
-const platforms = {};
-const updaterTargets = [
-  ["windows-x86_64", "_x64-setup.exe"],
-  ["linux-x86_64", "_amd64.AppImage"],
-  ["darwin-aarch64", "_aarch64.app.tar.gz"],
-  ["darwin-x86_64", "_x64.app.tar.gz"],
+const updaterSources = [
+  {
+    suffix: "_x64-setup.exe",
+    targets: ["windows-x86_64-nsis", "windows-x86_64"],
+  },
+  {
+    suffix: "_amd64.deb",
+    targets: ["linux-x86_64-deb"],
+  },
+  {
+    suffix: ".rpm",
+    targets: ["linux-x86_64-rpm"],
+  },
+  {
+    suffix: "_amd64.AppImage",
+    targets: ["linux-x86_64-appimage", "linux-x86_64"],
+  },
+  {
+    suffix: "_aarch64.app.tar.gz",
+    targets: ["darwin-aarch64-app", "darwin-aarch64"],
+  },
+  {
+    suffix: "_x64.app.tar.gz",
+    targets: ["darwin-x86_64-app", "darwin-x86_64"],
+  },
 ];
 
-for (const [target, suffix] of updaterTargets) {
+const platforms = {};
+for (const { suffix, targets } of updaterSources) {
   const artifact = findOne(suffix);
   const signaturePath = `${artifact}.sig`;
   if (statSync(signaturePath).size <= 0) {
@@ -82,10 +106,17 @@ for (const [target, suffix] of updaterTargets) {
   }
 
   const name = basename(artifact);
-  platforms[target] = {
+  const entry = {
     signature: readFileSync(signaturePath, "utf8").trim(),
     url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${tag}/${name}`,
   };
+
+  for (const target of targets) {
+    if (platforms[target]) {
+      throw new Error(`Duplicate updater platform target: ${target}`);
+    }
+    platforms[target] = entry;
+  }
 }
 
 const latest = {
@@ -107,4 +138,6 @@ const checksums = checksumFiles
   .join("\n");
 writeFileSync(join(assetsDir, "SHA256SUMS"), `${checksums}\n`, "utf8");
 
-console.log(`🎉 Verified ${updaterTargets.length} updater artifacts and assembled ${files().length} release files.`);
+console.log(
+  `🎉 Verified ${updaterSources.length} updater artifacts, generated ${Object.keys(platforms).length} updater targets, and assembled ${files().length} release files.`,
+);
