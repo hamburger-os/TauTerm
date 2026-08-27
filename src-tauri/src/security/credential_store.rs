@@ -426,8 +426,8 @@ fn decrypt(e: &Envelope, key: &[u8]) -> Result<BTreeMap<String, Stored>, Credent
     let ct = B64.decode(&e.ciphertext_b64).map_err(be)?;
     let c = Aes256Gcm::new_from_slice(key).map_err(|_| be("invalid vault key"))?;
     let a = aad(&e.kdf);
-    let nonce = <&Nonce<Aes256Gcm>>::try_from(n.as_slice())
-        .map_err(|_| be("invalid nonce length"))?;
+    let nonce =
+        <&Nonce<Aes256Gcm>>::try_from(n.as_slice()).map_err(|_| be("invalid nonce length"))?;
     let mut p = c
         .decrypt(
             nonce,
