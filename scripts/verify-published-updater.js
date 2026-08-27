@@ -34,6 +34,21 @@ if (!publicKey?.startsWith("RW")) {
   throw new Error("Invalid Tauri updater public key.");
 }
 
+function decodeTauriSignature(encoded, label) {
+  const compact = encoded.trim();
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length % 4 !== 0) {
+    throw new Error(`Updater signature is not valid base64: ${label}`);
+  }
+  const decoded = Buffer.from(compact, "base64").toString("utf8");
+  if (
+    !decoded.startsWith("untrusted comment:") ||
+    !decoded.includes("\ntrusted comment:")
+  ) {
+    throw new Error(`Updater signature does not contain a valid minisign signature box: ${label}`);
+  }
+  return decoded;
+}
+
 function sleep(ms) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
@@ -128,10 +143,10 @@ try {
   for (const [target] of expectedTargets) {
     const entry = manifest.platforms[target];
     const url = entry.url;
-    const signature = entry.signature.trim();
+    const encodedSignature = entry.signature.trim();
     const name = basename(new URL(url).pathname);
     const artifactPath = join(tempDir, name);
-    const signaturePath = `${artifactPath}.sig`;
+    const signaturePath = `${artifactPath}.minisig`;
     const response = await fetchWithRetry(url, `Updater artifact ${name}`);
     if (!response.body) {
       throw new Error(`Updater artifact ${name} returned no body.`);
@@ -140,7 +155,11 @@ try {
     if (statSync(artifactPath).size <= 0) {
       throw new Error(`Downloaded updater artifact is empty: ${name}`);
     }
-    writeFileSync(signaturePath, `${signature}\n`, "utf8");
+    writeFileSync(
+      signaturePath,
+      decodeTauriSignature(encodedSignature, `${target} manifest signature`),
+      "utf8",
+    );
 
     const verify = spawnSync(
       "minisign",
