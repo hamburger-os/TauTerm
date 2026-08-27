@@ -60,35 +60,21 @@ if (!publicKey?.startsWith("RW")) {
   throw new Error("Invalid Tauri updater public key.");
 }
 
-const updaterSources = [
-  {
-    suffix: "_x64-setup.exe",
-    targets: ["windows-x86_64-nsis", "windows-x86_64"],
-  },
-  {
-    suffix: "_amd64.deb",
-    targets: ["linux-x86_64-deb"],
-  },
-  {
-    suffix: ".rpm",
-    targets: ["linux-x86_64-rpm"],
-  },
-  {
-    suffix: "_amd64.AppImage",
-    targets: ["linux-x86_64-appimage", "linux-x86_64"],
-  },
-  {
-    suffix: "_aarch64.app.tar.gz",
-    targets: ["darwin-aarch64-app", "darwin-aarch64"],
-  },
-  {
-    suffix: "_x64.app.tar.gz",
-    targets: ["darwin-x86_64-app", "darwin-x86_64"],
-  },
+// Tauri 2.10.1 checks {os}-{arch}-{installer} before the generic target.
+// v0.5.0 is the updater baseline, so we intentionally publish exact targets only:
+// a damaged/unknown bundle marker must fail closed instead of falling back to a
+// different installer format.
+const updaterTargets = [
+  ["windows-x86_64-nsis", "_x64-setup.exe"],
+  ["linux-x86_64-deb", "_amd64.deb"],
+  ["linux-x86_64-rpm", ".rpm"],
+  ["linux-x86_64-appimage", "_amd64.AppImage"],
+  ["darwin-aarch64-app", "_aarch64.app.tar.gz"],
+  ["darwin-x86_64-app", "_x64.app.tar.gz"],
 ];
 
 const platforms = {};
-for (const { suffix, targets } of updaterSources) {
+for (const [target, suffix] of updaterTargets) {
   const artifact = findOne(suffix);
   const signaturePath = `${artifact}.sig`;
   if (statSync(signaturePath).size <= 0) {
@@ -106,17 +92,10 @@ for (const { suffix, targets } of updaterSources) {
   }
 
   const name = basename(artifact);
-  const entry = {
+  platforms[target] = {
     signature: readFileSync(signaturePath, "utf8").trim(),
     url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${tag}/${name}`,
   };
-
-  for (const target of targets) {
-    if (platforms[target]) {
-      throw new Error(`Duplicate updater platform target: ${target}`);
-    }
-    platforms[target] = entry;
-  }
 }
 
 const latest = {
@@ -139,5 +118,5 @@ const checksums = checksumFiles
 writeFileSync(join(assetsDir, "SHA256SUMS"), `${checksums}\n`, "utf8");
 
 console.log(
-  `🎉 Verified ${updaterSources.length} updater artifacts, generated ${Object.keys(platforms).length} updater targets, and assembled ${files().length} release files.`,
+  `🎉 Verified ${updaterTargets.length} exact updater targets and assembled ${files().length} release files.`,
 );
