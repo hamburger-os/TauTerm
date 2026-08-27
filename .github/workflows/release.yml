@@ -119,7 +119,7 @@ jobs:
       ref: ${{ needs.prepare.outputs.source_sha }}
 
   build-windows:
-    name: Windows x64 packages
+    name: Windows x64 NSIS package
     needs: [prepare, quality]
     runs-on: windows-2025
     timeout-minutes: 90
@@ -166,11 +166,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
 
-      - name: Build NSIS and MSI bundles
+      - name: Build NSIS bundle
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri -- build --bundles nsis,msi
+        run: npm run tauri -- build --bundles nsis
 
       - name: Stage and smoke-test Windows release files
         run: node scripts/stage-release.js windows release-stage
@@ -250,7 +250,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --bundles deb,rpm,appimage
 
-      - name: Stage Linux release files
+      - name: Stage Linux release files and updater signatures
         run: node scripts/stage-release.js linux release-stage
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -437,10 +437,10 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Tag and publish release
+    name: Publish verified release
     needs: [prepare, assemble]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: write
     steps:
@@ -450,12 +450,23 @@ jobs:
           ref: ${{ needs.prepare.outputs.source_sha }}
           persist-credentials: true
 
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-ready
           path: release-assets
 
-      - name: Create tag and publish only after all validation succeeds
+      - name: Install minisign
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq minisign
+
+      - name: Create, verify and promote release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -469,10 +480,11 @@ jobs:
 
           CREATED_TAG=false
           CREATED_RELEASE=false
-          PUBLISHED=false
+          FINALIZED=false
           cleanup() {
             code=$?
-            if [ "$code" -ne 0 ] && [ "$PUBLISHED" != "true" ]; then
+            if [ "$code" -ne 0 ] && [ "$FINALIZED" != "true" ]; then
+              echo '::warning::Release validation failed; rolling back the release created by this run.'
               if [ "$CREATED_RELEASE" = "true" ]; then
                 gh release delete "$TAG" --yes --cleanup-tag=false >/dev/null 2>&1 || true
               fi
@@ -495,8 +507,8 @@ jobs:
             exit 1
           fi
 
-          # Remove only stale, empty drafts for this tag. This also safely cleans up
-          # interrupted historical attempts without ever replacing a published release.
+          # Remove only stale, empty drafts for this tag. Never replace a release
+          # that already has assets or has ever been published.
           gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | \
             jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .draft == true and (.assets | length) == 0) | .id' | \
             while read -r id; do
@@ -540,15 +552,33 @@ jobs:
             exit 1
           fi
 
-          if [ "$PRERELEASE" = "true" ]; then
-            gh release edit "$TAG" --draft=false --prerelease
-          else
-            gh release edit "$TAG" --draft=false --prerelease=false --latest
-          fi
-          PUBLISHED=true
+          RELEASE_ID="$(jq -r .id "$REMOTE_RELEASE")"
+          test -n "$RELEASE_ID"
 
-          if [ "$PRERELEASE" = "false" ]; then
+          if [ "$PRERELEASE" = "true" ]; then
+            # Pre-releases intentionally do not participate in the stable /releases/latest updater channel.
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -F draft=false -F prerelease=true -f make_latest=false >/dev/null
+            FINALIZED=true
+          else
+            # Publish the stable release without promoting it to /releases/latest yet.
+            # This makes tag-scoped assets public so the exact bytes clients would
+            # download can be fetched and minisign-verified before rollout.
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -F draft=false -F prerelease=false -f make_latest=false >/dev/null
+
+            TAG_MANIFEST="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/latest.json"
+            node scripts/verify-published-updater.js "$TAG_MANIFEST" "$VERSION" "$TAG"
+
+            # Only a fully verified stable release is allowed to become the updater target.
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -f make_latest=true >/dev/null
+
             test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)" = "$TAG"
+
+            LATEST_MANIFEST="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json"
+            node scripts/verify-published-updater.js "$LATEST_MANIFEST" "$VERSION" "$TAG"
+            FINALIZED=true
           fi
 
           gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" \
