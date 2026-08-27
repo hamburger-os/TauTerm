@@ -4,20 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version to release, for example 0.5.0
+        description: Version to release (X.Y.Z, X.Y.Z-alpha.N, beta.N or rc.N)
         required: true
         type: string
-      prerelease:
-        description: Mark this release as a pre-release
-        required: false
-        default: false
-        type: boolean
-  push:
-    tags:
-      - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: tauterm-release
@@ -27,6 +19,7 @@ jobs:
   prepare:
     name: Resolve Release
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
@@ -34,54 +27,65 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
       notes_file: ${{ steps.meta.outputs.notes_file }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
+          cache: npm
 
-      - name: Resolve version, tag and source commit
+      - name: Resolve and validate release metadata
         id: meta
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
-          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ "$GITHUB_REF" != "refs/heads/master" ]; then
-              echo '::error::Manual releases must be started from master.'
-              exit 1
-            fi
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo '::error::Manual releases must be started from master.'
+            exit 1
+          fi
 
-            VERSION="${INPUT_VERSION#v}"
-            TAG="v${VERSION}"
-            SOURCE_SHA="$(git rev-parse HEAD)"
-            PRERELEASE="${INPUT_PRERELEASE:-false}"
+          VERSION="${INPUT_VERSION#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
+            echo "::error::Unsupported release version: $VERSION"
+            echo 'Use X.Y.Z or X.Y.Z-alpha.N / X.Y.Z-beta.N / X.Y.Z-rc.N.'
+            exit 1
+          fi
 
-            git fetch origin master --tags --force
-            if [ "$(git rev-parse origin/master)" != "$SOURCE_SHA" ]; then
-              echo '::error::master advanced before release preparation; rerun from the latest master.'
-              exit 1
-            fi
-          else
-            TAG="$GITHUB_REF_NAME"
-            VERSION="${TAG#v}"
-            git fetch origin "$TAG" --tags --force
-            SOURCE_SHA="$(git rev-list -n 1 "$TAG")"
-            if [[ "$VERSION" == *-* ]]; then
-              PRERELEASE=true
+          TAG="v${VERSION}"
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          REMOTE_MASTER="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          test -n "$REMOTE_MASTER"
+          if [ "$REMOTE_MASTER" != "$SOURCE_SHA" ]; then
+            echo '::error::master advanced before release preparation; rerun from the latest master.'
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists. Release tags are immutable; choose a new version."
+            exit 1
+          fi
+
+          EXISTING="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq -c --arg tag "$TAG" '[.[] | select(.tag_name == $tag)]')"
+          if [ "$(jq 'length' <<<"$EXISTING")" -gt 0 ]; then
+            if jq -e 'all(.[]; .draft == true and (.assets | length) == 0)' <<<"$EXISTING" >/dev/null; then
+              echo "::notice::Found stale empty draft release for $TAG; publish job will remove it before creating the new release."
             else
-              PRERELEASE=false
+              echo "::error::A non-empty or published GitHub Release already exists for $TAG."
+              exit 1
             fi
           fi
 
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Invalid release version: $VERSION"
-            exit 1
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
           fi
 
           NOTES_FILE="docs/RELEASE_NOTES_${TAG}.md"
@@ -96,6 +100,12 @@ jobs:
           echo "Source commit: $SOURCE_SHA"
           echo "Pre-release: $PRERELEASE"
 
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify exact Rust toolchain pin
+        run: npm run toolchain:check
+
       - name: Verify release metadata
         env:
           VERSION: ${{ steps.meta.outputs.version }}
@@ -108,120 +118,47 @@ jobs:
     with:
       ref: ${{ needs.prepare.outputs.source_sha }}
 
-  tag:
-    name: Create or Verify Tag
-    needs: [prepare, quality]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ needs.prepare.outputs.source_sha }}
-
-      - name: Create annotated release tag after quality passes
-        shell: bash
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-          git fetch origin master --tags --force
-
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            if [ "$(git rev-parse origin/master)" != "$SOURCE_SHA" ]; then
-              echo '::error::master advanced during release validation; refusing to tag stale content.'
-              exit 1
-            fi
-          fi
-
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            git fetch origin "refs/tags/$TAG:refs/tags/$TAG" --force
-            RESOLVED="$(git rev-list -n 1 "$TAG")"
-            if [ "$RESOLVED" != "$SOURCE_SHA" ]; then
-              echo "::error::$TAG already exists and points to $RESOLVED instead of $SOURCE_SHA."
-              exit 1
-            fi
-            echo "::notice::$TAG already exists on the validated source commit."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" "$SOURCE_SHA" -m "TauTerm $TAG"
-            git push origin "refs/tags/$TAG"
-          fi
-
-          test "$(git rev-list -n 1 "$TAG")" = "$SOURCE_SHA"
-
-  create-release:
-    name: Create Draft Release
-    needs: [prepare, tag]
-    runs-on: ubuntu-24.04
-    outputs:
-      release_id: ${{ steps.release.outputs.release_id }}
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ needs.prepare.outputs.source_sha }}
-
-      - name: Create or reuse draft release
-        id: release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
-          NOTES_FILE: ${{ needs.prepare.outputs.notes_file }}
-        run: |
-          set -euo pipefail
-
-          if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" >/tmp/release.json 2>/dev/null; then
-            jq -e '.draft == true' /tmp/release.json >/dev/null || {
-              echo "::error::A published release already exists for $TAG."
-              exit 1
-            }
-            echo "::notice::Reusing existing draft release for $TAG."
-          else
-            NOTES="$(cat "$NOTES_FILE")"
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" \
-              -f tag_name="$TAG" \
-              -f target_commitish="$SOURCE_SHA" \
-              -f name="TauTerm $TAG" \
-              -f body="$NOTES" \
-              -F draft=true \
-              -F prerelease="$PRERELEASE" > /tmp/release.json
-          fi
-
-          RELEASE_ID="$(jq -r '.id' /tmp/release.json)"
-          test -n "$RELEASE_ID"
-          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
-
   build-windows:
-    name: Windows x64 (NSIS + MSI)
-    needs: [prepare, create-release]
-    runs-on: windows-latest
+    name: Windows x64 packages
+    needs: [prepare, quality]
+    runs-on: windows-2025
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: release-rust-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            release-rust-${{ runner.os }}-
 
       - name: Install NSIS
-        run: choco install nsis -y
+        shell: pwsh
+        run: choco install nsis -y --no-progress
 
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
-
-      - name: Check com0com driver files
-        run: npm run check-com0com
-
-      - name: Check com0com reserved-region sync
-        run: npm run check-reserved-region
 
       - name: Require updater signing key
         shell: bash
@@ -229,32 +166,56 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
 
-      - uses: tauri-apps/tauri-action@action-v1.0.0
+      - name: Build NSIS and MSI bundles
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --bundles nsis,msi
+
+      - name: Stage and smoke-test Windows release files
+        run: node scripts/stage-release.js windows release-stage
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          tagName: ${{ needs.prepare.outputs.tag }}
-          releaseDraft: true
-          args: '--bundles nsis,msi'
+          name: release-windows
+          path: release-stage/*
+          if-no-files-found: error
+          retention-days: 2
 
   build-linux:
-    name: Linux x64 (DEB + RPM + AppImage)
-    needs: [prepare, create-release]
+    name: Linux x64 packages
+    needs: [prepare, quality]
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: release-rust-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            release-rust-${{ runner.os }}-
 
       - name: Install system dependencies
         shell: bash
@@ -283,32 +244,56 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
 
-      - uses: tauri-apps/tauri-action@action-v1.0.0
+      - name: Build Linux bundles
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          tagName: ${{ needs.prepare.outputs.tag }}
-          releaseDraft: true
-          args: '--bundles deb,rpm,appimage'
+        run: npm run tauri -- build --bundles deb,rpm,appimage
 
-  build-macos:
-    name: macOS Apple Silicon (DMG + app)
-    needs: [prepare, create-release]
-    runs-on: macos-latest
+      - name: Stage Linux release files
+        run: node scripts/stage-release.js linux release-stage
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-linux
+          path: release-stage/*
+          if-no-files-found: error
+          retention-days: 2
+
+  build-macos-arm:
+    name: macOS Apple Silicon packages
+    needs: [prepare, quality]
+    runs-on: macos-15
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: release-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            release-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
@@ -319,32 +304,56 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
 
-      - uses: tauri-apps/tauri-action@action-v1.0.0
+      - name: Build macOS bundles
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --bundles dmg,app
+
+      - name: Stage Apple Silicon release files
+        run: node scripts/stage-release.js macos-arm release-stage
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          tagName: ${{ needs.prepare.outputs.tag }}
-          releaseDraft: true
-          args: '--bundles dmg,app'
+          name: release-macos-arm
+          path: release-stage/*
+          if-no-files-found: error
+          retention-days: 2
 
   build-macos-intel:
-    name: macOS Intel x86_64 (DMG + app)
-    needs: [prepare, create-release]
+    name: macOS Intel packages
+    needs: [prepare, quality]
     runs-on: macos-15-intel
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: release-rust-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            release-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
@@ -355,267 +364,190 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
 
-      - uses: tauri-apps/tauri-action@action-v1.0.0
+      - name: Build macOS bundles
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          tagName: ${{ needs.prepare.outputs.tag }}
-          releaseDraft: true
-          args: '--bundles dmg,app'
+        run: npm run tauri -- build --bundles dmg,app
 
-  update-manifest:
-    name: Generate and Sign Update Manifest
+      - name: Stage Intel release files
+        run: node scripts/stage-release.js macos-intel release-stage
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-macos-intel
+          path: release-stage/*
+          if-no-files-found: error
+          retention-days: 2
+
+  assemble:
+    name: Verify and attest release artifacts
     needs:
       - prepare
-      - create-release
       - build-windows
       - build-linux
-      - build-macos
+      - build-macos-arm
       - build-macos-intel
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
 
-      - name: Install local Tauri CLI
-        run: npm ci --no-audit --no-fund
-
-      - name: Generate strict latest.json and detached signature
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
-
-          ASSETS_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID" \
-            --jq '[.assets[] | {name: .name, url: .browser_download_url}]')"
-
-          jq -n \
-            --arg version "$VERSION" \
-            --arg notes "See the GitHub release notes for $TAG." \
-            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {}}' > latest.json
-
-          add_platform() {
-            local target="$1"
-            local suffix="$2"
-            local entry name url sig_entry sig_url signature count
-
-            count="$(echo "$ASSETS_JSON" | jq --arg suffix "$suffix" '[.[] | select(.name | endswith($suffix))] | length')"
-            if [ "$count" -ne 1 ]; then
-              echo "::error::Expected exactly one release asset ending with $suffix, found $count"
-              exit 1
-            fi
-
-            entry="$(echo "$ASSETS_JSON" | jq -c --arg suffix "$suffix" '[.[] | select(.name | endswith($suffix))][0]')"
-            name="$(echo "$entry" | jq -r '.name')"
-            url="$(echo "$entry" | jq -r '.url')"
-
-            sig_entry="$(echo "$ASSETS_JSON" | jq -c --arg sig_name "$name.sig" '[.[] | select(.name == $sig_name)]')"
-            if [ "$(echo "$sig_entry" | jq 'length')" -ne 1 ]; then
-              echo "::error::Missing unique updater signature asset: $name.sig"
-              exit 1
-            fi
-
-            sig_url="$(echo "$sig_entry" | jq -r '.[0].url')"
-            signature="$(curl -fsSL --retry 3 --retry-delay 2 "$sig_url")"
-            if [ -z "$signature" ]; then
-              echo "::error::Updater signature is empty: $name.sig"
-              exit 1
-            fi
-
-            jq --arg target "$target" --arg sig "$signature" --arg url "$url" \
-              '.platforms[$target] = {signature: $sig, url: $url}' latest.json > latest.tmp.json
-            mv latest.tmp.json latest.json
-          }
-
-          add_platform windows-x86_64 '_x64-setup.exe'
-          add_platform linux-x86_64 '_amd64.AppImage'
-          add_platform darwin-aarch64 '_aarch64.app.tar.gz'
-          add_platform darwin-x86_64 '_x64.app.tar.gz'
-
-          jq --arg version "$VERSION" -e '
-            (.version == $version) and
-            ((.platforms | keys | sort) == ["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"]) and
-            (all(.platforms[]; ((.signature | length) > 0) and ((.url | length) > 0)))
-          ' latest.json >/dev/null
-
-          rm -f latest.json.sig
-          npx tauri signer sign latest.json
-          test -s latest.json.sig
-
-          gh release upload "$TAG" latest.json latest.json.sig --repo "$GITHUB_REPOSITORY" --clobber
-
-  validate-release:
-    name: Validate Draft Release
-    needs:
-      - prepare
-      - create-release
-      - update-manifest
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          fetch-depth: 0
-          ref: ${{ needs.prepare.outputs.source_sha }}
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
 
-      - name: Validate assets, updater signatures and manifest
+      - name: Install minisign
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           set -euo pipefail
-          ROOT=/tmp/tauterm-release-check
-          rm -rf "$ROOT"
-          mkdir -p "$ROOT"
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq minisign
 
-          # Decode the Tauri updater public key (a base64-encoded minisign public-key file)
-          # and use the official minisign tool to cryptographically verify signatures.
-          # The raw public key is the last non-empty line of the decoded key file (starts with "RW").
-          PUBKEY="$(node -e 'try{const c=require("./src-tauri/tauri.conf.json");const d=Buffer.from(c.plugins.updater.pubkey,"base64").toString("utf8");const lines=d.split(/\r?\n/).filter(Boolean);const k=lines[lines.length-1];if(!/^RW/.test(k))process.exit(3);process.stdout.write(k)}catch(e){process.exit(2)}')"
-          test -n "$PUBKEY"
+      - name: Verify updater signatures and assemble manifest
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/assemble-release.js "$TAG" "$VERSION" release-assets
 
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" > "$ROOT/release.json"
-          jq --arg tag "$TAG" --argjson prerelease "$PRERELEASE" -e '
-            .draft == true and
-            .prerelease == $prerelease and
-            .tag_name == $tag and
-            all(.assets[]; .size > 0)
-          ' "$ROOT/release.json" >/dev/null
+      - name: Attest final release files
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: release-assets/*
 
-          require_suffix() {
-            local suffix="$1"
-            local count
-            count="$(jq --arg suffix "$suffix" '[.assets[] | select(.name | endswith($suffix))] | length' "$ROOT/release.json")"
-            if [ "$count" -ne 1 ]; then
-              echo "::error::Expected exactly one non-empty asset ending in $suffix, found $count"
-              exit 1
-            fi
-          }
-
-          require_suffix '_x64-setup.exe'
-          require_suffix '.msi'
-          require_suffix '.deb'
-          require_suffix '.rpm'
-          require_suffix '.AppImage'
-          require_suffix '_aarch64.dmg'
-          require_suffix '_x64.dmg'
-          require_suffix '_x64-setup.exe.sig'
-          require_suffix '_amd64.AppImage.sig'
-          require_suffix '_aarch64.app.tar.gz'
-          require_suffix '_aarch64.app.tar.gz.sig'
-          require_suffix '_x64.app.tar.gz'
-          require_suffix '_x64.app.tar.gz.sig'
-          require_suffix 'latest.json'
-          require_suffix 'latest.json.sig'
-
-          gh release download "$TAG" \
-            --pattern latest.json \
-            --pattern latest.json.sig \
-            --dir "$ROOT"
-
-          test -s "$ROOT/latest.json"
-          test -s "$ROOT/latest.json.sig"
-
-          docker run --rm -v "$ROOT:/work" -w /work jedisct1/minisign \
-            -Vm latest.json -P "$PUBKEY" -x latest.json.sig
-
-          jq --arg version "$VERSION" -e '
-            .version == $version and
-            ((.platforms | keys | sort) == ["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"]) and
-            (all(.platforms[]; ((.signature | length) > 0) and ((.url | length) > 0)))
-          ' "$ROOT/latest.json" >/dev/null
-
-          verify_platform() {
-            local target="$1"
-            local suffix="$2"
-            local name sig_name url embedded downloaded
-
-            name="$(jq -r --arg suffix "$suffix" '[.assets[] | select(.name | endswith($suffix))][0].name' "$ROOT/release.json")"
-            sig_name="$name.sig"
-            url="$(jq -r --arg target "$target" '.platforms[$target].url' "$ROOT/latest.json")"
-
-            case "$url" in
-              */"$name") ;;
-              *)
-                echo "::error::Manifest URL for $target does not point to $name"
-                exit 1
-                ;;
-            esac
-
-            gh release download "$TAG" --pattern "$name" --pattern "$sig_name" --dir "$ROOT"
-            embedded="$(jq -r --arg target "$target" '.platforms[$target].signature' "$ROOT/latest.json")"
-            downloaded="$(cat "$ROOT/$sig_name")"
-
-            if [ -z "$embedded" ] || [ "$embedded" != "$downloaded" ]; then
-              echo "::error::Manifest signature mismatch for $target"
-              exit 1
-            fi
-
-            docker run --rm -v "$ROOT:/work" -w /work jedisct1/minisign \
-              -Vm "$name" -P "$PUBKEY" -x "$sig_name"
-          }
-
-          verify_platform windows-x86_64 '_x64-setup.exe'
-          verify_platform linux-x86_64 '_amd64.AppImage'
-          verify_platform darwin-aarch64 '_aarch64.app.tar.gz'
-          verify_platform darwin-x86_64 '_x64.app.tar.gz'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-ready
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
-    name: Publish Release
-    needs:
-      - prepare
-      - create-release
-      - validate-release
+    name: Tag and publish release
+    needs: [prepare, assemble]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: true
 
-      - name: Publish only after every validation succeeds
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-ready
+          path: release-assets
+
+      - name: Create tag and publish only after all validation succeeds
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           NOTES_FILE: ${{ needs.prepare.outputs.notes_file }}
         run: |
           set -euo pipefail
-          git fetch origin "$TAG" --tags --force
-          test "$(git rev-list -n 1 "$TAG")" = "$SOURCE_SHA"
+
+          CREATED_TAG=false
+          CREATED_RELEASE=false
+          PUBLISHED=false
+          cleanup() {
+            code=$?
+            if [ "$code" -ne 0 ] && [ "$PUBLISHED" != "true" ]; then
+              if [ "$CREATED_RELEASE" = "true" ]; then
+                gh release delete "$TAG" --yes --cleanup-tag=false >/dev/null 2>&1 || true
+              fi
+              if [ "$CREATED_TAG" = "true" ]; then
+                git push origin ":refs/tags/$TAG" >/dev/null 2>&1 || true
+              fi
+            fi
+            exit "$code"
+          }
+          trap cleanup EXIT
+
+          REMOTE_MASTER="$(git ls-remote origin refs/heads/master | awk '{print $1}')"
+          if [ "$REMOTE_MASTER" != "$SOURCE_SHA" ]; then
+            echo '::error::master advanced during release builds; refusing to publish stale content.'
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG appeared while the release was building."
+            exit 1
+          fi
+
+          # Remove only stale, empty drafts for this tag. This also safely cleans up
+          # interrupted historical attempts without ever replacing a published release.
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | \
+            jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .draft == true and (.assets | length) == 0) | .id' | \
+            while read -r id; do
+              [ -n "$id" ] && gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$id"
+            done
+
+          BLOCKING="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag)] | length')"
+          if [ "$BLOCKING" -ne 0 ]; then
+            echo "::error::A GitHub Release already exists for $TAG."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$SOURCE_SHA" -m "TauTerm $TAG"
+          git push origin "refs/tags/$TAG"
+          CREATED_TAG=true
+
+          CREATE_ARGS=("$TAG" --target "$SOURCE_SHA" --title "TauTerm $TAG" --notes-file "$NOTES_FILE" --draft)
+          if [ "$PRERELEASE" = "true" ]; then
+            CREATE_ARGS+=(--prerelease)
+          fi
+          gh release create "${CREATE_ARGS[@]}"
+          CREATED_RELEASE=true
+
+          gh release upload "$TAG" release-assets/*
+
+          REMOTE_RELEASE=/tmp/tauterm-release.json
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" > "$REMOTE_RELEASE"
+          jq --arg tag "$TAG" --argjson prerelease "$PRERELEASE" -e '
+            .draft == true and
+            .prerelease == $prerelease and
+            .tag_name == $tag and
+            all(.assets[]; .size > 0)
+          ' "$REMOTE_RELEASE" >/dev/null
+
+          find release-assets -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > /tmp/local-assets.txt
+          jq -r '.assets[].name' "$REMOTE_RELEASE" | LC_ALL=C sort > /tmp/remote-assets.txt
+          if ! diff -u /tmp/local-assets.txt /tmp/remote-assets.txt; then
+            echo '::error::Uploaded release asset set differs from the verified local artifact set.'
+            exit 1
+          fi
 
           if [ "$PRERELEASE" = "true" ]; then
-            gh release edit "$TAG" \
-              --notes-file "$NOTES_FILE" \
-              --draft=false \
-              --prerelease
+            gh release edit "$TAG" --draft=false --prerelease
           else
-            gh release edit "$TAG" \
-              --notes-file "$NOTES_FILE" \
-              --draft=false \
-              --prerelease=false \
-              --latest
+            gh release edit "$TAG" --draft=false --prerelease=false --latest
+          fi
+          PUBLISHED=true
+
+          if [ "$PRERELEASE" = "false" ]; then
             test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)" = "$TAG"
           fi
 

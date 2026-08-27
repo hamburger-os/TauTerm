@@ -52,9 +52,7 @@ fn main() {
             let dst = base.join(file);
             if src.exists() {
                 if let Err(error) = std::fs::copy(&src, &dst) {
-                    println!(
-                        "cargo:warning=com0com: failed to copy {arch_dir}/{file}: {error}"
-                    );
+                    println!("cargo:warning=com0com: failed to copy {arch_dir}/{file}: {error}");
                     all_ok = false;
                 }
             } else {

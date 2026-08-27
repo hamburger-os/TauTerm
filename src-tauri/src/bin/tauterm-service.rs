@@ -343,11 +343,7 @@ mod service {
 
     fn handle_client(pipe: HANDLE, vpm: &Mutex<VirtualPortManager>, clients: &Mutex<Clients>) {
         let mut client_id: Option<String> = None;
-        loop {
-            let frame = match read_frame(pipe) {
-                Some(f) => f,
-                None => break, // 客户端断开 / 管道关闭
-            };
+        while let Some(frame) = read_frame(pipe) {
             let req: Request = match serde_json::from_slice(&frame) {
                 Ok(r) => r,
                 Err(_) => break,

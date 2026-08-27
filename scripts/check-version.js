@@ -26,8 +26,10 @@ function same(label, actual, expected) {
 const pkg = readJson("package.json");
 const expected = (explicitVersion ?? pkg.version).replace(/^v/, "");
 
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(expected)) {
-  fail(`invalid semantic version: ${expected}`);
+if (!/^\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/.test(expected)) {
+  fail(
+    `unsupported version: ${expected}; use X.Y.Z or X.Y.Z-alpha.N / beta.N / rc.N`,
+  );
   process.exit(1);
 }
 
