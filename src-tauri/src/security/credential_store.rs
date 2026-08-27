@@ -97,8 +97,9 @@ impl Default for CredentialStore {
 impl CredentialStore {
     pub fn new() -> Self {
         let d = ProjectDirs::from("com", "TauTerm", "TauTerm")
-            .map(|x| x.data_local_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
+            .expect("supported desktop platform must provide an application data directory")
+            .data_local_dir()
+            .to_path_buf();
         Self::with_data_dir(d)
     }
     pub fn with_data_dir(d: PathBuf) -> Self {
@@ -255,7 +256,13 @@ impl CredentialStore {
         let e = Self::entry(a)?;
         e.set_secret(&b).map_err(be)?;
         b.zeroize();
-        let mut i = self.read_index()?;
+        let mut i = match self.read_index() {
+            Ok(index) => index,
+            Err(error) => {
+                let _ = e.delete_credential();
+                return Err(error);
+            }
+        };
         if i.insert(a.into()) {
             if let Err(x) = self.write_index(&i) {
                 let _ = e.delete_credential();

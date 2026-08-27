@@ -2023,6 +2023,7 @@ pub fn unlock_credential_vault(
     state: State<'_, AppState>,
     master_password: String,
 ) -> Result<(), String> {
+    let master_password = zeroize::Zeroizing::new(master_password);
     state
         .credential_store
         .unlock_fallback(&master_password)

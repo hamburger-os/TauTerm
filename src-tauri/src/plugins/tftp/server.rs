@@ -262,9 +262,6 @@ fn handle_rrq(
     } = context;
     let transfer_id = next_transfer_id.fetch_add(1, Ordering::Relaxed).to_string();
 
-    let file_path = sanitize_filename(filename);
-    let full_path = root.join(&file_path);
-
     // 创建一个临时 socket 用于发送错误响应
     let send_error = |code: ErrorCode, msg: &str| {
         if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
@@ -432,9 +429,6 @@ fn handle_wrq(
     } = context;
     let transfer_id = next_transfer_id.fetch_add(1, Ordering::Relaxed).to_string();
 
-    let file_path = sanitize_filename(filename);
-    let full_path = root.join(&file_path);
-
     let send_error = |code: ErrorCode, msg: &str| {
         if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
             let _ = TftpSocket::send_to(
@@ -516,7 +510,7 @@ fn handle_wrq(
         },
     );
 
-    match transfer::receive_file(&mut counting, full_path, remote, &params, abort, 1) {
+    match transfer::receive_file(&mut counting, full_path.clone(), remote, &params, abort, 1) {
         Ok(result) => {
             let cksum = result.checksum.map(|c| format!("{:08X}", c));
             let avg_bps = (result.bytes_transferred * 1000)
@@ -547,8 +541,7 @@ fn handle_wrq(
             log::error!("[TFTP Server] WRQ 失败 [{}]: {}", transfer_id, e);
             // 清理不完整文件
             if params.clean_on_error {
-                let file_path = root.join(sanitize_filename(filename));
-                let _ = std::fs::remove_file(&file_path);
+                let _ = std::fs::remove_file(&full_path);
             }
             let _ = app.emit(
                 "tftp-transfer-done",

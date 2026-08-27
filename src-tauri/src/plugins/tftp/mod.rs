@@ -292,8 +292,13 @@ impl ProtocolAdapter for TftpAdapter {
                 })?;
         let listen_addr = SocketAddr::new(listen_ip, config.listen_port);
 
+        if exposure_warning(&config).is_some() && !config.exposure_confirmed {
+            return Err(SessionError::ConnectionFailed {
+                reason: "TFTP is exposed to a non-loopback network with remote writes and overwrite enabled; explicit user confirmation is required".into(),
+            });
+        }
         if let Some(warning) = exposure_warning(&config) {
-            log::warn!("[TFTP] {}", warning);
+            log::warn!("[TFTP] confirmed exposure: {}", warning);
         }
 
         let socket = std::net::UdpSocket::bind(listen_addr)
