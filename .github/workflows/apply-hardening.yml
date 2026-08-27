@@ -4,7 +4,7 @@ on:
   push:
     branches: [hardening/cross-platform-release]
     paths:
-      - scripts/apply-hardening.py
+      - scripts/apply-hardening-v2.py
 
 permissions:
   contents: write
@@ -19,7 +19,7 @@ jobs:
           ref: hardening/cross-platform-release
           persist-credentials: true
       - name: Apply source migration
-        run: python3 scripts/apply-hardening.py
+        run: python3 scripts/apply-hardening-v2.py
       - name: Install pinned Rust toolchain
         shell: bash
         run: |
