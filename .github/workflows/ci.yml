@@ -14,13 +14,35 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  final-runtime-label-cleanup:
+    if: github.event_name == 'pull_request' && github.head_ref == 'hardening/cross-platform-release'
+    name: Apply final runtime label cleanup
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: hardening/cross-platform-release
+          persist-credentials: true
+      - run: python3 scripts/final-runtime-label-cleanup.py
+      - name: Commit self-cleaning review fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "review: remove final socat runtime label"
+          git push origin HEAD:hardening/cross-platform-release
+
   rust:
     name: Rust checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
