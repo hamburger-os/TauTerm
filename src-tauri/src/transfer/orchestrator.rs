@@ -236,13 +236,13 @@ impl InlineTransferOrchestrator {
             format!("无法从 I/O 线程获取 Channel: {}", e)
         })?;
 
-        let external_pathox = channel.try_handoff().ok_or_else(|| {
+        let port_box = channel.try_handoff().ok_or_else(|| {
             emit_transfer_failed(app, session_id, self.pt.as_str());
             restore_session_state(app, session_id);
             "Channel 不支持端口移交".to_string()
         })?;
 
-        let port = external_pathox
+        let port = port_box
             .downcast::<Box<dyn serialport::SerialPort>>()
             .map_err(|_| {
                 emit_transfer_failed(app, session_id, self.pt.as_str());

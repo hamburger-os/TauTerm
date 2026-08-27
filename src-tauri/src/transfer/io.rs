@@ -45,7 +45,7 @@ pub fn read_byte_with_timeout(
 ///
 /// 连续读取并丢弃数据，直到连续 3 次读取为空（超时或零字节），
 /// 确保缓冲区完全清空。最多尝试 20 次以避免死循环。
-pub fn flush_external_pathuffer(port: &mut Box<dyn serialport::SerialPort>) {
+pub fn flush_port_buffer(port: &mut Box<dyn serialport::SerialPort>) {
     let mut buf = [0u8; 256];
     let mut empty_count: u32 = 0;
     for _ in 0..20 {
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn test_flush_buffer_on_empty_cursor() {
-        // drain_rx_buffer 和 flush_external_pathuffer 在无数据时正常退出
+        // drain_rx_buffer 和 flush_port_buffer 在无数据时正常退出
         // 此测试仅验证函数不会 panic；实际行为需集成测试
     }
 

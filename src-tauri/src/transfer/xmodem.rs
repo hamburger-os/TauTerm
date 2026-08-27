@@ -652,7 +652,7 @@ fn xmodem_receive(
                         "XModem RX: unexpected byte 0x{:02X} waiting for header",
                         other
                     );
-                    io::flush_external_pathuffer(port);
+                    io::flush_port_buffer(port);
                 }
                 None => {
                     // 超时 — 发送 NAK 请求重传（对齐 lrzsz）
