@@ -357,7 +357,7 @@ pub fn run() {
                         // 原生 PTY 随文件描述符自动释放；统一调用保持后端生命周期接口一致。
                         let orphan_count = vpm.cleanup_orphans();
                         if orphan_count > 0 {
-                            log::info!("已清理 {} 个孤儿虚拟端口对 (socat)", orphan_count);
+                            log::info!("已清理 {} 个遗留虚拟端点资源", orphan_count);
                         }
 
                         if vpm.are_files_present() {
