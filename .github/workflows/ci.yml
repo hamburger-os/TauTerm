@@ -16,31 +16,46 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || inputs.ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # 跨平台 Rust 质量门禁：在 Linux / Windows / macOS 上都跑，确保
-  # 平台专属代码（build.rs 的 #[cfg(windows)] com0com、virtual_port 等）也被编译并被 lint。
-  # 使用 `stable`（最新稳定版）以避免固定精确版本导致的长期老化。
-  quality:
+  rust:
     name: Rust checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-2025, macos-15]
+
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: 22
-          cache: npm
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustc --version
+          cargo --version
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          components: clippy,rustfmt
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: rust-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
 
       - name: Install Tauri system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -56,29 +71,24 @@ jobs:
             libssl-dev \
             libudev-dev
 
-      - name: Install frontend dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-
       - name: Strict Clippy all targets
-        run: cargo clippy --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+        run: cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
 
       - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
-  # 前端与版本一致性/卫生检查与操作系统无关，放在单一 Ubuntu job，避免在矩阵里重复耗时。
-  frontend:
-    name: Frontend, version & hygiene checks
+  hygiene:
+    name: Frontend, formatting, version & hygiene
     runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
-          ref: ${{ inputs.ref || github.sha }}
+    timeout-minutes: 25
 
-      - uses: actions/setup-node@v7.0.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -86,8 +96,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Verify pinned Rust toolchain
+        run: npm run toolchain:check
+
       - name: Verify synchronized version metadata
         run: npm run version:check
+
+      - name: Install pinned Rust toolchain for rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
       - name: TypeScript type check
         run: npx tsc --noEmit
