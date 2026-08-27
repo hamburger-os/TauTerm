@@ -1,7 +1,5 @@
 //! Native PTY virtual serial backend for Linux/macOS.
 //!
-//! This module intentionally keeps the historical `socat` module path for source
-//! compatibility, but it no longer launches or depends on the `socat` command.
 //! Each virtual endpoint is a single POSIX PTY pair created in-process with
 //! `serialport::TTYPort::pair()`:
 //!
@@ -9,9 +7,9 @@
 //! physical serial <-> TauTerm <-> PTY master <-> PTY slave <-> external tool
 //! ```
 //!
-//! The PTY master is retained by TauTerm and consumed by `VirtualPortBridge`.
-//! Only the slave path is exposed to external applications. This removes PATH,
-//! package-manager, child-process and `/tmp` symlink lifecycle dependencies.
+//! TauTerm retains the PTY master and exposes only the slave path to external
+//! applications. No helper process, PATH lookup, package-manager dependency,
+//! world-writable symlink, or persistent kernel resource is required.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
@@ -78,9 +76,6 @@ impl PtyBackend {
 
         log::info!("native PTY endpoint created: {} (id={})", slave_path, id);
 
-        // Compatibility representation: Unix has one externally visible endpoint,
-        // not a kernel COM null-modem pair. Both metadata fields identify the same
-        // slave device until the frontend migrates to VirtualEndpoint metadata.
         Ok(VirtualEndpoint {
             bridge_path: slave_path.clone(),
             external_path: slave_path,
@@ -141,8 +136,8 @@ impl VirtualPortBackend for PtyBackend {
         self.create_endpoints(config)
     }
 
-    fn destroy_endpoint(&mut self, pair: &VirtualEndpoint) -> Result<(), String> {
-        self.remove_endpoint(&pair.bridge_path);
+    fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String> {
+        self.remove_endpoint(&endpoint.bridge_path);
         Ok(())
     }
 
@@ -168,9 +163,6 @@ impl VirtualPortBackend for PtyBackend {
         0
     }
 }
-
-/// Compatibility alias for the existing AppState initialization.
-pub type PtyBackend = PtyBackend;
 
 #[cfg(test)]
 mod tests {
