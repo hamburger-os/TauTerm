@@ -86,7 +86,7 @@ impl Drop for VirtualPortBridge {
 
 fn open_bridge_endpoint(name: &str, baud_rate: u32) -> Result<Box<dyn SerialPort>, String> {
     #[cfg(not(target_os = "windows"))]
-    if let Some(master) = crate::virtual_port::socat::take_master_for_slave(name) {
+    if let Some(master) = crate::virtual_port::pty::take_master_for_slave(name) {
         log::info!("Native PTY master attached for {}", name);
         return Ok(master);
     }
