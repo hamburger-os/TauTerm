@@ -25,7 +25,7 @@ use crate::kernel::data_batcher::DataBatcher;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
 use crate::kernel::plugin_adapter::{ChannelKind, ProtocolConnection, SideChannel};
 use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
-use crate::virtual_port::backend::PortPair;
+use crate::virtual_port::backend::VirtualEndpoint;
 use crate::virtual_port::bridge::VirtualPortBridge;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -217,9 +217,9 @@ pub struct ActiveSessionHandle {
     /// 是否启用发送栏（默认 true）
     pub send_bar_enabled: bool,
     /// 虚拟端口桥接线程（None = 未启用或未创建）
-    pub virtual_port_bridge: Option<VirtualPortBridge>,
+    pub virtual_external_pathridge: Option<VirtualPortBridge>,
     /// 当前会话的虚拟端口对列表
-    pub virtual_port_pairs: Vec<PortPair>,
+    pub virtual_endpoints: Vec<VirtualEndpoint>,
     /// 通信抽象句柄（供脚本引擎使用）
     pub comm_handle: Option<Arc<dyn CommHandle>>,
     /// 脚本引擎线程的命令发送端
@@ -303,7 +303,7 @@ impl Drop for ActiveSessionHandle {
         // 可能在 panic unwind 中触发 double-panic，或在持有 SessionStore Mutex
         // 时阻塞调用线程。改为在独立线程中关闭，close_session() 正常路径
         // 中已正确调用 shutdown()。
-        if let Some(bridge) = self.virtual_port_bridge.take() {
+        if let Some(bridge) = self.virtual_external_pathridge.take() {
             log::warn!(
                 "ActiveSessionHandle '{}' dropped without proper close_session — \
                  shutting down bridge in detached thread",
@@ -313,12 +313,12 @@ impl Drop for ActiveSessionHandle {
                 bridge.shutdown();
             });
         }
-        if !self.virtual_port_pairs.is_empty() {
+        if !self.virtual_endpoints.is_empty() {
             log::warn!(
                 "ActiveSessionHandle '{}' dropped with {} virtual port pair(s) still registered \
                  — these may be cleaned up on next TauTerm startup",
                 self.id,
-                self.virtual_port_pairs.len()
+                self.virtual_endpoints.len()
             );
         }
         if let Some(tx) = self.io_cancel_tx.take() {
@@ -607,8 +607,8 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
-            virtual_port_bridge: None,
-            virtual_port_pairs: Vec::new(),
+            virtual_external_pathridge: None,
+            virtual_endpoints: Vec::new(),
             comm_handle: Some(comm_handle),
             script_tx: None,
             script_thread: None,
@@ -626,7 +626,7 @@ impl SessionStore {
         // 在新 session 插入前执行，避免新旧会话并发持有同一硬件资源。
         if let Some(mut old_handle) = self.sessions.remove(&id) {
             // 先关闭虚拟端口桥接再 drop，防止 JoinHandle detach 泄漏线程
-            if let Some(bridge) = old_handle.virtual_port_bridge.take() {
+            if let Some(bridge) = old_handle.virtual_external_pathridge.take() {
                 bridge.shutdown();
                 log::warn!(
                     "create_session 中关闭了残留桥接线程 (session: {}) — 调用方应预先调用 close_session",
@@ -745,8 +745,8 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
-            virtual_port_bridge: None,
-            virtual_port_pairs: Vec::new(),
+            virtual_external_pathridge: None,
+            virtual_endpoints: Vec::new(),
             comm_handle,
             script_tx: None,
             script_thread: None,
@@ -767,7 +767,7 @@ impl SessionStore {
 
     /// # 调用方约定
     ///
-    /// **调用方必须在此调用之前 clone `virtual_port_pairs`**（如需访问），
+    /// **调用方必须在此调用之前 clone `virtual_endpoints`**（如需访问），
     /// 因为此方法一开始就 `sessions.remove(session_id)`，句柄随后被 drop。
     /// 参考 `disconnect_session` 在 `commands.rs` 中的用法。
     pub fn close_session(&mut self, session_id: &str) -> Result<(), String> {
@@ -841,7 +841,7 @@ impl SessionStore {
         }
 
         // 关闭虚拟端口桥接线程
-        if let Some(bridge) = handle.virtual_port_bridge.take() {
+        if let Some(bridge) = handle.virtual_external_pathridge.take() {
             bridge.shutdown();
             log::info!("虚拟端口桥接已关闭 (session: {})", session_id);
         }
@@ -1905,7 +1905,7 @@ impl SessionStore {
             }
 
             // ── 虚拟端口桥接 ──
-            if let Some(bridge) = handle.virtual_port_bridge.take() {
+            if let Some(bridge) = handle.virtual_external_pathridge.take() {
                 bridge.shutdown();
                 log::info!(
                     "虚拟端口桥接已关闭（设备意外断开，session: {}）",

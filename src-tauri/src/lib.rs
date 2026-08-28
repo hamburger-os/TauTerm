@@ -48,7 +48,7 @@ use virtual_port::backend::VirtualPortBackend;
 use virtual_port::manager::VirtualPortManager;
 
 #[cfg(not(target_os = "windows"))]
-use virtual_port::socat::SocatBackend;
+use virtual_port::pty::PtyBackend;
 
 /// 全局应用状态
 pub struct AppState {
@@ -88,7 +88,7 @@ pub struct AppState {
     pub credential_store: CredentialStore,
     /// 日志引擎（生产者-消费者异步日志系统）
     pub log_engine: Mutex<LogEngine>,
-    /// 虚拟串口设备管理器（com0com 驱动 + 端口对生命周期）
+    /// 虚拟端点后端（平台差异封装在 VirtualPortBackend 内）
     pub virtual_port_manager: Mutex<Box<dyn VirtualPortBackend>>,
 }
 
@@ -352,20 +352,20 @@ pub fn run() {
 
                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                     {
-                        *vpm = Box::new(SocatBackend::new());
+                        *vpm = Box::new(PtyBackend::new());
 
-                        // 清理上次异常退出可能遗留的孤儿 symlink
+                        // 原生 PTY 随文件描述符自动释放；统一调用保持后端生命周期接口一致。
                         let orphan_count = vpm.cleanup_orphans();
                         if orphan_count > 0 {
-                            log::info!("已清理 {} 个孤儿虚拟端口对 (socat)", orphan_count);
+                            log::info!("已清理 {} 个遗留虚拟端点资源", orphan_count);
                         }
 
                         if vpm.are_files_present() {
-                            log::info!("socat 已就绪，虚拟串口功能可用");
+                            log::info!("原生 PTY 后端已就绪，虚拟串口功能可用");
                         } else {
-                            log::warn!("socat 未安装，虚拟串口功能不可用。安装: apt install socat (Linux) / brew install socat (macOS)");
+                            log::warn!("原生 PTY 后端不可用");
                             let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                                "reason": "socat not installed. Install via: sudo apt install socat (Linux) or brew install socat (macOS)",
+                                "reason": "Native PTY backend unavailable",
                                 "can_install": false,
                             }));
                         }
@@ -411,7 +411,7 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from("."), std::path::PathBuf::from(".")))),
             #[cfg(not(target_os = "windows"))]
-            virtual_port_manager: Mutex::new(Box::new(SocatBackend::new())),
+            virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,
@@ -442,6 +442,9 @@ pub fn run() {
             commands::get_credential,
             commands::list_credentials,
             commands::delete_credential,
+            commands::credential_storage_status,
+            commands::unlock_credential_vault,
+            commands::lock_credential_vault,
             commands::get_config,
             commands::set_config,
             commands::delete_config,

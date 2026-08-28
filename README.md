@@ -5,17 +5,17 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/hamburger-os/TauTerm?include_prereleases)](https://github.com/hamburger-os/TauTerm/releases)
-[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20MSI-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
-[![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20AppImage-FCC624)](https://github.com/hamburger-os/TauTerm/releases)
-[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20dmg-333333)](https://github.com/hamburger-os/TauTerm/releases)
+[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20NSIS-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Linux](https://img.shields.io/badge/Linux-x64%20%7C%20deb%20%7C%20rpm%20%7C%20AppImage-FCC624)](https://github.com/hamburger-os/TauTerm/releases)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Tech%20Preview-333333)](https://github.com/hamburger-os/TauTerm/releases)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-67D6F8.svg)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-powered-000000.svg)](https://www.rust-lang.org/)
 
-**[Download](https://github.com/hamburger-os/TauTerm/releases)** — Windows · Linux · macOS · **[Build from source](docs/BUILDING.md)** · **[中文 README](README.zh-CN.md)**
+**[Download](https://github.com/hamburger-os/TauTerm/releases)** — Windows · Linux · macOS · **[Supported platforms](docs/SUPPORTED_PLATFORMS.md)** · **[Build from source](docs/BUILDING.md)** · **[中文 README](README.zh-CN.md)**
 
 TauTerm is for engineers who are tired of switching between an SSH client, an SFTP client, a serial terminal and separate TCP/UDP debugging tools. It brings those workflows into one lightweight desktop app with a microkernel plugin architecture.
 
-> **Release status:** Windows (NSIS/MSI), Linux (deb/rpm/AppImage) and macOS (Apple Silicon and Intel dmg/app) installers are published on GitHub Releases. Feature descriptions below track the current `master` branch; the latest packaged release may lag behind `master`.
+> **Release targets:** Windows 10/11 x86_64 (NSIS), Linux x86_64 (`.deb`/`.rpm`/`.AppImage`, Ubuntu 22.04 build baseline), and macOS Apple Silicon (`.dmg`/`.app`, tech preview). Windows ARM64, Linux ARM64, macOS Intel and MSI are not currently release targets. Feature descriptions below track the current `master` branch; the latest packaged release may lag behind `master`.
 
 ![TauTerm SSH terminal and SFTP file manager in one session](docs/assets/hero-en.png)
 
@@ -98,7 +98,7 @@ Choose a workspace appearance that fits the environment.
 
 ### 🔌 Embedded development
 
-- **Serial RS-232/485** with an optional **virtual serial bridge** — com0com on Windows, `socat` on Linux/macOS. On Windows the app itself runs as a standard (non-admin) user; privileged virtual-port operations are handled by a background service.
+- **Serial RS-232/485** with an optional **virtual serial bridge** — com0com virtual COM pairs on Windows; an in-process POSIX PTY bridge on Linux/macOS with no `socat` or external helper dependency. On Windows the app itself runs as a standard (non-admin) user; privileged virtual-port operations are handled by a background service.
 - **XModem / YModem / ZModem** transfers directly from an active serial session.
 - **Text / HEX / Dual display** with timestamps, framing and TX/RX differentiation.
 - **Character-set transcoding** — UTF-8, GBK, GB18030, Big5, Shift-JIS, EUC-JP, EUC-KR and ISO-8859-1.
@@ -109,12 +109,13 @@ Choose a workspace appearance that fits the environment.
 ### ⚡ Everyday workflow
 
 - Unified tabbed sessions and offline connection profiles.
-- OS-native credential storage with encrypted fallback.
 - SSH host-key verification and log redaction.
 - Searchable terminal, command palette and fully rebindable shortcuts.
 - Session logging with rotation/expiry cleanup.
 - zh-CN / en-US runtime language switching.
 - Three Liquid Glass themes with a native-feeling Tauri v2 shell.
+
+> Credential persistence is being hardened for a future release. The current `master` credential-store implementation should not be described as OS-native persistent keyring storage until that work lands.
 
 ---
 
@@ -122,21 +123,23 @@ Choose a workspace appearance that fits the environment.
 
 ### Windows
 
-Download the newest installer from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**.
+Download the newest **x64 NSIS installer** from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**.
 
-The Windows installer bundles the open-source [com0com](https://com0com.sourceforge.net/) virtual serial driver so TauTerm's virtual COM bridge works out of the box. The driver is a separate GPL component.
+The Windows installer bundles the open-source [com0com](https://com0com.sourceforge.net/) virtual serial driver so TauTerm's virtual COM bridge works out of the box. The driver is a separate GPL component. Windows ARM64 and MSI are not currently supported release targets. Builds are not yet Authenticode-signed, so SmartScreen may warn on first install.
 
 ### Linux
 
-Pick from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**: `.deb` (Debian/Ubuntu), `.rpm` (Fedora/RHEL) or `.AppImage` (portable).
+Pick from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**: `.deb` (Debian/Ubuntu), `.rpm` (Fedora/RHEL) or `.AppImage` (portable), currently for x86_64. Release artifacts are built on Ubuntu 22.04 to keep the Linux ABI baseline conservative.
 
-The Linux virtual serial bridge uses `socat` — install it with `sudo apt install socat` (the `.deb` package already declares this dependency).
+The Linux virtual serial bridge is implemented in-process using a POSIX PTY. No `socat`, package-manager dependency, `/tmp` symlink or shell `PATH` setup is required.
 
 ### macOS
 
-Download the `.dmg` or `.app` bundle for **Apple Silicon** or **Intel (x86_64)** from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**.
+Download the **Apple Silicon** `.dmg` / updater app archive from **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)**. macOS Intel is not currently a release target.
 
-The macOS virtual serial bridge also uses `socat` — install it with `brew install socat`. The macOS build is a tech preview and is not notarized, so Gatekeeper may require a one-time right-click → Open to launch it.
+The macOS virtual serial bridge also uses an in-process POSIX PTY and requires no Homebrew helper package. macOS remains a tech preview and is not notarized, so Gatekeeper may require a one-time right-click → Open to launch it.
+
+See **[Supported Platforms](docs/SUPPORTED_PLATFORMS.md)** for the exact support and signing matrix.
 
 ---
 
@@ -144,7 +147,7 @@ The macOS virtual serial bridge also uses `socat` — install it with `brew inst
 
 TauTerm moves quickly. The packaged release is the safest way to try the project; `master` contains newer work that may not have shipped yet.
 
-- **v0.5.0 — Networking & least-privilege security:** TCP/UDP Network Debug session, Telnet, iPerf2/iPerf3, session-level character-set transcoding and a remote journald viewer. On Windows the app now runs as a standard (non-admin) user with privileged virtual-port operations delegated to a LocalSystem service.
+- **v0.5.0 target — Networking & least-privilege security:** TCP/UDP Network Debug session, Telnet, iPerf2/iPerf3, session-level character-set transcoding and a remote journald viewer. On Windows the app runs as a standard (non-admin) user with privileged virtual-port operations delegated to a LocalSystem service.
 - **v0.4.0 — First Public Tech Preview:** serial, SSH/SFTP, transfer subsystem, Lua/auto-reply workflow, terminal/search, logging, settings, i18n and the core microkernel/plugin architecture.
 - **Current `master`:** continues expanding networking, security and workflow features beyond v0.5.
 - **Roadmap:** local shell, SSH tunnels/jump hosts, session grouping, FTP, recording/split panes, plugin SDK work and more.
@@ -172,13 +175,13 @@ See **[CHANGELOG.md](CHANGELOG.md)** for release-by-release details.
 ## Roadmap
 
 ```text
-v0.5  Shipped: TCP/UDP network debugging, Telnet, iPerf2/3,
+v0.5  TCP/UDP network debugging, Telnet, iPerf2/3,
       character-set transcoding, remote journald, least-privilege
-      Windows virtual-port service
-v0.6  Credential/security hardening (keyring + AES-256-GCM fallback),
+      Windows virtual-port service and native Unix PTY bridge
+v0.6  Credential/security hardening (native keyring + encrypted fallback),
       local shell, session groups, SSH tunnels + jump hosts
 v0.7  Network-debug polish, FTP, recording, split panes
-v1.0  GA: Windows validation, macOS/Linux core availability,
+v1.0  GA: release-grade Windows/macOS/Linux validation,
       performance budget, plugin SDK docs, TRDP
 v1.1  "Terminal + oscilloscope": WebGL plotting, FFT,
       FireWater/JustFloat compatibility

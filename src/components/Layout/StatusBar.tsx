@@ -277,14 +277,14 @@ export default function StatusBar({
       : null,
 
     // 虚拟串口指示器
-    activeTab && isConnected && isSerial && activeTab.virtualPortPairs && activeTab.virtualPortPairs.length > 0
+    activeTab && isConnected && isSerial && activeTab.virtualVirtualEndpoints && activeTab.virtualVirtualEndpoints.length > 0
       ? {
           key: "vport",
           priority: PRI.vport,
           node: (
             <div className={styles.segment}>
               <span className={styles.paramText}>
-                VPort: {activeTab.virtualPortPairs.map(p => `${p.port_a}↔${p.port_b}`).join(", ")}
+                VPort: {activeTab.virtualVirtualEndpoints.map(p => `${p.bridge_path}↔${p.external_path}`).join(", ")}
               </span>
             </div>
           ),

@@ -6,6 +6,7 @@ import AppearanceSettings from "./panels/AppearanceSettings";
 import LanguageSettings from "./panels/LanguageSettings";
 import LoggingSettings from "./panels/LoggingSettings";
 import ShortcutSettings from "./panels/ShortcutSettings";
+import SecuritySettings from "./panels/SecuritySettings";
 import AboutSettings from "./panels/AboutSettings";
 import type { UpdateInfo, CheckFrequency } from "../../types/updater";
 import styles from "./SettingsPage.module.css";
@@ -29,12 +30,13 @@ interface SettingsPageProps {
   onCheckFrequencyChange: (freq: CheckFrequency) => void;
 }
 
-type Category = "appearance" | "language" | "logging" | "shortcuts" | "about";
+type Category = "appearance" | "language" | "logging" | "security" | "shortcuts" | "about";
 
 const CATEGORIES: { id: Category; icon: import("../common/Icon").IconName; labelKey: string }[] = [
   { id: "appearance", icon: "palette" as const, labelKey: "settings.appearance" },
   { id: "language", icon: "globe" as const, labelKey: "settings.language" },
   { id: "logging", icon: "log" as const, labelKey: "settings.logging" },
+  { id: "security", icon: "lock" as const, labelKey: "settings.security" },
   { id: "shortcuts", icon: "keyboard" as const, labelKey: "settings.shortcuts" },
   { id: "about", icon: "info" as const, labelKey: "settings.about" },
 ];
@@ -88,6 +90,7 @@ export default function SettingsPage({
       case "appearance": return <AppearanceSettings />;
       case "language": return <LanguageSettings />;
       case "logging": return <LoggingSettings />;
+      case "security": return <SecuritySettings />;
       case "shortcuts": return <ShortcutSettings />;
       case "about": return (
         <AboutSettings

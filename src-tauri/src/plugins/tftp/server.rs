@@ -262,9 +262,6 @@ fn handle_rrq(
     } = context;
     let transfer_id = next_transfer_id.fetch_add(1, Ordering::Relaxed).to_string();
 
-    let file_path = sanitize_filename(filename);
-    let full_path = root.join(&file_path);
-
     // 创建一个临时 socket 用于发送错误响应
     let send_error = |code: ErrorCode, msg: &str| {
         if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
@@ -279,11 +276,18 @@ fn handle_rrq(
         }
     };
 
-    if !validate_file_path(&full_path, root) {
-        log::warn!("[TFTP Server] 路径遍历攻击: {}", filename);
-        send_error(ErrorCode::AccessViolation, "access violation");
-        return;
-    }
+    let full_path = match resolve_read_path(root, filename) {
+        Ok(path) => path,
+        Err(PathResolveError::NotFound) => {
+            send_error(ErrorCode::FileNotFound, "file not found");
+            return;
+        }
+        Err(error) => {
+            log::warn!("[TFTP Server] 拒绝 RRQ 路径 {}: {:?}", filename, error);
+            send_error(ErrorCode::AccessViolation, "access violation");
+            return;
+        }
+    };
     if !full_path.exists() {
         log::warn!("[TFTP Server] 文件不存在: {}", full_path.display());
         send_error(ErrorCode::FileNotFound, "file not found");
@@ -425,9 +429,6 @@ fn handle_wrq(
     } = context;
     let transfer_id = next_transfer_id.fetch_add(1, Ordering::Relaxed).to_string();
 
-    let file_path = sanitize_filename(filename);
-    let full_path = root.join(&file_path);
-
     let send_error = |code: ErrorCode, msg: &str| {
         if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
             let _ = TftpSocket::send_to(
@@ -441,11 +442,14 @@ fn handle_wrq(
         }
     };
 
-    if !validate_file_path(&full_path, root) {
-        log::warn!("[TFTP Server] 路径遍历攻击: {}", filename);
-        send_error(ErrorCode::AccessViolation, "access violation");
-        return;
-    }
+    let full_path = match resolve_write_path(root, filename) {
+        Ok(path) => path,
+        Err(error) => {
+            log::warn!("[TFTP Server] 拒绝 WRQ 路径 {}: {:?}", filename, error);
+            send_error(ErrorCode::AccessViolation, "access violation");
+            return;
+        }
+    };
     if full_path.exists() && !overwrite {
         log::warn!(
             "[TFTP Server] 文件已存在（不允许覆盖）: {}",
@@ -506,7 +510,7 @@ fn handle_wrq(
         },
     );
 
-    match transfer::receive_file(&mut counting, full_path, remote, &params, abort, 1) {
+    match transfer::receive_file(&mut counting, full_path.clone(), remote, &params, abort, 1) {
         Ok(result) => {
             let cksum = result.checksum.map(|c| format!("{:08X}", c));
             let avg_bps = (result.bytes_transferred * 1000)
@@ -537,8 +541,7 @@ fn handle_wrq(
             log::error!("[TFTP Server] WRQ 失败 [{}]: {}", transfer_id, e);
             // 清理不完整文件
             if params.clean_on_error {
-                let file_path = root.join(sanitize_filename(filename));
-                let _ = std::fs::remove_file(&file_path);
+                let _ = std::fs::remove_file(&full_path);
             }
             let _ = app.emit(
                 "tftp-transfer-done",
@@ -601,27 +604,99 @@ fn setup_counting_socket(
     counting
 }
 
-/// 清理文件名：去除 Windows 盘符（如 "C:\"）、前导斜杠、.. 等危险字符
-fn sanitize_filename(filename: &str) -> PathBuf {
-    // 跳过 Windows 盘符 (如 "C:file.txt" 或 "C:\file.txt")
-    let bytes = filename.as_bytes();
-    let without_drive = if bytes.len() >= 2 && bytes[1] == b':' {
-        &filename[2..]
-    } else {
-        filename
-    };
-    // 去除前导斜杠
-    let trimmed = without_drive.trim_start_matches(['/', '\\']);
-    PathBuf::from(trimmed)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathResolveError {
+    InvalidName,
+    Escape,
+    NotFound,
+    Io,
 }
-
-fn validate_file_path(path: &Path, root: &Path) -> bool {
-    if path.to_string_lossy().contains("..") {
-        return false;
+fn relative_request_path(filename: &str) -> Result<PathBuf, PathResolveError> {
+    let p = Path::new(filename);
+    if p.as_os_str().is_empty() {
+        return Err(PathResolveError::InvalidName);
     }
-    if let Some(parent) = path.parent() {
-        path.starts_with(root) || parent.starts_with(root)
+    for c in p.components() {
+        match c {
+            std::path::Component::Normal(_) | std::path::Component::CurDir => {}
+            _ => return Err(PathResolveError::InvalidName),
+        }
+    }
+    Ok(p.to_path_buf())
+}
+fn resolve_read_path(root: &Path, filename: &str) -> Result<PathBuf, PathResolveError> {
+    let c = root.join(relative_request_path(filename)?);
+    let p = c.canonicalize().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            PathResolveError::NotFound
+        } else {
+            PathResolveError::Io
+        }
+    })?;
+    if p.starts_with(root) {
+        Ok(p)
     } else {
-        path.starts_with(root)
+        Err(PathResolveError::Escape)
+    }
+}
+fn resolve_write_path(root: &Path, filename: &str) -> Result<PathBuf, PathResolveError> {
+    let c = root.join(relative_request_path(filename)?);
+    if c.exists() {
+        let p = c.canonicalize().map_err(|_| PathResolveError::Io)?;
+        return if p.starts_with(root) {
+            Ok(p)
+        } else {
+            Err(PathResolveError::Escape)
+        };
+    }
+    let parent = c
+        .parent()
+        .ok_or(PathResolveError::InvalidName)?
+        .canonicalize()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                PathResolveError::NotFound
+            } else {
+                PathResolveError::Io
+            }
+        })?;
+    if !parent.starts_with(root) {
+        return Err(PathResolveError::Escape);
+    }
+    Ok(parent.join(c.file_name().ok_or(PathResolveError::InvalidName)?))
+}
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    #[test]
+    fn traversal_rejected_nested_allowed() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("nested")).unwrap();
+        std::fs::write(root.join("nested/a"), b"x").unwrap();
+        assert_eq!(
+            resolve_read_path(&root, "../x"),
+            Err(PathResolveError::InvalidName)
+        );
+        assert!(resolve_read_path(&root, "nested/a").is_ok());
+        assert!(resolve_write_path(&root, "nested/b").is_ok());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escape_rejected() {
+        use std::os::unix::fs::symlink;
+        let d = tempfile::tempdir().unwrap();
+        let o = tempfile::tempdir().unwrap();
+        let root = d.path().canonicalize().unwrap();
+        std::fs::write(o.path().join("secret"), b"x").unwrap();
+        symlink(o.path(), root.join("escape")).unwrap();
+        assert_eq!(
+            resolve_read_path(&root, "escape/secret"),
+            Err(PathResolveError::Escape)
+        );
+        assert_eq!(
+            resolve_write_path(&root, "escape/new"),
+            Err(PathResolveError::Escape)
+        );
     }
 }

@@ -312,6 +312,16 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : (isTftp || isIperf ? false : (isTelnet ? telnetSendBarEnabled : sendBarEnabled));
     const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp || isTelnet || isIperf || isNetwork ? false : transferEnabled);
 
+    let tftpExposureConfirmed = false;
+    if (isTftp && tftpWriteEnabled && tftpOverwrite) {
+      const bind = tftpListenIp.trim().toLowerCase();
+      const loopback = bind === "127.0.0.1" || bind === "::1" || bind === "localhost";
+      if (!loopback) {
+        tftpExposureConfirmed = window.confirm(t("tftp.exposureWarning", { defaultValue: "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network." }));
+        if (!tftpExposureConfirmed) { setConnecting(false); return; }
+      }
+    }
+
     const params: Record<string, unknown> = isSerial ? {
       baud_rate: parseInt(baudRate),
       data_bits: parseInt(dataBits),
@@ -348,6 +358,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       write_enabled: tftpWriteEnabled,
       overwrite: tftpOverwrite,
       single_port: tftpSinglePort,
+      exposure_confirmed: tftpExposureConfirmed,
     } : isTelnet ? {
       host: telnetHost,
       port: telnetPort,

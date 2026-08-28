@@ -1,17 +1,11 @@
-//! VirtualPortBridge — Virtual serial port I/O bridge thread
+//! VirtualPortBridge — virtual serial endpoint I/O bridge.
 //!
-//! Runs in a dedicated std::thread:
-//! 1. Opens all virtual port A's (COM10, COM12, …)
-//! 2. Receives physical serial data from `data_rx` → broadcasts to all virtual ports
-//! 3. Reads external software writes from each virtual port → sends to physical port
-//!    via `write_tx` channel asynchronously
+//! Windows opens the internal side of each com0com pair by name. Linux/macOS
+//! consume the already-created PTY master retained by the native PTY backend.
+//! In both cases the bridge presents the same data flow:
 //!
-//! ## Performance design
-//!
-//! - Virtual port read timeout set to 5ms (local kernel driver data arrives instantly)
-//! - Physical port write-back uses a dedicated mpsc channel (avoids holding SessionStore
-//!   Mutex inside the bridge loop)
-//! - Read buffer reuse reduces heap allocations
+//! physical serial -> virtual endpoint(s)
+//! virtual endpoint(s) -> physical serial
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,10 +14,6 @@ use std::time::Duration;
 
 use serialport::SerialPort;
 
-/// Virtual port read timeout (milliseconds).
-/// Local com0com kernel driver data arrives near-instantly; short timeout
-/// prevents the bridge loop from accumulating latency across idle ports
-/// in multi-port scenarios.
 const VPORT_READ_TIMEOUT_MS: u64 = 5;
 
 pub struct VirtualPortBridge {
@@ -32,15 +22,6 @@ pub struct VirtualPortBridge {
 }
 
 impl VirtualPortBridge {
-    /// 启动桥接线程（使用 channel 异步写回）。
-    ///
-    /// * `virtual_port_names` — 虚拟端口 A 的名称列表（"COM10", "COM12", …）
-    /// * `baud_rate` — 虚拟端口打开时的波特率（应与物理端口一致）
-    /// * `data_rx` — 接收物理端口的输出数据，广播到所有虚拟端口
-    /// * `write_tx` — 将虚拟端口收到的数据通过 channel 异步发送到物理端口写线程
-    ///
-    /// 桥接循环内使用 `try_send()` 非阻塞发送，避免因 SessionStore Mutex
-    /// 争用而阻塞虚拟端口读取。
     pub fn spawn(
         virtual_port_names: Vec<String>,
         baud_rate: u32,
@@ -69,14 +50,12 @@ impl VirtualPortBridge {
     pub fn shutdown(mut self) {
         self.cancel_flag.store(true, Ordering::SeqCst);
         if let Some(thread) = self.bridge_thread.take() {
-            // Join with timeout (5 seconds) to prevent hanging on blocked I/O
             let start = std::time::Instant::now();
             loop {
                 if thread.is_finished() {
                     match thread.join() {
                         Ok(()) => {}
                         Err(e) => {
-                            // Bridge thread panicked — capture panic info for diagnostics
                             let msg = if let Some(s) = e.downcast_ref::<&str>() {
                                 s.to_string()
                             } else if let Some(s) = e.downcast_ref::<String>() {
@@ -91,7 +70,6 @@ impl VirtualPortBridge {
                 }
                 if start.elapsed() > Duration::from_secs(5) {
                     log::error!("Bridge thread did not exit within 5 seconds, abandoning wait");
-                    // JoinHandle drop 会 detach，cancel_flag 已设置，线程自行退出
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -103,11 +81,20 @@ impl VirtualPortBridge {
 impl Drop for VirtualPortBridge {
     fn drop(&mut self) {
         self.cancel_flag.store(true, Ordering::SeqCst);
-        // Don't join — avoid deadlock during panic unwind.
-        // shutdown() already took the JoinHandle via take();
-        // if shutdown wasn't called, JoinHandle's Drop will detach the thread,
-        // but cancel_flag is set so the thread will exit on its next loop iteration.
     }
+}
+
+fn open_bridge_endpoint(name: &str, baud_rate: u32) -> Result<Box<dyn SerialPort>, String> {
+    #[cfg(not(target_os = "windows"))]
+    if let Some(master) = crate::virtual_port::pty::take_master_for_slave(name) {
+        log::info!("Native PTY master attached for {}", name);
+        return Ok(master);
+    }
+
+    serialport::new(name, baud_rate)
+        .timeout(Duration::from_millis(VPORT_READ_TIMEOUT_MS))
+        .open()
+        .map_err(|e| format!("failed to open virtual endpoint {name}: {e}"))
 }
 
 fn bridge_loop(
@@ -118,22 +105,19 @@ fn bridge_loop(
     cancel: &AtomicBool,
 ) {
     let mut virtual_ports: Vec<Box<dyn SerialPort>> = Vec::new();
-    let timeout = Duration::from_millis(VPORT_READ_TIMEOUT_MS);
     for name in &virtual_port_names {
-        match serialport::new(name, baud_rate).timeout(timeout).open() {
+        match open_bridge_endpoint(name, baud_rate) {
             Ok(port) => {
                 let _ = port.clear(serialport::ClearBuffer::All);
                 virtual_ports.push(port);
-                log::info!("Virtual port {} opened (bridge)", name);
+                log::info!("Virtual endpoint {} attached to bridge", name);
             }
-            Err(e) => {
-                log::error!("Failed to open virtual port {}: {}", name, e);
-            }
+            Err(e) => log::error!("{}", e),
         }
     }
 
     if virtual_ports.is_empty() {
-        log::warn!("No virtual ports available, bridge thread exiting");
+        log::warn!("No virtual endpoints available, bridge thread exiting");
         return;
     }
 
@@ -144,26 +128,23 @@ fn bridge_loop(
             break;
         }
 
-        // 1. Physical port data (from I/O loop → mpsc channel) → broadcast to virtual ports
-        //    Use recv_timeout instead of try_recv + sleep; blocks when idle instead of spinning
         match data_rx.recv_timeout(Duration::from_millis(10)) {
             Ok(data) => {
-                // 批量写入所有虚拟端口：先 write_all，最后批量 flush
                 for vport in &mut virtual_ports {
                     if vport.write_all(&data).is_err() {
-                        log::trace!("Write to virtual port failed (peer closed)");
+                        log::trace!("Write to virtual endpoint failed (peer closed)");
                     }
                 }
                 for vport in &mut virtual_ports {
                     let _ = vport.flush();
                 }
-                // Drain any remaining data buffered in the channel
+
                 loop {
                     match data_rx.try_recv() {
                         Ok(data) => {
                             for vport in &mut virtual_ports {
                                 if vport.write_all(&data).is_err() {
-                                    log::trace!("Write to virtual port failed (peer closed)");
+                                    log::trace!("Write to virtual endpoint failed (peer closed)");
                                 }
                             }
                             for vport in &mut virtual_ports {
@@ -178,20 +159,13 @@ fn bridge_loop(
                     }
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // 10ms 内无物理数据到达，继续检查虚拟端口读取
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 log::info!("Data channel disconnected, bridge exiting");
                 return;
             }
         }
 
-        // 2. Virtual ports → physical port (external software writes forwarded back)
-        //    Use try_send for non-blocking send: avoids blocking the bridge loop
-        //    on SessionStore Mutex contention.
-        //    Drop data when channel is full (best-effort): frame loss is better than
-        //    blocking the bridge loop; the physical port recovers naturally.
         for vport in &mut virtual_ports {
             match vport.read(&mut read_buf) {
                 Ok(n) if n > 0 => {
@@ -202,7 +176,7 @@ fn bridge_loop(
                 Ok(_) => {}
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
                 Err(_) => {
-                    // External software closing a virtual port is normal, don't abort
+                    // External applications can disconnect/reconnect independently.
                 }
             }
         }
@@ -248,6 +222,7 @@ mod tests {
             self.buffer.extend_from_slice(buf);
             Ok(buf.len())
         }
+
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
@@ -255,23 +230,18 @@ mod tests {
 
     #[test]
     fn test_bidirectional_logic() {
-        // Simulate: write to physical → read on virtual
         let mut physical = MockPort::new();
         let mut virtual_a = MockPort::new();
         let mut buf = [0u8; 256];
 
-        // physical receives data, forwards to virtual
         physical.buffer.extend_from_slice(b"HELLO");
         let n = physical.read(&mut buf).unwrap();
-        assert_eq!(&buf[..n], b"HELLO");
         virtual_a.write_all(&buf[..n]).unwrap();
         assert_eq!(&virtual_a.buffer, b"HELLO");
 
-        // external software writes to virtual → forwarded to physical
         virtual_a.buffer.clear();
         virtual_a.buffer.extend_from_slice(b"WORLD");
         let n = virtual_a.read(&mut buf).unwrap();
-        assert_eq!(&buf[..n], b"WORLD");
         physical.buffer.clear();
         physical.write_all(&buf[..n]).unwrap();
         assert_eq!(&physical.buffer, b"WORLD");

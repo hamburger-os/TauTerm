@@ -5,17 +5,17 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/hamburger-os/TauTerm?include_prereleases)](https://github.com/hamburger-os/TauTerm/releases)
-[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20MSI-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
-[![Linux](https://img.shields.io/badge/Linux-deb%20%7C%20rpm%20%7C%20AppImage-FCC624)](https://github.com/hamburger-os/TauTerm/releases)
-[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20dmg-333333)](https://github.com/hamburger-os/TauTerm/releases)
+[![Windows](https://img.shields.io/badge/Windows-x64%20%7C%20NSIS-0078D4)](https://github.com/hamburger-os/TauTerm/releases)
+[![Linux](https://img.shields.io/badge/Linux-x64%20%7C%20deb%20%7C%20rpm%20%7C%20AppImage-FCC624)](https://github.com/hamburger-os/TauTerm/releases)
+[![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Tech%20Preview-333333)](https://github.com/hamburger-os/TauTerm/releases)
 [![Tauri v2](https://img.shields.io/badge/Tauri-v2-67D6F8.svg)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-powered-000000.svg)](https://www.rust-lang.org/)
 
-**[下载](https://github.com/hamburger-os/TauTerm/releases)** —— Windows · Linux · macOS · **[从源码构建](docs/BUILDING.md)** · **[English README](README.md)**
+**[下载](https://github.com/hamburger-os/TauTerm/releases)** —— Windows · Linux · macOS · **[支持平台](docs/SUPPORTED_PLATFORMS.md)** · **[从源码构建](docs/BUILDING.md)** · **[English README](README.md)**
 
 TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP 调试器之间来回切换的工程师。它把这些工作流放进一个轻量桌面应用，并通过微内核插件架构持续扩展。
 
-> **发布状态：** Windows（NSIS/MSI）、Linux（deb/rpm/AppImage）与 macOS（Apple Silicon 和 Intel dmg/app）安装包均已发布在 GitHub Releases 上。下方功能描述以当前 `master` 为准，最新打包版本可能会落后于 `master`。
+> **当前正式发布目标：** Windows 10/11 x86_64（NSIS）、Linux x86_64（`.deb` / `.rpm` / `.AppImage`，以 Ubuntu 22.04 为构建基线）以及 macOS Apple Silicon（技术预览）。Windows ARM64、Linux ARM64、macOS Intel 与 MSI 暂不属于发布目标。下方功能描述以当前 `master` 为准，最新打包版本可能会落后于 `master`。
 
 ![TauTerm：同一会话中的 SSH 终端与 SFTP 文件管理器](docs/assets/hero-zh-CN.png)
 
@@ -89,7 +89,7 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 ### 🖥️ 网络工程
 
 - **SSH + SFTP 单会话** —— 终端与文件传输复用同一条已认证连接。
-- **SFTP 文件管理器** —— 浏览、上传/下载、重命名、批量删除、查看远端文件信息，支持列表与网格两种视图，工具栏一键切换。
+- **SFTP 文件管理器** —— 浏览、上传/下载、重命名、批量删除、查看远端文件信息，支持列表与网格视图。
 - **网络调试（TCP/UDP）** —— TCP 客户端/服务端、UDP 客户端/服务端，多对端处理、TEXT/HEX 视图、目标选择与统计。
 - **TFTP** —— 客户端/服务端、RFC 7440 窗口、CRC32 校验和重试控制。
 - **Telnet** —— RFC 854 协商、窗口大小同步和 keepalive。
@@ -98,7 +98,7 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 
 ### 🔌 嵌入式开发
 
-- **RS-232/485 串口**，可选 **虚拟串口桥接**——Windows 使用 com0com，Linux/macOS 使用 `socat`。Windows 下应用本身以普通用户权限运行，特权操作由后台服务代理执行。
+- **RS-232/485 串口**，可选 **虚拟串口桥接**——Windows 使用 com0com 虚拟 COM 对；Linux/macOS 使用 TauTerm 进程内创建的 POSIX PTY，不再依赖 `socat`、Homebrew、系统 PATH 或 `/tmp` 符号链接。Windows 下应用本身以普通用户权限运行，特权操作由后台服务代理执行。
 - **XModem / YModem / ZModem**，可直接从活动串口会话执行传输。
 - **Text / HEX / Dual 显示**，支持时间戳、分帧和 TX/RX 区分。
 - **字符集转码** —— UTF-8、GBK、GB18030、Big5、Shift-JIS、EUC-JP、EUC-KR、ISO-8859-1。
@@ -109,12 +109,13 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 ### ⚡ 日常工作流
 
 - 统一标签页会话与离线连接配置。
-- 系统原生凭据存储与加密文件降级方案。
 - SSH 主机指纹确认与日志脱敏。
 - 终端搜索、命令面板、全快捷键重绑定。
 - 会话日志分卷与过期清理。
 - 中文 / 英文运行时切换。
 - 三套 Liquid Glass 主题与 Tauri v2 原生级外壳。
+
+> 凭据持久化正在进行安全强化。在真正的 OS 原生 Keyring + 认证加密降级方案落地之前，当前 `master` 不再宣称已经具备该能力。
 
 ---
 
@@ -122,21 +123,23 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 
 ### Windows
 
-从 **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)** 下载最新安装包。
+从 **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)** 下载最新 **x64 NSIS 安装包**。
 
-Windows 安装包会附带并自动安装开源 [com0com](https://com0com.sourceforge.net/) 虚拟串口驱动，因此虚拟 COM 桥可以开箱即用。com0com 是独立的第三方 GPL 组件。
+Windows 安装包会附带并自动安装开源 [com0com](https://com0com.sourceforge.net/) 虚拟串口驱动，因此虚拟 COM 桥可以开箱即用。com0com 是独立第三方 GPL 组件。Windows ARM64 与 MSI 暂不作为发布目标。当前安装包尚未做 Authenticode 签名，首次安装可能触发 SmartScreen 提示。
 
 ### Linux
 
-在 **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)** 中选择：`.deb`（Debian/Ubuntu）、`.rpm`（Fedora/RHEL）或 `.AppImage`（通用便携版）。
+在 **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)** 中选择 x86_64 的 `.deb`（Debian/Ubuntu）、`.rpm`（Fedora/RHEL）或 `.AppImage`。发行产物使用 Ubuntu 22.04 构建，以维持更保守的 glibc/ABI 基线。
 
-Linux 虚拟串口桥使用 `socat`——请先安装 `sudo apt install socat`（`.deb` 包已声明该依赖）。
+Linux 虚拟串口桥由 Rust 进程内 POSIX PTY 实现，不需要安装 `socat`，也不需要任何额外命令行程序。
 
 ### macOS
 
-在 **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)** 下载 **Apple Silicon** 或 **Intel (x86_64)** 的 `.dmg` 或 `.app` 包。
+在 **[GitHub Releases](https://github.com/hamburger-os/TauTerm/releases)** 下载 **Apple Silicon** 的 `.dmg` / updater app archive。macOS Intel 暂不作为发布目标。
 
-macOS 虚拟串口桥同样使用 `socat`——请先安装 `brew install socat`。macOS 构建属于技术预览且未经公证（notarization），若被 Gatekeeper 拦截，可右键 → 打开 一次以放行。
+macOS 虚拟串口桥同样使用进程内 POSIX PTY，不依赖 Homebrew。macOS 仍属于技术预览且尚未公证（notarization），若被 Gatekeeper 拦截，首次可右键 → 打开。
+
+准确的平台、架构与签名状态请查看 **[支持平台矩阵](docs/SUPPORTED_PLATFORMS.md)**。
 
 ---
 
@@ -144,8 +147,8 @@ macOS 虚拟串口桥同样使用 `socat`——请先安装 `brew install socat`
 
 TauTerm 迭代较快。想稳定体验请优先使用打包版本；`master` 会包含尚未正式发布的新功能。
 
-- **v0.5.0 — 网络与最小权限安全：** TCP/UDP 网络调试会话、Telnet、iPerf2/iPerf3、会话级字符集转码、远程 journald 日志查看器。Windows 下应用现以普通用户权限运行，特权虚拟串口操作委托给 LocalSystem 服务。
-- **v0.4.0 — First Public Tech Preview：** 串口、SSH/SFTP、传输子系统、Lua/自动应答工作流、终端搜索、日志、设置、国际化，以及核心微内核/插件架构。
+- **v0.5.0 目标 —— 网络与最小权限安全：** TCP/UDP 网络调试会话、Telnet、iPerf2/iPerf3、会话级字符集转码、远程 journald 日志查看器。Windows 下应用以普通用户权限运行，特权虚拟串口操作委托给 LocalSystem 服务；Unix 虚拟串口桥切换为进程内 PTY。
+- **v0.4.0 —— First Public Tech Preview：** 串口、SSH/SFTP、传输子系统、Lua/自动应答工作流、终端搜索、日志、设置、国际化，以及核心微内核/插件架构。
 - **当前 `master`：** 在 v0.5 基础上持续增加网络、安全与工作流能力。
 - **路线图：** 本地 Shell、SSH 隧道/跳板机、会话分组、FTP、录制/分屏、插件 SDK 等。
 
@@ -172,13 +175,13 @@ TauTerm 迭代较快。想稳定体验请优先使用打包版本；`master` 会
 ## 路线图
 
 ```text
-v0.5  已发布：TCP/UDP 网络调试、Telnet、iPerf2/3、
-      字符集转码、远程 journald、Windows 最小权限虚拟串口服务
-v0.6  凭据与安全强化（keyring + AES-256-GCM 降级）、
+v0.5  TCP/UDP 网络调试、Telnet、iPerf2/3、字符集转码、
+      远程 journald、Windows 最小权限虚拟串口服务、Unix 原生 PTY
+v0.6  凭据与安全强化（原生 Keyring + 认证加密降级）、
       本地 Shell、会话分组、SSH 隧道 + 跳板机
 v0.7  网络调试完善、FTP、录制、分屏
-v1.0  GA：Windows 完整验证、macOS/Linux 核心可用、
-      性能预算、插件 SDK 文档、TRDP
+v1.0  GA：Windows/macOS/Linux 发布级验证、性能预算、
+      插件 SDK 文档、TRDP
 v1.1  「终端 + 示波器」：WebGL 绘图、FFT、
       FireWater/JustFloat 兼容
 ```

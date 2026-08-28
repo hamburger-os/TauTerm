@@ -9,8 +9,8 @@ const bundleRoot = resolve(root, "src-tauri/target/release/bundle");
 
 const specs = {
   windows: {
-    suffixes: [".msi", "_x64-setup.exe", "_x64-setup.exe.sig"],
-    expected: 3,
+    suffixes: ["_x64-setup.exe", "_x64-setup.exe.sig"],
+    expected: 2,
   },
   linux: {
     suffixes: [".deb", ".rpm", ".AppImage", ".AppImage.sig"],
@@ -18,10 +18,6 @@ const specs = {
   },
   "macos-arm": {
     suffixes: ["_aarch64.dmg", "_aarch64.app.tar.gz", "_aarch64.app.tar.gz.sig"],
-    expected: 3,
-  },
-  "macos-intel": {
-    suffixes: ["_x64.dmg", "_x64.app.tar.gz", "_x64.app.tar.gz.sig"],
     expected: 3,
   },
 };
