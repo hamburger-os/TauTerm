@@ -102,6 +102,12 @@ jobs:
       - name: Verify synchronized version metadata
         run: npm run version:check
 
+      - name: Validate updater release scripts
+        run: |
+          node --check scripts/stage-release.js
+          node --check scripts/assemble-release.js
+          node --check scripts/verify-published-updater.js
+
       - name: Install pinned Rust toolchain for rustfmt
         shell: bash
         run: |
