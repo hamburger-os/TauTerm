@@ -39,6 +39,14 @@ telnet = "0.2.5"
 socket2 = "0.6"
 async-trait = "0.1"
 crc32fast = "1.5.0"
+keyring = "4.1.6"
+aes-gcm = "0.11"
+argon2 = "0.5"
+base64 = "0.22"
+getrandom = "0.3"
+zeroize = "1.8"
+directories = "6"
+atomic-write-file = "0.3.1"
 encoding_rs = "0.8"
 riperf3 = { path = "vendor/riperf3" }
 
@@ -57,3 +65,6 @@ windows-sys = { version = "0.59", features = [
   "Win32_System_Services",
   "Win32_System_Threading",
 ] }
+
+[dev-dependencies]
+tempfile = "3"

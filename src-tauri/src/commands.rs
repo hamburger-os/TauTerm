@@ -15,7 +15,9 @@ use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use crate::kernel::session_store::{
     ContainerSessionCreateOptions, IoTaskHandle, SessionCreateOptions, SessionState, SessionStore,
 };
-use crate::virtual_port::backend::{contains_elevation_indicator, PortPair, VirtualPortConfig};
+use crate::virtual_port::backend::{
+    contains_elevation_indicator, VirtualEndpoint, VirtualPortConfig,
+};
 use crate::virtual_port::bridge::VirtualPortBridge;
 use crate::AppState;
 use chrono::Local;
@@ -422,14 +424,14 @@ async fn connect_session_serial(
 
         // 1. 在 mark_disconnected 之前读取虚拟端口对
         //    （mark_disconnected 内部关闭桥接线程，但不销毁 pairs）
-        let pairs: Vec<PortPair> = {
+        let pairs: Vec<VirtualEndpoint> = {
             let store = match app_state.session_store.lock() {
                 Ok(s) => s,
                 Err(e) => e.into_inner(),
             };
             store
                 .get_session(&session_id)
-                .map(|h| h.virtual_port_pairs.clone())
+                .map(|h| h.virtual_endpoints.clone())
                 .unwrap_or_default()
         };
 
@@ -445,12 +447,12 @@ async fn connect_session_serial(
         if !pairs.is_empty() {
             if let Ok(mut vpm) = app_state.virtual_port_manager.lock() {
                 for pair in &pairs {
-                    let _ = vpm.destroy_pair(pair);
+                    let _ = vpm.destroy_endpoint(pair);
                 }
 
                 // 检查是否有因权限不足而写入 state 文件的残留端口
                 // UAC 弹窗推迟到下次用户主动操作（状态栏 [清理残留端口] 按钮或
-                // 下次连接的 create_pairs_elevated），避免在断开回调中突然弹窗
+                // 下次连接的 create_endpoints_elevated），避免在断开回调中突然弹窗
                 let orphan_count = vpm.pending_orphan_count();
                 if orphan_count > 0 {
                     log::warn!(
@@ -515,12 +517,12 @@ async fn connect_session_serial(
         .map(|v| v as u32)
         .unwrap_or(0);
 
-    // vport_pairs_json declared here so it's in scope for the session-connected emit below
+    // vport_endpoints_json declared here so it's in scope for the session-connected emit below
     // (even when virtual ports are disabled)
-    let mut vport_pairs_json: Vec<serde_json::Value> = Vec::new();
+    let mut vport_endpoints_json: Vec<serde_json::Value> = Vec::new();
 
     // ── Virtual port pair creation + bridge thread setup ──
-    // TODO: Extract into setup_virtual_port_bridge() helper once the parameter
+    // TODO: Extract into setup_virtual_external_pathridge() helper once the parameter
     // surface stabilizes (currently touches vpm, session_store, app, bridge channel).
     if virtual_enabled && virtual_count > 0 {
         let config = VirtualPortConfig {
@@ -535,17 +537,18 @@ async fn connect_session_serial(
         // 记录虚拟端口创建失败的真实原因，用于 `virtual-port-failed` 事件，避免
         // 用一句写死的 "driver not installed" 掩盖真实问题（如端口耗尽、UAC 被取消）。
         let mut vport_error: Option<String> = None;
-        let pairs: Vec<PortPair> = vpm
-            .create_pairs(&config)
+        let pairs: Vec<VirtualEndpoint> = vpm
+            .create_endpoints(&config)
             .or_else(|first_err| {
                 log::warn!("直接创建端口对失败: {}；尝试先安装驱动...", first_err);
-                vpm.install_driver().and_then(|_| vpm.create_pairs(&config))
+                vpm.install_driver()
+                    .and_then(|_| vpm.create_endpoints(&config))
             })
             .unwrap_or_else(|e| {
                 let is_elevation = contains_elevation_indicator(&e);
                 if is_elevation && vpm.detect_driver() {
                     log::info!("驱动已安装，尝试通过 UAC 提权创建端口对...");
-                    match vpm.create_pairs_elevated(&config) {
+                    match vpm.create_endpoints_elevated(&config) {
                         Ok(pairs) => return pairs,
                         Err(elevated_err) => log::warn!("提权创建端口对也失败: {}", elevated_err),
                     }
@@ -557,18 +560,18 @@ async fn connect_session_serial(
         drop(vpm);
 
         // 序列化 pairs 供 session-connected 事件使用
-        vport_pairs_json = pairs
+        vport_endpoints_json = pairs
             .iter()
             .map(|p| {
                 serde_json::json!({
-                    "port_a": p.port_a,
-                    "port_b": p.port_b,
+                    "external_path": p.external_path,
                 })
             })
             .collect();
 
         if !pairs.is_empty() {
-            let virtual_port_names: Vec<String> = pairs.iter().map(|p| p.port_a.clone()).collect();
+            let virtual_port_names: Vec<String> =
+                pairs.iter().map(|p| p.bridge_path.clone()).collect();
             let (_bridge_tx, bridge_rx) = bridge
                 .take()
                 .expect("bridge must be Some when virtual_enabled is true");
@@ -592,20 +595,24 @@ async fn connect_session_serial(
             });
 
             // Extract baud rate from serial config for virtual port opening
-            let vport_baud_rate = params_clone
+            let vexternal_pathaud_rate = params_clone
                 .get("baud_rate")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as u32)
                 .unwrap_or(115200);
 
-            let vport_bridge =
-                VirtualPortBridge::spawn(virtual_port_names, vport_baud_rate, bridge_rx, write_tx);
+            let vexternal_pathridge = VirtualPortBridge::spawn(
+                virtual_port_names,
+                vexternal_pathaud_rate,
+                bridge_rx,
+                write_tx,
+            );
 
             {
                 let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
                 if let Some(handle) = store.get_session_mut(&session_id) {
-                    handle.virtual_port_bridge = Some(vport_bridge);
-                    handle.virtual_port_pairs = pairs.clone();
+                    handle.virtual_external_pathridge = Some(vexternal_pathridge);
+                    handle.virtual_endpoints = pairs.clone();
                 }
             }
 
@@ -614,7 +621,7 @@ async fn connect_session_serial(
                 "virtual-port-created",
                 serde_json::json!({
                     "session_id": session_id,
-                    "pairs": &vport_pairs_json,
+                    "endpoints": &vport_endpoints_json,
                 }),
             );
         } else {
@@ -681,7 +688,7 @@ async fn connect_session_serial(
             // 合并虚拟端口对信息到 session-connected 中，
             // 避免 virtual-port-created 事件先于 session-connected 到达
             // 前端时因 tab 尚未创建而丢失数据
-            "virtual_port_pairs": vport_pairs_json,
+            "virtual_endpoints": vport_endpoints_json,
         }),
     );
 
@@ -1033,7 +1040,7 @@ pub async fn disconnect_session(
         let handle = store
             .get_session(&session_id)
             .ok_or_else(|| store.session_not_found(&session_id))?;
-        let pairs = handle.virtual_port_pairs.clone();
+        let pairs = handle.virtual_endpoints.clone();
         let name = handle.name.clone();
         let is_tftp = handle.plugin_id == "tftp";
         let is_iperf = handle.plugin_id == "iperf";
@@ -1049,8 +1056,8 @@ pub async fn disconnect_session(
     if !pairs_to_destroy.is_empty() {
         if let Ok(mut vpm) = state.virtual_port_manager.lock() {
             for pair in &pairs_to_destroy {
-                let _ = vpm.destroy_pair(pair);
-                // destroy_pair 对权限错误返回 Ok(()) 但通过 mark_for_deferred_cleanup
+                let _ = vpm.destroy_endpoint(pair);
+                // destroy_endpoint 对权限错误返回 Ok(()) 但通过 mark_for_deferred_cleanup
                 // 将 bus 号写入 state 文件，后续统一 UAC 清理
             }
 
@@ -1060,7 +1067,7 @@ pub async fn disconnect_session(
                     "断开连接: {} 个端口对需要管理员权限，通过 UAC 批量清理...",
                     vpm.pending_orphan_count()
                 );
-                match vpm.cleanup_pairs_elevated() {
+                match vpm.cleanup_endpoints_elevated() {
                     Ok(cleaned) => {
                         log::info!("断开连接: 通过 UAC 成功清理 {} 个端口对", cleaned);
                     }
@@ -2004,6 +2011,31 @@ pub fn delete_credential(state: State<'_, AppState>, account: String) -> Result<
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn credential_storage_status(
+    state: State<'_, AppState>,
+) -> Result<crate::security::credential_store::CredentialStorageStatus, String> {
+    Ok(state.credential_store.status())
+}
+
+#[tauri::command]
+pub fn unlock_credential_vault(
+    state: State<'_, AppState>,
+    master_password: String,
+) -> Result<(), String> {
+    let master_password = zeroize::Zeroizing::new(master_password);
+    state
+        .credential_store
+        .unlock_fallback(&master_password)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn lock_credential_vault(state: State<'_, AppState>) -> Result<(), String> {
+    state.credential_store.lock_fallback();
+    Ok(())
+}
+
 // ── ConfigStore 命令 ────────────────────────────────
 
 #[tauri::command]
@@ -2312,7 +2344,7 @@ pub fn install_virtual_port_driver(
 
 /// 手动触发虚拟端口残留清理（通过 UAC 提权，单次弹窗）。
 ///
-/// 收集所有已知的残留 bus 号（active_pairs + com0com_state.json + 驱动真实状态），
+/// 收集所有已知的残留 bus 号（active_endpoints + com0com_state.json + 驱动真实状态），
 /// 通过单个提权的 PowerShell 脚本批量清理。
 ///
 /// 返回 `{ cleaned: N, message: "..." }`。
@@ -2348,7 +2380,7 @@ pub fn cleanup_virtual_ports(state: State<'_, AppState>) -> Result<serde_json::V
         "cleanup_virtual_ports: 直接清理完成 {} 个，剩余端口对需要 UAC 提权",
         direct_cleaned
     );
-    match vpm.cleanup_pairs_elevated() {
+    match vpm.cleanup_endpoints_elevated() {
         Ok(uac_cleaned) => {
             let total = direct_cleaned + uac_cleaned;
             Ok(serde_json::json!({

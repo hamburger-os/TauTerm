@@ -33,18 +33,14 @@ function findOne(suffix) {
 
 for (const suffix of [
   "_x64-setup.exe",
-  ".msi",
   ".deb",
   ".rpm",
   ".AppImage",
   "_aarch64.dmg",
-  "_x64.dmg",
   "_x64-setup.exe.sig",
   "_amd64.AppImage.sig",
   "_aarch64.app.tar.gz",
   "_aarch64.app.tar.gz.sig",
-  "_x64.app.tar.gz",
-  "_x64.app.tar.gz.sig",
 ]) {
   findOne(suffix);
 }
@@ -61,7 +57,6 @@ const updaterTargets = [
   ["windows-x86_64", "_x64-setup.exe"],
   ["linux-x86_64", "_amd64.AppImage"],
   ["darwin-aarch64", "_aarch64.app.tar.gz"],
-  ["darwin-x86_64", "_x64.app.tar.gz"],
 ];
 
 for (const [target, suffix] of updaterTargets) {

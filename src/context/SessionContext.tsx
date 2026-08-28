@@ -45,7 +45,7 @@ export interface TabInfo {
   /** 虚拟端口对数量（默认 1） */
   virtualPortCount?: number;
   /** 虚拟端口对列表（连接成功时后端推送） */
-  virtualPortPairs?: Array<{ port_a: string; port_b: string }>;
+  virtualVirtualEndpoints?: Array<{ bridge_path: string; external_path: string }>;
   /** 虚拟端口创建失败时的错误信息 */
   virtualPortError?: string;
   /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed），供前端本地化 */
@@ -148,7 +148,7 @@ type SessionAction =
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
   | { type: "UPDATE_TAB_ECHO"; id: string; localEcho: boolean }
   | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean; fileServiceEnabled?: boolean; fileServiceProtocol?: string }
-  | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: Array<{ port_a: string; port_b: string }> }
+  | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: Array<{ bridge_path: string; external_path: string }> }
   | { type: "SET_VPORT_ERROR"; id: string; error: string; kind?: string }
   | { type: "CLEAR_VPORT_ERROR"; id: string }
   | { type: "CLEAR_TABS" }
@@ -296,7 +296,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         ...state,
         tabs: state.tabs.map(tab =>
           tab.id === action.id
-            ? { ...tab, virtualPortPairs: action.pairs }
+            ? { ...tab, virtualVirtualEndpoints: action.pairs }
             : tab
         ),
       };
@@ -305,7 +305,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         ...state,
         tabs: state.tabs.map(tab =>
           tab.id === action.id
-            ? { ...tab, virtualPortError: action.error, virtualPortErrorKind: action.kind, virtualPortPairs: undefined }
+            ? { ...tab, virtualPortError: action.error, virtualPortErrorKind: action.kind, virtualVirtualEndpoints: undefined }
             : tab
         ),
       };
@@ -1130,11 +1130,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1b(); return; }
       unlisteners.push(u1b);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_port_pairs?: Array<{ port_a: string; port_b: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; is_container?: boolean; local_addr?: string | null }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_endpoints?: Array<{ bridge_path: string; external_path: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; is_container?: boolean; local_addr?: string | null }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
-          const vPairs = event.payload.virtual_port_pairs;
+          const vPairs = event.payload.virtual_endpoints;
           const parentId = event.payload.parent_id ?? null;
           const isContainer = event.payload.is_container ?? false;
           // UDP client 本端地址（连接后本机 ip:port）→ 独立状态，供侧栏端点行展示
@@ -1224,7 +1224,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 transferEnabled: event.payload.transfer_enabled ?? true,
                 transferProtocol: event.payload.transfer_protocol,
                 sendBarEnabled: event.payload.send_bar_enabled ?? true,
-                virtualPortPairs: vPairs,
+                virtualVirtualEndpoints: vPairs,
                 virtualPortEnabled: (event.payload.params?.virtual_port_enabled as boolean) ?? false,
                 virtualPortCount: (event.payload.params?.virtual_port_count as number) ?? 0,
                 fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean) ?? false,
@@ -1238,7 +1238,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2(); return; }
       unlisteners.push(u2);
 
-      const u2b = await listen<{ session_id: string; pairs: Array<{ port_a: string; port_b: string }> }>(
+      const u2b = await listen<{ session_id: string; pairs: Array<{ bridge_path: string; external_path: string }> }>(
         "virtual-port-created",
         (event) => {
           dispatch({
