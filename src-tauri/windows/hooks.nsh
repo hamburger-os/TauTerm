@@ -54,13 +54,15 @@
     ExecWait '"taskkill.exe" /F /IM msedgewebview2.exe /FI "COMMANDLINE eq *TauTerm*" /T' $0
 
     ; 服务是 LocalSystem 常驻进程，必须在复制 tauterm-service.exe 前停止。
-    ; stop 后再强制结束一次，确保文件句柄已释放；POSTINSTALL 随后按当前
-    ; 安装目录重新创建服务，避免旧 binPath / 旧二进制残留。
+    ; 此处只停止进程以释放文件锁，不提前删除 SCM 注册：删除动作留到
+    ; POSTINSTALL，避免 service marked-for-deletion 状态横跨文件复制阶段。
     ExecWait 'sc.exe stop TauTermService' $0
-    ExecWait '"taskkill.exe" /F /IM tauterm-service.exe /T' $0
-    Sleep 1000
-    ExecWait 'sc.exe delete TauTermService' $0
-    Sleep 500
+    StrCpy $R7 0
+    ${Do}
+      ExecWait '"taskkill.exe" /F /IM tauterm-service.exe /T' $0
+      Sleep 300
+      IntOp $R7 $R7 + 1
+    ${LoopWhile} $R7 < 5
   ${EndIf}
 !macroend
 
@@ -105,7 +107,20 @@
   ${If} $2 == 0
     ExecWait 'sc.exe stop TauTermService' $2
     ExecWait 'sc.exe delete TauTermService' $2
+
+    ; sc delete 可能短暂进入 MARKED_FOR_DELETE 状态；在 create 之前等待 SCM
+    ; 真正确认旧服务消失，否则紧接着 sc create 会偶发 1072。
+    StrCpy $R7 0
+    ${Do}
+      ExecWait 'sc.exe query TauTermService' $2
+      ${If} $2 <> 0
+        ${Break}
+      ${EndIf}
+      Sleep 250
+      IntOp $R7 $R7 + 1
+    ${LoopWhile} $R7 < 20
   ${EndIf}
+
   ExecWait 'sc.exe create TauTermService binPath= "$INSTDIR\tauterm-service.exe" start= delayed-auto' $2
   ${If} $2 != 0
     MessageBox MB_ICONEXCLAMATION \
