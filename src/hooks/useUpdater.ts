@@ -50,6 +50,10 @@ export function useUpdater(
     setUpdateInfo({ phase: "checking" });
     try {
       const update = await check({ timeout: isManual ? 15000 : 10000 });
+      // 只有真正从 updater endpoint 得到有效响应后才记录检查时间。
+      // 网络/manifest/签名配置错误不能吞掉未来 24h 的自动重试机会。
+      touchLastCheck();
+
       if (update) {
         updateObjRef.current = update;
         setUpdateInfo({
@@ -70,11 +74,10 @@ export function useUpdater(
       if (isManual) {
         setUpdateInfo({ phase: "error", error: String(e) });
       } else {
-        setUpdateInfo({ phase: "idle" }); // 自动检查静默失败
+        setUpdateInfo({ phase: "idle" }); // 自动检查静默失败，下次启动仍可重试
       }
     }
-    touchLastCheck();
-  }, []);
+  }, [tr]);
 
   // ── 下载更新 ──
   const handleDownloadUpdate = useCallback(async () => {
@@ -84,7 +87,7 @@ export function useUpdater(
       await handleCheckUpdate(false);
       update = updateObjRef.current;
     }
-    if (!update) return; // 仍无可用更新（已是最新版本）
+    if (!update) return; // 仍无可用更新（已是最新版本或检查失败）
 
     setUpdateInfo(prev => ({
       ...prev,
@@ -112,6 +115,8 @@ export function useUpdater(
             break;
         }
       });
+      // Windows 成功启动 NSIS updater 后 Tauri 会直接退出进程；
+      // macOS/Linux 会返回到这里，等待用户重启进入新版本。
       setUpdateInfo(prev => ({ ...prev, phase: "ready" }));
     } catch (e) {
       setUpdateInfo(prev => ({
@@ -122,7 +127,7 @@ export function useUpdater(
     }
   }, [handleCheckUpdate]);
 
-  // ── 安装并重启 ──
+  // ── 安装完成后重启（macOS/Linux）；Windows 正常更新时会在此前退出 ──
   const handleInstallUpdate = useCallback(async () => {
     try {
       await relaunch();
@@ -153,7 +158,6 @@ export function useUpdater(
       }, 3000);
       return () => clearTimeout(timer);
     }
-    // handleCheckUpdate is stable (useCallback with [])
   }, [handleCheckUpdate]);
 
   return {
