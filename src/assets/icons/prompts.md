@@ -1,7 +1,7 @@
 # TauTerm Icon Generation Prompts / 图标生成提示词
 
 > **开发者**: 图标组件用法详见 `src/components/common/Icon.tsx` 源码注释。
-> 三级渲染体系：Tier 1 (PNG mask-image, 50个) / Tier 2 (CSS 状态圆点, 4个) / Tier 3 (内联 SVG, 11个含 plus)。
+> 三级渲染体系：Tier 1 (PNG mask-image, 51个，含 plus) / Tier 2 (CSS 状态圆点, 5个) / Tier 3 (内联 SVG, 3个)。
 > 尺寸预设: xs=12 / sm=14 / md=18 / lg=24 / xl=36 / 2xl=48（像素）。
 > **规则**: PNG 图标最小 `sm` (14px)，SVG 图标可在 `xs` (12px) 使用。
 > `color` prop 为 PNG 切换 mask-image 模式（主题适配），省略则渲染 `<img>` 保留原始玻璃质感。
@@ -37,9 +37,9 @@
 
 ## 图标提示词 / Icon Prompts
 
-以下 50 个图标均为 TauTerm 液态玻璃主题独立设计的 UI 功能图标。每个图标的设计从**功能语义**出发，以 TauTerm 的视觉语言（圆润胶囊描边、有机流体曲线、磨砂玻璃质感）为统一表达，而非对 emoji 或其他图标集的模仿。设计方案优先考虑：在 UI 中 18×18px 的可辨识性、与液态玻璃主题的视觉融合度、以及图标集的整体风格一致性。
+以下 51 个图标均为 TauTerm 液态玻璃主题独立设计的 UI 功能图标。每个图标的设计从**功能语义**出发，以 TauTerm 的视觉语言（圆润胶囊描边、有机流体曲线、磨砂玻璃质感）为统一表达，而非对 emoji 或其他图标集的模仿。设计方案优先考虑：在 UI 中 18×18px 的可辨识性、与液态玻璃主题的视觉融合度、以及图标集的整体风格一致性。
 
-The following 50 icons are purpose-built UI functional icons for TauTerm's liquid glass theme. Each icon design starts from its **functional semantics**, expressed through TauTerm's visual language (rounded capsule strokes, organic fluid curves, frosted glass texture) — not as imitations of emoji or other icon sets. Design priorities: recognizability at 18×18px in UI, visual cohesion with the liquid glass theme, and stylistic consistency across the entire icon set.
+The following 51 icons are purpose-built UI functional icons for TauTerm's liquid glass theme. Each icon design starts from its **functional semantics**, expressed through TauTerm's visual language (rounded capsule strokes, organic fluid curves, frosted glass texture) — not as imitations of emoji or other icon sets. Design priorities: recognizability at 18×18px in UI, visual cohesion with the liquid glass theme, and stylistic consistency across the entire icon set.
 
 ### 1. logo — 应用 Logo + 运行图标
 
@@ -65,6 +65,22 @@ A premium App icon for a tech terminal application "TauTerm", 256×256 pixels. S
 
 **English prompt:**
 A liquid glass style electric plug icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Plug shape is minimal geometric but soft — two rounded prongs extending from a rounded body, with an arc cable on the right side. All stroke ends rounded, all corners heavily filleted. Style reference: frosted glass texture, liquid pill strokes.
+
+**技术参数：** 256×256, frosted glass, black bg, PNG-24
+
+---
+
+### 3. lock — 安全锁定
+
+**中文提示词：**
+
+一个液态玻璃风格的安全锁图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与自然折射，256×256像素。设计：一个居中的圆角锁体，上方连接一枚宽厚圆润的 U 形锁梁；锁体保持纯净简洁，不要钥匙孔、锁孔或任何微小符号。锁梁与锁体自然融合，所有轮廓和端点都使用饱满圆角与均匀粗描边，不要尖锐棱角。造型简洁现代，在 18×18px 小尺寸下仍可清晰辨识为“安全/锁定”。风格参考：磨砂玻璃质感、液态胶囊描边、安全设置图标。
+
+**English prompt:**
+
+A liquid glass style security lock icon, 3D glass sculpture on a pure black background, rendered in frosted translucent liquid glass with bright edge highlights and natural refractions, 256×256 pixels. Design: a centered rounded lock body with a thick, softly rounded U-shaped shackle above it; keep the body clean and minimal with no keyhole, no lock hole, and no tiny symbols. The shackle blends naturally into the body; all outlines, ends, and corners are generously rounded with even thick strokes and no sharp edges. Clean modern form, clearly recognizable as “security/locked” at 18×18px. Style reference: frosted glass texture, liquid capsule strokes, security settings icon.
+
+**使用位置：** `src/assets/icons/lock.png` — 设置页面「安全」分类导航图标，以及凭据 vault 的解锁/锁定操作按钮
 
 **技术参数：** 256×256, frosted glass, black bg, PNG-24
 
@@ -688,7 +704,7 @@ A liquid glass style document/file icon, 3D glass sculpture on pure black backgr
 
 ### 图标质量
 
-- [ ] 所有 50 个图标风格统一（描边粗细、圆角程度、视觉密度）
+- [ ] 所有 51 个图标风格统一（描边粗细、圆角程度、视觉密度）
 - [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
 - [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
 - [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI
@@ -696,7 +712,7 @@ A liquid glass style document/file icon, 3D glass sculpture on pure black backgr
 
 ### 部署
 
-1. 将所有 50 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
+1. 将所有 51 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
 2. 运行部署脚本，一键将 logo 同步到 App 图标位置：
 
 ```bash

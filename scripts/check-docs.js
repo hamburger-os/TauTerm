@@ -9,6 +9,7 @@
  *  4. CHANGELOG.md 为 Keep a Changelog 格式且含版本段
  *  5. README 篇幅警告（> 400 行）
  *  6. i18n 语言文件 en-US.json / zh-CN.json 的 key 集合一一对应
+ *  7. SecuritySettings.tsx 静态引用的 settings.security* key 在两份语言文件中均存在
  *
  * 用法：node scripts/check-docs.js [--root <repo-root>]
  * 退出码：0 = 通过，1 = 存在错误
@@ -28,11 +29,15 @@ const DOC_FILES = [
   'README.zh-CN.md',
   'docs/ARCHITECTURE.md',
   'docs/BUILDING.md',
+  'docs/RELEASING.md',
+  'docs/SUPPORTED_PLATFORMS.md',
+  'docs/LAUNCH.md',
   'CONTRIBUTING.md',
   'CHANGELOG.md',
 ];
 
 const BANNED = /MobaXterm|WindTerm|VOFA\+?|Tabby|Electron/i;
+const CHECK_COUNT = 7;
 
 const errors = [];
 const warnings = [];
@@ -130,6 +135,20 @@ function checkI18n() {
   const onlyZh = [...zhSet].filter((k) => !enSet.has(k)).sort();
   if (onlyEn.length) fail(`en-US.json 存在 zh-CN.json 缺失的 key（${onlyEn.length}）: ${onlyEn.join(', ')}`);
   if (onlyZh.length) fail(`zh-CN.json 存在 en-US.json 缺失的 key（${onlyZh.length}）: ${onlyZh.join(', ')}`);
+
+  const securitySource = read('src/components/Settings/panels/SecuritySettings.tsx');
+  if (!securitySource) return;
+  const securityKeys = [...securitySource.matchAll(/\bt\(\s*["'](settings\.security[^"']+)["']\s*[,)]/g)]
+    .map((match) => match[1]);
+  const uniqueSecurityKeys = [...new Set(securityKeys)].sort();
+  if (uniqueSecurityKeys.length === 0) {
+    fail('SecuritySettings.tsx: 未找到静态 settings.security* 翻译引用');
+    return;
+  }
+  const missingEn = uniqueSecurityKeys.filter((key) => !enSet.has(key));
+  const missingZh = uniqueSecurityKeys.filter((key) => !zhSet.has(key));
+  if (missingEn.length) fail(`SecuritySettings.tsx 引用的 key 在 en-US.json 中缺失（${missingEn.length}）: ${missingEn.join(', ')}`);
+  if (missingZh.length) fail(`SecuritySettings.tsx 引用的 key 在 zh-CN.json 中缺失（${missingZh.length}）: ${missingZh.join(', ')}`);
 }
 
 function main() {
@@ -186,8 +205,8 @@ function main() {
   checkI18n();
 
   // 输出
-  const passCount = 6 - errors.length;
-  console.log(`check-docs: ${passCount}/6 项通过`);
+  const passCount = errors.length === 0 ? CHECK_COUNT : Math.max(0, CHECK_COUNT - errors.length);
+  console.log(`check-docs: ${passCount}/${CHECK_COUNT} 项通过`);
   for (const e of errors) console.log(`  ✗ ${e}`);
   for (const w of warnings) console.log(`  ⚠ ${w}`);
   if (errors.length === 0) {

@@ -53,11 +53,12 @@ import sshShellPng from "../../assets/icons/ssh-shell.png";
 import clipboardPng from "../../assets/icons/clipboard.png";
 import pastePng from "../../assets/icons/paste.png";
 import filePng from "../../assets/icons/file.png";
+import lockPng from "../../assets/icons/lock.png";
 
 // ── PNG URL Mapping ───────────────────────────────────────────
 // Must be defined before IconName type so PNG key list can be derived
 
-const PNG_MAP: Record<string, string> = {
+const PNG_MAP = {
   logo: logoPng,
   plug: plugPng,
   pin: pinPng,
@@ -108,9 +109,10 @@ const PNG_MAP: Record<string, string> = {
   "ssh-shell": sshShellPng,
   clipboard: clipboardPng,
   paste: pastePng,
-};
+  lock: lockPng,
+} satisfies Record<string, string>;
 
-// ── Preload: 模块加载时提前下载所有 44 个 PNG 图标到浏览器缓存 ──
+// ── Preload: 模块加载时提前下载所有 51 个 PNG 图标到浏览器缓存 ──
 // 使用 new Image() 在 JS 解析阶段立即发起下载，避免 React 渲染 <img>
 // 标签后才开始请求导致的"弹入"延迟。到渲染时图片已在缓存中，即时显示。
 for (const pngUrl of Object.values(PNG_MAP)) {
@@ -122,19 +124,26 @@ for (const pngUrl of Object.values(PNG_MAP)) {
 /** 从 PNG_MAP 的键推导，避免与常量集不同步 */
 type PngIconName = keyof typeof PNG_MAP;
 
-/** 所有图标名称的联合类型 */
-export type IconName =
-  // Tier 1: PNG mask-image (keyof PNG_MAP → 46 icons)
+type KnownIconName =
+  // Tier 1: PNG mask-image (keyof PNG_MAP → 51 icons)
   | PngIconName
-  // Tier 2: CSS status dots (4 icons)
+  // Tier 2: CSS status dots (5 icons)
   | "status-connected"
   | "status-disconnected"
   | "status-connecting"
+  | "status-transferring"
   | "status-idle"
   // Tier 3: Inline SVG — title bar window controls only (3 icons)
   | "window-minimize"
   | "window-maximize"
   | "window-restore";
+
+/** 所有图标名称的联合类型 */
+export type IconName =
+  | KnownIconName
+  // Callers may provide runtime-derived icon names; unknown values render
+  // as the existing empty fallback while known names retain autocomplete.
+  | (string & {});
 
 /** 预设尺寸映射到 CSS 像素值 */
 const SIZE_MAP: Record<string, number> = {
@@ -167,12 +176,21 @@ export interface IconProps extends HTMLAttributes<HTMLElement> {
 
 // ── Status Dot Class Mapping ──────────────────────────────────
 
-const STATUS_CLASS_MAP: Record<string, string> = {
+const STATUS_CLASS_MAP: Record<Extract<KnownIconName, `status-${string}`>, string> = {
   "status-connected": styles.statusConnected,
   "status-disconnected": styles.statusDisconnected,
   "status-connecting": styles.statusConnecting,
+  "status-transferring": styles.statusConnecting,
   "status-idle": styles.statusIdle,
 };
+
+function isStatusIconName(name: string): name is keyof typeof STATUS_CLASS_MAP {
+  return Object.prototype.hasOwnProperty.call(STATUS_CLASS_MAP, name);
+}
+
+function isPngIconName(name: string): name is PngIconName {
+  return Object.prototype.hasOwnProperty.call(PNG_MAP, name);
+}
 
 // ── Component ─────────────────────────────────────────────────
 
@@ -180,8 +198,8 @@ const STATUS_CLASS_MAP: Record<string, string> = {
  * 统一图标组件
  *
  * 三种内部渲染策略：
- * - Tier 1 (44 个): CSS mask-image / <img> 渲染 PNG，通过 currentColor 自动适配主题
- * - Tier 2 (4 个):  纯 CSS 状态圆点 + 主题色发光
+ * - Tier 1 (51 个，含 plus): CSS mask-image / <img> 渲染 PNG，通过 currentColor 自动适配主题
+ * - Tier 2 (5 个):  纯 CSS 状态圆点 + 主题色发光
  * - Tier 3 (3 个):  内联 SVG（仅顶栏窗口控制按钮）
  *
  * @example
@@ -211,7 +229,7 @@ export default function Icon({
   };
 
   // ── Tier 2: CSS Status Dots ──────────────────────────────
-  if (name in STATUS_CLASS_MAP) {
+  if (isStatusIconName(name)) {
     const dotClass = STATUS_CLASS_MAP[name];
     return (
       <span
@@ -225,7 +243,7 @@ export default function Icon({
   }
 
   // ── Tier 1: PNG Mask-Image ──────────────────────────────
-  if (name in PNG_MAP) {
+  if (isPngIconName(name)) {
     const pngUrl = PNG_MAP[name];
     // 显式传入 color 时使用 mask-image（主题自适应着色）
     if (color) {

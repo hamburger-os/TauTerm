@@ -6,12 +6,12 @@
 
 | 组件 | 版本要求 | 说明 |
 |------|---------|------|
-| **Node.js** | >= 18 | 前端运行时与包管理器 |
-| **Rust** | >= 1.96 (推荐) / >= 1.75 (最低) | 后端编译工具链 |
-| **npm** | >= 9 | 随 Node.js 附带 |
+| **Node.js** | 22.x | 前端运行时与包管理器（CI 与发布工作流固定使用 Node 22） |
+| **Rust** | **1.98.0** | 由 `rust-toolchain.toml` 精确锁定，包含 clippy 与 rustfmt |
+| **npm** | 随 Node.js 22 附带 | 依赖安装与脚本运行 |
 | **NSIS** | >= 3.0 | Windows 安装包构建工具（仅 Windows 构建需要） |
 
-> **注意**: Rust 1.96+ 内置 `rust-lld` 链接器，在 Windows 上**无需额外安装 Visual Studio Build Tools**。如果使用较低版本 Rust，则需要安装 VS Build Tools 提供 MSVC 链接器。
+> **注意**：请使用仓库锁定的 Rust 1.98.0。Windows 构建仍需要可用的 MSVC/Windows SDK 环境；Rust 工具链本身不替代这些系统组件。
 
 ---
 
@@ -19,17 +19,17 @@
 
 ### 1. 安装 Node.js
 
-从 [nodejs.org](https://nodejs.org/) 下载 LTS 版本安装，或使用 winget：
+从 [nodejs.org](https://nodejs.org/) 安装 Node.js 22，或使用 winget：
 
 ```powershell
-winget install --id OpenJS.NodeJS.LTS --source winget
+winget install --id OpenJS.NodeJS --source winget
 ```
 
 验证安装：
 
 ```powershell
-node --version   # 应输出 >= v18.0.0
-npm --version    # 应输出 >= 9.0.0
+node --version   # 应输出 v22.x
+npm --version
 ```
 
 ### 2. 安装 Rust
@@ -40,30 +40,30 @@ npm --version    # 应输出 >= 9.0.0
 winget install --id Rustlang.Rustup --source winget
 ```
 
-安装完成后，**重新打开终端**使环境变量生效，然后设置默认工具链：
+安装完成后，**重新打开终端**使环境变量生效。仓库根目录的 `rust-toolchain.toml` 会让 rustup 自动选择 1.98.0；也可以显式安装该工具链：
 
 ```powershell
-rustup default stable
+rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
 ```
 
 > **下载慢？** 可设置国内镜像源加速：
 > ```powershell
 > $env:RUSTUP_DIST_SERVER = "https://mirrors.ustc.edu.cn/rust-static"
-> rustup default stable
+> rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
 > ```
 
 验证安装：
 
 ```powershell
-rustc --version   # 应输出 >= rustc 1.75.0
-cargo --version   # 应输出 >= cargo 1.75.0
+rustc --version   # 应输出 rustc 1.98.0
+cargo --version   # 对应 1.98.0
 ```
 
 ### 3. 链接器
 
-**使用 Rust 内置的 rust-lld**
+**工具链组件**
 
-Rust 1.96+ 自带 LLVM 链接器 `rust-lld`，无需额外安装，编译器会自动使用。
+Rust 1.98.0 工具链包含仓库所需的 `rustfmt` 与 `clippy` 组件；具体链接器与 Windows SDK/MSVC 环境取决于目标平台。
 
 ---
 
@@ -80,9 +80,12 @@ sudo apt install -y \
   librsvg2-dev \
   patchelf \
   libssl-dev \
-  libkeyring-dev
+  libgtk-3-dev \
+  libsoup-3.0-dev \
+  libjavascriptcoregtk-4.1-dev \
+  libudev-dev
 
-# 安装 Node.js（使用 NodeSource）
+# 安装 Node.js 22（使用 NodeSource）
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
 
@@ -123,15 +126,14 @@ sudo pacman -S --needed \
 # 安装 Xcode Command Line Tools
 xcode-select --install
 
-# 安装 Node.js（使用 Homebrew）
-brew install node
+# 安装 Node.js 22（使用 Homebrew）
+brew install node@22
 
 # 安装 Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 
-# 虚拟串口桥接依赖（socat）
-brew install socat
+# Linux/macOS 虚拟串口桥接由 TauTerm 进程内创建 POSIX PTY，无需额外 helper
 ```
 
 ---
@@ -142,10 +144,10 @@ brew install socat
 
 ```powershell
 # Windows (PowerShell)
-node --version   # >= 18
-npm --version    # >= 9
-rustc --version  # >= 1.75
-cargo --version  # >= 1.75
+node --version   # v22.x
+npm --version
+rustc --version  # 1.98.0
+cargo --version  # 1.98.0
 
 # Linux / macOS
 node --version && npm --version && rustc --version && cargo --version
@@ -221,10 +223,10 @@ npm run tauri:build
 1. `check-com0com.js` — 验证 `resources/com0com/x64/` 和 `x86/` 中驱动文件齐全（setupc.exe, com0com.sys, com0com.inf, com0com.cat）
 2. `check-reserved-region.js` — 校验 `scripts/test-serial-session.py` 与 `src-tauri/src/virtual_port/manager.rs` 的 com0com 预留端口/bus 段常量一致，避免测试脚本与产品的虚拟串口互占/互删
 3. `tsc && vite build` — 前端 TypeScript 编译 + Vite 打包
-4. `build.rs` — 根据目标架构（x86_64 → x64, i686 → x86）将 7 个驱动文件复制到打包根目录；同时为服务二进制创建占位文件（满足 tauri-build 对资源路径的校验）
-5. `cargo build --release` — Rust 后端编译（产出主程序 `tauterm.exe` 与特权服务 `tauterm-service.exe`）
-6. `prepare-service-bin.js` — 将 `target/release/tauterm-service.exe` 复制到 `src-tauri/binaries/`（打包资源）
-7. **NSIS 打包** — 生成安装程序，内含 com0com 驱动文件 + 服务二进制 + post-install hook（安装时自动执行 `setupc.exe install` 并注册 `TauTermService`）
+4. `build.rs` — Windows 下按目标架构（x86_64 → x64，i686 → x86）复制 7 个驱动文件，并创建服务资源占位文件供 `tauri-build` 校验；非 Windows 不创建服务占位文件
+5. `cargo build --release` — Rust 后端编译，产出主程序 `tauterm.exe` 与 Windows 专用 `tauterm-service.exe`
+6. `prepare-service-bin.js` — Windows 打包前将服务二进制复制到 `src-tauri/binaries/`；非 Windows 跳过
+7. **NSIS 打包** — 生成 x64 安装程序，内含 com0com 驱动、服务二进制与 NSIS hooks；安装时执行驱动安装并注册 `TauTermService`
 
 > **平台差异**：服务二进制资源（`binaries/tauterm-service.exe`）仅声明在 `tauri.windows.conf.json` 的 `bundle.resources` 中（与基础 `tauri.conf.json` 合并），Linux/macOS 构建不会引用该文件，`build.rs` 的占位文件也只在 Windows 创建，因此非 Windows 平台可正常构建。
 
@@ -232,8 +234,7 @@ npm run tauri:build
 
 ```
 src-tauri/target/release/bundle/nsis/
-├── TauTerm_<version>_x64-setup.exe    # NSIS 安装程序（推荐分发）
-└── TauTerm_<version>_x64_en-US.msi    # WiX MSI 安装包
+└── TauTerm_<version>_x64-setup.exe    # NSIS 安装程序（当前 Windows 发布产物）
 ```
 
 **安装程序行为**：
@@ -259,7 +260,7 @@ npm run tauri build
 
 > **驱动版本**：Windows 使用 com0com v3.0.0.0（GPL 开源内核驱动），支持 Windows 10/11 x64/x86。详细的 com0com 使用与故障排查请参考 [tauterm-com0com skill](../.agents/skills/tauterm-com0com/SKILL.md)。
 
-> **非 Windows 平台**：Linux/macOS 使用用户态 `socat` 创建虚拟 PTY 对（无需内核驱动）。Linux 安装 `sudo apt install socat`；macOS 安装 `brew install socat`。缺失时应用会提示安装命令。
+> **非 Windows 平台**：Linux/macOS 使用 `src-tauri/src/virtual_port/pty.rs` 中的进程内 POSIX PTY 后端创建端点。无需 `socat`、Homebrew helper、shell `PATH` 配置、`/tmp` 符号链接或外部 helper 进程。该桥接传输字节流，不模拟硬件 UART 的波特率、调制解调器控制线或电气行为。
 
 虚拟串口功能**默认开启**，连接串口时自动创建端口对。基本使用流程：
 
@@ -268,8 +269,8 @@ npm run tauri build
 3. **外部工具读取**：用任意串口工具（如 SSCOM、Putty、Python `pyserial`）打开端口 B（COM23），即可实时接收物理串口的数据
 4. **外部工具写入**：外部工具向端口 B 写入的数据会自动转发到物理串口，实现双向桥接
 5. **断开自动清理**：断开串口或关闭 TauTerm 时，自动删除所有虚拟端口对
-6. **手动清理残留**：状态栏右侧常驻 `[清理残留端口]` 按钮，点击可触发 UAC 提权批量清理所有已知残留端口对
+6. **手动清理残留**：状态栏右侧常驻 `[清理残留端口]` 按钮，点击可触发服务或 UAC 回退路径批量清理已知残留端口对
 
 > **注意**：
 > - 首次使用需安装 com0com 内核驱动 — 安装 TauTerm 时由 NSIS 安装程序自动完成；若驱动被意外卸载，状态栏会显示 `VPort 未就绪 — 驱动未安装` 并提供 `[修复]` 按钮（服务模式下由服务安装，无 UAC；回退模式下触发 UAC 提权安装）
-> - **开发模式**：`npm run tauri dev` 启动的应用通常没有注册服务，虚拟端口操作走 UAC 回退路径。点击状态栏 `[清理残留端口]` 手动触发清理，或下次连接时自动由 UAC 批量清理
+> - **开发/便携模式**：如果未注册 `TauTermService`，虚拟端口操作走按需 UAC 回退路径。生产 NSIS 安装包通常通过 Windows 服务完成这些特权操作，主程序本身保持普通用户权限

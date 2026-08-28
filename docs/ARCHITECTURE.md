@@ -213,14 +213,15 @@ graph LR
     end
 
     CS -->|"主后端"| Keyring[keyring-rs<br/>macOS Keychain<br/>Windows Credential Manager<br/>Linux Secret Service]
-    CS -.->|"降级"| AES[AES-256-GCM<br/>加密文件]
+    CS -.->|"keyring 不可用时降级"| AES[Argon2id<br/>+ AES-256-GCM vault]
 ```
 
+- **凭据运行时语义**: `CredentialStore` 通过 `keyring::Entry::store_status()` 检测 OS 安全存储；可用时凭据与索引写入 Windows Credential Manager、macOS Keychain 或 Linux Secret Service。不可用时使用应用数据目录中的 `credentials.vault.json`，由 10 个字符以上主密码派生 Argon2id 密钥（64 MiB、3 次迭代、1 lane），再以 AES-256-GCM 认证加密；vault 密钥只保存在进程内，调用 lock 或进程退出即失效。SSH 连接表单没有自动写入凭据存储。
 - **主机密钥验证**: SSH `known_hosts` 管理，首次连接指纹确认，密钥变更安全警告
 - **TLS 证书固定**: TRDP / Telnet TLS 连接证书校验（规划中）
 - **日志脱敏**: 自动过滤密码、私钥、Token，输出 `[REDACTED]`
 - **代理转发控制**: SSH Agent Forwarding 默认禁用，需要显式确认
-- **最小权限模型（Windows 虚拟串口）**: 主程序以 `asInvoker`（普通用户）运行，特权 com0com 操作委托给 `LocalSystem` 服务 `TauTermService`；命名管道采用 SDDL 安全描述符，并通过 `GetNamedPipeClientProcessId` + `QueryFullProcessImageNameW` 校验调用方必须为 `tauterm.exe`，且只接受固定窄操作集（不透传任意 `setupc` 参数）
+- **最小权限模型（Windows 虚拟串口）**: 主程序以 `asInvoker`（普通用户）运行，特权 com0com 操作委托给 `LocalSystem` 服务 `TauTermService`；命名管道采用 SDDL 安全描述符，并通过 `GetNamedPipeClientProcessId` + `QueryFullProcessImageNameW` 校验调用方必须为安装目录中的 `tauterm.exe`，且只接受固定窄操作集（不透传任意 `setupc` 参数）。服务模式不写入磁盘状态，端口资源按驱动真实状态与客户端连接生命周期清理；开发/便携场景服务不可用时回退到按需 UAC。
 
 ---
 
@@ -236,7 +237,7 @@ graph LR
 | 异步运行时 | tokio |
 | 国际化 | i18next + react-i18next |
 | 样式方案 | CSS Modules + CSS 自定义属性 |
-| 安全存储 | keyring-rs + AES-256-GCM |
+| 安全存储 | OS keyring；不可用时 Argon2id + AES-256-GCM vault |
 | 自动更新 | tauri-plugin-updater + tauri-plugin-process |
 | 网络协议 | russh (纯 Rust async SSH) + russh-sftp + telnet (RFC 854) + tftpd + riperf3（vendored fork，iperf3，见 src-tauri/vendor/riperf3/VENDOR-NOTES.md）|
 | 脚本引擎 | mlua 0.10 (Lua 5.4, vendored) |
@@ -291,12 +292,13 @@ TauTerm/
 │   │   └── types.rs            # 传输共享类型
 │   │
 │   ├── security/               # 安全模块
-│   │   └── credential_store.rs # 凭据存储（keyring + AES 降级）
+│   │   └── credential_store.rs # 凭据存储（OS keyring + Argon2id/AES-256-GCM vault 降级）
 │   │
 │   ├── virtual_port/            # 虚拟串口模块（跨平台抽象）
 │   │   ├── mod.rs               # 模块声明与 re-export
-│   │   ├── backend.rs           # VirtualPortBackend trait（抽象接口，支持 com0com/socat/tty0tty）
-│   │   ├── manager.rs           # VirtualPort Manager（com0com 生命周期管理，直连/回退实现）
+│   │   ├── backend.rs           # VirtualPortBackend trait（平台无关抽象接口）
+│   │   ├── manager.rs           # Windows com0com 生命周期管理（服务/回退路径）
+│   │   ├── pty.rs               # Linux/macOS 进程内 POSIX PTY 后端
 │   │   ├── service_backend.rs   # ServiceBackend（Windows 特权服务客户端，named pipe 委托）
 │   │   └── bridge.rs            # VirtualPortBridge（后台线程，物理串口 ↔ 虚拟端口双向 I/O）
 │   │

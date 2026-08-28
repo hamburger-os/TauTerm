@@ -114,8 +114,9 @@ Choose a workspace appearance that fits the environment.
 - Session logging with rotation/expiry cleanup.
 - zh-CN / en-US runtime language switching.
 - Three Liquid Glass themes with a native-feeling Tauri v2 shell.
+- Credential storage prefers the OS keyring; when it is unavailable, an Argon2id + AES-256-GCM vault can be unlocked for the app session. Passwords entered in the SSH connection form are not saved automatically.
 
-> Credential persistence is being hardened for a future release. The current `master` credential-store implementation should not be described as OS-native persistent keyring storage until that work lands.
+TFTP configurations that listen beyond the local machine while allowing remote writes and overwrites require explicit confirmation before the server starts.
 
 ---
 
@@ -147,9 +148,9 @@ See **[Supported Platforms](docs/SUPPORTED_PLATFORMS.md)** for the exact support
 
 TauTerm moves quickly. The packaged release is the safest way to try the project; `master` contains newer work that may not have shipped yet.
 
-- **v0.5.0 target — Networking & least-privilege security:** TCP/UDP Network Debug session, Telnet, iPerf2/iPerf3, session-level character-set transcoding and a remote journald viewer. On Windows the app runs as a standard (non-admin) user with privileged virtual-port operations delegated to a LocalSystem service.
+- **v0.5.0 — released:** TCP/UDP Network Debug session, Telnet, iPerf2/iPerf3, session-level character-set transcoding, a remote journald viewer, and least-privilege Windows virtual-port handling. The app runs as a standard (non-admin) user with privileged operations delegated to a LocalSystem service.
 - **v0.4.0 — First Public Tech Preview:** serial, SSH/SFTP, transfer subsystem, Lua/auto-reply workflow, terminal/search, logging, settings, i18n and the core microkernel/plugin architecture.
-- **Current `master`:** continues expanding networking, security and workflow features beyond v0.5.
+- **Current `master`:** includes post-v0.5 updater/release hardening, OS-keyring-first credential storage with an encrypted vault fallback, an in-process POSIX PTY bridge for Linux/macOS, and follow-up fixes; packaged artifacts may lag behind it.
 - **Roadmap:** local shell, SSH tunnels/jump hosts, session grouping, FTP, recording/split panes, plugin SDK work and more.
 
 See **[CHANGELOG.md](CHANGELOG.md)** for release-by-release details.
@@ -175,11 +176,10 @@ See **[CHANGELOG.md](CHANGELOG.md)** for release-by-release details.
 ## Roadmap
 
 ```text
-v0.5  TCP/UDP network debugging, Telnet, iPerf2/3,
-      character-set transcoding, remote journald, least-privilege
-      Windows virtual-port service and native Unix PTY bridge
-v0.6  Credential/security hardening (native keyring + encrypted fallback),
-      local shell, session groups, SSH tunnels + jump hosts
+v0.5  Released: TCP/UDP network debugging, Telnet, iPerf2/3,
+      character-set transcoding, remote journald and
+      least-privilege Windows virtual-port service
+v0.6  Local shell, session groups, SSH tunnels + jump hosts
 v0.7  Network-debug polish, FTP, recording, split panes
 v1.0  GA: release-grade Windows/macOS/Linux validation,
       performance budget, plugin SDK docs, TRDP
