@@ -13,8 +13,15 @@ const specs = {
     expected: 2,
   },
   linux: {
-    suffixes: [".deb", ".rpm", ".AppImage", ".AppImage.sig"],
-    expected: 4,
+    suffixes: [
+      ".deb",
+      ".deb.sig",
+      ".rpm",
+      ".rpm.sig",
+      ".AppImage",
+      ".AppImage.sig",
+    ],
+    expected: 6,
   },
   "macos-arm": {
     suffixes: ["_aarch64.dmg", "_aarch64.app.tar.gz", "_aarch64.app.tar.gz.sig"],

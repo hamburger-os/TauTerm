@@ -205,7 +205,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- build --bundles deb,rpm,appimage
-      - name: Stage Linux release files
+      - name: Stage Linux release files and updater signatures
         run: node scripts/stage-release.js linux release-stage
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -308,10 +308,10 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Tag and publish release
+    name: Publish verified release
     needs: [prepare, assemble]
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     permissions:
       contents: write
     steps:
@@ -320,15 +320,25 @@ jobs:
           fetch-depth: 1
           ref: ${{ needs.prepare.outputs.source_sha }}
           persist-credentials: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-ready
           path: release-assets
-      - name: Create tag and publish only after all validation succeeds
+      - name: Install minisign
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq minisign
+      - name: Create, verify and promote release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           NOTES_FILE: ${{ needs.prepare.outputs.notes_file }}
@@ -336,10 +346,11 @@ jobs:
           set -euo pipefail
           CREATED_TAG=false
           CREATED_RELEASE=false
-          PUBLISHED=false
+          FINALIZED=false
           cleanup() {
             code=$?
-            if [ "$code" -ne 0 ] && [ "$PUBLISHED" != "true" ]; then
+            if [ "$code" -ne 0 ] && [ "$FINALIZED" != "true" ]; then
+              echo '::warning::Release validation failed; rolling back the release created by this run.'
               if [ "$CREATED_RELEASE" = "true" ]; then
                 gh release delete "$TAG" --yes --cleanup-tag=false >/dev/null 2>&1 || true
               fi
@@ -357,6 +368,7 @@ jobs:
             echo "::error::$TAG already exists."
             exit 1
           fi
+
           gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | \
             jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .draft == true and (.assets | length) == 0) | .id' | \
             while read -r id; do
@@ -364,6 +376,12 @@ jobs:
                 gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$id"
               fi
             done
+
+          BLOCKING="$(gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq --arg tag "$TAG" '[.[] | select(.tag_name == $tag)] | length')"
+          if [ "$BLOCKING" -ne 0 ]; then
+            echo "::error::A GitHub Release already exists for $TAG."
+            exit 1
+          fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -381,13 +399,44 @@ jobs:
 
           REMOTE_RELEASE=/tmp/tauterm-release.json
           gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" > "$REMOTE_RELEASE"
+          jq --arg tag "$TAG" --argjson prerelease "$PRERELEASE" -e '
+            .draft == true and
+            .prerelease == $prerelease and
+            .tag_name == $tag and
+            all(.assets[]; .size > 0)
+          ' "$REMOTE_RELEASE" >/dev/null
+
           find release-assets -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort > /tmp/local-assets.txt
           jq -r '.assets[].name' "$REMOTE_RELEASE" | LC_ALL=C sort > /tmp/remote-assets.txt
-          diff -u /tmp/local-assets.txt /tmp/remote-assets.txt
+          if ! diff -u /tmp/local-assets.txt /tmp/remote-assets.txt; then
+            echo '::error::Uploaded release asset set differs from the verified local artifact set.'
+            exit 1
+          fi
+
+          RELEASE_ID="$(jq -r .id "$REMOTE_RELEASE")"
+          test -n "$RELEASE_ID"
 
           if [ "$PRERELEASE" = "true" ]; then
-            gh release edit "$TAG" --draft=false --prerelease
+            # Pre-releases intentionally do not participate in the stable /releases/latest updater channel.
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -F draft=false -F prerelease=true -f make_latest=false >/dev/null
+            FINALIZED=true
           else
-            gh release edit "$TAG" --draft=false --prerelease=false --latest
+            # Make tag-scoped assets public first, but keep the previous stable
+            # release as /releases/latest until the public bytes are verified.
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -F draft=false -F prerelease=false -f make_latest=false >/dev/null
+
+            TAG_MANIFEST="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/latest.json"
+            node scripts/verify-published-updater.js "$TAG_MANIFEST" "$VERSION" "$TAG"
+
+            # Only a fully verified stable release may become the updater target.
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
+              -f make_latest=true >/dev/null
+
+            test "$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)" = "$TAG"
+
+            LATEST_MANIFEST="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/latest.json"
+            node scripts/verify-published-updater.js "$LATEST_MANIFEST" "$VERSION" "$TAG"
+            FINALIZED=true
           fi
-          PUBLISHED=true
