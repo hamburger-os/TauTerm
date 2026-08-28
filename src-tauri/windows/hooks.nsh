@@ -39,6 +39,28 @@
     ${LoopWhile} $R9 < ${_maxsec}
 !macroend
 
+; Tauri updater 以 /UPDATE 启动同一个 NSIS 安装器，并在更新模式下原地覆盖
+; 文件，而不会先运行旧版本卸载器。因此必须在 Tauri 模板复制新文件之前
+; 停掉 TauTermService；否则正在运行的 tauterm-service.exe 可能锁住旧文件，
+; 导致在线更新无法覆盖。该 hook 位于 Tauri 的 CheckIfAppIsRunning 和 File
+; 指令之前，fresh install 时这些命令均为无害 no-op。
+!macro NSIS_HOOK_PREINSTALL
+  DetailPrint "TauTerm: Preparing running components for install/update..."
+
+  ; updater 通过 ShellExecute 启动安装器后才退出当前 GUI 进程。这里再次
+  ; 结束主进程和 TauTerm 专属 WebView2 子进程，消除启动/退出之间的竞态。
+  ExecWait '"taskkill.exe" /IM tauterm.exe /F /T' $0
+  ExecWait '"taskkill.exe" /F /IM msedgewebview2.exe /FI "COMMANDLINE eq *TauTerm*" /T' $0
+
+  ; 服务是 LocalSystem 常驻进程，必须在复制 tauterm-service.exe 前停止。
+  ; stop 后再强制结束一次，确保文件句柄已释放；删除 SCM 注册由 POSTINSTALL
+  ; 随后按当前安装目录重新创建，避免旧 binPath / 旧二进制残留。
+  ExecWait 'sc.exe stop TauTermService' $0
+  ExecWait '"taskkill.exe" /F /IM tauterm-service.exe /T' $0
+  Sleep 1000
+  ExecWait 'sc.exe delete TauTermService' $0
+!macroend
+
 !macro NSIS_HOOK_POSTINSTALL
   DetailPrint "TauTerm: Installing com0com virtual serial port driver..."
 
