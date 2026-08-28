@@ -357,7 +357,6 @@ jobs:
             echo "::error::$TAG already exists."
             exit 1
           fi
-
           gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | \
             jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .draft == true and (.assets | length) == 0) | .id' | \
             while read -r id; do
@@ -372,7 +371,7 @@ jobs:
           git push origin "refs/tags/$TAG"
           CREATED_TAG=true
 
-          CREATE_ARGS=("$TAG" --target "$SOURCE_SHA" --title "TauTerm $TAG" --notes-file "$NOTES_FILE" --draft)
+          CREATE_ARGS=("$TAG" --target "$SOURCE_SHA" --title "$TAG" --notes-file "$NOTES_FILE" --draft)
           if [ "$PRERELEASE" = "true" ]; then
             CREATE_ARGS+=(--prerelease)
           fi
