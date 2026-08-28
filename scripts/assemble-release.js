@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -12,6 +20,9 @@ if (!/^v\d+\.\d+\.\d+(?:-(?:alpha|beta|rc)\.\d+)?$/.test(tag ?? "")) {
 }
 if (tag !== `v${version}`) {
   throw new Error(`Tag/version mismatch: ${tag} vs ${version}`);
+}
+if (!process.env.GITHUB_REPOSITORY) {
+  throw new Error("GITHUB_REPOSITORY is required to assemble updater URLs.");
 }
 
 function files() {
@@ -31,14 +42,31 @@ function findOne(suffix) {
   return matches[0];
 }
 
+function decodeTauriSignature(encoded, label) {
+  const compact = encoded.trim();
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(compact) || compact.length % 4 !== 0) {
+    throw new Error(`Updater signature is not valid base64: ${label}`);
+  }
+  const decoded = Buffer.from(compact, "base64").toString("utf8");
+  if (
+    !decoded.startsWith("untrusted comment:") ||
+    !decoded.includes("\ntrusted comment:")
+  ) {
+    throw new Error(`Updater signature does not contain a valid minisign signature box: ${label}`);
+  }
+  return decoded;
+}
+
 for (const suffix of [
   "_x64-setup.exe",
-  ".deb",
-  ".rpm",
-  ".AppImage",
-  "_aarch64.dmg",
   "_x64-setup.exe.sig",
-  "_amd64.AppImage.sig",
+  ".deb",
+  ".deb.sig",
+  ".rpm",
+  ".rpm.sig",
+  ".AppImage",
+  ".AppImage.sig",
+  "_aarch64.dmg",
   "_aarch64.app.tar.gz",
   "_aarch64.app.tar.gz.sig",
 ]) {
@@ -52,35 +80,56 @@ if (!publicKey?.startsWith("RW")) {
   throw new Error("Invalid Tauri updater public key.");
 }
 
-const platforms = {};
+// Tauri updater 2.10.1 first resolves {os}-{arch}-{installer}. v0.5.0 is
+// the first updater baseline, so publish exact bundle targets only and fail
+// closed if the installed bundle marker is unknown or damaged.
 const updaterTargets = [
-  ["windows-x86_64", "_x64-setup.exe"],
-  ["linux-x86_64", "_amd64.AppImage"],
-  ["darwin-aarch64", "_aarch64.app.tar.gz"],
+  ["windows-x86_64-nsis", "_x64-setup.exe"],
+  ["linux-x86_64-deb", "_amd64.deb"],
+  ["linux-x86_64-rpm", ".rpm"],
+  ["linux-x86_64-appimage", "_amd64.AppImage"],
+  ["darwin-aarch64-app", "_aarch64.app.tar.gz"],
 ];
 
-for (const [target, suffix] of updaterTargets) {
-  const artifact = findOne(suffix);
-  const signaturePath = `${artifact}.sig`;
-  if (statSync(signaturePath).size <= 0) {
-    throw new Error(`Updater signature is empty: ${basename(signaturePath)}`);
-  }
+const platforms = {};
+const verifyDir = mkdtempSync(join(tmpdir(), "tauterm-signature-verify-"));
+try {
+  for (const [target, suffix] of updaterTargets) {
+    const artifact = findOne(suffix);
+    const signaturePath = `${artifact}.sig`;
+    if (statSync(signaturePath).size <= 0) {
+      throw new Error(`Updater signature is empty: ${basename(signaturePath)}`);
+    }
 
-  const verify = spawnSync(
-    "minisign",
-    ["-Vm", artifact, "-P", publicKey, "-x", signaturePath],
-    { stdio: "inherit" },
-  );
-  if (verify.error) throw verify.error;
-  if (verify.status !== 0) {
-    throw new Error(`Updater signature verification failed for ${basename(artifact)}.`);
-  }
+    // Tauri CLI writes .sig as base64(SignatureBox text). The updater runtime
+    // expects that base64 form in latest.json, while minisign CLI expects the
+    // decoded SignatureBox text.
+    const encodedSignature = readFileSync(signaturePath, "utf8").trim();
+    const decodedSignaturePath = join(verifyDir, `${basename(artifact)}.minisig`);
+    writeFileSync(
+      decodedSignaturePath,
+      decodeTauriSignature(encodedSignature, basename(signaturePath)),
+      "utf8",
+    );
 
-  const name = basename(artifact);
-  platforms[target] = {
-    signature: readFileSync(signaturePath, "utf8").trim(),
-    url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${tag}/${name}`,
-  };
+    const verify = spawnSync(
+      "minisign",
+      ["-Vm", artifact, "-P", publicKey, "-x", decodedSignaturePath],
+      { stdio: "inherit" },
+    );
+    if (verify.error) throw verify.error;
+    if (verify.status !== 0) {
+      throw new Error(`Updater signature verification failed for ${basename(artifact)}.`);
+    }
+
+    const name = basename(artifact);
+    platforms[target] = {
+      signature: encodedSignature,
+      url: `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${tag}/${name}`,
+    };
+  }
+} finally {
+  rmSync(verifyDir, { recursive: true, force: true });
 }
 
 const latest = {
@@ -102,4 +151,6 @@ const checksums = checksumFiles
   .join("\n");
 writeFileSync(join(assetsDir, "SHA256SUMS"), `${checksums}\n`, "utf8");
 
-console.log(`🎉 Verified ${updaterTargets.length} updater artifacts and assembled ${files().length} release files.`);
+console.log(
+  `🎉 Verified ${updaterTargets.length} exact updater targets and assembled ${files().length} release files.`,
+);
