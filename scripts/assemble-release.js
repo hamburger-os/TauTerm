@@ -67,8 +67,8 @@ for (const suffix of [
   ".AppImage",
   ".AppImage.sig",
   "_aarch64.dmg",
-  "_aarch64.app.tar.gz",
-  "_aarch64.app.tar.gz.sig",
+  ".app.tar.gz",
+  ".app.tar.gz.sig",
 ]) {
   findOne(suffix);
 }
@@ -88,7 +88,9 @@ const updaterTargets = [
   ["linux-x86_64-deb", "_amd64.deb"],
   ["linux-x86_64-rpm", ".rpm"],
   ["linux-x86_64-appimage", "_amd64.AppImage"],
-  ["darwin-aarch64-app", "_aarch64.app.tar.gz"],
+  // Tauri 2.11 names the macOS updater archive after the .app bundle and
+  // does not include an architecture marker in the archive filename.
+  ["darwin-aarch64-app", ".app.tar.gz"],
 ];
 
 const platforms = {};
