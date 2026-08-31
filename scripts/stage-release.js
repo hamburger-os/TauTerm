@@ -24,7 +24,9 @@ const specs = {
     expected: 6,
   },
   "macos-arm": {
-    suffixes: ["_aarch64.dmg", "_aarch64.app.tar.gz", "_aarch64.app.tar.gz.sig"],
+    // Tauri 2.11 keeps the architecture marker on the DMG, but names the
+    // updater archive after the app bundle (for example TauTerm.app.tar.gz).
+    suffixes: ["_aarch64.dmg", ".app.tar.gz", ".app.tar.gz.sig"],
     expected: 3,
   },
 };
