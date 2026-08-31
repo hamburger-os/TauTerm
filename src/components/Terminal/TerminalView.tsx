@@ -670,7 +670,7 @@ export default function TerminalView() {
             initial={{ opacity: 0, y: -4 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            <Icon name="upload" size="sm" className={styles.transferBannerIcon} />
+            <Icon name="transfer-active" size="sm" className={styles.transferBannerIcon} />
             <span>{t("transfer.transferringBanner", "File transfer in progress...")}</span>
           </motion.div>
         )}

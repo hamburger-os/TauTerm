@@ -36,8 +36,8 @@ export const networkProfile: ProfileResolver = (tab: TabInfo): SessionProfile =>
   return {
     identity: [
       { label: "session.renameSession", value: tab.name, icon: "tag" },
-      { label: "connectionType.label", value: "network.name", icon: "plug" },
-      { label: "network.peer", value: tab.endpoint, icon: "pin" },
+      { label: "connectionType.label", value: "network.name", icon: "connection" },
+      { label: "network.peer", value: tab.endpoint, icon: "endpoint" },
       {
         label: "session.status",
         value: statusValue(tab.state),
@@ -53,7 +53,7 @@ function statusIconName(state: string): IconName {
     case "connected": return "status-connected";
     case "disconnected": return "status-disconnected";
     case "connecting": return "status-connecting";
-    case "transferring": return "status-connecting";
+    case "transferring": return "status-transferring";
     default: return "status-idle";
   }
 }

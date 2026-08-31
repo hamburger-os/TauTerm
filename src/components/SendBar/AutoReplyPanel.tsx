@@ -497,7 +497,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
                   onPointerCancel={handlePointerCancel}
                   style={{ touchAction: 'none' }}
                 >
-                  <Icon name="drag-handle" size={16} color="currentColor" />
+                  <Icon name="drag-handle" size={16} />
                 </span>
                 <label className={styles.checkLabel}>
                   <input
@@ -528,7 +528,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
                 )}
                 {rule.triggerType === "timer" && (
                   <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={t("sendBar.triggerTypeTimer")}>
-                    <Icon name="stopwatch" size="xs" color="currentColor" />
+                    <Icon name="stopwatch" size="xs" />
                   </span>
                 )}
                 {rule.triggerType !== "timer" && rule.conditions.length === 1 && rule.conditions[0].mode === "regex" && (
@@ -536,18 +536,18 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
                 )}
                 {rule.actions.some(a => a.data.includes("{{")) && (
                   <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title="Macros">
-                    <Icon name="code" size="xs" color="currentColor" />
+                    <Icon name="code" size="xs" />
                   </span>
                 )}
                 {rule.actions.length > 0 && (
                   <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={t("sendBar.sequenceSummary", { count: rule.actions.length })}>
-                    <Icon name="log" size="xs" color="currentColor" />
+                    <Icon name="steps" size="xs" />
                     {rule.actions.length}
                   </span>
                 )}
                 {rule.cooldownMs > 0 && (
                   <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={`${t("sendBar.cooldownMs")}: ${rule.cooldownMs}ms`}>
-                    <Icon name="stopwatch" size="xs" color="currentColor" />
+                    <Icon name="stopwatch" size="xs" />
                   </span>
                 )}
                 <code

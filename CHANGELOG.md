@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Credential storage backends** — prefer the operating-system keyring (Windows Credential Manager, macOS Keychain, or Linux Secret Service); when it is unavailable, store credentials in an Argon2id-derived AES-256-GCM vault that must be unlocked for the current app session. SSH connection-form passwords are not persisted automatically.
+- **Least-privilege virtual ports** — Windows keeps the main app non-elevated and delegates com0com operations to the LocalSystem service; Unix uses an in-process PTY bridge.
+
+### Fixed
+- **Icon system semantic and small-size audit** — all 61 registered PNG assets now have an explicit production meaning and a 12px readability contract. Directional arrows, window controls, sidebars, file views, send mode and action steps now use dedicated assets; XMODEM no longer implies wireless activity; the file-manager control no longer presents a drag handle; status, log, copy/paste and transfer meanings are separated. The registry has no inline-SVG escape hatch, while CSS remains reserved for connection-status dots.
+- **Security settings localization and feedback** — the security panel localizes known backend labels and uses a safe localized fallback for unknown backends, while handling loading, refresh, unlock, lock, and status failures without exposing backend error text.
+- **Security settings icon and themed controls** — adds the security lock icon and aligns refresh, unlock, and lock controls with the shared secondary glass-button layout across themes.
+
+### Platforms
+- **Native Unix PTY bridge** — Linux and macOS no longer require `socat`, a shell `PATH` entry, a `/tmp` symlink, or an external helper process for virtual serial endpoints.
+
+### Release process
+- **Updater and release validation hardening** — release dispatch accepts one version input, derives pre-release status from `-alpha.N`, `-beta.N`, or `-rc.N`, validates the exact five updater targets and signatures, verifies tag-scoped assets before promoting a stable release to `latest`, and cleans up the release created by that run (whether draft or temporarily public) and its tag when final validation fails.
+
+### Protocols
+- **TFTP exposure confirmation** — starting a server that listens on a non-loopback interface with remote writes and overwrite enabled now requires explicit user confirmation; existing defaults remain unchanged for compatibility.
+
 ## [0.5.0] — 2026-08-26
 
 ### Security

@@ -9,6 +9,7 @@
 import { useRef } from "react";
 import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
+import type { IconName } from "../common/Icon";
 import type { SortField, SortDirection } from "./types";
 import type { FileViewProps } from "./FileViewProps";
 import FileRow from "./FileRow";
@@ -17,9 +18,9 @@ import styles from "./FileList.module.css";
 
 // ── Helpers ────────────────────────────────────────────
 
-function sortIcon(field: SortField, active: SortField | null, dir: SortDirection): string | null {
+function sortIcon(field: SortField, active: SortField | null, dir: SortDirection): IconName | null {
   if (field !== active) return null;
-  return dir === "asc" ? "chevron-up" : "chevron-down";
+  return dir === "asc" ? "arrow-up" : "arrow-down";
 }
 
 // ── Component ──────────────────────────────────────────

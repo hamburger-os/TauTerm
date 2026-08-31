@@ -1,0 +1,34 @@
+.panel {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.refreshRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.statusDetails {
+  display: grid;
+  gap: 8px;
+}
+
+.vaultForm {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.passwordInput {
+  width: 100%;
+  height: var(--select-height);
+}
+
+.vaultActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}

@@ -269,8 +269,8 @@ export default function StatusBar({
           priority: PRI.stats,
           node: (
             <div className={styles.stats}>
-              <span className={styles.statItem} title="TX"><Icon name="chevron-up" size="xs" /> {formatBytes(activeTab.stats.txBytes)} · {formatRate(rate.tx)}</span>
-              <span className={styles.statItem} title="RX"><Icon name="chevron-down" size="xs" /> {formatBytes(activeTab.stats.rxBytes)} · {formatRate(rate.rx)}</span>
+              <span className={styles.statItem} title="TX"><Icon name="arrow-up" size="xs" /> {formatBytes(activeTab.stats.txBytes)} · {formatRate(rate.tx)}</span>
+              <span className={styles.statItem} title="RX"><Icon name="arrow-down" size="xs" /> {formatBytes(activeTab.stats.rxBytes)} · {formatRate(rate.rx)}</span>
             </div>
           ),
         }
@@ -435,7 +435,7 @@ export default function StatusBar({
         {/* 下载进度 */}
         {updatePhase === "downloading" && downloadPercent !== null && (
           <span className={styles.downloadProgress}>
-            <Icon name="chevron-down" size="xs" />
+            <Icon name="arrow-down" size="xs" />
             {" "}{downloadPercent}%
           </span>
         )}

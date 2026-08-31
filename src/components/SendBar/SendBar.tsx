@@ -8,6 +8,7 @@ import AutoReplyPanel from "./AutoReplyPanel";
 import ScriptEditor from "./ScriptEditor";
 import TargetBar from "./TargetBar";
 import Icon from "../common/Icon";
+import type { IconName } from "../common/Icon";
 import type { SendBarMode } from "./types";
 import styles from "./SendBar.module.css";
 
@@ -66,9 +67,9 @@ function SendBarInner({ containerId, engineSessionId }: SendBarProps) {
     return () => { unlisten.then(fn => fn()); };
   }, [engineId, dispatch]);
 
-  const modeButtons: { mode: SendBarMode; icon: string; title: string }[] = [
-    { mode: "basic", icon: "upload", title: t("sendBar.basicMode") },
-    { mode: "command", icon: "command-panel", title: t("commandPanel.title") },
+  const modeButtons: { mode: SendBarMode; icon: IconName; title: string }[] = [
+    { mode: "basic", icon: "send", title: t("sendBar.basicMode") },
+    { mode: "command", icon: "commands", title: t("commandPanel.title") },
     { mode: "auto-reply", icon: "robot", title: t("sendBar.autoReplyMode") },
     { mode: "script", icon: "code", title: t("sendBar.scriptMode") },
   ];

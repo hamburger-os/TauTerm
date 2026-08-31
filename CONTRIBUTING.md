@@ -19,8 +19,8 @@ npm run tauri dev
 
 | Component | Version |
 |-----------|---------|
-| Node.js | >= 18 |
-| Rust | >= 1.75 |
+| Node.js | 22.x |
+| Rust | 1.98.0 (pinned in `rust-toolchain.toml`) |
 | npm | >= 9 |
 | NSIS | >= 3.0 (Windows only, for installer builds) |
 
@@ -32,8 +32,8 @@ The project follows a microkernel plugin architecture:
 - `src-tauri/src/channel/` — I/O abstraction layer (`Channel` / `AsyncChannel` traits)
 - `src-tauri/src/transfer/` — File transfer subsystem (three strategies)
 - `src-tauri/src/plugins/` — Built-in protocol plugins (Serial, SSH, TFTP, Telnet, iperf)
-- `src-tauri/src/virtual_port/` — Virtual serial port bridge (com0com on Windows, socat on Linux)
-- `src-tauri/src/security/` — Credential store (keyring + AES-256-GCM)
+- `src-tauri/src/virtual_port/` — Virtual serial port bridge (com0com on Windows, in-process `pty.rs` POSIX PTY on Unix; no `socat` required)
+- `src-tauri/src/security/` — Credential store (OS keyring with Argon2id/AES-256-GCM vault fallback)
 - `src/` — React frontend (TypeScript)
   - `src/core/` — Frontend kernel API (plugin registry, tab host, event bus)
   - `src/components/` — UI components

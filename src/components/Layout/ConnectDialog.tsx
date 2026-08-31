@@ -521,7 +521,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
             <>
               <div className={styles.configHeader}>
                 <button className={`${styles.backBtn} liquid-glass-button`} onClick={handleBack} disabled={connecting}>
-                  <Icon name="back-arrow" size="sm" /> {t("common.back")}
+                  <Icon name="arrow-left" size="sm" /> {t("common.back")}
                 </button>
                 <h2 className={styles.title}>
                   {(() => { const m = availableModes.find(m => m.id === selectedMode); return m ? <><Icon name={m.icon} size="md" />{" "}{m.description}</> : selectedMode; })()}
@@ -553,7 +553,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                           <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
                         ))}
                       </select>
-                      <button className={`${styles.iconBtn} liquid-glass-button`} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}><Icon name="refresh" size="md" color="var(--accent-primary)" /></button>
+                      <button className={`${styles.iconBtn} liquid-glass-button`} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}><Icon name="refresh" size="md" /></button>
                     </div>
                   </div>
 

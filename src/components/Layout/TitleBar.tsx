@@ -68,7 +68,7 @@ export default function TitleBar({ isMaximized }: TitleBarProps) {
         aria-label={t("titleBar.close")}
         title={t("titleBar.close")}
       >
-        <Icon name="close" size="sm" />
+        <Icon name="window-close" size="sm" />
       </button>
     </div>
   );

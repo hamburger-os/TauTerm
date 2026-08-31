@@ -15,8 +15,8 @@ export const tftpProfile: ProfileResolver = (tab: TabInfo): SessionProfile => {
   return {
     identity: [
       { label: "session.renameSession", value: tab.name, icon: "tag" },
-      { label: "connectionType.label", value: "connectionType.tftp", icon: "plug" },
-      { label: "tftp.listenAddr", value: `${listenIp}:${port}`, icon: "pin" },
+      { label: "connectionType.label", value: "connectionType.tftp", icon: "connection" },
+      { label: "tftp.listenAddr", value: `${listenIp}:${port}`, icon: "endpoint" },
       {
         label: "session.status",
         value: statusValue(tab.state),

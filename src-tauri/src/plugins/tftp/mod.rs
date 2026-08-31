@@ -31,13 +31,13 @@ pub struct TftpConfig {
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
     pub file_root: String,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", deserialize_with = "deserialize_bool")]
     pub write_enabled: bool,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", deserialize_with = "deserialize_bool")]
     pub overwrite: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool")]
     pub single_port: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_bool")]
     pub exposure_confirmed: bool,
 }
 
@@ -49,6 +49,19 @@ fn default_listen_port() -> u16 {
 }
 fn default_true() -> bool {
     true
+}
+
+/// 容忍持久化/旧数据中误存的非布尔值（如空对象 `{}`、字符串、数字等）——此类字段
+/// 一旦被错误序列化，默认 serde 会崩溃于 `invalid type: map, expected a boolean`。
+/// 这里凡非字面 `true` 一律视为 `false`。对安全敏感的 `exposure_confirmed` 尤其重要：
+/// 损坏/错误的值绝不自动授权暴露写入口——必须显式 `true` 才视为已确认（与
+/// `exposure_warning`/connect 里 `!config.exposure_confirmed` 的失败关闭语义一致）。
+fn deserialize_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(deserializer)?;
+    Ok(v.as_bool().unwrap_or(false))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,10 +273,16 @@ impl ProtocolAdapter for TftpAdapter {
         _endpoint: &str,
         params: &serde_json::Value,
     ) -> Result<ProtocolConnection, SessionError> {
-        let mut config: TftpConfig =
-            serde_json::from_value(params.clone()).map_err(|e| SessionError::ConnectionFailed {
+        let mut config: TftpConfig = serde_json::from_value(params.clone()).map_err(|e| {
+            // 打印未解析的原始 params：serde 报错（如 "invalid type: map,
+            // expected a boolean"）只说明某字段类型不符，不指明是哪个字段/
+            // 哪个调用方写成了错误形状（如重连时 tab.params 被动态参数污染）。
+            // 输出完整 JSON 到运行日志，便于定位具体污染点。
+            log::error!("[TFTP] 连接参数解析失败: {}；原始 params={}", e, params);
+            SessionError::ConnectionFailed {
                 reason: format!("TFTP configuration parse failed: {}", e),
-            })?;
+            }
+        })?;
 
         let root = PathBuf::from(&config.file_root);
         if !root.is_absolute() {

@@ -117,26 +117,34 @@ let recordSeq = 0;
 // 记录配对（纯函数）
 // ═══════════════════════════════════════════════════════════════════
 
-/** 当前进行中的记录（按角色 + 方向查找：-d/-r 下同角色 fwd/rev 并发 running） */
+/** 当前进行中的记录（按角色 + 方向 + 协议查找：-d/-r 下同角色 fwd/rev 并发
+ * running；同会话 TCP/UDP 服务器记录共存时靠 protocol 区分，不按 index 误配） */
 function activeRecord(
   s: CachedState,
   role: IperfRoleStr,
-  direction: IperfDirection
+  direction: IperfDirection,
+  protocol?: IperfProtocolStr
 ): IperfRecord | undefined {
   return s.records.find(
-    (r) => r.role === role && r.direction === direction && r.status === "running"
+    (r) =>
+      r.role === role &&
+      r.direction === direction &&
+      r.status === "running" &&
+      (protocol === undefined || r.protocol === protocol)
   );
 }
 
 /**
  * 按事件配对记录：优先 seq 精确匹配（UDP 服务端多路复用下并发记录
  * 需按 seq 归位），无 seq 的事件（客户端/TCP 服务端）回退活跃记录。
+ * protocol 用于区分同角色下并存的 TCP/UDP 记录，避免汇总被误套。
  */
 function matchRecord(
   s: CachedState,
   role: IperfRoleStr,
   direction: IperfDirection,
-  seq?: number
+  seq?: number,
+  protocol?: IperfProtocolStr
 ): IperfRecord | undefined {
   if (typeof seq === "number") {
     const bySeq = s.records.find(
@@ -148,7 +156,7 @@ function matchRecord(
     );
     if (bySeq) return bySeq;
   }
-  return activeRecord(s, role, direction);
+  return activeRecord(s, role, direction, protocol);
 }
 
 /** 看门狗时长：双向测试（-d/-r）总时长约为 fwd 的两倍 */
@@ -286,7 +294,8 @@ async function initListeners(
       // 对外部客户端的 -P 未知，按单流 [  1]
       const label =
         role === "client" && s.clientParams.parallelStreams > 1 ? "SUM" : "1";
-      let target = matchRecord(s, role, direction, e.seq);
+      const proto: IperfProtocolStr = e.protocol === "udp" ? "udp" : "tcp";
+      let target = matchRecord(s, role, direction, e.seq, proto);
       // 服务端实时流：iperf3 pending 不建记录，首个区间 = 客户端已接入并开跑
       // → 惰性新建 running 记录（后续区间/done 正常归位）。serverTestRunning
       // 守卫：done 之后的迟到区间不造幽灵记录。协议与方向来自事件（后端补发）
@@ -354,7 +363,8 @@ async function initListeners(
         const doneLabel =
           role === "client" && s.clientParams.parallelStreams > 1 ? "SUM" : "1";
         const summary = summaryFromPayload(e.summary);
-        let target = matchRecord(s, role, direction, e.seq);
+        const proto: IperfProtocolStr = e.protocol === "udp" ? "udp" : "tcp";
+        let target = matchRecord(s, role, direction, e.seq, proto);
         // 无运行记录时按 summary 直接新建完成/失败记录：
         // - iperf3 服务端 pending 轮次（无区间）
         // - rev 相零字节（无区间 → 无惰性记录，done 仍须呈现）
@@ -371,6 +381,7 @@ async function initListeners(
             (r) =>
               r.role === role &&
               r.direction === direction &&
+              r.protocol === proto &&
               r.status === "failed" &&
               r.error === "已停止"
           );
