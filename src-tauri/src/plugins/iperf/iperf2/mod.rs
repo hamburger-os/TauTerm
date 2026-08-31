@@ -566,7 +566,9 @@ pub fn run_server<R: tauri::Runtime>(
                     let last = last_summary.clone();
                     let session = session.clone();
                     let h = std::thread::spawn(move || {
-                        handle_tcp_connection(&app, &sid, stream, &session, &abort, &running, &last);
+                        handle_tcp_connection(
+                            &app, &sid, stream, &session, &abort, &running, &last,
+                        );
                     });
                     tcp_handlers.push(h);
                 }

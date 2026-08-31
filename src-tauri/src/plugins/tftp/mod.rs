@@ -273,17 +273,16 @@ impl ProtocolAdapter for TftpAdapter {
         _endpoint: &str,
         params: &serde_json::Value,
     ) -> Result<ProtocolConnection, SessionError> {
-        let mut config: TftpConfig =
-            serde_json::from_value(params.clone()).map_err(|e| {
-                // 打印未解析的原始 params：serde 报错（如 "invalid type: map,
-                // expected a boolean"）只说明某字段类型不符，不指明是哪个字段/
-                // 哪个调用方写成了错误形状（如重连时 tab.params 被动态参数污染）。
-                // 输出完整 JSON 到运行日志，便于定位具体污染点。
-                log::error!("[TFTP] 连接参数解析失败: {}；原始 params={}", e, params);
-                SessionError::ConnectionFailed {
-                    reason: format!("TFTP configuration parse failed: {}", e),
-                }
-            })?;
+        let mut config: TftpConfig = serde_json::from_value(params.clone()).map_err(|e| {
+            // 打印未解析的原始 params：serde 报错（如 "invalid type: map,
+            // expected a boolean"）只说明某字段类型不符，不指明是哪个字段/
+            // 哪个调用方写成了错误形状（如重连时 tab.params 被动态参数污染）。
+            // 输出完整 JSON 到运行日志，便于定位具体污染点。
+            log::error!("[TFTP] 连接参数解析失败: {}；原始 params={}", e, params);
+            SessionError::ConnectionFailed {
+                reason: format!("TFTP configuration parse failed: {}", e),
+            }
+        })?;
 
         let root = PathBuf::from(&config.file_root);
         if !root.is_absolute() {
