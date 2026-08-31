@@ -34,7 +34,7 @@ jobs:
         run: |
           set -euo pipefail
           cp src-tauri/Cargo.lock /tmp/Cargo.lock.before
-          cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1 >/dev/null
+          cargo update --manifest-path src-tauri/Cargo.toml -p tauterm
           python3 - <<'PY'
           from pathlib import Path
           import difflib
