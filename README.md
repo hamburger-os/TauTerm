@@ -50,8 +50,6 @@ TauTerm deliberately serves both **network engineers** and **embedded developers
 
 ## Core workflows
 
-[Watch the 64-second silent walkthrough](docs/assets/tauterm-demo.mp4).
-
 ### SSH + SFTP
 
 One authenticated SSH session keeps the terminal, remote files and remote journald workflows together. The SFTP file manager supports browsing, upload/download, rename, batch delete and remote file inspection.
