@@ -393,12 +393,21 @@ jobs:
           if [ "$PRERELEASE" = "true" ]; then
             CREATE_ARGS+=(--prerelease)
           fi
-          gh release create "${CREATE_ARGS[@]}"
+          gh release create "${CREATE_ARGS[@]}" release-assets/*
           CREATED_RELEASE=true
-          gh release upload "$TAG" release-assets/*
 
           REMOTE_RELEASE=/tmp/tauterm-release.json
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" > "$REMOTE_RELEASE"
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | \
+            jq --arg tag "$TAG" --argjson prerelease "$PRERELEASE" -e '
+              [.[] | select(
+                .tag_name == $tag and
+                .draft == true and
+                .prerelease == $prerelease
+              )] |
+              if length == 1 then .[0]
+              else error("expected exactly one matching draft release")
+              end
+            ' > "$REMOTE_RELEASE"
           jq --arg tag "$TAG" --argjson prerelease "$PRERELEASE" -e '
             .draft == true and
             .prerelease == $prerelease and
