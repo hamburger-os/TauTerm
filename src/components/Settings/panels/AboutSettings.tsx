@@ -65,7 +65,7 @@ export default function AboutSettings({
             </span>
             <span className={styles.updateCurrentVersion}>{appVersion}</span>
             <span className={styles.updateArrow}>
-              <Icon name="chevron-up" size="sm" />
+              <Icon name="arrow-right" size="sm" />
             </span>
             <span className={styles.updateLatestVersion}>
               {updateInfo.latestVersion}

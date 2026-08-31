@@ -93,7 +93,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
           onClick={() => handleClick("sidebar")}
           title={t("toolbar.sidebar") + (sidebarShortcut ? ` (${sidebarShortcut})` : "")}
         >
-          <Icon name="menu" size="sm" className={styles.icon} />
+          <Icon name="sidebar-left" size="sm" className={styles.icon} />
         </button>
 
         {/* 插件左区按钮 */}
@@ -136,7 +136,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
           onClick={() => handleClick("rightSidebar")}
           title={t("toolbar.rightSidebar") + (rightSidebarShortcut ? ` (${rightSidebarShortcut})` : "")}
         >
-          <Icon name="panel-right" size="sm" className={styles.icon} />
+          <Icon name="sidebar-right" size="sm" className={styles.icon} />
         </button>
 
         {centerItems.map(item => (

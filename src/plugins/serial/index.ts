@@ -12,7 +12,7 @@ registerPlugin({
     version: "1.0.0",
     category: "terminal",
     description: "串口终端",
-    icon: "plug",
+    icon: "connection",
     content_type: "terminal",
     capabilities: ["connection", "transfer", "endpoint_discovery"],
     transfer_protocols: ["ymodem", "xmodem", "zmodem"],

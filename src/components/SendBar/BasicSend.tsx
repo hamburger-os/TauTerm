@@ -311,7 +311,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
             title={t("sendBar.sendHistory")}
             disabled={sendHistory.length === 0}
           >
-            <Icon name="chevron-dropdown" size="xs" />
+            <Icon name="caret-down" size="xs" />
           </button>
         </div>
         {showOptions && sendHistory.length > 0 && createPortal(

@@ -29,8 +29,8 @@ export function resolveProfile(tab: TabInfo): SessionProfile {
   return {
     identity: [
       { label: "session.renameSession", value: tab.name, icon: "tag" },
-      { label: "connectionType.label", value: tab.connection_type, icon: "plug" },
-      { label: "serial.port", value: tab.endpoint, icon: "pin" },
+      { label: "connectionType.label", value: tab.connection_type, icon: "connection" },
+      { label: "serial.port", value: tab.endpoint, icon: "endpoint" },
       { label: "session.status", value: tab.state, icon: "status-idle" },
     ],
     parameters: [

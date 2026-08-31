@@ -70,7 +70,7 @@ export default function ReplyActionEditor({ actions, onChange }: ReplyActionEdit
               onPointerCancel={handlePointerCancel}
               style={{ touchAction: "none" }}
             >
-              <Icon name="drag-handle" size={14} color="currentColor" />
+              <Icon name="drag-handle" size={14} />
             </span>
             <button
               type="button"

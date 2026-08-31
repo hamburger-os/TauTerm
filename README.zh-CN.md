@@ -113,9 +113,10 @@ TauTerm 面向那些不想再在 SSH 客户端、SFTP、串口助手、TCP/UDP �
 - 终端搜索、命令面板、全快捷键重绑定。
 - 会话日志分卷与过期清理。
 - 中文 / 英文运行时切换。
-- 三套 Liquid Glass 主题与 Tauri v2 原生级外壳。
+- 三套 Liquid Glass 主题与 Tauri v2 原生级外壳，并配套经过语义审查、覆盖窗口与布局控件的统一青蓝玻璃 PNG 图标系统。
+- 凭据存储优先使用 OS Keyring；不可用时可解锁 Argon2id + AES-256-GCM 加密 vault，并仅在当前应用会话中保持解锁。SSH 连接表单中输入的密码不会自动保存。
 
-> 凭据持久化正在进行安全强化。在真正的 OS 原生 Keyring + 认证加密降级方案落地之前，当前 `master` 不再宣称已经具备该能力。
+当 TFTP 监听范围超出本机、同时允许远程写入和覆盖时，启动服务前必须显式确认该暴露配置。
 
 ---
 
@@ -147,9 +148,9 @@ macOS 虚拟串口桥同样使用进程内 POSIX PTY，不依赖 Homebrew。macO
 
 TauTerm 迭代较快。想稳定体验请优先使用打包版本；`master` 会包含尚未正式发布的新功能。
 
-- **v0.5.0 目标 —— 网络与最小权限安全：** TCP/UDP 网络调试会话、Telnet、iPerf2/iPerf3、会话级字符集转码、远程 journald 日志查看器。Windows 下应用以普通用户权限运行，特权虚拟串口操作委托给 LocalSystem 服务；Unix 虚拟串口桥切换为进程内 PTY。
+- **v0.5.0 —— 已发布：** TCP/UDP 网络调试会话、Telnet、iPerf2/iPerf3、会话级字符集转码、远程 journald 查看器，以及 Windows 最小权限虚拟串口处理。应用以普通用户权限运行，特权操作委托给 LocalSystem 服务。
 - **v0.4.0 —— First Public Tech Preview：** 串口、SSH/SFTP、传输子系统、Lua/自动应答工作流、终端搜索、日志、设置、国际化，以及核心微内核/插件架构。
-- **当前 `master`：** 在 v0.5 基础上持续增加网络、安全与工作流能力。
+- **当前 `master`：** 包含 v0.5 之后的更新器/发布流程强化、优先使用 OS Keyring 且带加密 vault 降级的凭据存储、Linux/macOS 进程内 POSIX PTY 桥接及后续修复；打包版本可能落后于它。
 - **路线图：** 本地 Shell、SSH 隧道/跳板机、会话分组、FTP、录制/分屏、插件 SDK 等。
 
 每个版本的准确变化请查看 **[CHANGELOG.md](CHANGELOG.md)**。
@@ -175,10 +176,9 @@ TauTerm 迭代较快。想稳定体验请优先使用打包版本；`master` 会
 ## 路线图
 
 ```text
-v0.5  TCP/UDP 网络调试、Telnet、iPerf2/3、字符集转码、
-      远程 journald、Windows 最小权限虚拟串口服务、Unix 原生 PTY
-v0.6  凭据与安全强化（原生 Keyring + 认证加密降级）、
-      本地 Shell、会话分组、SSH 隧道 + 跳板机
+v0.5  已发布：TCP/UDP 网络调试、Telnet、iPerf2/3、字符集转码、
+      远程 journald、Windows 最小权限虚拟串口服务
+v0.6  本地 Shell、会话分组、SSH 隧道 + 跳板机
 v0.7  网络调试完善、FTP、录制、分屏
 v1.0  GA：Windows/macOS/Linux 发布级验证、性能预算、
       插件 SDK 文档、TRDP

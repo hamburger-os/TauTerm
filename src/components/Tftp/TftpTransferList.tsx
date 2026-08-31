@@ -25,10 +25,10 @@ function formatSpeed(bps: number): string {
 
 function getStatusIcon(status: string): IconName {
   switch (status) {
-    case "transferring": return "transfer-progress";
+    case "transferring": return "transfer-active";
     case "completed":     return "check-circle";
-    case "failed":        return "cross-circle";
-    case "cancelled":     return "close-circle";
+    case "failed":        return "x-circle";
+    case "cancelled":     return "status-cancelled";
     case "pending":       return "hourglass";
     default:              return "info";
   }

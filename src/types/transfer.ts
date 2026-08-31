@@ -95,7 +95,7 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
   xmodem: {
     type: "xmodem",
     i18nKey: "transfer.protocols.xmodem.name",
-    icon: "antenna",
+    icon: "package",
     defaultConfig: {
       protocol: "xmodem",
       blockSize: 128,
@@ -175,4 +175,3 @@ export interface BatchFileEntry {
   totalBytes: number;
   error?: string;
 }
-

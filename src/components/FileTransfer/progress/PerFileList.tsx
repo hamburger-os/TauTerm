@@ -17,13 +17,13 @@ function getStatusIconName(status: string): IconName {
     case "pending":
       return "hourglass";
     case "transferring":
-      return "transfer-progress";
+      return "transfer-active";
     case "completed":
       return "check-circle";
     case "failed":
-      return "cross-circle";
+      return "x-circle";
     case "skipped":
-      return "skip";
+      return "status-skipped";
     default:
       return "info";
   }

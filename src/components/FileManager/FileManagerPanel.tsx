@@ -644,10 +644,7 @@ export default function FileManagerPanel({
           title={viewMode === "list" ? t("fileManager.switchToGrid") : t("fileManager.switchToList")}
           aria-label={viewMode === "list" ? t("fileManager.switchToGrid") : t("fileManager.switchToList")}
         >
-          <Icon name="drag-handle" size="sm" />
-          <span className={styles.viewToggleIndicator}>
-            {viewMode === "list" ? "\u{2630}" : "\u{229E}"}
-          </span>
+          <Icon name={viewMode === "list" ? "view-grid" : "view-list"} size="sm" />
         </button>
       </div>
 

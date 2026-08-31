@@ -18,8 +18,8 @@ export const sshProfile: ProfileResolver = (tab: TabInfo): SessionProfile => {
   return {
     identity: [
       { label: "session.renameSession", value: tab.name, icon: "tag" },
-      { label: "connectionType.label", value: "connectionType.ssh", icon: "plug" },
-      { label: "ssh.host", value: tab.endpoint, icon: "pin" },
+      { label: "connectionType.label", value: "connectionType.ssh", icon: "connection" },
+      { label: "ssh.host", value: tab.endpoint, icon: "endpoint" },
       {
         label: "session.status",
         value: statusValue(tab.state),
@@ -39,8 +39,7 @@ function statusIconName(state: string): IconName {
     case "connected": return "status-connected";
     case "disconnected": return "status-disconnected";
     case "connecting": return "status-connecting";
-    // 与 serial 的 transferring 一致，统一使用旋转状态图标
-    case "transferring": return "status-connecting";
+    case "transferring": return "status-transferring";
     default: return "status-idle";
   }
 }

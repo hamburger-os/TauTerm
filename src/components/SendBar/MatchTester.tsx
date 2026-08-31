@@ -74,12 +74,12 @@ export default function MatchTester({ pattern, mode, caseSensitive, matchFormat 
         {result && (
           <div className={`${styles.regexResult} ${result.valid && result.matched ? styles.regexSuccess : result.valid && result.matched === null ? styles.regexNoMatch : result.valid ? styles.regexNoMatch : styles.regexError}`}>
             {result.error
-              ? <><Icon name="close" size="xs" /> {result.error}</>
+              ? <><Icon name="x-circle" size="xs" /> {result.error}</>
               : result.matched === null
-                ? <><Icon name="check-plain" size="xs" /> {t("sendBar.matchValid")}</>
+                ? <><Icon name="check" size="xs" /> {t("sendBar.matchValid")}</>
                 : result.matched
-                  ? <><Icon name="check-plain" size="xs" /> {t("sendBar.matchSuccess")}</>
-                  : <><Icon name="close" size="xs" /> {t("sendBar.matchFail")}</>
+                  ? <><Icon name="check" size="xs" /> {t("sendBar.matchSuccess")}</>
+                  : <><Icon name="x-circle" size="xs" /> {t("sendBar.matchFail")}</>
             }
             {showCaptureGroups && (
               <div className={styles.regexGroups}>

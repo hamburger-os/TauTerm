@@ -245,7 +245,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       const isIperf = pluginId === "iperf";
       const items: ContextMenuItem[] = [];
       if (isSsh) {
-        items.push({ id: "connect", label: t("contextMenu.connect") || "Connect", icon: "plus" });
+        items.push({ id: "connect", label: t("contextMenu.openChannel") || "Open Channel", icon: "connection" });
       }
       items.push(
         { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect All", icon: "stop" },
@@ -284,10 +284,35 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           setExpandedIds(prev => new Set(prev).add(sessionId));
         } else if (tab?.state === "disconnected" && tab.params) {
           // 已断开会话 → 重新连接
+          let params = tab.params as Record<string, unknown>;
+          // TFTP 暴露确认：旧数据可能把 exposure_confirmed 持久化成空对象等非布尔，
+          // 导致后端解析失败或暴露检查误拒。连接前若目标为可写且监听非回环、且该值
+          // 并非字面 true，则重新弹窗确认——确认后的 params 经 session-connected 回显
+          // 写回 tab，避免每次重连重复询问。
+          if (tab.pluginId === "tftp") {
+            const bindIp = String(params.listen_ip ?? "").trim().toLowerCase();
+            const loopback =
+              bindIp === "127.0.0.1" || bindIp === "::1" || bindIp === "localhost";
+            if (
+              !loopback &&
+              params.write_enabled === true &&
+              params.overwrite === true &&
+              params.exposure_confirmed !== true
+            ) {
+              const ok = window.confirm(
+                t("tftp.exposureWarning", {
+                  defaultValue:
+                    "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network.",
+                })
+              );
+              if (!ok) break; // 取消则中止重连
+              params = { ...params, exposure_confirmed: true };
+            }
+          }
           try {
             await connect({
               endpoint: tab.endpoint,
-              params: tab.params as Record<string, unknown>,
+              params,
               name: tab.name,
               pluginId: tab.pluginId,
               transferEnabled: tab.transferEnabled,
@@ -353,7 +378,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           onClick={() => onNewSession?.()}
           title={t("session.newSession") + " (Ctrl+Shift+N)"}
         >
-          <Icon name="plus" size="md" color="var(--text-primary)" />
+          <Icon name="plus" size="md" />
         </button>
       </div>
 
@@ -415,7 +440,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                     <Icon
                       name={
                         node.tab.state === "connected" ? "status-connected" :
-                        node.tab.state === "connecting" || node.tab.state === "transferring" ? "status-connecting" :
+                        node.tab.state === "transferring" ? "status-transferring" :
+                        node.tab.state === "connecting" ? "status-connecting" :
                         "status-idle"
                       }
                       size={10}

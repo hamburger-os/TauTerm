@@ -59,7 +59,7 @@ export default function IperfRecordList({ records, selectedId, onSelect }: Props
               <span className={styles.recordStatus}>
                 {r.status === "running" && <Icon name="hourglass" size="xs" />}
                 {r.status === "completed" && <Icon name="check-circle" size="xs" />}
-                {r.status === "failed" && <Icon name="cross-circle" size="xs" />}
+                {r.status === "failed" && <Icon name="x-circle" size="xs" />}
               </span>
             </div>
             <div className={styles.recordRow2}>

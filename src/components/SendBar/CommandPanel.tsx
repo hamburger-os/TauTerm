@@ -606,7 +606,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
                   onPointerCancel={handlePointerCancel}
                   style={{ touchAction: 'none' }}
                 >
-                  <Icon name="drag-handle" size={16} color="currentColor" />
+                  <Icon name="drag-handle" size={16} />
                 </span>
 
                 <label className={styles.checkLabel}>

@@ -33,7 +33,7 @@ interface SettingsPageProps {
 type Category = "appearance" | "language" | "logging" | "security" | "shortcuts" | "about";
 
 const CATEGORIES: { id: Category; icon: import("../common/Icon").IconName; labelKey: string }[] = [
-  { id: "appearance", icon: "palette" as const, labelKey: "settings.appearance" },
+  { id: "appearance", icon: "appearance" as const, labelKey: "settings.appearance" },
   { id: "language", icon: "globe" as const, labelKey: "settings.language" },
   { id: "logging", icon: "log" as const, labelKey: "settings.logging" },
   { id: "security", icon: "lock" as const, labelKey: "settings.security" },

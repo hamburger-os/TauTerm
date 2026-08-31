@@ -12,6 +12,8 @@
     "tauri:build": "tauri build --config src-tauri/tauri.dev.conf.json --bundles nsis",
     "build:release": "node scripts/build-release.js",
     "check-com0com": "node scripts/check-com0com.js",
+    "check:icons": "node scripts/check-icons.mjs",
+    "preview:icons": "node scripts/preview-icons.mjs",
     "check-reserved-region": "node scripts/check-reserved-region.js",
     "toolchain:check": "node scripts/check-rust-toolchain.js",
     "version:check": "node scripts/check-version.js",
