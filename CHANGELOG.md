@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-09-01
+
+### Changed
+- Bumped TauTerm to v0.5.1 as a minimal patch release for end-to-end validation of the signed online update path from v0.5.0.
+- No intentional user-facing product changes; this release isolates updater behavior.
+
 ## [0.5.0] — 2026-08-31
 
 ### Security
