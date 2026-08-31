@@ -7,31 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-31
+
 ### Security
 - **Credential storage backends** — prefer the operating-system keyring (Windows Credential Manager, macOS Keychain, or Linux Secret Service); when it is unavailable, store credentials in an Argon2id-derived AES-256-GCM vault that must be unlocked for the current app session. SSH connection-form passwords are not persisted automatically.
 - **Least-privilege virtual ports** — Windows keeps the main app non-elevated and delegates com0com operations to the LocalSystem service; Unix uses an in-process PTY bridge.
-
-### Fixed
-- **Icon system semantic and small-size audit** — all 61 registered PNG assets now have an explicit production meaning and a 12px readability contract. Directional arrows, window controls, sidebars, file views, send mode and action steps now use dedicated assets; XMODEM no longer implies wireless activity; the file-manager control no longer presents a drag handle; status, log, copy/paste and transfer meanings are separated. The registry has no inline-SVG escape hatch, while CSS remains reserved for connection-status dots.
-- **Security settings localization and feedback** — the security panel localizes known backend labels and uses a safe localized fallback for unknown backends, while handling loading, refresh, unlock, lock, and status failures without exposing backend error text.
-- **Security settings icon and themed controls** — adds the security lock icon and aligns refresh, unlock, and lock controls with the shared secondary glass-button layout across themes.
+- **On-demand elevation for com0com (Windows)** — the app no longer requests full administrator rights on every launch: the `requireAdministrator` manifest is removed (the app now runs `asInvoker`), and privileged com0com operations (driver install, virtual COM port pair create/remove/cleanup) are delegated to a new LocalSystem Windows service (`tauterm-service`) over a named pipe with a narrow typed API and caller identity verification. The main app stays non-elevated and exits cleanly without leaving orphaned port pairs — the service tracks per-client ownership and auto-cleans on pipe close / crash. When the service is unavailable (dev / portable), the app falls back to the previous on-demand UAC path, with fixes for unreliable success detection and the hardcoded bus-0 driver install.
+- **Privileged service pipe client verification hardened** — `TauTermService` now requires the connecting client to reside in the same directory as the service (the install directory) in addition to the `tauterm.exe` name check, closing a rename-based spoofing vector where any binary renamed to `tauterm.exe` could issue narrow SYSTEM operations.
 
 ### Platforms
 - **Native Unix PTY bridge** — Linux and macOS no longer require `socat`, a shell `PATH` entry, a `/tmp` symlink, or an external helper process for virtual serial endpoints.
 
-### Release process
-- **Updater and release validation hardening** — release dispatch accepts one version input, derives pre-release status from `-alpha.N`, `-beta.N`, or `-rc.N`, validates the exact five updater targets and signatures, verifies tag-scoped assets before promoting a stable release to `latest`, and cleans up the release created by that run (whether draft or temporarily public) and its tag when final validation fails.
-
 ### Protocols
 - **TFTP exposure confirmation** — starting a server that listens on a non-loopback interface with remote writes and overwrite enabled now requires explicit user confirmation; existing defaults remain unchanged for compatibility.
-
-## [0.5.0] — 2026-08-26
-
-### Security
-- **On-demand elevation for com0com (Windows)** — the app no longer requests full administrator rights on every launch: the `requireAdministrator` manifest is removed (the app now runs `asInvoker`), and privileged com0com operations (driver install, virtual COM port pair create/remove/cleanup) are delegated to a new LocalSystem Windows service (`tauterm-service`) over a named pipe with a narrow typed API and caller identity verification. The main app stays non-elevated and exits cleanly without leaving orphaned port pairs — the service tracks per-client ownership and auto-cleans on pipe close / crash. When the service is unavailable (dev / portable), the app falls back to the previous on-demand UAC path, with fixes for unreliable success detection and the hardcoded bus-0 driver install.
-- **Privileged service pipe client verification hardened** — `TauTermService` now requires the connecting client to reside in the same directory as the service (the install directory) in addition to the `tauterm.exe` name check, closing a rename-based spoofing vector where any binary renamed to `tauterm.exe` could issue narrow SYSTEM operations.
-
-### Protocols
 - **Telnet (RFC 854)** — adds a Telnet terminal session with full option negotiation (NAWS window-size, Suppress-Go-Ahead, Transmit-Binary) handled by the `telnet` crate, TCP keepalive and a bounded connect timeout, and local-echo state surfaced to the UI via `telnet-echo-state` so the front-end stays in sync with the server's echo mode. Sync I/O; no file transfer (by design).
 - **iperf network bandwidth test (iperf2 & iperf3)** — adds a network throughput plugin supporting both iperf2 (self-implemented protocol) and iperf3 (wire-compatible via `riperf3`); a single session acts as both client (transient config → run → result → end) and server (listens for external iperf clients, e.g. a board). Configurable duration, parallel streams, report interval, bandwidth cap, TCP window, plus iperf2 dualtest/tradeoff and iperf3 reverse/bidir/omit. iperf2 and iperf3 are not wire-interoperable — both ends must run the same version.
 - **Session-level character-set transcoding** — text-path sends (SendBar / keyboard / Lua `send_text`) are transcoded from UTF-8 to the session encoding (GBK, GB18030, Big5, Shift-JIS, EUC-JP, EUC-KR, ISO-8859-1 → windows-1252); HEX sends and raw Lua `send` pass through unchanged; received bytes are decoded back to UTF-8 so text-format session logs stay readable. Un-mappable characters are substituted with `?` rather than an HTML numeric reference.
@@ -55,12 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### UI
 - **Sidebar session cards: clearer separation & tighter left alignment** — unselected cards now carry a persistent subtle border (`--glass-border-default`) so long session lists read as distinct items instead of one text block (hover/active states unchanged); left-side whitespace trimmed (expand-arrow placeholder 16px → 10px, list/container padding reduced, text starts ~15px closer to the panel edge); card vertical spacing 2px → 4px; endpoint line font-size tokenized (`--text-xs`); header/search/cards/settings-button left edges unified on one alignment baseline; child-tree indent 16px → 12px
 - **New-session dialog: responsive mode grid** — the connection-type card grid switches from a fixed 2 columns to `auto-fit` so it flows to 3 columns (and more as space allows); the dialog width is now adaptive (`min(560px, 100vw - 32px)`); card labels reserve two lines so every card keeps a uniform size when a label wraps
-
 - **Default window size 1440×900 with small-screen clamping** — the initial window is now 1440×900 (up from 1200×800) for a wider terminal view; on launch the window is clamped to the primary monitor's work area (Windows taskbar excluded) and centered, so screens smaller than the default (e.g. 1366×768) no longer open with controls or edges off-screen.
-
 - **File Manager: list/grid view toggle + icon toolbar** — the SFTP file manager now offers an icon-tile (Windows-style "tiles") view alongside the existing list view, with the choice persisted globally via localStorage; a new inline icon toolbar surfaces the previously context-menu-only actions (refresh / new file / new folder / upload) plus a single view-toggle button (drag-handle icon) with a `☰`/`⊞` glyph and an action-style accessible label (switch to grid / switch to list). The `..` parent-directory entry now behaves like a folder (single-click selects, double-click navigates) and shares its icon with regular folders via a single source; file icons are extension-category emoji shared by both views. Rows/tiles expose grid ARIA semantics (`row`/`gridcell`, `aria-selected`, Enter/Space).
 
 ### Fixed
+- **Icon system semantic and small-size audit** — all 61 registered PNG assets now have an explicit production meaning and a 12px readability contract. Directional arrows, window controls, sidebars, file views, send mode and action steps now use dedicated assets; XMODEM no longer implies wireless activity; the file-manager control no longer presents a drag handle; status, log, copy/paste and transfer meanings are separated. The registry has no inline-SVG escape hatch, while CSS remains reserved for connection-status dots.
+- **Security settings localization and feedback** — the security panel localizes known backend labels and uses a safe localized fallback for unknown backends, while handling loading, refresh, unlock, lock, and status failures without exposing backend error text.
+- **Security settings icon and themed controls** — adds the security lock icon and aligns refresh, unlock, and lock controls with the shared secondary glass-button layout across themes.
 - **com0com: test server and TauTermService now coexist without clobbering each other** — `scripts/test-serial-session.py` previously created its virtual port pair on the lowest available bus/ports (`COM22/COM23`), which could collide with the product's own pairs and be wiped by the service's startup orphan cleanup. It now lives in a dedicated reserved region (`COM200-COM255` / bus `200-255`, fixed pair `COM200↔COM201`): the product's `VirtualPortManager` never allocates buses in that range (so the service startup orphan cleanup also leaves them alone), skips that port range when scanning and, when the test's reserved ports push the scan start into the range, wraps back to the low port range so it still finds free pairs instead of reporting none. `--teardown-all` only touches reserved-segment buses. A new build-time `check-reserved-region.js` keeps the Python and Rust constants in sync.
 - **com0com: virtual port failure message was misleading and unlocalized** — when virtual port pair creation failed, the app showed a hard-coded English "com0com driver not installed — run TauTerm as administrator once, or reinstall the application" regardless of the actual cause (port exhaustion, UAC cancellation, …). The `virtual-port-failed` event now carries the real failure reason plus a coarse `kind` (`files_missing` / `driver_missing` / `permission` / `create_failed`), and the status bar renders the localized message (with New i18n keys `permissionRequired` / `createFailed`) while keeping the raw reason in the tooltip.
 - **Network Debug: background receive lost for inactive sessions** — the `session-data` listener resolved peers from a ref that is only refreshed while the view renders; an inactive (unmounted) session froze that ref to an empty list, so all data arriving in the background was dropped and the data area appeared empty on switch. The listener now resolves peers from `SessionContext.stateRef` (always fresh), so frames accumulate per session even while inactive and are visible immediately on switch.
@@ -75,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Developer Experience
 - Remove Claude Code skill shims — `.agents/skills/` is now the sole canonical skill location. Deleted `scripts/gen-skill-shims.mjs`, the `skills:sync` npm script, the `.claude/` directory (including `settings.json`), and the CI drift check.
+
+### Release process
+- **Updater and release validation hardening** — release dispatch accepts one version input, derives pre-release status from `-alpha.N`, `-beta.N`, or `-rc.N`, validates the exact five updater targets and signatures, verifies tag-scoped assets before promoting a stable release to `latest`, and cleans up the release created by that run (whether draft or temporarily public) and its tag when final validation fails.
 
 ## [0.4.0] — 2026-07-22 (First Public Tech Preview)
 
@@ -150,7 +142,7 @@ This is the first public release of TauTerm, a cross-platform terminal emulator 
 
 ### Credential Store
 - In-memory credential management with type-safe API (password/key/certificate/token)
-- Full CRUD operations via Tauri commands (`store_credential`, `get_credential`, `list_credentials`, `delete_credential`)
+- Full CRUD operations via Tauri commands (`store_credential`, `get_credential`, `list_credentials`, `delete_credentials`)
 - OS-native keyring and AES-256-GCM encrypted file fallback planned for v0.5
 
 ### Security
