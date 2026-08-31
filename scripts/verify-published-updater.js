@@ -23,7 +23,9 @@ const expectedTargets = new Map([
   ["linux-x86_64-deb", "_amd64.deb"],
   ["linux-x86_64-rpm", ".rpm"],
   ["linux-x86_64-appimage", "_amd64.AppImage"],
-  ["darwin-aarch64-app", "_aarch64.app.tar.gz"],
+  // Tauri 2.11 names the macOS updater archive after the .app bundle and
+  // does not include an architecture marker in the archive filename.
+  ["darwin-aarch64-app", ".app.tar.gz"],
 ]);
 
 const config = JSON.parse(readFileSync(resolve(root, "src-tauri/tauri.conf.json"), "utf8"));
