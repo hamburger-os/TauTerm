@@ -411,6 +411,14 @@ fn format_host_port(host: &str, port: u16) -> String {
     }
 }
 
+/// 协议日志标签（供服务端监听/接待日志使用）
+fn protocol_label(p: IperfProtocol) -> &'static str {
+    match p {
+        IperfProtocol::Tcp => "TCP",
+        IperfProtocol::Udp => "UDP",
+    }
+}
+
 /// 服务端并发 TCP 连接上限（对齐客户端 -P 64 上限；防外部主机
 /// 无界连接耗尽本机线程/内存）
 const MAX_CONCURRENT_TCP_HANDLERS: usize = 64;
@@ -427,40 +435,53 @@ pub fn run_server<R: tauri::Runtime>(
 ) -> Result<String, String> {
     let listen_addr: SocketAddr = parse_host_port(&config.listen_ip, config.listen_port)?;
 
-    let window_size = lock_or_recover(dynamic_params, "dynamic_params").window_size;
+    let (window_size, protocol) = {
+        let d = lock_or_recover(dynamic_params, "dynamic_params");
+        (d.window_size, d.protocol)
+    };
 
-    // TCP 监听 + UDP socket（同一端口，不同协议可共存）。
-    // socket2：listen/bind 前设 SO_RCVBUF（-w；Windows 上 >64KB 仅在
-    // listen() 前设置才生效，accept 出的连接继承监听 socket 缓冲）
     let domain = if listen_addr.is_ipv4() {
         Domain::IPV4
     } else {
         Domain::IPV6
     };
-    let tcp_socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
-        .map_err(|e| format!("创建 TCP 监听 socket 失败: {}", e))?;
-    if let Some(w) = window_size {
-        let _ = tcp_socket.set_recv_buffer_size(w as usize);
-    }
-    tcp_socket
-        .bind(&listen_addr.into())
-        .map_err(|e| format!("无法绑定 TCP 监听端口 {}: {}", listen_addr, e))?;
-    tcp_socket
-        .listen(128)
-        .map_err(|e| format!("TCP listen 失败: {}", e))?;
-    let listener: TcpListener = tcp_socket.into();
 
-    // UDP socket 族跟随监听地址（此前硬编码 IPv4：IPv6 监听下 TCP 成功而
-    // UDP bind 失败，整个服务端起不来）
-    let udp_socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
-        .map_err(|e| format!("创建 UDP socket 失败: {}", e))?;
-    if let Some(w) = window_size {
-        let _ = udp_socket.set_recv_buffer_size(w as usize);
-    }
-    udp_socket
-        .bind(&listen_addr.into())
-        .map_err(|e| format!("无法绑定 UDP 端口 {}: {}", listen_addr, e))?;
-    let udp_socket: UdpSocket = udp_socket.into();
+    // 按协议单绑（对齐标准 iperf2：`-s` 仅 TCP 监听，`-s -u` 仅 UDP bind，
+    // 见 Listener::my_listen 的 isUDP ? SOCK_DGRAM : SOCK_STREAM）。不再无条件
+    // 双绑——否则 TCP 模式仍暴露 UDP 端口，外部 UDP 流量会被误收为"UDP 服务器
+    // 测试记录"，并因无 seq 的 activeRecord 匹配把 TCP 汇总误套到 UDP 记录上。
+    // socket2：listen/bind 前设 SO_RCVBUF（-w；Windows 上 >64KB 仅在 listen() 前
+    // 设置才生效，accept 出的连接继承监听 socket 缓冲）
+    let (tcp_listener, udp_socket) = match protocol {
+        IperfProtocol::Tcp => {
+            let tcp_socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))
+                .map_err(|e| format!("创建 TCP 监听 socket 失败: {}", e))?;
+            if let Some(w) = window_size {
+                let _ = tcp_socket.set_recv_buffer_size(w as usize);
+            }
+            tcp_socket
+                .bind(&listen_addr.into())
+                .map_err(|e| format!("无法绑定 TCP 监听端口 {}: {}", listen_addr, e))?;
+            tcp_socket
+                .listen(128)
+                .map_err(|e| format!("TCP listen 失败: {}", e))?;
+            let listener: TcpListener = tcp_socket.into();
+            (Some(listener), None)
+        }
+        IperfProtocol::Udp => {
+            // UDP 无连接：只需 bind，由接待线程 recvfrom（对齐真实 udp_accept）
+            let udp_socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP))
+                .map_err(|e| format!("创建 UDP socket 失败: {}", e))?;
+            if let Some(w) = window_size {
+                let _ = udp_socket.set_recv_buffer_size(w as usize);
+            }
+            udp_socket
+                .bind(&listen_addr.into())
+                .map_err(|e| format!("无法绑定 UDP 端口 {}: {}", listen_addr, e))?;
+            let udp_socket: UdpSocket = udp_socket.into();
+            (None, Some(udp_socket))
+        }
+    };
 
     // 实际绑定地址（解析后的 SocketAddr，IPv6 呈 [::1]:port 形式）
     let listen_str = listen_addr.to_string();
@@ -473,102 +494,117 @@ pub fn run_server<R: tauri::Runtime>(
         }),
     );
     log::info!(
-        "[iperf2] 服务端监听中 (session={}, {}, TCP+UDP)",
+        "[iperf2] 服务端监听中 (session={}, {}, {})",
         session_id,
-        listen_str
+        listen_str,
+        protocol_label(protocol)
     );
-
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("设置非阻塞失败: {}", e))?;
 
     let session = Arc::new(Mutex::new(TcpSession::new()));
 
-    // UDP 接待线程（单 socket 串行；共享 TcpSession 用于锁内派生 test_running）
-    let udp_handle = {
-        let app = app.clone();
-        let sid = session_id.to_string();
-        let abort = abort_flag.clone();
-        let running = test_running.clone();
-        let last = last_summary.clone();
-        let session = session.clone();
-        let udp_socket = udp_socket
-            .try_clone()
-            .map_err(|e| format!("克隆 UDP socket 失败: {}", e))?;
-        std::thread::spawn(move || {
-            if let Err(e) = data_udp::run_udp_server_loop(
-                &udp_socket,
-                &abort,
-                &running,
-                &last,
-                &app,
-                &sid,
-                &session,
-            ) {
-                log::warn!("[iperf2] UDP 接待线程退出: {}", e);
-            }
-        })
+    // UDP 接待线程（单 socket 串行；共享 TcpSession 用于锁内派生 test_running）。
+    // 仅 UDP 协议下启动——TCP 模式不暴露 UDP 端口
+    let udp_handle: Option<std::thread::JoinHandle<()>> = match udp_socket {
+        Some(udp_socket) => {
+            let app = app.clone();
+            let sid = session_id.to_string();
+            let abort = abort_flag.clone();
+            let running = test_running.clone();
+            let last = last_summary.clone();
+            let session = session.clone();
+            let udp_socket = udp_socket
+                .try_clone()
+                .map_err(|e| format!("克隆 UDP socket 失败: {}", e))?;
+            Some(std::thread::spawn(move || {
+                if let Err(e) = data_udp::run_udp_server_loop(
+                    &udp_socket,
+                    &abort,
+                    &running,
+                    &last,
+                    &app,
+                    &sid,
+                    &session,
+                ) {
+                    log::warn!("[iperf2] UDP 接待线程退出: {}", e);
+                }
+            }))
+        }
+        None => None,
     };
 
-    // accept 循环（非阻塞）+ 会话计时/force-end（50ms 粒度）
-    let mut tcp_handlers: Vec<std::thread::JoinHandle<()>> = Vec::new();
-    loop {
-        if abort_flag.load(Ordering::Relaxed) {
-            break;
-        }
-        // 剪枝已结束的 handler 句柄：并发上限按存活线程计——不剪枝则
-        // 长跑后死句柄占满上限、新连接被永久拒绝
-        tcp_handlers.retain(|h| !h.is_finished());
-        match listener.accept() {
-            Ok((stream, addr)) => {
-                // 并发连接上限：无界 spawn 会让外部主机耗尽本机线程/内存
-                if tcp_handlers.len() >= MAX_CONCURRENT_TCP_HANDLERS {
-                    log::warn!(
-                        "[iperf2] 并发 TCP 连接已达上限 ({})，拒绝 {} (session={})",
-                        MAX_CONCURRENT_TCP_HANDLERS,
-                        addr,
-                        session_id
-                    );
-                    continue;
+    // TCP 协议：accept 循环（非阻塞）+ 会话计时/force-end（50ms 粒度）。
+    // UDP 协议：主线程仅等待 abort（接待由上述 UDP 线程负责）
+    if let Some(listener) = tcp_listener {
+        listener
+            .set_nonblocking(true)
+            .map_err(|e| format!("设置非阻塞失败: {}", e))?;
+        let mut tcp_handlers: Vec<std::thread::JoinHandle<()>> = Vec::new();
+        loop {
+            if abort_flag.load(Ordering::Relaxed) {
+                break;
+            }
+            // 剪枝已结束的 handler 句柄：并发上限按存活线程计——不剪枝则
+            // 长跑后死句柄占满上限、新连接被永久拒绝
+            tcp_handlers.retain(|h| !h.is_finished());
+            match listener.accept() {
+                Ok((stream, addr)) => {
+                    // 并发连接上限：无界 spawn 会让外部主机耗尽本机线程/内存
+                    if tcp_handlers.len() >= MAX_CONCURRENT_TCP_HANDLERS {
+                        log::warn!(
+                            "[iperf2] 并发 TCP 连接已达上限 ({})，拒绝 {} (session={})",
+                            MAX_CONCURRENT_TCP_HANDLERS,
+                            addr,
+                            session_id
+                        );
+                        continue;
+                    }
+                    log::info!("[iperf2] TCP 客户端连接: {} (session={})", addr, session_id);
+                    let app = app.clone();
+                    let sid = session_id.to_string();
+                    let abort = abort_flag.clone();
+                    let running = test_running.clone();
+                    let last = last_summary.clone();
+                    let session = session.clone();
+                    let h = std::thread::spawn(move || {
+                        handle_tcp_connection(&app, &sid, stream, &session, &abort, &running, &last);
+                    });
+                    tcp_handlers.push(h);
                 }
-                log::info!("[iperf2] TCP 客户端连接: {} (session={})", addr, session_id);
-                let app = app.clone();
-                let sid = session_id.to_string();
-                let abort = abort_flag.clone();
-                let running = test_running.clone();
-                let last = last_summary.clone();
-                let session = session.clone();
-                let h = std::thread::spawn(move || {
-                    handle_tcp_connection(&app, &sid, stream, &session, &abort, &running, &last);
-                });
-                tcp_handlers.push(h);
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Err(e) => {
+                    log::warn!("[iperf2] accept 失败: {}", e);
+                    std::thread::sleep(Duration::from_millis(100));
+                }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => {
-                log::warn!("[iperf2] accept 失败: {}", e);
-                std::thread::sleep(Duration::from_millis(100));
+            tick_session(app, session_id, &session);
+        }
+
+        // 停止：强制结束进行中的测试
+        {
+            let s = lock_or_recover(&session, "TcpSession");
+            if s.started {
+                s.test_abort.store(true, Ordering::Relaxed);
             }
         }
-        tick_session(app, session_id, &session);
+        // 有界等待处理线程退出（对齐客户端：join 超时兜底，任务必然返回；
+        // 极端情况下卡住的握手线程可能被放弃，进程退出时回收）
+        join_handles_with_timeout(&tcp_handlers, ENGINE_JOIN_TIMEOUT, "TCP 处理");
+    } else {
+        // UDP 协议主线程等待 abort（50ms 粒度），接待由 UDP 线程自行收尾
+        while !abort_flag.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
-    // 停止：强制结束进行中的测试
-    {
-        let s = lock_or_recover(&session, "TcpSession");
-        if s.started {
-            s.test_abort.store(true, Ordering::Relaxed);
-        }
+    if let Some(udp_handle) = udp_handle {
+        join_handles_with_timeout(
+            std::slice::from_ref(&udp_handle),
+            ENGINE_JOIN_TIMEOUT,
+            "UDP 接待",
+        );
     }
-    // 有界等待处理线程退出（对齐客户端：join 超时兜底，任务必然返回；
-    // 极端情况下卡住的握手线程可能被放弃，进程退出时回收）
-    join_handles_with_timeout(&tcp_handlers, ENGINE_JOIN_TIMEOUT, "TCP 处理");
-    join_handles_with_timeout(
-        std::slice::from_ref(&udp_handle),
-        ENGINE_JOIN_TIMEOUT,
-        "UDP 接待",
-    );
     Ok(listen_str)
 }
 
