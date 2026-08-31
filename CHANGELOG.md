@@ -142,7 +142,7 @@ This is the first public release of TauTerm, a cross-platform terminal emulator 
 
 ### Credential Store
 - In-memory credential management with type-safe API (password/key/certificate/token)
-- Full CRUD operations via Tauri commands (`store_credential`, `get_credential`, `list_credentials`, `delete_credentials`)
+- Full CRUD operations via Tauri commands (`store_credential`, `get_credential`, `list_credentials`, `delete_credential`)
 - OS-native keyring and AES-256-GCM encrypted file fallback planned for v0.5
 
 ### Security
