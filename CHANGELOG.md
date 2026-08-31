@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Least-privilege virtual ports** — Windows keeps the main app non-elevated and delegates com0com operations to the LocalSystem service; Unix uses an in-process PTY bridge.
 
 ### Fixed
+- **Icon system semantic and small-size audit** — all 61 registered PNG assets now have an explicit production meaning and a 12px readability contract. Directional arrows, window controls, sidebars, file views, send mode and action steps now use dedicated assets; XMODEM no longer implies wireless activity; the file-manager control no longer presents a drag handle; status, log, copy/paste and transfer meanings are separated. The registry has no inline-SVG escape hatch, while CSS remains reserved for connection-status dots.
 - **Security settings localization and feedback** — the security panel localizes known backend labels and uses a safe localized fallback for unknown backends, while handling loading, refresh, unlock, lock, and status failures without exposing backend error text.
 - **Security settings icon and themed controls** — adds the security lock icon and aligns refresh, unlock, and lock controls with the shared secondary glass-button layout across themes.
 

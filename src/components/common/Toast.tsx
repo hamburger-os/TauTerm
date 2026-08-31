@@ -14,8 +14,8 @@ interface ToastProps {
 
 /** Toast 图标映射 */
 const iconMap: Record<string, IconName> = {
-  success: "check-plain",
-  error: "cross-circle",
+  success: "check",
+  error: "x-circle",
   warning: "warning",
   info: "info",
 };

@@ -245,7 +245,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       const isIperf = pluginId === "iperf";
       const items: ContextMenuItem[] = [];
       if (isSsh) {
-        items.push({ id: "connect", label: t("contextMenu.connect") || "Connect", icon: "plus" });
+        items.push({ id: "connect", label: t("contextMenu.openChannel") || "Open Channel", icon: "connection" });
       }
       items.push(
         { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect All", icon: "stop" },
@@ -353,7 +353,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           onClick={() => onNewSession?.()}
           title={t("session.newSession") + " (Ctrl+Shift+N)"}
         >
-          <Icon name="plus" size="md" color="var(--text-primary)" />
+          <Icon name="plus" size="md" />
         </button>
       </div>
 
@@ -415,7 +415,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                     <Icon
                       name={
                         node.tab.state === "connected" ? "status-connected" :
-                        node.tab.state === "connecting" || node.tab.state === "transferring" ? "status-connecting" :
+                        node.tab.state === "transferring" ? "status-transferring" :
+                        node.tab.state === "connecting" ? "status-connecting" :
                         "status-idle"
                       }
                       size={10}

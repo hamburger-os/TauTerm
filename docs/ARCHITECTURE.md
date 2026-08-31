@@ -55,7 +55,7 @@ graph TB
   "name": "SSH",
   "version": "1.0.0",
   "category": "terminal",
-  "icon": "ssh",
+  "icon": "ssh-shell",
   "content_type": "terminal",
   "capabilities": ["connection", "transfer", "authentication", "credential_store", "network_outbound"],
   "transfer_protocols": ["sftp"],
@@ -337,7 +337,7 @@ TauTerm/
 │   │   ├── FileTransfer/       # 传输子组件（协议选择器、配置表单、进度条，被 Transmission 复用）
 │   │   ├── FileManager/        # SFTP 文件管理器（目录浏览、上传/下载、批量、属性、预览、进度、列表/网格视图切换、图标工具栏、扩展名分类图标）
 │   │   ├── Tftp/               # TFTP 会话视图（服务端面板 + 客户端面板 + 传输列表 + 参数网格）
-│   │   └── common/             # Icon（三层渲染：PNG mask-image / CSS 状态点 / 内联 SVG）, GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
+│   │   └── common/             # Icon（严格注册 PNG + CSS 状态点；无内联 SVG）, GlassPanel, GlassButton, GlassInput, ContextMenu, Toast
 │   │
 │   ├── profiles/               # 会话 Profile 解析器（按协议提供身份信息与参数展示）
 │   │   ├── index.ts            # ProfileResolver 聚合 + dispatch

@@ -47,10 +47,3 @@
   gap: 4px;
   padding: 0 8px;
 }
-
-.viewToggleIndicator {
-  font-size: var(--text-xs);
-  font-family: var(--font-mono);
-  line-height: 1;
-}
-

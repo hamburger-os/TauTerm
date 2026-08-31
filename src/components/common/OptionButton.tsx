@@ -25,7 +25,7 @@ export default function OptionButton({
       {...buttonProps}
     >
       <Icon
-        name="check-plain"
+        name="check"
         size="sm"
         style={{ visibility: selected ? "visible" : "hidden" }}
       />

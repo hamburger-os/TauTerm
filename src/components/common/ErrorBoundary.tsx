@@ -57,7 +57,7 @@ export default class ErrorBoundary extends Component<
           <GlassPanel padding="lg" variant="elevated">
             <div style={{ textAlign: "center", maxWidth: "400px" }}>
               <div style={{ marginBottom: "12px" }}>
-                <Icon name="warning" size="2xl" color="var(--color-error)" />
+                <Icon name="warning" size="2xl" />
               </div>
               <h3
                 style={{

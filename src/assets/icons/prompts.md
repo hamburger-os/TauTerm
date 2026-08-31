@@ -1,732 +1,95 @@
-# TauTerm Icon Generation Prompts / 图标生成提示词
-
-> **开发者**: 图标组件用法详见 `src/components/common/Icon.tsx` 源码注释。
-> 三级渲染体系：Tier 1 (PNG mask-image, 51个，含 plus) / Tier 2 (CSS 状态圆点, 5个) / Tier 3 (内联 SVG, 3个)。
-> 尺寸预设: xs=12 / sm=14 / md=18 / lg=24 / xl=36 / 2xl=48（像素）。
-> **规则**: PNG 图标最小 `sm` (14px)，SVG 图标可在 `xs` (12px) 使用。
-> `color` prop 为 PNG 切换 mask-image 模式（主题适配），省略则渲染 `<img>` 保留原始玻璃质感。
-
-## 通用技术规范 / General Technical Specs
-
-所有图标遵循以下统一规范：
-
-| 参数 | 值 |
-|------|-----|
-| 画布尺寸 | **256×256 像素** |
-| 图形颜色 | **半透明霜白玻璃**，带明亮高光与深灰折射阴影 |
-| 背景 | **纯黑 #000000**（方便后期用屏幕混合模式过滤，或用抠图工具提取半透明通道） |
-| 格式 | **PNG-24** |
-| 图形区域 | 居中，四周保留 **12%** 边距（约 30px） |
-| 描边等效 | 在 256px 画布上约 **16-20px** 粗（缩小到 18px UI 显示时视觉等同 2.5-3px） |
-
-## 风格关键词 / Style Keywords
-
-> **中文**：纯黑背景，3D UI 图标，极致的液态玻璃质感，磨砂半透明材质，高级玻璃拟态（Glassmorphism），内部带有柔和的体积光与折射，边缘有明亮锐利的纯白高光（Specular highlight），圆润胶囊描边风格，有机流体形态，像水滴一样平滑，无任何尖锐棱角，8k 分辨率，Octane Render 渲染级别的通透感。
->
-> **English**: Pure black background, 3D UI icon, ultimate liquid glass texture, translucent frosted glass material, premium glassmorphism, soft volumetric light and refraction inside, bright sharp pure white specular highlights on the edges, rounded capsule stroke style, organic fluid form, smooth like water droplets, no sharp corners anywhere, 8k resolution, Octane Render level transparency and depth.
-
-## 形态要求 / Shape Requirements
-
-1. **圆润胶囊描边** — 所有线条端点为半圆形（round cap），转角为大圆角（round join），如液态玻璃管弯曲
-2. **有机流体曲线** — 避免僵硬几何直线，图形带轻微自然弧度
-3. **视觉重量一致** — 同尺寸下视觉密度相似
-4. **无尖锐棱角** — 任何转角至少 3-4px 等效圆角
-5. **3D 玻璃雕塑** — 图形为半透明液态玻璃材质渲染，带明亮边缘高光与内部折射，背景纯黑 #000000（便于后期抠图提取半透明通道，或使用屏幕混合模式叠加到 UI 上）
-
----
-
-## 图标提示词 / Icon Prompts
-
-以下 51 个图标均为 TauTerm 液态玻璃主题独立设计的 UI 功能图标。每个图标的设计从**功能语义**出发，以 TauTerm 的视觉语言（圆润胶囊描边、有机流体曲线、磨砂玻璃质感）为统一表达，而非对 emoji 或其他图标集的模仿。设计方案优先考虑：在 UI 中 18×18px 的可辨识性、与液态玻璃主题的视觉融合度、以及图标集的整体风格一致性。
-
-The following 51 icons are purpose-built UI functional icons for TauTerm's liquid glass theme. Each icon design starts from its **functional semantics**, expressed through TauTerm's visual language (rounded capsule strokes, organic fluid curves, frosted glass texture) — not as imitations of emoji or other icon sets. Design priorities: recognizability at 18×18px in UI, visual cohesion with the liquid glass theme, and stylistic consistency across the entire icon set.
-
-### 1. logo — 应用 Logo + 运行图标
-
-> **重要：此图标同时作为 App 运行图标使用**（窗口图标、任务栏图标、Favicon）。
-> 需要在缩小到 16×16 和 32×32 时仍清晰可辨。建议造型简洁有力，避免过于复杂的细节。
-
-**中文提示词：**
-一个科技终端应用"TauTerm"的精美 App 图标，256×256像素。背景为纯黑色（Pure black）。图标的底托是一块带有明显厚度与磨砂质感的半透明液态玻璃片（如一块悬浮的毛玻璃或磨砂亚克力板，不要完全透明，需要展现出细腻的磨砂颗粒、内部折射以及实体材质的体积感与光泽）。主体设计融合希腊字母 τ (tau) 与终端提示符 >_ 为一个有机整体。τ 的左侧为粗壮垂直胶囊形竖干，右侧弧线向下自然弯曲。右下方是终端风格的大于号 >，以两个圆润折角构成。底部是一条粗壮的圆角水平下划线 _，提供稳定底座。所有线条端点半圆形，转角大圆角，无任何锐角。核心图案材质为流光彩色的液态玻璃，色彩与光效完全还原经典的四色流光渐变（顶部为珊瑚红/粉红色，向左平滑过渡到亮黄与橙色，向下过渡到鲜艳的翠绿色，向右过渡到明亮的纯蓝色，中心呈现出四色自然交融的柔和漫反射效果）。在纯黑背景的衬托下，背后的磨砂液态玻璃片与前方绚丽的发光主体产生强烈的互动，通过毛玻璃的漫反射将前方的四色流光温柔地晕染开来，既保留了实体的细腻质感和边缘倒角的微光，又展现出极致的高级感、AI 智能感与未来科技感。造型紧凑有力，确保缩小到 16×16 时仍可辨识。
-
-**English prompt:**
-A premium App icon for a tech terminal application "TauTerm", 256×256 pixels. Set against a pure black background (#000000). The icon is backed by a translucent liquid glass sheet with visible thickness and a frosted matte texture (like a floating piece of frosted glass or frosted acrylic pane; it should NOT be completely transparent, clearly showing the fine frosted grain, inner volume, and physical material texture). The main design fuses the Greek letter τ (tau) with terminal prompt >_ into one organic whole. The τ has a thick vertical capsule stem on the left with a naturally curving right arc. A terminal-style greater-than symbol > made of two rounded bends sits at lower right. A thick rounded horizontal underscore _ forms the stable base. All strokes use round caps and round joins, no sharp edges anywhere. The core inner symbol is made of flowing colorful liquid glass, featuring the exact iconic dynamic glowing gradients of a four-color blend (a seamless, fluid transition with coral red/pink at the top, bright yellow and orange on the left, vivid emerald green at the bottom, and bright pure blue on the right, with a soft diffused blend of all four colors in the center). Set against the pure black background, the frosted liquid glass pane beautifully diffuses the vibrant four-color neon glow from the symbol in front of it. The frosted texture captures and scatters the light, emphasizing the pane's physical presence, glossy chamfered edges, and creating an incredibly premium, futuristic AI sci-fi vibe. Compact and bold form, must remain recognizable at 16×16 for taskbar/favicon use.
-
-**使用位置：** `src/assets/icons/logo.png`（UI 中引用）、`/favicon.png`（浏览器标签页图标，由 Vite 构建时自动从 logo.png 生成，参见 `vite.config.ts` 中的 `favicon-from-logo` 插件）、`src-tauri/icons/icon.png`（窗口/任务栏图标）
-
-**技术参数：** 256×256, 四色流光渐变液态玻璃 + 磨砂玻璃底托, pure black bg, PNG-24
-
----
-
-### 2. plug — 串口连接 / 插件
-
-**中文提示词：**
-一个液态玻璃风格的电插头图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。插头造型极简几何化但保持圆润 — 插脚为两个圆角矩形从圆润的主体中伸出，主体右侧连接一段弧线电缆。所有线条端点圆润，转角大圆角。风格参考：磨砂玻璃质感、液态胶囊描边。
-
-**English prompt:**
-A liquid glass style electric plug icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Plug shape is minimal geometric but soft — two rounded prongs extending from a rounded body, with an arc cable on the right side. All stroke ends rounded, all corners heavily filleted. Style reference: frosted glass texture, liquid pill strokes.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 3. lock — 安全锁定
-
-**中文提示词：**
-
-一个液态玻璃风格的安全锁图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与自然折射，256×256像素。设计：一个居中的圆角锁体，上方连接一枚宽厚圆润的 U 形锁梁；锁体保持纯净简洁，不要钥匙孔、锁孔或任何微小符号。锁梁与锁体自然融合，所有轮廓和端点都使用饱满圆角与均匀粗描边，不要尖锐棱角。造型简洁现代，在 18×18px 小尺寸下仍可清晰辨识为“安全/锁定”。风格参考：磨砂玻璃质感、液态胶囊描边、安全设置图标。
-
-**English prompt:**
-
-A liquid glass style security lock icon, 3D glass sculpture on a pure black background, rendered in frosted translucent liquid glass with bright edge highlights and natural refractions, 256×256 pixels. Design: a centered rounded lock body with a thick, softly rounded U-shaped shackle above it; keep the body clean and minimal with no keyhole, no lock hole, and no tiny symbols. The shackle blends naturally into the body; all outlines, ends, and corners are generously rounded with even thick strokes and no sharp edges. Clean modern form, clearly recognizable as “security/locked” at 18×18px. Style reference: frosted glass texture, liquid capsule strokes, security settings icon.
-
-**使用位置：** `src/assets/icons/lock.png` — 设置页面「安全」分类导航图标，以及凭据 vault 的解锁/锁定操作按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 4. pin — 位置/端口
-
-**中文提示词：**
-一个液态玻璃风格的定位图钉图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。图钉顶部为饱满的圆角水滴形/椭圆，底部收窄为柔和的尖端。整体造型如一颗液态金属水滴，无任何直线段，全部为有机曲线。风格参考：磨砂玻璃质感、液态胶囊描边、水滴形态。
-
-**English prompt:**
-A liquid glass style location pin icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. The pin has a plump rounded teardrop/oval top that tapers to a soft point at the bottom. Overall shape like a liquid metal droplet, no straight lines, all organic curves. Style reference: frosted glass texture, liquid pill strokes, droplet form.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 5. tag — 标签/名称
-
-**中文提示词：**
-一个液态玻璃风格的标签图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。标签主体为圆角矩形，左侧有一个小圆孔（挂绳孔），整体向右倾斜约10度，营造自然摆放感。所有转角大圆角，线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边。
-
-**English prompt:**
-A liquid glass style tag/label icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. The tag body is a rounded rectangle with a small circular hole on the left (string hole), tilted about 10 degrees to the right for a natural resting feel. All corners heavily rounded, strokes thick and even. Style reference: frosted glass texture, liquid pill strokes.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 6. settings — 设置齿轮
-
-**中文提示词：**
-一个液态玻璃风格的齿轮设置图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。齿轮中心为实心小圆，外围均匀分布6-8个圆角齿状凸起。齿形短而圆润（不像机械齿轮尖锐），每个齿的顶端和根部均为大圆角。整体如一个柔软的太阳/花朵齿轮混合造型。风格参考：磨砂玻璃质感、液态胶囊描边。
-
-**English prompt:**
-A liquid glass style gear/settings icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. The gear has a small solid circle center with 6-8 evenly distributed rounded teeth around it. Teeth are short and plump (not sharp like mechanical gears), each tooth tip and root heavily rounded. Overall looks like a soft sun/flower gear hybrid. Style reference: frosted glass texture, liquid pill strokes.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 7. palette — 外观/主题
-
-**中文提示词：**
-一个液态玻璃风格的调色板图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。调色板主体为圆角椭圆/盾形，左上角有一个小拇指孔（圆角矩形镂空）。调色板边缘均匀分布3-4个小圆点（颜料点）。所有形状圆润柔软，无尖锐边缘。风格参考：磨砂玻璃质感、液态胶囊描边。
-
-**English prompt:**
-A liquid glass style artist palette icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. The palette body is a rounded oval/shield shape with a small thumb hole (rounded rectangle cutout) in the upper left. 3-4 small rounded dots (paint spots) evenly distributed along the edge. All shapes soft and pillowy, no sharp edges. Style reference: frosted glass texture, liquid pill strokes.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 8. globe — 网络/语言
-
-**中文提示词：**
-一个液态玻璃风格的地球/网络图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。正圆形为主体，内部有3条水平弧线（纬度线，如玻璃管弯曲）和1条垂直弧线（经度线），交叉处自然融合。所有线条粗壮圆润，无锐角交叉。风格参考：磨砂玻璃质感、液态胶囊描边、简洁地球仪。
-
-**English prompt:**
-A liquid glass style globe/network icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A perfect circle body with 3 horizontal arcs (latitude lines, curved like glass tubes) and 1 vertical arc (longitude line) inside, intersections blend naturally. All strokes thick and rounded, no sharp intersections. Style reference: frosted glass texture, liquid pill strokes, minimal globe.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 9. font — 编码/文本
-
-**中文提示词：**
-一个液态玻璃风格的文字/字体图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计为 3 条长度递减的圆角水平胶囊（象征文本行），间距均匀，底部对齐。备选方案：设计为大写字母"A"的变体 — 两条斜线在下半部分以流畅的圆弧连接，中间横线也是一个柔和的弧线。字母形态保持几何感但转角全部圆润。风格参考：磨砂玻璃质感、液态胶囊描边、排版图标。
-
-**English prompt:**
-A liquid glass style text/font icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design as 3 rounded horizontal capsules of decreasing length (representing text lines), evenly spaced, bottom-aligned. Alternative: a stylized uppercase "A" — two diagonal strokes connected by a smooth arc at the bottom, the crossbar is a gentle arc. Letterform keeps geometric feel but all corners are rounded. Style reference: frosted glass texture, liquid pill strokes, typography icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 10. info — 信息提示
-
-**中文提示词：**
-一个液态玻璃风格的信息图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。正圆形外框（描边），内部为小写字母"i"的柔软变体 — 上方为一个圆润的小圆点，下方为一根垂直胶囊形竖线。圆形外框和内部元素全部使用粗描边和圆角。风格参考：磨砂玻璃质感、液态胶囊描边、信息提示符号。
-
-**English prompt:**
-A liquid glass style info icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A perfect circle outline (stroked), inside is a soft variant of lowercase "i" — a small rounded dot above and a vertical pill-shaped bar below. Both the circle and internal elements use thick strokes and rounded terminals. Style reference: frosted glass texture, liquid pill strokes, info symbol.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 11. search — 搜索
-
-**中文提示词：**
-一个液态玻璃风格的搜索/放大镜图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。正圆形镜头（描边），右下角连接一个45°的圆润手柄。圆形与手柄连接处自然过渡，手柄末端为饱满的半圆形。镜头内无额外细节，保持简洁。风格参考：磨砂玻璃质感、液态胶囊描边。
-
-**English prompt:**
-A liquid glass style search/magnifying glass icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A perfect circle lens (stroked) with a 45° rounded handle extending from the lower right. The circle-to-handle junction transitions naturally, handle ends in a plump half-circle. No extra detail inside the lens, keep it clean. Style reference: frosted glass texture, liquid pill strokes.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 12. upload — 发送/上传
-
-**中文提示词：**
-一个液态玻璃风格的上传/发送图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。圆角矩形外框（描边），内部中心是一个向上指的粗壮圆角箭头。箭头杆为垂直胶囊形，箭头顶部为圆润的V形/人字形。整体对称、有力、积极向上。风格参考：磨砂玻璃质感、液态胶囊描边、发送符号。
-
-**English prompt:**
-A liquid glass style upload/send icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A rounded rectangle outline (stroked) with a thick upward-pointing rounded arrow at center. The arrow shaft is a vertical capsule shape, the arrowhead is a rounded chevron/V at top. Overall symmetric, bold, upward energy. Style reference: frosted glass texture, liquid pill strokes, send symbol.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 13. download — 接收/下载
-
-**中文提示词：**
-一个液态玻璃风格的下载/接收图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。与 upload 图标对称 — 圆角矩形外框（描边），内部中心是一个向下指的粗壮圆角箭头。箭头杆为垂直胶囊形，箭头底部为圆润的倒V形。风格参考：磨砂玻璃质感、液态胶囊描边、接收符号。
-
-**English prompt:**
-A liquid glass style download/receive icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Symmetric to the upload icon — a rounded rectangle outline (stroked) with a thick downward-pointing rounded arrow at center. Arrow shaft is a vertical capsule, arrowhead is a rounded inverted chevron at bottom. Style reference: frosted glass texture, liquid pill strokes, receive symbol.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 14. package — YModem 协议/数据包
-
-**中文提示词：**
-一个液态玻璃风格的包裹/数据包图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。3D等距视角的圆角立方体（所有棱角大圆角），或者2D正视图的圆角方形盒子，顶部有一个柔和的弧线盖子。所有面使用粗描边和圆角连接。风格参考：磨砂玻璃质感、液态胶囊描边、包裹图标。
-
-**English prompt:**
-A liquid glass style package/archive icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A 3D isometric rounded cube (all edges heavily rounded), or a 2D front-view rounded square box with a soft arc lid on top. All faces use thick strokes with rounded connections. Style reference: frosted glass texture, liquid pill strokes, package icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 15. antenna — XModem 协议/通信
-
-**中文提示词：**
-一个液态玻璃风格的天线/卫星通信图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。中心为一个圆润的竖直塔杆（垂直胶囊形），顶部展开为3-4条向上弯曲的弧形信号波（如同心圆弧段，越远越宽）。信号波线条粗壮，弧度优美，与塔杆自然融合。风格参考：磨砂玻璃质感、液态胶囊描边、通信信号图标。
-
-**English prompt:**
-A liquid glass style antenna/satellite communication icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A rounded vertical pole (vertical capsule) at center, with 3-4 upward-curving arc signal waves expanding from the top (concentric arc segments, wider as they go out). Signal wave strokes are thick with elegant curves, blending naturally with the pole. Style reference: frosted glass texture, liquid pill strokes, signal icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 16. trash — 删除
-
-**中文提示词：**
-一个液态玻璃风格的垃圾桶/删除图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。圆角梯形/桶形主体（上宽下略窄），顶部有一条略宽的圆角横条（桶盖/把手）。桶身内部可选2-3条垂直圆角细线（象征纹理）。所有元素粗描边、大圆角。风格参考：磨砂玻璃质感、液态胶囊描边、删除图标。
-
-**English prompt:**
-A liquid glass style trash can/delete icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A rounded trapezoid/bucket body (wider at top, slightly narrower at bottom), with a slightly wider rounded horizontal bar at top (lid/handle). Optionally 2-3 vertical rounded thin lines inside the body (texture). All elements thick strokes, heavily rounded. Style reference: frosted glass texture, liquid pill strokes, delete icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 17. stop — 停止/断开
-
-**中文提示词：**
-一个液态玻璃风格的停止/方块图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。圆角正方形（四角大圆角），内部填充为实心（与 play 的三角空心形成对比）。四角弧度对称一致，整体饱满有力。风格参考：磨砂玻璃质感、液态胶囊描边、停止按钮。
-
-**English prompt:**
-A liquid glass style stop/square icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A rounded square (all four corners heavily rounded), filled solid (contrasting with the play triangle outline). Corner radii symmetric and consistent, overall plump and bold. Style reference: frosted glass texture, liquid pill strokes, stop button.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 18. play — 播放/连接
-
-**中文提示词：**
-一个液态玻璃风格的播放/三角图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。向右指向的圆角三角形（实心填充），三个顶点全部为大圆角。三角形的三条边带轻微向外弧度（非直线），营造有机流体感。风格参考：磨砂玻璃质感、液态胶囊描边、播放按钮。
-
-**English prompt:**
-A liquid glass style play/triangle icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A right-pointing rounded triangle (solid fill), all three vertices heavily rounded. The three sides have subtle outward curvature (not straight lines), creating an organic fluid feel. Style reference: frosted glass texture, liquid pill strokes, play button.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 19. construction — 建设中/未实现
-
-**中文提示词：**
-一个液态玻璃风格的施工/建设中图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。菱形/钻石形外框（圆角），内部为扳手与锤子的简化交叉造型 — 扳手为弧线+圆角头部，锤子为圆角矩形+饱满圆形锤头。所有元素粗描边、大圆角。风格参考：磨砂玻璃质感、液态胶囊描边、建设中符号。
-
-**English prompt:**
-A liquid glass style construction/under-development icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A diamond/rhombus outline (rounded corners), inside is a simplified crossed wrench and hammer — wrench is an arc with rounded head, hammer is a rounded rectangle handle with a plump circular head. All elements thick strokes, heavily rounded. Style reference: frosted glass texture, liquid pill strokes, construction symbol.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 20. folder — 文件夹/本地文件
-
-**中文提示词：**
-一个液态玻璃风格的文件夹图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。传统的文件夹造型 — 主体为大圆角矩形，顶部有一个小圆角矩形标签凸起。文件夹正面和标签之间的折线使用柔和的弧线过渡而非直角。所有边角大圆角。风格参考：磨砂玻璃质感、液态胶囊描边、文件管理图标。
-
-**English prompt:**
-A liquid glass style folder icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Classic folder shape — body is a large rounded rectangle with a small rounded rectangular tab protruding from the top. The fold line between the front face and tab uses a soft arc transition instead of a sharp angle. All edges heavily rounded. Style reference: frosted glass texture, liquid pill strokes, file manager icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 21. chart — 仪表盘/图表
-
-**中文提示词：**
-一个液态玻璃风格的柱状图/仪表盘图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。3根高度递增的垂直圆角柱形（胶囊形），底部对齐在一条圆角横线上。柱子间距均匀，每根柱子顶部为饱满的半圆形。风格参考：磨砂玻璃质感、液态胶囊描边、数据可视化图标。
-
-**English prompt:**
-A liquid glass style bar chart/dashboard icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. 3 vertical rounded bars (capsule shapes) of increasing height, aligned at the bottom on a rounded horizontal baseline. Bars are evenly spaced, each bar top is a plump half-circle. Style reference: frosted glass texture, liquid pill strokes, data visualization icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 22. warning — 警告/注意
-
-**中文提示词：**
-一个液态玻璃风格的警告三角图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。圆角等边三角形（描边），三个顶点全部为大圆角。内部中心为一个大圆角感叹号 — 上方竖线为垂直胶囊形，下方圆点为饱满的小圆形。三角形和感叹号均使用粗描边。风格参考：磨砂玻璃质感、液态胶囊描边、警告符号。
-
-**English prompt:**
-A liquid glass style warning triangle icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A rounded equilateral triangle (stroked), all three vertices heavily rounded. Inside at center is a large rounded exclamation mark — upper bar is a vertical capsule, lower dot is a plump small circle. Both triangle and exclamation use thick strokes. Style reference: frosted glass texture, liquid pill strokes, warning symbol.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 23. stopwatch — 计时/运行时间
-
-**中文提示词：**
-一个液态玻璃风格的秒表/计时器图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。正圆形表盘（描边），内部有钟面刻度 — 顶部12点位置有两个小圆点，中心有一个小圆点。一根从中心指向右上约2点钟方向的粗圆角指针。表盘顶部有一个圆角小按钮/表冠。风格参考：磨砂玻璃质感、液态胶囊描边、计时器图标。
-
-**English prompt:**
-A liquid glass style stopwatch/timer icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A perfect circle dial (stroked) with clock face markings inside — two small dots at the 12 o'clock position, a small dot at center. One thick rounded hand pointing from center to about 2 o'clock. A small rounded button/crown on top of the dial. Style reference: frosted glass texture, liquid pill strokes, timer icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 24. check-circle — 完成/成功
-
-**中文提示词：**
-一个液态玻璃风格的圆形完成/成功图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。正圆形外框（粗描边），内部为一个大圆角勾选标记 — 左侧短斜线和右侧长斜线以流畅的圆弧连接，勾选末端为饱满的半圆形。圆形和勾选标记线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边、成功确认图标。
-
-**English prompt:**
-A liquid glass style circle check/success icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A perfect circle outline (thick stroke) with a large rounded checkmark inside — a short left diagonal and a long right diagonal connected by a smooth arc, the checkmark tip ends in a plump half-circle. Both circle and checkmark strokes are thick and even. Style reference: frosted glass texture, liquid pill strokes, success confirmation icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 25. cross-circle — 失败/错误
-
-**中文提示词：**
-一个液态玻璃风格的圆形失败/错误图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。正圆形外框（粗描边），内部为两条45°交叉的圆角粗线（X形），每条线的四个端点均为饱满的半圆形。交叉处自然融合。圆形和X线线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边、错误图标。
-
-**English prompt:**
-A liquid glass style circle cross/error icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A perfect circle outline (thick stroke) with two 45° crossed rounded thick lines inside (X shape), all four endpoints of each line are plump half-circles. The intersection blends naturally. Both circle and X strokes are thick and even. Style reference: frosted glass texture, liquid pill strokes, error icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 26. skip — 跳过
-
-**中文提示词：**
-一个液态玻璃风格的跳过/快进图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。两个向右指向的并列圆角三角形（实心填充），后跟一条垂直圆角竖线。三角形顶点全部大圆角，竖线两端为半圆形。整体节奏感强，象征"跳过"。风格参考：磨砂玻璃质感、液态胶囊描边、媒体控制图标。
-
-**English prompt:**
-A liquid glass style skip/fast-forward icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Two side-by-side right-pointing rounded triangles (solid fill) followed by a vertical rounded bar. All triangle vertices heavily rounded, bar ends are half-circles. Strong rhythmic feel, symbolizing "skip". Style reference: frosted glass texture, liquid pill strokes, media control icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 27. hourglass — 等待/处理中
-
-**中文提示词：**
-一个液态玻璃风格的沙漏/等待图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。上下两个圆角三角形（或梯形）在中间以细窄的通道相连，形成经典的沙漏造型。所有顶点和转角大圆角处理。内部中空（轮廓描边）。风格参考：磨砂玻璃质感、液态胶囊描边、等待状态图标。
-
-**English prompt:**
-A liquid glass style hourglass/waiting icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Two rounded triangles (or trapezoids) connected by a narrow channel in the middle, forming the classic hourglass shape. All vertices and corners heavily rounded. Hollow inside (outline strokes). Style reference: frosted glass texture, liquid pill strokes, waiting state icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 28. transfer-progress — 传输进行中
-
-**中文提示词：**
-一个液态玻璃风格的传输/同步进行中图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。正圆形外框，内部不放置居中单一箭头，而是两个沿圆形路径弯曲的粗壮圆角箭头，呈首尾追逐的环形排列 — 每个箭头由弧线箭身和圆润箭头组成，线条粗壮均匀，端点全部为饱满的半圆形。箭头环绕圆心约 270°，营造连续运动/旋转的视觉动感。风格参考：磨砂玻璃质感、液态胶囊描边、同步/加载动画图标、传输进行中状态指示器。
-
-**English prompt:**
-A liquid glass style transfer/sync in-progress icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. A perfect circle outline. Inside — instead of a single centered arrow — two thick rounded arrows curved along a circular path, arranged head-to-tail in a chasing ring. Each arrow has a curved shaft and a rounded arrowhead, strokes thick and even, all terminals are plump half-circles. The arrows wrap approximately 270° around the center, conveying a sense of continuous motion / rotation. Style reference: frosted glass texture, liquid pill strokes, sync/loading animation icon, transfer in-progress status indicator.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 29. check-plain — 选中/已完成标记
-
-**中文提示词：**
-一个液态玻璃风格的纯勾选标记图标（无外框圆圈），3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。与 check-circle 的勾选标记造型一致 — 左侧短斜线和右侧长斜线以流畅的圆弧连接，勾选末端为饱满的半圆形。线条粗壮均匀，造型自信有力。风格参考：磨砂玻璃质感、液态胶囊描边、选中确认符号。
-
-**English prompt:**
-A liquid glass style plain checkmark icon (no outer circle), 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Same checkmark shape as check-circle — a short left diagonal and a long right diagonal connected by a smooth arc, the tip ends in a plump half-circle. Thick even strokes, confident and bold form. Style reference: frosted glass texture, liquid pill strokes, selection confirmation symbol.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 30. log — 日志/实时监控
-
-**中文提示词：**
-一个液态玻璃风格的日志/录制图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计方向：一张微微倾斜的圆角文档/页面，右上角悬浮一个饱满的小圆点（象征"正在记录"），文档表面有 3 条长度递减的水平胶囊形横线（象征日志条目行）。文档边缘粗壮圆润，圆点在文档上方投下微妙的玻璃折射。所有转角大圆角，线条粗壮。风格参考：磨砂玻璃质感、液态胶囊描边、录制/日志状态指示器。
-
-**English prompt:**
-A liquid glass style log/recording icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design direction: a slightly tilted rounded document/page with a plump small dot floating at the upper right corner (symbolizing "recording in progress"), the document surface has 3 horizontal capsule bars of decreasing length (representing log entry lines). The document edges are thick and heavily rounded, the dot casts subtle glass refraction above the document. All corners heavily filleted, strokes thick and bold. Style reference: frosted glass texture, liquid pill strokes, recording/log status indicator.
-
-**使用位置：** `src/assets/icons/log.png` — 右键菜单「实时监控」选项图标、设置页面「日志」分类图标、状态栏日志状态指示器
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 31. command-panel — 指令面板/快捷命令
-
-**中文提示词：**
-一个液态玻璃风格的终端命令面板图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：左侧为一个向右指向的实心圆角三角（播放/执行符号），右侧为三条长度递减的水平胶囊形横线（象征命令列表行），上下排列。三角和横线之间留适度间距，形成一个"指令列表 + 执行"的组合意象。所有转角大圆角，线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边。
-
-**English prompt:**
-A liquid glass style terminal command panel icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a right-pointing solid rounded triangle (play/execute symbol) on the left, with three horizontal capsule bars of decreasing length (representing command list rows) stacked vertically on the right. Moderate spacing between triangle and bars, forming a "command list + execution" visual metaphor. All corners heavily rounded, strokes thick and even. Style reference: frosted glass texture, liquid pill strokes.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 32. drag-handle — 拖拽排序把手
-
-**中文提示词：**
-一个液态玻璃风格的拖拽排序把手图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：2 列 × 3 行均匀排列的 6 个饱满小圆点（grid dots），行列间距一致，每个圆点圆润饱满。整体造型简洁克制，象征可拖拽重新排序的 UI 把手。风格参考：磨砂玻璃质感、液态胶囊描边、拖拽把手通用 UI 元素。
-
-**English prompt:**
-A liquid glass style drag handle icon for reordering, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: 6 plump small dots arranged in a 2-column × 3-row grid, evenly spaced, each dot perfectly rounded. Overall shape is minimal and restrained, representing a draggable reorder handle common in UI design. Style reference: frosted glass texture, liquid pill strokes, drag handle UI element.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 33. edit — 编辑/重命名
-
-**中文提示词：**
-一个液态玻璃风格的编辑/铅笔图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一根斜向约45°的圆角铅笔造型 — 笔身为一根粗壮的圆角矩形/胶囊形，笔尖处逐渐收窄为柔和的圆角锥形。笔身和笔尖之间自然过渡，所有转角大圆角，线条粗壮均匀。笔身中段可加一条柔和的弧形分割线（象征铅笔的木材与笔芯分界）。造型简洁现代，在 12×12px 极小尺寸下仍可辨识为"编辑"含义。风格参考：磨砂玻璃质感、液态胶囊描边、编辑/修改图标。
-
-**English prompt:**
-A liquid glass style edit/pencil icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a diagonal (~45°) rounded pencil shape — the body is a thick rounded rectangle/capsule, tapering at the tip into a soft rounded cone. The body-to-tip transition is smooth and natural, all corners heavily rounded, strokes thick and even. Optionally add a soft curved dividing line mid-body (representing the wood/core boundary). Clean and modern form, must remain recognizable as "edit" at 12×12px. Style reference: frosted glass texture, liquid pill strokes, edit/modify icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 34. loop — 循环/重复发送
-
-**中文提示词：**
-一个液态玻璃风格的循环/重复发送图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：两条粗壮的圆角箭头沿圆形路径首尾追逐排列 — 每条箭头由弧形箭身与圆润箭头组成，整体形成一个环形的循环/重复意象。箭头线条粗壮均匀，所有端点为饱满的半圆形。圆弧环绕约 300°，形成接近闭合的环形。风格参考：磨砂玻璃质感、液态胶囊描边、循环/刷新图标。
-
-**English prompt:**
-A liquid glass style loop/repeat icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: two thick rounded arrows curved along a circular path arranged head-to-tail in a chasing ring — each arrow has a curved shaft and a rounded arrowhead, forming a circular loop/repeat motif. Arrow strokes thick and even, all terminals are plump half-circles. The arcs wrap approximately 300°, forming a nearly closed ring. Style reference: frosted glass texture, liquid pill strokes, loop/repeat icon.
-
-**使用位置：** `src/assets/icons/loop.png` — BasicSend 和 CommandPanel 的循环发送控制图标
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 35. close — 关闭/取消
-
-**中文提示词：**
-一个液态玻璃风格的关闭/取消图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：两条约45°交叉的粗壮圆角线段形成X形 — 每条线段的两个端点均为饱满的半圆形，交叉处自然融合。线条粗壮均匀，整体简洁有力。风格参考：磨砂玻璃质感、液态胶囊描边、关闭/取消符号。
-
-**English prompt:**
-A liquid glass style close/cancel icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: two thick rounded lines crossing at approximately 45° forming an X shape — each line's two endpoints are plump half-circles, the intersection blends naturally. Strokes thick and even, overall simple and bold. Style reference: frosted glass texture, liquid pill strokes, close/cancel symbol.
-
-**使用位置：** `src/assets/icons/close.png` — 搜索栏关闭按钮、Toast关闭按钮、设置页关闭、弹窗关闭
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 36. menu — 菜单/汉堡菜单
-
-**中文提示词：**
-一个液态玻璃风格的菜单/汉堡图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：3条水平并列的粗壮圆角胶囊形横线，长度一致，间距均匀，上下排列。每条横线两端为饱满的半圆形。风格参考：磨砂玻璃质感、液态胶囊描边、汉堡菜单图标。
-
-**English prompt:**
-A liquid glass style menu/hamburger icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: 3 horizontal thick rounded capsule bars of equal length, evenly spaced, stacked vertically. Each bar has plump half-circle endpoints. Style reference: frosted glass texture, liquid pill strokes, hamburger menu icon.
-
-**使用位置：** `src/assets/icons/menu.png` — 顶部工具栏菜单按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 37. chevron-up — 上箭头/收起
-
-**中文提示词：**
-一个液态玻璃风格的向上箭头/三角图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个粗壮的倒V形/人字形，两条线段以约90°在顶点相交，顶点为大圆角，两个下端点为饱满的半圆形。线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边、上箭头符号。
-
-**English prompt:**
-A liquid glass style chevron-up arrow icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick inverted V/chevron shape, two line segments meeting at approximately 90° at the apex, the apex is heavily rounded, both lower endpoints are plump half-circles. Strokes thick and even. Style reference: frosted glass texture, liquid pill strokes, up arrow symbol.
-
-**使用位置：** `src/assets/icons/chevron-up.png` — 状态栏收起按钮、搜索栏上翻
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 38. chevron-down — 下箭头/展开
-
-**中文提示词：**
-一个液态玻璃风格的向下箭头/三角图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个粗壮的V形/人字形，两条线段以约90°在底点相交，底点为大圆角，两个上端点为饱满的半圆形。与 chevron-up 上下对称。线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边、下箭头符号。
-
-**English prompt:**
-A liquid glass style chevron-down arrow icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick V/chevron shape, two line segments meeting at approximately 90° at the bottom point, the bottom point is heavily rounded, both upper endpoints are plump half-circles. Symmetric to chevron-up. Strokes thick and even. Style reference: frosted glass texture, liquid pill strokes, down arrow symbol.
-
-**使用位置：** `src/assets/icons/chevron-down.png` — 状态栏展开按钮、搜索栏下翻
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 39. chevron-dropdown — 下拉三角
-
-**中文提示词：**
-一个液态玻璃风格的下拉三角/展开图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个实心填充的V形/倒三角，三个顶点全部为大圆角，三条边带轻微向外弧度营造有机流体感。整体饱满有力，底部弧线宽于顶部。风格参考：磨砂玻璃质感、液态胶囊描边、下拉三角符号。
-
-**English prompt:**
-A liquid glass style dropdown triangle icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a solid filled V/downward triangle, all three vertices heavily rounded, the three edges have subtle outward curvature for organic fluid feel. Overall plump and bold, the bottom arc is wider than the top. Style reference: frosted glass texture, liquid pill strokes, dropdown triangle symbol.
-
-**使用位置：** `src/assets/icons/chevron-dropdown.png` — 发送栏发送历史下拉按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 40. refresh — 刷新/重新加载
-
-**中文提示词：**
-一个液态玻璃风格的刷新/重新加载图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一段粗壮的圆弧（约270°），一端带有圆润的箭头头部（V形），另一端为饱满的半圆形端点。圆弧线条粗壮均匀，箭头头部与弧线自然融合。整体形成"旋转刷新"的视觉意象。风格参考：磨砂玻璃质感、液态胶囊描边、刷新/重新加载符号。
-
-**English prompt:**
-A liquid glass style refresh/reload icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick arc (approximately 270°) with a rounded arrowhead (V-shape) at one end and a plump half-circle at the other. The arc stroke is thick and even, the arrowhead blends naturally with the arc line. Forms a "rotating refresh" visual metaphor. Style reference: frosted glass texture, liquid pill strokes, refresh/reload symbol.
-
-**使用位置：** `src/assets/icons/refresh.png` — 连接对话框刷新串口列表按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 41. plus — 新增/添加
-
-**中文提示词：**
-一个液态玻璃风格的新增/加号图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一条垂直粗壮圆角胶囊形线段和一条水平粗壮圆角胶囊形线段在中心十字交叉，交叉处自然融合。四条端点均为饱满的半圆形。线条粗壮均匀，整体对称简洁。风格参考：磨砂玻璃质感、液态胶囊描边、添加/新增符号。
-
-**English prompt:**
-A liquid glass style plus/add icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a vertical thick rounded capsule bar and a horizontal thick rounded capsule bar crossing at center, the intersection blends naturally. All four endpoints are plump half-circles. Strokes thick and even, overall symmetric and minimal. Style reference: frosted glass texture, liquid pill strokes, add/new symbol.
-
-**使用位置：** `src/assets/icons/plus.png` — 侧栏新建会话按钮、指令面板新增命令按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 42. back-arrow — 返回箭头
-
-**中文提示词：**
-一个液态玻璃风格的返回/左箭头图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个指向左侧的粗壮V形/人字形（约120°转角），尖角为大圆角，两个右端点为饱满的半圆形。线条粗壮均匀，简洁有力，表达"返回上一级"的语义。风格参考：磨砂玻璃质感、液态胶囊描边、返回箭头符号。
-
-**English prompt:**
-A liquid glass style back/left arrow icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick V/chevron shape pointing left (approximately 120° turn), the apex is heavily rounded, both right endpoints are plump half-circles. Strokes thick and even, simple and bold, expressing "go back" semantics. Style reference: frosted glass texture, liquid pill strokes, back arrow symbol.
-
-**使用位置：** `src/assets/icons/back-arrow.png` — 连接对话框返回按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 43. keyboard — 键盘快捷键
-
-**中文提示词：**
-一个液态玻璃风格的键盘快捷键图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个圆角矩形外框（象征键盘按键/键帽），内部有 2 条水平平行的粗壮圆角胶囊形横线（象征按键上的功能标记）。外框四角大圆角，内部横线两端为饱满的半圆形。整体造型简洁现代，在 18×18px 小尺寸下仍可辨识为"键盘/快捷键"含义。风格参考：磨砂玻璃质感、液态胶囊描边、快捷键 UI 图标。
-
-**English prompt:**
-A liquid glass style keyboard shortcut icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a rounded rectangle outline (representing a keyboard keycap) with 2 horizontal parallel thick rounded capsule bars inside (representing function markings on the key). All four outer corners heavily rounded, internal bar endpoints are plump half-circles. Clean and modern form, must remain recognizable as "keyboard/shortcut" at 18×18px. Style reference: frosted glass texture, liquid pill strokes, shortcut UI icon.
-
-**使用位置：** `src/assets/icons/keyboard.png` — 设置页面「快捷键」分类图标
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 44. panel-right — 右侧栏切换
-
-**中文提示词：**
-A 3D icon of three vertical parallel rounded capsule bars, pure black background (#000000), frosted translucent glass material with bright edge highlights, internal light refractions and caustics, liquid glassmorphism style, organic fluid capsule strokes, soft ambient occlusion where bars meet the glass surface, glossy specular reflections along the top edges. The three bars are evenly spaced vertically oriented cylinders arranged horizontally side by side, resembling a vertical version of a hamburger menu icon. Subtle shadow beneath each bar. Photorealistic glass sculpture, 8K render quality, product lighting, centered composition, no background elements other than pure black.
-
-**English prompt:**
-A 3D icon of three vertical parallel rounded capsule bars, pure black background (#000000), frosted translucent glass material with bright edge highlights, internal light refractions and caustics, liquid glassmorphism style, organic fluid capsule strokes, soft ambient occlusion where bars meet the glass surface, glossy specular reflections along the top edges. The three bars are evenly spaced vertically oriented cylinders arranged horizontally side by side, resembling a vertical version of a hamburger menu icon. Subtle shadow beneath each bar. Photorealistic glass sculpture, 8K render quality, product lighting, centered composition, no background elements other than pure black.
-
-**使用位置：** `src/assets/icons/panel-right.png` — 顶栏右侧栏切换按钮，与 menu.png（三条横线）配对使用，hover 显示"右侧栏"和快捷键 Ctrl+Shift+E
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 45. robot — 自动应答/AI 助手
-
-**中文提示词：**
-一个液态玻璃风格的机器人/AI 图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个圆角方形头部（象征机器人头部/AI 助手），内部有两条水平的短横线（象征"眼睛"或"传感器"），头像顶部有两条V形圆角天线向外展开。天线和头部全部使用粗壮圆润的胶囊描边，所有转角大圆角。风格参考：磨砂玻璃质感、液态胶囊描边、AI/自动回复图标。
-
-**English prompt:**
-A liquid glass style robot/AI icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a rounded square head shape (representing a robot head / AI assistant), with two short horizontal rounded capsule bars inside (representing "eyes" or sensors), and two V-shaped rounded antennae expanding outward from the top. The antennae and head all use thick, plump capsule strokes, all corners heavily rounded. Style reference: frosted glass texture, liquid pill strokes, AI/auto-reply icon.
-
-**使用位置：** `src/assets/icons/robot.png` — 发送栏自动应答模式切换按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 46. code — 代码/脚本编辑
-
-**中文提示词：**
-一个液态玻璃风格的代码/脚本图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个简约的尖括号符号 `< >` 的变体 — 左侧为一个粗壮的圆角"<"形（由两条短线以约60°相交），右侧为一个对称的粗壮圆角">"形，中间留适度间距。整体形成"代码标签"的视觉意象。所有线段端点半圆形，转交大圆角。在 18×18px 小尺寸下仍可辨识为编程/代码含义。风格参考：磨砂玻璃质感、液态胶囊描边、编程/代码符号。
-
-**English prompt:**
-A liquid glass style code/script icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a minimalist angle bracket symbol `< >` — a thick rounded "<" shape on the left (two short strokes meeting at approximately 60°), and a symmetric thick rounded ">" shape on the right, with moderate spacing between them. Forms a "code tag" visual metaphor. All stroke ends are half-circles, all corners heavily rounded. Must remain recognizable as programming/code at 18×18px. Style reference: frosted glass texture, liquid pill strokes, programming/code symbol.
-
-**使用位置：** `src/assets/icons/code.png` — 发送栏脚本编辑器模式切换按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 47. chevron-right — 右箭头/面板展开
-
-**中文提示词：**
-一个液态玻璃风格的向右箭头/三角图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一个粗壮的指向右侧的 V 形/人字形，两条线段以约90°在右尖点相交，尖点为大圆角，两个左端点为饱满的半圆形。线条粗壮均匀。风格参考：磨砂玻璃质感、液态胶囊描边、右箭头符号。
-
-**English prompt:**
-A liquid glass style chevron-right arrow icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: a thick V/chevron shape pointing right, two line segments meeting at approximately 90° at the right point, the right point is heavily rounded, both left endpoints are plump half-circles. Strokes thick and even. Style reference: frosted glass texture, liquid pill strokes, right arrow symbol.
-
-**使用位置：** `src/assets/icons/chevron-right.png` — 脚本编辑器输出面板展开按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
----
-
-### 48. ssh-shell — SSH 终端会话
-
-**中文提示词：**
-一个液态玻璃风格的 SSH 远程终端图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计为终端窗口的有机流体变体 — 主体为圆角矩形（终端窗口），左上角有一个柔和弯曲的 >_ 提示符（两个圆润折角构成 >，底部一条粗壮下划线 _），右下角有 3 条放射状的小圆点（象征远程连接/网络信号）。所有线条端点半圆形，转角大圆角。风格参考：磨砂玻璃质感、液态胶囊描边、SSH 终端图标。
-
-**English prompt:**
-A liquid glass style SSH remote terminal icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Designed as an organic fluid variant of a terminal window — the body is a rounded rectangle (terminal window), with a softly curved >_ prompt in the upper left (> made of two rounded bends, _ a thick rounded underscore below), and 3 small radiating dots in the bottom right (symbolizing remote connection/network signals). All stroke ends rounded, corners heavily filleted. Style reference: frosted glass texture, liquid pill strokes, SSH terminal icon.
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 49. clipboard — 剪贴板/复制
-
-**中文提示词：**
-一个液态玻璃风格的剪贴板/复制图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：主体为一个圆角矩形剪贴板（描边），右上角有一个饱满的小圆形（象征图钉/夹子），剪贴板表面有 2-3 条水平的粗壮圆角胶囊形横线（象征文本行），横线长度递减，底部对齐。所有转角大圆角，线条粗壮均匀。整体造型简洁现代，在 18×18px 小尺寸下仍可辨识为"剪贴板/复制"含义。风格参考：磨砂玻璃质感、液态胶囊描边、复制/剪贴板 UI 图标。
-
-**English prompt:**
-A liquid glass style clipboard/copy icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: body is a rounded rectangle clipboard (stroked outline), with a plump small circle at the upper right (symbolizing a pin/clip), and 2-3 horizontal thick rounded capsule bars on the clipboard surface (representing text lines), bars decreasing in length, bottom-aligned. All corners heavily rounded, strokes thick and even. Clean modern form, must remain recognizable as "clipboard/copy" at 18×18px. Style reference: frosted glass texture, liquid pill strokes, copy/clipboard UI icon.
-
-**使用位置：** `src/assets/icons/clipboard.png` — 终端右键菜单「Copy（复制）」选项图标、文件管理器右键菜单多选计数 header、文件属性弹窗复制路径按钮
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 50. paste — 从剪贴板粘贴
-
-**中文提示词：**
-一个液态玻璃风格的粘贴图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：外侧为一个较大的圆角矩形剪贴板（描边），顶部中间有一个圆润的夹子/图钉凸起；剪贴板内部居中偏下位置有一个较小的圆角矩形/纸张（实心填充的朦胧玻璃片）。夹子与剪贴板外框之间通过柔和弧线自然过渡。外框和内层纸张之间有明显的空间深度关系，内层纸张带微微的内发光，与半透明液态玻璃外框形成层次对比。所有转角大圆角，线条粗壮均匀。整体造型在 14×14px 极小尺寸下仍可辨识为"粘贴"含义。与 clipboard.png（剪贴板+文本行，Copy 用）区分：clipboard 是空剪贴板表面有文本行（暗示"此处有内容可复制"），paste 是剪贴板内部有一张插入的实心纸张（暗示"内容正在被粘贴到此处"）。风格参考：磨砂玻璃质感、液态胶囊描边、粘贴/插入 UI 图标。
-
-**English prompt:**
-A liquid glass style paste icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: an outer large rounded rectangle clipboard (stroked outline) with a plump rounded clip/pin protruding from the top center; inside the clipboard, positioned slightly below center, is a smaller rounded rectangle / document sheet (solid filled, misty glass pane). The clip and clipboard outline transition naturally via a soft curved junction. There is a clear sense of spatial depth between the outer frame and the inner document — the inner sheet has subtle internal glow, creating layered contrast with the translucent liquid glass outer frame. All corners heavily rounded, strokes thick and even. The overall form must remain recognizable as "paste" at 14×14px. Distinguish from clipboard.png (clipboard + text lines, used for Copy): clipboard is an empty clipboard with text lines on the surface (implying "content is here to copy"), while paste is a clipboard with a solid document sheet being inserted (implying "content is being pasted into here"). Style reference: frosted glass texture, liquid pill strokes, paste/insert UI icon.
-
-**使用位置：** `src/assets/icons/paste.png` — 终端右键菜单「Paste（粘贴）」选项图标
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-### 51. file — 新建文件
-
-**中文提示词：**
-一个液态玻璃风格的文档/文件图标，3D 玻璃雕刻，纯黑背景，磨砂半透明液态玻璃材质，明亮边缘高光与折射，256×256像素。设计：一张正立的圆角矩形文档/纸张（描边），右上角有一个折叠的圆角折角（folded corner），文档表面有 2-3 条长度递减的水平胶囊形横线（象征文本行），底部对齐。所有转角大圆角，线条粗壮均匀，边缘高光锐利。整体造型简洁现代，在 18×18px 小尺寸下仍可辨识为"文件/文档"含义。风格参考：磨砂玻璃质感、液态胶囊描边、文件管理图标。
-
-**English prompt:**
-A liquid glass style document/file icon, 3D glass sculpture on pure black background, rendered in frosted liquid glass with bright edge highlights and refractions, 256×256 pixels. Design: an upright rounded rectangle document/page (stroked outline) with a folded corner at the top right (rounded fold), the surface has 2-3 horizontal capsule bars of decreasing length (representing text lines), bottom-aligned. All corners heavily rounded, strokes thick and even, edge highlights crisp. Clean modern form, must remain recognizable as "file/document" at 18×18px. Style reference: frosted glass texture, liquid pill strokes, file manager icon.
-
-**使用位置：** `src/assets/icons/file.png` — 文件管理器工具栏「新建文件」按钮图标
-
-**技术参数：** 256×256, frosted glass, black bg, PNG-24
-
----
-
-## 生成后检查清单 / Post-Generation Checklist
-
-### 图标质量
-
-- [ ] 所有 51 个图标风格统一（描边粗细、圆角程度、视觉密度）
-- [ ] 每个图标在缩小到 18×18 时仍然清晰可辨
-- [ ] 图标为半透明液态玻璃材质渲染，边缘高光锐利明亮，内部折射自然通透（非纯白剪影，非杂色噪点）
-- [ ] 图标在暗色背景上清晰可见（半透明玻璃需要暗色底色衬托）；纯黑背景便于后期抠图或使用屏幕混合模式叠加到 UI
-- [ ] 文件名与上述图标名一致（logo.png, ...）
-
-### 部署
-
-1. 将所有 51 个 PNG 图标放入 `src/assets/icons/` 目录，覆盖占位文件
-2. 运行部署脚本，一键将 logo 同步到 App 图标位置：
-
-```bash
-node scripts/apply-logo.mjs
-```
-
-该脚本自动完成：
-- 复制 `logo.png` → `src-tauri/icons/icon.png`（窗口/任务栏图标）
-- 生成 `icon.ico`（Windows 编译所需的 ICO 格式）
-
-3. 浏览器标签页图标（Favicon）无需单独部署：
-   - `index.html` 通过 `<link rel="icon" href="/favicon.png" />` 声明
-   - Vite 开发服务器中间件将 `/favicon.png` 实时映射到 `src/assets/icons/logo.png`
-   - 生产构建时 `vite.config.ts` 中的 `closeBundle` 钩子自动复制 `logo.png` → `dist/favicon.png`
-   - **不再需要** `public/` 目录
-
-4. 运行 `npm run tauri dev` 验证所有图标正常显示
+# TauTerm 图标生成规范（V3）
+
+本文件是 `src/assets/icons/` 的唯一生成依据。图标语义必须同时满足「资源键」「实际调用位置」「12px 视觉验收」；不得只按名称或提示词猜测用途。
+
+## 固定技术与风格约束
+
+- 本注册表的每个功能图标单独生成一张 **256×256、8-bit RGBA、透明背景 PNG**；不使用 SVG、字体字形或 CSS 蒙版。唯一例外是连接状态点，它们由 `Icon` 的 CSS 状态类提供主题色语义。
+- 主图形位于 `x/y=32…223` 的 192px 光学框，透明安全边距至少 32px。不得留黑底、裁切边缘、去背毛边、投影或方形底板。
+- 家族为「浅冰蓝、清晰优先的轻玻璃」：蓝色实体内芯、白色边缘高光、极少折射、圆角端点和连接处。12px 时要先读出轮廓、方向或状态；禁止仅剩细线框、密集小孔、文字和装饰碎片。
+- 窗口控制、箭头、折角、键盘、侧栏和视图切换同样是 PNG，但采用更少细节、更大留白的微型控制族，保证 12–18px 清晰度。
+- 本轮二次生成的重点资产为 `window-minimize`、`window-maximize`、`window-restore`、`window-close`、`sidebar-left`、`sidebar-right`、`clipboard`、`commands`、`log`、`paste`、`ssh-shell`、`status-cancelled`、`steps`、`transfer-active`、`send`、`package`。除 `window-minimize`（语义上必须是短横）外，每张图的高不透明度核心轮廓最长边目标为 180–188px；不能用缩小的留白或低透明度阴影凑尺寸。
+- 这 16 张图必须先通过 alpha 核心框检查，再验收 12/14/18/24px。核心轮廓要占据足够视觉面积；禁止只在 256px 画布中保留一个显小的中心缩略图。`window-maximize`、`window-restore`、`window-close` 使用与 `window-minimize` 同族的线宽、端点和视觉重量。
+- 最后一轮微调必须保持同一套几何基准：`window-close` 的 X 与其他三个窗口控件使用同样的笔画厚度、圆角端点和视觉重量；`sidebar-left`/`sidebar-right` 是同一主窗格的左右镜像，整体比例接近方正（约 1.2:1），边框加粗，窄栏一侧保留实体填充，主窗格不要变成长条或整块实心；`send` 使用紧凑、近方形的数据框配短送出箭头；`log` 借鉴 `edit` 的厚实单页节奏，但只表达记录页和时间线，不出现铅笔；`download` 的下箭头宽度、笔画和视觉重量与 `upload` 对齐；`paste` 与 `clipboard` 使用同宽的主体骨架，箭头不能压缩主体或糊成纸块。
+- 生成后在深色与浅色背景各验收 12/14/18/24px；`logo` 另验收 16/32px。运行 `npm run check:icons -- --strict` 与 `npm run preview:icons`。
+
+**基础正向提示词：**
+
+`One isolated TauTerm UI glyph, exact 256 by 256 RGBA PNG with a fully transparent background. [SEMANTIC SHAPE]. Center the single readable silhouette inside a 192px optical frame with 32px transparent safe margins. Pale ice-blue frosted glass with a solid blue core, soft white rim highlight, restrained refraction, rounded caps and joins, minimal 3D depth, crisp anti-aliased edges, consistent visual weight with TauTerm icons, legible at 12px. No text.`
+
+**负向提示词：**
+
+`no background, no tile, no black matte, no frame, no external drop shadow, no green or cyan cast, no dark navy body, no rainbow, no neon, no wireframe-only outline, no letters, no numbers, no tiny interior decoration, no duplicated glyph, no cropped edge, no opaque canvas fringe.`
+
+## 语义注册表与真实使用位置
+
+| 键 | 实际位置与唯一语义 | 提示词形状／禁止形态 |
+| --- | --- | --- |
+| `logo` | 工具栏与空状态的 TauTerm 品牌标识 | 保留四色品牌流光；不套用功能图标蓝色规则。 |
+| `appearance` | 设置 → 外观 | 中空半圆调色盘与三颗大圆点；不是画笔。 |
+| `arrow-down` | 回到底部、文件降序、RX、更新下载进度 | 粗短下向箭头；不是 V 折角或托盘下载。 |
+| `arrow-left` | 连接设置页返回 | 粗短左向箭头；不用于折叠。 |
+| `arrow-right` | 设置 → 关于页版本从当前到新版本 | 粗短右向箭头；不用于树状展开。 |
+| `arrow-up` | 文件升序、TX | 粗短上向箭头；不是上传托盘。 |
+| `caret-down` | 下拉控件与发送历史 | 紧凑实心向下三角；只表示下拉，不使用 V 形折角。 |
+| `chart` | iperf 吞吐与统计 | 三根高度明确柱加一条上升线；不画仪表盘。 |
+| `check` | 选项已选、普通确认 | 单一粗圆角勾；没有圆环。 |
+| `check-circle` | 传输完成、成功结果 | 中空圆环内实体勾。 |
+| `chevron-down` | Terminal SearchBar 下一匹配、RightSidebar 基础图形（展开通过 CSS 旋转）、AutoReply/Script 输出面板展开态 | 对称短臂下折角；不作滚动或下载。 |
+| `chevron-right` | 仅用于 AutoReply/Script 输出面板收起态 | 对称短臂右折角；不作版本前进或树状展开。 |
+| `chevron-up` | 仅用于 Terminal SearchBar 上一匹配 | 对称短臂上折角；不作通用折叠。 |
+| `clipboard` | 终端复制、复制动作 | 中空剪贴板、实体夹子、两条短内容线；外轮廓和夹子要足够大，12px 仍像剪贴板；不做实心纸块或密集文档。 |
+| `close` | 普通弹窗、Toast、可关闭提示 | 紧凑圆角 X；不是错误状态和窗口关闭。 |
+| `code` | 脚本编辑模式、代码操作 | 一对大圆角尖括号；无小字。 |
+| `commands` | SendBar 的「指令」模式入口 | 三条疏朗命令行与一个简单提示符，整体是命令面板语义；不画细节密集终端窗口、浏览器窗口或键盘。 |
+| `connection` | 串口会话、SSH 已连接时新建通道 | 两端圆角接头与短线缆；不能画无线电波。 |
+| `construction` | 开发中／工具入口 | 中空扳手与小齿轮，二者保持大轮廓。 |
+| `download` | 文件下载、TFTP 接收 | 竖直下箭头明确落入托盘；箭头杆、箭头头和整体笔画宽度与 `upload` 对齐，不得用过宽箭头头或厚重托盘；区别 `arrow-down`。 |
+| `drag-handle` | 命令/规则真实拖拽排序 | 两列各三枚大圆点；不得用于视图切换。 |
+| `edit` | 重命名、编辑文件/规则 | 粗圆角铅笔横跨短基线。 |
+| `endpoint` | 地址、主机或端口 | 中空定位针与中心大圆点。 |
+| `file` | 普通文件 | 中空单页、清晰折角；无多行细字。 |
+| `folder` | 目录 | 中空文件夹与明显开口。 |
+| `globe` | Telnet 与网络协议 | 地球外环和极少经纬线；不塞大陆。 |
+| `hourglass` | 等待传输 | 两个清晰腔体的沙漏。 |
+| `info` | 设置 → 关于 | 中空圆环内大写意 i。 |
+| `keyboard` | 设置 → 快捷键 | 中空键盘外形、仅 5–6 枚大键位与空格键；禁止密集键阵。 |
+| `lock` | 设置 → 安全 | 中空 U 锁梁、实体简洁锁身；不放钥匙孔。 |
+| `log` | 会话开始/停止日志、日志页 | 参考 `edit` 的厚实单页构图和折角节奏：中空记录页、左侧时间点和两条疏朗记录线；页面轮廓要占主要面积但保持透明内腔，不画成实心文档、剪贴板或自动回复步骤，也不加入铅笔。 |
+| `loop` | 循环发送 | 两条闭环箭头，和刷新方向差异明显。 |
+| `package` | Y/X/ZMODEM、TFTP 文件传输协议 | 中空或半透明的简洁包裹，使用清晰的大十字封箱带和顶部折线；轮廓要占满光学框，不能用模糊高光、密集折射、实心蓝方块或无线天线。 |
+| `paste` | 终端粘贴 | 与 `clipboard` 使用同宽、同视觉重量的中空剪贴板骨架，加一枚占主要面积的向内下箭头；主体可以比旧稿略宽，箭头和夹子要分离，不能与复制同形、不能塞入一张小纸。 |
+| `play` | 启动、连接、执行 | 实心圆角右三角，留白足够。 |
+| `plus` | 新建会话、添加规则 | 等宽短臂圆角加号；SSH 新通道改用 `connection`。 |
+| `refresh` | 刷新目录、刷新端口 | 单一顺时针回转箭头；不与 `loop` 相同。 |
+| `robot` | 自动回复 | 简洁中空机器人头、两枚大眼；无密集天线。 |
+| `search` | 全局/会话搜索 | 单一放大镜环和短柄。 |
+| `send` | 发送栏 → 基础发送模式 | 一个紧凑、近方形的中空终端数据框，带一至两条短文本线，右侧接粗短“送出”箭头或数据尾迹；必须同时读出“数据框 + 发送”，不能拉成长条，不能只剩孤立右箭头、纸飞机或上传托盘。 |
+| `settings` | 设置入口 | 六齿大齿轮与中心孔。 |
+| `sidebar-left` | 工具栏左上角会话栏开关 | 与 `sidebar-right` 使用完全相同的近方形主窗格比例（约 1.2:1）、线宽和留白；中空主窗格、左侧独立窄栏、清晰竖分隔，窄栏可用实体冰蓝填充，仅左右镜像；不得画成汉堡菜单、超长条或整块实心面板。 |
+| `sidebar-right` | 工具栏右侧栏开关 | 与 `sidebar-left` 使用完全相同的近方形主窗格比例（约 1.2:1）、线宽和留白；中空主窗格、右侧独立窄栏、清晰竖分隔，窄栏可用实体冰蓝填充，仅左右镜像；不得画成超长条或整块实心面板。 |
+| `ssh-shell` | 新建会话 → SSH | 放大的简化终端框和粗 `>_` 图形线，终端框占主要面积；不画锁、网络地球、密集窗口控件或缩小的蓝色方块。 |
+| `status-cancelled` | TFTP/文件传输已取消 | 占满光学框的粗圆环内斜杠，斜杠与圆环保持清晰负空间；区别失败 `x-circle` 与普通 close，不做显小的细线符号。 |
+| `status-skipped` | 跳过状态 | 前行短箭头越过短横；不是双快进细线。 |
+| `steps` | 自动回复规则动作数量 | 三个大顺序节点以短线连接，节点和连接线占主要面积；不是日志记录、菜单或密集流程图。 |
+| `stop` | 停止、断开 | 实心圆角方块；不加叉。 |
+| `stopwatch` | 定时发送 | 中空秒表和顶部按钮，表盘细节极少。 |
+| `tag` | 会话名称与标签 | 中空标签和单一大孔。 |
+| `transfer-active` | 传输中行、终端传输横幅 | 两条占满横向光学框的清晰水平反向传输箭头，中间留出可辨间隙；不能看成 `loop`、刷新或一枚小右箭头。 |
+| `trash` | 删除 | 中空桶身、桶盖和两条粗竖槽。 |
+| `upload` | 文件上传、文件传输发送 | 上箭头明确离开托盘；不用于基础数据发送。 |
+| `view-grid` | 文件管理器当前列表视图的目标切换 | 2×2 四块大方格；只表示“切换到网格”。 |
+| `view-list` | 文件管理器当前网格视图的目标切换 | 三条粗记录线和左侧点；只表示“切换到列表”。 |
+| `warning` | 警告 Toast/提示 | 中空圆角三角和大感叹号。 |
+| `window-close` | 标题栏关闭窗口 | 极简 X，必须与 `window-minimize`、`window-maximize`、`window-restore` 使用同一笔画厚度、圆角端点、核心尺寸和视觉重量；不复用普通 `close`，不加圆环。 |
+| `window-maximize` | 标题栏最大化 | 极简中空方框，外框尺寸、线宽和视觉重量与 `window-minimize`、`window-restore` 同族一致；不画实心方块。 |
+| `window-minimize` | 标题栏最小化 | 单一短横线。 |
+| `window-restore` | 标题栏还原 | 两个错位中空方框，后框与前框保持清晰间隙；线宽、端点和视觉重量与最大化/最小化同族一致，不画成细小双框。 |
+| `x-circle` | 失败、正则错误/不匹配 | 中空圆环内粗 X；不作普通关闭。 |
+
+## 验收与变更规则
+
+1. 新增、删除或重命名图标时，必须同步修改 `Icon.tsx` 的 `PNG_MAP`、本表、`scripts/check-icons.mjs`、真实调用点与双语文档。
+2. `antenna` 与 `menu` 已删除：前者曾错误暗示 XMODEM 无线语义，后者曾误表示左侧会话栏。
+3. 任何调用若不符合上表，应新增专用键或迁移调用；不得以视觉相似替代业务语义。
+4. 资源通过检查后再删除候选目录，避免候选资产进入运行时注册表。

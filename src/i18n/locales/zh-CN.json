@@ -216,6 +216,7 @@
     "delete": "删除",
     "startLogging": "实时监控",
     "stopLogging": "停止监控",
+    "openChannel": "新建通道",
     "newTerminal": "新建终端",
     "closeChannel": "断开连接",
     "closeAll": "断开全部"

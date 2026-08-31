@@ -216,6 +216,7 @@
     "delete": "Delete",
     "startLogging": "Start Logging",
     "stopLogging": "Stop Logging",
+    "openChannel": "Open Channel",
     "newTerminal": "New Terminal",
     "closeChannel": "Disconnect",
     "closeAll": "Disconnect All"

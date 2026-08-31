@@ -178,7 +178,7 @@ export default function TransmissionPanel({ sessionId, isConnected, initialProto
                 {/* 跳过汇总 */}
                 {skippedCount > 0 && !isTransferring && (
                   <div className={styles.skipSummary}>
-                    <Icon name="skip" size="sm" /> {skippedCount} {t("transfer.filesSkipped")}
+                    <Icon name="status-skipped" size="sm" /> {skippedCount} {t("transfer.filesSkipped")}
                   </div>
                 )}
               </>

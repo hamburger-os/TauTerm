@@ -113,7 +113,7 @@ Choose a workspace appearance that fits the environment.
 - Searchable terminal, command palette and fully rebindable shortcuts.
 - Session logging with rotation/expiry cleanup.
 - zh-CN / en-US runtime language switching.
-- Three Liquid Glass themes with a native-feeling Tauri v2 shell.
+- Three Liquid Glass themes with a native-feeling Tauri v2 shell and a unified, semantically audited blue-glass PNG icon system, including readable window and layout controls.
 - Credential storage prefers the OS keyring; when it is unavailable, an Argon2id + AES-256-GCM vault can be unlocked for the app session. Passwords entered in the SSH connection form are not saved automatically.
 
 TFTP configurations that listen beyond the local machine while allowing remote writes and overwrites require explicit confirmation before the server starts.

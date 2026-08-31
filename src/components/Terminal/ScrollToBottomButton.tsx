@@ -33,7 +33,7 @@ const ScrollToBottomButton = memo(function ScrollToBottomButton({ visible, onCli
           transition={{ duration: 0.2, ease: "easeOut" }}
           aria-label={t("terminal.scrollToBottom")}
         >
-          <Icon name="chevron-dropdown" size="sm" />
+          <Icon name="arrow-down" size="sm" />
         </motion.button>
       )}
     </AnimatePresence>

@@ -1,24 +1,9 @@
 /* ==========================================
    Icon — 统一图标组件样式
-   液态玻璃胶囊描边风格，3 策略渲染
+   PNG 资产 + CSS 状态点
    ========================================== */
 
-/* ── Strategy A: PNG Mask-Image（仅 color 覆盖模式） ────── */
-
-.maskIcon {
-  display: inline-block;
-  flex-shrink: 0;
-  /* background-color 由组件 inline style 设置 */
-  mask-repeat: no-repeat;
-  mask-position: center;
-  mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  -webkit-mask-size: contain;
-  vertical-align: middle;
-}
-
-/* ── Strategy A2: PNG <img> 直接渲染（保留玻璃质感） ──────── */
+/* ── Strategy A: PNG 原始色彩渲染（保留玻璃质感） ─────────── */
 
 .imgIcon {
   display: inline-block;
@@ -55,6 +40,12 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.statusTransferring {
+  background: var(--color-info);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-info) 70%, transparent);
+  animation: transferPulse 1.2s ease-in-out infinite;
+}
+
 .statusIdle {
   background: var(--text-muted);
   /* 无发光 — 默认态不需要视觉强调 */
@@ -69,5 +60,17 @@
   }
   50% {
     opacity: 0.4;
+  }
+}
+
+@keyframes transferPulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    box-shadow: 0 0 3px color-mix(in srgb, var(--color-info) 55%, transparent);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 7px color-mix(in srgb, var(--color-info) 85%, transparent);
   }
 }
