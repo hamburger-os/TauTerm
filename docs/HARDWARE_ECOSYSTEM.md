@@ -2,31 +2,17 @@
 
 > This document describes the intended software architecture and product experience for future first-party engineering instruments. It is a direction, not a hardware specification or release commitment.
 
-## Goal
+## 1. Goal
 
-TauTerm should become the common desktop software for a family of engineering analyzers instead of creating a different upper-computer application for every instrument.
+TauTerm should become the common upper-computer software for a family of engineering analyzers.
 
-A future CAN analyzer is the first likely example. Additional analyzers may follow.
+A future CAN analyzer is the first likely example. Additional analyzers may follow when they solve a clear engineering problem and fit the same platform model.
 
-The strategic idea is simple:
+The core idea is:
 
 > **One instrument adds a new source of engineering data; it should not create a new software silo.**
 
-Every Tau instrument should immediately benefit from the same Workspace, Recorder, Unified Timeline, Signal Lab, Data Lens and Automation systems.
-
-## Why this matters
-
-Traditional instrument products often split engineering context:
-
-- one application for CAN;
-- another for serial/network debugging;
-- another for signal plotting;
-- another for remote Linux logs;
-- separate capture formats and automation APIs.
-
-TauTerm can differentiate by correlating those domains in one local-first engineering environment.
-
-Example:
+Every first-party instrument should benefit from the same Workspace, Recorder, Unified Timeline, Signal Lab, Data Lens and Automation systems.
 
 ```text
 Tau CAN Analyzer ─ CAN/CAN FD ─┐
@@ -39,27 +25,25 @@ TCP/UDP service ─ Network ──────┘     ├─ Unified Timeline
                                      └─ Automation
 ```
 
-The resulting product is more valuable than a collection of independent analyzer applications.
+## 2. Platform principles
 
-## Product principles
+### 2.1 TauTerm is the common control and analysis environment
 
-### 1. TauTerm is the control plane
+Instrument discovery, setup, capture, monitoring, decoding, recording and automation should happen inside TauTerm where practical.
 
-Instrument setup, capture, monitoring, decoding, recording and automation should happen inside TauTerm where practical.
+A small recovery/configuration utility may exist when required for low-level firmware recovery, driver repair or manufacturing, but normal engineering use should remain inside TauTerm.
 
-Avoid permanent standalone companion applications unless a low-level recovery/configuration tool is necessary.
+### 2.2 First-party hardware gets the most integrated experience
 
-### 2. First-party hardware gets the best experience, not the only experience
+First-party instruments should be discoverable, identifiable and usable with minimal configuration.
 
-Tau hardware should be discoverable, identifiable and usable with minimal configuration.
+The architecture can still support third-party or generic adapters through stable extension boundaries. First-party devices should provide the strongest integration through known capabilities, hardware timestamping, firmware lifecycle support, device diagnostics and validated workflows.
 
-At the same time, the architecture should not unnecessarily prevent third-party hardware adapters. A healthy software ecosystem increases TauTerm adoption, while first-party instruments differentiate through integration quality, reliability, hardware timestamping, supported capabilities and official maintenance.
+### 2.3 Capability negotiation is versioned
 
-### 3. Capability negotiation, not hard-coded product assumptions
+TauTerm should discover instrument capabilities rather than hard-code assumptions about a model or hardware revision.
 
-TauTerm should learn what an attached instrument can do through a versioned capability model.
-
-Potential capability examples:
+Example capability names:
 
 ```text
 capture.can
@@ -74,42 +58,49 @@ calibration_info
 output.inject
 ```
 
-New hardware revisions should be able to add capabilities without requiring unrelated UI rewrites.
+New hardware revisions should be able to add capabilities without forcing unrelated UI or protocol changes.
 
-### 4. Raw data remains valuable
+### 2.4 Raw capture is durable data
 
-Capture pipelines should retain raw frames/samples close enough to the source that recordings can be replayed, re-decoded or analyzed with newer software.
+The capture path should retain raw frames or samples close enough to the source that a recording can later be replayed, re-decoded or analyzed by newer software.
 
-Do not make the rendered table/chart the only durable representation of a capture.
+Rendered tables and charts are views over engineering data, not the only durable representation of that data.
 
-### 5. Time is a first-class engineering primitive
+### 2.5 Time is a first-class engineering primitive
 
-Cross-instrument debugging depends on trustworthy timestamps.
+Cross-session and cross-instrument analysis depends on trustworthy timestamps.
 
-The instrument integration model should plan for:
+The integration model should account for:
 
 - host receive timestamp;
 - hardware capture timestamp where available;
-- timestamp resolution and clock source metadata;
+- timestamp resolution;
+- clock source metadata;
 - device/host clock offset information;
-- clock reset/discontinuity markers;
+- clock reset and discontinuity markers;
 - future multi-instrument synchronization where hardware supports it.
 
-This is essential for Unified Timeline correlation.
+The Recorder should preserve enough timing metadata for Unified Timeline to distinguish capture time from host receive time.
 
-### 6. Local-first operation
+### 2.6 Instrument workflows are local-first
 
-Instrument capture and analysis must work offline. Firmware packages, drivers and calibration metadata needed in isolated environments should have an enterprise-friendly offline distribution path.
+Capture, decoding, plotting and replay must work offline.
 
-## Suggested software-facing instrument model
+Drivers, firmware packages and calibration metadata needed in isolated environments should have a controlled offline distribution path.
 
-A future instrument adapter can conceptually expose:
+## 3. Software-facing instrument model
+
+Physical instruments and protocol sessions can share common session/event infrastructure without forcing them into exactly the same adapter abstraction.
+
+A future software-facing model can conceptually expose:
 
 ```text
 InstrumentManifest
-├─ id / model / serial number
+├─ product family
+├─ model
+├─ device identifier
 ├─ firmware version
-├─ transport
+├─ host transport
 ├─ capabilities
 ├─ channel definitions
 ├─ clock information
@@ -125,16 +116,16 @@ InstrumentSession
 └─ firmware/update hooks
 ```
 
-This does not require the existing `ProtocolAdapter` API to be stretched beyond its intended purpose. The implementation can share common session/event infrastructure while keeping protocol connections and physical instruments as separate architectural concepts where appropriate.
+The exact API should be designed when the first instrument implementation begins. The important constraint is that instrument data enters the same product-level event pipeline as protocol data.
 
-## Common data path
-
-Instrument events should enter the same product-level data pipeline used by protocol sessions:
+## 4. Shared data path
 
 ```text
 Instrument Driver
       ↓
 Raw Frame / Sample
+      ↓
+Timestamp + Source Metadata
       ↓
 Framing / Decoder
       ↓
@@ -147,60 +138,115 @@ Structured Event / Signal
    └─ Automation
 ```
 
-This shared path is the main reason to use TauTerm as the upper computer for multiple instruments.
+A single raw capture may therefore support several later views without duplicating acquisition logic.
 
-## Future CAN analyzer
+## 5. Device lifecycle
 
-The first-party CAN analyzer should be designed together with the TauTerm workflow instead of treating the desktop application as an afterthought.
+The instrument platform should treat the complete device lifecycle as part of product quality.
 
-### Software-facing baseline
+### Discovery and identity
 
-Likely baseline areas to consider when the hardware project begins:
+TauTerm should be able to determine, where supported:
+
+- device family and model;
+- stable device identifier;
+- firmware version;
+- hardware revision;
+- capabilities;
+- channel count/types;
+- calibration metadata status.
+
+### Connection state
+
+Instrument sessions should expose meaningful states such as:
+
+- unavailable;
+- ready;
+- configured;
+- capturing;
+- paused;
+- faulted;
+- updating firmware.
+
+### Health and diagnostics
+
+Where hardware supports it, TauTerm should surface:
+
+- transport errors;
+- overflow/drop counters;
+- device temperature or supply warnings;
+- bus/controller errors;
+- timestamp discontinuities;
+- firmware compatibility issues.
+
+These events should be recordable when they affect engineering interpretation.
+
+## 6. Future CAN analyzer
+
+The first-party CAN analyzer should be designed together with its TauTerm workflow.
+
+### 6.1 Initial software-facing scope to evaluate
 
 - CAN 2.0A / 2.0B;
-- CAN FD if hardware economics permit;
-- configurable nominal/data bit rates;
+- CAN FD where the hardware design supports it;
+- configurable nominal and data bit rates;
 - hardware timestamps;
 - receive and transmit/injection workflows;
 - acceptance filtering;
-- bus status/error visibility;
+- bus status and error visibility;
 - trace recording;
-- replay/transmit from trace with explicit safety controls;
-- DBC/symbol decoding as a Data Lens source;
+- controlled replay/transmit from trace;
+- DBC/symbol decoding through Data Lens;
 - statistics and bus load;
 - trigger/marker integration;
-- multi-channel support if hardware provides it;
+- multi-channel support when provided by hardware;
 - firmware update and device diagnostics.
 
-CAN XL can remain a future consideration rather than an initial requirement unless target customers create a clear need.
+CAN XL can remain a future consideration unless a concrete product requirement justifies it.
 
-### TauTerm-native workflows
+### 6.2 TauTerm-native CAN workflows
 
-A CAN session should not stop at a frame table.
+A CAN session should participate in the same engineering context as other sessions.
 
-Useful integrated workflows include:
+Examples:
 
-- correlate a CAN fault frame with a Serial console message;
-- mark a Recording when a CAN signal crosses a threshold;
+- correlate a CAN error frame with a Serial console message;
+- mark a Recording when a decoded CAN signal crosses a threshold;
 - plot decoded CAN signals in Signal Lab;
-- trigger SSH/journald collection from a CAN event;
+- trigger an SSH/journald query from a CAN event;
 - replay a captured CAN trace together with recorded device/network context;
 - compare captures from two test runs;
 - run automation against decoded CAN fields.
 
-These cross-domain workflows are a stronger differentiator than matching every checkbox of a standalone CAN utility on day one.
+### 6.3 Safety controls
 
-## Multi-instrument future
+Transmit, injection and replay features can affect real systems and should have explicit safety boundaries.
 
-Possible future instruments should be evaluated by whether they strengthen the same engineering model.
+Potential controls include:
 
-Examples could include network/protocol analyzers, serial/fieldbus interfaces, mixed digital/analog capture devices or domain-specific railway/industrial tools.
+- clear indication of monitor-only versus transmit-capable mode;
+- explicit confirmation before high-impact replay/injection operations;
+- rate and loop limits;
+- visible active-transmit state;
+- automatic stop when the device or host session is closed;
+- audit/recording of automated transmit actions where appropriate.
 
-Do not commit to a hardware category simply because TauTerm can display its data. A new instrument should have a clear user problem, credible hardware differentiation and strong integration value.
+## 7. Multi-instrument direction
 
-## Hardware/software versioning
+Additional instrument categories should be considered only when they have:
 
-Instrument support should plan early for long product lifetimes.
+1. a clear engineering problem;
+2. credible hardware value;
+3. a natural fit with the TauTerm data model;
+4. useful interaction with Recording, Timeline, Signal Lab, Data Lens or Automation.
+
+Possible categories may include network/protocol analyzers, serial/fieldbus interfaces, mixed digital/analog capture devices or domain-specific railway/industrial instruments.
+
+The platform should avoid one-off instrument designs whose data cannot participate in the shared workflow.
+
+## 8. Hardware/software versioning
+
+Long-lived engineering hardware requires explicit compatibility planning.
 
 Recommended properties:
 
@@ -209,31 +255,29 @@ Recommended properties:
 - explicit firmware compatibility ranges;
 - recoverable firmware-update path;
 - signed firmware for production devices;
-- stable capture file/event schemas;
+- stable capture/event schemas;
 - migration/version metadata in recordings;
-- clear support/LTS policy for industrial customers.
+- clear support and LTS policy for industrial deployments.
 
-## Commercial relationship
+## 9. Commercial relationship
 
-First-party instruments are both products and distribution channels for TauTerm.
+A first-party instrument should provide a durable and useful local workflow when purchased.
 
-The desired customer experience:
+The intended experience is:
 
-1. buy a Tau instrument;
-2. connect it to TauTerm and obtain a useful local workflow immediately;
-3. optionally buy Professional/Industrial capabilities for deeper analysis, correlation, automation, reporting and support;
-4. add another Tau instrument later and gain more value from the same Workspace rather than another standalone application.
+1. connect the instrument to TauTerm;
+2. obtain a useful baseline capture/inspection workflow immediately;
+3. optionally use Professional/Industrial capabilities for deeper analysis, correlation, automation, reporting and support;
+4. add more first-party instruments later without changing the overall engineering environment.
 
-Basic access to purchased hardware should not disappear when a software subscription or maintenance period ends.
+Basic access to purchased hardware should remain available even if a software maintenance period ends.
 
 See [COMMERCIALIZATION.md](COMMERCIALIZATION.md) for packaging principles.
 
-## Competitive advantage
+## 10. Compounding platform value
 
-The target moat is not simply “we make a CAN analyzer.”
+The long-term value of the hardware ecosystem is the shared workflow:
 
-It is:
+> **A growing family of engineering instruments whose data can be captured, decoded, plotted, recorded, replayed and correlated with remote systems, embedded devices and industrial networks inside one local-first workbench.**
 
-> **A growing family of engineering instruments whose data can be connected, decoded, plotted, recorded, replayed and correlated with servers, embedded devices and industrial networks inside one local-first workbench.**
-
-That creates a compounding software/hardware advantage: every new instrument strengthens TauTerm, and every TauTerm capability increases the value of every instrument.
+Every new instrument should strengthen the shared platform, and every improvement to the shared platform should increase the usefulness of every instrument.
