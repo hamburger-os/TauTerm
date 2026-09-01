@@ -7,7 +7,7 @@
 <p align="center"><strong>One terminal for the server room and the lab bench.</strong></p>
 
 <p align="center">
-  Open-source desktop workspace for SSH/SFTP, serial and TCP/UDP network debugging — built with Rust + Tauri.
+  A local-first open-source engineering workbench for connected systems — SSH/SFTP, Serial, TCP/UDP and device/network debugging, built with Rust + Tauri.
 </p>
 
 <p align="center">
@@ -19,13 +19,16 @@
 
 <p align="center">
   <a href="https://github.com/hamburger-os/TauTerm/releases"><strong>Download</strong></a>
+  · <a href="docs/README.md">Documentation</a>
   · <a href="docs/SUPPORTED_PLATFORMS.md">Supported platforms</a>
   · <a href="docs/BUILDING.md">Build from source</a>
   · <a href="docs/ARCHITECTURE.md">Architecture</a>
   · <a href="README.zh-CN.md">中文</a>
 </p>
 
-TauTerm brings **remote access, embedded bring-up and network debugging** into one lightweight desktop app. It is designed for engineers who would rather not keep switching between an SSH client, an SFTP client, a serial terminal and separate TCP/UDP debugging tools.
+TauTerm brings **remote systems, embedded devices and network-debugging workflows** into one lightweight desktop application. It is built for engineers who work across the server room and the lab bench and want those contexts to stay together instead of being split across an SSH client, SFTP client, serial terminal, TCP/UDP debugger and separate analysis tools.
+
+TauTerm is intentionally **local-first**: core engineering workflows should remain usable without an account or cloud dependency, including in laboratories, factories, railway environments and isolated networks.
 
 > **Version note:** this README describes the current `master` branch. GitHub Releases are the packaged snapshots intended for end users and may lag behind `master`. See [CHANGELOG.md](CHANGELOG.md) and each release page for the exact set of shipped features.
 
@@ -44,7 +47,11 @@ TauTerm brings **remote access, embedded bring-up and network debugging** into o
 | One consistent workspace | Unified sessions, logging, command palette and shortcuts |
 | Room to extend | A protocol-oriented microkernel/plugin architecture |
 
-TauTerm deliberately serves both **network engineers** and **embedded developers**. Serial communication is a first-class workflow rather than an afterthought, while SSH/SFTP and network-debugging tools share the same session-oriented desktop experience.
+TauTerm deliberately serves both **embedded/device R&D engineers** and engineers responsible for the networks and remote systems around those devices. Serial communication is a first-class workflow rather than an afterthought, while SSH/SFTP and network-debugging tools share the same session-oriented desktop experience.
+
+The longer-term direction goes beyond collecting protocols. TauTerm is evolving toward an **engineering workbench** where sessions and future physical instruments can share structured recording/replay, a unified timeline, real-time signal analysis, structured data decoding and automation. Railway and industrial workflows are strategic verticals, while the product itself remains broadly useful for connected-system engineering.
+
+See the [documentation index](docs/README.md) for the current product strategy, hardware ecosystem direction, commercialization strategy, architecture, build and release documentation. Direction documents describe goals, not shipped features.
 
 ---
 
@@ -114,9 +121,10 @@ TFTP configurations that listen beyond the local machine while allowing remote w
 | **Telnet** | ✅ | terminal | RFC 854 |
 | **iPerf2 / iPerf3** | ✅ | custom | network benchmark |
 | **Network Debug** (TCP/UDP) | ✅ | custom | client + server |
-| **Local Shell** (PTY) | 📋 planned | terminal | v0.6 target |
-| **FTP** | 📋 planned | file browser | v0.7 target |
-| **TRDP** | 📋 planned | terminal | v1.0 target |
+| **Local Shell** (PTY) | 📋 planned | terminal | Foundation |
+| **TRDP** | 📋 planned | industrial analysis | first-party strategic protocol |
+
+Future protocols are not added to the core roadmap simply to grow this table. Where possible, additional protocols should use the plugin/extension model unless they create clear workflow or industrial value.
 
 ---
 
@@ -161,14 +169,22 @@ Please report suspected vulnerabilities privately as described in [SECURITY.md](
 
 ## Roadmap
 
-| Target | Focus |
-|---|---|
-| **v0.6** | Local shell, session groups, SSH tunnels and jump hosts |
-| **v0.7** | Network-debug polish, FTP, recording and split panes |
-| **v1.0** | Release-grade cross-platform validation, performance budget, plugin SDK docs and TRDP |
-| **v1.1** | "Terminal + oscilloscope": WebGL plotting, FFT and FireWater/JustFloat compatibility |
+TauTerm's roadmap is organized around **capabilities**, not around collecting protocols or prematurely assigning every idea to a version number.
 
-Roadmap versions are targets, not promises; priorities may change based on real user feedback. For shipped changes, use [CHANGELOG.md](CHANGELOG.md) and [GitHub Releases](https://github.com/hamburger-os/TauTerm/releases) as the source of truth.
+| Stage | Outcome |
+|---|---|
+| **Foundation** | Daily-driver quality: Local Shell, split panes, SSH tunnels/jump hosts, Workspace foundations, cross-platform stability and performance |
+| **Engineering Memory** | Structured Recording/Replay, markers, search and a Unified Timeline across sessions |
+| **Signal Lab** | High-performance real-time plotting, FFT/statistics, FireWater/JustFloat compatibility and long-running numerical-data workflows |
+| **Data Intelligence** | Framing/decoder SDK, Data Lens, reusable fields, filters, visualizations and automation triggers |
+| **Industrial & Instruments** | Deep TRDP workflows, offline/long-run industrial quality and first-party instrument integration such as a future CAN analyzer when the hardware is ready |
+| **Automation & Teams** | Flow automation, Lua/CLI/MCP evolution, collaboration, governance, offline licensing and enterprise deployment |
+
+**Signal Lab** and **Data Lens** are intentionally different: Signal Lab focuses on high-rate numerical signals and plotting; Data Lens focuses on decoding raw protocol/device bytes into reusable engineering fields.
+
+The long-term instrument direction is to use TauTerm as the common upper-computer application for first-party analyzers rather than shipping a separate desktop application for every device. A future CAN analyzer is a likely first candidate, but hardware work is a strategic direction rather than a release promise.
+
+Roadmap stages are targets, not promises; priorities may change based on real user feedback and engineering constraints. For shipped changes, use [CHANGELOG.md](CHANGELOG.md) and [GitHub Releases](https://github.com/hamburger-os/TauTerm/releases) as the source of truth.
 
 ---
 
@@ -176,10 +192,12 @@ Roadmap versions are targets, not promises; priorities may change based on real 
 
 TauTerm uses a **microkernel plugin architecture**. The kernel provides shared platform capabilities while protocol implementations register through a common adapter/manifest model. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current design.
 
+The future product strategy deliberately distinguishes today's implemented protocol architecture from planned product-level concepts such as physical instrument adapters, structured recordings, Signal Lab and Data Lens. Those concepts should reuse common session/event infrastructure without pretending they already exist in the current API.
+
 Contributions are welcome:
 
 - Found a reproducible bug? [Open a bug report](https://github.com/hamburger-os/TauTerm/issues/new/choose).
-- Missing a feature that keeps you on another terminal? [Request it](https://github.com/hamburger-os/TauTerm/issues/new/choose).
+- Missing a workflow that would make TauTerm materially better for connected-system engineering? [Request it](https://github.com/hamburger-os/TauTerm/issues/new/choose).
 - Want to contribute code? Read [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/BUILDING.md](docs/BUILDING.md).
 - Interested in protocol plugins? Start with the plugin architecture in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -190,6 +208,8 @@ If TauTerm is useful to you, starring the repository helps other network and emb
 ## License
 
 TauTerm is available under either the **MIT License** or **Apache License 2.0**, at your option.
+
+The open-source license applies to this repository. The product strategy allows future optional commercial modules, services or first-party hardware to use separate commercial terms without reducing the usefulness of the open-source core.
 
 The Windows installer bundles [com0com](https://com0com.sourceforge.net/) as a separate third-party GPL component; its license is unaffected by TauTerm's dual licensing.
 
