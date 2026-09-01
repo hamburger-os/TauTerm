@@ -1,56 +1,52 @@
 # TauTerm Product Strategy
 
-> This document records the product direction behind TauTerm. It is intentionally broader than the implementation roadmap and should be updated when product decisions change.
+> This document records TauTerm's long-term product direction. It is broader than the implementation roadmap and should change only when product decisions change.
 
-## Vision
+## 1. Product vision
 
-**TauTerm is the open, local-first engineering workbench for connected systems.**
+**TauTerm is an open, local-first engineering workbench for connected systems.**
 
-It should let an engineer connect to, observe, understand, automate and reproduce a system that spans remote computers, embedded devices, network protocols and physical test instruments without having to split that context across unrelated tools.
+It should let an engineer connect to, observe, understand, automate and reproduce a system that spans remote computers, embedded devices, network protocols and physical engineering instruments while keeping that engineering context together.
 
 The public product line remains:
 
 > **TauTerm — one terminal for the server room and the lab bench.**
 
-The category is broader than a terminal emulator:
+The broader product category is:
 
 > **The open engineering workbench for connected systems.**
 
-TauTerm should earn adoption because its combined workflow is better, not because it imports configuration from competing applications.
+## 2. Primary users
 
-## Who TauTerm is for
+TauTerm has three related user groups with different roles in the product strategy.
 
-TauTerm has three closely related audiences rather than one generic developer persona.
+1. **Embedded developers are the product root.** Device bring-up, serial communication, binary data, real-time signals and hardware-adjacent workflows remain first-class.
+2. **Connected-system and device R&D engineers are the product center.** They work across devices, Linux services, network protocols, logs, test tools and automation in the same engineering task.
+3. **Industrial and railway engineering teams are the primary long-term commercial customers.** They need offline operation, long-running stability, traceability, specialist protocols, repeatable workflows, controlled deployment and support.
 
-1. **Embedded developers are the product root.** Device bring-up, serial communication, binary data, real-time signals and hardware-adjacent workflows must remain first-class.
-2. **Connected-system / device R&D engineers are the product center.** These users work across devices, Linux services, network protocols, logs, test tools and automation at the same time. TauTerm should remove the boundaries between those contexts.
-3. **Industrial and railway engineering teams are the primary long-term commercial customers.** They need offline operation, long-running stability, traceability, specialist protocols, repeatable test workflows, controlled deployment and support.
+TauTerm can also serve network and infrastructure engineers where those workflows naturally intersect with connected-system engineering.
 
-TauTerm may also be useful to DevOps and network engineers, but it should not become a generic IT administration suite at the expense of embedded and industrial engineering depth.
+## 3. Product principles
 
-## Product principles
-
-### 1. Local-first by design
+### 3.1 Local-first by design
 
 Core engineering workflows must work without an account, cloud service or Internet connection.
 
-SSH, serial, network debugging, recording/replay, Signal Lab, Data Lens, protocol analysis and automation should remain usable in isolated laboratories, railway networks, factories and air-gapped environments.
+SSH, Serial, network debugging, Recording/Replay, Signal Lab, Data Lens, protocol analysis and automation should remain usable in laboratories, factories, railway environments and isolated networks.
 
-Cloud services may later add optional synchronization, licensing, collaboration or distribution, but they must not be a runtime dependency for the engineering workbench.
+Optional online services may later provide synchronization, licensing, collaboration or distribution, but they must not be runtime dependencies for the engineering workbench.
 
-### 2. Complete open core, paid professional value
+### 3.2 Complete open core, paid professional value
 
-The open-source Community/Core edition should remain a complete and genuinely useful engineering tool. Basic SSH/SFTP, Serial, TCP/UDP, local shell, protocol debugging, scripting and extensibility should not be artificially crippled to force upgrades.
+The open-source Community/Core edition should remain a complete and genuinely useful engineering tool. Basic SSH/SFTP, Serial, TCP/UDP, local shell, protocol debugging, scripting and extensibility should not be artificially restricted to force an upgrade.
 
-Commercial products should charge for high-value professional workflows, official advanced modules, team collaboration, enterprise governance, support and industry-specific capabilities.
+Commercial products should focus on high-value professional workflows, official advanced modules, team collaboration, enterprise governance, support and industry-specific capabilities.
 
-Commercial modules may be proprietary even while the Community/Core repository remains MIT OR Apache-2.0.
+Commercial modules may use separate proprietary licensing while the Community/Core repository remains MIT OR Apache-2.0.
 
-### 3. Engineering context beats protocol count
+### 3.3 Engineering context before protocol count
 
-TauTerm does not win by accumulating the longest protocol checklist.
-
-A new feature should normally improve at least one of these capabilities:
+New capabilities should normally strengthen at least one of these areas:
 
 - preserve engineering context;
 - correlate information across sessions or instruments;
@@ -59,31 +55,31 @@ A new feature should normally improve at least one of these capabilities:
 - provide meaningful industrial depth;
 - integrate a physical engineering instrument into the same workflow.
 
-Protocols that do not strengthen those goals should prefer the plugin/extension path instead of expanding the core indefinitely.
+Protocols that do not materially strengthen these goals should prefer the plugin/extension path instead of expanding the core indefinitely.
 
-### 4. Independent product, not a migration assistant
+### 3.4 Native TauTerm workflows
 
-TauTerm will not prioritize importing configuration from competing terminal, serial or network-debugging products.
+TauTerm should prioritize its own Workspace, data model and engineering workflow instead of building migration-oriented importers for unrelated application formats.
 
-Users should choose TauTerm because its own Workspace and engineering workflows are worth setting up. Supporting an ecosystem standard such as OpenSSH configuration can be considered separately when it improves interoperability rather than competitor migration.
+Interoperability with open ecosystem standards can still be considered when it provides durable engineering value.
 
-### 5. Industrial depth without narrowing the brand
+### 3.5 Industrial depth without narrowing the product
 
-Railway and industrial engineering are strategic verticals, but TauTerm should not become a railway-only product.
+Railway and industrial engineering are strategic verticals, but the horizontal product remains the TauTerm engineering workbench.
 
-The horizontal product remains the TauTerm engineering workbench. Deep first-party vertical capabilities such as TRDP demonstrate professional depth and can later be complemented by railway, industrial or embedded solution packs.
+Deep first-party capabilities such as TRDP should demonstrate professional depth while remaining part of a broader connected-system workflow.
 
-### 6. Software and instruments form one platform
+### 3.6 Software and instruments form one platform
 
 TauTerm is intended to become the common desktop software for first-party engineering instruments, beginning with a possible future CAN analyzer and potentially extending to additional analyzers.
 
-Each instrument should plug into the same data and workflow model rather than ship with an isolated one-off desktop application.
+Each instrument should plug into the same data and workflow model rather than require an isolated desktop application.
 
-First-party hardware should receive the best zero-configuration experience, but TauTerm should remain architecturally capable of supporting third-party or generic adapters where that improves the ecosystem.
+First-party hardware should receive the most integrated experience, while the architecture can still support third-party or generic adapters where that improves the ecosystem.
 
-## The core data model
+## 4. Shared engineering data model
 
-Long-term differentiation should come from a common event pipeline rather than separate feature silos.
+Long-term product coherence should come from a shared event pipeline rather than separate feature silos.
 
 ```text
 Transport / Instrument
@@ -94,7 +90,7 @@ Transport / Instrument
         ↓
      Decoder
         ↓
- Structured Event
+ Structured Event / Signal
    ├─ Terminal / Packet View
    ├─ Signal Lab
    ├─ Data Lens
@@ -103,13 +99,15 @@ Transport / Instrument
    └─ Automation
 ```
 
-This model should eventually work across SSH output, journald, Serial, TCP/UDP, TRDP, CAN and first-party instruments.
+The model should eventually work across SSH output, journald, Serial, TCP/UDP, TRDP, CAN and first-party instruments.
 
-## Strategic product pillars
+Raw information should remain available close enough to the source that recordings can be re-decoded or re-analyzed later.
 
-### Foundation — become a daily driver
+## 5. Strategic capability pillars
 
-Before advanced differentiation matters, TauTerm must be comfortable enough to remain open all day.
+### 5.1 Foundation
+
+**Goal:** make TauTerm comfortable enough to remain open all day as a primary engineering tool.
 
 Priorities include:
 
@@ -117,40 +115,44 @@ Priorities include:
 - split panes;
 - SSH tunnels and jump hosts;
 - Workspace foundations rather than simple session groups;
-- long-running stability and performance budgets;
+- long-running stability and explicit performance budgets;
 - excellent session/configuration ergonomics;
 - cross-platform release quality.
 
-These are table stakes, not the long-term moat.
+These capabilities establish daily-driver quality and support everything that follows.
 
-### Engineering Memory — make debugging reproducible
+### 5.2 Engineering Memory
 
-A terminal log is not enough. TauTerm should develop structured recording and replay that preserves engineering evidence close to the raw event stream.
+**Goal:** make debugging reproducible rather than disposable.
 
-A recording should be able to retain, where applicable:
+TauTerm should develop structured Recording/Replay that preserves engineering evidence near the raw event stream.
+
+A recording should retain, where applicable:
 
 - timestamp and clock domain;
 - session/instrument identity;
 - transport and peer;
 - TX/RX direction;
-- raw bytes;
+- raw bytes or samples;
 - decoded/structured fields;
 - markers and annotations;
 - automation actions;
-- transfer or test events.
+- transfer and test events.
 
-Replay should allow engineers to analyze a problem again without reconnecting to the real equipment, including re-decoding data with an updated decoder where possible.
+Replay should allow engineers to inspect a problem again without reconnecting to the original equipment and, where possible, re-run decoding with newer decoder logic.
 
-The larger goal is a **Unified Timeline** that correlates events from multiple sessions and instruments around the moment a fault occurred.
+The larger goal is a **Unified Timeline** that correlates events from multiple sessions and instruments around the same engineering event.
 
-### Signal Lab — replace dedicated serial plotting workflows
+### 5.3 Signal Lab
 
-Signal Lab is the real-time numerical-data path and should become strong enough that an embedded engineer who currently needs TauTerm plus a dedicated VOFA+-style plotting tool can use TauTerm alone.
+**Goal:** provide a complete real-time numerical-data workflow inside TauTerm.
+
+Signal Lab should become strong enough that many embedded workflows no longer require a separate real-time plotting application.
 
 Target capabilities include:
 
 - high-throughput real-time plotting;
-- long capture sessions with bounded resource use;
+- bounded resource use during long capture sessions;
 - multi-channel curves;
 - zoom, cursors and measurements;
 - FFT and statistics;
@@ -158,15 +160,17 @@ Target capabilities include:
 - export;
 - FireWater / JustFloat compatibility;
 - custom framing and numerical extraction;
-- later integration with recorded/replayed data.
+- integration with recorded and replayed data.
 
-Signal Lab answers: **what is the signal doing over time?**
+Signal Lab answers:
 
-### Data Lens — turn bytes into engineering meaning
+> **What is the signal doing over time?**
 
-Data Lens is different from Signal Lab. It should decode structured protocol or device data into named engineering fields and make those fields reusable across the product.
+### 5.4 Data Lens
 
-For example, a binary packet may become:
+**Goal:** turn raw protocol and device data into reusable engineering meaning.
+
+A binary packet may become:
 
 ```text
 traction_status
@@ -177,7 +181,7 @@ traction_status
 └─ crc: OK
 ```
 
-Decoded fields should eventually be usable for:
+Decoded fields should eventually be reusable for:
 
 - filtering and search;
 - tables and packet inspection;
@@ -189,13 +193,19 @@ Decoded fields should eventually be usable for:
 
 The decoder model should be reusable across Serial, TCP/UDP, TRDP, CAN and future instruments.
 
-Signal Lab answers **what is the signal doing?** Data Lens answers **what do these bytes mean?**
+Data Lens answers:
 
-### Industrial Depth — solve real professional workflows
+> **What do these bytes mean?**
 
-TRDP is a first-party strategic protocol because it serves a real railway engineering need, not because TauTerm is collecting protocol badges.
+Signal Lab and Data Lens share the same data pipeline but serve different engineering questions.
 
-TRDP should ultimately grow beyond raw send/receive toward professional analysis such as:
+### 5.5 Industrial Depth
+
+**Goal:** solve complete professional workflows in selected industrial domains.
+
+TRDP is a first-party strategic protocol because it serves a real railway engineering need.
+
+Its long-term workflow can include:
 
 - PD/MD inspection;
 - COMID visibility and filtering;
@@ -206,23 +216,25 @@ TRDP should ultimately grow beyond raw send/receive toward professional analysis
 - recording and replay;
 - correlation with Serial, SSH and journald events.
 
-Other industrial protocols should be evaluated by the same standard: depth and workflow value matter more than quantity.
+Other industrial protocols should be evaluated by workflow depth, engineering value and fit with the shared data model.
 
-### Instrument Platform — one upper computer for many analyzers
+### 5.6 Instrument Platform
 
-TauTerm should become the shared desktop environment for future first-party analyzers instead of creating a new application for every hardware product.
+**Goal:** make TauTerm the common upper-computer environment for first-party analyzers.
 
-A future CAN analyzer is the first obvious candidate. It should appear as another first-class instrument/session that can use the same Workspace, Recorder, Timeline, Data Lens, Signal Lab and Automation systems.
+A future CAN analyzer is the first likely candidate. It should appear as a first-class instrument/session using the same Workspace, Recorder, Unified Timeline, Data Lens, Signal Lab and Automation systems.
 
-This creates compounding value: every new instrument gains the existing software platform, and every software capability becomes more useful as additional instruments join the platform.
+Every new instrument should gain the existing software platform, while every software capability should become useful across more instruments.
 
 See [HARDWARE_ECOSYSTEM.md](HARDWARE_ECOSYSTEM.md).
 
-### Automation — move from scripts to engineering workflows
+### 5.7 Automation
 
-Lua remains an important expert runtime, but automation should become accessible without requiring every user to write a full script.
+**Goal:** move from isolated scripts to repeatable engineering workflows.
 
-A future flow layer can express ideas such as:
+Lua remains an important expert runtime. A higher-level flow layer can later expose trigger / condition / action automation without requiring every user to write a full script.
+
+Example:
 
 ```text
 WHEN Serial matches "READY"
@@ -240,27 +252,31 @@ Potential layers include:
 - CLI automation;
 - MCP/agent access with explicit permissions and auditability.
 
-Agent features must respect local-first operation and should never require sending industrial data to a cloud model.
+Agent features must respect local-first operation and must not require industrial data to leave the user's environment.
 
-### Team / Enterprise — monetize organizational value
+### 5.8 Team and Enterprise
 
-Long-term paid organization features can include:
+**Goal:** provide organizational value without changing the local-first engineering model.
+
+Potential capabilities include:
 
 - shared Workspaces;
 - shared decoder and automation libraries;
 - recording review and annotations;
 - private plugin/instrument registries;
-- encrypted secrets and policy controls;
+- secrets and policy controls;
 - audit logs;
 - offline/floating/site licensing;
 - controlled updates and LTS releases;
 - enterprise support.
 
-## Roadmap structure
+See [COMMERCIALIZATION.md](COMMERCIALIZATION.md).
 
-The roadmap should be capability-led rather than a list of protocols tied prematurely to version numbers.
+## 6. Roadmap model
 
-| Stage | Outcome |
+The roadmap is capability-led. Version numbers are delivery vehicles rather than the definition of the strategy.
+
+| Stage | Intended outcome |
 |---|---|
 | **Foundation** | Daily-driver quality: Local Shell, split panes, SSH tunnel/jump-host support, Workspace foundation, release/performance quality |
 | **Engineering Memory** | Structured recording, replay, markers, search and Unified Timeline |
@@ -269,22 +285,33 @@ The roadmap should be capability-led rather than a list of protocols tied premat
 | **Industrial & Instruments** | Deep TRDP workflows, offline/long-run industrial quality and first-party instrument integration such as a future CAN analyzer |
 | **Automation & Teams** | Flow automation, Lua/CLI/MCP evolution, collaboration, governance and enterprise deployment |
 
-Version numbers remain delivery vehicles, not the definition of the strategy.
+Roadmap stages describe direction, not release commitments.
 
-## Explicit non-goals
+## 7. Product decision filter
 
-Unless evidence changes the strategy, TauTerm should not prioritize:
+A proposed feature should answer these questions before becoming a core priority:
 
-- competitor configuration importers;
+1. What engineering problem does it solve?
+2. Does it strengthen the shared Workspace or data model?
+3. Does it improve observation, understanding, reproducibility or automation?
+4. Is it broadly reusable, or should it be a plugin/module?
+5. Does it preserve local-first operation?
+6. If it introduces a new protocol or instrument, can it participate in Recording, Timeline, Data Lens, Signal Lab or Automation where appropriate?
+
+## 8. Explicit non-goals
+
+Unless product evidence changes the direction, TauTerm should not prioritize:
+
+- migration-oriented importers for unrelated application formats;
 - protocol accumulation for its own sake;
 - mandatory cloud accounts for engineering features;
-- generic RDP/VNC/database-client expansion simply to become an all-in-one desktop toolbox;
+- generic expansion into unrelated desktop-tool categories;
 - isolated instrument UIs that cannot participate in the shared data, recording and automation model.
 
-## The moat
+## 9. Compounding product value
 
-The desired competitive advantage is not any individual checkbox. It is the combination of:
+TauTerm's long-term product advantage should come from the way its capabilities reinforce one another:
 
-**local-first engineering + servers + embedded devices + industrial protocols + first-party instruments + structured recording/replay + Signal Lab + Data Lens + automation.**
+**local-first engineering + remote systems + embedded devices + industrial protocols + first-party instruments + structured Recording/Replay + Signal Lab + Data Lens + Automation.**
 
-A competitor can copy a protocol or a chart. It is substantially harder to copy a coherent workflow and data model that spans the server room, the lab bench and physical engineering instruments.
+The goal is a coherent engineering environment in which new protocols, new instruments and new analysis capabilities all strengthen the same Workspace and data model.
