@@ -42,7 +42,7 @@ SSH、Serial、网络调试、Recording/Replay、Signal Lab、Data Lens、协议
 
 商业产品应围绕高价值专业工作流、官方高级模块、团队协作、企业治理、支持服务和行业能力收费。
 
-Community/Core 仓库可以继续采用 MIT OR Apache-2.0；可选商业模块可以在清晰的包、仓库或插件边界之外采用独立商业许可证。
+Community/Core 仓库可以继续采用 MIT OR Apache-2.0；可选商业模块可以通过清晰的包、仓库或插件边界与开源 Core 隔离，并采用独立商业许可证。
 
 ### 3.3 工程上下文优先于协议数量
 
