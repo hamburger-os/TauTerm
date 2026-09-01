@@ -1,18 +1,18 @@
-# TauTerm Hardware Ecosystem Direction
+# TauTerm 硬件生态方向
 
-> This document describes the intended software architecture and product experience for future first-party engineering instruments. It is a direction, not a hardware specification or release commitment.
+> 本文描述未来自研工程仪器在 TauTerm 中的软件架构与产品体验方向。它是设计方向，不是硬件规格书，也不构成发布承诺。
 
-## 1. Goal
+## 1. 目标
 
-TauTerm should become the common upper-computer software for a family of engineering analyzers.
+TauTerm 应成为一系列自研工程分析仪的统一上位机软件。
 
-A future CAN analyzer is the first likely example. Additional analyzers may follow when they solve a clear engineering problem and fit the same platform model.
+未来 CAN 分析仪是第一个明显候选。之后只有在能够解决明确工程问题、并且适合统一平台模型时，才继续扩展更多分析仪。
 
-The core idea is:
+核心思想是：
 
-> **One instrument adds a new source of engineering data; it should not create a new software silo.**
+> **增加一种仪器，应当只是增加一种新的工程数据源，而不是再制造一个新的软件孤岛。**
 
-Every first-party instrument should benefit from the same Workspace, Recorder, Unified Timeline, Signal Lab, Data Lens and Automation systems.
+每一种自研仪器都应直接获得同一套 Workspace、Recorder、Unified Timeline、Signal Lab、Data Lens 与 Automation 能力。
 
 ```text
 Tau CAN Analyzer ─ CAN/CAN FD ─┐
@@ -25,25 +25,25 @@ TCP/UDP service ─ Network ──────┘     ├─ Unified Timeline
                                      └─ Automation
 ```
 
-## 2. Platform principles
+## 2. 平台原则
 
-### 2.1 TauTerm is the common control and analysis environment
+### 2.1 TauTerm 是统一控制与分析环境
 
-Instrument discovery, setup, capture, monitoring, decoding, recording and automation should happen inside TauTerm where practical.
+在条件允许时，仪器发现、配置、采集、监控、解码、Recording 和 Automation 都应在 TauTerm 内完成。
 
-A small recovery/configuration utility may exist when required for low-level firmware recovery, driver repair or manufacturing, but normal engineering use should remain inside TauTerm.
+如果底层固件恢复、驱动修复或生产制造确实需要，可以单独提供小型恢复/配置工具；但日常工程使用应尽量留在 TauTerm 内。
 
-### 2.2 First-party hardware gets the most integrated experience
+### 2.2 自研硬件获得最深度的集成体验
 
-First-party instruments should be discoverable, identifiable and usable with minimal configuration.
+自研仪器应能够被自动发现、识别，并以尽可能少的配置开始使用。
 
-The architecture can still support third-party or generic adapters through stable extension boundaries. First-party devices should provide the strongest integration through known capabilities, hardware timestamping, firmware lifecycle support, device diagnostics and validated workflows.
+架构仍可以通过稳定扩展边界支持第三方或通用适配器。自研设备则通过已知能力、硬件时间戳、固件生命周期支持、设备诊断和经过验证的工作流获得最完整的体验。
 
-### 2.3 Capability negotiation is versioned
+### 2.3 Capability Negotiation 必须版本化
 
-TauTerm should discover instrument capabilities rather than hard-code assumptions about a model or hardware revision.
+TauTerm 应通过能力发现了解设备可以做什么，而不是在软件中硬编码某个型号或某个硬件版本的假设。
 
-Example capability names:
+示例 Capability：
 
 ```text
 capture.can
@@ -58,41 +58,41 @@ calibration_info
 output.inject
 ```
 
-New hardware revisions should be able to add capabilities without forcing unrelated UI or protocol changes.
+新的硬件版本应能够新增 Capability，而不要求修改无关 UI 或其他协议逻辑。
 
-### 2.4 Raw capture is durable data
+### 2.4 原始采集数据是长期数据资产
 
-The capture path should retain raw frames or samples close enough to the source that a recording can later be replayed, re-decoded or analyzed by newer software.
+采集管线应在足够靠近数据源的位置保留 Raw Frame 或 Sample，使未来 Recording 可以重新 Replay、重新解码或使用新版软件重新分析。
 
-Rendered tables and charts are views over engineering data, not the only durable representation of that data.
+表格和图表只是工程数据的视图，而不能成为唯一持久化形式。
 
-### 2.5 Time is a first-class engineering primitive
+### 2.5 时间是一等工程数据
 
-Cross-session and cross-instrument analysis depends on trustworthy timestamps.
+跨会话、跨仪器分析依赖可信时间戳。
 
-The integration model should account for:
+仪器集成模型应考虑：
 
-- host receive timestamp;
-- hardware capture timestamp where available;
-- timestamp resolution;
-- clock source metadata;
-- device/host clock offset information;
-- clock reset and discontinuity markers;
-- future multi-instrument synchronization where hardware supports it.
+- Host Receive Timestamp；
+- 条件允许时的 Hardware Capture Timestamp；
+- 时间戳分辨率；
+- 时钟源元数据；
+- Device/Host Clock Offset；
+- Clock Reset 与 Discontinuity Marker；
+- 硬件支持时的多仪器同步能力。
 
-The Recorder should preserve enough timing metadata for Unified Timeline to distinguish capture time from host receive time.
+Recorder 应保留足够的时间信息，使 Unified Timeline 能够区分“真实采集时间”和“Host 接收时间”。
 
-### 2.6 Instrument workflows are local-first
+### 2.6 仪器工作流必须本地优先
 
-Capture, decoding, plotting and replay must work offline.
+采集、解码、绘图和 Replay 必须能够离线工作。
 
-Drivers, firmware packages and calibration metadata needed in isolated environments should have a controlled offline distribution path.
+隔离环境所需的驱动、固件包和校准元数据应提供受控的离线分发方式。
 
-## 3. Software-facing instrument model
+## 3. 面向软件的 Instrument 模型
 
-Physical instruments and protocol sessions can share common session/event infrastructure without forcing them into exactly the same adapter abstraction.
+物理仪器与协议 Session 可以共享会话/事件基础设施，但不应为了统一而强行塞进完全相同的 Adapter 抽象。
 
-A future software-facing model can conceptually expose:
+未来可以概念性地暴露：
 
 ```text
 InstrumentManifest
@@ -116,9 +116,9 @@ InstrumentSession
 └─ firmware/update hooks
 ```
 
-The exact API should be designed when the first instrument implementation begins. The important constraint is that instrument data enters the same product-level event pipeline as protocol data.
+精确 API 应在第一款真实仪器进入实现阶段时再设计。当前最重要的约束是：**仪器数据最终必须进入与协议数据一致的产品级事件管线。**
 
-## 4. Shared data path
+## 4. 共享数据路径
 
 ```text
 Instrument Driver
@@ -138,146 +138,146 @@ Structured Event / Signal
    └─ Automation
 ```
 
-A single raw capture may therefore support several later views without duplicating acquisition logic.
+因此，同一份 Raw Capture 可以在不重复采集逻辑的情况下，支撑多个后续视图和分析流程。
 
-## 5. Device lifecycle
+## 5. 设备生命周期
 
-The instrument platform should treat the complete device lifecycle as part of product quality.
+仪器平台应把完整设备生命周期视为产品质量的一部分，而不仅仅关注“能不能收数据”。
 
-### Discovery and identity
+### 5.1 发现与身份
 
-TauTerm should be able to determine, where supported:
+在硬件支持时，TauTerm 应能够确定：
 
-- device family and model;
-- stable device identifier;
-- firmware version;
-- hardware revision;
-- capabilities;
-- channel count/types;
-- calibration metadata status.
+- 设备系列与型号；
+- 稳定设备标识；
+- 固件版本；
+- 硬件版本；
+- Capabilities；
+- 通道数量与类型；
+- 校准元数据状态。
 
-### Connection state
+### 5.2 连接状态
 
-Instrument sessions should expose meaningful states such as:
+Instrument Session 应暴露具有工程意义的状态，例如：
 
-- unavailable;
-- ready;
-- configured;
-- capturing;
-- paused;
-- faulted;
-- updating firmware.
+- unavailable；
+- ready；
+- configured；
+- capturing；
+- paused；
+- faulted；
+- updating firmware。
 
-### Health and diagnostics
+### 5.3 健康状态与诊断
 
-Where hardware supports it, TauTerm should surface:
+在硬件支持时，TauTerm 应展示：
 
-- transport errors;
-- overflow/drop counters;
-- device temperature or supply warnings;
-- bus/controller errors;
-- timestamp discontinuities;
-- firmware compatibility issues.
+- Transport Error；
+- Overflow/Drop Counter；
+- 设备温度或供电告警；
+- 总线/控制器错误；
+- 时间戳不连续；
+- 固件兼容性问题。
 
-These events should be recordable when they affect engineering interpretation.
+如果这些事件会影响工程分析，它们也应进入 Recording。
 
-## 6. Future CAN analyzer
+## 6. 未来 CAN 分析仪
 
-The first-party CAN analyzer should be designed together with its TauTerm workflow.
+自研 CAN 分析仪应与 TauTerm 工作流一起设计，而不是先完成硬件、最后再补一个桌面界面。
 
-### 6.1 Initial software-facing scope to evaluate
+### 6.1 首版软件侧范围候选
 
-- CAN 2.0A / 2.0B;
-- CAN FD where the hardware design supports it;
-- configurable nominal and data bit rates;
-- hardware timestamps;
-- receive and transmit/injection workflows;
-- acceptance filtering;
-- bus status and error visibility;
-- trace recording;
-- controlled replay/transmit from trace;
-- DBC/symbol decoding through Data Lens;
-- statistics and bus load;
-- trigger/marker integration;
-- multi-channel support when provided by hardware;
-- firmware update and device diagnostics.
+- CAN 2.0A / 2.0B；
+- 硬件条件允许时支持 CAN FD；
+- 可配置 Nominal/Data Bit Rate；
+- Hardware Timestamp；
+- 接收与发送/注入工作流；
+- Acceptance Filter；
+- 总线状态与 Error 可见性；
+- Trace Recording；
+- 受控的 Trace Replay/Transmit；
+- 通过 Data Lens 支持 DBC/Symbol Decode；
+- Statistics 与 Bus Load；
+- Trigger/Marker 集成；
+- 硬件支持时的多通道；
+- Firmware Update 与 Device Diagnostics。
 
-CAN XL can remain a future consideration unless a concrete product requirement justifies it.
+除非出现明确产品需求，CAN XL 可以继续作为后续方向，而不是首版要求。
 
-### 6.2 TauTerm-native CAN workflows
+### 6.2 TauTerm 原生 CAN 工作流
 
-A CAN session should participate in the same engineering context as other sessions.
+CAN Session 不应停留在 Frame Table，而应参与其他 Session 共享的工程上下文。
 
-Examples:
+示例：
 
-- correlate a CAN error frame with a Serial console message;
-- mark a Recording when a decoded CAN signal crosses a threshold;
-- plot decoded CAN signals in Signal Lab;
-- trigger an SSH/journald query from a CAN event;
-- replay a captured CAN trace together with recorded device/network context;
-- compare captures from two test runs;
-- run automation against decoded CAN fields.
+- 将 CAN Error Frame 与 Serial Console Message 按时间关联；
+- 当某个已解码 CAN Signal 越过阈值时自动添加 Recording Marker；
+- 在 Signal Lab 中绘制已解码 CAN Signal；
+- 由 CAN Event 触发 SSH/journald 查询；
+- 将 CAN Trace 与已记录的设备/网络上下文一起 Replay；
+- 比较两次测试的 Capture；
+- 针对已解码 CAN 字段执行 Automation。
 
-### 6.3 Safety controls
+### 6.3 安全控制
 
-Transmit, injection and replay features can affect real systems and should have explicit safety boundaries.
+Transmit、Injection 与 Replay 可能直接影响真实系统，因此必须有明确安全边界。
 
-Potential controls include:
+潜在控制包括：
 
-- clear indication of monitor-only versus transmit-capable mode;
-- explicit confirmation before high-impact replay/injection operations;
-- rate and loop limits;
-- visible active-transmit state;
-- automatic stop when the device or host session is closed;
-- audit/recording of automated transmit actions where appropriate.
+- 清楚区分 Monitor-only 与 Transmit-capable 模式；
+- 高影响 Replay/Injection 前显式确认；
+- 发送速率与循环次数限制；
+- 明确显示当前 Active Transmit 状态；
+- 设备或 Host Session 关闭时自动停止；
+- 在适用时记录自动发送行为并纳入审计/Recording。
 
-## 7. Multi-instrument direction
+## 7. 多仪器方向
 
-Additional instrument categories should be considered only when they have:
+只有同时满足以下条件时，才应考虑新的仪器类别：
 
-1. a clear engineering problem;
-2. credible hardware value;
-3. a natural fit with the TauTerm data model;
-4. useful interaction with Recording, Timeline, Signal Lab, Data Lens or Automation.
+1. 存在明确工程问题；
+2. 硬件本身具有可信价值；
+3. 能自然进入 TauTerm 数据模型；
+4. 能与 Recording、Timeline、Signal Lab、Data Lens 或 Automation 形成有意义的交互。
 
-Possible categories may include network/protocol analyzers, serial/fieldbus interfaces, mixed digital/analog capture devices or domain-specific railway/industrial instruments.
+潜在方向可能包括网络/协议分析仪、串口/现场总线接口、混合数字/模拟采集设备，以及面向铁路或工业场景的专用仪器。
 
-The platform should avoid one-off instrument designs whose data cannot participate in the shared workflow.
+平台应避免开发那些数据无法进入共享工作流的一次性仪器。
 
-## 8. Hardware/software versioning
+## 8. 硬件/软件版本兼容
 
-Long-lived engineering hardware requires explicit compatibility planning.
+长生命周期工程硬件必须尽早规划兼容性。
 
-Recommended properties:
+推荐具备：
 
-- versioned host-device protocol;
-- backward-compatible capability discovery;
-- explicit firmware compatibility ranges;
-- recoverable firmware-update path;
-- signed firmware for production devices;
-- stable capture/event schemas;
-- migration/version metadata in recordings;
-- clear support and LTS policy for industrial deployments.
+- 版本化 Host-Device Protocol；
+- 向后兼容的 Capability Discovery；
+- 明确 Firmware Compatibility Range；
+- 可恢复的 Firmware Update 路径；
+- 量产设备使用签名固件；
+- 稳定 Capture/Event Schema；
+- Recording 中包含 Migration/Version Metadata；
+- 面向工业部署的清晰 Support/LTS 策略。
 
-## 9. Commercial relationship
+## 9. 商业关系
 
-A first-party instrument should provide a durable and useful local workflow when purchased.
+自研仪器一旦售出，就应拥有长期可用且有实际价值的本地基础工作流。
 
-The intended experience is:
+理想体验是：
 
-1. connect the instrument to TauTerm;
-2. obtain a useful baseline capture/inspection workflow immediately;
-3. optionally use Professional/Industrial capabilities for deeper analysis, correlation, automation, reporting and support;
-4. add more first-party instruments later without changing the overall engineering environment.
+1. 将仪器连接到 TauTerm；
+2. 立即获得有实际价值的基础采集与检查能力；
+3. 可选使用 Professional/Industrial 能力进行更深入的分析、关联、自动化、报告和支持；
+4. 后续增加更多自研仪器时，继续使用同一个工程环境。
 
-Basic access to purchased hardware should remain available even if a software maintenance period ends.
+即使软件维护期结束，用户也应继续拥有对已购买硬件的基础访问能力。
 
-See [COMMERCIALIZATION.md](COMMERCIALIZATION.md) for packaging principles.
+商业包装原则参见 [COMMERCIALIZATION.md](COMMERCIALIZATION.md)。
 
-## 10. Compounding platform value
+## 10. 平台复利价值
 
-The long-term value of the hardware ecosystem is the shared workflow:
+硬件生态的长期价值来自共享工作流：
 
-> **A growing family of engineering instruments whose data can be captured, decoded, plotted, recorded, replayed and correlated with remote systems, embedded devices and industrial networks inside one local-first workbench.**
+> **一系列不断增长的工程仪器，其数据都能够在同一个本地优先工作台中完成采集、解码、绘图、Recording、Replay，并与远程系统、嵌入式设备和工业网络关联。**
 
-Every new instrument should strengthen the shared platform, and every improvement to the shared platform should increase the usefulness of every instrument.
+每增加一种仪器，都应强化共享平台；每改进一次共享平台，也应同时提升所有仪器的价值。
