@@ -1,12 +1,12 @@
 # TauTerm Commercialization Strategy
 
-> This document is a product/business hypothesis, not a published price list. Pricing, packaging and licensing should be validated with real users and customers before being treated as commitments.
+> This document records business hypotheses for TauTerm. It is not a published price list or licensing commitment. Packaging and pricing should be validated with real users and customers before becoming product policy.
 
-## Commercial objective
+## 1. Commercial objective
 
-TauTerm should become financially sustainable without weakening the open-source product that earns developer trust.
+TauTerm should become financially sustainable while keeping the open-source product complete, trustworthy and useful.
 
-The business should monetize the points where TauTerm creates professional and organizational value:
+Commercial value should come from areas where TauTerm provides clear professional or organizational leverage:
 
 - advanced engineering analysis and reproducibility;
 - official first-party instruments and instrument integrations;
@@ -15,99 +15,105 @@ The business should monetize the points where TauTerm creates professional and o
 - controlled offline deployment and licensing;
 - support, maintenance and long-term releases.
 
-The business should **not** depend on crippling basic SSH, Serial or TCP/UDP workflows in the Community edition.
+Basic engineering connectivity should remain a strong part of the Community edition.
 
-## Product/business model
+## 2. Business model
 
-TauTerm should use an **open-core + commercial value layer + hardware** model.
+The intended model is:
 
-The current Community/Core code can remain MIT OR Apache-2.0. Proprietary commercial modules should be kept behind clean package/repository/plugin boundaries so the licensing model is technically and legally understandable.
+> **Open engineering core + commercial professional value + first-party hardware + support/services.**
 
-Because permissive open-source licensing allows commercial forks, the durable commercial moat must come from the TauTerm brand, execution quality, official modules, hardware integration, support, distribution and the compounding engineering workflow rather than from the core source license alone.
+The current Community/Core repository can remain MIT OR Apache-2.0. Optional commercial modules can use separate proprietary licensing behind clean package, repository or plugin boundaries.
 
-## Packaging
+The business should compound value through:
 
-### TauTerm Community
+- product quality and release execution;
+- the TauTerm brand;
+- maintained official modules;
+- first-party hardware integration;
+- industrial domain depth;
+- long-lived data/workflow compatibility;
+- deployment and support capabilities.
 
-**Purpose:** adoption, trust, ecosystem growth and a genuinely useful engineering tool.
+## 3. Packaging model
 
-Expected to remain free/open source and include strong baseline capabilities such as:
+### 3.1 TauTerm Community
+
+**Purpose:** adoption, trust, ecosystem growth and a complete daily engineering baseline.
+
+Expected baseline capabilities include:
 
 - SSH/SFTP;
 - Serial;
 - TCP/UDP network debugging;
 - TFTP/Telnet/iPerf;
 - Local Shell when available;
-- basic Workspace/session management;
+- practical Workspace/session management;
 - Lua scripting and extension/plugin foundations;
 - useful baseline recording and data inspection;
-- support for official instrument connectivity at a practical baseline level.
+- practical baseline connectivity for purchased first-party instruments.
 
-Community should be good enough that an engineer can choose TauTerm as a daily tool without buying anything.
+Community should be good enough for an engineer to use TauTerm as a daily tool without purchasing an upgrade.
 
-### TauTerm Professional
+### 3.2 TauTerm Professional
 
-**Purpose:** individual engineers whose productivity or debugging quality justifies paying for advanced workflows.
+**Purpose:** individual engineers who benefit from deeper analysis, reproducibility and automation.
 
-Potential paid value:
+Potential paid capabilities:
 
-- advanced structured Recording / Replay;
+- advanced structured Recording/Replay;
 - synchronized multi-session Unified Timeline;
-- advanced Signal Lab features and analysis;
-- advanced Data Lens tooling and decoder authoring UX;
+- advanced Signal Lab analysis;
+- advanced Data Lens and decoder-authoring workflows;
 - richer report/export workflows;
-- large/long-duration local recording management;
+- large and long-duration recording management;
 - advanced Tau Flow automation;
 - selected official professional protocol/industry modules;
-- optional local/BYOK AI workflow features;
-- priority release channel or individual support benefits.
+- optional local/BYOK AI-assisted workflows;
+- individual support or release-channel benefits.
 
-Initial pricing hypotheses to test rather than commit to:
+Initial pricing hypotheses to validate:
 
-- annual license in roughly the USD 79–129 range;
-- perpetual individual license in roughly the USD 249–399 range, including a defined update period;
-- regional pricing can be tested for China and other markets.
+- annual individual license: approximately USD 79–129;
+- perpetual individual license: approximately USD 249–399 with a defined update period;
+- regional pricing where appropriate.
 
-A perpetual option is strategically important for engineering users who dislike runtime subscriptions.
+A perpetual option is important because engineering users may need stable offline use without an active runtime subscription.
 
-### TauTerm Industrial / Team
+### 3.3 TauTerm Industrial / Team
 
 **Purpose:** railway, industrial, device-development and test organizations.
 
-This tier should solve organizational procurement and governance problems rather than merely unlock more buttons.
+This tier should solve organizational deployment, governance and support requirements.
 
 Potential capabilities:
 
 - shared Workspaces;
-- shared decoder/automation libraries;
+- shared decoder and automation libraries;
 - recording review, annotations and evidence packages;
 - private plugin/instrument registry;
-- role/policy controls;
-- centralized or enterprise-managed secrets where appropriate;
+- role and policy controls;
+- centrally managed secrets where appropriate;
 - audit trails;
 - controlled update channels;
 - offline activation;
 - floating/concurrent licensing;
-- lab/site licenses;
-- LTS versions and maintenance windows;
-- enterprise support and deployment assistance.
+- lab/site licensing;
+- LTS releases and defined maintenance windows;
+- deployment assistance and enterprise support.
 
-Recommended commercial structure:
+A preferred licensing structure for industrial deployments is:
 
-- perpetual use of the purchased major/product version;
-- 12 months of upgrades/support included;
-- optional annual maintenance renewal for new versions and support;
-- no need for an Internet connection during normal engineering operation.
+- perpetual use of the purchased product version;
+- an included update/support period;
+- optional annual maintenance renewal for newer versions and continued support;
+- no Internet requirement during normal engineering operation.
 
-This matches industrial buying expectations better than a cloud-only SaaS subscription.
+### 3.4 Test Bench / Station
 
-### Test Bench / Factory licensing
+Where TauTerm runs on a fixed validation rack, HIL bench, production tester or engineering station, a named-user license may not match the actual usage model.
 
-Where TauTerm becomes part of a fixed workstation, validation rack, HIL bench or production/test station, licensing by named user may be the wrong unit.
-
-Offer a **Test Bench / Station** license that is tied to the engineering workstation or controlled test station and can operate offline.
-
-Potential future license units:
+Potential license units include:
 
 - named engineer;
 - floating/concurrent engineer;
@@ -115,59 +121,74 @@ Potential future license units:
 - laboratory/site;
 - enterprise agreement.
 
-## Hardware business
+A station license should support controlled offline environments.
 
-First-party analyzers can become a second major revenue engine and also strengthen software differentiation.
+## 4. Licensing principles
 
-A future CAN analyzer is a natural first candidate. Other analyzers can later join the same software platform.
+Commercial licensing should preserve the local-first product model.
 
-The desired model is:
+Preferred rules:
 
-1. hardware is profitable on its own;
-2. TauTerm Community provides a useful out-of-box experience with the hardware;
-3. Professional/Industrial software increases the value of the hardware through advanced recording, decoding, correlation, automation and reporting;
-4. owning multiple Tau instruments increases the value of a single TauTerm Workspace rather than forcing customers to install separate applications.
+- no mandatory login for Community engineering workflows;
+- offline activation path for Industrial customers;
+- grace periods that do not interrupt active field or test work;
+- purchased perpetual versions continue to run after maintenance expires;
+- license state never blocks access to customer-owned recordings or data;
+- enterprise deployments can pin a supported release;
+- telemetry is opt-in and not required for licensing;
+- purchased first-party hardware retains a useful baseline workflow without an active software subscription.
 
-Do not make first-party hardware artificially unusable without a subscription. A customer who buys an instrument should receive a durable, useful local workflow.
+## 5. First-party hardware business
 
-Possible bundle structures to validate later:
+First-party analyzers can become a second major revenue stream while strengthening the software platform.
+
+A future CAN analyzer is a natural first candidate. Additional instruments can later join the same TauTerm environment.
+
+The intended model is:
+
+1. hardware has sustainable standalone economics;
+2. TauTerm Community provides a useful out-of-box hardware workflow;
+3. Professional/Industrial software adds deeper recording, decoding, correlation, automation and reporting;
+4. multiple Tau instruments share one Workspace and increase the value of the same software platform.
+
+Potential bundles to validate later:
 
 - instrument + Community software;
-- instrument + 1 year Professional entitlement;
+- instrument + Professional entitlement/update period;
 - industrial instrument kit + Industrial maintenance/support;
-- multi-instrument lab bundle;
-- test-bench bundle with offline station license.
+- multi-instrument laboratory bundle;
+- test-bench bundle with an offline station license.
 
-Hardware pricing and margin targets should only be set after BOM, certification, support, channel and warranty costs are understood.
+Hardware pricing should be set only after BOM, certification, manufacturing, support, channel, warranty and inventory costs are understood.
 
-## Industry packs and official modules
+See [HARDWARE_ECOSYSTEM.md](HARDWARE_ECOSYSTEM.md) for the instrument-platform design direction.
 
-Commercial expansion can also come from deep, maintained vertical capabilities rather than generic protocol checkboxes.
+## 6. Official industrial modules
 
-Examples:
+Commercial expansion should favor deep, maintained workflows rather than protocol quantity.
 
-### Railway Pack
+### 6.1 Railway module family
 
 Potential value:
 
 - advanced TRDP analysis;
 - dataset/configuration tooling;
-- cycle/jitter/loss diagnostics;
-- railway-oriented reports;
+- cycle, jitter and loss diagnostics;
+- railway-oriented evidence/report workflows;
 - validated decoder libraries;
 - long-term supported releases.
 
-### Industrial Pack
+### 6.2 Industrial modules
 
-Only add protocols where TauTerm can provide meaningful workflow depth. Candidates may eventually include fieldbus/device protocols that integrate naturally with Data Lens, Recorder and Automation.
+Additional fieldbus or device protocols should be considered when they integrate naturally with Data Lens, Recorder, Unified Timeline and Automation and when there is a clear professional workflow to maintain.
 
-### Instrument Packs
+### 6.3 Instrument modules
 
-Certain advanced first-party instrument capabilities, calibrated analysis modules or specialist decoders can be packaged commercially while basic connectivity remains available.
+Advanced first-party instrument capabilities, calibrated analysis modules or specialist decoder packages may use commercial packaging while baseline instrument connectivity remains practical and durable.
 
-## Services and support
+## 7. Services and support
 
-Services should accelerate product adoption without turning TauTerm into a consulting-only business.
+Services should accelerate adoption and reduce deployment risk without turning TauTerm into a customer-specific fork business.
 
 Potential paid services:
 
@@ -177,81 +198,78 @@ Potential paid services:
 - railway/industrial workflow integration;
 - training;
 - priority support;
-- LTS/security maintenance contracts.
+- LTS and security-maintenance contracts.
 
-Whenever a custom implementation is reusable, prefer turning the generic part into a product capability rather than maintaining permanent customer-specific forks.
+When custom work produces a broadly reusable capability, the reusable part should move back into the product or a maintained module where appropriate.
 
-## Local-first licensing rules
+## 8. What remains in the open baseline
 
-Commercial licensing must respect the product's industrial positioning.
-
-Preferred properties:
-
-- no mandatory login for core engineering use;
-- offline activation path for Industrial customers;
-- grace periods that do not interrupt active field/test work;
-- purchased perpetual versions keep working after maintenance expires;
-- license checks never block access to customer-owned recordings/data;
-- enterprise deployments can pin a supported release;
-- telemetry is opt-in and must not be required for licensing.
-
-## What not to monetize
-
-Avoid paywalls around the basic reasons people adopt TauTerm:
+The Community edition should retain the basic reasons engineers adopt TauTerm:
 
 - basic SSH/SFTP connectivity;
 - basic Serial connectivity;
 - basic TCP/UDP debugging;
 - ordinary terminal use;
-- reading a customer's own local data;
-- basic access to a purchased Tau instrument.
+- access to customer-owned local data;
+- practical baseline access to purchased first-party instruments.
 
-Charge for professional leverage: deeper analysis, reproducibility, automation, collaboration, governance, supported industry depth and first-party product quality.
+Commercial value should focus on deeper analysis, reproducibility, automation, collaboration, governance, industrial depth, deployment and support.
 
-## Go-to-market sequence
+## 9. Go-to-market sequence
 
-### Stage 1 — earn trust
+### Stage 1 — establish daily use
 
-Focus on Community quality, releases, technical content and real embedded/device-engineering users.
+Focus on Community quality, reliable releases, technical documentation and real embedded/device-engineering workflows.
 
-Success signals:
+Signals to watch:
 
-- users keep TauTerm open as a daily tool;
-- users replace multiple utilities with TauTerm;
-- external feedback changes the roadmap;
-- contributors build against extension points.
+- engineers keep TauTerm open during normal work;
+- users actively use more than one workflow domain in the same application;
+- external feedback changes product priorities;
+- extension points are used outside the core team.
 
-### Stage 2 — prove professional willingness to pay
+### Stage 2 — validate Professional value
 
-Introduce Professional only after Recording/Replay, Signal Lab, Data Lens or another clearly differentiated workflow is valuable enough to stand on its own.
+Introduce Professional only when Recording/Replay, Signal Lab, Data Lens, Automation or another advanced workflow creates a clear standalone productivity benefit.
 
-Do not launch a paid tier whose main message is simply “more protocols.”
+The paid tier should have a positive professional value proposition rather than being defined by removing baseline capabilities from Community.
 
-### Stage 3 — hardware flywheel
+### Stage 3 — introduce the first instrument
 
-Launch the first Tau instrument when hardware quality and the TauTerm integration are both good enough to feel like one product.
+Launch the first Tau instrument when both the hardware and its TauTerm integration meet the same product-quality bar.
 
-The instrument should become a discovery channel for TauTerm, while TauTerm should make the instrument more valuable than a standalone analyzer.
+The instrument should feel like a native part of the TauTerm Workspace from first connection through capture, decoding, recording and update lifecycle.
 
-### Stage 4 — industrial sales
+### Stage 4 — industrial deployment
 
-Use real railway/industrial workflows such as TRDP, offline deployment, replayable evidence and instrument correlation to sell Industrial licenses, support and maintenance.
+Use proven railway/industrial workflows, offline deployment, replayable evidence, instrument correlation and support to validate Industrial packaging and maintenance contracts.
 
 ### Stage 5 — team platform
 
-Add collaboration/private registries/governance when there is evidence that multiple engineers inside the same organization actively share TauTerm assets.
+Add deeper collaboration, private registries and governance when real organizations are actively sharing TauTerm Workspaces, decoders, recordings and automation assets.
 
-## Commercial moat
+## 10. Commercial validation gates
 
-The intended business moat is the combination of:
+Before making a commercial package permanent, validate:
+
+1. **User value:** does the capability save meaningful engineering time or improve evidence/reproducibility?
+2. **Packaging clarity:** can a customer understand why the capability belongs in this tier?
+3. **Offline viability:** can the intended industrial workflow operate without Internet access?
+4. **Supportability:** can the feature be maintained, tested and documented over a long lifecycle?
+5. **Data ownership:** can customers continue to access their own data regardless of license state?
+6. **Hardware economics:** for instruments, do margin, warranty and support assumptions remain sustainable?
+
+## 11. Compounding commercial value
+
+TauTerm's commercial strength should come from a coherent system of products and services:
 
 - a trusted open-source engineering core;
-- a local-first workflow suitable for industrial environments;
+- local-first workflows suitable for isolated environments;
 - professional Recording/Replay, Signal Lab and Data Lens capabilities;
-- deep railway/industrial expertise;
-- first-party analyzers with best-in-class TauTerm integration;
+- maintained railway and industrial modules;
+- first-party analyzers with deep TauTerm integration;
 - an extension ecosystem;
-- enterprise deployment/support;
-- the TauTerm brand and accumulated engineering workflows.
+- controlled enterprise deployment and support;
+- long-lived engineering data and workflow compatibility.
 
-Any single software feature can be copied. A coherent software/hardware engineering ecosystem is much harder to replace.
+The objective is a sustainable product family in which software, industrial modules, support and hardware reinforce the same engineering platform.
