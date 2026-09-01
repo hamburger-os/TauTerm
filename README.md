@@ -19,10 +19,10 @@
 
 <p align="center">
   <a href="https://github.com/hamburger-os/TauTerm/releases"><strong>Download</strong></a>
+  · <a href="docs/README.md">Documentation</a>
   · <a href="docs/SUPPORTED_PLATFORMS.md">Supported platforms</a>
   · <a href="docs/BUILDING.md">Build from source</a>
   · <a href="docs/ARCHITECTURE.md">Architecture</a>
-  · <a href="docs/PRODUCT_STRATEGY.md">Product strategy</a>
   · <a href="README.zh-CN.md">中文</a>
 </p>
 
@@ -51,7 +51,7 @@ TauTerm deliberately serves both **embedded/device R&D engineers** and engineers
 
 The longer-term direction goes beyond collecting protocols. TauTerm is evolving toward an **engineering workbench** where sessions and future physical instruments can share structured recording/replay, a unified timeline, real-time signal analysis, structured data decoding and automation. Railway and industrial workflows are strategic verticals, while the product itself remains broadly useful for connected-system engineering.
 
-See [Product Strategy](docs/PRODUCT_STRATEGY.md), [Hardware Ecosystem Direction](docs/HARDWARE_ECOSYSTEM.md) and [Commercialization Strategy](docs/COMMERCIALIZATION.md) for the current direction. These documents describe goals, not shipped features.
+See the [documentation index](docs/README.md) for the current product strategy, hardware ecosystem direction, commercialization strategy, architecture, build and release documentation. Direction documents describe goals, not shipped features.
 
 ---
 
