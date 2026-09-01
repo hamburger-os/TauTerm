@@ -1,275 +1,275 @@
-# TauTerm Commercialization Strategy
+# TauTerm 商业化战略
 
-> This document records business hypotheses for TauTerm. It is not a published price list or licensing commitment. Packaging and pricing should be validated with real users and customers before becoming product policy.
+> 本文记录 TauTerm 的商业化假设。它不是已经对外发布的价格表或授权承诺。产品分层、价格和授权方式都应在真实用户与客户中验证后，再成为正式政策。
 
-## 1. Commercial objective
+## 1. 商业目标
 
-TauTerm should become financially sustainable while keeping the open-source product complete, trustworthy and useful.
+TauTerm 应在保持开源产品完整、可信、有实际价值的前提下实现长期可持续经营。
 
-Commercial value should come from areas where TauTerm provides clear professional or organizational leverage:
+商业价值应主要来自那些能够显著提升专业工程效率或组织能力的部分：
 
-- advanced engineering analysis and reproducibility;
-- official first-party instruments and instrument integrations;
-- specialist industrial capabilities;
-- team workflows and governance;
-- controlled offline deployment and licensing;
-- support, maintenance and long-term releases.
+- 高级工程分析与可复现能力；
+- 自研工程仪器与深度集成；
+- 专业工业能力；
+- 团队工作流与治理；
+- 受控离线部署与授权；
+- 支持、维护和长期版本。
 
-Basic engineering connectivity should remain a strong part of the Community edition.
+基础工程连接能力应继续作为 Community 的强项，而不是人为削弱后再收费解锁。
 
-## 2. Business model
+## 2. 商业模式
 
-The intended model is:
+目标商业模型是：
 
-> **Open engineering core + commercial professional value + first-party hardware + support/services.**
+> **开放工程 Core + 商业专业能力 + 自研硬件 + 支持与服务。**
 
-The current Community/Core repository can remain MIT OR Apache-2.0. Optional commercial modules can use separate proprietary licensing behind clean package, repository or plugin boundaries.
+当前 Community/Core 仓库可以继续采用 MIT OR Apache-2.0。可选商业模块可以通过清晰的包、仓库或插件边界采用独立商业许可证。
 
-The business should compound value through:
+长期商业价值应通过以下因素不断累积：
 
-- product quality and release execution;
-- the TauTerm brand;
-- maintained official modules;
-- first-party hardware integration;
-- industrial domain depth;
-- long-lived data/workflow compatibility;
-- deployment and support capabilities.
+- 产品质量与稳定发布；
+- TauTerm 品牌；
+- 持续维护的官方模块；
+- 自研硬件深度集成；
+- 工业领域专业深度；
+- 长生命周期的数据与工作流兼容性；
+- 部署、维护和支持能力。
 
-## 3. Packaging model
+## 3. 产品分层
 
 ### 3.1 TauTerm Community
 
-**Purpose:** adoption, trust, ecosystem growth and a complete daily engineering baseline.
+**目的：** 获取用户、建立信任、发展生态，并提供完整的日常工程基础能力。
 
-Expected baseline capabilities include:
+预期长期保留的基础能力包括：
 
-- SSH/SFTP;
-- Serial;
-- TCP/UDP network debugging;
-- TFTP/Telnet/iPerf;
-- Local Shell when available;
-- practical Workspace/session management;
-- Lua scripting and extension/plugin foundations;
-- useful baseline recording and data inspection;
-- practical baseline connectivity for purchased first-party instruments.
+- SSH/SFTP；
+- Serial；
+- TCP/UDP 网络调试；
+- TFTP/Telnet/iPerf；
+- Local Shell（实现后）；
+- 实用的 Workspace/Session 管理；
+- Lua 脚本与插件/扩展基础；
+- 有实际价值的基础 Recording 与数据检查能力；
+- 对已购买自研仪器提供长期可用的基础连接能力。
 
-Community should be good enough for an engineer to use TauTerm as a daily tool without purchasing an upgrade.
+Community 应当足够优秀，使工程师即使不购买商业版本，也愿意把 TauTerm 作为日常工具使用。
 
 ### 3.2 TauTerm Professional
 
-**Purpose:** individual engineers who benefit from deeper analysis, reproducibility and automation.
+**目的：** 服务那些能够从更深入分析、复现和自动化中获得明显生产力收益的个人工程师。
 
-Potential paid capabilities:
+潜在商业能力包括：
 
-- advanced structured Recording/Replay;
-- synchronized multi-session Unified Timeline;
-- advanced Signal Lab analysis;
-- advanced Data Lens and decoder-authoring workflows;
-- richer report/export workflows;
-- large and long-duration recording management;
-- advanced Tau Flow automation;
-- selected official professional protocol/industry modules;
-- optional local/BYOK AI-assisted workflows;
-- individual support or release-channel benefits.
+- 高级结构化 Recording/Replay；
+- 多 Session 同步 Unified Timeline；
+- 高级 Signal Lab 分析能力；
+- 高级 Data Lens 与 Decoder Authoring 工作流；
+- 更完善的报告与导出；
+- 大规模、长时间 Recording 管理；
+- 高级 Tau Flow 自动化；
+- 部分官方专业协议/行业模块；
+- 可选本地/BYOK AI 辅助工作流；
+- 个人支持或特殊发布通道权益。
 
-Initial pricing hypotheses to validate:
+初始价格假设，仅用于后续验证：
 
-- annual individual license: approximately USD 79–129;
-- perpetual individual license: approximately USD 249–399 with a defined update period;
-- regional pricing where appropriate.
+- 个人年付授权：约 USD 79–129；
+- 个人永久授权：约 USD 249–399，并包含明确的软件更新期；
+- 在合适市场测试区域定价。
 
-A perpetual option is important because engineering users may need stable offline use without an active runtime subscription.
+永久授权选项很重要，因为工程用户可能需要在没有持续订阅和互联网连接的情况下长期稳定使用某一版本。
 
 ### 3.3 TauTerm Industrial / Team
 
-**Purpose:** railway, industrial, device-development and test organizations.
+**目的：** 服务铁路、工业、设备研发和测试组织。
 
-This tier should solve organizational deployment, governance and support requirements.
+这一层主要解决组织级部署、治理、授权与支持问题，而不是简单增加更多按钮。
 
-Potential capabilities:
+潜在能力包括：
 
-- shared Workspaces;
-- shared decoder and automation libraries;
-- recording review, annotations and evidence packages;
-- private plugin/instrument registry;
-- role and policy controls;
-- centrally managed secrets where appropriate;
-- audit trails;
-- controlled update channels;
-- offline activation;
-- floating/concurrent licensing;
-- lab/site licensing;
-- LTS releases and defined maintenance windows;
-- deployment assistance and enterprise support.
+- 共享 Workspace；
+- 共享 Decoder 与自动化库；
+- Recording 审阅、注释与证据包；
+- 私有插件/仪器 Registry；
+- Role 与 Policy 控制；
+- 适用情况下的集中式 Secret 管理；
+- 审计记录；
+- 受控更新通道；
+- 离线激活；
+- Floating/Concurrent License；
+- Lab/Site License；
+- LTS 与明确维护周期；
+- 部署协助与企业支持。
 
-A preferred licensing structure for industrial deployments is:
+工业部署优先考虑以下授权结构：
 
-- perpetual use of the purchased product version;
-- an included update/support period;
-- optional annual maintenance renewal for newer versions and continued support;
-- no Internet requirement during normal engineering operation.
+- 已购买产品版本永久可用；
+- 初始购买包含一段明确的更新与支持期；
+- 后续可以按年续维护，以获得新版本和持续支持；
+- 正常工程使用不要求联网。
 
 ### 3.4 Test Bench / Station
 
-Where TauTerm runs on a fixed validation rack, HIL bench, production tester or engineering station, a named-user license may not match the actual usage model.
+当 TauTerm 固定运行在验证台架、HIL、生产测试机或工程站上时，按实名用户授权不一定符合真实使用方式。
 
-Potential license units include:
+潜在授权单位包括：
 
-- named engineer;
-- floating/concurrent engineer;
-- test bench/station;
-- laboratory/site;
-- enterprise agreement.
+- Named Engineer；
+- Floating/Concurrent Engineer；
+- Test Bench/Station；
+- Laboratory/Site；
+- Enterprise Agreement。
 
-A station license should support controlled offline environments.
+Station License 应能够在受控离线环境中长期运行。
 
-## 4. Licensing principles
+## 4. 授权原则
 
-Commercial licensing should preserve the local-first product model.
+商业授权必须保持 TauTerm 的本地优先产品模型。
 
-Preferred rules:
+优先原则：
 
-- no mandatory login for Community engineering workflows;
-- offline activation path for Industrial customers;
-- grace periods that do not interrupt active field or test work;
-- purchased perpetual versions continue to run after maintenance expires;
-- license state never blocks access to customer-owned recordings or data;
-- enterprise deployments can pin a supported release;
-- telemetry is opt-in and not required for licensing;
-- purchased first-party hardware retains a useful baseline workflow without an active software subscription.
+- Community 工程工作流不强制登录；
+- Industrial 提供离线激活路径；
+- 授权异常应有 Grace Period，不能轻易中断正在进行的现场或测试工作；
+- 永久授权版本在维护期结束后继续运行；
+- License 状态永远不能阻止客户读取自己的 Recording 和数据；
+- 企业部署可以固定使用某个受支持版本；
+- Telemetry 必须可选，并且不能成为授权依赖；
+- 已购买自研硬件即使没有活跃软件订阅，也保留长期有用的基础工作流。
 
-## 5. First-party hardware business
+## 5. 自研硬件业务
 
-First-party analyzers can become a second major revenue stream while strengthening the software platform.
+自研分析仪可以成为软件之外的第二条重要收入来源，同时持续强化 TauTerm 平台本身。
 
-A future CAN analyzer is a natural first candidate. Additional instruments can later join the same TauTerm environment.
+未来 CAN 分析仪是最自然的第一个候选，之后还可以有更多仪器进入同一个 TauTerm 环境。
 
-The intended model is:
+目标模型是：
 
-1. hardware has sustainable standalone economics;
-2. TauTerm Community provides a useful out-of-box hardware workflow;
-3. Professional/Industrial software adds deeper recording, decoding, correlation, automation and reporting;
-4. multiple Tau instruments share one Workspace and increase the value of the same software platform.
+1. 硬件本身具备可持续的独立商业模型；
+2. TauTerm Community 为硬件提供有实际价值的开箱即用体验；
+3. Professional/Industrial 通过高级 Recording、解码、关联、自动化和报告提升硬件价值；
+4. 用户拥有多种 Tau 仪器时，共享一个 Workspace，而不是安装越来越多互不相干的软件。
 
-Potential bundles to validate later:
+后续可以验证的组合包括：
 
-- instrument + Community software;
-- instrument + Professional entitlement/update period;
-- industrial instrument kit + Industrial maintenance/support;
-- multi-instrument laboratory bundle;
-- test-bench bundle with an offline station license.
+- Instrument + Community；
+- Instrument + Professional 权益/更新期；
+- Industrial Instrument Kit + Industrial Maintenance/Support；
+- Multi-Instrument Laboratory Bundle；
+- Test Bench Bundle + Offline Station License。
 
-Hardware pricing should be set only after BOM, certification, manufacturing, support, channel, warranty and inventory costs are understood.
+硬件定价必须在 BOM、认证、生产、支持、渠道、质保和库存成本都足够清楚之后再决定。
 
-See [HARDWARE_ECOSYSTEM.md](HARDWARE_ECOSYSTEM.md) for the instrument-platform design direction.
+仪器平台设计方向参见 [HARDWARE_ECOSYSTEM.md](HARDWARE_ECOSYSTEM.md)。
 
-## 6. Official industrial modules
+## 6. 官方工业模块
 
-Commercial expansion should favor deep, maintained workflows rather than protocol quantity.
+商业扩展应优先建设有深度、可长期维护的工作流，而不是增加协议数量。
 
-### 6.1 Railway module family
+### 6.1 铁路模块族
 
-Potential value:
+潜在价值包括：
 
-- advanced TRDP analysis;
-- dataset/configuration tooling;
-- cycle, jitter and loss diagnostics;
-- railway-oriented evidence/report workflows;
-- validated decoder libraries;
-- long-term supported releases.
+- 高级 TRDP 分析；
+- Dataset/Configuration 工具；
+- Cycle、Jitter、Loss 诊断；
+- 面向铁路工程的证据与报告流程；
+- 经验证的 Decoder Library；
+- 长期支持版本。
 
-### 6.2 Industrial modules
+### 6.2 工业模块
 
-Additional fieldbus or device protocols should be considered when they integrate naturally with Data Lens, Recorder, Unified Timeline and Automation and when there is a clear professional workflow to maintain.
+只有当新的现场总线或设备协议能够自然接入 Data Lens、Recorder、Unified Timeline、Automation，并且存在值得长期维护的明确专业工作流时，才考虑将其发展为官方工业模块。
 
-### 6.3 Instrument modules
+### 6.3 仪器模块
 
-Advanced first-party instrument capabilities, calibrated analysis modules or specialist decoder packages may use commercial packaging while baseline instrument connectivity remains practical and durable.
+自研仪器的部分高级能力、校准分析模块或专业 Decoder Package 可以采用商业包装，但基础仪器连接必须保持实用、稳定、长期可用。
 
-## 7. Services and support
+## 7. 服务与支持
 
-Services should accelerate adoption and reduce deployment risk without turning TauTerm into a customer-specific fork business.
+服务的目标是降低部署风险、加速产品采用，而不是把 TauTerm 变成依赖大量客户定制分支的咨询项目。
 
-Potential paid services:
+潜在付费服务：
 
-- enterprise deployment assistance;
-- custom protocol/decoder development;
-- custom instrument integration;
-- railway/industrial workflow integration;
-- training;
-- priority support;
-- LTS and security-maintenance contracts.
+- 企业部署协助；
+- 自定义协议/Decoder 开发；
+- 自定义仪器集成；
+- 铁路/工业工作流集成；
+- 培训；
+- 优先支持；
+- LTS 与安全维护合同。
 
-When custom work produces a broadly reusable capability, the reusable part should move back into the product or a maintained module where appropriate.
+如果一次客户定制中产生了可以广泛复用的能力，应尽量把通用部分回收到正式产品或长期维护模块中，而不是永久维护客户专用 Fork。
 
-## 8. What remains in the open baseline
+## 8. 开源基础能力边界
 
-The Community edition should retain the basic reasons engineers adopt TauTerm:
+Community 应长期保留工程师采用 TauTerm 的基础理由：
 
-- basic SSH/SFTP connectivity;
-- basic Serial connectivity;
-- basic TCP/UDP debugging;
-- ordinary terminal use;
-- access to customer-owned local data;
-- practical baseline access to purchased first-party instruments.
+- 基础 SSH/SFTP；
+- 基础 Serial；
+- 基础 TCP/UDP 网络调试；
+- 普通终端使用；
+- 对用户自己本地数据的访问；
+- 对已购买自研仪器的实用基础访问。
 
-Commercial value should focus on deeper analysis, reproducibility, automation, collaboration, governance, industrial depth, deployment and support.
+商业价值应集中在更深的分析、可复现性、自动化、协作、治理、工业能力、部署和支持上。
 
-## 9. Go-to-market sequence
+## 9. 商业推进顺序
 
-### Stage 1 — establish daily use
+### Stage 1 —— 建立日常使用习惯
 
-Focus on Community quality, reliable releases, technical documentation and real embedded/device-engineering workflows.
+重点投入 Community 质量、可靠发布、技术文档和真实嵌入式/设备研发工作流。
 
-Signals to watch:
+重点观察：
 
-- engineers keep TauTerm open during normal work;
-- users actively use more than one workflow domain in the same application;
-- external feedback changes product priorities;
-- extension points are used outside the core team.
+- 工程师是否在正常工作中持续打开 TauTerm；
+- 用户是否会在同一应用中主动使用多个工作流领域；
+- 外部反馈是否真正改变产品优先级；
+- 核心团队之外是否有人使用扩展能力。
 
-### Stage 2 — validate Professional value
+### Stage 2 —— 验证 Professional 付费价值
 
-Introduce Professional only when Recording/Replay, Signal Lab, Data Lens, Automation or another advanced workflow creates a clear standalone productivity benefit.
+只有当 Recording/Replay、Signal Lab、Data Lens、Automation 或其他高级工作流形成清晰、独立的生产力价值后，再推出 Professional。
 
-The paid tier should have a positive professional value proposition rather than being defined by removing baseline capabilities from Community.
+付费层必须有正向的专业价值理由，而不能仅仅通过从 Community 中拿走基础能力来制造购买动机。
 
-### Stage 3 — introduce the first instrument
+### Stage 3 —— 推出第一款仪器
 
-Launch the first Tau instrument when both the hardware and its TauTerm integration meet the same product-quality bar.
+只有当硬件本身与 TauTerm 集成体验都达到同一产品质量标准时，再发布第一款 Tau 仪器。
 
-The instrument should feel like a native part of the TauTerm Workspace from first connection through capture, decoding, recording and update lifecycle.
+从第一次连接、采集、解码、Recording 到固件更新，仪器都应像 TauTerm Workspace 的原生组成部分。
 
-### Stage 4 — industrial deployment
+### Stage 4 —— 工业部署
 
-Use proven railway/industrial workflows, offline deployment, replayable evidence, instrument correlation and support to validate Industrial packaging and maintenance contracts.
+用经过实际验证的铁路/工业工作流、离线部署、可 Replay 证据、跨仪器关联和支持能力，验证 Industrial 包装与维护合同。
 
-### Stage 5 — team platform
+### Stage 5 —— 团队平台
 
-Add deeper collaboration, private registries and governance when real organizations are actively sharing TauTerm Workspaces, decoders, recordings and automation assets.
+当真实组织已经开始共享 TauTerm Workspace、Decoder、Recording 和 Automation Asset 后，再增加更深入的协作、私有 Registry 和治理能力。
 
-## 10. Commercial validation gates
+## 10. 商业验证门槛
 
-Before making a commercial package permanent, validate:
+在把某个商业包装正式固化之前，应验证：
 
-1. **User value:** does the capability save meaningful engineering time or improve evidence/reproducibility?
-2. **Packaging clarity:** can a customer understand why the capability belongs in this tier?
-3. **Offline viability:** can the intended industrial workflow operate without Internet access?
-4. **Supportability:** can the feature be maintained, tested and documented over a long lifecycle?
-5. **Data ownership:** can customers continue to access their own data regardless of license state?
-6. **Hardware economics:** for instruments, do margin, warranty and support assumptions remain sustainable?
+1. **用户价值：** 是否显著节省工程时间，或者明显提升证据质量与可复现性？
+2. **分层清晰度：** 客户是否能理解为什么这项能力属于该商业层级？
+3. **离线可用性：** 目标工业工作流是否可以不依赖互联网运行？
+4. **可支持性：** 是否能够在较长生命周期内持续维护、测试和文档化？
+5. **数据所有权：** 无论 License 状态如何，客户是否始终能够读取自己的数据？
+6. **硬件经济性：** 对仪器而言，毛利、质保和支持假设是否可持续？
 
-## 11. Compounding commercial value
+## 11. 商业价值的复利结构
 
-TauTerm's commercial strength should come from a coherent system of products and services:
+TauTerm 的长期商业实力应来自一组彼此强化的产品和服务：
 
-- a trusted open-source engineering core;
-- local-first workflows suitable for isolated environments;
-- professional Recording/Replay, Signal Lab and Data Lens capabilities;
-- maintained railway and industrial modules;
-- first-party analyzers with deep TauTerm integration;
-- an extension ecosystem;
-- controlled enterprise deployment and support;
-- long-lived engineering data and workflow compatibility.
+- 值得信任的开源工程 Core；
+- 适合隔离环境的本地优先工作流；
+- 专业 Recording/Replay、Signal Lab 和 Data Lens；
+- 长期维护的铁路与工业模块；
+- 与 TauTerm 深度集成的自研分析仪；
+- 扩展生态；
+- 受控企业部署与支持；
+- 长生命周期的工程数据与工作流兼容性。
 
-The objective is a sustainable product family in which software, industrial modules, support and hardware reinforce the same engineering platform.
+最终目标是形成一个可持续产品族：软件、工业模块、支持服务和硬件都围绕同一个工程平台互相增强。
