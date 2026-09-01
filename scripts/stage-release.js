@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -6,6 +6,7 @@ const root = resolve(import.meta.dirname, "..");
 const [platform, outputArg = "release-stage"] = process.argv.slice(2);
 const output = resolve(root, outputArg);
 const bundleRoot = resolve(root, "src-tauri/target/release/bundle");
+const { version } = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 
 const specs = {
   windows: {
@@ -46,6 +47,13 @@ function matchesAny(name, suffixes) {
   return suffixes.some((suffix) => name.endsWith(suffix));
 }
 
+function isCurrentVersionArtifact(name) {
+  if (platform === "macos-arm" && (name.endsWith(".app.tar.gz") || name.endsWith(".app.tar.gz.sig"))) {
+    return true;
+  }
+  return name.includes(version);
+}
+
 function findOne(files, suffix) {
   const matches = files.filter((file) => basename(file).endsWith(suffix));
   if (matches.length !== 1) {
@@ -75,13 +83,17 @@ const spec = specs[platform];
 if (!spec) {
   fail(`Unknown release platform ${platform}. Expected one of: ${Object.keys(specs).join(", ")}`);
 }
-
-const allFiles = walk(bundleRoot);
-if (platform === "windows") {
-  smokeTestWindowsInstaller(allFiles);
+if (typeof version !== "string" || version.length === 0) {
+  fail("package.json version is missing or invalid.");
 }
 
-const selected = allFiles.filter((file) => matchesAny(basename(file), spec.suffixes));
+const allFiles = walk(bundleRoot);
+const currentFiles = allFiles.filter((file) => isCurrentVersionArtifact(basename(file)));
+if (platform === "windows") {
+  smokeTestWindowsInstaller(currentFiles);
+}
+
+const selected = currentFiles.filter((file) => matchesAny(basename(file), spec.suffixes));
 for (const suffix of spec.suffixes) {
   findOne(selected, suffix);
 }
