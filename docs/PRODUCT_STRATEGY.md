@@ -1,85 +1,85 @@
-# TauTerm Product Strategy
+# TauTerm 产品战略
 
-> This document records TauTerm's long-term product direction. It is broader than the implementation roadmap and should change only when product decisions change.
+> 本文记录 TauTerm 的长期产品方向。它比具体版本路线更长期、更稳定，只有当产品决策本身发生变化时才应修改。
 
-## 1. Product vision
+## 1. 产品愿景
 
-**TauTerm is an open, local-first engineering workbench for connected systems.**
+**TauTerm 是面向连接系统的开源、本地优先工程工作台。**
 
-It should let an engineer connect to, observe, understand, automate and reproduce a system that spans remote computers, embedded devices, network protocols and physical engineering instruments while keeping that engineering context together.
+它应当让工程师能够在同一个工程上下文中连接、观察、理解、自动化并复现由远程计算机、嵌入式设备、网络协议和物理工程仪器共同组成的系统。
 
-The public product line remains:
+公开产品口号保持为：
 
-> **TauTerm — one terminal for the server room and the lab bench.**
+> **TauTerm —— 一台终端，服务机房与实验台。**
 
-The broader product category is:
+更完整的产品类别定义是：
 
-> **The open engineering workbench for connected systems.**
+> **面向连接系统的开源工程工作台。**
 
-## 2. Primary users
+## 2. 核心用户
 
-TauTerm has three related user groups with different roles in the product strategy.
+TauTerm 面向三类彼此关联、但在产品战略中承担不同角色的用户。
 
-1. **Embedded developers are the product root.** Device bring-up, serial communication, binary data, real-time signals and hardware-adjacent workflows remain first-class.
-2. **Connected-system and device R&D engineers are the product center.** They work across devices, Linux services, network protocols, logs, test tools and automation in the same engineering task.
-3. **Industrial and railway engineering teams are the primary long-term commercial customers.** They need offline operation, long-running stability, traceability, specialist protocols, repeatable workflows, controlled deployment and support.
+1. **嵌入式开发者是产品根基。** 设备 Bring-up、串口通信、二进制数据、实时信号以及与硬件紧密相关的工程流程必须始终是一等能力。
+2. **连接系统与设备研发工程师是产品中心。** 这类用户会在同一个工程任务中同时处理设备、Linux 服务、网络协议、日志、测试工具和自动化。
+3. **工业与铁路工程团队是长期主要商业客户。** 他们更重视离线运行、长时间稳定性、可追溯性、专业协议、可重复流程、受控部署和长期支持。
 
-TauTerm can also serve network and infrastructure engineers where those workflows naturally intersect with connected-system engineering.
+当网络与基础设施工作自然属于连接系统工程的一部分时，TauTerm 也可以很好地服务网络工程师和基础设施工程师。
 
-## 3. Product principles
+## 3. 产品原则
 
-### 3.1 Local-first by design
+### 3.1 本地优先
 
-Core engineering workflows must work without an account, cloud service or Internet connection.
+核心工程能力必须能够在没有账号、云服务或互联网连接的情况下工作。
 
-SSH, Serial, network debugging, Recording/Replay, Signal Lab, Data Lens, protocol analysis and automation should remain usable in laboratories, factories, railway environments and isolated networks.
+SSH、Serial、网络调试、Recording/Replay、Signal Lab、Data Lens、协议分析和自动化都应当能够在实验室、工厂、铁路环境和隔离网络中正常使用。
 
-Optional online services may later provide synchronization, licensing, collaboration or distribution, but they must not be runtime dependencies for the engineering workbench.
+未来可以提供同步、授权、协作或分发等可选在线服务，但这些服务不能成为工程工作台运行时的必要依赖。
 
-### 3.2 Complete open core, paid professional value
+### 3.2 完整开源 Core，商业化专业价值
 
-The open-source Community/Core edition should remain a complete and genuinely useful engineering tool. Basic SSH/SFTP, Serial, TCP/UDP, local shell, protocol debugging, scripting and extensibility should not be artificially restricted to force an upgrade.
+开源 Community/Core 应当始终是一款完整、可信、真正有用的工程工具。基础 SSH/SFTP、Serial、TCP/UDP、本地 Shell、协议调试、脚本和扩展能力不应为了推动付费而被人为削弱。
 
-Commercial products should focus on high-value professional workflows, official advanced modules, team collaboration, enterprise governance, support and industry-specific capabilities.
+商业产品应围绕高价值专业工作流、官方高级模块、团队协作、企业治理、支持服务和行业能力收费。
 
-Commercial modules may use separate proprietary licensing while the Community/Core repository remains MIT OR Apache-2.0.
+Community/Core 仓库可以继续采用 MIT OR Apache-2.0；可选商业模块可以通过清晰的包、仓库或插件边界与开源 Core 隔离，并采用独立商业许可证。
 
-### 3.3 Engineering context before protocol count
+### 3.3 工程上下文优先于协议数量
 
-New capabilities should normally strengthen at least one of these areas:
+新能力通常应至少强化以下一项：
 
-- preserve engineering context;
-- correlate information across sessions or instruments;
-- turn raw bytes into useful engineering meaning;
-- improve repeatability or automation;
-- provide meaningful industrial depth;
-- integrate a physical engineering instrument into the same workflow.
+- 保留完整工程上下文；
+- 关联多个会话或仪器的信息；
+- 将原始字节转化为有意义的工程语义；
+- 提升可重复性或自动化能力；
+- 提供真正有深度的工业工作流；
+- 将物理工程仪器纳入同一个工作环境。
 
-Protocols that do not materially strengthen these goals should prefer the plugin/extension path instead of expanding the core indefinitely.
+如果某个协议不能明显强化这些目标，应优先通过插件/扩展实现，而不是无限扩大 Core。
 
-### 3.4 Native TauTerm workflows
+### 3.4 优先建设 TauTerm 原生工作流
 
-TauTerm should prioritize its own Workspace, data model and engineering workflow instead of building migration-oriented importers for unrelated application formats.
+TauTerm 应优先建设自己的 Workspace、数据模型和工程工作流，而不是投入大量资源实现面向其他应用格式的迁移导入功能。
 
-Interoperability with open ecosystem standards can still be considered when it provides durable engineering value.
+如果某种开放生态标准能够带来长期工程价值，则可以单独考虑互操作支持。
 
-### 3.5 Industrial depth without narrowing the product
+### 3.5 深入工业领域，但不缩窄产品边界
 
-Railway and industrial engineering are strategic verticals, but the horizontal product remains the TauTerm engineering workbench.
+铁路和工业工程是重要的纵向领域，但 TauTerm 的横向产品定位仍然是工程工作台。
 
-Deep first-party capabilities such as TRDP should demonstrate professional depth while remaining part of a broader connected-system workflow.
+TRDP 等官方深度能力应体现专业工程深度，同时继续参与更广泛的连接系统工作流。
 
-### 3.6 Software and instruments form one platform
+### 3.6 软件与仪器属于同一个平台
 
-TauTerm is intended to become the common desktop software for first-party engineering instruments, beginning with a possible future CAN analyzer and potentially extending to additional analyzers.
+TauTerm 计划成为未来自研工程仪器的统一桌面软件。第一个明显候选是未来的 CAN 分析仪，之后还可能扩展到更多分析仪。
 
-Each instrument should plug into the same data and workflow model rather than require an isolated desktop application.
+每一种仪器都应进入同一套数据与工作流模型，而不是为每种硬件重新开发一套彼此割裂的桌面软件。
 
-First-party hardware should receive the most integrated experience, while the architecture can still support third-party or generic adapters where that improves the ecosystem.
+自研硬件应获得最深度、最顺畅的集成体验；同时，架构可以在有价值时通过稳定扩展边界支持第三方或通用适配器。
 
-## 4. Shared engineering data model
+## 4. 共享工程数据模型
 
-Long-term product coherence should come from a shared event pipeline rather than separate feature silos.
+长期产品一致性应来自统一事件管线，而不是彼此独立的功能孤岛。
 
 ```text
 Transport / Instrument
@@ -99,78 +99,78 @@ Transport / Instrument
    └─ Automation
 ```
 
-The model should eventually work across SSH output, journald, Serial, TCP/UDP, TRDP, CAN and first-party instruments.
+这套模型最终应能够覆盖 SSH 输出、journald、Serial、TCP/UDP、TRDP、CAN 以及自研仪器。
 
-Raw information should remain available close enough to the source that recordings can be re-decoded or re-analyzed later.
+原始信息应在足够靠近数据源的位置被保留下来，使 Recording 在未来仍可重新解码、重新分析。
 
-## 5. Strategic capability pillars
+## 5. 战略能力支柱
 
 ### 5.1 Foundation
 
-**Goal:** make TauTerm comfortable enough to remain open all day as a primary engineering tool.
+**目标：** 让 TauTerm 足够稳定、顺手，能够作为工程师全天保持开启的主力工具。
 
-Priorities include:
+优先能力包括：
 
-- Local Shell;
-- split panes;
-- SSH tunnels and jump hosts;
-- Workspace foundations rather than simple session groups;
-- long-running stability and explicit performance budgets;
-- excellent session/configuration ergonomics;
-- cross-platform release quality.
+- Local Shell；
+- 分屏；
+- SSH Tunnel 与 Jump Host；
+- 从简单会话分组升级到 Workspace 基础能力；
+- 长时间运行稳定性和明确的性能预算；
+- 优秀的会话与配置管理体验；
+- 跨平台发布质量。
 
-These capabilities establish daily-driver quality and support everything that follows.
+这些能力负责建立主力工具所需的基础质量，并支撑后续所有高级能力。
 
 ### 5.2 Engineering Memory
 
-**Goal:** make debugging reproducible rather than disposable.
+**目标：** 让调试过程可以复现，而不是随着窗口关闭而消失。
 
-TauTerm should develop structured Recording/Replay that preserves engineering evidence near the raw event stream.
+TauTerm 应建设结构化 Recording/Replay，并尽量在靠近 Raw Event 的位置保留工程证据。
 
-A recording should retain, where applicable:
+一次 Recording 应在适用时保存：
 
-- timestamp and clock domain;
-- session/instrument identity;
-- transport and peer;
-- TX/RX direction;
-- raw bytes or samples;
-- decoded/structured fields;
-- markers and annotations;
-- automation actions;
-- transfer and test events.
+- 时间戳与时钟域；
+- 会话/仪器身份；
+- Transport 与 Peer；
+- TX/RX 方向；
+- 原始字节或采样；
+- 已解码/结构化字段；
+- Marker 与注释；
+- 自动化动作；
+- 文件传输与测试事件。
 
-Replay should allow engineers to inspect a problem again without reconnecting to the original equipment and, where possible, re-run decoding with newer decoder logic.
+Replay 应允许工程师在不重新连接真实设备的情况下重新分析问题，并在条件允许时使用更新后的 Decoder 再次解码历史原始数据。
 
-The larger goal is a **Unified Timeline** that correlates events from multiple sessions and instruments around the same engineering event.
+更大的目标是 **Unified Timeline**：围绕同一个工程事件，将多个会话和仪器的数据按时间关联起来。
 
 ### 5.3 Signal Lab
 
-**Goal:** provide a complete real-time numerical-data workflow inside TauTerm.
+**目标：** 在 TauTerm 内提供完整的实时数值数据工作流。
 
-Signal Lab should become strong enough that many embedded workflows no longer require a separate real-time plotting application.
+Signal Lab 应足够强，使大量嵌入式实时数据调试场景不再需要额外打开独立实时绘图软件。
 
-Target capabilities include:
+目标能力包括：
 
-- high-throughput real-time plotting;
-- bounded resource use during long capture sessions;
-- multi-channel curves;
-- zoom, cursors and measurements;
-- FFT and statistics;
-- pause, inspect and resume;
-- export;
-- FireWater / JustFloat compatibility;
-- custom framing and numerical extraction;
-- integration with recorded and replayed data.
+- 高吞吐实时绘图；
+- 长时间采集时可控的资源占用；
+- 多通道曲线；
+- 缩放、游标和测量；
+- FFT 与统计；
+- 暂停、检查、继续；
+- 数据导出；
+- FireWater / JustFloat 兼容；
+- 自定义 Framing 与数值提取；
+- 与 Recording/Replay 数据打通。
 
-Signal Lab answers:
+Signal Lab 回答的问题是：
 
-> **What is the signal doing over time?**
+> **信号随时间发生了什么？**
 
 ### 5.4 Data Lens
 
-**Goal:** turn raw protocol and device data into reusable engineering meaning.
+**目标：** 将原始协议与设备数据转化为可以在整个产品中复用的工程语义。
 
-A binary packet may become:
+一个二进制数据包可以被解释为：
 
 ```text
 traction_status
@@ -181,60 +181,60 @@ traction_status
 └─ crc: OK
 ```
 
-Decoded fields should eventually be reusable for:
+解码后的字段最终应能够用于：
 
-- filtering and search;
-- tables and packet inspection;
-- plots and gauges;
-- statistics;
-- automation triggers;
-- Timeline correlation;
-- export and reports.
+- 过滤与搜索；
+- 表格与报文检查；
+- 曲线与仪表；
+- 统计；
+- 自动化触发；
+- Timeline 关联；
+- 导出与报告。
 
-The decoder model should be reusable across Serial, TCP/UDP, TRDP, CAN and future instruments.
+Decoder 模型应能够跨 Serial、TCP/UDP、TRDP、CAN 和未来仪器复用。
 
-Data Lens answers:
+Data Lens 回答的问题是：
 
-> **What do these bytes mean?**
+> **这些字节意味着什么？**
 
-Signal Lab and Data Lens share the same data pipeline but serve different engineering questions.
+Signal Lab 与 Data Lens 共用底层数据管线，但解决的是两个不同的工程问题。
 
 ### 5.5 Industrial Depth
 
-**Goal:** solve complete professional workflows in selected industrial domains.
+**目标：** 在选定的工业领域中解决完整的专业工作流，而不仅仅是“支持协议”。
 
-TRDP is a first-party strategic protocol because it serves a real railway engineering need.
+TRDP 是官方战略协议，因为它服务真实的铁路工程需求。
 
-Its long-term workflow can include:
+它的长期工作流可以包括：
 
-- PD/MD inspection;
-- COMID visibility and filtering;
-- multicast/source analysis;
-- sequence and timeout diagnostics;
-- cycle/jitter/loss statistics;
-- dataset decoding;
-- recording and replay;
-- correlation with Serial, SSH and journald events.
+- PD/MD 检查；
+- COMID 可见性与过滤；
+- Multicast/Source 分析；
+- Sequence 与 Timeout 诊断；
+- Cycle/Jitter/Loss 统计；
+- Dataset 解码；
+- Recording 与 Replay；
+- 与 Serial、SSH、journald 事件关联。
 
-Other industrial protocols should be evaluated by workflow depth, engineering value and fit with the shared data model.
+其他工业协议也应按照工作流深度、工程价值以及与共享数据模型的适配程度进行评估。
 
 ### 5.6 Instrument Platform
 
-**Goal:** make TauTerm the common upper-computer environment for first-party analyzers.
+**目标：** 让 TauTerm 成为自研分析仪的统一上位机环境。
 
-A future CAN analyzer is the first likely candidate. It should appear as a first-class instrument/session using the same Workspace, Recorder, Unified Timeline, Data Lens, Signal Lab and Automation systems.
+未来 CAN 分析仪是第一个明显候选。它应当作为一等 Instrument/Session 接入，并直接复用 Workspace、Recorder、Unified Timeline、Data Lens、Signal Lab 和 Automation。
 
-Every new instrument should gain the existing software platform, while every software capability should become useful across more instruments.
+每增加一种仪器，都应自动获得现有软件平台的能力；而每增加一项软件能力，也应自然提升更多仪器的价值。
 
-See [HARDWARE_ECOSYSTEM.md](HARDWARE_ECOSYSTEM.md).
+参见 [HARDWARE_ECOSYSTEM.md](HARDWARE_ECOSYSTEM.md)。
 
 ### 5.7 Automation
 
-**Goal:** move from isolated scripts to repeatable engineering workflows.
+**目标：** 从孤立脚本演进到可重复的工程自动化流程。
 
-Lua remains an important expert runtime. A higher-level flow layer can later expose trigger / condition / action automation without requiring every user to write a full script.
+Lua 继续作为重要的高级脚本运行时。未来可以在其上提供更高层的 Trigger / Condition / Action 流程，让普通用户无需写完整脚本也能构建自动化。
 
-Example:
+示例：
 
 ```text
 WHEN Serial matches "READY"
@@ -245,73 +245,73 @@ THEN mark recording
 AND query journald
 ```
 
-Potential layers include:
+潜在层次包括：
 
-- Lua API v2;
-- trigger / condition / action flows;
-- CLI automation;
-- MCP/agent access with explicit permissions and auditability.
+- Lua API v2；
+- Trigger / Condition / Action Flow；
+- CLI 自动化；
+- 带明确权限与审计能力的 MCP/Agent 接口。
 
-Agent features must respect local-first operation and must not require industrial data to leave the user's environment.
+Agent 能力必须遵循本地优先原则，并且不能要求工业数据必须离开用户环境。
 
-### 5.8 Team and Enterprise
+### 5.8 Team 与 Enterprise
 
-**Goal:** provide organizational value without changing the local-first engineering model.
+**目标：** 在不改变本地优先工程模型的前提下，为组织提供额外价值。
 
-Potential capabilities include:
+潜在能力包括：
 
-- shared Workspaces;
-- shared decoder and automation libraries;
-- recording review and annotations;
-- private plugin/instrument registries;
-- secrets and policy controls;
-- audit logs;
-- offline/floating/site licensing;
-- controlled updates and LTS releases;
-- enterprise support.
+- 共享 Workspace；
+- 共享 Decoder 与自动化库；
+- Recording 审阅与注释；
+- 私有插件/仪器 Registry；
+- 密钥与策略控制；
+- 审计日志；
+- 离线/Floating/Site License；
+- 受控更新与 LTS；
+- 企业支持。
 
-See [COMMERCIALIZATION.md](COMMERCIALIZATION.md).
+参见 [COMMERCIALIZATION.md](COMMERCIALIZATION.md)。
 
-## 6. Roadmap model
+## 6. 路线图模型
 
-The roadmap is capability-led. Version numbers are delivery vehicles rather than the definition of the strategy.
+路线图按能力组织。版本号只是交付载体，而不是战略本身。
 
-| Stage | Intended outcome |
+| 阶段 | 目标结果 |
 |---|---|
-| **Foundation** | Daily-driver quality: Local Shell, split panes, SSH tunnel/jump-host support, Workspace foundation, release/performance quality |
-| **Engineering Memory** | Structured recording, replay, markers, search and Unified Timeline |
-| **Signal Lab** | High-performance plotting, FFT/statistics, FireWater/JustFloat and real-time numerical workflows |
-| **Data Intelligence** | Framing/decoder SDK, Data Lens, reusable fields, filters, visualizations and triggers |
-| **Industrial & Instruments** | Deep TRDP workflows, offline/long-run industrial quality and first-party instrument integration such as a future CAN analyzer |
-| **Automation & Teams** | Flow automation, Lua/CLI/MCP evolution, collaboration, governance and enterprise deployment |
+| **Foundation** | 主力工具质量：Local Shell、分屏、SSH Tunnel/Jump Host、Workspace 基础、发布与性能质量 |
+| **Engineering Memory** | 结构化 Recording、Replay、Marker、搜索与 Unified Timeline |
+| **Signal Lab** | 高性能绘图、FFT/统计、FireWater/JustFloat 与实时数值工作流 |
+| **Data Intelligence** | Framing/Decoder SDK、Data Lens、可复用字段、过滤、可视化与触发器 |
+| **Industrial & Instruments** | 深入 TRDP 工作流、离线/长稳工业能力，以及未来 CAN 分析仪等自研仪器接入 |
+| **Automation & Teams** | Flow 自动化、Lua/CLI/MCP 演进、协作、治理和企业部署 |
 
-Roadmap stages describe direction, not release commitments.
+这些阶段描述方向，不构成版本交付承诺。
 
-## 7. Product decision filter
+## 7. 产品决策过滤器
 
-A proposed feature should answer these questions before becoming a core priority:
+一个新功能在成为 Core 优先项之前，应回答以下问题：
 
-1. What engineering problem does it solve?
-2. Does it strengthen the shared Workspace or data model?
-3. Does it improve observation, understanding, reproducibility or automation?
-4. Is it broadly reusable, or should it be a plugin/module?
-5. Does it preserve local-first operation?
-6. If it introduces a new protocol or instrument, can it participate in Recording, Timeline, Data Lens, Signal Lab or Automation where appropriate?
+1. 它具体解决什么工程问题？
+2. 它是否强化共享 Workspace 或数据模型？
+3. 它是否提升观察、理解、复现或自动化能力？
+4. 它是否具有广泛复用价值，还是更适合做成插件/模块？
+5. 它是否保持本地优先？
+6. 如果它引入新协议或新仪器，是否能在适用时参与 Recording、Timeline、Data Lens、Signal Lab 或 Automation？
 
-## 8. Explicit non-goals
+## 8. 明确的非目标
 
-Unless product evidence changes the direction, TauTerm should not prioritize:
+除非未来出现足够强的产品证据改变方向，否则 TauTerm 不优先投入：
 
-- migration-oriented importers for unrelated application formats;
-- protocol accumulation for its own sake;
-- mandatory cloud accounts for engineering features;
-- generic expansion into unrelated desktop-tool categories;
-- isolated instrument UIs that cannot participate in the shared data, recording and automation model.
+- 面向其他应用格式的迁移型导入器；
+- 仅为了增加数量而加入协议；
+- 工程功能必须登录云账号才能使用；
+- 向与核心工程场景无关的通用桌面工具类别扩张；
+- 无法参与共享数据、Recording 和 Automation 模型的孤立仪器 UI。
 
-## 9. Compounding product value
+## 9. 复利式产品价值
 
-TauTerm's long-term product advantage should come from the way its capabilities reinforce one another:
+TauTerm 的长期产品价值来自这些能力互相增强：
 
-**local-first engineering + remote systems + embedded devices + industrial protocols + first-party instruments + structured Recording/Replay + Signal Lab + Data Lens + Automation.**
+**本地优先工程工作流 + 远程系统 + 嵌入式设备 + 工业协议 + 自研仪器 + 结构化 Recording/Replay + Signal Lab + Data Lens + Automation。**
 
-The goal is a coherent engineering environment in which new protocols, new instruments and new analysis capabilities all strengthen the same Workspace and data model.
+目标不是堆出最多的功能，而是形成一个一致的工程环境：新协议、新仪器和新分析能力都能够继续强化同一套 Workspace 与数据模型。
