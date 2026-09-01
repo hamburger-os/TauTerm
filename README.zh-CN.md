@@ -19,10 +19,10 @@
 
 <p align="center">
   <a href="https://github.com/hamburger-os/TauTerm/releases"><strong>下载</strong></a>
+  · <a href="docs/README.md">文档</a>
   · <a href="docs/SUPPORTED_PLATFORMS.md">支持平台</a>
   · <a href="docs/BUILDING.md">从源码构建</a>
   · <a href="docs/ARCHITECTURE.md">架构设计</a>
-  · <a href="docs/PRODUCT_STRATEGY.md">产品战略</a>
   · <a href="README.md">English</a>
 </p>
 
@@ -51,7 +51,7 @@ TauTerm 从产品根基上服务**嵌入式/设备研发工程师**，同时覆�
 
 更长期的方向不是不断收集协议，而是演进成一个**工程工作台**：让会话以及未来的物理分析仪共享结构化录制/回放、统一时间线、实时信号分析、结构化数据解码和自动化能力。铁路和工业是重点纵向场景，但 TauTerm 本身仍面向更广泛的连接系统工程。
 
-当前方向详见 [产品战略](docs/PRODUCT_STRATEGY.md)、[硬件生态方向](docs/HARDWARE_ECOSYSTEM.md) 和 [商业化战略](docs/COMMERCIALIZATION.md)。这些文档描述目标，不代表功能已经发布。
+当前产品战略、硬件生态方向、商业化、架构、构建和发布文档统一从 [文档索引](docs/README.md) 进入。方向性文档描述目标，不代表相关能力已经发布。
 
 ---
 
