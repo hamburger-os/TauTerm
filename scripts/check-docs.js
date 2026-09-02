@@ -31,7 +31,6 @@ const DOC_FILES = [
   'docs/BUILDING.md',
   'docs/RELEASING.md',
   'docs/SUPPORTED_PLATFORMS.md',
-  'docs/LAUNCH.md',
   'CONTRIBUTING.md',
   'CHANGELOG.md',
 ];

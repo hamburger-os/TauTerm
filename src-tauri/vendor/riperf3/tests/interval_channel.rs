@@ -274,6 +274,9 @@ async fn official_iperf3_server_interop() {
     let run_elapsed = start.elapsed();
     let arrivals = consumer.join().unwrap();
 
-    assert!(server_result.is_ok(), "no official client connected within 90s");
+    assert!(
+        server_result.is_ok(),
+        "no official client connected within 90s"
+    );
     assert_live(&arrivals, run_elapsed, None);
 }

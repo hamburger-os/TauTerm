@@ -5,6 +5,7 @@ import { useSession } from "../../context/SessionContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useKeyboard } from "../../hooks/useKeyboard";
 import { ACTION_IDS } from "../../shortcuts/actionIds";
+import { PendingSessionData } from "../../core/pending-session-data";
 import Icon from "../common/Icon";
 import TerminalInstance from "./Terminal";
 import DualPane from "./DualPane";
@@ -181,6 +182,9 @@ export default function TerminalView() {
   const pendingDualRef = useRef<Map<string, DualLine[]>>(new Map());
   /** text 模式数据批量提交缓冲区：累积同一帧内多包数据（已按会话编码解码为文本），合并为一次 xterm.write */
   const pendingTextRef = useRef<Map<string, string[]>>(new Map());
+  /** 后端可能先于 React/xterm 就绪发送启动输出；按会话有界缓存并在终端 ready 后重放。 */
+  const pendingStartupDataRef = useRef(new PendingSessionData());
+  const sessionDataHandlerRef = useRef<(sessionId: string, data: Uint8Array) => void>(() => {});
   /** text 模式 RAF ID：用于批量提交的去重 */
   const textRafIdRef = useRef<number | null>(null);
   /**
@@ -202,9 +206,9 @@ export default function TerminalView() {
   const viewportRef = useRef<HTMLDivElement>(null);
   tabsRef.current = state.tabs;
 
-  // 所有已连接的标签页（需要保持终端实例存活）
-  const connectedTabs = state.tabs.filter(
-    t => t.state === "connected" || t.state === "transferring"
+  // 已连接会话与异常断开现场都保持 xterm 实例存活；主动断开和正常退出清理。
+  const terminalTabs = state.tabs.filter(
+    t => t.state === "connected" || t.state === "transferring" || t.disconnectInfo?.retain_terminal
   );
   const activeTab = state.tabs.find(t => t.id === state.activeTabId);
 
@@ -212,6 +216,7 @@ export default function TerminalView() {
   const connectedTabIds = useMemo(
     () => state.tabs
       .filter(t => t.state === "connected" || t.state === "transferring")
+      .concat(state.tabs.filter(t => t.state === "disconnected" && t.disconnectInfo?.retain_terminal))
       .map(t => t.id)
       .sort()
       .join(","),
@@ -438,14 +443,20 @@ export default function TerminalView() {
 
   // 注册数据回调，将每个 session 的数据路由到对应终端
   useEffect(() => {
-    onSessionData((sessionId, data) => {
+    const handleSessionData = (sessionId: string, data: Uint8Array) => {
       const tab = tabsRef.current.find(t => t.id === sessionId);
-      if (!tab) return;
+      if (!tab) {
+        pendingStartupDataRef.current.push(sessionId, data);
+        return;
+      }
 
       const isDual = tab.params?.data_mode === "dual";
       const writeFn = writeRefs.current.get(sessionId);
       // Dual 模式无需 xterm writeFn，直接推入 DualPane 缓冲区
-      if (!isDual && !writeFn) return;
+      if (!isDual && !writeFn) {
+        pendingStartupDataRef.current.push(sessionId, data);
+        return;
+      }
 
       if (tab.params?.data_mode === "hex") {
         // ── HEX 模式：逐行实时更新 ──
@@ -513,10 +524,25 @@ export default function TerminalView() {
           textRafIdRef.current = requestAnimationFrame(flushTextBuffers);
         }
       }
-    });
+    };
+    sessionDataHandlerRef.current = handleSessionData;
+    onSessionData(handleSessionData);
     // 卸载时清除回调，避免未挂载组件的闭包响应数据事件
-    return () => { onSessionData(() => {}); };
+    return () => {
+      sessionDataHandlerRef.current = () => {};
+      onSessionData(() => {});
+    };
   }, [onSessionData, pushDualLine, processIncomingFrame, flushTextBuffers]);
+
+  // Dual 模式没有 xterm ready 回调；tab 建立后直接重放其启动数据。
+  useEffect(() => {
+    for (const tab of state.tabs) {
+      if (tab.params?.data_mode !== "dual") continue;
+      for (const chunk of pendingStartupDataRef.current.drain(tab.id)) {
+        sessionDataHandlerRef.current(tab.id, chunk);
+      }
+    }
+  }, [state.tabs]);
 
   /**
    * 终结会话流式解码器：调用最终 decode() 冲刷内部缓冲的不完整多字节序列
@@ -635,6 +661,9 @@ export default function TerminalView() {
 
   const handleTermReady = useCallback((sessionId: string, writeFn: (data: Uint8Array | string) => void) => {
     writeRefs.current.set(sessionId, writeFn);
+    for (const chunk of pendingStartupDataRef.current.drain(sessionId)) {
+      sessionDataHandlerRef.current(sessionId, chunk);
+    }
   }, []);
 
   const handleTermCleanup = useCallback((sessionId: string) => {
@@ -646,6 +675,7 @@ export default function TerminalView() {
     frameBufRef.current.delete(sessionId);
     pendingDualRef.current.delete(sessionId);
     pendingTextRef.current.delete(sessionId);
+    pendingStartupDataRef.current.delete(sessionId);
     lineIdCounterRef.current.delete(sessionId);
     flushSessionDecoder(sessionId);
     setDualLines(prev => {
@@ -660,6 +690,9 @@ export default function TerminalView() {
   }, [sendData]);
 
   const isActiveTransferring = activeTab?.state === "transferring";
+  const retainedDisconnect = activeTab?.state === "disconnected" && activeTab.disconnectInfo?.retain_terminal
+    ? activeTab.disconnectInfo
+    : null;
 
   return (
     <div className={styles.viewport} ref={viewportRef}>
@@ -675,9 +708,25 @@ export default function TerminalView() {
           </motion.div>
         )}
 
+        {retainedDisconnect && (
+          <motion.div
+            className={`${styles.disconnectBanner} liquid-glass-alert-banner`}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+          >
+            <Icon name="warning" size="sm" />
+            <span>
+              {t("localShell.unexpectedExit")}: {retainedDisconnect.reason}
+              {typeof retainedDisconnect.exit_code === "number"
+                ? ` (${t("localShell.exitCode", { code: retainedDisconnect.exit_code })})`
+                : ""}
+            </span>
+          </motion.div>
+        )}
+
         <div className={styles.terminalsContainer}>
           <AnimatePresence>
-            {connectedTabs.map(tab => {
+            {terminalTabs.map(tab => {
               const isActive = tab.id === state.activeTabId;
               const isDual = tab.params?.data_mode === "dual";
 
@@ -724,7 +773,7 @@ export default function TerminalView() {
             })}
           </AnimatePresence>
 
-          {connectedTabs.length === 0 && (
+          {terminalTabs.length === 0 && (
             <div className={styles.emptyState}>
               <Icon name="logo" size="2xl" className={styles.emptyIcon} />
               <div>{t("session.noSessions")}</div>

@@ -61,6 +61,10 @@ TauTerm 从产品根基上服务**嵌入式/设备研发工程师**，同时覆�
 
 一条已认证的 SSH 连接即可同时承载终端、远程文件和 journald 工作流。SFTP 文件管理器支持浏览、上传/下载、重命名、批量删除和远端文件信息查看。
 
+### 本地 Shell
+
+在 Windows、Linux 或 macOS 上，将原生 PTY Shell 打开在同一套终端工作区中。TauTerm 可以自动探测平台 Shell，也可以用独立参数列表和工作目录启动自定义可执行文件。Windows 选择器会发现已安装的 PowerShell、CMD、WSL 发行版、Git Bash、MSYS2/Cygwin Bash 与 NuShell；WSL 会话使用 Linux 工作目录语义并默认进入 `~`。一个已保存配置可以承载多个相互独立的终端，父子卡片交互与 SSH 保持一致。Windows 原生 Shell 还可按单个终端选择“新建(以管理员身份)”；TauTerm 主进程保持普通权限，仅管理员子终端显示盾牌。会话卡片直接显示 `Shell @ <类型>` 和解析后的初始路径。本地 Shell 保留终端搜索、尺寸同步和日志，同时明确不提供仅适用于远端协议的传输与协议工具。
+
 ### 串口与嵌入式开发
 
 ![包含文件传输和协议工具的 RT-Thread 串口终端](docs/assets/serial-rtthread-dual-en.png)
@@ -101,6 +105,7 @@ Windows 可通过安装包自带的 com0com 建立虚拟 COM 对；Linux/macOS �
 ### 日常工作流
 
 - 统一标签页会话与离线连接配置。
+- 原生本地 Shell 会话，支持 Shell/WSL 探测、单配置多终端、按终端 Windows 管理员模式、自定义参数和工作目录。
 - 终端搜索、命令面板、全快捷键重绑定。
 - 会话日志分卷与过期清理。
 - 中文 / 英文运行时切换。
@@ -121,7 +126,7 @@ Windows 可通过安装包自带的 com0com 建立虚拟 COM 对；Linux/macOS �
 | **Telnet** | ✅ | terminal | RFC 854 |
 | **iPerf2 / iPerf3** | ✅ | custom | 网络测速 |
 | **网络调试**（TCP/UDP） | ✅ | custom | client + server |
-| **本地 Shell**（PTY） | 📋 规划中 | terminal | Foundation |
+| **本地 Shell**（PTY） | ✅ | terminal | 原生 PTY |
 | **TRDP** | 📋 规划中 | 工业协议分析 | 一方战略协议 |
 
 未来不会为了让这张表更长而不断把协议塞进核心路线图。除非能够提供明确的工程工作流或工业价值，新增协议应优先走插件/扩展路径。
@@ -173,7 +178,7 @@ TauTerm 的路线图按**能力**组织，而不是按“再支持几个协议�
 
 | 阶段 | 目标 |
 |---|---|
-| **Foundation** | 成为日常主力工具：本地 Shell、分屏、SSH 隧道/跳板机、Workspace 基础、跨平台稳定性与性能 |
+| **Foundation** | 成为日常主力工具：分屏、SSH 隧道/跳板机、Workspace 基础、跨平台稳定性与性能 |
 | **Engineering Memory** | 结构化 Recording/Replay、Marker、搜索，以及跨会话 Unified Timeline |
 | **Signal Lab** | 高性能实时绘图、FFT/统计、FireWater/JustFloat 兼容和长时间数值数据工作流 |
 | **Data Intelligence** | Framing/Decoder SDK、Data Lens、可复用字段、过滤、可视化和自动化触发 |
@@ -205,7 +210,7 @@ TauTerm 使用**微内核插件架构**。内核提供共享的平台能力，�
 
 ---
 
-## License
+## 许可证
 
 TauTerm 可由用户任选 **MIT License** 或 **Apache License 2.0** 使用。
 

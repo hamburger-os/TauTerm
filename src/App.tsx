@@ -376,6 +376,7 @@ function AppInner() {
                 const isCustomContent = activePlugin?.manifest.content_type === "custom";
                 // 网络调试会话（custom）保留右侧栏：提供校验和/编码/协议解析等开发工具
                 const isNetworkDebug = activePlugin?.manifest.id === "network";
+                const isLocalShell = activePlugin?.manifest.id === "local-shell";
                 const hasAnyPanel = activeTab
                   ? ((activePlugin?.manifest.transfer_protocols?.length ?? 0) > 0 && activeTab.transferEnabled !== false)
                     || (activePlugin?.manifest.id === "ssh" && activeTab.fileServiceEnabled === true)
@@ -383,7 +384,7 @@ function AppInner() {
                   : false;
 
                 // custom 内容类型无侧栏面板时完全隐藏右侧栏（网络调试除外）
-                if (isCustomContent && !hasAnyPanel && !isNetworkDebug) return null;
+                if (isLocalShell || (isCustomContent && !hasAnyPanel && !isNetworkDebug)) return null;
 
                 return (
                 <>

@@ -330,6 +330,7 @@ impl ProtocolAdapter for TftpAdapter {
             channel: None,
             comm_handle: None,
             side_channel: Some(side_channel),
+            channel_factory: None,
             teardown_delay: Duration::from_millis(100),
         })
     }

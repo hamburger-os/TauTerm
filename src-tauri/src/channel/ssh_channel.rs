@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::channel::error::ChannelError;
-use crate::channel::AsyncChannel;
+use crate::channel::{AsyncChannel, DisconnectInfo};
 use crate::plugins::ssh::handler::SshHandler;
 
 /// SSH 通道
@@ -26,6 +26,8 @@ pub struct SshChannel {
     _handle: Arc<russh::client::Handle<SshHandler>>,
     /// 连接状态标志。read() 返回 0/Eof/Close 时置 false。
     connected: AtomicBool,
+    exit_status: Option<u32>,
+    exit_signal: Option<String>,
 }
 
 impl SshChannel {
@@ -38,6 +40,8 @@ impl SshChannel {
             channel,
             _handle: handle,
             connected: AtomicBool::new(true),
+            exit_status: None,
+            exit_signal: None,
         }
     }
 }
@@ -94,10 +98,15 @@ impl AsyncChannel for SshChannel {
                     self.connected.store(false, Ordering::Relaxed);
                     return Ok(0);
                 }
-                Some(_) => {
-                    // 其他消息（ExitStatus、Signal 等）忽略，继续等待数据
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
+                    self.exit_status = Some(exit_status);
                     continue;
                 }
+                Some(russh::ChannelMsg::ExitSignal { signal_name, .. }) => {
+                    self.exit_signal = Some(format!("{signal_name:?}"));
+                    continue;
+                }
+                Some(_) => continue,
                 None => {
                     // channel 已关闭
                     self.connected.store(false, Ordering::Relaxed);
@@ -127,6 +136,17 @@ impl AsyncChannel for SshChannel {
     fn set_timeout(&mut self, _dur: Duration) -> Result<(), ChannelError> {
         // async 模式无需 timeout 设置
         Ok(())
+    }
+
+    fn disconnect_info(&self, fallback: DisconnectInfo) -> DisconnectInfo {
+        self.exit_status
+            .map(|status| DisconnectInfo::process_exited(status, self.exit_signal.as_deref()))
+            .or_else(|| {
+                self.exit_signal
+                    .as_deref()
+                    .map(|signal| DisconnectInfo::process_exited(1, Some(signal)))
+            })
+            .unwrap_or(fallback)
     }
 
     /// 转发 PTY 窗口大小调整到远端 SSH 通道

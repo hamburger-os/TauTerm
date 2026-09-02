@@ -5,16 +5,93 @@
 //! 成为可被 I/O 循环引擎驱动的统一接口。
 
 pub mod async_io_loop;
+#[cfg(windows)]
+pub mod elevated_shell_channel;
 pub mod error;
 pub mod io_loop;
+pub mod local_shell_channel;
 pub mod serial_channel;
 pub mod serial_comm;
 pub mod ssh_channel;
 
 use error::ChannelError;
+use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::io::{Read, Write};
 use std::time::Duration;
+
+/// 会话 I/O 结束原因。前端据此决定是否保留终端现场，避免解析本地化错误字符串。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DisconnectKind {
+    UserRequested,
+    RemoteEof,
+    IoError,
+    DeviceRemoved,
+    ProcessExited,
+}
+
+/// 协议无关的结构化断开信息。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisconnectInfo {
+    pub kind: DisconnectKind,
+    pub reason: String,
+    pub exit_code: Option<u32>,
+    pub retain_terminal: bool,
+}
+
+impl DisconnectInfo {
+    pub fn user_requested() -> Self {
+        Self {
+            kind: DisconnectKind::UserRequested,
+            reason: "User requested disconnect".into(),
+            exit_code: None,
+            retain_terminal: false,
+        }
+    }
+
+    pub fn remote_eof(reason: impl Into<String>) -> Self {
+        Self {
+            kind: DisconnectKind::RemoteEof,
+            reason: reason.into(),
+            exit_code: None,
+            retain_terminal: true,
+        }
+    }
+
+    pub fn io_error(reason: impl Into<String>) -> Self {
+        Self {
+            kind: DisconnectKind::IoError,
+            reason: reason.into(),
+            exit_code: None,
+            retain_terminal: true,
+        }
+    }
+
+    pub fn device_removed(reason: impl Into<String>) -> Self {
+        Self {
+            kind: DisconnectKind::DeviceRemoved,
+            reason: reason.into(),
+            exit_code: None,
+            retain_terminal: true,
+        }
+    }
+
+    pub fn process_exited(exit_code: u32, signal: Option<&str>) -> Self {
+        let success = exit_code == 0 && signal.is_none();
+        let reason = match signal {
+            Some(signal) => format!("Local shell terminated by {signal}"),
+            None if success => "Local shell exited normally".into(),
+            None => format!("Local shell exited with code {exit_code}"),
+        };
+        Self {
+            kind: DisconnectKind::ProcessExited,
+            reason,
+            exit_code: Some(exit_code),
+            retain_terminal: !success,
+        }
+    }
+}
 
 /// 统一 I/O 通道 trait
 ///
@@ -49,6 +126,16 @@ pub trait Channel: Read + Write + Send {
     fn resize_pty(&mut self, _cols: u32, _rows: u32) -> Result<(), ChannelError> {
         Ok(())
     }
+
+    /// 请求通道执行协议特定的优雅关闭。I/O loop 在处理 Shutdown 时调用。
+    fn shutdown(&mut self) -> Result<(), ChannelError> {
+        Ok(())
+    }
+
+    /// 允许通道用更精确的信息替代 I/O loop 提供的默认断开原因。
+    fn disconnect_info(&self, fallback: DisconnectInfo) -> DisconnectInfo {
+        fallback
+    }
 }
 
 /// I/O 策略枚举
@@ -82,6 +169,12 @@ pub trait AsyncChannel: Send {
     /// 请求 PTY 窗口大小调整（仅 SSH 等支持 PTY 的协议需要实现）
     async fn resize_pty(&mut self, _cols: u32, _rows: u32) -> Result<(), ChannelError> {
         Ok(())
+    }
+    async fn shutdown(&mut self) -> Result<(), ChannelError> {
+        Ok(())
+    }
+    fn disconnect_info(&self, fallback: DisconnectInfo) -> DisconnectInfo {
+        fallback
     }
     /// 尝试交出底层传输的所有权（用于 Inline 传输策略）
     ///

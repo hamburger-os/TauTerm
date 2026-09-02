@@ -4,7 +4,7 @@
 //! 与同步 `io_loop::spawn_sync_io_loop` 并存：串口用 Sync，SSH 用 Async。
 
 use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
-use crate::channel::AsyncChannel;
+use crate::channel::{AsyncChannel, DisconnectInfo};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ use std::sync::Arc;
 pub fn spawn_async_io_loop(
     mut channel: Box<dyn AsyncChannel>,
     mut on_data: impl FnMut(String, Vec<u8>) + Send + 'static,
-    mut on_disconnect: impl FnMut(String) + Send + 'static,
+    mut on_disconnect: impl FnMut(String, DisconnectInfo) + Send + 'static,
     context: IoLoopContext,
 ) -> tokio::task::JoinHandle<()> {
     let IoLoopContext {
@@ -81,7 +81,9 @@ pub fn spawn_async_io_loop(
                     match read_result {
                         Ok(0) => {
                             // 远端关闭
-                            on_disconnect(session_id.clone());
+                            let fallback = DisconnectInfo::remote_eof("Remote endpoint closed the session");
+                            let info = channel.disconnect_info(fallback);
+                            on_disconnect(session_id.clone(), info);
                             break;
                         }
                         Ok(n) => {
@@ -90,7 +92,9 @@ pub fn spawn_async_io_loop(
                         }
                         Err(e) => {
                             log::debug!("async io_loop read error: {}", e);
-                            on_disconnect(session_id.clone());
+                            let fallback = DisconnectInfo::io_error(e.to_string());
+                            let info = channel.disconnect_info(fallback);
+                            on_disconnect(session_id.clone(), info);
                             break;
                         }
                     }
@@ -121,7 +125,7 @@ async fn handle_cmd_async(
     channel: &mut Box<dyn AsyncChannel>,
     session_id: &str,
     tx_bytes: &Arc<AtomicU64>,
-    on_disconnect: &mut impl FnMut(String),
+    on_disconnect: &mut impl FnMut(String, DisconnectInfo),
 ) -> bool {
     match cmd {
         IoLoopCmd::Write(data) => {
@@ -145,13 +149,20 @@ async fn handle_cmd_async(
                 ok = false;
             }
             if !ok {
-                on_disconnect(session_id.to_string());
+                let fallback = DisconnectInfo::io_error("Failed writing to remote endpoint");
+                let info = channel.disconnect_info(fallback);
+                on_disconnect(session_id.to_string(), info);
                 return false;
             }
             tx_bytes.fetch_add(len as u64, Ordering::Relaxed);
             true
         }
-        IoLoopCmd::Shutdown => false,
+        IoLoopCmd::Shutdown => {
+            if let Err(error) = channel.shutdown().await {
+                log::warn!("Async channel graceful shutdown failed: {error}");
+            }
+            false
+        }
         IoLoopCmd::ResizePty { cols, rows } => {
             if let Err(e) = channel.resize_pty(cols, rows).await {
                 log::warn!("PTY resize 失败: {}", e);

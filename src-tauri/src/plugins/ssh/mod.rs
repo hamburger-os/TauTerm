@@ -19,7 +19,8 @@ use crate::channel::ssh_channel::SshChannel;
 use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::file_transfer::FileTransfer;
 use crate::kernel::plugin_adapter::{
-    EndpointInfo, ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
+    ChannelKind, ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection,
+    SessionChannelFactory, SideChannel, TransferProtocolType,
 };
 use handler::SshHandler;
 
@@ -99,16 +100,18 @@ impl SshAdapter {
         verifier: &HostKeyVerifier,
     ) -> Result<ProtocolConnection, SessionError> {
         let result = build_connection_with_config(config, Some(app_handle), Some(verifier)).await?;
+        let shared = Arc::new(SshSideChannel::new(
+            result.session,
+            result.host_key_fingerprint,
+            result.home_dir,
+        ));
         Ok(ProtocolConnection {
             channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(
                 result.channel,
             ))),
             comm_handle: None,
-            side_channel: Some(Arc::new(SshSideChannel::new(
-                result.session,
-                result.host_key_fingerprint,
-                result.home_dir,
-            ))),
+            side_channel: Some(shared.clone()),
+            channel_factory: Some(shared),
             teardown_delay: self.teardown_delay(),
         })
     }
@@ -207,6 +210,24 @@ impl SideChannel for SshSideChannel {
                 self.sftp.clone(),
             ),
         ))
+    }
+}
+
+#[async_trait::async_trait]
+impl SessionChannelFactory for SshSideChannel {
+    async fn open_channel(&self, mode: ChannelOpenMode) -> Result<ChannelKind, SessionError> {
+        if mode != ChannelOpenMode::Standard {
+            return Err(SessionError::CapabilityDenied {
+                capability: "elevated_shell".into(),
+            });
+        }
+        Ok(ChannelKind::Async(Box::new(
+            open_pty_shell_channel(self.handle()).await?,
+        )))
+    }
+
+    fn child_name_prefix(&self) -> &'static str {
+        "Channel"
     }
 }
 
@@ -504,16 +525,18 @@ impl ProtocolAdapter for SshAdapter {
         //
         // 主机密钥指纹（result.host_key_fingerprint）由 connect_session_ssh
         // 通过 SSH 连接的 session-connected 事件传递给前端。
+        let shared = Arc::new(SshSideChannel::new(
+            result.session,
+            result.host_key_fingerprint,
+            result.home_dir,
+        ));
         Ok(ProtocolConnection {
             channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(
                 result.channel,
             ))),
             comm_handle: None,
-            side_channel: Some(Arc::new(SshSideChannel::new(
-                result.session,
-                result.host_key_fingerprint,
-                result.home_dir,
-            ))),
+            side_channel: Some(shared.clone()),
+            channel_factory: Some(shared),
             teardown_delay: self.teardown_delay(),
         })
     }

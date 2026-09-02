@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
+import { homeDir } from "@tauri-apps/api/path";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import { CHARSETS, DEFAULT_ENCODING } from "../../utils/charsets";
@@ -43,6 +44,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
   const [step, setStep] = useState<"mode" | "config">("mode");
   const [selectedMode, setSelectedMode] = useState("serial");
+  const [pluginParams, setPluginParams] = useState<Record<string, unknown>>({});
 
   // 串口配置
   const [port, setPort] = useState("");
@@ -116,6 +118,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const isTelnet = selectedMode === "telnet";
   const isIperf = selectedMode === "iperf";
   const isNetwork = selectedMode === "network";
+  const isLocalShell = selectedMode === "local-shell";
+  const selectedPlugin = pluginRegistry.get(selectedMode);
+  const PluginConnectForm = selectedPlugin?.connectForm;
 
   // 保持最新的 tabs 引用，供 useEffect 在 editSessionId 变化时读取最新数据，
   // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
@@ -126,7 +131,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const availableModes = pluginRegistry.getByCapability("connection").map(p => ({
     id: p.manifest.id,
     icon: p.manifest.icon,
-    description: p.manifest.description || p.manifest.name,
+    description: p.manifest.id === "local-shell"
+      ? t("connectionType.localShell")
+      : (p.manifest.description || p.manifest.name),
   }));
 
   // 每次打开对话框时重置
@@ -145,6 +152,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         if (targetTab.endpoint) setPort(targetTab.endpoint);
         if (targetTab.params) {
           const p = targetTab.params;
+          if (pluginRegistry.get(targetTab.pluginId)?.connectForm) setPluginParams(p);
           if (typeof p.baud_rate === "number") setBaudRate(String(p.baud_rate));
           if (typeof p.data_bits === "number") setDataBits(String(p.data_bits));
           if (typeof p.parity === "string") setParity(p.parity);
@@ -219,6 +227,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
     setStep("mode");
     setSelectedMode("serial");
+    setPluginParams({});
     setPort("");
     setBaudRate("115200");
     setDataBits("8");
@@ -288,6 +297,20 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
   const handleModeSelect = useCallback((modeId: string) => {
     setSelectedMode(modeId);
+    setPluginParams(modeId === "local-shell" ? {
+      shell_mode: "auto",
+      executable: "",
+      args: [],
+      preset_args: [],
+      preset_id: "",
+      shell_label: "",
+      shell_kind: "native",
+      wsl_distro: "",
+      cwd: "",
+      data_mode: "text",
+      encoding: "utf-8",
+      send_bar_enabled: false,
+    } : {});
     setStep("config");
     setError(null);
   }, []);
@@ -303,14 +326,18 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     if (!sshHost && isSsh) return;
     if (!tftpFileRoot && isTftp) return;
     if (!telnetHost && isTelnet) return;
+    if (isLocalShell && pluginParams.shell_mode === "custom" && !String(pluginParams.executable ?? "").trim()) {
+      setError(t("localShell.executableRequired"));
+      return;
+    }
     // 网络调试：Client（TCP/UDP）必须有远端主机；Server 由本地绑定端口即可
     if (isNetwork && netRole === "client" && !netRemoteHost) return;
     setError(null);
     setConnecting(true);
 
     // 网络调试启用全局发送栏（发送目标由发送栏内 TargetBar 选择）
-    const effectiveSendBarEnabled = isSsh ? sshSendBarEnabled : (isTftp || isIperf ? false : (isTelnet ? telnetSendBarEnabled : sendBarEnabled));
-    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isTftp || isTelnet || isIperf || isNetwork ? false : transferEnabled);
+    const effectiveSendBarEnabled = isLocalShell ? false : (isSsh ? sshSendBarEnabled : (isTftp || isIperf ? false : (isTelnet ? telnetSendBarEnabled : sendBarEnabled)));
+    const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isLocalShell || isTftp || isTelnet || isIperf || isNetwork ? false : transferEnabled);
 
     let tftpExposureConfirmed = false;
     if (isTftp && tftpWriteEnabled && tftpOverwrite) {
@@ -322,7 +349,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       }
     }
 
-    const params: Record<string, unknown> = isSerial ? {
+    let params: Record<string, unknown> = isSerial ? {
       baud_rate: parseInt(baudRate),
       data_bits: parseInt(dataBits),
       parity,
@@ -388,24 +415,41 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       // data_mode 仅 TCP 流视图使用；UDP 恒为报文网格双栏，不写 data_mode
       ...(netTransport === "tcp" ? { data_mode: dataMode } : {}),
       encoding,
-    } : {};
+    } : PluginConnectForm ? pluginParams : {};
+
+    if (isLocalShell) {
+      try {
+        params = { ...params };
+        const configuredCwd = typeof params.cwd === "string" ? params.cwd.trim() : "";
+        if (!configuredCwd) {
+          params.cwd = params.shell_kind === "wsl" ? "~" : await homeDir();
+        } else {
+          params.cwd = configuredCwd;
+        }
+      } catch (e) {
+        setError(String(e));
+        setConnecting(false);
+        return;
+      }
+    }
 
     const pluginId = selectedMode; // "serial" | "ssh" | "tftp" | "telnet" | "iperf" | "network"
     // iperf 无单一连接目标（客户端目标每测可变、监听地址是配置项）——
     // endpoint 用字面量，默认名 `iperf @ iperf` 不携带易变的端口/版本
     // 网络调试：所有角色的 endpoint 统一带传输层前缀（tcp:// / udp://），
     // 使侧栏/状态栏/详情页自描述（网络会话状态栏无类型徽标，前缀即传输层标识）
-    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isIperf ? "iperf" : (isTelnet ? telnetHost : (isNetwork
+    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isIperf ? "iperf" : (isTelnet ? telnetHost : (isLocalShell ? String(params.cwd) : (isNetwork
       ? `${netTransport}://${netRole === "client"
           ? `${netRemoteHost}:${netRemotePort}`
           : `${netLocalHost || "0.0.0.0"}:${netLocalPort}`}`
-      : selectedMode)))));
+      : selectedMode))))));
     // 网络调试默认会话名：带传输层与角色（"Network Debug @ TCP Client"），
     // 避免多个网络调试会话在左侧树里无法区分 server/client
     const networkDefaultName = `${pluginRegistry.get("network")?.manifest.name || "Network Debug"} @ ${netTransport.toUpperCase()} ${netRole === "server" ? "Server" : "Client"}`;
     // Telnet/TFTP/iperf/网络调试 无文件传输：不保存 transfer_protocol，避免无意义的 "ymodem" 默认值
     // 污染会话配置（传输能力由 effectiveTransferEnabled=false 表达）
-    const effectiveTransferProtocol = isTelnet || isTftp || isIperf || isNetwork ? undefined : transferProtocol;
+    const effectiveTransferProtocol = isLocalShell || isTelnet || isTftp || isIperf || isNetwork ? undefined : transferProtocol;
+    const effectiveSessionName = sessionName || undefined;
 
     try {
       if (editSessionId) {
@@ -414,7 +458,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           editSessionId,
           endpoint,
           params,
-          sessionName || undefined,
+          effectiveSessionName,
           effectiveTransferEnabled,
           effectiveTransferProtocol,
           effectiveSendBarEnabled,
@@ -426,7 +470,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         // 新建模式：仅保存配置，不连接（连接由右键菜单触发）
         const sid = await createOfflineSession(
           endpoint, params,
-          isNetwork ? (sessionName || networkDefaultName) : sessionName || undefined, pluginId,
+          isNetwork ? (sessionName || networkDefaultName) : effectiveSessionName, pluginId,
           effectiveTransferEnabled, effectiveTransferProtocol,
           effectiveSendBarEnabled,
         );
@@ -439,7 +483,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive]);
 
   // 数据字符编码下拉（终端类协议共用：serial / ssh / telnet）
   const encodingField = (
@@ -534,7 +578,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                 <input
                   className={`${styles.input} liquid-glass-input`}
                   type="text"
-                  placeholder={isSerial ? port || "COM3" : "My Session"}
+                  placeholder={isSerial ? port || "COM3" : (isLocalShell ? "Shell" : "My Session")}
                   value={sessionName}
                   onChange={e => setSessionName(e.target.value)}
                   disabled={connecting}
@@ -1311,7 +1355,15 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
               )}
 
               {/* ── 未实现插件的占位提示 ── */}
-              {!isSerial && !isSsh && !isTftp && !isTelnet && !isIperf && !isNetwork && (
+              {PluginConnectForm && (
+                <PluginConnectForm
+                  params={pluginParams}
+                  onChange={setPluginParams}
+                  endpoints={state.endpoints.filter(endpoint => endpoint.connection_type === selectedMode)}
+                />
+              )}
+
+              {!isSerial && !isSsh && !isTftp && !isTelnet && !isIperf && !isNetwork && !PluginConnectForm && (
                 <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
                   <Icon name="construction" size="lg" />{" "}
                   {t("connectionType.formNotImplemented", { pluginName: selectedMode })}

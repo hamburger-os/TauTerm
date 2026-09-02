@@ -20,7 +20,7 @@ npm run tauri dev
 | Component | Version |
 |-----------|---------|
 | Node.js | 22.x |
-| Rust | 1.98.0 (pinned in `rust-toolchain.toml`) |
+| Rust | Exact stable version pinned in `rust-toolchain.toml` |
 | npm | >= 9 |
 | NSIS | >= 3.0 (Windows only, for installer builds) |
 

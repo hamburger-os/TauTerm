@@ -1,0 +1,64 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.input,
+.select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: var(--text-sm);
+  font-family: var(--font-ui);
+}
+
+.input {
+  flex: 1;
+}
+
+.iconButton {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.arguments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.addButton {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--text-xs);
+}

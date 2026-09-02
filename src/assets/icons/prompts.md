@@ -1,25 +1,35 @@
-# TauTerm 图标生成规范（V3）
+# TauTerm 图标生成规范（V4）
 
-本文件是 `src/assets/icons/` 的唯一生成依据。图标语义必须同时满足「资源键」「实际调用位置」「12px 视觉验收」；不得只按名称或提示词猜测用途。
+本文件是 `src/assets/icons/` 的唯一语义依据；`style-contract.json` 是机器可读的家族、参考图与调色板契约。图标必须同时满足「资源键」「实际调用位置」「固定参考图」「12px 视觉验收」；不得只按名称、自由提示词或单张旧图猜测用途。
+
+## 强制生成流水线
+
+1. **先注册、后生成**：新图标先在本表新增唯一语义行，并同步 `Icon.tsx` 与 `scripts/check-icons.mjs` 的注册表。未注册的键不得生成或进入运行时目录。
+2. **禁止纯文本裸生成**：运行 `npm run prompt:icon -- <key>`，使用命令输出的完整提示词，并把输出列出的三张参考图全部传给图像生成工具。不得自行删减全局正向、负向或参考图契约。
+3. **固定家族锚点**：普通功能图标固定参考 `settings`、`plus`、`lock`；微型控制图标固定参考 `window-maximize`、`chevron-down`、`sidebar-left`。家族和键列表只在 `style-contract.json` 维护，生成者不能临时挑选“看起来相近”的参考图。
+4. **候选不直写运行时**：生成稿先放在运行时目录之外，规范化为 256×256 RGBA 后运行 `npm run check:icons -- --strict --candidate <key> <png-path>`；通过后才替换目标 PNG。不合格稿直接丢弃，不通过局部去背或着色掩盖根本风格偏差。
+5. **提交机器门禁**：替换后再次运行 `npm run check:icons -- --strict`。它要求 PNG、`PNG_MAP`、本语义表一一对应，并检查透明边距、alpha 核心、重复资产、黑边、浅冰蓝均值、深色核心和紫/靛色漂移。
+6. **真实尺寸人工门禁**：运行 `npm run preview:icons`，在深色/浅色背景的 12/14/18/24px 下，将候选与其三张固定锚点并排检查语义、视觉重量、玻璃厚度和圆角。任何一项不一致都重新生成，不能以 256px 大图“看起来正常”为通过理由。
+
+机器检查只能排除可测量的漂移，不能判断业务语义是否准确；因此严格检查与真实尺寸人工验收缺一不可。
 
 ## 固定技术与风格约束
 
 - 本注册表的每个功能图标单独生成一张 **256×256、8-bit RGBA、透明背景 PNG**；不使用 SVG、字体字形或 CSS 蒙版。唯一例外是连接状态点，它们由 `Icon` 的 CSS 状态类提供主题色语义。
 - 主图形位于 `x/y=32…223` 的 192px 光学框，透明安全边距至少 32px。不得留黑底、裁切边缘、去背毛边、投影或方形底板。
-- 家族为「浅冰蓝、清晰优先的轻玻璃」：蓝色实体内芯、白色边缘高光、极少折射、圆角端点和连接处。12px 时要先读出轮廓、方向或状态；禁止仅剩细线框、密集小孔、文字和装饰碎片。
+- 家族为「浅冰蓝、清晰优先的轻玻璃」：淡青冰蓝半透明主体、亮天蓝外缘、白色柔光、极少折射、圆润厚边与连接处。所有功能图标禁止银色金属、深蓝、紫色/靛色、左右双色或高反差镀铬；12px 时要先读出轮廓、方向或状态，禁止仅剩细线框、密集小孔、文字和装饰碎片。
 - 窗口控制、箭头、折角、键盘、侧栏和视图切换同样是 PNG，但采用更少细节、更大留白的微型控制族，保证 12–18px 清晰度。
-- 本轮二次生成的重点资产为 `window-minimize`、`window-maximize`、`window-restore`、`window-close`、`sidebar-left`、`sidebar-right`、`clipboard`、`commands`、`log`、`paste`、`ssh-shell`、`status-cancelled`、`steps`、`transfer-active`、`send`、`package`。除 `window-minimize`（语义上必须是短横）外，每张图的高不透明度核心轮廓最长边目标为 180–188px；不能用缩小的留白或低透明度阴影凑尺寸。
-- 这 16 张图必须先通过 alpha 核心框检查，再验收 12/14/18/24px。核心轮廓要占据足够视觉面积；禁止只在 256px 画布中保留一个显小的中心缩略图。`window-maximize`、`window-restore`、`window-close` 使用与 `window-minimize` 同族的线宽、端点和视觉重量。
-- 最后一轮微调必须保持同一套几何基准：`window-close` 的 X 与其他三个窗口控件使用同样的笔画厚度、圆角端点和视觉重量；`sidebar-left`/`sidebar-right` 是同一主窗格的左右镜像，整体比例接近方正（约 1.2:1），边框加粗，窄栏一侧保留实体填充，主窗格不要变成长条或整块实心；`send` 使用紧凑、近方形的数据框配短送出箭头；`log` 借鉴 `edit` 的厚实单页节奏，但只表达记录页和时间线，不出现铅笔；`download` 的下箭头宽度、笔画和视觉重量与 `upload` 对齐；`paste` 与 `clipboard` 使用同宽的主体骨架，箭头不能压缩主体或糊成纸块。
+- 除语义上必须是短横的 `window-minimize` 外，新图标的高不透明度核心最长边目标为 180–188px；不能靠大面积透明留白、模糊阴影或低透明度外光凑尺寸。
+- 同族关系必须保持共同几何基准：成组方向图标使用相同笔画、端点和视觉重量；镜像图标只做镜像；功能图标的玻璃厚度和高光柔度以固定锚点为准。单个语义行可以收紧形状，但不得覆盖全局调色板和材质契约。
 - 生成后在深色与浅色背景各验收 12/14/18/24px；`logo` 另验收 16/32px。运行 `npm run check:icons -- --strict` 与 `npm run preview:icons`。
 
 **基础正向提示词：**
 
-`One isolated TauTerm UI glyph, exact 256 by 256 RGBA PNG with a fully transparent background. [SEMANTIC SHAPE]. Center the single readable silhouette inside a 192px optical frame with 32px transparent safe margins. Pale ice-blue frosted glass with a solid blue core, soft white rim highlight, restrained refraction, rounded caps and joins, minimal 3D depth, crisp anti-aliased edges, consistent visual weight with TauTerm icons, legible at 12px. No text.`
+`One isolated TauTerm UI glyph, exact 256 by 256 RGBA PNG with a fully transparent background. [SEMANTIC SHAPE]. Center the single readable silhouette inside a 192px optical frame with 32px transparent safe margins. Pale cyan ice-blue translucent glass body, bright sky-blue outer rim, soft white highlight, restrained refraction, thick rounded caps and joins, minimal 3D depth, crisp anti-aliased edges, consistent optical weight with the attached TauTerm reference icons, legible at 12px. No text.`
 
 **负向提示词：**
 
-`no background, no tile, no black matte, no frame, no external drop shadow, no green or cyan cast, no dark navy body, no rainbow, no neon, no wireframe-only outline, no letters, no numbers, no tiny interior decoration, no duplicated glyph, no cropped edge, no opaque canvas fringe.`
+`no background, no tile, no black matte, no frame, no external drop shadow, no green or teal cast, no dark navy body, no purple or indigo, no silver metal, no split two-tone halves, no central seam, no rainbow, no neon, no high-contrast chrome, no wireframe-only outline, no sharp knife-like edge, no letters, no numbers, no tiny interior decoration, no duplicated glyph, no cropped edge, no opaque canvas fringe.`
 
 ## 语义注册表与真实使用位置
 
@@ -66,6 +76,7 @@
 | `search` | 全局/会话搜索 | 单一放大镜环和短柄。 |
 | `send` | 发送栏 → 基础发送模式 | 一个紧凑、近方形的中空终端数据框，带一至两条短文本线，右侧接粗短“送出”箭头或数据尾迹；必须同时读出“数据框 + 发送”，不能拉成长条，不能只剩孤立右箭头、纸飞机或上传托盘。 |
 | `settings` | 设置入口 | 六齿大齿轮与中心孔。 |
+| `shield` | Local Shell 管理员子会话与“以管理员身份新建”动作 | 对称单体盾牌；严格跟随 `settings`、`plus`、`lock` 的淡青色半透明玻璃主体、亮天蓝描边与白色柔光；肩部、底尖和厚边框都必须圆润，12px 时仍清晰。禁止银色金属、深蓝/紫色、左右双色、中央分割线、锐角、锁、钥匙、星章或文字。 |
 | `sidebar-left` | 工具栏左上角会话栏开关 | 与 `sidebar-right` 使用完全相同的近方形主窗格比例（约 1.2:1）、线宽和留白；中空主窗格、左侧独立窄栏、清晰竖分隔，窄栏可用实体冰蓝填充，仅左右镜像；不得画成汉堡菜单、超长条或整块实心面板。 |
 | `sidebar-right` | 工具栏右侧栏开关 | 与 `sidebar-left` 使用完全相同的近方形主窗格比例（约 1.2:1）、线宽和留白；中空主窗格、右侧独立窄栏、清晰竖分隔，窄栏可用实体冰蓝填充，仅左右镜像；不得画成超长条或整块实心面板。 |
 | `ssh-shell` | 新建会话 → SSH | 放大的简化终端框和粗 `>_` 图形线，终端框占主要面积；不画锁、网络地球、密集窗口控件或缩小的蓝色方块。 |
@@ -93,3 +104,4 @@
 2. `antenna` 与 `menu` 已删除：前者曾错误暗示 XMODEM 无线语义，后者曾误表示左侧会话栏。
 3. 任何调用若不符合上表，应新增专用键或迁移调用；不得以视觉相似替代业务语义。
 4. 资源通过检查后再删除候选目录，避免候选资产进入运行时注册表。
+5. 任何新图标必须保存 `npm run prompt:icon -- <key>` 的最终输出作为生成输入；若生成工具不支持多参考图，则不得用该工具产出运行时图标。

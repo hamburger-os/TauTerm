@@ -15,7 +15,7 @@ registerPlugin({
     description: "SSH 远程终端",
     icon: "ssh-shell",
     content_type: "terminal",
-    capabilities: ["connection", "transfer", "endpoint_discovery"],
+    capabilities: ["connection", "transfer", "endpoint_discovery", "multi_session"],
     transfer_protocols: ["sftp"],
   },
   locales: {

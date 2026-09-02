@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Protocols
+- **Local Shell (native PTY)** — adds cross-platform local terminal sessions backed by ConPTY on Windows and Unix PTYs on Linux/macOS. Shell selection supports automatic platform detection or a custom executable, an independent argument list and a working directory (user home by default). Windows discovery includes native PowerShell/CMD, WSL default and per-distribution presets, Git Bash, MSYS2/Cygwin Bash and NuShell; managed WSL launcher arguments stay separate from user arguments, Linux working directories default to `~`, and the native Auto order never enters WSL implicitly. Sessions use UTF-8 with `TERM=xterm-256color`, support terminal resize/search/logging, and intentionally exclude SendBar, file transfer and protocol tools.
+- **Multi-terminal Local Shell and Windows elevation** — one saved Local Shell configuration can open up to 32 active independent PTYs through the same parent/child model as SSH. Native Windows shells expose a per-child `New (as Administrator)` action backed by a one-shot elevated helper and paired one-way local named pipes; the GUI remains unelevated, WSL is excluded, UAC cancellation creates no child, and elevated children carry a shield marker.
+
+### Changed
+- **Structured terminal disconnect lifecycle** — terminal channels now report user disconnect, remote EOF, I/O failure, device removal and process exit as structured reasons. User-requested disconnects and successful Local Shell exits clear the terminal, while abnormal disconnects and non-zero exits retain the in-memory terminal screen with the reason visible until reconnect, deletion or app exit.
+- **Localized and bounded Local Shell presentation** — the connection type and configuration heading now follow the active UI language, new unnamed sessions use `Shell @ <resolved type>`, and Local Shell publishes its resolved starting path (or `~` for the default WSL home) as the standard session endpoint. The protocol-agnostic sidebar renders it like every other session; all titles and endpoints shrink and ellipsize within the card, with full values available through tooltips.
+- **Elevated Local Shell startup and disconnect reliability** — command and event traffic now use separate one-way named pipes so a blocking output read cannot stall input or shutdown. Terminal bytes arriving before xterm mounts are retained in a bounded per-session startup buffer, and child removal is reflected immediately while backend cleanup completes.
+- **Elevated Local Shell access after UAC** — fixed `ERROR_ACCESS_DENIED (os error 5)` after accepting elevation. The two logical one-way pipes now use duplex-capable server handles so `SetNamedPipeHandleState` can restore blocking mode, while helper handles remain direction-limited; a production-mode pipe regression test covers the exact failure.
+- **Repeatable icon production contract** — every future functional icon must be generated from its registered semantic row with fixed family reference images through `npm run prompt:icon`. Strict validation now keeps the semantic table, runtime registry and PNG set aligned and rejects dark, violet/indigo and off-palette assets; the preview board pins family anchors beside 12/14/18/24px dark/light review sizes.
+
+### Developer Experience
+- **Protocol-neutral terminal child factory** — SSH and Local Shell now expose terminal creation through `SessionChannelFactory`; the session store owns common numbering, limits, I/O, statistics, exit-history and parent lifecycle behavior while each protocol keeps resource construction behind its adapter.
+
 ## [0.5.1] — 2026-09-01
 
 ### Changed

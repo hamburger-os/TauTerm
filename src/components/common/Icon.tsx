@@ -44,6 +44,7 @@ import robotPng from "../../assets/icons/robot.png";
 import searchPng from "../../assets/icons/search.png";
 import sendPng from "../../assets/icons/send.png";
 import settingsPng from "../../assets/icons/settings.png";
+import shieldPng from "../../assets/icons/shield.png";
 import sidebarLeftPng from "../../assets/icons/sidebar-left.png";
 import sidebarRightPng from "../../assets/icons/sidebar-right.png";
 import sshShellPng from "../../assets/icons/ssh-shell.png";
@@ -77,6 +78,7 @@ const PNG_MAP = {
   keyboard: keyboardPng, lock: lockPng, log: logPng, logo: logoPng, loop: loopPng,
   package: packagePng, paste: pastePng, play: playPng, plus: plusPng, refresh: refreshPng,
   robot: robotPng, search: searchPng, send: sendPng, settings: settingsPng,
+  shield: shieldPng,
   "sidebar-left": sidebarLeftPng, "sidebar-right": sidebarRightPng, "ssh-shell": sshShellPng,
   "status-cancelled": statusCancelledPng, "status-skipped": statusSkippedPng, steps: stepsPng,
   stop: stopPng, stopwatch: stopwatchPng, tag: tagPng, "transfer-active": transferActivePng,

@@ -4,6 +4,7 @@
 //! 未来可支持动态加载第三方插件。
 
 pub mod iperf;
+pub mod local_shell;
 pub mod network;
 pub mod serial;
 pub mod ssh;

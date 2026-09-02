@@ -41,6 +41,9 @@ pub trait SideChannel: Send + Sync {
 pub struct EndpointInfo {
     pub name: String,
     pub description: String,
+    /// 插件发现端点时附带的可选配置预设。内核只透传，不解释字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
 
 /// I/O 通道类型枚举
@@ -52,6 +55,29 @@ pub enum ChannelKind {
     Sync(Box<dyn Channel>),
     /// 异步通道（实现 `AsyncChannel` trait）
     Async(Box<dyn AsyncChannel>),
+}
+
+/// 子终端的启动权限。协议可只支持其中一部分能力。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelOpenMode {
+    Standard,
+    Elevated,
+}
+
+/// 可从父配置创建独立运行实例的深层接口。
+///
+/// SessionStore 与命令层只依赖这个接口，不再识别 SSH 或 Local Shell 的
+/// 具体实现。SSH factory 复用认证后的远程连接；Local Shell factory 每次
+/// 创建独立 PTY，Windows 下还可选择一次性管理员 helper。
+#[async_trait::async_trait]
+pub trait SessionChannelFactory: Send + Sync {
+    async fn open_channel(&self, mode: ChannelOpenMode) -> Result<ChannelKind, SessionError>;
+
+    fn supports_mode(&self, mode: ChannelOpenMode) -> bool {
+        mode == ChannelOpenMode::Standard
+    }
+
+    fn child_name_prefix(&self) -> &'static str;
 }
 
 /// 连接产物
@@ -75,6 +101,9 @@ pub struct ProtocolConnection {
     /// 侧通道资源句柄（None 表示无辅助资源）
     /// 使用 `Arc<dyn SideChannel>` 以允许多个消费者共享同一资源（如 SFTP 缓存）。
     pub side_channel: Option<Arc<dyn SideChannel>>,
+    /// 可选的子终端工厂。存在时该连接应作为父容器保存，首个 `channel`
+    /// 以及后续工厂产物都注册为独立子会话。
+    pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
     /// 会话关闭后、资源完全释放前所需的额外等待时间。
     /// 由适配器的 `teardown_delay()` 提供，`close_session()` 据此睡眠，
     /// 避免内核硬编码协议特定逻辑（如串口驱动释放端口的等待）。

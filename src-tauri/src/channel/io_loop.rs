@@ -2,7 +2,7 @@
 //!
 //! 同步 I/O 循环，基于 `dyn Channel` trait。
 
-use crate::channel::Channel;
+use crate::channel::{Channel, DisconnectInfo};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
@@ -41,7 +41,7 @@ pub enum IoLoopCmd {
 pub fn spawn_sync_io_loop(
     mut channel: Box<dyn Channel>,
     mut on_data: impl FnMut(String, Vec<u8>) + Send + 'static,
-    mut on_disconnect: impl FnMut(String) + Send + 'static,
+    mut on_disconnect: impl FnMut(String, DisconnectInfo) + Send + 'static,
     context: IoLoopContext,
 ) -> std::thread::JoinHandle<()> {
     let IoLoopContext {
@@ -95,8 +95,10 @@ pub fn spawn_sync_io_loop(
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => ReadOutcome::Empty {
                     should_idle: should_idle_now(&last_data_time, read_spin_window),
                 },
-                Err(_) => {
-                    on_disconnect(session_id.clone());
+                Err(error) => {
+                    let fallback = DisconnectInfo::io_error(error.to_string());
+                    let info = channel.disconnect_info(fallback);
+                    on_disconnect(session_id.clone(), info);
                     break;
                 }
             };
@@ -175,18 +177,25 @@ fn handle_cmd(
     session_id: &str,
     tx_bytes: &Arc<AtomicU64>,
     cancel_flag: &Arc<AtomicBool>,
-    on_disconnect: &mut impl FnMut(String),
+    on_disconnect: &mut impl FnMut(String, DisconnectInfo),
 ) -> bool {
     match cmd {
         IoLoopCmd::Write(data) => {
-            if channel.write_all(&data).is_err() || channel.flush().is_err() {
-                on_disconnect(session_id.to_string());
+            if let Err(error) = channel.write_all(&data).and_then(|_| channel.flush()) {
+                let fallback = DisconnectInfo::io_error(error.to_string());
+                let info = channel.disconnect_info(fallback);
+                on_disconnect(session_id.to_string(), info);
                 return false;
             }
             tx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
             true
         }
-        IoLoopCmd::Shutdown => false,
+        IoLoopCmd::Shutdown => {
+            if let Err(error) = channel.shutdown() {
+                log::warn!("Channel graceful shutdown failed: {error}");
+            }
+            false
+        }
         IoLoopCmd::ResizePty { cols, rows } => {
             if let Err(e) = channel.resize_pty(cols, rows) {
                 log::warn!("PTY resize 失败: {}", e);

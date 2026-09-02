@@ -1,0 +1,35 @@
+{
+  "version": 4,
+  "functionalReferences": ["settings", "plus", "lock"],
+  "microControlReferences": ["window-maximize", "chevron-down", "sidebar-left"],
+  "microControlKeys": [
+    "arrow-down",
+    "arrow-left",
+    "arrow-right",
+    "arrow-up",
+    "caret-down",
+    "check",
+    "chevron-down",
+    "chevron-right",
+    "chevron-up",
+    "close",
+    "play",
+    "sidebar-left",
+    "sidebar-right",
+    "stop",
+    "view-grid",
+    "view-list",
+    "window-close",
+    "window-maximize",
+    "window-minimize",
+    "window-restore"
+  ],
+  "brandExceptions": ["logo"],
+  "palette": {
+    "minMeanRed": 115,
+    "minMeanGreen": 190,
+    "minMeanBlue": 235,
+    "maxVioletCoreRatio": 0.005,
+    "maxDarkCoreRatio": 0.01
+  }
+}

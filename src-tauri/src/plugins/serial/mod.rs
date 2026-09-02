@@ -182,6 +182,7 @@ impl ProtocolAdapter for SerialAdapter {
             ))),
             comm_handle: None,
             side_channel: None,
+            channel_factory: None,
             teardown_delay: self.teardown_delay(),
         })
     }
@@ -195,6 +196,7 @@ impl ProtocolAdapter for SerialAdapter {
             .map(|p| EndpointInfo {
                 name: p.port_name.clone(),
                 description: p.port_name,
+                params: None,
             })
             .collect())
     }

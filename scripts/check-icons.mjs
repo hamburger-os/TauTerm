@@ -12,13 +12,14 @@ import { resolve } from "node:path";
 
 const ICON_DIR = resolve("src/assets/icons");
 const STRICT = process.argv.includes("--strict");
+const STYLE_CONTRACT = JSON.parse(readFileSync(resolve(ICON_DIR, "style-contract.json"), "utf8"));
 const EXPECTED = [
   "appearance", "arrow-down", "arrow-left", "arrow-right", "arrow-up", "caret-down",
   "chart", "check", "check-circle", "chevron-down", "chevron-right", "chevron-up",
   "clipboard", "close", "code", "commands", "connection", "construction", "download",
   "drag-handle", "edit", "endpoint", "file", "folder", "globe", "hourglass", "info",
   "keyboard", "lock", "log", "logo", "loop", "package", "paste", "play", "plus",
-  "refresh", "robot", "search", "send", "settings", "sidebar-left", "sidebar-right",
+  "refresh", "robot", "search", "send", "settings", "shield", "sidebar-left", "sidebar-right",
   "ssh-shell", "status-cancelled", "status-skipped", "steps", "stop", "stopwatch", "tag",
   "transfer-active", "trash", "upload", "view-grid", "view-list", "warning", "window-close",
   "window-maximize", "window-minimize", "window-restore", "x-circle",
@@ -66,6 +67,13 @@ let errors = 0;
 let warnings = 0;
 const fail = (message) => { errors += 1; console.error(`ERROR: ${message}`); };
 const warn = (message) => { warnings += 1; console.warn(`WARN: ${message}`); };
+const candidateIndex = process.argv.indexOf("--candidate");
+const candidate = candidateIndex >= 0
+  ? { key: process.argv[candidateIndex + 1], file: process.argv[candidateIndex + 2] }
+  : null;
+if (candidate && (!candidate.key || !candidate.file)) {
+  fail("--candidate requires <icon-key> <png-path>");
+}
 
 // Keep this list in lockstep with the component's single runtime registry.
 // Parsing the map here makes drift fail loudly while retaining a plain list
@@ -79,6 +87,23 @@ if (JSON.stringify(REGISTERED) !== JSON.stringify(EXPECTED)) {
   fail("EXPECTED icon list is out of sync with PNG_MAP in Icon.tsx");
   console.error(`  EXPECTED: ${EXPECTED.join(", ")}`);
   console.error(`  PNG_MAP:  ${REGISTERED.join(", ")}`);
+}
+
+const promptSource = readFileSync(resolve(ICON_DIR, "prompts.md"), "utf8");
+const PROMPT_KEYS = [...promptSource.matchAll(/^\|\s*`([^`]+)`\s*\|/gm)]
+  .map((match) => match[1]).sort();
+if (JSON.stringify(PROMPT_KEYS) !== JSON.stringify(EXPECTED)) {
+  fail("prompts.md semantic registry is out of sync with the runtime icon registry");
+  console.error(`  prompts.md: ${PROMPT_KEYS.join(", ")}`);
+  console.error(`  PNG_MAP:    ${EXPECTED.join(", ")}`);
+}
+for (const name of [
+  ...STYLE_CONTRACT.functionalReferences,
+  ...STYLE_CONTRACT.microControlReferences,
+  ...STYLE_CONTRACT.microControlKeys,
+  ...STYLE_CONTRACT.brandExceptions,
+]) {
+  if (!EXPECTED.includes(name)) fail(`style-contract.json references unknown icon key ${name}`);
 }
 
 function pngPixels(file) {
@@ -130,13 +155,14 @@ function pngPixels(file) {
   return { width, height, pixels };
 }
 
-function inspect(name) {
-  const file = resolve(ICON_DIR, `${name}.png`);
+function inspect(name, file = resolve(ICON_DIR, `${name}.png`), checkDuplicate = true) {
   const { width, height, pixels } = pngPixels(file);
+  const isBrandException = STYLE_CONTRACT.brandExceptions.includes(name);
   if (width !== 256 || height !== 256) fail(`${name}.png must be 256×256, got ${width}×${height}`);
   let minX = width, minY = height, maxX = -1, maxY = -1;
   let coreMinX = width, coreMinY = height, coreMaxX = -1, coreMaxY = -1;
   let alphaTotal = 0, red = 0, green = 0, blue = 0, corePixels = 0;
+  let violetCorePixels = 0, darkCorePixels = 0;
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
     const i = (y * width + x) * 4;
     const alpha = pixels[i + 3];
@@ -147,6 +173,8 @@ function inspect(name) {
     red += pixels[i] * alpha; green += pixels[i + 1] * alpha; blue += pixels[i + 2] * alpha;
     if (alpha >= 96) {
       corePixels += 1;
+      if (pixels[i + 2] - pixels[i + 1] >= 30 && pixels[i + 1] - pixels[i] <= 15) violetCorePixels += 1;
+      if (pixels[i] < 80 && pixels[i + 1] < 110 && pixels[i + 2] < 160) darkCorePixels += 1;
       coreMinX = Math.min(coreMinX, x); coreMinY = Math.min(coreMinY, y);
       coreMaxX = Math.max(coreMaxX, x); coreMaxY = Math.max(coreMaxY, y);
     }
@@ -172,8 +200,8 @@ function inspect(name) {
   }
   if (minX === 0 || minY === 0 || maxX === width - 1 || maxY === height - 1) fail(`${name}.png has opaque pixels on the canvas edge`);
   const padding = Math.min(minX, minY, width - 1 - maxX, height - 1 - maxY);
-  if (name !== "logo" && (minX < 32 || minY < 32 || maxX > 223 || maxY > 223)) warn(`${name}.png escapes the 192px optical frame [32,223] (padding ${padding}px)`);
-  if (name !== "logo") {
+  if (!isBrandException && (minX < 32 || minY < 32 || maxX > 223 || maxY > 223)) warn(`${name}.png escapes the 192px optical frame [32,223] (padding ${padding}px)`);
+  if (!isBrandException && checkDuplicate) {
     const digest = createHash("sha256").update(readFileSync(file)).digest("hex");
     const duplicate = seenHashes.get(digest);
     if (duplicate) fail(`${name}.png is byte-identical to ${duplicate}.png`);
@@ -185,7 +213,7 @@ function inspect(name) {
   // logo is the intentional brand exception: its four-colour app-mark may
   // include dark detail at the edge. Functional glyphs must never retain a
   // black matte after background removal.
-  if (name !== "logo") for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+  if (!isBrandException) for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
     if (x > 1 && y > 1 && x < width - 2 && y < height - 2) continue;
     const i = (y * width + x) * 4;
     if (pixels[i + 3] > 16 && pixels[i] < 24 && pixels[i + 1] < 24 && pixels[i + 2] < 24) {
@@ -193,11 +221,23 @@ function inspect(name) {
       break;
     }
   }
-  if (name !== "logo") {
+  if (!isBrandException) {
     const meanBlue = blue / alphaTotal;
     const meanRed = red / alphaTotal;
     const meanGreen = green / alphaTotal;
     if (meanBlue < meanRed * 0.9 || meanBlue < meanGreen * 0.9) warn(`${name}.png is not blue-led (mean RGB ${meanRed.toFixed(0)},${meanGreen.toFixed(0)},${meanBlue.toFixed(0)})`);
+    const palette = STYLE_CONTRACT.palette;
+    if (meanRed < palette.minMeanRed || meanGreen < palette.minMeanGreen || meanBlue < palette.minMeanBlue) {
+      fail(`${name}.png drifts outside the pale ice-blue palette (mean RGB ${meanRed.toFixed(0)},${meanGreen.toFixed(0)},${meanBlue.toFixed(0)})`);
+    }
+    const violetRatio = corePixels === 0 ? 0 : violetCorePixels / corePixels;
+    if (violetRatio > palette.maxVioletCoreRatio) {
+      fail(`${name}.png has ${(violetRatio * 100).toFixed(2)}% violet/indigo core pixels; maximum is ${(palette.maxVioletCoreRatio * 100).toFixed(2)}%`);
+    }
+    const darkRatio = corePixels === 0 ? 0 : darkCorePixels / corePixels;
+    if (darkRatio > palette.maxDarkCoreRatio) {
+      fail(`${name}.png has ${(darkRatio * 100).toFixed(2)}% dark core pixels; maximum is ${(palette.maxDarkCoreRatio * 100).toFixed(2)}%`);
+    }
   }
 }
 
@@ -209,7 +249,18 @@ for (const name of actual) if (!EXPECTED.includes(name)) fail(`unexpected icon a
 for (const name of EXPECTED) if (actual.includes(name)) {
   try { inspect(name); } catch (error) { fail(`${name}.png: ${error.message}`); }
 }
+if (candidate?.key && candidate?.file) {
+  if (!EXPECTED.includes(candidate.key)) {
+    fail(`candidate uses unknown icon key ${candidate.key}`);
+  } else {
+    try {
+      inspect(candidate.key, resolve(candidate.file), false);
+    } catch (error) {
+      fail(`candidate ${candidate.key}: ${error.message}`);
+    }
+  }
+}
 
 if (STRICT && warnings) errors += warnings;
 if (errors) process.exitCode = 1;
-else console.log(`Icon assets valid (${EXPECTED.length} files${warnings ? `, ${warnings} advisory warning(s)` : ""}).`);
+else console.log(`Icon assets valid (${EXPECTED.length} files${candidate ? `; ${candidate.key} candidate accepted` : ""}${warnings ? `, ${warnings} advisory warning(s)` : ""}).`);

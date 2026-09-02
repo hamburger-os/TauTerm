@@ -19,13 +19,17 @@ Then:
 
 1. move completed entries from `Unreleased` into `## [X.Y.Z] — YYYY-MM-DD` in `CHANGELOG.md`;
 2. add `docs/RELEASE_NOTES_vX.Y.Z.md`;
-3. run the local metadata check:
+3. run the local metadata check;
+4. run the full local release build, which updates `stable`, writes its exact version to `rust-toolchain.toml`, installs the pinned clippy/rustfmt components, runs formatting, strict Clippy and Rust tests, and builds the current platform package:
 
 ```bash
 npm run release:check -- X.Y.Z
+npm run build:release
 ```
 
-Open a release PR and merge it only after the normal **CI** workflow is green.
+`build:release` may modify `rust-toolchain.toml`. Review and commit that diff with the release PR so the compiler version used by CI and release artifacts remains part of the source revision. The GitHub CI and Release workflows deliberately install the committed pin and never upgrade toolchains or modify source code at runtime.
+
+Open a release PR containing all metadata and toolchain changes, and merge it only after the normal **CI** workflow is green.
 
 ## 2. Run the release workflow
 

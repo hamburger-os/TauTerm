@@ -37,6 +37,8 @@ export interface ConnectFormProps {
 export interface EndpointInfo {
   name: string;
   description: string;
+  /** 插件发现端点时附带的配置预设；内核只透传。 */
+  params?: Record<string, unknown>;
 }
 
 /** 工具栏项 */

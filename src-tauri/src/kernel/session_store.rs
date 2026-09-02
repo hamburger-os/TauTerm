@@ -23,7 +23,9 @@ use crate::channel::Channel;
 use crate::kernel::comm_handle::{CommHandle, DataCallback};
 use crate::kernel::data_batcher::DataBatcher;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
-use crate::kernel::plugin_adapter::{ChannelKind, ProtocolConnection, SideChannel};
+use crate::kernel::plugin_adapter::{
+    ChannelKind, ProtocolConnection, SessionChannelFactory, SideChannel,
+};
 use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
 use crate::virtual_port::backend::VirtualEndpoint;
 use crate::virtual_port::bridge::VirtualPortBridge;
@@ -169,6 +171,10 @@ pub struct SubConnection {
     pub stats_cancel_flag: Option<Arc<AtomicBool>>,
     /// 通道自动编号（从 0 开始）
     pub channel_index: u32,
+    /// 是否通过管理员 helper 启动（仅 Local Shell 子会话使用）。
+    pub elevated: bool,
+    /// 断开后是否保留终端现场。正常退出为 false，异常退出为 true。
+    pub retain_terminal: bool,
     /// 发送字节计数（网络调试对端统计用）
     pub tx_bytes: Arc<AtomicU64>,
     /// 接收字节计数（网络调试对端统计用）
@@ -232,6 +238,8 @@ pub struct ActiveSessionHandle {
     /// 由 `ProtocolConnection::side_channel` 提供，None 表示无辅助资源。
     /// 使用 `Arc<dyn SideChannel>` 以允许多个命令并发访问同一资源。
     pub side_channel: Option<Arc<dyn SideChannel>>,
+    /// 从该父配置创建子终端的协议无关工厂。
+    pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
     /// 侧通道传输取消标志（传输进行中置位，传输循环每块检查）。
     /// None 表示当前无传输进行。由传输命令在传输前设置，传输结束后置 None。
     pub transfer_cancel: Option<Arc<AtomicBool>>,
@@ -244,6 +252,8 @@ pub struct ActiveSessionHandle {
     pub teardown_delay: Duration,
     /// 子连接列表（SSH 多连接：每个 PTY channel 一个 SubConnection）
     pub sub_connections: Vec<SubConnection>,
+    /// 下一个子会话的单调编号。只有父卡片下不存在活动或保留的子卡片时重置。
+    pub next_child_index: u32,
 }
 
 impl SubConnection {
@@ -254,6 +264,7 @@ impl SubConnection {
         write_tx: mpsc::SyncSender<IoLoopCmd>,
         io_thread: IoTaskHandle,
         channel_index: u32,
+        elevated: bool,
         io_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Self {
         Self {
@@ -266,6 +277,8 @@ impl SubConnection {
             connected_at: None, // 由调用方设置（SubConnection 自身不感知真实连接时刻）
             stats_cancel_flag: None,
             channel_index,
+            elevated,
+            retain_terminal: false,
             tx_bytes: Arc::new(AtomicU64::new(0)),
             rx_bytes: Arc::new(AtomicU64::new(0)),
             comm_handle: None,
@@ -454,7 +467,7 @@ impl SessionStore {
         options: SessionCreateOptions,
         conn: ProtocolConnection,
         on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
-        on_disconnect: Box<dyn Fn(String) + Send>,
+        on_disconnect: Box<dyn Fn(String, crate::channel::DisconnectInfo) + Send>,
         app_handle: tauri::AppHandle,
     ) -> Result<TabId, String> {
         let SessionCreateOptions {
@@ -614,10 +627,12 @@ impl SessionStore {
             script_thread: None,
             script_shutdown: None,
             side_channel: conn.side_channel,
+            channel_factory: conn.channel_factory,
             transfer_cancel: None,
             transfer_tasks: Vec::new(),
             teardown_delay: conn.teardown_delay,
             sub_connections: Vec::new(),
+            next_child_index: 0,
         };
 
         // 防御性检查：若 id_override 指向的会话已存在且未被正确关闭，
@@ -662,14 +677,15 @@ impl SessionStore {
         }
     }
 
-    /// 创建容器会话（SSH 父容器，无 I/O loop）。
+    /// 创建终端父容器（SSH / Local Shell，无 I/O loop）。
     ///
-    /// 仅持有 SSH side_channel 和元数据，不创建 I/O 线程。
+    /// 仅持有可选 side_channel、channel factory 和元数据，不创建 I/O 线程。
     /// 实际终端通过 `add_sub_connection` 添加。
     pub fn create_container_session(
         &mut self,
         options: ContainerSessionCreateOptions,
         side_channel: Option<Arc<dyn SideChannel>>,
+        channel_factory: Option<Arc<dyn SessionChannelFactory>>,
         comm_handle: Option<Arc<dyn CommHandle>>,
     ) -> Result<TabId, String> {
         let ContainerSessionCreateOptions {
@@ -690,6 +706,14 @@ impl SessionStore {
         } else {
             uuid::Uuid::new_v4().to_string()
         };
+
+        // 若以已有 ID 重连，保留异常历史仍占用的单调编号，再清理旧容器。
+        let preserved_next_child_index = self
+            .sessions
+            .get(&id)
+            .filter(|handle| handle.state == SessionState::Disconnected)
+            .map(|handle| handle.next_child_index)
+            .unwrap_or(0);
 
         // 若以已有 ID 重连，先清理上一个 Disconnected 僵尸容器会话
         if let Some(ref raw) = id_override {
@@ -752,10 +776,12 @@ impl SessionStore {
             script_thread: None,
             script_shutdown: None,
             side_channel,
+            channel_factory,
             transfer_cancel: None,
             transfer_tasks: Vec::new(),
             teardown_delay: Duration::ZERO,
             sub_connections: Vec::new(),
+            next_child_index: preserved_next_child_index,
         };
 
         self.sessions.insert(id.clone(), handle);
@@ -952,6 +978,7 @@ impl SessionStore {
 
         // 断开连接后释放侧通道资源（如 TFTP 的 UDP socket）
         handle.side_channel = None;
+        handle.channel_factory = None;
         // 以 Disconnected 状态放回 HashMap，使并发传输命令可获取到句柄并返回明确的"已断开"错误
         handle.state = SessionState::Disconnected;
         self.sessions.insert(session_id.to_string(), handle);
@@ -1141,39 +1168,41 @@ impl SessionStore {
         let pid = parent_id.clone();
         let ch_id = channel_id.clone();
         let ch_id_for_evt = ch_id.clone();
-        let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |_channel_id| {
-            // 对端退出：从容器写通道注册表移除，避免群发写入失效通道
-            if let Ok(mut writers) = peer_writers.lock() {
-                writers.remove(&ch_id_for_evt);
-            }
-            // I/O 线程退出路径：先持锁落状态（Disconnected + 停 stats collector），
-            // 再发事件。锁内不 join 任何线程（mark_sub_disconnected 保证）。
-            let mut final_tx: Option<u64> = None;
-            let mut final_rx: Option<u64> = None;
-            if let Ok(mut store) = app_disconnect
-                .state::<crate::AppState>()
-                .session_store
-                .lock()
-            {
-                store.mark_sub_disconnected(&pid, &ch_id_for_evt);
-                // R4: 附带最终统计，前端据此更新对端末值（stats collector 已停）
-                if let Some(h) = store.get_session(&pid) {
-                    if let Some(sub) = h.sub_connections.iter().find(|s| s.id == ch_id_for_evt) {
-                        final_tx = Some(sub.tx_bytes.load(Ordering::Relaxed));
-                        final_rx = Some(sub.rx_bytes.load(Ordering::Relaxed));
+        let on_disconnect: Box<dyn Fn(String, crate::channel::DisconnectInfo) + Send> =
+            Box::new(move |_channel_id, _info| {
+                // 对端退出：从容器写通道注册表移除，避免群发写入失效通道
+                if let Ok(mut writers) = peer_writers.lock() {
+                    writers.remove(&ch_id_for_evt);
+                }
+                // I/O 线程退出路径：先持锁落状态（Disconnected + 停 stats collector），
+                // 再发事件。锁内不 join 任何线程（mark_sub_disconnected 保证）。
+                let mut final_tx: Option<u64> = None;
+                let mut final_rx: Option<u64> = None;
+                if let Ok(mut store) = app_disconnect
+                    .state::<crate::AppState>()
+                    .session_store
+                    .lock()
+                {
+                    store.mark_sub_disconnected(&pid, &ch_id_for_evt, false);
+                    // R4: 附带最终统计，前端据此更新对端末值（stats collector 已停）
+                    if let Some(h) = store.get_session(&pid) {
+                        if let Some(sub) = h.sub_connections.iter().find(|s| s.id == ch_id_for_evt)
+                        {
+                            final_tx = Some(sub.tx_bytes.load(Ordering::Relaxed));
+                            final_rx = Some(sub.rx_bytes.load(Ordering::Relaxed));
+                        }
                     }
                 }
-            }
-            let _ = app_disconnect.emit(
-                "netdbg-peer-left",
-                serde_json::json!({
-                    "session_id": pid,
-                    "peer_id": ch_id_for_evt,
-                    "tx_bytes": final_tx,
-                    "rx_bytes": final_rx,
-                }),
-            );
-        });
+                let _ = app_disconnect.emit(
+                    "netdbg-peer-left",
+                    serde_json::json!({
+                        "session_id": pid,
+                        "peer_id": ch_id_for_evt,
+                        "tx_bytes": final_tx,
+                        "rx_bytes": final_rx,
+                    }),
+                );
+            });
 
         let io_handle = match channel {
             ChannelKind::Sync(sync_channel) => IoTaskHandle::Sync(spawn_sync_io_loop(
@@ -1240,6 +1269,8 @@ impl SessionStore {
             connected_at,
             stats_cancel_flag: Some(stats_cancel_flag),
             channel_index: actual_index,
+            elevated: false,
+            retain_terminal: false,
             tx_bytes,
             rx_bytes,
             comm_handle: Some(comm_handle),
@@ -1379,7 +1410,10 @@ impl SessionStore {
         let io_thread = sub.io_thread.take();
 
         // 是否最后一个子连接（由调用方决定是否级联断开父会话；网络调试不级联）
-        let is_last = handle.sub_connections.is_empty();
+        let is_last = handle
+            .sub_connections
+            .iter()
+            .all(|child| child.state == SessionState::Disconnected);
         if is_last {
             log::info!("最后一个子连接已关闭 (parent: {})", parent_id);
         }
@@ -1628,6 +1662,12 @@ impl SessionStore {
         self.sessions.get_mut(session_id)
     }
 
+    pub fn reset_child_counter(&mut self, parent_id: &str) {
+        if let Some(handle) = self.sessions.get_mut(parent_id) {
+            handle.next_child_index = 0;
+        }
+    }
+
     /// 获取持久化会话列表
     pub fn get_saved_sessions(&self) -> Vec<SavedSession> {
         let mut result: Vec<SavedSession> = Vec::new();
@@ -1659,7 +1699,7 @@ impl SessionStore {
         session_id: &str,
         channel: Box<dyn Channel>,
         on_data: Box<dyn Fn(String, Vec<u8>) + Send>,
-        on_disconnect: Box<dyn Fn(String) + Send>,
+        on_disconnect: Box<dyn Fn(String, crate::channel::DisconnectInfo) + Send>,
         app_handle: tauri::AppHandle,
     ) -> Result<serde_json::Value, String> {
         let not_found = self.session_not_found(session_id);
@@ -1925,11 +1965,17 @@ impl SessionStore {
     /// 与 `mark_disconnected` 同理 — 调用时 I/O task 正在退出，不能 join 自己的线程。
     /// 仅标记状态、取消统计采集器。实际的 I/O task join 由后续的 `close_sub_connection` 或
     /// `close_session` 在安全上下文中执行。
-    pub fn mark_sub_disconnected(&mut self, parent_id: &str, channel_id: &str) {
+    pub fn mark_sub_disconnected(
+        &mut self,
+        parent_id: &str,
+        channel_id: &str,
+        retain_terminal: bool,
+    ) {
         if let Some(handle) = self.sessions.get_mut(parent_id) {
             for sub in handle.sub_connections.iter_mut() {
                 if sub.id == channel_id {
                     sub.state = SessionState::Disconnected;
+                    sub.retain_terminal = retain_terminal;
                     if let Some(ref flag) = sub.stats_cancel_flag {
                         flag.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
