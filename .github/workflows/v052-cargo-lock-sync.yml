@@ -27,11 +27,22 @@ jobs:
           TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
           rustup toolchain install "$TOOLCHAIN" --profile minimal
 
-      - name: Refresh only the workspace package lock metadata
+      - name: Synchronize workspace package lock metadata
         shell: bash
         run: |
           set -euo pipefail
-          cargo update --manifest-path src-tauri/Cargo.toml --offline -p tauterm || true
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('src-tauri/Cargo.lock')
+          text = path.read_text()
+          old = 'name = "tauterm"\nversion = "0.5.1"'
+          new = 'name = "tauterm"\nversion = "0.5.2"'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one TauTerm 0.5.1 lock entry, found {text.count(old)}')
+          if new in text:
+              raise SystemExit('TauTerm 0.5.2 lock entry already exists unexpectedly')
+          path.write_text(text.replace(old, new, 1))
+          PY
           git diff -- src-tauri/Cargo.lock
           node <<'NODE'
           const { execFileSync } = require('child_process');
@@ -46,6 +57,7 @@ jobs:
             throw new Error(`unexpected Cargo.lock change: ${JSON.stringify(changed)}`);
           }
           NODE
+          cargo metadata --locked --manifest-path src-tauri/Cargo.toml --format-version 1 --no-deps >/dev/null
           node scripts/check-version.js
 
       - name: Remove one-shot workflow and commit Cargo.lock
