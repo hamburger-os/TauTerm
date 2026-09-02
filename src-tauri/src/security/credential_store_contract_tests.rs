@@ -125,10 +125,9 @@ fn fallback_vault_has_explicit_version_and_rejects_unknown_versions() {
     store.lock_fallback();
 
     let vault_path = dir.path().join("credentials.vault.json");
-    let mut envelope: serde_json::Value = serde_json::from_slice(
-        &fs::read(&vault_path).expect("fallback vault file should exist"),
-    )
-    .expect("fallback vault envelope should be JSON");
+    let mut envelope: serde_json::Value =
+        serde_json::from_slice(&fs::read(&vault_path).expect("fallback vault file should exist"))
+            .expect("fallback vault envelope should be JSON");
     assert_eq!(
         envelope.get("version").and_then(serde_json::Value::as_u64),
         Some(1),
