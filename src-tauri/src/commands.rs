@@ -4,12 +4,14 @@
 //! 通过 SerialAdapter + SessionStore + Channel 架构管理会话。
 
 use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
-use crate::channel::AsyncChannel;
+use crate::channel::DisconnectInfo;
 use crate::kernel::charset::transcode_utf8_to_encoding;
 use crate::kernel::log_engine::{
     DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus,
 };
-use crate::kernel::plugin_adapter::{ProtocolAdapter, TransferProtocolType};
+use crate::kernel::plugin_adapter::{
+    ChannelKind, ChannelOpenMode, ProtocolAdapter, TransferProtocolType,
+};
 use crate::kernel::script_engine::codegen::{hex_to_bytes, interpret_escape_sequences};
 use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use crate::kernel::session_store::{
@@ -53,9 +55,12 @@ pub struct EndpointItem {
     pub name: String,
     pub description: String,
     pub connection_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TabInfo {
     pub id: String,
     pub name: String,
@@ -65,6 +70,14 @@ pub struct TabInfo {
     pub plugin_id: String,
     pub send_bar_enabled: bool,
     pub transfer_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_index: Option<u32>,
+    #[serde(default)]
+    pub elevated: bool,
+    #[serde(default)]
+    pub is_container: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +108,8 @@ pub struct ConnectSessionRequest {
     pub send_bar_enabled: Option<bool>,
     pub journald_enabled: Option<bool>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub initial_elevated: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -211,6 +226,7 @@ pub fn enumerate_endpoints(
                     name: ep.name,
                     description: ep.description,
                     connection_type: "serial".to_string(),
+                    params: ep.params,
                 })
                 .collect())
         }
@@ -227,6 +243,7 @@ pub fn enumerate_endpoints(
                     name: ep.name,
                     description: ep.description,
                     connection_type: "ssh".to_string(),
+                    params: ep.params,
                 })
                 .collect())
         }
@@ -244,6 +261,22 @@ pub fn enumerate_endpoints(
                     name: ep.name,
                     description: ep.description,
                     connection_type: "telnet".to_string(),
+                    params: ep.params,
+                })
+                .collect())
+        }
+        "local-shell" => {
+            let endpoints = state
+                .local_shell_adapter
+                .discover_endpoints()
+                .map_err(|e| e.to_string())?;
+            Ok(endpoints
+                .into_iter()
+                .map(|ep| EndpointItem {
+                    name: ep.name,
+                    description: ep.description,
+                    connection_type: "local-shell".to_string(),
+                    params: ep.params,
                 })
                 .collect())
         }
@@ -275,6 +308,7 @@ pub async fn connect_session(
         "tftp" => connect_session_tftp(app, state, request).await,
         "iperf" => connect_session_iperf(app, state, request).await,
         "telnet" => connect_session_telnet(app, state, request).await,
+        "local-shell" => connect_session_local_shell(app, state, request).await,
         "network" => connect_session_network(app, state, request).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
@@ -419,65 +453,68 @@ async fn connect_session_serial(
     );
 
     let app_disconnect = app.clone();
-    let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
-        let app_state: State<'_, AppState> = app_disconnect.state();
+    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
+        Box::new(move |session_id, info| {
+            let app_state: State<'_, AppState> = app_disconnect.state();
 
-        // 1. 在 mark_disconnected 之前读取虚拟端口对
-        //    （mark_disconnected 内部关闭桥接线程，但不销毁 pairs）
-        let pairs: Vec<VirtualEndpoint> = {
-            let store = match app_state.session_store.lock() {
-                Ok(s) => s,
-                Err(e) => e.into_inner(),
+            // 1. 在 mark_disconnected 之前读取虚拟端口对
+            //    （mark_disconnected 内部关闭桥接线程，但不销毁 pairs）
+            let pairs: Vec<VirtualEndpoint> = {
+                let store = match app_state.session_store.lock() {
+                    Ok(s) => s,
+                    Err(e) => e.into_inner(),
+                };
+                store
+                    .get_session(&session_id)
+                    .map(|h| h.virtual_endpoints.clone())
+                    .unwrap_or_default()
             };
-            store
-                .get_session(&session_id)
-                .map(|h| h.virtual_endpoints.clone())
-                .unwrap_or_default()
-        };
 
-        // 2. 标记断开 — 内部关闭桥接，PlugInMode 使 B 端自动隐藏
-        //    同步保存到磁盘，防止后续崩溃导致配置丢失
-        if let Ok(mut store) = app_state.session_store.lock() {
-            store.mark_disconnected(&session_id);
-            let path = SessionStore::sessions_file_path(&app_disconnect);
-            let _ = store.save_to_disk(&path);
-        }
+            // 2. 标记断开 — 内部关闭桥接，PlugInMode 使 B 端自动隐藏
+            //    同步保存到磁盘，防止后续崩溃导致配置丢失
+            if let Ok(mut store) = app_state.session_store.lock() {
+                store.mark_disconnected(&session_id);
+                let path = SessionStore::sessions_file_path(&app_disconnect);
+                let _ = store.save_to_disk(&path);
+            }
 
-        // 3. 从内核驱动删除端口对 → 外部工具感知 COM 端口消失
-        if !pairs.is_empty() {
-            if let Ok(mut vpm) = app_state.virtual_port_manager.lock() {
-                for pair in &pairs {
-                    let _ = vpm.destroy_endpoint(pair);
-                }
+            // 3. 从内核驱动删除端口对 → 外部工具感知 COM 端口消失
+            if !pairs.is_empty() {
+                if let Ok(mut vpm) = app_state.virtual_port_manager.lock() {
+                    for pair in &pairs {
+                        let _ = vpm.destroy_endpoint(pair);
+                    }
 
-                // 检查是否有因权限不足而写入 state 文件的残留端口
-                // UAC 弹窗推迟到下次用户主动操作（状态栏 [清理残留端口] 按钮或
-                // 下次连接的 create_endpoints_elevated），避免在断开回调中突然弹窗
-                let orphan_count = vpm.pending_orphan_count();
-                if orphan_count > 0 {
-                    log::warn!(
-                        "Session {} disconnected: {} port pair(s) need admin cleanup — \
+                    // 检查是否有因权限不足而写入 state 文件的残留端口
+                    // UAC 弹窗推迟到下次用户主动操作（状态栏 [清理残留端口] 按钮或
+                    // 下次连接的 create_endpoints_elevated），避免在断开回调中突然弹窗
+                    let orphan_count = vpm.pending_orphan_count();
+                    if orphan_count > 0 {
+                        log::warn!(
+                            "Session {} disconnected: {} port pair(s) need admin cleanup — \
                          deferred to next explicit user action",
+                            session_id,
+                            orphan_count
+                        );
+                    }
+
+                    log::info!(
+                        "已清理断开会话 {} 的虚拟端口对 ({} 对)",
                         session_id,
-                        orphan_count
+                        pairs.len()
                     );
                 }
-
-                log::info!(
-                    "已清理断开会话 {} 的虚拟端口对 ({} 对)",
-                    session_id,
-                    pairs.len()
-                );
             }
-        }
 
-        let _ = app_disconnect.emit(
-            "session-disconnected",
-            serde_json::json!({
-                "session_id": session_id,
-            }),
-        );
-    });
+            let _ = app_disconnect.emit(
+                "session-disconnected",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "reason": info.reason,
+                    "disconnect_info": info,
+                }),
+            );
+        });
 
     let transfer_enabled_val = transfer_enabled.unwrap_or(true);
     let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "ymodem".into());
@@ -705,17 +742,9 @@ async fn connect_session_telnet(
     state: State<'_, AppState>,
     request: ConnectSessionRequest,
 ) -> Result<String, String> {
-    let ConnectSessionRequest {
-        endpoint,
-        params,
-        name,
-        send_bar_enabled,
-        session_id,
-        ..
-    } = request;
     let conn = state
         .telnet_adapter
-        .connect(&endpoint, &params)
+        .connect(&request.endpoint, &request.params)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -730,59 +759,172 @@ async fn connect_session_telnet(
         transfer_protocols
     );
 
-    let session_name = name.unwrap_or_else(|| format!("Telnet {}", endpoint));
+    connect_simple_terminal_session(app, &state, request, "telnet", "Telnet", true, conn)
+}
 
-    let app_data = app.clone();
-    let log_tx = {
-        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-        log_engine.sender()
+/// Local Shell 会话连接（LocalShellAdapter → PTY Channel → SessionStore）。
+async fn connect_session_local_shell(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    mut request: ConnectSessionRequest,
+) -> Result<String, String> {
+    if request
+        .name
+        .as_deref()
+        .is_none_or(|name| name.trim().is_empty())
+    {
+        request.name = Some(
+            crate::plugins::local_shell::LocalShellAdapter::default_session_name(&request.params)?,
+        );
+    }
+    let initial_mode = if request.initial_elevated {
+        ChannelOpenMode::Elevated
+    } else {
+        ChannelOpenMode::Standard
     };
+    let mut conn = state
+        .local_shell_adapter
+        .connect_with_mode(&request.params, initial_mode)
+        .await
+        .map_err(|e| e.to_string())?;
+    let first_channel = conn
+        .channel
+        .take()
+        .ok_or("Local Shell 连接缺少 PTY channel")?;
+    let factory = conn
+        .channel_factory
+        .take()
+        .ok_or("Local Shell 连接缺少子终端工厂")?;
+    let session_name = request.name.clone().unwrap_or_else(|| "Shell".into());
+    let parent_id = {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store.create_container_session(
+            ContainerSessionCreateOptions {
+                name: session_name.clone(),
+                plugin_id: "local-shell".into(),
+                endpoint: request.endpoint.clone(),
+                params: request.params.clone(),
+                transfer_enabled: false,
+                transfer_protocol: None,
+                send_bar_enabled: request.send_bar_enabled.unwrap_or(false),
+                id_override: request.session_id.clone(),
+            },
+            None,
+            Some(factory),
+            None,
+        )?
+    };
+
+    let channel_id = create_terminal_sub_channel(
+        &app,
+        &state,
+        &parent_id,
+        first_channel,
+        initial_mode == ChannelOpenMode::Elevated,
+    )
+    .await
+    .inspect_err(|error| {
+        log::error!("Local Shell 首个子会话创建失败: {error}");
+        if let Ok(mut store) = state.session_store.lock() {
+            let _ = store.close_session(&parent_id);
+        }
+    })?;
+
+    let connected_at = Some(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+    );
+    let _ = app.emit(
+        "session-connected",
+        serde_json::json!({
+            "session_id": parent_id,
+            "endpoint": request.endpoint,
+            "connection_type": "local-shell",
+            "plugin_id": "local-shell",
+            "name": session_name,
+            "params": request.params,
+            "connected_at": connected_at,
+            "transfer_enabled": false,
+            "send_bar_enabled": false,
+            "is_container": true,
+        }),
+    );
+    log::info!(
+        "Local Shell 父会话已连接: {} (child: {})",
+        parent_id,
+        channel_id
+    );
+    Ok(parent_id)
+}
+
+/// 简单根终端会话的共享连接流程。
+///
+/// Serial 的虚拟端口、SSH 与 Local Shell 的多终端容器需要专属 orchestration；
+/// 当前由 Telnet 复用这里的日志、SessionStore、持久化和事件语义。
+fn connect_simple_terminal_session(
+    app: AppHandle,
+    state: &State<'_, AppState>,
+    request: ConnectSessionRequest,
+    plugin_id: &'static str,
+    display_name: &'static str,
+    default_send_bar_enabled: bool,
+    conn: crate::kernel::plugin_adapter::ProtocolConnection,
+) -> Result<String, String> {
+    let ConnectSessionRequest {
+        endpoint,
+        params,
+        name,
+        send_bar_enabled,
+        session_id,
+        ..
+    } = request;
+    let session_name = name.unwrap_or_else(|| format!("{display_name} {endpoint}"));
+    let log_tx = state.log_engine.lock().map_err(|e| e.to_string())?.sender();
     let data_mode = params
         .get("data_mode")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("text")
         .to_string();
-    // 会话字符编码（用于日志按编码解码为 UTF-8）
     let encoding = params
         .get("encoding")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("utf-8")
         .to_string();
-
-    // 共享 on_data 回调：DataBatcher + 日志（无虚拟端口桥接）
-    let on_data = create_on_data_callback(&app_data, log_tx, data_mode, encoding, None);
+    let on_data = create_on_data_callback(&app, log_tx, data_mode, encoding, None);
 
     let app_disconnect = app.clone();
-    let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |session_id| {
-        let app_state: State<'_, AppState> = app_disconnect.state();
-        if let Ok(mut store) = app_state.session_store.lock() {
-            store.mark_disconnected(&session_id);
-            let path = SessionStore::sessions_file_path(&app_disconnect);
-            let _ = store.save_to_disk(&path);
-        }
-        let _ = app_disconnect.emit(
-            "session-disconnected",
-            serde_json::json!({
-                "session_id": session_id,
-            }),
-        );
-    });
+    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
+        Box::new(move |session_id, info| {
+            let app_state: State<'_, AppState> = app_disconnect.state();
+            if let Ok(mut store) = app_state.session_store.lock() {
+                store.mark_disconnected(&session_id);
+                let path = SessionStore::sessions_file_path(&app_disconnect);
+                let _ = store.save_to_disk(&path);
+            }
+            let _ = app_disconnect.emit(
+                "session-disconnected",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "reason": info.reason,
+                    "disconnect_info": info,
+                }),
+            );
+        });
 
-    let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
-    // Telnet 无文件传输
-    let transfer_enabled_val = false;
-
+    let send_bar_enabled = send_bar_enabled.unwrap_or(default_send_bar_enabled);
     let session_id = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         let sid = store.create_session(
             SessionCreateOptions {
                 name: session_name.clone(),
-                plugin_id: "telnet".into(),
+                plugin_id: plugin_id.into(),
                 endpoint: endpoint.clone(),
                 params,
-                transfer_enabled: transfer_enabled_val,
+                transfer_enabled: false,
                 transfer_protocol: None,
-                send_bar_enabled: send_bar_enabled_val,
+                send_bar_enabled,
                 id_override: session_id,
             },
             conn,
@@ -790,8 +932,6 @@ async fn connect_session_telnet(
             on_disconnect,
             app.clone(),
         )?;
-
-        // 自动保存
         let path = SessionStore::sessions_file_path(&app);
         let _ = store.save_to_disk(&path);
         sid
@@ -801,27 +941,30 @@ async fn connect_session_telnet(
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         store
             .get_session(&session_id)
-            .map(|h| (h.name.clone(), h.params.clone(), h.connected_at))
+            .map(|handle| {
+                (
+                    handle.name.clone(),
+                    handle.params.clone(),
+                    handle.connected_at,
+                )
+            })
             .unwrap_or((session_name, Value::Null, None))
     };
-
-    log::info!("Telnet 会话已连接: {} @ {}", actual_name, endpoint);
-
+    log::info!("{display_name} session connected: {actual_name} @ {endpoint}");
     let _ = app.emit(
         "session-connected",
         serde_json::json!({
             "session_id": session_id,
             "endpoint": endpoint,
-            "connection_type": "telnet",
-            "plugin_id": "telnet",
+            "connection_type": plugin_id,
+            "plugin_id": plugin_id,
             "name": actual_name,
             "params": actual_params,
             "connected_at": connected_at,
-            "transfer_enabled": transfer_enabled_val,
-            "send_bar_enabled": send_bar_enabled_val,
+            "transfer_enabled": false,
+            "send_bar_enabled": send_bar_enabled,
         }),
     );
-
     Ok(session_id)
 }
 
@@ -901,9 +1044,10 @@ async fn connect_session_ssh(
 
     // 分离 side_channel（SSH Handle，供后续子连接复用）
     let side_channel = conn.side_channel;
+    let channel_factory = conn.channel_factory;
     // 分离 channel（第一个 PTY，作为通道 0 的 I/O）
     let channel_for_ch0 = match conn.channel {
-        Some(crate::kernel::plugin_adapter::ChannelKind::Async(ch)) => ch,
+        Some(ChannelKind::Async(ch)) => ChannelKind::Async(ch),
         Some(crate::kernel::plugin_adapter::ChannelKind::Sync(_)) => {
             return Err("SSH 连接期望 Async channel".to_string());
         }
@@ -928,12 +1072,13 @@ async fn connect_session_ssh(
                 id_override: session_id.clone(),
             },
             side_channel,
+            channel_factory,
             None,
         )?
     };
 
     // 2. 通过共享逻辑创建通道 0（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
-    let channel0_id = create_ssh_sub_channel(&app, &state, &parent_id, channel_for_ch0)
+    let channel0_id = create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false)
         .await
         .inspect_err(|e| {
             // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
@@ -1045,6 +1190,7 @@ pub async fn disconnect_session(
         let is_tftp = handle.plugin_id == "tftp";
         let is_iperf = handle.plugin_id == "iperf";
         store.close_session(&session_id)?;
+        store.reset_child_counter(&session_id);
         // 持久化：会话状态已变为 Disconnected，写入磁盘
         let path = SessionStore::sessions_file_path(&app);
         let _ = store.save_to_disk(&path);
@@ -1108,6 +1254,8 @@ pub async fn disconnect_session(
         "session-disconnected",
         serde_json::json!({
             "session_id": session_id,
+            "reason": "User requested disconnect",
+            "disconnect_info": DisconnectInfo::user_requested(),
         }),
     );
     Ok(())
@@ -1250,6 +1398,10 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
                 plugin_id: h.plugin_id.clone(),
                 send_bar_enabled: h.send_bar_enabled,
                 transfer_enabled: h.transfer_enabled,
+                parent_id: None,
+                channel_index: None,
+                elevated: false,
+                is_container: h.channel_factory.is_some(),
             })
         })
         .collect();
@@ -1277,6 +1429,10 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
                     plugin_id: h.plugin_id.clone(),
                     send_bar_enabled: h.send_bar_enabled,
                     transfer_enabled: h.transfer_enabled,
+                    parent_id: Some(h.id.clone()),
+                    channel_index: Some(sub.channel_index),
+                    elevated: sub.elevated,
+                    is_container: false,
                 });
             }
         }
@@ -1286,25 +1442,25 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
 
 // ── SSH 子通道创建（共享逻辑）───────────────────────
 
-/// 在已有 SSH 父会话上创建子通道。
+/// 在父配置上注册一个协议无关的终端子会话。
 ///
 /// 供 [`connect_session_ssh`]（channel-0）和 [`open_channel`]（channel-1+）共用。
 /// 所有配置均从父 [`ActiveSessionHandle`] 统一读取，确保所有通道行为完全一致。
 /// 通道名称按 `channel_index + 1` 自动生成为 `"Channel N"`。
-async fn create_ssh_sub_channel(
+async fn create_terminal_sub_channel(
     app: &tauri::AppHandle,
     app_state: &AppState,
     parent_id: &str,
-    channel: Box<dyn AsyncChannel>,
+    channel: ChannelKind,
+    elevated: bool,
 ) -> Result<String, String> {
     // ── 阶段 1: 获取锁 → 检查父存活 + 预留 channel_index + 读取配置 → 释放锁 ──
     let (
         endpoint,
+        plugin_id,
         params,
         data_mode,
         encoding,
-        channel_index,
-        reserved_name,
         send_bar_enabled_val,
         file_service_enabled,
         journald_enabled,
@@ -1315,6 +1471,14 @@ async fn create_ssh_sub_channel(
         let handle = store.get_session_mut(parent_id).ok_or(not_found)?;
         if handle.state != SessionState::Connected {
             return Err("父会话已断开，无法创建子连接".to_string());
+        }
+        let active_children = handle
+            .sub_connections
+            .iter()
+            .filter(|child| child.state != SessionState::Disconnected)
+            .count();
+        if active_children >= 32 {
+            return Err("每个父会话最多允许 32 个活动终端".to_string());
         }
         let dm = handle
             .params
@@ -1328,8 +1492,6 @@ async fn create_ssh_sub_channel(
             .and_then(|v| v.as_str())
             .unwrap_or("utf-8")
             .to_string();
-        let idx = handle.sub_connections.len() as u32;
-        let ch_name = format!("Channel {}", idx + 1);
         let sbe = handle.send_bar_enabled;
         let fse = handle
             .params
@@ -1349,11 +1511,10 @@ async fn create_ssh_sub_channel(
             .to_string();
         (
             handle.endpoint.clone(),
+            handle.plugin_id.clone(),
             handle.params.clone(),
             dm,
             enc,
-            idx,
-            ch_name,
             sbe,
             fse,
             jde,
@@ -1379,48 +1540,91 @@ async fn create_ssh_sub_channel(
     let app_disconnect = app.clone();
     let pid = parent_id.to_string();
     let ch_id = channel_id.clone();
-    let on_disconnect: Box<dyn Fn(String) + Send> = Box::new(move |channel_id| {
-        let parent_disconnected = {
-            if let Ok(mut store) = app_disconnect.state::<AppState>().session_store.lock() {
-                store.mark_sub_disconnected(&pid, &channel_id);
-                store
-                    .get_session(&pid)
-                    .map(|h| h.state == SessionState::Disconnected)
-                    .unwrap_or(false)
-            } else {
-                false
-            }
-        };
-        let _ = app_disconnect.emit(
-            "channel-closed",
-            serde_json::json!({
-                "channel_id": channel_id,
-                "parent_id": pid,
-            }),
-        );
-        if parent_disconnected {
+    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
+        Box::new(move |channel_id, info| {
+            let (parent_disconnected, retain_history) = {
+                if let Ok(mut store) = app_disconnect.state::<AppState>().session_store.lock() {
+                    store.mark_sub_disconnected(&pid, &channel_id, info.retain_terminal);
+                    let (no_live_children, has_other_history) = store
+                        .get_session(&pid)
+                        .map(|handle| {
+                            let no_live = handle.channel_factory.is_some()
+                                && handle
+                                    .sub_connections
+                                    .iter()
+                                    .all(|child| child.state == SessionState::Disconnected);
+                            let history = handle.sub_connections.iter().any(|child| {
+                                child.id != channel_id
+                                    && child.state == SessionState::Disconnected
+                                    && child.retain_terminal
+                            });
+                            (no_live, history)
+                        })
+                        .unwrap_or((false, false));
+                    let retain = info.retain_terminal || has_other_history;
+                    if no_live_children {
+                        let _ = store.close_session(&pid);
+                        if !retain {
+                            store.reset_child_counter(&pid);
+                        }
+                        let path = SessionStore::sessions_file_path(&app_disconnect);
+                        let _ = store.save_to_disk(&path);
+                    }
+                    (no_live_children, retain)
+                } else {
+                    (false, info.retain_terminal)
+                }
+            };
             let _ = app_disconnect.emit(
-                "session-disconnected",
+                "channel-closed",
                 serde_json::json!({
-                    "session_id": pid,
-                    "reason": "网络连接丢失",
+                    "channel_id": channel_id,
+                    "parent_id": pid,
+                    "disconnect_info": &info,
                 }),
             );
-        }
-    });
+            if parent_disconnected {
+                let parent_info = if retain_history {
+                    DisconnectInfo::remote_eof("所有活动终端已关闭")
+                } else {
+                    info.clone()
+                };
+                let _ = app_disconnect.emit(
+                    "session-disconnected",
+                    serde_json::json!({
+                        "session_id": pid,
+                        "reason": &parent_info.reason,
+                        "disconnect_info": &parent_info,
+                    }),
+                );
+            }
+        });
 
-    let io_handle = IoTaskHandle::Async(crate::channel::async_io_loop::spawn_async_io_loop(
-        channel,
-        Box::new(on_data),
-        on_disconnect,
-        IoLoopContext {
-            session_id: ch_id.clone(),
-            write_rx,
-            cancel_rx,
-            tx_bytes: tx_clone,
-            rx_bytes: rx_clone,
-        },
-    ));
+    let io_context = IoLoopContext {
+        session_id: ch_id.clone(),
+        write_rx,
+        cancel_rx,
+        tx_bytes: tx_clone,
+        rx_bytes: rx_clone,
+    };
+    let io_handle = match channel {
+        ChannelKind::Sync(channel) => {
+            IoTaskHandle::Sync(crate::channel::io_loop::spawn_sync_io_loop(
+                channel,
+                Box::new(on_data),
+                on_disconnect,
+                io_context,
+            ))
+        }
+        ChannelKind::Async(channel) => {
+            IoTaskHandle::Async(crate::channel::async_io_loop::spawn_async_io_loop(
+                channel,
+                Box::new(on_data),
+                on_disconnect,
+                io_context,
+            ))
+        }
+    };
 
     let stats_cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let connected_at = Some(
@@ -1455,13 +1659,26 @@ async fn create_ssh_sub_channel(
             );
             return Err("父会话已断开，无法创建子连接".to_string());
         }
-        // 验证 channel_index 未被其他并发请求抢占（正常不应发生，但防御性检查）
-        let actual_idx = handle.sub_connections.len() as u32;
-        let actual_name = if actual_idx == channel_index {
-            reserved_name
-        } else {
-            format!("Channel {}", actual_idx + 1)
-        };
+        // 阶段 1 到阶段 3 之间可能有并发创建完成；在真正注册前再次校验，
+        // 保证 32 个活动子会话上限不会因竞态被突破。
+        let active_children = handle
+            .sub_connections
+            .iter()
+            .filter(|child| child.state != SessionState::Disconnected)
+            .count();
+        if active_children >= 32 {
+            stats_cancel_flag.store(true, Ordering::SeqCst);
+            let _ = cancel_tx.send(());
+            return Err("每个父会话最多允许 32 个活动终端".to_string());
+        }
+        let actual_idx = handle.next_child_index;
+        handle.next_child_index = handle.next_child_index.saturating_add(1);
+        let prefix = handle
+            .channel_factory
+            .as_ref()
+            .map(|factory| factory.child_name_prefix())
+            .unwrap_or("Channel");
+        let actual_name = format!("{} {}", prefix, actual_idx + 1);
 
         let mut sub = crate::kernel::session_store::SubConnection::new(
             channel_id.clone(),
@@ -1469,6 +1686,7 @@ async fn create_ssh_sub_channel(
             write_tx,
             io_handle,
             actual_idx,
+            elevated,
             Some(cancel_tx),
         );
         sub.connected_at = connected_at;
@@ -1486,8 +1704,8 @@ async fn create_ssh_sub_channel(
         serde_json::json!({
             "session_id": channel_id,
             "endpoint": endpoint,
-            "connection_type": "ssh",
-            "plugin_id": "ssh",
+            "connection_type": plugin_id,
+            "plugin_id": plugin_id,
             "name": channel_name,
             "params": params,
             "connected_at": connected_at,
@@ -1495,6 +1713,7 @@ async fn create_ssh_sub_channel(
             "send_bar_enabled": send_bar_enabled_val,
             "parent_id": parent_id,
             "channel_index": actual_index,
+            "elevated": elevated,
             "file_service_enabled": file_service_enabled,
             "file_service_protocol": file_service_protocol,
             "journald_enabled": journald_enabled,
@@ -1502,10 +1721,11 @@ async fn create_ssh_sub_channel(
     );
 
     log::info!(
-        "SSH 子通道已创建: {} (parent: {}, channel_index: {})",
+        "终端子会话已创建: {} (parent: {}, channel_index: {}, elevated: {})",
         channel_id,
         parent_id,
-        actual_index
+        actual_index,
+        elevated
     );
     Ok(channel_id)
 }
@@ -1518,33 +1738,46 @@ pub async fn open_channel(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    elevated: Option<bool>,
 ) -> Result<String, String> {
-    // 1. 获取 SSH side_channel（russh Handle）
-    let ssh_handle = {
+    let mode = if elevated.unwrap_or(false) {
+        ChannelOpenMode::Elevated
+    } else {
+        ChannelOpenMode::Standard
+    };
+    let factory = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let side = store.get_side_channel(&session_id).ok_or_else(|| {
-            format!(
-                "会话 {} 没有 SSH side channel（可能是串口会话）",
-                session_id
-            )
-        })?;
-        let ssh_side = side
-            .as_any()
-            .downcast_ref::<crate::plugins::ssh::SshSideChannel>()
-            .ok_or("无法获取 SSH 会话句柄")?;
-        ssh_side.handle().clone()
+        let handle = store
+            .get_session(&session_id)
+            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+        if handle.state != SessionState::Connected {
+            return Err("父会话未连接".into());
+        }
+        let factory = handle
+            .channel_factory
+            .as_ref()
+            .ok_or("此会话不支持多个终端")?
+            .clone();
+        if !factory.supports_mode(mode) {
+            return Err("此 Shell 不支持管理员连接".into());
+        }
+        factory
     };
 
-    // 2. 打开新 PTY + shell
-    let ssh_channel = crate::plugins::ssh::open_pty_shell_channel(ssh_handle)
+    let channel = factory
+        .open_channel(mode)
         .await
-        .map_err(|e| format!("打开新终端失败: {}", e))?;
+        .map_err(|error| format!("打开新终端失败: {error}"))?;
+    let channel_id = create_terminal_sub_channel(
+        &app,
+        &state,
+        &session_id,
+        channel,
+        mode == ChannelOpenMode::Elevated,
+    )
+    .await?;
 
-    // 3. 通过共享逻辑创建子通道（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
-    let channel_id =
-        create_ssh_sub_channel(&app, &state, &session_id, Box::new(ssh_channel)).await?;
-
-    log::info!("SSH 子连接已打开: {} (parent: {})", channel_id, session_id);
+    log::info!("子终端已打开: {} (parent: {})", channel_id, session_id);
     Ok(channel_id)
 }
 
@@ -1554,38 +1787,72 @@ pub async fn close_channel(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    parent_id: Option<String>,
+    reset_counter: Option<bool>,
 ) -> Result<(), String> {
     // 两段式关闭：锁内发信号并取出 join 句柄，锁外 join I/O 线程
     // （I/O 线程退出路径可能触发 on_disconnect 回调，回调需获取 store 锁）
-    let (parent_id, is_last, cleanup) = {
+    let (parent_id, is_last, retain_history, cleanup) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         let pid = store
             .find_parent_of_channel(&session_id)
+            .or(parent_id)
             .ok_or_else(|| format!("子连接 {} 未找到", session_id))?;
-        let (last, cleanup) = store.close_sub_connection(&pid, &session_id)?;
+        let result = store.close_sub_connection(&pid, &session_id);
+        let (last, cleanup) = match result {
+            Ok(result) => result,
+            Err(_) => {
+                if reset_counter.unwrap_or(false) {
+                    store.reset_child_counter(&pid);
+                    let path = SessionStore::sessions_file_path(&app);
+                    let _ = store.save_to_disk(&path);
+                }
+                // 异常终端现场只驻留在前端内存中；父连接关闭后后端已释放
+                // 对应 I/O 资源，此时关闭卡片是幂等的 UI 清理。
+                return Ok(());
+            }
+        };
+        let retain_history = store
+            .get_session(&pid)
+            .map(|handle| {
+                handle
+                    .sub_connections
+                    .iter()
+                    .any(|child| child.state == SessionState::Disconnected && child.retain_terminal)
+            })
+            .unwrap_or(false);
         if last {
             store.close_session(&pid)?;
+            if reset_counter.unwrap_or(false) {
+                store.reset_child_counter(&pid);
+            }
             // 持久化：父会话已断开
             let path = SessionStore::sessions_file_path(&app);
             let _ = store.save_to_disk(&path);
         }
-        (pid, last, cleanup)
+        (pid, last, retain_history, cleanup)
     };
     // 锁外等待 I/O 线程与脚本线程真实退出
     cleanup.join();
 
     // 通知前端（仅 session-disconnected；channel-closed 由 on_disconnect 回调单独发出）
     if is_last {
+        let info = if retain_history {
+            DisconnectInfo::remote_eof("所有活动终端已关闭")
+        } else {
+            DisconnectInfo::user_requested()
+        };
         let _ = app.emit(
             "session-disconnected",
             serde_json::json!({
                 "session_id": parent_id,
                 "reason": "所有终端已关闭",
+                "disconnect_info": info,
             }),
         );
     }
 
-    log::info!("SSH 子连接已关闭: {}", session_id);
+    log::info!("终端子连接已关闭: {}", session_id);
     Ok(())
 }
 
@@ -1656,6 +1923,7 @@ pub async fn connect_session_network(
                 id_override: session_id,
             },
             conn.side_channel.clone(),
+            None,
             conn.comm_handle.clone(),
         )?
     };
@@ -1880,6 +2148,9 @@ pub fn save_session_config(
         session_id,
     } = request;
     let pid = plugin_id.unwrap_or_else(|| "serial".into());
+    if pid == "local-shell" {
+        crate::plugins::local_shell::LocalShellAdapter::validate_params(&params)?;
+    }
     let id = if let Some(ref raw) = session_id {
         if uuid::Uuid::parse_str(raw).is_err() {
             return Err(format!("无效的 session_id 格式: {}", raw));
@@ -1888,7 +2159,13 @@ pub fn save_session_config(
     } else {
         uuid::Uuid::new_v4().to_string()
     };
-    let session_name = name.unwrap_or_else(|| format!("{} @ {}", pid, endpoint));
+    let session_name = match name.filter(|value| !value.trim().is_empty()) {
+        Some(name) => name,
+        None if pid == "local-shell" => {
+            crate::plugins::local_shell::LocalShellAdapter::default_session_name(&params)?
+        }
+        None => format!("{} @ {}", pid, endpoint),
+    };
 
     let now = chrono::Utc::now().timestamp_millis() as u64;
 
@@ -1916,6 +2193,11 @@ pub fn save_session_config(
     SessionStore::save_config_to_disk(&app, saved)?;
 
     Ok(id)
+}
+
+#[tauri::command]
+pub fn resolve_local_shell_session_name(params: Value) -> Result<String, String> {
+    crate::plugins::local_shell::LocalShellAdapter::default_session_name(&params)
 }
 
 /// 删除会话配置（从 sessions.json 中移除指定会话）
@@ -3174,6 +3456,7 @@ async fn connect_session_tftp(
             },
             Some(side_channel.clone()),
             None,
+            None,
         )?;
         let path = SessionStore::sessions_file_path(&app);
         let _ = store.save_to_disk(&path);
@@ -3621,6 +3904,7 @@ async fn connect_session_iperf(
                 id_override: session_id,
             },
             Some(side_channel.clone()),
+            None,
             None,
         )?;
         let path = SessionStore::sessions_file_path(&app);

@@ -7,11 +7,11 @@
 | 组件 | 版本要求 | 说明 |
 |------|---------|------|
 | **Node.js** | 22.x | 前端运行时与包管理器（CI 与发布工作流固定使用 Node 22） |
-| **Rust** | **1.98.0** | 由 `rust-toolchain.toml` 精确锁定，包含 clippy 与 rustfmt |
+| **Rust** | 仓库锁定版本 | 由根目录 `rust-toolchain.toml` 精确锁定稳定版，并声明 clippy 与 rustfmt |
 | **npm** | 随 Node.js 22 附带 | 依赖安装与脚本运行 |
 | **NSIS** | >= 3.0 | Windows 安装包构建工具（仅 Windows 构建需要） |
 
-> **注意**：请使用仓库锁定的 Rust 1.98.0。Windows 构建仍需要可用的 MSVC/Windows SDK 环境；Rust 工具链本身不替代这些系统组件。
+> **注意**：Rust 的精确版本只以 `rust-toolchain.toml` 为准。请通过 rustup 进入仓库后运行 Rust 命令，不要在本机另行选择其他版本。Windows 构建仍需要可用的 MSVC/Windows SDK 环境；Rust 工具链本身不替代这些系统组件。
 
 ---
 
@@ -40,30 +40,34 @@ npm --version
 winget install --id Rustlang.Rustup --source winget
 ```
 
-安装完成后，**重新打开终端**使环境变量生效。仓库根目录的 `rust-toolchain.toml` 会让 rustup 自动选择 1.98.0；也可以显式安装该工具链：
+安装完成后，**重新打开终端**使环境变量生效。进入仓库并首次运行 Rust 命令时，rustup 会按照根目录的 `rust-toolchain.toml` 安装或选择精确工具链及其组件：
 
 ```powershell
-rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+cd C:\path\to\TauTerm
+rustup show active-toolchain
+cargo --version
 ```
 
 > **下载慢？** 可设置国内镜像源加速：
 > ```powershell
 > $env:RUSTUP_DIST_SERVER = "https://mirrors.ustc.edu.cn/rust-static"
-> rustup toolchain install 1.98.0 --profile minimal --component clippy --component rustfmt
+> rustup show active-toolchain
 > ```
 
 验证安装：
 
 ```powershell
-rustc --version   # 应输出 rustc 1.98.0
-cargo --version   # 对应 1.98.0
+rustup show active-toolchain   # 应与 rust-toolchain.toml 一致
+rustc --version
+cargo --version
+npm run toolchain:check
 ```
 
 ### 3. 链接器
 
 **工具链组件**
 
-Rust 1.98.0 工具链包含仓库所需的 `rustfmt` 与 `clippy` 组件；具体链接器与 Windows SDK/MSVC 环境取决于目标平台。
+`rust-toolchain.toml` 声明仓库所需的 `rustfmt` 与 `clippy` 组件；具体链接器与 Windows SDK/MSVC 环境取决于目标平台。
 
 ---
 
@@ -146,12 +150,68 @@ source "$HOME/.cargo/env"
 # Windows (PowerShell)
 node --version   # v22.x
 npm --version
-rustc --version  # 1.98.0
-cargo --version  # 1.98.0
+rustup show active-toolchain
+rustc --version
+cargo --version
+npm run toolchain:check
 
 # Linux / macOS
 node --version && npm --version && rustc --version && cargo --version
 ```
+
+---
+
+## 常用命令
+
+`package.json` 的 `scripts` 是 npm 命令的实现来源；下表说明开发者与维护者会直接使用的入口。
+
+| 命令 | 用途 |
+|------|------|
+| `npm run tauri dev` | 启动完整 Tauri 开发环境（Vite + Rust 后端 + 桌面窗口） |
+| `npm run dev` | 仅启动 Vite 前端开发服务器 |
+| `npm run build` | 执行 TypeScript 检查并构建前端生产资源 |
+| `npm run preview` | 本地预览已经构建的前端资源 |
+| `npm run tauri:build` | Windows 使用开发打包配置生成 NSIS 安装包 |
+| `npm run tauri -- build` | 使用当前平台的标准 Tauri 配置构建安装包 |
+| `npm run build:release` | 更新并固定当前 stable Rust，运行完整质量检查，再构建当前平台的正式产物 |
+| `npm run toolchain:check` | 验证 `rust-toolchain.toml` 使用精确稳定版本并包含 clippy/rustfmt |
+| `npm run version:check` | 检查各处应用版本元数据是否一致 |
+| `npm run release:check -- X.Y.Z` | 检查指定发布版本、CHANGELOG 与 Release Notes |
+| `npm run version:sync` | 将 `package.json` 的版本同步到 Cargo 与 Tauri 配置 |
+| `npm run check-com0com` | 校验打包所需的 com0com 驱动文件 |
+| `npm run check-reserved-region` | 校验虚拟串口测试与产品保留区配置一致 |
+| `npm run check:icons` | 校验图标资产集合与基本视觉约束；追加 `-- --strict` 可将 advisory warning 视为失败 |
+| `npm run check:session-buffer` | 回归验证终端挂载前到达的启动数据按顺序保留且受内存上限约束 |
+| `npm run prompt:icon -- <key>` | 从语义注册表生成不可删减的图标提示词，并列出必须附带的三张家族参考图；`--json` 输出结构化结果 |
+| `npm run preview:icons` | 生成图标资产预览页 |
+
+`postversion` 是 npm 生命周期钩子，不需要直接执行；运行 `npm version ...` 时会自动调用版本同步脚本。完整发布顺序见 [RELEASING.md](RELEASING.md)。
+
+---
+
+## Windows 管理员 Shell 构建说明
+
+管理员 Local Shell 不增加独立 sidecar，也不使用 `TauTermService`。打包后的同一个 `tauterm.exe` 会在 Tauri 初始化前识别内部 helper 参数；用户选择“新建(以管理员身份)”时，普通权限主进程通过 Windows `runas` 启动该一次性 helper，由 helper 创建管理员 ConPTY，并通过一对随机本地逻辑单向命名管道分别传输命令和事件。server 句柄需要 duplex-capable 权限，以便连接后把非阻塞等待模式切回阻塞模式；helper 端仍只打开相应的读端或写端。因而标准 Tauri 开发构建和正式安装包会自动包含此能力，不需要额外复制文件或注册服务。
+
+该路径只能在 Windows 上进行完整人工冒烟验证：启动 Local Shell，右键父卡片选择“新建(以管理员身份)”，接受 UAC 后确认子卡片出现盾牌，并执行 `net session` 等需要管理员权限的只读命令；再验证拒绝 UAC 时不会创建子卡片。WSL 会话不显示该菜单。
+
+## 图标资产生成与验收
+
+图标不能直接根据自由文本生成并覆盖 `src/assets/icons/`。先在 `src/assets/icons/prompts.md` 注册语义，再运行：
+
+```powershell
+npm run prompt:icon -- <key>
+```
+
+生成时必须逐字使用输出提示词，并附带输出列出的三张固定家族参考图。候选图先保存在运行时图标目录之外并规范化为 256×256 RGBA；先执行候选检查，通过后才能替换正式资产：
+
+```powershell
+npm run check:icons -- --strict --candidate <key> <png-path>
+npm run check:icons -- --strict
+npm run preview:icons
+```
+
+第一项校验注册表、RGBA/透明边距、alpha 核心以及浅冰蓝调色板漂移；第二项生成深浅背景的 12/14/18/24px 对照板，并固定显示普通功能族和微型控制族参考图。机器检查不能替代语义与小尺寸人工验收。家族锚点、分类和调色板阈值集中在 `src/assets/icons/style-contract.json`，不要在生成任务中临时覆盖。
 
 ---
 
@@ -249,7 +309,7 @@ src-tauri/target/release/bundle/nsis/
 ### Linux / macOS
 
 ```bash
-npm run tauri build
+npm run tauri -- build
 ```
 
 构建产物位于 `src-tauri/target/release/bundle/`：`.deb` / `.rpm` / `.AppImage`（Linux），`.dmg` / `.app`（macOS）。

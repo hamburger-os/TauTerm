@@ -7,6 +7,7 @@ import ContextMenu from "../common/ContextMenu";
 import Icon from "../common/Icon";
 import type { ContextMenuItem } from "../common/ContextMenu";
 import type { TabInfo } from "../../context/SessionContext";
+import { pluginRegistry } from "../../core/plugin-registry";
 import styles from "./SessionSidebar.module.css";
 
 /** 树节点（扁平 TabInfo 渲染时推导；网络对端为 peerChildren，非标签页） */
@@ -24,11 +25,11 @@ interface SessionSidebarProps {
 }
 
 /**
- * 左侧会话列表侧边栏（树形结构，支持 SSH 多连接）。
+ * 左侧会话列表侧边栏（树形结构，支持协议能力驱动的多终端）。
  *
- * - 根节点（parentId === null）：Serial 或 SSH 父会话
- * - 子节点（parentId 非空）：SSH 子 channel
- * - SSH 父会话在 connected 状态下可展开/折叠子项
+ * - 根节点（parentId === null）：普通会话或多终端父配置
+ * - 子节点（parentId 非空）：SSH / Local Shell 终端实例
+ * - 支持 multi_session 的父会话可展开/折叠子项
  * - 选中父会话时自动路由到第一个子 channel
  */
 export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
@@ -229,6 +230,10 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     }
 
     const { state: sessionState, parentId, pluginId } = menu.session;
+    const capabilities = pluginRegistry.get(pluginId)?.manifest.capabilities ?? [];
+    const supportsMultiple = capabilities.includes("multi_session");
+    const supportsElevation = capabilities.includes("elevated_session")
+      && menu.session.params?.shell_kind !== "wsl";
 
     // 子 channel 菜单
     if (parentId) {
@@ -240,12 +245,14 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     // ── 父级 SSH / TFTP / Serial 会话 ──
     if (sessionState === "connected" || sessionState === "transferring") {
       const isLogging = loggingSessions.has(menu.session.id);
-      const isSsh = pluginId === "ssh";
       const isTftp = pluginId === "tftp";
       const isIperf = pluginId === "iperf";
       const items: ContextMenuItem[] = [];
-      if (isSsh) {
-        items.push({ id: "connect", label: t("contextMenu.openChannel") || "Open Channel", icon: "connection" });
+      if (supportsMultiple) {
+        items.push({ id: "connect", label: t("contextMenu.newTerminal") || "New Terminal", icon: "connection" });
+      }
+      if (supportsElevation) {
+        items.push({ id: "connect_elevated", label: t("contextMenu.connectAsAdministrator"), icon: "shield" });
       }
       items.push(
         { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect All", icon: "stop" },
@@ -267,6 +274,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       { id: "connect", label: t("contextMenu.connect") || "Connect", icon: "play" },
       { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "settings" },
     ];
+    if (supportsElevation) {
+      items.splice(1, 0, { id: "connect_elevated", label: t("contextMenu.connectAsAdministrator"), icon: "shield" });
+    }
     items.push({ id: "delete", label: t("contextMenu.delete") || "Delete", icon: "trash", danger: true });
     return items;
   }, [menu.session, menu.peer, state.networkPeers, t, loggingSessions]);
@@ -277,8 +287,10 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     switch (itemId) {
       case "connect": {
         const tab = state.tabs.find(t => t.id === sessionId);
-        if (tab?.pluginId === "ssh" && (tab?.state === "connected" || tab?.state === "transferring")) {
-          // SSH 已连接 → 打开新通道
+        const supportsMultiple = tab
+          ? pluginRegistry.get(tab.pluginId)?.manifest.capabilities.includes("multi_session")
+          : false;
+        if (supportsMultiple && (tab?.state === "connected" || tab?.state === "transferring")) {
           await openChannel(sessionId);
           // 自动展开父节点
           setExpandedIds(prev => new Set(prev).add(sessionId));
@@ -323,6 +335,30 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
             });
           } catch (_e) { /* ignored */ }
         }
+        break;
+      }
+      case "connect_elevated": {
+        const tab = state.tabs.find(t => t.id === sessionId);
+        const supportsElevation = tab
+          ? pluginRegistry.get(tab.pluginId)?.manifest.capabilities.includes("elevated_session")
+            && tab.params?.shell_kind !== "wsl"
+          : false;
+        if (!tab || !supportsElevation) break;
+        if (tab.state === "connected" || tab.state === "transferring") {
+          await openChannel(sessionId, true);
+        } else if (tab.state === "disconnected" && tab.params) {
+          await connect({
+            endpoint: tab.endpoint,
+            params: tab.params,
+            name: tab.name,
+            pluginId: tab.pluginId,
+            transferEnabled: false,
+            sendBarEnabled: tab.sendBarEnabled,
+            sessionId,
+            initialElevated: true,
+          });
+        }
+        setExpandedIds(prev => new Set(prev).add(sessionId));
         break;
       }
       case "configure":
@@ -400,10 +436,10 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           filteredTree.map(node => {
             const isExpanded = expandedIds.has(node.tab.id);
             const hasChildren = node.children.length > 0 || node.peerChildren.length > 0;
-            const isSsh = node.tab.pluginId === "ssh";
             const isNetwork = node.tab.pluginId === "network";
-            const isConnected = node.tab.state === "connected" || node.tab.state === "transferring";
-            const canExpand = isConnected && hasChildren && (isSsh || isNetwork);
+            const supportsMultiple = pluginRegistry
+              .get(node.tab.pluginId)?.manifest.capabilities.includes("multi_session") ?? false;
+            const canExpand = hasChildren && (supportsMultiple || isNetwork);
             // 网络 client 是单会话：本端地址并入端点行（连接后本机 ip:port，与服务端
             // 对端条目对应），保持与其余会话卡片一致的单行高度。
             // TCP client 本端地址来自对端条目；UDP client 无对端，来自 networkLocalAddrs。
@@ -414,6 +450,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                   ? state.networkLocalAddrs[node.tab.id]
                   : state.networkPeers[node.tab.id]?.[0]?.localAddr)
               : undefined;
+            const parentEndpoint = clientLocalAddr
+              ? `${node.tab.endpoint} · ${clientLocalAddr}`
+              : node.tab.endpoint;
 
             return (
               <div key={node.tab.id}>
@@ -446,13 +485,13 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                       }
                       size={10}
                     />
-                    <div>
-                      <div className={styles.itemName}>{node.tab.name}</div>
+                    <div className={styles.itemText}>
+                      <div className={styles.itemName} title={node.tab.name}>{node.tab.name}</div>
                       <div
                         className={styles.itemEndpoint}
-                        title={clientLocalAddr ? `${node.tab.endpoint} · ${clientLocalAddr}` : node.tab.endpoint}
+                        title={parentEndpoint}
                       >
-                        {clientLocalAddr ? `${node.tab.endpoint} · ${clientLocalAddr}` : node.tab.endpoint}
+                        {parentEndpoint}
                       </div>
                     </div>
                   </div>
@@ -487,9 +526,14 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                             }
                             size={8}
                           />
-                          <div>
-                            <div className={styles.itemName}>{child.name}</div>
-                            <div className={styles.itemEndpoint}>{child.endpoint}</div>
+                          <div className={styles.itemText}>
+                            <div className={styles.childNameRow}>
+                              <div className={styles.itemName} title={child.name}>{child.name}</div>
+                              {child.elevated && (
+                                <Icon name="shield" size="xs" label={t("localShell.administrator")} />
+                              )}
+                            </div>
+                            <div className={styles.itemEndpoint} title={child.endpoint}>{child.endpoint}</div>
                           </div>
                         </div>
                         {state.activeTabId === child.id && (
@@ -516,9 +560,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                             name={p.state === "connected" ? "status-connected" : "status-disconnected"}
                             size={8}
                           />
-                          <div>
-                            <div className={styles.itemName}>{p.name}</div>
-                            <div className={styles.itemEndpoint}>{p.addr}</div>
+                          <div className={styles.itemText}>
+                            <div className={styles.itemName} title={p.name}>{p.name}</div>
+                            <div className={styles.itemEndpoint} title={p.addr}>{p.addr}</div>
                           </div>
                         </div>
                         {state.selectedNetworkPeer[node.tab.id] === p.peerId && (

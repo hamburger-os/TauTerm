@@ -70,6 +70,8 @@
   cursor: pointer;
   transition: all var(--transition-normal);
   margin-bottom: 4px;
+  min-width: 0;
+  overflow: hidden;
   /* 常驻淡边框：未选中卡片也有轮廓，多会话时分隔可辨 */
   border: 1px solid var(--glass-border-default);
 }
@@ -91,6 +93,14 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.itemText {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .itemName {
@@ -99,6 +109,17 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.childNameRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.childNameRow .itemName {
+  min-width: 0;
 }
 
 .itemEndpoint {

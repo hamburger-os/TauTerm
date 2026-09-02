@@ -6,6 +6,7 @@ import ErrorBoundary from "./components/common/ErrorBoundary";
 import "./plugins/serial";
 import "./plugins/ssh";
 import "./plugins/telnet";
+import "./plugins/local-shell";
 import "./plugins/tftp";
 import "./plugins/iperf";
 import "./plugins/network";

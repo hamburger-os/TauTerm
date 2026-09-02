@@ -61,6 +61,10 @@ See the [documentation index](docs/README.md) for the current product strategy, 
 
 One authenticated SSH session keeps the terminal, remote files and remote journald workflows together. The SFTP file manager supports browsing, upload/download, rename, batch delete and remote file inspection.
 
+### Local Shell
+
+Open a native PTY-backed shell inside the same terminal workspace on Windows, Linux or macOS. TauTerm can auto-detect the platform shell, or launch a custom executable with an explicit argument list and working directory. On Windows, the selector discovers installed PowerShell, CMD, WSL distributions, Git Bash, MSYS2/Cygwin Bash and NuShell entries; WSL sessions use Linux working-directory semantics and default to `~`. One saved configuration can host multiple independent terminals, using the same parent/child interaction model as SSH. Windows native shells can also open an elevated child with `New (as Administrator)`; TauTerm keeps its main process unelevated and marks only that child with a shield. Session cards show `Shell @ <type>` and the resolved starting path directly. Local Shell keeps terminal search, resize and logging, while deliberately omitting remote-only transfer and protocol tools.
+
 ### Serial and embedded development
 
 ![RT-Thread serial terminal with file transfer and protocol tools](docs/assets/serial-rtthread-dual-en.png)
@@ -101,6 +105,7 @@ Run TCP client/server and UDP client/server workflows in the same app, including
 ### Everyday workflow
 
 - Unified tabbed sessions and offline connection profiles.
+- Native Local Shell sessions with shell/WSL discovery, multiple terminals per configuration, optional per-terminal Windows elevation, custom arguments and working directory.
 - Searchable terminal, command palette and fully rebindable shortcuts.
 - Session logging with rotation and expiry cleanup.
 - zh-CN / en-US runtime language switching.
@@ -121,7 +126,7 @@ TFTP configurations that listen beyond the local machine while allowing remote w
 | **Telnet** | ✅ | terminal | RFC 854 |
 | **iPerf2 / iPerf3** | ✅ | custom | network benchmark |
 | **Network Debug** (TCP/UDP) | ✅ | custom | client + server |
-| **Local Shell** (PTY) | 📋 planned | terminal | Foundation |
+| **Local Shell** (PTY) | ✅ | terminal | native PTY |
 | **TRDP** | 📋 planned | industrial analysis | first-party strategic protocol |
 
 Future protocols are not added to the core roadmap simply to grow this table. Where possible, additional protocols should use the plugin/extension model unless they create clear workflow or industrial value.
@@ -173,7 +178,7 @@ TauTerm's roadmap is organized around **capabilities**, not around collecting pr
 
 | Stage | Outcome |
 |---|---|
-| **Foundation** | Daily-driver quality: Local Shell, split panes, SSH tunnels/jump hosts, Workspace foundations, cross-platform stability and performance |
+| **Foundation** | Daily-driver quality: split panes, SSH tunnels/jump hosts, Workspace foundations, cross-platform stability and performance |
 | **Engineering Memory** | Structured Recording/Replay, markers, search and a Unified Timeline across sessions |
 | **Signal Lab** | High-performance real-time plotting, FFT/statistics, FireWater/JustFloat compatibility and long-running numerical-data workflows |
 | **Data Intelligence** | Framing/decoder SDK, Data Lens, reusable fields, filters, visualizations and automation triggers |

@@ -22,6 +22,11 @@ mod security;
 mod transfer;
 pub mod virtual_port;
 
+#[cfg(windows)]
+pub fn maybe_run_elevated_shell_helper() -> bool {
+    channel::elevated_shell_channel::maybe_run_helper()
+}
+
 use kernel::config_store::ConfigStore;
 use kernel::i18n_engine::I18nEngine;
 use kernel::ipc_bridge::IpcBridge;
@@ -33,6 +38,7 @@ use kernel::tab_host::TabHost;
 use kernel::theme_engine::ThemeEngine;
 use kernel::window_manager::WindowManager;
 use plugins::iperf::IperfAdapter;
+use plugins::local_shell::LocalShellAdapter;
 use plugins::network::NetworkAdapter;
 use plugins::serial::SerialAdapter;
 use plugins::ssh::HostKeyVerifier;
@@ -62,6 +68,8 @@ pub struct AppState {
     pub tftp_adapter: TftpAdapter,
     /// Telnet 协议适配器
     pub telnet_adapter: TelnetAdapter,
+    /// 本地 PTY Shell 适配器
+    pub local_shell_adapter: LocalShellAdapter,
     /// iperf 协议适配器
     pub iperf_adapter: IperfAdapter,
     /// 网络调试协议适配器（TCP/UDP 调试会话）
@@ -144,6 +152,17 @@ pub fn run() {
             state: kernel::plugin_host::PluginState::Ready,
         })
         .expect("注册 Telnet 插件失败");
+    plugin_host
+        .register_plugin(kernel::plugin_host::PluginDescriptor {
+            id: "local-shell".into(),
+            name: "Local Shell".into(),
+            version: "1.0.0".into(),
+            category: "terminal".into(),
+            content_type: "terminal".into(),
+            capabilities: vec!["connection".into(), "endpoint_discovery".into()],
+            state: kernel::plugin_host::PluginState::Ready,
+        })
+        .expect("注册 Local Shell 插件失败");
     plugin_host
         .register_plugin(kernel::plugin_host::PluginDescriptor {
             id: "tftp".into(),
@@ -393,6 +412,7 @@ pub fn run() {
             ssh_adapter: SshAdapter::new(),
             tftp_adapter: TftpAdapter::new(),
             telnet_adapter: TelnetAdapter::new(),
+            local_shell_adapter: LocalShellAdapter::new(),
             iperf_adapter: IperfAdapter::new(),
             network_adapter: NetworkAdapter::new(),
             host_key_verifier: HostKeyVerifier::new(),
@@ -434,6 +454,7 @@ pub fn run() {
             commands::save_sessions,
             commands::load_sessions,
             commands::save_session_config,
+            commands::resolve_local_shell_session_name,
             commands::delete_session_config,
             commands::file_transfer_send,
             commands::file_transfer_receive,

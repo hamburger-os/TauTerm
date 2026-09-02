@@ -164,6 +164,13 @@ body {
   border-radius: var(--radius-md);
 }
 
+/* 异常断开等需要保留现场的内联告警横幅。 */
+.liquid-glass-alert-banner {
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-error) 28%, transparent);
+  color: var(--color-error);
+}
+
 /* ==========================================
    5. 液态玻璃按钮
    ========================================== */

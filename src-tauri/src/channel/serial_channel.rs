@@ -3,7 +3,7 @@
 //! 包装 `Box<dyn SerialPort>` 实现 `Channel` trait。
 //! 支持端口所有权交出（用于 YModem 等 Inline 传输策略）。
 
-use crate::channel::{error::ChannelError, Channel};
+use crate::channel::{error::ChannelError, Channel, DisconnectInfo};
 use std::any::Any;
 use std::io::{Read, Write};
 use std::time::Duration;
@@ -66,6 +66,14 @@ impl Channel for SerialChannel {
         self.port_mut()
             .set_timeout(dur)
             .map_err(|e| ChannelError::Io(e.into()))
+    }
+
+    fn disconnect_info(&self, fallback: DisconnectInfo) -> DisconnectInfo {
+        if self.connected {
+            fallback
+        } else {
+            DisconnectInfo::device_removed(fallback.reason)
+        }
     }
 
     /// 交出底层串口的所有权（用于 YModem 等 Inline 传输策略）

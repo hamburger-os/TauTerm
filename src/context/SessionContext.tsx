@@ -3,10 +3,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { pluginRegistry } from "../core/plugin-registry";
 import { releaseSessionStore } from "../hooks/usePluginSessionStore";
+import i18n from "../i18n";
 
 // ── Types ───────────────────────────────────────────
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "transferring";
+
+export interface DisconnectInfo {
+  kind: "user_requested" | "remote_eof" | "io_error" | "device_removed" | "process_exited";
+  reason: string;
+  exit_code?: number | null;
+  retain_terminal: boolean;
+}
 
 /** I/O 运行时统计 */
 export interface SessionStats {
@@ -32,6 +40,8 @@ export interface TabInfo {
   stats: SessionStats;
   /** 连接建立时的时间戳 (Date.now()) */
   connectedAt: number | null;
+  /** 异常断开时保留终端现场所需的结构化原因；仅驻留于当前进程内。 */
+  disconnectInfo?: DisconnectInfo;
   /** 是否启用文件传输子系统（默认 true） */
   transferEnabled?: boolean;
   /** 文件传输协议（ymodem / xmodem / zmodem） */
@@ -64,6 +74,10 @@ export interface TabInfo {
   parentId?: string | null;
   /** 子 channel 在父会话中的自动编号（从 0 开始） */
   channelIndex?: number;
+  /** Local Shell 子会话是否经 Windows UAC helper 启动。 */
+  elevated?: boolean;
+  /** 根会话是否是可创建多个子终端的容器。 */
+  isContainer?: boolean;
 }
 
 /** connect() 参数对象 */
@@ -75,6 +89,7 @@ export interface ConnectOptions {
   transferEnabled?: boolean;
   transferProtocol?: string;
   sendBarEnabled?: boolean;
+  initialElevated?: boolean;
   journaldEnabled?: boolean;
   sessionId?: string;
 }
@@ -92,6 +107,7 @@ export interface EndpointInfo {
   name: string;
   description: string;
   connection_type: string;
+  params?: Record<string, unknown>;
 }
 
 /** 网络调试会话的对端条目（左侧会话树 / 视图共用） */
@@ -145,6 +161,7 @@ type SessionAction =
   | { type: "SET_ENDPOINTS"; endpoints: EndpointInfo[] }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
+  | { type: "SET_TAB_DISCONNECTED"; id: string; info?: DisconnectInfo }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
   | { type: "UPDATE_TAB_ECHO"; id: string; localEcho: boolean }
   | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean; fileServiceEnabled?: boolean; fileServiceProtocol?: string }
@@ -187,6 +204,13 @@ function decodeBase64(b64: string): Uint8Array {
   return bytes;
 }
 
+function localizeSessionError(error: unknown): string {
+  const message = String(error);
+  return message.includes("User cancelled the UAC elevation prompt")
+    ? i18n.t("localShell.elevationCancelled")
+    : message;
+}
+
 const initialState: SessionState = {
   tabs: [],
   activeTabId: null,
@@ -211,7 +235,10 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       return {
         ...state,
         tabs: [...state.tabs, action.tab],
-        activeTabId: action.tab.id,
+        activeTabId: action.tab.isContainer
+          && state.tabs.some(tab => tab.parentId === action.tab.id)
+          ? state.activeTabId
+          : action.tab.id,
       };
     }
     case "REMOVE_TAB": {
@@ -251,7 +278,16 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
     case "SET_TAB_STATE":
       return {
         ...state,
-        tabs: state.tabs.map(t => t.id === action.id ? { ...t, state: action.state } : t),
+        tabs: state.tabs.map(t => t.id === action.id
+          ? { ...t, state: action.state, disconnectInfo: undefined }
+          : t),
+      };
+    case "SET_TAB_DISCONNECTED":
+      return {
+        ...state,
+        tabs: state.tabs.map(t => t.id === action.id
+          ? { ...t, state: "disconnected", disconnectInfo: action.info }
+          : t),
       };
     case "UPDATE_TAB_STATS":
       return {
@@ -452,7 +488,7 @@ interface SessionContextValue {
   renameTab: (sessionId: string, name: string) => Promise<void>;
   reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string, journaldEnabled?: boolean) => Promise<void>;
   /** 在已有 SSH 会话上打开新 channel */
-  openChannel: (parentSessionId: string) => Promise<string | null>;
+  openChannel: (parentSessionId: string, elevated?: boolean) => Promise<string | null>;
   /** 关闭单个子 channel */
   closeChannel: (channelId: string, parentId: string) => Promise<void>;
   getTabs: () => Promise<void>;
@@ -576,8 +612,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const refreshEndpoints = useCallback(async () => {
     try {
-      const list = await invoke<EndpointInfo[]>("enumerate_endpoints");
-      dispatch({ type: "SET_ENDPOINTS", endpoints: list });
+      const pluginIds = pluginRegistry
+        .getByCapability("endpoint_discovery")
+        .map(plugin => plugin.manifest.id);
+      const results = await Promise.allSettled(
+        pluginIds.map(pluginId => invoke<EndpointInfo[]>("enumerate_endpoints", { pluginId }))
+      );
+      const endpoints = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
+      dispatch({ type: "SET_ENDPOINTS", endpoints });
       dispatch({ type: "SET_ERROR", error: null });
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `${e}` });
@@ -585,7 +627,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const connect = useCallback(async (opts: ConnectOptions) => {
-    const { endpoint, params, name, pluginId, transferEnabled, transferProtocol, sendBarEnabled, journaldEnabled, sessionId } = opts;
+    const { endpoint, params, name, pluginId, transferEnabled, transferProtocol, sendBarEnabled, journaldEnabled, sessionId, initialElevated } = opts;
     dispatch({ type: "SET_ERROR", error: null });
     // 如果已知 sessionId（已创建离线配置），立即将 tab 状态设为 connecting
     if (sessionId) {
@@ -604,11 +646,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sendBarEnabled: sendBarEnabled ?? true,
         journaldEnabled: journaldEnabled ?? false,
         sessionId: sessionId || null,
+        initialElevated: initialElevated ?? false,
 
         },});
       return sid;
     } catch (e) {
-      dispatch({ type: "SET_ERROR", error: `连接失败: ${e}` });
+      dispatch({ type: "SET_ERROR", error: `${i18n.t("localShell.connectFailed")}: ${localizeSessionError(e)}` });
       // 连接失败时恢复为 disconnected 状态
       if (sessionId) {
         dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
@@ -626,7 +669,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const pluginName = (pluginRegistry.get(pid)?.manifest.name) || pid.toUpperCase();
       // Bug fix: 始终将计算后的 effectiveName 传给后端，避免前后端大小写不一致
       // 前端用 manifest.name ("SSH")，后端 fallback 用 pid ("ssh")，不传递会导致闪烁
-      const effectiveName = name || `${pluginName} @ ${endpoint}`;
+      const effectiveName = name || (pid === "local-shell"
+        ? await invoke<string>("resolve_local_shell_session_name", { params })
+        : `${pluginName} @ ${endpoint}`);
       const sessionId = await invoke<string>("save_session_config", {
         request: {
         endpoint, params,
@@ -868,27 +913,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const openChannel = useCallback(async (parentSessionId: string): Promise<string | null> => {
-    // 通道名称由后端 create_ssh_sub_channel 按 channel_index + 1 自动生成 "Channel N"
+  const openChannel = useCallback(async (parentSessionId: string, elevated = false): Promise<string | null> => {
     try {
       const channelId = await invoke<string>("open_channel", {
         sessionId: parentSessionId,
+        elevated,
       });
       return channelId;
     } catch (e) {
-      dispatch({ type: "SET_ERROR", error: `创建通道失败: ${e}` });
+      dispatch({ type: "SET_ERROR", error: `${i18n.t("localShell.openFailed")}: ${localizeSessionError(e)}` });
       return null;
     }
   }, []);
 
   const closeChannel = useCallback(async (channelId: string, parentId: string) => {
+    const resetCounter = !tabsRef.current.some(tab => tab.parentId === parentId && tab.id !== channelId);
+    // 子会话关闭是用户明确动作：先从 UI 移除，避免等待 PTY/helper 回收时看起来“没反应”。
+    dispatch({ type: "REMOVE_CHILD", id: channelId, parentId });
     try {
-      await invoke("close_channel", { sessionId: channelId });
-      dispatch({ type: "REMOVE_CHILD", id: channelId, parentId });
+      await invoke("close_channel", { sessionId: channelId, parentId, resetCounter });
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `关闭终端失败: ${e}` });
+      await getTabs();
     }
-  }, []);
+  }, [getTabs]);
 
   const clearError = useCallback(() => dispatch({ type: "SET_ERROR", error: null }), []);
 
@@ -1130,7 +1178,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1b(); return; }
       unlisteners.push(u1b);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_endpoints?: Array<{ bridge_path: string; external_path: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; is_container?: boolean; local_addr?: string | null }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_endpoints?: Array<{ bridge_path: string; external_path: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; elevated?: boolean; is_container?: boolean; local_addr?: string | null }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
@@ -1173,8 +1221,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           } else if (parentId) {
             // 子 channel 连接成功（connect_session_ssh 的 channel-0 或 open_channel）
             // tab 不存在时直接 ADD_TAB，避免 SET_TAB_STATE 对不存在的 ID 无操作
-            const chIdx = (event.payload.channel_index ?? 0) + 1;
-            const chName = `Channel ${chIdx}`;
+            const chName = event.payload.name;
+            dispatch({ type: "SET_TAB_STATE", id: parentId, state: "connected" });
             dispatch({
               type: "ADD_TAB",
               tab: {
@@ -1192,15 +1240,34 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 sendBarEnabled: event.payload.send_bar_enabled ?? true,
                 parentId,
                 channelIndex: event.payload.channel_index,
+                elevated: event.payload.elevated ?? false,
                 fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean) ?? false,
                 fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
                 journaldEnabled: event.payload.journald_enabled ?? (event.payload.params?.journald_enabled as boolean) ?? false,
               },
             });
           } else if (isContainer) {
-            // SSH 容器会话 — 不创建独立的根 tab。实际的终端 tab
-            // 由后续的 channel-0 session-connected 事件（带 parentId）创建。
-            // 仅在重连场景（tab 已存在）时更新状态。
+            dispatch({
+              type: "ADD_TAB",
+              tab: {
+                id: sid,
+                name: event.payload.name,
+                connection_type: event.payload.connection_type,
+                endpoint: event.payload.endpoint,
+                state: "connected",
+                pluginId: event.payload.plugin_id || event.payload.connection_type,
+                params: event.payload.params,
+                stats: { txBytes: 0, rxBytes: 0 },
+                connectedAt: event.payload.connected_at ?? Date.now(),
+                transferEnabled: event.payload.transfer_enabled ?? false,
+                transferProtocol: event.payload.transfer_protocol,
+                sendBarEnabled: event.payload.send_bar_enabled ?? true,
+                isContainer: true,
+                fileServiceEnabled: event.payload.file_service_enabled ?? false,
+                fileServiceProtocol: event.payload.file_service_protocol,
+                journaldEnabled: event.payload.journald_enabled ?? false,
+              },
+            });
           } else {
             // 真正的新根会话：添加 tab
             const pendingEcho = pendingEchoRef.current.get(sid);
@@ -1278,8 +1345,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       unlisteners.push(u2d);
 
       // 子通道关闭事件（后端 on_disconnect 或 close_channel 命令触发）
-      const u2e = await listen<{ channel_id: string; parent_id: string }>("channel-closed", (event) => {
-        dispatch({ type: "REMOVE_CHILD", id: event.payload.channel_id, parentId: event.payload.parent_id });
+      const u2e = await listen<{ channel_id: string; parent_id: string; disconnect_info?: DisconnectInfo }>("channel-closed", (event) => {
+        if (event.payload.disconnect_info?.retain_terminal) {
+          dispatch({ type: "SET_TAB_DISCONNECTED", id: event.payload.channel_id, info: event.payload.disconnect_info });
+        } else {
+          dispatch({ type: "REMOVE_CHILD", id: event.payload.channel_id, parentId: event.payload.parent_id });
+        }
       });
       if (cancelled) { u2e(); return; }
       unlisteners.push(u2e);
@@ -1332,10 +1403,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2g(); return; }
       unlisteners.push(u2g);
 
-      const u3 = await listen<{ session_id: string; reason?: string }>("session-disconnected", (event) => {
+      const u3 = await listen<{ session_id: string; reason?: string; disconnect_info?: DisconnectInfo }>("session-disconnected", (event) => {
         const reason = event.payload.reason;
         const sid = event.payload.session_id;
-        dispatch({ type: "SET_TAB_STATE", id: sid, state: "disconnected" });
+        dispatch({ type: "SET_TAB_DISCONNECTED", id: sid, info: event.payload.disconnect_info });
         // 网络调试容器断开：级联清理对端注册（后端通道已随容器关闭）
         const peers = stateRef.current.networkPeers[sid];
         if (peers) {
@@ -1351,7 +1422,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // 重置 Telnet 回显状态（重连时重新协商）
         dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: false });
         // 父 session 断开时级联移除所有子 channel
-        dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sid });
+        if (!event.payload.disconnect_info?.retain_terminal) {
+          dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sid });
+        }
         // 清除虚拟端口对信息（端口已在后端销毁）
         dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: [] });
         disconnectCallbackRef.current?.(sid, reason);

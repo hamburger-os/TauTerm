@@ -82,6 +82,8 @@ pub trait Channel: Read + Write + Send {
     fn is_connected(&self) -> bool;
     fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError>;
     fn try_handoff(&mut self) -> Option<Box<dyn Any>>;  // Inline 传输所有权交出
+    fn shutdown(&mut self) -> Result<(), ChannelError>; // 协议级有序关闭
+    fn disconnect_info(&self, fallback: DisconnectInfo) -> DisconnectInfo;
 }
 
 /// 异步 I/O 通道 —— SSH 等 tokio 协议实现此 trait（由 spawn_async_io_loop 驱动）
@@ -94,12 +96,18 @@ pub trait AsyncChannel: Send {
     fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError>;
     async fn resize_pty(&mut self, cols: u32, rows: u32) -> Result<(), ChannelError>;
     fn try_handoff(&mut self) -> Option<Box<dyn Any>>;  // 默认 None（SSH 用 SideChannel 策略）
+    async fn shutdown(&mut self) -> Result<(), ChannelError>;
+    fn disconnect_info(&self, fallback: DisconnectInfo) -> DisconnectInfo;
 }
 ```
 
 `ProtocolConnection` 返回 `ChannelKind::Sync(Box<dyn Channel>)` 或 `ChannelKind::Async(Box<dyn AsyncChannel>)`，
 并可携带 `side_channel: Option<Arc<dyn SideChannel>>`（如 SSH 的 `SshSideChannel` 持有 russh Handle + SFTP 缓存）。
 当 `channel` 为 `None` 时，`SessionStore` 使用容器会话模式（无终端 I/O loop），适用于纯侧通道协议（如 TFTP）。
+
+需要“一个配置、多终端”的协议另行提供 `channel_factory: Option<Arc<dyn SessionChannelFactory>>`。工厂只暴露 `open_channel(ChannelOpenMode) -> ChannelKind`、能力判断和子会话名称前缀；`SessionStore` 统一负责父容器、子会话注册、32 个活动终端上限、单调编号、I/O/统计、异常现场保留与最后一个活动子会话退出后的父状态。SSH 工厂在同一条已认证连接上创建新的远端 PTY，Local Shell 工厂按已解析配置创建新的独立本地 PTY。管理员模式是单个子会话的运行时属性，不写回父配置。
+
+`EndpointInfo` 除稳定的 `name` 与用户可读的 `description` 外，可携带可选 `params` 配置预设。内核只负责透传；插件连接表单决定如何应用。Local Shell 用它把 WSL 发行版、受管理启动参数和用户参数分离，Serial 等简单端点保持 `params = None`。
 
 ### 前端注册 API
 
@@ -154,9 +162,25 @@ stateDiagram-v2
 
 | 模式 | 运行时 | 适用协议 | 特点 |
 |------|--------|---------|------|
-| **Sync** | `std::thread` | Serial, Telnet | 低延迟，无 runtime 开销（`serialport`/`telnet` crate 阻塞式 API + Inline 传输 `try_handoff` 模式） |
+| **Sync** | `std::thread` | Serial, Telnet, Local Shell | 低延迟，无 runtime 开销（阻塞式通道 API；串口支持 Inline 传输 `try_handoff`） |
 | **Async** | `tokio` | SSH | 高并发，线程安全（russh 纯 Rust async SSH 库，SFTP 与终端 I/O 并发复用同一会话） |
 | **Headless** | 无 I/O loop | TFTP, iPerf | 容器会话模式 — `ProtocolConnection.channel = None`，不创建 I/O loop/StatsCollector/CommHandle，所有数据传输通过 `SideChannel` 在独立线程中完成 |
+
+### Local Shell PTY 与断连语义
+
+Local Shell 是标准 `ProtocolAdapter + ChannelKind::Sync` 插件，不在前端直接启动子进程。后端使用 `portable-pty` 创建平台原生 PTY：Windows 走 ConPTY，Linux/macOS 走 Unix PTY。用户配置包含 Shell 模式（自动/已探测/自定义）、可执行文件、独立用户参数数组和工作目录；默认工作目录为用户主目录。Windows 的“自动”严格使用原生 `pwsh → powershell → cmd`，不会隐式进入 WSL；选择器另行发现 WSL 默认/各发行版、Git Bash、MSYS2/Cygwin Bash 与 NuShell，并按原生 → WSL → 开发环境排序。Unix 自动顺序为 `$SHELL → zsh → bash → sh`。进程环境固定补充 `TERM=xterm-256color` 与 `COLORTERM=truecolor`。
+
+WSL 预设将发行版参数和 `--cd` 作为受管理参数，用户参数独立追加。空目录解析为 Linux 用户主目录 `~`，非空目录只接受绝对 Linux 路径或 `~/...`；保存阶段验证语法，连接阶段通过目标发行版验证目录存在性。WSL 命令输出按 UTF-8/UTF-16LE 自适应解码，发行版枚举失败不会阻断其他 Shell 的发现。
+
+Local Shell 在保存会话配置时将空工作目录解析为实际用户主目录（WSL 为 `~`），并将该规范化目录同时保存为通用会话 `endpoint`。侧栏只渲染所有协议共有的 `name + endpoint`，不解析 Local Shell 的 `cwd`、Shell 类型或可执行文件。
+
+Local Shell 与 SSH 统一采用“已保存配置父容器 + 运行时终端子会话”。父卡片默认名为 `Shell @ <解析后的 Shell 类型>`，用户自定义名称不被覆盖；子卡片按 `Shell N` 编号。父卡片进入第一个子会话，每个子会话拥有独立 PTY、统计、退出状态和可选管理员标记。最多同时存在 32 个活动子会话；编号在仍有活动或异常现场卡片时保持单调，全部子卡片清除后才重置。正常退出移除子卡片，异常退出保留终端现场；最后一个活动子会话结束时父运行时断开，但保存的配置仍可重新连接。
+
+Windows 管理员终端不会提升 TauTerm 主进程，也不会复用面向 com0com 的 LocalSystem 服务。用户显式选择“新建(以管理员身份)”后，当前 `tauterm.exe` 通过 `runas` 以早期 helper 模式重新进入；每个 helper 只承载一个 ConPTY，并使用一对随机、拒绝远程客户端的本地逻辑单向命名管道：命令管道承载 `config/write/resize/shutdown`，事件管道承载 `data/exit/error`。分离同步读写方向可避免等待终端输出时阻塞输入和关闭命令。server 句柄以 `PIPE_ACCESS_DUPLEX` 创建，仅用于取得 `SetNamedPipeHandleState` 从 `PIPE_NOWAIT` 切回 `PIPE_WAIT` 所需的写属性权限；helper 端仍只按方向申请 `GENERIC_READ` 或 `GENERIC_WRITE`，协议不允许反向帧。helper 校验参数边界，连接具有 10 秒超时，GUI 或任一管道关闭时会关闭完整 PTY 进程树。UAC 取消不会创建子会话；WSL 和非 Windows 平台不暴露管理员入口。
+
+PTY 的阻塞读取由专用线程隔离，再通过有界通道送入同步 I/O loop，以保持关闭信号和尺寸调整可响应。显式断开先关闭写端并等待子进程；超时后终止进程组（Unix）或关闭带 `KILL_ON_JOB_CLOSE` 的 Job Object（Windows），避免遗留子进程。
+
+所有终端通道通过 `DisconnectInfo` 统一上报 `kind`、`reason`、可选 `exit_code` 与 `retain_terminal`。用户主动断开和 Local Shell 正常退出会清空终端；远端 EOF、I/O 错误、设备移除或非零进程退出保留当前终端缓冲区并显示原因。保留状态只存在于当前进程内，重新连接、删除会话或退出应用都会清除。
 
 ### 容器会话与对端通道（网络调试）
 
@@ -240,6 +264,7 @@ graph LR
 | 安全存储 | OS keyring；不可用时 Argon2id + AES-256-GCM vault |
 | 自动更新 | tauri-plugin-updater + tauri-plugin-process |
 | 网络协议 | russh (纯 Rust async SSH) + russh-sftp + telnet (RFC 854) + tftpd + riperf3（vendored fork，iperf3，见 src-tauri/vendor/riperf3/VENDOR-NOTES.md）|
+| 本地终端 | portable-pty（Windows ConPTY / Unix PTY） |
 | 脚本引擎 | mlua 0.10 (Lua 5.4, vendored) |
 | 正则引擎 | regex 1 |
 
@@ -271,9 +296,11 @@ TauTerm/
 │   │   └── script_engine/      # Lua 5.4 脚本运行时（VM + 代码生成 + API 注入 + 沙箱）
 │   │
 │   ├── channel/                # I/O 通道抽象层
-│   │   ├── mod.rs              # Channel / AsyncChannel trait + IoStrategy 枚举
+│   │   ├── mod.rs              # Channel / AsyncChannel trait + IoStrategy + DisconnectInfo
 │   │   ├── serial_channel.rs   # 串口 Channel 实现（Sync 路径，serialport 阻塞 API）
 │   │   ├── ssh_channel.rs      # SSH AsyncChannel 实现（russh::Channel<client::Msg>，PTY 窗口调整）
+│   │   ├── local_shell_channel.rs # 本地进程 PTY Channel（进程组/Job Object 生命周期）
+│   │   ├── elevated_shell_channel.rs # Windows 一次性管理员 helper + 命名管道桥接
 │   │   ├── io_loop.rs          # 同步 I/O 循环引擎（spawn_sync_io_loop）
 │   │   ├── async_io_loop.rs    # 异步 I/O 循环引擎（spawn_async_io_loop，tokio task）
 │   │   ├── serial_comm.rs      # CommHandle 串口适配实现
@@ -309,10 +336,11 @@ TauTerm/
 │       ├── serial/             # 串口插件（ProtocolAdapter + Channel）
 │       ├── ssh/                # SSH 插件（ProtocolAdapter + SshSideChannel，密码/密钥认证，SFTP）
 │       ├── telnet/             # Telnet 插件（ProtocolAdapter + Channel，Sync I/O，RFC 854 协商）
+│       ├── local_shell/         # 本地 Shell 插件（ProtocolAdapter + 原生 PTY，Sync I/O）
 │       ├── tftp/               # TFTP 插件（ProtocolAdapter + TftpSideChannel，容器模式，服务端+客户端）
 │       ├── iperf/              # iPerf 插件（iperf2 自研协议引擎 + iperf3 vendored riperf3，容器模式，服务端+客户端）
 │       └── network/            # 网络调试插件（ProtocolAdapter + NetworkSideChannel，容器模式，TCP/UDP 全角色）
-│       # TRDP / Shell / FTP — 规划中
+│       # TRDP / FTP — 规划中
 │
 ├── src/                        # React 前端
 │   ├── core/                   # 内核前端 API
@@ -344,6 +372,7 @@ TauTerm/
 │   │   ├── types.ts            # SessionProfile 类型定义
 │   │   ├── serial.ts          # 串口 Profile
 │   │   ├── ssh.ts             # SSH Profile
+│   │   ├── localShell.ts      # Local Shell Profile
 │   │   └── tftp.ts            # TFTP Profile
 │   │
 │   ├── styles/                 # 全局样式
@@ -354,6 +383,7 @@ TauTerm/
 │       ├── serial/             # SerialConnectForm, 工具栏, 状态栏
 │       ├── ssh/                # SSH 插件清单、区域设置
 │       ├── telnet/             # Telnet 插件清单（manifest + locales）
+│       ├── local-shell/        # Local Shell 清单与连接配置表单
 │       └── tftp/               # TFTP 插件清单（customView 注册）
 │       └── iperf/              # iPerf 插件清单（customView 注册）
 │       # FTP 等前端插件 — 计划中

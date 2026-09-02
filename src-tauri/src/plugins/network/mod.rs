@@ -705,6 +705,7 @@ impl ProtocolAdapter for NetworkAdapter {
             channel: None,
             comm_handle: Some(comm_handle),
             side_channel: Some(side_arc),
+            channel_factory: None,
             teardown_delay: Duration::ZERO,
         })
     }
@@ -806,6 +807,7 @@ mod tests {
                 },
                 None,
                 None,
+                None,
             )
             .unwrap();
 
@@ -826,7 +828,7 @@ mod tests {
         // 这里直接用独立锁模拟"回调等锁"场景的时序正确性——两段式保证阶段 1 不等待回调）
         let disconnect_latch = Arc::new(AtomicBool::new(false));
         let latch_c = disconnect_latch.clone();
-        let on_disconnect = Box::new(move |_sid: String| {
+        let on_disconnect = Box::new(move |_sid: String, _info: crate::channel::DisconnectInfo| {
             // 回调耗时操作模拟（真实路径为取 store 锁）
             std::thread::sleep(Duration::from_millis(100));
             latch_c.store(true, Ordering::SeqCst);
@@ -855,6 +857,8 @@ mod tests {
             connected_at: None,
             stats_cancel_flag: Some(Arc::new(AtomicBool::new(false))),
             channel_index: 0,
+            elevated: false,
+            retain_terminal: false,
             tx_bytes,
             rx_bytes,
             comm_handle: None,

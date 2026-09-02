@@ -5,6 +5,7 @@ import { sshProfile } from "./ssh";
 import { telnetProfile } from "./telnet";
 import { tftpProfile } from "./tftp";
 import { networkProfile } from "./network";
+import { localShellProfile } from "./localShell";
 
 /** Profile 注册表：连接类型 -> ProfileResolver */
 const registry: Record<string, ProfileResolver> = {
@@ -13,6 +14,7 @@ const registry: Record<string, ProfileResolver> = {
   telnet: telnetProfile,
   tftp: tftpProfile,
   network: networkProfile,
+  "local-shell": localShellProfile,
 };
 
 /**

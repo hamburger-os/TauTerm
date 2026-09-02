@@ -205,6 +205,7 @@ impl ProtocolAdapter for TelnetAdapter {
             channel: Some(ChannelKind::Sync(Box::new(channel))),
             comm_handle: None,
             side_channel: None,
+            channel_factory: None,
             teardown_delay: self.teardown_delay(),
         })
     }
