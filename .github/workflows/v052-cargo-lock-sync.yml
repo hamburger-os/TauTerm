@@ -31,7 +31,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 --no-deps >/dev/null
+          # Cargo refreshes workspace package metadata before compilation. The
+          # build itself may lack desktop system libraries on this minimal job,
+          # so only the resulting lockfile delta is authoritative here.
+          cargo check --manifest-path src-tauri/Cargo.toml >/tmp/v052-cargo-check.log 2>&1 || true
           git diff -- src-tauri/Cargo.lock
           node <<'NODE'
           const { execFileSync } = require('child_process');
@@ -42,7 +45,7 @@ jobs:
           );
           const expected = ['-version = "0.5.1"', '+version = "0.5.2"'];
           if (changed.length !== 2 || !expected.every((line) => changed.includes(line)) || !diff.includes('name = "tauterm"')) {
-            console.error(diff);
+            console.error(diff || require('fs').readFileSync('/tmp/v052-cargo-check.log', 'utf8'));
             throw new Error(`unexpected Cargo.lock change: ${JSON.stringify(changed)}`);
           }
           NODE
