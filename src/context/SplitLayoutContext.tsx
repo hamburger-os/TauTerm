@@ -61,20 +61,36 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     void switchTab(sessionId ?? "");
   }, [switchTab]);
 
-  // Sidebar、快捷键或其他既有入口仍会更新 SessionContext.activeTabId。
-  // 把这种“外部会话切换”解释为：已显示则跳到所在 Pane；未显示则放入当前 Pane。
+  // 同步 SessionContext 的 activeTabId 与 Split Layout，同时优先清理已删除的 assignment。
+  // 多分屏中若“当前 selected Pane 的 Session”被删除/子 Channel 被关闭，该 Pane 应保持为空；
+  // 不让 SessionContext 为兼容单屏而选择的 sibling 自动重新填入这个 Pane。
   useEffect(() => {
-    const activeId = sessionState.activeTabId;
-    if (!activeId) return;
-    if (!sessionState.tabs.some(tab => tab.id === activeId)) return;
-    setState(prev => activateSessionInLayout(prev, activeId));
-  }, [sessionState.activeTabId, sessionState.tabs]);
-
-  // 会话被删除/子 channel 被关闭后，只清掉 Pane assignment，不改变 Split Tree。
-  useEffect(() => {
+    const current = stateRef.current;
     const valid = new Set(sessionState.tabs.map(tab => tab.id));
-    setState(prev => pruneAssignments(prev, valid));
-  }, [sessionState.tabs]);
+    const selectedSessionId = current.assignments[current.selectedPaneId];
+    const selectedSessionRemoved = Boolean(selectedSessionId && !valid.has(selectedSessionId));
+
+    let next = pruneAssignments(current, valid);
+
+    if (selectedSessionRemoved && countPanes(current.root) > 1) {
+      if (next !== current) {
+        stateRef.current = next;
+        setState(next);
+      }
+      syncActiveSession(null);
+      return;
+    }
+
+    const activeId = sessionState.activeTabId;
+    if (activeId && valid.has(activeId)) {
+      next = activateSessionInLayout(next, activeId);
+    }
+
+    if (next !== current) {
+      stateRef.current = next;
+      setState(next);
+    }
+  }, [sessionState.activeTabId, sessionState.tabs, syncActiveSession]);
 
   const selectPane = useCallback((paneId: PaneId) => {
     const current = stateRef.current;
