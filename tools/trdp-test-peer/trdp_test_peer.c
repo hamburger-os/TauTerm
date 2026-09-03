@@ -1,8 +1,15 @@
-/* Minimal TCNOpen 3.0.0.0 interoperability peer for TauTerm TRDP development. */
+/*
+ * Minimal TCNOpen 3.0.0.0 interoperability peer for TauTerm TRDP development.
+ *
+ * This is deliberately small and protocol-focused: it is not a simulator. It
+ * exists so CI and a developer laptop can exercise TauTerm against a second,
+ * independently configured TCNOpen application session.
+ */
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "trdp_if_light.h"
 #include "vos_sock.h"
@@ -13,6 +20,8 @@ static TRDP_PUB_T publisher;
 static TRDP_SUB_T subscriber;
 static TRDP_LIS_T listener;
 static UINT32 counter;
+static int replier_query;
+static int requester_mode;
 
 static void stop_handler(int sig) {
     (void)sig;
@@ -61,57 +70,101 @@ static void md_cb(
     UINT8 *data,
     UINT32 size
 ) {
+    TRDP_COM_PARAM_T send;
+    TRDP_ERR_T error;
     (void)ref;
     (void)data;
     if (info == NULL) {
         return;
     }
     printf(
-        "MD %c%c comId=%u seq=%u size=%u result=%d replies=%u\n",
+        "MD %c%c comId=%u seq=%u size=%u result=%d replies=%u queries=%u confirms=%u\n",
         (char)(info->msgType >> 8),
         (char)(info->msgType & 0xff),
         (unsigned int)info->comId,
         (unsigned int)info->seqCount,
         (unsigned int)size,
         (int)info->resultCode,
-        (unsigned int)info->numReplies
+        (unsigned int)info->numReplies,
+        (unsigned int)info->numRepliesQuery,
+        (unsigned int)info->numConfirmSent
     );
     fflush(stdout);
+
+    send = md_send_params();
     if (info->msgType == TRDP_MSG_MR) {
         static const UINT8 reply[] = {0x54, 0x41, 0x55, 0x54, 0x45, 0x52, 0x4d};
-        TRDP_COM_PARAM_T send = md_send_params();
-        (void)tlm_reply(
-            handle,
-            &info->sessionId,
-            info->comId,
-            0u,
-            &send,
-            reply,
-            (UINT32)sizeof(reply),
-            NULL
-        );
+        if (replier_query) {
+            error = tlm_replyQuery(
+                handle,
+                &info->sessionId,
+                info->comId,
+                0u,
+                1000000u,
+                &send,
+                reply,
+                (UINT32)sizeof(reply),
+                NULL
+            );
+        } else {
+            error = tlm_reply(
+                handle,
+                &info->sessionId,
+                info->comId,
+                0u,
+                &send,
+                reply,
+                (UINT32)sizeof(reply),
+                NULL
+            );
+        }
+        if (error != TRDP_NO_ERR) {
+            fprintf(stderr, "MD reply failed: %d\n", (int)error);
+        }
+    } else if (requester_mode && info->msgType == TRDP_MSG_MQ) {
+        error = tlm_confirm(handle, &info->sessionId, 0u, &send);
+        if (error != TRDP_NO_ERR) {
+            fprintf(stderr, "MD confirm failed: %d\n", (int)error);
+        }
     }
 }
 
 static int process_once(void) {
-    TRDP_FDS_T rfds;
-    TRDP_TIME_T tv;
+    TRDP_FDS_T read_fds;
+    TRDP_TIME_T interval;
     TRDP_SOCK_T no_desc = 0;
     INT32 ready;
 
-    FD_ZERO(&rfds);
-    if (tlc_getInterval(app, &tv, &rfds, &no_desc) != TRDP_NO_ERR) {
+    FD_ZERO(&read_fds);
+    if (tlc_getInterval(app, &interval, &read_fds, &no_desc) != TRDP_NO_ERR) {
         return -1;
     }
-    if (tv.tv_sec > 0 || tv.tv_usec > 100000) {
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000;
+    if (interval.tv_sec > 0 || interval.tv_usec > 100000) {
+        interval.tv_sec = 0;
+        interval.tv_usec = 100000;
     }
-    ready = vos_select(no_desc + 1, &rfds, NULL, NULL, &tv);
+    ready = vos_select(no_desc + 1, &read_fds, NULL, NULL, &interval);
     if (ready < 0) {
         ready = 0;
     }
-    return (int)tlc_process(app, &rfds, &ready);
+    return (int)tlc_process(app, &read_fds, &ready);
+}
+
+static int mode_is(const char *mode, const char *name) {
+    return strcmp(mode, name) == 0;
+}
+
+static int mode_has_tcp(const char *mode) {
+    size_t length = strlen(mode);
+    return length >= 4u && strcmp(mode + length - 4u, "-tcp") == 0;
+}
+
+static void usage(const char *program) {
+    fprintf(
+        stderr,
+        "usage: %s <pd-publisher|pd-subscriber|md-requester|md-requester-tcp|md-replier|md-replier-query|md-replier-tcp|md-replier-query-tcp> <own-ip> <peer/multicast-ip> <comid> [seconds]\n",
+        program
+    );
 }
 
 int main(int argc, char **argv) {
@@ -119,22 +172,33 @@ int main(int argc, char **argv) {
     const char *own;
     const char *peer;
     UINT32 comid;
+    unsigned int duration_seconds = 0u;
+    time_t deadline = 0;
     TRDP_PD_CONFIG_T pd;
     TRDP_MD_CONFIG_T md;
-    TRDP_ERR_T err;
+    TRDP_ERR_T error = TRDP_NO_ERR;
 
     if (argc < 5) {
-        fprintf(
-            stderr,
-            "usage: %s <pd-publisher|pd-subscriber|md-requester|md-replier> <own-ip> <peer/multicast-ip> <comid>\n",
-            argv[0]
-        );
+        usage(argv[0]);
         return 2;
     }
     mode = argv[1];
     own = argv[2];
     peer = argv[3];
     comid = (UINT32)strtoul(argv[4], NULL, 10);
+    if (argc >= 6) {
+        duration_seconds = (unsigned int)strtoul(argv[5], NULL, 10);
+        if (duration_seconds > 0u) {
+            deadline = time(NULL) + (time_t)duration_seconds;
+        }
+    }
+    if (comid == 0u) {
+        usage(argv[0]);
+        return 2;
+    }
+
+    replier_query = mode_is(mode, "md-replier-query") || mode_is(mode, "md-replier-query-tcp");
+    requester_mode = mode_is(mode, "md-requester") || mode_is(mode, "md-requester-tcp");
     signal(SIGINT, stop_handler);
     signal(SIGTERM, stop_handler);
 
@@ -150,22 +214,27 @@ int main(int argc, char **argv) {
     md.replyTimeout = 5000000u;
     md.confirmTimeout = 1000000u;
     md.connectTimeout = 60000000u;
+    md.sendingTimeout = 5000000u;
     md.udpPort = 17225u;
     md.tcpPort = 17225u;
     md.sendParam = md_send_params();
     md.maxNumSessions = 32u;
 
-    if (tlc_init(NULL, NULL, NULL) != TRDP_NO_ERR) {
+    error = tlc_init(NULL, NULL, NULL);
+    if (error != TRDP_NO_ERR) {
+        fprintf(stderr, "tlc_init failed: %d\n", (int)error);
         return 3;
     }
-    if (tlc_openSession(&app, vos_dottedIP(own), 0u, NULL, &pd, &md, NULL) != TRDP_NO_ERR) {
+    error = tlc_openSession(&app, vos_dottedIP(own), 0u, NULL, &pd, &md, NULL);
+    if (error != TRDP_NO_ERR) {
+        fprintf(stderr, "tlc_openSession failed: %d\n", (int)error);
         (void)tlc_terminate();
         return 4;
     }
 
-    if (strcmp(mode, "pd-publisher") == 0) {
+    if (mode_is(mode, "pd-publisher")) {
         UINT8 initial[4] = {0};
-        err = tlp_publish(
+        error = tlp_publish(
             app,
             &publisher,
             NULL,
@@ -182,8 +251,8 @@ int main(int argc, char **argv) {
             initial,
             (UINT32)sizeof(initial)
         );
-    } else if (strcmp(mode, "pd-subscriber") == 0) {
-        err = tlp_subscribe(
+    } else if (mode_is(mode, "pd-subscriber")) {
+        error = tlp_subscribe(
             app,
             &subscriber,
             NULL,
@@ -199,8 +268,17 @@ int main(int argc, char **argv) {
             300000u,
             TRDP_TO_KEEP_LAST_VALUE
         );
-    } else if (strcmp(mode, "md-replier") == 0) {
-        err = tlm_addListener(
+    } else if (
+        mode_is(mode, "md-replier")
+        || mode_is(mode, "md-replier-query")
+        || mode_is(mode, "md-replier-tcp")
+        || mode_is(mode, "md-replier-query-tcp")
+    ) {
+        TRDP_FLAGS_T flags = TRDP_FLAGS_CALLBACK;
+        if (mode_has_tcp(mode)) {
+            flags |= TRDP_FLAGS_TCP;
+        }
+        error = tlm_addListener(
             app,
             &listener,
             NULL,
@@ -212,15 +290,19 @@ int main(int argc, char **argv) {
             0u,
             0u,
             0u,
-            TRDP_FLAGS_CALLBACK,
+            flags,
             NULL,
             NULL
         );
-    } else if (strcmp(mode, "md-requester") == 0) {
+    } else if (requester_mode) {
         TRDP_COM_PARAM_T send = md_send_params();
         TRDP_UUID_T session;
+        TRDP_FLAGS_T flags = TRDP_FLAGS_CALLBACK;
         static const UINT8 request[] = {1, 2, 3, 4};
-        err = tlm_request(
+        if (mode_has_tcp(mode)) {
+            flags |= TRDP_FLAGS_TCP;
+        }
+        error = tlm_request(
             app,
             NULL,
             md_cb,
@@ -230,7 +312,7 @@ int main(int argc, char **argv) {
             0u,
             vos_dottedIP(own),
             vos_dottedIP(peer),
-            TRDP_FLAGS_CALLBACK,
+            flags,
             1u,
             5000000u,
             &send,
@@ -240,21 +322,24 @@ int main(int argc, char **argv) {
             NULL
         );
     } else {
-        fprintf(stderr, "unknown mode: %s\n", mode);
+        usage(argv[0]);
         (void)tlc_closeSession(app);
         (void)tlc_terminate();
         return 2;
     }
 
-    if (err != TRDP_NO_ERR) {
-        fprintf(stderr, "TCNOpen operation failed: %d\n", (int)err);
+    if (error != TRDP_NO_ERR) {
+        fprintf(stderr, "TCNOpen operation failed: %d\n", (int)error);
         (void)tlc_closeSession(app);
         (void)tlc_terminate();
         return 5;
     }
 
     while (running) {
-        if (strcmp(mode, "pd-publisher") == 0) {
+        if (deadline != 0 && time(NULL) >= deadline) {
+            break;
+        }
+        if (mode_is(mode, "pd-publisher")) {
             UINT8 value[4];
             ++counter;
             value[0] = (UINT8)(counter >> 24);
