@@ -24,16 +24,16 @@ if ($LASTEXITCODE -ne 0) { throw "TRDP CMake configure failed with exit code $LA
 cmake --build $Build --config Release --parallel
 if ($LASTEXITCODE -ne 0) { throw "TRDP native build failed with exit code $LASTEXITCODE" }
 
-$BridgeBuilt = Join-Path $Build "bin\tauterm-trdp-bridge.exe"
-$PeerBuilt = Join-Path $Build "bin\trdp-test-peer.exe"
+$BridgeBuilt = Get-ChildItem -Path $Build -Recurse -File -Filter "tauterm-trdp-bridge.exe" | Select-Object -First 1
+$PeerBuilt = Get-ChildItem -Path $Build -Recurse -File -Filter "trdp-test-peer.exe" | Select-Object -First 1
 $BridgeExe = Join-Path $Out "tauterm-trdp-bridge.exe"
 $PeerExe = Join-Path $ToolsOut "trdp-test-peer.exe"
 
-if (-not (Test-Path $BridgeBuilt)) { throw "TRDP bridge executable was not produced: $BridgeBuilt" }
-if (-not (Test-Path $PeerBuilt)) { throw "TRDP reference peer executable was not produced: $PeerBuilt" }
+if (-not $BridgeBuilt) { throw "TRDP bridge executable was not produced under $Build" }
+if (-not $PeerBuilt) { throw "TRDP reference peer executable was not produced under $Build" }
 
-Copy-Item -Force $BridgeBuilt $BridgeExe
-Copy-Item -Force $PeerBuilt $PeerExe
+Copy-Item -Force $BridgeBuilt.FullName $BridgeExe
+Copy-Item -Force $PeerBuilt.FullName $PeerExe
 
 $SmokeInput = "{`"command`":`"monitor_open`",`"params`":{`"mode`":`"monitor`"}}`n{`"command`":`"shutdown`"}`n"
 $SmokeOutput = $SmokeInput | & $BridgeExe
