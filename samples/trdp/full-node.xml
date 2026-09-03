@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<device host-name="tauterm-full-node" leader-name="lab" type="lab">
+  <bus-interface-list>
+    <bus-interface network-id="1" name="eth0">
+      <trdp-process blocking="no" cycle-time="10000" priority="60" traffic-shaping="off"/>
+      <pd-com-parameter marshall="on" port="17224" qos="2" ttl="64" timeout-value="300000" validity-behavior="keep"/>
+      <md-com-parameter udp-port="17225" tcp-port="17225" confirm-timeout="1000000" connect-timeout="60000000" reply-timeout="5000000" marshall="off" protocol="UDP" qos="2" retries="2" ttl="64"/>
+      <telegram name="VehicleStatus" com-id="5001" data-set-id="5001" com-parameter-id="1"><pd-parameter cycle="100000" marshall="on" timeout="300000" validity-behavior="keep"/><source id="1" uri1="10.10.0.10"/><destination id="1" uri="239.255.5.1"/></telegram>
+      <telegram name="VehicleCommand" com-id="5002" data-set-id="5002" com-parameter-id="1"><pd-parameter cycle="100000" marshall="on" timeout="300000" validity-behavior="keep"/><source id="1" uri1="10.10.0.20"/><destination id="1" uri="239.255.5.2"/></telegram>
+      <telegram name="MaintenanceMD" com-id="5100" data-set-id="5100" com-parameter-id="2"><source id="1" uri1="10.10.0.10"/><destination id="1" uri="10.10.0.20"/></telegram>
+    </bus-interface>
+  </bus-interface-list>
+  <com-parameter-list><com-parameter id="1" qos="2" ttl="64"/><com-parameter id="2" qos="2" ttl="64"/></com-parameter-list>
+  <data-set-list>
+    <data-set name="VehicleStatus" id="5001"><element name="counter" type="UINT32"/><element name="speed" type="UINT16" unit="km/h"/><element name="direction" type="BOOL8"/><element name="temperature" type="REAL32" unit="degC"/></data-set>
+    <data-set name="VehicleCommand" id="5002"><element name="command" type="UINT16"/><element name="value" type="INT32"/></data-set>
+    <data-set name="MaintenanceMD" id="5100"><element name="service" type="UINT16"/><element name="argument" type="UINT32"/></data-set>
+  </data-set-list>
+</device>
