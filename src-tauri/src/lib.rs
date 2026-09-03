@@ -222,11 +222,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            let window = app.get_webview_window("main")
+            let window = app
+                .get_webview_window("main")
                 .expect("main window not found");
             // 设置窗口图标（任务栏 + 标题栏）
             if let Ok(icon) = Image::from_path("icons/icon.png") {
-              let _ = window.set_icon(icon);
+                let _ = window.set_icon(icon);
             }
             // Windows 平台无边框窗口丢失原生阴影，手动开启
             #[cfg(target_os = "windows")]
@@ -238,10 +239,22 @@ pub fn run() {
             #[cfg(target_os = "windows")]
             let work_area: Option<(u32, u32)> = {
                 use windows_sys::Win32::Foundation::RECT;
-                use windows_sys::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETWORKAREA};
-                let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                    SystemParametersInfoW, SPI_GETWORKAREA,
+                };
+                let mut rect = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
                 let ok = unsafe {
-                    SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut rect as *mut RECT as *mut core::ffi::c_void, 0)
+                    SystemParametersInfoW(
+                        SPI_GETWORKAREA,
+                        0,
+                        &mut rect as *mut RECT as *mut core::ffi::c_void,
+                        0,
+                    )
                 };
                 if ok != 0 && rect.right > rect.left && rect.bottom > rect.top {
                     Some(((rect.right - rect.left) as u32, (rect.bottom - rect.top) as u32))
@@ -250,14 +263,10 @@ pub fn run() {
                 }
             };
             #[cfg(not(target_os = "windows"))]
-            let work_area: Option<(u32, u32)> = app
-                .primary_monitor()
-                .ok()
-                .flatten()
-                .map(|m| {
-                    let s = m.size();
-                    (s.width, s.height)
-                });
+            let work_area: Option<(u32, u32)> = app.primary_monitor().ok().flatten().map(|m| {
+                let s = m.size();
+                (s.width, s.height)
+            });
 
             if let (Some((work_w, work_h)), Ok(current)) = (work_area, window.outer_size()) {
                 let w = current.width.min(work_w);
@@ -283,7 +292,9 @@ pub fn run() {
                     let _ = std::fs::remove_file(&test_file);
                     exe_dir
                 } else {
-                    let app_data = app.path().app_data_dir()
+                    let app_data = app
+                        .path()
+                        .app_data_dir()
                         .unwrap_or_else(|_| std::path::PathBuf::from("."));
                     let fallback = app_data.join("logs");
                     let _ = std::fs::create_dir_all(&fallback);
@@ -296,10 +307,9 @@ pub fn run() {
                     log_engine.set_log_dir(log_dir.clone());
                 }
                 // 同步到 ConfigStore 供前端查询
-                let _ = state.config_store.set(
-                    "log.dir",
-                    &log_dir.to_string_lossy().to_string(),
-                );
+                let _ = state
+                    .config_store
+                    .set("log.dir", &log_dir.to_string_lossy().to_string());
             }
             let _ = std::fs::create_dir_all(&log_dir);
             log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
@@ -314,7 +324,9 @@ pub fn run() {
                 if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                     #[cfg(target_os = "windows")]
                     {
-                        let resource_dir = app.path().resource_dir()
+                        let resource_dir = app
+                            .path()
+                            .resource_dir()
                             .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
                         // 检测 com0com 驱动文件路径：
@@ -327,7 +339,9 @@ pub fn run() {
                             if dev_path.join("setupc.exe").exists() {
                                 log::info!(
                                     "开发模式: com0com 驱动文件位于 {:?}",
-                                    dev_path.canonicalize().unwrap_or_else(|_| dev_path.clone())
+                                    dev_path
+                                        .canonicalize()
+                                        .unwrap_or_else(|_| dev_path.clone())
                                 );
                                 dev_path
                             } else {
@@ -336,7 +350,9 @@ pub fn run() {
                             }
                         };
 
-                        let state_dir = app.path().app_data_dir()
+                        let state_dir = app
+                            .path()
+                            .app_data_dir()
                             .unwrap_or_else(|_| std::path::PathBuf::from("."));
                         let _ = std::fs::create_dir_all(&state_dir);
 
@@ -351,13 +367,11 @@ pub fn run() {
                             *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
                         }
 
-                        // 清理上次异常退出可能遗留的孤儿端口对
                         let orphan_count = vpm.cleanup_orphans();
                         if orphan_count > 0 {
                             log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
                         }
 
-                        // 分层检测 com0com 状态：
                         if !vpm.are_files_present() {
                             log::warn!("com0com 驱动文件缺失，虚拟串口功能不可用");
                         } else if vpm.detect_driver() {
@@ -366,7 +380,6 @@ pub fn run() {
                             log::info!("com0com 驱动文件已找到但驱动未安装 \u{2014} 首次连接时将通过 NSIS 安装或需管理员权限运行时安装");
                         }
 
-                        // 启动时向前端报告驱动状态
                         let driver_installed = vpm.detect_driver();
                         let files_present = vpm.are_files_present();
                         drop(vpm);
@@ -388,7 +401,6 @@ pub fn run() {
                     {
                         *vpm = Box::new(PtyBackend::new());
 
-                        // 原生 PTY 随文件描述符自动释放；统一调用保持后端生命周期接口一致。
                         let orphan_count = vpm.cleanup_orphans();
                         if orphan_count > 0 {
                             log::info!("已清理 {} 个遗留虚拟端点资源", orphan_count);
@@ -408,7 +420,6 @@ pub fn run() {
 
                     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
                     {
-                        // 其他平台：虚拟串口暂未支持
                         log::warn!("当前平台不支持虚拟串口功能");
                         let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
                             "reason": "Virtual serial port feature not yet supported on this platform",
@@ -441,17 +452,19 @@ pub fn run() {
             window_manager: WindowManager::new(),
             credential_store: CredentialStore::new(),
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
-            // 占位 VPM — setup() 闭包中立即用平台正确的实现替换。
-            // setup() 在所有命令处理器就绪前运行，不存在竞态条件。
             #[cfg(target_os = "windows")]
-            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(std::path::PathBuf::from("."), std::path::PathBuf::from(".")))),
+            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(
+                std::path::PathBuf::from("."),
+                std::path::PathBuf::from("."),
+            ))),
             #[cfg(not(target_os = "windows"))]
             virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,
             commands::enumerate_endpoints,
-            plugins::trdp::connect_session,
+            commands::connect_session,
+            plugins::trdp::connect_session_trdp,
             commands::disconnect_session,
             commands::write_data,
             commands::switch_active_session,
@@ -469,6 +482,8 @@ pub fn run() {
             plugins::trdp::trdp_command,
             plugins::trdp::trdp_open_capture,
             plugins::trdp::trdp_save_capture,
+            plugins::trdp::trdp_import_xml,
+            plugins::trdp::trdp_decode_dataset,
             commands::save_sessions,
             commands::load_sessions,
             commands::save_session_config,
@@ -543,7 +558,6 @@ pub fn run() {
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app_handle.try_state::<AppState>() {
-                    // 1. 关闭所有活跃会话（释放串口 + 关闭桥接线程）
                     if let Ok(mut store) = state.session_store.lock() {
                         let ids: Vec<String> = store.tab_ids().to_vec();
                         for id in &ids {
@@ -556,7 +570,6 @@ pub fn run() {
                             log::warn!("保存会话到磁盘失败: {}", e);
                         }
                     }
-                    // 2. 清理 com0com 驱动和所有虚拟端口（会话已关闭，设备不再被占用）
                     if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                         vpm.cleanup_all();
                     }
