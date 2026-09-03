@@ -291,7 +291,8 @@ fn side_channel(
 }
 
 fn import_workspace(path: &str) -> Result<Value, String> {
-    let text = fs::read_to_string(path).map_err(|error| format!("读取 TRDP Workspace 失败: {error}"))?;
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("读取 TRDP Workspace 失败: {error}"))?;
     let value: Value = serde_json::from_str(&text)
         .map_err(|error| format!("TRDP Workspace JSON 无效: {error}"))?;
     let object = value
