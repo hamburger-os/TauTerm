@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-09-03
+
+### Security
+- **Credential storage trust closure** — adds cross-platform persistence contract tests for store/get/list/delete and reopen behavior, requires the headless Ubuntu CI leg to exercise the authenticated encrypted fallback, verifies the explicit v1 fallback envelope rejects unsupported versions fail-closed, retains AEAD tamper-detection coverage, and documents the credential-storage trust boundary in `SECURITY.md`. The v1 envelope is TauTerm’s first persisted fallback credential format, so there is no predecessor on-disk TauTerm format to migrate.
+
 ### Protocols
 - **Local Shell (native PTY)** — adds cross-platform local terminal sessions backed by ConPTY on Windows and Unix PTYs on Linux/macOS. Shell selection supports automatic platform detection or a custom executable, an independent argument list and a working directory (user home by default). Windows discovery includes native PowerShell/CMD, WSL default and per-distribution presets, Git Bash, MSYS2/Cygwin Bash and NuShell; managed WSL launcher arguments stay separate from user arguments, Linux working directories default to `~`, and the native Auto order never enters WSL implicitly. Sessions use UTF-8 with `TERM=xterm-256color`, support terminal resize/search/logging, and intentionally exclude SendBar, file transfer and protocol tools.
 - **Multi-terminal Local Shell and Windows elevation** — one saved Local Shell configuration can open up to 32 active independent PTYs through the same parent/child model as SSH. Native Windows shells expose a per-child `New (as Administrator)` action backed by a one-shot elevated helper and paired one-way local named pipes; the GUI remains unelevated, WSL is excluded, UAC cancellation creates no child, and elevated children carry a shield marker.

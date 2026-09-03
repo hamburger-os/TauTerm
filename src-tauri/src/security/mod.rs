@@ -5,4 +5,7 @@
 pub mod credential_store;
 pub mod log_sanitizer;
 
+#[cfg(test)]
+mod credential_store_contract_tests;
+
 pub use credential_store::CredentialStore;

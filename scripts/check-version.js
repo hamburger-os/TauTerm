@@ -50,6 +50,16 @@ if (!cargoVersion) {
   same("src-tauri/Cargo.toml", cargoVersion, expected);
 }
 
+const cargoLock = readFileSync(resolve(root, "src-tauri/Cargo.lock"), "utf8");
+const cargoLockVersion = cargoLock.match(
+  /^\[\[package\]\]\s*\nname\s*=\s*"tauterm"\s*\nversion\s*=\s*"([^"]+)"/m,
+)?.[1];
+if (!cargoLockVersion) {
+  fail("src-tauri/Cargo.lock: tauterm package version not found");
+} else {
+  same("src-tauri/Cargo.lock", cargoLockVersion, expected);
+}
+
 if (releaseMode) {
   const changelog = readFileSync(resolve(root, "CHANGELOG.md"), "utf8");
   const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
