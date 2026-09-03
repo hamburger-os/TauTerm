@@ -146,7 +146,7 @@ function normalizeDecodedText(text: string): string {
  */
 export default function TerminalView({ dockedPlacements, onActivateSession }: TerminalViewProps = {}) {
   const { t } = useTranslation();
-  const { state, sendData, disconnect, onSessionData, onDataSent } = useSession();
+  const { state, sendData, disconnect, closeChannel, onSessionData, onDataSent } = useSession();
   const { fontSize, bufferLines } = useTheme();
   const { registerAction } = useKeyboard();
   const writeRefs = useRef<Map<string, (data: Uint8Array | string) => void>>(new Map());
@@ -567,7 +567,13 @@ export default function TerminalView({ dockedPlacements, onActivateSession }: Te
         fontSize={fontSize}
         bufferLines={bufferLines}
         onShowSearch={() => setSearchVisible(true)}
-        onDisconnectSession={() => disconnect(tab.id)}
+        onDisconnectSession={() => {
+          if (tab.parentId) {
+            void closeChannel(tab.id, tab.parentId);
+          } else {
+            void disconnect(tab.id);
+          }
+        }}
         ref={(node) => {
           if (node) terminalRefs.current.set(tab.id, node);
           else terminalRefs.current.delete(tab.id);
