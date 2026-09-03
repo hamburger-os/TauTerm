@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<device host-name="tauterm-md" type="lab">
+  <bus-interface-list><bus-interface network-id="1" name="eth0">
+    <trdp-process blocking="no" cycle-time="10000" priority="60" traffic-shaping="off"/>
+    <md-com-parameter udp-port="17225" tcp-port="17225" confirm-timeout="1000000" connect-timeout="60000000" reply-timeout="5000000" marshall="off" protocol="UDP" qos="2" retries="2" ttl="64"/>
+    <telegram name="DiagnosticsRequest" com-id="4001" data-set-id="4001" com-parameter-id="2"><source id="1" uri1="10.10.0.10"/><destination id="1" uri="10.10.0.20"/></telegram>
+  </bus-interface></bus-interface-list>
+  <com-parameter-list><com-parameter id="2" qos="2" ttl="64"/></com-parameter-list>
+  <data-set-list><data-set name="Diagnostics" id="4001"><element name="command" type="UINT16"/><element name="argument" type="UINT32"/><element name="text" type="CHAR8" array-size="16"/></data-set></data-set-list>
+</device>
