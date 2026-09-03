@@ -820,7 +820,7 @@ mod tests {
         )
         .expect("decode");
         assert_eq!(decoded["fields"]["counter"]["value"], json!(7u32));
-        assert_eq!(decoded["fields"]["text"]["value"], json!([79, 75]));
+        assert_eq!(decoded["fields"]["text"]["value"], json!(["O", "K"]));
     }
 
     #[test]
