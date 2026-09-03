@@ -52,7 +52,7 @@ function resolveCssLengthPx(varName: string): number | null {
 function AppInner() {
   const { t } = useTranslation();
   // Context hooks
-  const { state: sessionState, refreshEndpoints, disconnect, switchTab } = useSession();
+  const { state: sessionState, refreshEndpoints, disconnect, closeChannel, switchTab } = useSession();
   const { state: transferState } = useTransfer();
   const { registerAction } = useKeyboard();
 
@@ -281,7 +281,14 @@ function AppInner() {
   // Keyboard shortcuts — session-dependent actions (re-register on tab changes)
   useEffect(() => {
     registerAction(ACTION_IDS.SESSION_CLOSE, () => {
-      if (sessionState.activeTabId) disconnect(sessionState.activeTabId);
+      const activeId = sessionState.activeTabId;
+      if (!activeId) return;
+      const activeTab = sessionState.tabs.find(tab => tab.id === activeId);
+      if (activeTab?.parentId) {
+        void closeChannel(activeId, activeTab.parentId);
+      } else {
+        void disconnect(activeId);
+      }
     });
     registerAction(ACTION_IDS.SESSION_NEXT, () => {
       const tabs = sessionState.tabs;
@@ -297,7 +304,7 @@ function AppInner() {
       const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
       switchTab(prev.id);
     });
-  }, [registerAction, disconnect, switchTab, sessionState.tabs, sessionState.activeTabId]);
+  }, [registerAction, disconnect, closeChannel, switchTab, sessionState.tabs, sessionState.activeTabId]);
 
   // Command palette execution
   const handlePaletteExecute = useCallback((cmdId: string) => {

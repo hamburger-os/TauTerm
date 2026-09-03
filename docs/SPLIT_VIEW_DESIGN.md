@@ -51,6 +51,8 @@ The core rules are:
 8. An empty selected Pane has no active Session context until a Session is assigned.
 9. Closing a Pane does not disconnect, delete, or dispose its Session runtime.
 10. Split View state lives only for the current app process.
+11. A `multi_session` parent is a navigation proxy for its most recently active child Channel; it does not always force navigation to the first child.
+12. Creating a new child Channel from a parent context menu preserves the Pane that was selected before the context-menu navigation and uses that Pane as the new Channel's intended placement.
 
 ## Layout model
 
@@ -175,6 +177,29 @@ Sidebar clicks and other existing session-switch entry points update `activeTabI
 
 Selecting an occupied Pane updates `activeTabId` to that Pane's Session. Selecting a newly-created empty Pane clears the effective active Session context until a Session is assigned. When no active Session exists, Session-scoped auxiliary UI such as the RightSidebar shell must not reserve empty layout space.
 
+## Multi-session parent navigation and child lifecycle
+
+Plugins with the `multi_session` capability, currently SSH and Local Shell, have a root/container Session plus runtime child Channels. Split View treats the child Channel as the displayable terminal Session while preserving the parent card as a useful navigation and command surface.
+
+The navigation contract is:
+
+- left-clicking or right-clicking a multi-session parent remains navigational;
+- the parent resolves to the most recently active valid child Channel in the current process;
+- any child activation path, including Sidebar selection, Pane selection, shortcuts, or newly-created Channels, updates that remembered child;
+- if the remembered child no longer exists, parent navigation falls back to the first remaining child;
+- if no child exists, navigation falls back to the parent Session itself;
+- this recent-child memory is runtime UI state and is not persisted across app restart.
+
+A parent context menu has one additional placement rule. Opening the context menu may navigate to the parent's recent child, but TauTerm snapshots the Pane that was selected before that navigation. When the user chooses **New Terminal** or **Run as administrator**, that original Pane is re-selected immediately before creating the child Channel. The new Channel can therefore fill an intentionally-created Empty Pane without changing the normal right-click navigation behavior.
+
+Root and child lifecycle commands are distinct:
+
+- closing/disconnecting a child terminal uses `close_channel(childId, parentId)`;
+- disconnecting a root Session uses the root Session disconnect path (`disconnect_session` through SessionContext);
+- terminal context-menu **Disconnect** and the global **Close Current Session** shortcut must apply this same child-vs-root distinction;
+- closing a child clears any Pane assignment to that child but does not collapse the Split Tree or implicitly disconnect the parent Session;
+- in a multi-pane layout, if the removed child occupied the selected Pane, that Pane stays selected and empty instead of being automatically replaced by a sibling; single-pane mode may retain the pre-split sibling fallback behavior.
+
 ## Terminal lifecycle invariant
 
 The most important implementation invariant is:
@@ -205,7 +230,9 @@ Pane surfaces allow contained scrolling for non-terminal/custom views so control
 
 ## Session deletion and child sessions
 
-If a Session is deleted, or an SSH/Local Shell child channel is closed, any Pane assignment pointing to that runtime ID is cleared. The Pane remains in the layout as an empty Pane.
+If a Session is deleted, or an SSH/Local Shell child channel is closed, any Pane assignment pointing to that runtime ID is cleared. In a multi-pane layout, a selected Pane whose Session was removed remains selected and empty; the Split Tree is not repopulated from SessionContext's single-pane fallback selection.
+
+In single-pane mode, the existing Session navigation fallback may select a surviving sibling after the active child closes, preserving the pre-split workflow.
 
 Split layout is not collapsed automatically in response to Session deletion. Only an explicit `Close Pane` action changes the number of panes.
 
@@ -249,3 +276,6 @@ Manual acceptance scenarios should include:
 11. Select an empty Pane and verify the RightSidebar does not leave an empty shell or resize handle.
 12. Put iperf/TFTP or another custom renderer in a short Pane and verify controls remain reachable by scrolling.
 13. Close TauTerm and reopen; verify no split layout is restored in this release.
+14. Activate a non-first SSH/Local Shell child, switch elsewhere, then click and right-click the parent; verify the recent child is restored rather than always selecting the first child.
+15. Select an Empty Pane, right-click a connected SSH/Local Shell parent and choose New Terminal; verify the newly-created child is placed in the original Empty Pane.
+16. In a multi-pane layout, disconnect the selected SSH/Local Shell child from terminal context menu or the close-current-session shortcut; verify only that child closes, its Pane remains selected and empty, the parent remains valid, and no root-session-not-found error is reported.

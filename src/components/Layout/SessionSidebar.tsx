@@ -32,16 +32,18 @@ interface SessionSidebarProps {
  * - 根节点（parentId === null）：普通会话或多终端父配置
  * - 子节点（parentId 非空）：SSH / Local Shell 终端实例
  * - 支持 multi_session 的父会话可展开/折叠子项
- * - 选中父会话时自动路由到第一个子 channel
+ * - 选中多终端父会话时由 SessionContext 路由到上一次活动的子 channel
  * - 分屏模式下在已显示 Session 右侧绘制当前 Split Tree mini-map，标出所在 Pane
  */
 export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
   const { t } = useTranslation();
   const { state, switchTab, disconnect, deleteSession, connect, startSessionLog, stopSessionLog, loggingSessions, openChannel, closeChannel, selectNetworkPeer, disconnectNetworkPeer, clearNetworkPeer } = useSession();
-  const { state: splitLayout, sessionToPane, paneCount } = useSplitLayout();
+  const { state: splitLayout, sessionToPane, paneCount, selectPane } = useSplitLayout();
   const [search, setSearch] = useState("");
   const { menu, openMenu, openPeerMenu, closeMenu } = useContextMenu();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  /** 右键菜单打开前的 Pane。新建子终端时用它作为落点，避免右键导航抢走空 Pane。 */
+  const contextMenuOriginPaneRef = useRef(splitLayout.selectedPaneId);
 
   // 构建树形结构（排序：connection_type → [网络会话: 传输层→角色] → endpoint → name）
   const tree = useMemo<TreeNode[]>(() => {
@@ -174,8 +176,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     if (node.children.length > 0 || node.peerChildren.length > 0) {
       setExpandedIds(prev => new Set(prev).add(node.tab.id));
     }
-    // switchTab 内部会自动路由到第一个子 channel；SplitLayoutContext 会监听
-    // activeTabId：若 Session 已显示则跳到它的 Pane，否则放入当前 selected Pane。
+    // SessionContext 统一处理 multi_session 父会话 → 最近活动 Channel；
+    // SplitLayoutContext 监听 activeTabId，若目标已显示则跳到对应 Pane，否则放入当前 selected Pane。
     switchTab(node.tab.id);
     // 网络 server 容器：参照 SSH 主会话，点击容器自动选中第一个已连接对端；
     // 无对端时取消选择（UDP 网格回到"全部"时间线 / TCP 空状态）。
@@ -209,10 +211,12 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   const handleContextMenu = useCallback((e: React.MouseEvent, tab: TabInfo) => {
     e.preventDefault();
     e.stopPropagation();
-    // 右键时先切换到该 tab（符合常规 UX）
+    // 保留原有交互：右键同时进入该会话上下文。
+    // 先记住右键前的 Pane；若随后选择“新建终端”，新 Channel 仍应落到这个 Pane。
+    contextMenuOriginPaneRef.current = splitLayout.selectedPaneId;
     switchTab(tab.id);
     openMenu(e, tab);
-  }, [switchTab, openMenu]);
+  }, [splitLayout.selectedPaneId, switchTab, openMenu]);
 
   // ── 右键菜单项 ──
 
@@ -296,6 +300,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           ? pluginRegistry.get(tab.pluginId)?.manifest.capabilities.includes("multi_session")
           : false;
         if (supportsMultiple && (tab?.state === "connected" || tab?.state === "transferring")) {
+          // 右键父卡片会按原交互导航到最近活动 Channel；真正新建前恢复右键前 Pane，
+          // 让 session-connected 带来的新 Channel 被 SplitLayout 分配到用户原先选中的位置。
+          selectPane(contextMenuOriginPaneRef.current);
           await openChannel(sessionId);
           // 自动展开父节点
           setExpandedIds(prev => new Set(prev).add(sessionId));
@@ -350,6 +357,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           : false;
         if (!tab || !supportsElevation) break;
         if (tab.state === "connected" || tab.state === "transferring") {
+          // 与普通“新建终端”一致：保留右键前 Pane 作为新管理员终端落点。
+          selectPane(contextMenuOriginPaneRef.current);
           await openChannel(sessionId, true);
         } else if (tab.state === "disconnected" && tab.params) {
           await connect({
@@ -407,7 +416,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         break;
       }
     }
-  }, [menu.session, menu.peer, state.tabs, t, connect, disconnect, deleteSession, openChannel, closeChannel, onEditSession, loggingSessions, startSessionLog, stopSessionLog, disconnectNetworkPeer, clearNetworkPeer]);
+  }, [menu.session, menu.peer, state.tabs, t, connect, disconnect, deleteSession, openChannel, closeChannel, selectPane, onEditSession, loggingSessions, startSessionLog, stopSessionLog, disconnectNetworkPeer, clearNetworkPeer]);
 
   return (
     <div className={`${styles.sidebar} liquid-glass`}>

@@ -556,10 +556,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // 完整 state 镜像（网络对端清理等全局监听器需读取最新 networkPeers）
   const stateRef = useRef(state);
   stateRef.current = state;
+  // 多终端父会话 → 最近一次活动的子 Channel。仅当前进程内有效。
+  const lastActiveChildRef = useRef<Map<string, string>>(new Map());
   // Telnet 回显状态暂存：telnet-echo-state 早于 session-connected 到达
   // （tab 尚未创建）时暂存于此，session-connected 创建/更新 tab 时取出
   // 初始化 localEcho，避免事件被静默丢弃导致输入不可见
   const pendingEchoRef = useRef<Map<string, boolean>>(new Map());
+
+  // ADD_TAB / session-switched 等不一定经过 switchTab；统一从 activeTabId 回填最近子 Channel。
+  useEffect(() => {
+    const activeId = state.activeTabId;
+    if (!activeId) return;
+    const activeTab = state.tabs.find(tab => tab.id === activeId);
+    if (activeTab?.parentId) {
+      lastActiveChildRef.current.set(activeTab.parentId, activeTab.id);
+    }
+  }, [state.activeTabId, state.tabs]);
 
   // ── Logging state ────────────────────────────────
 
@@ -783,24 +795,36 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const switchTab = useCallback(async (sessionId: string) => {
-    // 如果选中的是父 session，自动路由到第一个子 channel
-    const targetTab = state.tabs.find(t => t.id === sessionId);
-    if (targetTab && !targetTab.parentId) {
-      // 这是一个根节点（父 session）
-      const firstChild = state.tabs.find(t => t.parentId === sessionId);
-      if (firstChild) {
-        dispatch({ type: "SET_ACTIVE", id: firstChild.id });
-        try { await invoke("switch_active_session", { sessionId: firstChild.id }); } catch (_e) {}
-        return;
+    const tabs = tabsRef.current;
+    const targetTab = tabs.find(tab => tab.id === sessionId);
+    let resolvedSessionId = sessionId;
+
+    if (targetTab?.parentId) {
+      // 直接切到子 Channel 时同步更新父会话的最近活动记录。
+      lastActiveChildRef.current.set(targetTab.parentId, targetTab.id);
+    } else if (targetTab) {
+      const supportsMultiple = pluginRegistry
+        .get(targetTab.pluginId)?.manifest.capabilities.includes("multi_session") ?? false;
+      if (supportsMultiple) {
+        const children = tabs.filter(tab => tab.parentId === targetTab.id);
+        if (children.length > 0) {
+          const rememberedId = lastActiveChildRef.current.get(targetTab.id);
+          const remembered = rememberedId
+            ? children.find(child => child.id === rememberedId)
+            : undefined;
+          resolvedSessionId = remembered?.id ?? children[0].id;
+          lastActiveChildRef.current.set(targetTab.id, resolvedSessionId);
+        }
       }
     }
-    dispatch({ type: "SET_ACTIVE", id: sessionId });
+
+    dispatch({ type: "SET_ACTIVE", id: resolvedSessionId });
     try {
-      await invoke("switch_active_session", { sessionId });
+      await invoke("switch_active_session", { sessionId: resolvedSessionId });
     } catch (_e) {
       // 恢复的会话在后端不存在，静默忽略
     }
-  }, [state.tabs]);
+  }, []);
 
   const renameTab = useCallback(async (sessionId: string, name: string) => {
     dispatch({ type: "RENAME_TAB", id: sessionId, name });
