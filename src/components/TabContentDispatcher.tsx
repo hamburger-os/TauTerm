@@ -1,75 +1,37 @@
 /**
- * TabContentDispatcher — 统一标签页内容适配器
+ * 主内容区调度器。
  *
- * 根据活跃标签页对应插件的 `content_type` 选择渲染器。
- * 支持 terminal、file_browser、stats_dashboard、custom 四种内容类型。
+ * 分屏只是一层运行时布局：Pane 决定多个 Session Content 的摆放，
+ * selected Pane 继续通过 SessionContext.activeTabId 驱动 SendBar / RightSidebar。
+ * 不保存布局，也不恢复上一次分屏。
  */
-
-import { useSession } from "../context/SessionContext";
-import { pluginRegistry } from "../core/plugin-registry";
-import type { ContentType } from "../core/plugin-registry";
-import Icon from "./common/Icon";
-import TerminalRenderer from "../renderers/TerminalRenderer";
-import FileBrowserRenderer from "../renderers/FileBrowserRenderer";
-import StatsDashboardRenderer from "../renderers/StatsDashboardRenderer";
-import CustomRenderer from "../renderers/CustomRenderer";
-
-/** 空状态占位（无活跃标签页） */
-function EmptyState() {
-  return (
-    <div style={{
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      height: "100%",
-      gap: 12,
-      color: "var(--text-muted)",
-    }}>
-      <Icon name="logo" size="2xl" />
-      <span style={{ fontSize: 14 }}>
-        请新建会话或从侧栏选择一个已保存的会话
-      </span>
-    </div>
-  );
-}
-
-/** 未知内容类型占位 */
-function UnknownContentType({ type }: { type: string }) {
-  return (
-    <div style={{
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      height: "100%",
-      color: "var(--text-muted)",
-    }}>
-      未知的内容类型: {type}
-    </div>
-  );
-}
+import SplitWorkspace from "./Layout/SplitWorkspace";
+import { useSplitLayout } from "../context/SplitLayoutContext";
 
 export default function TabContentDispatcher() {
-  const { state } = useSession();
-  const activeTab = state.tabs.find(t => t.id === state.activeTabId);
+  const {
+    state,
+    paneRects,
+    dividers,
+    blockedEdges,
+    paneCount,
+    selectPane,
+    splitPane,
+    closePane,
+    resizeSplit,
+  } = useSplitLayout();
 
-  if (!activeTab) {
-    return <EmptyState />;
-  }
-
-  const plugin = pluginRegistry.get(activeTab.pluginId);
-  const contentType: ContentType = plugin?.manifest.content_type ?? "terminal";
-
-  switch (contentType) {
-    case "terminal":
-      return <TerminalRenderer />;
-    case "file_browser":
-      return <FileBrowserRenderer tab={activeTab} />;
-    case "stats_dashboard":
-      return <StatsDashboardRenderer tab={activeTab} />;
-    case "custom":
-      return <CustomRenderer tab={activeTab} />;
-    default:
-      return <UnknownContentType type={contentType} />;
-  }
+  return (
+    <SplitWorkspace
+      layout={state}
+      paneRects={paneRects}
+      dividers={dividers}
+      blockedEdges={blockedEdges}
+      paneCount={paneCount}
+      onSelectPane={selectPane}
+      onSplitPane={splitPane}
+      onClosePane={closePane}
+      onResizeSplit={resizeSplit}
+    />
+  );
 }
