@@ -53,7 +53,14 @@ jobs:
 
       - name: Build vendored TCNOpen 3.0.0.0 and native helpers
         shell: bash
-        run: bash scripts/bootstrap-trdp.sh
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            export TAUTERM_TRDP_SANITIZE=1
+            export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0"
+            export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+          fi
+          bash scripts/bootstrap-trdp.sh
 
       - name: Verify native artifacts
         shell: bash
@@ -71,6 +78,22 @@ jobs:
           set -euo pipefail
           BRIDGE="$PWD/src-tauri/binaries/tauterm-trdp-bridge"
           PEER="$PWD/tools/trdp-test-peer/bin/trdp-test-peer"
+          export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0"
+          export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+          dump_logs() {
+            status=$?
+            if [[ $status -ne 0 ]]; then
+              echo "=== TRDP interop diagnostics ==="
+              for log in /tmp/trdp-peer-*.log /tmp/trdp-bridge-*.log; do
+                if [[ -f "$log" ]]; then
+                  echo "--- $log ---"
+                  cat "$log"
+                fi
+              done
+            fi
+            exit $status
+          }
+          trap dump_logs EXIT
 
           "$PEER" pd-publisher 127.0.0.2 127.0.0.1 7001 4 >/tmp/trdp-peer-pd.log 2>&1 &
           PD_PID=$!
