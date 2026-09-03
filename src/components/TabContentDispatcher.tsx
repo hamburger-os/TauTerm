@@ -5,7 +5,7 @@
  * selected Pane 继续通过 SessionContext.activeTabId 驱动 SendBar / RightSidebar。
  * 不保存布局，也不恢复上一次分屏。
  */
-import SplitWorkspace from "./Layout/SplitWorkspace";
+import SplitView from "./Layout/SplitView";
 import { useSplitLayout } from "../context/SplitLayoutContext";
 
 export default function TabContentDispatcher() {
@@ -22,7 +22,7 @@ export default function TabContentDispatcher() {
   } = useSplitLayout();
 
   return (
-    <SplitWorkspace
+    <SplitView
       layout={state}
       paneRects={paneRects}
       dividers={dividers}
