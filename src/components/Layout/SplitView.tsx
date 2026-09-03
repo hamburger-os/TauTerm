@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSession, type TabInfo } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
@@ -10,12 +11,15 @@ import type {
   SplitLayoutState,
 } from "../../core/split-layout";
 import TerminalView from "../Terminal/TerminalView";
+import Icon from "../common/Icon";
 import FileBrowserRenderer from "../../renderers/FileBrowserRenderer";
 import StatsDashboardRenderer from "../../renderers/StatsDashboardRenderer";
 import CustomRenderer from "../../renderers/CustomRenderer";
 import styles from "./SplitView.module.css";
 
 const MIN_PANE_PX = 160;
+const PANE_HEADER_PX = 24;
+const MENU_MARGIN_PX = 8;
 const EDGES: SplitEdge[] = ["left", "right", "top", "bottom"];
 
 interface SplitViewProps {
@@ -42,6 +46,18 @@ function rectStyle(rect: PaneRect): React.CSSProperties {
     top: `${rect.top * 100}%`,
     width: `${rect.width * 100}%`,
     height: `${rect.height * 100}%`,
+  };
+}
+
+function insetPaneContent(rect: PaneRect, paneCount: number, viewportHeight: number): PaneRect {
+  if (paneCount <= 1 || viewportHeight <= 0) return rect;
+  const paneHeightPx = rect.height * viewportHeight;
+  const headerPx = Math.min(PANE_HEADER_PX, Math.max(0, paneHeightPx));
+  const headerRatio = headerPx / viewportHeight;
+  return {
+    ...rect,
+    top: rect.top + headerRatio,
+    height: Math.max(0, rect.height - headerRatio),
   };
 }
 
@@ -86,8 +102,53 @@ export default function SplitView({
   const { t } = useTranslation();
   const { state: sessionState } = useSession();
   const viewRef = useRef<HTMLDivElement>(null);
+  const paneMenuRef = useRef<HTMLDivElement>(null);
+  const [viewSize, setViewSize] = useState({ width: 0, height: 0 });
   const [hoveredSplit, setHoveredSplit] = useState<{ paneId: PaneId; edge: SplitEdge } | null>(null);
   const [paneMenu, setPaneMenu] = useState<PaneMenuState | null>(null);
+
+  useLayoutEffect(() => {
+    const root = viewRef.current;
+    if (!root) return;
+    const update = () => {
+      const bounds = root.getBoundingClientRect();
+      setViewSize({ width: bounds.width, height: bounds.height });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (paneCount >= 4) setHoveredSplit(null);
+  }, [paneCount]);
+
+  useEffect(() => {
+    if (!paneMenu) return;
+    const handleDocumentMouseDown = (event: MouseEvent) => {
+      if (paneMenuRef.current?.contains(event.target as Node)) return;
+      setPaneMenu(null);
+    };
+    document.addEventListener("mousedown", handleDocumentMouseDown, true);
+    return () => document.removeEventListener("mousedown", handleDocumentMouseDown, true);
+  }, [paneMenu]);
+
+  useLayoutEffect(() => {
+    if (!paneMenu || !paneMenuRef.current) return;
+    const menuBounds = paneMenuRef.current.getBoundingClientRect();
+    const x = Math.max(
+      MENU_MARGIN_PX,
+      Math.min(paneMenu.x, window.innerWidth - menuBounds.width - MENU_MARGIN_PX),
+    );
+    const y = Math.max(
+      MENU_MARGIN_PX,
+      Math.min(paneMenu.y, window.innerHeight - menuBounds.height - MENU_MARGIN_PX),
+    );
+    if (x !== paneMenu.x || y !== paneMenu.y) {
+      setPaneMenu(current => current ? { ...current, x, y } : current);
+    }
+  }, [paneMenu]);
 
   const tabsById = useMemo(() => {
     const map = new Map<string, TabInfo>();
@@ -104,10 +165,10 @@ export default function SplitView({
       const plugin = pluginRegistry.get(tab.pluginId);
       if ((plugin?.manifest.content_type ?? "terminal") !== "terminal") continue;
       const rect = paneRects[paneId];
-      if (rect) result[sessionId] = rect;
+      if (rect) result[sessionId] = insetPaneContent(rect, paneCount, viewSize.height);
     }
     return result;
-  }, [layout.assignments, paneRects, tabsById]);
+  }, [layout.assignments, paneRects, paneCount, tabsById, viewSize.height]);
 
   const terminalPaneIds = useMemo(() => {
     const result: Record<string, PaneId> = {};
@@ -165,10 +226,19 @@ export default function SplitView({
     setPaneMenu({ paneId, x: e.clientX, y: e.clientY });
   }, [paneCount]);
 
+  const canOfferSplit = useCallback((rect: PaneRect, edge: SplitEdge): boolean => {
+    if (paneCount >= 4) return false;
+    const axisSize = edge === "left" || edge === "right"
+      ? rect.width * viewSize.width
+      : rect.height * viewSize.height;
+    if (axisSize <= 0) return true;
+    return axisSize >= MIN_PANE_PX * 2;
+  }, [paneCount, viewSize.height, viewSize.width]);
+
   const previewRect = useMemo(() => {
-    if (!hoveredSplit) return null;
+    if (!hoveredSplit || paneCount >= 4) return null;
     const base = paneRects[hoveredSplit.paneId];
-    if (!base) return null;
+    if (!base || !canOfferSplit(base, hoveredSplit.edge)) return null;
     switch (hoveredSplit.edge) {
       case "left":
         return { ...base, width: base.width / 2 };
@@ -179,7 +249,28 @@ export default function SplitView({
       case "bottom":
         return { ...base, top: base.top + base.height / 2, height: base.height / 2 };
     }
-  }, [hoveredSplit, paneRects]);
+  }, [hoveredSplit, paneCount, paneRects, canOfferSplit]);
+
+  const paneMenuElement = paneMenu ? (
+    <div
+      ref={paneMenuRef}
+      className={`${styles.paneMenu} liquid-glass-float`}
+      style={{ left: paneMenu.x, top: paneMenu.y }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          const paneId = paneMenu.paneId;
+          setPaneMenu(null);
+          onClosePane(paneId);
+        }}
+      >
+        <Icon name="close" size="xs" />
+        <span>{t("split.closePane", "关闭分屏")}</span>
+      </button>
+    </div>
+  ) : null;
 
   return (
     <div
@@ -195,11 +286,12 @@ export default function SplitView({
         const contentType = plugin?.manifest.content_type ?? "terminal";
         const isTerminal = Boolean(tab) && contentType === "terminal";
         const showTerminalPlaceholder = isTerminal && tab ? !terminalHasRuntime(tab) : false;
+        const contentRect = insetPaneContent(rect, paneCount, viewSize.height);
         return (
           <div
             key={`surface-${paneId}`}
             className={styles.paneSurface}
-            style={rectStyle(rect)}
+            style={rectStyle(contentRect)}
             onMouseDown={() => onSelectPane(paneId)}
             onContextMenu={(e) => {
               if (!isTerminal || !tab) openPaneMenu(e, paneId);
@@ -207,7 +299,9 @@ export default function SplitView({
           >
             {!tab && (
               <div className={styles.emptyPane}>
-                <span className={styles.emptyMark}>+</span>
+                <span className={styles.emptyMark}>
+                  <Icon name="connection" size="xl" className={styles.emptyPaneIcon} />
+                </span>
                 <span>{t("split.selectSession", "选择左侧会话")}</span>
               </div>
             )}
@@ -231,7 +325,7 @@ export default function SplitView({
         }}
       />
 
-      {/* Pane Chrome：选中态、会话 badge、右键关闭入口与边缘分屏入口。 */}
+      {/* Pane Chrome：选中态、轻量标题栏、右键关闭入口与边缘分屏入口。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
         const sessionId = layout.assignments[paneId] ?? null;
         const tab = sessionId ? tabsById.get(sessionId) : undefined;
@@ -240,22 +334,22 @@ export default function SplitView({
         return (
           <div key={`chrome-${paneId}`} className={styles.paneChrome} style={rectStyle(rect)}>
             <div className={`${styles.paneFrame} ${selected ? styles.selectedFrame : ""}`} />
-            {paneCount > 1 && tab && (
-              <button
-                type="button"
-                className={`${styles.sessionBadge} ${selected ? styles.selectedBadge : ""}`}
+            {paneCount > 1 && (
+              <div
+                className={`${styles.paneHeader} ${selected ? styles.selectedHeader : ""}`}
                 onMouseDown={(e) => {
                   e.stopPropagation();
                   onSelectPane(paneId);
                 }}
                 onContextMenu={(e) => openPaneMenu(e, paneId)}
-                title={tab.name}
               >
-                {tab.name}
-              </button>
+                <span className={`${styles.paneHeaderTitle} ${tab ? "" : styles.emptyPaneTitle}`} title={tab?.name}>
+                  {tab?.name ?? t("split.emptyPane", "空分屏")}
+                </span>
+              </div>
             )}
             {paneCount < 4 && EDGES.map(edge => {
-              if (blocked.has(edge)) return null;
+              if (blocked.has(edge) || !canOfferSplit(rect, edge)) return null;
               return (
                 <button
                   key={edge}
@@ -317,24 +411,7 @@ export default function SplitView({
         );
       })}
 
-      {paneMenu && (
-        <div
-          className={`${styles.paneMenu} liquid-glass-float`}
-          style={{ left: paneMenu.x, top: paneMenu.y }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              const paneId = paneMenu.paneId;
-              setPaneMenu(null);
-              onClosePane(paneId);
-            }}
-          >
-            {t("split.closePane", "关闭分屏")}
-          </button>
-        </div>
-      )}
+      {paneMenuElement && createPortal(paneMenuElement, document.body)}
     </div>
   );
 }
