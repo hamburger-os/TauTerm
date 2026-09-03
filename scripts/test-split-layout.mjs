@@ -11,6 +11,10 @@ import {
   setSplitRatioInLayout,
   splitPaneInLayout,
 } from "../src/core/split-layout.ts";
+import {
+  parsePersistedWorkspaceLayout,
+  serializeWorkspaceLayout,
+} from "../src/core/workspace-layout.ts";
 
 let state = createInitialSplitLayout("p1");
 assert.equal(countPanes(state.root), 1);
@@ -84,4 +88,42 @@ const capped = splitPaneInLayout(state, "p5", "bottom", "p6", "s5", 4);
 assert.strictEqual(capped, state);
 assert.equal(countPanes(capped.root), 4);
 
-console.log("split-layout: runtime pane invariants preserved");
+// Workspace persistence preserves geometry/selection while converting runtime child channels
+// to stable saved Session IDs. Duplicate child channels of the same parent restore only once.
+let workspace = createInitialSplitLayout("wp1");
+workspace = activateSessionInLayout(workspace, "ssh-child-0");
+workspace = splitPaneInLayout(workspace, "wp1", "right", "wp2", "ws1");
+workspace = activateSessionInLayout(workspace, "ssh-child-1");
+workspace = splitPaneInLayout(workspace, "wp2", "bottom", "wp3", "ws2");
+workspace = activateSessionInLayout(workspace, "serial-root");
+workspace = setSplitRatioInLayout(workspace, "ws1", 0.63);
+
+const serializedWorkspace = serializeWorkspaceLayout(
+  workspace,
+  new Map([
+    ["ssh-child-0", "ssh-root"],
+    ["ssh-child-1", "ssh-root"],
+    ["serial-root", "serial-root"],
+  ]),
+);
+const restoredWorkspace = parsePersistedWorkspaceLayout(serializedWorkspace);
+assert.ok(restoredWorkspace);
+assert.equal(countPanes(restoredWorkspace.root), 3);
+assert.equal(restoredWorkspace.selectedPaneId, "wp3");
+assert.equal(restoredWorkspace.assignments.wp1, "ssh-root");
+assert.equal(restoredWorkspace.assignments.wp2, null);
+assert.equal(restoredWorkspace.assignments.wp3, "serial-root");
+assert.equal(restoredWorkspace.root.type, "split");
+assert.equal(restoredWorkspace.root.ratio, 0.63);
+
+// Corrupt/future payloads fail closed and fall back to normal single-pane startup.
+assert.equal(parsePersistedWorkspaceLayout("not json"), null);
+assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({ version: 2 })), null);
+assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({
+  version: 1,
+  root: { type: "pane", id: "p1" },
+  assignments: { p1: null },
+  selectedPaneId: "missing",
+})), null);
+
+console.log("split-layout: runtime and persisted workspace invariants preserved");
