@@ -6,11 +6,13 @@ import { useSession } from "../../context/SessionContext";
 
 type Page = "overview" | "publishers" | "subscribers" | "messages" | "traffic";
 type LinkChoice = "a" | "b" | "both";
+type ObjectKind = "pd_publisher" | "pd_subscriber" | "pd_request" | "md_request" | "md_listener" | "md_notify";
 
 type TrdpEvent = {
   session_id?: string;
   event?: string;
   kind?: string;
+  id?: string;
   link?: string;
   com_id?: number;
   src_ip?: string;
@@ -31,12 +33,13 @@ type TrdpEvent = {
   reply_status?: number;
   user_status?: number;
   num_replies?: number;
+  md_session_id?: string;
   error?: string;
 };
 
 type TrdpObject = {
   id: string;
-  kind: "pd_publisher" | "pd_subscriber" | "pd_request" | "md_request" | "md_listener" | "md_notify";
+  kind: ObjectKind;
   name: string;
   comId: number;
   link: LinkChoice;
@@ -44,11 +47,18 @@ type TrdpObject = {
   destination: string;
   source: string;
   cycleUs: number;
+  timeoutUs: number;
+  timeoutBehavior: "keep" | "zero";
   payloadHex: string;
   transport: "udp" | "tcp";
   etbTopoCount: number;
   opTrnTopoCount: number;
   redId: number;
+  redState: "leader" | "follower";
+  numReplies: number;
+  replyTimeoutUs: number;
+  responseMode: "reply" | "query";
+  confirmTimeoutUs: number;
 };
 
 type XmlElement = { name: string; data_type: string; array_size: number; unit?: string };
@@ -67,34 +77,73 @@ type XmlImport = {
   path: string;
   datasets: XmlDataset[];
   telegrams: XmlTelegram[];
+  pd_port: number;
+  md_udp_port: number;
+  md_tcp_port: number;
   sdt_detected: boolean;
   warnings: string[];
 };
+type DecodedField = { type: string; type_id?: number; unit?: string; raw?: unknown; value?: unknown; error?: string };
 type DecodedDataset = {
   dataset_id: number;
   dataset_name: string;
   consumed_bytes: number;
   payload_bytes: number;
-  fields: Array<{ name: string; type: string; unit?: string; raw?: unknown; value?: unknown; error?: string }>;
+  fields: Record<string, DecodedField>;
+};
+type Workspace = {
+  format: string;
+  name?: string;
+  xml?: string;
+  objects?: Array<Record<string, unknown>>;
+};
+
+type FlowRow = {
+  key: string;
+  msg: string;
+  comId: number;
+  src: string;
+  dst: string;
+  count: number;
+  lastSeq?: number;
+  size?: number;
+  link: string;
+  missed: number;
+  errors: number;
+  minIntervalUs?: number;
+  avgIntervalUs?: number;
+  maxIntervalUs?: number;
+  jitterUs?: number;
 };
 
 const nav: Array<[Page, string]> = [
   ["overview", "概览 / Overview · TRDP Application Session"],
   ["publishers", "发布 / Publishers · PD Publisher"],
   ["subscribers", "订阅 / Subscribers · PD Subscriber / Request"],
-  ["messages", "消息 / Messages · MD Request/Reply/Notify"],
+  ["messages", "消息 / Messages · MD Request / Reply / Notify"],
   ["traffic", "流量 / Traffic · Packet Inspector"],
 ];
 
 const tableStyle = { width: "100%", borderCollapse: "collapse" } as const;
 const cellInputStyle = { width: "100%", minWidth: 80 } as const;
+const U32 = 0x1_0000_0000;
+
+function paramNumber(params: Record<string, unknown> | undefined, key: string, fallback: number) {
+  const value = params?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
 
 function hexPreview(value?: string) {
   if (!value) return "—";
   return value.length > 72 ? `${value.slice(0, 72)}…` : value;
 }
 
-function createObject(kind: TrdpObject["kind"], index: number): TrdpObject {
+function isKind(value: unknown): value is ObjectKind {
+  return typeof value === "string" && ["pd_publisher", "pd_subscriber", "pd_request", "md_request", "md_listener", "md_notify"].includes(value);
+}
+
+function createObject(kind: ObjectKind, index: number): TrdpObject {
+  const subscriber = kind === "pd_subscriber" || kind === "pd_request";
   return {
     id: crypto.randomUUID(),
     kind,
@@ -104,12 +153,48 @@ function createObject(kind: TrdpObject["kind"], index: number): TrdpObject {
     state: "stopped",
     destination: kind.startsWith("pd_") ? "239.255.1.1" : "10.0.0.2",
     source: "0.0.0.0",
-    cycleUs: kind === "pd_subscriber" || kind === "pd_request" ? 300000 : 100000,
+    cycleUs: 100000,
+    timeoutUs: subscriber ? 300000 : 100000,
+    timeoutBehavior: "keep",
     payloadHex: kind === "pd_subscriber" ? "" : "00000000",
     transport: "udp",
     etbTopoCount: 0,
     opTrnTopoCount: 0,
     redId: 0,
+    redState: "leader",
+    numReplies: 1,
+    replyTimeoutUs: 5000000,
+    responseMode: "reply",
+    confirmTimeoutUs: 2000000,
+  };
+}
+
+function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObject | null {
+  if (!isKind(raw.kind)) return null;
+  const base = createObject(raw.kind, index + 1);
+  const link = raw.link === "b" || raw.link === "both" ? raw.link : "a";
+  return {
+    ...base,
+    id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
+    name: typeof raw.name === "string" ? raw.name : base.name,
+    comId: Number(raw.com_id ?? base.comId),
+    link,
+    state: "stopped",
+    destination: typeof raw.destination === "string" ? raw.destination : base.destination,
+    source: typeof raw.source === "string" ? raw.source : base.source,
+    cycleUs: Number(raw.cycle_us ?? base.cycleUs),
+    timeoutUs: Number(raw.timeout_us ?? raw.cycle_us ?? base.timeoutUs),
+    timeoutBehavior: raw.timeout_behavior === "zero" ? "zero" : "keep",
+    payloadHex: typeof raw.payload_hex === "string" ? raw.payload_hex.toUpperCase() : base.payloadHex,
+    transport: raw.transport === "tcp" ? "tcp" : "udp",
+    etbTopoCount: Number(raw.etb_topo_count ?? 0),
+    opTrnTopoCount: Number(raw.op_trn_topo_count ?? 0),
+    redId: Number(raw.red_id ?? 0),
+    redState: raw.red_state === "follower" ? "follower" : "leader",
+    numReplies: Number(raw.num_replies ?? 1),
+    replyTimeoutUs: Number(raw.reply_timeout_us ?? 5000000),
+    responseMode: raw.response_mode === "query" ? "query" : "reply",
+    confirmTimeoutUs: Number(raw.confirm_timeout_us ?? 2000000),
   };
 }
 
@@ -119,10 +204,16 @@ function displayValue(value: unknown): string {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
+function missedBetween(previous: number, current: number) {
+  const distance = (current - previous + U32) % U32;
+  return distance > 1 && distance < 0x8000_0000 ? distance - 1 : 0;
+}
+
 export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const { state } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
-  const mode = (tab?.params?.mode as string | undefined) ?? "node";
+  const params = tab?.params as Record<string, unknown> | undefined;
+  const mode = (params?.mode as string | undefined) ?? "node";
   const storageKey = `tauterm:trdp:${sessionId}:objects`;
   const [page, setPage] = useState<Page>("overview");
   const [events, setEvents] = useState<TrdpEvent[]>([]);
@@ -133,6 +224,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     } catch { return []; }
   });
   const [xmlImport, setXmlImport] = useState<XmlImport | null>(null);
+  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [decoded, setDecoded] = useState<DecodedDataset | null>(null);
   const [selectedPacket, setSelectedPacket] = useState<TrdpEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -157,19 +249,64 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     return result;
   }, [xmlImport]);
 
+  const expectedCycleByComId = useMemo(() => {
+    const result = new Map<number, number>();
+    for (const object of objects) {
+      if (object.kind === "pd_publisher") result.set(object.comId, object.cycleUs);
+      if (object.kind === "pd_subscriber" || object.kind === "pd_request") result.set(object.comId, object.timeoutUs);
+    }
+    for (const telegram of xmlImport?.telegrams ?? []) {
+      if (telegram.cycle_us && !result.has(telegram.com_id)) result.set(telegram.com_id, telegram.cycle_us);
+    }
+    return result;
+  }, [objects, xmlImport]);
+
   const flows = useMemo(() => {
-    const map = new Map<string, { key: string; msg: string; comId: number; src: string; dst: string; count: number; lastSeq?: number; size?: number; link: string }>();
+    type MutableFlow = FlowRow & { intervals: number[]; previousSeq?: number; previousTimestamp?: number };
+    const map = new Map<string, MutableFlow>();
     for (const event of events) {
       if (event.com_id === undefined) continue;
       const key = `${event.link ?? ""}:${event.msg_type ?? event.kind}:${event.com_id}:${event.src_ip ?? ""}:${event.dest_ip ?? ""}`;
-      const row = map.get(key) ?? { key, msg: event.msg_type ?? event.kind ?? "?", comId: event.com_id, src: event.src_ip ?? "—", dst: event.dest_ip ?? "—", count: 0, link: event.link ?? "—" };
+      const row = map.get(key) ?? {
+        key,
+        msg: event.msg_type ?? event.kind ?? "?",
+        comId: event.com_id,
+        src: event.src_ip ?? "—",
+        dst: event.dest_ip ?? "—",
+        count: 0,
+        link: event.link ?? "—",
+        missed: 0,
+        errors: 0,
+        intervals: [],
+      };
       row.count += 1;
-      row.lastSeq = event.seq_count;
+      if (event.result_code !== undefined && event.result_code !== 0) row.errors += 1;
+      if (event.seq_count !== undefined) {
+        if (row.previousSeq !== undefined) row.missed += missedBetween(row.previousSeq, event.seq_count);
+        row.previousSeq = event.seq_count;
+        row.lastSeq = event.seq_count;
+      }
+      if (event.timestamp_us !== undefined) {
+        if (row.previousTimestamp !== undefined && event.timestamp_us >= row.previousTimestamp) {
+          row.intervals.push(event.timestamp_us - row.previousTimestamp);
+        }
+        row.previousTimestamp = event.timestamp_us;
+      }
       row.size = event.data_len;
       map.set(key, row);
     }
-    return [...map.values()];
-  }, [events]);
+    return [...map.values()].map(row => {
+      const expected = expectedCycleByComId.get(row.comId);
+      if (row.intervals.length) {
+        row.minIntervalUs = Math.min(...row.intervals);
+        row.maxIntervalUs = Math.max(...row.intervals);
+        row.avgIntervalUs = row.intervals.reduce((sum, value) => sum + value, 0) / row.intervals.length;
+        if (expected !== undefined) row.jitterUs = row.intervals.reduce((sum, value) => sum + Math.abs(value - expected), 0) / row.intervals.length;
+      }
+      const { intervals: _intervals, previousSeq: _previousSeq, previousTimestamp: _previousTimestamp, ...result } = row;
+      return result;
+    });
+  }, [events, expectedCycleByComId]);
 
   async function command<T = unknown>(name: string, payload: Record<string, unknown> = {}): Promise<T> {
     setError(null);
@@ -181,7 +318,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     }
   }
 
-  function addObject(kind: TrdpObject["kind"]) {
+  function addObject(kind: ObjectKind) {
     setObjects(prev => [...prev, createObject(kind, prev.filter(item => item.kind === kind).length + 1)]);
   }
 
@@ -200,14 +337,20 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         destination: obj.destination,
         source: obj.source,
         cycle_us: obj.cycleUs,
+        timeout_us: obj.timeoutUs,
+        timeout_behavior: obj.timeoutBehavior,
         payload_hex: obj.payloadHex,
         transport: obj.transport,
         etb_topo_count: obj.etbTopoCount,
         op_trn_topo_count: obj.opTrnTopoCount,
         red_id: obj.redId,
+        red_state: obj.redState,
+        num_replies: obj.numReplies,
+        reply_timeout_us: obj.replyTimeoutUs,
+        response_mode: obj.responseMode,
+        confirm_timeout_us: obj.confirmTimeoutUs,
       },
     });
-    // MD Request/Notify are one-shot operations and deliberately return to Stopped.
     if (obj.kind !== "md_request" && obj.kind !== "md_notify") patchObject(obj.id, { state: "running" });
   }
 
@@ -223,7 +366,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   async function openCapture() {
     const path = await open({ multiple: false, filters: [{ name: "Packet Capture", extensions: ["pcap", "pcapng"] }] });
     if (typeof path !== "string") return;
-    const packets = await invoke<TrdpEvent[]>("trdp_open_capture", { path });
+    const pdPort = paramNumber(params, "pd_port", 17224);
+    const mdPorts = [...new Set([paramNumber(params, "md_udp_port", 17225), paramNumber(params, "md_tcp_port", 17225)])];
+    const packets = await invoke<TrdpEvent[]>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
     setEvents(prev => [...prev, ...packets].slice(-5000));
     setPage("traffic");
   }
@@ -235,7 +380,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function importXml() {
-    const configured = typeof tab?.params?.xml_path === "string" ? tab.params.xml_path : "";
+    const configured = typeof params?.xml_path === "string" ? params.xml_path : "";
     let path = configured;
     if (!path) {
       const selected = await open({ multiple: false, filters: [{ name: "TRDP XML", extensions: ["xml"] }] });
@@ -245,6 +390,15 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const imported = await command<XmlImport>("xml_import", { path });
     setXmlImport(imported);
     setDecoded(null);
+  }
+
+  async function importWorkspace() {
+    const selected = await open({ multiple: false, filters: [{ name: "TauTerm TRDP Workspace", extensions: ["json"] }] });
+    if (typeof selected !== "string") return;
+    const workspace = await command<Workspace>("workspace_import", { path: selected });
+    const imported = (workspace.objects ?? []).map(workspaceObject).filter((item): item is TrdpObject => item !== null);
+    setObjects(imported.map(item => ({ ...item, state: "stopped" })));
+    setWorkspaceName(workspace.name ?? selected);
   }
 
   async function inspectPacket(event: TrdpEvent) {
@@ -275,7 +429,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           item.comId = telegram.com_id;
           item.destination = destination;
           item.source = telegram.sources[0] ?? "0.0.0.0";
-          item.cycleUs = telegram.timeout_us ?? 300000;
+          item.timeoutUs = telegram.timeout_us ?? (telegram.cycle_us ? telegram.cycle_us * 3 : 300000);
           additions.push(item);
           known.add(`${telegram.com_id}:${destination}`);
         }
@@ -284,22 +438,42 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     });
   }
 
+  async function startLiveCapture() {
+    const interfaceA = typeof params?.capture_interface === "string" ? params.capture_interface : "";
+    const interfaceB = params?.capture_interface_b_enabled && typeof params?.capture_interface_b === "string" ? params.capture_interface_b : "";
+    await command("capture_start", {
+      interface: interfaceA,
+      interface_b: interfaceB,
+      filter: params?.capture_filter,
+    });
+  }
+
+  async function confirmMessage(event: TrdpEvent) {
+    if (!event.md_session_id) return;
+    await command("md_confirm", { md_session_id: event.md_session_id, link: event.link ?? "a", user_status: 0 });
+  }
+
   const objectEditor = (obj: TrdpObject) => {
     const oneShot = obj.kind === "md_request" || obj.kind === "md_notify";
+    const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
     return (
       <tr key={obj.id}>
         <td><input style={cellInputStyle} value={obj.name} onChange={event => patchObject(obj.id, { name: event.target.value })} /></td>
         <td><input style={cellInputStyle} type="number" min={1} value={obj.comId} onChange={event => patchObject(obj.id, { comId: Number(event.target.value) })} /></td>
         <td><select value={obj.link} onChange={event => patchObject(obj.id, { link: event.target.value as LinkChoice })}><option value="a">A</option><option value="b">B</option><option value="both">A+B</option></select></td>
         <td><input style={cellInputStyle} value={obj.destination} onChange={event => patchObject(obj.id, { destination: event.target.value })} /></td>
-        <td>{obj.kind.startsWith("md_") ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select> : <input style={cellInputStyle} type="number" min={0} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}</td>
+        <td>{obj.kind.startsWith("md_") ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select> : <input style={cellInputStyle} type="number" min={0} value={subscriber ? obj.timeoutUs : obj.cycleUs} onChange={event => patchObject(obj.id, subscriber ? { timeoutUs: Number(event.target.value) } : { cycleUs: Number(event.target.value) })} />}</td>
         <td><input style={cellInputStyle} value={obj.payloadHex} onChange={event => patchObject(obj.id, { payloadHex: event.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase() })} /></td>
         <td>
           <details>
             <summary>Advanced</summary>
+            <label>Source <input value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
             <label>ETB <input type="number" min={0} value={obj.etbTopoCount} onChange={event => patchObject(obj.id, { etbTopoCount: Number(event.target.value) })} /></label><br />
             <label>OpTrn <input type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label><br />
-            {obj.kind === "pd_publisher" && <label>Red ID <input type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label>}
+            {subscriber && <label>Timeout behavior <select value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">Keep last value</option><option value="zero">Set to zero</option></select></label>}
+            {obj.kind === "pd_publisher" && <><label>Red ID <input type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>Red state <select value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">Leader</option><option value="follower">Follower</option></select></label></>}
+            {obj.kind === "md_request" && <><label>Replies <input type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>Reply timeout µs <input type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
+            {obj.kind === "md_listener" && <><label>Response <select value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>Confirm timeout µs <input type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
           </details>
         </td>
         <td style={{ whiteSpace: "nowrap" }}>
@@ -324,17 +498,20 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         {page === "overview" && (
           <div style={{ display: "grid", gap: 12 }}>
             <h2>TRDP {mode === "monitor" ? "Monitor" : "Node"}</h2>
-            <div>PD: UDP/17224 · MD: UDP/TCP/17225 · SDTv2/SDTv4: detected only, validation out of scope</div>
-            <div>Link A: {String(tab?.params?.link_a_ip ?? "—")} · Link B: {tab?.params?.link_b_enabled ? String(tab?.params?.link_b_ip ?? "—") : "Disabled"}</div>
+            <div>PD: UDP/{paramNumber(params, "pd_port", 17224)} · MD: UDP/{paramNumber(params, "md_udp_port", 17225)} TCP/{paramNumber(params, "md_tcp_port", 17225)} · SDTv2/SDTv4: detected only, validation out of scope</div>
+            {mode === "node" ? <div>Link A: {String(params?.link_a_ip ?? "—")} · Link B: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : "Disabled"}</div> : <div>Capture A: {String(params?.capture_interface ?? "—")} · Capture B: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : "Disabled"}</div>}
             <div>发送策略 / TX policy: Publishers, PD Requests and MD Requests/Notify always require an explicit Start/Send action.</div>
+            <div>Safety: TauTerm TRDP is a diagnostic/development tool and does not perform SDT safety validation or claim safety certification.</div>
+            {workspaceName && <div>Workspace: {workspaceName} · imported objects forced to Stopped.</div>}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={() => void importXml()}>导入 TRDP XML / Import XML</button>
-              {mode === "monitor" && <><button onClick={() => void openCapture()}>打开 .pcap/.pcapng</button><button onClick={() => void saveCapture()} disabled={!events.some(event => event.raw_frame_hex)}>保存 .pcapng</button><button onClick={() => void command("capture_start", { interface: tab?.params?.capture_interface, filter: tab?.params?.capture_filter })}>Start Live Capture</button><button onClick={() => void command("capture_stop")}>Stop Capture</button></>}
+              {mode === "node" && <button onClick={() => void importWorkspace()}>导入 Workspace JSON</button>}
+              {mode === "monitor" && <><button onClick={() => void openCapture()}>打开 .pcap/.pcapng</button><button onClick={() => void saveCapture()} disabled={!events.some(event => event.raw_frame_hex)}>保存 .pcapng</button><button onClick={() => void startLiveCapture()}>Start Live Capture</button><button onClick={() => void command("capture_stop")}>Stop Capture</button></>}
             </div>
             {xmlImport && (
               <div className="liquid-glass-card" style={{ padding: 12 }}>
                 <strong>Import Preview</strong>
-                <div>{xmlImport.datasets.length} Datasets · {xmlImport.telegrams.length} Telegrams · SDT: {xmlImport.sdt_detected ? "Detected (not validated)" : "No configuration detected"}</div>
+                <div>{xmlImport.datasets.length} Datasets · {xmlImport.telegrams.length} Telegrams · ports {xmlImport.pd_port}/{xmlImport.md_udp_port}/{xmlImport.md_tcp_port} · SDT: {xmlImport.sdt_detected ? "Detected (not validated)" : "No configuration detected"}</div>
                 {xmlImport.warnings.map(warning => <div key={warning} style={{ marginTop: 4 }}>⚠ {warning}</div>)}
                 {mode === "node" && <button style={{ marginTop: 8 }} onClick={importTemplates}>将 Telegram 作为停止状态的订阅模板加入 Workspace</button>}
                 <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
@@ -344,17 +521,17 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         )}
 
         {page === "publishers" && <section><div style={{ display: "flex", justifyContent: "space-between" }}><h2>发布 / Publishers · PD Publisher</h2><button onClick={() => addObject("pd_publisher")}>+ Publisher</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination</th><th>Cycle µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_publisher").map(objectEditor)}</tbody></table></section>}
-        {page === "subscribers" && <section><div style={{ display: "flex", gap: 8, alignItems: "center" }}><h2 style={{ marginRight: "auto" }}>订阅 / Subscribers · PD Subscriber / Request</h2><button onClick={() => addObject("pd_subscriber")}>+ Subscriber</button><button onClick={() => addObject("pd_request")}>+ PD Request</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_subscriber" || object.kind === "pd_request").map(objectEditor)}</tbody></table></section>}
+        {page === "subscribers" && <section><div style={{ display: "flex", gap: 8, alignItems: "center" }}><h2 style={{ marginRight: "auto" }}>订阅 / Subscribers · PD Subscriber / Request</h2><button onClick={() => addObject("pd_subscriber")}>+ Subscriber</button><button onClick={() => addObject("pd_request")}>+ PD Request</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_subscriber" || object.kind === "pd_request").map(objectEditor)}</tbody></table><h3>Subscriber diagnostics</h3><table style={tableStyle}><thead><tr><th>Link</th><th>ComID</th><th>Packets</th><th>Missed seq</th><th>Last seq</th><th>Interval min/avg/max µs</th><th>Avg jitter µs</th><th>Errors</th></tr></thead><tbody>{flows.filter(flow => flow.msg.startsWith("P")).map(flow => <tr key={`diag-${flow.key}`}><td>{flow.link}</td><td>{flow.comId}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.minIntervalUs === undefined ? "—" : `${Math.round(flow.minIntervalUs)}/${Math.round(flow.avgIntervalUs ?? 0)}/${Math.round(flow.maxIntervalUs ?? 0)}`}</td><td>{flow.jitterUs === undefined ? "—" : Math.round(flow.jitterUs)}</td><td>{flow.errors}</td></tr>)}</tbody></table></section>}
         {page === "messages" && <section><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><h2 style={{ marginRight: "auto" }}>消息 / Messages · MD</h2><button onClick={() => addObject("md_request")}>+ Request</button><button onClick={() => addObject("md_listener")}>+ Listener/Replier</button><button onClick={() => addObject("md_notify")}>+ Notify</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination/Filter</th><th>UDP/TCP</th><th>Payload HEX</th><th>Protocol</th><th>Action</th></tr></thead><tbody>{objects.filter(object => object.kind.startsWith("md_")).map(objectEditor)}</tbody></table></section>}
 
         {page === "traffic" && (
           <section>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><h2>流量 / Traffic · TRDP Packet Inspector</h2><div style={{ display: "flex", gap: 8 }}><button onClick={() => void openCapture()}>Open capture</button><button onClick={() => void saveCapture()} disabled={!events.some(event => event.raw_frame_hex)}>Save pcapng</button><button onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>Clear</button></div></div>
             <h3>Flows</h3>
-            <table style={tableStyle}><thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Seq</th><th>Size</th></tr></thead><tbody>{flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.size ?? "—"}</td></tr>)}</tbody></table>
+            <table style={tableStyle}><thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead><tbody>{flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}</tbody></table>
             <h3>Packets</h3>
             <table style={{ ...tableStyle, fontFamily: "var(--font-mono)" }}><thead><tr><th>#</th><th>Link</th><th>Type</th><th>ComID</th><th>Source → Destination</th><th>Seq</th><th>Topo ETB/Op</th><th>Len</th><th>Payload</th></tr></thead><tbody>{events.slice().reverse().slice(0, 1000).map((event, index) => <tr key={`${event.timestamp_us ?? 0}-${index}`} onClick={() => void inspectPacket(event)} style={{ cursor: "pointer" }}><td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.etb_topo_count ?? "—"}/{event.op_trn_topo_count ?? "—"}</td><td>{event.data_len ?? "—"}</td><td title={event.payload_hex}>{hexPreview(event.payload_hex)}</td></tr>)}</tbody></table>
-            {selectedPacket && <div className="liquid-glass-card" style={{ marginTop: 12, padding: 12 }}><h3>Packet Inspector</h3><div>Protocol {selectedPacket.protocol_version ?? "—"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"}</div><div>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>{decoded ? <><h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4><div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div><table style={tableStyle}><thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead><tbody>{decoded.fields.map((field, index) => <tr key={`${field.name}-${index}`}><td>{field.name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></> : xmlImport && selectedPacket.com_id !== undefined ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div> : <div>Import a TRDP XML file to enable Dataset decoding.</div>}</div>}
+            {selectedPacket && <div className="liquid-glass-card" style={{ marginTop: 12, padding: 12 }}><h3>Packet Inspector</h3><div>Protocol {selectedPacket.protocol_version ?? "—"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? "—"}</div>{selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code>{selectedPacket.msg_type === "Mq" && <button style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}<div>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>{decoded ? <><h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4><div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div><table style={tableStyle}><thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead><tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></> : xmlImport && selectedPacket.com_id !== undefined ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div> : <div>Import a TRDP XML file to enable Dataset decoding.</div>}</div>}
           </section>
         )}
       </div>
