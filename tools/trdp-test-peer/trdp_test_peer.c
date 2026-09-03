@@ -176,6 +176,7 @@ int main(int argc, char **argv) {
     time_t deadline = 0;
     TRDP_PD_CONFIG_T pd;
     TRDP_MD_CONFIG_T md;
+    TRDP_PROCESS_CONFIG_T process;
     TRDP_ERR_T error = TRDP_NO_ERR;
 
     if (argc < 5) {
@@ -204,6 +205,7 @@ int main(int argc, char **argv) {
 
     memset(&pd, 0, sizeof(pd));
     memset(&md, 0, sizeof(md));
+    memset(&process, 0, sizeof(process));
     pd.flags = TRDP_FLAGS_CALLBACK;
     pd.timeout = 300000u;
     pd.toBehavior = TRDP_TO_KEEP_LAST_VALUE;
@@ -220,12 +222,18 @@ int main(int argc, char **argv) {
     md.sendParam = md_send_params();
     md.maxNumSessions = 32u;
 
+    (void)snprintf((char *)process.hostName, sizeof(process.hostName), "TauTermPeer");
+    process.cycleTime = TRDP_PROCESS_DEFAULT_CYCLE_TIME;
+    process.priority = 0u;
+    process.options = TRDP_OPTION_NONE;
+    process.vlanId = 0u;
+
     error = tlc_init(NULL, NULL, NULL);
     if (error != TRDP_NO_ERR) {
         fprintf(stderr, "tlc_init failed: %d\n", (int)error);
         return 3;
     }
-    error = tlc_openSession(&app, vos_dottedIP(own), 0u, NULL, &pd, &md, NULL);
+    error = tlc_openSession(&app, vos_dottedIP(own), 0u, NULL, &pd, &md, &process);
     if (error != TRDP_NO_ERR) {
         fprintf(stderr, "tlc_openSession failed: %d\n", (int)error);
         (void)tlc_terminate();
