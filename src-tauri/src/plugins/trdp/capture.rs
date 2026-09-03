@@ -140,7 +140,6 @@ fn decode_frame(
     if ip_header_length < 20 || frame.len() < ip + ip_header_length {
         return None;
     }
-    // Non-first IPv4 fragments do not contain a complete transport/TRDP header.
     if be16(frame, ip + 6)? & 0x1fff != 0 {
         return None;
     }
@@ -216,8 +215,6 @@ fn decode_frame(
         data_len,
         payload_hex: hex(payload),
         raw_frame_hex: hex(frame),
-        // SDT is a payload-level protocol. Generic packet bytes are not enough
-        // to make a reliable safety-profile claim; XML import reports metadata.
         sdt_detected: false,
     })
 }
@@ -356,24 +353,23 @@ fn parse_pcapng(data: &[u8], ports: CapturePorts<'_>) -> Result<Vec<TrdpPacket>,
             6 if block_length >= 32 => {
                 let interface_index =
                     read_u32(data, offset + 8, little_endian).unwrap_or(0) as usize;
-                let timestamp_high =
-                    read_u32(data, offset + 12, little_endian).unwrap_or(0) as u64;
-                let timestamp_low =
-                    read_u32(data, offset + 16, little_endian).unwrap_or(0) as u64;
+                let timestamp_high = read_u32(data, offset + 12, little_endian).unwrap_or(0) as u64;
+                let timestamp_low = read_u32(data, offset + 16, little_endian).unwrap_or(0) as u64;
                 let captured_length =
                     read_u32(data, offset + 20, little_endian).unwrap_or(0) as usize;
                 let packet_start = offset + 28;
                 if packet_start + captured_length > offset + block_length - 4 {
                     return Err("pcapng packet length exceeds block size".into());
                 }
-                let interface = interfaces
-                    .get(interface_index)
-                    .copied()
-                    .unwrap_or(PcapNgInterface {
-                        linktype: LINKTYPE_ETHERNET,
-                        timestamp_resolution: 6,
-                        timestamp_base2: false,
-                    });
+                let interface =
+                    interfaces
+                        .get(interface_index)
+                        .copied()
+                        .unwrap_or(PcapNgInterface {
+                            linktype: LINKTYPE_ETHERNET,
+                            timestamp_resolution: 6,
+                            timestamp_base2: false,
+                        });
                 let raw_timestamp = (timestamp_high << 32) | timestamp_low;
                 let timestamp_us = pcapng_timestamp_to_us(
                     raw_timestamp,
@@ -396,7 +392,6 @@ fn parse_pcapng(data: &[u8], ports: CapturePorts<'_>) -> Result<Vec<TrdpPacket>,
     Ok(packets)
 }
 
-#[tauri::command]
 pub fn trdp_open_capture(
     path: String,
     pd_ports: Option<Vec<u16>>,
@@ -420,10 +415,8 @@ fn append_u32(output: &mut Vec<u8>, value: u32) {
     output.extend_from_slice(&value.to_le_bytes());
 }
 
-#[tauri::command]
 pub fn trdp_save_capture(path: String, packets: Vec<TrdpPacket>) -> Result<(), String> {
     let mut output = Vec::new();
-    // Section Header Block, little endian.
     append_u32(&mut output, 0x0a0d0d0a);
     append_u32(&mut output, 28);
     append_u32(&mut output, 0x1a2b3c4d);
@@ -432,7 +425,6 @@ pub fn trdp_save_capture(path: String, packets: Vec<TrdpPacket>) -> Result<(), S
     output.extend_from_slice(&u64::MAX.to_le_bytes());
     append_u32(&mut output, 28);
 
-    // Interface Description Block: Ethernet, snaplen 65535, default µs timestamps.
     append_u32(&mut output, 1);
     append_u32(&mut output, 20);
     output.extend_from_slice(&(LINKTYPE_ETHERNET as u16).to_le_bytes());
