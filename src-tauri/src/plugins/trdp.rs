@@ -19,6 +19,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 pub struct TrdpSideChannel {
@@ -130,7 +131,12 @@ impl TrdpSideChannel {
         });
 
         *self.child.lock().map_err(|error| error.to_string())? = Some(child);
-        self.send(json!({ "command": "open", "params": params }))
+        let open_command = if params.get("mode").and_then(Value::as_str) == Some("monitor") {
+            "monitor_open"
+        } else {
+            "open"
+        };
+        self.send(json!({ "command": open_command, "params": params }))
     }
 
     fn send(&self, command: Value) -> Result<(), String> {
@@ -157,6 +163,13 @@ impl SideChannel for TrdpSideChannel {
         }
         if let Ok(mut child) = self.child.lock() {
             if let Some(mut process) = child.take() {
+                for _ in 0..25 {
+                    match process.try_wait() {
+                        Ok(Some(_)) => return,
+                        Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                        Err(_) => break,
+                    }
+                }
                 let _ = process.kill();
                 let _ = process.wait();
             }
