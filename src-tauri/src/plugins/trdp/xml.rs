@@ -507,7 +507,6 @@ fn decode_dataset_inner(
     Ok((fields, offset))
 }
 
-
 fn encode_hex(data: &[u8]) -> String {
     const TABLE: &[u8; 16] = b"0123456789ABCDEF";
     let mut output = String::with_capacity(data.len() * 2);
@@ -746,11 +745,7 @@ fn encode_dataset_inner(
     Ok(())
 }
 
-pub fn trdp_encode_dataset(
-    path: String,
-    dataset_id: u32,
-    values: Value,
-) -> Result<Value, String> {
+pub fn trdp_encode_dataset(path: String, dataset_id: u32, values: Value) -> Result<Value, String> {
     let imported = parse_xml(&path)?;
     let values = values
         .as_object()
@@ -814,17 +809,16 @@ mod tests {
         )
         .expect("write");
         let path = file.path().to_string_lossy().to_string();
-        let encoded = trdp_encode_dataset(
-            path.clone(),
-            1001,
-            json!({"counter": 7, "text": "OK"}),
-        )
-        .expect("encode");
+        let encoded = trdp_encode_dataset(path.clone(), 1001, json!({"counter": 7, "text": "OK"}))
+            .expect("encode");
         assert_eq!(encoded["payload_hex"], "000000074F4B");
 
-        let decoded =
-            trdp_decode_dataset(path, 1001, encoded["payload_hex"].as_str().unwrap().to_string())
-                .expect("decode");
+        let decoded = trdp_decode_dataset(
+            path,
+            1001,
+            encoded["payload_hex"].as_str().unwrap().to_string(),
+        )
+        .expect("decode");
         assert_eq!(decoded["fields"]["counter"]["value"], json!(7u32));
         assert_eq!(decoded["fields"]["text"]["value"], json!([79, 75]));
     }
