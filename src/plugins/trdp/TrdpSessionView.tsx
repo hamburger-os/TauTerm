@@ -59,9 +59,20 @@ type TrdpObject = {
   replyTimeoutUs: number;
   responseMode: "reply" | "query";
   confirmTimeoutUs: number;
+  replyComId: number;
+  replyIp: string;
+  sourceUri: string;
+  destUri: string;
 };
 
-type XmlElement = { name: string; data_type: string; array_size: number; unit?: string };
+type XmlElement = {
+  name: string;
+  data_type: string;
+  type_id: number;
+  array_size: number;
+  dynamic: boolean;
+  unit?: string;
+};
 type XmlDataset = { id: number; name: string; elements: XmlElement[] };
 type XmlTelegram = {
   name: string;
@@ -96,6 +107,16 @@ type Workspace = {
   name?: string;
   xml?: string;
   objects?: Array<Record<string, unknown>>;
+};
+type EncodedDataset = {
+  dataset_id: number;
+  payload_bytes: number;
+  payload_hex: string;
+};
+type StructuredEditor = {
+  objectId: string;
+  datasetId: number;
+  drafts: Record<string, string>;
 };
 
 type FlowRow = {
@@ -166,6 +187,10 @@ function createObject(kind: ObjectKind, index: number): TrdpObject {
     replyTimeoutUs: 5000000,
     responseMode: "reply",
     confirmTimeoutUs: 2000000,
+    replyComId: 0,
+    replyIp: "0.0.0.0",
+    sourceUri: "",
+    destUri: "",
   };
 }
 
@@ -195,6 +220,10 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
     replyTimeoutUs: Number(raw.reply_timeout_us ?? 5000000),
     responseMode: raw.response_mode === "query" ? "query" : "reply",
     confirmTimeoutUs: Number(raw.confirm_timeout_us ?? 2000000),
+    replyComId: Number(raw.reply_com_id ?? 0),
+    replyIp: typeof raw.reply_ip === "string" ? raw.reply_ip : "0.0.0.0",
+    sourceUri: typeof raw.source_uri === "string" ? raw.source_uri : "",
+    destUri: typeof raw.dest_uri === "string" ? raw.dest_uri : "",
   };
 }
 
@@ -227,6 +256,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [decoded, setDecoded] = useState<DecodedDataset | null>(null);
   const [selectedPacket, setSelectedPacket] = useState<TrdpEvent | null>(null);
+  const [structuredEditor, setStructuredEditor] = useState<StructuredEditor | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -253,7 +283,6 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const result = new Map<number, number>();
     for (const object of objects) {
       if (object.kind === "pd_publisher") result.set(object.comId, object.cycleUs);
-      if (object.kind === "pd_subscriber" || object.kind === "pd_request") result.set(object.comId, object.timeoutUs);
     }
     for (const telegram of xmlImport?.telegrams ?? []) {
       if (telegram.cycle_us && !result.has(telegram.com_id)) result.set(telegram.com_id, telegram.cycle_us);
@@ -349,6 +378,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         reply_timeout_us: obj.replyTimeoutUs,
         response_mode: obj.responseMode,
         confirm_timeout_us: obj.confirmTimeoutUs,
+        reply_com_id: obj.replyComId,
+        reply_ip: obj.replyIp,
+        source_uri: obj.sourceUri,
+        dest_uri: obj.destUri,
       },
     });
     if (obj.kind !== "md_request" && obj.kind !== "md_notify") patchObject(obj.id, { state: "running" });
