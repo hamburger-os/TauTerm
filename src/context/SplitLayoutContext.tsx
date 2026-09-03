@@ -21,6 +21,12 @@ import {
   type SplitEdge,
   type SplitLayoutState,
 } from "../core/split-layout";
+import {
+  hasWorkspaceAssignments,
+  parsePersistedWorkspaceLayout,
+  serializeWorkspaceLayout,
+  WORKSPACE_LAYOUT_STORAGE_KEY,
+} from "../core/workspace-layout";
 
 interface SplitLayoutContextValue {
   state: SplitLayoutState;
@@ -41,19 +47,53 @@ const SplitLayoutContext = createContext<SplitLayoutContextValue | null>(null);
 let nextPaneNumber = 2;
 let nextSplitNumber = 1;
 
-function makePaneId(): PaneId {
-  return `pane-${nextPaneNumber++}`;
+function hasSplitId(node: LayoutNode, splitId: string): boolean {
+  if (node.type === "pane") return false;
+  if (node.id === splitId) return true;
+  return hasSplitId(node.first, splitId) || hasSplitId(node.second, splitId);
 }
 
-function makeSplitId(): string {
-  return `split-${nextSplitNumber++}`;
+function makePaneId(root: LayoutNode): PaneId {
+  const existing = new Set(collectPaneIds(root));
+  let candidate: PaneId;
+  do {
+    candidate = `pane-${nextPaneNumber++}`;
+  } while (existing.has(candidate));
+  return candidate;
+}
+
+function makeSplitId(root: LayoutNode): string {
+  let candidate: string;
+  do {
+    candidate = `split-${nextSplitNumber++}`;
+  } while (hasSplitId(root, candidate));
+  return candidate;
+}
+
+function loadInitialWorkspaceLayout(): SplitLayoutState | null {
+  try {
+    return parsePersistedWorkspaceLayout(localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY));
+  } catch {
+    return null;
+  }
 }
 
 export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   const { state: sessionState, switchTab } = useSession();
-  const [state, setState] = useState<SplitLayoutState>(() => createInitialSplitLayout());
+  const restoredLayoutRef = useRef<SplitLayoutState | null>(null);
+  const [state, setState] = useState<SplitLayoutState>(() => {
+    const restored = loadInitialWorkspaceLayout();
+    restoredLayoutRef.current = restored;
+    return restored ?? createInitialSplitLayout();
+  });
   const stateRef = useRef(state);
   stateRef.current = state;
+  const restoringWorkspaceRef = useRef(restoredLayoutRef.current !== null);
+  /** Runtime child Session ID -> stable root/config Session ID. Keep old mappings until app exit. */
+  const stableSessionIdsRef = useRef<Map<string, string>>(new Map());
+  for (const tab of sessionState.tabs) {
+    stableSessionIdsRef.current.set(tab.id, tab.parentId ?? tab.id);
+  }
 
   const syncActiveSession = useCallback((sessionId: string | null) => {
     // 空字符串沿用现有 switchTab 的容错路径，前端等价于“当前无会话”：
@@ -61,12 +101,51 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     void switchTab(sessionId ?? "");
   }, [switchTab]);
 
+  const persistWorkspaceNow = useCallback(() => {
+    try {
+      const serialized = serializeWorkspaceLayout(stateRef.current, stableSessionIdsRef.current);
+      localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, serialized);
+    } catch (error) {
+      console.warn("SplitLayoutContext: 保存 Workspace 布局失败:", error);
+    }
+  }, []);
+
+  // Split Tree / assignment / ratio 变化后自动保存；拖动 divider 时用短防抖避免频繁写 localStorage。
+  useEffect(() => {
+    const timer = window.setTimeout(persistWorkspaceNow, 160);
+    return () => window.clearTimeout(timer);
+  }, [state, sessionState.tabs, persistWorkspaceNow]);
+
+  // 若用户刚拖完 divider 就立即关闭窗口，确保最后状态仍同步落盘。
+  useEffect(() => {
+    window.addEventListener("beforeunload", persistWorkspaceNow);
+    return () => window.removeEventListener("beforeunload", persistWorkspaceNow);
+  }, [persistWorkspaceNow]);
+
   // 同步 SessionContext 的 activeTabId 与 Split Layout，同时优先清理已删除的 assignment。
-  // 多分屏中若“当前 selected Pane 的 Session”被删除/子 Channel 被关闭，该 Pane 应保持为空；
-  // 不让 SessionContext 为兼容单屏而选择的 sibling 自动重新填入这个 Pane。
+  // 恢复 Workspace 时先等磁盘会话配置进入 SessionContext，再让持久化的 selected Pane 成为 active context；
+  // 这样 loadSavedSessions() 默认选中的第一张卡片不会覆盖昨日保存的 Pane assignment。
   useEffect(() => {
     const current = stateRef.current;
     const valid = new Set(sessionState.tabs.map(tab => tab.id));
+
+    if (restoringWorkspaceRef.current) {
+      // SessionContext 异步 load_sessions。在持久化布局确实引用了 Session 时，空 tabs 只是“尚未加载”，
+      // 不能把 assignment 当成已删除会话立即清空。
+      if (valid.size === 0 && hasWorkspaceAssignments(current)) return;
+
+      const next = pruneAssignments(current, valid);
+      restoringWorkspaceRef.current = false;
+      if (next !== current) {
+        stateRef.current = next;
+        setState(next);
+      }
+
+      const restoredSessionId = next.assignments[next.selectedPaneId] ?? null;
+      syncActiveSession(restoredSessionId && valid.has(restoredSessionId) ? restoredSessionId : null);
+      return;
+    }
+
     const selectedSessionId = current.assignments[current.selectedPaneId];
     const selectedSessionRemoved = Boolean(selectedSessionId && !valid.has(selectedSessionId));
 
@@ -104,7 +183,14 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   const splitPane = useCallback((paneId: PaneId, edge: SplitEdge) => {
     const current = stateRef.current;
     if (countPanes(current.root) >= 4) return;
-    const next = splitPaneInLayout(current, paneId, edge, makePaneId(), makeSplitId(), 4);
+    const next = splitPaneInLayout(
+      current,
+      paneId,
+      edge,
+      makePaneId(current.root),
+      makeSplitId(current.root),
+      4,
+    );
     if (next === current) return;
     stateRef.current = next;
     setState(next);
