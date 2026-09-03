@@ -124,31 +124,38 @@ export function parsePersistedWorkspaceLayout(raw: string | null): SplitLayoutSt
  * Persist only stable Session configuration identities.
  *
  * Runtime child channels (SSH/Local Shell) are mapped to their parent configuration ID before
- * saving. If several panes currently show child channels from the same parent, only the first
- * pane keeps that stable reference; the remaining pane slots stay present but restore empty.
+ * saving. If several panes currently show child channels from the same parent, only one Pane may
+ * keep that durable reference. Prefer the selected Pane when it belongs to the duplicate group;
+ * otherwise keep the first Pane in Split Tree order.
  */
 export function serializeWorkspaceLayout(
   state: SplitLayoutState,
   stableSessionIds: ReadonlyMap<string, string>,
 ): string {
-  const assignments: Record<PaneId, string | null> = {};
-  const usedStableIds = new Set<string>();
+  const paneIds = collectWorkspacePaneIds(state.root);
+  const stableByPane: Record<PaneId, string | null> = {};
+  const preferredPaneBySession = new Map<string, PaneId>();
 
-  for (const paneId of collectWorkspacePaneIds(state.root)) {
+  // Pass 1: canonicalize runtime child IDs and choose one durable Pane for every stable Session.
+  // Tree order supplies the default; the selected Pane overrides that default for its Session.
+  for (const paneId of paneIds) {
     const runtimeId = state.assignments[paneId];
-    if (!runtimeId) {
-      assignments[paneId] = null;
-      continue;
-    }
+    const stableId = runtimeId ? (stableSessionIds.get(runtimeId) ?? runtimeId) : null;
+    stableByPane[paneId] = stableId;
+    if (!stableId) continue;
 
-    const stableId = stableSessionIds.get(runtimeId) ?? runtimeId;
-    if (usedStableIds.has(stableId)) {
-      assignments[paneId] = null;
-      continue;
+    if (!preferredPaneBySession.has(stableId) || paneId === state.selectedPaneId) {
+      preferredPaneBySession.set(stableId, paneId);
     }
+  }
 
-    usedStableIds.add(stableId);
-    assignments[paneId] = stableId;
+  // Pass 2: enforce the one-Session-one-Pane invariant in the persisted payload.
+  const assignments: Record<PaneId, string | null> = {};
+  for (const paneId of paneIds) {
+    const stableId = stableByPane[paneId];
+    assignments[paneId] = stableId && preferredPaneBySession.get(stableId) === paneId
+      ? stableId
+      : null;
   }
 
   const payload: PersistedWorkspaceLayoutV1 = {
