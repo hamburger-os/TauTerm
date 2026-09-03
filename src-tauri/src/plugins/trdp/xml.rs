@@ -1,13 +1,16 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+use std::collections::HashSet;
 use std::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrdpXmlElement {
     pub name: String,
     pub data_type: String,
+    pub type_id: u32,
     pub array_size: u32,
+    pub dynamic: bool,
     pub unit: Option<String>,
     pub scale: Option<f64>,
     pub offset: Option<i64>,
@@ -37,12 +40,18 @@ pub struct TrdpXmlImport {
     pub path: String,
     pub datasets: Vec<TrdpXmlDataset>,
     pub telegrams: Vec<TrdpXmlTelegram>,
+    pub pd_port: u16,
+    pub md_udp_port: u16,
+    pub md_tcp_port: u16,
     pub sdt_detected: bool,
     pub warnings: Vec<String>,
 }
 
 fn attr(tag: &str, name: &str) -> Option<String> {
-    let pattern = format!(r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#, regex::escape(name));
+    let pattern = format!(
+        r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#,
+        regex::escape(name)
+    );
     Regex::new(&pattern)
         .ok()?
         .captures(tag)
@@ -54,14 +63,73 @@ fn attr_u32(tag: &str, name: &str) -> Option<u32> {
     attr(tag, name)?.trim().parse().ok()
 }
 
+fn type_id(value: &str) -> Option<u32> {
+    if let Ok(id) = value.trim().parse::<u32>() {
+        return Some(id);
+    }
+    match value.trim().to_ascii_uppercase().as_str() {
+        "BOOL8" | "BITSET8" | "ANTIVALENT8" => Some(1),
+        "CHAR8" => Some(2),
+        "UTF16" => Some(3),
+        "INT8" => Some(4),
+        "INT16" => Some(5),
+        "INT32" => Some(6),
+        "INT64" => Some(7),
+        "UINT8" => Some(8),
+        "UINT16" => Some(9),
+        "UINT32" => Some(10),
+        "UINT64" => Some(11),
+        "REAL32" => Some(12),
+        "REAL64" => Some(13),
+        "TIMEDATE32" => Some(14),
+        "TIMEDATE48" => Some(15),
+        "TIMEDATE64" => Some(16),
+        _ => None,
+    }
+}
+
+fn type_name(id: u32, original: &str) -> String {
+    match id {
+        1 => "BITSET8",
+        2 => "CHAR8",
+        3 => "UTF16",
+        4 => "INT8",
+        5 => "INT16",
+        6 => "INT32",
+        7 => "INT64",
+        8 => "UINT8",
+        9 => "UINT16",
+        10 => "UINT32",
+        11 => "UINT64",
+        12 => "REAL32",
+        13 => "REAL64",
+        14 => "TIMEDATE32",
+        15 => "TIMEDATE48",
+        16 => "TIMEDATE64",
+        nested if nested > 1000 => return format!("Dataset {nested}"),
+        _ => original,
+    }
+    .to_string()
+}
+
 fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
     let xml = fs::read_to_string(path).map_err(|error| format!("读取 TRDP XML 失败: {error}"))?;
-    let dataset_re = Regex::new(r#"(?is)<data-set\b([^>]*)>(.*?)</data-set>"#).map_err(|error| error.to_string())?;
-    let element_re = Regex::new(r#"(?is)<element\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
-    let telegram_re = Regex::new(r#"(?is)<telegram\b([^>]*)>(.*?)</telegram>"#).map_err(|error| error.to_string())?;
-    let pd_re = Regex::new(r#"(?is)<pd-parameter\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
-    let source_re = Regex::new(r#"(?is)<source\b([^>]*)"#).map_err(|error| error.to_string())?;
-    let destination_re = Regex::new(r#"(?is)<destination\b([^>]*)"#).map_err(|error| error.to_string())?;
+    let dataset_re = Regex::new(r#"(?is)<data-set\b([^>]*)>(.*?)</data-set>"#)
+        .map_err(|error| error.to_string())?;
+    let element_re =
+        Regex::new(r#"(?is)<element\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let telegram_re = Regex::new(r#"(?is)<telegram\b([^>]*)>(.*?)</telegram>"#)
+        .map_err(|error| error.to_string())?;
+    let pd_re = Regex::new(r#"(?is)<pd-parameter\b([^>]*)/?>"#)
+        .map_err(|error| error.to_string())?;
+    let source_re =
+        Regex::new(r#"(?is)<source\b([^>]*)"#).map_err(|error| error.to_string())?;
+    let destination_re = Regex::new(r#"(?is)<destination\b([^>]*)"#)
+        .map_err(|error| error.to_string())?;
+    let pd_config_re = Regex::new(r#"(?is)<pd-com-parameter\b([^>]*)/?>"#)
+        .map_err(|error| error.to_string())?;
+    let md_config_re = Regex::new(r#"(?is)<md-com-parameter\b([^>]*)/?>"#)
+        .map_err(|error| error.to_string())?;
 
     let mut warnings = Vec::new();
     let mut datasets = Vec::new();
@@ -73,20 +141,30 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             continue;
         };
         let name = attr(tag, "name").unwrap_or_else(|| format!("Dataset {id}"));
-        let elements = element_re
-            .captures_iter(body)
-            .map(|element| {
-                let attributes = element.get(1).map(|value| value.as_str()).unwrap_or_default();
-                TrdpXmlElement {
-                    name: attr(attributes, "name").unwrap_or_else(|| "unnamed".to_string()),
-                    data_type: attr(attributes, "type").unwrap_or_else(|| "INVALID".to_string()),
-                    array_size: attr_u32(attributes, "array-size").unwrap_or(1),
-                    unit: attr(attributes, "unit"),
-                    scale: attr(attributes, "scale").and_then(|value| value.parse().ok()),
-                    offset: attr(attributes, "offset").and_then(|value| value.parse().ok()),
-                }
-            })
-            .collect();
+        let mut elements = Vec::new();
+        for element in element_re.captures_iter(body) {
+            let attributes = element.get(1).map(|value| value.as_str()).unwrap_or_default();
+            let raw_type = attr(attributes, "type").unwrap_or_else(|| "0".to_string());
+            let element_type_id = type_id(&raw_type).unwrap_or(0);
+            if element_type_id == 0 {
+                warnings.push(format!(
+                    "Dataset {id} 字段 {} 使用未知类型 {}",
+                    attr(attributes, "name").unwrap_or_else(|| "unnamed".to_string()),
+                    raw_type
+                ));
+            }
+            let array_size = attr_u32(attributes, "array-size").unwrap_or(1);
+            elements.push(TrdpXmlElement {
+                name: attr(attributes, "name").unwrap_or_else(|| "unnamed".to_string()),
+                data_type: type_name(element_type_id, &raw_type),
+                type_id: element_type_id,
+                array_size,
+                dynamic: array_size == 0,
+                unit: attr(attributes, "unit"),
+                scale: attr(attributes, "scale").and_then(|value| value.parse().ok()),
+                offset: attr(attributes, "offset").and_then(|value| value.parse().ok()),
+            });
+        }
         datasets.push(TrdpXmlDataset { id, name, elements });
     }
 
@@ -107,7 +185,9 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         let sources = source_re
             .captures_iter(body)
             .filter_map(|value| value.get(1))
-            .filter_map(|value| attr(value.as_str(), "uri1").or_else(|| attr(value.as_str(), "uri")))
+            .filter_map(|value| {
+                attr(value.as_str(), "uri1").or_else(|| attr(value.as_str(), "uri"))
+            })
             .collect();
         let destinations = destination_re
             .captures_iter(body)
@@ -126,9 +206,30 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         });
     }
 
-    let sdt_detected = xml.to_ascii_lowercase().contains("<sdt-parameter")
-        || xml.to_ascii_lowercase().contains("sdtv2")
-        || xml.to_ascii_lowercase().contains("sdtv4");
+    let pd_attributes = pd_config_re
+        .captures(&xml)
+        .and_then(|value| value.get(1))
+        .map(|value| value.as_str())
+        .unwrap_or_default();
+    let md_attributes = md_config_re
+        .captures(&xml)
+        .and_then(|value| value.get(1))
+        .map(|value| value.as_str())
+        .unwrap_or_default();
+    let pd_port = attr_u32(pd_attributes, "port")
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(17224);
+    let md_udp_port = attr_u32(md_attributes, "udp-port")
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(17225);
+    let md_tcp_port = attr_u32(md_attributes, "tcp-port")
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(17225);
+
+    let lowercase = xml.to_ascii_lowercase();
+    let sdt_detected = lowercase.contains("<sdt-parameter")
+        || lowercase.contains("sdtv2")
+        || lowercase.contains("sdtv4");
     if sdt_detected {
         warnings.push(
             "检测到 SDT 配置：TauTerm 首版仅展示元数据，不执行 SDTv2/SDTv4 安全验证。".to_string(),
@@ -138,6 +239,9 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         path: path.to_string(),
         datasets,
         telegrams,
+        pd_port,
+        md_udp_port,
+        md_tcp_port,
         sdt_detected,
         warnings,
     })
@@ -149,8 +253,11 @@ pub fn trdp_import_xml(path: String) -> Result<TrdpXmlImport, String> {
 }
 
 fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
-    let compact: String = value.chars().filter(|character| !character.is_whitespace()).collect();
-    if compact.len() % 2 != 0 {
+    let compact: String = value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if !compact.len().is_multiple_of(2) {
         return Err("HEX 长度必须为偶数".to_string());
     }
     (0..compact.len())
@@ -162,41 +269,196 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-fn primitive_width(data_type: &str) -> Option<usize> {
-    match data_type.to_ascii_uppercase().as_str() {
-        "BOOL8" | "BITSET8" | "CHAR8" | "INT8" | "UINT8" => Some(1),
-        "UTF16" | "INT16" | "UINT16" => Some(2),
-        "INT32" | "UINT32" | "REAL32" | "TIMEDATE32" => Some(4),
-        "INT64" | "UINT64" | "REAL64" | "TIMEDATE64" => Some(8),
-        "TIMEDATE48" => Some(6),
+fn primitive_width(type_id: u32) -> Option<usize> {
+    match type_id {
+        1 | 2 | 4 | 8 => Some(1),
+        3 | 5 | 9 => Some(2),
+        6 | 10 | 12 | 14 => Some(4),
+        15 => Some(6),
+        7 | 11 | 13 | 16 => Some(8),
         _ => None,
     }
 }
 
-fn decode_primitive(data_type: &str, bytes: &[u8]) -> Value {
-    match data_type.to_ascii_uppercase().as_str() {
-        "BOOL8" => json!(bytes.first().copied().unwrap_or(0) != 0),
-        "BITSET8" | "UINT8" => json!(bytes.first().copied().unwrap_or(0)),
-        "CHAR8" => json!(bytes.first().map(|value| char::from(*value).to_string()).unwrap_or_default()),
-        "INT8" => json!(bytes.first().copied().unwrap_or(0) as i8),
-        "UTF16" | "UINT16" => json!(u16::from_be_bytes([bytes[0], bytes[1]])),
-        "INT16" => json!(i16::from_be_bytes([bytes[0], bytes[1]])),
-        "UINT32" | "TIMEDATE32" => json!(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
-        "INT32" => json!(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
-        "REAL32" => json!(f32::from_bits(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))),
-        "UINT64" | "TIMEDATE64" => json!(u64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
-        "INT64" => json!(i64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
-        "REAL64" => json!(f64::from_bits(u64::from_be_bytes(bytes.try_into().unwrap_or([0; 8])))),
-        "TIMEDATE48" => json!({
+fn decode_primitive(type_id: u32, bytes: &[u8]) -> Value {
+    match type_id {
+        1 => json!(bytes.first().copied().unwrap_or(0)),
+        2 => json!(bytes.first().map(|value| char::from(*value).to_string()).unwrap_or_default()),
+        3 | 9 => json!(u16::from_be_bytes([bytes[0], bytes[1]])),
+        4 => json!(bytes.first().copied().unwrap_or(0) as i8),
+        5 => json!(i16::from_be_bytes([bytes[0], bytes[1]])),
+        6 => json!(i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        7 => json!(i64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
+        8 => json!(bytes.first().copied().unwrap_or(0)),
+        10 | 14 => json!(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        11 | 16 => json!(u64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
+        12 => json!(f32::from_bits(u32::from_be_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        ]))),
+        13 => json!(f64::from_bits(u64::from_be_bytes(
+            bytes.try_into().unwrap_or([0; 8])
+        ))),
+        15 => json!({
             "seconds": u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
             "ticks": u16::from_be_bytes([bytes[4], bytes[5]])
         }),
-        _ => json!(null),
+        _ => Value::Null,
     }
 }
 
+fn fixed_dataset_width(
+    dataset_id: u32,
+    imported: &TrdpXmlImport,
+    visiting: &mut HashSet<u32>,
+) -> Option<usize> {
+    if !visiting.insert(dataset_id) {
+        return None;
+    }
+    let dataset = imported.datasets.iter().find(|dataset| dataset.id == dataset_id)?;
+    let mut total = 0usize;
+    for element in &dataset.elements {
+        if element.dynamic {
+            visiting.remove(&dataset_id);
+            return None;
+        }
+        let width = if let Some(width) = primitive_width(element.type_id) {
+            width
+        } else if element.type_id > 1000 {
+            fixed_dataset_width(element.type_id, imported, visiting)?
+        } else {
+            visiting.remove(&dataset_id);
+            return None;
+        };
+        total = total.checked_add(width.checked_mul(element.array_size as usize)?)?;
+    }
+    visiting.remove(&dataset_id);
+    Some(total)
+}
+
+fn decode_dataset_inner(
+    dataset_id: u32,
+    payload: &[u8],
+    imported: &TrdpXmlImport,
+    visiting: &mut HashSet<u32>,
+) -> Result<(Map<String, Value>, usize), String> {
+    if !visiting.insert(dataset_id) {
+        return Err(format!("Dataset 嵌套循环: {dataset_id}"));
+    }
+    let dataset = imported
+        .datasets
+        .iter()
+        .find(|dataset| dataset.id == dataset_id)
+        .ok_or_else(|| format!("Dataset {dataset_id} 不存在"))?;
+    let mut offset = 0usize;
+    let mut fields = Map::new();
+
+    for (index, element) in dataset.elements.iter().enumerate() {
+        let remaining_fixed_width = dataset.elements[index + 1..]
+            .iter()
+            .try_fold(0usize, |sum, trailing| {
+                if trailing.dynamic {
+                    return None;
+                }
+                let width = if let Some(width) = primitive_width(trailing.type_id) {
+                    width
+                } else if trailing.type_id > 1000 {
+                    fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
+                } else {
+                    return None;
+                };
+                sum.checked_add(width.checked_mul(trailing.array_size as usize)?)
+            });
+
+        let item_width = if let Some(width) = primitive_width(element.type_id) {
+            width
+        } else if element.type_id > 1000 {
+            fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(|| {
+                format!(
+                    "嵌套 Dataset {} 包含动态长度，无法从父 Dataset 自动切片",
+                    element.type_id
+                )
+            })?
+        } else {
+            return Err(format!(
+                "Dataset {} 字段 {} 使用未知类型 {}",
+                dataset_id, element.name, element.type_id
+            ));
+        };
+
+        let count = if element.dynamic {
+            let reserved = remaining_fixed_width.ok_or_else(|| {
+                format!(
+                    "Dataset {} 字段 {} 为动态数组，但其后仍有动态/未知长度字段",
+                    dataset_id, element.name
+                )
+            })?;
+            if payload.len() < offset + reserved {
+                return Err(format!("Dataset {dataset_id} payload 长度不足"));
+            }
+            (payload.len() - offset - reserved) / item_width
+        } else {
+            element.array_size as usize
+        };
+
+        let mut values = Vec::with_capacity(count);
+        for _ in 0..count {
+            if offset + item_width > payload.len() {
+                return Err(format!(
+                    "Dataset {} payload 长度不足：字段 {} 需要 {} bytes，当前 offset {} / {}",
+                    dataset_id,
+                    element.name,
+                    item_width,
+                    offset,
+                    payload.len()
+                ));
+            }
+            let slice = &payload[offset..offset + item_width];
+            let value = if element.type_id > 1000 {
+                let (nested, consumed) =
+                    decode_dataset_inner(element.type_id, slice, imported, visiting)?;
+                if consumed != item_width {
+                    return Err(format!("嵌套 Dataset {} 长度不一致", element.type_id));
+                }
+                Value::Object(nested)
+            } else {
+                decode_primitive(element.type_id, slice)
+            };
+            values.push(value);
+            offset += item_width;
+        }
+
+        let raw = if values.len() == 1 && !element.dynamic {
+            values.remove(0)
+        } else {
+            Value::Array(values)
+        };
+        let display = match raw.as_f64() {
+            Some(number) if element.scale.is_some() || element.offset.is_some() => json!(
+                number * element.scale.unwrap_or(1.0) + element.offset.unwrap_or(0) as f64
+            ),
+            _ => raw.clone(),
+        };
+        fields.insert(
+            element.name.clone(),
+            json!({
+                "type": element.data_type,
+                "type_id": element.type_id,
+                "unit": element.unit,
+                "raw": raw,
+                "value": display
+            }),
+        );
+    }
+    visiting.remove(&dataset_id);
+    Ok((fields, offset))
+}
+
 #[tauri::command]
-pub fn trdp_decode_dataset(path: String, dataset_id: u32, payload_hex: String) -> Result<Value, String> {
+pub fn trdp_decode_dataset(
+    path: String,
+    dataset_id: u32,
+    payload_hex: String,
+) -> Result<Value, String> {
     let imported = parse_xml(&path)?;
     let dataset = imported
         .datasets
@@ -204,49 +466,12 @@ pub fn trdp_decode_dataset(path: String, dataset_id: u32, payload_hex: String) -
         .find(|dataset| dataset.id == dataset_id)
         .ok_or_else(|| format!("Dataset {dataset_id} 不存在"))?;
     let payload = decode_hex(&payload_hex)?;
-    let mut offset = 0usize;
-    let mut fields = Vec::new();
-    for element in &dataset.elements {
-        let Some(width) = primitive_width(&element.data_type) else {
-            fields.push(json!({
-                "name": element.name,
-                "type": element.data_type,
-                "value": null,
-                "error": "nested/unknown dataset requires recursive schema support"
-            }));
-            continue;
-        };
-        let mut values = Vec::new();
-        for _ in 0..element.array_size.max(1) {
-            if offset + width > payload.len() {
-                return Err(format!(
-                    "Dataset {} payload 长度不足：字段 {} 需要 {} bytes，当前 offset {} / {}",
-                    dataset.id, element.name, width, offset, payload.len()
-                ));
-            }
-            let raw_value = decode_primitive(&element.data_type, &payload[offset..offset + width]);
-            values.push(raw_value);
-            offset += width;
-        }
-        let raw = if values.len() == 1 { values.remove(0) } else { Value::Array(values) };
-        let display = match raw.as_f64() {
-            Some(number) if element.scale.is_some() || element.offset.is_some() => json!(
-                number * element.scale.unwrap_or(1.0) + element.offset.unwrap_or(0) as f64
-            ),
-            _ => raw.clone(),
-        };
-        fields.push(json!({
-            "name": element.name,
-            "type": element.data_type,
-            "unit": element.unit,
-            "raw": raw,
-            "value": display
-        }));
-    }
+    let (fields, consumed) =
+        decode_dataset_inner(dataset_id, &payload, &imported, &mut HashSet::new())?;
     Ok(json!({
         "dataset_id": dataset.id,
         "dataset_name": dataset.name,
-        "consumed_bytes": offset,
+        "consumed_bytes": consumed,
         "payload_bytes": payload.len(),
         "fields": fields
     }))
@@ -255,10 +480,36 @@ pub fn trdp_decode_dataset(path: String, dataset_id: u32, payload_hex: String) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
-    fn decodes_network_order_uints() {
-        assert_eq!(decode_primitive("UINT16", &[0x12, 0x34]), json!(0x1234u16));
-        assert_eq!(decode_primitive("UINT32", &[0, 0, 0, 9]), json!(9u32));
+    fn maps_numeric_tcnopen_types() {
+        assert_eq!(type_id("5"), Some(5));
+        assert_eq!(type_name(5, "5"), "INT16");
+        assert_eq!(type_id("UINT32"), Some(10));
+    }
+
+    #[test]
+    fn imports_official_style_xml_and_dynamic_array() {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(
+            file,
+            r#"<device><bus-interface-list><bus-interface><pd-com-parameter port="17224"/><md-com-parameter udp-port="17225" tcp-port="17225"/><telegram name="demo" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram></bus-interface></bus-interface-list><data-set-list><data-set name="demo" id="1001"><element name="counter" type="10"/><element name="text" type="2" array-size="0"/></data-set></data-set-list></device>"#
+        )
+        .expect("write");
+        let path = file.path().to_string_lossy().to_string();
+        let imported = parse_xml(&path).expect("import");
+        assert_eq!(imported.telegrams[0].com_id, 1001);
+        assert!(imported.datasets[0].elements[1].dynamic);
+        let payload = [0, 0, 0, 7, b'O', b'K'];
+        let (fields, consumed) = decode_dataset_inner(
+            1001,
+            &payload,
+            &imported,
+            &mut HashSet::new(),
+        )
+        .expect("decode");
+        assert_eq!(consumed, payload.len());
+        assert_eq!(fields["counter"]["value"], json!(7u32));
     }
 }
