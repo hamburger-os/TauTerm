@@ -221,13 +221,16 @@ static void md_callback(
     UINT8 *data,
     UINT32 size
 ) {
-    node_object_t *object = (node_object_t *)ref;
+    node_object_t *object;
     TRDP_ERR_T error;
     TRDP_COM_PARAM_T send;
 
     if (message == NULL) {
         return;
     }
+    object = message->pUserRef != NULL
+        ? (node_object_t *)message->pUserRef
+        : (node_object_t *)ref;
     emit_md(object, app, message, data, size);
     if (
         object == NULL
