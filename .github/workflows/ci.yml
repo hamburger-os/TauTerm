@@ -122,6 +122,9 @@ jobs:
       - name: TypeScript type check
         run: npx tsc --noEmit
 
+      - name: Split layout invariants
+        run: npm run check:split-layout
+
       - name: Frontend production build without warnings
         shell: bash
         run: |
