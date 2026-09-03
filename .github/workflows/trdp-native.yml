@@ -1,0 +1,142 @@
+name: TRDP Native
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src-tauri/native/trdp_bridge*'
+      - 'scripts/bootstrap-trdp.sh'
+      - 'scripts/bootstrap-trdp.ps1'
+      - 'tools/trdp-test-peer/**'
+      - '.github/workflows/trdp-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trdp-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix:
+    name: Native TRDP (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/tcnopen-3.0.0.0
+          key: tcnopen-${{ matrix.os }}-3.0.0.0-v1
+
+      - name: Install native dependencies (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq uuid-dev
+
+      - name: Bootstrap TCNOpen 3.0.0.0 and native helpers
+        shell: bash
+        run: bash scripts/bootstrap-trdp.sh
+
+      - name: Verify native artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x src-tauri/binaries/tauterm-trdp-bridge
+          test -x tools/trdp-test-peer/bin/trdp-test-peer
+          file src-tauri/binaries/tauterm-trdp-bridge
+          file tools/trdp-test-peer/bin/trdp-test-peer
+
+      - name: Linux TCNOpen interoperability
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRIDGE="$PWD/src-tauri/binaries/tauterm-trdp-bridge"
+          PEER="$PWD/tools/trdp-test-peer/bin/trdp-test-peer"
+
+          "$PEER" pd-publisher 127.0.0.2 127.0.0.1 7001 4 >/tmp/trdp-peer-pd.log 2>&1 &
+          PD_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-pd-sub","kind":"pd_subscriber","com_id":7001,"source":"127.0.0.2","destination":"127.0.0.1","timeout_us":500000}}'
+            sleep 2
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-pd.log 2>&1
+          wait "$PD_PID"
+          grep -q '"com_id":7001' /tmp/trdp-bridge-pd.log
+
+          "$PEER" md-replier 127.0.0.2 0.0.0.0 7100 4 >/tmp/trdp-peer-md.log 2>&1 &
+          MD_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-md-request","kind":"md_request","com_id":7100,"destination":"127.0.0.2","transport":"udp","payload_hex":"01020304"}}'
+            sleep 2
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-md.log 2>&1
+          wait "$MD_PID"
+          grep -q '"msg_type":"Mp"' /tmp/trdp-bridge-md.log
+
+          "$PEER" md-replier-tcp 127.0.0.2 0.0.0.0 7101 5 >/tmp/trdp-peer-tcp.log 2>&1 &
+          TCP_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-md-tcp","kind":"md_request","com_id":7101,"destination":"127.0.0.2","transport":"tcp","payload_hex":"01020304"}}'
+            sleep 3
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-tcp.log 2>&1
+          wait "$TCP_PID"
+          grep -q '"msg_type":"Mp"' /tmp/trdp-bridge-tcp.log
+
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-md-query","kind":"md_listener","com_id":7102,"destination":"0.0.0.0","response_mode":"query","confirm_timeout_us":2000000,"payload_hex":"544155"}}'
+            sleep 0.5
+            "$PEER" md-requester 127.0.0.2 127.0.0.1 7102 3 >/tmp/trdp-peer-query.log 2>&1
+            sleep 0.5
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-query.log 2>&1
+          grep -q 'MD Mq' /tmp/trdp-peer-query.log
+          grep -q '"msg_type":"Mc"' /tmp/trdp-bridge-query.log
+
+          echo 'TRDP native loopback interoperability passed.'
+
+  windows:
+    name: Native TRDP (windows-2025)
+    runs-on: windows-2025
+    timeout-minutes: 50
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/tcnopen-3.0.0.0
+          key: tcnopen-windows-2025-3.0.0.0-v1
+
+      - name: Bootstrap TCNOpen 3.0.0.0 and native helpers
+        shell: pwsh
+        run: ./scripts/bootstrap-trdp.ps1
+
+      - name: Verify native artifacts
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'src-tauri/binaries/tauterm-trdp-bridge.exe')) { throw 'bridge missing' }
+          if (-not (Test-Path 'tools/trdp-test-peer/bin/trdp-test-peer.exe')) { throw 'peer missing' }
