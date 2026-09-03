@@ -105,11 +105,11 @@ Persistence follows these rules:
 
 1. Split state is autosaved locally after layout/assignment/ratio changes with a short debounce.
 2. Window shutdown performs a final synchronous save so the last divider movement is not lost.
-3. The parser validates the version, tree shape, unique Pane/Split IDs, ratio bounds, selected Pane and the four-Pane maximum. Invalid/corrupt/future payloads fall back safely to normal startup.
-4. Session configuration loading is asynchronous. A restored assignment is not pruned merely because `SessionContext.tabs` is still empty during startup.
+3. The parser validates the version, bounded tree shape/depth, unique Pane/Split IDs, ratio bounds, selected Pane, one-Session-one-Pane assignment uniqueness and the four-Pane maximum. Invalid/corrupt/future payloads fall back safely to normal startup.
+4. Session configuration loading is asynchronous. Workspace restoration waits for the saved-session catalog to resolve before treating an empty `SessionContext.tabs` as authoritative, including when every restored Pane is intentionally empty.
 5. Once saved Sessions are available, missing/deleted Session IDs are pruned without collapsing the Pane tree.
 6. A runtime SSH/Local Shell child Channel is persisted as its stable parent Session configuration ID. On next startup the Pane therefore shows the saved parent Session in the disconnected state.
-7. If multiple visible child Channels belong to the same parent, only one durable parent assignment can be restored without violating the one-Session-one-Pane invariant; additional Pane slots remain present but restore empty.
+7. If multiple visible child Channels belong to the same parent, only one durable parent assignment can be restored without violating the one-Session-one-Pane invariant. If the selected Pane belongs to that duplicate group it keeps the durable parent reference; otherwise the first Pane in Split Tree order keeps it. Additional Pane slots remain present but restore empty.
 8. Restoring a Workspace never invokes `connect_session`, `open_channel`, or any equivalent automatic connection path.
 
 The intended startup experience is therefore:
@@ -218,7 +218,7 @@ Sidebar clicks and other existing session-switch entry points update `activeTabI
 
 Selecting an occupied Pane updates `activeTabId` to that Pane's Session. Selecting a newly-created empty Pane clears the effective active Session context until a Session is assigned. When no active Session exists, Session-scoped auxiliary UI such as the RightSidebar shell must not reserve empty layout space.
 
-During Workspace restoration, the persisted selected Pane wins over the temporary first-tab selection produced while saved Session configurations are loading. This prevents startup hydration from overwriting the restored Pane assignment.
+During Workspace restoration, the persisted selected Pane wins over the temporary first-tab selection produced while saved Session configurations are loading. This also applies to a deliberately all-empty Workspace: startup hydration must not populate its selected Pane merely because saved Session configurations exist.
 
 ## Multi-session parent navigation and child lifecycle
 
@@ -298,9 +298,12 @@ Pure Split Tree / Workspace tests cover:
 - Session deletion/pruning without layout collapse;
 - hard maximum of four Pane leaves;
 - Workspace serialization/parsing;
+- deliberately all-empty Workspace geometry/selection persistence;
 - child Channel → stable parent Session canonicalization;
 - duplicate child Channels from one parent restoring without duplicate Session placement;
-- corrupt/future Workspace payload rejection.
+- selected-Pane preference when duplicate child Channels canonicalize to one parent;
+- corrupt/future Workspace payload rejection;
+- duplicate persisted Session assignments rejection.
 
 CI must additionally pass:
 
@@ -330,3 +333,5 @@ Manual acceptance scenarios should include:
 16. In a multi-pane layout, disconnect the selected SSH/Local Shell child from terminal context menu or the close-current-session shortcut; verify only that child closes, its Pane remains selected and empty, the parent remains valid, and no root-session-not-found error is reported.
 17. Put a saved but disconnected terminal Session in a Pane, right-click the disconnected placeholder, verify the WebView default menu never appears, then choose Connect and verify the Session connects in that Pane.
 18. From the same disconnected Pane menu, verify Configure opens the existing Session editor and Delete follows the same confirmation/removal behavior as the Sidebar card.
+19. Save a multi-Pane Workspace with every Pane intentionally empty, restart, and verify the Pane tree, ratios and selected Pane remain empty instead of being populated by the first saved Session.
+20. Display two child Channels from the same SSH/Local Shell parent, select the second child's Pane, restart, and verify that selected Pane receives the single restored parent Session reference while the duplicate Pane restores empty.
