@@ -334,6 +334,13 @@ int main(int argc, char **argv) {
         (void)tlc_terminate();
         return 5;
     }
+    error = tlc_updateSession(app);
+    if (error != TRDP_NO_ERR) {
+        fprintf(stderr, "tlc_updateSession failed: %d\n", (int)error);
+        (void)tlc_closeSession(app);
+        (void)tlc_terminate();
+        return 6;
+    }
 
     while (running) {
         if (deadline != 0 && time(NULL) >= deadline) {
