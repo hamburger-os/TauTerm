@@ -344,10 +344,12 @@ static TRDP_ERR_T open_link(
 ) {
     TRDP_PD_CONFIG_T pd;
     TRDP_MD_CONFIG_T md;
+    TRDP_PROCESS_CONFIG_T process;
     TRDP_ERR_T error;
 
     memset(&pd, 0, sizeof(pd));
     memset(&md, 0, sizeof(md));
+    memset(&process, 0, sizeof(process));
     pd.sendParam.qos = 2u;
     pd.sendParam.ttl = 64u;
     pd.flags = TRDP_FLAGS_CALLBACK;
@@ -365,9 +367,15 @@ static TRDP_ERR_T open_link(
     md.tcpPort = md_tcp_port;
     md.maxNumSessions = 64u;
 
+    (void)snprintf((char *)process.hostName, sizeof(process.hostName), "TauTerm");
+    process.cycleTime = TRDP_PROCESS_DEFAULT_CYCLE_TIME;
+    process.priority = 0u;
+    process.options = TRDP_OPTION_NONE;
+    process.vlanId = 0u;
+
     link->label = label;
     link->own_ip = vos_dottedIP(ip != NULL && *ip != '\0' ? ip : "0.0.0.0");
-    error = tlc_openSession(&link->app, link->own_ip, 0u, NULL, &pd, &md, NULL);
+    error = tlc_openSession(&link->app, link->own_ip, 0u, NULL, &pd, &md, &process);
     if (error == TRDP_NO_ERR) {
         link->active = 1;
     }
