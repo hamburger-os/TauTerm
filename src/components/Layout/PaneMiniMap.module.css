@@ -1,0 +1,40 @@
+.wrapper {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.78;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.wrapper:hover,
+.selected {
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+.svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.frame {
+  fill: color-mix(in srgb, var(--glass-bg-default) 65%, transparent);
+  stroke: var(--glass-border-hover);
+  stroke-width: 5;
+}
+
+.otherPane {
+  fill: color-mix(in srgb, var(--text-secondary) 18%, transparent);
+  stroke: color-mix(in srgb, var(--text-secondary) 38%, transparent);
+  stroke-width: 2;
+}
+
+.currentPane {
+  fill: var(--accent-primary);
+  stroke: color-mix(in srgb, var(--accent-primary) 70%, white);
+  stroke-width: 3;
+}

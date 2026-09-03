@@ -2,9 +2,11 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
 import { useSession, type NetworkPeerEntry } from "../../context/SessionContext";
+import { useSplitLayout } from "../../context/SplitLayoutContext";
 import { useContextMenu } from "../../hooks/useContextMenu";
 import ContextMenu from "../common/ContextMenu";
 import Icon from "../common/Icon";
+import PaneMiniMap from "./PaneMiniMap";
 import type { ContextMenuItem } from "../common/ContextMenu";
 import type { TabInfo } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
@@ -31,10 +33,12 @@ interface SessionSidebarProps {
  * - 子节点（parentId 非空）：SSH / Local Shell 终端实例
  * - 支持 multi_session 的父会话可展开/折叠子项
  * - 选中父会话时自动路由到第一个子 channel
+ * - 分屏模式下在已显示 Session 右侧绘制当前 Split Tree mini-map，标出所在 Pane
  */
 export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
   const { t } = useTranslation();
   const { state, switchTab, disconnect, deleteSession, connect, startSessionLog, stopSessionLog, loggingSessions, openChannel, closeChannel, selectNetworkPeer, disconnectNetworkPeer, clearNetworkPeer } = useSession();
+  const { state: splitLayout, sessionToPane, paneCount } = useSplitLayout();
   const [search, setSearch] = useState("");
   const { menu, openMenu, openPeerMenu, closeMenu } = useContextMenu();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -170,7 +174,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     if (node.children.length > 0 || node.peerChildren.length > 0) {
       setExpandedIds(prev => new Set(prev).add(node.tab.id));
     }
-    // switchTab 内部会自动路由到第一个子 channel
+    // switchTab 内部会自动路由到第一个子 channel；SplitLayoutContext 会监听
+    // activeTabId：若 Session 已显示则跳到它的 Pane，否则放入当前 selected Pane。
     switchTab(node.tab.id);
     // 网络 server 容器：参照 SSH 主会话，点击容器自动选中第一个已连接对端；
     // 无对端时取消选择（UDP 网格回到"全部"时间线 / TCP 空状态）。
@@ -453,6 +458,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
             const parentEndpoint = clientLocalAddr
               ? `${node.tab.endpoint} · ${clientLocalAddr}`
               : node.tab.endpoint;
+            const parentPaneId = sessionToPane[node.tab.id];
 
             return (
               <div key={node.tab.id}>
@@ -495,6 +501,14 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                       </div>
                     </div>
                   </div>
+                  {paneCount > 1 && parentPaneId && (
+                    <PaneMiniMap
+                      layout={splitLayout.root}
+                      paneId={parentPaneId}
+                      selected={parentPaneId === splitLayout.selectedPaneId}
+                      title={t("split.sessionLocation", { defaultValue: "已显示在分屏中" })}
+                    />
+                  )}
                   {state.activeTabId === node.tab.id && (
                     <motion.div
                       className={styles.activeBar}
@@ -508,7 +522,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                 {isExpanded && hasChildren && (
                   <div className={styles.children}>
                     {/* SSH 子 channel（标签页） */}
-                    {node.children.map(child => (
+                    {node.children.map(child => {
+                      const childPaneId = sessionToPane[child.id];
+                      return (
                       <motion.div
                         key={child.id}
                         className={`${styles.childItem} ${state.activeTabId === child.id ? styles.active : ""}`}
@@ -536,6 +552,14 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                             <div className={styles.itemEndpoint} title={child.endpoint}>{child.endpoint}</div>
                           </div>
                         </div>
+                        {paneCount > 1 && childPaneId && (
+                          <PaneMiniMap
+                            layout={splitLayout.root}
+                            paneId={childPaneId}
+                            selected={childPaneId === splitLayout.selectedPaneId}
+                            title={t("split.sessionLocation", { defaultValue: "已显示在分屏中" })}
+                          />
+                        )}
                         {state.activeTabId === child.id && (
                           <motion.div
                             className={styles.activeBar}
@@ -544,7 +568,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                           />
                         )}
                       </motion.div>
-                    ))}
+                      );
+                    })}
                     {/* 网络调试对端（非标签页树节点） */}
                     {node.peerChildren.map(p => (
                       <motion.div

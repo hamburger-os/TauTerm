@@ -1,0 +1,87 @@
+import assert from "node:assert/strict";
+import {
+  activateSessionInLayout,
+  closePaneInLayout,
+  collectPaneIds,
+  computePaneRects,
+  countPanes,
+  createInitialSplitLayout,
+  findPaneForSession,
+  pruneAssignments,
+  setSplitRatioInLayout,
+  splitPaneInLayout,
+} from "../src/core/split-layout.ts";
+
+let state = createInitialSplitLayout("p1");
+assert.equal(countPanes(state.root), 1);
+assert.deepEqual(state.assignments, { p1: null });
+assert.equal(state.selectedPaneId, "p1");
+
+// Sidebar click in single-pane mode assigns the clicked Session to the selected Pane.
+state = activateSessionInLayout(state, "ssh-a");
+assert.equal(state.assignments.p1, "ssh-a");
+
+// Edge split preserves the old Pane, creates an empty selected Pane, and never duplicates a Session.
+state = splitPaneInLayout(state, "p1", "right", "p2", "s1");
+assert.equal(countPanes(state.root), 2);
+assert.equal(state.selectedPaneId, "p2");
+assert.equal(state.assignments.p1, "ssh-a");
+assert.equal(state.assignments.p2, null);
+
+state = activateSessionInLayout(state, "serial-com3");
+assert.equal(state.assignments.p2, "serial-com3");
+assert.equal(findPaneForSession(state.assignments, "serial-com3"), "p2");
+
+// Clicking a Session that is already visible focuses its existing Pane instead of cloning it.
+state = activateSessionInLayout(state, "ssh-a");
+assert.equal(state.selectedPaneId, "p1");
+assert.deepEqual(
+  Object.values(state.assignments).filter(id => id === "ssh-a"),
+  ["ssh-a"],
+);
+
+// Split a leaf again: this is a recursive Split Tree, not a fixed 2/3/4 template.
+state = splitPaneInLayout(state, "p1", "bottom", "p3", "s2");
+assert.equal(countPanes(state.root), 3);
+assert.equal(state.selectedPaneId, "p3");
+assert.deepEqual(new Set(collectPaneIds(state.root)), new Set(["p1", "p2", "p3"]));
+
+const rects = computePaneRects(state.root);
+assert.equal(rects.p2.left, 0.5);
+assert.equal(rects.p2.width, 0.5);
+assert.equal(rects.p1.height, 0.5);
+assert.equal(rects.p3.top, 0.5);
+
+// Closing a Pane removes only the view slot and collapses its now-redundant parent split.
+const closed = closePaneInLayout(state, "p3");
+assert.ok(closed);
+state = closed.state;
+assert.equal(countPanes(state.root), 2);
+assert.equal(state.selectedPaneId, "p1");
+assert.equal(state.assignments.p1, "ssh-a");
+assert.equal(state.assignments.p2, "serial-com3");
+assert.equal("p3" in state.assignments, false);
+
+// Divider ratios are bounded defensively.
+state = setSplitRatioInLayout(state, "s1", 0.001);
+assert.equal(state.root.type, "split");
+assert.equal(state.root.ratio, 0.05);
+state = setSplitRatioInLayout(state, "s1", 2);
+assert.equal(state.root.type, "split");
+assert.equal(state.root.ratio, 0.95);
+
+// A removed Session clears its Pane assignment but does not mutate/collapse the layout.
+const beforePrunePanes = collectPaneIds(state.root);
+state = pruneAssignments(state, new Set(["ssh-a"]));
+assert.equal(state.assignments.p2, null);
+assert.deepEqual(collectPaneIds(state.root), beforePrunePanes);
+
+// Hard cap: no more than four Pane leaves.
+state = splitPaneInLayout(state, "p2", "bottom", "p4", "s3", 4);
+state = splitPaneInLayout(state, "p4", "right", "p5", "s4", 4);
+assert.equal(countPanes(state.root), 4);
+const capped = splitPaneInLayout(state, "p5", "bottom", "p6", "s5", 4);
+assert.strictEqual(capped, state);
+assert.equal(countPanes(capped.root), 4);
+
+console.log("split-layout: runtime pane invariants preserved");
