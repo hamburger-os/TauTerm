@@ -7,6 +7,9 @@ import type {
 export const WORKSPACE_LAYOUT_STORAGE_KEY = "tauterm-workspace-layout-v1";
 export const WORKSPACE_LAYOUT_VERSION = 1;
 
+const MAX_WORKSPACE_PANES = 4;
+const MAX_WORKSPACE_TREE_DEPTH = 4;
+
 interface PersistedWorkspaceLayoutV1 {
   version: 1;
   root: LayoutNode;
@@ -32,13 +35,17 @@ function parseLayoutNode(
   value: unknown,
   paneIds: Set<string>,
   splitIds: Set<string>,
+  depth: number,
 ): LayoutNode | null {
+  // Four Pane leaves can never require an arbitrarily deep tree. Bound recursion before reading
+  // untrusted/corrupt localStorage deeply enough to risk a startup stack overflow.
+  if (depth > MAX_WORKSPACE_TREE_DEPTH) return null;
   if (!isRecord(value) || typeof value.type !== "string" || typeof value.id !== "string" || !value.id) {
     return null;
   }
 
   if (value.type === "pane") {
-    if (paneIds.has(value.id)) return null;
+    if (paneIds.has(value.id) || paneIds.size >= MAX_WORKSPACE_PANES) return null;
     paneIds.add(value.id);
     return { type: "pane", id: value.id };
   }
@@ -50,8 +57,8 @@ function parseLayoutNode(
   if (value.ratio < 0.05 || value.ratio > 0.95) return null;
 
   splitIds.add(value.id);
-  const first = parseLayoutNode(value.first, paneIds, splitIds);
-  const second = parseLayoutNode(value.second, paneIds, splitIds);
+  const first = parseLayoutNode(value.first, paneIds, splitIds, depth + 1);
+  const second = parseLayoutNode(value.second, paneIds, splitIds, depth + 1);
   if (!first || !second) return null;
 
   return {
@@ -84,17 +91,26 @@ export function parsePersistedWorkspaceLayout(raw: string | null): SplitLayoutSt
 
   const paneIds = new Set<string>();
   const splitIds = new Set<string>();
-  const root = parseLayoutNode(parsed.root, paneIds, splitIds);
-  if (!root || paneIds.size < 1 || paneIds.size > 4 || countWorkspacePanes(root) !== paneIds.size) return null;
+  const root = parseLayoutNode(parsed.root, paneIds, splitIds, 0);
+  if (!root || paneIds.size < 1 || paneIds.size > MAX_WORKSPACE_PANES || countWorkspacePanes(root) !== paneIds.size) return null;
 
   if (typeof parsed.selectedPaneId !== "string" || !paneIds.has(parsed.selectedPaneId)) return null;
   if (!isRecord(parsed.assignments)) return null;
 
   const assignments: Record<PaneId, string | null> = {};
+  const assignedSessionIds = new Set<string>();
   for (const paneId of collectWorkspacePaneIds(root)) {
     const assigned = parsed.assignments[paneId];
     if (assigned !== null && assigned !== undefined && typeof assigned !== "string") return null;
-    assignments[paneId] = typeof assigned === "string" && assigned.length > 0 ? assigned : null;
+
+    const sessionId = typeof assigned === "string" && assigned.length > 0 ? assigned : null;
+    if (sessionId) {
+      // One Session may occupy at most one Pane. Normal serialization already guarantees this;
+      // reject hand-edited/corrupt payloads that would violate the runtime TerminalView invariant.
+      if (assignedSessionIds.has(sessionId)) return null;
+      assignedSessionIds.add(sessionId);
+    }
+    assignments[paneId] = sessionId;
   }
 
   return {
@@ -143,8 +159,4 @@ export function serializeWorkspaceLayout(
   };
 
   return JSON.stringify(payload);
-}
-
-export function hasWorkspaceAssignments(state: SplitLayoutState): boolean {
-  return Object.values(state.assignments).some(Boolean);
 }
