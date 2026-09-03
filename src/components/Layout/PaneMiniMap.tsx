@@ -3,13 +3,14 @@ import styles from "./PaneMiniMap.module.css";
 
 interface PaneMiniMapProps {
   layout: LayoutNode;
-  paneId: PaneId;
+  paneIds: PaneId | readonly PaneId[];
   selected?: boolean;
   title?: string;
 }
 
-export default function PaneMiniMap({ layout, paneId, selected = false, title }: PaneMiniMapProps) {
+export default function PaneMiniMap({ layout, paneIds, selected = false, title }: PaneMiniMapProps) {
   const rects = computePaneRects(layout);
+  const highlighted = new Set(Array.isArray(paneIds) ? paneIds : [paneIds]);
   return (
     <span
       className={`${styles.wrapper} ${selected ? styles.selected : ""}`}
@@ -26,7 +27,7 @@ export default function PaneMiniMap({ layout, paneId, selected = false, title }:
             width={Math.max(0, rect.width * 100 - 8)}
             height={Math.max(0, rect.height * 100 - 8)}
             rx="5"
-            className={id === paneId ? styles.currentPane : styles.otherPane}
+            className={highlighted.has(id) ? styles.currentPane : styles.otherPane}
           />
         ))}
       </svg>
