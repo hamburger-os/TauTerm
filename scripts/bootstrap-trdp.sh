@@ -19,7 +19,11 @@ fi
 mkdir -p "$BUILD" "$OUT" "$TOOLS_OUT"
 
 echo "Configuring vendored TCNOpen 3.0.0.0 + TauTerm TRDP native helpers..."
-cmake -S "$NATIVE" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release
+CMAKE_ARGS=(-DCMAKE_BUILD_TYPE=Release)
+if [[ "${TAUTERM_TRDP_SANITIZE:-0}" == "1" ]]; then
+  CMAKE_ARGS+=(-DTAUTERM_TRDP_SANITIZE=ON)
+fi
+cmake -S "$NATIVE" -B "$BUILD" "${CMAKE_ARGS[@]}"
 cmake --build "$BUILD" --config Release --parallel
 
 BRIDGE="$(find "$BUILD" -type f -name 'tauterm-trdp-bridge' -perm -111 -print -quit)"
