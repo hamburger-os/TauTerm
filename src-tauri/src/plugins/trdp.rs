@@ -22,7 +22,6 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
 pub use capture::{trdp_open_capture, trdp_save_capture, TrdpPacket};
-pub use xml::{trdp_decode_dataset, trdp_import_xml, TrdpXmlImport};
 
 pub struct TrdpSideChannel {
     child: Mutex<Option<Child>>,
@@ -68,12 +67,7 @@ impl TrdpSideChannel {
     }
 
     fn start(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
-        if self
-            .child
-            .lock()
-            .map_err(|error| error.to_string())?
-            .is_some()
-        {
+        if self.child.lock().map_err(|error| error.to_string())?.is_some() {
             return Ok(());
         }
 
@@ -143,9 +137,7 @@ impl TrdpSideChannel {
         let mut input = self.stdin.lock().map_err(|error| error.to_string())?;
         let stdin = input.as_mut().ok_or("TRDP bridge 尚未启动")?;
         serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
-        stdin
-            .write_all(b"\n")
-            .map_err(|error| error.to_string())?;
+        stdin.write_all(b"\n").map_err(|error| error.to_string())?;
         stdin.flush().map_err(|error| error.to_string())
     }
 }
@@ -172,16 +164,20 @@ impl SideChannel for TrdpSideChannel {
     }
 }
 
-/// Dedicated TRDP Tauri connection entry point. Keeping a distinct Rust command
-/// name avoids a Tauri macro collision with the microkernel's `connect_session`.
+/// Tauri connection entry point. Non-TRDP requests delegate to the existing
+/// connection command so the integration does not duplicate other protocols.
 #[tauri::command]
-pub async fn connect_session_trdp(
+pub async fn connect_session(
     app: AppHandle,
     state: State<'_, AppState>,
     request: ConnectSessionRequest,
 ) -> Result<String, String> {
-    if request.plugin_id.as_deref() != Some("trdp") {
-        return Err("connect_session_trdp 仅接受 TRDP 会话".to_string());
+    let plugin_id = request
+        .plugin_id
+        .clone()
+        .unwrap_or_else(|| "serial".to_string());
+    if plugin_id != "trdp" {
+        return crate::commands::connect_session(app, state, request).await;
     }
 
     let ConnectSessionRequest {
@@ -284,16 +280,48 @@ fn side_channel(
         .ok_or_else(|| "TRDP 会话不存在或已断开".to_string())
 }
 
-/// Forward a protocol-specific operation to the TCNOpen bridge. The command
-/// envelope is intentionally open so new PD/MD operations do not require changes
-/// to the microkernel command registry.
+/// Plugin-scoped command gateway. File-only operations are handled in Rust and
+/// return structured results directly. Active protocol operations are forwarded
+/// to the TCNOpen helper. Keeping this as one Tauri command avoids expanding the
+/// global command registry for every TRDP operation.
 #[tauri::command]
 pub fn trdp_command(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     command: Value,
-) -> Result<(), String> {
+) -> Result<Value, String> {
+    match command.get("command").and_then(Value::as_str) {
+        Some("xml_import") => {
+            let path = command
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or("xml_import requires path")?;
+            let imported = xml::trdp_import_xml(path.to_string())?;
+            return serde_json::to_value(imported).map_err(|error| error.to_string());
+        }
+        Some("dataset_decode") => {
+            let path = command
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or("dataset_decode requires path")?;
+            let dataset_id = command
+                .get("dataset_id")
+                .and_then(Value::as_u64)
+                .ok_or("dataset_decode requires dataset_id")? as u32;
+            let payload_hex = command
+                .get("payload_hex")
+                .and_then(Value::as_str)
+                .ok_or("dataset_decode requires payload_hex")?;
+            return xml::trdp_decode_dataset(
+                path.to_string(),
+                dataset_id,
+                payload_hex.to_string(),
+            );
+        }
+        _ => {}
+    }
+
     let side_channel = side_channel(&state, &session_id)?;
     let trdp = side_channel
         .as_any()
@@ -307,5 +335,6 @@ pub fn trdp_command(
     {
         trdp.start(app, &session_id)?;
     }
-    trdp.send(command)
+    trdp.send(command)?;
+    Ok(Value::Null)
 }
