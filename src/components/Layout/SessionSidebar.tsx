@@ -32,7 +32,7 @@ interface SessionSidebarProps {
  * - 根节点（parentId === null）：普通会话或多终端父配置
  * - 子节点（parentId 非空）：SSH / Local Shell 终端实例
  * - 支持 multi_session 的父会话可展开/折叠子项
- * - 选中多终端父会话时优先路由到上一次活动的子 channel
+ * - 选中多终端父会话时由 SessionContext 路由到上一次活动的子 channel
  * - 分屏模式下在已显示 Session 右侧绘制当前 Split Tree mini-map，标出所在 Pane
  */
 export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
@@ -42,8 +42,6 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   const [search, setSearch] = useState("");
   const { menu, openMenu, openPeerMenu, closeMenu } = useContextMenu();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  /** 多终端父会话 → 最近一次活动的子 channel。只保留当前进程内导航历史。 */
-  const lastSelectedChildRef = useRef<Map<string, string>>(new Map());
   /** 右键菜单打开前的 Pane。新建子终端时用它作为落点，避免右键导航抢走空 Pane。 */
   const contextMenuOriginPaneRef = useRef(splitLayout.selectedPaneId);
 
@@ -117,15 +115,6 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     prevTabIdsRef.current = currentIds;
   }, [state.tabs]);
 
-  // 任意入口（侧栏、Pane 点击、快捷键、新建 Channel）只要激活了子会话，
-  // 就更新该父会话的最近活动 Channel。这样父卡片导航不依赖 children[0]。
-  useEffect(() => {
-    const active = state.tabs.find(tab => tab.id === state.activeTabId);
-    if (active?.parentId) {
-      lastSelectedChildRef.current.set(active.parentId, active.id);
-    }
-  }, [state.activeTabId, state.tabs]);
-
   // 自动展开：网络调试对端加入 → 展开所属容器节点（仅 server 容器，client 无对端树）
   const prevPeerIdsRef = useRef<Set<string>>(new Set());
 
@@ -181,33 +170,15 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     });
   }, []);
 
-  /**
-   * 解析侧栏卡片的导航目标。
-   * 子会话直接返回自身；multi_session 父会话优先最近活动子 Channel，失效时才回退第一个。
-   */
-  const resolveNavigationTarget = useCallback((tab: TabInfo): string => {
-    if (tab.parentId) return tab.id;
-    const supportsMultiple = pluginRegistry
-      .get(tab.pluginId)?.manifest.capabilities.includes("multi_session") ?? false;
-    if (!supportsMultiple) return tab.id;
-    const children = state.tabs.filter(child => child.parentId === tab.id);
-    if (children.length === 0) return tab.id;
-    const rememberedId = lastSelectedChildRef.current.get(tab.id);
-    if (rememberedId && children.some(child => child.id === rememberedId)) {
-      return rememberedId;
-    }
-    return children[0].id;
-  }, [state.tabs]);
-
   // 双击父节点：如果未展开则自动展开
   const handleParentSelect = useCallback((node: TreeNode) => {
     // 先展开（SSH connected 会话有子项 / 网络容器有对端时）
     if (node.children.length > 0 || node.peerChildren.length > 0) {
       setExpandedIds(prev => new Set(prev).add(node.tab.id));
     }
-    // 多终端父会话回到最近一次活动 Channel；SplitLayoutContext 会监听 activeTabId：
-    // 若目标 Session 已显示则跳到它的 Pane，否则放入当前 selected Pane。
-    switchTab(resolveNavigationTarget(node.tab));
+    // SessionContext 统一处理 multi_session 父会话 → 最近活动 Channel；
+    // SplitLayoutContext 监听 activeTabId，若目标已显示则跳到对应 Pane，否则放入当前 selected Pane。
+    switchTab(node.tab.id);
     // 网络 server 容器：参照 SSH 主会话，点击容器自动选中第一个已连接对端；
     // 无对端时取消选择（UDP 网格回到"全部"时间线 / TCP 空状态）。
     // client 是单会话（无对端树），点击即切换会话，不应取消选择唯一对端。
@@ -219,12 +190,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       }
     }
     onSelectSession?.(node.tab.id);
-  }, [switchTab, resolveNavigationTarget, onSelectSession, selectNetworkPeer]);
+  }, [switchTab, onSelectSession, selectNetworkPeer]);
 
   const handleChildSelect = useCallback((child: TabInfo) => {
-    if (child.parentId) {
-      lastSelectedChildRef.current.set(child.parentId, child.id);
-    }
     switchTab(child.id);
     onSelectSession?.(child.id);
   }, [switchTab, onSelectSession]);
@@ -246,9 +214,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     // 保留原有交互：右键同时进入该会话上下文。
     // 先记住右键前的 Pane；若随后选择“新建终端”，新 Channel 仍应落到这个 Pane。
     contextMenuOriginPaneRef.current = splitLayout.selectedPaneId;
-    switchTab(resolveNavigationTarget(tab));
+    switchTab(tab.id);
     openMenu(e, tab);
-  }, [splitLayout.selectedPaneId, switchTab, resolveNavigationTarget, openMenu]);
+  }, [splitLayout.selectedPaneId, switchTab, openMenu]);
 
   // ── 右键菜单项 ──
 
