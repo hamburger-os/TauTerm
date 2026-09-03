@@ -3,14 +3,18 @@ import styles from "./PaneMiniMap.module.css";
 
 interface PaneMiniMapProps {
   layout: LayoutNode;
-  paneIds: PaneId | readonly PaneId[];
+  /** 单个 Session 通常只在一个 Pane；保留 paneIds 以支持父会话未来汇总多个子 Pane。 */
+  paneId?: PaneId;
+  paneIds?: PaneId | readonly PaneId[];
   selected?: boolean;
   title?: string;
 }
 
-export default function PaneMiniMap({ layout, paneIds, selected = false, title }: PaneMiniMapProps) {
+export default function PaneMiniMap({ layout, paneId, paneIds, selected = false, title }: PaneMiniMapProps) {
   const rects = computePaneRects(layout);
-  const highlighted = new Set(Array.isArray(paneIds) ? paneIds : [paneIds]);
+  const source = paneIds ?? paneId;
+  if (!source) return null;
+  const highlighted = new Set(Array.isArray(source) ? source : [source]);
   return (
     <span
       className={`${styles.wrapper} ${selected ? styles.selected : ""}`}
