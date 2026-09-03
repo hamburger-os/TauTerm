@@ -48,10 +48,7 @@ pub struct TrdpXmlImport {
 }
 
 fn attr(tag: &str, name: &str) -> Option<String> {
-    let pattern = format!(
-        r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#,
-        regex::escape(name)
-    );
+    let pattern = format!(r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#, regex::escape(name));
     Regex::new(&pattern)
         .ok()?
         .captures(tag)
