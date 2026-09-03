@@ -48,7 +48,10 @@ pub struct TrdpXmlImport {
 }
 
 fn attr(tag: &str, name: &str) -> Option<String> {
-    let pattern = format!(r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#, regex::escape(name));
+    let pattern = format!(
+        r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#,
+        regex::escape(name)
+    );
     Regex::new(&pattern)
         .ok()?
         .captures(tag)
@@ -119,16 +122,15 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         Regex::new(r#"(?is)<element\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
     let telegram_re = Regex::new(r#"(?is)<telegram\s+([^>]*)>(.*?)</telegram>"#)
         .map_err(|error| error.to_string())?;
-    let pd_re = Regex::new(r#"(?is)<pd-parameter\s+([^>]*)/?>"#)
-        .map_err(|error| error.to_string())?;
-    let source_re =
-        Regex::new(r#"(?is)<source\s+([^>]*)"#).map_err(|error| error.to_string())?;
-    let destination_re = Regex::new(r#"(?is)<destination\s+([^>]*)"#)
-        .map_err(|error| error.to_string())?;
-    let pd_config_re = Regex::new(r#"(?is)<pd-com-parameter\s+([^>]*)/?>"#)
-        .map_err(|error| error.to_string())?;
-    let md_config_re = Regex::new(r#"(?is)<md-com-parameter\s+([^>]*)/?>"#)
-        .map_err(|error| error.to_string())?;
+    let pd_re =
+        Regex::new(r#"(?is)<pd-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let source_re = Regex::new(r#"(?is)<source\s+([^>]*)"#).map_err(|error| error.to_string())?;
+    let destination_re =
+        Regex::new(r#"(?is)<destination\s+([^>]*)"#).map_err(|error| error.to_string())?;
+    let pd_config_re =
+        Regex::new(r#"(?is)<pd-com-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let md_config_re =
+        Regex::new(r#"(?is)<md-com-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
 
     let mut warnings = Vec::new();
     let mut datasets = Vec::new();
@@ -147,7 +149,9 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             continue;
         };
         if !dataset_ids.insert(id) {
-            warnings.push(format!("Dataset {id} 重复定义；保留全部定义供预览，请在使用前修正配置"));
+            warnings.push(format!(
+                "Dataset {id} 重复定义；保留全部定义供预览，请在使用前修正配置"
+            ));
         }
         let name = attr(tag, "name").unwrap_or_else(|| format!("Dataset {id}"));
         let mut elements = Vec::new();
@@ -396,31 +400,34 @@ fn decode_dataset_inner(
     let mut fields = Map::new();
 
     for (index, element) in dataset.elements.iter().enumerate() {
-        let remaining_fixed_width = dataset.elements[index + 1..]
-            .iter()
-            .try_fold(0usize, |sum, trailing| {
-                if trailing.dynamic {
-                    return None;
-                }
-                let width = if let Some(width) = primitive_width(trailing.type_id) {
-                    width
-                } else if trailing.type_id > 1000 {
-                    fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
-                } else {
-                    return None;
-                };
-                sum.checked_add(width.checked_mul(trailing.array_size as usize)?)
-            });
+        let remaining_fixed_width =
+            dataset.elements[index + 1..]
+                .iter()
+                .try_fold(0usize, |sum, trailing| {
+                    if trailing.dynamic {
+                        return None;
+                    }
+                    let width = if let Some(width) = primitive_width(trailing.type_id) {
+                        width
+                    } else if trailing.type_id > 1000 {
+                        fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
+                    } else {
+                        return None;
+                    };
+                    sum.checked_add(width.checked_mul(trailing.array_size as usize)?)
+                });
 
         let item_width = if let Some(width) = primitive_width(element.type_id) {
             width
         } else if element.type_id > 1000 {
-            fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(|| {
-                format!(
-                    "嵌套 Dataset {} 包含动态长度，无法从父 Dataset 自动切片",
-                    element.type_id
-                )
-            })?
+            fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(
+                || {
+                    format!(
+                        "嵌套 Dataset {} 包含动态长度，无法从父 Dataset 自动切片",
+                        element.type_id
+                    )
+                },
+            )?
         } else {
             return Err(format!(
                 "Dataset {} 字段 {} 使用未知类型 {}",
