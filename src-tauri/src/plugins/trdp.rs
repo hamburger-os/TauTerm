@@ -351,6 +351,21 @@ pub fn trdp_command(
                 .ok_or("dataset_decode requires payload_hex")?;
             return xml::trdp_decode_dataset(path.to_string(), dataset_id, payload_hex.to_string());
         }
+        Some("dataset_encode") => {
+            let path = command
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or("dataset_encode requires path")?;
+            let dataset_id = command
+                .get("dataset_id")
+                .and_then(Value::as_u64)
+                .ok_or("dataset_encode requires dataset_id")? as u32;
+            let values = command
+                .get("values")
+                .cloned()
+                .ok_or("dataset_encode requires values")?;
+            return xml::trdp_encode_dataset(path.to_string(), dataset_id, values);
+        }
         _ => {}
     }
 
