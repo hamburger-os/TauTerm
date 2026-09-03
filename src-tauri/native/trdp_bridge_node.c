@@ -456,7 +456,6 @@ static TRDP_ERR_T start_pd_publisher(
         &object->publisher[link_index],
         object,
         pd_callback,
-        0u,
         object->com_id,
         object->etb_topo_count,
         object->op_trn_topo_count,
@@ -494,7 +493,6 @@ static TRDP_ERR_T start_pd_subscriber(
         &object->subscriber[link_index],
         object,
         pd_callback,
-        0u,
         subscribe_com_id,
         object->etb_topo_count,
         object->op_trn_topo_count,
@@ -511,7 +509,6 @@ static TRDP_ERR_T start_pd_subscriber(
     error = tlp_request(
         link->app,
         object->subscriber[link_index],
-        0u,
         object->com_id,
         object->etb_topo_count,
         object->op_trn_topo_count,
