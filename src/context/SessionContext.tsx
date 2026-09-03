@@ -350,7 +350,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
         ...state,
         tabs: state.tabs.map(tab =>
           tab.id === action.id
-            ? { ...tab, virtualPortError: undefined, virtualPortErrorKind: undefined, virtualVirtualEndpoints: undefined }
+            ? { ...tab, virtualPortError: undefined, virtualPortErrorKind: undefined }
             : tab
         ),
       };
