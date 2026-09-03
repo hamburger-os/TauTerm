@@ -98,14 +98,12 @@ workspace = splitPaneInLayout(workspace, "wp2", "bottom", "wp3", "ws2");
 workspace = activateSessionInLayout(workspace, "serial-root");
 workspace = setSplitRatioInLayout(workspace, "ws1", 0.63);
 
-const serializedWorkspace = serializeWorkspaceLayout(
-  workspace,
-  new Map([
-    ["ssh-child-0", "ssh-root"],
-    ["ssh-child-1", "ssh-root"],
-    ["serial-root", "serial-root"],
-  ]),
-);
+const stableSessionIds = new Map([
+  ["ssh-child-0", "ssh-root"],
+  ["ssh-child-1", "ssh-root"],
+  ["serial-root", "serial-root"],
+]);
+const serializedWorkspace = serializeWorkspaceLayout(workspace, stableSessionIds);
 const restoredWorkspace = parsePersistedWorkspaceLayout(serializedWorkspace);
 assert.ok(restoredWorkspace);
 assert.equal(countPanes(restoredWorkspace.root), 3);
@@ -115,6 +113,17 @@ assert.equal(restoredWorkspace.assignments.wp2, null);
 assert.equal(restoredWorkspace.assignments.wp3, "serial-root");
 assert.equal(restoredWorkspace.root.type, "split");
 assert.equal(restoredWorkspace.root.ratio, 0.63);
+
+// If the selected Pane belongs to a duplicate child group, it owns the durable parent reference.
+const selectedDuplicateWorkspace = activateSessionInLayout(workspace, "ssh-child-1");
+const restoredSelectedDuplicate = parsePersistedWorkspaceLayout(
+  serializeWorkspaceLayout(selectedDuplicateWorkspace, stableSessionIds),
+);
+assert.ok(restoredSelectedDuplicate);
+assert.equal(restoredSelectedDuplicate.selectedPaneId, "wp2");
+assert.equal(restoredSelectedDuplicate.assignments.wp1, null);
+assert.equal(restoredSelectedDuplicate.assignments.wp2, "ssh-root");
+assert.equal(restoredSelectedDuplicate.assignments.wp3, "serial-root");
 
 // A deliberately empty Workspace is still meaningful: geometry and selected Pane survive.
 let emptyWorkspace = createInitialSplitLayout("ep1");
