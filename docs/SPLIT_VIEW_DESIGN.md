@@ -197,7 +197,8 @@ Root and child lifecycle commands are distinct:
 - closing/disconnecting a child terminal uses `close_channel(childId, parentId)`;
 - disconnecting a root Session uses the root Session disconnect path (`disconnect_session` through SessionContext);
 - terminal context-menu **Disconnect** and the global **Close Current Session** shortcut must apply this same child-vs-root distinction;
-- closing a child clears any Pane assignment to that child but does not collapse the Split Tree or implicitly disconnect the parent Session.
+- closing a child clears any Pane assignment to that child but does not collapse the Split Tree or implicitly disconnect the parent Session;
+- in a multi-pane layout, if the removed child occupied the selected Pane, that Pane stays selected and empty instead of being automatically replaced by a sibling; single-pane mode may retain the pre-split sibling fallback behavior.
 
 ## Terminal lifecycle invariant
 
@@ -229,7 +230,9 @@ Pane surfaces allow contained scrolling for non-terminal/custom views so control
 
 ## Session deletion and child sessions
 
-If a Session is deleted, or an SSH/Local Shell child channel is closed, any Pane assignment pointing to that runtime ID is cleared. The Pane remains in the layout as an empty Pane.
+If a Session is deleted, or an SSH/Local Shell child channel is closed, any Pane assignment pointing to that runtime ID is cleared. In a multi-pane layout, a selected Pane whose Session was removed remains selected and empty; the Split Tree is not repopulated from SessionContext's single-pane fallback selection.
+
+In single-pane mode, the existing Session navigation fallback may select a surviving sibling after the active child closes, preserving the pre-split workflow.
 
 Split layout is not collapsed automatically in response to Session deletion. Only an explicit `Close Pane` action changes the number of panes.
 
@@ -275,4 +278,4 @@ Manual acceptance scenarios should include:
 13. Close TauTerm and reopen; verify no split layout is restored in this release.
 14. Activate a non-first SSH/Local Shell child, switch elsewhere, then click and right-click the parent; verify the recent child is restored rather than always selecting the first child.
 15. Select an Empty Pane, right-click a connected SSH/Local Shell parent and choose New Terminal; verify the newly-created child is placed in the original Empty Pane.
-16. Disconnect an SSH/Local Shell child from terminal context menu or the close-current-session shortcut; verify only that child closes, the parent remains valid, and no root-session-not-found error is reported.
+16. In a multi-pane layout, disconnect the selected SSH/Local Shell child from terminal context menu or the close-current-session shortcut; verify only that child closes, its Pane remains selected and empty, the parent remains valid, and no root-session-not-found error is reported.
