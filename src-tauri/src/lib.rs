@@ -200,6 +200,21 @@ pub fn run() {
             state: kernel::plugin_host::PluginState::Ready,
         })
         .expect("注册 network 插件失败");
+    plugin_host
+        .register_plugin(kernel::plugin_host::PluginDescriptor {
+            id: "trdp".into(),
+            name: "TRDP".into(),
+            version: "1.0.0".into(),
+            category: "network_tool".into(),
+            content_type: "custom".into(),
+            capabilities: vec![
+                "connection".into(),
+                "network_outbound".into(),
+                "network_listen".into(),
+            ],
+            state: kernel::plugin_host::PluginState::Ready,
+        })
+        .expect("注册 TRDP 插件失败");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -436,7 +451,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,
             commands::enumerate_endpoints,
-            commands::connect_session,
+            plugins::trdp::connect_session,
             commands::disconnect_session,
             commands::write_data,
             commands::switch_active_session,
@@ -451,6 +466,9 @@ pub fn run() {
             commands::network_udp_send_to,
             commands::network_udp_send,
             commands::set_network_send_target,
+            plugins::trdp::trdp_command,
+            plugins::trdp::trdp_open_capture,
+            plugins::trdp::trdp_save_capture,
             commands::save_sessions,
             commands::load_sessions,
             commands::save_session_config,
