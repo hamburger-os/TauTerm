@@ -4,9 +4,12 @@ on:
   pull_request:
     branches: [master]
     paths:
+      - 'src-tauri/vendor/tcnopen/**'
       - 'src-tauri/native/trdp_bridge*'
+      - 'src-tauri/native/CMakeLists.txt'
       - 'scripts/bootstrap-trdp.sh'
       - 'scripts/bootstrap-trdp.ps1'
+      - 'scripts/vendor_tcnopen.py'
       - 'tools/trdp-test-peer/**'
       - '.github/workflows/trdp-native.yml'
   workflow_dispatch:
@@ -22,7 +25,7 @@ jobs:
   unix:
     name: Native TRDP (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -33,20 +36,22 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .cache/tcnopen-3.0.0.0
-          key: tcnopen-${{ matrix.os }}-3.0.0.0-v1
-
-      - name: Install native dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Verify vendored source metadata
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq uuid-dev
+          python3 -m py_compile scripts/vendor_tcnopen.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          meta = json.loads(Path("src-tauri/vendor/tcnopen/SOURCE.json").read_text())
+          assert meta["version"] == "3.0.0.0"
+          assert meta["license"] == "MPL-2.0"
+          assert Path("src-tauri/vendor/tcnopen/src/api/trdp_if_light.h").is_file()
+          assert Path("src-tauri/vendor/tcnopen/src/common/trdp_private.h").is_file()
+          PY
 
-      - name: Bootstrap TCNOpen 3.0.0.0 and native helpers
+      - name: Build vendored TCNOpen 3.0.0.0 and native helpers
         shell: bash
         run: bash scripts/bootstrap-trdp.sh
 
@@ -119,19 +124,21 @@ jobs:
   windows:
     name: Native TRDP (windows-2025)
     runs-on: windows-2025
-    timeout-minutes: 50
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .cache/tcnopen-3.0.0.0
-          key: tcnopen-windows-2025-3.0.0.0-v1
+      - name: Verify vendored source metadata
+        shell: pwsh
+        run: |
+          python -m py_compile scripts/vendor_tcnopen.py
+          $meta = Get-Content 'src-tauri/vendor/tcnopen/SOURCE.json' -Raw | ConvertFrom-Json
+          if ($meta.version -ne '3.0.0.0' -or $meta.license -ne 'MPL-2.0') { throw 'bad TCNOpen vendor metadata' }
 
-      - name: Bootstrap TCNOpen 3.0.0.0 and native helpers
+      - name: Build vendored TCNOpen 3.0.0.0 and native helpers
         shell: pwsh
         run: ./scripts/bootstrap-trdp.ps1
 
