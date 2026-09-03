@@ -1,9 +1,7 @@
-import {
-  collectPaneIds,
-  countPanes,
-  type LayoutNode,
-  type PaneId,
-  type SplitLayoutState,
+import type {
+  LayoutNode,
+  PaneId,
+  SplitLayoutState,
 } from "./split-layout";
 
 export const WORKSPACE_LAYOUT_STORAGE_KEY = "tauterm-workspace-layout-v1";
@@ -14,6 +12,16 @@ interface PersistedWorkspaceLayoutV1 {
   root: LayoutNode;
   assignments: Record<PaneId, string | null>;
   selectedPaneId: PaneId;
+}
+
+function collectWorkspacePaneIds(node: LayoutNode): PaneId[] {
+  if (node.type === "pane") return [node.id];
+  return [...collectWorkspacePaneIds(node.first), ...collectWorkspacePaneIds(node.second)];
+}
+
+function countWorkspacePanes(node: LayoutNode): number {
+  if (node.type === "pane") return 1;
+  return countWorkspacePanes(node.first) + countWorkspacePanes(node.second);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -77,13 +85,13 @@ export function parsePersistedWorkspaceLayout(raw: string | null): SplitLayoutSt
   const paneIds = new Set<string>();
   const splitIds = new Set<string>();
   const root = parseLayoutNode(parsed.root, paneIds, splitIds);
-  if (!root || paneIds.size < 1 || paneIds.size > 4 || countPanes(root) !== paneIds.size) return null;
+  if (!root || paneIds.size < 1 || paneIds.size > 4 || countWorkspacePanes(root) !== paneIds.size) return null;
 
   if (typeof parsed.selectedPaneId !== "string" || !paneIds.has(parsed.selectedPaneId)) return null;
   if (!isRecord(parsed.assignments)) return null;
 
   const assignments: Record<PaneId, string | null> = {};
-  for (const paneId of collectPaneIds(root)) {
+  for (const paneId of collectWorkspacePaneIds(root)) {
     const assigned = parsed.assignments[paneId];
     if (assigned !== null && assigned !== undefined && typeof assigned !== "string") return null;
     assignments[paneId] = typeof assigned === "string" && assigned.length > 0 ? assigned : null;
@@ -110,7 +118,7 @@ export function serializeWorkspaceLayout(
   const assignments: Record<PaneId, string | null> = {};
   const usedStableIds = new Set<string>();
 
-  for (const paneId of collectPaneIds(state.root)) {
+  for (const paneId of collectWorkspacePaneIds(state.root)) {
     const runtimeId = state.assignments[paneId];
     if (!runtimeId) {
       assignments[paneId] = null;
