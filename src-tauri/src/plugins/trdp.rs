@@ -15,6 +15,7 @@ use crate::kernel::session_store::ContainerSessionCreateOptions;
 use crate::AppState;
 use serde_json::{json, Value};
 use std::any::Any;
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -289,6 +290,24 @@ fn side_channel(
         .ok_or_else(|| "TRDP 会话不存在或已断开".to_string())
 }
 
+fn import_workspace(path: &str) -> Result<Value, String> {
+    let text = fs::read_to_string(path).map_err(|error| format!("读取 TRDP Workspace 失败: {error}"))?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("TRDP Workspace JSON 无效: {error}"))?;
+    let object = value
+        .as_object()
+        .ok_or("TRDP Workspace 顶层必须是 JSON object")?;
+    if object.get("format").and_then(Value::as_str) != Some("tauterm-trdp-workspace/v1") {
+        return Err("不支持的 TRDP Workspace format，期望 tauterm-trdp-workspace/v1".to_string());
+    }
+    if let Some(objects) = object.get("objects") {
+        if !objects.is_array() {
+            return Err("TRDP Workspace objects 必须是数组".to_string());
+        }
+    }
+    Ok(value)
+}
+
 /// Plugin-scoped command gateway. File-only operations are handled in Rust and
 /// return structured results directly. Active protocol operations are forwarded
 /// to the TCNOpen helper. Keeping this as one Tauri command avoids expanding the
@@ -308,6 +327,13 @@ pub fn trdp_command(
                 .ok_or("xml_import requires path")?;
             let imported = xml::trdp_import_xml(path.to_string())?;
             return serde_json::to_value(imported).map_err(|error| error.to_string());
+        }
+        Some("workspace_import") => {
+            let path = command
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or("workspace_import requires path")?;
+            return import_workspace(path);
         }
         Some("dataset_decode") => {
             let path = command
@@ -354,10 +380,7 @@ pub fn trdp_open_capture(
 }
 
 #[tauri::command]
-pub fn trdp_save_capture(
-    path: String,
-    packets: Vec<capture::TrdpPacket>,
-) -> Result<(), String> {
+pub fn trdp_save_capture(path: String, packets: Vec<capture::TrdpPacket>) -> Result<(), String> {
     capture::trdp_save_capture(path, packets)
 }
 
