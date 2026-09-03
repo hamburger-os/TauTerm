@@ -7,6 +7,24 @@
   height: 100%;
 }
 
+.sidebarEmpty {
+  display: none;
+}
+
+/*
+ * App 目前由外层 motion.div 持有右栏宽度，ResizeHandle 又是它的前一个兄弟节点。
+ * Split View 选中空 Pane 时 RightSidebar 自身为空，但若只隐藏 aside，外层仍会占宽。
+ * :has() 在 Tauri 当前 WebView2/WebKit 目标上可用，因此一起折叠外层与相邻 handle。
+ */
+:global(.terminal-transmission-row) > div:has(> .sidebarEmpty) {
+  display: none !important;
+  width: 0 !important;
+}
+
+:global(.terminal-transmission-row) > div:has(+ div > .sidebarEmpty) {
+  display: none !important;
+}
+
 .scrollArea {
   flex: 1;
   overflow-y: auto;
