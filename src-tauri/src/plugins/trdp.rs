@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
 pub use capture::{trdp_open_capture, trdp_save_capture, TrdpPacket};
+pub use xml::{trdp_decode_dataset, trdp_import_xml, TrdpXmlImport};
 
 pub struct TrdpSideChannel {
     child: Mutex<Option<Child>>,
@@ -67,7 +68,12 @@ impl TrdpSideChannel {
     }
 
     fn start(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
-        if self.child.lock().map_err(|error| error.to_string())?.is_some() {
+        if self
+            .child
+            .lock()
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
             return Ok(());
         }
 
@@ -137,7 +143,9 @@ impl TrdpSideChannel {
         let mut input = self.stdin.lock().map_err(|error| error.to_string())?;
         let stdin = input.as_mut().ok_or("TRDP bridge 尚未启动")?;
         serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
-        stdin.write_all(b"\n").map_err(|error| error.to_string())?;
+        stdin
+            .write_all(b"\n")
+            .map_err(|error| error.to_string())?;
         stdin.flush().map_err(|error| error.to_string())
     }
 }
@@ -164,10 +172,12 @@ impl SideChannel for TrdpSideChannel {
     }
 }
 
-/// Tauri connection entry point. Non-TRDP requests delegate to the existing
-/// connection command so the integration does not duplicate other protocols.
-#[tauri::command]
-pub async fn connect_session(
+/// Single connection router exposed to the frontend as `connect_session`.
+/// Non-TRDP requests delegate to the existing microkernel command; TRDP sessions
+/// use the container/side-channel runtime below. The Rust function name remains
+/// unique so Tauri's generated command symbols do not collide across modules.
+#[tauri::command(rename = "connect_session")]
+pub async fn connect_session_trdp(
     app: AppHandle,
     state: State<'_, AppState>,
     request: ConnectSessionRequest,
