@@ -47,3 +47,4 @@ if ($LASTEXITCODE -ne 2) { throw "TRDP reference peer usage smoke test failed" }
 Write-Host "TRDP bridge ready: $BridgeExe"
 Write-Host "Reference peer ready: $PeerExe"
 Write-Host "TCNOpen source: $Vendor (MPL-2.0, vendored 3.0.0.0 snapshot)"
+exit 0
