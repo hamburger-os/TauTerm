@@ -29,6 +29,118 @@ typedef pthread_mutex_t bridge_mutex_t;
 #define BRIDGE_PD_PORT 17224u
 #define BRIDGE_MD_PORT 17225u
 
+/*
+ * TauTerm v1 exposes ordinary TRDP PD sessions, not the optional
+ * service-oriented extension. TCNOpen 3.0 keeps serviceId in the three PD
+ * entry points even though per-telegram communication parameters were removed.
+ * These wrappers make the deliberate serviceId=0 choice explicit and keep the
+ * bridge call sites focused on the user-visible TRDP parameters.
+ */
+static inline TRDP_ERR_T bridge_tlp_publish(
+    TRDP_APP_SESSION_T app,
+    TRDP_PUB_T *publisher,
+    const void *user_ref,
+    TRDP_PD_CALLBACK_T callback,
+    UINT32 com_id,
+    UINT32 etb_topo_count,
+    UINT32 op_trn_topo_count,
+    TRDP_IP_ADDR_T source_ip,
+    TRDP_IP_ADDR_T destination_ip,
+    UINT32 interval,
+    UINT32 red_id,
+    TRDP_FLAGS_T flags,
+    const UINT8 *data,
+    UINT32 data_size
+) {
+    return tlp_publish(
+        app,
+        publisher,
+        user_ref,
+        callback,
+        0u,
+        com_id,
+        etb_topo_count,
+        op_trn_topo_count,
+        source_ip,
+        destination_ip,
+        interval,
+        red_id,
+        flags,
+        data,
+        data_size
+    );
+}
+
+static inline TRDP_ERR_T bridge_tlp_subscribe(
+    TRDP_APP_SESSION_T app,
+    TRDP_SUB_T *subscriber,
+    const void *user_ref,
+    TRDP_PD_CALLBACK_T callback,
+    UINT32 com_id,
+    UINT32 etb_topo_count,
+    UINT32 op_trn_topo_count,
+    TRDP_IP_ADDR_T source_ip_1,
+    TRDP_IP_ADDR_T source_ip_2,
+    TRDP_IP_ADDR_T destination_ip,
+    TRDP_FLAGS_T flags,
+    UINT32 timeout,
+    TRDP_TO_BEHAVIOR_T timeout_behavior
+) {
+    return tlp_subscribe(
+        app,
+        subscriber,
+        user_ref,
+        callback,
+        0u,
+        com_id,
+        etb_topo_count,
+        op_trn_topo_count,
+        source_ip_1,
+        source_ip_2,
+        destination_ip,
+        flags,
+        timeout,
+        timeout_behavior
+    );
+}
+
+static inline TRDP_ERR_T bridge_tlp_request(
+    TRDP_APP_SESSION_T app,
+    TRDP_SUB_T subscriber,
+    UINT32 com_id,
+    UINT32 etb_topo_count,
+    UINT32 op_trn_topo_count,
+    TRDP_IP_ADDR_T source_ip,
+    TRDP_IP_ADDR_T destination_ip,
+    UINT32 red_id,
+    TRDP_FLAGS_T flags,
+    const UINT8 *data,
+    UINT32 data_size,
+    UINT32 reply_com_id,
+    TRDP_IP_ADDR_T reply_ip
+) {
+    return tlp_request(
+        app,
+        subscriber,
+        0u,
+        com_id,
+        etb_topo_count,
+        op_trn_topo_count,
+        source_ip,
+        destination_ip,
+        red_id,
+        flags,
+        data,
+        data_size,
+        reply_com_id,
+        reply_ip
+    );
+}
+
+#define tlp_publish bridge_tlp_publish
+#define tlp_subscribe bridge_tlp_subscribe
+#define tlp_request bridge_tlp_request
+
 void bridge_common_init(void);
 void bridge_common_shutdown(void);
 void bridge_mutex_init(bridge_mutex_t *mutex);
