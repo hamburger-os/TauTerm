@@ -14,6 +14,11 @@ function bool(params: Record<string, unknown>, key: string, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function num(params: Record<string, unknown>, key: string, fallback: number) {
+  const value = params[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) {
   const mode = str(params, "mode", "node") as "node" | "monitor";
   const patch = (next: Record<string, unknown>) => onChange({
@@ -24,10 +29,38 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
     pd_port: 17224,
     md_udp_port: 17225,
     md_tcp_port: 17225,
+    capture_interface: "",
+    capture_interface_b_enabled: false,
+    capture_interface_b: "",
     capture_filter: "udp port 17224 or udp port 17225 or tcp port 17225",
     ...params,
     ...next,
   });
+
+  const portFields = (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+      <div style={field}>
+        <label>PD UDP port</label>
+        <input className="liquid-glass-input" type="number" min={1} max={65535} value={num(params, "pd_port", 17224)} onChange={e => patch({ pd_port: Number(e.target.value) })} />
+      </div>
+      <div style={field}>
+        <label>MD UDP port</label>
+        <input className="liquid-glass-input" type="number" min={1} max={65535} value={num(params, "md_udp_port", 17225)} onChange={e => patch({ md_udp_port: Number(e.target.value) })} />
+      </div>
+      <div style={field}>
+        <label>MD TCP port</label>
+        <input className="liquid-glass-input" type="number" min={1} max={65535} value={num(params, "md_tcp_port", 17225)} onChange={e => patch({ md_tcp_port: Number(e.target.value) })} />
+      </div>
+    </div>
+  );
+
+  const bridgeField = (
+    <div style={field}>
+      <label>TCNOpen bridge 路径 / Bridge executable</label>
+      <input className="liquid-glass-input" style={input} value={str(params, "bridge_path")} onChange={e => patch({ bridge_path: e.target.value })} placeholder="auto" />
+      <small>未填写时从 TauTerm 可执行文件同目录和 src-tauri/binaries 自动发现。</small>
+    </div>
+  );
 
   return (
     <div>
@@ -64,24 +97,37 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           </div>
           <details>
             <summary>高级 / Advanced</summary>
-            <div style={{ ...field, marginTop: 10 }}>
-              <label>TCNOpen bridge 路径 / Bridge executable</label>
-              <input className="liquid-glass-input" style={input} value={str(params, "bridge_path")} onChange={e => patch({ bridge_path: e.target.value })} placeholder="auto" />
-              <small>未填写时从 TauTerm 可执行文件同目录和 src-tauri/binaries 自动发现。</small>
-            </div>
+            <div style={{ marginTop: 10 }}>{portFields}</div>
+            {bridgeField}
           </details>
         </>
       ) : (
         <>
           <div style={field}>
-            <label>抓包接口 / Capture interface</label>
+            <label>抓包接口 A / Capture interface A</label>
             <input className="liquid-glass-input" style={input} value={str(params, "capture_interface")} onChange={e => patch({ capture_interface: e.target.value })} placeholder="Windows: \\Device\\NPF_{GUID}; Linux/macOS: en0/eth0" />
           </div>
+          <label className="liquid-glass-toggle" style={{ marginBottom: 14 }}>
+            <input type="checkbox" checked={bool(params, "capture_interface_b_enabled")} onChange={e => patch({ capture_interface_b_enabled: e.target.checked })} />
+            <div />
+            <span>启用第二抓包接口 / Capture Link B</span>
+          </label>
+          {bool(params, "capture_interface_b_enabled") && (
+            <div style={field}>
+              <label>抓包接口 B / Capture interface B</label>
+              <input className="liquid-glass-input" style={input} value={str(params, "capture_interface_b")} onChange={e => patch({ capture_interface_b: e.target.value })} placeholder="第二个 Npcap/libpcap device" />
+            </div>
+          )}
           <div style={field}>
             <label>默认过滤器 / Capture filter</label>
             <input className="liquid-glass-input" style={input} value={str(params, "capture_filter", "udp port 17224 or udp port 17225 or tcp port 17225")} onChange={e => patch({ capture_filter: e.target.value })} />
             <small>默认仅 TRDP 标准端口：PD UDP/17224；MD UDP/TCP/17225。</small>
           </div>
+          <details>
+            <summary>高级 / Advanced</summary>
+            <div style={{ marginTop: 10 }}>{portFields}</div>
+            {bridgeField}
+          </details>
           <p style={{ opacity: 0.78, fontSize: 12 }}>
             Windows 实时 Monitor 需要单独安装 Npcap；TauTerm 不捆绑 Npcap。离线打开 .pcap/.pcapng 不需要 Npcap。
           </p>
