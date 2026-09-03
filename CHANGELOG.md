@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.2] — 2026-09-03
+## [0.6.0] — 2026-09-03
+
+### Workspace
+- **Split View (1–4 panes)** — adds nested multi-pane layouts with selected-pane session context, draggable dividers, pane collapse behavior and sidebar placement cues so SSH, Serial, Local Shell and network-debugging sessions can stay visible together.
+- **Persistent Workspace context** — persists the last valid pane tree, normalized split ratios, stable saved-session placement and selected pane across app restarts. Restored sessions stay disconnected until the user explicitly connects them; sockets, PTYs, credentials, terminal process state and automatic reconnect are never persisted as Workspace state.
+- **Safe restore and direct reconnect workflow** — missing or deleted saved sessions are pruned without collapsing the pane tree, corrupt/stale/future Workspace payloads fall back safely, and disconnected panes expose Connect / Configure / Delete directly. Runtime SSH and Local Shell child channels are canonicalized to stable parent configurations for durable placement.
 
 ### Security
 - **Credential storage trust closure** — adds cross-platform persistence contract tests for store/get/list/delete and reopen behavior, requires the headless Ubuntu CI leg to exercise the authenticated encrypted fallback, verifies the explicit v1 fallback envelope rejects unsupported versions fail-closed, retains AEAD tamper-detection coverage, and documents the credential-storage trust boundary in `SECURITY.md`. The v1 envelope is TauTerm’s first persisted fallback credential format, so there is no predecessor on-disk TauTerm format to migrate.
