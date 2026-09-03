@@ -1,7 +1,8 @@
+import type { CSSProperties } from "react";
 import type { ConnectFormProps } from "../../core/plugin-registry";
 
-const field: React.CSSProperties = { display: "grid", gap: 6, marginBottom: 14 };
-const input: React.CSSProperties = { width: "100%" };
+const field: CSSProperties = { display: "grid", gap: 6, marginBottom: 14 };
+const input: CSSProperties = { width: "100%" };
 
 function str(params: Record<string, unknown>, key: string, fallback = "") {
   const value = params[key];
