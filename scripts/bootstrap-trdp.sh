@@ -22,10 +22,11 @@ echo "Configuring vendored TCNOpen 3.0.0.0 + TauTerm TRDP native helpers..."
 cmake -S "$NATIVE" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release
 cmake --build "$BUILD" --config Release --parallel
 
-BRIDGE="$BUILD/bin/tauterm-trdp-bridge"
-PEER="$BUILD/bin/trdp-test-peer"
-if [[ ! -x "$BRIDGE" || ! -x "$PEER" ]]; then
-  echo "TRDP native build did not produce expected executables in $BUILD/bin" >&2
+BRIDGE="$(find "$BUILD" -type f -name 'tauterm-trdp-bridge' -perm -111 -print -quit)"
+PEER="$(find "$BUILD" -type f -name 'trdp-test-peer' -perm -111 -print -quit)"
+if [[ -z "$BRIDGE" || -z "$PEER" || ! -x "$BRIDGE" || ! -x "$PEER" ]]; then
+  echo "TRDP native build did not produce expected executables under $BUILD" >&2
+  find "$BUILD" -maxdepth 3 -type f -print >&2 || true
   exit 1
 fi
 
