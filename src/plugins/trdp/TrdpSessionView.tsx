@@ -238,6 +238,40 @@ function missedBetween(previous: number, current: number) {
   return distance > 1 && distance < 0x8000_0000 ? distance - 1 : 0;
 }
 
+function defaultDatasetValues(imported: XmlImport, datasetId: number, visiting = new Set<number>()): Record<string, unknown> {
+  if (visiting.has(datasetId)) return {};
+  const dataset = imported.datasets.find(item => item.id === datasetId);
+  if (!dataset) return {};
+  const nextVisiting = new Set(visiting);
+  nextVisiting.add(datasetId);
+  const result: Record<string, unknown> = {};
+  for (const element of dataset.elements) {
+    const singleValue = () => {
+      if (element.type_id > 1000) return defaultDatasetValues(imported, element.type_id, nextVisiting);
+      if (element.type_id === 15) return { seconds: 0, ticks: 0 };
+      return 0;
+    };
+    if (element.dynamic) {
+      result[element.name] = [];
+    } else if (element.array_size > 1) {
+      result[element.name] = Array.from({ length: element.array_size }, singleValue);
+    } else {
+      result[element.name] = singleValue();
+    }
+  }
+  return result;
+}
+
+function draftsFromValues(values: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(Object.entries(values).map(([name, value]) => [name, JSON.stringify(value)]));
+}
+
+function draftsFromDecoded(decoded: DecodedDataset): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(decoded.fields).map(([name, field]) => [name, JSON.stringify(field.value ?? field.raw ?? null)]),
+  );
+}
+
 export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const { state } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
@@ -447,6 +481,83 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       });
       setDecoded(result);
     } catch { /* error banner already populated */ }
+  }
+
+  async function openStructuredEditor(obj: TrdpObject) {
+    if (!xmlImport) {
+      setError("先导入 TRDP XML 才能使用 Dataset structured editor。");
+      return;
+    }
+    const datasetId = datasetByComId.get(obj.comId);
+    if (!datasetId) {
+      setError(`ComID ${obj.comId} 没有 XML Dataset 映射。`);
+      return;
+    }
+    if (obj.payloadHex) {
+      try {
+        const result = await command<DecodedDataset>("dataset_decode", {
+          path: xmlImport.path,
+          dataset_id: datasetId,
+          payload_hex: obj.payloadHex,
+        });
+        setStructuredEditor({ objectId: obj.id, datasetId, drafts: draftsFromDecoded(result) });
+        return;
+      } catch {
+        return;
+      }
+    }
+    setStructuredEditor({
+      objectId: obj.id,
+      datasetId,
+      drafts: draftsFromValues(defaultDatasetValues(xmlImport, datasetId)),
+    });
+  }
+
+  async function decodeStructuredFromHex() {
+    if (!structuredEditor || !xmlImport) return;
+    const obj = objects.find(item => item.id === structuredEditor.objectId);
+    if (!obj || !obj.payloadHex) {
+      setError("当前对象没有可解码的 Payload HEX。");
+      return;
+    }
+    try {
+      const result = await command<DecodedDataset>("dataset_decode", {
+        path: xmlImport.path,
+        dataset_id: structuredEditor.datasetId,
+        payload_hex: obj.payloadHex,
+      });
+      setStructuredEditor(prev => prev ? { ...prev, drafts: draftsFromDecoded(result) } : prev);
+    } catch {
+      // command() already populated the error banner.
+    }
+  }
+
+  async function applyStructuredToHex() {
+    if (!structuredEditor || !xmlImport) return;
+    const obj = objects.find(item => item.id === structuredEditor.objectId);
+    if (!obj) return;
+    const values: Record<string, unknown> = {};
+    try {
+      for (const [name, draft] of Object.entries(structuredEditor.drafts)) {
+        values[name] = JSON.parse(draft);
+      }
+    } catch (cause) {
+      setError(`Structured field 必须是合法 JSON 值: ${String(cause)}`);
+      return;
+    }
+    try {
+      const encoded = await command<EncodedDataset>("dataset_encode", {
+        path: xmlImport.path,
+        dataset_id: structuredEditor.datasetId,
+        values,
+      });
+      patchObject(obj.id, { payloadHex: encoded.payload_hex });
+      if (obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener")) {
+        await command("object_update", { id: obj.id, payload_hex: encoded.payload_hex });
+      }
+    } catch {
+      // command() already populated the error banner.
+    }
   }
 
   function importTemplates() {
