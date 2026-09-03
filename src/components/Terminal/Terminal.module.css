@@ -23,12 +23,35 @@
   overflow: hidden;
 }
 
+/* SplitWorkspace 中唯一的终端实例池覆盖层。根层不吃鼠标，具体可见 terminalWrapper 自己恢复 pointer-events。 */
+.dockedRoot {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 .terminalWrapper {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
+}
+
+.dockedTerminalWrapper {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: left 80ms linear, top 80ms linear, width 80ms linear, height 80ms linear, opacity 80ms linear;
+}
+
+.dockedTerminalBody {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
 }
 
 /* 终端实例相对定位容器 — 支持浮动按钮等绝对定位覆盖层 */
@@ -101,6 +124,7 @@
   border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);
   color: var(--color-warning);
   font-size: var(--text-xs);
+  flex-shrink: 0;
 }
 
 .transferBannerIcon {
@@ -113,4 +137,5 @@
   gap: 8px;
   padding: 6px 12px;
   font-size: var(--text-xs);
+  flex-shrink: 0;
 }
