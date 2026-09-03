@@ -92,10 +92,11 @@ A free outer edge of a Pane is a split hit-zone.
 - Hovering an eligible edge shows a subtle edge affordance and half-pane preview.
 - Clicking the edge splits that Pane in the requested direction.
 - The new Pane is empty and automatically selected.
-- When four Pane leaves already exist, split triggers are hidden.
+- When four Pane leaves already exist, split triggers and previews are hidden completely.
+- If splitting an edge would create panes below the minimum usable size, that edge does not offer a split trigger.
 - An edge that is already an internal divider is reserved for resize and does not offer another split trigger.
 
-The hit-zone is wider than the visible accent line so it remains easy to target without permanently adding buttons around the terminal.
+The visible accent line is smaller than its hit-zone, but the hit-zones must not steal pointer interaction from the Pane Header. In particular, left/right hit-zones begin below the header and the top-edge hit-zone is deliberately compact.
 
 ## Divider resize
 
@@ -115,9 +116,11 @@ Single-pane mode should remain visually close to existing TauTerm.
 
 In multi-pane mode:
 
-- each occupied Pane shows a small Session badge;
-- the selected Pane receives a subtle accent at the top edge;
-- the badge is above edge split hit-zones and can be right-clicked;
+- each Pane gets a lightweight 24px header outside the Session content area;
+- an occupied Pane shows its Session name in that header, while an empty Pane uses a subdued empty-state label;
+- the selected Pane receives a subtle accent at the top edge and a lightly emphasized header;
+- the header never overlays terminal or custom-renderer content;
+- right-clicking the Pane Header opens the Pane-level context menu;
 - terminal content keeps its existing right-click menu;
 - Pane close is exposed from Pane chrome rather than stealing terminal content right-click.
 
@@ -170,7 +173,7 @@ Existing `SessionContext.activeTabId` remains the compatibility bridge for curre
 
 Sidebar clicks and other existing session-switch entry points update `activeTabId`; Split Layout observes that change and either assigns the Session to the selected Pane or selects the Pane where it is already visible.
 
-Selecting an occupied Pane updates `activeTabId` to that Pane's Session. Selecting a newly-created empty Pane clears the effective active Session context until a Session is assigned.
+Selecting an occupied Pane updates `activeTabId` to that Pane's Session. Selecting a newly-created empty Pane clears the effective active Session context until a Session is assigned. When no active Session exists, Session-scoped auxiliary UI such as the RightSidebar shell must not reserve empty layout space.
 
 ## Terminal lifecycle invariant
 
@@ -197,6 +200,8 @@ Non-terminal content is rendered inside its assigned Pane using the existing ren
 The same Session duplication rule applies: an exact Session is never assigned to two Panes simultaneously.
 
 Long-lived plugin/runtime state should continue to live in Session/plugin stores rather than Pane state.
+
+Pane surfaces allow contained scrolling for non-terminal/custom views so controls remain reachable when a Pane becomes short in three- or four-pane layouts. Plugins may still provide their own more specific internal scrolling behavior.
 
 ## Session deletion and child sessions
 
@@ -238,6 +243,9 @@ Manual acceptance scenarios should include:
 5. Drag both nested dividers and verify independent resize.
 6. Click different visible panes and verify SendBar/RightSidebar follow the selected Session.
 7. Click a Session already visible elsewhere and verify TauTerm selects that Pane without duplicating it.
-8. Right-click Pane badge → Close Pane; verify layout collapses but Session remains connected/listed.
-9. Reach four Panes and verify no further split triggers are offered.
-10. Close TauTerm and reopen; verify no split layout is restored in this release.
+8. Right-click a Pane Header → Close Pane; verify layout collapses but Session remains connected/listed.
+9. Reach four Panes and verify no further split triggers or previews are offered.
+10. Shrink a Pane below the usable split threshold and verify ineligible edges no longer advertise another split.
+11. Select an empty Pane and verify the RightSidebar does not leave an empty shell or resize handle.
+12. Put iperf/TFTP or another custom renderer in a short Pane and verify controls remain reachable by scrolling.
+13. Close TauTerm and reopen; verify no split layout is restored in this release.
