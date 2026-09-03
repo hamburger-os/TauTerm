@@ -75,6 +75,7 @@
 
 .sessionBadge {
   position: absolute;
+  z-index: 9;
   top: 5px;
   left: 8px;
   max-width: min(52%, 260px);
