@@ -6,8 +6,8 @@
 //! pcap/pcapng offline without the helper. Live capture uses the helper and the
 //! host's libpcap/Npcap installation, so TauTerm does not redistribute Npcap.
 
-mod capture;
-mod xml;
+pub mod capture;
+pub mod xml;
 
 use crate::commands::ConnectSessionRequest;
 use crate::kernel::plugin_adapter::SideChannel;
@@ -20,9 +20,6 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
-
-pub use capture::{trdp_open_capture, trdp_save_capture, TrdpPacket};
-pub use xml::{trdp_decode_dataset, trdp_import_xml, TrdpXmlImport};
 
 pub struct TrdpSideChannel {
     child: Mutex<Option<Child>>,
@@ -118,10 +115,7 @@ impl TrdpSideChannel {
                 let mut payload = serde_json::from_str::<Value>(&line)
                     .unwrap_or_else(|_| json!({ "event": "bridge_output", "message": line }));
                 if let Some(object) = payload.as_object_mut() {
-                    object.insert(
-                        "session_id".into(),
-                        Value::String(event_session_id.clone()),
-                    );
+                    object.insert("session_id".into(), Value::String(event_session_id.clone()));
                 }
                 let _ = event_app.emit("trdp-event", payload);
             }
@@ -143,9 +137,7 @@ impl TrdpSideChannel {
         let mut input = self.stdin.lock().map_err(|error| error.to_string())?;
         let stdin = input.as_mut().ok_or("TRDP bridge 尚未启动")?;
         serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
-        stdin
-            .write_all(b"\n")
-            .map_err(|error| error.to_string())?;
+        stdin.write_all(b"\n").map_err(|error| error.to_string())?;
         stdin.flush().map_err(|error| error.to_string())
     }
 }
@@ -200,10 +192,7 @@ pub async fn connect_session_trdp(
         session_id,
         ..
     } = request;
-    let mode = params
-        .get("mode")
-        .and_then(Value::as_str)
-        .unwrap_or("node");
+    let mode = params.get("mode").and_then(Value::as_str).unwrap_or("node");
     if !matches!(mode, "node" | "monitor") {
         return Err(format!("未知 TRDP 会话模式: {mode}"));
     }
@@ -238,9 +227,6 @@ pub async fn connect_session_trdp(
         )?
     };
 
-    // A Node is an active protocol participant, so TCNOpen must be present at
-    // connect time. Monitor sessions can still be used for offline capture files
-    // without the native helper; the helper is started lazily for live capture.
     if mode == "node" {
         if let Err(error) = side_channel.start(app.clone(), &session_id) {
             if let Ok(mut store) = state.session_store.lock() {
@@ -323,11 +309,7 @@ pub fn trdp_command(
                 .get("payload_hex")
                 .and_then(Value::as_str)
                 .ok_or("dataset_decode requires payload_hex")?;
-            return xml::trdp_decode_dataset(
-                path.to_string(),
-                dataset_id,
-                payload_hex.to_string(),
-            );
+            return xml::trdp_decode_dataset(path.to_string(), dataset_id, payload_hex.to_string());
         }
         _ => {}
     }
@@ -347,4 +329,35 @@ pub fn trdp_command(
     }
     trdp.send(command)?;
     Ok(Value::Null)
+}
+
+#[tauri::command]
+pub fn trdp_open_capture(
+    path: String,
+    pd_ports: Option<Vec<u16>>,
+    md_ports: Option<Vec<u16>>,
+) -> Result<Vec<capture::TrdpPacket>, String> {
+    capture::trdp_open_capture(path, pd_ports, md_ports)
+}
+
+#[tauri::command]
+pub fn trdp_save_capture(
+    path: String,
+    packets: Vec<capture::TrdpPacket>,
+) -> Result<(), String> {
+    capture::trdp_save_capture(path, packets)
+}
+
+#[tauri::command]
+pub fn trdp_import_xml(path: String) -> Result<xml::TrdpXmlImport, String> {
+    xml::trdp_import_xml(path)
+}
+
+#[tauri::command]
+pub fn trdp_decode_dataset(
+    path: String,
+    dataset_id: u32,
+    payload_hex: String,
+) -> Result<Value, String> {
+    xml::trdp_decode_dataset(path, dataset_id, payload_hex)
 }
