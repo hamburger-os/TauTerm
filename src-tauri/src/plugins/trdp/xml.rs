@@ -111,24 +111,28 @@ fn type_name(id: u32, original: &str) -> String {
 
 fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
     let xml = fs::read_to_string(path).map_err(|error| format!("读取 TRDP XML 失败: {error}"))?;
-    let dataset_re = Regex::new(r#"(?is)<data-set\b([^>]*)>(.*?)</data-set>"#)
+    // Require whitespace after element names. `\b` is not sufficient because
+    // the hyphen in <data-set-list>/<telegram-list> is itself a word boundary.
+    let dataset_re = Regex::new(r#"(?is)<data-set\s+([^>]*)>(.*?)</data-set>"#)
         .map_err(|error| error.to_string())?;
     let element_re =
-        Regex::new(r#"(?is)<element\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
-    let telegram_re = Regex::new(r#"(?is)<telegram\b([^>]*)>(.*?)</telegram>"#)
+        Regex::new(r#"(?is)<element\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let telegram_re = Regex::new(r#"(?is)<telegram\s+([^>]*)>(.*?)</telegram>"#)
         .map_err(|error| error.to_string())?;
-    let pd_re =
-        Regex::new(r#"(?is)<pd-parameter\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
-    let source_re = Regex::new(r#"(?is)<source\b([^>]*)"#).map_err(|error| error.to_string())?;
-    let destination_re =
-        Regex::new(r#"(?is)<destination\b([^>]*)"#).map_err(|error| error.to_string())?;
-    let pd_config_re =
-        Regex::new(r#"(?is)<pd-com-parameter\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
-    let md_config_re =
-        Regex::new(r#"(?is)<md-com-parameter\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let pd_re = Regex::new(r#"(?is)<pd-parameter\s+([^>]*)/?>"#)
+        .map_err(|error| error.to_string())?;
+    let source_re =
+        Regex::new(r#"(?is)<source\s+([^>]*)"#).map_err(|error| error.to_string())?;
+    let destination_re = Regex::new(r#"(?is)<destination\s+([^>]*)"#)
+        .map_err(|error| error.to_string())?;
+    let pd_config_re = Regex::new(r#"(?is)<pd-com-parameter\s+([^>]*)/?>"#)
+        .map_err(|error| error.to_string())?;
+    let md_config_re = Regex::new(r#"(?is)<md-com-parameter\s+([^>]*)/?>"#)
+        .map_err(|error| error.to_string())?;
 
     let mut warnings = Vec::new();
     let mut datasets = Vec::new();
+    let mut dataset_ids = HashSet::new();
     for capture in dataset_re.captures_iter(&xml) {
         let tag = capture
             .get(1)
@@ -142,6 +146,9 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             warnings.push("忽略缺少数字 id 的 <data-set>".to_string());
             continue;
         };
+        if !dataset_ids.insert(id) {
+            warnings.push(format!("Dataset {id} 重复定义；保留全部定义供预览，请在使用前修正配置"));
+        }
         let name = attr(tag, "name").unwrap_or_else(|| format!("Dataset {id}"));
         let mut elements = Vec::new();
         for element in element_re.captures_iter(body) {
@@ -169,6 +176,15 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
                 scale: attr(attributes, "scale").and_then(|value| value.parse().ok()),
                 offset: attr(attributes, "offset").and_then(|value| value.parse().ok()),
             });
+        }
+        if elements
+            .iter()
+            .take(elements.len().saturating_sub(1))
+            .any(|element| element.dynamic)
+        {
+            warnings.push(format!(
+                "Dataset {id} 在非末尾位置包含动态数组；解码仅在后续字段固定长度时可确定边界"
+            ));
         }
         datasets.push(TrdpXmlDataset { id, name, elements });
     }
@@ -217,6 +233,16 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         });
     }
 
+    let known_dataset_ids: HashSet<u32> = datasets.iter().map(|dataset| dataset.id).collect();
+    for telegram in &telegrams {
+        if telegram.dataset_id != 0 && !known_dataset_ids.contains(&telegram.dataset_id) {
+            warnings.push(format!(
+                "ComID {} 引用了不存在的 Dataset {}",
+                telegram.com_id, telegram.dataset_id
+            ));
+        }
+    }
+
     let pd_attributes = pd_config_re
         .captures(&xml)
         .and_then(|value| value.get(1))
@@ -246,6 +272,7 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             "检测到 SDT 配置：TauTerm 首版仅展示元数据，不执行 SDTv2/SDTv4 安全验证。".to_string(),
         );
     }
+
     Ok(TrdpXmlImport {
         path: path.to_string(),
         datasets,
@@ -369,34 +396,31 @@ fn decode_dataset_inner(
     let mut fields = Map::new();
 
     for (index, element) in dataset.elements.iter().enumerate() {
-        let remaining_fixed_width =
-            dataset.elements[index + 1..]
-                .iter()
-                .try_fold(0usize, |sum, trailing| {
-                    if trailing.dynamic {
-                        return None;
-                    }
-                    let width = if let Some(width) = primitive_width(trailing.type_id) {
-                        width
-                    } else if trailing.type_id > 1000 {
-                        fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
-                    } else {
-                        return None;
-                    };
-                    sum.checked_add(width.checked_mul(trailing.array_size as usize)?)
-                });
+        let remaining_fixed_width = dataset.elements[index + 1..]
+            .iter()
+            .try_fold(0usize, |sum, trailing| {
+                if trailing.dynamic {
+                    return None;
+                }
+                let width = if let Some(width) = primitive_width(trailing.type_id) {
+                    width
+                } else if trailing.type_id > 1000 {
+                    fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
+                } else {
+                    return None;
+                };
+                sum.checked_add(width.checked_mul(trailing.array_size as usize)?)
+            });
 
         let item_width = if let Some(width) = primitive_width(element.type_id) {
             width
         } else if element.type_id > 1000 {
-            fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(
-                || {
-                    format!(
-                        "嵌套 Dataset {} 包含动态长度，无法从父 Dataset 自动切片",
-                        element.type_id
-                    )
-                },
-            )?
+            fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(|| {
+                format!(
+                    "嵌套 Dataset {} 包含动态长度，无法从父 Dataset 自动切片",
+                    element.type_id
+                )
+            })?
         } else {
             return Err(format!(
                 "Dataset {} 字段 {} 使用未知类型 {}",
@@ -414,7 +438,14 @@ fn decode_dataset_inner(
             if payload.len() < offset + reserved {
                 return Err(format!("Dataset {dataset_id} payload 长度不足"));
             }
-            (payload.len() - offset - reserved) / item_width
+            let available = payload.len() - offset - reserved;
+            if !available.is_multiple_of(item_width) {
+                return Err(format!(
+                    "Dataset {} 字段 {} 的动态数组长度 {} 不是元素宽度 {} 的整数倍",
+                    dataset_id, element.name, available, item_width
+                ));
+            }
+            available / item_width
         } else {
             element.array_size as usize
         };
@@ -512,11 +543,13 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().expect("tempfile");
         write!(
             file,
-            r#"<device><bus-interface-list><bus-interface><pd-com-parameter port="17224"/><md-com-parameter udp-port="17225" tcp-port="17225"/><telegram name="demo" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram></bus-interface></bus-interface-list><data-set-list><data-set name="demo" id="1001"><element name="counter" type="10"/><element name="text" type="2" array-size="0"/></data-set></data-set-list></device>"#
+            r#"<device><bus-interface-list><bus-interface><pd-com-parameter port="17224"/><md-com-parameter udp-port="17225" tcp-port="17225"/><telegram-list><telegram name="demo" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram></telegram-list></bus-interface></bus-interface-list><data-set-list><data-set name="demo" id="1001"><element name="counter" type="10"/><element name="text" type="2" array-size="0"/></data-set></data-set-list></device>"#
         )
         .expect("write");
         let path = file.path().to_string_lossy().to_string();
         let imported = parse_xml(&path).expect("import");
+        assert_eq!(imported.datasets.len(), 1);
+        assert_eq!(imported.telegrams.len(), 1);
         assert_eq!(imported.telegrams[0].com_id, 1001);
         assert!(imported.datasets[0].elements[1].dynamic);
         let payload = [0, 0, 0, 7, b'O', b'K'];
