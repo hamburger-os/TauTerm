@@ -116,6 +116,19 @@ assert.equal(restoredWorkspace.assignments.wp3, "serial-root");
 assert.equal(restoredWorkspace.root.type, "split");
 assert.equal(restoredWorkspace.root.ratio, 0.63);
 
+// A deliberately empty Workspace is still meaningful: geometry and selected Pane survive.
+let emptyWorkspace = createInitialSplitLayout("ep1");
+emptyWorkspace = splitPaneInLayout(emptyWorkspace, "ep1", "right", "ep2", "es1");
+emptyWorkspace = setSplitRatioInLayout(emptyWorkspace, "es1", 0.41);
+const restoredEmptyWorkspace = parsePersistedWorkspaceLayout(
+  serializeWorkspaceLayout(emptyWorkspace, new Map()),
+);
+assert.ok(restoredEmptyWorkspace);
+assert.equal(restoredEmptyWorkspace.selectedPaneId, "ep2");
+assert.deepEqual(restoredEmptyWorkspace.assignments, { ep1: null, ep2: null });
+assert.equal(restoredEmptyWorkspace.root.type, "split");
+assert.equal(restoredEmptyWorkspace.root.ratio, 0.41);
+
 // Corrupt/future payloads fail closed and fall back to normal single-pane startup.
 assert.equal(parsePersistedWorkspaceLayout("not json"), null);
 assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({ version: 2 })), null);
@@ -124,6 +137,21 @@ assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({
   root: { type: "pane", id: "p1" },
   assignments: { p1: null },
   selectedPaneId: "missing",
+})), null);
+
+// A hand-edited/corrupt payload may not place one Session in two Panes.
+assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({
+  version: 1,
+  root: {
+    type: "split",
+    id: "dup-split",
+    direction: "horizontal",
+    ratio: 0.5,
+    first: { type: "pane", id: "dup-p1" },
+    second: { type: "pane", id: "dup-p2" },
+  },
+  assignments: { "dup-p1": "same-session", "dup-p2": "same-session" },
+  selectedPaneId: "dup-p1",
 })), null);
 
 console.log("split-layout: runtime and persisted workspace invariants preserved");
