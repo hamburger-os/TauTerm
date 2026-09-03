@@ -868,6 +868,10 @@ void node_object_start(const char *line) {
         if (error != TRDP_NO_ERR) {
             break;
         }
+        error = tlc_updateSession(g_links[index].app);
+        if (error != TRDP_NO_ERR) {
+            break;
+        }
         ++started;
     }
     bridge_mutex_unlock(&g_node_mutex);
