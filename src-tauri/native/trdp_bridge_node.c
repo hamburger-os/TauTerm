@@ -396,7 +396,7 @@ static void *node_process_loop(void *unused)
                         interval.tv_sec = 0;
                         interval.tv_usec = 10000;
                     }
-                    ready = vos_select(no_desc + 1, &read_fds, NULL, NULL, &interval);
+                    ready = vos_select(no_desc, &read_fds, NULL, NULL, &interval);
                     if (ready < 0) {
                         ready = 0;
                     }
