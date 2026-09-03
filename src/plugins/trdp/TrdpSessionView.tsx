@@ -72,6 +72,8 @@ type XmlElement = {
   array_size: number;
   dynamic: boolean;
   unit?: string;
+  scale?: number;
+  offset?: number;
 };
 type XmlDataset = { id: number; name: string; elements: XmlElement[] };
 type XmlTelegram = {
@@ -597,6 +599,11 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     await command("md_confirm", { md_session_id: event.md_session_id, link: event.link ?? "a", user_status: 0 });
   }
 
+  const structuredObject = structuredEditor ? objects.find(item => item.id === structuredEditor.objectId) : undefined;
+  const structuredDataset = structuredEditor && xmlImport
+    ? xmlImport.datasets.find(item => item.id === structuredEditor.datasetId)
+    : undefined;
+
   const objectEditor = (obj: TrdpObject) => {
     const oneShot = obj.kind === "md_request" || obj.kind === "md_notify";
     const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
@@ -615,7 +622,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             <label>ETB <input type="number" min={0} value={obj.etbTopoCount} onChange={event => patchObject(obj.id, { etbTopoCount: Number(event.target.value) })} /></label><br />
             <label>OpTrn <input type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label><br />
             {subscriber && <label>Timeout behavior <select value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">Keep last value</option><option value="zero">Set to zero</option></select></label>}
+            {obj.kind === "pd_request" && <><br /><label>Reply ComID <input type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>0 = same as request ComID</small><br /><label>Reply IP <input value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>0.0.0.0 = Link local IP</small></>}
             {obj.kind === "pd_publisher" && <><label>Red ID <input type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>Red state <select value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">Leader</option><option value="follower">Follower</option></select></label></>}
+            {obj.kind.startsWith("md_") && <><label>Source URI <input value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>Destination URI <input value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
             {obj.kind === "md_request" && <><label>Replies <input type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>Reply timeout µs <input type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
             {obj.kind === "md_listener" && <><label>Response <select value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>Confirm timeout µs <input type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
           </details>
@@ -623,6 +632,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         <td style={{ whiteSpace: "nowrap" }}>
           {oneShot ? <button onClick={() => void startObject(obj)}>Send</button> : <button onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? "Stop" : "Start"}</button>}
           {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button onClick={() => void updatePayload(obj)}>Put</button>}
+          {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button onClick={() => void openStructuredEditor(obj)}>Dataset</button>}
           <button onClick={() => setObjects(prev => prev.filter(item => item.id !== obj.id))} disabled={obj.state === "running"}>×</button>
         </td>
       </tr>
@@ -638,6 +648,46 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       </div>
       <div style={{ padding: 12, overflow: "auto" }}>
         {error && <div style={{ padding: 10, marginBottom: 12, border: "1px solid var(--danger, #d44)", borderRadius: 8 }}>{error}</div>}
+
+        {structuredEditor && structuredObject && structuredDataset && (
+          <div className="liquid-glass-card" style={{ padding: 12, marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <strong>Dataset Structured Editor · {structuredDataset.name} ({structuredDataset.id})</strong>
+              <span>Object: {structuredObject.name} · ComID {structuredObject.comId}</span>
+              <button style={{ marginLeft: "auto" }} onClick={() => void decodeStructuredFromHex()}>HEX → Fields</button>
+              <button onClick={() => void applyStructuredToHex()}>Fields → HEX</button>
+              <button onClick={() => setStructuredEditor(null)}>Close</button>
+            </div>
+            <div style={{ marginTop: 6, opacity: 0.8 }}>
+              每个字段输入合法 JSON 值；数组/嵌套 Dataset 使用 JSON array/object。Fields → HEX 会按 XML 类型、网络字节序及 scale/offset 编码，HEX 仍是最终 wire truth source。
+            </div>
+            <table style={{ ...tableStyle, marginTop: 8 }}>
+              <thead><tr><th>Field</th><th>Type</th><th>Array</th><th>Value (JSON)</th><th>Unit</th></tr></thead>
+              <tbody>
+                {structuredDataset.elements.map(element => (
+                  <tr key={element.name}>
+                    <td>{element.name}</td>
+                    <td>{element.data_type}{element.scale !== undefined ? ` ×${element.scale}` : ""}{element.offset !== undefined ? ` +${element.offset}` : ""}</td>
+                    <td>{element.dynamic ? "dynamic" : element.array_size}</td>
+                    <td>
+                      <textarea
+                        rows={1}
+                        style={{ width: "100%", minWidth: 220, fontFamily: "var(--font-mono)" }}
+                        value={structuredEditor.drafts[element.name] ?? "null"}
+                        onChange={event => setStructuredEditor(prev => prev ? {
+                          ...prev,
+                          drafts: { ...prev.drafts, [element.name]: event.target.value },
+                        } : prev)}
+                      />
+                    </td>
+                    <td>{element.unit ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ marginTop: 6 }}>Payload HEX: <code>{structuredObject.payloadHex || "—"}</code></div>
+          </div>
+        )}
 
         {page === "overview" && (
           <div style={{ display: "grid", gap: 12 }}>
