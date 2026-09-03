@@ -507,6 +507,269 @@ fn decode_dataset_inner(
     Ok((fields, offset))
 }
 
+
+fn encode_hex(data: &[u8]) -> String {
+    const TABLE: &[u8; 16] = b"0123456789ABCDEF";
+    let mut output = String::with_capacity(data.len() * 2);
+    for &byte in data {
+        output.push(TABLE[(byte >> 4) as usize] as char);
+        output.push(TABLE[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn numeric_value(value: &Value, field: &str) -> Result<f64, String> {
+    value
+        .as_f64()
+        .ok_or_else(|| format!("字段 {field} 需要数字值"))
+}
+
+fn integer_value(value: &Value, field: &str) -> Result<i128, String> {
+    if let Some(value) = value.as_i64() {
+        return Ok(value as i128);
+    }
+    if let Some(value) = value.as_u64() {
+        return Ok(value as i128);
+    }
+    if let Some(value) = value.as_f64() {
+        let rounded = value.round();
+        if (value - rounded).abs() <= 1e-9 {
+            return Ok(rounded as i128);
+        }
+    }
+    Err(format!("字段 {field} 需要整数值"))
+}
+
+fn wire_value(element: &TrdpXmlElement, value: &Value) -> Result<Value, String> {
+    if element.scale.is_none() && element.offset.is_none() {
+        return Ok(value.clone());
+    }
+    let scale = element.scale.unwrap_or(1.0);
+    if scale == 0.0 {
+        return Err(format!("字段 {} 的 scale 不能为 0", element.name));
+    }
+    let display = numeric_value(value, &element.name)?;
+    let raw = (display - element.offset.unwrap_or(0) as f64) / scale;
+    serde_json::Number::from_f64(raw)
+        .map(Value::Number)
+        .ok_or_else(|| format!("字段 {} 缩放后的值无效", element.name))
+}
+
+fn encode_primitive(
+    element: &TrdpXmlElement,
+    value: &Value,
+    output: &mut Vec<u8>,
+) -> Result<(), String> {
+    let value = wire_value(element, value)?;
+    let field = element.name.as_str();
+    match element.type_id {
+        1 => {
+            let byte = if let Some(value) = value.as_bool() {
+                u8::from(value)
+            } else {
+                u8::try_from(integer_value(&value, field)?)
+                    .map_err(|_| format!("字段 {field} 超出 UINT8 范围"))?
+            };
+            output.push(byte);
+        }
+        2 => {
+            if let Some(text) = value.as_str() {
+                let bytes = text.as_bytes();
+                if bytes.len() != 1 {
+                    return Err(format!("字段 {field} 的 CHAR8 必须恰好一个字节"));
+                }
+                output.push(bytes[0]);
+            } else {
+                output.push(
+                    u8::try_from(integer_value(&value, field)?)
+                        .map_err(|_| format!("字段 {field} 超出 CHAR8 范围"))?,
+                );
+            }
+        }
+        3 => {
+            let encoded = if let Some(text) = value.as_str() {
+                let mut units = text.encode_utf16();
+                let first = units
+                    .next()
+                    .ok_or_else(|| format!("字段 {field} 的 UTF16 不能为空"))?;
+                if units.next().is_some() {
+                    return Err(format!("字段 {field} 的 UTF16 必须恰好一个 code unit"));
+                }
+                first
+            } else {
+                u16::try_from(integer_value(&value, field)?)
+                    .map_err(|_| format!("字段 {field} 超出 UTF16 范围"))?
+            };
+            output.extend_from_slice(&encoded.to_be_bytes());
+        }
+        4 => output.push(
+            i8::try_from(integer_value(&value, field)?)
+                .map_err(|_| format!("字段 {field} 超出 INT8 范围"))? as u8,
+        ),
+        5 => output.extend_from_slice(
+            &i16::try_from(integer_value(&value, field)?)
+                .map_err(|_| format!("字段 {field} 超出 INT16 范围"))?
+                .to_be_bytes(),
+        ),
+        6 => output.extend_from_slice(
+            &i32::try_from(integer_value(&value, field)?)
+                .map_err(|_| format!("字段 {field} 超出 INT32 范围"))?
+                .to_be_bytes(),
+        ),
+        7 => output.extend_from_slice(
+            &i64::try_from(integer_value(&value, field)?)
+                .map_err(|_| format!("字段 {field} 超出 INT64 范围"))?
+                .to_be_bytes(),
+        ),
+        8 => output.push(
+            u8::try_from(integer_value(&value, field)?)
+                .map_err(|_| format!("字段 {field} 超出 UINT8 范围"))?,
+        ),
+        9 => output.extend_from_slice(
+            &u16::try_from(integer_value(&value, field)?)
+                .map_err(|_| format!("字段 {field} 超出 UINT16 范围"))?
+                .to_be_bytes(),
+        ),
+        10 | 14 => output.extend_from_slice(
+            &u32::try_from(integer_value(&value, field)?)
+                .map_err(|_| format!("字段 {field} 超出 UINT32 范围"))?
+                .to_be_bytes(),
+        ),
+        11 | 16 => output.extend_from_slice(
+            &u64::try_from(integer_value(&value, field)?)
+                .map_err(|_| format!("字段 {field} 超出 UINT64 范围"))?
+                .to_be_bytes(),
+        ),
+        12 => output.extend_from_slice(&(numeric_value(&value, field)? as f32).to_be_bytes()),
+        13 => output.extend_from_slice(&numeric_value(&value, field)?.to_be_bytes()),
+        15 => {
+            let object = value
+                .as_object()
+                .ok_or_else(|| format!("字段 {field} 的 TIMEDATE48 需要 {{seconds,ticks}}"))?;
+            let seconds = object
+                .get("seconds")
+                .ok_or_else(|| format!("字段 {field} 缺少 seconds"))?;
+            let ticks = object
+                .get("ticks")
+                .ok_or_else(|| format!("字段 {field} 缺少 ticks"))?;
+            output.extend_from_slice(
+                &u32::try_from(integer_value(seconds, field)?)
+                    .map_err(|_| format!("字段 {field}.seconds 超出 UINT32 范围"))?
+                    .to_be_bytes(),
+            );
+            output.extend_from_slice(
+                &u16::try_from(integer_value(ticks, field)?)
+                    .map_err(|_| format!("字段 {field}.ticks 超出 UINT16 范围"))?
+                    .to_be_bytes(),
+            );
+        }
+        _ => return Err(format!("字段 {field} 使用不支持的类型 {}", element.type_id)),
+    }
+    Ok(())
+}
+
+fn field_items(element: &TrdpXmlElement, value: &Value) -> Result<Vec<Value>, String> {
+    if element.type_id == 2 && (element.dynamic || element.array_size != 1) {
+        if let Some(text) = value.as_str() {
+            let values = text
+                .as_bytes()
+                .iter()
+                .map(|byte| Value::from(*byte))
+                .collect::<Vec<_>>();
+            if !element.dynamic && values.len() != element.array_size as usize {
+                return Err(format!(
+                    "字段 {} 需要 {} 个 CHAR8，实际 {}",
+                    element.name,
+                    element.array_size,
+                    values.len()
+                ));
+            }
+            return Ok(values);
+        }
+    }
+
+    if element.dynamic || element.array_size != 1 {
+        let values = value
+            .as_array()
+            .ok_or_else(|| format!("字段 {} 需要 JSON 数组", element.name))?
+            .clone();
+        if !element.dynamic && values.len() != element.array_size as usize {
+            return Err(format!(
+                "字段 {} 需要 {} 个元素，实际 {}",
+                element.name,
+                element.array_size,
+                values.len()
+            ));
+        }
+        Ok(values)
+    } else {
+        Ok(vec![value.clone()])
+    }
+}
+
+fn encode_dataset_inner(
+    dataset_id: u32,
+    values: &Map<String, Value>,
+    imported: &TrdpXmlImport,
+    visiting: &mut HashSet<u32>,
+    output: &mut Vec<u8>,
+) -> Result<(), String> {
+    if !visiting.insert(dataset_id) {
+        return Err(format!("Dataset 嵌套循环: {dataset_id}"));
+    }
+    let dataset = imported
+        .datasets
+        .iter()
+        .find(|dataset| dataset.id == dataset_id)
+        .ok_or_else(|| format!("Dataset {dataset_id} 不存在"))?;
+
+    for element in &dataset.elements {
+        let value = values
+            .get(&element.name)
+            .ok_or_else(|| format!("Dataset {dataset_id} 缺少字段 {}", element.name))?;
+        let items = field_items(element, value)?;
+        for item in items {
+            if element.type_id > 1000 {
+                let nested = item.as_object().ok_or_else(|| {
+                    format!(
+                        "Dataset {dataset_id} 字段 {} 需要嵌套 JSON object",
+                        element.name
+                    )
+                })?;
+                encode_dataset_inner(element.type_id, nested, imported, visiting, output)?;
+            } else {
+                encode_primitive(element, &item, output)?;
+            }
+        }
+    }
+    visiting.remove(&dataset_id);
+    Ok(())
+}
+
+pub fn trdp_encode_dataset(
+    path: String,
+    dataset_id: u32,
+    values: Value,
+) -> Result<Value, String> {
+    let imported = parse_xml(&path)?;
+    let values = values
+        .as_object()
+        .ok_or("Dataset encode values 必须是 JSON object")?;
+    let mut output = Vec::new();
+    encode_dataset_inner(
+        dataset_id,
+        values,
+        &imported,
+        &mut HashSet::new(),
+        &mut output,
+    )?;
+    Ok(json!({
+        "dataset_id": dataset_id,
+        "payload_bytes": output.len(),
+        "payload_hex": encode_hex(&output)
+    }))
+}
+
 pub fn trdp_decode_dataset(
     path: String,
     dataset_id: u32,
@@ -540,6 +803,30 @@ mod tests {
         assert_eq!(type_id("5"), Some(5));
         assert_eq!(type_name(5, "5"), "INT16");
         assert_eq!(type_id("UINT32"), Some(10));
+    }
+
+    #[test]
+    fn encodes_structured_values_to_wire_payload() {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(
+            file,
+            r#"<device><data-set-list><data-set name="demo" id="1001"><element name="counter" type="10"/><element name="text" type="2" array-size="0"/></data-set></data-set-list></device>"#
+        )
+        .expect("write");
+        let path = file.path().to_string_lossy().to_string();
+        let encoded = trdp_encode_dataset(
+            path.clone(),
+            1001,
+            json!({"counter": 7, "text": "OK"}),
+        )
+        .expect("encode");
+        assert_eq!(encoded["payload_hex"], "000000074F4B");
+
+        let decoded =
+            trdp_decode_dataset(path, 1001, encoded["payload_hex"].as_str().unwrap().to_string())
+                .expect("decode");
+        assert_eq!(decoded["fields"]["counter"]["value"], json!(7u32));
+        assert_eq!(decoded["fields"]["text"]["value"], json!([79, 75]));
     }
 
     #[test]
