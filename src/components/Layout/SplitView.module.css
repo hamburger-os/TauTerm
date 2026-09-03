@@ -148,10 +148,13 @@
   box-shadow: 0 0 10px var(--accent-glow);
 }
 
-/* 自由边缘本身就是 hover hit-zone；已有 Divider 的边由 blockedEdges 隐藏。 */
+/* 自由边缘本身就是 hover hit-zone；已有 Divider 的边由 blockedEdges 隐藏。
+ * 左右触发区从标题栏下方开始，避免和 Pane Header 抢鼠标事件。
+ * 顶部触发区保留在真实顶边，但收窄为居中的短 hit-zone，避免覆盖整条标题栏。
+ */
 .splitTriggerLeft,
 .splitTriggerRight {
-  top: 16px;
+  top: 24px;
   bottom: 16px;
   width: 12px;
 }
@@ -182,9 +185,10 @@
 
 .splitTriggerTop,
 .splitTriggerBottom {
-  left: 16px;
-  right: 16px;
-  height: 12px;
+  left: 50%;
+  width: 56px;
+  height: 8px;
+  transform: translateX(-50%);
 }
 
 .splitTriggerTop span,
@@ -200,7 +204,7 @@
 }
 
 .splitTriggerTop span {
-  top: 3px;
+  top: 2px;
 }
 
 .splitTriggerBottom {
@@ -208,7 +212,7 @@
 }
 
 .splitTriggerBottom span {
-  bottom: 3px;
+  bottom: 2px;
 }
 
 .splitPreview {
