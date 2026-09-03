@@ -48,10 +48,7 @@ pub struct TrdpXmlImport {
 }
 
 fn attr(tag: &str, name: &str) -> Option<String> {
-    let pattern = format!(
-        r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#,
-        regex::escape(name)
-    );
+    let pattern = format!(r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#, regex::escape(name));
     Regex::new(&pattern)
         .ok()?
         .captures(tag)
@@ -120,22 +117,27 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         Regex::new(r#"(?is)<element\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
     let telegram_re = Regex::new(r#"(?is)<telegram\b([^>]*)>(.*?)</telegram>"#)
         .map_err(|error| error.to_string())?;
-    let pd_re = Regex::new(r#"(?is)<pd-parameter\b([^>]*)/?>"#)
-        .map_err(|error| error.to_string())?;
-    let source_re =
-        Regex::new(r#"(?is)<source\b([^>]*)"#).map_err(|error| error.to_string())?;
-    let destination_re = Regex::new(r#"(?is)<destination\b([^>]*)"#)
-        .map_err(|error| error.to_string())?;
-    let pd_config_re = Regex::new(r#"(?is)<pd-com-parameter\b([^>]*)/?>"#)
-        .map_err(|error| error.to_string())?;
-    let md_config_re = Regex::new(r#"(?is)<md-com-parameter\b([^>]*)/?>"#)
-        .map_err(|error| error.to_string())?;
+    let pd_re =
+        Regex::new(r#"(?is)<pd-parameter\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let source_re = Regex::new(r#"(?is)<source\b([^>]*)"#).map_err(|error| error.to_string())?;
+    let destination_re =
+        Regex::new(r#"(?is)<destination\b([^>]*)"#).map_err(|error| error.to_string())?;
+    let pd_config_re =
+        Regex::new(r#"(?is)<pd-com-parameter\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let md_config_re =
+        Regex::new(r#"(?is)<md-com-parameter\b([^>]*)/?>"#).map_err(|error| error.to_string())?;
 
     let mut warnings = Vec::new();
     let mut datasets = Vec::new();
     for capture in dataset_re.captures_iter(&xml) {
-        let tag = capture.get(1).map(|value| value.as_str()).unwrap_or_default();
-        let body = capture.get(2).map(|value| value.as_str()).unwrap_or_default();
+        let tag = capture
+            .get(1)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        let body = capture
+            .get(2)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
         let Some(id) = attr_u32(tag, "id") else {
             warnings.push("忽略缺少数字 id 的 <data-set>".to_string());
             continue;
@@ -143,7 +145,10 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         let name = attr(tag, "name").unwrap_or_else(|| format!("Dataset {id}"));
         let mut elements = Vec::new();
         for element in element_re.captures_iter(body) {
-            let attributes = element.get(1).map(|value| value.as_str()).unwrap_or_default();
+            let attributes = element
+                .get(1)
+                .map(|value| value.as_str())
+                .unwrap_or_default();
             let raw_type = attr(attributes, "type").unwrap_or_else(|| "0".to_string());
             let element_type_id = type_id(&raw_type).unwrap_or(0);
             if element_type_id == 0 {
@@ -170,8 +175,14 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
 
     let mut telegrams = Vec::new();
     for capture in telegram_re.captures_iter(&xml) {
-        let tag = capture.get(1).map(|value| value.as_str()).unwrap_or_default();
-        let body = capture.get(2).map(|value| value.as_str()).unwrap_or_default();
+        let tag = capture
+            .get(1)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        let body = capture
+            .get(2)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
         let Some(com_id) = attr_u32(tag, "com-id") else {
             warnings.push("忽略缺少 com-id 的 <telegram>".to_string());
             continue;
@@ -247,7 +258,6 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
     })
 }
 
-#[tauri::command]
 pub fn trdp_import_xml(path: String) -> Result<TrdpXmlImport, String> {
     parse_xml(&path)
 }
@@ -283,7 +293,10 @@ fn primitive_width(type_id: u32) -> Option<usize> {
 fn decode_primitive(type_id: u32, bytes: &[u8]) -> Value {
     match type_id {
         1 => json!(bytes.first().copied().unwrap_or(0)),
-        2 => json!(bytes.first().map(|value| char::from(*value).to_string()).unwrap_or_default()),
+        2 => json!(bytes
+            .first()
+            .map(|value| char::from(*value).to_string())
+            .unwrap_or_default()),
         3 | 9 => json!(u16::from_be_bytes([bytes[0], bytes[1]])),
         4 => json!(bytes.first().copied().unwrap_or(0) as i8),
         5 => json!(i16::from_be_bytes([bytes[0], bytes[1]])),
@@ -314,7 +327,10 @@ fn fixed_dataset_width(
     if !visiting.insert(dataset_id) {
         return None;
     }
-    let dataset = imported.datasets.iter().find(|dataset| dataset.id == dataset_id)?;
+    let dataset = imported
+        .datasets
+        .iter()
+        .find(|dataset| dataset.id == dataset_id)?;
     let mut total = 0usize;
     for element in &dataset.elements {
         if element.dynamic {
@@ -353,31 +369,34 @@ fn decode_dataset_inner(
     let mut fields = Map::new();
 
     for (index, element) in dataset.elements.iter().enumerate() {
-        let remaining_fixed_width = dataset.elements[index + 1..]
-            .iter()
-            .try_fold(0usize, |sum, trailing| {
-                if trailing.dynamic {
-                    return None;
-                }
-                let width = if let Some(width) = primitive_width(trailing.type_id) {
-                    width
-                } else if trailing.type_id > 1000 {
-                    fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
-                } else {
-                    return None;
-                };
-                sum.checked_add(width.checked_mul(trailing.array_size as usize)?)
-            });
+        let remaining_fixed_width =
+            dataset.elements[index + 1..]
+                .iter()
+                .try_fold(0usize, |sum, trailing| {
+                    if trailing.dynamic {
+                        return None;
+                    }
+                    let width = if let Some(width) = primitive_width(trailing.type_id) {
+                        width
+                    } else if trailing.type_id > 1000 {
+                        fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
+                    } else {
+                        return None;
+                    };
+                    sum.checked_add(width.checked_mul(trailing.array_size as usize)?)
+                });
 
         let item_width = if let Some(width) = primitive_width(element.type_id) {
             width
         } else if element.type_id > 1000 {
-            fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(|| {
-                format!(
-                    "嵌套 Dataset {} 包含动态长度，无法从父 Dataset 自动切片",
-                    element.type_id
-                )
-            })?
+            fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(
+                || {
+                    format!(
+                        "嵌套 Dataset {} 包含动态长度，无法从父 Dataset 自动切片",
+                        element.type_id
+                    )
+                },
+            )?
         } else {
             return Err(format!(
                 "Dataset {} 字段 {} 使用未知类型 {}",
@@ -433,9 +452,9 @@ fn decode_dataset_inner(
             Value::Array(values)
         };
         let display = match raw.as_f64() {
-            Some(number) if element.scale.is_some() || element.offset.is_some() => json!(
-                number * element.scale.unwrap_or(1.0) + element.offset.unwrap_or(0) as f64
-            ),
+            Some(number) if element.scale.is_some() || element.offset.is_some() => {
+                json!(number * element.scale.unwrap_or(1.0) + element.offset.unwrap_or(0) as f64)
+            }
             _ => raw.clone(),
         };
         fields.insert(
@@ -453,7 +472,6 @@ fn decode_dataset_inner(
     Ok((fields, offset))
 }
 
-#[tauri::command]
 pub fn trdp_decode_dataset(
     path: String,
     dataset_id: u32,
@@ -502,13 +520,8 @@ mod tests {
         assert_eq!(imported.telegrams[0].com_id, 1001);
         assert!(imported.datasets[0].elements[1].dynamic);
         let payload = [0, 0, 0, 7, b'O', b'K'];
-        let (fields, consumed) = decode_dataset_inner(
-            1001,
-            &payload,
-            &imported,
-            &mut HashSet::new(),
-        )
-        .expect("decode");
+        let (fields, consumed) =
+            decode_dataset_inner(1001, &payload, &imported, &mut HashSet::new()).expect("decode");
         assert_eq!(consumed, payload.len());
         assert_eq!(fields["counter"]["value"], json!(7u32));
     }
