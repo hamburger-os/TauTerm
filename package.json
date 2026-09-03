@@ -14,6 +14,7 @@
     "check-com0com": "node scripts/check-com0com.js",
     "check:icons": "node scripts/check-icons.mjs",
     "check:session-buffer": "node --experimental-strip-types scripts/test-pending-session-data.mjs",
+    "check:split-layout": "node --experimental-strip-types scripts/test-split-layout.mjs",
     "prompt:icon": "node scripts/icon-prompt.mjs",
     "preview:icons": "node scripts/preview-icons.mjs",
     "check-reserved-region": "node scripts/check-reserved-region.js",
