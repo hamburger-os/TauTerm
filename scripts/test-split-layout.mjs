@@ -11,6 +11,10 @@ import {
   setSplitRatioInLayout,
   splitPaneInLayout,
 } from "../src/core/split-layout.ts";
+import {
+  parsePersistedWorkspaceLayout,
+  serializeWorkspaceLayout,
+} from "../src/core/workspace-layout.ts";
 
 let state = createInitialSplitLayout("p1");
 assert.equal(countPanes(state.root), 1);
@@ -84,4 +88,79 @@ const capped = splitPaneInLayout(state, "p5", "bottom", "p6", "s5", 4);
 assert.strictEqual(capped, state);
 assert.equal(countPanes(capped.root), 4);
 
-console.log("split-layout: runtime pane invariants preserved");
+// Workspace persistence preserves geometry/selection while converting runtime child channels
+// to stable saved Session IDs. Duplicate child channels of the same parent restore only once.
+let workspace = createInitialSplitLayout("wp1");
+workspace = activateSessionInLayout(workspace, "ssh-child-0");
+workspace = splitPaneInLayout(workspace, "wp1", "right", "wp2", "ws1");
+workspace = activateSessionInLayout(workspace, "ssh-child-1");
+workspace = splitPaneInLayout(workspace, "wp2", "bottom", "wp3", "ws2");
+workspace = activateSessionInLayout(workspace, "serial-root");
+workspace = setSplitRatioInLayout(workspace, "ws1", 0.63);
+
+const stableSessionIds = new Map([
+  ["ssh-child-0", "ssh-root"],
+  ["ssh-child-1", "ssh-root"],
+  ["serial-root", "serial-root"],
+]);
+const serializedWorkspace = serializeWorkspaceLayout(workspace, stableSessionIds);
+const restoredWorkspace = parsePersistedWorkspaceLayout(serializedWorkspace);
+assert.ok(restoredWorkspace);
+assert.equal(countPanes(restoredWorkspace.root), 3);
+assert.equal(restoredWorkspace.selectedPaneId, "wp3");
+assert.equal(restoredWorkspace.assignments.wp1, "ssh-root");
+assert.equal(restoredWorkspace.assignments.wp2, null);
+assert.equal(restoredWorkspace.assignments.wp3, "serial-root");
+assert.equal(restoredWorkspace.root.type, "split");
+assert.equal(restoredWorkspace.root.ratio, 0.63);
+
+// If the selected Pane belongs to a duplicate child group, it owns the durable parent reference.
+const selectedDuplicateWorkspace = activateSessionInLayout(workspace, "ssh-child-1");
+const restoredSelectedDuplicate = parsePersistedWorkspaceLayout(
+  serializeWorkspaceLayout(selectedDuplicateWorkspace, stableSessionIds),
+);
+assert.ok(restoredSelectedDuplicate);
+assert.equal(restoredSelectedDuplicate.selectedPaneId, "wp2");
+assert.equal(restoredSelectedDuplicate.assignments.wp1, null);
+assert.equal(restoredSelectedDuplicate.assignments.wp2, "ssh-root");
+assert.equal(restoredSelectedDuplicate.assignments.wp3, "serial-root");
+
+// A deliberately empty Workspace is still meaningful: geometry and selected Pane survive.
+let emptyWorkspace = createInitialSplitLayout("ep1");
+emptyWorkspace = splitPaneInLayout(emptyWorkspace, "ep1", "right", "ep2", "es1");
+emptyWorkspace = setSplitRatioInLayout(emptyWorkspace, "es1", 0.41);
+const restoredEmptyWorkspace = parsePersistedWorkspaceLayout(
+  serializeWorkspaceLayout(emptyWorkspace, new Map()),
+);
+assert.ok(restoredEmptyWorkspace);
+assert.equal(restoredEmptyWorkspace.selectedPaneId, "ep2");
+assert.deepEqual(restoredEmptyWorkspace.assignments, { ep1: null, ep2: null });
+assert.equal(restoredEmptyWorkspace.root.type, "split");
+assert.equal(restoredEmptyWorkspace.root.ratio, 0.41);
+
+// Corrupt/future payloads fail closed and fall back to normal single-pane startup.
+assert.equal(parsePersistedWorkspaceLayout("not json"), null);
+assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({ version: 2 })), null);
+assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({
+  version: 1,
+  root: { type: "pane", id: "p1" },
+  assignments: { p1: null },
+  selectedPaneId: "missing",
+})), null);
+
+// A hand-edited/corrupt payload may not place one Session in two Panes.
+assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({
+  version: 1,
+  root: {
+    type: "split",
+    id: "dup-split",
+    direction: "horizontal",
+    ratio: 0.5,
+    first: { type: "pane", id: "dup-p1" },
+    second: { type: "pane", id: "dup-p2" },
+  },
+  assignments: { "dup-p1": "same-session", "dup-p2": "same-session" },
+  selectedPaneId: "dup-p1",
+})), null);
+
+console.log("split-layout: runtime and persisted workspace invariants preserved");

@@ -10,11 +10,13 @@ import type {
   SplitEdge,
   SplitLayoutState,
 } from "../../core/split-layout";
+import { useContextMenu } from "../../hooks/useContextMenu";
 import TerminalView from "../Terminal/TerminalView";
 import Icon from "../common/Icon";
 import FileBrowserRenderer from "../../renderers/FileBrowserRenderer";
 import StatsDashboardRenderer from "../../renderers/StatsDashboardRenderer";
 import CustomRenderer from "../../renderers/CustomRenderer";
+import DisconnectedSessionContextMenu from "./DisconnectedSessionContextMenu";
 import styles from "./SplitView.module.css";
 
 const MIN_PANE_PX = 160;
@@ -83,7 +85,7 @@ function terminalHasRuntime(tab: TabInfo): boolean {
 }
 
 /**
- * Runtime-only Split View.
+ * Split View surface for the persisted local Workspace layout.
  *
  * Pane 只是显示槽；Session 生命周期仍由 SessionContext/插件 store 管理。
  * 最多四个 Pane，可从自由边缘继续分割；内部 Divider 只负责 resize。
@@ -106,6 +108,11 @@ export default function SplitView({
   const [viewSize, setViewSize] = useState({ width: 0, height: 0 });
   const [hoveredSplit, setHoveredSplit] = useState<{ paneId: PaneId; edge: SplitEdge } | null>(null);
   const [paneMenu, setPaneMenu] = useState<PaneMenuState | null>(null);
+  const {
+    menu: disconnectedSessionMenu,
+    openMenu: openDisconnectedSessionMenu,
+    closeMenu: closeDisconnectedSessionMenu,
+  } = useContextMenu();
 
   useLayoutEffect(() => {
     const root = viewRef.current;
@@ -223,8 +230,17 @@ export default function SplitView({
     if (paneCount <= 1) return;
     e.preventDefault();
     e.stopPropagation();
+    closeDisconnectedSessionMenu();
     setPaneMenu({ paneId, x: e.clientX, y: e.clientY });
-  }, [paneCount]);
+  }, [paneCount, closeDisconnectedSessionMenu]);
+
+  const openDisconnectedMenu = useCallback((e: React.MouseEvent, paneId: PaneId, tab: TabInfo) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPaneMenu(null);
+    onSelectPane(paneId);
+    openDisconnectedSessionMenu(e, tab);
+  }, [onSelectPane, openDisconnectedSessionMenu]);
 
   const canOfferSplit = useCallback((rect: PaneRect, edge: SplitEdge): boolean => {
     if (paneCount >= 4) return false;
@@ -276,7 +292,10 @@ export default function SplitView({
     <div
       ref={viewRef}
       className={styles.view}
-      onMouseDown={() => setPaneMenu(null)}
+      onMouseDown={() => {
+        setPaneMenu(null);
+        closeDisconnectedSessionMenu();
+      }}
     >
       {/* 非终端内容层与空 Pane。终端由下面唯一的 TerminalView 实例池覆盖投放。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
@@ -294,6 +313,10 @@ export default function SplitView({
             style={rectStyle(contentRect)}
             onMouseDown={() => onSelectPane(paneId)}
             onContextMenu={(e) => {
+              if (showTerminalPlaceholder && tab) {
+                openDisconnectedMenu(e, paneId, tab);
+                return;
+              }
               if (!isTerminal || !tab) openPaneMenu(e, paneId);
             }}
           >
@@ -411,6 +434,10 @@ export default function SplitView({
         );
       })}
 
+      <DisconnectedSessionContextMenu
+        state={disconnectedSessionMenu}
+        onClose={closeDisconnectedSessionMenu}
+      />
       {paneMenuElement && createPortal(paneMenuElement, document.body)}
     </div>
   );
