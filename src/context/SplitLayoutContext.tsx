@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useSession } from "./SessionContext";
 import {
   activateSessionInLayout,
@@ -22,7 +23,6 @@ import {
   type SplitLayoutState,
 } from "../core/split-layout";
 import {
-  hasWorkspaceAssignments,
   parsePersistedWorkspaceLayout,
   serializeWorkspaceLayout,
   WORKSPACE_LAYOUT_STORAGE_KEY,
@@ -89,11 +89,40 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef(state);
   stateRef.current = state;
   const restoringWorkspaceRef = useRef(restoredLayoutRef.current !== null);
+  const expectedSavedSessionIdsRef = useRef<Set<string>>(new Set());
+  const [workspaceSessionCatalogReady, setWorkspaceSessionCatalogReady] = useState(
+    restoredLayoutRef.current === null,
+  );
   /** Runtime child Session ID -> stable root/config Session ID. Keep old mappings until app exit. */
   const stableSessionIdsRef = useRef<Map<string, string>>(new Map());
   for (const tab of sessionState.tabs) {
     stableSessionIdsRef.current.set(tab.id, tab.parentId ?? tab.id);
   }
+
+  // SessionContext intentionally exposes live tabs rather than a startup-hydration flag. For a
+  // restored Workspace we need one deterministic barrier so an all-empty layout is not mistaken
+  // for "there are no assignments to restore" before loadSavedSessions() completes. The backend
+  // command is read-only; this second read is used only to learn the expected stable Session IDs.
+  useEffect(() => {
+    if (!restoringWorkspaceRef.current) return;
+    let cancelled = false;
+
+    void invoke<Array<{ id: string }>>("load_sessions")
+      .then(saved => {
+        if (cancelled) return;
+        expectedSavedSessionIdsRef.current = new Set((saved ?? []).map(session => session.id));
+        setWorkspaceSessionCatalogReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Missing/unreadable session storage is already treated as an empty catalog by
+        // SessionContext. Mirror that startup fallback here rather than leaving restoration stuck.
+        expectedSavedSessionIdsRef.current = new Set();
+        setWorkspaceSessionCatalogReady(true);
+      });
+
+    return () => { cancelled = true; };
+  }, []);
 
   const syncActiveSession = useCallback((sessionId: string | null) => {
     // 空字符串沿用现有 switchTab 的容错路径，前端等价于“当前无会话”：
@@ -130,9 +159,13 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     const valid = new Set(sessionState.tabs.map(tab => tab.id));
 
     if (restoringWorkspaceRef.current) {
-      // SessionContext 异步 load_sessions。在持久化布局确实引用了 Session 时，空 tabs 只是“尚未加载”，
-      // 不能把 assignment 当成已删除会话立即清空。
-      if (valid.size === 0 && hasWorkspaceAssignments(current)) return;
+      if (!workspaceSessionCatalogReady) return;
+
+      // loadSavedSessions() 用一次 SET_TABS 写入完整磁盘目录。等目录中预期的稳定 ID 都出现后
+      // 再结束恢复；空目录也能明确结束，因此纯空 Pane Workspace 不会被首会话意外填充。
+      for (const sessionId of expectedSavedSessionIdsRef.current) {
+        if (!valid.has(sessionId)) return;
+      }
 
       const next = pruneAssignments(current, valid);
       restoringWorkspaceRef.current = false;
@@ -169,7 +202,7 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
       stateRef.current = next;
       setState(next);
     }
-  }, [sessionState.activeTabId, sessionState.tabs, syncActiveSession]);
+  }, [sessionState.activeTabId, sessionState.tabs, syncActiveSession, workspaceSessionCatalogReady]);
 
   const selectPane = useCallback((paneId: PaneId) => {
     const current = stateRef.current;
