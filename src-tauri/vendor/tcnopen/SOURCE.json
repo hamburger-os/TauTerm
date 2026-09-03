@@ -1,0 +1,16 @@
+{
+  "name": "TCNOpen TRDP",
+  "version": "3.0.0.0",
+  "license": "MPL-2.0",
+  "official_release_url": "https://sourceforge.net/projects/tcnopen/files/TRDP/3.0.0.0/3.0.0.0.zip/download",
+  "official_release_date": "2025-04-25",
+  "upstream_tag": "tags/3.0.0.0",
+  "snapshot_transport": {
+    "repository": "https://github.com/HtoTheB/TCNOpen-Mirror",
+    "ref": "tag/3.0.0.0",
+    "commit": "379221f881c2abe4862cac9c7fc9b3557a25ae19"
+  },
+  "archive_sha256": null,
+  "refresh_tool": "scripts/vendor_tcnopen.py",
+  "notes": "Vendored files retain their upstream MPL-2.0 notices and are not modified by TauTerm."
+}
