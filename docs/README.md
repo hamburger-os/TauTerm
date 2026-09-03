@@ -48,6 +48,7 @@ Release documentation is maintainer/community-facing and may remain English or b
 | [RELEASING.md](RELEASING.md) | 维护者发布流程与 Release Engineering / Maintainer release process and release engineering |
 | [RELEASE_NOTES_v0.5.0.md](RELEASE_NOTES_v0.5.0.md) | v0.5.0 历史 Release Notes |
 | [RELEASE_NOTES_v0.5.1.md](RELEASE_NOTES_v0.5.1.md) | v0.5.1 历史 Release Notes |
+| [RELEASE_NOTES_v0.6.0.md](RELEASE_NOTES_v0.6.0.md) | v0.6.0 Workspace Foundation Release Notes |
 
 根目录 [CHANGELOG.md](../CHANGELOG.md) 继续作为已经发布变化的权威时间线记录。
 
