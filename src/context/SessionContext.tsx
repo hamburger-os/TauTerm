@@ -684,8 +684,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const effectiveName = name || (pid === "local-shell"
         ? await invoke<string>("resolve_local_shell_session_name", { params })
         : pid === "trdp"
-          ? (params.mode === "monitor" ? "TRDP Monitor" : "TRDP Node")
-          : `${pluginName} @ ${endpoint}`);
+          ? `TRDP @ ${params.mode === "monitor" ? "Monitor" : "Node"}`
+          : pid === "iperf"
+            ? `iperf @ ${params.version === "iperf3" ? "iperf3" : "iperf2"}`
+            : `${pluginName} @ ${endpoint}`);
       const sessionId = await invoke<string>("save_session_config", {
         request: {
         endpoint, params,
