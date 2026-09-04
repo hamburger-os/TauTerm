@@ -333,6 +333,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [page, setPage] = useState<Page>("overview");
   const [events, setEvents] = useState<TrdpEvent[]>([]);
   const [captureFrames, setCaptureFrames] = useState<TrdpEvent[]>([]);
+  const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
   const [objects, setObjects] = useState<TrdpObject[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -555,6 +556,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const mdPorts = [...new Set([paramNumber(params, "md_udp_port", 17225), paramNumber(params, "md_tcp_port", 17225)])];
     const packets = await invoke<TrdpEvent[]>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
     setCaptureFrames([]);
+    setCaptureSource("offline");
     setEvents(prev => [...prev, ...packets].slice(-5000));
     setPage("traffic");
   }
@@ -562,7 +564,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   async function saveCapture() {
     const path = await save({ filters: [{ name: "PCAPNG", extensions: ["pcapng"] }] });
     if (!path) return;
-    const packets = captureFrames.length > 0
+    const packets = captureSource === "live"
       ? captureFrames
       : events.filter(event => event.raw_frame_hex);
     await invoke("trdp_save_capture", { path, packets });
@@ -716,6 +718,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
   async function startLiveCapture() {
     setCaptureFrames([]);
+    setCaptureSource("live");
     const interfaceA = typeof params?.capture_interface === "string" ? params.capture_interface : "";
     const interfaceB = params?.capture_interface_b_enabled && typeof params?.capture_interface_b === "string" ? params.capture_interface_b : "";
     const configuredFilter = typeof params?.capture_filter === "string" ? params.capture_filter : STANDARD_CAPTURE_FILTER;
