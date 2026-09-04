@@ -58,6 +58,37 @@ static int g_tlc_initialized;
 static bridge_thread_t g_node_thread;
 static int g_node_thread_active;
 
+static void trdp_debug_log(
+    void *ref,
+    TRDP_LOG_T category,
+    const CHAR8 *time_text,
+    const CHAR8 *file,
+    UINT16 line,
+    const CHAR8 *message
+) {
+    const char *level = "user";
+    (void)ref;
+    if (category == VOS_LOG_ERROR) {
+        level = "error";
+    } else if (category == VOS_LOG_WARNING) {
+        level = "warning";
+    } else if (category == VOS_LOG_INFO) {
+        level = "info";
+    } else if (category == VOS_LOG_DBG) {
+        level = "debug";
+    }
+    fprintf(
+        stderr,
+        "[TCNOpen:%s] %s %s:%u %s",
+        level,
+        time_text != NULL ? (const char *)time_text : "",
+        file != NULL ? (const char *)file : "",
+        (unsigned int)line,
+        message != NULL ? (const char *)message : ""
+    );
+    fflush(stderr);
+}
+
 static TRDP_COM_PARAM_T md_send_params(void) {
     TRDP_COM_PARAM_T send;
     memset(&send, 0, sizeof(send));
@@ -742,7 +773,11 @@ void node_open(const char *line) {
     md_udp_port = (UINT16)md_udp_port_value;
     md_tcp_port = (UINT16)md_tcp_port_value;
 
-    error = tlc_init(NULL, NULL, NULL);
+    error = tlc_init(
+        getenv("TAUTERM_TRDP_DEBUG") != NULL ? trdp_debug_log : NULL,
+        NULL,
+        NULL
+    );
     if (error != TRDP_NO_ERR) {
         bridge_emit_trdp_error("tlc_init", error);
         return;
