@@ -717,8 +717,6 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function startLiveCapture() {
-    setCaptureFrames([]);
-    setCaptureSource("live");
     const interfaceA = typeof params?.capture_interface === "string" ? params.capture_interface : "";
     const interfaceB = params?.capture_interface_b_enabled && typeof params?.capture_interface_b === "string" ? params.capture_interface_b : "";
     const configuredFilter = typeof params?.capture_filter === "string" ? params.capture_filter : STANDARD_CAPTURE_FILTER;
@@ -737,6 +735,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       interface_b: interfaceB,
       filter,
     });
+    setCaptureFrames([]);
+    setCaptureSource("live");
   }
 
   async function confirmMessage(event: TrdpEvent) {
