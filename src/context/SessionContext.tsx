@@ -378,11 +378,20 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       }
       return { ...state, tabs: remaining, activeTabId: nextActive };
     }
-    case "REMOVE_ALL_CHILDREN":
+    case "REMOVE_ALL_CHILDREN": {
+      const childIds = new Set(
+        state.tabs.filter(t => t.parentId === action.parentId).map(t => t.id)
+      );
       return {
         ...state,
         tabs: state.tabs.filter(t => t.parentId !== action.parentId),
+        // 断开父容器会话时，子终端会被销毁，但父会话配置仍然存在。
+        // 若当前活跃的是被销毁的子终端，回到父会话，而不是留下一个失效的 activeTabId。
+        activeTabId: state.activeTabId && childIds.has(state.activeTabId)
+          ? action.parentId
+          : state.activeTabId,
       };
+    }
     case "CLEAR_TABS":
       return { ...state, tabs: [], activeTabId: null };
     case "SET_PEER_CONNECTED":

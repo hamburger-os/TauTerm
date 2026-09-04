@@ -102,8 +102,7 @@
     "disconnected": "未连接",
     "connecting": "连接中...",
     "transferring": "传输中",
-    "preparingContent": "正在准备会话内容...",
-    "connectToUse": "连接会话后可使用此内容",
+    "connectToViewContent": "连接后显示会话内容",
     "noSessions": "暂无活跃会话",
     "emptyHint": "点击顶部 + 新建会话 或使用 Ctrl+Shift+N 创建新会话",
     "newSession": "新建会话",
@@ -984,7 +983,6 @@
   },
   "network": {
     "name": "网络调试",
-    "connectToViewData": "连接后开始显示网络数据",
     "transport": "传输层协议",
     "transportTcp": "TCP",
     "transportUdp": "UDP",

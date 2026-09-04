@@ -17,6 +17,13 @@ const READ_TIMEOUT: Duration = Duration::from_millis(50);
 const GRACEFUL_EXIT_TIMEOUT: Duration = Duration::from_millis(350);
 const FORCE_EXIT_TIMEOUT: Duration = Duration::from_millis(250);
 
+#[cfg(windows)]
+const CONPTY_STARTUP_CPR_QUERY: &[u8] = b"\x1b[6n";
+#[cfg(windows)]
+const CONPTY_STARTUP_CPR_REPLY: &[u8] = b"\x1b[1;1R";
+#[cfg(windows)]
+const CONPTY_STARTUP_CPR_WINDOW: Duration = Duration::from_secs(5);
+
 #[derive(Debug, Clone)]
 struct ProcessExit {
     code: u32,
@@ -39,6 +46,16 @@ pub struct LocalShellChannel {
     exit: Arc<Mutex<Option<ProcessExit>>>,
     killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
     shutdown_started: bool,
+    // portable-pty on Windows creates ConPTY with PSEUDOCONSOLE_INHERIT_CURSOR.
+    // ConPTY asks for the initial cursor position with ESC[6n before the child can
+    // finish console initialization. Answer that one startup handshake locally so
+    // shell startup never depends on the WebView/xterm event pipeline being ready.
+    #[cfg(windows)]
+    startup_cpr_handled: bool,
+    #[cfg(windows)]
+    startup_cpr_deadline: Instant,
+    #[cfg(windows)]
+    startup_cpr_tail: Vec<u8>,
     #[cfg(unix)]
     process_group: Option<libc::pid_t>,
     #[cfg(windows)]
@@ -140,6 +157,12 @@ impl LocalShellChannel {
             exit,
             killer,
             shutdown_started: false,
+            #[cfg(windows)]
+            startup_cpr_handled: false,
+            #[cfg(windows)]
+            startup_cpr_deadline: Instant::now() + CONPTY_STARTUP_CPR_WINDOW,
+            #[cfg(windows)]
+            startup_cpr_tail: Vec::new(),
             #[cfg(unix)]
             process_group,
             #[cfg(windows)]
@@ -223,6 +246,55 @@ impl LocalShellChannel {
         }
         self.exit_snapshot()
     }
+
+    #[cfg(windows)]
+    fn handle_conpty_startup_cpr(&mut self, data: Vec<u8>) -> std::io::Result<Vec<u8>> {
+        if self.startup_cpr_handled {
+            return Ok(data);
+        }
+
+        let mut combined = std::mem::take(&mut self.startup_cpr_tail);
+        combined.extend_from_slice(&data);
+
+        if Instant::now() > self.startup_cpr_deadline {
+            // Startup window elapsed without the ConPTY probe. Stop intercepting so
+            // later application/TUI DSR queries are handled normally by xterm.
+            self.startup_cpr_handled = true;
+            return Ok(combined);
+        }
+
+        if let Some(pos) = find_subsequence(&combined, CONPTY_STARTUP_CPR_QUERY) {
+            let writer = self.writer.as_mut().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "local shell writer is closed during ConPTY startup handshake",
+                )
+            })?;
+            writer.write_all(CONPTY_STARTUP_CPR_REPLY)?;
+            writer.flush()?;
+            self.startup_cpr_handled = true;
+
+            // Consume the startup-only DSR request here. Forwarding it as well would make
+            // xterm emit a second CPR reply that then becomes stray shell input.
+            let mut visible = Vec::with_capacity(
+                combined
+                    .len()
+                    .saturating_sub(CONPTY_STARTUP_CPR_QUERY.len()),
+            );
+            visible.extend_from_slice(&combined[..pos]);
+            visible.extend_from_slice(&combined[pos + CONPTY_STARTUP_CPR_QUERY.len()..]);
+            log::info!("ConPTY startup cursor handshake answered");
+            return Ok(visible);
+        }
+
+        // The 4-byte query may be split across pipe reads. Keep only the longest
+        // suffix that can still become ESC[6n; emit everything before it immediately.
+        let keep = longest_suffix_prefix(&combined, CONPTY_STARTUP_CPR_QUERY);
+        let emit_len = combined.len().saturating_sub(keep);
+        let visible = combined[..emit_len].to_vec();
+        self.startup_cpr_tail = combined[emit_len..].to_vec();
+        Ok(visible)
+    }
 }
 
 impl Read for LocalShellChannel {
@@ -236,6 +308,8 @@ impl Read for LocalShellChannel {
 
         match self.reader_rx.recv_timeout(READ_TIMEOUT) {
             Ok(ReaderEvent::Data(data)) => {
+                #[cfg(windows)]
+                let data = self.handle_conpty_startup_cpr(data)?;
                 self.pending.extend(data);
                 Ok(drain_pending(&mut self.pending, buf))
             }
@@ -346,6 +420,25 @@ fn drain_pending(pending: &mut VecDeque<u8>, buf: &mut [u8]) -> usize {
     count
 }
 
+#[cfg(windows)]
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+#[cfg(windows)]
+fn longest_suffix_prefix(data: &[u8], prefix: &[u8]) -> usize {
+    let max = data.len().min(prefix.len().saturating_sub(1));
+    (1..=max)
+        .rev()
+        .find(|&len| data[data.len() - len..] == prefix[..len])
+        .unwrap_or(0)
+}
+
 fn io_other(message: impl Into<String>) -> std::io::Error {
     std::io::Error::other(message.into())
 }
@@ -436,19 +529,10 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut output = Vec::new();
         let mut buffer = [0u8; 4096];
-        let mut answered_cursor_query = false;
         while Instant::now() < deadline {
             match channel.read(&mut buffer) {
                 Ok(n) if n > 0 => {
                     output.extend_from_slice(&buffer[..n]);
-                    if !answered_cursor_query && output.windows(4).any(|bytes| bytes == b"\x1b[6n")
-                    {
-                        channel
-                            .write_all(b"\x1b[1;1R")
-                            .expect("answer cursor query");
-                        channel.flush().expect("flush cursor response");
-                        answered_cursor_query = true;
-                    }
                 }
                 Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
@@ -457,6 +541,13 @@ mod tests {
         }
         let text = String::from_utf8_lossy(&output);
         assert!(text.contains("TAUTERM_LOCAL_SHELL_TEST"), "output: {text}");
+        #[cfg(windows)]
+        assert!(
+            !output
+                .windows(CONPTY_STARTUP_CPR_QUERY.len())
+                .any(|bytes| bytes == CONPTY_STARTUP_CPR_QUERY),
+            "ConPTY startup CPR query should be consumed by LocalShellChannel"
+        );
 
         let info = channel.disconnect_info(DisconnectInfo::io_error("fallback"));
         assert_eq!(info.exit_code, Some(7));

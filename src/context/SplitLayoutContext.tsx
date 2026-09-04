@@ -78,6 +78,51 @@ function loadInitialWorkspaceLayout(): SplitLayoutState | null {
   }
 }
 
+/**
+ * 父容器明确断开时，运行时子会话（Local Shell / SSH channel）会被销毁，但
+ * 离线根会话配置仍然存在。仅在根会话已经 disconnected 时把 Pane 从旧 child ID
+ * 回退到稳定 root ID；关闭单个 child 且父容器仍在线时不改变原有 Pane 清理语义。
+ */
+function remapRemovedChildrenToDisconnectedRoots(
+  state: SplitLayoutState,
+  validSessionIds: ReadonlySet<string>,
+  disconnectedRootIds: ReadonlySet<string>,
+  stableSessionIds: ReadonlyMap<string, string>,
+): SplitLayoutState {
+  let changed = false;
+  const assignments = { ...state.assignments };
+  const paneIds = collectPaneIds(state.root);
+  // A root Session may appear in only one Pane. Prefer preserving the selected
+  // Pane when several runtime children of the same container disappear together.
+  const orderedPaneIds = [
+    state.selectedPaneId,
+    ...paneIds.filter(paneId => paneId !== state.selectedPaneId),
+  ];
+  const occupiedStableIds = new Set(
+    Object.values(assignments).filter(
+      (sessionId): sessionId is string => Boolean(sessionId && validSessionIds.has(sessionId)),
+    ),
+  );
+
+  for (const paneId of orderedPaneIds) {
+    const assigned = assignments[paneId];
+    if (!assigned || validSessionIds.has(assigned)) continue;
+    const stableId = stableSessionIds.get(assigned);
+    if (
+      stableId
+      && stableId !== assigned
+      && validSessionIds.has(stableId)
+      && disconnectedRootIds.has(stableId)
+      && !occupiedStableIds.has(stableId)
+    ) {
+      assignments[paneId] = stableId;
+      occupiedStableIds.add(stableId);
+      changed = true;
+    }
+  }
+  return changed ? { ...state, assignments } : state;
+}
+
 export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   const { state: sessionState, switchTab } = useSession();
   const restoredLayoutRef = useRef<SplitLayoutState | null>(null);
@@ -180,11 +225,26 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     }
 
     const selectedSessionId = current.assignments[current.selectedPaneId];
-    const selectedSessionRemoved = Boolean(selectedSessionId && !valid.has(selectedSessionId));
 
-    let next = pruneAssignments(current, valid);
+    // 子终端关闭/父容器断开并不等于“用户删除了这个会话”。
+    // 先把已消失的运行时 child ID 回退到稳定 root/config ID，再做真正的无效分配清理。
+    const disconnectedRootIds = new Set(
+      sessionState.tabs
+        .filter(tab => !tab.parentId && tab.state === "disconnected")
+        .map(tab => tab.id),
+    );
+    let next = remapRemovedChildrenToDisconnectedRoots(
+      current,
+      valid,
+      disconnectedRootIds,
+      stableSessionIdsRef.current,
+    );
+    next = pruneAssignments(next, valid);
 
-    if (selectedSessionRemoved && countPanes(current.root) > 1) {
+    const selectedAssignmentLost = Boolean(
+      selectedSessionId && !next.assignments[current.selectedPaneId]
+    );
+    if (selectedAssignmentLost && countPanes(current.root) > 1) {
       if (next !== current) {
         stateRef.current = next;
         setState(next);
