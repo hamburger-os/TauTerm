@@ -60,7 +60,7 @@ type TrdpObject = {
   destination: string;
   source: string;
   cycleUs: number;
-  timeoutMode: "auto" | "custom";
+  timeoutMode: "auto" | "custom" | "disabled";
   timeoutUs: number;
   timeoutBehavior: "keep" | "zero";
   payloadHex: string;
@@ -92,11 +92,12 @@ type XmlElement = {
 type XmlDataset = { id: number; name: string; elements: XmlElement[] };
 type XmlTelegram = {
   name: string;
-  traffic_kind: "pd" | "md";
+  traffic_kind: "pd" | "md" | "unknown" | "ambiguous";
   com_id: number;
   dataset_id: number;
   cycle_us?: number;
   timeout_us?: number;
+  timeout_behavior?: "zero" | "keep";
   sources: string[];
   destinations: string[];
   sdt_detected: boolean;
@@ -231,11 +232,13 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
     && parsedTimeoutUs > 0;
   const timeoutMode = raw.timeout_mode === "custom"
     ? "custom"
-    : raw.timeout_mode === "auto"
-      ? "auto"
-      : hasCustomTimeout
-        ? "custom"
-        : "auto";
+    : raw.timeout_mode === "disabled"
+      ? "disabled"
+      : raw.timeout_mode === "auto"
+        ? "auto"
+        : hasCustomTimeout
+          ? "custom"
+          : "auto";
   return {
     ...base,
     id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
@@ -495,7 +498,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         destination: obj.destination,
         source: obj.source,
         cycle_us: obj.cycleUs,
-        timeout_us: obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
+        timeout_us: obj.timeoutMode === "disabled" ? 0xffff_ffff : obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
         timeout_behavior: obj.timeoutBehavior,
         payload_hex: obj.payloadHex,
         transport: obj.transport,
@@ -675,12 +678,13 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           item.comId = telegram.com_id;
           item.destination = destination;
           item.source = telegram.sources[0] ?? "0.0.0.0";
-          if (telegram.timeout_us !== undefined) {
+          if (telegram.timeout_us === undefined || telegram.timeout_us === 0) {
+            item.timeoutMode = "disabled";
+          } else {
             item.timeoutMode = "custom";
             item.timeoutUs = telegram.timeout_us;
-          } else {
-            item.timeoutMode = "auto";
           }
+          item.timeoutBehavior = telegram.timeout_behavior === "keep" ? "keep" : "zero";
           additions.push(item);
           known.add(`${telegram.com_id}:${destination}`);
         }
@@ -759,7 +763,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select>
           : subscriber
             ? <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                <select value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" })}><option value="auto">Auto</option><option value="custom">Custom</option></select>
+                <select value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" | "disabled" })}><option value="auto">Auto</option><option value="custom">Custom</option><option value="disabled">Disabled</option></select>
                 {obj.timeoutMode === "custom" && <input style={cellInputStyle} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
               </span>
             : <input style={cellInputStyle} type="number" min={1} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}</td>
@@ -857,7 +861,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 <div>{xmlImport.datasets.length} Datasets · {xmlImport.telegrams.length} Telegrams · ports {xmlImport.pd_port}/{xmlImport.md_udp_port}/{xmlImport.md_tcp_port} · SDT: {xmlImport.sdt_detected ? "Detected (not validated)" : "No configuration detected"}</div>
                 {xmlImport.warnings.map(warning => <div key={warning} style={{ marginTop: 4 }}>⚠ {warning}</div>)}
                 {mode === "node" && <button style={{ marginTop: 8 }} onClick={importTemplates}>将 PD Telegram 作为停止状态的 Subscriber 模板加入 Workspace</button>}
-                <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
+                <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Timeout</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? `${telegram.timeout_us} µs / ${telegram.timeout_behavior ?? "zero"}` : `disabled / ${telegram.timeout_behavior ?? "zero"}`) : "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
               </div>
             )}
           </div>
