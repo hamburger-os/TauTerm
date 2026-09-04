@@ -94,7 +94,7 @@ Import a TCNOpen-style TRDP XML file to obtain:
 - Dataset element definitions;
 - SDT presence metadata.
 
-The importer is intentionally **read/decode oriented**. TauTerm does not rewrite the full input XML as a general-purpose TCNOpen configuration editor. Import Preview classifies telegrams from explicit `<pd-parameter>` / `<md-parameter>` elements. Telegrams with neither are marked Unknown; telegrams with both are marked Ambiguous. The automatic template action only creates stopped **PD Subscriber** templates; MD telegrams remain visible in Preview because XML alone does not tell TauTerm whether the local node should act as requester, notifier or listener/replier.
+The importer is intentionally **read/decode oriented**. TauTerm does not rewrite the full input XML as a general-purpose TCNOpen configuration editor. Import Preview classifies telegrams from explicit `<pd-parameter>` / `<md-parameter>` elements. Telegrams with neither are marked Unknown; telegrams with both are marked Ambiguous. The automatic template action only creates stopped **PD Subscriber** templates; MD telegrams remain visible in Preview because XML alone does not tell TauTerm whether the local node should act as requester, notifier or listener/replier. Source/destination URI strings are always preserved in Import Preview. The first version of the active Node runtime accepts dotted IPv4 addresses rather than a general URI/DNR resolver, so automatic PD templates only copy URI values that are valid IPv4 text; otherwise the template uses `0.0.0.0` and leaves the original URI visible in Preview.
 
 ### TauTerm Workspace JSON
 
