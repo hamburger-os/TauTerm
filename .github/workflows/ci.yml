@@ -108,7 +108,7 @@ jobs:
           node --check scripts/assemble-release.js
           node --check scripts/verify-published-updater.js
 
-      - name: Validate TRDP bundle resource contract
+      - name: Validate TRDP sidecar bundle contract
         shell: bash
         run: |
           set -euo pipefail
@@ -117,19 +117,18 @@ jobs:
           import json
           from pathlib import Path
 
-          expected = {
-              "src-tauri/tauri.windows.conf.json": "binaries/tauterm-trdp-bridge.exe",
-              "src-tauri/tauri.linux.conf.json": "binaries/tauterm-trdp-bridge",
-              "src-tauri/tauri.macos.conf.json": "binaries/tauterm-trdp-bridge",
-          }
-          for config_path, helper in expected.items():
-              config = json.loads(Path(config_path).read_text(encoding="utf-8"))
-              resources = config.get("bundle", {}).get("resources", {})
-              assert helper in resources, f"{config_path} does not bundle {helper}"
           base = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
           assert base["build"]["beforeBundleCommand"] == "node scripts/prepare-service-bin.js"
+          assert "binaries/tauterm-trdp-bridge" in base["bundle"]["externalBin"]
+
+          prepare = Path("scripts/prepare-service-bin.js").read_text(encoding="utf-8")
+          assert "TAURI_ENV_TARGET_TRIPLE" in prepare
+          assert "bootstrap-trdp.ps1" in prepare
+          assert "bootstrap-trdp.sh" in prepare
+
           build_rs = Path("src-tauri/build.rs").read_text(encoding="utf-8")
-          assert "tauterm-trdp-bridge" in build_rs
+          assert 'std::env::var("TARGET")' in build_rs
+          assert "tauterm-trdp-bridge-{target}" in build_rs
           PY
 
       - name: Install pinned Rust toolchain for rustfmt
