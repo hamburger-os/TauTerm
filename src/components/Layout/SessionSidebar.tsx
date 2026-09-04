@@ -140,12 +140,41 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     prevPeerIdsRef.current = currentIds;
   }, [state.networkPeers, state.tabs]);
 
+  const getSessionSubtitle = useCallback((tab: TabInfo): string => {
+    if (tab.pluginId !== "trdp") return tab.endpoint;
+
+    const params = (tab.params ?? {}) as Record<string, unknown>;
+    const mode = params.mode === "monitor" ? "monitor" : "node";
+    if (mode === "monitor") {
+      const interfaceA = typeof params.capture_interface === "string"
+        ? params.capture_interface.trim()
+        : "";
+      const interfaceB = typeof params.capture_interface_b === "string"
+        ? params.capture_interface_b.trim()
+        : "";
+      const unconfigured = t("trdpSidebar.unconfigured");
+      if (params.capture_interface_b_enabled === true) {
+        return `A: ${interfaceA || unconfigured} · B: ${interfaceB || unconfigured}`;
+      }
+      return `${t("trdpSidebar.capture")}: ${interfaceA || unconfigured}`;
+    }
+
+    const linkA = typeof params.link_a_ip === "string" && params.link_a_ip.trim()
+      ? params.link_a_ip.trim()
+      : "0.0.0.0";
+    const linkB = typeof params.link_b_ip === "string" && params.link_b_ip.trim()
+      ? params.link_b_ip.trim()
+      : "0.0.0.0";
+    return `A: ${linkA} · B: ${params.link_b_enabled === true ? linkB : t("trdpSidebar.disabled")}`;
+  }, [t]);
+
   // 按搜索过滤后的扁平列表（仅用于搜索匹配，树形结构渲染时过滤）
   const searchLower = search.toLowerCase();
   const filteredTree = useMemo(() => {
     if (!search) return tree;
     return tree.filter(node => {
       const parentMatch = node.tab.name.toLowerCase().includes(searchLower)
+        || getSessionSubtitle(node.tab).toLowerCase().includes(searchLower)
         || node.tab.endpoint.toLowerCase().includes(searchLower);
       const childMatch = node.children.some(c =>
         c.name.toLowerCase().includes(searchLower)
@@ -157,7 +186,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       );
       return parentMatch || childMatch || peerMatch;
     });
-  }, [tree, search]);
+  }, [tree, search, getSessionSubtitle]);
 
   // 展开/折叠切换
   const toggleExpand = useCallback((id: string, e: React.MouseEvent) => {
@@ -464,9 +493,10 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                   ? state.networkLocalAddrs[node.tab.id]
                   : state.networkPeers[node.tab.id]?.[0]?.localAddr)
               : undefined;
+            const baseSubtitle = getSessionSubtitle(node.tab);
             const parentEndpoint = clientLocalAddr
-              ? `${node.tab.endpoint} · ${clientLocalAddr}`
-              : node.tab.endpoint;
+              ? `${baseSubtitle} · ${clientLocalAddr}`
+              : baseSubtitle;
             const parentPaneId = sessionToPane[node.tab.id];
 
             return (

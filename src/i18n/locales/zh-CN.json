@@ -14,6 +14,11 @@
     "comingSoon": "(即将推出)",
     "formNotImplemented": "插件 \"{{pluginName}}\" 的前端配置表单尚未实现，将在后续版本中提供。"
   },
+  "trdpSidebar": {
+    "capture": "抓包",
+    "unconfigured": "未配置接口",
+    "disabled": "关闭"
+  },
   "localShell": {
     "shell": "Shell",
     "auto": "自动（系统默认）",
