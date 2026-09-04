@@ -17,7 +17,7 @@ A Node owns one TCNOpen application session per enabled TauTerm link and can hos
 - **MD Request**
 - **MD Listener / Replier**
 
-The session view is split into Overview, Publishers, Subscribers, Messages and Traffic. Objects are created in **Stopped** state. Transmitting objects are never auto-started when a saved TauTerm configuration or Workspace is restored; use **Start** or **Send** explicitly.
+The session view is split into Overview, Publishers, Subscribers, Messages and Traffic. Objects are created in **Stopped** state. Transmitting objects are never auto-started when a saved TauTerm configuration or Workspace is restored; use **Start** or **Send** explicitly. PD Request is a one-shot **Send** action in the UI and remains Stopped; the native side may keep a temporary subscriber handle for the reply window, which is replaced on the next Send and cleaned when the object/session is removed.
 
 ### Monitor
 
@@ -61,7 +61,7 @@ TauTerm exposes ComID, source/destination addressing, cycle/timeout values, topo
 
 Diagnostics include the observed sequence, packet count, missed sequence estimates, interval min/average/max, jitter relative to a known publisher/XML cycle, payload size and protocol/result errors.
 
-Subscriber timeout behavior can keep the last value or set it to zero. TauTerm does not impose a universal `3 × cycle` timeout policy; use the configured object/XML timeout or the TCNOpen default when no explicit timeout is supplied.
+Subscriber/PD Request timeout mode is explicit: **Auto** sends `timeout_us=0` and lets TCNOpen apply its default, while **Custom** sends the configured timeout. Timeout behavior independently chooses Keep last value or Set to zero. XML imports with an explicit timeout become Custom; XML without one remains Auto. TauTerm does not derive a universal `3 × cycle` timeout.
 
 PD Request supports an independent Reply ComID and Reply IP. A zero Reply ComID means "use the request ComID"; `0.0.0.0` Reply IP resolves to the selected link's local address.
 
