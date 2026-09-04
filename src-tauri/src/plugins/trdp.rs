@@ -38,13 +38,9 @@ impl TrdpSideChannel {
         }
     }
 
-    fn bridge_candidates(params: &Value, resource_dir: Option<PathBuf>) -> Vec<PathBuf> {
+    fn bridge_candidates(resource_dir: Option<PathBuf>) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
-        if let Some(path) = params
-            .get("bridge_path")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-        {
+        if let Some(path) = std::env::var_os("TAUTERM_TRDP_BRIDGE").filter(|value| !value.is_empty()) {
             candidates.push(PathBuf::from(path));
         }
 
@@ -86,7 +82,7 @@ impl TrdpSideChannel {
             .map_err(|error| error.to_string())?
             .clone();
         let resource_dir = app.path().resource_dir().ok();
-        let bridge = Self::bridge_candidates(&params, resource_dir)
+        let bridge = Self::bridge_candidates(resource_dir)
             .into_iter()
             .find(|path| path.is_file())
             .ok_or_else(|| {
