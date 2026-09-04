@@ -687,7 +687,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           ? `TRDP @ ${params.mode === "monitor" ? "Monitor" : "Node"}`
           : pid === "iperf"
             ? `iperf @ ${params.version === "iperf3" ? "iperf3" : "iperf2"}`
-            : `${pluginName} @ ${endpoint}`);
+            : pid === "tftp"
+              ? `TFTP @ ${typeof params.file_root === "string" && params.file_root ? params.file_root : endpoint}`
+              : `${pluginName} @ ${endpoint}`);
       const sessionId = await invoke<string>("save_session_config", {
         request: {
         endpoint, params,
