@@ -978,8 +978,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
               <div className={styles.infoCard + " liquid-glass-card"}>
                 <strong>{mode === "node" ? t("trdp.overview.links") : t("trdp.overview.captureInterfaces")}</strong><br />
                 {mode === "node"
-                  ? <>Link A: {String(params?.link_a_ip ?? "—")} · Link B: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : t("trdpSidebar.disabled")}</>
-                  : <>Capture A: {String(params?.capture_interface ?? "—")} · Capture B: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : t("trdpSidebar.disabled")}</>}
+                  ? <>{t("trdp.overview.linkA")}: {String(params?.link_a_ip ?? "—")} · {t("trdp.overview.linkB")}: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : t("trdpSidebar.disabled")}</>
+                  : <>{t("trdp.overview.captureA")}: {String(params?.capture_interface ?? "—")} · {t("trdp.overview.captureB")}: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : t("trdpSidebar.disabled")}</>}
               </div>
               <div className={styles.infoCard + " liquid-glass-card"}>
                 <strong>{t("trdp.overview.txPolicy")}</strong><br />
@@ -1029,7 +1029,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                       : xmlImport.telegrams.map(telegram => (
                         <tr key={telegram.com_id + "-" + telegram.name}>
                           <td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td>
-                          <td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? telegram.timeout_us + " µs / " + (telegram.timeout_behavior ?? "zero") : "disabled / " + (telegram.timeout_behavior ?? "zero")) : "—"}</td>
+                          <td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? telegram.timeout_us + " µs / " + t(`trdp.status.${telegram.timeout_behavior ?? "zero"}`) : t("trdp.status.disabled") + " / " + t(`trdp.status.${telegram.timeout_behavior ?? "zero"}`)) : "—"}</td>
                           <td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td>
                         </tr>
                       ))}
