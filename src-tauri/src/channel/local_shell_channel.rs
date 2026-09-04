@@ -277,7 +277,9 @@ impl LocalShellChannel {
             // Consume the startup-only DSR request here. Forwarding it as well would make
             // xterm emit a second CPR reply that then becomes stray shell input.
             let mut visible = Vec::with_capacity(
-                combined.len().saturating_sub(CONPTY_STARTUP_CPR_QUERY.len()),
+                combined
+                    .len()
+                    .saturating_sub(CONPTY_STARTUP_CPR_QUERY.len()),
             );
             visible.extend_from_slice(&combined[..pos]);
             visible.extend_from_slice(&combined[pos + CONPTY_STARTUP_CPR_QUERY.len()..]);
@@ -423,7 +425,9 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
     }
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(windows)]
@@ -539,7 +543,9 @@ mod tests {
         assert!(text.contains("TAUTERM_LOCAL_SHELL_TEST"), "output: {text}");
         #[cfg(windows)]
         assert!(
-            !output.windows(CONPTY_STARTUP_CPR_QUERY.len()).any(|bytes| bytes == CONPTY_STARTUP_CPR_QUERY),
+            !output
+                .windows(CONPTY_STARTUP_CPR_QUERY.len())
+                .any(|bytes| bytes == CONPTY_STARTUP_CPR_QUERY),
             "ConPTY startup CPR query should be consumed by LocalShellChannel"
         );
 
