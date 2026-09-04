@@ -246,11 +246,17 @@ uint32_t bridge_json_u32(const char *line, const char *key, uint32_t fallback) {
     const char *cursor = find_key(line, key);
     char *end = NULL;
     unsigned long value;
-    if (cursor == NULL) {
+    if (cursor == NULL || *cursor == '-' || !isdigit((unsigned char)*cursor)) {
         return fallback;
     }
     value = strtoul(cursor, &end, 10);
     if (end == cursor || value > 0xffffffffUL) {
+        return fallback;
+    }
+    while (*end != '\0' && isspace((unsigned char)*end)) {
+        ++end;
+    }
+    if (*end != '\0' && *end != ',' && *end != '}') {
         return fallback;
     }
     return (uint32_t)value;
