@@ -31,6 +31,7 @@ type TrdpEvent = {
   raw_frame_hex?: string;
   link_type?: number;
   timestamp_us?: number;
+  latency_us?: number;
   result_code?: number;
   reply_status?: number;
   user_status?: number;
@@ -341,9 +342,30 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const unlisten = listen<TrdpEvent>("trdp-event", ({ payload }) => {
       if (disposed || payload.session_id !== sessionId) return;
       if (payload.event === "md_session" && payload.md_session_id && payload.timestamp_us !== undefined) {
-        mdRequestStartedUs.current.set(payload.md_session_id, payload.timestamp_us);
+        const starts = mdRequestStartedUs.current;
+        starts.set(payload.md_session_id, payload.timestamp_us);
+        if (starts.size > 1024) {
+          const oldest = starts.keys().next().value;
+          if (typeof oldest === "string") starts.delete(oldest);
+        }
       }
-      if (payload.event === "packet") setEvents(prev => [...prev, payload].slice(-5000));
+      if (payload.event === "packet") {
+        let packet = payload;
+        if (
+          payload.md_session_id
+          && payload.timestamp_us !== undefined
+          && ["Mp", "Mq", "Me"].includes(payload.msg_type ?? "")
+        ) {
+          const started = mdRequestStartedUs.current.get(payload.md_session_id);
+          if (started !== undefined && payload.timestamp_us >= started) {
+            packet = { ...payload, latency_us: payload.timestamp_us - started };
+          }
+        }
+        setEvents(prev => [...prev, packet].slice(-5000));
+        if (payload.about_to_die && payload.md_session_id) {
+          mdRequestStartedUs.current.delete(payload.md_session_id);
+        }
+      }
       if (payload.event === "ack" && payload.id) {
         setObjects(prev => prev.map(item => {
           if (item.id !== payload.id) return item;
@@ -667,6 +689,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   function mdLatencyUs(event: TrdpEvent) {
+    if (event.latency_us !== undefined) return event.latency_us;
     if (!event.md_session_id || event.timestamp_us === undefined || !["Mp", "Mq", "Me"].includes(event.msg_type ?? "")) {
       return undefined;
     }
@@ -681,6 +704,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       : undefined;
     const started = capturedRequest?.timestamp_us ?? mdRequestStartedUs.current.get(event.md_session_id);
     return started === undefined || event.timestamp_us < started ? undefined : event.timestamp_us - started;
+  }
+
+  function observedMdReplies(event: TrdpEvent) {
+    if (!event.md_session_id) return undefined;
+    return events.filter(candidate =>
+      candidate.md_session_id === event.md_session_id
+      && ["Mp", "Mq", "Me"].includes(candidate.msg_type ?? ""),
+    ).length;
   }
 
   const structuredObject = structuredEditor ? objects.find(item => item.id === structuredEditor.objectId) : undefined;
@@ -816,7 +847,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             <table style={tableStyle}><thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead><tbody>{flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}</tbody></table>
             <h3>Packets</h3>
             <table style={{ ...tableStyle, fontFamily: "var(--font-mono)" }}><thead><tr><th>#</th><th>Link</th><th>Type</th><th>ComID</th><th>Source → Destination</th><th>Seq</th><th>Topo ETB/Op</th><th>Len</th><th>Payload</th></tr></thead><tbody>{events.slice().reverse().slice(0, 1000).map((event, index) => <tr key={`${event.timestamp_us ?? 0}-${index}`} onClick={() => void inspectPacket(event)} style={{ cursor: "pointer" }}><td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.etb_topo_count ?? "—"}/{event.op_trn_topo_count ?? "—"}</td><td>{event.data_len ?? "—"}</td><td title={event.payload_hex}>{hexPreview(event.payload_hex)}</td></tr>)}</tbody></table>
-            {selectedPacket && <div className="liquid-glass-card" style={{ marginTop: 12, padding: 12 }}><h3>Packet Inspector</h3><div>Protocol {selectedPacket.protocol_version ?? "—"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>{selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · Request/Reply latency {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}{selectedPacket.md_session_id && <div>ReplyQuery {selectedPacket.num_reply_queries ?? "—"} · Confirms {selectedPacket.num_confirm_sent ?? "—"} · Confirm timeouts {selectedPacket.num_confirm_timeout ?? "—"} · Reply timeout {selectedPacket.reply_timeout_us ?? "—"} µs</div>}{(selectedPacket.src_uri || selectedPacket.dest_uri) && <div>URI: <code>{selectedPacket.src_uri || "—"}</code> → <code>{selectedPacket.dest_uri || "—"}</code></div>}<div>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>{decoded ? <><h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4><div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div><table style={tableStyle}><thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead><tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></> : xmlImport && selectedPacket.com_id !== undefined ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div> : <div>Import a TRDP XML file to enable Dataset decoding.</div>}</div>}
+            {selectedPacket && <div className="liquid-glass-card" style={{ marginTop: 12, padding: 12 }}><h3>Packet Inspector</h3><div>Protocol {selectedPacket.protocol_version ?? "—"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>{selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · Request/Reply latency {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}{selectedPacket.md_session_id && <div>ReplyQuery {selectedPacket.num_reply_queries ?? "—"} · Confirms {selectedPacket.num_confirm_sent ?? "—"} · Confirm timeouts {selectedPacket.num_confirm_timeout ?? "—"} · Reply timeout {selectedPacket.reply_timeout_us ?? "—"} µs</div>}{(selectedPacket.src_uri || selectedPacket.dest_uri) && <div>URI: <code>{selectedPacket.src_uri || "—"}</code> → <code>{selectedPacket.dest_uri || "—"}</code></div>}<div>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>{decoded ? <><h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4><div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div><table style={tableStyle}><thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead><tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></> : xmlImport && selectedPacket.com_id !== undefined ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div> : <div>Import a TRDP XML file to enable Dataset decoding.</div>}</div>}
           </section>
         )}
       </div>
