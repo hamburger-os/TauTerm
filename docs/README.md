@@ -29,6 +29,7 @@ These documents describe the current codebase, build environment and supported p
 | 文档 / Document | 用途 / Purpose |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 当前微内核、协议 Adapter、Session/I/O 与前后端架构 / Current microkernel, protocol adapters, session/I/O and frontend/backend architecture |
+| [TRDP.md](TRDP.md) | 已实现的 TRDP Node/Monitor、TCNOpen、抓包、Dataset 与边界 / Shipped TRDP Node/Monitor, TCNOpen, capture, Dataset tooling and boundaries |
 | [SPLIT_VIEW_DESIGN.md](SPLIT_VIEW_DESIGN.md) | 当前分屏、Pane/Session 关系、Workspace 持久化与恢复契约 / Current Split View, Pane/Session mapping, Workspace persistence and restore contract |
 | [BUILDING.md](BUILDING.md) | 开发环境、依赖与源码构建流程 / Developer prerequisites and source-build instructions |
 | [SUPPORTED_PLATFORMS.md](SUPPORTED_PLATFORMS.md) | 支持的系统、架构、打包与签名状态 / Supported operating systems, architectures, packaging and signing status |
