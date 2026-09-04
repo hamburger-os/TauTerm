@@ -1156,7 +1156,11 @@
       "txPolicyText": "Publishers, PD Requests and MD Requests/Notify always require an explicit Start/Send action.",
       "safetyText": "TauTerm TRDP is a diagnostic/development tool and does not perform SDT safety validation or claim safety certification.",
       "live": "live",
-      "offline": "offline"
+      "offline": "offline",
+      "linkA": "Link A",
+      "linkB": "Link B",
+      "captureA": "Capture A",
+      "captureB": "Capture B"
     },
     "inspector": {
       "notChecked": "not checked",
