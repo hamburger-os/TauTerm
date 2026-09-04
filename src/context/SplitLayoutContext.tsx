@@ -91,7 +91,20 @@ function remapRemovedChildrenToDisconnectedRoots(
 ): SplitLayoutState {
   let changed = false;
   const assignments = { ...state.assignments };
-  for (const paneId of collectPaneIds(state.root)) {
+  const paneIds = collectPaneIds(state.root);
+  // A root Session may appear in only one Pane. Prefer preserving the selected
+  // Pane when several runtime children of the same container disappear together.
+  const orderedPaneIds = [
+    state.selectedPaneId,
+    ...paneIds.filter(paneId => paneId !== state.selectedPaneId),
+  ];
+  const occupiedStableIds = new Set(
+    Object.values(assignments).filter(
+      (sessionId): sessionId is string => Boolean(sessionId && validSessionIds.has(sessionId)),
+    ),
+  );
+
+  for (const paneId of orderedPaneIds) {
     const assigned = assignments[paneId];
     if (!assigned || validSessionIds.has(assigned)) continue;
     const stableId = stableSessionIds.get(assigned);
@@ -100,8 +113,10 @@ function remapRemovedChildrenToDisconnectedRoots(
       && stableId !== assigned
       && validSessionIds.has(stableId)
       && disconnectedRootIds.has(stableId)
+      && !occupiedStableIds.has(stableId)
     ) {
       assignments[paneId] = stableId;
+      occupiedStableIds.add(stableId);
       changed = true;
     }
   }
