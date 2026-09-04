@@ -49,6 +49,7 @@ type TrdpObject = {
   destination: string;
   source: string;
   cycleUs: number;
+  timeoutMode: "auto" | "custom";
   timeoutUs: number;
   timeoutBehavior: "keep" | "zero";
   payloadHex: string;
@@ -167,6 +168,10 @@ function isKind(value: unknown): value is ObjectKind {
   return typeof value === "string" && ["pd_publisher", "pd_subscriber", "pd_request", "md_request", "md_listener", "md_notify"].includes(value);
 }
 
+function isOneShotKind(kind: ObjectKind) {
+  return kind === "pd_request" || kind === "md_request" || kind === "md_notify";
+}
+
 function createObject(kind: ObjectKind, index: number): TrdpObject {
   const subscriber = kind === "pd_subscriber" || kind === "pd_request";
   return {
@@ -179,6 +184,7 @@ function createObject(kind: ObjectKind, index: number): TrdpObject {
     destination: kind.startsWith("pd_") ? "239.255.1.1" : "10.0.0.2",
     source: "0.0.0.0",
     cycleUs: 100000,
+    timeoutMode: "auto",
     timeoutUs: subscriber ? 300000 : 100000,
     timeoutBehavior: "keep",
     payloadHex: kind === "pd_subscriber" ? "" : "00000000",
@@ -202,6 +208,10 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
   if (!isKind(raw.kind)) return null;
   const base = createObject(raw.kind, index + 1);
   const link = raw.link === "b" || raw.link === "both" ? raw.link : "a";
+  const timeoutMode = raw.timeout_mode === "custom"
+    || (raw.timeout_mode !== "auto" && raw.timeout_us !== undefined)
+    ? "custom"
+    : "auto";
   return {
     ...base,
     id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
@@ -212,7 +222,8 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
     destination: typeof raw.destination === "string" ? raw.destination : base.destination,
     source: typeof raw.source === "string" ? raw.source : base.source,
     cycleUs: Number(raw.cycle_us ?? base.cycleUs),
-    timeoutUs: Number(raw.timeout_us ?? raw.cycle_us ?? base.timeoutUs),
+    timeoutMode,
+    timeoutUs: Number(raw.timeout_us ?? base.timeoutUs),
     timeoutBehavior: raw.timeout_behavior === "zero" ? "zero" : "keep",
     payloadHex: typeof raw.payload_hex === "string" ? raw.payload_hex.toUpperCase() : base.payloadHex,
     transport: raw.transport === "tcp" ? "tcp" : "udp",
@@ -289,7 +300,13 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       const saved = localStorage.getItem(storageKey);
       if (!saved) return [];
       const parsed = JSON.parse(saved) as TrdpObject[];
-      return Array.isArray(parsed) ? parsed.map(item => ({ ...item, state: "stopped" as const })) : [];
+      return Array.isArray(parsed)
+        ? parsed.map(item => ({
+            ...item,
+            state: "stopped" as const,
+            timeoutMode: item.timeoutMode ?? "auto",
+          }))
+        : [];
     } catch { return []; }
   });
   const [xmlImport, setXmlImport] = useState<XmlImport | null>(null);
@@ -309,14 +326,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       if (disposed || payload.session_id !== sessionId) return;
       if (payload.event === "packet") setEvents(prev => [...prev, payload].slice(-5000));
       if (payload.event === "ack" && payload.id) {
-        const nextState = payload.command === "object_start"
-          ? "running"
-          : payload.command === "object_stop"
-            ? "stopped"
-            : undefined;
-        if (nextState) {
-          setObjects(prev => prev.map(item => item.id === payload.id ? { ...item, state: nextState } : item));
-        }
+        setObjects(prev => prev.map(item => {
+          if (item.id !== payload.id) return item;
+          if (payload.command === "object_stop") return { ...item, state: "stopped" };
+          if (payload.command === "object_start") {
+            return { ...item, state: isOneShotKind(item.kind) ? "stopped" : "running" };
+          }
+          return item;
+        }));
       }
       if (payload.error) setError(payload.error);
     });
@@ -406,6 +423,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function startObject(obj: TrdpObject) {
+    if (obj.kind === "pd_request") {
+      // PD Request is a Send action in the UI. The native side may retain a
+      // subscriber handle for the reply window, so replace any previous handle
+      // before issuing the next request with the same object id.
+      await command("object_stop", { id: obj.id, kind: obj.kind });
+    }
     await command("object_start", {
       object: {
         id: obj.id,
@@ -416,7 +439,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         destination: obj.destination,
         source: obj.source,
         cycle_us: obj.cycleUs,
-        timeout_us: obj.timeoutUs,
+        timeout_us: obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
         timeout_behavior: obj.timeoutBehavior,
         payload_hex: obj.payloadHex,
         transport: obj.transport,
@@ -438,6 +461,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
   async function stopObject(obj: TrdpObject) {
     await command("object_stop", { id: obj.id, kind: obj.kind });
+  }
+
+  async function removeObject(obj: TrdpObject) {
+    if (obj.state === "running") return;
+    if (obj.kind === "pd_request") {
+      await command("object_stop", { id: obj.id, kind: obj.kind });
+    }
+    setObjects(prev => prev.filter(item => item.id !== obj.id));
   }
 
   async function updatePayload(obj: TrdpObject) {
@@ -587,7 +618,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           item.comId = telegram.com_id;
           item.destination = destination;
           item.source = telegram.sources[0] ?? "0.0.0.0";
-          item.timeoutUs = telegram.timeout_us ?? (telegram.cycle_us ? telegram.cycle_us * 3 : 300000);
+          if (telegram.timeout_us !== undefined) {
+            item.timeoutMode = "custom";
+            item.timeoutUs = telegram.timeout_us;
+          } else {
+            item.timeoutMode = "auto";
+          }
           additions.push(item);
           known.add(`${telegram.com_id}:${destination}`);
         }
@@ -617,7 +653,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     : undefined;
 
   const objectEditor = (obj: TrdpObject) => {
-    const oneShot = obj.kind === "md_request" || obj.kind === "md_notify";
+    const oneShot = isOneShotKind(obj.kind);
     const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
     return (
       <tr key={obj.id}>
@@ -625,7 +661,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         <td><input style={cellInputStyle} type="number" min={1} value={obj.comId} onChange={event => patchObject(obj.id, { comId: Number(event.target.value) })} /></td>
         <td><select value={obj.link} onChange={event => patchObject(obj.id, { link: event.target.value as LinkChoice })}><option value="a">A</option><option value="b">B</option><option value="both">A+B</option></select></td>
         <td><input style={cellInputStyle} value={obj.destination} onChange={event => patchObject(obj.id, { destination: event.target.value })} /></td>
-        <td>{obj.kind.startsWith("md_") ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select> : <input style={cellInputStyle} type="number" min={0} value={subscriber ? obj.timeoutUs : obj.cycleUs} onChange={event => patchObject(obj.id, subscriber ? { timeoutUs: Number(event.target.value) } : { cycleUs: Number(event.target.value) })} />}</td>
+        <td>{obj.kind.startsWith("md_")
+          ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select>
+          : subscriber
+            ? <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                <select value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" })}><option value="auto">Auto</option><option value="custom">Custom</option></select>
+                {obj.timeoutMode === "custom" && <input style={cellInputStyle} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
+              </span>
+            : <input style={cellInputStyle} type="number" min={1} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}</td>
         <td><input style={cellInputStyle} value={obj.payloadHex} onChange={event => patchObject(obj.id, { payloadHex: event.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase() })} /></td>
         <td>
           <details>
@@ -645,7 +688,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           {oneShot ? <button onClick={() => void startObject(obj)}>Send</button> : <button onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? "Stop" : "Start"}</button>}
           {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button onClick={() => void updatePayload(obj)}>Put</button>}
           {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button onClick={() => void openStructuredEditor(obj)}>Dataset</button>}
-          <button onClick={() => setObjects(prev => prev.filter(item => item.id !== obj.id))} disabled={obj.state === "running"}>×</button>
+          <button onClick={() => void removeObject(obj)} disabled={obj.state === "running"}>×</button>
         </td>
       </tr>
     );
