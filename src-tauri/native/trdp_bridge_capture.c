@@ -69,7 +69,6 @@ typedef struct {
     char interface_name[512];
     char label;
     int linktype;
-    volatile int running;
     int thread_active;
 } capture_context_t;
 
@@ -136,10 +135,19 @@ static int load_pcap(void) {
         UINT length = GetSystemDirectoryA(system_directory, MAX_PATH);
         if (length > 0u && length < MAX_PATH) {
             (void)snprintf(path, sizeof(path), "%s\\Npcap\\wpcap.dll", system_directory);
-            g_pcap_library = (void *)LoadLibraryA(path);
+            g_pcap_library = (void *)LoadLibraryExA(
+                path,
+                NULL,
+                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32
+            );
         }
-        if (g_pcap_library == NULL) {
-            g_pcap_library = (void *)LoadLibraryA("wpcap.dll");
+        if (g_pcap_library == NULL && length > 0u && length < MAX_PATH) {
+            (void)snprintf(path, sizeof(path), "%s\\wpcap.dll", system_directory);
+            g_pcap_library = (void *)LoadLibraryExA(
+                path,
+                NULL,
+                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32
+            );
         }
     }
 #else
@@ -218,7 +226,7 @@ static int network_offset(
         return 1;
     }
     if (linktype == LINKTYPE_NULL) {
-        if (length < 4u || (frame[4] >> 4) != 4u) {
+        if (length < 5u || (frame[4] >> 4) != 4u) {
             return 0;
         }
         *offset = 4u;
@@ -247,6 +255,27 @@ static int valid_pd_type(const unsigned char *data, size_t length) {
         return 0;
     }
     return data[7] == 'd' || data[7] == 'p' || data[7] == 'r' || data[7] == 'e';
+}
+
+static void emit_capture_frame(
+    capture_context_t *context,
+    const struct bridge_pcap_pkthdr *header,
+    const unsigned char *frame
+) {
+    bridge_output_lock();
+    fprintf(
+        stdout,
+        "{\"event\":\"capture_frame\",\"link\":\"%c\",\"link_type\":%d,"
+        "\"timestamp_us\":%llu,\"raw_frame_hex\":\"",
+        context->label,
+        context->linktype,
+        (unsigned long long)header->ts.tv_sec * 1000000ULL
+            + (unsigned long long)header->ts.tv_usec
+    );
+    bridge_print_hex(stdout, frame, header->caplen);
+    fputs("\"}\n", stdout);
+    fflush(stdout);
+    bridge_output_unlock();
 }
 
 static void emit_trdp(
@@ -291,7 +320,8 @@ static void emit_trdp(
     memcpy(&stored_fcs, trdp + header_length - SIZE_OF_FCS, SIZE_OF_FCS);
     computed_fcs = vos_crc32(INITFCS, trdp, (UINT32)(header_length - SIZE_OF_FCS));
     crc_valid = stored_fcs == MAKE_LE(computed_fcs);
-    protocol_valid = (read_be16(trdp + 4u) & 0xff00u) == 0x0100u;
+    protocol_valid = (read_be16(trdp + 4u) & 0xff00u) == 0x0100u
+        && data_length <= trdp_length - header_length;
 
     bridge_output_lock();
     fprintf(
@@ -525,21 +555,30 @@ static void process_frame(
     size_t ip_offset;
     size_t ip_header_length;
     size_t transport_offset;
+    size_t ip_total_length;
+    size_t ip_end;
     uint16_t fragment;
     uint32_t source_ip;
     uint32_t destination_ip;
     unsigned char protocol;
 
-    if (header == NULL || frame == NULL
-        || !network_offset(frame, (size_t)header->caplen, context->linktype, &ip_offset)
+    if (header == NULL || frame == NULL) {
+        return;
+    }
+    emit_capture_frame(context, header, frame);
+    if (!network_offset(frame, (size_t)header->caplen, context->linktype, &ip_offset)
         || (size_t)header->caplen < ip_offset + 20u
         || (frame[ip_offset] >> 4) != 4u) {
         return;
     }
     ip_header_length = (size_t)(frame[ip_offset] & 0x0fu) * 4u;
-    if (ip_header_length < 20u || (size_t)header->caplen < ip_offset + ip_header_length) {
+    ip_total_length = (size_t)read_be16(frame + ip_offset + 2u);
+    if (ip_header_length < 20u
+        || ip_total_length < ip_header_length
+        || (size_t)header->caplen < ip_offset + ip_total_length) {
         return;
     }
+    ip_end = ip_offset + ip_total_length;
     fragment = read_be16(frame + ip_offset + 6u);
     if ((fragment & 0x3fffu) != 0u) {
         return;
@@ -554,17 +593,17 @@ static void process_frame(
         uint16_t destination_port;
         size_t trdp_offset;
         size_t udp_length;
-        if ((size_t)header->caplen < transport_offset + 8u) {
+        if (transport_offset + 8u > ip_end) {
             return;
         }
         source_port = read_be16(frame + transport_offset);
         destination_port = read_be16(frame + transport_offset + 2u);
         udp_length = (size_t)read_be16(frame + transport_offset + 4u);
-        if (udp_length < 8u) {
+        if (udp_length < 8u || transport_offset + udp_length > ip_end) {
             return;
         }
         trdp_offset = transport_offset + 8u;
-        if ((size_t)header->caplen <= trdp_offset) {
+        if (transport_offset + udp_length <= trdp_offset) {
             return;
         }
         emit_trdp(
@@ -577,7 +616,7 @@ static void process_frame(
             destination_port,
             "udp",
             frame + trdp_offset,
-            (size_t)header->caplen - trdp_offset
+            transport_offset + udp_length - trdp_offset
         );
     } else if (protocol == 6u) {
         size_t tcp_header_length;
@@ -586,11 +625,11 @@ static void process_frame(
         uint16_t destination_port;
         uint32_t sequence;
         unsigned char flags;
-        if ((size_t)header->caplen < transport_offset + 20u) {
+        if (transport_offset + 20u > ip_end) {
             return;
         }
         tcp_header_length = (size_t)(frame[transport_offset + 12u] >> 4) * 4u;
-        if (tcp_header_length < 20u || (size_t)header->caplen < transport_offset + tcp_header_length) {
+        if (tcp_header_length < 20u || transport_offset + tcp_header_length > ip_end) {
             return;
         }
         source_port = read_be16(frame + transport_offset);
@@ -609,7 +648,7 @@ static void process_frame(
             sequence,
             flags,
             frame + payload_offset,
-            (size_t)header->caplen - payload_offset
+            ip_end - payload_offset
         );
     }
 }

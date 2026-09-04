@@ -60,7 +60,7 @@ type TrdpObject = {
   destination: string;
   source: string;
   cycleUs: number;
-  timeoutMode: "auto" | "custom";
+  timeoutMode: "auto" | "custom" | "disabled";
   timeoutUs: number;
   timeoutBehavior: "keep" | "zero";
   payloadHex: string;
@@ -92,10 +92,12 @@ type XmlElement = {
 type XmlDataset = { id: number; name: string; elements: XmlElement[] };
 type XmlTelegram = {
   name: string;
+  traffic_kind: "pd" | "md" | "unknown" | "ambiguous";
   com_id: number;
   dataset_id: number;
   cycle_us?: number;
   timeout_us?: number;
+  timeout_behavior?: "zero" | "keep";
   sources: string[];
   destinations: string[];
   sdt_detected: boolean;
@@ -164,10 +166,24 @@ const nav: Array<[Page, string]> = [
 const tableStyle = { width: "100%", borderCollapse: "collapse" } as const;
 const cellInputStyle = { width: "100%", minWidth: 80 } as const;
 const U32 = 0x1_0000_0000;
+const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
+
+function captureFilterForPorts(pdPort: number, mdUdpPort: number, mdTcpPort: number) {
+  return `udp port ${pdPort} or udp port ${mdUdpPort} or tcp port ${mdTcpPort}`;
+}
 
 function paramNumber(params: Record<string, unknown> | undefined, key: string, fallback: number) {
   const value = params?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function isIpv4Text(value: string) {
+  const parts = value.split(".");
+  return parts.length === 4 && parts.every(part => {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const octet = Number(part);
+    return octet >= 0 && octet <= 255;
+  });
 }
 
 function hexPreview(value?: string) {
@@ -225,11 +241,13 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
     && parsedTimeoutUs > 0;
   const timeoutMode = raw.timeout_mode === "custom"
     ? "custom"
-    : raw.timeout_mode === "auto"
-      ? "auto"
-      : hasCustomTimeout
-        ? "custom"
-        : "auto";
+    : raw.timeout_mode === "disabled"
+      ? "disabled"
+      : raw.timeout_mode === "auto"
+        ? "auto"
+        : hasCustomTimeout
+          ? "custom"
+          : "auto";
   return {
     ...base,
     id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
@@ -280,8 +298,9 @@ function defaultDatasetValues(imported: XmlImport, datasetId: number, visiting =
   const result: Record<string, unknown> = {};
   for (const element of dataset.elements) {
     const singleValue = () => {
-      if (element.type_id > 1000) return defaultDatasetValues(imported, element.type_id, nextVisiting);
+      if (element.type_id >= 1000) return defaultDatasetValues(imported, element.type_id, nextVisiting);
       if (element.type_id === 15) return { seconds: 0, ticks: 0 };
+      if (element.type_id === 16) return { seconds: 0, microseconds: 0 };
       return 0;
     };
     if (element.dynamic) {
@@ -313,6 +332,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const storageKey = `tauterm:trdp:${sessionId}:objects`;
   const [page, setPage] = useState<Page>("overview");
   const [events, setEvents] = useState<TrdpEvent[]>([]);
+  const [captureFrames, setCaptureFrames] = useState<TrdpEvent[]>([]);
+  const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
+  const captureStartPending = useRef<{
+    source: "offline" | "live" | null;
+    frames: TrdpEvent[];
+  } | null>(null);
   const [objects, setObjects] = useState<TrdpObject[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -352,6 +377,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           if (typeof oldest === "string") starts.delete(oldest);
         }
       }
+      if (payload.event === "capture_frame") {
+        setCaptureFrames(prev => [...prev, payload].slice(-5000));
+      }
       if (payload.event === "packet") {
         let packet = payload;
         if (
@@ -369,6 +397,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           mdRequestStartedUs.current.delete(payload.md_session_id);
         }
       }
+      if (payload.event === "ack" && payload.command === "capture_start") {
+        captureStartPending.current = null;
+        setCaptureSource("live");
+      }
       if (payload.event === "ack" && payload.id) {
         setObjects(prev => prev.map(item => {
           if (item.id !== payload.id) return item;
@@ -379,7 +411,15 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           return item;
         }));
       }
-      if (payload.error) setError(payload.error);
+      if (payload.error) {
+        const pendingCapture = captureStartPending.current;
+        if (pendingCapture) {
+          captureStartPending.current = null;
+          setCaptureFrames(pendingCapture.frames);
+          setCaptureSource(pendingCapture.source);
+        }
+        setError(payload.error);
+      }
     });
     return () => { disposed = true; void unlisten.then(fn => fn()); };
   }, [sessionId]);
@@ -489,7 +529,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         destination: obj.destination,
         source: obj.source,
         cycle_us: obj.cycleUs,
-        timeout_us: obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
+        timeout_us: obj.timeoutMode === "disabled" ? 0xffff_ffff : obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
         timeout_behavior: obj.timeoutBehavior,
         payload_hex: obj.payloadHex,
         transport: obj.transport,
@@ -531,6 +571,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const pdPort = paramNumber(params, "pd_port", 17224);
     const mdPorts = [...new Set([paramNumber(params, "md_udp_port", 17225), paramNumber(params, "md_tcp_port", 17225)])];
     const packets = await invoke<TrdpEvent[]>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
+    setCaptureFrames([]);
+    setCaptureSource("offline");
     setEvents(prev => [...prev, ...packets].slice(-5000));
     setPage("traffic");
   }
@@ -538,7 +580,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   async function saveCapture() {
     const path = await save({ filters: [{ name: "PCAPNG", extensions: ["pcapng"] }] });
     if (!path) return;
-    await invoke("trdp_save_capture", { path, packets: events.filter(event => event.raw_frame_hex) });
+    const packets = captureSource === "live"
+      ? captureFrames
+      : events.filter(event => event.raw_frame_hex);
+    await invoke("trdp_save_capture", { path, packets });
   }
 
   async function importXml() {
@@ -661,19 +706,24 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       const known = new Set(prev.map(item => `${item.comId}:${item.destination}`));
       const additions: TrdpObject[] = [];
       for (const telegram of xmlImport.telegrams) {
-        for (const destination of telegram.destinations.length ? telegram.destinations : ["0.0.0.0"]) {
+        if (telegram.traffic_kind !== "pd") continue;
+        const ipv4Destinations = telegram.destinations.filter(isIpv4Text);
+        const templateDestinations = ipv4Destinations.length > 0 ? ipv4Destinations : ["0.0.0.0"];
+        const source = telegram.sources.find(isIpv4Text) ?? "0.0.0.0";
+        for (const destination of templateDestinations) {
           if (known.has(`${telegram.com_id}:${destination}`)) continue;
           const item = createObject("pd_subscriber", additions.length + 1);
           item.name = `${telegram.name} (imported template)`;
           item.comId = telegram.com_id;
           item.destination = destination;
-          item.source = telegram.sources[0] ?? "0.0.0.0";
-          if (telegram.timeout_us !== undefined) {
+          item.source = source;
+          if (telegram.timeout_us === undefined || telegram.timeout_us === 0) {
+            item.timeoutMode = "disabled";
+          } else {
             item.timeoutMode = "custom";
             item.timeoutUs = telegram.timeout_us;
-          } else {
-            item.timeoutMode = "auto";
           }
+          item.timeoutBehavior = telegram.timeout_behavior === "keep" ? "keep" : "zero";
           additions.push(item);
           known.add(`${telegram.com_id}:${destination}`);
         }
@@ -685,11 +735,33 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   async function startLiveCapture() {
     const interfaceA = typeof params?.capture_interface === "string" ? params.capture_interface : "";
     const interfaceB = params?.capture_interface_b_enabled && typeof params?.capture_interface_b === "string" ? params.capture_interface_b : "";
-    await command("capture_start", {
-      interface: interfaceA,
-      interface_b: interfaceB,
-      filter: params?.capture_filter,
-    });
+    const configuredFilter = typeof params?.capture_filter === "string" ? params.capture_filter : STANDARD_CAPTURE_FILTER;
+    const filterAuto = typeof params?.capture_filter_auto === "boolean"
+      ? params.capture_filter_auto
+      : configuredFilter === STANDARD_CAPTURE_FILTER;
+    const filter = filterAuto
+      ? captureFilterForPorts(
+          paramNumber(params, "pd_port", 17224),
+          paramNumber(params, "md_udp_port", 17225),
+          paramNumber(params, "md_tcp_port", 17225),
+        )
+      : configuredFilter;
+    const previousCapture = { source: captureSource, frames: captureFrames };
+    captureStartPending.current = previousCapture;
+    setCaptureFrames([]);
+    try {
+      await command("capture_start", {
+        interface: interfaceA,
+        interface_b: interfaceB,
+        filter,
+      });
+    } catch {
+      if (captureStartPending.current === previousCapture) {
+        captureStartPending.current = null;
+        setCaptureFrames(previousCapture.frames);
+        setCaptureSource(previousCapture.source);
+      }
+    }
   }
 
   async function confirmMessage(event: TrdpEvent) {
@@ -741,7 +813,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select>
           : subscriber
             ? <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                <select value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" })}><option value="auto">Auto</option><option value="custom">Custom</option></select>
+                <select value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" | "disabled" })}><option value="auto">Auto</option><option value="custom">Custom</option><option value="disabled">Disabled</option></select>
                 {obj.timeoutMode === "custom" && <input style={cellInputStyle} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
               </span>
             : <input style={cellInputStyle} type="number" min={1} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}</td>
@@ -838,15 +910,15 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 <strong>Import Preview</strong>
                 <div>{xmlImport.datasets.length} Datasets · {xmlImport.telegrams.length} Telegrams · ports {xmlImport.pd_port}/{xmlImport.md_udp_port}/{xmlImport.md_tcp_port} · SDT: {xmlImport.sdt_detected ? "Detected (not validated)" : "No configuration detected"}</div>
                 {xmlImport.warnings.map(warning => <div key={warning} style={{ marginTop: 4 }}>⚠ {warning}</div>)}
-                {mode === "node" && <button style={{ marginTop: 8 }} onClick={importTemplates}>将 Telegram 作为停止状态的订阅模板加入 Workspace</button>}
-                <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
+                {mode === "node" && <button style={{ marginTop: 8 }} onClick={importTemplates}>将 PD Telegram 作为停止状态的 Subscriber 模板加入 Workspace</button>}
+                <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Timeout</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? `${telegram.timeout_us} µs / ${telegram.timeout_behavior ?? "zero"}` : `disabled / ${telegram.timeout_behavior ?? "zero"}`) : "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
               </div>
             )}
           </div>
         )}
 
         {page === "publishers" && <section><div style={{ display: "flex", justifyContent: "space-between" }}><h2>发布 / Publishers · PD Publisher</h2><button onClick={() => addObject("pd_publisher")}>+ Publisher</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination</th><th>Cycle µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_publisher").map(objectEditor)}</tbody></table></section>}
-        {page === "subscribers" && <section><div style={{ display: "flex", gap: 8, alignItems: "center" }}><h2 style={{ marginRight: "auto" }}>订阅 / Subscribers · PD Subscriber / Request</h2><button onClick={() => addObject("pd_subscriber")}>+ Subscriber</button><button onClick={() => addObject("pd_request")}>+ PD Request</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_subscriber" || object.kind === "pd_request").map(objectEditor)}</tbody></table><h3>Subscriber diagnostics</h3><table style={tableStyle}><thead><tr><th>Link</th><th>ComID</th><th>Packets</th><th>Missed seq</th><th>Last seq</th><th>Interval min/avg/max µs</th><th>Avg jitter µs</th><th>Errors</th></tr></thead><tbody>{flows.filter(flow => flow.msg.startsWith("P")).map(flow => <tr key={`diag-${flow.key}`}><td>{flow.link}</td><td>{flow.comId}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.minIntervalUs === undefined ? "—" : `${Math.round(flow.minIntervalUs)}/${Math.round(flow.avgIntervalUs ?? 0)}/${Math.round(flow.maxIntervalUs ?? 0)}`}</td><td>{flow.jitterUs === undefined ? "—" : Math.round(flow.jitterUs)}</td><td>{flow.errors}</td></tr>)}</tbody></table></section>}
+        {page === "subscribers" && <section><div style={{ display: "flex", gap: 8, alignItems: "center" }}><h2 style={{ marginRight: "auto" }}>订阅 / Subscribers · PD Subscriber / Request</h2><button onClick={() => addObject("pd_subscriber")}>+ Subscriber</button><button onClick={() => addObject("pd_request")}>+ PD Request</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_subscriber" || object.kind === "pd_request").map(objectEditor)}</tbody></table><h3>Subscriber diagnostics</h3><table style={tableStyle}><thead><tr><th>Link</th><th>ComID</th><th>Packets</th><th>Missed seq</th><th>Last seq</th><th>Interval min/avg/max µs</th><th>Avg jitter µs</th><th>Errors</th></tr></thead><tbody>{flows.filter(flow => flow.msg.startsWith("P")).map(flow => <tr key={`diag-${flow.key}`}><td>{flow.link}</td><td>{flow.comId}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.minIntervalUs === undefined ? "—" : `${Math.round(flow.minIntervalUs)}/${Math.round(flow.avgIntervalUs ?? 0)}/${Math.round(flow.maxIntervalUs ?? 0)}`}</td><td>{flow.jitterUs === undefined ? "—" : Math.round(flow.jitterUs)}</td><td>{flow.errors}</td></tr>)}</tbody></table></section>}
         {page === "messages" && <section><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><h2 style={{ marginRight: "auto" }}>消息 / Messages · MD</h2><button onClick={() => addObject("md_request")}>+ Request</button><button onClick={() => addObject("md_listener")}>+ Listener/Replier</button><button onClick={() => addObject("md_notify")}>+ Notify</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination/Filter</th><th>UDP/TCP</th><th>Payload HEX</th><th>Protocol</th><th>Action</th></tr></thead><tbody>{objects.filter(object => object.kind.startsWith("md_")).map(objectEditor)}</tbody></table></section>}
 
         {page === "traffic" && (

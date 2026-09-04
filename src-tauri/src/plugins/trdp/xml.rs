@@ -26,10 +26,12 @@ pub struct TrdpXmlDataset {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrdpXmlTelegram {
     pub name: String,
+    pub traffic_kind: String,
     pub com_id: u32,
     pub dataset_id: u32,
     pub cycle_us: Option<u32>,
     pub timeout_us: Option<u32>,
+    pub timeout_behavior: Option<String>,
     pub sources: Vec<String>,
     pub destinations: Vec<String>,
     pub sdt_detected: bool,
@@ -103,7 +105,7 @@ fn type_name(id: u32, original: &str) -> String {
         14 => "TIMEDATE32",
         15 => "TIMEDATE48",
         16 => "TIMEDATE64",
-        nested if nested > 1000 => return format!("Dataset {nested}"),
+        nested if nested >= 1000 => return format!("Dataset {nested}"),
         _ => original,
     }
     .to_string()
@@ -120,7 +122,9 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
     let telegram_re = Regex::new(r#"(?is)<telegram\s+([^>]*)>(.*?)</telegram>"#)
         .map_err(|error| error.to_string())?;
     let pd_re =
-        Regex::new(r#"(?is)<pd-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
+        Regex::new(r#"(?is)<pd-parameter(?:\s+([^>]*))?/?>"#).map_err(|error| error.to_string())?;
+    let md_re =
+        Regex::new(r#"(?is)<md-parameter(?:\s+([^>]*))?/?>"#).map_err(|error| error.to_string())?;
     let source_re = Regex::new(r#"(?is)<source\s+([^>]*)"#).map_err(|error| error.to_string())?;
     let destination_re =
         Regex::new(r#"(?is)<destination\s+([^>]*)"#).map_err(|error| error.to_string())?;
@@ -205,8 +209,26 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             continue;
         };
         let dataset_id = attr_u32(tag, "data-set-id").unwrap_or(0);
-        let pd_attributes = pd_re
-            .captures(body)
+        let pd_parameter = pd_re.captures(body);
+        let md_parameter = md_re.captures(body);
+        let traffic_kind = match (pd_parameter.is_some(), md_parameter.is_some()) {
+            (true, false) => "pd",
+            (false, true) => "md",
+            (true, true) => {
+                warnings.push(format!(
+                    "ComID {com_id} 同时包含 pd-parameter 与 md-parameter；不会自动生成模板"
+                ));
+                "ambiguous"
+            }
+            (false, false) => {
+                warnings.push(format!(
+                    "ComID {com_id} 未声明 pd-parameter/md-parameter；协议类型标记为 unknown"
+                ));
+                "unknown"
+            }
+        };
+        let pd_attributes = pd_parameter
+            .as_ref()
             .and_then(|value| value.get(1))
             .map(|value| value.as_str())
             .unwrap_or_default();
@@ -224,10 +246,14 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             .collect();
         telegrams.push(TrdpXmlTelegram {
             name: attr(tag, "name").unwrap_or_else(|| format!("ComID {com_id}")),
+            traffic_kind: traffic_kind.to_string(),
             com_id,
             dataset_id,
             cycle_us: attr_u32(pd_attributes, "cycle"),
             timeout_us: attr_u32(pd_attributes, "timeout"),
+            timeout_behavior: pd_parameter.as_ref().map(|_| {
+                attr(pd_attributes, "validity-behavior").unwrap_or_else(|| "zero".to_string())
+            }),
             sources,
             destinations,
             sdt_detected: body.to_ascii_lowercase().contains("<sdt-parameter"),
@@ -332,7 +358,11 @@ fn decode_primitive(type_id: u32, bytes: &[u8]) -> Value {
         7 => json!(i64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
         8 => json!(bytes.first().copied().unwrap_or(0)),
         10 | 14 => json!(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
-        11 | 16 => json!(u64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
+        11 => json!(u64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
+        16 => json!({
+            "seconds": u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            "microseconds": u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
+        }),
         12 => json!(f32::from_bits(u32::from_be_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3]
         ]))),
@@ -367,7 +397,7 @@ fn fixed_dataset_width(
         }
         let width = if let Some(width) = primitive_width(element.type_id) {
             width
-        } else if element.type_id > 1000 {
+        } else if element.type_id >= 1000 {
             fixed_dataset_width(element.type_id, imported, visiting)?
         } else {
             visiting.remove(&dataset_id);
@@ -406,7 +436,7 @@ fn decode_dataset_inner(
                     }
                     let width = if let Some(width) = primitive_width(trailing.type_id) {
                         width
-                    } else if trailing.type_id > 1000 {
+                    } else if trailing.type_id >= 1000 {
                         fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
                     } else {
                         return None;
@@ -416,7 +446,7 @@ fn decode_dataset_inner(
 
         let item_width = if let Some(width) = primitive_width(element.type_id) {
             width
-        } else if element.type_id > 1000 {
+        } else if element.type_id >= 1000 {
             fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(
                 || {
                     format!(
@@ -467,7 +497,7 @@ fn decode_dataset_inner(
                 ));
             }
             let slice = &payload[offset..offset + item_width];
-            let value = if element.type_id > 1000 {
+            let value = if element.type_id >= 1000 {
                 let (nested, consumed) =
                     decode_dataset_inner(element.type_id, slice, imported, visiting)?;
                 if consumed != item_width {
@@ -634,11 +664,32 @@ fn encode_primitive(
                 .map_err(|_| format!("字段 {field} 超出 UINT32 范围"))?
                 .to_be_bytes(),
         ),
-        11 | 16 => output.extend_from_slice(
+        11 => output.extend_from_slice(
             &u64::try_from(integer_value(&value, field)?)
                 .map_err(|_| format!("字段 {field} 超出 UINT64 范围"))?
                 .to_be_bytes(),
         ),
+        16 => {
+            let object = value.as_object().ok_or_else(|| {
+                format!("字段 {field} 的 TIMEDATE64 需要 {{seconds,microseconds}}")
+            })?;
+            let seconds = object
+                .get("seconds")
+                .ok_or_else(|| format!("字段 {field} 缺少 seconds"))?;
+            let microseconds = object
+                .get("microseconds")
+                .ok_or_else(|| format!("字段 {field} 缺少 microseconds"))?;
+            output.extend_from_slice(
+                &u32::try_from(integer_value(seconds, field)?)
+                    .map_err(|_| format!("字段 {field}.seconds 超出 UINT32 范围"))?
+                    .to_be_bytes(),
+            );
+            output.extend_from_slice(
+                &u32::try_from(integer_value(microseconds, field)?)
+                    .map_err(|_| format!("字段 {field}.microseconds 超出 UINT32 范围"))?
+                    .to_be_bytes(),
+            );
+        }
         12 => output.extend_from_slice(&(numeric_value(&value, field)? as f32).to_be_bytes()),
         13 => output.extend_from_slice(&numeric_value(&value, field)?.to_be_bytes()),
         15 => {
@@ -728,7 +779,7 @@ fn encode_dataset_inner(
             .ok_or_else(|| format!("Dataset {dataset_id} 缺少字段 {}", element.name))?;
         let items = field_items(element, value)?;
         for item in items {
-            if element.type_id > 1000 {
+            if element.type_id >= 1000 {
                 let nested = item.as_object().ok_or_else(|| {
                     format!(
                         "Dataset {dataset_id} 字段 {} 需要嵌套 JSON object",
@@ -801,6 +852,59 @@ mod tests {
     }
 
     #[test]
+    fn round_trips_timedate64_components() {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(
+            file,
+            r#"<device><data-set name="time" id="1000"><element name="stamp" type="TIMEDATE64"/></data-set></device>"#
+        )
+        .expect("write");
+        let path = file.path().to_string_lossy().to_string();
+        let encoded = trdp_encode_dataset(
+            path.clone(),
+            1000,
+            json!({"stamp": {"seconds": 7, "microseconds": 123456}}),
+        )
+        .expect("encode TIMEDATE64");
+        assert_eq!(encoded["payload_hex"], "000000070001E240");
+        let decoded = trdp_decode_dataset(
+            path,
+            1000,
+            encoded["payload_hex"].as_str().unwrap().to_string(),
+        )
+        .expect("decode TIMEDATE64");
+        assert_eq!(decoded["fields"]["stamp"]["value"]["seconds"], json!(7u32));
+        assert_eq!(
+            decoded["fields"]["stamp"]["value"]["microseconds"],
+            json!(123456u32)
+        );
+    }
+
+    #[test]
+    fn supports_nested_dataset_id_1000() {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(
+            file,
+            r#"<device><data-set name="child" id="1000"><element name="value" type="UINT16"/></data-set><data-set name="parent" id="1001"><element name="child" type="1000"/></data-set></device>"#
+        )
+        .expect("write");
+        let path = file.path().to_string_lossy().to_string();
+        let encoded = trdp_encode_dataset(path.clone(), 1001, json!({"child": {"value": 42}}))
+            .expect("encode nested dataset 1000");
+        assert_eq!(encoded["payload_hex"], "002A");
+        let decoded = trdp_decode_dataset(
+            path,
+            1001,
+            encoded["payload_hex"].as_str().unwrap().to_string(),
+        )
+        .expect("decode nested dataset 1000");
+        assert_eq!(
+            decoded["fields"]["child"]["value"]["value"]["value"],
+            json!(42u16)
+        );
+    }
+
+    #[test]
     fn encodes_structured_values_to_wire_payload() {
         let mut file = tempfile::NamedTempFile::new().expect("tempfile");
         write!(
@@ -824,6 +928,22 @@ mod tests {
     }
 
     #[test]
+    fn distinguishes_pd_and_md_telegrams() {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(
+            file,
+            r#"<device><telegram name="pd" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram><telegram name="md" com-id="2001" data-set-id="1001"><md-parameter/><source uri1="10.0.0.1"/><destination uri="10.0.0.2"/></telegram><data-set name="demo" id="1001"><element name="counter" type="10"/></data-set></device>"#
+        )
+        .expect("write");
+        let imported = parse_xml(&file.path().to_string_lossy()).expect("import");
+        assert_eq!(imported.telegrams.len(), 2);
+        assert_eq!(imported.telegrams[0].traffic_kind, "pd");
+        assert_eq!(imported.telegrams[1].traffic_kind, "md");
+        assert_eq!(imported.telegrams[1].cycle_us, None);
+        assert_eq!(imported.telegrams[1].timeout_us, None);
+    }
+
+    #[test]
     fn imports_official_style_xml_and_dynamic_array() {
         let mut file = tempfile::NamedTempFile::new().expect("tempfile");
         write!(
@@ -836,6 +956,11 @@ mod tests {
         assert_eq!(imported.datasets.len(), 1);
         assert_eq!(imported.telegrams.len(), 1);
         assert_eq!(imported.telegrams[0].com_id, 1001);
+        assert_eq!(imported.telegrams[0].traffic_kind, "pd");
+        assert_eq!(
+            imported.telegrams[0].timeout_behavior.as_deref(),
+            Some("zero")
+        );
         assert!(imported.datasets[0].elements[1].dynamic);
         let payload = [0, 0, 0, 7, b'O', b'K'];
         let (fields, consumed) =

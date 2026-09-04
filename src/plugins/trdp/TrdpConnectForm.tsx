@@ -3,6 +3,11 @@ import type { ConnectFormProps } from "../../core/plugin-registry";
 
 const field: CSSProperties = { display: "grid", gap: 6, marginBottom: 14 };
 const input: CSSProperties = { width: "100%" };
+const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
+
+function captureFilterForPorts(pdPort: number, mdUdpPort: number, mdTcpPort: number) {
+  return `udp port ${pdPort} or udp port ${mdUdpPort} or tcp port ${mdTcpPort}`;
+}
 
 function str(params: Record<string, unknown>, key: string, fallback = "") {
   const value = params[key];
@@ -32,10 +37,23 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
     capture_interface: "",
     capture_interface_b_enabled: false,
     capture_interface_b: "",
-    capture_filter: "udp port 17224 or udp port 17225 or tcp port 17225",
+    capture_filter_auto: bool(
+      params,
+      "capture_filter_auto",
+      str(params, "capture_filter", STANDARD_CAPTURE_FILTER) === STANDARD_CAPTURE_FILTER,
+    ),
+    capture_filter: STANDARD_CAPTURE_FILTER,
     ...params,
     ...next,
   });
+
+  const captureFilterValue = str(params, "capture_filter", STANDARD_CAPTURE_FILTER);
+  const captureFilterAuto = bool(params, "capture_filter_auto", captureFilterValue === STANDARD_CAPTURE_FILTER);
+  const effectiveCaptureFilter = captureFilterForPorts(
+    num(params, "pd_port", 17224),
+    num(params, "md_udp_port", 17225),
+    num(params, "md_tcp_port", 17225),
+  );
 
   const portFields = (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
@@ -109,10 +127,17 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
               <input className="liquid-glass-input" style={input} value={str(params, "capture_interface_b")} onChange={e => patch({ capture_interface_b: e.target.value })} placeholder="第二个 Npcap/libpcap device" />
             </div>
           )}
+          <label className="liquid-glass-toggle" style={{ marginBottom: 14 }}>
+            <input type="checkbox" checked={captureFilterAuto} onChange={e => patch({ capture_filter_auto: e.target.checked })} />
+            <div />
+            <span>按 PD/MD 端口自动生成过滤器 / Auto filter from ports</span>
+          </label>
           <div style={field}>
-            <label>默认过滤器 / Capture filter</label>
-            <input className="liquid-glass-input" style={input} value={str(params, "capture_filter", "udp port 17224 or udp port 17225 or tcp port 17225")} onChange={e => patch({ capture_filter: e.target.value })} />
-            <small>默认仅 TRDP 标准端口：PD UDP/17224；MD UDP/TCP/17225。</small>
+            <label>抓包过滤器 / Capture filter</label>
+            {captureFilterAuto
+              ? <code style={{ overflowWrap: "anywhere" }}>{effectiveCaptureFilter}</code>
+              : <input className="liquid-glass-input" style={input} value={captureFilterValue} onChange={e => patch({ capture_filter: e.target.value })} />}
+            <small>{captureFilterAuto ? "修改高级 PD/MD 端口时过滤器会自动同步。" : "Custom 使用原始 libpcap/Npcap BPF 表达式。"}</small>
           </div>
           <details>
             <summary>高级 / Advanced</summary>

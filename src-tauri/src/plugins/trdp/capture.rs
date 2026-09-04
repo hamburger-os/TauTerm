@@ -175,8 +175,8 @@ fn network_offset(frame: &[u8], linktype: u32) -> Option<usize> {
             }
             (ether_type == 0x0800).then_some(offset)
         }
-        LINKTYPE_LINUX_SLL => Some(16),
-        LINKTYPE_LINUX_SLL2 => Some(20),
+        LINKTYPE_LINUX_SLL => (frame.len() >= 16 && be16(frame, 14)? == 0x0800).then_some(16),
+        LINKTYPE_LINUX_SLL2 => (frame.len() >= 20 && be16(frame, 0)? == 0x0800).then_some(20),
         LINKTYPE_NULL => (frame.len() >= 5 && frame.get(4)? >> 4 == 4).then_some(4),
         LINKTYPE_RAW => (frame.first()? >> 4 == 4).then_some(0),
         _ => None,
@@ -194,35 +194,62 @@ fn decode_frame(
         return None;
     }
     let ip_header_length = ((frame.get(ip)? & 0x0f) as usize) * 4;
-    if ip_header_length < 20 || frame.len() < ip + ip_header_length {
+    let ip_total_length = be16(frame, ip + 2)? as usize;
+    if ip_header_length < 20
+        || ip_total_length < ip_header_length
+        || frame.len() < ip + ip_total_length
+    {
         return None;
     }
     if be16(frame, ip + 6)? & 0x3fff != 0 {
         return None;
     }
 
+    let ip_end = ip + ip_total_length;
     let protocol = *frame.get(ip + 9)?;
     let src_ip = ipv4(frame.get(ip + 12..ip + 16)?);
     let dest_ip = ipv4(frame.get(ip + 16..ip + 20)?);
     let transport_offset = ip + ip_header_length;
-    let (transport, src_port, dest_port, payload_offset) = match protocol {
+    let (transport, src_port, dest_port, payload_offset, payload_end) = match protocol {
         17 => {
+            if transport_offset + 8 > ip_end {
+                return None;
+            }
             let source = be16(frame, transport_offset)?;
             let destination = be16(frame, transport_offset + 2)?;
-            ("udp", source, destination, transport_offset + 8)
+            let udp_length = be16(frame, transport_offset + 4)? as usize;
+            if udp_length < 8 || transport_offset + udp_length > ip_end {
+                return None;
+            }
+            (
+                "udp",
+                source,
+                destination,
+                transport_offset + 8,
+                transport_offset + udp_length,
+            )
         }
         6 => {
+            if transport_offset + 20 > ip_end {
+                return None;
+            }
             let source = be16(frame, transport_offset)?;
             let destination = be16(frame, transport_offset + 2)?;
             let header_length = ((*frame.get(transport_offset + 12)? >> 4) as usize) * 4;
-            if header_length < 20 {
+            if header_length < 20 || transport_offset + header_length > ip_end {
                 return None;
             }
-            ("tcp", source, destination, transport_offset + header_length)
+            (
+                "tcp",
+                source,
+                destination,
+                transport_offset + header_length,
+                ip_end,
+            )
         }
         _ => return None,
     };
-    if !ports.accepts(src_port, dest_port) || frame.len() < payload_offset + 24 {
+    if !ports.accepts(src_port, dest_port) || payload_end < payload_offset + 24 {
         return None;
     }
 
@@ -245,17 +272,17 @@ fn decode_frame(
     let op_trn_topo_count = be32(frame, payload_offset + 16)?;
     let data_len = be32(frame, payload_offset + 20)?;
     let trdp_header_length = if msg_type.starts_with('M') { 116 } else { 40 };
-    if frame.len() < payload_offset + trdp_header_length {
+    if payload_end < payload_offset + trdp_header_length {
         return None;
     }
     let fcs_offset = payload_offset + trdp_header_length - 4;
     let stored_fcs = u32::from_le_bytes(frame.get(fcs_offset..fcs_offset + 4)?.try_into().ok()?);
     let crc_valid = stored_fcs == trdp_crc32(frame.get(payload_offset..fcs_offset)?);
-    let protocol_valid = protocol_version & 0xff00 == 0x0100;
     let data_start = payload_offset + trdp_header_length;
-    let data_end = data_start
-        .saturating_add(data_len as usize)
-        .min(frame.len());
+    let declared_data_end = data_start.checked_add(data_len as usize);
+    let data_complete = declared_data_end.is_some_and(|end| end <= payload_end);
+    let protocol_valid = protocol_version & 0xff00 == 0x0100 && data_complete;
+    let data_end = declared_data_end.unwrap_or(payload_end).min(payload_end);
     let payload = frame.get(data_start..data_end).unwrap_or_default();
 
     let (reply_status, user_status, reply_timeout_us, md_session_id, src_uri, dest_uri) =
@@ -621,6 +648,13 @@ mod tests {
         (vec![STANDARD_PD_PORT], vec![STANDARD_MD_PORT])
     }
 
+    fn finalize_udp_ipv4(frame: &mut [u8]) {
+        let ip_total_length = u16::try_from(frame.len() - 14).expect("IPv4 test frame length");
+        let udp_length = u16::try_from(frame.len() - 34).expect("UDP test frame length");
+        frame[16..18].copy_from_slice(&ip_total_length.to_be_bytes());
+        frame[38..40].copy_from_slice(&udp_length.to_be_bytes());
+    }
+
     #[test]
     fn ignores_non_trdp_ports() {
         let mut frame = vec![0u8; 14 + 20 + 8 + 40];
@@ -631,6 +665,7 @@ mod tests {
         frame[30..34].copy_from_slice(&[10, 0, 0, 2]);
         frame[34..36].copy_from_slice(&1000u16.to_be_bytes());
         frame[36..38].copy_from_slice(&1001u16.to_be_bytes());
+        finalize_udp_ipv4(&mut frame);
         let (pd, md) = default_ports();
         assert!(decode_frame(
             &frame,
@@ -658,6 +693,9 @@ mod tests {
         frame[payload + 8..payload + 12].copy_from_slice(&1001u32.to_be_bytes());
         frame[payload + 20..payload + 24].copy_from_slice(&4u32.to_be_bytes());
         frame[payload + 40..payload + 44].copy_from_slice(&[1, 2, 3, 4]);
+        let crc = trdp_crc32(&frame[payload..payload + 36]);
+        frame[payload + 36..payload + 40].copy_from_slice(&crc.to_le_bytes());
+        finalize_udp_ipv4(&mut frame);
         let (pd, md) = default_ports();
         let packet = decode_frame(
             &frame,
@@ -668,6 +706,8 @@ mod tests {
         .expect("packet");
         assert_eq!(packet.com_id, 1001);
         assert_eq!(packet.seq_count, 7);
+        assert_eq!(packet.crc_valid, Some(true));
+        assert_eq!(packet.protocol_valid, Some(true));
         assert_eq!(packet.payload_hex, "01020304");
     }
 
@@ -697,6 +737,7 @@ mod tests {
         let crc = trdp_crc32(&frame[payload..payload + 112]);
         frame[payload + 112..payload + 116].copy_from_slice(&crc.to_le_bytes());
         frame[payload + 116..payload + 120].copy_from_slice(&[1, 2, 3, 4]);
+        finalize_udp_ipv4(&mut frame);
 
         let (pd, md) = default_ports();
         let ports = CapturePorts { pd: &pd, md: &md };
@@ -726,6 +767,40 @@ mod tests {
     }
 
     #[test]
+    fn marks_truncated_trdp_payload_as_protocol_invalid() {
+        let mut frame = vec![0u8; 14 + 20 + 8 + 42];
+        frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+        frame[14] = 0x45;
+        frame[23] = 17;
+        frame[26..30].copy_from_slice(&[10, 0, 0, 1]);
+        frame[30..34].copy_from_slice(&[239, 1, 1, 1]);
+        frame[34..36].copy_from_slice(&STANDARD_PD_PORT.to_be_bytes());
+        frame[36..38].copy_from_slice(&STANDARD_PD_PORT.to_be_bytes());
+        let payload = 42;
+        frame[payload + 4..payload + 6].copy_from_slice(&0x0100u16.to_be_bytes());
+        frame[payload + 6..payload + 8].copy_from_slice(b"Pd");
+        frame[payload + 8..payload + 12].copy_from_slice(&1001u32.to_be_bytes());
+        frame[payload + 20..payload + 24].copy_from_slice(&4u32.to_be_bytes());
+        let crc = trdp_crc32(&frame[payload..payload + 36]);
+        frame[payload + 36..payload + 40].copy_from_slice(&crc.to_le_bytes());
+        frame[payload + 40..payload + 42].copy_from_slice(&[1, 2]);
+        finalize_udp_ipv4(&mut frame);
+
+        let (pd, md) = default_ports();
+        let packet = decode_frame(
+            &frame,
+            LINKTYPE_ETHERNET,
+            0,
+            CapturePorts { pd: &pd, md: &md },
+        )
+        .expect("truncated packet remains inspectable");
+        assert_eq!(packet.crc_valid, Some(true));
+        assert_eq!(packet.protocol_valid, Some(false));
+        assert_eq!(packet.payload_hex, "0102");
+        assert_eq!(packet.data_len, 4);
+    }
+
+    #[test]
     fn accepts_custom_pd_port() {
         let mut frame = vec![0u8; 14 + 20 + 8 + 40];
         frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
@@ -737,6 +812,7 @@ mod tests {
         frame[36..38].copy_from_slice(&18000u16.to_be_bytes());
         let payload = 42;
         frame[payload + 6..payload + 8].copy_from_slice(b"Pd");
+        finalize_udp_ipv4(&mut frame);
         let pd = vec![18000];
         let md = vec![STANDARD_MD_PORT];
         assert!(decode_frame(
@@ -764,6 +840,9 @@ mod tests {
             frame[payload + 8..payload + 12].copy_from_slice(&com_id.to_be_bytes());
             frame[payload + 20..payload + 24].copy_from_slice(&4u32.to_be_bytes());
             frame[payload + 40..payload + 44].copy_from_slice(&[1, 2, 3, 4]);
+            let crc = trdp_crc32(&frame[payload..payload + 36]);
+            frame[payload + 36..payload + 40].copy_from_slice(&crc.to_le_bytes());
+            finalize_udp_ipv4(&mut frame);
             frame
         }
 

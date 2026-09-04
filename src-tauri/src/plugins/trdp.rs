@@ -61,9 +61,17 @@ impl TrdpSideChannel {
                 candidates.push(directory.join("binaries").join(executable));
             }
         }
-        if let Ok(cwd) = std::env::current_dir() {
-            candidates.push(cwd.join("src-tauri").join("binaries").join(executable));
-            candidates.push(cwd.join("binaries").join(executable));
+        // Repository-relative lookup exists only for local development. A release
+        // build must never execute a helper discovered from the process CWD:
+        // the working directory may be user-controlled. Production resolves
+        // the packaged sidecar from Tauri resources / the executable directory,
+        // unless the launching process explicitly opts into TAUTERM_TRDP_BRIDGE.
+        #[cfg(debug_assertions)]
+        {
+            if let Ok(cwd) = std::env::current_dir() {
+                candidates.push(cwd.join("src-tauri").join("binaries").join(executable));
+                candidates.push(cwd.join("binaries").join(executable));
+            }
         }
         candidates
     }
@@ -140,7 +148,11 @@ impl TrdpSideChannel {
         } else {
             "open"
         };
-        self.send(json!({ "command": open_command, "params": params }))
+        let result = self.send(json!({ "command": open_command, "params": params }));
+        if result.is_err() {
+            <Self as SideChannel>::shutdown(self);
+        }
+        result
     }
 
     fn send(&self, command: Value) -> Result<(), String> {
