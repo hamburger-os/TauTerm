@@ -879,7 +879,10 @@ mod tests {
         assert_eq!(imported.telegrams.len(), 1);
         assert_eq!(imported.telegrams[0].com_id, 1001);
         assert_eq!(imported.telegrams[0].traffic_kind, "pd");
-        assert_eq!(imported.telegrams[0].timeout_behavior.as_deref(), Some("zero"));
+        assert_eq!(
+            imported.telegrams[0].timeout_behavior.as_deref(),
+            Some("zero")
+        );
         assert!(imported.datasets[0].elements[1].dynamic);
         let payload = [0, 0, 0, 7, b'O', b'K'];
         let (fields, consumed) =
