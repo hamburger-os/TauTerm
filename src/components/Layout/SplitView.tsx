@@ -389,10 +389,7 @@ export default function SplitView({
         const blocked = blockedEdges[paneId] ?? new Set<SplitEdge>();
         const paneTitle = tab ? getPaneDisplayTitle(tab, tabsById) : t("split.emptyPane", "空分屏");
         const stateLabel = tab
-          ? t(
-              `session.${tab.state === "transferring" ? "connected" : tab.state}`,
-              getConnectionStateFallback(tab.state),
-            )
+          ? t(`session.${tab.state}`, getConnectionStateFallback(tab.state))
           : "";
         const lifecycleClass = tab?.state === "connected" || tab?.state === "transferring"
           ? styles.lifecycleConnected
