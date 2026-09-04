@@ -162,7 +162,7 @@ static int mode_has_tcp(const char *mode) {
 static void usage(const char *program) {
     fprintf(
         stderr,
-        "usage: %s <pd-publisher|pd-subscriber|md-requester|md-requester-tcp|md-replier|md-replier-query|md-replier-tcp|md-replier-query-tcp> <own-ip> <peer/multicast-ip> <comid> [seconds]\n",
+        "usage: %s <pd-publisher|pd-pull-provider|pd-subscriber|md-requester|md-requester-tcp|md-replier|md-replier-query|md-replier-tcp|md-replier-query-tcp> <own-ip> <peer/multicast-ip> <comid> [seconds]\n",
         program
     );
 }
@@ -240,8 +240,9 @@ int main(int argc, char **argv) {
         return 4;
     }
 
-    if (mode_is(mode, "pd-publisher")) {
+    if (mode_is(mode, "pd-publisher") || mode_is(mode, "pd-pull-provider")) {
         UINT8 initial[4] = {0};
+        UINT32 cycle_us = mode_is(mode, "pd-pull-provider") ? 0u : 100000u;
         error = tlp_publish(
             app,
             &publisher,
@@ -253,7 +254,7 @@ int main(int argc, char **argv) {
             0u,
             0u,
             vos_dottedIP(peer),
-            100000u,
+            cycle_us,
             0u,
             TRDP_FLAGS_CALLBACK,
             initial,
