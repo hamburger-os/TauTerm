@@ -320,12 +320,31 @@ static void emit_trdp(
     fputs("\",\"raw_frame_hex\":\"", stdout);
     bridge_print_hex(stdout, raw_frame, header->caplen);
     fputs("\"", stdout);
-    if (valid_md_type(trdp, trdp_length) && trdp_length >= 48u) {
+    if (valid_md_type(trdp, trdp_length) && trdp_length >= 116u) {
         static const char digits[] = "0123456789abcdef";
+        char source_uri[33] = {0};
+        char destination_uri[33] = {0};
+        int32_t raw_reply_status = (int32_t)read_be32(trdp + 24u);
+        int32_t reply_status = raw_reply_status >= 0 ? 0 : raw_reply_status;
+        uint16_t user_status = raw_reply_status >= 0 ? (uint16_t)raw_reply_status : 0u;
         size_t index;
-        fputs(",\"md_session_id\":\"", stdout);
+
+        memcpy(source_uri, trdp + 48u, 32u);
+        memcpy(destination_uri, trdp + 80u, 32u);
+        fprintf(
+            stdout,
+            ",\"reply_status\":%d,\"user_status\":%u,\"reply_timeout_us\":%u,"
+            "\"src_uri\":\"",
+            (int)reply_status,
+            (unsigned int)user_status,
+            (unsigned int)read_be32(trdp + 44u)
+        );
+        bridge_json_escape(stdout, source_uri);
+        fputs("\",\"dest_uri\":\"", stdout);
+        bridge_json_escape(stdout, destination_uri);
+        fputs("\",\"md_session_id\":\"", stdout);
         for (index = 0u; index < 16u; ++index) {
-            unsigned char value = trdp[32u + index];
+            unsigned char value = trdp[28u + index];
             fputc(digits[(value >> 4) & 0x0fu], stdout);
             fputc(digits[value & 0x0fu], stdout);
             if (index == 3u || index == 5u || index == 7u || index == 9u) {
