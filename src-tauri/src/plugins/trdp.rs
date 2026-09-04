@@ -40,7 +40,9 @@ impl TrdpSideChannel {
 
     fn bridge_candidates(resource_dir: Option<PathBuf>) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
-        if let Some(path) = std::env::var_os("TAUTERM_TRDP_BRIDGE").filter(|value| !value.is_empty()) {
+        if let Some(path) =
+            std::env::var_os("TAUTERM_TRDP_BRIDGE").filter(|value| !value.is_empty())
+        {
             candidates.push(PathBuf::from(path));
         }
 
