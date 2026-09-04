@@ -393,6 +393,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           mdRequestStartedUs.current.delete(payload.md_session_id);
         }
       }
+      if (payload.event === "ack" && payload.command === "capture_start") {
+        setCaptureFrames([]);
+        setCaptureSource("live");
+      }
       if (payload.event === "ack" && payload.id) {
         setObjects(prev => prev.map(item => {
           if (item.id !== payload.id) return item;
@@ -735,8 +739,6 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       interface_b: interfaceB,
       filter,
     });
-    setCaptureFrames([]);
-    setCaptureSource("live");
   }
 
   async function confirmMessage(event: TrdpEvent) {
