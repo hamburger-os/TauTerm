@@ -278,11 +278,11 @@ fn decode_frame(
     let fcs_offset = payload_offset + trdp_header_length - 4;
     let stored_fcs = u32::from_le_bytes(frame.get(fcs_offset..fcs_offset + 4)?.try_into().ok()?);
     let crc_valid = stored_fcs == trdp_crc32(frame.get(payload_offset..fcs_offset)?);
-    let protocol_valid = protocol_version & 0xff00 == 0x0100;
     let data_start = payload_offset + trdp_header_length;
-    let data_end = data_start
-        .saturating_add(data_len as usize)
-        .min(payload_end);
+    let declared_data_end = data_start.checked_add(data_len as usize);
+    let data_complete = declared_data_end.is_some_and(|end| end <= payload_end);
+    let protocol_valid = protocol_version & 0xff00 == 0x0100 && data_complete;
+    let data_end = declared_data_end.unwrap_or(payload_end).min(payload_end);
     let payload = frame.get(data_start..data_end).unwrap_or_default();
 
     let (reply_status, user_status, reply_timeout_us, md_session_id, src_uri, dest_uri) =
@@ -764,6 +764,40 @@ mod tests {
             decode_frame(&frame, LINKTYPE_ETHERNET, 124, ports).expect("error packet");
         assert_eq!(error_packet.reply_status, Some(-6));
         assert_eq!(error_packet.user_status, Some(0));
+    }
+
+    #[test]
+    fn marks_truncated_trdp_payload_as_protocol_invalid() {
+        let mut frame = vec![0u8; 14 + 20 + 8 + 42];
+        frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+        frame[14] = 0x45;
+        frame[23] = 17;
+        frame[26..30].copy_from_slice(&[10, 0, 0, 1]);
+        frame[30..34].copy_from_slice(&[239, 1, 1, 1]);
+        frame[34..36].copy_from_slice(&STANDARD_PD_PORT.to_be_bytes());
+        frame[36..38].copy_from_slice(&STANDARD_PD_PORT.to_be_bytes());
+        let payload = 42;
+        frame[payload + 4..payload + 6].copy_from_slice(&0x0100u16.to_be_bytes());
+        frame[payload + 6..payload + 8].copy_from_slice(b"Pd");
+        frame[payload + 8..payload + 12].copy_from_slice(&1001u32.to_be_bytes());
+        frame[payload + 20..payload + 24].copy_from_slice(&4u32.to_be_bytes());
+        let crc = trdp_crc32(&frame[payload..payload + 36]);
+        frame[payload + 36..payload + 40].copy_from_slice(&crc.to_le_bytes());
+        frame[payload + 40..payload + 42].copy_from_slice(&[1, 2]);
+        finalize_udp_ipv4(&mut frame);
+
+        let (pd, md) = default_ports();
+        let packet = decode_frame(
+            &frame,
+            LINKTYPE_ETHERNET,
+            0,
+            CapturePorts { pd: &pd, md: &md },
+        )
+        .expect("truncated packet remains inspectable");
+        assert_eq!(packet.crc_valid, Some(true));
+        assert_eq!(packet.protocol_valid, Some(false));
+        assert_eq!(packet.payload_hex, "0102");
+        assert_eq!(packet.data_len, 4);
     }
 
     #[test]
