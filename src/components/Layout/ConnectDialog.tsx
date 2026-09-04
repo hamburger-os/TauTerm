@@ -436,9 +436,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       }
     }
 
-    const pluginId = selectedMode; // "serial" | "ssh" | "tftp" | "telnet" | "iperf" | "network"
-    // iperf 无单一连接目标（客户端目标每测可变、监听地址是配置项）——
-    // endpoint 用字面量，默认名 `iperf @ iperf` 不携带易变的端口/版本
+    const pluginId = selectedMode;
+    // iperf 无单一连接目标（客户端目标每测可变、监听地址是配置项），
+    // endpoint 保持内部字面量；侧栏第二行单独显示监听地址，首次创建的默认名携带版本。
     // 网络调试：所有角色的 endpoint 统一带传输层前缀（tcp:// / udp://），
     // 使侧栏/状态栏/详情页自描述（网络会话状态栏无类型徽标，前缀即传输层标识）
     const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isIperf ? "iperf" : (isTelnet ? telnetHost : (isLocalShell ? String(params.cwd) : (isNetwork
