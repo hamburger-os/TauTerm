@@ -217,7 +217,13 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
             <select
               className={`${styles.select} liquid-glass-input liquid-glass-select`}
               value={str(params, "capture_interface")}
-              onChange={e => patch({ capture_interface: e.target.value })}
+              onChange={e => {
+                const next = e.target.value;
+                patch({
+                  capture_interface: next,
+                  ...(next && next === str(params, "capture_interface_b") ? { capture_interface_b: "" } : {}),
+                });
+              }}
               disabled={captureInterfacesLoading}
             >
               <option value="">
