@@ -85,8 +85,15 @@ jobs:
           export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0"
           export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
           export TAUTERM_TRDP_DEBUG=1
+          PULL_NS_A="trdp-pull-a"
+          PULL_NS_B="trdp-pull-b"
+          cleanup_pull_netns() {
+            sudo ip netns del "$PULL_NS_A" 2>/dev/null || true
+            sudo ip netns del "$PULL_NS_B" 2>/dev/null || true
+          }
           dump_logs() {
             status=$?
+            cleanup_pull_netns
             if [[ $status -ne 0 ]]; then
               echo "=== TRDP interop diagnostics ==="
               for log in /tmp/trdp-peer-*.log /tmp/trdp-bridge-*.log; do
@@ -112,20 +119,49 @@ jobs:
           wait "$PD_PID"
           grep -q '"com_id":7001' /tmp/trdp-bridge-pd.log
 
-          "$PEER" pd-pull-provider 127.0.0.2 239.255.70.2 7002 4 >/tmp/trdp-peer-pull.log 2>&1 &
+          # TCNOpen rejects a second 127/8 alias on Linux as a multi-home
+          # mismatch because IP_PKTINFO reports loopback as 127.0.0.1. Use two
+          # real veth interfaces so each TCNOpen application session sees the
+          # same realIP that the kernel reports for received packets.
+          cleanup_pull_netns
+          sudo ip netns add "$PULL_NS_A"
+          sudo ip netns add "$PULL_NS_B"
+          sudo ip link add trdp-va type veth peer name trdp-vb
+          sudo ip link set trdp-va netns "$PULL_NS_A"
+          sudo ip link set trdp-vb netns "$PULL_NS_B"
+          sudo ip -n "$PULL_NS_A" addr add 10.250.0.1/24 dev trdp-va
+          sudo ip -n "$PULL_NS_B" addr add 10.250.0.2/24 dev trdp-vb
+          sudo ip -n "$PULL_NS_A" link set lo up
+          sudo ip -n "$PULL_NS_B" link set lo up
+          sudo ip -n "$PULL_NS_A" link set trdp-va up
+          sudo ip -n "$PULL_NS_B" link set trdp-vb up
+          sudo ip -n "$PULL_NS_A" route add 224.0.0.0/4 dev trdp-va
+          sudo ip -n "$PULL_NS_B" route add 224.0.0.0/4 dev trdp-vb
+
+          sudo ip netns exec "$PULL_NS_B" env \
+            ASAN_OPTIONS="$ASAN_OPTIONS" \
+            UBSAN_OPTIONS="$UBSAN_OPTIONS" \
+            TAUTERM_TRDP_DEBUG="$TAUTERM_TRDP_DEBUG" \
+            "$PEER" pd-pull-provider 10.250.0.2 239.255.70.2 7002 4 \
+            >/tmp/trdp-peer-pull.log 2>&1 &
           PULL_PID=$!
           sleep 0.5
           {
-            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
-            echo '{"command":"object_start","object":{"id":"ci-pd-request","kind":"pd_request","com_id":7002,"source":"127.0.0.1","destination":"127.0.0.2","reply_com_id":7002,"reply_ip":"239.255.70.2","timeout_us":0,"payload_hex":"00000000"}}'
+            echo '{"command":"open","params":{"link_a_ip":"10.250.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-pd-request","kind":"pd_request","com_id":7002,"source":"10.250.0.1","destination":"10.250.0.2","reply_com_id":7002,"reply_ip":"239.255.70.2","timeout_us":0,"payload_hex":"00000000"}}'
             sleep 2
             echo '{"command":"shutdown"}'
-          } | "$BRIDGE" >/tmp/trdp-bridge-pull.log 2>&1
+          } | sudo ip netns exec "$PULL_NS_A" env \
+                ASAN_OPTIONS="$ASAN_OPTIONS" \
+                UBSAN_OPTIONS="$UBSAN_OPTIONS" \
+                TAUTERM_TRDP_DEBUG="$TAUTERM_TRDP_DEBUG" \
+                "$BRIDGE" >/tmp/trdp-bridge-pull.log 2>&1
           wait "$PULL_PID"
           grep -q 'PD Pp comId=7002' /tmp/trdp-peer-pull.log
           grep -q '"msg_type":"Pp"' /tmp/trdp-bridge-pull.log
           grep -q '"com_id":7002' /tmp/trdp-bridge-pull.log
           grep -q '"id":"ci-pd-request"' /tmp/trdp-bridge-pull.log
+          cleanup_pull_netns
 
           "$PEER" md-replier 127.0.0.2 0.0.0.0 7100 4 >/tmp/trdp-peer-md.log 2>&1 &
           MD_PID=$!
