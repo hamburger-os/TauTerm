@@ -48,9 +48,10 @@ The peer accepts an optional final run-duration argument in seconds, which is us
   pd-subscriber 10.10.0.20 239.255.1.1 2001
 
 # Pull-only publisher: emits Pp only after a PD Request (Pr).
-# Configure TauTerm as PD Request with Reply ComID 2002 and Reply IP = TauTerm Link A.
+# The third argument is the Pp reply destination/group. Configure TauTerm
+# destination = 10.10.0.20, Reply ComID = 2002, Reply IP = 239.255.2.2.
 ./tools/trdp-test-peer/bin/trdp-test-peer \
-  pd-pull-provider 10.10.0.20 10.10.0.10 2002
+  pd-pull-provider 10.10.0.20 239.255.2.2 2002
 
 # Peer is an MD UDP replier; configure TauTerm Messages → MD Request.
 ./tools/trdp-test-peer/bin/trdp-test-peer \
