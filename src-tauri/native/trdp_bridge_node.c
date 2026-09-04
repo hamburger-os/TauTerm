@@ -582,7 +582,13 @@ static void emit_md_session(const char *id, char link, UINT32 com_id, const TRDP
     bridge_output_lock();
     fputs("{\"event\":\"md_session\",\"id\":\"", stdout);
     bridge_json_escape(stdout, id);
-    fprintf(stdout, "\",\"link\":\"%c\",\"com_id\":%u,\"md_session_id\":\"", link, (unsigned int)com_id);
+    fprintf(
+        stdout,
+        "\",\"link\":\"%c\",\"com_id\":%u,\"timestamp_us\":%llu,\"md_session_id\":\"",
+        link,
+        (unsigned int)com_id,
+        (unsigned long long)bridge_now_us()
+    );
     bridge_json_escape(stdout, session_id);
     fputs("\"}\n", stdout);
     fflush(stdout);
