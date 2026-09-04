@@ -334,6 +334,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [events, setEvents] = useState<TrdpEvent[]>([]);
   const [captureFrames, setCaptureFrames] = useState<TrdpEvent[]>([]);
   const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
+  const captureStartPending = useRef<{
+    source: "offline" | "live" | null;
+    frames: TrdpEvent[];
+  } | null>(null);
   const [objects, setObjects] = useState<TrdpObject[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -394,7 +398,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         }
       }
       if (payload.event === "ack" && payload.command === "capture_start") {
-        setCaptureFrames([]);
+        captureStartPending.current = null;
         setCaptureSource("live");
       }
       if (payload.event === "ack" && payload.id) {
@@ -407,7 +411,15 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           return item;
         }));
       }
-      if (payload.error) setError(payload.error);
+      if (payload.error) {
+        const pendingCapture = captureStartPending.current;
+        if (pendingCapture) {
+          captureStartPending.current = null;
+          setCaptureFrames(pendingCapture.frames);
+          setCaptureSource(pendingCapture.source);
+        }
+        setError(payload.error);
+      }
     });
     return () => { disposed = true; void unlisten.then(fn => fn()); };
   }, [sessionId]);
@@ -734,11 +746,22 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           paramNumber(params, "md_tcp_port", 17225),
         )
       : configuredFilter;
-    await command("capture_start", {
-      interface: interfaceA,
-      interface_b: interfaceB,
-      filter,
-    });
+    const previousCapture = { source: captureSource, frames: captureFrames };
+    captureStartPending.current = previousCapture;
+    setCaptureFrames([]);
+    try {
+      await command("capture_start", {
+        interface: interfaceA,
+        interface_b: interfaceB,
+        filter,
+      });
+    } catch {
+      if (captureStartPending.current === previousCapture) {
+        captureStartPending.current = null;
+        setCaptureFrames(previousCapture.frames);
+        setCaptureSource(previousCapture.source);
+      }
+    }
   }
 
   async function confirmMessage(event: TrdpEvent) {
