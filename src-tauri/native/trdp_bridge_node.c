@@ -500,8 +500,8 @@ static TRDP_ERR_T start_pd_subscriber(
         ? object->reply_com_id
         : object->com_id;
     TRDP_IP_ADDR_T source_filter = request && dest_ip != 0u ? dest_ip : source_ip;
-    TRDP_IP_ADDR_T subscription_dest = request && object->reply_ip != 0u
-        ? object->reply_ip
+    TRDP_IP_ADDR_T subscription_dest = request
+        ? (object->reply_ip != 0u ? object->reply_ip : link->own_ip)
         : dest_ip;
     TRDP_ERR_T error;
 
