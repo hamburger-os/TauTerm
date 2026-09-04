@@ -232,4 +232,6 @@ TauTerm 可由用户任选 **MIT License** 或 **Apache License 2.0** 使用。
 
 Windows 安装包包含独立第三方 GPL 组件 [com0com](https://com0com.sourceforge.net/)；它的许可证不受 TauTerm 双许可证影响。
 
+TRDP 使用 MPL-2.0 的 **TCNOpen TRDP 3.0.0.0** vendored 源码。上游 MPL 文件与 TauTerm 自有 MIT OR Apache-2.0 代码保持独立，详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) 与 [docs/TRDP.md](docs/TRDP.md)。
+
 <p align="center"><strong>TauTerm —— 一台终端，服务机房与实验台。</strong></p>
