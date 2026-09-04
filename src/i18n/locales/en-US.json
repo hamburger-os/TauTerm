@@ -102,8 +102,7 @@
     "disconnected": "Disconnected",
     "connecting": "Connecting...",
     "transferring": "Transferring",
-    "preparingContent": "Preparing session content...",
-    "connectToUse": "Connect the session to use this content",
+    "connectToViewContent": "Connect to display session content",
     "noSessions": "No active sessions",
     "emptyHint": "Click + New Session or use Ctrl+Shift+N to create a new session",
     "newSession": "New Session",
@@ -984,7 +983,6 @@
   },
   "network": {
     "name": "Network Debug",
-    "connectToViewData": "Connect to start displaying network data",
     "transport": "Transport",
     "transportTcp": "TCP",
     "transportUdp": "UDP",
