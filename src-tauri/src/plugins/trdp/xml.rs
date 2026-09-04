@@ -670,9 +670,9 @@ fn encode_primitive(
                 .to_be_bytes(),
         ),
         16 => {
-            let object = value
-                .as_object()
-                .ok_or_else(|| format!("字段 {field} 的 TIMEDATE64 需要 {{seconds,microseconds}}"))?;
+            let object = value.as_object().ok_or_else(|| {
+                format!("字段 {field} 的 TIMEDATE64 需要 {{seconds,microseconds}}")
+            })?;
             let seconds = object
                 .get("seconds")
                 .ok_or_else(|| format!("字段 {field} 缺少 seconds"))?;
@@ -898,7 +898,10 @@ mod tests {
             encoded["payload_hex"].as_str().unwrap().to_string(),
         )
         .expect("decode nested dataset 1000");
-        assert_eq!(decoded["fields"]["child"]["value"]["value"]["value"], json!(42u16));
+        assert_eq!(
+            decoded["fields"]["child"]["value"]["value"]["value"],
+            json!(42u16)
+        );
     }
 
     #[test]
