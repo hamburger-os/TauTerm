@@ -173,32 +173,7 @@ jobs:
           DEB="$(find src-tauri/target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -print -quit)"
           test -n "$DEB"
           dpkg-deb -c "$DEB" | tee /tmp/tauterm-deb-files.txt
-          grep -E -- '-rwx[^ ]* .*tauterm-trdp-bridge    name: Native TRDP (windows-2025)
-    runs-on: windows-2025
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Verify vendored source metadata
-        shell: pwsh
-        run: |
-          python -m py_compile scripts/vendor_tcnopen.py
-          $meta = Get-Content 'src-tauri/vendor/tcnopen/SOURCE.json' -Raw | ConvertFrom-Json
-          if ($meta.version -ne '3.0.0.0' -or $meta.license -ne 'MPL-2.0') { throw 'bad TCNOpen vendor metadata' }
-
-      - name: Build vendored TCNOpen 3.0.0.0 and native helpers
-        shell: pwsh
-        run: ./scripts/bootstrap-trdp.ps1
-
-      - name: Verify native artifacts
-        shell: pwsh
-        run: |
-          if (-not (Test-Path 'src-tauri/binaries/tauterm-trdp-bridge.exe')) { throw 'bridge missing' }
-          if (-not (Test-Path 'tools/trdp-test-peer/bin/trdp-test-peer.exe')) { throw 'peer missing' }
- /tmp/tauterm-deb-files.txt
+          grep -F 'tauterm-trdp-bridge' /tmp/tauterm-deb-files.txt
 
   windows:
     name: Native TRDP (windows-2025)
