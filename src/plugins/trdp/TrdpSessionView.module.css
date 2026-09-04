@@ -116,6 +116,10 @@
   min-width: 760px;
   border-collapse: separate;
   border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--glass-card-fill) 72%, transparent);
 }
 
 .table th {
