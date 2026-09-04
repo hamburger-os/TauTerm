@@ -92,6 +92,7 @@ type XmlElement = {
 type XmlDataset = { id: number; name: string; elements: XmlElement[] };
 type XmlTelegram = {
   name: string;
+  traffic_kind: "pd" | "md";
   com_id: number;
   dataset_id: number;
   cycle_us?: number;
@@ -661,6 +662,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       const known = new Set(prev.map(item => `${item.comId}:${item.destination}`));
       const additions: TrdpObject[] = [];
       for (const telegram of xmlImport.telegrams) {
+        if (telegram.traffic_kind !== "pd") continue;
         for (const destination of telegram.destinations.length ? telegram.destinations : ["0.0.0.0"]) {
           if (known.has(`${telegram.com_id}:${destination}`)) continue;
           const item = createObject("pd_subscriber", additions.length + 1);
@@ -838,8 +840,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 <strong>Import Preview</strong>
                 <div>{xmlImport.datasets.length} Datasets · {xmlImport.telegrams.length} Telegrams · ports {xmlImport.pd_port}/{xmlImport.md_udp_port}/{xmlImport.md_tcp_port} · SDT: {xmlImport.sdt_detected ? "Detected (not validated)" : "No configuration detected"}</div>
                 {xmlImport.warnings.map(warning => <div key={warning} style={{ marginTop: 4 }}>⚠ {warning}</div>)}
-                {mode === "node" && <button style={{ marginTop: 8 }} onClick={importTemplates}>将 Telegram 作为停止状态的订阅模板加入 Workspace</button>}
-                <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
+                {mode === "node" && <button style={{ marginTop: 8 }} onClick={importTemplates}>将 PD Telegram 作为停止状态的 Subscriber 模板加入 Workspace</button>}
+                <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
               </div>
             )}
           </div>
