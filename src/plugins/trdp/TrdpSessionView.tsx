@@ -177,6 +177,15 @@ function paramNumber(params: Record<string, unknown> | undefined, key: string, f
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function isIpv4Text(value: string) {
+  const parts = value.split(".");
+  return parts.length === 4 && parts.every(part => {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const octet = Number(part);
+    return octet >= 0 && octet <= 255;
+  });
+}
+
 function hexPreview(value?: string) {
   if (!value) return "—";
   return value.length > 72 ? `${value.slice(0, 72)}…` : value;
@@ -680,13 +689,16 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       const additions: TrdpObject[] = [];
       for (const telegram of xmlImport.telegrams) {
         if (telegram.traffic_kind !== "pd") continue;
-        for (const destination of telegram.destinations.length ? telegram.destinations : ["0.0.0.0"]) {
+        const ipv4Destinations = telegram.destinations.filter(isIpv4Text);
+        const templateDestinations = ipv4Destinations.length > 0 ? ipv4Destinations : ["0.0.0.0"];
+        const source = telegram.sources.find(isIpv4Text) ?? "0.0.0.0";
+        for (const destination of templateDestinations) {
           if (known.has(`${telegram.com_id}:${destination}`)) continue;
           const item = createObject("pd_subscriber", additions.length + 1);
           item.name = `${telegram.name} (imported template)`;
           item.comId = telegram.com_id;
           item.destination = destination;
-          item.source = telegram.sources[0] ?? "0.0.0.0";
+          item.source = source;
           if (telegram.timeout_us === undefined || telegram.timeout_us === 0) {
             item.timeoutMode = "disabled";
           } else {
