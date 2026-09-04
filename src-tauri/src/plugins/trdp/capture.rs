@@ -144,7 +144,10 @@ fn uuid_text(data: &[u8]) -> Option<String> {
 }
 
 fn fixed_text(data: &[u8]) -> Option<String> {
-    let end = data.iter().position(|byte| *byte == 0).unwrap_or(data.len());
+    let end = data
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(data.len());
     let value = String::from_utf8_lossy(&data[..end]).trim().to_string();
     (!value.is_empty()).then_some(value)
 }
