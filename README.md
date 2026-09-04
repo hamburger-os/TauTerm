@@ -43,6 +43,7 @@ TauTerm is intentionally **local-first**: core engineering workflows should rema
 | Server access | SSH terminal + SFTP in one authenticated connection |
 | Embedded bring-up | Serial RS-232/485, Text/HEX/Dual views, X/Y/ZModem |
 | Network debugging | TCP/UDP client & server, TFTP, Telnet, iPerf |
+| Railway / industrial TRDP | Active Node roles + passive live/offline Monitor |
 | Repetitive-task automation | Per-session Lua 5.4 scripting and auto-reply rules |
 | One consistent workspace | Unified sessions, logging, command palette and shortcuts |
 | Room to extend | A protocol-oriented microkernel/plugin architecture |
@@ -79,6 +80,12 @@ On Windows, TauTerm can bridge a serial session through bundled com0com virtual 
 
 Run TCP client/server and UDP client/server workflows in the same app, including peer selection, per-peer statistics, Text/HEX inspection and scripted sending. TFTP, Telnet and iPerf2/iPerf3 complement the same network-debugging workspace.
 
+### TRDP Node and Monitor
+
+TRDP is a first-party custom session for railway/industrial debugging. **Node** sessions can combine PD Publisher, PD Subscriber, PD Request, MD Notify, MD Request and MD Listener/Replier roles. **Monitor** sessions provide passive one/two-interface live capture plus offline pcap/pcapng inspection, including A/B link provenance and MD/TCP stream reassembly.
+
+TCNOpen TRDP 3.0.0.0 is vendored as MPL-2.0 source and built into a separate TauTerm sidecar. Windows live capture uses a separately installed Npcap; Linux/macOS use the system libpcap. Offline capture analysis does not require either capture runtime. See [TRDP Sessions](docs/TRDP.md).
+
 ---
 
 ## Highlights
@@ -87,6 +94,7 @@ Run TCP client/server and UDP client/server workflows in the same app, including
 
 - **SSH + SFTP in one session** — terminal and file transfer share a single authenticated connection.
 - **Network Debug (TCP/UDP)** — TCP client/server and UDP client/server with multi-peer handling, target selection and statistics.
+- **TRDP Node + Monitor** — PD/MD active roles, XML/Dataset tooling, raw HEX/structured payload editing, live/offline capture and pcapng export.
 - **TFTP** — client/server workflows with RFC 7440 windowing, CRC32 verification and retry controls.
 - **Telnet** — RFC 854 negotiation, live window-size sync and keepalive.
 - **iPerf2 / iPerf3** — TCP/UDP testing, bidirectional modes, live rate curves and history.
@@ -127,7 +135,7 @@ TFTP configurations that listen beyond the local machine while allowing remote w
 | **iPerf2 / iPerf3** | ✅ | custom | network benchmark |
 | **Network Debug** (TCP/UDP) | ✅ | custom | client + server |
 | **Local Shell** (PTY) | ✅ | terminal | native PTY |
-| **TRDP** | 📋 planned | industrial analysis | first-party strategic protocol |
+| **TRDP** | ✅ | custom | Node (PD/MD) + passive Monitor |
 
 Future protocols are not added to the core roadmap simply to grow this table. Where possible, additional protocols should use the plugin/extension model unless they create clear workflow or industrial value.
 
@@ -141,17 +149,23 @@ Download the newest **x64 NSIS installer** from [GitHub Releases](https://github
 
 The installer bundles the open-source [com0com](https://com0com.sourceforge.net/) virtual serial driver so the virtual COM bridge can work out of the box. com0com remains a separate GPL component. Windows ARM64 and MSI are not current release targets. Builds are not yet Authenticode-signed, so SmartScreen may warn on first install.
 
+TRDP Node works from the bundled TCNOpen sidecar. TRDP **live Monitor** additionally requires a user-installed Npcap; TauTerm does not redistribute Npcap. Offline pcap/pcapng inspection does not require it.
+
 ### Linux
 
 Choose the x86_64 `.deb`, `.rpm` or `.AppImage` from [GitHub Releases](https://github.com/hamburger-os/TauTerm/releases). Release artifacts use Ubuntu 22.04 as the Linux build baseline.
 
 The Linux virtual serial bridge is implemented with an in-process POSIX PTY and does not require `socat` or another helper process.
 
+TRDP live Monitor dynamically loads the system libpcap; install libpcap if it is not already available. Offline pcap/pcapng inspection does not require libpcap.
+
 ### macOS
 
 Download the **Apple Silicon** `.dmg` / updater app archive from [GitHub Releases](https://github.com/hamburger-os/TauTerm/releases). macOS Intel is not a current release target.
 
 macOS remains a **tech preview** and is not yet notarized, so Gatekeeper may require a one-time right-click → Open.
+
+TRDP live Monitor dynamically loads the system libpcap; offline pcap/pcapng inspection does not require libpcap.
 
 See [Supported Platforms](docs/SUPPORTED_PLATFORMS.md) for the exact architecture, package and signing matrix.
 
@@ -217,5 +231,7 @@ TauTerm is available under either the **MIT License** or **Apache License 2.0**,
 The open-source license applies to this repository. The product strategy allows future optional commercial modules, services or first-party hardware to use separate commercial terms without reducing the usefulness of the open-source core.
 
 The Windows installer bundles [com0com](https://com0com.sourceforge.net/) as a separate third-party GPL component; its license is unaffected by TauTerm's dual licensing.
+
+TRDP uses vendored **TCNOpen TRDP 3.0.0.0** source under MPL-2.0. The MPL-covered upstream files remain separate from TauTerm-owned MIT OR Apache-2.0 code; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and [docs/TRDP.md](docs/TRDP.md).
 
 <p align="center"><strong>TauTerm — one terminal for the server room and the lab bench.</strong></p>
