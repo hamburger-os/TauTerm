@@ -164,7 +164,7 @@ stateDiagram-v2
 |------|--------|---------|------|
 | **Sync** | `std::thread` | Serial, Telnet, Local Shell | 低延迟，无 runtime 开销（阻塞式通道 API；串口支持 Inline 传输 `try_handoff`） |
 | **Async** | `tokio` | SSH | 高并发，线程安全（russh 纯 Rust async SSH 库，SFTP 与终端 I/O 并发复用同一会话） |
-| **Headless** | 无 I/O loop | TFTP, iPerf | 容器会话模式 — `ProtocolConnection.channel = None`，不创建 I/O loop/StatsCollector/CommHandle，所有数据传输通过 `SideChannel` 在独立线程中完成 |
+| **Headless** | 无终端 I/O loop | TFTP, iPerf, TRDP | 容器会话模式 — `ProtocolConnection.channel = None`，不创建终端 I/O loop；协议自己的 SideChannel/native runtime 驱动数据与事件 |
 
 ### Local Shell PTY 与断连语义
 
@@ -200,6 +200,36 @@ PTY 的阻塞读取由专用线程隔离，再通过有界通道送入同步 I/O
 
 > 标准依据：RFC 4254 Channel Mechanism——一个连接承载多个动态开/关的通道。`SubConnection` 由此泛化为通用对端注册 API，SSH 子通道与网络对端共用同一骨架。
 
+### TRDP 容器会话与 native sidecar
+
+TRDP 使用 Headless 容器会话，但与 TFTP/iPerf 的纯 Rust SideChannel 不同：`TrdpSideChannel` 管理一个独立的 `tauterm-trdp-bridge` 进程。这样 TCNOpen 的 C 运行时、VOS 线程/socket 生命周期与 Tauri 主进程隔离，同时仍通过统一 SessionStore 管理会话身份和关闭语义。
+
+运行链路：
+
+```mermaid
+graph LR
+    UI[TRDP custom view] -->|trdp_command JSON| Rust[Rust TRDP plugin]
+    Rust -->|stdin JSON lines| Bridge[tauterm-trdp-bridge]
+    Bridge --> TCN[vendored TCNOpen 3.0.0.0]
+    TCN --> NET[PD UDP / MD UDP+TCP]
+    Bridge -->|stdout JSON events| Rust
+    Rust -->|trdp-event| UI
+    Rust --> XML[XML / Dataset encode-decode]
+    Rust --> PCAP[Offline pcap/pcapng parser-writer]
+    Bridge --> PCAPLIVE[dynamic Npcap/libpcap live capture]
+```
+
+- **Node**：每个启用的 TauTerm Link（A/B）对应一个 TCNOpen Application Session；一个 TauTerm Node 可以同时承载 PD Publisher/Subscriber/Request 与 MD Notify/Request/Listener-Replier。
+- **Monitor**：不初始化 TCNOpen Node session；live capture 由 sidecar 动态加载 Npcap/libpcap，offline pcap/pcapng 由 Rust 解析。
+- **A/B 与 redundancy 分离**：Link A/B 是物理/抓包接口选择；`redId` 与 Leader/Follower 是 TRDP redundancy 属性，不存在 A=Leader/B=Follower 的隐式映射。
+- **事件一致性**：前端对象状态只根据 native `ack` 事件进入 Running/Stopped，stdin 写入成功本身不代表 TCNOpen object 已成功创建。
+- **Sidecar 打包**：基础 `tauri.conf.json` 通过 `bundle.externalBin` 声明 helper；`beforeBundleCommand` 从 vendored TCNOpen 构建并按 target triple staging。运行时优先从 Tauri resource directory 查找 sidecar。
+- **源码边界**：`src-tauri/vendor/tcnopen/**` 保持 MPL-2.0 上游文件；TauTerm 自有 Rust/TS/C bridge/CMake 继续 MIT OR Apache-2.0。
+
+Dataset Structured Editor 始终把 raw HEX 作为最终 wire truth source。SDT 只检测/保留元数据与 raw payload，不执行 SDTv2/SDTv4 safety validation，也不构成任何安全认证。
+
+用户与开发者使用说明见 [TRDP.md](TRDP.md)。
+
 ### 传输子系统
 
 根据会话协议自动选择传输策略：
@@ -220,9 +250,9 @@ graph TD
 
 | content_type | 渲染器 | 典型插件 |
 |-------------|--------|---------|
-| `terminal` | xterm.js 实例池（CSS opacity 切换） | Serial, SSH, Telnet, TRDP, Shell Local |
+| `terminal` | xterm.js 实例池（CSS opacity 切换） | Serial, SSH, Telnet, Shell Local |
 | `file_browser` | 双栏文件树 + 传输进度 | FTP, NFS |
-| `custom` | 插件自定义组件 | TFTP, iPerf2/iPerf3, 网络调试, 任意 |
+| `custom` | 插件自定义组件 | TFTP, iPerf2/iPerf3, 网络调试, TRDP, 任意 |
 
 ---
 
@@ -242,7 +272,7 @@ graph LR
 
 - **凭据运行时语义**: `CredentialStore` 通过 `keyring::Entry::store_status()` 检测 OS 安全存储；可用时凭据与索引写入 Windows Credential Manager、macOS Keychain 或 Linux Secret Service。不可用时使用应用数据目录中的 `credentials.vault.json`，由 10 个字符以上主密码派生 Argon2id 密钥（64 MiB、3 次迭代、1 lane），再以 AES-256-GCM 认证加密；vault 密钥只保存在进程内，调用 lock 或进程退出即失效。SSH 连接表单没有自动写入凭据存储。
 - **主机密钥验证**: SSH `known_hosts` 管理，首次连接指纹确认，密钥变更安全警告
-- **TLS 证书固定**: TRDP / Telnet TLS 连接证书校验（规划中）
+- **TRDP 安全边界**: 当前实现使用标准 PD UDP 与 MD UDP/TCP；不提供 SDTv2/SDTv4 safety validation，也不声称 safety certification。未来任何安全传输/证书信任模型都必须作为显式能力设计，而不能由普通 TRDP session 隐式推断。
 - **日志脱敏**: 自动过滤密码、私钥、Token，输出 `[REDACTED]`
 - **代理转发控制**: SSH Agent Forwarding 默认禁用，需要显式确认
 - **最小权限模型（Windows 虚拟串口）**: 主程序以 `asInvoker`（普通用户）运行，特权 com0com 操作委托给 `LocalSystem` 服务 `TauTermService`；命名管道采用 SDDL 安全描述符，并通过 `GetNamedPipeClientProcessId` + `QueryFullProcessImageNameW` 校验调用方必须为安装目录中的 `tauterm.exe`，且只接受固定窄操作集（不透传任意 `setupc` 参数）。服务模式不写入磁盘状态，端口资源按驱动真实状态与客户端连接生命周期清理；开发/便携场景服务不可用时回退到按需 UAC。
@@ -263,7 +293,7 @@ graph LR
 | 样式方案 | CSS Modules + CSS 自定义属性 |
 | 安全存储 | OS keyring；不可用时 Argon2id + AES-256-GCM vault |
 | 自动更新 | tauri-plugin-updater + tauri-plugin-process |
-| 网络协议 | russh (纯 Rust async SSH) + russh-sftp + telnet (RFC 854) + tftpd + riperf3（vendored fork，iperf3，见 src-tauri/vendor/riperf3/VENDOR-NOTES.md）|
+| 网络协议 | russh + russh-sftp + telnet (RFC 854) + tftpd + riperf3（vendored fork）+ TCNOpen TRDP 3.0.0.0（vendored MPL-2.0 source + native sidecar） |
 | 本地终端 | portable-pty（Windows ConPTY / Unix PTY） |
 | 脚本引擎 | mlua 0.10 (Lua 5.4, vendored) |
 | 正则引擎 | regex 1 |
@@ -339,8 +369,16 @@ TauTerm/
 │       ├── local_shell/         # 本地 Shell 插件（ProtocolAdapter + 原生 PTY，Sync I/O）
 │       ├── tftp/               # TFTP 插件（ProtocolAdapter + TftpSideChannel，容器模式，服务端+客户端）
 │       ├── iperf/              # iPerf 插件（iperf2 自研协议引擎 + iperf3 vendored riperf3，容器模式，服务端+客户端）
-│       └── network/            # 网络调试插件（ProtocolAdapter + NetworkSideChannel，容器模式，TCP/UDP 全角色）
-│       # TRDP / FTP — 规划中
+│       ├── network/            # 网络调试插件（ProtocolAdapter + NetworkSideChannel，容器模式，TCP/UDP 全角色）
+│       └── trdp/               # TRDP Rust 插件（SideChannel、XML/Dataset、pcap/pcapng）
+│       # FTP — 规划中
+│
+├── src-tauri/native/           # TauTerm-owned TRDP C bridge + CMake
+│   ├── trdp_bridge_common.c
+│   ├── trdp_bridge_node.c
+│   ├── trdp_bridge_capture.c
+│   └── trdp_bridge_main.c
+├── src-tauri/vendor/tcnopen/   # TCNOpen TRDP 3.0.0.0 MPL-2.0 source snapshot
 │
 ├── src/                        # React 前端
 │   ├── core/                   # 内核前端 API
