@@ -55,7 +55,22 @@ function runTrdpBootstrap() {
     console.error(`❌ ERROR: TRDP bridge not produced: ${helper}`);
     process.exit(1);
   }
+
+  const targetTriple = process.env.TAURI_ENV_TARGET_TRIPLE;
+  if (!targetTriple) {
+    console.error('❌ ERROR: TAURI_ENV_TARGET_TRIPLE is unavailable in beforeBundleCommand');
+    process.exit(1);
+  }
+  const extension = windows ? '.exe' : '';
+  const sidecar = join(
+    root,
+    'src-tauri',
+    'binaries',
+    `tauterm-trdp-bridge-${targetTriple}${extension}`,
+  );
+  copyFileSync(helper, sidecar);
   console.log(`✅ Prepared TRDP bridge -> ${helper}`);
+  console.log(`✅ Prepared Tauri sidecar -> ${sidecar}`);
 }
 
 runTrdpBootstrap();
