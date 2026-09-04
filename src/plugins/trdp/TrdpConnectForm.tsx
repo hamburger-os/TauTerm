@@ -37,7 +37,11 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
     capture_interface: "",
     capture_interface_b_enabled: false,
     capture_interface_b: "",
-    capture_filter_auto: true,
+    capture_filter_auto: bool(
+      params,
+      "capture_filter_auto",
+      str(params, "capture_filter", STANDARD_CAPTURE_FILTER) === STANDARD_CAPTURE_FILTER,
+    ),
     capture_filter: STANDARD_CAPTURE_FILTER,
     ...params,
     ...next,
