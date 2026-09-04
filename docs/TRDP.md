@@ -59,7 +59,7 @@ Node and offline Monitor allow advanced custom port values. Live Monitor uses th
 
 TauTerm exposes ComID, source/destination addressing, cycle/timeout values, topology counters, redundancy settings, raw payload and decoded Dataset values when an XML schema is available.
 
-Diagnostics include the observed sequence, packet count, missed sequence estimates, interval min/average/max, jitter relative to a known publisher/XML cycle, payload size and protocol/result errors.
+Diagnostics include the observed sequence, packet count, missed sequence estimates, interval min/average/max, jitter relative to a known publisher/XML cycle, payload size and result errors. Live/offline Monitor also validates the TRDP header CRC and the compatible protocol-version byte. Topology counters are shown verbatim in Monitor; topology validity is only judged by an active Node where TCNOpen has the application-session topology context.
 
 Subscriber/PD Request timeout mode is explicit: **Auto** sends `timeout_us=0` and lets TCNOpen apply its default, while **Custom** sends the configured timeout. Timeout behavior independently chooses Keep last value or Set to zero. XML imports with an explicit timeout become Custom; XML without one remains Auto. TauTerm does not derive a universal `3 × cycle` timeout.
 
@@ -67,7 +67,7 @@ PD Request supports an independent Reply ComID and Reply IP. A zero Reply ComID 
 
 ## MD behavior
 
-Messages expose message type, ComID, source/destination, MD Session UUID, reply/user status, expected/received reply counts, timeout information and UDP/TCP transport.
+Messages expose message type, ComID, source/destination, MD Session UUID, request/reply latency, reply/user status, reply counts, timeout information, URI fields and UDP/TCP transport. An active Node can also show TCNOpen-local expected-reply/session counters. Passive Monitor derives only fields present on the wire plus observed replies for the same UUID; it does not invent expected-reply state that is absent from the MD header.
 
 Supported active workflows include:
 
