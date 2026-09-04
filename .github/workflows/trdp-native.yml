@@ -7,6 +7,9 @@ on:
       - 'src-tauri/vendor/tcnopen/**'
       - 'src-tauri/native/trdp_bridge*'
       - 'src-tauri/native/CMakeLists.txt'
+      - 'src-tauri/src/plugins/trdp.rs'
+      - 'src-tauri/src/plugins/trdp/**'
+      - 'src/plugins/trdp/**'
       - 'src-tauri/build.rs'
       - 'src-tauri/tauri.conf.json'
       - 'src-tauri/tauri.windows.conf.json'
@@ -14,6 +17,7 @@ on:
       - 'scripts/bootstrap-trdp.sh'
       - 'scripts/bootstrap-trdp.ps1'
       - 'scripts/vendor_tcnopen.py'
+      - 'scripts/stage-release.js'
       - 'tools/trdp-test-peer/**'
       - '.github/workflows/trdp-native.yml'
   workflow_dispatch:
@@ -87,9 +91,15 @@ jobs:
           export TAUTERM_TRDP_DEBUG=1
           PULL_NS_A="trdp-pull-a"
           PULL_NS_B="trdp-pull-b"
+          AB_NS_A="trdp-ab-a"
+          AB_NS_B="trdp-ab-b"
           cleanup_pull_netns() {
             sudo ip netns del "$PULL_NS_A" 2>/dev/null || true
             sudo ip netns del "$PULL_NS_B" 2>/dev/null || true
+            sudo ip netns del "$AB_NS_A" 2>/dev/null || true
+            sudo ip netns del "$AB_NS_B" 2>/dev/null || true
+            sudo ip link del trdp-ab-ha 2>/dev/null || true
+            sudo ip link del trdp-ab-hb 2>/dev/null || true
           }
           dump_logs() {
             status=$?
@@ -118,6 +128,19 @@ jobs:
           } | "$BRIDGE" >/tmp/trdp-bridge-pd.log 2>&1
           wait "$PD_PID"
           grep -q '"com_id":7001' /tmp/trdp-bridge-pd.log
+
+          "$PEER" pd-subscriber 127.0.0.2 127.0.0.2 7003 3 >/tmp/trdp-peer-pd-tx.log 2>&1 &
+          PD_TX_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-pd-pub","kind":"pd_publisher","com_id":7003,"source":"127.0.0.1","destination":"127.0.0.2","cycle_us":100000,"payload_hex":"01020304"}}'
+            sleep 2
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-pd-tx.log 2>&1
+          wait "$PD_TX_PID"
+          grep -q 'PD Pd comId=7003' /tmp/trdp-peer-pd-tx.log
+          grep -q '"command":"object_start","id":"ci-pd-pub"' /tmp/trdp-bridge-pd-tx.log
 
           # TCNOpen rejects a second 127/8 alias on Linux as a multi-home
           # mismatch because IP_PKTINFO reports loopback as 127.0.0.1. Use two
@@ -163,6 +186,46 @@ jobs:
           grep -q '"id":"ci-pd-request"' /tmp/trdp-bridge-pull.log
           cleanup_pull_netns
 
+          # Verify one TauTerm object selected for Both really transmits on two
+          # independent application sessions / physical links.
+          sudo ip netns add "$AB_NS_A"
+          sudo ip netns add "$AB_NS_B"
+          sudo ip link add trdp-ab-ha type veth peer name trdp-ab-pa
+          sudo ip link add trdp-ab-hb type veth peer name trdp-ab-pb
+          sudo ip link set trdp-ab-pa netns "$AB_NS_A"
+          sudo ip link set trdp-ab-pb netns "$AB_NS_B"
+          sudo ip addr add 10.251.0.1/24 dev trdp-ab-ha
+          sudo ip addr add 10.252.0.1/24 dev trdp-ab-hb
+          sudo ip link set trdp-ab-ha up
+          sudo ip link set trdp-ab-hb up
+          sudo ip route add 224.0.0.0/4 dev trdp-ab-ha metric 251
+          sudo ip route add 224.0.0.0/4 dev trdp-ab-hb metric 252
+          sudo ip -n "$AB_NS_A" addr add 10.251.0.2/24 dev trdp-ab-pa
+          sudo ip -n "$AB_NS_B" addr add 10.252.0.2/24 dev trdp-ab-pb
+          sudo ip -n "$AB_NS_A" link set lo up
+          sudo ip -n "$AB_NS_B" link set lo up
+          sudo ip -n "$AB_NS_A" link set trdp-ab-pa up
+          sudo ip -n "$AB_NS_B" link set trdp-ab-pb up
+          sudo ip -n "$AB_NS_A" route add 224.0.0.0/4 dev trdp-ab-pa
+          sudo ip -n "$AB_NS_B" route add 224.0.0.0/4 dev trdp-ab-pb
+
+          sudo ip netns exec "$AB_NS_A" env             ASAN_OPTIONS="$ASAN_OPTIONS"             UBSAN_OPTIONS="$UBSAN_OPTIONS"             TAUTERM_TRDP_DEBUG="$TAUTERM_TRDP_DEBUG"             "$PEER" pd-subscriber 10.251.0.2 239.255.71.4 7004 4             >/tmp/trdp-peer-ab-a.log 2>&1 &
+          AB_A_PID=$!
+          sudo ip netns exec "$AB_NS_B" env             ASAN_OPTIONS="$ASAN_OPTIONS"             UBSAN_OPTIONS="$UBSAN_OPTIONS"             TAUTERM_TRDP_DEBUG="$TAUTERM_TRDP_DEBUG"             "$PEER" pd-subscriber 10.252.0.2 239.255.71.4 7004 4             >/tmp/trdp-peer-ab-b.log 2>&1 &
+          AB_B_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"10.251.0.1","link_b_enabled":true,"link_b_ip":"10.252.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-pd-both","kind":"pd_publisher","com_id":7004,"link":"both","source":"0.0.0.0","destination":"239.255.71.4","cycle_us":100000,"payload_hex":"01020304"}}'
+            sleep 3
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-ab.log 2>&1
+          wait "$AB_A_PID"
+          wait "$AB_B_PID"
+          grep -q 'PD Pd comId=7004' /tmp/trdp-peer-ab-a.log
+          grep -q 'PD Pd comId=7004' /tmp/trdp-peer-ab-b.log
+          cleanup_pull_netns
+
           "$PEER" md-replier 127.0.0.2 0.0.0.0 7100 4 >/tmp/trdp-peer-md.log 2>&1 &
           MD_PID=$!
           sleep 0.5
@@ -175,6 +238,18 @@ jobs:
           wait "$MD_PID"
           grep -q '"msg_type":"Mp"' /tmp/trdp-bridge-md.log
 
+          "$PEER" md-replier 127.0.0.2 0.0.0.0 7104 3 >/tmp/trdp-peer-notify.log 2>&1 &
+          NOTIFY_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-md-notify","kind":"md_notify","com_id":7104,"destination":"127.0.0.2","transport":"udp","payload_hex":"01020304"}}'
+            sleep 1
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-notify.log 2>&1
+          wait "$NOTIFY_PID"
+          grep -q 'MD Mn comId=7104' /tmp/trdp-peer-notify.log
+
           "$PEER" md-replier-tcp 127.0.0.2 0.0.0.0 7101 5 >/tmp/trdp-peer-tcp.log 2>&1 &
           TCP_PID=$!
           sleep 0.5
@@ -186,6 +261,16 @@ jobs:
           } | "$BRIDGE" >/tmp/trdp-bridge-tcp.log 2>&1
           wait "$TCP_PID"
           grep -q '"msg_type":"Mp"' /tmp/trdp-bridge-tcp.log
+
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-md-reply","kind":"md_listener","com_id":7103,"destination":"0.0.0.0","response_mode":"reply","payload_hex":"544155"}}'
+            sleep 0.5
+            "$PEER" md-requester 127.0.0.2 127.0.0.1 7103 3 >/tmp/trdp-peer-reply.log 2>&1
+            sleep 0.5
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-reply.log 2>&1
+          grep -q 'MD Mp comId=7103' /tmp/trdp-peer-reply.log
 
           {
             echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
