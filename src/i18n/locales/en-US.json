@@ -91,6 +91,7 @@
     "connected": "Connected",
     "disconnected": "Disconnected",
     "connecting": "Connecting...",
+    "transferring": "Transferring",
     "noPorts": "No serial ports detected",
     "portOccupied": "Port is occupied",
     "deviceDisconnected": "Device disconnected",
