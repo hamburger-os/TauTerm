@@ -13,6 +13,7 @@ use crate::commands::ConnectSessionRequest;
 use crate::kernel::plugin_adapter::SideChannel;
 use crate::kernel::session_store::ContainerSessionCreateOptions;
 use crate::AppState;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::any::Any;
 use std::fs;
@@ -22,6 +23,12 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrdpCaptureInterface {
+    pub name: String,
+    pub description: String,
+}
 
 pub struct TrdpSideChannel {
     child: Mutex<Option<Child>>,
@@ -229,9 +236,9 @@ pub async fn connect_session_trdp(
     let side_channel = Arc::new(TrdpSideChannel::new(params.clone()));
     let session_name = name.unwrap_or_else(|| {
         if mode == "monitor" {
-            "TRDP Monitor".to_string()
+            "TRDP @ Monitor".to_string()
         } else {
-            "TRDP Node".to_string()
+            "TRDP @ Node".to_string()
         }
     });
     let session_id = {
@@ -399,6 +406,70 @@ pub fn trdp_command(
     }
     trdp.send(command)?;
     Ok(Value::Null)
+}
+
+#[tauri::command]
+pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterface>, String> {
+    let resource_dir = app.path().resource_dir().ok();
+    let bridge = TrdpSideChannel::bridge_candidates(resource_dir)
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| "TCNOpen bridge 未安装。请先构建/安装 tauterm-trdp-bridge。".to_string())?;
+
+    let mut child = Command::new(&bridge)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("启动 TRDP bridge {} 失败: {error}", bridge.display()))?;
+
+    {
+        let mut input = child.stdin.take().ok_or("TRDP bridge stdin unavailable")?;
+        input
+            .write_all(b"{\"command\":\"capture_list\"}\n{\"command\":\"shutdown\"}\n")
+            .map_err(|error| error.to_string())?;
+        input.flush().map_err(|error| error.to_string())?;
+    }
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("TRDP bridge stdout unavailable")?;
+    let reader = BufReader::new(stdout);
+    let mut interfaces: Option<Vec<TrdpCaptureInterface>> = None;
+    let mut bridge_error: Option<String> = None;
+
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        match value.get("event").and_then(Value::as_str) {
+            Some("capture_interfaces") => {
+                interfaces = Some(
+                    serde_json::from_value(
+                        value
+                            .get("interfaces")
+                            .cloned()
+                            .unwrap_or_else(|| json!([])),
+                    )
+                    .map_err(|error| error.to_string())?,
+                );
+            }
+            Some("error") => {
+                bridge_error = value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
+            }
+            _ => {}
+        }
+    }
+    let _ = child.wait();
+
+    if let Some(error) = bridge_error {
+        return Err(error);
+    }
+    interfaces.ok_or_else(|| "TRDP bridge 未返回抓包接口列表".to_string())
 }
 
 #[tauri::command]

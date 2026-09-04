@@ -40,6 +40,14 @@ struct bridge_bpf_program {
     struct bridge_bpf_insn *bf_insns;
 };
 
+struct bridge_pcap_if {
+    struct bridge_pcap_if *next;
+    char *name;
+    char *description;
+    void *addresses;
+    bpf_u_int32 flags;
+};
+
 typedef pcap_t *(*fn_pcap_open_live)(const char *, int, int, int, char *);
 typedef int (*fn_pcap_next_ex)(pcap_t *, struct bridge_pcap_pkthdr **, const unsigned char **);
 typedef void (*fn_pcap_close)(pcap_t *);
@@ -49,6 +57,8 @@ typedef void (*fn_pcap_freecode)(struct bridge_bpf_program *);
 typedef int (*fn_pcap_datalink)(pcap_t *);
 typedef void (*fn_pcap_breakloop)(pcap_t *);
 typedef const char *(*fn_pcap_geterr)(pcap_t *);
+typedef int (*fn_pcap_findalldevs)(struct bridge_pcap_if **, char *);
+typedef void (*fn_pcap_freealldevs)(struct bridge_pcap_if *);
 
 typedef struct {
     uint32_t source_ip;
@@ -81,6 +91,8 @@ static fn_pcap_freecode dyn_freecode;
 static fn_pcap_datalink dyn_datalink;
 static fn_pcap_breakloop dyn_breakloop;
 static fn_pcap_geterr dyn_geterr;
+static fn_pcap_findalldevs dyn_findalldevs;
+static fn_pcap_freealldevs dyn_freealldevs;
 static void *g_pcap_library;
 static capture_context_t g_capture[CAPTURE_COUNT];
 
@@ -122,6 +134,8 @@ static void unload_pcap(void) {
     dyn_datalink = NULL;
     dyn_breakloop = NULL;
     dyn_geterr = NULL;
+    dyn_findalldevs = NULL;
+    dyn_freealldevs = NULL;
 }
 
 static int load_pcap(void) {
@@ -159,6 +173,9 @@ static int load_pcap(void) {
 #else
     g_pcap_library = dlopen("libpcap.so.1", RTLD_NOW);
     if (g_pcap_library == NULL) {
+        g_pcap_library = dlopen("libpcap.so.0.8", RTLD_NOW);
+    }
+    if (g_pcap_library == NULL) {
         g_pcap_library = dlopen("libpcap.so", RTLD_NOW);
     }
 #endif
@@ -176,6 +193,8 @@ static int load_pcap(void) {
     dyn_datalink = (fn_pcap_datalink)dynamic_symbol("pcap_datalink");
     dyn_breakloop = (fn_pcap_breakloop)dynamic_symbol("pcap_breakloop");
     dyn_geterr = (fn_pcap_geterr)dynamic_symbol("pcap_geterr");
+    dyn_findalldevs = (fn_pcap_findalldevs)dynamic_symbol("pcap_findalldevs");
+    dyn_freealldevs = (fn_pcap_freealldevs)dynamic_symbol("pcap_freealldevs");
     if (dyn_open_live == NULL || dyn_next_ex == NULL || dyn_close == NULL
         || dyn_compile == NULL || dyn_setfilter == NULL || dyn_freecode == NULL
         || dyn_datalink == NULL) {
@@ -183,6 +202,48 @@ static int load_pcap(void) {
         return 0;
     }
     return 1;
+}
+
+void capture_list(void) {
+    char error[256] = {0};
+    struct bridge_pcap_if *devices = NULL;
+    struct bridge_pcap_if *device;
+    int first = 1;
+
+    if (!load_pcap()) {
+        bridge_emit_error("Npcap/libpcap is unavailable");
+        return;
+    }
+    if (dyn_findalldevs == NULL || dyn_freealldevs == NULL) {
+        bridge_emit_error("pcap interface enumeration is unavailable");
+        return;
+    }
+    if (dyn_findalldevs(&devices, error) != 0) {
+        bridge_emit_error(*error != '\0' ? error : "pcap_findalldevs failed");
+        return;
+    }
+
+    bridge_output_lock();
+    fputs("{\"event\":\"capture_interfaces\",\"interfaces\":[", stdout);
+    for (device = devices; device != NULL; device = device->next) {
+        if (device->name == NULL || *device->name == '\0') {
+            continue;
+        }
+        if (!first) {
+            fputc(',', stdout);
+        }
+        first = 0;
+        fputs("{\"name\":\"", stdout);
+        bridge_json_escape(stdout, device->name);
+        fputs("\",\"description\":\"", stdout);
+        bridge_json_escape(stdout, device->description != NULL ? device->description : "");
+        fputs("\"}", stdout);
+    }
+    fputs("]}\n", stdout);
+    fflush(stdout);
+    bridge_output_unlock();
+
+    dyn_freealldevs(devices);
 }
 
 static int network_offset(

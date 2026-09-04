@@ -32,6 +32,8 @@ int main(void) {
             node_md_confirm(line);
         } else if (strcmp(command, "md_abort") == 0) {
             node_md_abort(line);
+        } else if (strcmp(command, "capture_list") == 0) {
+            capture_list();
         } else if (strcmp(command, "capture_start") == 0) {
             capture_start(line);
         } else if (strcmp(command, "capture_stop") == 0) {

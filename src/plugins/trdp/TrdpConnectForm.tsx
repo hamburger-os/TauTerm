@@ -1,7 +1,15 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 import type { ConnectFormProps } from "../../core/plugin-registry";
 import Icon from "../../components/common/Icon";
 import styles from "./TrdpConnectForm.module.css";
+
+type CaptureInterface = {
+  name: string;
+  description: string;
+};
 
 const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
 
@@ -25,7 +33,32 @@ function num(params: Record<string, unknown>, key: string, fallback: number) {
 }
 
 export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) {
+  const { t } = useTranslation();
   const mode = str(params, "mode", "node") as "node" | "monitor";
+  const [captureInterfaces, setCaptureInterfaces] = useState<CaptureInterface[]>([]);
+  const [captureInterfacesLoading, setCaptureInterfacesLoading] = useState(false);
+  const [captureInterfacesError, setCaptureInterfacesError] = useState("");
+
+  useEffect(() => {
+    if (mode !== "monitor") return;
+    let cancelled = false;
+    setCaptureInterfacesLoading(true);
+    setCaptureInterfacesError("");
+    void invoke<CaptureInterface[]>("trdp_capture_interfaces")
+      .then(items => {
+        if (!cancelled) setCaptureInterfaces(items);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setCaptureInterfaces([]);
+          setCaptureInterfacesError(String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCaptureInterfacesLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [mode]);
   const patch = (next: Record<string, unknown>) => onChange({
     mode: "node",
     link_a_ip: "0.0.0.0",
@@ -66,7 +99,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
   const portFields = (
     <div className={styles.ports}>
       <div className={styles.field}>
-        <label className={styles.label}>PD UDP port</label>
+        <label className={styles.label}>{t("trdp.form.pdUdpPort")}</label>
         <input
           className={`${styles.numberInput} liquid-glass-input`}
           type="number"
@@ -77,7 +110,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
         />
       </div>
       <div className={styles.field}>
-        <label className={styles.label}>MD UDP port</label>
+        <label className={styles.label}>{t("trdp.form.mdUdpPort")}</label>
         <input
           className={`${styles.numberInput} liquid-glass-input`}
           type="number"
@@ -88,7 +121,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
         />
       </div>
       <div className={styles.field}>
-        <label className={styles.label}>MD TCP port</label>
+        <label className={styles.label}>{t("trdp.form.mdTcpPort")}</label>
         <input
           className={`${styles.numberInput} liquid-glass-input`}
           type="number"
@@ -104,28 +137,28 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
   return (
     <div className={styles.root}>
       <div className={styles.field}>
-        <label className={styles.label}>会话模式 / Session mode</label>
+        <label className={styles.label}>{t("trdp.form.sessionMode")}</label>
         <select
           className={`${styles.select} liquid-glass-input liquid-glass-select`}
           value={mode}
           onChange={e => patch({ mode: e.target.value })}
         >
-          <option value="node">节点 / Node — PD Publisher/Subscriber + MD</option>
-          <option value="monitor">监控 / Monitor — Passive capture & pcap analysis</option>
+          <option value="node">{t("trdp.form.nodeOption")}</option>
+          <option value="monitor">{t("trdp.form.monitorOption")}</option>
         </select>
       </div>
 
       {mode === "node" ? (
         <>
           <div className={styles.field}>
-            <label className={styles.label}>链路 A 本机 IP / Link A local IP</label>
+            <label className={styles.label}>{t("trdp.form.linkALocalIp")}</label>
             <input
               className={`${styles.input} liquid-glass-input`}
               value={str(params, "link_a_ip", "0.0.0.0")}
               onChange={e => patch({ link_a_ip: e.target.value })}
               placeholder="10.0.0.10"
             />
-            <small className={styles.hint}>建议填写具体接口 IPv4；0.0.0.0 仅用于实验环境。</small>
+            <small className={styles.hint}>{t("trdp.form.linkAHint")}</small>
           </div>
 
           <label className={`liquid-glass-toggle ${styles.toggle}`}>
@@ -135,12 +168,12 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
               onChange={e => patch({ link_b_enabled: e.target.checked })}
             />
             <div />
-            <span>启用 A/B 双链路 / Enable Link B</span>
+            <span>{t("trdp.form.enableLinkB")}</span>
           </label>
 
           {bool(params, "link_b_enabled") && (
             <div className={styles.field}>
-              <label className={styles.label}>链路 B 本机 IP / Link B local IP</label>
+              <label className={styles.label}>{t("trdp.form.linkBLocalIp")}</label>
               <input
                 className={`${styles.input} liquid-glass-input`}
                 value={str(params, "link_b_ip", "0.0.0.0")}
@@ -151,7 +184,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           )}
 
           <div className={styles.field}>
-            <label className={styles.label}>TRDP XML（可选）/ TRDP XML (optional)</label>
+            <label className={styles.label}>{t("trdp.form.xmlOptional")}</label>
             <div className={styles.pathRow}>
               <input
                 className={`${styles.input} ${styles.pathInput} liquid-glass-input`}
@@ -163,30 +196,51 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
                 type="button"
                 className={`${styles.iconButton} liquid-glass-button`}
                 onClick={() => void chooseXml()}
-                title="选择 TRDP XML / Choose TRDP XML"
-                aria-label="选择 TRDP XML / Choose TRDP XML"
+                title={t("trdp.form.chooseXml")}
+                aria-label={t("trdp.form.chooseXml")}
               >
                 <Icon name="folder" size="md" />
               </button>
             </div>
-            <small className={styles.hint}>连接后导入并预览；发送对象始终默认 Stopped。</small>
+            <small className={styles.hint}>{t("trdp.form.xmlHint")}</small>
           </div>
 
           <details className={`${styles.details} liquid-glass-card`}>
-            <summary>高级 / Advanced</summary>
+            <summary>{t("trdp.actions.advanced")}</summary>
             <div className={styles.detailsBody}>{portFields}</div>
           </details>
         </>
       ) : (
         <>
           <div className={styles.field}>
-            <label className={styles.label}>抓包接口 A / Capture interface A</label>
-            <input
-              className={`${styles.input} liquid-glass-input`}
+            <label className={styles.label}>{t("trdp.form.captureInterfaceA")}</label>
+            <select
+              className={`${styles.select} liquid-glass-input liquid-glass-select`}
               value={str(params, "capture_interface")}
-              onChange={e => patch({ capture_interface: e.target.value })}
-              placeholder="Windows: \\Device\\NPF_{GUID}; Linux/macOS: en0/eth0"
-            />
+              onChange={e => {
+                const next = e.target.value;
+                patch({
+                  capture_interface: next,
+                  ...(next && next === str(params, "capture_interface_b") ? { capture_interface_b: "" } : {}),
+                });
+              }}
+              disabled={captureInterfacesLoading}
+            >
+              <option value="">
+                {captureInterfacesLoading
+                  ? t("trdp.captureInterfaces.loading")
+                  : t("trdp.captureInterfaces.choose")}
+              </option>
+              {captureInterfaces.map(item => (
+                <option key={item.name} value={item.name}>
+                  {item.description ? `${item.description} — ${item.name}` : item.name}
+                </option>
+              ))}
+            </select>
+            {captureInterfacesError && <small className={styles.hint}>{t("trdp.captureInterfaces.error")}: {captureInterfacesError}</small>}
+            {!captureInterfacesLoading && !captureInterfacesError && captureInterfaces.length === 0 && (
+              <small className={styles.hint}>{t("trdp.captureInterfaces.empty")}</small>
+            )}
           </div>
 
           <label className={`liquid-glass-toggle ${styles.toggle}`}>
@@ -196,18 +250,31 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
               onChange={e => patch({ capture_interface_b_enabled: e.target.checked })}
             />
             <div />
-            <span>启用第二抓包接口 / Capture Link B</span>
+            <span>{t("trdp.form.captureLinkB")}</span>
           </label>
 
           {bool(params, "capture_interface_b_enabled") && (
             <div className={styles.field}>
-              <label className={styles.label}>抓包接口 B / Capture interface B</label>
-              <input
-                className={`${styles.input} liquid-glass-input`}
+              <label className={styles.label}>{t("trdp.form.captureInterfaceB")}</label>
+              <select
+                className={`${styles.select} liquid-glass-input liquid-glass-select`}
                 value={str(params, "capture_interface_b")}
                 onChange={e => patch({ capture_interface_b: e.target.value })}
-                placeholder="第二个 Npcap/libpcap device"
-              />
+                disabled={captureInterfacesLoading}
+              >
+                <option value="">
+                  {captureInterfacesLoading
+                    ? t("trdp.captureInterfaces.loading")
+                    : t("trdp.captureInterfaces.choose")}
+                </option>
+                {captureInterfaces
+                  .filter(item => item.name !== str(params, "capture_interface"))
+                  .map(item => (
+                    <option key={item.name} value={item.name}>
+                      {item.description ? `${item.description} — ${item.name}` : item.name}
+                    </option>
+                  ))}
+              </select>
             </div>
           )}
 
@@ -220,11 +287,11 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
                 : { capture_filter_auto: false, capture_filter: effectiveCaptureFilter })}
             />
             <div />
-            <span>按 PD/MD 端口自动生成过滤器 / Auto filter from ports</span>
+            <span>{t("trdp.form.autoFilter")}</span>
           </label>
 
           <div className={styles.field}>
-            <label className={styles.label}>抓包过滤器 / Capture filter</label>
+            <label className={styles.label}>{t("trdp.form.captureFilter")}</label>
             {captureFilterAuto
               ? <code className={styles.filterPreview}>{effectiveCaptureFilter}</code>
               : (
@@ -236,18 +303,18 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
               )}
             <small className={styles.hint}>
               {captureFilterAuto
-                ? "修改高级 PD/MD 端口时过滤器会自动同步。"
-                : "Custom 使用原始 libpcap/Npcap BPF 表达式。"}
+                ? t("trdp.form.autoFilterHint")
+                : t("trdp.form.customFilterHint")}
             </small>
           </div>
 
           <details className={`${styles.details} liquid-glass-card`}>
-            <summary>高级 / Advanced</summary>
+            <summary>{t("trdp.actions.advanced")}</summary>
             <div className={styles.detailsBody}>{portFields}</div>
           </details>
 
           <p className={styles.note}>
-            Windows 实时 Monitor 需要单独安装 Npcap；TauTerm 不捆绑 Npcap。离线打开 .pcap/.pcapng 不需要 Npcap。
+            {t("trdp.form.monitorNote")}
           </p>
         </>
       )}

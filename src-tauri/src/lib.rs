@@ -424,6 +424,7 @@ pub fn run() {
             commands::network_udp_send,
             commands::set_network_send_target,
             plugins::trdp::trdp_command,
+            plugins::trdp::trdp_capture_interfaces,
             plugins::trdp::trdp_open_capture,
             plugins::trdp::trdp_save_capture,
             plugins::trdp::trdp_import_xml,

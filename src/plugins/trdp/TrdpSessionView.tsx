@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
 import styles from "./TrdpSessionView.module.css";
 
@@ -157,11 +158,11 @@ type FlowRow = {
 };
 
 const nav: Array<[Page, string]> = [
-  ["overview", "概览 / Overview · TRDP Application Session"],
-  ["publishers", "发布 / Publishers · PD Publisher"],
-  ["subscribers", "订阅 / Subscribers · PD Subscriber / Request"],
-  ["messages", "消息 / Messages · MD Request / Reply / Notify"],
-  ["traffic", "流量 / Traffic · Packet Inspector"],
+  ["overview", "trdp.nav.overview"],
+  ["publishers", "trdp.nav.publishers"],
+  ["subscribers", "trdp.nav.subscribers"],
+  ["messages", "trdp.nav.messages"],
+  ["traffic", "trdp.nav.traffic"],
 ];
 
 const U32 = 0x1_0000_0000;
@@ -325,6 +326,7 @@ function draftsFromDecoded(decoded: DecodedDataset): Record<string, string> {
 }
 
 export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation();
   const { state } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = tab?.params as Record<string, unknown> | undefined;
@@ -571,7 +573,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
   async function removeObject(obj: TrdpObject) {
     if (obj.state === "running") return;
-    if (obj.kind === "pd_request") {
+    // PD Request is one-shot in the UI but TCNOpen retains a subscriber handle
+    // for its reply window. Clean that native handle only while this Node
+    // session is actually connected. Once disconnected, the side-channel and
+    // all native handles are already gone; sending object_stop would fail and
+    // incorrectly block deletion of the local object.
+    if (obj.kind === "pd_request" && tab?.state === "connected") {
       await command("object_stop", { id: obj.id, kind: obj.kind });
     }
     setObjects(prev => prev.filter(item => item.id !== obj.id));
@@ -855,7 +862,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
               ? (
                 <span className={styles.inlineControls}>
                   <select className={selectClass} value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" | "disabled" })}>
-                    <option value="auto">Auto</option><option value="custom">Custom</option><option value="disabled">Disabled</option>
+                    <option value="auto">{t("trdp.status.auto")}</option><option value="custom">{t("trdp.status.custom")}</option><option value="disabled">{t("trdp.status.disabled")}</option>
                   </select>
                   {obj.timeoutMode === "custom" && <input className={numberClass} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
                 </span>
@@ -865,26 +872,26 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         <td><input className={inputClass} value={obj.payloadHex} onChange={event => patchObject(obj.id, { payloadHex: event.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase() })} /></td>
         <td>
           <details className={styles.advancedDetails}>
-            <summary>Advanced</summary>
-            <label>Source <input className="liquid-glass-input" value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
+            <summary>{t("trdp.actions.advanced")}</summary>
+            <label>{t("trdp.advanced.source")} <input className="liquid-glass-input" value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
             <label>ETB <input className="liquid-glass-input" type="number" min={0} value={obj.etbTopoCount} onChange={event => patchObject(obj.id, { etbTopoCount: Number(event.target.value) })} /></label><br />
             <label>OpTrn <input className="liquid-glass-input" type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label><br />
-            {subscriber && <label>Timeout behavior <select className="liquid-glass-input liquid-glass-select" value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">Keep last value</option><option value="zero">Set to zero</option></select></label>}
-            {obj.kind === "pd_request" && <><br /><label>Reply ComID <input className="liquid-glass-input" type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>0 = same as request ComID</small><br /><label>Reply IP <input className="liquid-glass-input" value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>0.0.0.0 = Link local IP</small></>}
-            {obj.kind === "pd_publisher" && <><label>Red ID <input className="liquid-glass-input" type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>Red state <select className="liquid-glass-input liquid-glass-select" value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">Leader</option><option value="follower">Follower</option></select></label></>}
-            {obj.kind.startsWith("md_") && <><label>Source URI <input className="liquid-glass-input" value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>Destination URI <input className="liquid-glass-input" value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
-            {obj.kind === "md_request" && <><label>Replies <input className="liquid-glass-input" type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>Reply timeout µs <input className="liquid-glass-input" type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
-            {obj.kind === "md_listener" && <><label>Response <select className="liquid-glass-input liquid-glass-select" value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>Confirm timeout µs <input className="liquid-glass-input" type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
+            {subscriber && <label>{t("trdp.advanced.timeoutBehavior")} <select className="liquid-glass-input liquid-glass-select" value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">{t("trdp.advanced.keepLast")}</option><option value="zero">{t("trdp.advanced.setZero")}</option></select></label>}
+            {obj.kind === "pd_request" && <><br /><label>{t("trdp.advanced.replyComId")} <input className="liquid-glass-input" type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>{t("trdp.advanced.sameAsRequest")}</small><br /><label>{t("trdp.advanced.replyIp")} <input className="liquid-glass-input" value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>{t("trdp.advanced.linkLocalIp")}</small></>}
+            {obj.kind === "pd_publisher" && <><label>{t("trdp.advanced.redId")} <input className="liquid-glass-input" type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>{t("trdp.advanced.redState")} <select className="liquid-glass-input liquid-glass-select" value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">{t("trdp.advanced.leader")}</option><option value="follower">{t("trdp.advanced.follower")}</option></select></label></>}
+            {obj.kind.startsWith("md_") && <><label>{t("trdp.advanced.sourceUri")} <input className="liquid-glass-input" value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>{t("trdp.advanced.destinationUri")} <input className="liquid-glass-input" value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
+            {obj.kind === "md_request" && <><label>{t("trdp.advanced.replies")} <input className="liquid-glass-input" type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>{t("trdp.advanced.replyTimeout")} <input className="liquid-glass-input" type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
+            {obj.kind === "md_listener" && <><label>{t("trdp.advanced.response")} <select className="liquid-glass-input liquid-glass-select" value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>{t("trdp.advanced.confirmTimeout")} <input className="liquid-glass-input" type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
           </details>
         </td>
         <td>
           <span className={styles.rowActions}>
             {oneShot
-              ? <button className={styles.compactButton + " liquid-primary-button"} onClick={() => void startObject(obj)}>Send</button>
-              : <button className={styles.compactButton + " " + (obj.state === "running" ? "liquid-glass-button" : "liquid-primary-button")} onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? "Stop" : "Start"}</button>}
-            {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button className={compactClass} onClick={() => void updatePayload(obj)}>Put</button>}
-            {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button className={compactClass} onClick={() => void openStructuredEditor(obj)}>Dataset</button>}
-            <button className={compactClass} onClick={() => void removeObject(obj)} disabled={obj.state === "running"} title="Remove">×</button>
+              ? <button className={styles.compactButton + " liquid-primary-button"} onClick={() => void startObject(obj)}>{t("trdp.actions.send")}</button>
+              : <button className={styles.compactButton + " " + (obj.state === "running" ? "liquid-glass-button" : "liquid-primary-button")} onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? t("trdp.actions.stop") : t("trdp.actions.start")}</button>}
+            {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button className={compactClass} onClick={() => void updatePayload(obj)}>{t("trdp.actions.update")}</button>}
+            {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button className={compactClass} onClick={() => void openStructuredEditor(obj)}>{t("trdp.actions.dataset")}</button>}
+            <button className={compactClass} onClick={() => void removeObject(obj)} disabled={obj.state === "running"} title={t("trdp.actions.remove")}>×</button>
           </span>
         </td>
       </tr>
@@ -907,7 +914,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             className={styles.navButton + " " + (page === key ? "liquid-primary-button" : "liquid-glass-button")}
             onClick={() => setPage(key)}
           >
-            {label}
+            {t(label)}
           </button>
         ))}
       </div>
@@ -918,25 +925,25 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         {structuredEditor && structuredObject && structuredDataset && (
           <div className={styles.structuredEditor + " liquid-glass-card"}>
             <div className={styles.structuredHeader}>
-              <strong>Dataset Structured Editor · {structuredDataset.name} ({structuredDataset.id})</strong>
-              <span>Object: {structuredObject.name} · ComID {structuredObject.comId}</span>
+              <strong>{t("trdp.structured.editor")} · {structuredDataset.name} ({structuredDataset.id})</strong>
+              <span>{t("trdp.structured.object")}: {structuredObject.name} · ComID {structuredObject.comId}</span>
               <div className={styles.structuredActions}>
-                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void decodeStructuredFromHex()}>HEX → Fields</button>
-                <button className={styles.actionButton + " liquid-primary-button"} onClick={() => void applyStructuredToHex()}>Fields → HEX</button>
-                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => setStructuredEditor(null)}>Close</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void decodeStructuredFromHex()}>{t("trdp.actions.hexToFields")}</button>
+                <button className={styles.actionButton + " liquid-primary-button"} onClick={() => void applyStructuredToHex()}>{t("trdp.actions.fieldsToHex")}</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => setStructuredEditor(null)}>{t("trdp.actions.close")}</button>
               </div>
             </div>
             <div className={styles.structuredHint}>
-              每个字段输入合法 JSON 值；数组/嵌套 Dataset 使用 JSON array/object。Fields → HEX 会按 XML 类型、网络字节序及 scale/offset 编码，HEX 仍是最终 wire truth source。
+              {t("trdp.structured.hint")}
             </div>
             <table className={styles.table} style={{ marginTop: 8 }}>
-              <thead><tr><th>Field</th><th>Type</th><th>Array</th><th>Value (JSON)</th><th>Unit</th></tr></thead>
+              <thead><tr><th>{t("trdp.table.field")}</th><th>{t("trdp.table.type")}</th><th>{t("trdp.table.array")}</th><th>{t("trdp.table.valueJson")}</th><th>{t("trdp.table.unit")}</th></tr></thead>
               <tbody>
                 {structuredDataset.elements.map(element => (
                   <tr key={element.name}>
                     <td>{element.name}</td>
                     <td>{element.data_type}{element.scale !== undefined ? " ×" + element.scale : ""}{element.offset !== undefined ? " +" + element.offset : ""}</td>
-                    <td>{element.dynamic ? "dynamic" : element.array_size}</td>
+                    <td>{element.dynamic ? t("trdp.structured.dynamic") : element.array_size}</td>
                     <td>
                       <textarea
                         rows={1}
@@ -953,7 +960,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 ))}
               </tbody>
             </table>
-            <div className={styles.payload}>Payload HEX: <code>{structuredObject.payloadHex || "—"}</code></div>
+            <div className={styles.payload}>{t("trdp.structured.payloadHex")}: <code>{structuredObject.payloadHex || "—"}</code></div>
           </div>
         )}
 
@@ -965,64 +972,64 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
             <div className={styles.overviewInfo}>
               <div className={styles.infoCard + " liquid-glass-card"}>
-                <strong>Protocol</strong><br />
-                PD: UDP/{paramNumber(params, "pd_port", 17224)} · MD: UDP/{paramNumber(params, "md_udp_port", 17225)} TCP/{paramNumber(params, "md_tcp_port", 17225)} · SDTv2/SDTv4: detected only, validation out of scope
+                <strong>{t("trdp.overview.protocol")}</strong><br />
+                PD: UDP/{paramNumber(params, "pd_port", 17224)} · MD: UDP/{paramNumber(params, "md_udp_port", 17225)} TCP/{paramNumber(params, "md_tcp_port", 17225)} · SDTv2/SDTv4: {t("trdp.overview.detectedNotValidated")}
               </div>
               <div className={styles.infoCard + " liquid-glass-card"}>
-                <strong>{mode === "node" ? "Links" : "Capture interfaces"}</strong><br />
+                <strong>{mode === "node" ? t("trdp.overview.links") : t("trdp.overview.captureInterfaces")}</strong><br />
                 {mode === "node"
-                  ? <>Link A: {String(params?.link_a_ip ?? "—")} · Link B: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : "Disabled"}</>
-                  : <>Capture A: {String(params?.capture_interface ?? "—")} · Capture B: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : "Disabled"}</>}
+                  ? <>{t("trdp.overview.linkA")}: {String(params?.link_a_ip ?? "—")} · {t("trdp.overview.linkB")}: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : t("trdpSidebar.disabled")}</>
+                  : <>{t("trdp.overview.captureA")}: {String(params?.capture_interface ?? "—")} · {t("trdp.overview.captureB")}: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : t("trdpSidebar.disabled")}</>}
               </div>
               <div className={styles.infoCard + " liquid-glass-card"}>
-                <strong>发送策略 / TX policy</strong><br />
-                Publishers, PD Requests and MD Requests/Notify always require an explicit Start/Send action.
+                <strong>{t("trdp.overview.txPolicy")}</strong><br />
+                {t("trdp.overview.txPolicyText")}
               </div>
               <div className={styles.infoCard + " liquid-glass-card"}>
-                <strong>Safety</strong><br />
-                TauTerm TRDP is a diagnostic/development tool and does not perform SDT safety validation or claim safety certification.
+                <strong>{t("trdp.overview.safety")}</strong><br />
+                {t("trdp.overview.safetyText")}
               </div>
-              {workspaceName && <div className={styles.infoCard + " liquid-glass-card"}><strong>Workspace</strong><br />{workspaceName} · imported objects forced to Stopped.</div>}
+              {workspaceName && <div className={styles.infoCard + " liquid-glass-card"}><strong>{t("trdp.overview.workspace")}</strong><br />{workspaceName} · {t("trdp.overview.importedStopped")}</div>}
             </div>
 
             <div className={styles.toolbar}>
-              <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void importXml()}>导入 TRDP XML / Import XML</button>
-              {mode === "node" && <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void importWorkspace()}>导入 Workspace JSON</button>}
+              <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void importXml()}>{t("trdp.actions.importXml")}</button>
+              {mode === "node" && <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void importWorkspace()}>{t("trdp.actions.importWorkspace")}</button>}
               {mode === "monitor" && (
                 <>
-                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void openCapture()}>打开 .pcap/.pcapng</button>
-                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>保存 .pcapng</button>
-                  <button className={styles.actionButton + " liquid-primary-button"} onClick={() => void startLiveCapture()} disabled={captureRunning}>Start Live Capture</button>
-                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void command("capture_stop")} disabled={!captureRunning}>Stop Capture</button>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void openCapture()}>{t("trdp.actions.openCapture")}</button>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>{t("trdp.actions.saveCapture")}</button>
+                  <button className={styles.actionButton + " liquid-primary-button"} onClick={() => void startLiveCapture()} disabled={captureRunning}>{t("trdp.actions.startCapture")}</button>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void command("capture_stop")} disabled={!captureRunning}>{t("trdp.actions.stopCapture")}</button>
                 </>
               )}
             </div>
 
             {mode === "monitor" && (
               <div className={styles.infoCard + " liquid-glass-card"}>
-                <strong>Capture</strong><br />
-                {captureRunning ? "Running" : captureSource ? "Stopped" : "Not started"}
-                {captureSource ? <> · source {captureSource}</> : null}
-                {" · buffered frames "}{captureFrames.length}
-                {captureDroppedFrames > 0 ? <> · ⚠ {captureDroppedFrames} older live frames dropped after reaching the {LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()}-frame in-memory limit</> : null}
+                <strong>{t("trdp.overview.capture")}</strong><br />
+                {captureRunning ? t("trdp.overview.running") : captureSource ? t("trdp.overview.stopped") : t("trdp.overview.notStarted")}
+                {captureSource ? <> · {t("trdp.overview.source")} {t(`trdp.overview.${captureSource}`)}</> : null}
+                {" · "}{t("trdp.overview.bufferedFrames")} {captureFrames.length}
+                {captureDroppedFrames > 0 ? <> · ⚠ {captureDroppedFrames} {t("trdp.overview.droppedFrames")} ({LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()})</> : null}
               </div>
             )}
 
             {xmlImport && (
               <div className={styles.infoCard + " liquid-glass-card"}>
-                <strong>Import Preview</strong>
-                <div>{xmlImport.datasets.length} Datasets · {xmlImport.telegrams.length} Telegrams · ports {xmlImport.pd_port}/{xmlImport.md_udp_port}/{xmlImport.md_tcp_port} · SDT: {xmlImport.sdt_detected ? "Detected (not validated)" : "No configuration detected"}</div>
+                <strong>{t("trdp.overview.importPreview")}</strong>
+                <div>{xmlImport.datasets.length} {t("trdp.overview.datasets")} · {xmlImport.telegrams.length} {t("trdp.overview.telegrams")} · {t("trdp.overview.ports")} {xmlImport.pd_port}/{xmlImport.md_udp_port}/{xmlImport.md_tcp_port} · SDT: {xmlImport.sdt_detected ? t("trdp.overview.detectedNotValidated") : t("trdp.overview.noConfigDetected")}</div>
                 {xmlImport.warnings.map(warning => <div key={warning} style={{ marginTop: 4 }}>⚠ {warning}</div>)}
-                {mode === "node" && <button className={styles.actionButton + " liquid-glass-button"} style={{ marginTop: 8 }} onClick={importTemplates}>将 PD Telegram 作为停止状态的 Subscriber 模板加入 Workspace</button>}
+                {mode === "node" && <button className={styles.actionButton + " liquid-glass-button"} style={{ marginTop: 8 }} onClick={importTemplates}>{t("trdp.actions.importTemplates")}</button>}
                 <table className={styles.table} style={{ marginTop: 8 }}>
-                  <thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Timeout</th><th>Sources</th><th>Destinations</th></tr></thead>
+                  <thead><tr><th>{t("trdp.table.type")}</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>{t("trdp.table.cycle")}</th><th>{t("trdp.table.timeout")}</th><th>{t("trdp.table.sources")}</th><th>{t("trdp.table.destinations")}</th></tr></thead>
                   <tbody>
                     {xmlImport.telegrams.length === 0
-                      ? <tr><td colSpan={8} className={styles.emptyState}>XML 中没有可显示的 Telegram。</td></tr>
+                      ? <tr><td colSpan={8} className={styles.emptyState}>{t("trdp.empty.xmlNoTelegram")}</td></tr>
                       : xmlImport.telegrams.map(telegram => (
                         <tr key={telegram.com_id + "-" + telegram.name}>
                           <td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td>
-                          <td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? telegram.timeout_us + " µs / " + (telegram.timeout_behavior ?? "zero") : "disabled / " + (telegram.timeout_behavior ?? "zero")) : "—"}</td>
+                          <td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? telegram.timeout_us + " µs / " + t(`trdp.status.${telegram.timeout_behavior ?? "zero"}`) : t("trdp.status.disabled") + " / " + t(`trdp.status.${telegram.timeout_behavior ?? "zero"}`)) : "—"}</td>
                           <td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td>
                         </tr>
                       ))}
@@ -1036,12 +1043,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         {page === "publishers" && (
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>发布 / Publishers · PD Publisher</h2>
-              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_publisher")}>+ Publisher</button>
+              <h2 className={styles.sectionTitle}>{t("trdp.nav.publishers")}</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_publisher")}>{t("trdp.actions.addPublisher")}</button>
             </div>
             <table className={styles.table}>
-              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination</th><th>Cycle µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead>
-              <tbody>{publisherObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 Publisher，请点击右上角添加。</td></tr> : publisherObjects.map(objectEditor)}</tbody>
+              <thead><tr><th>{t("trdp.table.name")}</th><th>ComID</th><th>{t("trdp.table.link")}</th><th>{t("trdp.table.destination")}</th><th>{t("trdp.table.cycleUs")}</th><th>Payload HEX</th><th>{t("trdp.table.protocol")}</th><th>{t("trdp.table.state")}</th></tr></thead>
+              <tbody>{publisherObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>{t("trdp.empty.noPublisher")}</td></tr> : publisherObjects.map(objectEditor)}</tbody>
             </table>
           </section>
         )}
@@ -1049,20 +1056,20 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         {page === "subscribers" && (
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>订阅 / Subscribers · PD Subscriber / Request</h2>
-              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_subscriber")}>+ Subscriber</button>
-              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_request")}>+ PD Request</button>
+              <h2 className={styles.sectionTitle}>{t("trdp.nav.subscribers")}</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_subscriber")}>{t("trdp.actions.addSubscriber")}</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_request")}>{t("trdp.actions.addPdRequest")}</button>
             </div>
             <table className={styles.table}>
-              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead>
-              <tbody>{subscriberObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 Subscriber / PD Request，请点击右上角添加。</td></tr> : subscriberObjects.map(objectEditor)}</tbody>
+              <thead><tr><th>{t("trdp.table.name")}</th><th>ComID</th><th>{t("trdp.table.link")}</th><th>{t("trdp.table.multicastDestination")}</th><th>{t("trdp.table.timeout")}</th><th>Payload HEX</th><th>{t("trdp.table.protocol")}</th><th>{t("trdp.table.state")}</th></tr></thead>
+              <tbody>{subscriberObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>{t("trdp.empty.noSubscriber")}</td></tr> : subscriberObjects.map(objectEditor)}</tbody>
             </table>
-            <h3 className={styles.subheading}>Subscriber diagnostics</h3>
+            <h3 className={styles.subheading}>{t("trdp.section.subscriberDiagnostics")}</h3>
             <table className={styles.table}>
-              <thead><tr><th>Link</th><th>ComID</th><th>Packets</th><th>Missed seq</th><th>Last seq</th><th>Interval min/avg/max µs</th><th>Avg jitter µs</th><th>Errors</th></tr></thead>
+              <thead><tr><th>{t("trdp.table.link")}</th><th>ComID</th><th>{t("trdp.table.packets")}</th><th>{t("trdp.table.missedSeq")}</th><th>{t("trdp.table.lastSeq")}</th><th>{t("trdp.table.interval")}</th><th>{t("trdp.table.avgJitter")}</th><th>{t("trdp.table.errors")}</th></tr></thead>
               <tbody>
                 {subscriberFlows.length === 0
-                  ? <tr><td colSpan={8} className={styles.emptyState}>尚未收到 PD 流量。</td></tr>
+                  ? <tr><td colSpan={8} className={styles.emptyState}>{t("trdp.empty.noPdTraffic")}</td></tr>
                   : subscriberFlows.map(flow => (
                     <tr key={"diag-" + flow.key}><td>{flow.link}</td><td>{flow.comId}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td>
                       <td>{flow.minIntervalUs === undefined ? "—" : Math.round(flow.minIntervalUs) + "/" + Math.round(flow.avgIntervalUs ?? 0) + "/" + Math.round(flow.maxIntervalUs ?? 0)}</td>
@@ -1077,14 +1084,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         {page === "messages" && (
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>消息 / Messages · MD</h2>
-              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_request")}>+ Request</button>
-              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_listener")}>+ Listener/Replier</button>
-              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_notify")}>+ Notify</button>
+              <h2 className={styles.sectionTitle}>{t("trdp.nav.messages")}</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_request")}>{t("trdp.actions.addRequest")}</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_listener")}>{t("trdp.actions.addListener")}</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_notify")}>{t("trdp.actions.addNotify")}</button>
             </div>
             <table className={styles.table}>
-              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination/Filter</th><th>UDP/TCP</th><th>Payload HEX</th><th>Protocol</th><th>Action</th></tr></thead>
-              <tbody>{messageObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 MD 对象，请点击右上角添加。</td></tr> : messageObjects.map(objectEditor)}</tbody>
+              <thead><tr><th>{t("trdp.table.name")}</th><th>ComID</th><th>{t("trdp.table.link")}</th><th>{t("trdp.table.destination")}</th><th>{t("trdp.table.udpTcp")}</th><th>Payload HEX</th><th>{t("trdp.table.protocol")}</th><th>{t("trdp.table.action")}</th></tr></thead>
+              <tbody>{messageObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>{t("trdp.empty.noMdObject")}</td></tr> : messageObjects.map(objectEditor)}</tbody>
             </table>
           </section>
         )}
@@ -1092,30 +1099,30 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         {page === "traffic" && (
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h2 className={styles.sectionTitle}>流量 / Traffic · TRDP Packet Inspector</h2>
+              <h2 className={styles.sectionTitle}>{t("trdp.nav.traffic")}</h2>
               <div className={styles.toolbar}>
-                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void openCapture()}>Open capture</button>
-                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>Save pcapng</button>
-                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>Clear</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void openCapture()}>{t("trdp.actions.openCapture")}</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>{t("trdp.actions.saveCapture")}</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>{t("trdp.actions.clear")}</button>
               </div>
             </div>
 
-            <h3 className={styles.subheading}>Flows</h3>
+            <h3 className={styles.subheading}>{t("trdp.section.flows")}</h3>
             <table className={styles.table}>
-              <thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead>
+              <thead><tr><th>{t("trdp.table.link")}</th><th>{t("trdp.table.type")}</th><th>ComID</th><th>{t("trdp.table.source")}</th><th>{t("trdp.table.destination")}</th><th>{t("trdp.table.packets")}</th><th>{t("trdp.table.missed")}</th><th>{t("trdp.table.seq")}</th><th>{t("trdp.table.rateInterval")}</th><th>{t("trdp.table.size")}</th><th>{t("trdp.table.errors")}</th></tr></thead>
               <tbody>
                 {flows.length === 0
-                  ? <tr><td colSpan={11} className={styles.emptyState}>暂无流量。请打开抓包文件，或在 Monitor 模式启动实时抓包。</td></tr>
+                  ? <tr><td colSpan={11} className={styles.emptyState}>{t("trdp.empty.noTraffic")}</td></tr>
                   : flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}
               </tbody>
             </table>
 
-            <h3 className={styles.subheading}>Packets</h3>
+            <h3 className={styles.subheading}>{t("trdp.section.packets")}</h3>
             <table className={styles.table + " " + styles.monoTable}>
-              <thead><tr><th>#</th><th>Link</th><th>Type</th><th>ComID</th><th>Source → Destination</th><th>Seq</th><th>Topo ETB/Op</th><th>Len</th><th>Payload</th></tr></thead>
+              <thead><tr><th>#</th><th>{t("trdp.table.link")}</th><th>{t("trdp.table.type")}</th><th>ComID</th><th>{t("trdp.table.sourceDestination")}</th><th>{t("trdp.table.seq")}</th><th>{t("trdp.table.topo")}</th><th>{t("trdp.table.length")}</th><th>Payload</th></tr></thead>
               <tbody>
                 {packetRows.length === 0
-                  ? <tr><td colSpan={9} className={styles.emptyState}>暂无可检查的数据包。</td></tr>
+                  ? <tr><td colSpan={9} className={styles.emptyState}>{t("trdp.empty.noPackets")}</td></tr>
                   : packetRows.map((event, index) => (
                     <tr key={String(event.timestamp_us ?? 0) + "-" + index} onClick={() => void inspectPacket(event)} style={{ cursor: "pointer" }}>
                       <td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.etb_topo_count ?? "—"}/{event.op_trn_topo_count ?? "—"}</td><td>{event.data_len ?? "—"}</td><td title={event.payload_hex}>{hexPreview(event.payload_hex)}</td>
@@ -1126,24 +1133,24 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
             {selectedPacket && (
               <div className={styles.packetCard + " liquid-glass-card"}>
-                <h3>Packet Inspector</h3>
-                <div>Protocol {selectedPacket.protocol_version ?? "—"} ({selectedPacket.protocol_valid === undefined ? "not checked" : selectedPacket.protocol_valid ? "valid" : "invalid"}) · CRC {selectedPacket.crc_valid === undefined ? "not checked" : selectedPacket.crc_valid ? "valid" : "invalid"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>
-                {selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · Request/Reply latency {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button className={styles.compactButton + " liquid-glass-button"} style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}
-                {selectedPacket.md_session_id && <div>ReplyQuery {selectedPacket.num_reply_queries ?? "—"} · Confirms {selectedPacket.num_confirm_sent ?? "—"} · Confirm timeouts {selectedPacket.num_confirm_timeout ?? "—"} · Reply timeout {selectedPacket.reply_timeout_us ?? "—"} µs</div>}
+                <h3>{t("trdp.section.packetInspector")}</h3>
+                <div>{t("trdp.overview.protocol")} {selectedPacket.protocol_version ?? "—"} ({selectedPacket.protocol_valid === undefined ? t("trdp.inspector.notChecked") : selectedPacket.protocol_valid ? t("trdp.inspector.valid") : t("trdp.inspector.invalid")}) · CRC {selectedPacket.crc_valid === undefined ? t("trdp.inspector.notChecked") : selectedPacket.crc_valid ? t("trdp.inspector.valid") : t("trdp.inspector.invalid")} · {t("trdp.inspector.result")} {selectedPacket.result_code ?? "—"} · {t("trdp.inspector.replyStatus")} {selectedPacket.reply_status ?? "—"} · {t("trdp.inspector.userStatus")} {selectedPacket.user_status ?? "—"} · {t("trdp.inspector.replies")} {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>
+                {selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · {t("trdp.inspector.requestReplyLatency")} {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button className={styles.compactButton + " liquid-glass-button"} style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>{t("trdp.actions.confirm")} (Mc)</button>}</div>}
+                {selectedPacket.md_session_id && <div>{t("trdp.inspector.replyQuery")} {selectedPacket.num_reply_queries ?? "—"} · {t("trdp.inspector.confirms")} {selectedPacket.num_confirm_sent ?? "—"} · {t("trdp.inspector.confirmTimeouts")} {selectedPacket.num_confirm_timeout ?? "—"} · {t("trdp.inspector.replyTimeout")} {selectedPacket.reply_timeout_us ?? "—"} µs</div>}
                 {(selectedPacket.src_uri || selectedPacket.dest_uri) && <div>URI: <code>{selectedPacket.src_uri || "—"}</code> → <code>{selectedPacket.dest_uri || "—"}</code></div>}
-                <div className={styles.payload}>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>
+                <div className={styles.payload}>{t("trdp.inspector.rawPayload")}: <code>{selectedPacket.payload_hex || "—"}</code></div>
                 {decoded ? (
                   <>
                     <h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4>
-                    <div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div>
+                    <div>{decoded.consumed_bytes}/{decoded.payload_bytes} {t("trdp.inspector.bytesDecoded")}</div>
                     <table className={styles.table}>
-                      <thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead>
+                      <thead><tr><th>{t("trdp.table.field")}</th><th>{t("trdp.table.type")}</th><th>{t("trdp.table.value")}</th><th>{t("trdp.table.unit")}</th></tr></thead>
                       <tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody>
                     </table>
                   </>
                 ) : xmlImport && selectedPacket.com_id !== undefined
-                  ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div>
-                  : <div>Import a TRDP XML file to enable Dataset decoding.</div>}
+                  ? <div>{t("trdp.inspector.noMapping")} ComID {selectedPacket.com_id}.</div>
+                  : <div>{t("trdp.inspector.importXmlToDecode")}</div>}
               </div>
             )}
           </section>

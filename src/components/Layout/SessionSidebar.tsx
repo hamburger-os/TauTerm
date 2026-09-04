@@ -141,9 +141,18 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   }, [state.networkPeers, state.tabs]);
 
   const getSessionSubtitle = useCallback((tab: TabInfo): string => {
+    const params = (tab.params ?? {}) as Record<string, unknown>;
+    if (tab.pluginId === "iperf") {
+      const listenIp = typeof params.listen_ip === "string" && params.listen_ip.trim()
+        ? params.listen_ip.trim()
+        : "0.0.0.0";
+      const listenPort = typeof params.listen_port === "number" && Number.isFinite(params.listen_port)
+        ? params.listen_port
+        : (params.version === "iperf3" ? 5201 : 5001);
+      return `${listenIp}:${listenPort}`;
+    }
     if (tab.pluginId !== "trdp") return tab.endpoint;
 
-    const params = (tab.params ?? {}) as Record<string, unknown>;
     const mode = params.mode === "monitor" ? "monitor" : "node";
     if (mode === "monitor") {
       const interfaceA = typeof params.capture_interface === "string"
