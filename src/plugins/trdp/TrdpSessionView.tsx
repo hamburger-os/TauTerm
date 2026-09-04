@@ -718,7 +718,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     if (!event.md_session_id) return undefined;
     return events.filter(candidate =>
       candidate.md_session_id === event.md_session_id
-      && ["Mp", "Mq", "Me"].includes(candidate.msg_type ?? ""),
+      && ["Mp", "Mq"].includes(candidate.msg_type ?? ""),
     ).length;
   }
 
