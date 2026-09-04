@@ -194,7 +194,7 @@ fn decode_frame(
     if ip_header_length < 20 || frame.len() < ip + ip_header_length {
         return None;
     }
-    if be16(frame, ip + 6)? & 0x1fff != 0 {
+    if be16(frame, ip + 6)? & 0x3fff != 0 {
         return None;
     }
 
