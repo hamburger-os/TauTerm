@@ -392,8 +392,15 @@ static void *node_process_loop(void *unused)
 #endif
 {
     (void)unused;
-    while (g_node_running) {
+    for (;;) {
         int index;
+        int running;
+        bridge_mutex_lock(&g_node_mutex);
+        running = g_node_running;
+        bridge_mutex_unlock(&g_node_mutex);
+        if (!running) {
+            break;
+        }
         for (index = 0; index < 2; ++index) {
             if (g_links[index].active) {
                 TRDP_FDS_T read_fds;
@@ -1036,7 +1043,9 @@ void node_md_abort(const char *line) {
 void node_shutdown(void) {
     int index;
     if (g_node_thread_active) {
+        bridge_mutex_lock(&g_node_mutex);
         g_node_running = 0;
+        bridge_mutex_unlock(&g_node_mutex);
         bridge_thread_join(g_node_thread);
         g_node_thread_active = 0;
     }
