@@ -414,9 +414,7 @@ pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterfac
     let bridge = TrdpSideChannel::bridge_candidates(resource_dir)
         .into_iter()
         .find(|path| path.is_file())
-        .ok_or_else(|| {
-            "TCNOpen bridge 未安装。请先构建/安装 tauterm-trdp-bridge。".to_string()
-        })?;
+        .ok_or_else(|| "TCNOpen bridge 未安装。请先构建/安装 tauterm-trdp-bridge。".to_string())?;
 
     let mut child = Command::new(&bridge)
         .stdin(Stdio::piped())
@@ -433,7 +431,10 @@ pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterfac
         input.flush().map_err(|error| error.to_string())?;
     }
 
-    let stdout = child.stdout.take().ok_or("TRDP bridge stdout unavailable")?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("TRDP bridge stdout unavailable")?;
     let reader = BufReader::new(stdout);
     let mut interfaces: Option<Vec<TrdpCaptureInterface>> = None;
     let mut bridge_error: Option<String> = None;
@@ -446,7 +447,10 @@ pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterfac
             Some("capture_interfaces") => {
                 interfaces = Some(
                     serde_json::from_value(
-                        value.get("interfaces").cloned().unwrap_or_else(|| json!([])),
+                        value
+                            .get("interfaces")
+                            .cloned()
+                            .unwrap_or_else(|| json!([])),
                     )
                     .map_err(|error| error.to_string())?,
                 );
