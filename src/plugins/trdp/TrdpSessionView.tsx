@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useSession } from "../../context/SessionContext";
+import styles from "./TrdpSessionView.module.css";
 
 type Page = "overview" | "publishers" | "subscribers" | "messages" | "traffic";
 type LinkChoice = "a" | "b" | "both";
@@ -163,8 +164,6 @@ const nav: Array<[Page, string]> = [
   ["traffic", "流量 / Traffic · Packet Inspector"],
 ];
 
-const tableStyle = { width: "100%", borderCollapse: "collapse" } as const;
-const cellInputStyle = { width: "100%", minWidth: 80 } as const;
 const U32 = 0x1_0000_0000;
 const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
 const LIVE_CAPTURE_FRAME_LIMIT = 50_000;
@@ -830,79 +829,118 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const objectEditor = (obj: TrdpObject) => {
     const oneShot = isOneShotKind(obj.kind);
     const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
+    const inputClass = styles.cellInput + " liquid-glass-input";
+    const numberClass = styles.cellInput + " " + styles.cellNumber + " liquid-glass-input";
+    const selectClass = styles.cellSelect + " liquid-glass-input liquid-glass-select";
+    const compactClass = styles.compactButton + " liquid-glass-button";
+
     return (
       <tr key={obj.id}>
-        <td><input style={cellInputStyle} value={obj.name} onChange={event => patchObject(obj.id, { name: event.target.value })} /></td>
-        <td><input style={cellInputStyle} type="number" min={1} value={obj.comId} onChange={event => patchObject(obj.id, { comId: Number(event.target.value) })} /></td>
-        <td><select value={obj.link} onChange={event => patchObject(obj.id, { link: event.target.value as LinkChoice })}><option value="a">A</option><option value="b">B</option><option value="both">A+B</option></select></td>
-        <td><input style={cellInputStyle} value={obj.destination} onChange={event => patchObject(obj.id, { destination: event.target.value })} /></td>
-        <td>{obj.kind.startsWith("md_")
-          ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select>
-          : subscriber
-            ? <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                <select value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" | "disabled" })}><option value="auto">Auto</option><option value="custom">Custom</option><option value="disabled">Disabled</option></select>
-                {obj.timeoutMode === "custom" && <input style={cellInputStyle} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
-              </span>
-            : <input style={cellInputStyle} type="number" min={1} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}</td>
-        <td><input style={cellInputStyle} value={obj.payloadHex} onChange={event => patchObject(obj.id, { payloadHex: event.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase() })} /></td>
+        <td><input className={inputClass} value={obj.name} onChange={event => patchObject(obj.id, { name: event.target.value })} /></td>
+        <td><input className={numberClass} type="number" min={1} value={obj.comId} onChange={event => patchObject(obj.id, { comId: Number(event.target.value) })} /></td>
         <td>
-          <details>
+          <select className={selectClass} value={obj.link} onChange={event => patchObject(obj.id, { link: event.target.value as LinkChoice })}>
+            <option value="a">A</option><option value="b">B</option><option value="both">A+B</option>
+          </select>
+        </td>
+        <td><input className={inputClass} value={obj.destination} onChange={event => patchObject(obj.id, { destination: event.target.value })} /></td>
+        <td>
+          {obj.kind.startsWith("md_")
+            ? (
+              <select className={selectClass} value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}>
+                <option value="udp">UDP</option><option value="tcp">TCP</option>
+              </select>
+            )
+            : subscriber
+              ? (
+                <span className={styles.inlineControls}>
+                  <select className={selectClass} value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" | "disabled" })}>
+                    <option value="auto">Auto</option><option value="custom">Custom</option><option value="disabled">Disabled</option>
+                  </select>
+                  {obj.timeoutMode === "custom" && <input className={numberClass} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
+                </span>
+              )
+              : <input className={numberClass} type="number" min={1} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}
+        </td>
+        <td><input className={inputClass} value={obj.payloadHex} onChange={event => patchObject(obj.id, { payloadHex: event.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase() })} /></td>
+        <td>
+          <details className={styles.advancedDetails}>
             <summary>Advanced</summary>
-            <label>Source <input value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
-            <label>ETB <input type="number" min={0} value={obj.etbTopoCount} onChange={event => patchObject(obj.id, { etbTopoCount: Number(event.target.value) })} /></label><br />
-            <label>OpTrn <input type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label><br />
-            {subscriber && <label>Timeout behavior <select value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">Keep last value</option><option value="zero">Set to zero</option></select></label>}
-            {obj.kind === "pd_request" && <><br /><label>Reply ComID <input type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>0 = same as request ComID</small><br /><label>Reply IP <input value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>0.0.0.0 = Link local IP</small></>}
-            {obj.kind === "pd_publisher" && <><label>Red ID <input type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>Red state <select value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">Leader</option><option value="follower">Follower</option></select></label></>}
-            {obj.kind.startsWith("md_") && <><label>Source URI <input value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>Destination URI <input value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
-            {obj.kind === "md_request" && <><label>Replies <input type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>Reply timeout µs <input type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
-            {obj.kind === "md_listener" && <><label>Response <select value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>Confirm timeout µs <input type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
+            <label>Source <input className="liquid-glass-input" value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
+            <label>ETB <input className="liquid-glass-input" type="number" min={0} value={obj.etbTopoCount} onChange={event => patchObject(obj.id, { etbTopoCount: Number(event.target.value) })} /></label><br />
+            <label>OpTrn <input className="liquid-glass-input" type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label><br />
+            {subscriber && <label>Timeout behavior <select className="liquid-glass-input liquid-glass-select" value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">Keep last value</option><option value="zero">Set to zero</option></select></label>}
+            {obj.kind === "pd_request" && <><br /><label>Reply ComID <input className="liquid-glass-input" type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>0 = same as request ComID</small><br /><label>Reply IP <input className="liquid-glass-input" value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>0.0.0.0 = Link local IP</small></>}
+            {obj.kind === "pd_publisher" && <><label>Red ID <input className="liquid-glass-input" type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>Red state <select className="liquid-glass-input liquid-glass-select" value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">Leader</option><option value="follower">Follower</option></select></label></>}
+            {obj.kind.startsWith("md_") && <><label>Source URI <input className="liquid-glass-input" value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>Destination URI <input className="liquid-glass-input" value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
+            {obj.kind === "md_request" && <><label>Replies <input className="liquid-glass-input" type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>Reply timeout µs <input className="liquid-glass-input" type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
+            {obj.kind === "md_listener" && <><label>Response <select className="liquid-glass-input liquid-glass-select" value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>Confirm timeout µs <input className="liquid-glass-input" type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
           </details>
         </td>
-        <td style={{ whiteSpace: "nowrap" }}>
-          {oneShot ? <button onClick={() => void startObject(obj)}>Send</button> : <button onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? "Stop" : "Start"}</button>}
-          {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button onClick={() => void updatePayload(obj)}>Put</button>}
-          {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button onClick={() => void openStructuredEditor(obj)}>Dataset</button>}
-          <button onClick={() => void removeObject(obj)} disabled={obj.state === "running"}>×</button>
+        <td>
+          <span className={styles.rowActions}>
+            {oneShot
+              ? <button className={styles.compactButton + " liquid-primary-button"} onClick={() => void startObject(obj)}>Send</button>
+              : <button className={styles.compactButton + " " + (obj.state === "running" ? "liquid-glass-button" : "liquid-primary-button")} onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? "Stop" : "Start"}</button>}
+            {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button className={compactClass} onClick={() => void updatePayload(obj)}>Put</button>}
+            {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button className={compactClass} onClick={() => void openStructuredEditor(obj)}>Dataset</button>}
+            <button className={compactClass} onClick={() => void removeObject(obj)} disabled={obj.state === "running"} title="Remove">×</button>
+          </span>
         </td>
       </tr>
     );
   };
 
+  const visibleNav = nav.filter(([key]) => mode === "monitor" ? ["overview", "traffic"].includes(key) : true);
+  const publisherObjects = objects.filter(object => object.kind === "pd_publisher");
+  const subscriberObjects = objects.filter(object => object.kind === "pd_subscriber" || object.kind === "pd_request");
+  const messageObjects = objects.filter(object => object.kind.startsWith("md_"));
+  const subscriberFlows = flows.filter(flow => flow.msg.startsWith("P"));
+  const packetRows = events.slice().reverse().slice(0, 1000);
+
   return (
-    <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", overflow: "hidden" }}>
-      <div style={{ display: "flex", gap: 6, padding: 8, borderBottom: "1px solid var(--border-color)", overflowX: "auto" }}>
-        {nav.filter(([key]) => mode === "monitor" ? ["overview", "traffic"].includes(key) : true).map(([key, label]) => (
-          <button key={key} className={page === key ? "liquid-primary-button" : "liquid-glass-button"} onClick={() => setPage(key)}>{label}</button>
+    <div className={styles.root}>
+      <div className={styles.navBar}>
+        {visibleNav.map(([key, label]) => (
+          <button
+            key={key}
+            className={styles.navButton + " " + (page === key ? "liquid-primary-button" : "liquid-glass-button")}
+            onClick={() => setPage(key)}
+          >
+            {label}
+          </button>
         ))}
       </div>
-      <div style={{ padding: 12, overflow: "auto" }}>
-        {error && <div style={{ padding: 10, marginBottom: 12, border: "1px solid var(--danger, #d44)", borderRadius: 8 }}>{error}</div>}
+
+      <div className={styles.content}>
+        {error && <div className={styles.error}>{error}</div>}
 
         {structuredEditor && structuredObject && structuredDataset && (
-          <div className="liquid-glass-card" style={{ padding: 12, marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div className={styles.structuredEditor + " liquid-glass-card"}>
+            <div className={styles.structuredHeader}>
               <strong>Dataset Structured Editor · {structuredDataset.name} ({structuredDataset.id})</strong>
               <span>Object: {structuredObject.name} · ComID {structuredObject.comId}</span>
-              <button style={{ marginLeft: "auto" }} onClick={() => void decodeStructuredFromHex()}>HEX → Fields</button>
-              <button onClick={() => void applyStructuredToHex()}>Fields → HEX</button>
-              <button onClick={() => setStructuredEditor(null)}>Close</button>
+              <div className={styles.structuredActions}>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void decodeStructuredFromHex()}>HEX → Fields</button>
+                <button className={styles.actionButton + " liquid-primary-button"} onClick={() => void applyStructuredToHex()}>Fields → HEX</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => setStructuredEditor(null)}>Close</button>
+              </div>
             </div>
-            <div style={{ marginTop: 6, opacity: 0.8 }}>
+            <div className={styles.structuredHint}>
               每个字段输入合法 JSON 值；数组/嵌套 Dataset 使用 JSON array/object。Fields → HEX 会按 XML 类型、网络字节序及 scale/offset 编码，HEX 仍是最终 wire truth source。
             </div>
-            <table style={{ ...tableStyle, marginTop: 8 }}>
+            <table className={styles.table} style={{ marginTop: 8 }}>
               <thead><tr><th>Field</th><th>Type</th><th>Array</th><th>Value (JSON)</th><th>Unit</th></tr></thead>
               <tbody>
                 {structuredDataset.elements.map(element => (
                   <tr key={element.name}>
                     <td>{element.name}</td>
-                    <td>{element.data_type}{element.scale !== undefined ? ` ×${element.scale}` : ""}{element.offset !== undefined ? ` +${element.offset}` : ""}</td>
+                    <td>{element.data_type}{element.scale !== undefined ? " ×" + element.scale : ""}{element.offset !== undefined ? " +" + element.offset : ""}</td>
                     <td>{element.dynamic ? "dynamic" : element.array_size}</td>
                     <td>
                       <textarea
                         rows={1}
-                        style={{ width: "100%", minWidth: 220, fontFamily: "var(--font-mono)" }}
+                        className={styles.textarea + " liquid-glass-input liquid-glass-textarea"}
                         value={structuredEditor.drafts[element.name] ?? "null"}
                         onChange={event => setStructuredEditor(prev => prev ? {
                           ...prev,
@@ -915,48 +953,199 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 ))}
               </tbody>
             </table>
-            <div style={{ marginTop: 6 }}>Payload HEX: <code>{structuredObject.payloadHex || "—"}</code></div>
+            <div className={styles.payload}>Payload HEX: <code>{structuredObject.payloadHex || "—"}</code></div>
           </div>
         )}
 
         {page === "overview" && (
-          <div style={{ display: "grid", gap: 12 }}>
-            <h2>TRDP {mode === "monitor" ? "Monitor" : "Node"}</h2>
-            <div>PD: UDP/{paramNumber(params, "pd_port", 17224)} · MD: UDP/{paramNumber(params, "md_udp_port", 17225)} TCP/{paramNumber(params, "md_tcp_port", 17225)} · SDTv2/SDTv4: detected only, validation out of scope</div>
-            {mode === "node" ? <div>Link A: {String(params?.link_a_ip ?? "—")} · Link B: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : "Disabled"}</div> : <div>Capture A: {String(params?.capture_interface ?? "—")} · Capture B: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : "Disabled"}</div>}
-            <div>发送策略 / TX policy: Publishers, PD Requests and MD Requests/Notify always require an explicit Start/Send action.</div>
-            <div>Safety: TauTerm TRDP is a diagnostic/development tool and does not perform SDT safety validation or claim safety certification.</div>
-            {workspaceName && <div>Workspace: {workspaceName} · imported objects forced to Stopped.</div>}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => void importXml()}>导入 TRDP XML / Import XML</button>
-              {mode === "node" && <button onClick={() => void importWorkspace()}>导入 Workspace JSON</button>}
-              {mode === "monitor" && <><button onClick={() => void openCapture()}>打开 .pcap/.pcapng</button><button onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>保存 .pcapng</button><button onClick={() => void startLiveCapture()} disabled={captureRunning}>Start Live Capture</button><button onClick={() => void command("capture_stop")} disabled={!captureRunning}>Stop Capture</button></>}
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>TRDP {mode === "monitor" ? "Monitor" : "Node"}</h2>
             </div>
-            {mode === "monitor" && <div>Capture: {captureRunning ? "Running" : captureSource ? "Stopped" : "Not started"}{captureSource ? ` · source ${captureSource}` : ""} · buffered frames {captureFrames.length}{captureDroppedFrames > 0 ? ` · ⚠ ${captureDroppedFrames} older live frames dropped after reaching the ${LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()}-frame in-memory limit` : ""}</div>}
+
+            <div className={styles.overviewInfo}>
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>Protocol</strong><br />
+                PD: UDP/{paramNumber(params, "pd_port", 17224)} · MD: UDP/{paramNumber(params, "md_udp_port", 17225)} TCP/{paramNumber(params, "md_tcp_port", 17225)} · SDTv2/SDTv4: detected only, validation out of scope
+              </div>
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>{mode === "node" ? "Links" : "Capture interfaces"}</strong><br />
+                {mode === "node"
+                  ? <>Link A: {String(params?.link_a_ip ?? "—")} · Link B: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : "Disabled"}</>
+                  : <>Capture A: {String(params?.capture_interface ?? "—")} · Capture B: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : "Disabled"}</>}
+              </div>
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>发送策略 / TX policy</strong><br />
+                Publishers, PD Requests and MD Requests/Notify always require an explicit Start/Send action.
+              </div>
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>Safety</strong><br />
+                TauTerm TRDP is a diagnostic/development tool and does not perform SDT safety validation or claim safety certification.
+              </div>
+              {workspaceName && <div className={styles.infoCard + " liquid-glass-card"}><strong>Workspace</strong><br />{workspaceName} · imported objects forced to Stopped.</div>}
+            </div>
+
+            <div className={styles.toolbar}>
+              <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void importXml()}>导入 TRDP XML / Import XML</button>
+              {mode === "node" && <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void importWorkspace()}>导入 Workspace JSON</button>}
+              {mode === "monitor" && (
+                <>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void openCapture()}>打开 .pcap/.pcapng</button>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>保存 .pcapng</button>
+                  <button className={styles.actionButton + " liquid-primary-button"} onClick={() => void startLiveCapture()} disabled={captureRunning}>Start Live Capture</button>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void command("capture_stop")} disabled={!captureRunning}>Stop Capture</button>
+                </>
+              )}
+            </div>
+
+            {mode === "monitor" && (
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>Capture</strong><br />
+                {captureRunning ? "Running" : captureSource ? "Stopped" : "Not started"}
+                {captureSource ? <> · source {captureSource}</> : null}
+                {" · buffered frames "}{captureFrames.length}
+                {captureDroppedFrames > 0 ? <> · ⚠ {captureDroppedFrames} older live frames dropped after reaching the {LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()}-frame in-memory limit</> : null}
+              </div>
+            )}
+
             {xmlImport && (
-              <div className="liquid-glass-card" style={{ padding: 12 }}>
+              <div className={styles.infoCard + " liquid-glass-card"}>
                 <strong>Import Preview</strong>
                 <div>{xmlImport.datasets.length} Datasets · {xmlImport.telegrams.length} Telegrams · ports {xmlImport.pd_port}/{xmlImport.md_udp_port}/{xmlImport.md_tcp_port} · SDT: {xmlImport.sdt_detected ? "Detected (not validated)" : "No configuration detected"}</div>
                 {xmlImport.warnings.map(warning => <div key={warning} style={{ marginTop: 4 }}>⚠ {warning}</div>)}
-                {mode === "node" && <button style={{ marginTop: 8 }} onClick={importTemplates}>将 PD Telegram 作为停止状态的 Subscriber 模板加入 Workspace</button>}
-                <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Timeout</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? `${telegram.timeout_us} µs / ${telegram.timeout_behavior ?? "zero"}` : `disabled / ${telegram.timeout_behavior ?? "zero"}`) : "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
+                {mode === "node" && <button className={styles.actionButton + " liquid-glass-button"} style={{ marginTop: 8 }} onClick={importTemplates}>将 PD Telegram 作为停止状态的 Subscriber 模板加入 Workspace</button>}
+                <table className={styles.table} style={{ marginTop: 8 }}>
+                  <thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Timeout</th><th>Sources</th><th>Destinations</th></tr></thead>
+                  <tbody>
+                    {xmlImport.telegrams.length === 0
+                      ? <tr><td colSpan={8} className={styles.emptyState}>XML 中没有可显示的 Telegram。</td></tr>
+                      : xmlImport.telegrams.map(telegram => (
+                        <tr key={telegram.com_id + "-" + telegram.name}>
+                          <td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td>
+                          <td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? telegram.timeout_us + " µs / " + (telegram.timeout_behavior ?? "zero") : "disabled / " + (telegram.timeout_behavior ?? "zero")) : "—"}</td>
+                          <td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               </div>
             )}
-          </div>
+          </section>
         )}
 
-        {page === "publishers" && <section><div style={{ display: "flex", justifyContent: "space-between" }}><h2>发布 / Publishers · PD Publisher</h2><button onClick={() => addObject("pd_publisher")}>+ Publisher</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination</th><th>Cycle µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_publisher").map(objectEditor)}</tbody></table></section>}
-        {page === "subscribers" && <section><div style={{ display: "flex", gap: 8, alignItems: "center" }}><h2 style={{ marginRight: "auto" }}>订阅 / Subscribers · PD Subscriber / Request</h2><button onClick={() => addObject("pd_subscriber")}>+ Subscriber</button><button onClick={() => addObject("pd_request")}>+ PD Request</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_subscriber" || object.kind === "pd_request").map(objectEditor)}</tbody></table><h3>Subscriber diagnostics</h3><table style={tableStyle}><thead><tr><th>Link</th><th>ComID</th><th>Packets</th><th>Missed seq</th><th>Last seq</th><th>Interval min/avg/max µs</th><th>Avg jitter µs</th><th>Errors</th></tr></thead><tbody>{flows.filter(flow => flow.msg.startsWith("P")).map(flow => <tr key={`diag-${flow.key}`}><td>{flow.link}</td><td>{flow.comId}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.minIntervalUs === undefined ? "—" : `${Math.round(flow.minIntervalUs)}/${Math.round(flow.avgIntervalUs ?? 0)}/${Math.round(flow.maxIntervalUs ?? 0)}`}</td><td>{flow.jitterUs === undefined ? "—" : Math.round(flow.jitterUs)}</td><td>{flow.errors}</td></tr>)}</tbody></table></section>}
-        {page === "messages" && <section><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><h2 style={{ marginRight: "auto" }}>消息 / Messages · MD</h2><button onClick={() => addObject("md_request")}>+ Request</button><button onClick={() => addObject("md_listener")}>+ Listener/Replier</button><button onClick={() => addObject("md_notify")}>+ Notify</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination/Filter</th><th>UDP/TCP</th><th>Payload HEX</th><th>Protocol</th><th>Action</th></tr></thead><tbody>{objects.filter(object => object.kind.startsWith("md_")).map(objectEditor)}</tbody></table></section>}
+        {page === "publishers" && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>发布 / Publishers · PD Publisher</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_publisher")}>+ Publisher</button>
+            </div>
+            <table className={styles.table}>
+              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination</th><th>Cycle µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead>
+              <tbody>{publisherObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 Publisher，请点击右上角添加。</td></tr> : publisherObjects.map(objectEditor)}</tbody>
+            </table>
+          </section>
+        )}
+
+        {page === "subscribers" && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>订阅 / Subscribers · PD Subscriber / Request</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_subscriber")}>+ Subscriber</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_request")}>+ PD Request</button>
+            </div>
+            <table className={styles.table}>
+              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead>
+              <tbody>{subscriberObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 Subscriber / PD Request，请点击右上角添加。</td></tr> : subscriberObjects.map(objectEditor)}</tbody>
+            </table>
+            <h3 className={styles.subheading}>Subscriber diagnostics</h3>
+            <table className={styles.table}>
+              <thead><tr><th>Link</th><th>ComID</th><th>Packets</th><th>Missed seq</th><th>Last seq</th><th>Interval min/avg/max µs</th><th>Avg jitter µs</th><th>Errors</th></tr></thead>
+              <tbody>
+                {subscriberFlows.length === 0
+                  ? <tr><td colSpan={8} className={styles.emptyState}>尚未收到 PD 流量。</td></tr>
+                  : subscriberFlows.map(flow => (
+                    <tr key={"diag-" + flow.key}><td>{flow.link}</td><td>{flow.comId}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td>
+                      <td>{flow.minIntervalUs === undefined ? "—" : Math.round(flow.minIntervalUs) + "/" + Math.round(flow.avgIntervalUs ?? 0) + "/" + Math.round(flow.maxIntervalUs ?? 0)}</td>
+                      <td>{flow.jitterUs === undefined ? "—" : Math.round(flow.jitterUs)}</td><td>{flow.errors}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {page === "messages" && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>消息 / Messages · MD</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_request")}>+ Request</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_listener")}>+ Listener/Replier</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_notify")}>+ Notify</button>
+            </div>
+            <table className={styles.table}>
+              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination/Filter</th><th>UDP/TCP</th><th>Payload HEX</th><th>Protocol</th><th>Action</th></tr></thead>
+              <tbody>{messageObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 MD 对象，请点击右上角添加。</td></tr> : messageObjects.map(objectEditor)}</tbody>
+            </table>
+          </section>
+        )}
 
         {page === "traffic" && (
-          <section>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><h2>流量 / Traffic · TRDP Packet Inspector</h2><div style={{ display: "flex", gap: 8 }}><button onClick={() => void openCapture()}>Open capture</button><button onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>Save pcapng</button><button onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>Clear</button></div></div>
-            <h3>Flows</h3>
-            <table style={tableStyle}><thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead><tbody>{flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}</tbody></table>
-            <h3>Packets</h3>
-            <table style={{ ...tableStyle, fontFamily: "var(--font-mono)" }}><thead><tr><th>#</th><th>Link</th><th>Type</th><th>ComID</th><th>Source → Destination</th><th>Seq</th><th>Topo ETB/Op</th><th>Len</th><th>Payload</th></tr></thead><tbody>{events.slice().reverse().slice(0, 1000).map((event, index) => <tr key={`${event.timestamp_us ?? 0}-${index}`} onClick={() => void inspectPacket(event)} style={{ cursor: "pointer" }}><td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.etb_topo_count ?? "—"}/{event.op_trn_topo_count ?? "—"}</td><td>{event.data_len ?? "—"}</td><td title={event.payload_hex}>{hexPreview(event.payload_hex)}</td></tr>)}</tbody></table>
-            {selectedPacket && <div className="liquid-glass-card" style={{ marginTop: 12, padding: 12 }}><h3>Packet Inspector</h3><div>Protocol {selectedPacket.protocol_version ?? "—"} ({selectedPacket.protocol_valid === undefined ? "not checked" : selectedPacket.protocol_valid ? "valid" : "invalid"}) · CRC {selectedPacket.crc_valid === undefined ? "not checked" : selectedPacket.crc_valid ? "valid" : "invalid"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>{selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · Request/Reply latency {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}{selectedPacket.md_session_id && <div>ReplyQuery {selectedPacket.num_reply_queries ?? "—"} · Confirms {selectedPacket.num_confirm_sent ?? "—"} · Confirm timeouts {selectedPacket.num_confirm_timeout ?? "—"} · Reply timeout {selectedPacket.reply_timeout_us ?? "—"} µs</div>}{(selectedPacket.src_uri || selectedPacket.dest_uri) && <div>URI: <code>{selectedPacket.src_uri || "—"}</code> → <code>{selectedPacket.dest_uri || "—"}</code></div>}<div>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>{decoded ? <><h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4><div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div><table style={tableStyle}><thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead><tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></> : xmlImport && selectedPacket.com_id !== undefined ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div> : <div>Import a TRDP XML file to enable Dataset decoding.</div>}</div>}
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>流量 / Traffic · TRDP Packet Inspector</h2>
+              <div className={styles.toolbar}>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void openCapture()}>Open capture</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>Save pcapng</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>Clear</button>
+              </div>
+            </div>
+
+            <h3 className={styles.subheading}>Flows</h3>
+            <table className={styles.table}>
+              <thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead>
+              <tbody>
+                {flows.length === 0
+                  ? <tr><td colSpan={11} className={styles.emptyState}>暂无流量。请打开抓包文件，或在 Monitor 模式启动实时抓包。</td></tr>
+                  : flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}
+              </tbody>
+            </table>
+
+            <h3 className={styles.subheading}>Packets</h3>
+            <table className={styles.table + " " + styles.monoTable}>
+              <thead><tr><th>#</th><th>Link</th><th>Type</th><th>ComID</th><th>Source → Destination</th><th>Seq</th><th>Topo ETB/Op</th><th>Len</th><th>Payload</th></tr></thead>
+              <tbody>
+                {packetRows.length === 0
+                  ? <tr><td colSpan={9} className={styles.emptyState}>暂无可检查的数据包。</td></tr>
+                  : packetRows.map((event, index) => (
+                    <tr key={String(event.timestamp_us ?? 0) + "-" + index} onClick={() => void inspectPacket(event)} style={{ cursor: "pointer" }}>
+                      <td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.etb_topo_count ?? "—"}/{event.op_trn_topo_count ?? "—"}</td><td>{event.data_len ?? "—"}</td><td title={event.payload_hex}>{hexPreview(event.payload_hex)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+
+            {selectedPacket && (
+              <div className={styles.packetCard + " liquid-glass-card"}>
+                <h3>Packet Inspector</h3>
+                <div>Protocol {selectedPacket.protocol_version ?? "—"} ({selectedPacket.protocol_valid === undefined ? "not checked" : selectedPacket.protocol_valid ? "valid" : "invalid"}) · CRC {selectedPacket.crc_valid === undefined ? "not checked" : selectedPacket.crc_valid ? "valid" : "invalid"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>
+                {selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · Request/Reply latency {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button className={styles.compactButton + " liquid-glass-button"} style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}
+                {selectedPacket.md_session_id && <div>ReplyQuery {selectedPacket.num_reply_queries ?? "—"} · Confirms {selectedPacket.num_confirm_sent ?? "—"} · Confirm timeouts {selectedPacket.num_confirm_timeout ?? "—"} · Reply timeout {selectedPacket.reply_timeout_us ?? "—"} µs</div>}
+                {(selectedPacket.src_uri || selectedPacket.dest_uri) && <div>URI: <code>{selectedPacket.src_uri || "—"}</code> → <code>{selectedPacket.dest_uri || "—"}</code></div>}
+                <div className={styles.payload}>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>
+                {decoded ? (
+                  <>
+                    <h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4>
+                    <div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div>
+                    <table className={styles.table}>
+                      <thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead>
+                      <tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody>
+                    </table>
+                  </>
+                ) : xmlImport && selectedPacket.com_id !== undefined
+                  ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div>
+                  : <div>Import a TRDP XML file to enable Dataset decoding.</div>}
+              </div>
+            )}
           </section>
         )}
       </div>

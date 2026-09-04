@@ -133,7 +133,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     icon: p.manifest.icon,
     description: p.manifest.id === "local-shell"
       ? t("connectionType.localShell")
-      : (p.manifest.description || p.manifest.name),
+      : p.manifest.id === "trdp"
+        ? t("connectionType.trdp")
+        : (p.manifest.description || p.manifest.name),
   }));
 
   // 每次打开对话框时重置

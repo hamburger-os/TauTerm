@@ -9,6 +9,7 @@
     "ssh": "SSH",
     "telnet": "Telnet",
     "tftp": "TFTP",
+    "trdp": "TRDP 调试助手",
     "localShell": "本地 Shell",
     "comingSoon": "(即将推出)",
     "formNotImplemented": "插件 \"{{pluginName}}\" 的前端配置表单尚未实现，将在后续版本中提供。"
