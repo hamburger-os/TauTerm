@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useSession } from "../../context/SessionContext";
+import styles from "./TrdpSessionView.module.css";
 
 type Page = "overview" | "publishers" | "subscribers" | "messages" | "traffic";
 type LinkChoice = "a" | "b" | "both";
@@ -163,8 +164,6 @@ const nav: Array<[Page, string]> = [
   ["traffic", "流量 / Traffic · Packet Inspector"],
 ];
 
-const tableStyle = { width: "100%", borderCollapse: "collapse" } as const;
-const cellInputStyle = { width: "100%", minWidth: 80 } as const;
 const U32 = 0x1_0000_0000;
 const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
 const LIVE_CAPTURE_FRAME_LIMIT = 50_000;
@@ -830,40 +829,63 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const objectEditor = (obj: TrdpObject) => {
     const oneShot = isOneShotKind(obj.kind);
     const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
+    const inputClass = styles.cellInput + " liquid-glass-input";
+    const numberClass = styles.cellInput + " " + styles.cellNumber + " liquid-glass-input";
+    const selectClass = styles.cellSelect + " liquid-glass-input liquid-glass-select";
+    const compactClass = styles.compactButton + " liquid-glass-button";
+
     return (
       <tr key={obj.id}>
-        <td><input style={cellInputStyle} value={obj.name} onChange={event => patchObject(obj.id, { name: event.target.value })} /></td>
-        <td><input style={cellInputStyle} type="number" min={1} value={obj.comId} onChange={event => patchObject(obj.id, { comId: Number(event.target.value) })} /></td>
-        <td><select value={obj.link} onChange={event => patchObject(obj.id, { link: event.target.value as LinkChoice })}><option value="a">A</option><option value="b">B</option><option value="both">A+B</option></select></td>
-        <td><input style={cellInputStyle} value={obj.destination} onChange={event => patchObject(obj.id, { destination: event.target.value })} /></td>
-        <td>{obj.kind.startsWith("md_")
-          ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select>
-          : subscriber
-            ? <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                <select value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" | "disabled" })}><option value="auto">Auto</option><option value="custom">Custom</option><option value="disabled">Disabled</option></select>
-                {obj.timeoutMode === "custom" && <input style={cellInputStyle} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
-              </span>
-            : <input style={cellInputStyle} type="number" min={1} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}</td>
-        <td><input style={cellInputStyle} value={obj.payloadHex} onChange={event => patchObject(obj.id, { payloadHex: event.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase() })} /></td>
+        <td><input className={inputClass} value={obj.name} onChange={event => patchObject(obj.id, { name: event.target.value })} /></td>
+        <td><input className={numberClass} type="number" min={1} value={obj.comId} onChange={event => patchObject(obj.id, { comId: Number(event.target.value) })} /></td>
         <td>
-          <details>
+          <select className={selectClass} value={obj.link} onChange={event => patchObject(obj.id, { link: event.target.value as LinkChoice })}>
+            <option value="a">A</option><option value="b">B</option><option value="both">A+B</option>
+          </select>
+        </td>
+        <td><input className={inputClass} value={obj.destination} onChange={event => patchObject(obj.id, { destination: event.target.value })} /></td>
+        <td>
+          {obj.kind.startsWith("md_")
+            ? (
+              <select className={selectClass} value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}>
+                <option value="udp">UDP</option><option value="tcp">TCP</option>
+              </select>
+            )
+            : subscriber
+              ? (
+                <span className={styles.inlineControls}>
+                  <select className={selectClass} value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" | "disabled" })}>
+                    <option value="auto">Auto</option><option value="custom">Custom</option><option value="disabled">Disabled</option>
+                  </select>
+                  {obj.timeoutMode === "custom" && <input className={numberClass} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
+                </span>
+              )
+              : <input className={numberClass} type="number" min={1} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}
+        </td>
+        <td><input className={inputClass} value={obj.payloadHex} onChange={event => patchObject(obj.id, { payloadHex: event.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase() })} /></td>
+        <td>
+          <details className={styles.advancedDetails}>
             <summary>Advanced</summary>
-            <label>Source <input value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
-            <label>ETB <input type="number" min={0} value={obj.etbTopoCount} onChange={event => patchObject(obj.id, { etbTopoCount: Number(event.target.value) })} /></label><br />
-            <label>OpTrn <input type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label><br />
-            {subscriber && <label>Timeout behavior <select value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">Keep last value</option><option value="zero">Set to zero</option></select></label>}
-            {obj.kind === "pd_request" && <><br /><label>Reply ComID <input type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>0 = same as request ComID</small><br /><label>Reply IP <input value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>0.0.0.0 = Link local IP</small></>}
-            {obj.kind === "pd_publisher" && <><label>Red ID <input type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>Red state <select value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">Leader</option><option value="follower">Follower</option></select></label></>}
-            {obj.kind.startsWith("md_") && <><label>Source URI <input value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>Destination URI <input value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
-            {obj.kind === "md_request" && <><label>Replies <input type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>Reply timeout µs <input type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
-            {obj.kind === "md_listener" && <><label>Response <select value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>Confirm timeout µs <input type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
+            <label>Source <input className="liquid-glass-input" value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
+            <label>ETB <input className="liquid-glass-input" type="number" min={0} value={obj.etbTopoCount} onChange={event => patchObject(obj.id, { etbTopoCount: Number(event.target.value) })} /></label><br />
+            <label>OpTrn <input className="liquid-glass-input" type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label><br />
+            {subscriber && <label>Timeout behavior <select className="liquid-glass-input liquid-glass-select" value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">Keep last value</option><option value="zero">Set to zero</option></select></label>}
+            {obj.kind === "pd_request" && <><br /><label>Reply ComID <input className="liquid-glass-input" type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>0 = same as request ComID</small><br /><label>Reply IP <input className="liquid-glass-input" value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>0.0.0.0 = Link local IP</small></>}
+            {obj.kind === "pd_publisher" && <><label>Red ID <input className="liquid-glass-input" type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>Red state <select className="liquid-glass-input liquid-glass-select" value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">Leader</option><option value="follower">Follower</option></select></label></>}
+            {obj.kind.startsWith("md_") && <><label>Source URI <input className="liquid-glass-input" value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>Destination URI <input className="liquid-glass-input" value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
+            {obj.kind === "md_request" && <><label>Replies <input className="liquid-glass-input" type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>Reply timeout µs <input className="liquid-glass-input" type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
+            {obj.kind === "md_listener" && <><label>Response <select className="liquid-glass-input liquid-glass-select" value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>Confirm timeout µs <input className="liquid-glass-input" type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
           </details>
         </td>
-        <td style={{ whiteSpace: "nowrap" }}>
-          {oneShot ? <button onClick={() => void startObject(obj)}>Send</button> : <button onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? "Stop" : "Start"}</button>}
-          {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button onClick={() => void updatePayload(obj)}>Put</button>}
-          {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button onClick={() => void openStructuredEditor(obj)}>Dataset</button>}
-          <button onClick={() => void removeObject(obj)} disabled={obj.state === "running"}>×</button>
+        <td>
+          <span className={styles.rowActions}>
+            {oneShot
+              ? <button className={styles.compactButton + " liquid-primary-button"} onClick={() => void startObject(obj)}>Send</button>
+              : <button className={styles.compactButton + " " + (obj.state === "running" ? "liquid-glass-button" : "liquid-primary-button")} onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? "Stop" : "Start"}</button>}
+            {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button className={compactClass} onClick={() => void updatePayload(obj)}>Put</button>}
+            {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button className={compactClass} onClick={() => void openStructuredEditor(obj)}>Dataset</button>}
+            <button className={compactClass} onClick={() => void removeObject(obj)} disabled={obj.state === "running"} title="Remove">×</button>
+          </span>
         </td>
       </tr>
     );
