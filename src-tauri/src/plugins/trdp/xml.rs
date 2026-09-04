@@ -122,6 +122,8 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         .map_err(|error| error.to_string())?;
     let pd_re =
         Regex::new(r#"(?is)<pd-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let md_re =
+        Regex::new(r#"(?is)<md-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
     let source_re = Regex::new(r#"(?is)<source\s+([^>]*)"#).map_err(|error| error.to_string())?;
     let destination_re =
         Regex::new(r#"(?is)<destination\s+([^>]*)"#).map_err(|error| error.to_string())?;
@@ -207,7 +209,23 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         };
         let dataset_id = attr_u32(tag, "data-set-id").unwrap_or(0);
         let pd_parameter = pd_re.captures(body);
-        let traffic_kind = if pd_parameter.is_some() { "pd" } else { "md" };
+        let md_parameter = md_re.captures(body);
+        let traffic_kind = match (pd_parameter.is_some(), md_parameter.is_some()) {
+            (true, false) => "pd",
+            (false, true) => "md",
+            (true, true) => {
+                warnings.push(format!(
+                    "ComID {com_id} 同时包含 pd-parameter 与 md-parameter；不会自动生成模板"
+                ));
+                "ambiguous"
+            }
+            (false, false) => {
+                warnings.push(format!(
+                    "ComID {com_id} 未声明 pd-parameter/md-parameter；协议类型标记为 unknown"
+                ));
+                "unknown"
+            }
+        };
         let pd_attributes = pd_parameter
             .as_ref()
             .and_then(|value| value.get(1))
@@ -832,7 +850,7 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().expect("tempfile");
         write!(
             file,
-            r#"<device><telegram name="pd" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram><telegram name="md" com-id="2001" data-set-id="1001"><source uri1="10.0.0.1"/><destination uri="10.0.0.2"/></telegram><data-set name="demo" id="1001"><element name="counter" type="10"/></data-set></device>"#
+            r#"<device><telegram name="pd" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram><telegram name="md" com-id="2001" data-set-id="1001"><md-parameter protocol="UDP"/><source uri1="10.0.0.1"/><destination uri="10.0.0.2"/></telegram><data-set name="demo" id="1001"><element name="counter" type="10"/></data-set></device>"#
         )
         .expect("write");
         let imported = parse_xml(&file.path().to_string_lossy()).expect("import");
