@@ -216,10 +216,17 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
   if (!isKind(raw.kind)) return null;
   const base = createObject(raw.kind, index + 1);
   const link = raw.link === "b" || raw.link === "both" ? raw.link : "a";
+  const parsedTimeoutUs = Number(raw.timeout_us);
+  const hasCustomTimeout = raw.timeout_us !== undefined
+    && Number.isFinite(parsedTimeoutUs)
+    && parsedTimeoutUs > 0;
   const timeoutMode = raw.timeout_mode === "custom"
-    || (raw.timeout_mode !== "auto" && raw.timeout_us !== undefined)
     ? "custom"
-    : "auto";
+    : raw.timeout_mode === "auto"
+      ? "auto"
+      : hasCustomTimeout
+        ? "custom"
+        : "auto";
   return {
     ...base,
     id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
@@ -231,7 +238,7 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
     source: typeof raw.source === "string" ? raw.source : base.source,
     cycleUs: Number(raw.cycle_us ?? base.cycleUs),
     timeoutMode,
-    timeoutUs: Number(raw.timeout_us ?? base.timeoutUs),
+    timeoutUs: hasCustomTimeout ? parsedTimeoutUs : base.timeoutUs,
     timeoutBehavior: raw.timeout_behavior === "zero" ? "zero" : "keep",
     payloadHex: typeof raw.payload_hex === "string" ? raw.payload_hex.toUpperCase() : base.payloadHex,
     transport: raw.transport === "tcp" ? "tcp" : "udp",
@@ -663,14 +670,15 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     if (!event.md_session_id || event.timestamp_us === undefined || !["Mp", "Mq", "Me"].includes(event.msg_type ?? "")) {
       return undefined;
     }
-    const capturedRequest = events
-      .filter(candidate =>
-        candidate.md_session_id === event.md_session_id
-        && candidate.msg_type === "Mr"
-        && candidate.timestamp_us !== undefined
-        && candidate.timestamp_us <= event.timestamp_us!,
-      )
-      .at(-1);
+    const capturedRequests = events.filter(candidate =>
+      candidate.md_session_id === event.md_session_id
+      && candidate.msg_type === "Mr"
+      && candidate.timestamp_us !== undefined
+      && candidate.timestamp_us <= event.timestamp_us!,
+    );
+    const capturedRequest = capturedRequests.length > 0
+      ? capturedRequests[capturedRequests.length - 1]
+      : undefined;
     const started = capturedRequest?.timestamp_us ?? mdRequestStartedUs.current.get(event.md_session_id);
     return started === undefined || event.timestamp_us < started ? undefined : event.timestamp_us - started;
   }
