@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Protocols
-- **TRDP Node + Monitor** — adds a first-party custom TRDP session backed by TCNOpen 3.0.0.0. Node sessions can combine PD Publisher/Subscriber/Request and MD Notify/Request/Listener-Replier roles, including MD UDP/TCP Reply/ReplyQuery/Confirm flows, A/B link selection, topology/redundancy metadata, diagnostics and explicit start/stop semantics.
+- **TRDP Node + Monitor** — adds a first-party custom TRDP session backed by TCNOpen 3.0.0.0. Node sessions can combine PD Publisher/Subscriber/Request and MD Notify/Request/Listener-Replier roles, including MD UDP/TCP Reply/ReplyQuery/Confirm flows, A/B link selection, topology/redundancy metadata and diagnostics. PD Request/MD Request/MD Notify use one-shot Send semantics; persistent objects use explicit Start/Stop. Subscriber/PD Request timeout is explicit Auto/Custom rather than a hard-coded cycle multiplier.
 - **TRDP XML, Dataset and capture tooling** — imports TCNOpen-style XML, maps ComID to Dataset definitions, decodes/encodes structured payload fields while keeping raw HEX as the wire truth source, opens pcap/pcapng, performs live one/two-interface Monitor capture with MD/TCP stream reassembly and saves pcapng with A/B provenance preserved.
 - **TRDP safety boundary** — detects/preserves SDT-related metadata/raw traffic but intentionally does not validate SDTv2/SDTv4 safety semantics or claim safety certification.
 
