@@ -226,7 +226,7 @@ static int network_offset(
         return 1;
     }
     if (linktype == LINKTYPE_NULL) {
-        if (length < 4u || (frame[4] >> 4) != 4u) {
+        if (length < 5u || (frame[4] >> 4) != 4u) {
             return 0;
         }
         *offset = 4u;
