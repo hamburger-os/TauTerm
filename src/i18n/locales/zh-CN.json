@@ -1112,7 +1112,10 @@
       "array": "数组",
       "valueJson": "值 (JSON)",
       "unit": "单位",
-      "value": "值"
+      "value": "值",
+      "cycle": "周期",
+      "sources": "源",
+      "destinations": "目标"
     },
     "section": {
       "subscriberDiagnostics": "Subscriber 诊断",
@@ -1149,7 +1152,11 @@
       "ports": "端口",
       "detectedNotValidated": "已检测（未验证）",
       "noConfigDetected": "未检测到配置",
-      "importedStopped": "导入对象已强制设为 Stopped。"
+      "importedStopped": "导入对象已强制设为 Stopped。",
+      "txPolicyText": "Publisher、PD Request 与 MD Request/Notify 始终需要显式点击启动/发送。",
+      "safetyText": "TauTerm TRDP 是诊断/开发工具，不执行 SDT 安全验证，也不声明安全认证。",
+      "live": "实时",
+      "offline": "离线"
     },
     "inspector": {
       "notChecked": "未检查",
@@ -1166,7 +1173,8 @@
       "replyTimeout": "Reply 超时",
       "rawPayload": "原始 Payload",
       "noMapping": "没有对应的 Dataset 映射或可解码 Payload。",
-      "importXmlToDecode": "导入 TRDP XML 文件以启用 Dataset 解码。"
+      "importXmlToDecode": "导入 TRDP XML 文件以启用 Dataset 解码。",
+      "bytesDecoded": "字节已解码"
     },
     "advanced": {
       "source": "源",
@@ -1190,7 +1198,10 @@
     },
     "structured": {
       "hint": "每个字段输入合法 JSON 值；数组/嵌套 Dataset 使用 JSON array/object。字段 → HEX 会按 XML 类型、网络字节序及 scale/offset 编码，HEX 仍是最终 wire truth source。",
-      "payloadHex": "Payload HEX"
+      "payloadHex": "Payload HEX",
+      "editor": "Dataset 结构化编辑器",
+      "object": "对象",
+      "dynamic": "动态"
     },
     "status": {
       "auto": "自动",
