@@ -554,6 +554,8 @@ static void process_frame(
     size_t ip_offset;
     size_t ip_header_length;
     size_t transport_offset;
+    size_t ip_total_length;
+    size_t ip_end;
     uint16_t fragment;
     uint32_t source_ip;
     uint32_t destination_ip;
@@ -569,9 +571,13 @@ static void process_frame(
         return;
     }
     ip_header_length = (size_t)(frame[ip_offset] & 0x0fu) * 4u;
-    if (ip_header_length < 20u || (size_t)header->caplen < ip_offset + ip_header_length) {
+    ip_total_length = (size_t)read_be16(frame + ip_offset + 2u);
+    if (ip_header_length < 20u
+        || ip_total_length < ip_header_length
+        || (size_t)header->caplen < ip_offset + ip_total_length) {
         return;
     }
+    ip_end = ip_offset + ip_total_length;
     fragment = read_be16(frame + ip_offset + 6u);
     if ((fragment & 0x3fffu) != 0u) {
         return;
@@ -586,17 +592,17 @@ static void process_frame(
         uint16_t destination_port;
         size_t trdp_offset;
         size_t udp_length;
-        if ((size_t)header->caplen < transport_offset + 8u) {
+        if (transport_offset + 8u > ip_end) {
             return;
         }
         source_port = read_be16(frame + transport_offset);
         destination_port = read_be16(frame + transport_offset + 2u);
         udp_length = (size_t)read_be16(frame + transport_offset + 4u);
-        if (udp_length < 8u) {
+        if (udp_length < 8u || transport_offset + udp_length > ip_end) {
             return;
         }
         trdp_offset = transport_offset + 8u;
-        if ((size_t)header->caplen <= trdp_offset) {
+        if (transport_offset + udp_length <= trdp_offset) {
             return;
         }
         emit_trdp(
@@ -609,7 +615,7 @@ static void process_frame(
             destination_port,
             "udp",
             frame + trdp_offset,
-            (size_t)header->caplen - trdp_offset
+            transport_offset + udp_length - trdp_offset
         );
     } else if (protocol == 6u) {
         size_t tcp_header_length;
@@ -618,11 +624,11 @@ static void process_frame(
         uint16_t destination_port;
         uint32_t sequence;
         unsigned char flags;
-        if ((size_t)header->caplen < transport_offset + 20u) {
+        if (transport_offset + 20u > ip_end) {
             return;
         }
         tcp_header_length = (size_t)(frame[transport_offset + 12u] >> 4) * 4u;
-        if (tcp_header_length < 20u || (size_t)header->caplen < transport_offset + tcp_header_length) {
+        if (tcp_header_length < 20u || transport_offset + tcp_header_length > ip_end) {
             return;
         }
         source_port = read_be16(frame + transport_offset);
@@ -641,7 +647,7 @@ static void process_frame(
             sequence,
             flags,
             frame + payload_offset,
-            (size_t)header->caplen - payload_offset
+            ip_end - payload_offset
         );
     }
 }
