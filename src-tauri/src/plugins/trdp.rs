@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 pub struct TrdpSideChannel {
     child: Mutex<Option<Child>>,
@@ -38,7 +38,7 @@ impl TrdpSideChannel {
         }
     }
 
-    fn bridge_candidates(params: &Value) -> Vec<PathBuf> {
+    fn bridge_candidates(params: &Value, resource_dir: Option<PathBuf>) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
         if let Some(path) = params
             .get("bridge_path")
@@ -53,6 +53,10 @@ impl TrdpSideChannel {
         } else {
             "tauterm-trdp-bridge"
         };
+        if let Some(directory) = resource_dir {
+            candidates.push(directory.join(executable));
+            candidates.push(directory.join("binaries").join(executable));
+        }
         if let Ok(current_exe) = std::env::current_exe() {
             if let Some(directory) = current_exe.parent() {
                 candidates.push(directory.join(executable));
@@ -81,7 +85,8 @@ impl TrdpSideChannel {
             .lock()
             .map_err(|error| error.to_string())?
             .clone();
-        let bridge = Self::bridge_candidates(&params)
+        let resource_dir = app.path().resource_dir().ok();
+        let bridge = Self::bridge_candidates(&params, resource_dir)
             .into_iter()
             .find(|path| path.is_file())
             .ok_or_else(|| {
