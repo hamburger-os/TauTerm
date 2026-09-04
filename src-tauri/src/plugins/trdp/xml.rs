@@ -122,9 +122,9 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
     let telegram_re = Regex::new(r#"(?is)<telegram\s+([^>]*)>(.*?)</telegram>"#)
         .map_err(|error| error.to_string())?;
     let pd_re =
-        Regex::new(r#"(?is)<pd-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
+        Regex::new(r#"(?is)<pd-parameter(?:\s+([^>]*))?/?>"#).map_err(|error| error.to_string())?;
     let md_re =
-        Regex::new(r#"(?is)<md-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
+        Regex::new(r#"(?is)<md-parameter(?:\s+([^>]*))?/?>"#).map_err(|error| error.to_string())?;
     let source_re = Regex::new(r#"(?is)<source\s+([^>]*)"#).map_err(|error| error.to_string())?;
     let destination_re =
         Regex::new(r#"(?is)<destination\s+([^>]*)"#).map_err(|error| error.to_string())?;
@@ -854,7 +854,7 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().expect("tempfile");
         write!(
             file,
-            r#"<device><telegram name="pd" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram><telegram name="md" com-id="2001" data-set-id="1001"><md-parameter protocol="UDP"/><source uri1="10.0.0.1"/><destination uri="10.0.0.2"/></telegram><data-set name="demo" id="1001"><element name="counter" type="10"/></data-set></device>"#
+            r#"<device><telegram name="pd" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram><telegram name="md" com-id="2001" data-set-id="1001"><md-parameter/><source uri1="10.0.0.1"/><destination uri="10.0.0.2"/></telegram><data-set name="demo" id="1001"><element name="counter" type="10"/></data-set></device>"#
         )
         .expect("write");
         let imported = parse_xml(&file.path().to_string_lossy()).expect("import");
