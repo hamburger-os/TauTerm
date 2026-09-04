@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - **TRDP helper/capture loading trust boundary** — release builds no longer search the process working directory for `tauterm-trdp-bridge`; repository-relative helper lookup is debug-only. Windows live capture loads `wpcap.dll` only from System32/Npcap absolute paths instead of the generic DLL search path.
+- **TRDP capture/release hardening** — capture-file saving now uses the current capture buffer instead of the accumulated traffic log, live capture has an explicit Running state, failed restarts preserve prior frames without pretending capture is still active, the in-memory live buffer reports dropped older frames at its 50,000-frame cap, Auto→Custom BPF freezes the effective port-derived filter, unsigned native IPC parsing rejects malformed/overflow values, TRDP-native CI follows Rust/TypeScript protocol changes and covers outbound PD/MD plus A/B Both, and Windows/macOS release staging verifies the bundled TRDP sidecar.
 
 ### Platforms
 - **TRDP native sidecar** — vendors the required TCNOpen TRDP 3.0.0.0 MPL-2.0 source and builds it offline as a Tauri `externalBin` sidecar. Windows live Monitor dynamically loads user-installed Npcap; Linux/macOS use system libpcap; offline capture analysis requires neither.
