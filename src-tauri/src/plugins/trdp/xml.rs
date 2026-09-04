@@ -31,6 +31,7 @@ pub struct TrdpXmlTelegram {
     pub dataset_id: u32,
     pub cycle_us: Option<u32>,
     pub timeout_us: Option<u32>,
+    pub timeout_behavior: Option<String>,
     pub sources: Vec<String>,
     pub destinations: Vec<String>,
     pub sdt_detected: bool,
@@ -250,6 +251,9 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             dataset_id,
             cycle_us: attr_u32(pd_attributes, "cycle"),
             timeout_us: attr_u32(pd_attributes, "timeout"),
+            timeout_behavior: pd_parameter.as_ref().map(|_| {
+                attr(pd_attributes, "validity-behavior").unwrap_or_else(|| "zero".to_string())
+            }),
             sources,
             destinations,
             sdt_detected: body.to_ascii_lowercase().contains("<sdt-parameter"),
@@ -875,6 +879,7 @@ mod tests {
         assert_eq!(imported.telegrams.len(), 1);
         assert_eq!(imported.telegrams[0].com_id, 1001);
         assert_eq!(imported.telegrams[0].traffic_kind, "pd");
+        assert_eq!(imported.telegrams[0].timeout_behavior.as_deref(), Some("zero"));
         assert!(imported.datasets[0].elements[1].dynamic);
         let payload = [0, 0, 0, 7, b'O', b'K'];
         let (fields, consumed) =
