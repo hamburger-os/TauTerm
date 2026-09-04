@@ -105,7 +105,7 @@ fn type_name(id: u32, original: &str) -> String {
         14 => "TIMEDATE32",
         15 => "TIMEDATE48",
         16 => "TIMEDATE64",
-        nested if nested > 1000 => return format!("Dataset {nested}"),
+        nested if nested >= 1000 => return format!("Dataset {nested}"),
         _ => original,
     }
     .to_string()
@@ -393,7 +393,7 @@ fn fixed_dataset_width(
         }
         let width = if let Some(width) = primitive_width(element.type_id) {
             width
-        } else if element.type_id > 1000 {
+        } else if element.type_id >= 1000 {
             fixed_dataset_width(element.type_id, imported, visiting)?
         } else {
             visiting.remove(&dataset_id);
@@ -432,7 +432,7 @@ fn decode_dataset_inner(
                     }
                     let width = if let Some(width) = primitive_width(trailing.type_id) {
                         width
-                    } else if trailing.type_id > 1000 {
+                    } else if trailing.type_id >= 1000 {
                         fixed_dataset_width(trailing.type_id, imported, &mut HashSet::new())?
                     } else {
                         return None;
@@ -442,7 +442,7 @@ fn decode_dataset_inner(
 
         let item_width = if let Some(width) = primitive_width(element.type_id) {
             width
-        } else if element.type_id > 1000 {
+        } else if element.type_id >= 1000 {
             fixed_dataset_width(element.type_id, imported, &mut HashSet::new()).ok_or_else(
                 || {
                     format!(
@@ -493,7 +493,7 @@ fn decode_dataset_inner(
                 ));
             }
             let slice = &payload[offset..offset + item_width];
-            let value = if element.type_id > 1000 {
+            let value = if element.type_id >= 1000 {
                 let (nested, consumed) =
                     decode_dataset_inner(element.type_id, slice, imported, visiting)?;
                 if consumed != item_width {
@@ -754,7 +754,7 @@ fn encode_dataset_inner(
             .ok_or_else(|| format!("Dataset {dataset_id} 缺少字段 {}", element.name))?;
         let items = field_items(element, value)?;
         for item in items {
-            if element.type_id > 1000 {
+            if element.type_id >= 1000 {
                 let nested = item.as_object().ok_or_else(|| {
                     format!(
                         "Dataset {dataset_id} 字段 {} 需要嵌套 JSON object",
@@ -824,6 +824,27 @@ mod tests {
         assert_eq!(type_id("5"), Some(5));
         assert_eq!(type_name(5, "5"), "INT16");
         assert_eq!(type_id("UINT32"), Some(10));
+    }
+
+    #[test]
+    fn supports_nested_dataset_id_1000() {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(
+            file,
+            r#"<device><data-set name="child" id="1000"><element name="value" type="UINT16"/></data-set><data-set name="parent" id="1001"><element name="child" type="1000"/></data-set></device>"#
+        )
+        .expect("write");
+        let path = file.path().to_string_lossy().to_string();
+        let encoded = trdp_encode_dataset(path.clone(), 1001, json!({"child": {"value": 42}}))
+            .expect("encode nested dataset 1000");
+        assert_eq!(encoded["payload_hex"], "002A");
+        let decoded = trdp_decode_dataset(
+            path,
+            1001,
+            encoded["payload_hex"].as_str().unwrap().to_string(),
+        )
+        .expect("decode nested dataset 1000");
+        assert_eq!(decoded["fields"]["child"]["value"]["value"]["value"], json!(42u16));
     }
 
     #[test]
