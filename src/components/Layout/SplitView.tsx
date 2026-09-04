@@ -357,15 +357,13 @@ export default function SplitView({
             {tab && !isTerminal && renderNonTerminalContent(tab)}
             {tab && showTerminalPlaceholder && (
               <div className={styles.emptyPane}>
-                <span
-                  className={`${styles.lifecycleDot} ${
-                    tab.state === "connecting" ? styles.lifecycleConnecting : styles.lifecycleDisconnected
-                  }`}
-                />
+                <span className={styles.emptyMark}>
+                  <Icon name="connection" size="xl" className={styles.emptyPaneIcon} />
+                </span>
                 <span>
                   {tab.state === "connecting"
-                    ? t("session.connecting", getConnectionStateFallback(tab.state))
-                    : t("session.disconnected", getConnectionStateFallback(tab.state))}
+                    ? t("session.preparingContent", "正在准备会话内容...")
+                    : t("session.connectToUse", "连接会话后可使用此内容")}
                 </span>
               </div>
             )}
@@ -388,6 +386,9 @@ export default function SplitView({
         const selected = paneId === layout.selectedPaneId;
         const blocked = blockedEdges[paneId] ?? new Set<SplitEdge>();
         const paneTitle = tab ? getPaneDisplayTitle(tab, tabsById) : t("split.emptyPane", "空分屏");
+        const paneTitleTooltip = tab?.elevated
+          ? `${paneTitle} · ${t("localShell.administrator", "管理员")}`
+          : paneTitle;
         const stateLabel = tab
           ? t(`session.${tab.state}`, getConnectionStateFallback(tab.state))
           : "";
@@ -408,9 +409,14 @@ export default function SplitView({
                 }}
                 onContextMenu={(e) => openPaneMenu(e, paneId)}
               >
-                <span className={`${styles.paneHeaderTitle} ${tab ? "" : styles.emptyPaneTitle}`} title={paneTitle}>
+                <span className={`${styles.paneHeaderTitle} ${tab ? "" : styles.emptyPaneTitle}`} title={paneTitleTooltip}>
                   {paneTitle}
                 </span>
+                {tab?.elevated && (
+                  <span className={styles.paneHeaderBadge} title={t("localShell.administrator", "管理员")}>
+                    <Icon name="shield" size="xs" />
+                  </span>
+                )}
                 {tab && (
                   <span className={styles.paneHeaderState} title={stateLabel}>
                     <span className={`${styles.lifecycleDot} ${lifecycleClass}`} />
