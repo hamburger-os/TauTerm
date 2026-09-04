@@ -82,7 +82,7 @@ Run TCP client/server and UDP client/server workflows in the same app, including
 
 ### TRDP Node and Monitor
 
-TRDP is a first-party custom session for railway/industrial debugging. **Node** sessions can combine PD Publisher, PD Subscriber, PD Request, MD Notify, MD Request and MD Listener/Replier roles. **Monitor** sessions provide passive one/two-interface live capture plus offline pcap/pcapng inspection, including A/B link provenance and MD/TCP stream reassembly.
+TRDP is a first-party custom session for railway/industrial debugging. **Node** sessions can combine PD Publisher, PD Subscriber, PD Request, MD Notify, MD Request and MD Listener/Replier roles. **Monitor** sessions provide passive one/two-interface live capture plus offline pcap/pcapng inspection, including A/B link provenance; live capture also reassembles MD/TCP streams.
 
 TCNOpen TRDP 3.0.0.0 is vendored as MPL-2.0 source and built into a separate TauTerm sidecar. Windows live capture uses a separately installed Npcap; Linux/macOS use the system libpcap. Offline capture analysis does not require either capture runtime. See [TRDP Sessions](docs/TRDP.md).
 
