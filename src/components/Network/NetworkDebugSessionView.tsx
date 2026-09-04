@@ -270,6 +270,9 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
     : selectedPeerId;
   const selectedPeer = peers.find(p => p.peerId === effectiveSelectedPeerId) ?? null;
   const containerConnected = containerTab?.state === "connected" || containerTab?.state === "transferring";
+  const lifecycleLabel = containerTab?.state === "connecting"
+    ? t("session.connecting", "连接中...")
+    : t("session.disconnected", "未连接");
 
   return (
     <div className={styles.container}>
@@ -277,9 +280,8 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
       {snap.transport === "udp" && (
         !containerConnected ? (
           <div className={styles.emptyState}>
-            <Icon name="logo" size="2xl" className={styles.emptyIcon} />
-            <div>{t("session.noSessions")}</div>
-            <div className={styles.emptyHint}>{t("session.emptyHint")}</div>
+            <Icon name="connection" size="xl" className={styles.emptyIcon} />
+            <div>{lifecycleLabel}</div>
           </div>
         ) : (
           <div className={styles.dataArea}>
@@ -292,9 +294,8 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
       {snap.transport === "tcp" && (
         !containerConnected ? (
           <div className={styles.emptyState}>
-            <Icon name="logo" size="2xl" className={styles.emptyIcon} />
-            <div>{t("session.noSessions")}</div>
-            <div className={styles.emptyHint}>{t("session.emptyHint")}</div>
+            <Icon name="connection" size="xl" className={styles.emptyIcon} />
+            <div>{lifecycleLabel}</div>
           </div>
         ) : peers.length === 0 ? (
           <div className={styles.emptyState}>
