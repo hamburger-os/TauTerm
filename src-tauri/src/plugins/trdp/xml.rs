@@ -358,7 +358,11 @@ fn decode_primitive(type_id: u32, bytes: &[u8]) -> Value {
         7 => json!(i64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
         8 => json!(bytes.first().copied().unwrap_or(0)),
         10 | 14 => json!(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
-        11 | 16 => json!(u64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
+        11 => json!(u64::from_be_bytes(bytes.try_into().unwrap_or([0; 8]))),
+        16 => json!({
+            "seconds": u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            "microseconds": u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]])
+        }),
         12 => json!(f32::from_bits(u32::from_be_bytes([
             bytes[0], bytes[1], bytes[2], bytes[3]
         ]))),
@@ -660,11 +664,32 @@ fn encode_primitive(
                 .map_err(|_| format!("字段 {field} 超出 UINT32 范围"))?
                 .to_be_bytes(),
         ),
-        11 | 16 => output.extend_from_slice(
+        11 => output.extend_from_slice(
             &u64::try_from(integer_value(&value, field)?)
                 .map_err(|_| format!("字段 {field} 超出 UINT64 范围"))?
                 .to_be_bytes(),
         ),
+        16 => {
+            let object = value
+                .as_object()
+                .ok_or_else(|| format!("字段 {field} 的 TIMEDATE64 需要 {{seconds,microseconds}}"))?;
+            let seconds = object
+                .get("seconds")
+                .ok_or_else(|| format!("字段 {field} 缺少 seconds"))?;
+            let microseconds = object
+                .get("microseconds")
+                .ok_or_else(|| format!("字段 {field} 缺少 microseconds"))?;
+            output.extend_from_slice(
+                &u32::try_from(integer_value(seconds, field)?)
+                    .map_err(|_| format!("字段 {field}.seconds 超出 UINT32 范围"))?
+                    .to_be_bytes(),
+            );
+            output.extend_from_slice(
+                &u32::try_from(integer_value(microseconds, field)?)
+                    .map_err(|_| format!("字段 {field}.microseconds 超出 UINT32 范围"))?
+                    .to_be_bytes(),
+            );
+        }
         12 => output.extend_from_slice(&(numeric_value(&value, field)? as f32).to_be_bytes()),
         13 => output.extend_from_slice(&numeric_value(&value, field)?.to_be_bytes()),
         15 => {
@@ -824,6 +849,35 @@ mod tests {
         assert_eq!(type_id("5"), Some(5));
         assert_eq!(type_name(5, "5"), "INT16");
         assert_eq!(type_id("UINT32"), Some(10));
+    }
+
+    #[test]
+    fn round_trips_timedate64_components() {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(
+            file,
+            r#"<device><data-set name="time" id="1000"><element name="stamp" type="TIMEDATE64"/></data-set></device>"#
+        )
+        .expect("write");
+        let path = file.path().to_string_lossy().to_string();
+        let encoded = trdp_encode_dataset(
+            path.clone(),
+            1000,
+            json!({"stamp": {"seconds": 7, "microseconds": 123456}}),
+        )
+        .expect("encode TIMEDATE64");
+        assert_eq!(encoded["payload_hex"], "000000070001E240");
+        let decoded = trdp_decode_dataset(
+            path,
+            1000,
+            encoded["payload_hex"].as_str().unwrap().to_string(),
+        )
+        .expect("decode TIMEDATE64");
+        assert_eq!(decoded["fields"]["stamp"]["value"]["seconds"], json!(7u32));
+        assert_eq!(
+            decoded["fields"]["stamp"]["value"]["microseconds"],
+            json!(123456u32)
+        );
     }
 
     #[test]
