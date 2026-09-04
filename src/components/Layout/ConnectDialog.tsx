@@ -118,7 +118,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const isTelnet = selectedMode === "telnet";
   const isIperf = selectedMode === "iperf";
   const isNetwork = selectedMode === "network";
-  const isTrdp = selectedMode === "trdp";
   const isLocalShell = selectedMode === "local-shell";
   const selectedPlugin = pluginRegistry.get(selectedMode);
   const PluginConnectForm = selectedPlugin?.connectForm;
@@ -452,11 +451,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     // Telnet/TFTP/iperf/网络调试 无文件传输：不保存 transfer_protocol，避免无意义的 "ymodem" 默认值
     // 污染会话配置（传输能力由 effectiveTransferEnabled=false 表达）
     const effectiveTransferProtocol = isLocalShell || isTelnet || isTftp || isIperf || isNetwork ? undefined : transferProtocol;
-    const trdpDefaultName = pluginParams.mode === "monitor" ? "TRDP Monitor" : "TRDP Node";
-    const trdpNameIsAutomatic = ["", "TRDP @ trdp", "TRDP Node", "TRDP Monitor"].includes(sessionName.trim());
-    const effectiveSessionName = isTrdp && trdpNameIsAutomatic
-      ? trdpDefaultName
-      : sessionName || undefined;
+    const effectiveSessionName = sessionName || undefined;
 
     try {
       if (editSessionId) {
@@ -490,7 +485,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive, isTrdp]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive]);
 
   // 数据字符编码下拉（终端类协议共用：serial / ssh / telnet）
   const encodingField = (
