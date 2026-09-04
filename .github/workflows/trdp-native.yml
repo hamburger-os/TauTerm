@@ -84,6 +84,7 @@ jobs:
           PEER="$PWD/tools/trdp-test-peer/bin/trdp-test-peer"
           export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0"
           export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+          export TAUTERM_TRDP_DEBUG=1
           dump_logs() {
             status=$?
             if [[ $status -ne 0 ]]; then
