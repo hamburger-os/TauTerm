@@ -69,7 +69,6 @@ typedef struct {
     char interface_name[512];
     char label;
     int linktype;
-    volatile int running;
     int thread_active;
 } capture_context_t;
 
@@ -138,8 +137,9 @@ static int load_pcap(void) {
             (void)snprintf(path, sizeof(path), "%s\\Npcap\\wpcap.dll", system_directory);
             g_pcap_library = (void *)LoadLibraryA(path);
         }
-        if (g_pcap_library == NULL) {
-            g_pcap_library = (void *)LoadLibraryA("wpcap.dll");
+        if (g_pcap_library == NULL && length > 0u && length < MAX_PATH) {
+            (void)snprintf(path, sizeof(path), "%s\\wpcap.dll", system_directory);
+            g_pcap_library = (void *)LoadLibraryA(path);
         }
     }
 #else
