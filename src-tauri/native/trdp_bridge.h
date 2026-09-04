@@ -181,6 +181,7 @@ void node_md_confirm(const char *line);
 void node_md_abort(const char *line);
 void node_shutdown(void);
 
+void capture_list(void);
 void capture_start(const char *line);
 void capture_stop(void);
 void capture_shutdown(void);
