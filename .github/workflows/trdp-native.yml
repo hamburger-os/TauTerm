@@ -124,6 +124,7 @@ jobs:
           grep -q 'PD Pp comId=7002' /tmp/trdp-peer-pull.log
           grep -q '"msg_type":"Pp"' /tmp/trdp-bridge-pull.log
           grep -q '"com_id":7002' /tmp/trdp-bridge-pull.log
+          grep -q '"id":"ci-pd-request"' /tmp/trdp-bridge-pull.log
 
           "$PEER" md-replier 127.0.0.2 0.0.0.0 7100 4 >/tmp/trdp-peer-md.log 2>&1 &
           MD_PID=$!
