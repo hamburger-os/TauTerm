@@ -270,9 +270,9 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
     : selectedPeerId;
   const selectedPeer = peers.find(p => p.peerId === effectiveSelectedPeerId) ?? null;
   const containerConnected = containerTab?.state === "connected" || containerTab?.state === "transferring";
-  const lifecycleLabel = containerTab?.state === "connecting"
-    ? t("session.connecting", "连接中...")
-    : t("session.disconnected", "未连接");
+  const lifecycleHint = containerTab?.state === "connecting"
+    ? t("session.preparingContent", "正在准备会话内容...")
+    : t("network.connectToViewData", "连接后开始显示网络数据");
 
   return (
     <div className={styles.container}>
@@ -281,7 +281,7 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
         !containerConnected ? (
           <div className={styles.emptyState}>
             <Icon name="connection" size="xl" className={styles.emptyIcon} />
-            <div>{lifecycleLabel}</div>
+            <div>{lifecycleHint}</div>
           </div>
         ) : (
           <div className={styles.dataArea}>
@@ -295,7 +295,7 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
         !containerConnected ? (
           <div className={styles.emptyState}>
             <Icon name="connection" size="xl" className={styles.emptyIcon} />
-            <div>{lifecycleLabel}</div>
+            <div>{lifecycleHint}</div>
           </div>
         ) : peers.length === 0 ? (
           <div className={styles.emptyState}>
