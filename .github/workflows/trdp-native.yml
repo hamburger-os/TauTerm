@@ -111,6 +111,19 @@ jobs:
           wait "$PD_PID"
           grep -q '"com_id":7001' /tmp/trdp-bridge-pd.log
 
+          "$PEER" pd-publisher 127.0.0.2 127.0.0.1 7002 4 >/tmp/trdp-peer-pull.log 2>&1 &
+          PULL_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-pd-request","kind":"pd_request","com_id":7002,"source":"127.0.0.1","destination":"127.0.0.2","reply_com_id":7002,"reply_ip":"127.0.0.1","timeout_us":0,"payload_hex":"00000000"}}'
+            sleep 2
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-pull.log 2>&1
+          wait "$PULL_PID"
+          grep -q '"msg_type":"Pp"' /tmp/trdp-bridge-pull.log
+          grep -q '"com_id":7002' /tmp/trdp-bridge-pull.log
+
           "$PEER" md-replier 127.0.0.2 0.0.0.0 7100 4 >/tmp/trdp-peer-md.log 2>&1 &
           MD_PID=$!
           sleep 0.5
