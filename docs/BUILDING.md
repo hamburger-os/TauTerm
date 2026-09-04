@@ -197,6 +197,8 @@ bash scripts/bootstrap-trdp.sh
 
 `npm run tauri dev` 不执行 Tauri 的 `beforeBundleCommand`，因此如果开发时要真正打开 TRDP Node/Monitor，会话启动前至少手动运行一次对应平台 bootstrap。纯前端/普通协议开发不需要这一步。
 
+开发/CI 如需显式覆盖 helper，可以设置环境变量 `TAUTERM_TRDP_BRIDGE` 指向可信的可执行文件。会话配置/Workspace 不接受任意 bridge executable 路径，避免导入配置时形成隐式代码执行入口。
+
 正式 Tauri 打包会自动执行 `scripts/prepare-service-bin.js`。该 hook 会：
 
 1. 调用对应平台的 TRDP bootstrap；
