@@ -564,7 +564,7 @@ static TRDP_ERR_T start_pd_subscriber(
         0u,
         subscription_dest,
         TRDP_FLAGS_CALLBACK | TRDP_FLAGS_FORCE_CB,
-        timeout_us != 0u ? timeout_us : TRDP_DEFAULT_PD_TIMEOUT,
+        timeout_us,
         object->timeout_behavior
     );
     if (error != TRDP_NO_ERR || !request) {
