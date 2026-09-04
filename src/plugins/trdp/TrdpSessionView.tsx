@@ -291,6 +291,7 @@ function defaultDatasetValues(imported: XmlImport, datasetId: number, visiting =
     const singleValue = () => {
       if (element.type_id >= 1000) return defaultDatasetValues(imported, element.type_id, nextVisiting);
       if (element.type_id === 15) return { seconds: 0, ticks: 0 };
+      if (element.type_id === 16) return { seconds: 0, microseconds: 0 };
       return 0;
     };
     if (element.dynamic) {
