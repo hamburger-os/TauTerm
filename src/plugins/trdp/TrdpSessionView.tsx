@@ -165,6 +165,11 @@ const nav: Array<[Page, string]> = [
 const tableStyle = { width: "100%", borderCollapse: "collapse" } as const;
 const cellInputStyle = { width: "100%", minWidth: 80 } as const;
 const U32 = 0x1_0000_0000;
+const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
+
+function captureFilterForPorts(pdPort: number, mdUdpPort: number, mdTcpPort: number) {
+  return `udp port ${pdPort} or udp port ${mdUdpPort} or tcp port ${mdTcpPort}`;
+}
 
 function paramNumber(params: Record<string, unknown> | undefined, key: string, fallback: number) {
   const value = params?.[key];
@@ -687,10 +692,21 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   async function startLiveCapture() {
     const interfaceA = typeof params?.capture_interface === "string" ? params.capture_interface : "";
     const interfaceB = params?.capture_interface_b_enabled && typeof params?.capture_interface_b === "string" ? params.capture_interface_b : "";
+    const configuredFilter = typeof params?.capture_filter === "string" ? params.capture_filter : STANDARD_CAPTURE_FILTER;
+    const filterAuto = typeof params?.capture_filter_auto === "boolean"
+      ? params.capture_filter_auto
+      : configuredFilter === STANDARD_CAPTURE_FILTER;
+    const filter = filterAuto
+      ? captureFilterForPorts(
+          paramNumber(params, "pd_port", 17224),
+          paramNumber(params, "md_udp_port", 17225),
+          paramNumber(params, "md_tcp_port", 17225),
+        )
+      : configuredFilter;
     await command("capture_start", {
       interface: interfaceA,
       interface_b: interfaceB,
-      filter: params?.capture_filter,
+      filter,
     });
   }
 
