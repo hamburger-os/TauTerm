@@ -260,6 +260,30 @@ int main(int argc, char **argv) {
             initial,
             (UINT32)sizeof(initial)
         );
+        if (error == TRDP_NO_ERR && mode_is(mode, "pd-pull-provider")) {
+            /*
+             * TCNOpen dispatches an incoming Pr through the receive queue
+             * before it looks up the matching pull-only publisher. Register a
+             * narrow subscription for requests addressed to this peer so the
+             * library can execute its native Pr -> Pp path.
+             */
+            error = tlp_subscribe(
+                app,
+                &subscriber,
+                NULL,
+                pd_cb,
+                0u,
+                comid,
+                0u,
+                0u,
+                vos_dottedIP(peer),
+                0u,
+                vos_dottedIP(own),
+                TRDP_FLAGS_CALLBACK | TRDP_FLAGS_FORCE_CB,
+                1000000u,
+                TRDP_TO_KEEP_LAST_VALUE
+            );
+        }
     } else if (mode_is(mode, "pd-subscriber")) {
         error = tlp_subscribe(
             app,
