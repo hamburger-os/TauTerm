@@ -173,6 +173,9 @@ static int load_pcap(void) {
 #else
     g_pcap_library = dlopen("libpcap.so.1", RTLD_NOW);
     if (g_pcap_library == NULL) {
+        g_pcap_library = dlopen("libpcap.so.0.8", RTLD_NOW);
+    }
+    if (g_pcap_library == NULL) {
         g_pcap_library = dlopen("libpcap.so", RTLD_NOW);
     }
 #endif
