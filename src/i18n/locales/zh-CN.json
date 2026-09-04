@@ -91,6 +91,7 @@
     "connected": "已连接",
     "disconnected": "未连接",
     "connecting": "连接中...",
+    "transferring": "传输中",
     "noPorts": "未检测到串口",
     "portOccupied": "端口已被占用",
     "deviceDisconnected": "设备已断开",
