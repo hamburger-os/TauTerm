@@ -289,7 +289,7 @@ function defaultDatasetValues(imported: XmlImport, datasetId: number, visiting =
   const result: Record<string, unknown> = {};
   for (const element of dataset.elements) {
     const singleValue = () => {
-      if (element.type_id > 1000) return defaultDatasetValues(imported, element.type_id, nextVisiting);
+      if (element.type_id >= 1000) return defaultDatasetValues(imported, element.type_id, nextVisiting);
       if (element.type_id === 15) return { seconds: 0, ticks: 0 };
       return 0;
     };
