@@ -125,12 +125,8 @@ fn network_offset(frame: &[u8], linktype: u32) -> Option<usize> {
         }
         LINKTYPE_LINUX_SLL => Some(16),
         LINKTYPE_LINUX_SLL2 => Some(20),
-        LINKTYPE_NULL => {
-            (frame.len() >= 5 && frame.get(4)? >> 4 == 4).then_some(4)
-        }
-        LINKTYPE_RAW => {
-            (frame.first()? >> 4 == 4).then_some(0)
-        }
+        LINKTYPE_NULL => (frame.len() >= 5 && frame.get(4)? >> 4 == 4).then_some(4),
+        LINKTYPE_RAW => (frame.first()? >> 4 == 4).then_some(0),
         _ => None,
     }
 }
@@ -386,12 +382,15 @@ fn parse_pcapng(data: &[u8], ports: CapturePorts<'_>) -> Result<Vec<TrdpPacket>,
                     return Err("pcapng packet length exceeds block size".into());
                 }
                 let interface =
-                    interfaces.get(interface_index).cloned().unwrap_or(PcapNgInterface {
-                        linktype: LINKTYPE_ETHERNET,
-                        timestamp_resolution: 6,
-                        timestamp_base2: false,
-                        link: format!("capture:{interface_index}"),
-                    });
+                    interfaces
+                        .get(interface_index)
+                        .cloned()
+                        .unwrap_or(PcapNgInterface {
+                            linktype: LINKTYPE_ETHERNET,
+                            timestamp_resolution: 6,
+                            timestamp_base2: false,
+                            link: format!("capture:{interface_index}"),
+                        });
                 let raw_timestamp = (timestamp_high << 32) | timestamp_low;
                 let timestamp_us = pcapng_timestamp_to_us(
                     raw_timestamp,
@@ -483,7 +482,10 @@ pub fn trdp_save_capture(path: String, packets: Vec<TrdpPacket>) -> Result<(), S
             packet.link.clone()
         };
         let linktype = packet.link_type.unwrap_or(LINKTYPE_ETHERNET);
-        if !interfaces.iter().any(|item| item.0 == link && item.1 == linktype) {
+        if !interfaces
+            .iter()
+            .any(|item| item.0 == link && item.1 == linktype)
+        {
             interfaces.push((link, linktype));
         }
     }
@@ -643,5 +645,4 @@ mod tests {
         assert_eq!(reopened[1].link, "B");
         assert_eq!(reopened[0].link_type, Some(LINKTYPE_ETHERNET));
     }
-
 }
