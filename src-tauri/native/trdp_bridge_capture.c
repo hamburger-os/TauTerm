@@ -590,7 +590,7 @@ static void *capture_loop(void *context_ptr)
 #endif
 {
     capture_context_t *context = (capture_context_t *)context_ptr;
-    while (context->running && context->pcap != NULL) {
+    while (context->pcap != NULL) {
         struct bridge_pcap_pkthdr *header = NULL;
         const unsigned char *data = NULL;
         int result = dyn_next_ex(context->pcap, &header, &data);
@@ -612,7 +612,6 @@ static void stop_context(capture_context_t *context) {
     if (context == NULL) {
         return;
     }
-    context->running = 0;
     if (context->pcap != NULL && dyn_breakloop != NULL) {
         dyn_breakloop(context->pcap);
     }
@@ -680,7 +679,6 @@ static int start_context(
         return 0;
     }
     dyn_freecode(&program);
-    context->running = 1;
 #ifdef _WIN32
     {
         uintptr_t thread = _beginthreadex(NULL, 0, capture_loop, context, 0, NULL);
