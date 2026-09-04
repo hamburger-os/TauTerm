@@ -683,7 +683,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // 前端用 manifest.name ("SSH")，后端 fallback 用 pid ("ssh")，不传递会导致闪烁
       const effectiveName = name || (pid === "local-shell"
         ? await invoke<string>("resolve_local_shell_session_name", { params })
-        : `${pluginName} @ ${endpoint}`);
+        : pid === "trdp"
+          ? (params.mode === "monitor" ? "TRDP Monitor" : "TRDP Node")
+          : `${pluginName} @ ${endpoint}`);
       const sessionId = await invoke<string>("save_session_config", {
         request: {
         endpoint, params,
