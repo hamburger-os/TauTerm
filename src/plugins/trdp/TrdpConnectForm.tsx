@@ -1,7 +1,15 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useTranslation } from "react-i18next";
 import type { ConnectFormProps } from "../../core/plugin-registry";
 import Icon from "../../components/common/Icon";
 import styles from "./TrdpConnectForm.module.css";
+
+type CaptureInterface = {
+  name: string;
+  description: string;
+};
 
 const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
 
@@ -25,7 +33,32 @@ function num(params: Record<string, unknown>, key: string, fallback: number) {
 }
 
 export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) {
+  const { t } = useTranslation();
   const mode = str(params, "mode", "node") as "node" | "monitor";
+  const [captureInterfaces, setCaptureInterfaces] = useState<CaptureInterface[]>([]);
+  const [captureInterfacesLoading, setCaptureInterfacesLoading] = useState(false);
+  const [captureInterfacesError, setCaptureInterfacesError] = useState("");
+
+  useEffect(() => {
+    if (mode !== "monitor") return;
+    let cancelled = false;
+    setCaptureInterfacesLoading(true);
+    setCaptureInterfacesError("");
+    void invoke<CaptureInterface[]>("trdp_capture_interfaces")
+      .then(items => {
+        if (!cancelled) setCaptureInterfaces(items);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setCaptureInterfaces([]);
+          setCaptureInterfacesError(String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCaptureInterfacesLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [mode]);
   const patch = (next: Record<string, unknown>) => onChange({
     mode: "node",
     link_a_ip: "0.0.0.0",
@@ -181,12 +214,27 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
         <>
           <div className={styles.field}>
             <label className={styles.label}>抓包接口 A / Capture interface A</label>
-            <input
-              className={`${styles.input} liquid-glass-input`}
+            <select
+              className={`${styles.select} liquid-glass-input liquid-glass-select`}
               value={str(params, "capture_interface")}
               onChange={e => patch({ capture_interface: e.target.value })}
-              placeholder="Windows: \\Device\\NPF_{GUID}; Linux/macOS: en0/eth0"
-            />
+              disabled={captureInterfacesLoading}
+            >
+              <option value="">
+                {captureInterfacesLoading
+                  ? t("trdp.captureInterfaces.loading")
+                  : t("trdp.captureInterfaces.choose")}
+              </option>
+              {captureInterfaces.map(item => (
+                <option key={item.name} value={item.name}>
+                  {item.description ? `${item.description} — ${item.name}` : item.name}
+                </option>
+              ))}
+            </select>
+            {captureInterfacesError && <small className={styles.hint}>{t("trdp.captureInterfaces.error")}: {captureInterfacesError}</small>}
+            {!captureInterfacesLoading && !captureInterfacesError && captureInterfaces.length === 0 && (
+              <small className={styles.hint}>{t("trdp.captureInterfaces.empty")}</small>
+            )}
           </div>
 
           <label className={`liquid-glass-toggle ${styles.toggle}`}>
@@ -202,12 +250,25 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           {bool(params, "capture_interface_b_enabled") && (
             <div className={styles.field}>
               <label className={styles.label}>抓包接口 B / Capture interface B</label>
-              <input
-                className={`${styles.input} liquid-glass-input`}
+              <select
+                className={`${styles.select} liquid-glass-input liquid-glass-select`}
                 value={str(params, "capture_interface_b")}
                 onChange={e => patch({ capture_interface_b: e.target.value })}
-                placeholder="第二个 Npcap/libpcap device"
-              />
+                disabled={captureInterfacesLoading}
+              >
+                <option value="">
+                  {captureInterfacesLoading
+                    ? t("trdp.captureInterfaces.loading")
+                    : t("trdp.captureInterfaces.choose")}
+                </option>
+                {captureInterfaces
+                  .filter(item => item.name !== str(params, "capture_interface"))
+                  .map(item => (
+                    <option key={item.name} value={item.name}>
+                      {item.description ? `${item.description} — ${item.name}` : item.name}
+                    </option>
+                  ))}
+              </select>
             </div>
           )}
 
