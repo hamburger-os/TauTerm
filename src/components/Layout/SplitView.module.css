@@ -49,10 +49,24 @@
   opacity: 0.78;
 }
 
-.disconnectedDot {
+.lifecycleDot {
   width: 7px;
   height: 7px;
+  flex: 0 0 7px;
   border-radius: 50%;
+}
+
+.lifecycleConnected {
+  background: var(--color-success);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--color-success) 45%, transparent);
+}
+
+.lifecycleConnecting {
+  background: var(--color-warning);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--color-warning) 42%, transparent);
+}
+
+.lifecycleDisconnected {
   background: var(--text-secondary);
   opacity: 0.55;
 }
@@ -108,11 +122,29 @@
 }
 
 .paneHeaderTitle {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--text-xs);
   line-height: 1;
+}
+
+.paneHeaderState {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.paneHeaderStateText {
+  opacity: 0.78;
 }
 
 .emptyPaneTitle {
