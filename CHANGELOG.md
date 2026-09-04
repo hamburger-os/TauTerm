@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **TRDP/iperf/TFTP session identity and TRDP usability** — TRDP Monitor now enumerates real Npcap/libpcap capture devices for dropdown selection; new sessions use `TRDP @ Node/Monitor`, `iperf @ iperf2/iperf3`, and `TFTP @ <file root>` default names only at initial creation while later configuration changes preserve the session name; iperf and TFTP sidebar subtitles show their listen endpoints instead of repeating the same value on both card rows; disconnected PD Request objects can be removed without trying to clean an already-destroyed native handle; and TRDP navigation/action buttons now follow the active UI language while protocol terms remain intact.
-- **TRDP sidebar identity** — new TRDP sessions default to “TRDP Node” / “TRDP Monitor”; the sidebar replaces the redundant `trdp` endpoint line with a stable mode-specific configuration summary (Node A/B local IPs or Monitor capture interface), and updates that summary after reconfiguration without using capture Start/Stop as card state.
 - **TRDP UI theme polish** — localizes the new-session TRDP card as “TRDP 调试助手” / “TRDP Debug Assistant”, keeps all new-session cards equal-sized, aligns TRDP configuration controls with the shared Liquid Glass form sizing, adds a themed XML file picker, and restyles TRDP navigation, object editors, tables, actions and empty states to match the rest of TauTerm.
 
 ### Protocols
