@@ -313,7 +313,7 @@ int main(int argc, char **argv) {
                 0u,
                 VOS_INADDR_ANY,
                 VOS_INADDR_ANY,
-                vos_dottedIP(peer),
+                vos_dottedIP(own_ip),
                 TRDP_FLAGS_CALLBACK | TRDP_FLAGS_FORCE_CB,
                 1000000u,
                 TRDP_TO_KEEP_LAST_VALUE
