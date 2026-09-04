@@ -11,6 +11,7 @@ type ObjectKind = "pd_publisher" | "pd_subscriber" | "pd_request" | "md_request"
 type TrdpEvent = {
   session_id?: string;
   event?: string;
+  command?: string;
   kind?: string;
   id?: string;
   link?: string;
@@ -304,6 +305,16 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const unlisten = listen<TrdpEvent>("trdp-event", ({ payload }) => {
       if (disposed || payload.session_id !== sessionId) return;
       if (payload.event === "packet") setEvents(prev => [...prev, payload].slice(-5000));
+      if (payload.event === "ack" && payload.id) {
+        const nextState = payload.command === "object_start"
+          ? "running"
+          : payload.command === "object_stop"
+            ? "stopped"
+            : undefined;
+        if (nextState) {
+          setObjects(prev => prev.map(item => item.id === payload.id ? { ...item, state: nextState } : item));
+        }
+      }
       if (payload.error) setError(payload.error);
     });
     return () => { disposed = true; void unlisten.then(fn => fn()); };
@@ -420,12 +431,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         dest_uri: obj.destUri,
       },
     });
-    if (obj.kind !== "md_request" && obj.kind !== "md_notify") patchObject(obj.id, { state: "running" });
   }
 
   async function stopObject(obj: TrdpObject) {
     await command("object_stop", { id: obj.id, kind: obj.kind });
-    patchObject(obj.id, { state: "stopped" });
   }
 
   async function updatePayload(obj: TrdpObject) {
