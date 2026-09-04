@@ -37,7 +37,10 @@
         "installMode": "perMachine",
         "installerHooks": "./windows/hooks.nsh"
       }
-    }
+    },
+    "externalBin": [
+      "binaries/tauterm-trdp-bridge"
+    ]
   },
   "plugins": {
     "updater": {
