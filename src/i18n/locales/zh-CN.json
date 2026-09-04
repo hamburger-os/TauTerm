@@ -1017,5 +1017,47 @@
     "peer": "对端",
     "time": "时间",
     "seq": "序号"
+  },
+  "trdp": {
+    "nav": {
+      "overview": "概览 · TRDP 应用会话",
+      "publishers": "发布 · PD Publisher",
+      "subscribers": "订阅 · PD Subscriber / Request",
+      "messages": "消息 · MD Request / Reply / Notify",
+      "traffic": "流量 · 报文检查"
+    },
+    "actions": {
+      "send": "发送",
+      "start": "启动",
+      "stop": "停止",
+      "update": "更新",
+      "dataset": "数据集",
+      "remove": "删除",
+      "advanced": "高级",
+      "hexToFields": "HEX → 字段",
+      "fieldsToHex": "字段 → HEX",
+      "close": "关闭",
+      "importXml": "导入 TRDP XML",
+      "importWorkspace": "导入 Workspace JSON",
+      "openCapture": "打开抓包",
+      "saveCapture": "保存 pcapng",
+      "startCapture": "开始实时抓包",
+      "stopCapture": "停止抓包",
+      "importTemplates": "将 PD Telegram 作为已停止的 Subscriber 模板加入 Workspace",
+      "addPublisher": "+ 发布器",
+      "addSubscriber": "+ 订阅器",
+      "addPdRequest": "+ PD 请求",
+      "addRequest": "+ 请求",
+      "addListener": "+ 监听/应答",
+      "addNotify": "+ 通知",
+      "clear": "清空",
+      "confirm": "确认"
+    },
+    "captureInterfaces": {
+      "loading": "正在读取抓包接口…",
+      "choose": "请选择抓包接口",
+      "empty": "未检测到可用的 Npcap/libpcap 抓包接口。",
+      "error": "读取抓包接口失败"
+    }
   }
 }
