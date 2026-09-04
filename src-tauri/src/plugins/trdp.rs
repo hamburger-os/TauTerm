@@ -236,9 +236,9 @@ pub async fn connect_session_trdp(
     let side_channel = Arc::new(TrdpSideChannel::new(params.clone()));
     let session_name = name.unwrap_or_else(|| {
         if mode == "monitor" {
-            "TRDP Monitor".to_string()
+            "TRDP @ Monitor".to_string()
         } else {
-            "TRDP Node".to_string()
+            "TRDP @ Node".to_string()
         }
     });
     let session_id = {
