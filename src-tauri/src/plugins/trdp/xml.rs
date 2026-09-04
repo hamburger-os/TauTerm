@@ -26,6 +26,7 @@ pub struct TrdpXmlDataset {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrdpXmlTelegram {
     pub name: String,
+    pub traffic_kind: String,
     pub com_id: u32,
     pub dataset_id: u32,
     pub cycle_us: Option<u32>,
@@ -205,8 +206,10 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             continue;
         };
         let dataset_id = attr_u32(tag, "data-set-id").unwrap_or(0);
-        let pd_attributes = pd_re
-            .captures(body)
+        let pd_parameter = pd_re.captures(body);
+        let traffic_kind = if pd_parameter.is_some() { "pd" } else { "md" };
+        let pd_attributes = pd_parameter
+            .as_ref()
             .and_then(|value| value.get(1))
             .map(|value| value.as_str())
             .unwrap_or_default();
@@ -224,6 +227,7 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
             .collect();
         telegrams.push(TrdpXmlTelegram {
             name: attr(tag, "name").unwrap_or_else(|| format!("ComID {com_id}")),
+            traffic_kind: traffic_kind.to_string(),
             com_id,
             dataset_id,
             cycle_us: attr_u32(pd_attributes, "cycle"),
@@ -824,6 +828,22 @@ mod tests {
     }
 
     #[test]
+    fn distinguishes_pd_and_md_telegrams() {
+        let mut file = tempfile::NamedTempFile::new().expect("tempfile");
+        write!(
+            file,
+            r#"<device><telegram name="pd" com-id="1001" data-set-id="1001"><pd-parameter cycle="100000"/></telegram><telegram name="md" com-id="2001" data-set-id="1001"><source uri1="10.0.0.1"/><destination uri="10.0.0.2"/></telegram><data-set name="demo" id="1001"><element name="counter" type="10"/></data-set></device>"#
+        )
+        .expect("write");
+        let imported = parse_xml(&file.path().to_string_lossy()).expect("import");
+        assert_eq!(imported.telegrams.len(), 2);
+        assert_eq!(imported.telegrams[0].traffic_kind, "pd");
+        assert_eq!(imported.telegrams[1].traffic_kind, "md");
+        assert_eq!(imported.telegrams[1].cycle_us, None);
+        assert_eq!(imported.telegrams[1].timeout_us, None);
+    }
+
+    #[test]
     fn imports_official_style_xml_and_dynamic_array() {
         let mut file = tempfile::NamedTempFile::new().expect("tempfile");
         write!(
@@ -836,6 +856,7 @@ mod tests {
         assert_eq!(imported.datasets.len(), 1);
         assert_eq!(imported.telegrams.len(), 1);
         assert_eq!(imported.telegrams[0].com_id, 1001);
+        assert_eq!(imported.telegrams[0].traffic_kind, "pd");
         assert!(imported.datasets[0].elements[1].dynamic);
         let payload = [0, 0, 0, 7, b'O', b'K'];
         let (fields, consumed) =
