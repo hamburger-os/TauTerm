@@ -140,20 +140,6 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     prevPeerIdsRef.current = currentIds;
   }, [state.networkPeers, state.tabs]);
 
-  const getSessionDisplayName = useCallback((tab: TabInfo): string => {
-    if (tab.pluginId !== "trdp") return tab.name;
-    const params = (tab.params ?? {}) as Record<string, unknown>;
-    const mode = params.mode === "monitor" ? "monitor" : "node";
-    // Older TRDP sessions used the generic plugin fallback "TRDP @ trdp".
-    // Render those legacy auto-generated names with the new mode-aware default,
-    // while preserving every explicit user rename verbatim.
-    const normalizedName = tab.name.trim().toLowerCase();
-    if (["trdp @ trdp", "trdp node", "trdp monitor"].includes(normalizedName)) {
-      return mode === "monitor" ? "TRDP Monitor" : "TRDP Node";
-    }
-    return tab.name;
-  }, []);
-
   const getSessionSubtitle = useCallback((tab: TabInfo): string => {
     if (tab.pluginId !== "trdp") return tab.endpoint;
 
@@ -187,7 +173,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   const filteredTree = useMemo(() => {
     if (!search) return tree;
     return tree.filter(node => {
-      const parentMatch = getSessionDisplayName(node.tab).toLowerCase().includes(searchLower)
+      const parentMatch = node.tab.name.toLowerCase().includes(searchLower)
         || getSessionSubtitle(node.tab).toLowerCase().includes(searchLower)
         || node.tab.endpoint.toLowerCase().includes(searchLower);
       const childMatch = node.children.some(c =>
@@ -200,7 +186,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       );
       return parentMatch || childMatch || peerMatch;
     });
-  }, [tree, search, getSessionDisplayName, getSessionSubtitle]);
+  }, [tree, search, getSessionSubtitle]);
 
   // 展开/折叠切换
   const toggleExpand = useCallback((id: string, e: React.MouseEvent) => {
@@ -511,7 +497,6 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
             const parentEndpoint = clientLocalAddr
               ? `${baseSubtitle} · ${clientLocalAddr}`
               : baseSubtitle;
-            const parentDisplayName = getSessionDisplayName(node.tab);
             const parentPaneId = sessionToPane[node.tab.id];
 
             return (
@@ -546,7 +531,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                       size={10}
                     />
                     <div className={styles.itemText}>
-                      <div className={styles.itemName} title={parentDisplayName}>{parentDisplayName}</div>
+                      <div className={styles.itemName} title={node.tab.name}>{node.tab.name}</div>
                       <div
                         className={styles.itemEndpoint}
                         title={parentEndpoint}
