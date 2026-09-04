@@ -54,14 +54,6 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
     </div>
   );
 
-  const bridgeField = (
-    <div style={field}>
-      <label>TCNOpen bridge 路径 / Bridge executable</label>
-      <input className="liquid-glass-input" style={input} value={str(params, "bridge_path")} onChange={e => patch({ bridge_path: e.target.value })} placeholder="auto" />
-      <small>未填写时从 TauTerm 可执行文件同目录和 src-tauri/binaries 自动发现。</small>
-    </div>
-  );
-
   return (
     <div>
       <div style={field}>
@@ -98,7 +90,6 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           <details>
             <summary>高级 / Advanced</summary>
             <div style={{ marginTop: 10 }}>{portFields}</div>
-            {bridgeField}
           </details>
         </>
       ) : (
