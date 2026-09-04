@@ -3,7 +3,8 @@
   "bundle": {
     "resources": {
       "../resources/com0com/*": "",
-      "binaries/tauterm-service.exe": ""
+      "binaries/tauterm-service.exe": "",
+      "binaries/tauterm-trdp-bridge.exe": ""
     }
   }
 }
