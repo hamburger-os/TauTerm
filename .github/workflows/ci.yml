@@ -108,6 +108,29 @@ jobs:
           node --check scripts/assemble-release.js
           node --check scripts/verify-published-updater.js
 
+      - name: Validate TRDP sidecar bundle contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/prepare-service-bin.js
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          base = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
+          assert base["build"]["beforeBundleCommand"] == "node scripts/prepare-service-bin.js"
+          assert "binaries/tauterm-trdp-bridge" in base["bundle"]["externalBin"]
+
+          prepare = Path("scripts/prepare-service-bin.js").read_text(encoding="utf-8")
+          assert "TAURI_ENV_TARGET_TRIPLE" in prepare
+          assert "bootstrap-trdp.ps1" in prepare
+          assert "bootstrap-trdp.sh" in prepare
+
+          build_rs = Path("src-tauri/build.rs").read_text(encoding="utf-8")
+          assert 'std::env::var("TARGET")' in build_rs
+          assert "tauterm-trdp-bridge-{target}" in build_rs
+          PY
+
       - name: Install pinned Rust toolchain for rustfmt
         shell: bash
         run: |

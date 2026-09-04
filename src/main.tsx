@@ -10,6 +10,7 @@ import "./plugins/local-shell";
 import "./plugins/tftp";
 import "./plugins/iperf";
 import "./plugins/network";
+import "./plugins/trdp";
 import "./styles/global.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

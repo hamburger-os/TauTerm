@@ -1,0 +1,203 @@
+name: TRDP Native
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src-tauri/vendor/tcnopen/**'
+      - 'src-tauri/native/trdp_bridge*'
+      - 'src-tauri/native/CMakeLists.txt'
+      - 'src-tauri/build.rs'
+      - 'src-tauri/tauri.conf.json'
+      - 'src-tauri/tauri.windows.conf.json'
+      - 'scripts/prepare-service-bin.js'
+      - 'scripts/bootstrap-trdp.sh'
+      - 'scripts/bootstrap-trdp.ps1'
+      - 'scripts/vendor_tcnopen.py'
+      - 'tools/trdp-test-peer/**'
+      - '.github/workflows/trdp-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trdp-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix:
+    name: Native TRDP (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify vendored source metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/vendor_tcnopen.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          meta = json.loads(Path("src-tauri/vendor/tcnopen/SOURCE.json").read_text())
+          assert meta["version"] == "3.0.0.0"
+          assert meta["license"] == "MPL-2.0"
+          assert Path("src-tauri/vendor/tcnopen/src/api/trdp_if_light.h").is_file()
+          assert Path("src-tauri/vendor/tcnopen/src/common/trdp_private.h").is_file()
+          PY
+
+      - name: Build vendored TCNOpen 3.0.0.0 and native helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            export TAUTERM_TRDP_SANITIZE=1
+            export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0"
+            export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+          fi
+          bash scripts/bootstrap-trdp.sh
+
+      - name: Verify native artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x src-tauri/binaries/tauterm-trdp-bridge
+          test -x tools/trdp-test-peer/bin/trdp-test-peer
+          file src-tauri/binaries/tauterm-trdp-bridge
+          file tools/trdp-test-peer/bin/trdp-test-peer
+
+      - name: Linux TCNOpen interoperability
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRIDGE="$PWD/src-tauri/binaries/tauterm-trdp-bridge"
+          PEER="$PWD/tools/trdp-test-peer/bin/trdp-test-peer"
+          export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0"
+          export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+          dump_logs() {
+            status=$?
+            if [[ $status -ne 0 ]]; then
+              echo "=== TRDP interop diagnostics ==="
+              for log in /tmp/trdp-peer-*.log /tmp/trdp-bridge-*.log; do
+                if [[ -f "$log" ]]; then
+                  echo "--- $log ---"
+                  cat "$log"
+                fi
+              done
+            fi
+            exit $status
+          }
+          trap dump_logs EXIT
+
+          "$PEER" pd-publisher 127.0.0.2 127.0.0.1 7001 4 >/tmp/trdp-peer-pd.log 2>&1 &
+          PD_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-pd-sub","kind":"pd_subscriber","com_id":7001,"source":"127.0.0.2","destination":"127.0.0.1","timeout_us":500000}}'
+            sleep 2
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-pd.log 2>&1
+          wait "$PD_PID"
+          grep -q '"com_id":7001' /tmp/trdp-bridge-pd.log
+
+          "$PEER" md-replier 127.0.0.2 0.0.0.0 7100 4 >/tmp/trdp-peer-md.log 2>&1 &
+          MD_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-md-request","kind":"md_request","com_id":7100,"destination":"127.0.0.2","transport":"udp","payload_hex":"01020304"}}'
+            sleep 2
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-md.log 2>&1
+          wait "$MD_PID"
+          grep -q '"msg_type":"Mp"' /tmp/trdp-bridge-md.log
+
+          "$PEER" md-replier-tcp 127.0.0.2 0.0.0.0 7101 5 >/tmp/trdp-peer-tcp.log 2>&1 &
+          TCP_PID=$!
+          sleep 0.5
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-md-tcp","kind":"md_request","com_id":7101,"destination":"127.0.0.2","transport":"tcp","payload_hex":"01020304"}}'
+            sleep 3
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-tcp.log 2>&1
+          wait "$TCP_PID"
+          grep -q '"msg_type":"Mp"' /tmp/trdp-bridge-tcp.log
+
+          {
+            echo '{"command":"open","params":{"link_a_ip":"127.0.0.1"}}'
+            echo '{"command":"object_start","object":{"id":"ci-md-query","kind":"md_listener","com_id":7102,"destination":"0.0.0.0","response_mode":"query","confirm_timeout_us":2000000,"payload_hex":"544155"}}'
+            sleep 0.5
+            "$PEER" md-requester 127.0.0.2 127.0.0.1 7102 3 >/tmp/trdp-peer-query.log 2>&1
+            sleep 0.5
+            echo '{"command":"shutdown"}'
+          } | "$BRIDGE" >/tmp/trdp-bridge-query.log 2>&1
+          grep -q 'MD Mq' /tmp/trdp-peer-query.log
+          grep -q '"msg_type":"Mc"' /tmp/trdp-bridge-query.log
+
+          echo 'TRDP native loopback interoperability passed.'
+
+      - name: Install Tauri bundle smoke dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libssl-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libudev-dev
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+          npm ci --no-audit --no-fund
+
+      - name: Verify TRDP sidecar is packaged in Linux deb
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TAUTERM_TRDP_SANITIZE: "0"
+        run: |
+          set -euo pipefail
+          npm run tauri -- build --config src-tauri/tauri.dev.conf.json --bundles deb
+          DEB="$(find src-tauri/target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$DEB"
+          dpkg-deb -c "$DEB" | tee /tmp/tauterm-deb-files.txt
+          grep -F 'tauterm-trdp-bridge' /tmp/tauterm-deb-files.txt
+
+  windows:
+    name: Native TRDP (windows-2025)
+    runs-on: windows-2025
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify vendored source metadata
+        shell: pwsh
+        run: |
+          python -m py_compile scripts/vendor_tcnopen.py
+          $meta = Get-Content 'src-tauri/vendor/tcnopen/SOURCE.json' -Raw | ConvertFrom-Json
+          if ($meta.version -ne '3.0.0.0' -or $meta.license -ne 'MPL-2.0') { throw 'bad TCNOpen vendor metadata' }
+
+      - name: Build vendored TCNOpen 3.0.0.0 and native helpers
+        shell: pwsh
+        run: ./scripts/bootstrap-trdp.ps1
+
+      - name: Verify native artifacts
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'src-tauri/binaries/tauterm-trdp-bridge.exe')) { throw 'bridge missing' }
+          if (-not (Test-Path 'tools/trdp-test-peer/bin/trdp-test-peer.exe')) { throw 'peer missing' }

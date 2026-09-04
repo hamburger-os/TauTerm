@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<device host-name="tauterm-dataset" type="lab">
+  <bus-interface-list><bus-interface network-id="1" name="eth0"><pd-com-parameter marshall="on" port="17224" qos="2" ttl="64" timeout-value="500000" validity-behavior="keep"/><telegram name="DatasetTypes" com-id="3001" data-set-id="3001" com-parameter-id="1"><pd-parameter cycle="100000" marshall="on" timeout="500000" validity-behavior="keep"/><destination id="1" uri="239.255.3.1"/></telegram></bus-interface></bus-interface-list>
+  <com-parameter-list><com-parameter id="1" qos="2" ttl="64"/></com-parameter-list>
+  <data-set-list><data-set name="DatasetTypes" id="3001"><element name="bool" type="BOOL8"/><element name="signed" type="INT16"/><element name="counter" type="UINT32"/><element name="voltage" type="REAL32" unit="V" scale="0.1" offset="0"/><element name="timestamp" type="TIMEDATE64"/></data-set></data-set-list>
+</device>

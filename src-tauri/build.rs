@@ -1,4 +1,26 @@
 fn main() {
+    // Platform bundle configs declare the TRDP helper as a resource. The real
+    // executable is built by scripts/prepare-service-bin.js in beforeBundleCommand,
+    // which runs after the Rust build. Create a placeholder first so tauri-build
+    // can validate bundle resources during the build-script phase.
+    {
+        std::fs::create_dir_all("binaries")
+            .expect("failed to create src-tauri/binaries for TRDP helper");
+        let target = std::env::var("TARGET").expect("TARGET is unavailable for TRDP sidecar");
+        let target_os =
+            std::env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS is unavailable");
+        let helper_name = if target_os == "windows" {
+            format!("tauterm-trdp-bridge-{target}.exe")
+        } else {
+            format!("tauterm-trdp-bridge-{target}")
+        };
+        let placeholder = std::path::Path::new("binaries").join(helper_name);
+        if !placeholder.exists() {
+            std::fs::write(&placeholder, b"placeholder")
+                .expect("failed to create TRDP bridge sidecar placeholder");
+        }
+    }
+
     // The service binary is produced by Cargo in the same build, while tauri-build
     // validates bundle.resources during the build-script phase. Create a placeholder
     // first; scripts/prepare-service-bin.js replaces it with the real binary before bundling.
