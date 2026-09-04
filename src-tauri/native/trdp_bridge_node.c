@@ -285,6 +285,16 @@ static int link_selected(const char *selection, int index) {
     return selection[0] == 'b' || selection[0] == 'B';
 }
 
+static int parse_ipv4_text(const char *text, TRDP_IP_ADDR_T *output) {
+    const char *value = text != NULL && *text != '\0' ? text : "0.0.0.0";
+    if (strcmp(value, "0.0.0.0") == 0) {
+        *output = 0u;
+        return 1;
+    }
+    *output = vos_dottedIP(value);
+    return *output != 0u;
+}
+
 static node_object_t *find_object(const char *id) {
     int index;
     for (index = 0; index < NODE_MAX_OBJECTS; ++index) {
@@ -377,7 +387,9 @@ static TRDP_ERR_T open_link(
     process.vlanId = 0u;
 
     link->label = label;
-    link->own_ip = vos_dottedIP(ip != NULL && *ip != '\0' ? ip : "0.0.0.0");
+    if (!parse_ipv4_text(ip, &link->own_ip)) {
+        return TRDP_PARAM_ERR;
+    }
     error = tlc_openSession(&link->app, link->own_ip, 0u, NULL, &pd, &md, &process);
     if (error == TRDP_NO_ERR) {
         link->active = 1;
@@ -696,9 +708,12 @@ void node_open(const char *line) {
     char link_a_ip[64] = "0.0.0.0";
     char link_b_ip[64] = "0.0.0.0";
     int link_b_enabled = bridge_json_bool(line, "link_b_enabled", 0);
-    UINT16 pd_port = (UINT16)bridge_json_u32(line, "pd_port", BRIDGE_PD_PORT);
-    UINT16 md_udp_port = (UINT16)bridge_json_u32(line, "md_udp_port", BRIDGE_MD_PORT);
-    UINT16 md_tcp_port = (UINT16)bridge_json_u32(line, "md_tcp_port", BRIDGE_MD_PORT);
+    UINT32 pd_port_value = bridge_json_u32(line, "pd_port", BRIDGE_PD_PORT);
+    UINT32 md_udp_port_value = bridge_json_u32(line, "md_udp_port", BRIDGE_MD_PORT);
+    UINT32 md_tcp_port_value = bridge_json_u32(line, "md_tcp_port", BRIDGE_MD_PORT);
+    UINT16 pd_port;
+    UINT16 md_udp_port;
+    UINT16 md_tcp_port;
     TRDP_ERR_T error;
 
     if (!g_node_mutex_ready) {
@@ -709,8 +724,20 @@ void node_open(const char *line) {
         bridge_emit_error("TRDP Node is already open");
         return;
     }
-    (void)bridge_json_string(line, "link_a_ip", link_a_ip, sizeof(link_a_ip), "0.0.0.0");
-    (void)bridge_json_string(line, "link_b_ip", link_b_ip, sizeof(link_b_ip), "0.0.0.0");
+    if (!bridge_json_string(line, "link_a_ip", link_a_ip, sizeof(link_a_ip), "0.0.0.0")
+        || !bridge_json_string(line, "link_b_ip", link_b_ip, sizeof(link_b_ip), "0.0.0.0")) {
+        bridge_emit_error("TRDP link IP is invalid or too long");
+        return;
+    }
+    if (pd_port_value == 0u || pd_port_value > 65535u
+        || md_udp_port_value == 0u || md_udp_port_value > 65535u
+        || md_tcp_port_value == 0u || md_tcp_port_value > 65535u) {
+        bridge_emit_error("TRDP ports must be in range 1..65535");
+        return;
+    }
+    pd_port = (UINT16)pd_port_value;
+    md_udp_port = (UINT16)md_udp_port_value;
+    md_tcp_port = (UINT16)md_tcp_port_value;
 
     error = tlc_init(NULL, NULL, NULL);
     if (error != TRDP_NO_ERR) {
@@ -768,6 +795,9 @@ void node_object_start(const char *line) {
     UINT32 reply_timeout_us;
     UINT32 confirm_timeout_us;
     UINT32 data_len = 0u;
+    TRDP_IP_ADDR_T source_ip_value;
+    TRDP_IP_ADDR_T destination_ip_value;
+    TRDP_IP_ADDR_T reply_ip_value;
     UINT8 *data;
     node_object_t *object;
     TRDP_ERR_T error = TRDP_NO_ERR;
@@ -783,18 +813,35 @@ void node_object_start(const char *line) {
         bridge_emit_error("object_start requires id and kind");
         return;
     }
-    (void)bridge_json_string(line, "name", name, sizeof(name), "");
-    (void)bridge_json_string(line, "link", link_selection, sizeof(link_selection), "a");
-    (void)bridge_json_string(line, "destination", destination, sizeof(destination), "0.0.0.0");
-    (void)bridge_json_string(line, "source", source, sizeof(source), "0.0.0.0");
-    (void)bridge_json_string(line, "reply_ip", reply_ip_text, sizeof(reply_ip_text), "0.0.0.0");
-    (void)bridge_json_string(line, "payload_hex", payload, sizeof(payload), "");
-    (void)bridge_json_string(line, "transport", transport, sizeof(transport), "udp");
-    (void)bridge_json_string(line, "timeout_behavior", timeout_behavior, sizeof(timeout_behavior), "keep");
-    (void)bridge_json_string(line, "red_state", red_state, sizeof(red_state), "leader");
-    (void)bridge_json_string(line, "response_mode", response_mode, sizeof(response_mode), "reply");
-    (void)bridge_json_string(line, "source_uri", source_uri, sizeof(source_uri), "");
-    (void)bridge_json_string(line, "dest_uri", dest_uri, sizeof(dest_uri), "");
+    if (!bridge_json_string(line, "name", name, sizeof(name), "")
+        || !bridge_json_string(line, "link", link_selection, sizeof(link_selection), "a")
+        || !bridge_json_string(line, "destination", destination, sizeof(destination), "0.0.0.0")
+        || !bridge_json_string(line, "source", source, sizeof(source), "0.0.0.0")
+        || !bridge_json_string(line, "reply_ip", reply_ip_text, sizeof(reply_ip_text), "0.0.0.0")
+        || !bridge_json_string(line, "payload_hex", payload, sizeof(payload), "")
+        || !bridge_json_string(line, "transport", transport, sizeof(transport), "udp")
+        || !bridge_json_string(line, "timeout_behavior", timeout_behavior, sizeof(timeout_behavior), "keep")
+        || !bridge_json_string(line, "red_state", red_state, sizeof(red_state), "leader")
+        || !bridge_json_string(line, "response_mode", response_mode, sizeof(response_mode), "reply")
+        || !bridge_json_string(line, "source_uri", source_uri, sizeof(source_uri), "")
+        || !bridge_json_string(line, "dest_uri", dest_uri, sizeof(dest_uri), "")) {
+        bridge_emit_error("object_start contains an invalid or oversized string field");
+        return;
+    }
+    if (!(strcmp(link_selection, "a") == 0 || strcmp(link_selection, "b") == 0 || strcmp(link_selection, "both") == 0)
+        || !(strcmp(transport, "udp") == 0 || strcmp(transport, "tcp") == 0)
+        || !(strcmp(timeout_behavior, "keep") == 0 || strcmp(timeout_behavior, "zero") == 0)
+        || !(strcmp(red_state, "leader") == 0 || strcmp(red_state, "follower") == 0)
+        || !(strcmp(response_mode, "reply") == 0 || strcmp(response_mode, "query") == 0)) {
+        bridge_emit_error("object_start contains an invalid enum value");
+        return;
+    }
+    if (!parse_ipv4_text(source, &source_ip_value)
+        || !parse_ipv4_text(destination, &destination_ip_value)
+        || !parse_ipv4_text(reply_ip_text, &reply_ip_value)) {
+        bridge_emit_error("object_start contains an invalid IPv4 address");
+        return;
+    }
 
     com_id = bridge_json_u32(line, "com_id", 0u);
     cycle_us = bridge_json_u32(line, "cycle_us", 100000u);
@@ -860,7 +907,7 @@ void node_object_start(const char *line) {
     object->red_id = red_id;
     object->red_leader = strcmp(red_state, "follower") == 0 ? FALSE : TRUE;
     object->reply_com_id = reply_com_id;
-    object->reply_ip = vos_dottedIP(reply_ip_text);
+    object->reply_ip = reply_ip_value;
     object->timeout_behavior = strcmp(timeout_behavior, "zero") == 0
         ? TRDP_TO_SET_TO_ZERO
         : TRDP_TO_KEEP_LAST_VALUE;
@@ -876,8 +923,8 @@ void node_object_start(const char *line) {
         if (!g_links[index].active || !link_selected(link_selection, index)) {
             continue;
         }
-        source_ip = vos_dottedIP(source);
-        dest_ip = vos_dottedIP(destination);
+        source_ip = source_ip_value;
+        dest_ip = destination_ip_value;
         if (strcmp(kind, "pd_publisher") == 0) {
             error = start_pd_publisher(object, index, source_ip, dest_ip, cycle_us);
         } else if (strcmp(kind, "pd_subscriber") == 0) {
@@ -927,7 +974,10 @@ void node_object_update(const char *line) {
         bridge_emit_error("object_update requires id");
         return;
     }
-    (void)bridge_json_string(line, "payload_hex", payload, sizeof(payload), "");
+    if (!bridge_json_string(line, "payload_hex", payload, sizeof(payload), "")) {
+        bridge_emit_error("object_update payload_hex is invalid or too large");
+        return;
+    }
     object = find_object(id);
     if (object == NULL) {
         bridge_emit_error("TRDP object is not active");
