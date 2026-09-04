@@ -29,6 +29,7 @@ type TrdpEvent = {
   data_len?: number;
   payload_hex?: string;
   raw_frame_hex?: string;
+  link_type?: number;
   timestamp_us?: number;
   result_code?: number;
   reply_status?: number;
@@ -286,7 +287,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [objects, setObjects] = useState<TrdpObject[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
-      return saved ? JSON.parse(saved) as TrdpObject[] : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved) as TrdpObject[];
+      return Array.isArray(parsed) ? parsed.map(item => ({ ...item, state: "stopped" as const })) : [];
     } catch { return []; }
   });
   const [xmlImport, setXmlImport] = useState<XmlImport | null>(null);
