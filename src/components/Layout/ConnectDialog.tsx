@@ -118,6 +118,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const isTelnet = selectedMode === "telnet";
   const isIperf = selectedMode === "iperf";
   const isNetwork = selectedMode === "network";
+  const isTrdp = selectedMode === "trdp";
   const isLocalShell = selectedMode === "local-shell";
   const selectedPlugin = pluginRegistry.get(selectedMode);
   const PluginConnectForm = selectedPlugin?.connectForm;
@@ -448,6 +449,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     // 网络调试默认会话名：带传输层与角色（"Network Debug @ TCP Client"），
     // 避免多个网络调试会话在左侧树里无法区分 server/client
     const networkDefaultName = `${pluginRegistry.get("network")?.manifest.name || "Network Debug"} @ ${netTransport.toUpperCase()} ${netRole === "server" ? "Server" : "Client"}`;
+    const iperfDefaultName = `iperf @ ${iperfVersion}`;
+    const trdpDefaultName = `TRDP @ ${pluginParams.mode === "monitor" ? "Monitor" : "Node"}`;
     // Telnet/TFTP/iperf/网络调试 无文件传输：不保存 transfer_protocol，避免无意义的 "ymodem" 默认值
     // 污染会话配置（传输能力由 effectiveTransferEnabled=false 表达）
     const effectiveTransferProtocol = isLocalShell || isTelnet || isTftp || isIperf || isNetwork ? undefined : transferProtocol;
@@ -470,9 +473,16 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         onClose();
       } else {
         // 新建模式：仅保存配置，不连接（连接由右键菜单触发）
+        const initialSessionName = isNetwork
+          ? (sessionName || networkDefaultName)
+          : isIperf
+            ? (sessionName || iperfDefaultName)
+            : isTrdp
+              ? (sessionName || trdpDefaultName)
+              : effectiveSessionName;
         const sid = await createOfflineSession(
           endpoint, params,
-          isNetwork ? (sessionName || networkDefaultName) : effectiveSessionName, pluginId,
+          initialSessionName, pluginId,
           effectiveTransferEnabled, effectiveTransferProtocol,
           effectiveSendBarEnabled,
         );
@@ -485,7 +495,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive, isTrdp]);
 
   // 数据字符编码下拉（终端类协议共用：serial / ssh / telnet）
   const encodingField = (
