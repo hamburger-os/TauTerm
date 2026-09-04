@@ -175,8 +175,12 @@ fn network_offset(frame: &[u8], linktype: u32) -> Option<usize> {
             }
             (ether_type == 0x0800).then_some(offset)
         }
-        LINKTYPE_LINUX_SLL => Some(16),
-        LINKTYPE_LINUX_SLL2 => Some(20),
+        LINKTYPE_LINUX_SLL => {
+            (frame.len() >= 16 && be16(frame, 14)? == 0x0800).then_some(16)
+        }
+        LINKTYPE_LINUX_SLL2 => {
+            (frame.len() >= 20 && be16(frame, 0)? == 0x0800).then_some(20)
+        },
         LINKTYPE_NULL => (frame.len() >= 5 && frame.get(4)? >> 4 == 4).then_some(4),
         LINKTYPE_RAW => (frame.first()? >> 4 == 4).then_some(0),
         _ => None,
@@ -194,35 +198,62 @@ fn decode_frame(
         return None;
     }
     let ip_header_length = ((frame.get(ip)? & 0x0f) as usize) * 4;
-    if ip_header_length < 20 || frame.len() < ip + ip_header_length {
+    let ip_total_length = be16(frame, ip + 2)? as usize;
+    if ip_header_length < 20
+        || ip_total_length < ip_header_length
+        || frame.len() < ip + ip_total_length
+    {
         return None;
     }
     if be16(frame, ip + 6)? & 0x3fff != 0 {
         return None;
     }
 
+    let ip_end = ip + ip_total_length;
     let protocol = *frame.get(ip + 9)?;
     let src_ip = ipv4(frame.get(ip + 12..ip + 16)?);
     let dest_ip = ipv4(frame.get(ip + 16..ip + 20)?);
     let transport_offset = ip + ip_header_length;
-    let (transport, src_port, dest_port, payload_offset) = match protocol {
+    let (transport, src_port, dest_port, payload_offset, payload_end) = match protocol {
         17 => {
+            if transport_offset + 8 > ip_end {
+                return None;
+            }
             let source = be16(frame, transport_offset)?;
             let destination = be16(frame, transport_offset + 2)?;
-            ("udp", source, destination, transport_offset + 8)
+            let udp_length = be16(frame, transport_offset + 4)? as usize;
+            if udp_length < 8 || transport_offset + udp_length > ip_end {
+                return None;
+            }
+            (
+                "udp",
+                source,
+                destination,
+                transport_offset + 8,
+                transport_offset + udp_length,
+            )
         }
         6 => {
+            if transport_offset + 20 > ip_end {
+                return None;
+            }
             let source = be16(frame, transport_offset)?;
             let destination = be16(frame, transport_offset + 2)?;
             let header_length = ((*frame.get(transport_offset + 12)? >> 4) as usize) * 4;
-            if header_length < 20 {
+            if header_length < 20 || transport_offset + header_length > ip_end {
                 return None;
             }
-            ("tcp", source, destination, transport_offset + header_length)
+            (
+                "tcp",
+                source,
+                destination,
+                transport_offset + header_length,
+                ip_end,
+            )
         }
         _ => return None,
     };
-    if !ports.accepts(src_port, dest_port) || frame.len() < payload_offset + 24 {
+    if !ports.accepts(src_port, dest_port) || payload_end < payload_offset + 24 {
         return None;
     }
 
@@ -245,7 +276,7 @@ fn decode_frame(
     let op_trn_topo_count = be32(frame, payload_offset + 16)?;
     let data_len = be32(frame, payload_offset + 20)?;
     let trdp_header_length = if msg_type.starts_with('M') { 116 } else { 40 };
-    if frame.len() < payload_offset + trdp_header_length {
+    if payload_end < payload_offset + trdp_header_length {
         return None;
     }
     let fcs_offset = payload_offset + trdp_header_length - 4;
@@ -255,7 +286,7 @@ fn decode_frame(
     let data_start = payload_offset + trdp_header_length;
     let data_end = data_start
         .saturating_add(data_len as usize)
-        .min(frame.len());
+        .min(payload_end);
     let payload = frame.get(data_start..data_end).unwrap_or_default();
 
     let (reply_status, user_status, reply_timeout_us, md_session_id, src_uri, dest_uri) =
