@@ -9,9 +9,11 @@
 | **Node.js** | 22.x | 前端运行时与包管理器（CI 与发布工作流固定使用 Node 22） |
 | **Rust** | 仓库锁定版本 | 由根目录 `rust-toolchain.toml` 精确锁定稳定版，并声明 clippy 与 rustfmt |
 | **npm** | 随 Node.js 22 附带 | 依赖安装与脚本运行 |
+| **CMake** | >= 3.20 | 构建 vendored TCNOpen/TRDP native helper 与 reference peer |
+| **C 编译器** | 平台原生 | Windows 使用 MSVC；Linux/macOS 使用系统 C toolchain |
 | **NSIS** | >= 3.0 | Windows 安装包构建工具（仅 Windows 构建需要） |
 
-> **注意**：Rust 的精确版本只以 `rust-toolchain.toml` 为准。请通过 rustup 进入仓库后运行 Rust 命令，不要在本机另行选择其他版本。Windows 构建仍需要可用的 MSVC/Windows SDK 环境；Rust 工具链本身不替代这些系统组件。
+> **注意**：Rust 的精确版本只以 `rust-toolchain.toml` 为准。请通过 rustup 进入仓库后运行 Rust 命令，不要在本机另行选择其他版本。Windows 构建仍需要可用的 MSVC/Windows SDK 环境；Rust 工具链本身不替代这些系统组件。TRDP 不需要单独安装 TCNOpen SDK：TauTerm 固定 vendoring TCNOpen 3.0.0.0 源码，并由 CMake 构建。
 
 ---
 
@@ -63,11 +65,11 @@ cargo --version
 npm run toolchain:check
 ```
 
-### 3. 链接器
-
-**工具链组件**
+### 3. 链接器、CMake 与 MSVC
 
 `rust-toolchain.toml` 声明仓库所需的 `rustfmt` 与 `clippy` 组件；具体链接器与 Windows SDK/MSVC 环境取决于目标平台。
+
+TRDP native helper 使用 CMake + MSVC 构建。请确保 `cmake` 可用，并安装 Visual Studio Build Tools / Desktop development with C++ 或等价的 x64 MSVC 工具链。当前 Windows 发布目标为 x86_64。
 
 ---
 
@@ -87,7 +89,9 @@ sudo apt install -y \
   libgtk-3-dev \
   libsoup-3.0-dev \
   libjavascriptcoregtk-4.1-dev \
-  libudev-dev
+  libudev-dev \
+  cmake \
+  build-essential
 
 # 安装 Node.js 22（使用 NodeSource）
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
@@ -106,7 +110,9 @@ sudo dnf install -y \
   libappindicator-gtk3-devel \
   librsvg2-devel \
   patchelf \
-  openssl-devel
+  openssl-devel \
+  cmake \
+  gcc
 
 # Node.js 和 Rust 安装同上
 ```
@@ -119,7 +125,9 @@ sudo pacman -S --needed \
   libappindicator-gtk3 \
   librsvg \
   patchelf \
-  openssl
+  openssl \
+  cmake \
+  base-devel
 ```
 
 ---
@@ -136,6 +144,9 @@ brew install node@22
 # 安装 Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
+
+# TRDP native helper
+brew install cmake
 
 # Linux/macOS 虚拟串口桥接由 TauTerm 进程内创建 POSIX PTY，无需额外 helper
 ```
@@ -158,6 +169,48 @@ npm run toolchain:check
 # Linux / macOS
 node --version && npm --version && rustc --version && cargo --version
 ```
+
+---
+
+## TRDP native helper 与 vendored TCNOpen
+
+TauTerm 把 **TCNOpen TRDP 3.0.0.0** 源码固定在 `src-tauri/vendor/tcnopen/`。普通源码构建不需要联网下载 TCNOpen，也不需要额外安装 TCNOpen SDK。
+
+手动构建 TRDP helper 与 reference peer：
+
+### Linux / macOS
+
+```bash
+bash scripts/bootstrap-trdp.sh
+```
+
+### Windows x64
+
+```powershell
+./scripts/bootstrap-trdp.ps1
+```
+
+输出位置：
+
+- `src-tauri/binaries/tauterm-trdp-bridge[.exe]`
+- `tools/trdp-test-peer/bin/trdp-test-peer[.exe]`
+
+`npm run tauri dev` 不执行 Tauri 的 `beforeBundleCommand`，因此如果开发时要真正打开 TRDP Node/Monitor，会话启动前至少手动运行一次对应平台 bootstrap。纯前端/普通协议开发不需要这一步。
+
+正式 Tauri 打包会自动执行 `scripts/prepare-service-bin.js`。该 hook 会：
+
+1. 调用对应平台的 TRDP bootstrap；
+2. 生成未带 target triple 的开发 helper；
+3. 根据 `TAURI_ENV_TARGET_TRIPLE` 复制为 Tauri `bundle.externalBin` 所需的 sidecar 文件名；
+4. Windows 下继续处理现有的 `tauterm-service.exe` 资源。
+
+实时 TRDP Monitor 的抓包库是**运行时依赖**而不是编译依赖：
+
+- Windows：用户自行安装 Npcap；TauTerm 动态加载 `wpcap.dll`，不分发 Npcap。
+- Linux/macOS：TauTerm 动态加载系统 libpcap。
+- 离线 `.pcap/.pcapng` 分析不依赖 Npcap/libpcap。
+
+完整 TRDP 功能、样例、SDT 边界和 reference peer 说明见 [TRDP.md](TRDP.md)。
 
 ---
 
@@ -225,6 +278,10 @@ cd TauTerm
 # 安装前端依赖
 npm install
 
+# 如需调试 TRDP，会话启动前先构建 native helper：
+# Linux/macOS: bash scripts/bootstrap-trdp.sh
+# Windows:     ./scripts/bootstrap-trdp.ps1
+
 # 启动开发模式（同时启动 Vite 开发服务器和 Tauri 桌面窗口）
 npm run tauri dev
 ```
@@ -283,12 +340,12 @@ npm run tauri:build
 1. `check-com0com.js` — 验证 `resources/com0com/x64/` 和 `x86/` 中驱动文件齐全（setupc.exe, com0com.sys, com0com.inf, com0com.cat）
 2. `check-reserved-region.js` — 校验 `scripts/test-serial-session.py` 与 `src-tauri/src/virtual_port/manager.rs` 的 com0com 预留端口/bus 段常量一致，避免测试脚本与产品的虚拟串口互占/互删
 3. `tsc && vite build` — 前端 TypeScript 编译 + Vite 打包
-4. `build.rs` — Windows 下按目标架构（x86_64 → x64，i686 → x86）复制 7 个驱动文件，并创建服务资源占位文件供 `tauri-build` 校验；非 Windows 不创建服务占位文件
+4. `build.rs` — Windows 下按目标架构复制 com0com 驱动资源；同时为目标 triple 创建 TRDP sidecar 占位文件，供 `tauri-build` 在 Rust build-script 阶段校验 `bundle.externalBin`
 5. `cargo build --release` — Rust 后端编译，产出主程序 `tauterm.exe` 与 Windows 专用 `tauterm-service.exe`
-6. `prepare-service-bin.js` — Windows 打包前将服务二进制复制到 `src-tauri/binaries/`；非 Windows 跳过
-7. **NSIS 打包** — 生成 x64 安装程序，内含 com0com 驱动、服务二进制与 NSIS hooks；安装时执行驱动安装并注册 `TauTermService`
+6. `prepare-service-bin.js` — 所有平台先从 vendored TCNOpen 3.0.0.0 构建 `tauterm-trdp-bridge`，再按 `TAURI_ENV_TARGET_TRIPLE` staging 为 Tauri sidecar；Windows 同时把 `tauterm-service.exe` 复制到 bundle resource 位置
+7. **NSIS 打包** — 生成 x64 安装程序，内含 com0com 驱动、Windows 服务、TRDP sidecar 与 NSIS hooks；安装时执行驱动安装并注册 `TauTermService`
 
-> **平台差异**：服务二进制资源（`binaries/tauterm-service.exe`）仅声明在 `tauri.windows.conf.json` 的 `bundle.resources` 中（与基础 `tauri.conf.json` 合并），Linux/macOS 构建不会引用该文件，`build.rs` 的占位文件也只在 Windows 创建，因此非 Windows 平台可正常构建。
+> **平台差异**：Windows 服务二进制（`binaries/tauterm-service.exe`）仍只声明在 `tauri.windows.conf.json` 的 `bundle.resources` 中；TRDP helper 则由基础 `tauri.conf.json` 的 `bundle.externalBin` 跨平台声明，并按目标 triple staging。TRDP Native CI 会额外构建 Linux `.deb` 并检查安装包中确实包含 sidecar。
 
 **构建产物**：
 
@@ -312,7 +369,7 @@ src-tauri/target/release/bundle/nsis/
 npm run tauri -- build
 ```
 
-构建产物位于 `src-tauri/target/release/bundle/`：`.deb` / `.rpm` / `.AppImage`（Linux），`.dmg` / `.app`（macOS）。
+构建前需要 CMake 和平台 C 编译器，因为 `beforeBundleCommand` 会自动构建 TRDP sidecar。构建产物位于 `src-tauri/target/release/bundle/`：`.deb` / `.rpm` / `.AppImage`（Linux），`.dmg` / `.app`（macOS）。
 
 ---
 
