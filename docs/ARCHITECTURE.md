@@ -223,6 +223,7 @@ graph LR
 - **Monitor**：不初始化 TCNOpen Node session；live capture 由 sidecar 动态加载 Npcap/libpcap，offline pcap/pcapng 由 Rust 解析。
 - **A/B 与 redundancy 分离**：Link A/B 是物理/抓包接口选择；`redId` 与 Leader/Follower 是 TRDP redundancy 属性，不存在 A=Leader/B=Follower 的隐式映射。
 - **事件一致性**：前端对象状态只根据 native `ack` 事件进入 Running/Stopped，stdin 写入成功本身不代表 TCNOpen object 已成功创建。
+- **Helper 信任边界**：Release 只从 Tauri resource/executable directory 或显式 `TAUTERM_TRDP_BRIDGE` 环境变量解析 sidecar；仓库/CWD 相对查找只允许 debug build，避免工作目录路径劫持。
 - **Sidecar 打包**：基础 `tauri.conf.json` 通过 `bundle.externalBin` 声明 helper；`beforeBundleCommand` 从 vendored TCNOpen 构建并按 target triple staging。运行时优先从 Tauri resource directory 查找 sidecar。
 - **源码边界**：`src-tauri/vendor/tcnopen/**` 保持 MPL-2.0 上游文件；TauTerm 自有 Rust/TS/C bridge/CMake 继续 MIT OR Apache-2.0。
 
