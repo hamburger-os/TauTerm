@@ -79,13 +79,14 @@ function loadInitialWorkspaceLayout(): SplitLayoutState | null {
 }
 
 /**
- * 运行时子会话（Local Shell / SSH channel）被关闭或父会话断开时，子 ID 会从
- * SessionContext 中消失，但其稳定根会话仍然存在。分屏应回退显示根会话，而不是
- * 把 Pane 清空；真正删除根会话时才允许 pruneAssignments 清除该分配。
+ * 父容器明确断开时，运行时子会话（Local Shell / SSH channel）会被销毁，但
+ * 离线根会话配置仍然存在。仅在根会话已经 disconnected 时把 Pane 从旧 child ID
+ * 回退到稳定 root ID；关闭单个 child 且父容器仍在线时不改变原有 Pane 清理语义。
  */
-function remapRemovedChildrenToStableRoots(
+function remapRemovedChildrenToDisconnectedRoots(
   state: SplitLayoutState,
   validSessionIds: ReadonlySet<string>,
+  disconnectedRootIds: ReadonlySet<string>,
   stableSessionIds: ReadonlyMap<string, string>,
 ): SplitLayoutState {
   let changed = false;
@@ -94,7 +95,12 @@ function remapRemovedChildrenToStableRoots(
     const assigned = assignments[paneId];
     if (!assigned || validSessionIds.has(assigned)) continue;
     const stableId = stableSessionIds.get(assigned);
-    if (stableId && stableId !== assigned && validSessionIds.has(stableId)) {
+    if (
+      stableId
+      && stableId !== assigned
+      && validSessionIds.has(stableId)
+      && disconnectedRootIds.has(stableId)
+    ) {
       assignments[paneId] = stableId;
       changed = true;
     }
@@ -207,9 +213,15 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
 
     // 子终端关闭/父容器断开并不等于“用户删除了这个会话”。
     // 先把已消失的运行时 child ID 回退到稳定 root/config ID，再做真正的无效分配清理。
-    let next = remapRemovedChildrenToStableRoots(
+    const disconnectedRootIds = new Set(
+      sessionState.tabs
+        .filter(tab => !tab.parentId && tab.state === "disconnected")
+        .map(tab => tab.id),
+    );
+    let next = remapRemovedChildrenToDisconnectedRoots(
       current,
       valid,
+      disconnectedRootIds,
       stableSessionIdsRef.current,
     );
     next = pruneAssignments(next, valid);
