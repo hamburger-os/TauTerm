@@ -128,7 +128,13 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
             </div>
           )}
           <label className="liquid-glass-toggle" style={{ marginBottom: 14 }}>
-            <input type="checkbox" checked={captureFilterAuto} onChange={e => patch({ capture_filter_auto: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={captureFilterAuto}
+              onChange={e => patch(e.target.checked
+                ? { capture_filter_auto: true }
+                : { capture_filter_auto: false, capture_filter: effectiveCaptureFilter })}
+            />
             <div />
             <span>按 PD/MD 端口自动生成过滤器 / Auto filter from ports</span>
           </label>
