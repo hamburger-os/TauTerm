@@ -3,14 +3,50 @@
   "name": "TauTerm TRDP Lab",
   "mode": "node",
   "links": {
-    "a": { "local_ip": "10.10.0.10", "enabled": true },
-    "b": { "local_ip": "10.20.0.10", "enabled": false }
+    "a": {
+      "local_ip": "10.10.0.10",
+      "enabled": true
+    },
+    "b": {
+      "local_ip": "10.20.0.10",
+      "enabled": false
+    }
   },
   "xml": "full-node.xml",
   "objects": [
-    { "id": "status-pub", "kind": "pd_publisher", "name": "Vehicle Status", "com_id": 5001, "link": "a", "destination": "239.255.5.1", "cycle_us": 100000, "payload_hex": "000000000000000000000000", "auto_start": false },
-    { "id": "command-sub", "kind": "pd_subscriber", "name": "Vehicle Command", "com_id": 5002, "link": "a", "destination": "239.255.5.2", "cycle_us": 300000, "payload_hex": "", "auto_start": false },
-    { "id": "maintenance-listener", "kind": "md_listener", "name": "Maintenance Replier", "com_id": 5100, "link": "a", "destination": "0.0.0.0", "transport": "udp", "payload_hex": "000000000000", "auto_start": false }
+    {
+      "id": "status-pub",
+      "kind": "pd_publisher",
+      "name": "Vehicle Status",
+      "com_id": 5001,
+      "link": "a",
+      "destination": "239.255.5.1",
+      "cycle_us": 100000,
+      "payload_hex": "000000000000000000000000",
+      "auto_start": false
+    },
+    {
+      "id": "command-sub",
+      "kind": "pd_subscriber",
+      "name": "Vehicle Command",
+      "com_id": 5002,
+      "link": "a",
+      "destination": "239.255.5.2",
+      "payload_hex": "",
+      "auto_start": false,
+      "timeout_mode": "auto"
+    },
+    {
+      "id": "maintenance-listener",
+      "kind": "md_listener",
+      "name": "Maintenance Replier",
+      "com_id": 5100,
+      "link": "a",
+      "destination": "0.0.0.0",
+      "transport": "udp",
+      "payload_hex": "000000000000",
+      "auto_start": false
+    }
   ],
   "monitor": {
     "filter": "udp port 17224 or udp port 17225 or tcp port 17225",
