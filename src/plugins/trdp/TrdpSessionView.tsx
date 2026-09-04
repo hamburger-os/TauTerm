@@ -322,7 +322,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         ? parsed.map(item => ({
             ...item,
             state: "stopped" as const,
-            timeoutMode: item.timeoutMode ?? "auto",
+            timeoutMode: item.timeoutMode
+              ?? (item.kind === "pd_subscriber" || item.kind === "pd_request" ? "custom" : "auto"),
           }))
         : [];
     } catch { return []; }
