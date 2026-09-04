@@ -1,30 +1,77 @@
 # TauTerm TRDP reference peer
 
-This is intentionally a thin **TCNOpen C** peer for interoperability testing. It is not a second TRDP implementation, so TauTerm is tested against the same reference stack used by railway applications rather than against its own packet code.
+This is intentionally a thin **TCNOpen C** peer for interoperability testing. It is not a second TRDP implementation or a train simulator. It exists so CI and a developer machine can exercise TauTerm against an independently configured TCNOpen application session.
 
-Build TCNOpen 3.0.0.0 first with `scripts/bootstrap-trdp.sh`. The extracted source is left under `.cache/tcnopen-3.0.0.0/src/`. Locate the extracted `trdp` directory and the generated `libtrdp.a`, then compile:
+TauTerm vendors TCNOpen TRDP **3.0.0.0** under `src-tauri/vendor/tcnopen/`. Normal development and CI do not download or unpack a separate TCNOpen SDK.
 
-```bash
-cc -O2 -DMD_SUPPORT=1 -DLINUX -DL_ENDIAN \
-  -I/path/to/trdp/src/api -I/path/to/trdp/src/common -I/path/to/trdp/src/vos/api \
-  tools/trdp-test-peer/trdp_test_peer.c /path/to/libtrdp.a -pthread -lrt \
-  -o trdp-test-peer
-```
+## Build
 
-Examples:
+The same bootstrap that builds TauTerm's native TRDP bridge also builds this peer.
+
+### Linux / macOS
 
 ```bash
-# Linux board publishes PD ComID 2001 to a multicast group.
-./trdp-test-peer pd-publisher 10.10.0.20 239.255.1.1 2001
-
-# Linux board subscribes; configure TauTerm as PD Publisher.
-./trdp-test-peer pd-subscriber 10.10.0.20 239.255.1.1 2001
-
-# Linux board is an MD replier; configure TauTerm Messages → MD Request.
-./trdp-test-peer md-replier 10.10.0.20 0.0.0.0 4001
-
-# Linux board sends an MD request to TauTerm's Listener/Replier.
-./trdp-test-peer md-requester 10.10.0.20 10.10.0.10 4001
+bash scripts/bootstrap-trdp.sh
 ```
 
-For Windows ↔ Linux-board testing, set TauTerm Link A to the Windows Ethernet adapter's concrete IPv4 address. Do not use `0.0.0.0` for final interoperability tests. Firewalls must allow PD UDP/17224 and MD UDP/TCP/17225.
+Output:
+
+```text
+tools/trdp-test-peer/bin/trdp-test-peer
+```
+
+### Windows x64
+
+```powershell
+./scripts/bootstrap-trdp.ps1
+```
+
+Output:
+
+```text
+tools/trdp-test-peer/bin/trdp-test-peer.exe
+```
+
+The build uses `src-tauri/native/CMakeLists.txt` and the vendored TCNOpen source. Do not manually link against a random system TCNOpen version when reproducing TauTerm CI results.
+
+## Examples
+
+The peer accepts an optional final run-duration argument in seconds, which is useful for scripts/CI.
+
+```bash
+# Peer publishes PD ComID 2001; configure TauTerm as PD Subscriber.
+./tools/trdp-test-peer/bin/trdp-test-peer \
+  pd-publisher 10.10.0.20 239.255.1.1 2001
+
+# Peer subscribes; configure TauTerm as PD Publisher.
+./tools/trdp-test-peer/bin/trdp-test-peer \
+  pd-subscriber 10.10.0.20 239.255.1.1 2001
+
+# Peer is an MD UDP replier; configure TauTerm Messages → MD Request.
+./tools/trdp-test-peer/bin/trdp-test-peer \
+  md-replier 10.10.0.20 0.0.0.0 4001
+
+# Peer is an MD TCP replier.
+./tools/trdp-test-peer/bin/trdp-test-peer \
+  md-replier-tcp 10.10.0.20 0.0.0.0 4001
+
+# Peer sends an MD request to TauTerm's Listener/Replier.
+./tools/trdp-test-peer/bin/trdp-test-peer \
+  md-requester 10.10.0.20 10.10.0.10 4001
+```
+
+For Windows ↔ Linux-board testing, set TauTerm Link A to the Windows Ethernet adapter's concrete IPv4 address. Do not use `0.0.0.0` for final interoperability tests. Firewalls must allow the configured TRDP ports (standard defaults: PD UDP/17224 and MD UDP/TCP/17225).
+
+The repository samples under `samples/trdp/` are useful starting points for lab ComIDs/Datasets.
+
+## CI coverage
+
+`.github/workflows/trdp-native.yml` builds the bridge and this reference peer on Windows x64, Linux x86_64 and macOS Apple Silicon. Linux additionally exercises:
+
+- PD Publish → Subscribe;
+- MD UDP Request → Reply;
+- MD TCP Request → Reply;
+- ReplyQuery → Confirm;
+- Tauri `.deb` packaging of the TRDP sidecar.
+
+For the complete session/runtime boundaries, see [docs/TRDP.md](../../docs/TRDP.md).
