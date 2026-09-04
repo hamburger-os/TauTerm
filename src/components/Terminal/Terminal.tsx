@@ -114,6 +114,10 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   onTermReadyRef.current = onTermReady;
   const onCleanupRef = useRef(onCleanup);
   onCleanupRef.current = onCleanup;
+  // xterm 可能在解析首批 shell 输出时立即产生终端响应（例如 DSR 光标位置报告）。
+  // 用 ref 保持最新输入回调，并在首批输出回放前完成 onData 订阅，避免响应丢失后 shell 阻塞。
+  const onDataRef = useRef(onData);
+  onDataRef.current = onData;
 
   const { t } = useTranslation();
   const { theme } = useTheme();
@@ -194,6 +198,14 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    // 必须先订阅 xterm 输入，再向父层暴露 write。
+    // 父层会在 onTermReady 中同步回放连接初期缓存的 PTY 数据；PowerShell / cmd /
+    // Git Bash 等启动阶段可能输出 ESC[6n（DSR）并等待终端应答。如果此时 onData 尚未
+    // 注册，xterm 生成的 ESC[row;colR 响应会被丢掉，表现为“连接成功但终端空白、回车无反应”。
+    const inputDisposable = term.onData((data) => {
+      onDataRef.current?.(data);
+    });
+
     // 终端初始化完成后立即注册写函数，不依赖外部重渲染触发
     onTermReadyRef.current?.((data: Uint8Array | string) => {
       term.write(data);
@@ -209,6 +221,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
     return () => {
       observer.disconnect();
+      inputDisposable.dispose();
       if (resizeTimerRef.current) {
         clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = null;
@@ -279,14 +292,6 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       cancelAnimationFrame(raf2);
     };
   }, [isActive]);
-
-  // 捕获终端输入
-  useEffect(() => {
-    if (!xtermRef.current || !onData) return;
-    const term = xtermRef.current;
-    const handler = term.onData(onData);
-    return () => { handler.dispose(); };
-  }, [onData, sessionId]);
 
   // 处理粘贴
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {

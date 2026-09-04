@@ -85,6 +85,32 @@ function terminalHasRuntime(tab: TabInfo): boolean {
 }
 
 /**
+ * Pane 标题必须在脱离侧栏树的上下文后仍能唯一识别会话。
+ * 子会话（SSH channel / Local Shell PTY / 未来其它 tabbed sub-session）
+ * 统一带上父会话名称，避免所有分屏只看到 "Shell 1" / "Channel 1"。
+ */
+function getPaneDisplayTitle(tab: TabInfo, tabsById: Map<string, TabInfo>): string {
+  if (!tab.parentId) return tab.name;
+  const parent = tabsById.get(tab.parentId);
+  if (!parent?.name) return tab.name;
+  return `${parent.name} › ${tab.name}`;
+}
+
+function getConnectionStateFallback(state: TabInfo["state"]): string {
+  switch (state) {
+    case "connecting":
+      return "连接中...";
+    case "connected":
+      return "已连接";
+    case "transferring":
+      return "传输中";
+    case "disconnected":
+    default:
+      return "未连接";
+  }
+}
+
+/**
  * Split View surface for the persisted local Workspace layout.
  *
  * Pane 只是显示槽；Session 生命周期仍由 SessionContext/插件 store 管理。
@@ -331,9 +357,14 @@ export default function SplitView({
             {tab && !isTerminal && renderNonTerminalContent(tab)}
             {tab && showTerminalPlaceholder && (
               <div className={styles.emptyPane}>
-                <span className={styles.disconnectedDot} />
-                <span>{tab.name}</span>
-                <small>{t("session.disconnected", "未连接")}</small>
+                <span className={styles.emptyMark}>
+                  <Icon name="connection" size="xl" className={styles.emptyPaneIcon} />
+                </span>
+                <span>
+                  {tab.state === "connecting"
+                    ? t("session.preparingContent", "正在准备会话内容...")
+                    : t("session.connectToUse", "连接会话后可使用此内容")}
+                </span>
               </div>
             )}
           </div>
@@ -354,6 +385,18 @@ export default function SplitView({
         const tab = sessionId ? tabsById.get(sessionId) : undefined;
         const selected = paneId === layout.selectedPaneId;
         const blocked = blockedEdges[paneId] ?? new Set<SplitEdge>();
+        const paneTitle = tab ? getPaneDisplayTitle(tab, tabsById) : t("split.emptyPane", "空分屏");
+        const paneTitleTooltip = tab?.elevated
+          ? `${paneTitle} · ${t("localShell.administrator", "管理员")}`
+          : paneTitle;
+        const stateLabel = tab
+          ? t(`session.${tab.state}`, getConnectionStateFallback(tab.state))
+          : "";
+        const lifecycleClass = tab?.state === "connected" || tab?.state === "transferring"
+          ? styles.lifecycleConnected
+          : tab?.state === "connecting"
+            ? styles.lifecycleConnecting
+            : styles.lifecycleDisconnected;
         return (
           <div key={`chrome-${paneId}`} className={styles.paneChrome} style={rectStyle(rect)}>
             <div className={`${styles.paneFrame} ${selected ? styles.selectedFrame : ""}`} />
@@ -366,9 +409,20 @@ export default function SplitView({
                 }}
                 onContextMenu={(e) => openPaneMenu(e, paneId)}
               >
-                <span className={`${styles.paneHeaderTitle} ${tab ? "" : styles.emptyPaneTitle}`} title={tab?.name}>
-                  {tab?.name ?? t("split.emptyPane", "空分屏")}
+                <span className={`${styles.paneHeaderTitle} ${tab ? "" : styles.emptyPaneTitle}`} title={paneTitleTooltip}>
+                  {paneTitle}
                 </span>
+                {tab?.elevated && (
+                  <span className={styles.paneHeaderBadge} title={t("localShell.administrator", "管理员")}>
+                    <Icon name="shield" size="xs" />
+                  </span>
+                )}
+                {tab && (
+                  <span className={styles.paneHeaderState} title={stateLabel}>
+                    <span className={`${styles.lifecycleDot} ${lifecycleClass}`} />
+                    <span className={styles.paneHeaderStateText}>{stateLabel}</span>
+                  </span>
+                )}
               </div>
             )}
             {paneCount < 4 && EDGES.map(edge => {
