@@ -891,40 +891,56 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     );
   };
 
+  const visibleNav = nav.filter(([key]) => mode === "monitor" ? ["overview", "traffic"].includes(key) : true);
+  const publisherObjects = objects.filter(object => object.kind === "pd_publisher");
+  const subscriberObjects = objects.filter(object => object.kind === "pd_subscriber" || object.kind === "pd_request");
+  const messageObjects = objects.filter(object => object.kind.startsWith("md_"));
+  const subscriberFlows = flows.filter(flow => flow.msg.startsWith("P"));
+  const packetRows = events.slice().reverse().slice(0, 1000);
+
   return (
-    <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr", overflow: "hidden" }}>
-      <div style={{ display: "flex", gap: 6, padding: 8, borderBottom: "1px solid var(--border-color)", overflowX: "auto" }}>
-        {nav.filter(([key]) => mode === "monitor" ? ["overview", "traffic"].includes(key) : true).map(([key, label]) => (
-          <button key={key} className={page === key ? "liquid-primary-button" : "liquid-glass-button"} onClick={() => setPage(key)}>{label}</button>
+    <div className={styles.root}>
+      <div className={styles.navBar}>
+        {visibleNav.map(([key, label]) => (
+          <button
+            key={key}
+            className={styles.navButton + " " + (page === key ? "liquid-primary-button" : "liquid-glass-button")}
+            onClick={() => setPage(key)}
+          >
+            {label}
+          </button>
         ))}
       </div>
-      <div style={{ padding: 12, overflow: "auto" }}>
-        {error && <div style={{ padding: 10, marginBottom: 12, border: "1px solid var(--danger, #d44)", borderRadius: 8 }}>{error}</div>}
+
+      <div className={styles.content}>
+        {error && <div className={styles.error}>{error}</div>}
 
         {structuredEditor && structuredObject && structuredDataset && (
-          <div className="liquid-glass-card" style={{ padding: 12, marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div className={styles.structuredEditor + " liquid-glass-card"}>
+            <div className={styles.structuredHeader}>
               <strong>Dataset Structured Editor · {structuredDataset.name} ({structuredDataset.id})</strong>
               <span>Object: {structuredObject.name} · ComID {structuredObject.comId}</span>
-              <button style={{ marginLeft: "auto" }} onClick={() => void decodeStructuredFromHex()}>HEX → Fields</button>
-              <button onClick={() => void applyStructuredToHex()}>Fields → HEX</button>
-              <button onClick={() => setStructuredEditor(null)}>Close</button>
+              <div className={styles.structuredActions}>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void decodeStructuredFromHex()}>HEX → Fields</button>
+                <button className={styles.actionButton + " liquid-primary-button"} onClick={() => void applyStructuredToHex()}>Fields → HEX</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => setStructuredEditor(null)}>Close</button>
+              </div>
             </div>
-            <div style={{ marginTop: 6, opacity: 0.8 }}>
+            <div className={styles.structuredHint}>
               每个字段输入合法 JSON 值；数组/嵌套 Dataset 使用 JSON array/object。Fields → HEX 会按 XML 类型、网络字节序及 scale/offset 编码，HEX 仍是最终 wire truth source。
             </div>
-            <table style={{ ...tableStyle, marginTop: 8 }}>
+            <table className={styles.table} style={{ marginTop: 8 }}>
               <thead><tr><th>Field</th><th>Type</th><th>Array</th><th>Value (JSON)</th><th>Unit</th></tr></thead>
               <tbody>
                 {structuredDataset.elements.map(element => (
                   <tr key={element.name}>
                     <td>{element.name}</td>
-                    <td>{element.data_type}{element.scale !== undefined ? ` ×${element.scale}` : ""}{element.offset !== undefined ? ` +${element.offset}` : ""}</td>
+                    <td>{element.data_type}{element.scale !== undefined ? " ×" + element.scale : ""}{element.offset !== undefined ? " +" + element.offset : ""}</td>
                     <td>{element.dynamic ? "dynamic" : element.array_size}</td>
                     <td>
                       <textarea
                         rows={1}
-                        style={{ width: "100%", minWidth: 220, fontFamily: "var(--font-mono)" }}
+                        className={styles.textarea + " liquid-glass-input liquid-glass-textarea"}
                         value={structuredEditor.drafts[element.name] ?? "null"}
                         onChange={event => setStructuredEditor(prev => prev ? {
                           ...prev,
@@ -937,48 +953,199 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 ))}
               </tbody>
             </table>
-            <div style={{ marginTop: 6 }}>Payload HEX: <code>{structuredObject.payloadHex || "—"}</code></div>
+            <div className={styles.payload}>Payload HEX: <code>{structuredObject.payloadHex || "—"}</code></div>
           </div>
         )}
 
         {page === "overview" && (
-          <div style={{ display: "grid", gap: 12 }}>
-            <h2>TRDP {mode === "monitor" ? "Monitor" : "Node"}</h2>
-            <div>PD: UDP/{paramNumber(params, "pd_port", 17224)} · MD: UDP/{paramNumber(params, "md_udp_port", 17225)} TCP/{paramNumber(params, "md_tcp_port", 17225)} · SDTv2/SDTv4: detected only, validation out of scope</div>
-            {mode === "node" ? <div>Link A: {String(params?.link_a_ip ?? "—")} · Link B: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : "Disabled"}</div> : <div>Capture A: {String(params?.capture_interface ?? "—")} · Capture B: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : "Disabled"}</div>}
-            <div>发送策略 / TX policy: Publishers, PD Requests and MD Requests/Notify always require an explicit Start/Send action.</div>
-            <div>Safety: TauTerm TRDP is a diagnostic/development tool and does not perform SDT safety validation or claim safety certification.</div>
-            {workspaceName && <div>Workspace: {workspaceName} · imported objects forced to Stopped.</div>}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => void importXml()}>导入 TRDP XML / Import XML</button>
-              {mode === "node" && <button onClick={() => void importWorkspace()}>导入 Workspace JSON</button>}
-              {mode === "monitor" && <><button onClick={() => void openCapture()}>打开 .pcap/.pcapng</button><button onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>保存 .pcapng</button><button onClick={() => void startLiveCapture()} disabled={captureRunning}>Start Live Capture</button><button onClick={() => void command("capture_stop")} disabled={!captureRunning}>Stop Capture</button></>}
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>TRDP {mode === "monitor" ? "Monitor" : "Node"}</h2>
             </div>
-            {mode === "monitor" && <div>Capture: {captureRunning ? "Running" : captureSource ? "Stopped" : "Not started"}{captureSource ? ` · source ${captureSource}` : ""} · buffered frames {captureFrames.length}{captureDroppedFrames > 0 ? ` · ⚠ ${captureDroppedFrames} older live frames dropped after reaching the ${LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()}-frame in-memory limit` : ""}</div>}
+
+            <div className={styles.overviewInfo}>
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>Protocol</strong><br />
+                PD: UDP/{paramNumber(params, "pd_port", 17224)} · MD: UDP/{paramNumber(params, "md_udp_port", 17225)} TCP/{paramNumber(params, "md_tcp_port", 17225)} · SDTv2/SDTv4: detected only, validation out of scope
+              </div>
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>{mode === "node" ? "Links" : "Capture interfaces"}</strong><br />
+                {mode === "node"
+                  ? <>Link A: {String(params?.link_a_ip ?? "—")} · Link B: {params?.link_b_enabled ? String(params?.link_b_ip ?? "—") : "Disabled"}</>
+                  : <>Capture A: {String(params?.capture_interface ?? "—")} · Capture B: {params?.capture_interface_b_enabled ? String(params?.capture_interface_b ?? "—") : "Disabled"}</>}
+              </div>
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>发送策略 / TX policy</strong><br />
+                Publishers, PD Requests and MD Requests/Notify always require an explicit Start/Send action.
+              </div>
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>Safety</strong><br />
+                TauTerm TRDP is a diagnostic/development tool and does not perform SDT safety validation or claim safety certification.
+              </div>
+              {workspaceName && <div className={styles.infoCard + " liquid-glass-card"}><strong>Workspace</strong><br />{workspaceName} · imported objects forced to Stopped.</div>}
+            </div>
+
+            <div className={styles.toolbar}>
+              <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void importXml()}>导入 TRDP XML / Import XML</button>
+              {mode === "node" && <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void importWorkspace()}>导入 Workspace JSON</button>}
+              {mode === "monitor" && (
+                <>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void openCapture()}>打开 .pcap/.pcapng</button>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>保存 .pcapng</button>
+                  <button className={styles.actionButton + " liquid-primary-button"} onClick={() => void startLiveCapture()} disabled={captureRunning}>Start Live Capture</button>
+                  <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void command("capture_stop")} disabled={!captureRunning}>Stop Capture</button>
+                </>
+              )}
+            </div>
+
+            {mode === "monitor" && (
+              <div className={styles.infoCard + " liquid-glass-card"}>
+                <strong>Capture</strong><br />
+                {captureRunning ? "Running" : captureSource ? "Stopped" : "Not started"}
+                {captureSource ? <> · source {captureSource}</> : null}
+                {" · buffered frames "}{captureFrames.length}
+                {captureDroppedFrames > 0 ? <> · ⚠ {captureDroppedFrames} older live frames dropped after reaching the {LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()}-frame in-memory limit</> : null}
+              </div>
+            )}
+
             {xmlImport && (
-              <div className="liquid-glass-card" style={{ padding: 12 }}>
+              <div className={styles.infoCard + " liquid-glass-card"}>
                 <strong>Import Preview</strong>
                 <div>{xmlImport.datasets.length} Datasets · {xmlImport.telegrams.length} Telegrams · ports {xmlImport.pd_port}/{xmlImport.md_udp_port}/{xmlImport.md_tcp_port} · SDT: {xmlImport.sdt_detected ? "Detected (not validated)" : "No configuration detected"}</div>
                 {xmlImport.warnings.map(warning => <div key={warning} style={{ marginTop: 4 }}>⚠ {warning}</div>)}
-                {mode === "node" && <button style={{ marginTop: 8 }} onClick={importTemplates}>将 PD Telegram 作为停止状态的 Subscriber 模板加入 Workspace</button>}
-                <table style={{ ...tableStyle, marginTop: 8 }}><thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Timeout</th><th>Sources</th><th>Destinations</th></tr></thead><tbody>{xmlImport.telegrams.map(telegram => <tr key={`${telegram.com_id}-${telegram.name}`}><td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td><td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? `${telegram.timeout_us} µs / ${telegram.timeout_behavior ?? "zero"}` : `disabled / ${telegram.timeout_behavior ?? "zero"}`) : "—"}</td><td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td></tr>)}</tbody></table>
+                {mode === "node" && <button className={styles.actionButton + " liquid-glass-button"} style={{ marginTop: 8 }} onClick={importTemplates}>将 PD Telegram 作为停止状态的 Subscriber 模板加入 Workspace</button>}
+                <table className={styles.table} style={{ marginTop: 8 }}>
+                  <thead><tr><th>Type</th><th>Telegram</th><th>ComID</th><th>Dataset</th><th>Cycle</th><th>Timeout</th><th>Sources</th><th>Destinations</th></tr></thead>
+                  <tbody>
+                    {xmlImport.telegrams.length === 0
+                      ? <tr><td colSpan={8} className={styles.emptyState}>XML 中没有可显示的 Telegram。</td></tr>
+                      : xmlImport.telegrams.map(telegram => (
+                        <tr key={telegram.com_id + "-" + telegram.name}>
+                          <td>{telegram.traffic_kind.toUpperCase()}</td><td>{telegram.name}</td><td>{telegram.com_id}</td><td>{telegram.dataset_id}</td><td>{telegram.cycle_us ?? "—"}</td>
+                          <td>{telegram.traffic_kind === "pd" ? (telegram.timeout_us && telegram.timeout_us > 0 ? telegram.timeout_us + " µs / " + (telegram.timeout_behavior ?? "zero") : "disabled / " + (telegram.timeout_behavior ?? "zero")) : "—"}</td>
+                          <td>{telegram.sources.join(", ") || "—"}</td><td>{telegram.destinations.join(", ") || "—"}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
               </div>
             )}
-          </div>
+          </section>
         )}
 
-        {page === "publishers" && <section><div style={{ display: "flex", justifyContent: "space-between" }}><h2>发布 / Publishers · PD Publisher</h2><button onClick={() => addObject("pd_publisher")}>+ Publisher</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination</th><th>Cycle µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_publisher").map(objectEditor)}</tbody></table></section>}
-        {page === "subscribers" && <section><div style={{ display: "flex", gap: 8, alignItems: "center" }}><h2 style={{ marginRight: "auto" }}>订阅 / Subscribers · PD Subscriber / Request</h2><button onClick={() => addObject("pd_subscriber")}>+ Subscriber</button><button onClick={() => addObject("pd_request")}>+ PD Request</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead><tbody>{objects.filter(object => object.kind === "pd_subscriber" || object.kind === "pd_request").map(objectEditor)}</tbody></table><h3>Subscriber diagnostics</h3><table style={tableStyle}><thead><tr><th>Link</th><th>ComID</th><th>Packets</th><th>Missed seq</th><th>Last seq</th><th>Interval min/avg/max µs</th><th>Avg jitter µs</th><th>Errors</th></tr></thead><tbody>{flows.filter(flow => flow.msg.startsWith("P")).map(flow => <tr key={`diag-${flow.key}`}><td>{flow.link}</td><td>{flow.comId}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.minIntervalUs === undefined ? "—" : `${Math.round(flow.minIntervalUs)}/${Math.round(flow.avgIntervalUs ?? 0)}/${Math.round(flow.maxIntervalUs ?? 0)}`}</td><td>{flow.jitterUs === undefined ? "—" : Math.round(flow.jitterUs)}</td><td>{flow.errors}</td></tr>)}</tbody></table></section>}
-        {page === "messages" && <section><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><h2 style={{ marginRight: "auto" }}>消息 / Messages · MD</h2><button onClick={() => addObject("md_request")}>+ Request</button><button onClick={() => addObject("md_listener")}>+ Listener/Replier</button><button onClick={() => addObject("md_notify")}>+ Notify</button></div><table style={tableStyle}><thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination/Filter</th><th>UDP/TCP</th><th>Payload HEX</th><th>Protocol</th><th>Action</th></tr></thead><tbody>{objects.filter(object => object.kind.startsWith("md_")).map(objectEditor)}</tbody></table></section>}
+        {page === "publishers" && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>发布 / Publishers · PD Publisher</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_publisher")}>+ Publisher</button>
+            </div>
+            <table className={styles.table}>
+              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination</th><th>Cycle µs</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead>
+              <tbody>{publisherObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 Publisher，请点击右上角添加。</td></tr> : publisherObjects.map(objectEditor)}</tbody>
+            </table>
+          </section>
+        )}
+
+        {page === "subscribers" && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>订阅 / Subscribers · PD Subscriber / Request</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_subscriber")}>+ Subscriber</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("pd_request")}>+ PD Request</button>
+            </div>
+            <table className={styles.table}>
+              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Multicast/Destination</th><th>Timeout</th><th>Payload HEX</th><th>Protocol</th><th>State</th></tr></thead>
+              <tbody>{subscriberObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 Subscriber / PD Request，请点击右上角添加。</td></tr> : subscriberObjects.map(objectEditor)}</tbody>
+            </table>
+            <h3 className={styles.subheading}>Subscriber diagnostics</h3>
+            <table className={styles.table}>
+              <thead><tr><th>Link</th><th>ComID</th><th>Packets</th><th>Missed seq</th><th>Last seq</th><th>Interval min/avg/max µs</th><th>Avg jitter µs</th><th>Errors</th></tr></thead>
+              <tbody>
+                {subscriberFlows.length === 0
+                  ? <tr><td colSpan={8} className={styles.emptyState}>尚未收到 PD 流量。</td></tr>
+                  : subscriberFlows.map(flow => (
+                    <tr key={"diag-" + flow.key}><td>{flow.link}</td><td>{flow.comId}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td>
+                      <td>{flow.minIntervalUs === undefined ? "—" : Math.round(flow.minIntervalUs) + "/" + Math.round(flow.avgIntervalUs ?? 0) + "/" + Math.round(flow.maxIntervalUs ?? 0)}</td>
+                      <td>{flow.jitterUs === undefined ? "—" : Math.round(flow.jitterUs)}</td><td>{flow.errors}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {page === "messages" && (
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>消息 / Messages · MD</h2>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_request")}>+ Request</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_listener")}>+ Listener/Replier</button>
+              <button className={styles.actionButton + " liquid-primary-button"} onClick={() => addObject("md_notify")}>+ Notify</button>
+            </div>
+            <table className={styles.table}>
+              <thead><tr><th>Name</th><th>ComID</th><th>Link</th><th>Destination/Filter</th><th>UDP/TCP</th><th>Payload HEX</th><th>Protocol</th><th>Action</th></tr></thead>
+              <tbody>{messageObjects.length === 0 ? <tr><td colSpan={8} className={styles.emptyState}>暂无 MD 对象，请点击右上角添加。</td></tr> : messageObjects.map(objectEditor)}</tbody>
+            </table>
+          </section>
+        )}
 
         {page === "traffic" && (
-          <section>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><h2>流量 / Traffic · TRDP Packet Inspector</h2><div style={{ display: "flex", gap: 8 }}><button onClick={() => void openCapture()}>Open capture</button><button onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>Save pcapng</button><button onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>Clear</button></div></div>
-            <h3>Flows</h3>
-            <table style={tableStyle}><thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead><tbody>{flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}</tbody></table>
-            <h3>Packets</h3>
-            <table style={{ ...tableStyle, fontFamily: "var(--font-mono)" }}><thead><tr><th>#</th><th>Link</th><th>Type</th><th>ComID</th><th>Source → Destination</th><th>Seq</th><th>Topo ETB/Op</th><th>Len</th><th>Payload</th></tr></thead><tbody>{events.slice().reverse().slice(0, 1000).map((event, index) => <tr key={`${event.timestamp_us ?? 0}-${index}`} onClick={() => void inspectPacket(event)} style={{ cursor: "pointer" }}><td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.etb_topo_count ?? "—"}/{event.op_trn_topo_count ?? "—"}</td><td>{event.data_len ?? "—"}</td><td title={event.payload_hex}>{hexPreview(event.payload_hex)}</td></tr>)}</tbody></table>
-            {selectedPacket && <div className="liquid-glass-card" style={{ marginTop: 12, padding: 12 }}><h3>Packet Inspector</h3><div>Protocol {selectedPacket.protocol_version ?? "—"} ({selectedPacket.protocol_valid === undefined ? "not checked" : selectedPacket.protocol_valid ? "valid" : "invalid"}) · CRC {selectedPacket.crc_valid === undefined ? "not checked" : selectedPacket.crc_valid ? "valid" : "invalid"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>{selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · Request/Reply latency {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}{selectedPacket.md_session_id && <div>ReplyQuery {selectedPacket.num_reply_queries ?? "—"} · Confirms {selectedPacket.num_confirm_sent ?? "—"} · Confirm timeouts {selectedPacket.num_confirm_timeout ?? "—"} · Reply timeout {selectedPacket.reply_timeout_us ?? "—"} µs</div>}{(selectedPacket.src_uri || selectedPacket.dest_uri) && <div>URI: <code>{selectedPacket.src_uri || "—"}</code> → <code>{selectedPacket.dest_uri || "—"}</code></div>}<div>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>{decoded ? <><h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4><div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div><table style={tableStyle}><thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead><tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></> : xmlImport && selectedPacket.com_id !== undefined ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div> : <div>Import a TRDP XML file to enable Dataset decoding.</div>}</div>}
+          <section className={styles.section}>
+            <div className={styles.sectionHeader}>
+              <h2 className={styles.sectionTitle}>流量 / Traffic · TRDP Packet Inspector</h2>
+              <div className={styles.toolbar}>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void openCapture()}>Open capture</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>Save pcapng</button>
+                <button className={styles.actionButton + " liquid-glass-button"} onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>Clear</button>
+              </div>
+            </div>
+
+            <h3 className={styles.subheading}>Flows</h3>
+            <table className={styles.table}>
+              <thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead>
+              <tbody>
+                {flows.length === 0
+                  ? <tr><td colSpan={11} className={styles.emptyState}>暂无流量。请打开抓包文件，或在 Monitor 模式启动实时抓包。</td></tr>
+                  : flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}
+              </tbody>
+            </table>
+
+            <h3 className={styles.subheading}>Packets</h3>
+            <table className={styles.table + " " + styles.monoTable}>
+              <thead><tr><th>#</th><th>Link</th><th>Type</th><th>ComID</th><th>Source → Destination</th><th>Seq</th><th>Topo ETB/Op</th><th>Len</th><th>Payload</th></tr></thead>
+              <tbody>
+                {packetRows.length === 0
+                  ? <tr><td colSpan={9} className={styles.emptyState}>暂无可检查的数据包。</td></tr>
+                  : packetRows.map((event, index) => (
+                    <tr key={String(event.timestamp_us ?? 0) + "-" + index} onClick={() => void inspectPacket(event)} style={{ cursor: "pointer" }}>
+                      <td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.etb_topo_count ?? "—"}/{event.op_trn_topo_count ?? "—"}</td><td>{event.data_len ?? "—"}</td><td title={event.payload_hex}>{hexPreview(event.payload_hex)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+
+            {selectedPacket && (
+              <div className={styles.packetCard + " liquid-glass-card"}>
+                <h3>Packet Inspector</h3>
+                <div>Protocol {selectedPacket.protocol_version ?? "—"} ({selectedPacket.protocol_valid === undefined ? "not checked" : selectedPacket.protocol_valid ? "valid" : "invalid"}) · CRC {selectedPacket.crc_valid === undefined ? "not checked" : selectedPacket.crc_valid ? "valid" : "invalid"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>
+                {selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · Request/Reply latency {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button className={styles.compactButton + " liquid-glass-button"} style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}
+                {selectedPacket.md_session_id && <div>ReplyQuery {selectedPacket.num_reply_queries ?? "—"} · Confirms {selectedPacket.num_confirm_sent ?? "—"} · Confirm timeouts {selectedPacket.num_confirm_timeout ?? "—"} · Reply timeout {selectedPacket.reply_timeout_us ?? "—"} µs</div>}
+                {(selectedPacket.src_uri || selectedPacket.dest_uri) && <div>URI: <code>{selectedPacket.src_uri || "—"}</code> → <code>{selectedPacket.dest_uri || "—"}</code></div>}
+                <div className={styles.payload}>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>
+                {decoded ? (
+                  <>
+                    <h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4>
+                    <div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div>
+                    <table className={styles.table}>
+                      <thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead>
+                      <tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody>
+                    </table>
+                  </>
+                ) : xmlImport && selectedPacket.com_id !== undefined
+                  ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div>
+                  : <div>Import a TRDP XML file to enable Dataset decoding.</div>}
+              </div>
+            )}
           </section>
         )}
       </div>
