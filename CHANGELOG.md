@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **TRDP sidebar identity** — new TRDP sessions default to “TRDP Node” / “TRDP Monitor”; the sidebar replaces the redundant `trdp` endpoint line with a stable mode-specific configuration summary (Node A/B local IPs or Monitor capture interface), updates that summary after reconfiguration without using capture Start/Stop as card state, and renders legacy auto-generated `TRDP @ trdp` names with the new mode-aware identity.
+- **TRDP sidebar identity** — new TRDP sessions default to “TRDP Node” / “TRDP Monitor”; the sidebar replaces the redundant `trdp` endpoint line with a stable mode-specific configuration summary (Node A/B local IPs or Monitor capture interface), and updates that summary after reconfiguration without using capture Start/Stop as card state.
 - **TRDP UI theme polish** — localizes the new-session TRDP card as “TRDP 调试助手” / “TRDP Debug Assistant”, keeps all new-session cards equal-sized, aligns TRDP configuration controls with the shared Liquid Glass form sizing, adds a themed XML file picker, and restyles TRDP navigation, object editors, tables, actions and empty states to match the rest of TauTerm.
 
 ### Protocols
