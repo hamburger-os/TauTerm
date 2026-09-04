@@ -147,7 +147,11 @@ impl TrdpSideChannel {
         } else {
             "open"
         };
-        self.send(json!({ "command": open_command, "params": params }))
+        let result = self.send(json!({ "command": open_command, "params": params }));
+        if result.is_err() {
+            self.shutdown();
+        }
+        result
     }
 
     fn send(&self, command: Value) -> Result<(), String> {
