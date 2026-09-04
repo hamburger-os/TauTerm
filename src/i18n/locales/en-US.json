@@ -9,6 +9,7 @@
     "ssh": "SSH",
     "telnet": "Telnet",
     "tftp": "TFTP",
+    "trdp": "TRDP Debug Assistant",
     "localShell": "Local Shell",
     "comingSoon": "(Coming Soon)",
     "formNotImplemented": "The configuration form for the \"{{pluginName}}\" plugin is not yet implemented and will be provided in a future release."
