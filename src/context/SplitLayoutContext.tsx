@@ -78,6 +78,30 @@ function loadInitialWorkspaceLayout(): SplitLayoutState | null {
   }
 }
 
+/**
+ * 运行时子会话（Local Shell / SSH channel）被关闭或父会话断开时，子 ID 会从
+ * SessionContext 中消失，但其稳定根会话仍然存在。分屏应回退显示根会话，而不是
+ * 把 Pane 清空；真正删除根会话时才允许 pruneAssignments 清除该分配。
+ */
+function remapRemovedChildrenToStableRoots(
+  state: SplitLayoutState,
+  validSessionIds: ReadonlySet<string>,
+  stableSessionIds: ReadonlyMap<string, string>,
+): SplitLayoutState {
+  let changed = false;
+  const assignments = { ...state.assignments };
+  for (const paneId of collectPaneIds(state.root)) {
+    const assigned = assignments[paneId];
+    if (!assigned || validSessionIds.has(assigned)) continue;
+    const stableId = stableSessionIds.get(assigned);
+    if (stableId && stableId !== assigned && validSessionIds.has(stableId)) {
+      assignments[paneId] = stableId;
+      changed = true;
+    }
+  }
+  return changed ? { ...state, assignments } : state;
+}
+
 export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   const { state: sessionState, switchTab } = useSession();
   const restoredLayoutRef = useRef<SplitLayoutState | null>(null);
@@ -180,11 +204,20 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     }
 
     const selectedSessionId = current.assignments[current.selectedPaneId];
-    const selectedSessionRemoved = Boolean(selectedSessionId && !valid.has(selectedSessionId));
 
-    let next = pruneAssignments(current, valid);
+    // 子终端关闭/父容器断开并不等于“用户删除了这个会话”。
+    // 先把已消失的运行时 child ID 回退到稳定 root/config ID，再做真正的无效分配清理。
+    let next = remapRemovedChildrenToStableRoots(
+      current,
+      valid,
+      stableSessionIdsRef.current,
+    );
+    next = pruneAssignments(next, valid);
 
-    if (selectedSessionRemoved && countPanes(current.root) > 1) {
+    const selectedAssignmentLost = Boolean(
+      selectedSessionId && !next.assignments[current.selectedPaneId]
+    );
+    if (selectedAssignmentLost && countPanes(current.root) > 1) {
       if (next !== current) {
         stateRef.current = next;
         setState(next);
