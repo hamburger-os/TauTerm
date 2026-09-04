@@ -117,8 +117,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           <details>
             <summary>高级 / Advanced</summary>
             <div style={{ marginTop: 10 }}>{portFields}</div>
-            {bridgeField}
-          </details>
+</details>
           <p style={{ opacity: 0.78, fontSize: 12 }}>
             Windows 实时 Monitor 需要单独安装 Npcap；TauTerm 不捆绑 Npcap。离线打开 .pcap/.pcapng 不需要 Npcap。
           </p>
