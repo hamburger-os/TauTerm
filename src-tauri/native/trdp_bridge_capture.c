@@ -135,7 +135,11 @@ static int load_pcap(void) {
         UINT length = GetSystemDirectoryA(system_directory, MAX_PATH);
         if (length > 0u && length < MAX_PATH) {
             (void)snprintf(path, sizeof(path), "%s\\Npcap\\wpcap.dll", system_directory);
-            g_pcap_library = (void *)LoadLibraryA(path);
+            g_pcap_library = (void *)LoadLibraryExA(
+                path,
+                NULL,
+                LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32
+            );
         }
         if (g_pcap_library == NULL && length > 0u && length < MAX_PATH) {
             (void)snprintf(path, sizeof(path), "%s\\wpcap.dll", system_directory);
