@@ -1156,7 +1156,11 @@
       "txPolicyText": "Publisher、PD Request 与 MD Request/Notify 始终需要显式点击启动/发送。",
       "safetyText": "TauTerm TRDP 是诊断/开发工具，不执行 SDT 安全验证，也不声明安全认证。",
       "live": "实时",
-      "offline": "离线"
+      "offline": "离线",
+      "linkA": "链路 A",
+      "linkB": "链路 B",
+      "captureA": "抓包 A",
+      "captureB": "抓包 B"
     },
     "inspector": {
       "notChecked": "未检查",
