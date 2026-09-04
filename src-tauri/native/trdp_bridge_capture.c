@@ -320,7 +320,8 @@ static void emit_trdp(
     memcpy(&stored_fcs, trdp + header_length - SIZE_OF_FCS, SIZE_OF_FCS);
     computed_fcs = vos_crc32(INITFCS, trdp, (UINT32)(header_length - SIZE_OF_FCS));
     crc_valid = stored_fcs == MAKE_LE(computed_fcs);
-    protocol_valid = (read_be16(trdp + 4u) & 0xff00u) == 0x0100u;
+    protocol_valid = (read_be16(trdp + 4u) & 0xff00u) == 0x0100u
+        && data_length <= trdp_length - header_length;
 
     bridge_output_lock();
     fprintf(
