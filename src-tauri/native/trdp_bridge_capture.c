@@ -1,4 +1,5 @@
 #include "trdp_bridge.h"
+#include "vos_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -263,6 +264,10 @@ static void emit_trdp(
     size_t header_length;
     size_t data_length;
     size_t available;
+    UINT32 stored_fcs;
+    UINT32 computed_fcs;
+    int crc_valid;
+    int protocol_valid;
     char message_type[3];
 
     if (valid_md_type(trdp, trdp_length)) {
@@ -283,6 +288,10 @@ static void emit_trdp(
     message_type[0] = (char)trdp[6];
     message_type[1] = (char)trdp[7];
     message_type[2] = '\0';
+    memcpy(&stored_fcs, trdp + header_length - SIZE_OF_FCS, SIZE_OF_FCS);
+    computed_fcs = vos_crc32(INITFCS, trdp, (UINT32)(header_length - SIZE_OF_FCS));
+    crc_valid = stored_fcs == MAKE_LE(computed_fcs);
+    protocol_valid = (read_be16(trdp + 4u) & 0xff00u) == 0x0100u;
 
     bridge_output_lock();
     fprintf(
@@ -292,6 +301,7 @@ static void emit_trdp(
         "\"src_port\":%u,\"dest_port\":%u,\"msg_type\":\"%s\","
         "\"com_id\":%u,\"seq_count\":%u,\"protocol_version\":%u,"
         "\"etb_topo_count\":%u,\"op_trn_topo_count\":%u,"
+        "\"crc_valid\":%s,\"protocol_valid\":%s,"
         "\"src_ip\":\"%u.%u.%u.%u\",\"dest_ip\":\"%u.%u.%u.%u\","
         "\"data_len\":%u,\"payload_hex\":\"",
         context->label,
@@ -306,6 +316,8 @@ static void emit_trdp(
         (unsigned int)read_be16(trdp + 4u),
         (unsigned int)read_be32(trdp + 12u),
         (unsigned int)read_be32(trdp + 16u),
+        crc_valid ? "true" : "false",
+        protocol_valid ? "true" : "false",
         (unsigned int)((source_ip >> 24) & 0xffu),
         (unsigned int)((source_ip >> 16) & 0xffu),
         (unsigned int)((source_ip >> 8) & 0xffu),
@@ -320,12 +332,31 @@ static void emit_trdp(
     fputs("\",\"raw_frame_hex\":\"", stdout);
     bridge_print_hex(stdout, raw_frame, header->caplen);
     fputs("\"", stdout);
-    if (valid_md_type(trdp, trdp_length) && trdp_length >= 48u) {
+    if (valid_md_type(trdp, trdp_length) && trdp_length >= 116u) {
         static const char digits[] = "0123456789abcdef";
+        char source_uri[33] = {0};
+        char destination_uri[33] = {0};
+        int32_t raw_reply_status = (int32_t)read_be32(trdp + 24u);
+        int32_t reply_status = raw_reply_status >= 0 ? 0 : raw_reply_status;
+        uint16_t user_status = raw_reply_status >= 0 ? (uint16_t)raw_reply_status : 0u;
         size_t index;
-        fputs(",\"md_session_id\":\"", stdout);
+
+        memcpy(source_uri, trdp + 48u, 32u);
+        memcpy(destination_uri, trdp + 80u, 32u);
+        fprintf(
+            stdout,
+            ",\"reply_status\":%d,\"user_status\":%u,\"reply_timeout_us\":%u,"
+            "\"src_uri\":\"",
+            (int)reply_status,
+            (unsigned int)user_status,
+            (unsigned int)read_be32(trdp + 44u)
+        );
+        bridge_json_escape(stdout, source_uri);
+        fputs("\",\"dest_uri\":\"", stdout);
+        bridge_json_escape(stdout, destination_uri);
+        fputs("\",\"md_session_id\":\"", stdout);
         for (index = 0u; index < 16u; ++index) {
-            unsigned char value = trdp[32u + index];
+            unsigned char value = trdp[28u + index];
             fputc(digits[(value >> 4) & 0x0fu], stdout);
             fputc(digits[value & 0x0fu], stdout);
             if (index == 3u || index == 5u || index == 7u || index == 9u) {

@@ -21,6 +21,24 @@ The Linux release ABI baseline is **Ubuntu 22.04**. The CI matrix currently vali
 
 These combinations may compile partially, but they are not release targets and should not be advertised as supported.
 
+## TRDP platform support
+
+TRDP follows the release-grade platform matrix above. The packaged application contains a Tauri sidecar built from the repository's vendored TCNOpen TRDP 3.0.0.0 source.
+
+| Platform | Node / offline Monitor | Live Monitor capture | Validation |
+|---|---|---|---|
+| Windows x86_64 | Supported | User-installed Npcap required | Native bridge/reference-peer build in CI |
+| Linux x86_64 | Supported | System libpcap required | Native build + PD/MD loopback interop + `.deb` sidecar package smoke |
+| macOS Apple Silicon | Tech preview | System libpcap required | Native bridge/reference-peer build in CI |
+
+Npcap is **not** redistributed by TauTerm. Linux/macOS libpcap is loaded dynamically and is not vendored. Offline `.pcap/.pcapng` analysis does not require either live-capture runtime.
+
+Live capture is also subject to OS capture permissions and network topology. A normal switched port will not automatically see unrelated TRDP traffic; use a mirror/SPAN port or TAP when required.
+
+The TRDP Native CI currently validates the release architectures above. Windows ARM64, Linux ARM64 and macOS Intel should not be advertised as TRDP-supported release targets merely because parts of the native code may compile there.
+
+See [TRDP.md](TRDP.md) for session roles, A/B semantics, Dataset tooling and SDT boundaries.
+
 ## Virtual serial implementation
 
 Windows uses the bundled com0com kernel driver and exposes a real virtual COM pair. Linux and macOS use an in-process POSIX PTY created by Rust's `serialport::TTYPort::pair()` implementation. TauTerm owns the PTY master and exposes only the slave device path to external applications.

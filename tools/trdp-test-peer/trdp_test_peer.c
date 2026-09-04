@@ -14,6 +14,37 @@
 #include "trdp_if_light.h"
 #include "vos_sock.h"
 
+static void peer_debug_log(
+    void *ref,
+    TRDP_LOG_T category,
+    const CHAR8 *time_text,
+    const CHAR8 *file,
+    UINT16 line,
+    const CHAR8 *message
+) {
+    const char *level = "user";
+    (void)ref;
+    if (category == VOS_LOG_ERROR) {
+        level = "error";
+    } else if (category == VOS_LOG_WARNING) {
+        level = "warning";
+    } else if (category == VOS_LOG_INFO) {
+        level = "info";
+    } else if (category == VOS_LOG_DBG) {
+        level = "debug";
+    }
+    fprintf(
+        stderr,
+        "[TCNOpen-peer:%s] %s %s:%u %s",
+        level,
+        time_text != NULL ? (const char *)time_text : "",
+        file != NULL ? (const char *)file : "",
+        (unsigned int)line,
+        message != NULL ? (const char *)message : ""
+    );
+    fflush(stderr);
+}
+
 static volatile int running = 1;
 static TRDP_APP_SESSION_T app;
 static TRDP_PUB_T publisher;
@@ -162,7 +193,7 @@ static int mode_has_tcp(const char *mode) {
 static void usage(const char *program) {
     fprintf(
         stderr,
-        "usage: %s <pd-publisher|pd-subscriber|md-requester|md-requester-tcp|md-replier|md-replier-query|md-replier-tcp|md-replier-query-tcp> <own-ip> <peer/multicast-ip> <comid> [seconds]\n",
+        "usage: %s <pd-publisher|pd-pull-provider|pd-subscriber|md-requester|md-requester-tcp|md-replier|md-replier-query|md-replier-tcp|md-replier-query-tcp> <own-ip> <peer/multicast-ip> <comid> [seconds]\n",
         program
     );
 }
@@ -228,7 +259,11 @@ int main(int argc, char **argv) {
     process.options = TRDP_OPTION_NONE;
     process.vlanId = 0u;
 
-    error = tlc_init(NULL, NULL, NULL);
+    error = tlc_init(
+        getenv("TAUTERM_TRDP_DEBUG") != NULL ? peer_debug_log : NULL,
+        NULL,
+        NULL
+    );
     if (error != TRDP_NO_ERR) {
         fprintf(stderr, "tlc_init failed: %d\n", (int)error);
         return 3;
@@ -240,8 +275,9 @@ int main(int argc, char **argv) {
         return 4;
     }
 
-    if (mode_is(mode, "pd-publisher")) {
+    if (mode_is(mode, "pd-publisher") || mode_is(mode, "pd-pull-provider")) {
         UINT8 initial[4] = {0};
+        UINT32 cycle_us = mode_is(mode, "pd-pull-provider") ? 0u : 100000u;
         error = tlp_publish(
             app,
             &publisher,
@@ -253,12 +289,36 @@ int main(int argc, char **argv) {
             0u,
             0u,
             vos_dottedIP(peer),
-            100000u,
+            cycle_us,
             0u,
             TRDP_FLAGS_CALLBACK,
             initial,
             (UINT32)sizeof(initial)
         );
+        if (error == TRDP_NO_ERR && mode_is(mode, "pd-pull-provider")) {
+            /*
+             * TCNOpen dispatches an incoming Pr through the receive queue
+             * before it looks up the matching pull-only publisher. Register a
+             * narrow subscription for requests addressed to this peer so the
+             * library can execute its native Pr -> Pp path.
+             */
+            error = tlp_subscribe(
+                app,
+                &subscriber,
+                NULL,
+                pd_cb,
+                0u,
+                comid,
+                0u,
+                0u,
+                VOS_INADDR_ANY,
+                VOS_INADDR_ANY,
+                vos_dottedIP(own),
+                TRDP_FLAGS_CALLBACK | TRDP_FLAGS_FORCE_CB,
+                1000000u,
+                TRDP_TO_KEEP_LAST_VALUE
+            );
+        }
     } else if (mode_is(mode, "pd-subscriber")) {
         error = tlp_subscribe(
             app,

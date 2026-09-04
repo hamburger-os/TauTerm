@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -30,11 +30,22 @@ type TrdpEvent = {
   payload_hex?: string;
   raw_frame_hex?: string;
   link_type?: number;
+  crc_valid?: boolean;
+  protocol_valid?: boolean;
   timestamp_us?: number;
+  latency_us?: number;
   result_code?: number;
   reply_status?: number;
   user_status?: number;
   num_replies?: number;
+  num_expected_replies?: number;
+  num_reply_queries?: number;
+  num_confirm_sent?: number;
+  num_confirm_timeout?: number;
+  reply_timeout_us?: number;
+  about_to_die?: boolean;
+  src_uri?: string;
+  dest_uri?: string;
   md_session_id?: string;
   error?: string;
 };
@@ -49,6 +60,7 @@ type TrdpObject = {
   destination: string;
   source: string;
   cycleUs: number;
+  timeoutMode: "auto" | "custom";
   timeoutUs: number;
   timeoutBehavior: "keep" | "zero";
   payloadHex: string;
@@ -167,6 +179,10 @@ function isKind(value: unknown): value is ObjectKind {
   return typeof value === "string" && ["pd_publisher", "pd_subscriber", "pd_request", "md_request", "md_listener", "md_notify"].includes(value);
 }
 
+function isOneShotKind(kind: ObjectKind) {
+  return kind === "pd_request" || kind === "md_request" || kind === "md_notify";
+}
+
 function createObject(kind: ObjectKind, index: number): TrdpObject {
   const subscriber = kind === "pd_subscriber" || kind === "pd_request";
   return {
@@ -179,6 +195,7 @@ function createObject(kind: ObjectKind, index: number): TrdpObject {
     destination: kind.startsWith("pd_") ? "239.255.1.1" : "10.0.0.2",
     source: "0.0.0.0",
     cycleUs: 100000,
+    timeoutMode: "auto",
     timeoutUs: subscriber ? 300000 : 100000,
     timeoutBehavior: "keep",
     payloadHex: kind === "pd_subscriber" ? "" : "00000000",
@@ -202,6 +219,17 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
   if (!isKind(raw.kind)) return null;
   const base = createObject(raw.kind, index + 1);
   const link = raw.link === "b" || raw.link === "both" ? raw.link : "a";
+  const parsedTimeoutUs = Number(raw.timeout_us);
+  const hasCustomTimeout = raw.timeout_us !== undefined
+    && Number.isFinite(parsedTimeoutUs)
+    && parsedTimeoutUs > 0;
+  const timeoutMode = raw.timeout_mode === "custom"
+    ? "custom"
+    : raw.timeout_mode === "auto"
+      ? "auto"
+      : hasCustomTimeout
+        ? "custom"
+        : "auto";
   return {
     ...base,
     id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
@@ -212,7 +240,8 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
     destination: typeof raw.destination === "string" ? raw.destination : base.destination,
     source: typeof raw.source === "string" ? raw.source : base.source,
     cycleUs: Number(raw.cycle_us ?? base.cycleUs),
-    timeoutUs: Number(raw.timeout_us ?? raw.cycle_us ?? base.timeoutUs),
+    timeoutMode,
+    timeoutUs: hasCustomTimeout ? parsedTimeoutUs : base.timeoutUs,
     timeoutBehavior: raw.timeout_behavior === "zero" ? "zero" : "keep",
     payloadHex: typeof raw.payload_hex === "string" ? raw.payload_hex.toUpperCase() : base.payloadHex,
     transport: raw.transport === "tcp" ? "tcp" : "udp",
@@ -289,13 +318,21 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       const saved = localStorage.getItem(storageKey);
       if (!saved) return [];
       const parsed = JSON.parse(saved) as TrdpObject[];
-      return Array.isArray(parsed) ? parsed.map(item => ({ ...item, state: "stopped" as const })) : [];
+      return Array.isArray(parsed)
+        ? parsed.map(item => ({
+            ...item,
+            state: "stopped" as const,
+            timeoutMode: item.timeoutMode
+              ?? (item.kind === "pd_subscriber" || item.kind === "pd_request" ? "custom" : "auto"),
+          }))
+        : [];
     } catch { return []; }
   });
   const [xmlImport, setXmlImport] = useState<XmlImport | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [decoded, setDecoded] = useState<DecodedDataset | null>(null);
   const [selectedPacket, setSelectedPacket] = useState<TrdpEvent | null>(null);
+  const mdRequestStartedUs = useRef(new Map<string, number>());
   const [structuredEditor, setStructuredEditor] = useState<StructuredEditor | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -307,16 +344,40 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     let disposed = false;
     const unlisten = listen<TrdpEvent>("trdp-event", ({ payload }) => {
       if (disposed || payload.session_id !== sessionId) return;
-      if (payload.event === "packet") setEvents(prev => [...prev, payload].slice(-5000));
-      if (payload.event === "ack" && payload.id) {
-        const nextState = payload.command === "object_start"
-          ? "running"
-          : payload.command === "object_stop"
-            ? "stopped"
-            : undefined;
-        if (nextState) {
-          setObjects(prev => prev.map(item => item.id === payload.id ? { ...item, state: nextState } : item));
+      if (payload.event === "md_session" && payload.md_session_id && payload.timestamp_us !== undefined) {
+        const starts = mdRequestStartedUs.current;
+        starts.set(payload.md_session_id, payload.timestamp_us);
+        if (starts.size > 1024) {
+          const oldest = starts.keys().next().value;
+          if (typeof oldest === "string") starts.delete(oldest);
         }
+      }
+      if (payload.event === "packet") {
+        let packet = payload;
+        if (
+          payload.md_session_id
+          && payload.timestamp_us !== undefined
+          && ["Mp", "Mq", "Me"].includes(payload.msg_type ?? "")
+        ) {
+          const started = mdRequestStartedUs.current.get(payload.md_session_id);
+          if (started !== undefined && payload.timestamp_us >= started) {
+            packet = { ...payload, latency_us: payload.timestamp_us - started };
+          }
+        }
+        setEvents(prev => [...prev, packet].slice(-5000));
+        if (payload.about_to_die && payload.md_session_id) {
+          mdRequestStartedUs.current.delete(payload.md_session_id);
+        }
+      }
+      if (payload.event === "ack" && payload.id) {
+        setObjects(prev => prev.map(item => {
+          if (item.id !== payload.id) return item;
+          if (payload.command === "object_stop") return { ...item, state: "stopped" };
+          if (payload.command === "object_start") {
+            return { ...item, state: isOneShotKind(item.kind) ? "stopped" : "running" };
+          }
+          return item;
+        }));
       }
       if (payload.error) setError(payload.error);
     });
@@ -359,7 +420,13 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         intervals: [],
       };
       row.count += 1;
-      if (event.result_code !== undefined && event.result_code !== 0) row.errors += 1;
+      if (
+        (event.result_code !== undefined && event.result_code !== 0)
+        || event.crc_valid === false
+        || event.protocol_valid === false
+      ) {
+        row.errors += 1;
+      }
       if (event.seq_count !== undefined) {
         if (row.previousSeq !== undefined) row.missed += missedBetween(row.previousSeq, event.seq_count);
         row.previousSeq = event.seq_count;
@@ -406,6 +473,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function startObject(obj: TrdpObject) {
+    if (obj.kind === "pd_request") {
+      // PD Request is a Send action in the UI. The native side may retain a
+      // subscriber handle for the reply window, so replace any previous handle
+      // before issuing the next request with the same object id.
+      await command("object_stop", { id: obj.id, kind: obj.kind });
+    }
     await command("object_start", {
       object: {
         id: obj.id,
@@ -416,7 +489,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         destination: obj.destination,
         source: obj.source,
         cycle_us: obj.cycleUs,
-        timeout_us: obj.timeoutUs,
+        timeout_us: obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
         timeout_behavior: obj.timeoutBehavior,
         payload_hex: obj.payloadHex,
         transport: obj.transport,
@@ -438,6 +511,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
   async function stopObject(obj: TrdpObject) {
     await command("object_stop", { id: obj.id, kind: obj.kind });
+  }
+
+  async function removeObject(obj: TrdpObject) {
+    if (obj.state === "running") return;
+    if (obj.kind === "pd_request") {
+      await command("object_stop", { id: obj.id, kind: obj.kind });
+    }
+    setObjects(prev => prev.filter(item => item.id !== obj.id));
   }
 
   async function updatePayload(obj: TrdpObject) {
@@ -587,7 +668,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           item.comId = telegram.com_id;
           item.destination = destination;
           item.source = telegram.sources[0] ?? "0.0.0.0";
-          item.timeoutUs = telegram.timeout_us ?? (telegram.cycle_us ? telegram.cycle_us * 3 : 300000);
+          if (telegram.timeout_us !== undefined) {
+            item.timeoutMode = "custom";
+            item.timeoutUs = telegram.timeout_us;
+          } else {
+            item.timeoutMode = "auto";
+          }
           additions.push(item);
           known.add(`${telegram.com_id}:${destination}`);
         }
@@ -611,13 +697,39 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     await command("md_confirm", { md_session_id: event.md_session_id, link: event.link ?? "a", user_status: 0 });
   }
 
+  function mdLatencyUs(event: TrdpEvent) {
+    if (event.latency_us !== undefined) return event.latency_us;
+    if (!event.md_session_id || event.timestamp_us === undefined || !["Mp", "Mq", "Me"].includes(event.msg_type ?? "")) {
+      return undefined;
+    }
+    const capturedRequests = events.filter(candidate =>
+      candidate.md_session_id === event.md_session_id
+      && candidate.msg_type === "Mr"
+      && candidate.timestamp_us !== undefined
+      && candidate.timestamp_us <= event.timestamp_us!,
+    );
+    const capturedRequest = capturedRequests.length > 0
+      ? capturedRequests[capturedRequests.length - 1]
+      : undefined;
+    const started = capturedRequest?.timestamp_us ?? mdRequestStartedUs.current.get(event.md_session_id);
+    return started === undefined || event.timestamp_us < started ? undefined : event.timestamp_us - started;
+  }
+
+  function observedMdReplies(event: TrdpEvent) {
+    if (!event.md_session_id) return undefined;
+    return events.filter(candidate =>
+      candidate.md_session_id === event.md_session_id
+      && ["Mp", "Mq"].includes(candidate.msg_type ?? ""),
+    ).length;
+  }
+
   const structuredObject = structuredEditor ? objects.find(item => item.id === structuredEditor.objectId) : undefined;
   const structuredDataset = structuredEditor && xmlImport
     ? xmlImport.datasets.find(item => item.id === structuredEditor.datasetId)
     : undefined;
 
   const objectEditor = (obj: TrdpObject) => {
-    const oneShot = obj.kind === "md_request" || obj.kind === "md_notify";
+    const oneShot = isOneShotKind(obj.kind);
     const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
     return (
       <tr key={obj.id}>
@@ -625,7 +737,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         <td><input style={cellInputStyle} type="number" min={1} value={obj.comId} onChange={event => patchObject(obj.id, { comId: Number(event.target.value) })} /></td>
         <td><select value={obj.link} onChange={event => patchObject(obj.id, { link: event.target.value as LinkChoice })}><option value="a">A</option><option value="b">B</option><option value="both">A+B</option></select></td>
         <td><input style={cellInputStyle} value={obj.destination} onChange={event => patchObject(obj.id, { destination: event.target.value })} /></td>
-        <td>{obj.kind.startsWith("md_") ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select> : <input style={cellInputStyle} type="number" min={0} value={subscriber ? obj.timeoutUs : obj.cycleUs} onChange={event => patchObject(obj.id, subscriber ? { timeoutUs: Number(event.target.value) } : { cycleUs: Number(event.target.value) })} />}</td>
+        <td>{obj.kind.startsWith("md_")
+          ? <select value={obj.transport} onChange={event => patchObject(obj.id, { transport: event.target.value as "udp" | "tcp" })}><option value="udp">UDP</option><option value="tcp">TCP</option></select>
+          : subscriber
+            ? <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                <select value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" })}><option value="auto">Auto</option><option value="custom">Custom</option></select>
+                {obj.timeoutMode === "custom" && <input style={cellInputStyle} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
+              </span>
+            : <input style={cellInputStyle} type="number" min={1} value={obj.cycleUs} onChange={event => patchObject(obj.id, { cycleUs: Number(event.target.value) })} />}</td>
         <td><input style={cellInputStyle} value={obj.payloadHex} onChange={event => patchObject(obj.id, { payloadHex: event.target.value.replace(/[^0-9a-f]/gi, "").toUpperCase() })} /></td>
         <td>
           <details>
@@ -645,7 +764,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           {oneShot ? <button onClick={() => void startObject(obj)}>Send</button> : <button onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>{obj.state === "running" ? "Stop" : "Start"}</button>}
           {obj.state === "running" && (obj.kind === "pd_publisher" || obj.kind === "md_listener") && <button onClick={() => void updatePayload(obj)}>Put</button>}
           {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && <button onClick={() => void openStructuredEditor(obj)}>Dataset</button>}
-          <button onClick={() => setObjects(prev => prev.filter(item => item.id !== obj.id))} disabled={obj.state === "running"}>×</button>
+          <button onClick={() => void removeObject(obj)} disabled={obj.state === "running"}>×</button>
         </td>
       </tr>
     );
@@ -737,7 +856,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             <table style={tableStyle}><thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead><tbody>{flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}</tbody></table>
             <h3>Packets</h3>
             <table style={{ ...tableStyle, fontFamily: "var(--font-mono)" }}><thead><tr><th>#</th><th>Link</th><th>Type</th><th>ComID</th><th>Source → Destination</th><th>Seq</th><th>Topo ETB/Op</th><th>Len</th><th>Payload</th></tr></thead><tbody>{events.slice().reverse().slice(0, 1000).map((event, index) => <tr key={`${event.timestamp_us ?? 0}-${index}`} onClick={() => void inspectPacket(event)} style={{ cursor: "pointer" }}><td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.etb_topo_count ?? "—"}/{event.op_trn_topo_count ?? "—"}</td><td>{event.data_len ?? "—"}</td><td title={event.payload_hex}>{hexPreview(event.payload_hex)}</td></tr>)}</tbody></table>
-            {selectedPacket && <div className="liquid-glass-card" style={{ marginTop: 12, padding: 12 }}><h3>Packet Inspector</h3><div>Protocol {selectedPacket.protocol_version ?? "—"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? "—"}</div>{selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code>{selectedPacket.msg_type === "Mq" && <button style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}<div>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>{decoded ? <><h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4><div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div><table style={tableStyle}><thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead><tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></> : xmlImport && selectedPacket.com_id !== undefined ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div> : <div>Import a TRDP XML file to enable Dataset decoding.</div>}</div>}
+            {selectedPacket && <div className="liquid-glass-card" style={{ marginTop: 12, padding: 12 }}><h3>Packet Inspector</h3><div>Protocol {selectedPacket.protocol_version ?? "—"} ({selectedPacket.protocol_valid === undefined ? "not checked" : selectedPacket.protocol_valid ? "valid" : "invalid"}) · CRC {selectedPacket.crc_valid === undefined ? "not checked" : selectedPacket.crc_valid ? "valid" : "invalid"} · Result {selectedPacket.result_code ?? "—"} · Reply status {selectedPacket.reply_status ?? "—"} · User status {selectedPacket.user_status ?? "—"} · Replies {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}</div>{selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · Request/Reply latency {mdLatencyUs(selectedPacket) ?? "—"} µs{selectedPacket.msg_type === "Mq" && <button style={{ marginLeft: 8 }} onClick={() => void confirmMessage(selectedPacket)}>Confirm (Mc)</button>}</div>}{selectedPacket.md_session_id && <div>ReplyQuery {selectedPacket.num_reply_queries ?? "—"} · Confirms {selectedPacket.num_confirm_sent ?? "—"} · Confirm timeouts {selectedPacket.num_confirm_timeout ?? "—"} · Reply timeout {selectedPacket.reply_timeout_us ?? "—"} µs</div>}{(selectedPacket.src_uri || selectedPacket.dest_uri) && <div>URI: <code>{selectedPacket.src_uri || "—"}</code> → <code>{selectedPacket.dest_uri || "—"}</code></div>}<div>Raw payload: <code>{selectedPacket.payload_hex || "—"}</code></div>{decoded ? <><h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4><div>{decoded.consumed_bytes}/{decoded.payload_bytes} bytes decoded</div><table style={tableStyle}><thead><tr><th>Field</th><th>Type</th><th>Value</th><th>Unit</th></tr></thead><tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></> : xmlImport && selectedPacket.com_id !== undefined ? <div>No dataset mapping/decodable payload for ComID {selectedPacket.com_id}.</div> : <div>Import a TRDP XML file to enable Dataset decoding.</div>}</div>}
           </section>
         )}
       </div>

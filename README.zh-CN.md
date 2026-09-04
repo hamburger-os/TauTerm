@@ -43,6 +43,7 @@ TauTerm 坚持**本地优先（Local-first）**：核心工程能力应当不依
 | 管理服务器 | SSH 终端 + 同一认证连接上的 SFTP |
 | 调试嵌入式设备 | RS-232/485 串口、Text/HEX/Dual、X/Y/ZModem |
 | 做网络联调 | TCP/UDP 客户端与服务端、TFTP、Telnet、iPerf |
+| 铁路 / 工业 TRDP | 主动 Node 多角色 + 被动实时/离线 Monitor |
 | 自动化重复操作 | 每会话 Lua 5.4 脚本与自动应答规则 |
 | 少开几个工具 | 统一会话、日志、命令面板与快捷键 |
 | 后续扩展协议 | 面向协议插件的微内核架构 |
@@ -79,6 +80,12 @@ Windows 可通过安装包自带的 com0com 建立虚拟 COM 对；Linux/macOS �
 
 在同一个应用内运行 TCP 客户端/服务端与 UDP 客户端/服务端工作流，支持对端选择、逐对端统计、Text/HEX 查看和脚本发送。TFTP、Telnet 与 iPerf2/iPerf3 则补齐同一套网络调试环境。
 
+### TRDP Node 与 Monitor
+
+TRDP 现在是 TauTerm 的一方工业协议会话。**Node** 可同时配置 PD Publisher、PD Subscriber、PD Request、MD Notify、MD Request 与 MD Listener/Replier；**Monitor** 提供单/双网卡被动实时抓包和 pcap/pcapng 离线分析，并保留 A/B Link 来源；实时抓包路径还支持 MD/TCP 流重组。
+
+TCNOpen TRDP 3.0.0.0 以 MPL-2.0 源码固定 vendoring，并构建为独立 TauTerm sidecar。Windows 实时 Monitor 需要用户自行安装 Npcap；Linux/macOS 动态加载系统 libpcap。离线 pcap/pcapng 分析不依赖这些实时抓包运行库。详见 [TRDP 会话指南](docs/TRDP.md)。
+
 ---
 
 ## 亮点功能
@@ -87,6 +94,7 @@ Windows 可通过安装包自带的 com0com 建立虚拟 COM 对；Linux/macOS �
 
 - **SSH + SFTP 单会话** —— 终端与文件传输复用同一条已认证连接。
 - **网络调试（TCP/UDP）** —— TCP 客户端/服务端、UDP 客户端/服务端，多对端处理、发送目标选择与统计。
+- **TRDP Node + Monitor** —— PD/MD 主动角色、XML/Dataset 工具、Raw HEX/结构化 Payload 编辑、实时/离线抓包与 pcapng 导出。
 - **TFTP** —— 客户端/服务端、RFC 7440 窗口、CRC32 校验和重试控制。
 - **Telnet** —— RFC 854 协商、窗口大小同步和 keepalive。
 - **iPerf2 / iPerf3** —— TCP/UDP 测试、双向模式、实时速率曲线与历史记录。
@@ -127,7 +135,7 @@ Windows 可通过安装包自带的 com0com 建立虚拟 COM 对；Linux/macOS �
 | **iPerf2 / iPerf3** | ✅ | custom | 网络测速 |
 | **网络调试**（TCP/UDP） | ✅ | custom | client + server |
 | **本地 Shell**（PTY） | ✅ | terminal | 原生 PTY |
-| **TRDP** | 📋 规划中 | 工业协议分析 | 一方战略协议 |
+| **TRDP** | ✅ | custom | Node（PD/MD）+ 被动 Monitor |
 
 未来不会为了让这张表更长而不断把协议塞进核心路线图。除非能够提供明确的工程工作流或工业价值，新增协议应优先走插件/扩展路径。
 
@@ -141,17 +149,23 @@ Windows 可通过安装包自带的 com0com 建立虚拟 COM 对；Linux/macOS �
 
 安装包会附带开源 [com0com](https://com0com.sourceforge.net/) 虚拟串口驱动，使虚拟 COM 桥可以开箱即用。com0com 是独立第三方 GPL 组件。Windows ARM64 与 MSI 暂不属于当前发布目标。安装包尚未做 Authenticode 签名，因此首次安装可能触发 SmartScreen 提示。
 
+TRDP Node 使用安装包内的 TCNOpen sidecar。TRDP **实时 Monitor** 额外需要用户自行安装 Npcap；TauTerm 不分发 Npcap。离线 pcap/pcapng 分析不需要 Npcap。
+
 ### Linux
 
 从 [GitHub Releases](https://github.com/hamburger-os/TauTerm/releases) 选择 x86_64 的 `.deb`、`.rpm` 或 `.AppImage`。Linux 发行产物以 Ubuntu 22.04 为构建基线。
 
 Linux 虚拟串口桥使用进程内 POSIX PTY，不需要 `socat` 或额外 helper 进程。
 
+TRDP 实时 Monitor 动态加载系统 libpcap；系统未提供时需要单独安装。离线 pcap/pcapng 分析不依赖 libpcap。
+
 ### macOS
 
 从 [GitHub Releases](https://github.com/hamburger-os/TauTerm/releases) 下载 **Apple Silicon** 的 `.dmg` / updater app archive。macOS Intel 暂不属于当前发布目标。
 
 macOS 仍属于**技术预览**且尚未 notarize，若被 Gatekeeper 拦截，首次可右键 → 打开。
+
+TRDP 实时 Monitor 动态加载系统 libpcap；离线 pcap/pcapng 分析不依赖 libpcap。
 
 准确的平台、架构、安装包与签名状态请查看 [支持平台矩阵](docs/SUPPORTED_PLATFORMS.md)。
 
@@ -217,5 +231,7 @@ TauTerm 可由用户任选 **MIT License** 或 **Apache License 2.0** 使用。
 开源许可证适用于本仓库。产品战略允许未来的可选商业模块、服务或一方硬件采用独立商业条款，同时不削弱开源 Core 本身的可用性。
 
 Windows 安装包包含独立第三方 GPL 组件 [com0com](https://com0com.sourceforge.net/)；它的许可证不受 TauTerm 双许可证影响。
+
+TRDP 使用 MPL-2.0 的 **TCNOpen TRDP 3.0.0.0** vendored 源码。上游 MPL 文件与 TauTerm 自有 MIT OR Apache-2.0 代码保持独立，详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) 与 [docs/TRDP.md](docs/TRDP.md)。
 
 <p align="center"><strong>TauTerm —— 一台终端，服务机房与实验台。</strong></p>

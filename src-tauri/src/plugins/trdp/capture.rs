@@ -31,6 +31,14 @@ pub struct TrdpPacket {
     pub payload_hex: String,
     pub raw_frame_hex: String,
     pub link_type: Option<u32>,
+    pub crc_valid: Option<bool>,
+    pub protocol_valid: Option<bool>,
+    pub reply_status: Option<i32>,
+    pub user_status: Option<u16>,
+    pub reply_timeout_us: Option<u32>,
+    pub md_session_id: Option<String>,
+    pub src_uri: Option<String>,
+    pub dest_uri: Option<String>,
     pub sdt_detected: bool,
 }
 
@@ -112,6 +120,50 @@ fn ipv4(data: &[u8]) -> String {
     format!("{}.{}.{}.{}", data[0], data[1], data[2], data[3])
 }
 
+fn uuid_text(data: &[u8]) -> Option<String> {
+    let bytes = data.get(..16)?;
+    Some(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    ))
+}
+
+fn fixed_text(data: &[u8]) -> Option<String> {
+    let end = data
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(data.len());
+    let value = String::from_utf8_lossy(&data[..end]).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn trdp_crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffffu32;
+    for byte in data {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320u32 & mask);
+        }
+    }
+    !crc
+}
+
 fn network_offset(frame: &[u8], linktype: u32) -> Option<usize> {
     match linktype {
         LINKTYPE_ETHERNET => {
@@ -145,7 +197,7 @@ fn decode_frame(
     if ip_header_length < 20 || frame.len() < ip + ip_header_length {
         return None;
     }
-    if be16(frame, ip + 6)? & 0x1fff != 0 {
+    if be16(frame, ip + 6)? & 0x3fff != 0 {
         return None;
     }
 
@@ -196,11 +248,35 @@ fn decode_frame(
     if frame.len() < payload_offset + trdp_header_length {
         return None;
     }
+    let fcs_offset = payload_offset + trdp_header_length - 4;
+    let stored_fcs = u32::from_le_bytes(frame.get(fcs_offset..fcs_offset + 4)?.try_into().ok()?);
+    let crc_valid = stored_fcs == trdp_crc32(frame.get(payload_offset..fcs_offset)?);
+    let protocol_valid = protocol_version & 0xff00 == 0x0100;
     let data_start = payload_offset + trdp_header_length;
     let data_end = data_start
         .saturating_add(data_len as usize)
         .min(frame.len());
     let payload = frame.get(data_start..data_end).unwrap_or_default();
+
+    let (reply_status, user_status, reply_timeout_us, md_session_id, src_uri, dest_uri) =
+        if msg_type.starts_with('M') {
+            let raw_reply_status = be32(frame, payload_offset + 24)? as i32;
+            let (reply_status, user_status) = if raw_reply_status >= 0 {
+                (Some(0), Some(raw_reply_status as u16))
+            } else {
+                (Some(raw_reply_status), Some(0))
+            };
+            (
+                reply_status,
+                user_status,
+                be32(frame, payload_offset + 44),
+                uuid_text(frame.get(payload_offset + 28..payload_offset + 44)?),
+                fixed_text(frame.get(payload_offset + 48..payload_offset + 80)?),
+                fixed_text(frame.get(payload_offset + 80..payload_offset + 112)?),
+            )
+        } else {
+            (None, None, None, None, None, None)
+        };
 
     Some(TrdpPacket {
         event: "packet".into(),
@@ -221,6 +297,14 @@ fn decode_frame(
         payload_hex: hex(payload),
         raw_frame_hex: hex(frame),
         link_type: Some(linktype),
+        crc_valid: Some(crc_valid),
+        protocol_valid: Some(protocol_valid),
+        reply_status,
+        user_status,
+        reply_timeout_us,
+        md_session_id,
+        src_uri,
+        dest_uri,
         sdt_detected: false,
     })
 }
@@ -585,6 +669,60 @@ mod tests {
         assert_eq!(packet.com_id, 1001);
         assert_eq!(packet.seq_count, 7);
         assert_eq!(packet.payload_hex, "01020304");
+    }
+
+    #[test]
+    fn parses_md_wire_status_uuid_timeout_and_uris() {
+        let mut frame = vec![0u8; 14 + 20 + 8 + 120];
+        frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+        frame[14] = 0x45;
+        frame[23] = 17;
+        frame[26..30].copy_from_slice(&[10, 0, 0, 1]);
+        frame[30..34].copy_from_slice(&[10, 0, 0, 2]);
+        frame[34..36].copy_from_slice(&STANDARD_MD_PORT.to_be_bytes());
+        frame[36..38].copy_from_slice(&STANDARD_MD_PORT.to_be_bytes());
+        let payload = 42;
+        frame[payload..payload + 4].copy_from_slice(&9u32.to_be_bytes());
+        frame[payload + 4..payload + 6].copy_from_slice(&0x0100u16.to_be_bytes());
+        frame[payload + 6..payload + 8].copy_from_slice(b"Mp");
+        frame[payload + 8..payload + 12].copy_from_slice(&4001u32.to_be_bytes());
+        frame[payload + 20..payload + 24].copy_from_slice(&4u32.to_be_bytes());
+        frame[payload + 24..payload + 28].copy_from_slice(&42u32.to_be_bytes());
+        for index in 0..16 {
+            frame[payload + 28 + index] = index as u8;
+        }
+        frame[payload + 44..payload + 48].copy_from_slice(&5_000_000u32.to_be_bytes());
+        frame[payload + 48..payload + 54].copy_from_slice(b"caller");
+        frame[payload + 80..payload + 87].copy_from_slice(b"replier");
+        let crc = trdp_crc32(&frame[payload..payload + 112]);
+        frame[payload + 112..payload + 116].copy_from_slice(&crc.to_le_bytes());
+        frame[payload + 116..payload + 120].copy_from_slice(&[1, 2, 3, 4]);
+
+        let (pd, md) = default_ports();
+        let ports = CapturePorts { pd: &pd, md: &md };
+        let packet = decode_frame(&frame, LINKTYPE_ETHERNET, 123, ports).expect("packet");
+        assert_eq!(packet.msg_type, "Mp");
+        assert_eq!(packet.com_id, 4001);
+        assert_eq!(packet.crc_valid, Some(true));
+        assert_eq!(packet.protocol_valid, Some(true));
+        assert_eq!(packet.reply_status, Some(0));
+        assert_eq!(packet.user_status, Some(42));
+        assert_eq!(packet.reply_timeout_us, Some(5_000_000));
+        assert_eq!(
+            packet.md_session_id.as_deref(),
+            Some("00010203-0405-0607-0809-0a0b0c0d0e0f")
+        );
+        assert_eq!(packet.src_uri.as_deref(), Some("caller"));
+        assert_eq!(packet.dest_uri.as_deref(), Some("replier"));
+        assert_eq!(packet.payload_hex, "01020304");
+
+        frame[payload + 24..payload + 28].copy_from_slice(&(-6i32).to_be_bytes());
+        let crc = trdp_crc32(&frame[payload..payload + 112]);
+        frame[payload + 112..payload + 116].copy_from_slice(&crc.to_le_bytes());
+        let error_packet =
+            decode_frame(&frame, LINKTYPE_ETHERNET, 124, ports).expect("error packet");
+        assert_eq!(error_packet.reply_status, Some(-6));
+        assert_eq!(error_packet.user_status, Some(0));
     }
 
     #[test]
