@@ -53,7 +53,7 @@ The standard defaults are:
 | MD UDP | 17225 |
 | MD TCP | 17225 |
 
-Node and offline Monitor allow advanced custom port values. Live Monitor uses the configured capture filter; the default filter follows the standard ports.
+Node and offline Monitor allow advanced custom port values. Live Monitor offers **Auto** and **Custom** capture-filter modes. Auto starts with the standard ports (PD UDP/17224, MD UDP/TCP/17225) and regenerates the BPF expression from the currently configured PD/MD ports; Custom passes the user-supplied libpcap/Npcap BPF expression unchanged.
 
 ## PD behavior
 
@@ -61,7 +61,7 @@ TauTerm exposes ComID, source/destination addressing, cycle/timeout values, topo
 
 Diagnostics include the observed sequence, packet count, missed sequence estimates, interval min/average/max, jitter relative to a known publisher/XML cycle, payload size and result errors. Live/offline Monitor also validates the TRDP header CRC and the compatible protocol-version byte. Topology counters are shown verbatim in Monitor; topology validity is only judged by an active Node where TCNOpen has the application-session topology context.
 
-Subscriber/PD Request timeout mode is explicit: **Auto** sends `timeout_us=0` and lets TCNOpen apply its default, while **Custom** sends the configured timeout. Timeout behavior independently chooses Keep last value or Set to zero. XML imports with an explicit timeout become Custom; XML without one remains Auto. TauTerm does not derive a universal `3 × cycle` timeout.
+Subscriber/PD Request timeout mode is explicit: **Auto** sends `timeout_us=0` and lets TCNOpen apply the application-session default; **Custom** sends the configured timeout; **Disabled** sends TCNOpen's `TRDP_INFINITE_TIMEOUT`. Timeout behavior independently chooses Keep last value or Set to zero. For official XML, `<pd-parameter timeout="0">` or an omitted timeout means Disabled, while a positive timeout becomes Custom; `validity-behavior` is preserved (XSD default: zero). TauTerm does not derive a universal `3 × cycle` timeout.
 
 PD Request supports an independent Reply ComID and Reply IP. A zero Reply ComID means "use the request ComID"; `0.0.0.0` Reply IP resolves to the selected link's local address.
 
@@ -94,7 +94,7 @@ Import a TCNOpen-style TRDP XML file to obtain:
 - Dataset element definitions;
 - SDT presence metadata.
 
-The importer is intentionally **read/decode oriented**. TauTerm does not rewrite the full input XML as a general-purpose TCNOpen configuration editor. Import Preview also preserves whether a telegram is PD or MD. The automatic template action only creates stopped **PD Subscriber** templates; MD telegrams remain visible in Preview because XML alone does not tell TauTerm whether the local node should act as requester, notifier or listener/replier.
+The importer is intentionally **read/decode oriented**. TauTerm does not rewrite the full input XML as a general-purpose TCNOpen configuration editor. Import Preview classifies telegrams from explicit `<pd-parameter>` / `<md-parameter>` elements. Telegrams with neither are marked Unknown; telegrams with both are marked Ambiguous. The automatic template action only creates stopped **PD Subscriber** templates; MD telegrams remain visible in Preview because XML alone does not tell TauTerm whether the local node should act as requester, notifier or listener/replier.
 
 ### TauTerm Workspace JSON
 
