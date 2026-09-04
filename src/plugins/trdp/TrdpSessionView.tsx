@@ -167,6 +167,7 @@ const tableStyle = { width: "100%", borderCollapse: "collapse" } as const;
 const cellInputStyle = { width: "100%", minWidth: 80 } as const;
 const U32 = 0x1_0000_0000;
 const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
+const LIVE_CAPTURE_FRAME_LIMIT = 50_000;
 
 function captureFilterForPorts(pdPort: number, mdUdpPort: number, mdTcpPort: number) {
   return `udp port ${pdPort} or udp port ${mdUdpPort} or tcp port ${mdTcpPort}`;
@@ -334,9 +335,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [events, setEvents] = useState<TrdpEvent[]>([]);
   const [captureFrames, setCaptureFrames] = useState<TrdpEvent[]>([]);
   const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
+  const [captureRunning, setCaptureRunning] = useState(false);
+  const [captureDroppedFrames, setCaptureDroppedFrames] = useState(0);
   const captureStartPending = useRef<{
     source: "offline" | "live" | null;
     frames: TrdpEvent[];
+    droppedFrames: number;
   } | null>(null);
   const [objects, setObjects] = useState<TrdpObject[]>(() => {
     try {
@@ -378,7 +382,11 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         }
       }
       if (payload.event === "capture_frame") {
-        setCaptureFrames(prev => [...prev, payload].slice(-5000));
+        setCaptureFrames(prev => {
+          if (prev.length < LIVE_CAPTURE_FRAME_LIMIT) return [...prev, payload];
+          setCaptureDroppedFrames(count => count + 1);
+          return [...prev.slice(1), payload];
+        });
       }
       if (payload.event === "packet") {
         let packet = payload;
@@ -400,6 +408,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       if (payload.event === "ack" && payload.command === "capture_start") {
         captureStartPending.current = null;
         setCaptureSource("live");
+        setCaptureRunning(true);
+      }
+      if (payload.event === "ack" && payload.command === "capture_stop") {
+        setCaptureRunning(false);
       }
       if (payload.event === "ack" && payload.id) {
         setObjects(prev => prev.map(item => {
@@ -417,6 +429,11 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           captureStartPending.current = null;
           setCaptureFrames(pendingCapture.frames);
           setCaptureSource(pendingCapture.source);
+          setCaptureDroppedFrames(pendingCapture.droppedFrames);
+          // Native capture_start stops the previous capture before attempting
+          // the replacement. A failed restart therefore never restores a
+          // "running" state, even though the previous capture buffer is kept.
+          setCaptureRunning(false);
         }
         setError(payload.error);
       }
@@ -571,19 +588,21 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const pdPort = paramNumber(params, "pd_port", 17224);
     const mdPorts = [...new Set([paramNumber(params, "md_udp_port", 17225), paramNumber(params, "md_tcp_port", 17225)])];
     const packets = await invoke<TrdpEvent[]>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
-    setCaptureFrames([]);
+    // The current capture is a separate data source from the rolling event log.
+    // Replacing it here prevents Save from accidentally mixing multiple files
+    // or stale live-capture traffic.
+    setCaptureFrames(packets);
     setCaptureSource("offline");
-    setEvents(prev => [...prev, ...packets].slice(-5000));
+    setCaptureRunning(false);
+    setCaptureDroppedFrames(0);
+    setEvents(packets.slice(-5000));
     setPage("traffic");
   }
 
   async function saveCapture() {
     const path = await save({ filters: [{ name: "PCAPNG", extensions: ["pcapng"] }] });
     if (!path) return;
-    const packets = captureSource === "live"
-      ? captureFrames
-      : events.filter(event => event.raw_frame_hex);
-    await invoke("trdp_save_capture", { path, packets });
+    await invoke("trdp_save_capture", { path, packets: captureFrames });
   }
 
   async function importXml() {
@@ -746,9 +765,15 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           paramNumber(params, "md_tcp_port", 17225),
         )
       : configuredFilter;
-    const previousCapture = { source: captureSource, frames: captureFrames };
+    const previousCapture = {
+      source: captureSource,
+      frames: captureFrames,
+      droppedFrames: captureDroppedFrames,
+    };
     captureStartPending.current = previousCapture;
     setCaptureFrames([]);
+    setCaptureDroppedFrames(0);
+    setCaptureRunning(false);
     try {
       await command("capture_start", {
         interface: interfaceA,
@@ -760,6 +785,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         captureStartPending.current = null;
         setCaptureFrames(previousCapture.frames);
         setCaptureSource(previousCapture.source);
+        setCaptureDroppedFrames(previousCapture.droppedFrames);
+        setCaptureRunning(false);
       }
     }
   }
@@ -903,8 +930,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={() => void importXml()}>导入 TRDP XML / Import XML</button>
               {mode === "node" && <button onClick={() => void importWorkspace()}>导入 Workspace JSON</button>}
-              {mode === "monitor" && <><button onClick={() => void openCapture()}>打开 .pcap/.pcapng</button><button onClick={() => void saveCapture()} disabled={!events.some(event => event.raw_frame_hex)}>保存 .pcapng</button><button onClick={() => void startLiveCapture()}>Start Live Capture</button><button onClick={() => void command("capture_stop")}>Stop Capture</button></>}
+              {mode === "monitor" && <><button onClick={() => void openCapture()}>打开 .pcap/.pcapng</button><button onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>保存 .pcapng</button><button onClick={() => void startLiveCapture()} disabled={captureRunning}>Start Live Capture</button><button onClick={() => void command("capture_stop")} disabled={!captureRunning}>Stop Capture</button></>}
             </div>
+            {mode === "monitor" && <div>Capture: {captureRunning ? "Running" : captureSource ? "Stopped" : "Not started"}{captureSource ? ` · source ${captureSource}` : ""} · buffered frames {captureFrames.length}{captureDroppedFrames > 0 ? ` · ⚠ ${captureDroppedFrames} older live frames dropped after reaching the ${LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()}-frame in-memory limit` : ""}</div>}
             {xmlImport && (
               <div className="liquid-glass-card" style={{ padding: 12 }}>
                 <strong>Import Preview</strong>
@@ -923,7 +951,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
         {page === "traffic" && (
           <section>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><h2>流量 / Traffic · TRDP Packet Inspector</h2><div style={{ display: "flex", gap: 8 }}><button onClick={() => void openCapture()}>Open capture</button><button onClick={() => void saveCapture()} disabled={!events.some(event => event.raw_frame_hex)}>Save pcapng</button><button onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>Clear</button></div></div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><h2>流量 / Traffic · TRDP Packet Inspector</h2><div style={{ display: "flex", gap: 8 }}><button onClick={() => void openCapture()}>Open capture</button><button onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>Save pcapng</button><button onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>Clear</button></div></div>
             <h3>Flows</h3>
             <table style={tableStyle}><thead><tr><th>Link</th><th>Type</th><th>ComID</th><th>Source</th><th>Destination</th><th>Packets</th><th>Missed</th><th>Seq</th><th>Rate/Interval µs</th><th>Size</th><th>Errors</th></tr></thead><tbody>{flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.missed}</td><td>{flow.lastSeq ?? "—"}</td><td>{flow.avgIntervalUs === undefined ? "—" : Math.round(flow.avgIntervalUs)}</td><td>{flow.size ?? "—"}</td><td>{flow.errors}</td></tr>)}</tbody></table>
             <h3>Packets</h3>

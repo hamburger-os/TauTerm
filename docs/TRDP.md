@@ -119,6 +119,8 @@ Offline capture understands classic pcap and pcapng for supported link types and
 
 TauTerm saves pcapng by default. When live traffic has A/B provenance, the writer creates separate pcapng Interface Description Blocks keyed by TauTerm link and datalink and stores the link label as the interface name. Reopening the saved pcapng therefore preserves A/B provenance.
 
+Opening another offline capture replaces the current save buffer instead of appending it to previously inspected traffic. Live Monitor keeps a bounded in-memory raw-frame save buffer of 50,000 frames; when that cap is reached, TauTerm keeps the newest frames and shows an explicit dropped-frame count rather than silently implying the saved file is complete. Live capture Running/Stopped state follows native `capture_start` / `capture_stop` acknowledgements; if a restart fails after native capture has stopped the previous handles, prior buffered frames are restored for inspection but the session remains Stopped.
+
 Supported capture link types include Ethernet, Linux cooked capture (SLL/SLL2), DLT_NULL and raw IPv4.
 
 ## Live capture requirements
