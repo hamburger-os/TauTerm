@@ -146,7 +146,10 @@ static void pd_callback(
     UINT8 *data,
     UINT32 size
 ) {
-    emit_pd((node_object_t *)ref, app, message, data, size);
+    node_object_t *object = message != NULL && message->pUserRef != NULL
+        ? (node_object_t *)message->pUserRef
+        : (node_object_t *)ref;
+    emit_pd(object, app, message, data, size);
 }
 
 static void emit_md(
