@@ -66,7 +66,8 @@ impl TrdpSideChannel {
         // the working directory may be user-controlled. Production resolves
         // the packaged sidecar from Tauri resources / the executable directory,
         // unless the launching process explicitly opts into TAUTERM_TRDP_BRIDGE.
-        if cfg!(debug_assertions) {
+        #[cfg(debug_assertions)]
+        {
             if let Ok(cwd) = std::env::current_dir() {
                 candidates.push(cwd.join("src-tauri").join("binaries").join(executable));
                 candidates.push(cwd.join("binaries").join(executable));
