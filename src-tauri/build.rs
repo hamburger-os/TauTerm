@@ -7,7 +7,9 @@ fn main() {
         std::fs::create_dir_all("binaries")
             .expect("failed to create src-tauri/binaries for TRDP helper");
         let target = std::env::var("TARGET").expect("TARGET is unavailable for TRDP sidecar");
-        let helper_name = if cfg!(target_os = "windows") {
+        let target_os =
+            std::env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS is unavailable");
+        let helper_name = if target_os == "windows" {
             format!("tauterm-trdp-bridge-{target}.exe")
         } else {
             format!("tauterm-trdp-bridge-{target}")
