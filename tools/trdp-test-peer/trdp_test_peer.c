@@ -14,6 +14,37 @@
 #include "trdp_if_light.h"
 #include "vos_sock.h"
 
+static void peer_debug_log(
+    void *ref,
+    TRDP_LOG_T category,
+    const CHAR8 *time_text,
+    const CHAR8 *file,
+    UINT16 line,
+    const CHAR8 *message
+) {
+    const char *level = "user";
+    (void)ref;
+    if (category == VOS_LOG_ERROR) {
+        level = "error";
+    } else if (category == VOS_LOG_WARNING) {
+        level = "warning";
+    } else if (category == VOS_LOG_INFO) {
+        level = "info";
+    } else if (category == VOS_LOG_DBG) {
+        level = "debug";
+    }
+    fprintf(
+        stderr,
+        "[TCNOpen-peer:%s] %s %s:%u %s",
+        level,
+        time_text != NULL ? (const char *)time_text : "",
+        file != NULL ? (const char *)file : "",
+        (unsigned int)line,
+        message != NULL ? (const char *)message : ""
+    );
+    fflush(stderr);
+}
+
 static volatile int running = 1;
 static TRDP_APP_SESSION_T app;
 static TRDP_PUB_T publisher;
@@ -228,7 +259,11 @@ int main(int argc, char **argv) {
     process.options = TRDP_OPTION_NONE;
     process.vlanId = 0u;
 
-    error = tlc_init(NULL, NULL, NULL);
+    error = tlc_init(
+        getenv("TAUTERM_TRDP_DEBUG") != NULL ? peer_debug_log : NULL,
+        NULL,
+        NULL
+    );
     if (error != TRDP_NO_ERR) {
         fprintf(stderr, "tlc_init failed: %d\n", (int)error);
         return 3;
