@@ -147,7 +147,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     // Older TRDP sessions used the generic plugin fallback "TRDP @ trdp".
     // Render those legacy auto-generated names with the new mode-aware default,
     // while preserving every explicit user rename verbatim.
-    if (tab.name.trim().toLowerCase() === "trdp @ trdp") {
+    const normalizedName = tab.name.trim().toLowerCase();
+    if (["trdp @ trdp", "trdp node", "trdp monitor"].includes(normalizedName)) {
       return mode === "monitor" ? "TRDP Monitor" : "TRDP Node";
     }
     return tab.name;
