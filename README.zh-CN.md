@@ -82,7 +82,7 @@ Windows 可通过安装包自带的 com0com 建立虚拟 COM 对；Linux/macOS �
 
 ### TRDP Node 与 Monitor
 
-TRDP 现在是 TauTerm 的一方工业协议会话。**Node** 可同时配置 PD Publisher、PD Subscriber、PD Request、MD Notify、MD Request 与 MD Listener/Replier；**Monitor** 提供单/双网卡被动实时抓包和 pcap/pcapng 离线分析，并保留 A/B Link 来源、支持 MD/TCP 流重组。
+TRDP 现在是 TauTerm 的一方工业协议会话。**Node** 可同时配置 PD Publisher、PD Subscriber、PD Request、MD Notify、MD Request 与 MD Listener/Replier；**Monitor** 提供单/双网卡被动实时抓包和 pcap/pcapng 离线分析，并保留 A/B Link 来源；实时抓包路径还支持 MD/TCP 流重组。
 
 TCNOpen TRDP 3.0.0.0 以 MPL-2.0 源码固定 vendoring，并构建为独立 TauTerm sidecar。Windows 实时 Monitor 需要用户自行安装 Npcap；Linux/macOS 动态加载系统 libpcap。离线 pcap/pcapng 分析不依赖这些实时抓包运行库。详见 [TRDP 会话指南](docs/TRDP.md)。
 
