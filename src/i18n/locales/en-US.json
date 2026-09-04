@@ -1112,7 +1112,10 @@
       "array": "Array",
       "valueJson": "Value (JSON)",
       "unit": "Unit",
-      "value": "Value"
+      "value": "Value",
+      "cycle": "Cycle",
+      "sources": "Sources",
+      "destinations": "Destinations"
     },
     "section": {
       "subscriberDiagnostics": "Subscriber diagnostics",
@@ -1149,7 +1152,11 @@
       "ports": "ports",
       "detectedNotValidated": "Detected (not validated)",
       "noConfigDetected": "No configuration detected",
-      "importedStopped": "imported objects forced to Stopped."
+      "importedStopped": "imported objects forced to Stopped.",
+      "txPolicyText": "Publishers, PD Requests and MD Requests/Notify always require an explicit Start/Send action.",
+      "safetyText": "TauTerm TRDP is a diagnostic/development tool and does not perform SDT safety validation or claim safety certification.",
+      "live": "live",
+      "offline": "offline"
     },
     "inspector": {
       "notChecked": "not checked",
@@ -1166,7 +1173,8 @@
       "replyTimeout": "Reply timeout",
       "rawPayload": "Raw payload",
       "noMapping": "No dataset mapping or decodable payload.",
-      "importXmlToDecode": "Import a TRDP XML file to enable Dataset decoding."
+      "importXmlToDecode": "Import a TRDP XML file to enable Dataset decoding.",
+      "bytesDecoded": "bytes decoded"
     },
     "advanced": {
       "source": "Source",
@@ -1190,7 +1198,10 @@
     },
     "structured": {
       "hint": "Enter a valid JSON value for each field; arrays and nested Datasets use JSON arrays/objects. Fields → HEX encodes according to XML types, network byte order and scale/offset; HEX remains the wire truth source.",
-      "payloadHex": "Payload HEX"
+      "payloadHex": "Payload HEX",
+      "editor": "Dataset Structured Editor",
+      "object": "Object",
+      "dynamic": "dynamic"
     },
     "status": {
       "auto": "Auto",
