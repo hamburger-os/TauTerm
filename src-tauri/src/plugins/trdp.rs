@@ -149,7 +149,7 @@ impl TrdpSideChannel {
         };
         let result = self.send(json!({ "command": open_command, "params": params }));
         if result.is_err() {
-            self.shutdown();
+            <Self as SideChannel>::shutdown(self);
         }
         result
     }
