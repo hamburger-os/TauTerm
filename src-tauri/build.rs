@@ -6,15 +6,16 @@ fn main() {
     {
         std::fs::create_dir_all("binaries")
             .expect("failed to create src-tauri/binaries for TRDP helper");
+        let target = std::env::var("TARGET").expect("TARGET is unavailable for TRDP sidecar");
         let helper_name = if cfg!(target_os = "windows") {
-            "tauterm-trdp-bridge.exe"
+            format!("tauterm-trdp-bridge-{target}.exe")
         } else {
-            "tauterm-trdp-bridge"
+            format!("tauterm-trdp-bridge-{target}")
         };
         let placeholder = std::path::Path::new("binaries").join(helper_name);
         if !placeholder.exists() {
             std::fs::write(&placeholder, b"placeholder")
-                .expect("failed to create TRDP bridge placeholder");
+                .expect("failed to create TRDP bridge sidecar placeholder");
         }
     }
 
