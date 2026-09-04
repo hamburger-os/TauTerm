@@ -72,10 +72,23 @@ function smokeTestWindowsInstaller(files) {
   if (result.status !== 0) fail(`7z failed to inspect ${basename(installer)}.`);
 
   const listing = result.stdout.toLowerCase();
-  for (const required of ["tauterm-service.exe", "setupc.exe", "com0com.sys"]) {
+  for (const required of ["tauterm-service.exe", "setupc.exe", "com0com.sys", "tauterm-trdp-bridge"]) {
     if (!listing.includes(required)) {
       fail(`NSIS installer is missing required bundled file: ${required}`);
     }
+  }
+}
+
+function smokeTestMacUpdater(files) {
+  const updater = findOne(files, ".app.tar.gz");
+  const result = spawnSync("tar", ["-tzf", updater], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) fail(`tar failed to inspect ${basename(updater)}.`);
+  if (!result.stdout.includes("tauterm-trdp-bridge")) {
+    fail("macOS app updater archive is missing required bundled file: tauterm-trdp-bridge");
   }
 }
 
@@ -91,6 +104,8 @@ const allFiles = walk(bundleRoot);
 const currentFiles = allFiles.filter((file) => isCurrentVersionArtifact(basename(file)));
 if (platform === "windows") {
   smokeTestWindowsInstaller(currentFiles);
+} else if (platform === "macos-arm") {
+  smokeTestMacUpdater(currentFiles);
 }
 
 const selected = currentFiles.filter((file) => matchesAny(basename(file), spec.suffixes));
