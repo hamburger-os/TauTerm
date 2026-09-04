@@ -360,11 +360,7 @@ export default function SplitView({
                 <span className={styles.emptyMark}>
                   <Icon name="connection" size="xl" className={styles.emptyPaneIcon} />
                 </span>
-                <span>
-                  {tab.state === "connecting"
-                    ? t("session.preparingContent", "正在准备会话内容...")
-                    : t("session.connectToUse", "连接会话后可使用此内容")}
-                </span>
+                <span>{t("session.connectToViewContent", "连接后显示会话内容")}</span>
               </div>
             )}
           </div>
