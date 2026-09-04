@@ -1017,5 +1017,47 @@
     "peer": "Peer",
     "time": "Time",
     "seq": "#"
+  },
+  "trdp": {
+    "nav": {
+      "overview": "Overview · TRDP Application Session",
+      "publishers": "Publishers · PD Publisher",
+      "subscribers": "Subscribers · PD Subscriber / Request",
+      "messages": "Messages · MD Request / Reply / Notify",
+      "traffic": "Traffic · Packet Inspector"
+    },
+    "actions": {
+      "send": "Send",
+      "start": "Start",
+      "stop": "Stop",
+      "update": "Update",
+      "dataset": "Dataset",
+      "remove": "Remove",
+      "advanced": "Advanced",
+      "hexToFields": "HEX → Fields",
+      "fieldsToHex": "Fields → HEX",
+      "close": "Close",
+      "importXml": "Import TRDP XML",
+      "importWorkspace": "Import Workspace JSON",
+      "openCapture": "Open capture",
+      "saveCapture": "Save pcapng",
+      "startCapture": "Start live capture",
+      "stopCapture": "Stop capture",
+      "importTemplates": "Add PD Telegrams to Workspace as stopped Subscriber templates",
+      "addPublisher": "+ Publisher",
+      "addSubscriber": "+ Subscriber",
+      "addPdRequest": "+ PD Request",
+      "addRequest": "+ Request",
+      "addListener": "+ Listener/Replier",
+      "addNotify": "+ Notify",
+      "clear": "Clear",
+      "confirm": "Confirm"
+    },
+    "captureInterfaces": {
+      "loading": "Loading capture interfaces…",
+      "choose": "Choose a capture interface",
+      "empty": "No Npcap/libpcap capture interfaces were detected.",
+      "error": "Failed to load capture interfaces"
+    }
   }
 }
