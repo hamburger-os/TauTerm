@@ -111,7 +111,7 @@ Each active object ultimately sends a raw byte payload. When a Dataset schema is
 - **HEX → Fields**
 - **Fields → HEX**
 
-The encoder/decoder handles network byte order, fixed/dynamic arrays, nested Datasets (including the XSD minimum Dataset ID 1000), supported primitive types, and XML scale/offset metadata. The generated HEX is written back to the object and remains the final wire representation.
+The encoder/decoder handles network byte order, fixed/dynamic arrays, nested Datasets (including the XSD minimum Dataset ID 1000), supported primitive types (including explicit TIMEDATE48/TIMEDATE64 component objects), and XML scale/offset metadata. The generated HEX is written back to the object and remains the final wire representation.
 
 ## Capture files
 
