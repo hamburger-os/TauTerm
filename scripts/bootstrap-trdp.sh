@@ -22,6 +22,8 @@ echo "Configuring vendored TCNOpen 3.0.0.0 + TauTerm TRDP native helpers..."
 CMAKE_ARGS=(-DCMAKE_BUILD_TYPE=Release)
 if [[ "${TAUTERM_TRDP_SANITIZE:-0}" == "1" ]]; then
   CMAKE_ARGS+=(-DTAUTERM_TRDP_SANITIZE=ON)
+else
+  CMAKE_ARGS+=(-DTAUTERM_TRDP_SANITIZE=OFF)
 fi
 cmake -S "$NATIVE" -B "$BUILD" "${CMAKE_ARGS[@]}"
 cmake --build "$BUILD" --config Release --parallel
