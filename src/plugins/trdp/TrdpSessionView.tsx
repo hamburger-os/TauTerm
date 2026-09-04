@@ -862,7 +862,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
               ? (
                 <span className={styles.inlineControls}>
                   <select className={selectClass} value={obj.timeoutMode} onChange={event => patchObject(obj.id, { timeoutMode: event.target.value as "auto" | "custom" | "disabled" })}>
-                    <option value="auto">Auto</option><option value="custom">Custom</option><option value="disabled">Disabled</option>
+                    <option value="auto">{t("trdp.status.auto")}</option><option value="custom">{t("trdp.status.custom")}</option><option value="disabled">{t("trdp.status.disabled")}</option>
                   </select>
                   {obj.timeoutMode === "custom" && <input className={numberClass} type="number" min={1} value={obj.timeoutUs} onChange={event => patchObject(obj.id, { timeoutUs: Number(event.target.value) })} />}
                 </span>
@@ -873,15 +873,15 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         <td>
           <details className={styles.advancedDetails}>
             <summary>{t("trdp.actions.advanced")}</summary>
-            <label>Source <input className="liquid-glass-input" value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
+            <label>{t("trdp.advanced.source")} <input className="liquid-glass-input" value={obj.source} onChange={event => patchObject(obj.id, { source: event.target.value })} /></label><br />
             <label>ETB <input className="liquid-glass-input" type="number" min={0} value={obj.etbTopoCount} onChange={event => patchObject(obj.id, { etbTopoCount: Number(event.target.value) })} /></label><br />
             <label>OpTrn <input className="liquid-glass-input" type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label><br />
-            {subscriber && <label>Timeout behavior <select className="liquid-glass-input liquid-glass-select" value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">Keep last value</option><option value="zero">Set to zero</option></select></label>}
-            {obj.kind === "pd_request" && <><br /><label>Reply ComID <input className="liquid-glass-input" type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>0 = same as request ComID</small><br /><label>Reply IP <input className="liquid-glass-input" value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>0.0.0.0 = Link local IP</small></>}
-            {obj.kind === "pd_publisher" && <><label>Red ID <input className="liquid-glass-input" type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>Red state <select className="liquid-glass-input liquid-glass-select" value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">Leader</option><option value="follower">Follower</option></select></label></>}
-            {obj.kind.startsWith("md_") && <><label>Source URI <input className="liquid-glass-input" value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>Destination URI <input className="liquid-glass-input" value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
-            {obj.kind === "md_request" && <><label>Replies <input className="liquid-glass-input" type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>Reply timeout µs <input className="liquid-glass-input" type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
-            {obj.kind === "md_listener" && <><label>Response <select className="liquid-glass-input liquid-glass-select" value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>Confirm timeout µs <input className="liquid-glass-input" type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
+            {subscriber && <label>{t("trdp.advanced.timeoutBehavior")} <select className="liquid-glass-input liquid-glass-select" value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">{t("trdp.advanced.keepLast")}</option><option value="zero">{t("trdp.advanced.setZero")}</option></select></label>}
+            {obj.kind === "pd_request" && <><br /><label>{t("trdp.advanced.replyComId")} <input className="liquid-glass-input" type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><br /><small>{t("trdp.advanced.sameAsRequest")}</small><br /><label>{t("trdp.advanced.replyIp")} <input className="liquid-glass-input" value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label><br /><small>{t("trdp.advanced.linkLocalIp")}</small></>}
+            {obj.kind === "pd_publisher" && <><label>{t("trdp.advanced.redId")} <input className="liquid-glass-input" type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><br /><label>{t("trdp.advanced.redState")} <select className="liquid-glass-input liquid-glass-select" value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">{t("trdp.advanced.leader")}</option><option value="follower">{t("trdp.advanced.follower")}</option></select></label></>}
+            {obj.kind.startsWith("md_") && <><label>{t("trdp.advanced.sourceUri")} <input className="liquid-glass-input" value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><br /><label>{t("trdp.advanced.destinationUri")} <input className="liquid-glass-input" value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label><br /></>}
+            {obj.kind === "md_request" && <><label>{t("trdp.advanced.replies")} <input className="liquid-glass-input" type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><br /><label>{t("trdp.advanced.replyTimeout")} <input className="liquid-glass-input" type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
+            {obj.kind === "md_listener" && <><label>{t("trdp.advanced.response")} <select className="liquid-glass-input liquid-glass-select" value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <><br /><label>{t("trdp.advanced.confirmTimeout")} <input className="liquid-glass-input" type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label></>}</>}
           </details>
         </td>
         <td>
@@ -934,10 +934,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
               </div>
             </div>
             <div className={styles.structuredHint}>
-              每个字段输入合法 JSON 值；数组/嵌套 Dataset 使用 JSON array/object。Fields → HEX 会按 XML 类型、网络字节序及 scale/offset 编码，HEX 仍是最终 wire truth source。
+              {t("trdp.structured.hint")}
             </div>
             <table className={styles.table} style={{ marginTop: 8 }}>
-              <thead><tr><th>Field</th><th>Type</th><th>Array</th><th>Value (JSON)</th><th>Unit</th></tr></thead>
+              <thead><tr><th>{t("trdp.table.field")}</th><th>{t("trdp.table.type")}</th><th>{t("trdp.table.array")}</th><th>{t("trdp.table.valueJson")}</th><th>{t("trdp.table.unit")}</th></tr></thead>
               <tbody>
                 {structuredDataset.elements.map(element => (
                   <tr key={element.name}>
@@ -960,7 +960,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 ))}
               </tbody>
             </table>
-            <div className={styles.payload}>Payload HEX: <code>{structuredObject.payloadHex || "—"}</code></div>
+            <div className={styles.payload}>{t("trdp.structured.payloadHex")}: <code>{structuredObject.payloadHex || "—"}</code></div>
           </div>
         )}
 
