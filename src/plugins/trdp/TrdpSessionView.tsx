@@ -323,6 +323,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const storageKey = `tauterm:trdp:${sessionId}:objects`;
   const [page, setPage] = useState<Page>("overview");
   const [events, setEvents] = useState<TrdpEvent[]>([]);
+  const [captureFrames, setCaptureFrames] = useState<TrdpEvent[]>([]);
   const [objects, setObjects] = useState<TrdpObject[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -361,6 +362,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           const oldest = starts.keys().next().value;
           if (typeof oldest === "string") starts.delete(oldest);
         }
+      }
+      if (payload.event === "capture_frame") {
+        setCaptureFrames(prev => [...prev, payload].slice(-5000));
       }
       if (payload.event === "packet") {
         let packet = payload;
@@ -541,6 +545,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const pdPort = paramNumber(params, "pd_port", 17224);
     const mdPorts = [...new Set([paramNumber(params, "md_udp_port", 17225), paramNumber(params, "md_tcp_port", 17225)])];
     const packets = await invoke<TrdpEvent[]>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
+    setCaptureFrames([]);
     setEvents(prev => [...prev, ...packets].slice(-5000));
     setPage("traffic");
   }
@@ -548,7 +553,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   async function saveCapture() {
     const path = await save({ filters: [{ name: "PCAPNG", extensions: ["pcapng"] }] });
     if (!path) return;
-    await invoke("trdp_save_capture", { path, packets: events.filter(event => event.raw_frame_hex) });
+    const packets = captureFrames.length > 0
+      ? captureFrames
+      : events.filter(event => event.raw_frame_hex);
+    await invoke("trdp_save_capture", { path, packets });
   }
 
   async function importXml() {
@@ -695,6 +703,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function startLiveCapture() {
+    setCaptureFrames([]);
     const interfaceA = typeof params?.capture_interface === "string" ? params.capture_interface : "";
     const interfaceB = params?.capture_interface_b_enabled && typeof params?.capture_interface_b === "string" ? params.capture_interface_b : "";
     const configuredFilter = typeof params?.capture_filter === "string" ? params.capture_filter : STANDARD_CAPTURE_FILTER;
