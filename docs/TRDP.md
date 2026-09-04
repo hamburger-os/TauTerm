@@ -28,7 +28,7 @@ Monitor is passive. It can:
 - preserve which TauTerm capture link (A/B) observed a frame;
 - open `.pcap` and `.pcapng` files;
 - save inspected raw frames as `.pcapng`;
-- reassemble MD/TCP streams for inspection.
+- reassemble MD/TCP streams during live capture.
 
 A passive monitor only sees traffic presented to the selected NIC. On a switched network, use a SPAN/mirror port, TAP, or other capture arrangement when the traffic is not already delivered to the host.
 
@@ -115,7 +115,7 @@ The encoder/decoder handles network byte order, fixed/dynamic arrays, nested Dat
 
 ## Capture files
 
-Offline capture understands classic pcap and pcapng for supported link types and IPv4 UDP/TCP TRDP traffic.
+Offline capture understands classic pcap and pcapng for supported link types and IPv4 UDP/TCP TRDP traffic. The offline Rust parser decodes captured frames/segments; TCP stream reassembly is currently provided by the live Monitor path, not by offline pcap replay.
 
 TauTerm saves pcapng by default. When live traffic has A/B provenance, the writer creates separate pcapng Interface Description Blocks keyed by TauTerm link and datalink and stores the link label as the interface name. Reopening the saved pcapng therefore preserves A/B provenance.
 
