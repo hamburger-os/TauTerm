@@ -257,6 +257,27 @@ static int valid_pd_type(const unsigned char *data, size_t length) {
     return data[7] == 'd' || data[7] == 'p' || data[7] == 'r' || data[7] == 'e';
 }
 
+static void emit_capture_frame(
+    capture_context_t *context,
+    const struct bridge_pcap_pkthdr *header,
+    const unsigned char *frame
+) {
+    bridge_output_lock();
+    fprintf(
+        stdout,
+        "{\"event\":\"capture_frame\",\"link\":\"%c\",\"link_type\":%d,"
+        "\"timestamp_us\":%llu,\"raw_frame_hex\":\"",
+        context->label,
+        context->linktype,
+        (unsigned long long)header->ts.tv_sec * 1000000ULL
+            + (unsigned long long)header->ts.tv_usec
+    );
+    bridge_print_hex(stdout, frame, header->caplen);
+    fputs("\"}\n", stdout);
+    fflush(stdout);
+    bridge_output_unlock();
+}
+
 static void emit_trdp(
     capture_context_t *context,
     const struct bridge_pcap_pkthdr *header,
@@ -538,8 +559,11 @@ static void process_frame(
     uint32_t destination_ip;
     unsigned char protocol;
 
-    if (header == NULL || frame == NULL
-        || !network_offset(frame, (size_t)header->caplen, context->linktype, &ip_offset)
+    if (header == NULL || frame == NULL) {
+        return;
+    }
+    emit_capture_frame(context, header, frame);
+    if (!network_offset(frame, (size_t)header->caplen, context->linktype, &ip_offset)
         || (size_t)header->caplen < ip_offset + 20u
         || (frame[ip_offset] >> 4) != 4u) {
         return;
