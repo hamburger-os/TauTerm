@@ -131,6 +131,15 @@
   line-height: 1;
 }
 
+.paneHeaderBadge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--text-secondary);
+  opacity: 0.82;
+}
+
 .paneHeaderState {
   flex: 0 0 auto;
   display: inline-flex;
