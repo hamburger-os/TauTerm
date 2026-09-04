@@ -1,4 +1,5 @@
 #include "trdp_bridge.h"
+#include "vos_utils.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -263,6 +264,10 @@ static void emit_trdp(
     size_t header_length;
     size_t data_length;
     size_t available;
+    UINT32 stored_fcs;
+    UINT32 computed_fcs;
+    int crc_valid;
+    int protocol_valid;
     char message_type[3];
 
     if (valid_md_type(trdp, trdp_length)) {
@@ -283,6 +288,10 @@ static void emit_trdp(
     message_type[0] = (char)trdp[6];
     message_type[1] = (char)trdp[7];
     message_type[2] = '\0';
+    memcpy(&stored_fcs, trdp + header_length - SIZE_OF_FCS, SIZE_OF_FCS);
+    computed_fcs = vos_crc32(INITFCS, trdp, (UINT32)(header_length - SIZE_OF_FCS));
+    crc_valid = stored_fcs == MAKE_LE(computed_fcs);
+    protocol_valid = (read_be16(trdp + 4u) & 0xff00u) == 0x0100u;
 
     bridge_output_lock();
     fprintf(
@@ -292,6 +301,7 @@ static void emit_trdp(
         "\"src_port\":%u,\"dest_port\":%u,\"msg_type\":\"%s\","
         "\"com_id\":%u,\"seq_count\":%u,\"protocol_version\":%u,"
         "\"etb_topo_count\":%u,\"op_trn_topo_count\":%u,"
+        "\"crc_valid\":%s,\"protocol_valid\":%s,"
         "\"src_ip\":\"%u.%u.%u.%u\",\"dest_ip\":\"%u.%u.%u.%u\","
         "\"data_len\":%u,\"payload_hex\":\"",
         context->label,
@@ -306,6 +316,8 @@ static void emit_trdp(
         (unsigned int)read_be16(trdp + 4u),
         (unsigned int)read_be32(trdp + 12u),
         (unsigned int)read_be32(trdp + 16u),
+        crc_valid ? "true" : "false",
+        protocol_valid ? "true" : "false",
         (unsigned int)((source_ip >> 24) & 0xffu),
         (unsigned int)((source_ip >> 16) & 0xffu),
         (unsigned int)((source_ip >> 8) & 0xffu),
