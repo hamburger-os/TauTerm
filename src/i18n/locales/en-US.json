@@ -14,6 +14,11 @@
     "comingSoon": "(Coming Soon)",
     "formNotImplemented": "The configuration form for the \"{{pluginName}}\" plugin is not yet implemented and will be provided in a future release."
   },
+  "trdpSidebar": {
+    "capture": "Capture",
+    "unconfigured": "Unconfigured",
+    "disabled": "Disabled"
+  },
   "localShell": {
     "shell": "Shell",
     "auto": "Auto (system default)",
