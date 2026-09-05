@@ -325,6 +325,12 @@ html[data-motion="reduced"] .ambient-field {
   box-shadow: var(--selected-shadow);
   text-shadow: var(--primary-button-text-shadow);
   transform: translateY(0);
+  transition:
+    background-position 520ms ease,
+    border-color var(--transition-button),
+    box-shadow var(--transition-button),
+    color var(--transition-button),
+    transform var(--transition-button);
 }
 
 .liquid-glass-button.liquid-theme-selected:hover:not(:disabled) {
