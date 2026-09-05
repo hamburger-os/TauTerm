@@ -248,6 +248,22 @@ impl LocalShellChannel {
     }
 
     #[cfg(windows)]
+    fn flush_expired_conpty_startup_tail(&mut self) -> bool {
+        if self.startup_cpr_handled
+            || self.startup_cpr_tail.is_empty()
+            || Instant::now() <= self.startup_cpr_deadline
+        {
+            return false;
+        }
+
+        // 只可能保留 ESC / ESC[ / ESC[6 这类查询前缀。启动窗口结束仍未补全
+        // ESC[6n 时，它就是普通终端输出，必须交回 xterm，不能永久扣在后端。
+        self.startup_cpr_handled = true;
+        self.pending.extend(std::mem::take(&mut self.startup_cpr_tail));
+        true
+    }
+
+    #[cfg(windows)]
     fn handle_conpty_startup_cpr(&mut self, data: Vec<u8>) -> std::io::Result<Vec<u8>> {
         if self.startup_cpr_handled {
             return Ok(data);
@@ -305,6 +321,10 @@ impl Read for LocalShellChannel {
         if !self.pending.is_empty() {
             return Ok(drain_pending(&mut self.pending, buf));
         }
+        #[cfg(windows)]
+        if self.flush_expired_conpty_startup_tail() {
+            return Ok(drain_pending(&mut self.pending, buf));
+        }
 
         match self.reader_rx.recv_timeout(READ_TIMEOUT) {
             Ok(ReaderEvent::Data(data)) => {
@@ -321,10 +341,16 @@ impl Read for LocalShellChannel {
                 ))
             }
             Ok(ReaderEvent::Error(error)) => Err(io_other(error)),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "local shell read timeout",
-            )),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                #[cfg(windows)]
+                if self.flush_expired_conpty_startup_tail() {
+                    return Ok(drain_pending(&mut self.pending, buf));
+                }
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "local shell read timeout",
+                ))
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "local shell reader stopped",
@@ -513,6 +539,24 @@ mod tests {
     #[cfg(unix)]
     fn scripted_shell(script: &str) -> (String, Vec<String>) {
         ("/bin/sh".into(), vec!["-c".into(), script.into()])
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn conpty_startup_cpr_fragment_detection_is_lossless() {
+        let query = CONPTY_STARTUP_CPR_QUERY;
+
+        assert_eq!(longest_suffix_prefix(b"plain\x1b", query), 1);
+        assert_eq!(longest_suffix_prefix(b"plain\x1b[", query), 2);
+        assert_eq!(longest_suffix_prefix(b"plain\x1b[6", query), 3);
+        assert_eq!(longest_suffix_prefix(b"plain text", query), 0);
+
+        let combined = b"before\x1b[6nafter";
+        let pos = find_subsequence(combined, query).expect("complete CPR query");
+        let mut visible = Vec::new();
+        visible.extend_from_slice(&combined[..pos]);
+        visible.extend_from_slice(&combined[pos + query.len()..]);
+        assert_eq!(visible, b"beforeafter");
     }
 
     #[test]
