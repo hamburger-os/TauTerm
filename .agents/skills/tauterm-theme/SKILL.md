@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "8.6"
+  version: "8.7"
 ---
 
-# TauTerm Liquid Glass v8.6 — 唯一主题规范源
+# TauTerm Liquid Glass v8.7 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -19,7 +19,7 @@ metadata:
 1. **Gemini Ambient**：提供低频颜色与流动。
 2. **Clear Liquid Glass Physics**：所有主题共享的透明玻璃本体。
 3. **Theme Veil**：Google Glow / Obsidian / Frosted 只在同一玻璃上覆盖透明 / 黑 / 白薄膜。
-4. **Performance Mode**：只改变采样和装饰动画成本，不改变材质身份。
+4. **Performance Mode**：只改变 Ambient 动态成本与小面积 backdrop sampling；不改变材质身份、四色完整度或主题关系。
 
 核心原则：
 
@@ -51,6 +51,8 @@ metadata:
 - 右上 Blue
 
 `--google-brand-gradient` / `--google-brand-gradient-soft` 必须一次同时呈现完整四色。Purple / Orange 只能由四色插值产生。
+
+**四色完整度是不变量**：3 themes × 3 performance modes 都必须同时保留 Red / Yellow / Green / Blue 四个锚点。性能档只能改变运动、采样和合成成本，禁止删色、合并成单色场或让任一颜色在正常窗口中不可见。
 
 ---
 
@@ -99,7 +101,7 @@ Surface 的背景组合顺序固定为：
 
 ### Google Glow / 炫彩流光
 
-- 三主题中 **veil 最弱**，且 Ambient opacity 可以略高于其它暗色主题以强化透亮感。
+- 三主题中 **veil 最弱**，Ambient 本身与其它主题完全同源、同强度。
 - Ambient 能明显穿过 Sidebar / SendBar / Dialog。
 - Structural Panel 不应看起来像红蓝绿黄实心色块；颜色来自背后的 Ambient。
 - 保持中性清透，不加 Navy Blue 固有底色。
@@ -124,17 +126,20 @@ Surface 的背景组合顺序固定为：
 
 ## 5. Gemini Ambient Flow
 
-使用两个 oversized Field：
+始终使用两个 oversized Field，**所有主题、所有性能档都保留这两层**：
 
 - Field A：Red（左上） + Green（右下）
 - Field B：Blue（右上） + Yellow（左下）
 
-只动画 transform：translate + 轻 rotation + 轻 scale。
+Ambient 的几何、颜色和强度是跨主题共享源；主题不得定义自己的 `--ambient-opacity-*`。主题差异只能来自底色 / Theme Veil / 对比补偿。
 
-- Balanced：约 20s / 24s
-- Quality：约 14s / 17s
-- 正常观察 3–5 秒必须能感知流动
-- Compat：保留完整四色但静态
+动态档只动画 transform：translate + 轻 rotation + 轻 scale。
+
+- Balanced：约 20s / 24s，低频连续流动
+- Quality：约 12s / 15s，路径更明显、流动更易感知
+- 正常观察 3–5 秒必须能感知 Quality / Balanced 的位置变化
+- Compat：两层都保留，完整四色同时可见，但静态
+- layout drag / resize 时暂停纯装饰 Ambient，释放后恢复
 - hidden 时暂停；仅 unfocused 不暂停
 - reduced motion 停止装饰动画
 
@@ -349,21 +354,32 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 
 ## 13. Performance
 
+三个档位是一条单一维度：**效果丰富度 / GPU 成本**。它们不得改变主题身份，也不得删减四色。
+
 Quality：
-- 2 dynamic Ambient Fields
-- Small Chrome / Float 较高 blur sampling
+- 2 dynamic Ambient Fields，完整四色
+- 更明显的 transform 路径与更快的低频流动
+- Small Chrome / Float 使用更高 blur sampling 与适度更高 saturate
+- 大面积 Structural / Content 仍然不做 backdrop sampling
 
 Balanced：
-- 2 dynamic Ambient Fields
-- 默认 20s / 24s motion
-- Small Chrome / Float 8–10px 级 sampling
+- 2 dynamic Ambient Fields，完整四色
+- 默认约 20s / 24s motion
+- Small Chrome / Float 使用 8–10px 级轻量 sampling
+- 默认推荐档
 
 Compat：
-- 2 static Ambient Fields
-- backdrop blur = 0
+- 2 static Ambient Fields，完整四色同时可见
+- backdrop blur = 0，saturate sampling = 0
+- 停止纯装饰 Ambient 合成动画，这是兼容档最主要的 GPU 降级来源之一
 - Structural / Content 保持正常 clear base + theme veil，不额外变厚
 - **依赖 backdrop 的 Small Chrome / Float 必须切换到更实的 `--theme-*-veil-compat` fallback**，避免底层文字和边框无模糊地直接穿透
-- Compat 可以比 Balanced 更“稳”和更实，但不能比 Balanced 感知上更透明，也不能退回死板的实心 opaque surface
+- Compat 必须感知上比 Balanced 更稳、更实，绝不能出现“关闭 blur 后反而更透明、更玻璃、文字重叠更严重”的倒挂
+- Compat 仍是 Liquid Glass，不得退回死板的完全 opaque surface
+
+交互降载：
+- Sidebar / SendBar / Split divider 等布局拖动期间，暂时关闭 Small Chrome / Float backdrop sampling，并暂停 Ambient 装饰动画
+- mouseup / cancel 后立即恢复当前性能档材质与动画状态
 
 ---
 
@@ -407,9 +423,10 @@ npm run build
 - **发送栏四个模式仍在左侧竖排**
 - **左栏、右栏、SendBar、TargetBar 是同一种 Structural Glass**
 - **Terminal 是同一种玻璃的克制 Content 版本**
+- **三主题使用同一份 Ambient 几何 / 色值 / 强度；差异只来自底色、Theme Veil 与必要的对比补偿**
 - **炫彩流光明显最透亮，Ambient 穿透最清楚**
-- **黑曜石 = clear glass + 更厚 black veil，必须明显比炫彩流光更黑**
-- **白霜 = clear glass + white veil**
+- **黑曜石 = 同一 clear glass + black base / 更厚 black veil，必须明显比炫彩流光更黑**
+- **白霜 = 同一 clear glass + white base / white veil**
 - **三个主题都有清澈、柔亮、边缘高光的液态玻璃质感**
 - **单 Pane 没有 active/selected 材质差异**
 - **中间 Workspace 只有一层 Content 外框/阴影；分屏后不出现 Pane 套 Card 的第二层框**
@@ -418,6 +435,7 @@ npm run build
 - **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮，横纵滚动条交汇处没有白色 corner 方块**
 - **右键未选中 Pane Header 或已连接 Terminal 时都不会先切换 active Session；Close Pane 菜单只从 Header 出现**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
+- **Quality / Balanced 正常观察 3–5 秒能看出 Ambient 位置变化；Compat 保留两层完整四色但静态**
 - **Compat 仍然是玻璃，但 Small Chrome/Float 的可读性不能低于 Balanced，也不能出现“兼容档最透明”**
 
 ## 实现源文件
@@ -427,6 +445,9 @@ npm run build
 - `src/context/ThemeContext.tsx`
 - `src/App.tsx`
 - `src/components/Layout/GoogleGlowBackground.tsx`
+- `src/components/Settings/panels/AppearanceSettings.tsx`
+- `src/i18n/locales/zh-CN.json`
+- `src/i18n/locales/en-US.json`
 - `src/components/Layout/SessionSidebar.tsx`
 - `src/components/RightSidebar/RightSidebar.tsx`
 - `src/components/Layout/SplitView.tsx`
