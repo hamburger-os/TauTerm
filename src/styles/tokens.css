@@ -1,16 +1,14 @@
 /* ========================================
    TauTerm Liquid Glass v8.5 设计令牌
-   Google Glow (默认) + Obsidian + Frosted
+   Spectrum Flow (默认) + Obsidian + Frosted
    ======================================== */
 
 /* ===== Level 1: 共享常量（不随主题变化） ===== */
 
 :root {
   /* 字体 */
-  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Code", "Fira Code",
-    "Consolas", "Courier New", monospace;
+  --font-ui: system-ui, ui-sans-serif, sans-serif;
+  --font-mono: ui-monospace, monospace;
 
   /* 字号 */
   --text-xs: 0.7rem;
@@ -33,7 +31,7 @@
   --radius-xl: 24px;       /* Frame — 弹窗、设置容器、命令面板 */
   --radius-2xl: 24px;      /* Frame alias — 与 xl 同值，向后兼容 */
   --radius-full: 9999px;   /* Pill — 开关轨道/滑块、徽章、状态指示点 */
-  --radius-window: 8px;    /* Window — 无边框窗口圆角（匹配 Windows 11 原生） */
+  --radius-window: 8px;    /* Window — 无边框窗口圆角（匹配系统窗口） */
 
   /* 间距 */
   --spacing-xs: 4px;
@@ -50,55 +48,53 @@
   --transition-input: 0.3s ease;
   --transition-knob: 200ms ease;
 
-  /* Canonical Gemini spectrum — sampled from the user-provided Gemini mark.
-     这四个锚点是 TauTerm 唯一 Google/Gemini 色谱来源。
-     Ambient、holofoil、selected state、Google Glow terminal ANSI 等只能引用这些 token，
-     禁止再写传统 Google brand palette 或“接近 Gemini”的另一套色值。 */
-  --google-red: #FE3734;
-  --google-yellow: #F4BA00;
-  --google-green: #02BE66;
-  --google-blue: #0B8AFF;
+  /* Canonical 四色环境 spectrum — sampled from the user-provided 四色环境 mark.
+     这四个锚点是 TauTerm 唯一 四色环境 色谱来源。
+     Ambient、holofoil、selected state、Spectrum Flow terminal ANSI 等只能引用这些 token，
+     禁止再写传统 外部品牌色板 或“接近 四色环境”的另一套色值。 */
+  --spectrum-red: #FE3734;
+  --spectrum-yellow: #F4BA00;
+  --spectrum-green: #02BE66;
+  --spectrum-blue: #0B8AFF;
 
   /* RGB 形式只为需要 alpha 的场景服务，数值必须与上面的 canonical hex 一一对应。 */
-  --google-red-rgb: 254, 55, 52;
-  --google-yellow-rgb: 244, 186, 0;
-  --google-green-rgb: 2, 190, 102;
-  --google-blue-rgb: 11, 138, 255;
+  --spectrum-red-rgb: 254, 55, 52;
+  --spectrum-yellow-rgb: 244, 186, 0;
+  --spectrum-green-rgb: 2, 190, 102;
+  --spectrum-blue-rgb: 11, 138, 255;
 
-  /* Gemini mark 的二维空间顺序是唯一标准：
+  /* 四色环境 mark 的二维空间顺序是唯一标准：
      左上 Red / 左下 Yellow / 右下 Green / 右上 Blue。
      conic 从左上开始沿四角连续插值，使任意宽高比控件都能同时看到完整四色。 */
-  --google-brand-gradient: conic-gradient(
+  --spectrum-gradient: conic-gradient(
     from -45deg at 50% 50%,
-    var(--google-red) 0deg,
-    var(--google-blue) 90deg,
-    var(--google-green) 180deg,
-    var(--google-yellow) 270deg,
-    var(--google-red) 360deg
+    var(--spectrum-red) 0deg,
+    var(--spectrum-blue) 90deg,
+    var(--spectrum-green) 180deg,
+    var(--spectrum-yellow) 270deg,
+    var(--spectrum-red) 360deg
   );
-  --google-brand-gradient-soft: conic-gradient(
+  --spectrum-gradient-soft: conic-gradient(
     from -45deg at 50% 50%,
-    color-mix(in srgb, var(--google-red) 86%, transparent) 0deg,
-    color-mix(in srgb, var(--google-blue) 86%, transparent) 90deg,
-    color-mix(in srgb, var(--google-green) 84%, transparent) 180deg,
-    color-mix(in srgb, var(--google-yellow) 84%, transparent) 270deg,
-    color-mix(in srgb, var(--google-red) 86%, transparent) 360deg
+    color-mix(in srgb, var(--spectrum-red) 86%, transparent) 0deg,
+    color-mix(in srgb, var(--spectrum-blue) 86%, transparent) 90deg,
+    color-mix(in srgb, var(--spectrum-green) 84%, transparent) 180deg,
+    color-mix(in srgb, var(--spectrum-yellow) 84%, transparent) 270deg,
+    color-mix(in srgb, var(--spectrum-red) 86%, transparent) 360deg
   );
 
-  /* 默认使用 Balanced。Performance 只控制渲染成本/丰富度，不改变主题身份，
-     也绝不能删减 Gemini 四色环境场。三个主题共用完全相同的 Ambient 强度。 */
-  --glass-blur-chrome: 8px;
-  --glass-blur-float: 10px;
-  --glass-blur-saturate: 122%;
+  /* 默认使用效果优先。两档都保留完整四色；性能优先只减少动态与采样成本。 */
+  --glass-blur-shell: 16px;
+  --glass-blur-float: 18px;
+  --glass-blur-saturate: 142%;
   --ambient-opacity-quality: 0.60;
-  --ambient-opacity-balanced: 0.52;
-  --ambient-opacity-compat: 0.46;
+  --ambient-opacity-performance: 0.46;
 
   /* Liquid Glass Physics v8.1
      三个主题共享同一透明玻璃本体；主题只提供一层 veil（透明 / 黑 / 白）。
      大面积 Structural / Content surface 不做 backdrop sampling，靠这些低成本静态层模拟
      清澈、柔亮、边缘高光和轻微内部雾化。 */
-  --liquid-clear-chrome-fill: linear-gradient(
+  --liquid-clear-shell-fill: linear-gradient(
     135deg,
     rgba(255, 255, 255, 0.105) 0%,
     rgba(255, 255, 255, 0.026) 38%,
@@ -129,7 +125,7 @@
     rgba(255, 255, 255, 0.052) 0%,
     rgba(255, 255, 255, 0.012) 100%
   );
-  --liquid-specular-chrome-fill: linear-gradient(
+  --liquid-specular-shell-fill: linear-gradient(
     120deg,
     rgba(255, 255, 255, 0.22) 0%,
     rgba(255, 255, 255, 0.075) 16%,
@@ -150,27 +146,27 @@
     transparent 48%
   );
 
-  /* Shared Google Ambient defaults (Balanced).
-     四色始终完整；Balanced 只动画 Field A，Field B 静态，因此这里只需要为 A 保留明显但克制的路径。 */
-  --ambient-field-opacity: var(--ambient-opacity-balanced);
-  --ambient-field-a-duration: 22s;
-  --ambient-field-b-duration: 26s;
-  --ambient-a-x1: -14vw;
-  --ambient-a-y1: -9vh;
-  --ambient-a-x2: 13vw;
-  --ambient-a-y2: -3vh;
-  --ambient-a-x3: 15vw;
-  --ambient-a-y3: 10vh;
-  --ambient-a-x4: -12vw;
-  --ambient-a-y4: 8vh;
-  --ambient-b-x1: 0vw;
-  --ambient-b-y1: 0vh;
-  --ambient-b-x2: 0vw;
-  --ambient-b-y2: 0vh;
-  --ambient-b-x3: 0vw;
-  --ambient-b-y3: 0vh;
-  --ambient-b-x4: 0vw;
-  --ambient-b-y4: 0vh;
+  /* Shared Spectrum Ambient defaults (Effects First).
+     两组对角光场默认都运动；不扩大 raster layer，只通过 transform 形成大范围交叠。 */
+  --ambient-field-opacity: var(--ambient-opacity-quality);
+  --ambient-field-a-duration: 13s;
+  --ambient-field-b-duration: 16s;
+  --ambient-a-x1: -20vw;
+  --ambient-a-y1: -13vh;
+  --ambient-a-x2: 19vw;
+  --ambient-a-y2: -5vh;
+  --ambient-a-x3: 21vw;
+  --ambient-a-y3: 13vh;
+  --ambient-a-x4: -18vw;
+  --ambient-a-y4: 10vh;
+  --ambient-b-x1: 20vw;
+  --ambient-b-y1: -13vh;
+  --ambient-b-x2: -19vw;
+  --ambient-b-y2: -4vh;
+  --ambient-b-x3: -21vw;
+  --ambient-b-y3: 13vh;
+  --ambient-b-x4: 18vw;
+  --ambient-b-y4: 10vh;
 
   /* 模糊 */
   --blur-xs: 4px;
@@ -209,7 +205,7 @@
 
 /* ===== Level 1.5: 视觉性能档 ===== */
 html[data-performance="quality"] {
-  --glass-blur-chrome: 16px;
+  --glass-blur-shell: 16px;
   --glass-blur-float: 18px;
   --glass-blur-saturate: 142%;
   --ambient-field-opacity: var(--ambient-opacity-quality);
@@ -233,29 +229,20 @@ html[data-performance="quality"] {
   --ambient-b-y4: 10vh;
 }
 
-html[data-performance="balanced"] {
-  --glass-blur-chrome: 6px;
-  --glass-blur-float: 8px;
-  --glass-blur-saturate: 116%;
-  --ambient-field-opacity: var(--ambient-opacity-balanced);
-  --ambient-field-a-duration: 22s;
-  --ambient-field-b-duration: 26s;
-}
-
-html[data-performance="compat"] {
-  --glass-blur-chrome: 0px;
+html[data-performance="performance"] {
+  --glass-blur-shell: 0px;
   --glass-blur-float: 0px;
   --glass-blur-saturate: 100%;
-  --ambient-field-opacity: var(--ambient-opacity-compat);
+  --ambient-field-opacity: var(--ambient-opacity-performance);
 }
 
 /* ===== Level 2: 主题令牌 ===== */
 
-/* Google Glow — 中性烟晶玻璃 + 共享 Google Ambient；颜色来自环境光而不是蓝色面板。 */
-:root, [data-theme="google-glow"] {
+/* Spectrum Flow — 中性烟晶玻璃 + 共享 Spectrum Ambient；颜色来自环境光而不是蓝色面板。 */
+:root, [data-theme="spectrum-flow"] {
   --bg-base: #101318;
-  /* 共享 Clear Glass + 更轻的中性 veil：Google Glow 明确是三主题中最亮、最透的一层。 */
-  --theme-chrome-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.075), rgba(4, 7, 10, 0.028));
+  /* 共享 Clear Glass + 更轻的中性 veil：Spectrum Flow 明确是三主题中最亮、最透的一层。 */
+  --theme-shell-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.075), rgba(4, 7, 10, 0.028));
   --theme-panel-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.045), rgba(4, 7, 10, 0.014));
   --theme-content-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.26), rgba(3, 6, 9, 0.33));
   --theme-content-active-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.21), rgba(3, 6, 9, 0.28));
@@ -264,15 +251,15 @@ html[data-performance="compat"] {
   --theme-card-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.10), rgba(4, 7, 10, 0.040));
   --theme-float-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.15), rgba(4, 7, 10, 0.070));
   --theme-control-veil: linear-gradient(180deg, rgba(7, 10, 13, 0.58), rgba(3, 6, 8, 0.66));
-  /* Compat：单层半透明纯色，不做 backdrop、specular gradient 或大阴影。 */
-  --compat-chrome-fill: rgba(8, 11, 15, 0.90);
-  --compat-panel-fill: rgba(8, 11, 15, 0.78);
-  --compat-content-fill: rgba(6, 9, 12, 0.82);
-  --compat-control-fill: rgba(5, 8, 11, 0.90);
-  --compat-card-fill: rgba(8, 11, 15, 0.84);
-  --compat-float-fill: rgba(6, 9, 12, 0.93);
+  /* Performance First：单层半透明纯色，不做 backdrop、specular gradient 或大阴影。 */
+  --performance-shell-fill: rgba(8, 11, 15, 0.90);
+  --performance-panel-fill: rgba(8, 11, 15, 0.78);
+  --performance-content-fill: rgba(6, 9, 12, 0.82);
+  --performance-control-fill: rgba(5, 8, 11, 0.90);
+  --performance-card-fill: rgba(8, 11, 15, 0.84);
+  --performance-float-fill: rgba(6, 9, 12, 0.93);
 
-  --glass-fill: var(--theme-chrome-veil);
+  --glass-fill: var(--theme-shell-veil);
   --glass-card-fill: var(--theme-card-veil);
   --glass-noise-opacity: 0;
   --glass-blur: 10px;
@@ -281,8 +268,8 @@ html[data-performance="compat"] {
   --glass-border-left: rgba(255, 255, 255, 0.18);
   --glass-shadow-outer: 0 10px 28px rgba(0, 0, 0, 0.12);
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 -1px 0 rgba(0, 0, 0, 0.10);
-  --glass-specular-fill: var(--liquid-specular-chrome-fill);
-  --glass-compat-fill: var(--theme-chrome-veil);
+  --glass-specular-fill: var(--liquid-specular-shell-fill);
+  --glass-performance-fill: var(--theme-shell-veil);
 
   --panel-fill: var(--theme-panel-veil);
   --panel-specular-fill: var(--liquid-specular-panel-fill);
@@ -312,7 +299,7 @@ html[data-performance="compat"] {
   --control-button-hover-border: rgba(255, 255, 255, 0.25);
   --control-input-bg: rgba(0, 0, 0, 0.52);
   --control-input-border: rgba(255, 255, 255, 0.18);
-  --control-input-focus-border: color-mix(in srgb, var(--google-blue) 62%, transparent);
+  --control-input-focus-border: color-mix(in srgb, var(--spectrum-blue) 62%, transparent);
   --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.050), inset 0 -1px 0 rgba(0, 0, 0, 0.28);
   --control-disabled-bg: rgba(255, 255, 255, 0.055);
   --control-disabled-input-bg: rgba(0, 0, 0, 0.46);
@@ -333,8 +320,8 @@ html[data-performance="compat"] {
   --glass-input-bg: rgba(3, 5, 7, 0.40);
   --glass-input-border: rgba(255, 255, 255, 0.12);
   --glass-input-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.045), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
-  --glass-input-focus-border: color-mix(in srgb, var(--google-blue) 58%, transparent);
-  --glass-input-focus-glow: 0 0 0 2px color-mix(in srgb, var(--google-blue) 16%, transparent);
+  --glass-input-focus-border: color-mix(in srgb, var(--spectrum-blue) 58%, transparent);
+  --glass-input-focus-glow: 0 0 0 2px color-mix(in srgb, var(--spectrum-blue) 16%, transparent);
 
   /* 文字 */
   --text-primary: #f1f3f6;
@@ -342,10 +329,10 @@ html[data-performance="compat"] {
   --text-muted: #858d98;
 
   /* 强调色 */
-  --accent-primary: var(--google-blue);
-  --accent-secondary: var(--google-green);
-  --accent-gradient: linear-gradient(135deg, var(--google-blue) 0%, var(--google-green) 100%);
-  --accent-glow: color-mix(in srgb, var(--google-blue) 18%, transparent);
+  --accent-primary: var(--spectrum-blue);
+  --accent-secondary: var(--spectrum-green);
+  --accent-gradient: linear-gradient(135deg, var(--spectrum-blue) 0%, var(--spectrum-green) 100%);
+  --accent-glow: color-mix(in srgb, var(--spectrum-blue) 18%, transparent);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -353,7 +340,7 @@ html[data-performance="compat"] {
   --color-success: #34d399;
   --color-error: #ff4757;
   --color-warning: #ffa502;
-  --color-info: var(--google-blue);
+  --color-info: var(--spectrum-blue);
 
   /* 右侧栏工具面板辅助令牌 */
   --color-accent: var(--accent-primary);
@@ -361,10 +348,10 @@ html[data-performance="compat"] {
   --glass-fill-secondary: rgba(255, 255, 255, 0.03);
   --text-tertiary: #777f8b;
 
-  /* Google Glow 的品牌膜与 Ambient 使用同一套 Google/Gemini 四色。
+  /* Spectrum Flow 的品牌膜与 Ambient 使用同一套 四色环境 四色。
      中间出现的紫/橙只能由标准色自然混合产生，不定义额外品牌色。 */
-  --accent-holofoil-gradient: var(--google-brand-gradient);
-  --selected-surface: var(--google-brand-gradient);
+  --accent-holofoil-gradient: var(--spectrum-gradient);
+  --selected-surface: var(--spectrum-gradient);
   --selected-border: rgba(255, 255, 255, 0.42);
   --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 4px 14px rgba(0, 0, 0, 0.18);
   --selected-text: #ffffff;
@@ -377,7 +364,7 @@ html[data-performance="compat"] {
   --glass-bg-hover: rgba(255, 255, 255, 0.08);
   --glass-bg-active: rgba(255, 255, 255, 0.12);
   --glass-border-hover: rgba(255, 255, 255, 0.25);
-  --glass-border-focus: color-mix(in srgb, var(--google-blue) 50%, transparent);
+  --glass-border-focus: color-mix(in srgb, var(--spectrum-blue) 50%, transparent);
   --blur-light: 8px;
   --blur-medium: 16px;
   --blur-heavy: 24px;
@@ -398,11 +385,11 @@ html[data-performance="compat"] {
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%239494b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }
 
-/* Obsidian — 与 Google Glow 共用 Glass Physics，仅换成更深的黑曜石 tint。 */
+/* Obsidian — 与 Spectrum Flow 共用 Glass Physics，仅换成更深的黑曜石 tint。 */
 [data-theme="obsidian"] {
   --bg-base: #020304;
-  /* 与 Google Glow 完全相同的 Clear Glass Physics，只增加更明确的黑曜石 veil。 */
-  --theme-chrome-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.60), rgba(0, 0, 0, 0.50));
+  /* 与 Spectrum Flow 完全相同的 Clear Glass Physics，只增加更明确的黑曜石 veil。 */
+  --theme-shell-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.60), rgba(0, 0, 0, 0.50));
   --theme-panel-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.56), rgba(0, 0, 0, 0.46));
   --theme-content-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.76), rgba(0, 0, 0, 0.84));
   --theme-content-active-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.70), rgba(0, 0, 0, 0.79));
@@ -411,14 +398,14 @@ html[data-performance="compat"] {
   --theme-card-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.60), rgba(0, 0, 0, 0.48));
   --theme-float-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.56));
   --theme-control-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.90));
-  --compat-chrome-fill: rgba(0, 0, 0, 0.94);
-  --compat-panel-fill: rgba(0, 0, 0, 0.88);
-  --compat-content-fill: rgba(0, 0, 0, 0.92);
-  --compat-control-fill: rgba(0, 0, 0, 0.95);
-  --compat-card-fill: rgba(0, 0, 0, 0.91);
-  --compat-float-fill: rgba(0, 0, 0, 0.96);
+  --performance-shell-fill: rgba(0, 0, 0, 0.94);
+  --performance-panel-fill: rgba(0, 0, 0, 0.88);
+  --performance-content-fill: rgba(0, 0, 0, 0.92);
+  --performance-control-fill: rgba(0, 0, 0, 0.95);
+  --performance-card-fill: rgba(0, 0, 0, 0.91);
+  --performance-float-fill: rgba(0, 0, 0, 0.96);
 
-  --glass-fill: var(--theme-chrome-veil);
+  --glass-fill: var(--theme-shell-veil);
   --glass-card-fill: var(--theme-card-veil);
   --glass-noise-opacity: 0;
   --glass-blur: 10px;
@@ -427,8 +414,8 @@ html[data-performance="compat"] {
   --glass-border-left: rgba(255, 255, 255, 0.15);
   --glass-shadow-outer: 0 10px 28px rgba(0, 0, 0, 0.30);
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
-  --glass-specular-fill: var(--liquid-specular-chrome-fill);
-  --glass-compat-fill: var(--theme-chrome-veil);
+  --glass-specular-fill: var(--liquid-specular-shell-fill);
+  --glass-performance-fill: var(--theme-shell-veil);
 
   --panel-fill: var(--theme-panel-veil);
   --panel-specular-fill: var(--liquid-specular-panel-fill);
@@ -458,7 +445,7 @@ html[data-performance="compat"] {
   --control-button-hover-border: rgba(255, 255, 255, 0.20);
   --control-input-bg: rgba(0, 0, 0, 0.62);
   --control-input-border: rgba(255, 255, 255, 0.15);
-  --control-input-focus-border: color-mix(in srgb, var(--google-blue) 54%, transparent);
+  --control-input-focus-border: color-mix(in srgb, var(--spectrum-blue) 54%, transparent);
   --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), inset 0 -1px 0 rgba(0, 0, 0, 0.34);
   --control-disabled-bg: rgba(255, 255, 255, 0.045);
   --control-disabled-input-bg: rgba(0, 0, 0, 0.58);
@@ -479,8 +466,8 @@ html[data-performance="compat"] {
   --glass-input-bg: rgba(0, 0, 0, 0.52);
   --glass-input-border: rgba(255, 255, 255, 0.10);
   --glass-input-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.035), inset 0 -1px 0 rgba(0, 0, 0, 0.28);
-  --glass-input-focus-border: color-mix(in srgb, var(--google-blue) 48%, transparent);
-  --glass-input-focus-glow: 0 0 0 2px color-mix(in srgb, var(--google-blue) 14%, transparent);
+  --glass-input-focus-border: color-mix(in srgb, var(--spectrum-blue) 48%, transparent);
+  --glass-input-focus-glow: 0 0 0 2px color-mix(in srgb, var(--spectrum-blue) 14%, transparent);
 
   /* 文字 */
   --text-primary: #e7e8ea;
@@ -488,10 +475,10 @@ html[data-performance="compat"] {
   --text-muted: #777b83;
 
   /* 强调色 */
-  --accent-primary: var(--google-blue);
-  --accent-secondary: var(--google-green);
-  --accent-gradient: linear-gradient(135deg, var(--google-blue) 0%, var(--google-green) 100%);
-  --accent-glow: color-mix(in srgb, var(--google-blue) 16%, transparent);
+  --accent-primary: var(--spectrum-blue);
+  --accent-secondary: var(--spectrum-green);
+  --accent-gradient: linear-gradient(135deg, var(--spectrum-blue) 0%, var(--spectrum-green) 100%);
+  --accent-glow: color-mix(in srgb, var(--spectrum-blue) 16%, transparent);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -499,16 +486,16 @@ html[data-performance="compat"] {
   --color-success: #34d399;
   --color-error: #ff4757;
   --color-warning: #ffa502;
-  --color-info: var(--google-blue);
+  --color-info: var(--spectrum-blue);
 
-  /* Holofoil / selected 的 hue 与 Google Glow 完全一致；Obsidian 只通过 tint、border、shadow 区分材质。 */
-  --accent-holofoil-gradient: var(--google-brand-gradient-soft);
-  --selected-surface: var(--google-brand-gradient-soft);
+  /* Holofoil / selected 的 hue 与 Spectrum Flow 完全一致；Obsidian 只通过 tint、border、shadow 区分材质。 */
+  --accent-holofoil-gradient: var(--spectrum-gradient-soft);
+  --selected-surface: var(--spectrum-gradient-soft);
   --selected-border: rgba(148, 163, 184, 0.28);
   --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 4px 12px rgba(0, 0, 0, 0.28);
   --selected-text: #f8fafc;
 
-  /* 右侧栏工具面板辅助令牌 — 仅覆盖与 google-glow 不同的 token */
+  /* 右侧栏工具面板辅助令牌 — 仅覆盖与 spectrum-flow 不同的 token */
   --glass-hover: rgba(255, 255, 255, 0.06);
   --glass-fill-secondary: rgba(255, 255, 255, 0.02);
   --text-tertiary: #888888;
@@ -521,14 +508,14 @@ html[data-performance="compat"] {
   --glass-bg-hover: rgba(255, 255, 255, 0.06);
   --glass-bg-active: rgba(255, 255, 255, 0.10);
   --glass-border-hover: rgba(255, 255, 255, 0.15);
-  --glass-border-focus: color-mix(in srgb, var(--google-blue) 35%, transparent);
+  --glass-border-focus: color-mix(in srgb, var(--spectrum-blue) 35%, transparent);
   --blur-medium: 20px;
   --blur-heavy: 30px;
   --shadow-glass: 0 20px 50px rgba(0, 0, 0, 0.7);
   --glass-rim-glow: 0 1px 0 rgba(255, 255, 255, 0.075), 0 6px 18px rgba(0, 0, 0, 0.20);
   --glass-rim-light: 0 1px 0 rgba(255, 255, 255, 0.055), 0 3px 8px rgba(0, 0, 0, 0.13);
   --primary-button-border: rgba(148, 163, 184, 0.24);
-  --primary-button-hover-border: color-mix(in srgb, var(--google-blue) 42%, transparent);
+  --primary-button-hover-border: color-mix(in srgb, var(--spectrum-blue) 42%, transparent);
   --primary-button-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 4px 12px rgba(0, 0, 0, 0.28);
   --primary-button-hover-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 6px 16px rgba(0, 0, 0, 0.32);
   --primary-button-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
@@ -544,7 +531,7 @@ html[data-performance="compat"] {
 [data-theme="frosted"] {
   --bg-base: #edf1f4;
   /* 与其它主题完全相同的 Clear Glass Physics，只增加乳白 veil；不是实心白卡片。 */
-  --theme-chrome-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.54), rgba(242, 248, 252, 0.38));
+  --theme-shell-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.54), rgba(242, 248, 252, 0.38));
   --theme-panel-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.44), rgba(241, 247, 251, 0.28));
   --theme-content-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.50), rgba(241, 247, 251, 0.58));
   --theme-content-active-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(241, 247, 251, 0.52));
@@ -553,14 +540,14 @@ html[data-performance="compat"] {
   --theme-card-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.58), rgba(241, 247, 251, 0.42));
   --theme-float-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(241, 247, 251, 0.48));
   --theme-control-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(239, 246, 250, 0.82));
-  --compat-chrome-fill: rgba(247, 250, 252, 0.90);
-  --compat-panel-fill: rgba(247, 250, 252, 0.82);
-  --compat-content-fill: rgba(247, 250, 252, 0.86);
-  --compat-control-fill: rgba(247, 250, 252, 0.92);
-  --compat-card-fill: rgba(247, 250, 252, 0.88);
-  --compat-float-fill: rgba(247, 250, 252, 0.94);
+  --performance-shell-fill: rgba(247, 250, 252, 0.90);
+  --performance-panel-fill: rgba(247, 250, 252, 0.82);
+  --performance-content-fill: rgba(247, 250, 252, 0.86);
+  --performance-control-fill: rgba(247, 250, 252, 0.92);
+  --performance-card-fill: rgba(247, 250, 252, 0.88);
+  --performance-float-fill: rgba(247, 250, 252, 0.94);
 
-  --glass-fill: var(--theme-chrome-veil);
+  --glass-fill: var(--theme-shell-veil);
   --glass-card-fill: var(--theme-card-veil);
   --glass-noise-opacity: 0;
   --glass-blur: 10px;
@@ -569,8 +556,8 @@ html[data-performance="compat"] {
   --glass-border-left: rgba(255, 255, 255, 0.62);
   --glass-shadow-outer: 0 10px 28px rgba(30, 41, 59, 0.08);
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.90), inset 0 -1px 0 rgba(71, 85, 105, 0.09);
-  --glass-specular-fill: var(--liquid-specular-chrome-fill);
-  --glass-compat-fill: var(--theme-chrome-veil);
+  --glass-specular-fill: var(--liquid-specular-shell-fill);
+  --glass-performance-fill: var(--theme-shell-veil);
 
   --panel-fill: var(--theme-panel-veil);
   --panel-specular-fill: var(--liquid-specular-panel-fill);
@@ -600,7 +587,7 @@ html[data-performance="compat"] {
   --control-button-hover-border: rgba(71, 85, 105, 0.32);
   --control-input-bg: rgba(255, 255, 255, 0.80);
   --control-input-border: rgba(71, 85, 105, 0.26);
-  --control-input-focus-border: color-mix(in srgb, var(--google-blue) 60%, transparent);
+  --control-input-focus-border: color-mix(in srgb, var(--spectrum-blue) 60%, transparent);
   --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(71, 85, 105, 0.09);
   --control-disabled-bg: rgba(100, 116, 139, 0.07);
   --control-disabled-input-bg: rgba(255, 255, 255, 0.70);
@@ -621,8 +608,8 @@ html[data-performance="compat"] {
   --glass-input-bg: rgba(255, 255, 255, 0.68);
   --glass-input-border: rgba(71, 85, 105, 0.24);
   --glass-input-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.82), inset 0 -1px 0 rgba(71, 85, 105, 0.08);
-  --glass-input-focus-border: color-mix(in srgb, var(--google-blue) 55%, transparent);
-  --glass-input-focus-glow: 0 0 0 2px color-mix(in srgb, var(--google-blue) 14%, transparent);
+  --glass-input-focus-border: color-mix(in srgb, var(--spectrum-blue) 55%, transparent);
+  --glass-input-focus-glow: 0 0 0 2px color-mix(in srgb, var(--spectrum-blue) 14%, transparent);
 
   /* 文字 */
   --text-primary: #1b2b3d;
@@ -630,10 +617,10 @@ html[data-performance="compat"] {
   --text-muted: #617184;
 
   /* 强调色 */
-  --accent-primary: var(--google-blue);
-  --accent-secondary: var(--google-green);
-  --accent-gradient: linear-gradient(135deg, var(--google-blue) 0%, var(--google-green) 100%);
-  --accent-glow: color-mix(in srgb, var(--google-blue) 16%, transparent);
+  --accent-primary: var(--spectrum-blue);
+  --accent-secondary: var(--spectrum-green);
+  --accent-gradient: linear-gradient(135deg, var(--spectrum-blue) 0%, var(--spectrum-green) 100%);
+  --accent-glow: color-mix(in srgb, var(--spectrum-blue) 16%, transparent);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -641,7 +628,7 @@ html[data-performance="compat"] {
   --color-success: #16a34a;
   --color-error: #dc2626;
   --color-warning: #d97706;
-  --color-info: var(--google-blue);
+  --color-info: var(--spectrum-blue);
 
   /* 右侧栏工具面板辅助令牌 */
   --color-accent: var(--accent-primary);
@@ -650,10 +637,10 @@ html[data-performance="compat"] {
   --text-tertiary: #788090;
 
   /* 全息光效渐变（主按钮等 — 浅色主题使用实色渐变） */
-  --accent-holofoil-gradient: var(--google-brand-gradient-soft);
-  --selected-surface: var(--google-brand-gradient-soft);
-  --selected-border: color-mix(in srgb, var(--google-blue) 32%, transparent);
-  --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 4px 12px color-mix(in srgb, var(--google-blue) 14%, transparent);
+  --accent-holofoil-gradient: var(--spectrum-gradient-soft);
+  --selected-surface: var(--spectrum-gradient-soft);
+  --selected-border: color-mix(in srgb, var(--spectrum-blue) 32%, transparent);
+  --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 4px 12px color-mix(in srgb, var(--spectrum-blue) 14%, transparent);
   --selected-text: #1e3a5f;
 
   /* 浮层蒙版 */
@@ -664,18 +651,18 @@ html[data-performance="compat"] {
   --glass-bg-hover: rgba(255, 255, 255, 0.7);
   --glass-bg-active: rgba(255, 255, 255, 0.9);
   --glass-border-hover: rgba(100, 116, 139, 0.5);
-  --glass-border-focus: color-mix(in srgb, var(--google-blue) 50%, transparent);
+  --glass-border-focus: color-mix(in srgb, var(--spectrum-blue) 50%, transparent);
   --blur-light: 8px;
   --blur-medium: 20px;
   --blur-heavy: 35px;
   --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.06);
   --glass-rim-glow: 0 1px 0 rgba(255, 255, 255, 0.78), 0 6px 18px rgba(30, 41, 59, 0.08);
   --glass-rim-light: 0 1px 0 rgba(255, 255, 255, 0.66), 0 3px 8px rgba(30, 41, 59, 0.07);
-  /* 全息主按钮 — 浅色主题保持相同 Gemini hue，仅改变 edge / shadow */
+  /* 全息主按钮 — 浅色主题保持相同 四色环境 hue，仅改变 edge / shadow */
   --primary-button-border: rgba(148, 163, 184, 0.55);
-  --primary-button-hover-border: color-mix(in srgb, var(--google-blue) 60%, transparent);
-  --primary-button-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.6), 0 4px 15px color-mix(in srgb, var(--google-blue) 25%, transparent);
-  --primary-button-hover-shadow: inset 0 1px 3px rgba(255, 255, 255, 0.9), 0 6px 22px color-mix(in srgb, var(--google-blue) 30%, transparent);
+  --primary-button-hover-border: color-mix(in srgb, var(--spectrum-blue) 60%, transparent);
+  --primary-button-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.6), 0 4px 15px color-mix(in srgb, var(--spectrum-blue) 25%, transparent);
+  --primary-button-hover-shadow: inset 0 1px 3px rgba(255, 255, 255, 0.9), 0 6px 22px color-mix(in srgb, var(--spectrum-blue) 30%, transparent);
   --primary-button-text-shadow: none;
   /* 弹窗背景 */
   --dialog-bg: rgba(255, 255, 255, 0.92);
