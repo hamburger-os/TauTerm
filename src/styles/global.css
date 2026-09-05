@@ -1,4 +1,4 @@
-/* TauTerm Liquid Glass v8.4 全局样式 */
+/* TauTerm Liquid Glass v8.5 全局样式 */
 
 @import "./tokens.css";
 
@@ -49,6 +49,12 @@ body {
   display: none;
   width: 0;
   height: 0;
+}
+
+/* 横纵滚动条同时出现时，WebKit 会绘制右下角 scrollbar corner。
+   默认背景在深色/玻璃 Pane 上会形成醒目的白色方块，必须保持透明。 */
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {

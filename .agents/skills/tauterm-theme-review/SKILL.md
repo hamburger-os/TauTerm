@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "3.8"
+  version: "3.9"
 ---
 
 # TauTerm 主题与渲染审查
@@ -33,7 +33,7 @@ rg 'liquid-glass-panel|liquid-glass-content|liquid-glass-accent|liquid-glass-flo
 rg 'data-performance|data-motion|tauterm-performance-mode' src
 rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius|liquid-glass-content|selectedHeader|requestAnimationFrame|onMouseDownCapture' src/components/Layout/SplitView* src/components/Terminal/TerminalView.tsx
-rg 'content-divider|scrollbar-button' src/styles src/components/Layout
+rg 'content-divider|scrollbar-(button|corner)' src/styles src/components/Layout
 rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glob '*.tsx'
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 ```
