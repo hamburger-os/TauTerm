@@ -625,7 +625,7 @@
     "performanceCompat": "兼容",
     "performanceQualityDesc": "完整 Google 四色环境场持续流动，移动更明显；小面积工具/弹窗玻璃使用更强采样与饱和度，大面积工作区仍不做实时模糊。效果最好，GPU 开销最高。",
     "performanceBalancedDesc": "默认方案。完整 Google 四色环境场持续缓慢流动，小面积玻璃使用轻量采样；大面积工作区保持低成本静态玻璃，兼顾质感与流畅度。",
-    "performanceCompatDesc": "完整 Google 四色环境场全部保留但改为静态，同时关闭实时 backdrop blur，并使用更实的兼容遮罩避免底层文字穿透。GPU 开销最低。"
+    "performanceCompatDesc": "完整 Google 四色环境场全部保留但改为静态；主要玻璃表面退化为单层半透明纯色，关闭实时 backdrop blur、复杂高光和大面积阴影。显示更稳，GPU 开销最低。"
   },
   "updater": {
     "checking": "正在检查更新...",
