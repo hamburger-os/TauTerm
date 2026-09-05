@@ -618,7 +618,14 @@
     "securityStatusUnavailable": "无法获取安全状态，请尝试刷新。",
     "securityOperationFailed": "安全操作失败，请重试。",
     "securityVaultUnlocked": "已为本应用会话解锁加密凭据库。",
-    "securityVaultLocked": "加密凭据库已锁定。"
+    "securityVaultLocked": "加密凭据库已锁定。",
+    "performanceMode": "视觉性能",
+    "performanceQuality": "清透优先",
+    "performanceBalanced": "平衡（推荐）",
+    "performanceCompat": "兼容",
+    "performanceQualityDesc": "保留完整动态光团与较强玻璃采样，适合性能较好的设备。",
+    "performanceBalancedDesc": "默认方案。保留液态玻璃层次，但避免大面积实时模糊，兼顾质感与流畅度。",
+    "performanceCompatDesc": "面向老电脑、软件渲染或远程桌面：背景静态化，并关闭实时 backdrop blur，仍保留玻璃配色、边缘高光与层次。"
   },
   "updater": {
     "checking": "正在检查更新...",
