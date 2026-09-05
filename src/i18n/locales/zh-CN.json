@@ -579,6 +579,7 @@
     "languageEn": "English",
     "appVersion": "应用版本",
     "buildInfo": "构建信息",
+    "buildStack": "原生桌面 + Web 界面 + 终端引擎",
     "shortcuts": "快捷键",
     "shortcutsDesc": "点击任意快捷键项进入录制模式，按下目标组合键即可修改。按 Esc 取消录制。",
     "shortcutsReset": "重置为默认值",
