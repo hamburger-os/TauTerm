@@ -18,7 +18,7 @@
  * - TX：TCP 走 `subscribeDataSent`（群发扇出由 SessionContext.sendData 统一处理），
  *   UDP 走 `subscribeNetworkManualSent`。
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
@@ -78,6 +78,22 @@ const FRAME_TIMEOUT_MS = 50;
 // 路由数据（服务器数据区为空）。每次渲染把最新 refs 写入本注册表，监听器在事件
 // 到达时按 sessionId 实时读取，彻底消除重挂载造成的闭包失效。
 const listenerDeps: Record<string, InitDeps> = {};
+
+function clearListenerRuntime(sessionId: string): void {
+  const deps = listenerDeps[sessionId];
+  if (!deps) return;
+  for (const framer of deps.framersRef.current.values()) framer.dispose();
+  deps.framersRef.current.clear();
+  for (const decoder of deps.decodersRef.current.values()) {
+    try { decoder.decode(); } catch { /* 冲刷残留 */ }
+  }
+  deps.decodersRef.current.clear();
+}
+
+function releaseListenerDeps(sessionId: string): void {
+  clearListenerRuntime(sessionId);
+  delete listenerDeps[sessionId];
+}
 
 // ── 纯函数辅助 ─────────────────────────────────────
 
@@ -186,20 +202,28 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
   // 流式解码器（TCP RX 文本栏，按对端缓存，处理跨帧多字节字符）
   const decodersRef = useRef<Map<string, TextDecoder>>(new Map());
 
-  // 每次渲染刷新监听器依赖注册表：initListeners 只注册一次，事件到达时按
-  // sessionId 读取此处的最新 refs（修复视图重挂载后旧闭包持有陈旧 refs）
-  listenerDeps[sessionId] = { getNetworkPeers, peersRef, framersRef, decodersRef, subscribeDataSent, subscribeNetworkManualSent, registerNetworkUdpSource };
+  // initListeners 只注册一次；重挂载后在 commit 阶段刷新最新 refs，
+  // 避免 render 阶段修改模块级状态，同时保持后台监听器路由到当前组件实例。
+  useLayoutEffect(() => {
+    listenerDeps[sessionId] = {
+      getNetworkPeers,
+      peersRef,
+      framersRef,
+      decodersRef,
+      subscribeDataSent,
+      subscribeNetworkManualSent,
+      registerNetworkUdpSource,
+    };
+  });
 
   const { state: snap, api } = usePluginSessionStore<NetworkViewState>(sessionId, {
     createState: () => createState(transport, role, encoding),
     init: (api) => initListeners(api, { getNetworkPeers, peersRef, framersRef, decodersRef, subscribeDataSent, subscribeNetworkManualSent, registerNetworkUdpSource }),
     keepAlive: true,
+    onRelease: () => releaseListenerDeps(sessionId),
     onSessionDisconnected: () => {
-      // 容器断开：清理分帧/解码器（对端注册由 SessionContext 级联清理）
-      for (const f of framersRef.current.values()) f.dispose();
-      framersRef.current.clear();
-      for (const d of decodersRef.current.values()) { try { d.decode(); } catch { /* 冲刷残留 */ } }
-      decodersRef.current.clear();
+      // 容器断开：清理当前注册实例的分帧/解码器（对端注册由 SessionContext 级联清理）。
+      clearListenerRuntime(sessionId);
       return { frames: {}, packets: [], rxBytes: 0, txBytes: 0, rxPackets: 0, txPackets: 0 };
     },
     getStatus: async (sid, _api) => {
