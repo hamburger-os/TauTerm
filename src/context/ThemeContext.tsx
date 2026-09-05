@@ -61,14 +61,9 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeId>(() => {
     const stored = localStorage.getItem("tauterm-theme");
-    // 迁移旧主题 ID 到新主题
-    if (stored === "neon-dark" || stored === "ocean" || stored === "sunset") {
-      return "google-glow";
-    }
-    if (stored === "google-glow" || stored === "obsidian" || stored === "frosted") {
-      return stored;
-    }
-    return "google-glow";
+    return stored === "google-glow" || stored === "obsidian" || stored === "frosted"
+      ? stored
+      : "google-glow";
   });
 
   const [performanceMode, setPerformanceModeState] = useState<VisualPerformanceMode>(() => {

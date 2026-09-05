@@ -623,9 +623,9 @@
     "performanceQuality": "Effects First",
     "performanceBalanced": "Balanced (Recommended)",
     "performanceCompat": "Compatibility",
-    "performanceQualityDesc": "Full four-color Google ambient fields with wider paths and faster continuous drift. Only small chrome surfaces use stronger sampling; terminal and control surfaces still use no real-time blur.",
-    "performanceBalancedDesc": "Default. Keeps the full Google ambient fields on calmer continuous paths with lightweight sampling on small chrome surfaces.",
-    "performanceCompatDesc": "For older PCs, software rendering, or remote desktops: keeps one static Google color field and disables real-time backdrop blur while preserving material and control contrast."
+    "performanceQualityDesc": "Keeps the complete four-color Google ambient field in clearly visible motion. Small tool/dialog glass uses stronger sampling and saturation while the large workspace still avoids real-time blur. Best visuals, highest GPU cost.",
+    "performanceBalancedDesc": "Default. Keeps the complete four-color Google ambient field moving more calmly with lightweight sampling on small glass surfaces, while large workspace glass stays low-cost.",
+    "performanceCompatDesc": "Keeps the complete four-color Google ambient field but makes it static, disables real-time backdrop blur, and uses denser compatibility veils so underlying text does not bleed through. Lowest GPU cost."
   },
   "updater": {
     "checking": "Checking for updates...",

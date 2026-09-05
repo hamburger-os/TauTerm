@@ -95,6 +95,7 @@ body {
   position: fixed;
   inset: 0;
   overflow: hidden;
+  contain: paint;
   pointer-events: none;
   z-index: 0;
   background: var(--bg-base);
@@ -102,54 +103,55 @@ body {
 
 .ambient-field {
   position: absolute;
-  width: 128vw;
-  height: 126vh;
-  left: -14vw;
-  top: -13vh;
+  width: 126vw;
+  height: 124vh;
+  left: -13vw;
+  top: -12vh;
   opacity: var(--ambient-field-opacity);
   pointer-events: none;
   transform-origin: center;
 }
 
-/* 对角 A：左上 Red → 右下 Green。 */
+/* 对角 A：左上 Red → 右下 Green。更紧凑的软光团让 transform 位移在 3–5 秒内可感知。 */
 .ambient-field-a {
   background:
-    radial-gradient(ellipse 46% 64% at 22% 22%,
-      color-mix(in srgb, var(--google-red) 78%, transparent) 0%,
-      color-mix(in srgb, var(--google-red) 40%, transparent) 20%,
-      color-mix(in srgb, var(--google-red) 14%, transparent) 43%,
-      color-mix(in srgb, var(--google-red) 3.5%, transparent) 66%,
-      transparent 88%),
-    radial-gradient(ellipse 48% 66% at 78% 78%,
-      color-mix(in srgb, var(--google-green) 74%, transparent) 0%,
-      color-mix(in srgb, var(--google-green) 38%, transparent) 20%,
-      color-mix(in srgb, var(--google-green) 13%, transparent) 43%,
-      color-mix(in srgb, var(--google-green) 3.3%, transparent) 66%,
-      transparent 88%);
+    radial-gradient(ellipse 40% 54% at 19% 19%,
+      color-mix(in srgb, var(--google-red) 82%, transparent) 0%,
+      color-mix(in srgb, var(--google-red) 44%, transparent) 22%,
+      color-mix(in srgb, var(--google-red) 16%, transparent) 46%,
+      color-mix(in srgb, var(--google-red) 4%, transparent) 70%,
+      transparent 92%),
+    radial-gradient(ellipse 42% 56% at 81% 81%,
+      color-mix(in srgb, var(--google-green) 80%, transparent) 0%,
+      color-mix(in srgb, var(--google-green) 42%, transparent) 22%,
+      color-mix(in srgb, var(--google-green) 15%, transparent) 46%,
+      color-mix(in srgb, var(--google-green) 4%, transparent) 70%,
+      transparent 92%);
   animation: ambient-flow-a var(--ambient-field-a-duration) linear infinite;
-  animation-delay: -6s;
+  animation-delay: -4s;
 }
 
 /* 对角 B：右上 Blue → 左下 Yellow。 */
 .ambient-field-b {
   background:
-    radial-gradient(ellipse 46% 64% at 78% 22%,
-      color-mix(in srgb, var(--google-blue) 78%, transparent) 0%,
-      color-mix(in srgb, var(--google-blue) 40%, transparent) 20%,
-      color-mix(in srgb, var(--google-blue) 14%, transparent) 43%,
-      color-mix(in srgb, var(--google-blue) 3.5%, transparent) 66%,
-      transparent 88%),
-    radial-gradient(ellipse 48% 66% at 22% 78%,
-      color-mix(in srgb, var(--google-yellow) 74%, transparent) 0%,
-      color-mix(in srgb, var(--google-yellow) 38%, transparent) 20%,
-      color-mix(in srgb, var(--google-yellow) 13%, transparent) 43%,
-      color-mix(in srgb, var(--google-yellow) 3.3%, transparent) 66%,
-      transparent 88%);
+    radial-gradient(ellipse 40% 54% at 81% 19%,
+      color-mix(in srgb, var(--google-blue) 82%, transparent) 0%,
+      color-mix(in srgb, var(--google-blue) 44%, transparent) 22%,
+      color-mix(in srgb, var(--google-blue) 16%, transparent) 46%,
+      color-mix(in srgb, var(--google-blue) 4%, transparent) 70%,
+      transparent 92%),
+    radial-gradient(ellipse 42% 56% at 19% 81%,
+      color-mix(in srgb, var(--google-yellow) 80%, transparent) 0%,
+      color-mix(in srgb, var(--google-yellow) 42%, transparent) 22%,
+      color-mix(in srgb, var(--google-yellow) 15%, transparent) 46%,
+      color-mix(in srgb, var(--google-yellow) 4%, transparent) 70%,
+      transparent 92%);
   animation: ambient-flow-b var(--ambient-field-b-duration) linear infinite;
-  animation-delay: -14s;
+  animation-delay: -9s;
 }
 
-/* Compatibility 仍保留完整四色，只停止合成动画与 backdrop sampling。 */
+/* Compatibility 仍保留两层、完整四色，只停止装饰合成动画与 backdrop sampling。
+   系统 reduced-motion 同样静态化；窗口仅失焦时不会冻结。 */
 html[data-performance="compat"] .ambient-field { animation: none; }
 html[data-motion="paused"] .ambient-field { animation-play-state: paused; }
 html[data-motion="reduced"] .ambient-field { animation: none; }
@@ -734,6 +736,11 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 .ui-resizing .liquid-glass-float {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+/* 拖动布局时同时暂停纯装饰 Ambient，避免 resize 与合成动画争抢帧预算。 */
+.ui-resizing .ambient-field {
+  animation-play-state: paused;
 }
 
 /* Compat 关闭 backdrop sampling 后，不能继续使用正常档位的低 alpha veil。

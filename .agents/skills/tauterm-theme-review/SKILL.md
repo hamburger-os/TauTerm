@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "4.0"
+  version: "4.1"
 ---
 
 # TauTerm 主题与渲染审查
@@ -31,6 +31,7 @@ rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg 'glass-blur|bg-orb-blur' src
 rg 'liquid-glass-panel|liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
 rg 'data-performance|data-motion|tauterm-performance-mode' src
+rg 'ambient-opacity-(quality|balanced|compat)|ambient-field-(opacity|a-duration|b-duration)' src/styles/tokens.css
 rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius|liquid-glass-content|selectedHeader|requestAnimationFrame|onMouseDownCapture' src/components/Layout/SplitView* src/components/Terminal/TerminalView.tsx
 rg 'content-divider|scrollbar-(button|corner)|container-name' src/styles src/components/Layout
@@ -54,7 +55,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 7. Dialog / Popover / ContextMenu
 8. 可扩展的大面积面板
 9. Frosted theme
-10. Compatibility mode（重点检查无 blur 时是否反而最透明）
+10. Performance modes（按 SSOT 检查档位差异、Ambient 运动/静态语义与 Compatibility 透明度倒挂）
 11. SplitView Workspace surface ownership / nested frame / interaction stability / resize cadence（判断规则只读 SSOT）
 12. Custom renderer 在短/窄 Pane 中的可达性与 Pane-relative adaptation（判断规则只读 SSOT）
 
