@@ -160,7 +160,7 @@ In multi-pane mode:
 - right-clicking the Pane Header opens the Pane-level context menu (`Close Pane`);
 - a secondary-button press on a non-selected Pane Header does **not** activate the Pane first, so SendBar/RightSidebar changes cannot move the target before the context menu opens;
 - the Pane-level `Close Pane` menu is owned **only** by the Pane Header; right-clicking Pane content never opens it;
-- connected terminal content keeps its existing terminal right-click menu;
+- connected terminal content keeps its existing terminal right-click menu, and secondary-button interaction does not activate that Pane before the menu opens;
 - right-clicking a disconnected terminal placeholder opens Session actions instead of the WebView/browser default context menu;
 - the disconnected Session menu provides the same direct workflow as the Sidebar card: Connect, Configure, Delete, plus Run as administrator where the plugin supports elevation.
 
@@ -339,3 +339,5 @@ Manual acceptance scenarios should include:
 21. Right-click connected Network Debug/custom content and an empty Pane body; verify the Pane-level `Close Pane` menu never appears there.
 22. Right-click a non-selected Pane Header whose Session would change SendBar/RightSidebar layout if activated; verify `Close Pane` opens at the original pointer position and the active Session does not change before an explicit left-click.
 23. Select a disconnected Network Debug Session from either the Sidebar card or its Pane; verify its SendBar is already visible and connecting/disconnecting does not create/remove the SendBar shell.
+24. Right-click a non-selected connected terminal whose Session would change SendBar/RightSidebar layout; verify the terminal menu opens without changing the active Session first.
+25. Drag dividers quickly, release the mouse (and repeat once while the window loses focus); verify the final ratio matches the pointer and resize state/cursor are always cleaned up.

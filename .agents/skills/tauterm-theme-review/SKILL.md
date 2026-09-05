@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "3.7"
+  version: "3.8"
 ---
 
 # TauTerm 主题与渲染审查
@@ -32,7 +32,8 @@ rg 'glass-blur|bg-orb-blur' src
 rg 'liquid-glass-panel|liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
 rg 'data-performance|data-motion|tauterm-performance-mode' src
 rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
-rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius|liquid-glass-content' src/components/Layout/SplitView* src/components/Terminal/TerminalView.tsx
+rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius|liquid-glass-content|selectedHeader|requestAnimationFrame|onMouseDownCapture' src/components/Layout/SplitView* src/components/Terminal/TerminalView.tsx
+rg 'content-divider|scrollbar-button' src/styles src/components/Layout
 rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glob '*.tsx'
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 ```
@@ -53,7 +54,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 8. 可扩展的大面积面板
 9. Frosted theme
 10. Compatibility mode（重点检查无 blur 时是否反而最透明）
-11. SplitView Workspace surface ownership / nested frame / interaction stability（判断规则只读 SSOT）
+11. SplitView Workspace surface ownership / nested frame / interaction stability / resize cadence（判断规则只读 SSOT）
 
 ### 4. 验证矩阵
 

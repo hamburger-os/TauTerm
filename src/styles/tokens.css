@@ -1,5 +1,5 @@
 /* ========================================
-   TauTerm Liquid Glass v8.2 设计令牌
+   TauTerm Liquid Glass v8.4 设计令牌
    Google Glow (默认) + Obsidian + Frosted
    ======================================== */
 
@@ -290,6 +290,7 @@ html[data-performance="compat"] {
   --content-surface-active: var(--theme-content-active-veil);
   --content-surface-inactive: var(--theme-content-inactive-veil);
   --content-border: rgba(255, 255, 255, 0.075);
+  --content-divider: rgba(255, 255, 255, 0.052);
   --content-border-top: rgba(255, 255, 255, 0.14);
   --content-border-left: rgba(255, 255, 255, 0.095);
   --content-border-active: rgba(255, 255, 255, 0.13);
@@ -436,6 +437,7 @@ html[data-performance="compat"] {
   --content-surface-active: var(--theme-content-active-veil);
   --content-surface-inactive: var(--theme-content-inactive-veil);
   --content-border: rgba(255, 255, 255, 0.060);
+  --content-divider: rgba(255, 255, 255, 0.042);
   --content-border-top: rgba(255, 255, 255, 0.12);
   --content-border-left: rgba(255, 255, 255, 0.080);
   --content-border-active: rgba(255, 255, 255, 0.105);
@@ -578,6 +580,7 @@ html[data-performance="compat"] {
   --content-surface-active: var(--theme-content-active-veil);
   --content-surface-inactive: var(--theme-content-inactive-veil);
   --content-border: rgba(71, 85, 105, 0.13);
+  --content-divider: rgba(71, 85, 105, 0.090);
   --content-border-top: rgba(255, 255, 255, 0.68);
   --content-border-left: rgba(255, 255, 255, 0.40);
   --content-border-active: rgba(71, 85, 105, 0.20);
