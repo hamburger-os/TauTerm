@@ -60,63 +60,76 @@ body {
 }
 
 /* ==========================================
-   1. 环境流光：预柔化 radial-gradient + transform-only 动画
-   不再使用超大 filter: blur / border-radius morph / mix-blend-mode。
+   1. Shared Google Ambient
+   三主题共享完全相同的 RGB / geometry / trajectory。
+   Theme 只提供可见度补偿；Performance 控制 opacity / amplitude / duration。
+   全程 transform-only，不使用实时 blur / blend / morph。
    ========================================== */
-@keyframes glow-drift-1 {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(8vw, 7vh, 0) scale(1.10); }
+@keyframes glow-drift-blue {
+  0%, 100% { transform: translate3d(-2vw, -1vh, 0) scale(0.98); }
+  50% { transform: translate3d(var(--ambient-blue-dx), var(--ambient-blue-dy), 0) scale(var(--ambient-scale-peak)); }
 }
 
-@keyframes glow-drift-2 {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
-  50% { transform: translate3d(-8vw, 9vh, 0) scale(0.96); }
+@keyframes glow-drift-red {
+  0%, 100% { transform: translate3d(2vw, -1vh, 0) scale(1.02); }
+  50% { transform: translate3d(var(--ambient-red-dx), var(--ambient-red-dy), 0) scale(var(--ambient-scale-peak)); }
 }
 
-@keyframes glow-drift-3 {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(0.98); }
-  50% { transform: translate3d(10vw, -7vh, 0) scale(1.08); }
+@keyframes glow-drift-yellow {
+  0%, 100% { transform: translate3d(-1vw, 2vh, 0) scale(0.99); }
+  50% { transform: translate3d(var(--ambient-yellow-dx), var(--ambient-yellow-dy), 0) scale(var(--ambient-scale-peak)); }
 }
 
-@keyframes glow-drift-4 {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1.04); }
-  50% { transform: translate3d(-9vw, -8vh, 0) scale(0.97); }
+@keyframes glow-drift-green {
+  0%, 100% { transform: translate3d(2vw, 2vh, 0) scale(1.01); }
+  50% { transform: translate3d(var(--ambient-green-dx), var(--ambient-green-dy), 0) scale(var(--ambient-scale-peak)); }
 }
 
 .glow-orb {
   position: absolute;
   border-radius: 50%;
-  opacity: var(--bg-orb-opacity);
+  opacity: var(--ambient-orb-opacity);
   pointer-events: none;
   transform-origin: center;
 }
 
 .glow-orb-blue {
-  background: radial-gradient(circle at 50% 50%, rgba(66, 133, 244, 0.78) 0%, rgba(66, 133, 244, 0.34) 32%, rgba(66, 133, 244, 0.10) 56%, transparent 74%);
-  animation: glow-drift-1 42s ease-in-out infinite;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(66, 133, 244, 0.82) 0%,
+    rgba(66, 133, 244, 0.42) 32%,
+    rgba(66, 133, 244, 0.14) 58%,
+    transparent 78%);
+  animation: glow-drift-blue var(--ambient-duration-blue) ease-in-out infinite;
 }
 
 .glow-orb-red {
-  background: radial-gradient(circle at 50% 50%, rgba(234, 67, 53, 0.72) 0%, rgba(234, 67, 53, 0.28) 34%, rgba(234, 67, 53, 0.08) 58%, transparent 75%);
-  animation: glow-drift-2 48s ease-in-out infinite;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(234, 67, 53, 0.78) 0%,
+    rgba(234, 67, 53, 0.38) 32%,
+    rgba(234, 67, 53, 0.13) 58%,
+    transparent 78%);
+  animation: glow-drift-red var(--ambient-duration-red) ease-in-out infinite;
 }
 
 .glow-orb-yellow {
-  background: radial-gradient(circle at 50% 50%, rgba(251, 188, 5, 0.68) 0%, rgba(251, 188, 5, 0.24) 34%, rgba(251, 188, 5, 0.07) 58%, transparent 75%);
-  animation: glow-drift-3 46s ease-in-out infinite;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(251, 188, 5, 0.76) 0%,
+    rgba(251, 188, 5, 0.36) 32%,
+    rgba(251, 188, 5, 0.12) 58%,
+    transparent 78%);
+  animation: glow-drift-yellow var(--ambient-duration-yellow) ease-in-out infinite;
 }
 
 .glow-orb-green {
-  background: radial-gradient(circle at 50% 50%, rgba(52, 168, 83, 0.72) 0%, rgba(52, 168, 83, 0.27) 34%, rgba(52, 168, 83, 0.08) 58%, transparent 75%);
-  animation: glow-drift-4 50s ease-in-out infinite;
+  background: radial-gradient(circle at 50% 50%,
+    rgba(52, 168, 83, 0.78) 0%,
+    rgba(52, 168, 83, 0.38) 32%,
+    rgba(52, 168, 83, 0.13) 58%,
+    transparent 78%);
+  animation: glow-drift-green var(--ambient-duration-green) ease-in-out infinite;
 }
 
-/* Quality 只增加环境色存在感，不恢复昂贵的大半径实时 blur。 */
-html[data-performance="quality"] .glow-orb {
-  opacity: calc(var(--bg-orb-opacity) + 0.04);
-}
-
-/* Compatibility 保留品牌色氛围，但使用两个静态渐变光团。 */
+/* Compatibility 保留品牌身份，但只渲染两个静态 Google 光团。 */
 html[data-performance="compat"] .glow-orb {
   animation: none;
 }
