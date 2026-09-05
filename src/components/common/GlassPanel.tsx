@@ -1,13 +1,13 @@
 import { CSSProperties, ReactNode } from "react";
 import styles from "./GlassPanel.module.css";
 
-type GlassSurface = "chrome" | "content" | "accent";
+type GlassSurface = "chrome" | "content" | "control" | "accent";
 
 interface GlassPanelProps {
   children: ReactNode;
   className?: string;
   style?: CSSProperties;
-  /** 材质层：chrome 可轻量采样背景；content 不使用 backdrop blur；accent 用于小型强调层 */
+  /** 材质层：chrome 可轻量采样；content 是大面积内容；control 是稳定交互工作台；accent 是小型强调层 */
   surface?: GlassSurface;
   /** 面板变体：默认 / 高亮 */
   variant?: "default" | "elevated";
@@ -18,6 +18,7 @@ interface GlassPanelProps {
 const SURFACE_CLASS: Record<GlassSurface, string> = {
   chrome: "liquid-glass",
   content: "liquid-glass-content",
+  control: "liquid-control-surface",
   accent: "liquid-glass-accent",
 };
 
@@ -25,7 +26,8 @@ const SURFACE_CLASS: Record<GlassSurface, string> = {
  * TauTerm Liquid Glass 面板。
  *
  * 默认是 chrome 材质；承载终端、文件/数据内容的大面积面板必须显式使用
- * surface="content"，避免把 backdrop-filter 带进内容渲染路径。
+ * surface="content"，避免把 backdrop-filter 带进内容渲染路径；高密度表单/编辑工具使用
+ * surface="control"，在不引入 backdrop blur 的前提下稳定控件对比度。
  */
 export default function GlassPanel({
   children,
