@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "8.1"
+  version: "8.2"
 ---
 
-# TauTerm Liquid Glass v8.1 — 唯一主题规范源
+# TauTerm Liquid Glass v8.2 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -99,18 +99,19 @@ Surface 的背景组合顺序固定为：
 
 ### Google Glow / 炫彩流光
 
-- 三主题中 **veil 最弱**。
+- 三主题中 **veil 最弱**，且 Ambient opacity 可以略高于其它暗色主题以强化透亮感。
 - Ambient 能明显穿过 Sidebar / SendBar / Dialog。
 - Structural Panel 不应看起来像红蓝绿黄实心色块；颜色来自背后的 Ambient。
 - 保持中性清透，不加 Navy Blue 固有底色。
 - 目标是 airy / luminous / clear / prismatic。
+- Google Glow 与 Obsidian 必须在正常截图里一眼能区分，不接受“只是稍微亮一点”的差异。
 
 ### Obsidian / 黑曜石
 
 - 与 Google Glow 完全相同的 clear physics。
-- 只增加黑色 veil。
-- 黑膜必须仍允许 Ambient 和 specular 可见。
-- 禁止退化成近乎不透明的黑卡片。
+- 只通过更厚的黑色 veil 建立身份。
+- Panel/Chrome 必须明显更黑，Content/Control 可以更实，以保证黑曜石的深邃感。
+- 黑膜仍要保留少量 Ambient 和 specular，不能退化成完全不透明的黑卡片。
 
 ### Frosted / 白霜
 
@@ -270,7 +271,9 @@ Content 与 Structural Panel 共用 clear physics，但：
 
 - selected pane 可使用 active veil；
 - 其它 pane 可使用 inactive veil；
-- Pane Header 使用 `--theme-content-header-veil` + 同一 content clear base。
+- Pane Header 使用 `--theme-content-header-veil` + 同一 content clear base；
+- Pane 圆角必须遵循 **outer-corner only**：Workspace 四个真实外角可圆，所有内部 Split 交点必须为直角；
+- Pane Frame、Header、Content/Terminal 必须使用同一套 corner geometry，禁止各自写固定四角圆角。
 
 ### Disconnected
 
@@ -338,7 +341,9 @@ Balanced：
 Compat：
 - 2 static Ambient Fields
 - backdrop blur = 0
-- 仍使用同一 clear base + theme veil，不回退成实心 opaque surface
+- Structural / Content 保持正常 clear base + theme veil，不额外变厚
+- **依赖 backdrop 的 Small Chrome / Float 必须切换到更实的 `--theme-*-veil-compat` fallback**，避免底层文字和边框无模糊地直接穿透
+- Compat 可以比 Balanced 更“稳”和更实，但不能比 Balanced 感知上更透明，也不能退回死板的实心 opaque surface
 
 ---
 
@@ -350,7 +355,8 @@ rg 'transition:\s*all' src --glob '*.css'
 rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg -U ':disabled[^\{]*\{[^\}]*opacity\s*:\s*0\.' src --glob '*.css'
 rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-float|liquid-glass' src --glob '*.tsx'
-rg 'theme-(chrome|panel|content|card|float|control).*veil|liquid-clear-|liquid-specular-' src/styles
+rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
+rg 'border-radius.*pane|pane(Frame|Header|Content)Radius|dockedBorderRadii' src/components/Layout src/components/Terminal
 rg 'modeHeader|modeTitle|flex-direction:\s*row' src/components/SendBar
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 npm run build
@@ -377,12 +383,13 @@ npm run build
 - **发送栏四个模式仍在左侧竖排**
 - **左栏、右栏、SendBar、TargetBar 是同一种 Structural Glass**
 - **Terminal 是同一种玻璃的克制 Content 版本**
-- **炫彩流光明显最透亮**
-- **黑曜石 = clear glass + black veil**
+- **炫彩流光明显最透亮，Ambient 穿透最清楚**
+- **黑曜石 = clear glass + 更厚 black veil，必须明显比炫彩流光更黑**
 - **白霜 = clear glass + white veil**
 - **三个主题都有清澈、柔亮、边缘高光的液态玻璃质感**
 - **单 Pane 没有 active/selected 材质差异**
-- **Compat 仍然是玻璃，不变成实心面板**
+- **多 Pane 只有 Workspace 外角圆，内部交点直**
+- **Compat 仍然是玻璃，但 Small Chrome/Float 的可读性不能低于 Balanced，也不能出现“兼容档最透明”**
 
 ## 实现源文件
 
