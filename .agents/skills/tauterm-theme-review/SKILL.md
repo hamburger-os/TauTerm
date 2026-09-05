@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "4.3"
+  version: "4.4"
 ---
 
 # TauTerm 主题与渲染审查
@@ -31,8 +31,8 @@ rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg 'glass-blur|bg-orb-blur' src
 rg 'liquid-glass-panel|liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
 rg 'data-performance|data-motion|tauterm-performance-mode' src
-rg 'ambient-opacity-(quality|balanced|compat)|ambient-field-(opacity|a-duration|b-duration)' src/styles/tokens.css
-rg 'theme-(chrome|panel|content|card|float|control).*veil|compat-(chrome|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
+rg 'ambient-opacity-(quality|performance)|ambient-field-(opacity|a-duration|b-duration)' src/styles/tokens.css
+rg 'theme-(shell|panel|content|card|float|control).*veil|performance-(shell|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius|liquid-glass-content|selectedHeader|requestAnimationFrame|onMouseDownCapture' src/components/Layout/SplitView* src/components/Terminal/TerminalView.tsx
 rg 'content-divider|scrollbar-(button|corner)|container-name' src/styles src/components/Layout
 rg '@container\s+session-pane|@media\s*\(max-width' src/components src/plugins --glob '*.module.css'
@@ -48,14 +48,14 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 
 1. TerminalView / Terminal.module.css
 2. SplitView
-3. GoogleGlowBackground / ThemeContext motion
+3. SpectrumAmbientBackground / ThemeContext motion
 4. Structural Panel ownership（左右 Sidebar / SendBar / TargetBar）与重复 glass
 5. SendBar 左侧竖排布局冻结 / TargetBar / disabled controls
 6. Toolbar / Sidebar / RightSidebar / StatusBar
 7. Dialog / Popover / ContextMenu
 8. 可扩展的大面积面板
 9. Frosted theme
-10. Performance modes（按 SSOT 检查 Quality 两动态层 / Balanced 单动态层 / Compat 静态层、Ambient 交叠可感知性、系统 reduced-motion 状态提示与 Compatibility flat fill）
+10. Performance modes（按 SSOT 检查效果优先双动态层 / 性能优先全静态层、Ambient 交叠可感知性、系统 reduced-motion 状态提示与低成本 flat fill）
 11. SplitView Workspace surface ownership / nested frame / interaction stability / resize cadence（判断规则只读 SSOT）
 12. Custom renderer 在短/窄 Pane 中的可达性与 Pane-relative adaptation（判断规则只读 SSOT）
 
@@ -105,7 +105,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 
 严重度按影响判定：
 
-- **CRITICAL**：主题不可用、内容不可读、持续高 GPU/严重卡顿、Compatibility 失效
+- **CRITICAL**：主题不可用、内容不可读、持续高 GPU/严重卡顿、性能优先失效
 - **HIGH**：违反 surface/backdrop 红线、重新引入大面积 blur/持续合成
 - **MEDIUM**：不必要动画、transition/all、层级/active 状态不一致
 - **LOW**：轻微 token、视觉一致性、可维护性问题
