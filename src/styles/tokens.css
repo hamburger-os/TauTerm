@@ -213,7 +213,7 @@ html[data-performance="compat"] {
   --accent-primary: #4285F4;
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #4285F4 0%, #6366f1 100%);
-  --accent-glow: rgba(66, 133, 244, 0.35);
+  --accent-glow: rgba(66, 133, 244, 0.18);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -227,20 +227,18 @@ html[data-performance="compat"] {
   --color-accent: var(--accent-primary);
   --glass-hover: rgba(255, 255, 255, 0.08);
   --glass-fill-secondary: rgba(255, 255, 255, 0.03);
-  --text-tertiary: #8888aa;
+  --text-tertiary: #777f8b;
 
-  /* 全息光效渐变（主按钮等） */
-  --accent-holofoil-gradient: linear-gradient(-45deg,
-    rgba(66, 133, 244, 0.85),
-    rgba(168, 85, 247, 0.85),
-    rgba(236, 72, 153, 0.85),
-    rgba(251, 188, 5, 0.85));
+  /* 主 CTA 只保留克制的主题 accent；Google 四色留给 Ambient。 */
+  --accent-holofoil-gradient: linear-gradient(135deg,
+    rgba(66, 133, 244, 0.90),
+    rgba(96, 165, 250, 0.82));
 
   /* 浮层蒙版 */
   --overlay-bg: rgba(2, 7, 16, 0.32);
 
   /* 辅助令牌（跨组件共享的状态与层级令牌，所有 3 套主题各自定义） */
-  --bg-secondary: #0f0f1a;
+  --bg-secondary: #111316;
   --glass-bg-hover: rgba(255, 255, 255, 0.08);
   --glass-bg-active: rgba(255, 255, 255, 0.12);
   --glass-border-hover: rgba(255, 255, 255, 0.25);
@@ -258,10 +256,10 @@ html[data-performance="compat"] {
   --primary-button-hover-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), 0 6px 16px rgba(0, 0, 0, 0.20);
   --primary-button-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
   /* 弹窗背景 */
-  --dialog-bg: rgba(15, 15, 30, 0.95);
-  --dialog-shadow: 0 0 30px rgba(66, 133, 244, 0.15);
+  --dialog-bg: rgba(24, 25, 29, 0.90);
+  --dialog-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
   /* 下拉选项 */
-  --select-option-bg: #12122a;
+  --select-option-bg: #17191d;
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%239494b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }
 
@@ -323,7 +321,7 @@ html[data-performance="compat"] {
   --accent-primary: #3b82f6;
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-  --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-glow: rgba(59, 130, 246, 0.16);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -334,11 +332,9 @@ html[data-performance="compat"] {
   --color-info: #4285F4;
 
   /* 全息光效渐变（主按钮等） */
-  --accent-holofoil-gradient: linear-gradient(-45deg,
-    rgba(59, 130, 246, 0.85),
-    rgba(99, 102, 241, 0.85),
-    rgba(139, 92, 246, 0.85),
-    rgba(59, 130, 246, 0.85));
+  --accent-holofoil-gradient: linear-gradient(135deg,
+    rgba(59, 130, 246, 0.84),
+    rgba(71, 85, 105, 0.88));
 
   /* 右侧栏工具面板辅助令牌 — 仅覆盖与 google-glow 不同的 token */
   --glass-hover: rgba(255, 255, 255, 0.06);
@@ -361,7 +357,7 @@ html[data-performance="compat"] {
   --glass-rim-light: 0 1px 0 rgba(255, 255, 255, 0.055), 0 3px 8px rgba(0, 0, 0, 0.13);
   /* 弹窗背景 */
   --dialog-bg: rgba(8, 8, 12, 0.97);
-  --dialog-shadow: 0 0 30px rgba(59, 130, 246, 0.12);
+  --dialog-shadow: 0 16px 42px rgba(0, 0, 0, 0.36);
   /* 下拉选项 */
   --select-option-bg: #0a0a12;
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23909090' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
@@ -425,7 +421,7 @@ html[data-performance="compat"] {
   --accent-primary: #3b82f6;
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-  --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-glow: rgba(59, 130, 246, 0.16);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -442,8 +438,8 @@ html[data-performance="compat"] {
   --text-tertiary: #788090;
 
   /* 全息光效渐变（主按钮等 — 浅色主题使用实色渐变） */
-  --accent-holofoil-gradient: linear-gradient(-45deg,
-    #3b82f6, #6366f1, #8b5cf6, #3b82f6);
+  --accent-holofoil-gradient: linear-gradient(135deg,
+    #3b82f6, #60a5fa);
 
   /* 浮层蒙版 */
   --overlay-bg: rgba(31, 55, 78, 0.12);
