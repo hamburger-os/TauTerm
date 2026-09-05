@@ -115,8 +115,8 @@ export function useUpdater(
             break;
         }
       });
-      // Windows 成功启动 NSIS updater 后 Tauri 会直接退出进程；
-      // macOS/Linux 会返回到这里，等待用户重启进入新版本。
+      // 某些平台启动系统安装器后应用会直接退出；
+      // 其它平台会返回到这里，等待用户重启进入新版本。
       setUpdateInfo(prev => ({ ...prev, phase: "ready" }));
     } catch (e) {
       setUpdateInfo(prev => ({
@@ -127,7 +127,7 @@ export function useUpdater(
     }
   }, [handleCheckUpdate]);
 
-  // ── 安装完成后重启（macOS/Linux）；Windows 正常更新时会在此前退出 ──
+  // ── 安装完成后重启；若系统安装器已接管流程，应用会在此前退出 ──
   const handleInstallUpdate = useCallback(async () => {
     try {
       await relaunch();
