@@ -151,26 +151,26 @@
   );
 
   /* Shared Google Ambient defaults (Balanced).
-     不扩大纹理层，只把四色中心向内收并加大 transform 路径：位移更明显，合成成本基本不变。 */
+     四色始终完整；Balanced 只动画 Field A，Field B 静态，因此这里只需要为 A 保留明显但克制的路径。 */
   --ambient-field-opacity: var(--ambient-opacity-balanced);
-  --ambient-field-a-duration: 20s;
-  --ambient-field-b-duration: 24s;
-  --ambient-a-x1: -11vw;
-  --ambient-a-y1: -7vh;
-  --ambient-a-x2: 10vw;
-  --ambient-a-y2: -2vh;
-  --ambient-a-x3: 12vw;
-  --ambient-a-y3: 8vh;
-  --ambient-a-x4: -9vw;
-  --ambient-a-y4: 6vh;
-  --ambient-b-x1: 11vw;
-  --ambient-b-y1: -8vh;
-  --ambient-b-x2: -10vw;
-  --ambient-b-y2: -2vh;
-  --ambient-b-x3: -12vw;
-  --ambient-b-y3: 8vh;
-  --ambient-b-x4: 9vw;
-  --ambient-b-y4: 6vh;
+  --ambient-field-a-duration: 22s;
+  --ambient-field-b-duration: 26s;
+  --ambient-a-x1: -14vw;
+  --ambient-a-y1: -9vh;
+  --ambient-a-x2: 13vw;
+  --ambient-a-y2: -3vh;
+  --ambient-a-x3: 15vw;
+  --ambient-a-y3: 10vh;
+  --ambient-a-x4: -12vw;
+  --ambient-a-y4: 8vh;
+  --ambient-b-x1: 0vw;
+  --ambient-b-y1: 0vh;
+  --ambient-b-x2: 0vw;
+  --ambient-b-y2: 0vh;
+  --ambient-b-x3: 0vw;
+  --ambient-b-y3: 0vh;
+  --ambient-b-x4: 0vw;
+  --ambient-b-y4: 0vh;
 
   /* 模糊 */
   --blur-xs: 4px;
@@ -209,37 +209,37 @@
 
 /* ===== Level 1.5: 视觉性能档 ===== */
 html[data-performance="quality"] {
-  --glass-blur-chrome: 14px;
-  --glass-blur-float: 16px;
-  --glass-blur-saturate: 136%;
+  --glass-blur-chrome: 16px;
+  --glass-blur-float: 18px;
+  --glass-blur-saturate: 142%;
   --ambient-field-opacity: var(--ambient-opacity-quality);
-  --ambient-field-a-duration: 12s;
-  --ambient-field-b-duration: 15s;
-  --ambient-a-x1: -15vw;
-  --ambient-a-y1: -10vh;
-  --ambient-a-x2: 14vw;
-  --ambient-a-y2: -4vh;
-  --ambient-a-x3: 15vw;
-  --ambient-a-y3: 10vh;
-  --ambient-a-x4: -13vw;
-  --ambient-a-y4: 8vh;
-  --ambient-b-x1: 15vw;
-  --ambient-b-y1: -10vh;
-  --ambient-b-x2: -14vw;
-  --ambient-b-y2: -3vh;
-  --ambient-b-x3: -15vw;
-  --ambient-b-y3: 10vh;
-  --ambient-b-x4: 13vw;
-  --ambient-b-y4: 8vh;
+  --ambient-field-a-duration: 13s;
+  --ambient-field-b-duration: 16s;
+  --ambient-a-x1: -20vw;
+  --ambient-a-y1: -13vh;
+  --ambient-a-x2: 19vw;
+  --ambient-a-y2: -5vh;
+  --ambient-a-x3: 21vw;
+  --ambient-a-y3: 13vh;
+  --ambient-a-x4: -18vw;
+  --ambient-a-y4: 10vh;
+  --ambient-b-x1: 20vw;
+  --ambient-b-y1: -13vh;
+  --ambient-b-x2: -19vw;
+  --ambient-b-y2: -4vh;
+  --ambient-b-x3: -21vw;
+  --ambient-b-y3: 13vh;
+  --ambient-b-x4: 18vw;
+  --ambient-b-y4: 10vh;
 }
 
 html[data-performance="balanced"] {
-  --glass-blur-chrome: 8px;
-  --glass-blur-float: 10px;
-  --glass-blur-saturate: 122%;
+  --glass-blur-chrome: 6px;
+  --glass-blur-float: 8px;
+  --glass-blur-saturate: 116%;
   --ambient-field-opacity: var(--ambient-opacity-balanced);
-  --ambient-field-a-duration: 20s;
-  --ambient-field-b-duration: 24s;
+  --ambient-field-a-duration: 22s;
+  --ambient-field-b-duration: 26s;
 }
 
 html[data-performance="compat"] {
