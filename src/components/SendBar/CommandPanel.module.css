@@ -85,7 +85,13 @@
   font-weight: 500;
   font-family: var(--font-ui);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .renameModalCancelBtn {
@@ -97,7 +103,8 @@
   /* 基础视觉由 liquid-primary-button 提供 */
 }
 
-.renameModalSaveBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.renameModalSaveBtn:disabled {
+  cursor: not-allowed; }
 
 .configBtn {
   display: flex;
@@ -119,7 +126,6 @@
 }
 
 .configBtn:disabled {
-  opacity: 0.35;
   cursor: not-allowed;
 }
 
@@ -157,7 +163,6 @@
 }
 
 .toolBtn:disabled {
-  opacity: 0.4;
   cursor: not-allowed;
 }
 
@@ -301,7 +306,13 @@
   border-radius: var(--radius-sm);
   background: var(--glass-input-bg);
   box-shadow: var(--glass-input-shadow-inner);
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
   flex-shrink: 0;
 }
 
@@ -329,7 +340,10 @@
 }
 
 .checkInput:disabled + .checkTrack {
-  opacity: 0.35;
+  opacity: 1;
+  background: var(--control-disabled-bg);
+  border-color: var(--control-disabled-border);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -386,7 +400,6 @@
 }
 
 .editBtn:disabled {
-  opacity: 0.3;
   cursor: not-allowed;
 }
 
@@ -404,7 +417,6 @@
 }
 
 .deleteBtn:disabled {
-  opacity: 0.3;
   cursor: not-allowed;
 }
 
@@ -457,7 +469,6 @@
 }
 
 .runBtn:disabled {
-  opacity: 0.4;
   cursor: not-allowed;
 }
 
