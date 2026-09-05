@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "3.0"
+  version: "3.1"
 ---
 
 # TauTerm 主题与渲染审查
@@ -42,12 +42,13 @@ rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glo
 
 1. TerminalView / Terminal.module.css
 2. SplitView
-3. GoogleGlowBackground
-4. Toolbar / Sidebar / RightSidebar / StatusBar
-5. Dialog / Popover / ContextMenu
-6. 可扩展的大面积面板
-7. Frosted theme
-8. Compatibility mode
+3. GoogleGlowBackground / ThemeContext motion
+4. SendBar / TargetBar / disabled controls
+5. Toolbar / Sidebar / RightSidebar / StatusBar
+6. Dialog / Popover / ContextMenu
+7. 可扩展的大面积面板
+8. Frosted theme
+9. Compatibility mode
 
 ### 4. 验证矩阵
 
