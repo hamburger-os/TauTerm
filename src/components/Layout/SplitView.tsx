@@ -110,6 +110,24 @@ function getConnectionStateFallback(state: TabInfo["state"]): string {
   }
 }
 
+function shouldShowDisconnectedPlaceholder(tab: TabInfo, contentType: string): boolean {
+  if (contentType === "terminal") return !terminalHasRuntime(tab);
+  // Network Debug 的断开态以前由自定义 renderer 自己画空状态，导致图标框/字号与其它 Pane 漂移。
+  // 断开时直接复用 SplitView 的统一 PaneEmptyState；连接/连接中仍交给 renderer。
+  return tab.pluginId === "network" && tab.state === "disconnected";
+}
+
+function PaneEmptyState({ message }: { message: string }) {
+  return (
+    <div className={styles.emptyPane}>
+      <span className={styles.emptyMark}>
+        <Icon name="connection" size="xl" className={styles.emptyPaneIcon} />
+      </span>
+      <span>{message}</span>
+    </div>
+  );
+}
+
 /**
  * Split View surface for the persisted local Workspace layout.
  *
@@ -330,12 +348,17 @@ export default function SplitView({
         const plugin = tab ? pluginRegistry.get(tab.pluginId) : null;
         const contentType = plugin?.manifest.content_type ?? "terminal";
         const isTerminal = Boolean(tab) && contentType === "terminal";
-        const showTerminalPlaceholder = isTerminal && tab ? !terminalHasRuntime(tab) : false;
+        const showDisconnectedPlaceholder = tab
+          ? shouldShowDisconnectedPlaceholder(tab, contentType)
+          : false;
         const selected = paneId === layout.selectedPaneId;
         const contentRect = insetPaneContent(rect, paneCount, viewSize.height);
-        const needsOwnSurface = !tab || !isTerminal || showTerminalPlaceholder;
+        const needsOwnSurface = !tab || !isTerminal || showDisconnectedPlaceholder;
+        const selectionMaterial = paneCount > 1
+          ? (selected ? "liquid-glass-content-active" : "liquid-glass-content-inactive")
+          : "";
         const surfaceMaterial = needsOwnSurface
-          ? `liquid-glass-content ${selected ? "liquid-glass-content-active" : "liquid-glass-content-inactive"}`
+          ? `liquid-glass-content ${selectionMaterial}`
           : "";
         return (
           <div
@@ -344,7 +367,7 @@ export default function SplitView({
             style={rectStyle(contentRect)}
             onMouseDown={() => onSelectPane(paneId)}
             onContextMenu={(e) => {
-              if (showTerminalPlaceholder && tab) {
+              if (showDisconnectedPlaceholder && tab) {
                 openDisconnectedMenu(e, paneId, tab);
                 return;
               }
@@ -352,21 +375,11 @@ export default function SplitView({
             }}
           >
             {!tab && (
-              <div className={styles.emptyPane}>
-                <span className={styles.emptyMark}>
-                  <Icon name="connection" size="xl" className={styles.emptyPaneIcon} />
-                </span>
-                <span>{t("split.selectSession", "选择左侧会话")}</span>
-              </div>
+              <PaneEmptyState message={t("split.selectSession", "选择左侧会话")} />
             )}
-            {tab && !isTerminal && renderNonTerminalContent(tab)}
-            {tab && showTerminalPlaceholder && (
-              <div className={styles.emptyPane}>
-                <span className={styles.emptyMark}>
-                  <Icon name="connection" size="xl" className={styles.emptyPaneIcon} />
-                </span>
-                <span>{t("session.connectToViewContent", "连接后显示会话内容")}</span>
-              </div>
+            {tab && !isTerminal && !showDisconnectedPlaceholder && renderNonTerminalContent(tab)}
+            {tab && showDisconnectedPlaceholder && (
+              <PaneEmptyState message={t("session.connectToViewContent", "连接后显示会话内容")} />
             )}
           </div>
         );
@@ -385,6 +398,7 @@ export default function SplitView({
         const sessionId = layout.assignments[paneId] ?? null;
         const tab = sessionId ? tabsById.get(sessionId) : undefined;
         const selected = paneId === layout.selectedPaneId;
+        const showSelection = paneCount > 1 && selected;
         const blocked = blockedEdges[paneId] ?? new Set<SplitEdge>();
         const paneTitle = tab ? getPaneDisplayTitle(tab, tabsById) : t("split.emptyPane", "空分屏");
         const paneTitleTooltip = tab?.elevated
@@ -400,10 +414,10 @@ export default function SplitView({
             : styles.lifecycleDisconnected;
         return (
           <div key={`chrome-${paneId}`} className={styles.paneChrome} style={rectStyle(rect)}>
-            <div className={`${styles.paneFrame} ${selected ? styles.selectedFrame : ""}`} />
+            <div className={`${styles.paneFrame} ${showSelection ? styles.selectedFrame : ""}`} />
             {paneCount > 1 && (
               <div
-                className={`${styles.paneHeader} ${selected ? styles.selectedHeader : ""}`}
+                className={`${styles.paneHeader} ${showSelection ? styles.selectedHeader : ""}`}
                 onMouseDown={(e) => {
                   e.stopPropagation();
                   onSelectPane(paneId);

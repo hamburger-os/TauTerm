@@ -350,7 +350,7 @@ function AppInner() {
           {sidebarVisible && (
             <>
               <motion.aside
-                className="sidebar liquid-glass"
+                className="sidebar liquid-glass-panel"
                 style={{ width: sidebarWidth }}
                 initial={{ width: 0, opacity: 0 }}
                 animate={{ width: sidebarWidth, opacity: 1 }}
@@ -397,6 +397,7 @@ function AppInner() {
                 <>
                   <ResizeHandle direction="horizontal" onMouseDown={handleRightSidebarMouseDown} />
                   <motion.div
+                    className="sidebar liquid-glass-panel"
                     style={{ height: "100%", width: rightSidebarWidth, overflow: "hidden" }}
                     initial={{ width: 0, opacity: 0 }}
                     animate={{ width: rightSidebarWidth, opacity: 1 }}

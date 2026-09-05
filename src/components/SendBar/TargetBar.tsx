@@ -62,7 +62,7 @@ export default function TargetBar({ containerId }: Props) {
   if (transport === "tcp") {
     const value = broadcast ? ALL_PEERS : (selectedPeerId ?? "");
     return (
-      <div className={`${styles.bar} liquid-control-surface`}>
+      <div className={`${styles.bar} liquid-glass-panel`}>
         <span className={styles.label}>{t("network.targetLabel")}</span>
         <select
           className={`${styles.select} liquid-glass-input liquid-glass-select`}
@@ -89,7 +89,7 @@ export default function TargetBar({ containerId }: Props) {
 
   if (transport === "udp") {
     return (
-      <div className={`${styles.bar} liquid-control-surface`}>
+      <div className={`${styles.bar} liquid-glass-panel`}>
         <span className={styles.label}>{t("network.targetLabel")}</span>
         <input
           className={`${styles.input} liquid-glass-input`}

@@ -1,4 +1,4 @@
-/* TauTerm Liquid Glass v7.2 全局样式 */
+/* TauTerm Liquid Glass v8.0 全局样式 */
 
 @import "./tokens.css";
 
@@ -61,37 +61,21 @@ body {
 
 /* ==========================================
    1. Shared Google Ambient Field
-   两个不对称超大色场通过 translate/rotate/scale 形成持续相对运动。
-   颜色梯度本身静态 rasterize，不动画 background/filter。
+   Gemini 二维空间固定为：左上 Red / 左下 Yellow / 右下 Green / 右上 Blue。
+   两个对角 Field 只动画 transform，方向、相位与 rotation 相反，制造“流过玻璃”的相对剪切感。
    ========================================== */
 @keyframes ambient-flow-a {
-  0%, 100% {
-    transform: translate3d(var(--ambient-a-x1), var(--ambient-a-y1), 0) rotate(-4deg) scale(0.985);
-  }
-  24% {
-    transform: translate3d(var(--ambient-a-x2), var(--ambient-a-y2), 0) rotate(1.5deg) scale(1.025);
-  }
-  49% {
-    transform: translate3d(var(--ambient-a-x3), var(--ambient-a-y3), 0) rotate(5deg) scale(1.055);
-  }
-  73% {
-    transform: translate3d(var(--ambient-a-x4), var(--ambient-a-y4), 0) rotate(-1deg) scale(1.015);
-  }
+  0%, 100% { transform: translate3d(var(--ambient-a-x1), var(--ambient-a-y1), 0) rotate(-7deg) scale(0.99); }
+  24% { transform: translate3d(var(--ambient-a-x2), var(--ambient-a-y2), 0) rotate(2deg) scale(1.025); }
+  49% { transform: translate3d(var(--ambient-a-x3), var(--ambient-a-y3), 0) rotate(8deg) scale(1.045); }
+  73% { transform: translate3d(var(--ambient-a-x4), var(--ambient-a-y4), 0) rotate(-2deg) scale(1.015); }
 }
 
 @keyframes ambient-flow-b {
-  0%, 100% {
-    transform: translate3d(var(--ambient-b-x1), var(--ambient-b-y1), 0) rotate(4deg) scale(1.025);
-  }
-  27% {
-    transform: translate3d(var(--ambient-b-x2), var(--ambient-b-y2), 0) rotate(-2deg) scale(0.99);
-  }
-  53% {
-    transform: translate3d(var(--ambient-b-x3), var(--ambient-b-y3), 0) rotate(-5.5deg) scale(1.05);
-  }
-  78% {
-    transform: translate3d(var(--ambient-b-x4), var(--ambient-b-y4), 0) rotate(1deg) scale(1.015);
-  }
+  0%, 100% { transform: translate3d(var(--ambient-b-x1), var(--ambient-b-y1), 0) rotate(7deg) scale(1.02); }
+  27% { transform: translate3d(var(--ambient-b-x2), var(--ambient-b-y2), 0) rotate(-3deg) scale(0.985); }
+  53% { transform: translate3d(var(--ambient-b-x3), var(--ambient-b-y3), 0) rotate(-8deg) scale(1.04); }
+  78% { transform: translate3d(var(--ambient-b-x4), var(--ambient-b-y4), 0) rotate(2deg) scale(1.01); }
 }
 
 .ambient-root {
@@ -105,96 +89,63 @@ body {
 
 .ambient-field {
   position: absolute;
-  width: 140vw;
-  height: 136vh;
-  left: -20vw;
-  top: -18vh;
+  width: 128vw;
+  height: 126vh;
+  left: -14vw;
+  top: -13vh;
   opacity: var(--ambient-field-opacity);
   pointer-events: none;
   transform-origin: center;
 }
 
-/* Blue + Yellow：只引用 canonical Google/Gemini palette。 */
+/* 对角 A：左上 Red → 右下 Green。 */
 .ambient-field-a {
   background:
-    radial-gradient(
-      ellipse 42% 68% at 24% 27%,
-      color-mix(in srgb, var(--google-blue) 78%, transparent) 0%,
-      color-mix(in srgb, var(--google-blue) 42%, transparent) 18%,
-      color-mix(in srgb, var(--google-blue) 17%, transparent) 38%,
-      color-mix(in srgb, var(--google-blue) 5%, transparent) 60%,
-      color-mix(in srgb, var(--google-blue) 1.2%, transparent) 76%,
-      transparent 92%
-    ),
-    radial-gradient(
-      ellipse 46% 64% at 72% 73%,
-      color-mix(in srgb, var(--google-yellow) 70%, transparent) 0%,
-      color-mix(in srgb, var(--google-yellow) 36%, transparent) 18%,
-      color-mix(in srgb, var(--google-yellow) 14.5%, transparent) 39%,
-      color-mix(in srgb, var(--google-yellow) 4.4%, transparent) 61%,
-      color-mix(in srgb, var(--google-yellow) 1.1%, transparent) 77%,
-      transparent 92%
-    ),
-    radial-gradient(
-      ellipse 26% 50% at 54% 45%,
-      color-mix(in srgb, var(--google-blue) 17%, transparent) 0%,
-      color-mix(in srgb, var(--google-blue) 5.5%, transparent) 45%,
-      transparent 82%
-    );
+    radial-gradient(ellipse 46% 64% at 22% 22%,
+      color-mix(in srgb, var(--google-red) 78%, transparent) 0%,
+      color-mix(in srgb, var(--google-red) 40%, transparent) 20%,
+      color-mix(in srgb, var(--google-red) 14%, transparent) 43%,
+      color-mix(in srgb, var(--google-red) 3.5%, transparent) 66%,
+      transparent 88%),
+    radial-gradient(ellipse 48% 66% at 78% 78%,
+      color-mix(in srgb, var(--google-green) 74%, transparent) 0%,
+      color-mix(in srgb, var(--google-green) 38%, transparent) 20%,
+      color-mix(in srgb, var(--google-green) 13%, transparent) 43%,
+      color-mix(in srgb, var(--google-green) 3.3%, transparent) 66%,
+      transparent 88%);
   animation: ambient-flow-a var(--ambient-field-a-duration) linear infinite;
-  animation-delay: -8s;
+  animation-delay: -6s;
 }
 
-/* Red + Green：同一 canonical palette，不允许组件另造近似品牌色。 */
+/* 对角 B：右上 Blue → 左下 Yellow。 */
 .ambient-field-b {
   background:
-    radial-gradient(
-      ellipse 43% 66% at 76% 26%,
-      color-mix(in srgb, var(--google-red) 72%, transparent) 0%,
-      color-mix(in srgb, var(--google-red) 38%, transparent) 18%,
-      color-mix(in srgb, var(--google-red) 15.5%, transparent) 39%,
-      color-mix(in srgb, var(--google-red) 4.6%, transparent) 61%,
-      color-mix(in srgb, var(--google-red) 1.1%, transparent) 77%,
-      transparent 92%
-    ),
-    radial-gradient(
-      ellipse 48% 64% at 28% 72%,
-      color-mix(in srgb, var(--google-green) 72%, transparent) 0%,
-      color-mix(in srgb, var(--google-green) 38%, transparent) 18%,
-      color-mix(in srgb, var(--google-green) 15.5%, transparent) 39%,
-      color-mix(in srgb, var(--google-green) 4.6%, transparent) 61%,
-      color-mix(in srgb, var(--google-green) 1.1%, transparent) 77%,
-      transparent 92%
-    ),
-    radial-gradient(
-      ellipse 28% 52% at 48% 56%,
-      color-mix(in srgb, var(--google-red) 14%, transparent) 0%,
-      color-mix(in srgb, var(--google-green) 4.5%, transparent) 48%,
-      transparent 84%
-    );
+    radial-gradient(ellipse 46% 64% at 78% 22%,
+      color-mix(in srgb, var(--google-blue) 78%, transparent) 0%,
+      color-mix(in srgb, var(--google-blue) 40%, transparent) 20%,
+      color-mix(in srgb, var(--google-blue) 14%, transparent) 43%,
+      color-mix(in srgb, var(--google-blue) 3.5%, transparent) 66%,
+      transparent 88%),
+    radial-gradient(ellipse 48% 66% at 22% 78%,
+      color-mix(in srgb, var(--google-yellow) 74%, transparent) 0%,
+      color-mix(in srgb, var(--google-yellow) 38%, transparent) 20%,
+      color-mix(in srgb, var(--google-yellow) 13%, transparent) 43%,
+      color-mix(in srgb, var(--google-yellow) 3.3%, transparent) 66%,
+      transparent 88%);
   animation: ambient-flow-b var(--ambient-field-b-duration) linear infinite;
-  animation-delay: -17s;
+  animation-delay: -14s;
 }
 
-html[data-performance="compat"] .ambient-field {
-  animation: none;
-}
-html[data-performance="compat"] .ambient-field-b {
-  display: none;
-}
-
-html[data-motion="paused"] .ambient-field {
-  animation-play-state: paused;
-}
-html[data-motion="reduced"] .ambient-field {
-  animation: none;
-}
+/* Compatibility 仍保留完整四色，只停止合成动画与 backdrop sampling。 */
+html[data-performance="compat"] .ambient-field { animation: none; }
+html[data-motion="paused"] .ambient-field { animation-play-state: paused; }
+html[data-motion="reduced"] .ambient-field { animation: none; }
 
 /* ==========================================
    4. Liquid Glass 材质分层
    chrome: 小面积导航/工具/弹窗，可轻量 backdrop sampling
    content: 终端/文件/数据主体，稳定半透明表面，不使用 backdrop-filter
-   control: SendBar/参数编辑等交互工作台，稳定控件对比度且不使用 backdrop-filter
+   control: 高密度参数编辑区，稳定控件对比度且不使用 backdrop-filter
    accent: 小型交互强调，靠 tint + rim light，不常驻模糊
    ========================================== */
 .liquid-glass {
@@ -206,6 +157,17 @@ html[data-motion="reduced"] .ambient-field {
   border-top-color: var(--glass-border-top);
   border-left-color: var(--glass-border-left);
   box-shadow: var(--glass-shadow-outer), var(--glass-shadow-inner);
+}
+
+/* Structural Panel：左/右 Sidebar、SendBar、TargetBar 共用同一材质。
+   不做 backdrop sampling；比 Chrome 更透，靠 specular edge + 轻阴影形成液态玻璃轮廓。 */
+.liquid-glass-panel {
+  position: relative;
+  background: var(--panel-specular-fill), var(--panel-fill);
+  border: 1px solid var(--panel-border);
+  border-top-color: var(--panel-border-top);
+  border-left-color: var(--panel-border-left);
+  box-shadow: var(--panel-shadow);
 }
 
 .liquid-glass-content {
@@ -223,8 +185,8 @@ html[data-motion="reduced"] .ambient-field {
   background: var(--content-surface-inactive);
 }
 
-/* 高密度交互工作台：SendBar / 参数表单 / 编辑工具。
-   比 content 更稳定，但仍不做 backdrop-filter。 */
+/* 高密度交互工作台：参数表单 / 编辑工具。
+   SendBar / TargetBar 外壳使用 Structural Panel；Control 只用于确实需要更稳定底色的内部区域。 */
 .liquid-control-surface {
   /* Control Deck 在动态 Ambient 上必须建立自己的稳定对比度环境。
      通过局部重绑共享 control token，让所有标准 button/input/toggle 自动增强，
@@ -318,15 +280,12 @@ html[data-motion="reduced"] .ambient-field {
    只在 selected/active tab 等少量元素上使用，不做 idle 动画。 */
 .liquid-glass-button.liquid-theme-selected {
   background: var(--selected-surface);
-  background-size: 220% 220%;
-  background-position: 12% 50%;
   border-color: var(--selected-border);
   color: var(--selected-text);
   box-shadow: var(--selected-shadow);
   text-shadow: var(--primary-button-text-shadow);
   transform: translateY(0);
   transition:
-    background-position 520ms ease,
     border-color var(--transition-button),
     box-shadow var(--transition-button),
     color var(--transition-button),
@@ -335,12 +294,10 @@ html[data-motion="reduced"] .ambient-field {
 
 .liquid-glass-button.liquid-theme-selected:hover:not(:disabled) {
   background: var(--selected-surface);
-  background-size: 220% 220%;
-  background-position: 86% 50%;
   border-color: var(--selected-border);
   color: var(--selected-text);
   box-shadow: var(--selected-shadow);
-  transform: translateY(-1px);
+  transform: translateY(-1px) scale(1.025);
 }
 
 /* ==========================================
@@ -512,35 +469,22 @@ html[data-motion="reduced"] .ambient-field {
 }
 
 /* ==========================================
-   8. 炫彩流光主按钮 — 全息动态光效
+   8. Gemini Prism 主按钮
+   Idle 始终完整显示四色空间关系；hover 不换色，只提升尺度、边缘与阴影。
    ========================================== */
 .liquid-primary-button {
-  /* 全息渐变（由主题令牌控制） */
   background: var(--accent-holofoil-gradient);
-  background-size: 180% 180%;
-  background-position: 0% 50%;
-
-  /* 玻璃边框与高光 */
   border: 1px solid var(--primary-button-border);
   border-radius: var(--radius-md);
   box-shadow: var(--primary-button-shadow);
-
-  /* 文字 */
   color: #fff;
   text-shadow: var(--primary-button-text-shadow);
   font-weight: 600;
-
-  /* 小面积强调控件不常驻 backdrop blur，液态感来自边缘和交互位移。 */
-
-  /* 布局 */
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-
-  /* 过渡 */
   transition:
-    background-position 500ms ease,
     border-color var(--transition-button),
     box-shadow var(--transition-button),
     transform var(--transition-button);
@@ -548,23 +492,13 @@ html[data-motion="reduced"] .ambient-field {
 }
 
 .liquid-primary-button:hover:not(:disabled) {
-  background-position: 100% 50%;
   border-color: var(--primary-button-hover-border);
-  transform: translateY(-1px) scale(1.02);
+  transform: translateY(-1px) scale(1.04);
   box-shadow: var(--primary-button-hover-shadow);
 }
 
-.liquid-primary-button:hover:not(:disabled) svg {
-  transform: translateX(2px);
-  transition: transform var(--transition-button);
-}
-
-.liquid-primary-button svg {
-  transition: transform var(--transition-button);
-}
-
 .liquid-primary-button:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: translateY(0) scale(0.98);
 }
 
 .liquid-primary-button:disabled {
