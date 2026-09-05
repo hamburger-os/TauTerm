@@ -489,10 +489,10 @@ html[data-performance="compat"] {
   --text-muted: #617184;
 
   /* 强调色 */
-  --accent-primary: #3b82f6;
-  --accent-secondary: #60a5fa;
-  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-  --accent-glow: rgba(59, 130, 246, 0.16);
+  --accent-primary: var(--google-blue);
+  --accent-secondary: var(--google-green);
+  --accent-gradient: linear-gradient(135deg, var(--google-blue) 0%, var(--google-green) 100%);
+  --accent-glow: color-mix(in srgb, var(--google-blue) 16%, transparent);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -500,7 +500,7 @@ html[data-performance="compat"] {
   --color-success: #16a34a;
   --color-error: #dc2626;
   --color-warning: #d97706;
-  --color-info: #2563eb;
+  --color-info: var(--google-blue);
 
   /* 右侧栏工具面板辅助令牌 */
   --color-accent: var(--accent-primary);
@@ -511,7 +511,7 @@ html[data-performance="compat"] {
   /* 全息光效渐变（主按钮等 — 浅色主题使用实色渐变） */
   --accent-holofoil-gradient: var(--google-brand-gradient-soft);
   --selected-surface: var(--google-brand-gradient-soft);
-  --selected-border: rgba(59, 130, 246, 0.32);
+  --selected-border: color-mix(in srgb, var(--google-blue) 32%, transparent);
   --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 4px 12px color-mix(in srgb, var(--google-blue) 14%, transparent);
   --selected-text: #1e3a5f;
 
@@ -530,11 +530,11 @@ html[data-performance="compat"] {
   --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.06);
   --glass-rim-glow: 0 1px 0 rgba(255, 255, 255, 0.78), 0 6px 18px rgba(30, 41, 59, 0.08);
   --glass-rim-light: 0 1px 0 rgba(255, 255, 255, 0.66), 0 3px 8px rgba(30, 41, 59, 0.07);
-  /* 全息主按钮 — 浅色主题 slate 边框 + 蓝紫光晕 */
+  /* 全息主按钮 — 浅色主题保持相同 Gemini hue，仅改变 edge / shadow */
   --primary-button-border: rgba(148, 163, 184, 0.55);
-  --primary-button-hover-border: rgba(59, 130, 246, 0.6);
-  --primary-button-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.6), 0 4px 15px rgba(59, 130, 246, 0.25);
-  --primary-button-hover-shadow: inset 0 1px 3px rgba(255, 255, 255, 0.9), 0 6px 22px rgba(99, 102, 241, 0.35);
+  --primary-button-hover-border: color-mix(in srgb, var(--google-blue) 60%, transparent);
+  --primary-button-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.6), 0 4px 15px color-mix(in srgb, var(--google-blue) 25%, transparent);
+  --primary-button-hover-shadow: inset 0 1px 3px rgba(255, 255, 255, 0.9), 0 6px 22px color-mix(in srgb, var(--google-blue) 30%, transparent);
   --primary-button-text-shadow: none;
   /* 弹窗背景 */
   --dialog-bg: rgba(255, 255, 255, 0.92);
