@@ -12,6 +12,7 @@ import {
   createInitialSplitLayout,
   findPaneForSession,
   pruneAssignments,
+  remapRemovedChildrenToDisconnectedRoots,
   selectPaneInLayout,
   setSplitRatioInLayout,
   splitPaneInLayout,
@@ -76,51 +77,6 @@ function loadInitialWorkspaceLayout(): SplitLayoutState | null {
   } catch {
     return null;
   }
-}
-
-/**
- * 父容器明确断开时，运行时子会话（Local Shell / SSH channel）会被销毁，但
- * 离线根会话配置仍然存在。仅在根会话已经 disconnected 时把 Pane 从旧 child ID
- * 回退到稳定 root ID；关闭单个 child 且父容器仍在线时不改变原有 Pane 清理语义。
- */
-function remapRemovedChildrenToDisconnectedRoots(
-  state: SplitLayoutState,
-  validSessionIds: ReadonlySet<string>,
-  disconnectedRootIds: ReadonlySet<string>,
-  stableSessionIds: ReadonlyMap<string, string>,
-): SplitLayoutState {
-  let changed = false;
-  const assignments = { ...state.assignments };
-  const paneIds = collectPaneIds(state.root);
-  // A root Session may appear in only one Pane. Prefer preserving the selected
-  // Pane when several runtime children of the same container disappear together.
-  const orderedPaneIds = [
-    state.selectedPaneId,
-    ...paneIds.filter(paneId => paneId !== state.selectedPaneId),
-  ];
-  const occupiedStableIds = new Set(
-    Object.values(assignments).filter(
-      (sessionId): sessionId is string => Boolean(sessionId && validSessionIds.has(sessionId)),
-    ),
-  );
-
-  for (const paneId of orderedPaneIds) {
-    const assigned = assignments[paneId];
-    if (!assigned || validSessionIds.has(assigned)) continue;
-    const stableId = stableSessionIds.get(assigned);
-    if (
-      stableId
-      && stableId !== assigned
-      && validSessionIds.has(stableId)
-      && disconnectedRootIds.has(stableId)
-      && !occupiedStableIds.has(stableId)
-    ) {
-      assignments[paneId] = stableId;
-      occupiedStableIds.add(stableId);
-      changed = true;
-    }
-  }
-  return changed ? { ...state, assignments } : state;
 }
 
 export function SplitLayoutProvider({ children }: { children: ReactNode }) {

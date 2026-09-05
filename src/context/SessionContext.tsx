@@ -500,7 +500,6 @@ interface SessionContextValue {
   openChannel: (parentSessionId: string, elevated?: boolean) => Promise<string | null>;
   /** 关闭单个子 channel */
   closeChannel: (channelId: string, parentId: string) => Promise<void>;
-  getTabs: () => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   /** 订阅 TX 通知（多监听者；网络调试对端 TX 显示用），返回取消订阅函数 */
@@ -943,15 +942,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [state.tabs]);
 
-  const getTabs = useCallback(async () => {
-    try {
-      const tabs = await invoke<TabInfo[]>("get_tabs");
-      dispatch({ type: "SET_TABS", tabs });
-    } catch (e) {
-      // tabs may not exist yet, ignore
-    }
-  }, []);
-
   const openChannel = useCallback(async (parentSessionId: string, elevated = false): Promise<string | null> => {
     try {
       const channelId = await invoke<string>("open_channel", {
@@ -967,15 +957,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const closeChannel = useCallback(async (channelId: string, parentId: string) => {
     const resetCounter = !tabsRef.current.some(tab => tab.parentId === parentId && tab.id !== channelId);
-    // 子会话关闭是用户明确动作：先从 UI 移除，避免等待 PTY/helper 回收时看起来“没反应”。
-    dispatch({ type: "REMOVE_CHILD", id: channelId, parentId });
     try {
+      // 不再乐观删除 child：若后端关闭失败，保留完整 Tab/Pane 状态供用户重试。
+      // 后端成功时通常会先 emit channel-closed；这里再做一次幂等 REMOVE_CHILD，
+      // 覆盖“后端已清理但没有再次 emit”的关闭/历史终端路径。
       await invoke("close_channel", { sessionId: channelId, parentId, resetCounter });
+      dispatch({ type: "REMOVE_CHILD", id: channelId, parentId });
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `关闭终端失败: ${e}` });
-      await getTabs();
     }
-  }, [getTabs]);
+  }, []);
 
   const clearError = useCallback(() => dispatch({ type: "SET_ERROR", error: null }), []);
 
@@ -1587,7 +1578,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       openChannel,
       closeChannel,
-      getTabs,
       onSessionData,
       onDataSent,
       subscribeDataSent,

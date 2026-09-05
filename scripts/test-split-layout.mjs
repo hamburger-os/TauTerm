@@ -8,6 +8,7 @@ import {
   createInitialSplitLayout,
   findPaneForSession,
   pruneAssignments,
+  remapRemovedChildrenToDisconnectedRoots,
   setSplitRatioInLayout,
   splitPaneInLayout,
 } from "../src/core/split-layout.ts";
@@ -162,5 +163,49 @@ assert.equal(parsePersistedWorkspaceLayout(JSON.stringify({
   assignments: { "dup-p1": "same-session", "dup-p2": "same-session" },
   selectedPaneId: "dup-p1",
 })), null);
+
+// Runtime child disappears because its parent container disconnected:
+// preserve the selected Pane by remapping child -> stable disconnected root.
+let disconnectedWorkspace = createInitialSplitLayout("dp1");
+disconnectedWorkspace = activateSessionInLayout(disconnectedWorkspace, "shell-child-1");
+disconnectedWorkspace = remapRemovedChildrenToDisconnectedRoots(
+  disconnectedWorkspace,
+  new Set(["shell-root"]),
+  new Set(["shell-root"]),
+  new Map([["shell-child-1", "shell-root"]]),
+);
+assert.equal(disconnectedWorkspace.assignments.dp1, "shell-root");
+
+// Multiple children of the same disconnected root may not duplicate the root across Panes.
+// The selected Pane wins the durable root assignment; the other stale child is later pruned.
+let duplicateRuntime = createInitialSplitLayout("dr1");
+duplicateRuntime = activateSessionInLayout(duplicateRuntime, "shell-child-a");
+duplicateRuntime = splitPaneInLayout(duplicateRuntime, "dr1", "right", "dr2", "drs1");
+duplicateRuntime = activateSessionInLayout(duplicateRuntime, "shell-child-b");
+assert.equal(duplicateRuntime.selectedPaneId, "dr2");
+duplicateRuntime = remapRemovedChildrenToDisconnectedRoots(
+  duplicateRuntime,
+  new Set(["shell-root"]),
+  new Set(["shell-root"]),
+  new Map([
+    ["shell-child-a", "shell-root"],
+    ["shell-child-b", "shell-root"],
+  ]),
+);
+duplicateRuntime = pruneAssignments(duplicateRuntime, new Set(["shell-root"]));
+assert.equal(duplicateRuntime.assignments.dr1, null);
+assert.equal(duplicateRuntime.assignments.dr2, "shell-root");
+
+// Closing only one child while the parent is still connected must not remap to the root.
+let connectedParentWorkspace = createInitialSplitLayout("cp1");
+connectedParentWorkspace = activateSessionInLayout(connectedParentWorkspace, "ssh-child-1");
+connectedParentWorkspace = remapRemovedChildrenToDisconnectedRoots(
+  connectedParentWorkspace,
+  new Set(["ssh-root"]),
+  new Set(),
+  new Map([["ssh-child-1", "ssh-root"]]),
+);
+connectedParentWorkspace = pruneAssignments(connectedParentWorkspace, new Set(["ssh-root"]));
+assert.equal(connectedParentWorkspace.assignments.cp1, null);
 
 console.log("split-layout: runtime and persisted workspace invariants preserved");

@@ -48,6 +48,8 @@ export interface PluginSessionStoreOptions<TState> {
    * 缺省 false = 断开时执行 init 返回的清理并注销会话（重连时重注册）。
    */
   keepAlive?: boolean;
+  /** 会话永久删除时释放插件自有的模块级资源/注册表。 */
+  onRelease?: () => void;
   /** 会话断开时的状态处理（返回补丁）；缺省：keepAlive ? 原样保留 : 清空重建 */
   onSessionDisconnected?: (state: TState) => Partial<TState> | undefined;
   /**
@@ -69,6 +71,8 @@ const stores = new Map<string, unknown>();
 const subscribers = new Map<string, Set<() => void>>();
 /** init 返回的清理函数（keepAlive=false 的会话断开时执行） */
 const cleanupFns = new Map<string, () => void>();
+/** 永久删除时执行；与 sessionOpts 分离，确保 keepAlive=false 会话断开后仍可释放插件资源。 */
+const releaseFns = new Map<string, () => void>();
 const apiCache = new Map<string, SessionStoreApi<unknown>>();
 const sessionOpts = new Map<string, PluginSessionStoreOptions<unknown>>();
 /** 注册代际：断连后重注册递增，用于废弃旧代在途的 init/getStatus 结果 */
@@ -214,6 +218,9 @@ function ensureSession<TState>(
   const gen = (generations.get(sessionId) ?? 0) + 1;
   generations.set(sessionId, gen);
   sessionOpts.set(sessionId, options as PluginSessionStoreOptions<unknown>);
+  if (options.onRelease) {
+    releaseFns.set(sessionId, options.onRelease);
+  }
   // 已有 store 不复建：断连补丁（记录标 failed、保留参数/历史）跨断连保留
   if (!stores.has(sessionId)) {
     stores.set(sessionId, options.createState());
@@ -250,6 +257,12 @@ function ensureSession<TState>(
 export function releaseSessionStore(sessionId: string): void {
   cleanupFns.get(sessionId)?.();
   cleanupFns.delete(sessionId);
+  try {
+    releaseFns.get(sessionId)?.();
+  } catch (error) {
+    console.warn(`[usePluginSessionStore] 释放插件资源失败 (${sessionId}):`, error);
+  }
+  releaseFns.delete(sessionId);
   sessionOpts.delete(sessionId);
   clearSessionWatchdogs(sessionId);
   stores.delete(sessionId);
