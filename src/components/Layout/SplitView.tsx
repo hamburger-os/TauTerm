@@ -424,7 +424,7 @@ export default function SplitView({
         }}
       />
 
-      {/* Pane Chrome：轻量标题栏、右键关闭入口与边缘分屏入口；Workspace root 独占外框。 */}
+      {/* Pane Header Layer：轻量标题栏、右键关闭入口与边缘分屏入口；Workspace root 独占外框。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
         const sessionId = layout.assignments[paneId] ?? null;
         const tab = sessionId ? tabsById.get(sessionId) : undefined;
@@ -444,7 +444,7 @@ export default function SplitView({
             ? styles.lifecycleConnecting
             : styles.lifecycleDisconnected;
         return (
-          <div key={`chrome-${paneId}`} className={styles.paneChrome} style={rectStyle(rect)}>
+          <div key={`header-layer-${paneId}`} className={styles.paneHeaderLayer} style={rectStyle(rect)}>
             {paneCount > 1 && (
               <div
                 className={`${styles.paneHeader} ${showSelection ? styles.selectedHeader : ""}`}
