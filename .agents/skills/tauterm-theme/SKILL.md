@@ -1,30 +1,30 @@
 ---
 name: tauterm-theme
-description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google ambient spectrum, clear-glass physics, theme tint veils, structural panels, control states, split/session presentation, motion, and rendering-performance rules."
+description: "Single source of truth for TauTerm Liquid Glass UI, four-color ambient spectrum, clear-glass physics, theme tint veils, structural panels, control states, split/session presentation, motion, and rendering-performance rules."
 license: MIT
 metadata:
   author: tauterm
-  version: "8.9"
+  version: "9.0"
 ---
 
-# TauTerm Liquid Glass v8.9 — 唯一主题规范源
+# TauTerm Liquid Glass v9.0 — 唯一主题规范源
 
-> **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
+> **SSOT**：TauTerm 的主题、材质、四色环境 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
 
 ## 1. 设计模型
 
 视觉系统由四个正交层组成：
 
-1. **Gemini Ambient**：提供低频颜色与流动。
+1. **四色环境 Ambient**：提供低频颜色与流动。
 2. **Clear Liquid Glass Physics**：所有主题共享的透明玻璃本体。
-3. **Theme Veil**：Google Glow / Obsidian / Frosted 只在同一玻璃上覆盖透明 / 黑 / 白薄膜。
+3. **Theme Veil**：炫彩流光 / Obsidian / Frosted 只在同一玻璃上覆盖透明 / 黑 / 白薄膜。
 4. **Performance Mode**：只改变 Ambient 动态成本与小面积 backdrop sampling；不改变材质身份、四色完整度或主题关系。
 
 核心原则：
 
 - **先有同一种玻璃，再有主题染膜。**
-- Google Glow 不是深蓝玻璃；它是三主题里最清、最亮、最透的一层。
+- Spectrum Flow 不是深蓝玻璃；它是三主题里最清、最亮、最透的一层。
 - Obsidian 不是另一套厚重黑面板；它是同一透明玻璃 + 黑色 veil。
 - Frosted 不是实心白卡片；它是同一透明玻璃 + 乳白 veil。
 - 大面积工作区不依赖实时 backdrop blur。
@@ -34,14 +34,14 @@ metadata:
 
 ---
 
-## 2. Canonical Gemini Spectrum
+## 2. Canonical 四色环境 Spectrum
 
 唯一品牌色：
 
-- `--google-red: #FE3734`
-- `--google-yellow: #F4BA00`
-- `--google-green: #02BE66`
-- `--google-blue: #0B8AFF`
+- `--spectrum-red: #FE3734`
+- `--spectrum-yellow: #F4BA00`
+- `--spectrum-green: #02BE66`
+- `--spectrum-blue: #0B8AFF`
 
 二维空间固定：
 
@@ -50,9 +50,9 @@ metadata:
 - 右下 Green
 - 右上 Blue
 
-`--google-brand-gradient` / `--google-brand-gradient-soft` 必须一次同时呈现完整四色。Purple / Orange 只能由四色插值产生。
+`--spectrum-gradient` / `--spectrum-gradient-soft` 必须一次同时呈现完整四色。Purple / Orange 只能由四色插值产生。
 
-**四色完整度是不变量**：3 themes × 3 performance modes 都必须同时保留 Red / Yellow / Green / Blue 四个锚点。性能档只能改变运动、采样和合成成本，禁止删色、合并成单色场或让任一颜色在正常窗口中不可见。
+**四色完整度是不变量**：3 themes × 2 performance modes 都必须同时保留 Red / Yellow / Green / Blue 四个锚点。性能档只能改变运动、采样和合成成本，禁止删色、合并成单色场或让任一颜色在正常窗口中不可见。
 
 ---
 
@@ -62,12 +62,12 @@ metadata:
 
 所有主题必须共用：
 
-- `--liquid-clear-chrome-fill`
+- `--liquid-clear-shell-fill`
 - `--liquid-clear-panel-fill`
 - `--liquid-clear-content-fill`
 - `--liquid-clear-card-fill`
 - `--liquid-clear-control-fill`
-- `--liquid-specular-chrome-fill`
+- `--liquid-specular-shell-fill`
 - `--liquid-specular-panel-fill`
 - `--liquid-specular-content-fill`
 
@@ -77,7 +77,7 @@ metadata:
 
 每个主题用以下 veil 建立视觉身份；允许对 border/shadow 做最低限度的对比补偿：
 
-- `--theme-chrome-veil`
+- `--theme-shell-veil`
 - `--theme-panel-veil`
 - `--theme-content-veil`
 - `--theme-content-active-veil`
@@ -99,20 +99,20 @@ Surface 的背景组合顺序固定为：
 
 ## 4. Theme Identity
 
-### Google Glow / 炫彩流光
+### Spectrum Flow / 炫彩流光
 
 - 三主题中 **veil 最弱**，Ambient 本身与其它主题完全同源、同强度。
 - Ambient 能明显穿过 Sidebar / SendBar / Dialog。
 - Structural Panel 不应看起来像红蓝绿黄实心色块；颜色来自背后的 Ambient。
 - 保持中性清透，不加 Navy Blue 固有底色。
 - 目标是 airy / luminous / clear / prismatic。
-- Google Glow 与 Obsidian 必须在正常截图里一眼能区分，不接受“只是稍微亮一点”的差异。
+- Spectrum Flow 与 Obsidian 必须在正常截图里一眼能区分，不接受“只是稍微亮一点”的差异。
 
 ### Obsidian / 黑曜石
 
-- 与 Google Glow 完全相同的 clear physics。
+- 与 Spectrum Flow 完全相同的 clear physics。
 - 只通过更厚的黑色 veil 建立身份。
-- Panel/Chrome 必须明显更黑，Content/Control 可以更实，以保证黑曜石的深邃感。
+- Panel/Shell Surface 必须明显更黑，Content/Control 可以更实，以保证黑曜石的深邃感。
 - 黑膜仍要保留少量 Ambient 和 specular，不能退化成完全不透明的黑卡片。
 
 ### Frosted / 白霜
@@ -124,7 +124,7 @@ Surface 的背景组合顺序固定为：
 
 ---
 
-## 5. Gemini Ambient Flow
+## 5. 四色环境 Ambient Flow
 
 始终使用两个 oversized Field，**所有主题、所有性能档都保留这两层**：
 
@@ -135,14 +135,13 @@ Ambient 的几何、颜色和强度是跨主题共享源；主题不得定义自
 
 动态档只动画 transform：translate + 轻 rotation + 轻 scale。
 
-- Balanced：两层四色都保留，但只动画 Field A（Red + Green）；Field B（Blue + Yellow）静态。持续 transform 合成层从 2 个降到 1 个，约 22s 的低频路径
-- Quality：Field A / Field B 两层都独立动画，约 13s / 16s；横向路径可达约 ±18–21vw、纵向约 ±10–13vh，两组对角光场运动中应明显交叠
-- 为了放大运动感，优先把色团中心向内收、让 gradient 边缘在 raster 边界前归零，再扩大 transform 路径；**不得仅为了飘得更远而扩大 Ambient raster layer**
-- 正常观察 3–5 秒必须能感知 Quality / Balanced 的位置变化
-- Compat：两层都保留，完整四色同时可见，但静态
+- **效果优先 / Quality**：Field A / Field B 两层都独立动画，约 13s / 16s；横向路径可达约 ±18–21vw、纵向约 ±10–13vh。色团使用更大的柔光半径，两组对角光场运动中必须出现明显交叠
+- **性能优先 / Performance**：两层都保留完整四色，但全部静态，不产生持续 Ambient transform 合成
+- 为了放大运动感，优先把色团中心向内收、适度增大柔光半径、让 gradient 边缘在 raster 边界前归零，再扩大 transform 路径；**不得仅为了飘得更远而扩大 Ambient raster layer**
+- 正常观察 3–5 秒必须能感知效果优先的明显位移与交叠
 - layout drag / resize 时暂停纯装饰 Ambient，释放后恢复
 - hidden 时暂停；仅 unfocused 不暂停
-- reduced motion 停止装饰动画；设置页必须实时显示系统 motion 偏好，不能让用户在 Quality/Balanced 静止时不知道原因
+- reduced motion 停止效果优先的装饰动画；设置页必须实时显示系统 motion 偏好，不能让用户在效果优先静止时不知道原因
 
 禁止 `filter: blur()`、`mix-blend-mode`、持续 background animation、常驻 `will-change`。
 
@@ -150,12 +149,12 @@ Ambient 的几何、颜色和强度是跨主题共享源；主题不得定义自
 
 ## 6. Surface 体系
 
-### Small Chrome — `.liquid-glass`
+### Small Shell Surface — `.liquid-glass`
 
-Toolbar、Settings、Dialog、Command Palette 等小面积 chrome。
+Toolbar、Settings、Dialog、Command Palette 等小面积 shell surface。
 
 - 可按 performance 使用 backdrop sampling。
-- 使用 Clear Glass Physics + `--theme-chrome-veil`。
+- 使用 Clear Glass Physics + `--theme-shell-veil`。
 
 ### Structural Panel — `.liquid-glass-panel`
 
@@ -307,7 +306,7 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 
 ---
 
-## 10. Gemini Prism Button
+## 10. 四色棱镜按钮
 
 高价值 Primary / Selected 可使用完整四色 Prism。
 
@@ -337,7 +336,7 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 
 ## 12. Backdrop / 性能红线
 
-`backdrop-filter` 只允许 Small Chrome / Float 在 `src/styles/global.css` 使用。
+`backdrop-filter` 只允许 Small Shell Surface / Float 在 `src/styles/global.css` 使用。
 
 禁止：
 
@@ -355,32 +354,27 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 
 ## 13. Performance
 
-三个档位是一条单一维度：**效果丰富度 / GPU 成本**。它们不得改变主题身份，也不得删减四色。
+视觉性能只保留两个明确档位：**效果优先 / Quality** 与 **性能优先 / Performance**。禁止重新引入没有显著 GPU/流畅度收益的中间档。
 
-Quality：
+效果优先 / Quality：
 - 2 dynamic Ambient Fields，完整四色
-- 两层独立大范围 transform，允许红/绿与蓝/黄光场在中心区域交叠
-- Small Chrome / Float 使用更高 blur sampling 与 saturate
+- 两层独立大范围 transform，红/绿与蓝/黄光场在中心区域明显交叠
+- 色团尺寸比旧实现更大，但 Ambient raster layer 尺寸保持不变
+- Small Shell Surface / Float 使用更高 blur sampling 与 saturate
 - 大面积 Structural / Content 仍然不做 backdrop sampling
+- 目标：最大化液态玻璃层次与流动感
 
-Balanced：
-- 2 Ambient Fields、完整四色，但只有 Field A 动态，Field B 静态
-- 默认约 22s motion；持续 transform 合成层数量必须低于 Quality
-- Small Chrome / Float 使用约 6–8px 的更轻 sampling
-- 默认推荐档；必须在实现成本上与 Quality 有结构性差异，而不是只改 animation duration
-
-Compat：
+性能优先 / Performance：
 - 2 static Ambient Fields，完整四色同时可见
 - backdrop blur = 0，saturate sampling = 0
-- 停止纯装饰 Ambient 合成动画，这是兼容档最主要的 GPU 降级来源之一
-- **所有主要 surface 退化为单层 flat translucent fill**：Chrome / Panel / Content / Control / Card / Float 分别只引用一个 `--compat-*-fill`
-- Compat 不叠 specular + clear + veil 多层背景，不保留大面积 glass shadow；现有 1px 结构 border 可以保留
-- flat translucent fill 必须足够实，不能让后层文字形成清晰重影；Google Glow 仍可透出少量四色，Obsidian / Frosted 只通过黑/白基底和 fill 区分
-- Compat 必须感知上比 Balanced 更稳、更实，绝不能出现“关闭 blur 后反而更透明、更玻璃、文字重叠更严重”的倒挂
-- Compat 是最低成本的半透明降级材质，不要求维持 Quality/Balanced 的高光层次
+- 完全停止 Ambient 装饰动画
+- **所有主要 surface 退化为单层 flat translucent fill**：Shell Surface / Panel / Content / Control / Card / Float 分别只引用一个 `--performance-*-fill`
+- 不叠 specular + clear + veil 多层背景，不保留大面积 glass shadow；现有 1px 结构 border 可以保留
+- flat translucent fill 必须足够实，不能让后层文字形成清晰重影；炫彩流光仍可透出少量四色，黑曜石 / 白霜只通过黑/白基底和 fill 区分
+- 目标：最低持续 GPU 开销与最高交互流畅度
 
 交互降载：
-- Sidebar / SendBar / Split divider 等布局拖动期间，暂时关闭 Small Chrome / Float backdrop sampling，并暂停 Ambient 装饰动画
+- Sidebar / SendBar / Split divider 等布局拖动期间，暂时关闭 Small Shell Surface / Float backdrop sampling，并暂停 Ambient 装饰动画
 - mouseup / cancel 后立即恢复当前性能档材质与动画状态
 
 ---
@@ -393,7 +387,7 @@ rg 'transition:\s*all' src --glob '*.css'
 rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg -U ':disabled[^\{]*\{[^\}]*opacity\s*:\s*0\.' src --glob '*.css'
 rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-float|liquid-glass' src --glob '*.tsx'
-rg 'theme-(chrome|panel|content|card|float|control).*veil|compat-(chrome|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
+rg 'theme-(shell surface|panel|content|card|float|control).*veil|performance-(shell surface|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius' src/components/Layout src/components/Terminal
 rg 'liquid-glass-content' src/components/Layout/SplitView.tsx src/components/Terminal/TerminalView.tsx
 rg 'selectedHeader|content-divider|scrollbar-(button|corner)|requestAnimationFrame|onMouseDownCapture|container-name' src/components/Layout src/components/Terminal src/styles
@@ -409,7 +403,7 @@ npm run build
 
 至少覆盖：
 
-- 3 themes × 3 performance modes
+- 3 themes × 2 performance modes
 - Settings / ConnectDialog
 - 左右 Sidebar 同时可见
 - SendBar Basic / Command / Auto Reply / Script
@@ -437,10 +431,10 @@ npm run build
 - **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮，横纵滚动条交汇处没有白色 corner 方块**
 - **右键未选中 Pane Header 或已连接 Terminal 时都不会先切换 active Session；Close Pane 菜单只从 Header 出现**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
-- **Quality / Balanced 正常观察 3–5 秒能看出 Ambient 明显位移；Quality 两层独立运动并可出现明显交叠，Balanced 只有一层持续运动**
-- **系统 reduced-motion 生效时，设置页必须明确显示“系统动态效果已关闭/减少动态效果”，并解释 Quality/Balanced 因此静止**
-- **Compat 保留两层完整四色但静态；主要 surface 是单层半透明纯色，没有 backdrop、specular 多层和大面积 glass shadow**
-- **Compat 的后层文字不能形成清晰重影，也不能出现“兼容档最透明”**
+- **效果优先正常观察 3–5 秒能看出两层 Ambient 明显位移与交叠；色团更大但 raster layer 不扩大**
+- **系统 reduced-motion 生效时，设置页必须明确显示“系统动态效果已关闭/减少动态效果”，并解释效果优先因此静止**
+- **性能优先保留两层完整四色但静态；主要 surface 是单层半透明纯色，没有 backdrop、specular 多层和大面积 glass shadow**
+- **性能优先的后层文字不能形成清晰重影，持续 GPU 开销必须显著低于效果优先**
 
 ## 实现源文件
 
@@ -448,7 +442,7 @@ npm run build
 - `src/styles/global.css`
 - `src/context/ThemeContext.tsx`
 - `src/App.tsx`
-- `src/components/Layout/GoogleGlowBackground.tsx`
+- `src/components/Layout/SpectrumGlowBackground.tsx`
 - `src/components/Settings/panels/AppearanceSettings.tsx`
 - `src/i18n/locales/zh-CN.json`
 - `src/i18n/locales/en-US.json`
