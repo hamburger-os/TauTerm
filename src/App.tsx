@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "framer-motion";
 import AppShell from "./components/Layout/AppShell";
-import GoogleGlowBackground from "./components/Layout/GoogleGlowBackground";
+import SpectrumAmbientBackground from "./components/Layout/SpectrumAmbientBackground";
 import Toolbar from "./components/Layout/Toolbar";
 import SessionSidebar from "./components/Layout/SessionSidebar";
 import StatusBar from "./components/Layout/StatusBar";
@@ -341,8 +341,8 @@ function AppInner() {
 
   return (
     <div className={`app-root ${isResizingSidebar || isResizingRightSidebar || isResizingSendBar ? "ui-resizing" : ""}`}>
-      {/* Shared Google Ambient Field 背景层 (z-index: 0) */}
-      <GoogleGlowBackground />
+      {/* Shared four-color ambient background (z-index: 0) */}
+      <SpectrumAmbientBackground />
 
       {/* 顶栏 (z-index: 10) */}
       <Toolbar onAction={handleToolbarAction} isMaximized={isMaximized} />
