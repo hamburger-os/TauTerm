@@ -145,7 +145,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
    4. Liquid Glass 材质分层
    chrome: 小面积导航/工具/弹窗，可轻量 backdrop sampling
    content: 终端/文件/数据主体，稳定半透明表面，不使用 backdrop-filter
-   control: SendBar/参数编辑等交互工作台，稳定控件对比度且不使用 backdrop-filter
+   control: 高密度参数编辑区，稳定控件对比度且不使用 backdrop-filter
    accent: 小型交互强调，靠 tint + rim light，不常驻模糊
    ========================================== */
 .liquid-glass {
@@ -185,8 +185,8 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
   background: var(--content-surface-inactive);
 }
 
-/* 高密度交互工作台：SendBar / 参数表单 / 编辑工具。
-   比 content 更稳定，但仍不做 backdrop-filter。 */
+/* 高密度交互工作台：参数表单 / 编辑工具。
+   SendBar / TargetBar 外壳使用 Structural Panel；Control 只用于确实需要更稳定底色的内部区域。 */
 .liquid-control-surface {
   /* Control Deck 在动态 Ambient 上必须建立自己的稳定对比度环境。
      通过局部重绑共享 control token，让所有标准 button/input/toggle 自动增强，
