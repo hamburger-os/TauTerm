@@ -1,9 +1,13 @@
 # TauTerm Theme Skill — Source References
 
-Key source files referenced by the tauterm-theme skill:
+This directory is non-normative. The **only rules source** is `../SKILL.md`.
 
-- [src/styles/tokens.css](../../../src/styles/tokens.css) — All CSS custom properties (Level 1 shared constants + Level 2 per-theme tokens)
-- [src/styles/global.css](../../../src/styles/global.css) — Global utility classes (`.liquid-glass`, `.liquid-glass-button`, `.liquid-glass-input`, `.liquid-primary-button`, `.glow-orb`) and keyframes
-- [src/context/ThemeContext.tsx](../../../src/context/ThemeContext.tsx) — Theme provider with legacy migration (neon-dark/ocean/sunset → google-glow)
-- [src/components/Layout/GoogleGlowBackground.tsx](../../../src/components/Layout/GoogleGlowBackground.tsx) — Dynamic orb background component
-- [src/assets/icons/prompts.md](../../../src/assets/icons/prompts.md) — Icon generation prompts for AI-generated liquid glass PNG icons
+Implementation references:
+
+- [src/styles/tokens.css](../../../src/styles/tokens.css) — Theme + visual-performance tokens
+- [src/styles/global.css](../../../src/styles/global.css) — Material classes, lightweight ambient glow, compatibility/motion fallbacks
+- [src/context/ThemeContext.tsx](../../../src/context/ThemeContext.tsx) — Theme, performance tier, and motion state
+- [src/components/Layout/GoogleGlowBackground.tsx](../../../src/components/Layout/GoogleGlowBackground.tsx) — Transform-only radial-gradient ambient glow
+- [src/components/Terminal/TerminalView.tsx](../../../src/components/Terminal/TerminalView.tsx) — Terminal visibility/paint policy
+- [src/components/Layout/SplitView.tsx](../../../src/components/Layout/SplitView.tsx) — Per-pane content surface assignment
+- [src/assets/icons/prompts.md](../../../src/assets/icons/prompts.md) — Icon generation prompts
