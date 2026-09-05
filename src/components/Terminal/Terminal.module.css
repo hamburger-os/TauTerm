@@ -40,11 +40,36 @@
   height: 100%;
 }
 
+/* 单视图标签页保持 xterm 实例挂载，但非活跃项在淡出后 visibility:hidden，
+   避免隐藏终端继续参与 paint/compositing。 */
+.stackedTerminalWrapper {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  contain: paint;
+  transition:
+    opacity 120ms linear,
+    visibility 0s linear 120ms;
+}
+
+.stackedTerminalActive {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
 .dockedTerminalWrapper {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: left 80ms linear, top 80ms linear, width 80ms linear, height 80ms linear, opacity 80ms linear;
+  transition:
+    left 80ms linear,
+    top 80ms linear,
+    width 80ms linear,
+    height 80ms linear,
+    opacity 80ms linear,
+    border-color var(--transition-fast);
 }
 
 .dockedTerminalBody {
