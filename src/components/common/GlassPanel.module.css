@@ -1,18 +1,19 @@
-/* 液态玻璃面板 v3 */
+/* 液态玻璃面板 v4 */
 
 .panel {
   border-radius: var(--radius-lg);
-  transition: border-color var(--transition-fast),
-    background var(--transition-fast);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 /* 变体 */
 .default {
-  /* 使用全局 .liquid-glass 类的完整效果 */
+  /* 材质由 GlassPanel.surface 映射到全局语义类。 */
 }
 
 .elevated {
-  /* 在 liquid-glass 基础上增强阴影和边框 */
+  /* 在当前 surface 基础上增强边缘层次。 */
   box-shadow: var(--glass-shadow-outer),
               inset 0 2px 0 0 var(--glass-border-top);
   border-color: var(--glass-border-hover);

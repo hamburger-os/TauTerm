@@ -1,4 +1,4 @@
-/* 新建会话对话框 v3 */
+/* 新建会话对话框 v4 */
 
 .overlay {
   z-index: var(--z-toast);
@@ -11,9 +11,9 @@
   overflow-y: auto;
   border-radius: var(--radius-xl);
   padding: 20px;
-  /* GPU compositing layer is provided by the .liquid-glass global class
-     (backface-visibility: hidden), which ensures backdrop-filter blur
-     texture is captured before the wrapper's animation plays. */
+  /* Chrome material is supplied by .liquid-glass. Keep this component
+     free of custom compositing hints so the global performance tier can
+     disable backdrop sampling in Compatibility mode. */
 }
 
 .title {
@@ -48,7 +48,12 @@
   cursor: pointer;
   font-size: var(--text-xs);
   flex-shrink: 0;
-  transition: all var(--transition-fast);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .backBtn:hover { color: var(--text-primary); }
@@ -71,7 +76,11 @@
   gap: 8px;
   padding: 12px 10px;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
   color: var(--text-primary);
   font-family: var(--font-ui);
   position: relative;
@@ -214,7 +223,12 @@
   font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .cancelBtn {

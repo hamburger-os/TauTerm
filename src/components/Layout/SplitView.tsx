@@ -331,11 +331,16 @@ export default function SplitView({
         const contentType = plugin?.manifest.content_type ?? "terminal";
         const isTerminal = Boolean(tab) && contentType === "terminal";
         const showTerminalPlaceholder = isTerminal && tab ? !terminalHasRuntime(tab) : false;
+        const selected = paneId === layout.selectedPaneId;
         const contentRect = insetPaneContent(rect, paneCount, viewSize.height);
+        const needsOwnSurface = !tab || !isTerminal || showTerminalPlaceholder;
+        const surfaceMaterial = needsOwnSurface
+          ? `liquid-glass-content ${selected ? "liquid-glass-content-active" : "liquid-glass-content-inactive"}`
+          : "";
         return (
           <div
             key={`surface-${paneId}`}
-            className={styles.paneSurface}
+            className={`${styles.paneSurface} ${surfaceMaterial}`}
             style={rectStyle(contentRect)}
             onMouseDown={() => onSelectPane(paneId)}
             onContextMenu={(e) => {

@@ -117,7 +117,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
       <div className={styles.centerZone}>
         {/* VSCode 风格命令搜索栏 — 点击打开命令面板 */}
         <div
-          className={styles.searchTrigger}
+          className={`${styles.searchTrigger} liquid-glass-accent`}
           onClick={() => handleClick("commands")}
           role="button"
           tabIndex={0}

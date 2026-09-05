@@ -1,4 +1,4 @@
-/* TauTerm Liquid Glass v3 全局样式 */
+/* TauTerm Liquid Glass v4 全局样式 */
 
 @import "./tokens.css";
 
@@ -60,83 +60,115 @@ body {
 }
 
 /* ==========================================
-   1. 不规则液体形状形变动画
+   1. 环境流光：预柔化 radial-gradient + transform-only 动画
+   不再使用超大 filter: blur / border-radius morph / mix-blend-mode。
    ========================================== */
-@keyframes morph {
-  0%   { border-radius: 40% 60% 70% 30% / 40% 40% 60% 50%; }
-  34%  { border-radius: 70% 30% 50% 50% / 30% 30% 70% 70%; }
-  67%  { border-radius: 100% 60% 60% 100% / 100% 100% 60% 60%; }
-  100% { border-radius: 40% 60% 70% 30% / 40% 40% 60% 50%; }
+@keyframes glow-drift-1 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(8vw, 7vh, 0) scale(1.10); }
 }
 
-/* ==========================================
-   2. 复杂的流光盘旋运动轨迹
-   ========================================== */
-@keyframes flow1 {
-  0%   { transform: translate(0%, 0%) rotate(0deg) scale(1); }
-  50%  { transform: translate(10vw, 10vh) rotate(180deg) scale(1.3); }
-  100% { transform: translate(0%, 0%) rotate(360deg) scale(1); }
-}
-@keyframes flow2 {
-  0%   { transform: translate(0%, 0%) rotate(0deg) scale(1.2); }
-  50%  { transform: translate(-10vw, 15vh) rotate(-180deg) scale(0.9); }
-  100% { transform: translate(0%, 0%) rotate(-360deg) scale(1.2); }
-}
-@keyframes flow3 {
-  0%   { transform: translate(0%, 0%) rotate(0deg) scale(0.9); }
-  50%  { transform: translate(15vw, -10vh) rotate(180deg) scale(1.4); }
-  100% { transform: translate(0%, 0%) rotate(360deg) scale(0.9); }
-}
-@keyframes flow4 {
-  0%   { transform: translate(0%, 0%) rotate(0deg) scale(1.1); }
-  50%  { transform: translate(-15vw, -15vh) rotate(-180deg) scale(0.8); }
-  100% { transform: translate(0%, 0%) rotate(-360deg) scale(1.1); }
+@keyframes glow-drift-2 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
+  50% { transform: translate3d(-8vw, 9vh, 0) scale(0.96); }
 }
 
-/* ==========================================
-   3. 流光光球基础样式
-   ========================================== */
+@keyframes glow-drift-3 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(0.98); }
+  50% { transform: translate3d(10vw, -7vh, 0) scale(1.08); }
+}
+
+@keyframes glow-drift-4 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.04); }
+  50% { transform: translate3d(-9vw, -8vh, 0) scale(0.97); }
+}
+
 .glow-orb {
   position: absolute;
-  filter: blur(var(--bg-orb-blur));
+  border-radius: 50%;
   opacity: var(--bg-orb-opacity);
-  mix-blend-mode: var(--bg-orb-blend);
-  will-change: transform, border-radius;
+  pointer-events: none;
+  transform-origin: center;
+}
+
+.glow-orb-blue {
+  background: radial-gradient(circle at 50% 50%, rgba(66, 133, 244, 0.78) 0%, rgba(66, 133, 244, 0.34) 32%, rgba(66, 133, 244, 0.10) 56%, transparent 74%);
+  animation: glow-drift-1 42s ease-in-out infinite;
+}
+
+.glow-orb-red {
+  background: radial-gradient(circle at 50% 50%, rgba(234, 67, 53, 0.72) 0%, rgba(234, 67, 53, 0.28) 34%, rgba(234, 67, 53, 0.08) 58%, transparent 75%);
+  animation: glow-drift-2 48s ease-in-out infinite;
+}
+
+.glow-orb-yellow {
+  background: radial-gradient(circle at 50% 50%, rgba(251, 188, 5, 0.68) 0%, rgba(251, 188, 5, 0.24) 34%, rgba(251, 188, 5, 0.07) 58%, transparent 75%);
+  animation: glow-drift-3 46s ease-in-out infinite;
+}
+
+.glow-orb-green {
+  background: radial-gradient(circle at 50% 50%, rgba(52, 168, 83, 0.72) 0%, rgba(52, 168, 83, 0.27) 34%, rgba(52, 168, 83, 0.08) 58%, transparent 75%);
+  animation: glow-drift-4 50s ease-in-out infinite;
+}
+
+/* Quality 只增加环境色存在感，不恢复昂贵的大半径实时 blur。 */
+html[data-performance="quality"] .glow-orb {
+  opacity: calc(var(--bg-orb-opacity) + 0.04);
+}
+
+/* Compatibility 保留品牌色氛围，但使用两个静态渐变光团。 */
+html[data-performance="compat"] .glow-orb {
+  animation: none;
+}
+html[data-performance="compat"] .glow-orb-red,
+html[data-performance="compat"] .glow-orb-yellow {
+  display: none;
+}
+
+html[data-motion="paused"] .glow-orb {
+  animation-play-state: paused;
+}
+
+html[data-motion="reduced"] .glow-orb {
+  animation: none;
 }
 
 /* ==========================================
-   4. 液态玻璃核心效果
+   4. Liquid Glass 材质分层
+   chrome: 小面积导航/工具/弹窗，可轻量 backdrop sampling
+   content: 终端/文件/数据主体，稳定半透明表面，不使用 backdrop-filter
+   accent: 小型交互强调，靠 tint + rim light，不常驻模糊
    ========================================== */
-/* WARNING: position: relative 为 ::before 噪点纹理提供定位上下文。
-   不可用于 position:absolute / position:fixed 的元素（会覆盖其定位）。
-   这些元素需在 CSS Module 中自行维护玻璃效果属性。 */
 .liquid-glass {
   position: relative;
-  background: var(--glass-fill);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
+  background: var(--glass-specular-fill), var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur-chrome)) saturate(var(--glass-blur-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur-chrome)) saturate(var(--glass-blur-saturate));
   border: 1px solid var(--glass-border-default);
-  border-top: 1px solid var(--glass-border-top);
-  border-left: 1px solid var(--glass-border-left);
-  box-shadow: var(--glass-shadow-outer),
-              var(--glass-shadow-inner);
-  /* Force GPU compositing for backdrop-filter: ensures blur texture is
-     pre-rendered as a GPU layer before any animation plays.
-     Does not permanently reserve GPU memory (unlike will-change). */
-  backface-visibility: hidden;
+  border-top-color: var(--glass-border-top);
+  border-left-color: var(--glass-border-left);
+  box-shadow: var(--glass-shadow-outer), var(--glass-shadow-inner);
 }
 
-/* SVG 噪点纹理叠加层，使用主题令牌控制不透明度 */
-.liquid-glass::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  /* baseFrequency 三套主题共享 0.8 (0.8/0.85/0.9 差异微乎其微) */
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-  opacity: var(--glass-noise-opacity);
-  pointer-events: none;
-  z-index: 0;
+.liquid-glass-content {
+  background: var(--content-surface);
+  border: 1px solid var(--content-border);
+  box-shadow: var(--content-shadow);
+}
+
+.liquid-glass-content-active {
+  background: var(--content-surface-active);
+  border-color: var(--content-border-active);
+}
+
+.liquid-glass-content-inactive {
+  background: var(--content-surface-inactive);
+}
+
+.liquid-glass-accent {
+  background: var(--glass-specular-fill), var(--glass-card-fill);
+  border: 1px solid var(--glass-border-default);
+  box-shadow: var(--glass-rim-light), inset 0 1px 0 var(--glass-border-top);
 }
 
 /* ==========================================
@@ -144,7 +176,7 @@ body {
    适用于嵌套在 .liquid-glass 表面内部的小型卡片元素
    ========================================== */
 .liquid-glass-card {
-  background: var(--glass-card-fill);
+  background: var(--glass-specular-fill), var(--glass-card-fill);
   border: 1px solid var(--glass-border-default);
   border-top: 1px solid var(--glass-border-top);
   border-left: 1px solid var(--glass-border-left);
@@ -180,7 +212,12 @@ body {
   border: 1px solid var(--glass-button-border);
   border-radius: var(--radius-md);
   box-shadow: var(--glass-button-shadow-inset);
-  transition: all var(--transition-button);
+  transition:
+    background-color var(--transition-button),
+    border-color var(--transition-button),
+    box-shadow var(--transition-button),
+    color var(--transition-button),
+    transform var(--transition-button);
 }
 
 .liquid-glass-button:hover {
@@ -246,7 +283,11 @@ body {
   box-shadow: var(--glass-input-shadow-inner);
   color: var(--text-primary);
   outline: none;
-  transition: all var(--transition-input);
+  transition:
+    background-color var(--transition-input),
+    border-color var(--transition-input),
+    box-shadow var(--transition-input),
+    color var(--transition-input);
 }
 
 .liquid-glass-input::placeholder {
@@ -346,22 +387,13 @@ body {
 }
 
 /* ==========================================
-   7. 炫彩流光背景位移动画
-   ========================================== */
-@keyframes gradient-shift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-/* ==========================================
    8. 炫彩流光主按钮 — 全息动态光效
    ========================================== */
 .liquid-primary-button {
   /* 全息渐变（由主题令牌控制） */
   background: var(--accent-holofoil-gradient);
-  background-size: 300% 300%;
-  animation: gradient-shift 4s ease infinite;
+  background-size: 180% 180%;
+  background-position: 0% 50%;
 
   /* 玻璃边框与高光 */
   border: 1px solid var(--primary-button-border);
@@ -373,9 +405,7 @@ body {
   text-shadow: var(--primary-button-text-shadow);
   font-weight: 600;
 
-  /* 玻璃模糊 */
-  backdrop-filter: blur(var(--blur-light));
-  -webkit-backdrop-filter: blur(var(--blur-light));
+  /* 小面积强调控件不常驻 backdrop blur，液态感来自边缘和交互位移。 */
 
   /* 布局 */
   display: inline-flex;
@@ -384,11 +414,16 @@ body {
   gap: 0.5rem;
 
   /* 过渡 */
-  transition: all var(--transition-button);
+  transition:
+    background-position 500ms ease,
+    border-color var(--transition-button),
+    box-shadow var(--transition-button),
+    transform var(--transition-button);
   cursor: pointer;
 }
 
 .liquid-primary-button:hover:not(:disabled) {
+  background-position: 100% 50%;
   border-color: var(--primary-button-hover-border);
   transform: translateY(-1px) scale(1.02);
   box-shadow: var(--primary-button-hover-shadow);
@@ -411,10 +446,7 @@ body {
   background: var(--glass-button-bg);
   border-color: var(--glass-button-border);
   color: var(--text-muted);
-  animation: none;
   box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -453,9 +485,9 @@ body {
    （Toast、ContextMenu、SearchBar 下拉、SendBar 历史下拉等）
    ========================================== */
 .liquid-glass-float {
-  background: var(--glass-fill);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-blur-saturate));
+  background: var(--glass-specular-fill), var(--glass-fill);
+  backdrop-filter: blur(var(--glass-blur-float)) saturate(var(--glass-blur-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur-float)) saturate(var(--glass-blur-saturate));
   border: 1px solid var(--glass-border-default);
   border-top: 1px solid var(--glass-border-top);
   border-left: 1px solid var(--glass-border-left);
@@ -495,7 +527,10 @@ body {
   border: 1px solid var(--glass-input-border);
   border-radius: var(--radius-full);
   box-shadow: var(--glass-input-shadow-inner);
-  transition: all var(--transition-button);
+  transition:
+    background-color var(--transition-button),
+    border-color var(--transition-button),
+    box-shadow var(--transition-button);
   flex-shrink: 0;
 }
 
@@ -509,7 +544,10 @@ body {
   height: 11px;
   border-radius: var(--radius-full);
   background: var(--text-muted);
-  transition: all var(--transition-button);
+  transition:
+    left var(--transition-button),
+    background-color var(--transition-button),
+    box-shadow var(--transition-button);
   box-shadow: var(--glass-rim-light);
 }
 
@@ -572,4 +610,45 @@ body {
   border-left: 1px solid var(--glass-border-left);
   border-radius: var(--radius-sm);
   box-shadow: var(--glass-rim-light);
+}
+
+
+/* ==========================================
+   16. 性能与动态降级
+   ========================================== */
+/* Drag-resize changes large surface geometry every pointer frame. Suspend
+   chrome sampling only for the gesture; the full material returns on mouseup. */
+.ui-resizing .liquid-glass,
+.ui-resizing .liquid-glass-float {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-performance="compat"] .liquid-glass,
+html[data-performance="compat"] .liquid-glass-float {
+  background: var(--glass-specular-fill), var(--glass-compat-fill);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 窗口失焦/隐藏时暂停所有 CSS animation，避免后台持续占用合成器。 */
+html[data-motion="paused"] *,
+html[data-motion="paused"] *::before,
+html[data-motion="paused"] *::after {
+  animation-play-state: paused !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass-button,
+  .liquid-glass-input,
+  .liquid-primary-button,
+  .liquid-glass-toggle > div,
+  .liquid-glass-toggle > div::after {
+    transition-duration: 80ms;
+  }
+
+  .liquid-primary-button:hover:not(:disabled),
+  .liquid-glass-button:hover {
+    transform: none;
+  }
 }
