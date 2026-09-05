@@ -141,7 +141,7 @@ impl LocalShellConfig {
         let (cwd, args) = if self.shell_kind == "wsl" {
             #[cfg(not(windows))]
             return Err(SessionError::ConnectionFailed {
-                reason: "WSL sessions are only available on Windows".into(),
+                reason: "Linux subsystem sessions are not available on this platform".into(),
             });
 
             #[cfg(windows)]
@@ -214,11 +214,11 @@ fn shell_display_label(executable: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or("Shell");
     match stem.to_ascii_lowercase().as_str() {
-        "pwsh" => "PowerShell 7".into(),
-        "powershell" => "Windows PowerShell".into(),
-        "cmd" => "CMD".into(),
-        "wsl" => "WSL".into(),
-        "nu" => "NuShell".into(),
+        "pwsh" => "Script Shell".into(),
+        "powershell" => "Script Shell (compat)".into(),
+        "cmd" => "Command Shell".into(),
+        "wsl" => "Linux Subsystem".into(),
+        "nu" => "Structured Shell".into(),
         _ => stem.to_string(),
     }
 }
@@ -471,42 +471,42 @@ fn detect_shell_presets() -> Vec<ShellPreset> {
 fn detect_windows_shell_presets() -> Vec<ShellPreset> {
     let mut presets = Vec::new();
 
-    push_resolved_native(&mut presets, "powershell-core", "pwsh.exe", "PowerShell 7");
+    push_resolved_native(&mut presets, "powershell-core", "pwsh.exe", "Script Shell");
     push_resolved_native(
         &mut presets,
         "windows-powershell",
         "powershell.exe",
-        "Windows PowerShell",
+        "Script Shell (compat)",
     );
-    push_resolved_native(&mut presets, "cmd", "cmd.exe", "CMD");
+    push_resolved_native(&mut presets, "cmd", "cmd.exe", "Command Shell");
 
     if let Some(wsl) = resolve_executable("wsl.exe") {
         presets.push(ShellPreset::wsl(
             "wsl-default".into(),
             wsl.clone(),
-            "WSL (default distribution)".into(),
+            "Linux subsystem (default distribution)".into(),
             String::new(),
         ));
-        for distro in detect_wsl_distributions(&wsl) {
+        for (index, distro) in detect_wsl_distributions(&wsl).into_iter().enumerate() {
             presets.push(ShellPreset::wsl(
                 format!("wsl-distro:{distro}"),
                 wsl.clone(),
-                format!("WSL · {distro}"),
+                format!("Linux subsystem · distribution {}", index + 1),
                 distro,
             ));
         }
     }
 
     if let Some(path) = first_existing_path(&git_bash_candidates()) {
-        presets.push(ShellPreset::native("git-bash", path, "Git Bash"));
+        presets.push(ShellPreset::native("git-bash", path, "POSIX Shell A"));
     }
     if let Some(path) = first_existing_path(&msys2_bash_candidates()) {
-        presets.push(ShellPreset::native("msys2-bash", path, "MSYS2 Bash"));
+        presets.push(ShellPreset::native("msys2-bash", path, "POSIX Shell B"));
     }
     if let Some(path) = first_existing_path(&cygwin_bash_candidates()) {
-        presets.push(ShellPreset::native("cygwin-bash", path, "Cygwin Bash"));
+        presets.push(ShellPreset::native("cygwin-bash", path, "POSIX Shell C"));
     }
-    push_resolved_native(&mut presets, "nushell", "nu.exe", "NuShell");
+    push_resolved_native(&mut presets, "nushell", "nu.exe", "Structured Shell");
 
     presets
 }
@@ -564,7 +564,7 @@ fn validate_wsl_path_syntax(path: &str) -> Result<(), String> {
     if path.is_empty() || path == "~" || path.starts_with("~/") || path.starts_with('/') {
         return Ok(());
     }
-    Err("WSL working directory must be an absolute Linux path or start with ~/".into())
+    Err("Linux subsystem working directory must be an absolute Linux path or start with ~/".into())
 }
 
 #[cfg(windows)]
@@ -573,13 +573,13 @@ fn detect_wsl_distributions(wsl: &Path) -> Vec<String> {
         Ok(output) if output.status.success() => output,
         Ok(output) => {
             log::warn!(
-                "WSL distribution discovery failed: {}",
+                "Linux subsystem distribution discovery failed: {}",
                 decode_windows_output(&output.stderr)
             );
             return vec![];
         }
         Err(error) => {
-            log::warn!("Unable to enumerate WSL distributions: {error}");
+            log::warn!("Unable to enumerate Linux subsystem distributions: {error}");
             return vec![];
         }
     };
@@ -607,7 +607,7 @@ fn validate_wsl_working_directory(
         .args(["--cd", cwd, "--exec", "/bin/sh", "-c", "exit 0"])
         .output()
         .map_err(|error| SessionError::ConnectionFailed {
-            reason: format!("Unable to validate WSL working directory: {error}"),
+            reason: format!("Unable to validate Linux subsystem working directory: {error}"),
         })?;
     if output.status.success() {
         return Ok(());
@@ -616,7 +616,7 @@ fn validate_wsl_working_directory(
     let reason = decode_windows_output(&output.stderr);
     Err(SessionError::ConnectionFailed {
         reason: if reason.trim().is_empty() {
-            format!("WSL working directory is unavailable: {cwd}")
+            format!("Linux subsystem working directory is unavailable: {cwd}")
         } else {
             format!(
                 "WSL working directory is unavailable: {cwd} ({})",
@@ -777,10 +777,10 @@ mod tests {
 
     #[test]
     fn derives_stable_shell_labels_from_executable_names() {
-        assert_eq!(shell_display_label(Path::new("pwsh.exe")), "PowerShell 7");
+        assert_eq!(shell_display_label(Path::new("pwsh.exe")), "Script Shell");
         assert_eq!(
             shell_display_label(Path::new("powershell.exe")),
-            "Windows PowerShell"
+            "Script Shell (compat)"
         );
         assert_eq!(shell_display_label(Path::new("cmd.exe")), "CMD");
         assert_eq!(
