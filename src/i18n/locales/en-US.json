@@ -31,7 +31,7 @@
     "homeDirectory": "User home directory",
     "wslWorkingDirectory": "Linux starting directory",
     "wslHomeDirectory": "Linux user home (~)",
-    "wslDefault": "WSL (default distribution)",
+    "wslDefault": "Linux subsystem (default distribution)",
     "chooseDirectory": "Choose directory",
     "arguments": "Arguments",
     "additionalArguments": "Additional arguments",
@@ -138,7 +138,7 @@
     "search": "Search in Terminal"
   },
   "theme": {
-    "googleGlow": "Google Glow",
+    "spectrumFlow": "Spectrum Flow",
     "obsidian": "Obsidian",
     "frosted": "Frosted",
     "switchTo": "Switch to"
@@ -567,7 +567,7 @@
     "switchToEn": "Switch to English",
     "switchToZh": "切换为中文",
     "theme": "Theme",
-    "themeGoogleGlow": "Google Glow",
+    "themeSpectrumFlow": "Spectrum Flow",
     "themeObsidian": "Obsidian",
     "themeFrosted": "Frosted",
     "fontSize": "Terminal Font Size",
@@ -597,7 +597,7 @@
     "shortcutsAction_toggleSidebar": "Toggle Left Sidebar",
     "shortcutsAction_toggleRightSidebar": "Toggle Right Panel",
     "shortcutsAction_refreshPorts": "Refresh Port List",
-    "securityNative": "Credentials are stored in the operating system secure store (Credential Manager / Keychain / Secret Service).",
+    "securityNative": "Credentials are stored in the secure storage provided by the operating system.",
     "securityFallback": "The OS secure store is unavailable. Unlock the Argon2id + AES-256-GCM vault before storing credentials.",
     "securityBackend": "Active backend",
     "securityBackendNativeKeyring": "Operating system secure store",
@@ -621,15 +621,13 @@
     "securityVaultLocked": "Encrypted credential vault locked.",
     "performanceMode": "Visual Performance",
     "performanceQuality": "Effects First",
-    "performanceBalanced": "Balanced (Recommended)",
-    "performanceCompat": "Compatibility",
-    "performanceQualityDesc": "Keeps the complete four-color Google ambient field with both diagonal fields moving independently over wider paths so they visibly overlap in motion. Small tool/dialog glass uses stronger sampling and saturation. Best visuals, highest GPU cost.",
-    "performanceBalancedDesc": "Default. Keeps all four Google colors, but animates only one diagonal field while the other remains static and reduces small-glass sampling, cutting continuous compositing work.",
-    "performanceCompatDesc": "Keeps the complete four-color Google ambient field but makes it static. Major glass surfaces fall back to one flat translucent fill with no real-time backdrop blur, layered specular effects, or large glass shadows. Lowest GPU cost.",
+    "performancePerformance": "Performance First",
+    "performanceQualityDesc": "Keeps the complete four-color ambient light in wide continuous motion, with both diagonal fields visibly overlapping as they travel. Small tools and dialogs use richer liquid-glass sampling. Stronger visuals with higher GPU cost.",
+    "performancePerformanceDesc": "Keeps the complete four-color ambient light but makes it static. Major glass surfaces use a single translucent material with no real-time backdrop blur, layered highlights, or large shadows. Lowest GPU cost and maximum smoothness.",
     "systemMotionStatus": "System motion",
     "systemMotionAllowed": "Enabled",
     "systemMotionReduced": "Reduced / disabled",
-    "systemMotionReducedHint": "The system currently requests reduced motion, so ambient flow in Effects First and Balanced stays still. Re-enable system animation effects and it will resume immediately."
+    "systemMotionReducedHint": "The system currently requests reduced motion, so ambient flow in Effects First stays still. Re-enable system animation effects and it will resume immediately. Performance First is static by design."
   },
   "updater": {
     "checking": "Checking for updates...",
@@ -1072,7 +1070,7 @@
     "captureInterfaces": {
       "loading": "Loading capture interfaces…",
       "choose": "Choose a capture interface",
-      "empty": "No Npcap/libpcap capture interfaces were detected.",
+      "empty": "No compatible capture interfaces were detected.",
       "error": "Failed to load capture interfaces"
     },
     "form": {
@@ -1092,8 +1090,8 @@
       "autoFilter": "Auto-generate filter from PD/MD ports",
       "captureFilter": "Capture filter",
       "autoFilterHint": "Changing the advanced PD/MD ports updates the filter automatically.",
-      "customFilterHint": "Custom uses a raw libpcap/Npcap BPF expression.",
-      "monitorNote": "Live Monitor on Windows requires a separate Npcap installation; TauTerm does not bundle Npcap. Offline .pcap/.pcapng analysis does not require Npcap.",
+      "customFilterHint": "Custom mode uses a raw BPF expression.",
+      "monitorNote": "Live capture requires a compatible capture driver installed on the system. Offline .pcap/.pcapng analysis does not require a capture driver.",
       "pdUdpPort": "PD UDP port",
       "mdUdpPort": "MD UDP port",
       "mdTcpPort": "MD TCP port"
