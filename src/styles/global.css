@@ -308,7 +308,7 @@ html[data-motion="reduced"] .ambient-field {
   justify-content: center;
 }
 
-.liquid-glass-ghost-button:hover {
+.liquid-glass-ghost-button:hover:not(:disabled) {
   background: var(--glass-bg-hover);
   color: var(--text-primary);
 }
@@ -317,8 +317,8 @@ html[data-motion="reduced"] .ambient-field {
   background: var(--glass-bg-active);
 }
 
-.liquid-glass-button.active:disabled {
-  opacity: 0.55;
+.liquid-glass-ghost-button:disabled {
+  color: var(--control-disabled-text);
   cursor: not-allowed;
 }
 
