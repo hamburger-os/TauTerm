@@ -375,6 +375,11 @@ html[data-motion="reduced"] .ambient-field {
   cursor: not-allowed;
 }
 
+.liquid-glass-input:disabled::placeholder {
+  color: var(--control-disabled-text);
+  opacity: 1;
+}
+
 /* 数字输入框微调箭头 —— 统一主题样式
    - WebKit: 使用内联 SVG currentColor 绘制 ▲▼ 箭头，颜色随主题 token 自动适配
    - Firefox: 隐藏原生微调按钮（Tauri 全平台使用 WebKit webview，保留以保持一致性） */
