@@ -22,7 +22,7 @@ interface SendBarProps {
 /**
  * 发送栏容器组件
  *
- * - 顶部横向模式条：基本发送 / 指令面板 / 自动应答 / 脚本编辑器
+ * - 左侧竖向模式切换器：基本发送 / 指令面板 / 自动应答 / 脚本编辑器
  * - 内容区：四个子视图始终挂载，通过 CSS display 切换可见性
  * - 高度由 App.tsx 通过 CSS 控制（支持拖拽调整）
  * - 状态由 SendBarContext 管理，切换视图时不会丢失输入数据
@@ -79,26 +79,21 @@ function SendBarInner({ containerId, engineSessionId }: SendBarProps) {
       {/* 发送目标栏 — 网络调试（TCP server / UDP server）跨四模式共享，其余返回 null */}
       <TargetBar containerId={containerId} />
 
-      {/* 主体：与左右侧栏共用 Structural Panel；模式条改为横向，避免四个小按钮孤立漂在 Ambient 上。 */}
+      {/* 主体：保留原有左侧竖排四模式布局；外壳仍与左右侧栏共用同一 Structural Panel。 */}
       <div className={`${styles.body} liquid-glass-panel`}>
-        <div className={styles.modeHeader}>
-          <div className={styles.modeSwitcher}>
-            {modeButtons.map((btn) => (
-              <button
-                key={btn.mode}
-                className={`${styles.modeBtn} liquid-glass-button ${mode === btn.mode ? "liquid-theme-selected" : ""}`}
-                onClick={() => handleModeChange(btn.mode)}
-                disabled={isChildRunning}
-                aria-pressed={mode === btn.mode}
-                title={isChildRunning ? t("sendBar.modeLocked") : btn.title}
-              >
-                <Icon name={btn.icon} size="sm" />
-              </button>
-            ))}
-          </div>
-          <span className={styles.modeTitle}>
-            {modeButtons.find(btn => btn.mode === mode)?.title}
-          </span>
+        <div className={styles.modeSwitcher}>
+          {modeButtons.map((btn) => (
+            <button
+              key={btn.mode}
+              className={`${styles.modeBtn} liquid-glass-button ${mode === btn.mode ? "liquid-theme-selected" : ""}`}
+              onClick={() => handleModeChange(btn.mode)}
+              disabled={isChildRunning}
+              aria-pressed={mode === btn.mode}
+              title={isChildRunning ? t("sendBar.modeLocked") : btn.title}
+            >
+              <Icon name={btn.icon} size="md" />
+            </button>
+          ))}
         </div>
 
         {/* 内容区 — 四个视图始终挂载，CSS 显隐切换 */}
