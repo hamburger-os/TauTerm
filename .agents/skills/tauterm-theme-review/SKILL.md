@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "3.3"
+  version: "3.4"
 ---
 
 # TauTerm 主题与渲染审查
@@ -29,7 +29,7 @@ rg 'backdrop-filter' src/components src/renderers --glob '*.module.css'
 rg 'transition:\s*all' src --glob '*.css'
 rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg 'glass-blur|bg-orb-blur' src
-rg 'liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
+rg 'liquid-glass-panel|liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
 rg 'data-performance|data-motion|tauterm-performance-mode' src
 rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glob '*.tsx'
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
@@ -44,12 +44,13 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 1. TerminalView / Terminal.module.css
 2. SplitView
 3. GoogleGlowBackground / ThemeContext motion
-4. SendBar / TargetBar / disabled controls
-5. Toolbar / Sidebar / RightSidebar / StatusBar
-6. Dialog / Popover / ContextMenu
-7. 可扩展的大面积面板
-8. Frosted theme
-9. Compatibility mode
+4. Structural Panel ownership（左右 Sidebar / SendBar / TargetBar）与重复 glass
+5. SendBar / TargetBar / disabled controls
+6. Toolbar / Sidebar / RightSidebar / StatusBar
+7. Dialog / Popover / ContextMenu
+8. 可扩展的大面积面板
+9. Frosted theme
+10. Compatibility mode
 
 ### 4. 验证矩阵
 
