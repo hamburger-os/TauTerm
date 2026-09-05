@@ -13,7 +13,11 @@
   justify-content: center;
   cursor: pointer;
   color: var(--text-secondary);
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
   padding: 0;
   outline-offset: 2px;
 }
