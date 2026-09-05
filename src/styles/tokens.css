@@ -240,12 +240,11 @@ html[data-performance="compat"] {
   --text-tertiary: #777f8b;
 
   /* Google Glow 的招牌全息膜：只用于 active/selected 高价值状态和主 CTA。 */
-  --accent-holofoil-gradient: linear-gradient(110deg,
-    rgba(66, 133, 244, 0.92) 0%,
-    rgba(52, 168, 83, 0.82) 26%,
-    rgba(251, 188, 5, 0.86) 53%,
-    rgba(234, 67, 53, 0.86) 78%,
-    rgba(66, 133, 244, 0.92) 100%);
+  --accent-holofoil-gradient: linear-gradient(-45deg,
+    rgba(66, 133, 244, 0.90) 0%,
+    rgba(168, 85, 247, 0.88) 30%,
+    rgba(236, 72, 153, 0.86) 62%,
+    rgba(251, 188, 5, 0.88) 100%);
   --selected-surface: var(--accent-holofoil-gradient);
   --selected-border: rgba(255, 255, 255, 0.42);
   --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 4px 14px rgba(0, 0, 0, 0.18);
@@ -387,6 +386,11 @@ html[data-performance="compat"] {
   --shadow-glass: 0 20px 50px rgba(0, 0, 0, 0.7);
   --glass-rim-glow: 0 1px 0 rgba(255, 255, 255, 0.075), 0 6px 18px rgba(0, 0, 0, 0.20);
   --glass-rim-light: 0 1px 0 rgba(255, 255, 255, 0.055), 0 3px 8px rgba(0, 0, 0, 0.13);
+  --primary-button-border: rgba(148, 163, 184, 0.24);
+  --primary-button-hover-border: rgba(96, 165, 250, 0.42);
+  --primary-button-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 4px 12px rgba(0, 0, 0, 0.28);
+  --primary-button-hover-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 6px 16px rgba(0, 0, 0, 0.32);
+  --primary-button-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
   /* 弹窗背景 */
   --dialog-bg: rgba(8, 8, 12, 0.97);
   --dialog-shadow: 0 16px 42px rgba(0, 0, 0, 0.36);
