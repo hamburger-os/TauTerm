@@ -8,23 +8,22 @@ interface TitleBarProps {
   isMaximized: boolean;
 }
 
-/** 同步检测当前平台是否为需要自定义窗口控制的平台（Windows / Linux） */
+/** 同步检测当前平台是否需要自定义窗口控制。 */
 export function needsCustomTitleBar(): boolean {
-  // User-Agent Client Hints API（Chromium 90+ / WebView2 90+）
+  // 优先使用 User-Agent Client Hints API。
   if ("userAgentData" in navigator && (navigator as any).userAgentData?.platform) {
     return (navigator as any).userAgentData.platform !== "macOS";
   }
-  // 降级：navigator.platform（WebView2 始终返回 "Win32"）
+  // 降级：使用 navigator.platform。
   if (navigator.platform?.startsWith("Mac")) return false;
-  // 最后兜底：userAgent（兼容旧版 WebView）
+  // 最后兜底：使用 userAgent。
   return !/Mac/i.test(navigator.userAgent);
 }
 
 /**
  * 自定义窗口控制按钮（最小化 / 最大化 / 关闭）
  *
- * 在 Windows 和 Linux 上渲染——macOS 在 decorations:false 时仍保留原生红绿灯按钮，
- * 因此无需自定义控件，直接返回 null。
+ * 仅在需要自绘窗口按钮的平台上渲染；系统已提供原生窗口控件时直接返回 null。
  */
 export default function TitleBar({ isMaximized }: TitleBarProps) {
   const { t } = useTranslation();
