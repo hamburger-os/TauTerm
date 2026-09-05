@@ -252,6 +252,16 @@ export default function SplitView({
     document.body.style.userSelect = "none";
     document.body.style.cursor = horizontal ? "col-resize" : "row-resize";
 
+    let animationFrame: number | null = null;
+    let pendingRatio: number | null = null;
+
+    const commitPendingRatio = () => {
+      animationFrame = null;
+      const ratio = pendingRatio;
+      pendingRatio = null;
+      if (ratio !== null) onResizeSplit(divider.splitId, ratio);
+    };
+
     const handleMove = (event: MouseEvent) => {
       const regionStart = horizontal
         ? bounds.left + divider.rect.left * bounds.width
@@ -262,19 +272,28 @@ export default function SplitView({
       if (regionSize <= 0) return;
       const pointer = horizontal ? event.clientX : event.clientY;
       const minRatio = Math.min(0.45, MIN_PANE_PX / regionSize);
-      const ratio = Math.max(minRatio, Math.min(1 - minRatio, (pointer - regionStart) / regionSize));
-      onResizeSplit(divider.splitId, ratio);
+      pendingRatio = Math.max(minRatio, Math.min(1 - minRatio, (pointer - regionStart) / regionSize));
+      if (animationFrame === null) {
+        animationFrame = requestAnimationFrame(commitPendingRatio);
+      }
     };
 
     const handleUp = () => {
       document.removeEventListener("mousemove", handleMove);
       document.removeEventListener("mouseup", handleUp);
+      window.removeEventListener("blur", handleUp);
+      if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+      }
+      commitPendingRatio();
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
     };
 
     document.addEventListener("mousemove", handleMove);
     document.addEventListener("mouseup", handleUp);
+    window.addEventListener("blur", handleUp);
   }, [onResizeSplit]);
 
   const openPaneMenu = useCallback((e: React.MouseEvent, paneId: PaneId) => {

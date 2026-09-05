@@ -113,6 +113,7 @@ TCNOpen TRDP 3.0.0.0 is vendored as MPL-2.0 source and built into a separate Tau
 ### Everyday workflow
 
 - Unified tabbed sessions and offline connection profiles.
+- Persistent 1–4-pane Workspace with draggable dividers and session-aware Pane context.
 - Native Local Shell sessions with shell/WSL discovery, multiple terminals per configuration, optional per-terminal Windows elevation, custom arguments and working directory.
 - Searchable terminal, command palette and fully rebindable shortcuts.
 - Session logging with rotation and expiry cleanup.

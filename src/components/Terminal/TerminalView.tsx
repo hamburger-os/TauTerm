@@ -618,8 +618,10 @@ export default function TerminalView({
                 visibility: visible ? "visible" : "hidden",
                 pointerEvents: visible ? "auto" : "none",
               }}
-              onMouseDownCapture={() => {
-                if (visible) onActivateSession?.(tab.id);
+              onMouseDownCapture={(event) => {
+                // Keep secondary-button terminal context menus geometry-stable:
+                // only primary-button interaction changes the active Pane/Session.
+                if (visible && event.button === 0) onActivateSession?.(tab.id);
               }}
             >
               {tab.state === "transferring" && (

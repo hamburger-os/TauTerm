@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "8.3"
+  version: "8.4"
 ---
 
-# TauTerm Liquid Glass v8.3 — 唯一主题规范源
+# TauTerm Liquid Glass v8.4 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -273,15 +273,19 @@ Split Workspace 只能有一层 Content 壳体：
 - selected pane 可叠加 active veil；
 - 其它 pane 可叠加 inactive veil；
 - Pane Header 使用 `--theme-content-header-veil` + 同一 content clear base；
-- Divider 是 1px 语义分隔线 + 更宽 hit-zone，不是第二层 Card 边框；
-- 所有 Pane 内部交点保持直角，外角由 Workspace root 的 overflow clipping 自动完成。
+- selected Header 只允许 **一条 1px accent 分隔线**；禁止再叠加 inset shadow / 第二条高亮线；
+- Divider 是 1px 语义分隔线 + 更宽 hit-zone，不是第二层 Card 边框；idle 必须使用主题级 `--content-divider`，视觉强度低于 Workspace 外框，hover 才提升为 accent；
+- 所有 Pane 内部交点保持直角，外角由 Workspace root 的 overflow clipping 自动完成；
+- WebKit 滚动条只保留 track + thumb，必须全局隐藏原生 `::-webkit-scrollbar-button`，避免终端/长列表两端出现原生箭头。
 
 ### Context / Interaction Stability
 
 - `Close Pane` 右键菜单只属于 **Pane Header**；Pane content 绝不打开 Pane-level close menu。
 - 对未选中的 Pane Header 按下右键时，**不得先激活该 Pane**。必须等 `contextmenu` 在原几何位置打开菜单，避免 SendBar / RightSidebar 切换导致标题栏在指针下发生位移。
+- docked Terminal 也遵循同一规则：**只有 primary-button / 左键**可以激活 Pane；secondary-button / 右键必须保留原 active Session，直接交给 Terminal context menu。
 - 左键点击 Header / content 才执行 Pane selection。
 - Divider resize / Pane geometry 改变不得对 `left/top/width/height` 做 CSS transition；拖动必须直接跟手。
+- Divider 高频 mousemove 必须按 `requestAnimationFrame` 合并为每帧最多一次 ratio 更新，并在 mouseup / window blur 时提交最后 pending ratio、清理 listener/cursor。
 
 ### Disconnected
 
@@ -366,6 +370,7 @@ rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-
 rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius' src/components/Layout src/components/Terminal
 rg 'liquid-glass-content' src/components/Layout/SplitView.tsx src/components/Terminal/TerminalView.tsx
+rg 'selectedHeader|content-divider|scrollbar-button|requestAnimationFrame|onMouseDownCapture' src/components/Layout src/components/Terminal src/styles
 rg 'modeHeader|modeTitle|flex-direction:\s*row' src/components/SendBar
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 npm run build
@@ -399,7 +404,10 @@ npm run build
 - **单 Pane 没有 active/selected 材质差异**
 - **中间 Workspace 只有一层 Content 外框/阴影；分屏后不出现 Pane 套 Card 的第二层框**
 - **多 Pane 只有 Workspace root 拥有外角，Pane 子矩形与内部交点保持直角**
-- **右键未选中 Pane Header 时不会先切换 active Session；Close Pane 菜单只从 Header 出现**
+- **selected Pane 只有一条 1px Header accent，不出现双线/内阴影边**
+- **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮**
+- **右键未选中 Pane Header 或已连接 Terminal 时都不会先切换 active Session；Close Pane 菜单只从 Header 出现**
+- **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
 - **Compat 仍然是玻璃，但 Small Chrome/Float 的可读性不能低于 Balanced，也不能出现“兼容档最透明”**
 
 ## 实现源文件
