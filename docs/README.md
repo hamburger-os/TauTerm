@@ -105,6 +105,6 @@ Strategy documents guide implementation, but they are not evidence that a capabi
 
 ### 视觉主题规范 / Visual Theme Specification
 
-TauTerm 的视觉主题、Liquid Glass 材质、Gemini Ambient、Structural Panel、视觉交互与渲染性能规则**不在 `docs/` 维护副本**。唯一规范源是 [`.agents/skills/tauterm-theme/SKILL.md`](../.agents/skills/tauterm-theme/SKILL.md)；[`tauterm-theme-review`](../.agents/skills/tauterm-theme-review/SKILL.md) 仅定义审查流程并引用该 SSOT。
+TauTerm 的视觉主题、Liquid Glass 材质、Gemini Ambient、三档视觉性能语义、Structural Panel、视觉交互与渲染性能规则**不在 `docs/` 维护副本**。唯一规范源是 [`.agents/skills/tauterm-theme/SKILL.md`](../.agents/skills/tauterm-theme/SKILL.md)；[`tauterm-theme-review`](../.agents/skills/tauterm-theme-review/SKILL.md) 仅定义审查流程并引用该 SSOT。
 
-TauTerm's visual theme, Liquid Glass material, Gemini Ambient, structural-panel, interaction, and visual rendering-performance rules are **not duplicated under `docs/`**. The sole specification is [`.agents/skills/tauterm-theme/SKILL.md`](../.agents/skills/tauterm-theme/SKILL.md); [`tauterm-theme-review`](../.agents/skills/tauterm-theme-review/SKILL.md) contains only the audit workflow.
+TauTerm's visual theme, Liquid Glass material, Gemini Ambient, visual-performance tier semantics, structural-panel, interaction, and visual rendering-performance rules are **not duplicated under `docs/`**. The sole specification is [`.agents/skills/tauterm-theme/SKILL.md`](../.agents/skills/tauterm-theme/SKILL.md); [`tauterm-theme-review`](../.agents/skills/tauterm-theme-review/SKILL.md) contains only the audit workflow.
