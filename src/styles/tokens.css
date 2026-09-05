@@ -1,5 +1,5 @@
 /* ========================================
-   TauTerm Liquid Glass v7.2 设计令牌
+   TauTerm Liquid Glass v8.0 设计令牌
    Google Glow (默认) + Obsidian + Frosted
    ======================================== */
 
@@ -65,64 +65,70 @@
   --google-green-rgb: 2, 190, 102;
   --google-blue-rgb: 11, 138, 255;
 
-  /* 顺序参考 Gemini mark 的空间色谱：左侧 Yellow → 下方 Green → 右侧 Blue → 顶部 Red。 */
-  --google-brand-gradient: linear-gradient(
-    118deg,
-    var(--google-yellow) 0%,
-    var(--google-green) 30%,
-    var(--google-blue) 62%,
-    var(--google-red) 100%
+  /* Gemini mark 的二维空间顺序是唯一标准：
+     左上 Red / 左下 Yellow / 右下 Green / 右上 Blue。
+     conic 从左上开始沿四角连续插值，使任意宽高比控件都能同时看到完整四色。 */
+  --google-brand-gradient: conic-gradient(
+    from -45deg at 50% 50%,
+    var(--google-red) 0deg,
+    var(--google-blue) 90deg,
+    var(--google-green) 180deg,
+    var(--google-yellow) 270deg,
+    var(--google-red) 360deg
   );
-  --google-brand-gradient-soft: linear-gradient(
-    118deg,
-    color-mix(in srgb, var(--google-yellow) 84%, transparent) 0%,
-    color-mix(in srgb, var(--google-green) 82%, transparent) 30%,
-    color-mix(in srgb, var(--google-blue) 86%, transparent) 62%,
-    color-mix(in srgb, var(--google-red) 84%, transparent) 100%
+  --google-brand-gradient-soft: conic-gradient(
+    from -45deg at 50% 50%,
+    color-mix(in srgb, var(--google-red) 86%, transparent) 0deg,
+    color-mix(in srgb, var(--google-blue) 86%, transparent) 90deg,
+    color-mix(in srgb, var(--google-green) 84%, transparent) 180deg,
+    color-mix(in srgb, var(--google-yellow) 84%, transparent) 270deg,
+    color-mix(in srgb, var(--google-red) 86%, transparent) 360deg
   );
 
   /* 默认使用 Balanced。Performance 只控制渲染丰富度，不改变主题身份。 */
   --glass-blur-chrome: 8px;
   --glass-blur-float: 10px;
 
-  /* Shared Google Ambient field defaults (Balanced).
-     Two oversized fields carry four Google colors; only transform is animated. */
+  /* Shared Google Ambient defaults (Balanced).
+     两个对角 Field 保持总体象限身份，同时以较短闭合轨迹反向运动，3–5 秒内必须可感知。 */
   --ambient-field-opacity: var(--ambient-opacity-balanced);
-  --ambient-field-a-duration: 27s;
-  --ambient-field-b-duration: 33s;
-  --ambient-a-x1: -18vw;
-  --ambient-a-y1: -9vh;
-  --ambient-a-x2: 16vw;
-  --ambient-a-y2: 4vh;
-  --ambient-a-x3: 26vw;
-  --ambient-a-y3: 18vh;
-  --ambient-a-x4: -10vw;
-  --ambient-a-y4: 14vh;
-  --ambient-b-x1: 15vw;
-  --ambient-b-y1: -12vh;
-  --ambient-b-x2: -20vw;
-  --ambient-b-y2: 7vh;
-  --ambient-b-x3: -28vw;
-  --ambient-b-y3: 20vh;
-  --ambient-b-x4: 12vw;
-  --ambient-b-y4: 15vh;
+  --ambient-field-a-duration: 20s;
+  --ambient-field-b-duration: 24s;
+  --ambient-a-x1: -6vw;
+  --ambient-a-y1: -4vh;
+  --ambient-a-x2: 5vw;
+  --ambient-a-y2: -2vh;
+  --ambient-a-x3: 8vw;
+  --ambient-a-y3: 6vh;
+  --ambient-a-x4: -4vw;
+  --ambient-a-y4: 5vh;
+  --ambient-b-x1: 6vw;
+  --ambient-b-y1: -5vh;
+  --ambient-b-x2: -5vw;
+  --ambient-b-y2: -1vh;
+  --ambient-b-x3: -7vw;
+  --ambient-b-y3: 6vh;
+  --ambient-b-x4: 4vw;
+  --ambient-b-y4: 4vh;
 
   /* 模糊 */
   --blur-xs: 4px;
 
   /* 布局常量 */
-  /* 发送模式按钮尺寸 / 间距 / 切换器 padding，供 .modeBtn / .modeSwitcher 与最小高度派生共用 */
-  --sendbar-mode-btn-size: 36px;
-  --sendbar-mode-btn-gap: 2px;
-  --sendbar-mode-switcher-padding: 2px;
-  /* 发送模式数量：基本 / 指令 / 自动应答 / 脚本（新增或删除模式时同步此值） */
-  --sendbar-mode-count: 4;
-  /* 发送栏主体（下方卡片）最小高度 = 模式切换器内容高度（N 按钮 + N-1 gap + 上下 padding）
-     + .body 的 liquid-glass 上下边框 2px；顶部目标栏卡片为固定一行高度，不计入此最小值。 */
+  /* SendBar v8：四模式使用横向模式条。最小高度只由模式条 + 内容区决定，
+     不再为了竖排四个按钮强迫整个发送栏变高。 */
+  --sendbar-mode-btn-size: 32px;
+  --sendbar-mode-btn-gap: 4px;
+  --sendbar-mode-toolbar-padding: 4px;
+  --sendbar-mode-toolbar-height: calc(
+    var(--sendbar-mode-btn-size)
+    + 2 * var(--sendbar-mode-toolbar-padding)
+    + 1px
+  );
+  --sendbar-content-min-height: 92px;
   --sendbar-min-height: calc(
-    var(--sendbar-mode-count) * var(--sendbar-mode-btn-size)
-    + (var(--sendbar-mode-count) - 1) * var(--sendbar-mode-btn-gap)
-    + 2 * var(--sendbar-mode-switcher-padding)
+    var(--sendbar-mode-toolbar-height)
+    + var(--sendbar-content-min-height)
     + 2px
   );
   /* 顶部目标栏（TargetBar）垂直 padding，供 TargetBar.module.css 与下方高度派生共用 */
@@ -150,32 +156,32 @@ html[data-performance="quality"] {
   --glass-blur-chrome: 16px;
   --glass-blur-float: 18px;
   --ambient-field-opacity: var(--ambient-opacity-quality);
-  --ambient-field-a-duration: 18s;
-  --ambient-field-b-duration: 23s;
-  --ambient-a-x1: -24vw;
-  --ambient-a-y1: -12vh;
-  --ambient-a-x2: 22vw;
-  --ambient-a-y2: 7vh;
-  --ambient-a-x3: 34vw;
-  --ambient-a-y3: 23vh;
-  --ambient-a-x4: -14vw;
-  --ambient-a-y4: 18vh;
-  --ambient-b-x1: 20vw;
-  --ambient-b-y1: -16vh;
-  --ambient-b-x2: -27vw;
+  --ambient-field-a-duration: 14s;
+  --ambient-field-b-duration: 17s;
+  --ambient-a-x1: -11vw;
+  --ambient-a-y1: -8vh;
+  --ambient-a-x2: 10vw;
+  --ambient-a-y2: -3vh;
+  --ambient-a-x3: 14vw;
+  --ambient-a-y3: -2vh;
+  --ambient-a-x4: -8vw;
+  --ambient-a-y4: 8vh;
+  --ambient-b-x1: 11vw;
+  --ambient-b-y1: -9vh;
+  --ambient-b-x2: -10vw;
   --ambient-b-y2: 10vh;
-  --ambient-b-x3: -36vw;
-  --ambient-b-y3: 25vh;
-  --ambient-b-x4: 16vw;
-  --ambient-b-y4: 20vh;
+  --ambient-b-x3: -14vw;
+  --ambient-b-y3: 10vh;
+  --ambient-b-x4: 8vw;
+  --ambient-b-y4: 8vh;
 }
 
 html[data-performance="balanced"] {
   --glass-blur-chrome: 8px;
   --glass-blur-float: 10px;
   --ambient-field-opacity: var(--ambient-opacity-balanced);
-  --ambient-field-a-duration: 27s;
-  --ambient-field-b-duration: 33s;
+  --ambient-field-a-duration: 20s;
+  --ambient-field-b-duration: 24s;
 }
 
 html[data-performance="compat"] {
@@ -206,6 +212,12 @@ html[data-performance="compat"] {
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
   --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.035) 22%, transparent 48%, rgba(255, 255, 255, 0.015) 100%);
   --glass-compat-fill: linear-gradient(135deg, rgba(30, 32, 36, 0.88) 0%, rgba(12, 14, 17, 0.84) 100%);
+  --panel-fill: linear-gradient(135deg, rgba(38, 40, 44, 0.22) 0%, rgba(12, 14, 17, 0.14) 100%);
+  --panel-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.025) 24%, transparent 52%);
+  --panel-border: rgba(255, 255, 255, 0.10);
+  --panel-border-top: rgba(255, 255, 255, 0.18);
+  --panel-border-left: rgba(255, 255, 255, 0.12);
+  --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.12);
   --content-surface: linear-gradient(180deg, rgba(12, 14, 17, 0.44), rgba(7, 9, 11, 0.54));
   --content-surface-active: linear-gradient(180deg, rgba(14, 16, 19, 0.34), rgba(8, 10, 12, 0.46));
   --content-surface-inactive: linear-gradient(180deg, rgba(10, 12, 15, 0.54), rgba(6, 8, 10, 0.64));
@@ -327,6 +339,12 @@ html[data-performance="compat"] {
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
   --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.025) 22%, transparent 48%, rgba(255, 255, 255, 0.010) 100%);
   --glass-compat-fill: linear-gradient(135deg, rgba(22, 23, 26, 0.94) 0%, rgba(4, 5, 6, 0.92) 100%);
+  --panel-fill: linear-gradient(135deg, rgba(20, 21, 24, 0.40) 0%, rgba(4, 5, 7, 0.28) 100%);
+  --panel-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.018) 24%, transparent 52%);
+  --panel-border: rgba(255, 255, 255, 0.09);
+  --panel-border-top: rgba(255, 255, 255, 0.15);
+  --panel-border-left: rgba(255, 255, 255, 0.10);
+  --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.09), inset 0 -1px 0 rgba(0, 0, 0, 0.18);
   --content-surface: linear-gradient(180deg, rgba(6, 7, 9, 0.72), rgba(2, 3, 4, 0.80));
   --content-surface-active: linear-gradient(180deg, rgba(7, 8, 10, 0.62), rgba(3, 4, 5, 0.72));
   --content-surface-inactive: linear-gradient(180deg, rgba(5, 6, 8, 0.80), rgba(2, 3, 4, 0.86));
@@ -444,6 +462,12 @@ html[data-performance="compat"] {
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.84), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
   --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.16) 22%, transparent 48%, rgba(255, 255, 255, 0.04) 100%);
   --glass-compat-fill: linear-gradient(135deg, rgba(252, 253, 254, 0.94) 0%, rgba(236, 241, 245, 0.90) 100%);
+  --panel-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.56) 0%, rgba(238, 243, 247, 0.40) 100%);
+  --panel-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.24) 24%, transparent 52%);
+  --panel-border: rgba(71, 85, 105, 0.16);
+  --panel-border-top: rgba(255, 255, 255, 0.78);
+  --panel-border-left: rgba(255, 255, 255, 0.52);
+  --panel-shadow: 0 8px 22px rgba(30, 41, 59, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.72), inset 0 -1px 0 rgba(71, 85, 105, 0.08);
   --content-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(242, 246, 249, 0.58));
   --content-surface-active: linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(239, 244, 248, 0.50));
   --content-surface-inactive: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(241, 245, 248, 0.68));
