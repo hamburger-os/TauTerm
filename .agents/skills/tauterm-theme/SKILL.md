@@ -299,6 +299,8 @@ CSS Module 出现 backdrop-filter 默认视为 HIGH/CRITICAL。
 
 - xterm `background: "transparent"` 时必须 `allowTransparency: true`。
 - xterm 透明目标是 Content Surface，不是 raw window。
+- Google Glow 的 xterm cursor / ANSI Blue/Red/Yellow/Green 必须在运行时读取 `--google-*` canonical token；TS 中不得复制 Google 品牌十六进制值。
+- ANSI Purple/Cyan/bright variants 可以从 canonical 四色派生混色，但不能被定义成新的 Google/Gemini 品牌 token。
 - inactive terminal 保留实例/scrollback，淡出后 `visibility:hidden`。
 - active pane 比 inactive 更透。
 - 不使用未经验证的 `content-visibility`。
@@ -387,7 +389,6 @@ rg 'glow-orb|data-motion="paused".*\*' src --glob '*.css' --glob '*.tsx'
 
 # Canonical Google/Gemini palette：品牌十六进制只能出现在 tokens.css canonical block
 rg '#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
-rg 'A855F7|EC4899|8B5CF6|D946EF' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 
 npm run build
 ```
