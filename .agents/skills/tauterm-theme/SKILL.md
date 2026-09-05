@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "8.4"
+  version: "8.5"
 ---
 
-# TauTerm Liquid Glass v8.4 — 唯一主题规范源
+# TauTerm Liquid Glass v8.5 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -276,7 +276,7 @@ Split Workspace 只能有一层 Content 壳体：
 - selected Header 只允许 **一条 1px accent 分隔线**；禁止再叠加 inset shadow / 第二条高亮线；
 - Divider 是 1px 语义分隔线 + 更宽 hit-zone，不是第二层 Card 边框；idle 必须使用主题级 `--content-divider`，视觉强度低于 Workspace 外框，hover 才提升为 accent；
 - 所有 Pane 内部交点保持直角，外角由 Workspace root 的 overflow clipping 自动完成；
-- WebKit 滚动条只保留 track + thumb，必须全局隐藏原生 `::-webkit-scrollbar-button`，避免终端/长列表两端出现原生箭头。
+- WebKit 滚动条只保留 track + thumb：必须全局隐藏原生 `::-webkit-scrollbar-button`，并将 `::-webkit-scrollbar-corner` 设为透明；横纵滚动条同时出现时，右下交汇处不得出现原生白色方块。
 
 ### Context / Interaction Stability
 
@@ -370,7 +370,7 @@ rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-
 rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius' src/components/Layout src/components/Terminal
 rg 'liquid-glass-content' src/components/Layout/SplitView.tsx src/components/Terminal/TerminalView.tsx
-rg 'selectedHeader|content-divider|scrollbar-button|requestAnimationFrame|onMouseDownCapture' src/components/Layout src/components/Terminal src/styles
+rg 'selectedHeader|content-divider|scrollbar-(button|corner)|requestAnimationFrame|onMouseDownCapture' src/components/Layout src/components/Terminal src/styles
 rg 'modeHeader|modeTitle|flex-direction:\s*row' src/components/SendBar
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 npm run build
@@ -405,7 +405,7 @@ npm run build
 - **中间 Workspace 只有一层 Content 外框/阴影；分屏后不出现 Pane 套 Card 的第二层框**
 - **多 Pane 只有 Workspace root 拥有外角，Pane 子矩形与内部交点保持直角**
 - **selected Pane 只有一条 1px Header accent，不出现双线/内阴影边**
-- **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮**
+- **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮，横纵滚动条交汇处没有白色 corner 方块**
 - **右键未选中 Pane Header 或已连接 Terminal 时都不会先切换 active Session；Close Pane 菜单只从 Header 出现**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
 - **Compat 仍然是玻璃，但 Small Chrome/Float 的可读性不能低于 Balanced，也不能出现“兼容档最透明”**
