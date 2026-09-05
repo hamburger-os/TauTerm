@@ -17,7 +17,7 @@ A Node owns one TCNOpen application session per enabled TauTerm link and can hos
 - **MD Request**
 - **MD Listener / Replier**
 
-The session view is split into Overview, Publishers, Subscribers, Messages and Traffic. Objects are created in **Stopped** state. Transmitting objects are never auto-started when a saved TauTerm configuration or Workspace is restored; use **Start** or **Send** explicitly. PD Request is a one-shot **Send** action in the UI and remains Stopped; the native side may keep a temporary subscriber handle for the reply window, which is replaced on the next Send and cleaned when the object/session is removed.
+The session view is split into Overview, Publishers, Subscribers, Messages and Traffic. TRDP intentionally does **not** use TauTerm's generic global SendBar: Node transmit actions are bound to their PD/MD objects, while Monitor is passive. Objects are created in **Stopped** state. Transmitting objects are never auto-started when a saved TauTerm configuration or Workspace is restored; use **Start** or **Send** explicitly. PD Request is a one-shot **Send** action in the UI and remains Stopped; the native side may keep a temporary subscriber handle for the reply window, which is replaced on the next Send and cleaned when the object/session is removed.
 
 ### Monitor
 

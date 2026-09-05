@@ -13,6 +13,7 @@ registerPlugin({
     description: "iperf 网络测速",
     icon: "stopwatch",
     content_type: "custom",
+    send_bar: false,
     capabilities: ["connection"],
     transfer_protocols: [],
   },

@@ -392,7 +392,7 @@ export default function SplitView({
               if (e.button === 0) onSelectPane(paneId);
             }}
             onContextMenu={(e) => {
-              if (showDisconnectedPlaceholder && tab) {
+              if (tab?.state === "disconnected") {
                 openDisconnectedMenu(e, paneId, tab);
                 return;
               }

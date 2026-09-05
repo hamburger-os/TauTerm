@@ -417,3 +417,42 @@
   word-break: break-all;
   user-select: text;
 }
+
+/* Pane-relative adaptation keeps both configuration and records reachable in narrow splits. */
+@container session-pane (max-width: 640px) {
+  .container {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .columns {
+    flex: none;
+    flex-direction: column;
+    min-height: auto;
+  }
+
+  .leftCol,
+  .rightCol {
+    flex: none;
+    min-width: 0;
+    overflow: visible;
+    padding-right: 0;
+  }
+}
+
+@container session-pane (max-width: 440px) {
+  .versionBar,
+  .checkboxRow,
+  .actions {
+    flex-wrap: wrap;
+  }
+
+  .versionHint {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .row2 {
+    flex-direction: column;
+  }
+}

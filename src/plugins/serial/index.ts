@@ -14,6 +14,7 @@ registerPlugin({
     description: "串口终端",
     icon: "connection",
     content_type: "terminal",
+    send_bar: true,
     capabilities: ["connection", "transfer", "endpoint_discovery"],
     transfer_protocols: ["ymodem", "xmodem", "zmodem"],
   },

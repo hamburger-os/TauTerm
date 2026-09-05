@@ -22,6 +22,8 @@ export interface PluginManifest {
   description: string;
   icon: IconName;
   content_type: ContentType;
+  /** 是否提供 TauTerm 全局 SendBar；协议自带发送/发布工作流时应为 false。 */
+  send_bar: boolean;
   capabilities: string[];
   transfer_protocols: string[];
 }
@@ -151,6 +153,16 @@ class PluginRegistry {
     return this.getAll().filter(
       (p) => p.manifest.capabilities.includes(capability)
     );
+  }
+
+  /** 插件是否拥有 TauTerm 全局 SendBar。 */
+  supportsSendBar(pluginId: string): boolean {
+    return this.get(pluginId)?.manifest.send_bar === true;
+  }
+
+  /** 插件能力是上限，会话配置只能关闭支持的 SendBar，不能为不支持的插件强行开启。 */
+  resolveSendBarEnabled(pluginId: string, requested?: boolean): boolean {
+    return this.supportsSendBar(pluginId) && requested !== false;
   }
 
   /** 获取活跃插件的工具栏项 */

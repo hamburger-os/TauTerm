@@ -11,6 +11,7 @@ registerPlugin({
     description: "TRDP · Train Real Time Data Protocol",
     icon: "globe",
     content_type: "custom",
+    send_bar: false,
     capabilities: ["connection", "network_outbound", "network_listen"],
     transfer_protocols: [],
   },
