@@ -1,4 +1,4 @@
-/* TauTerm Liquid Glass v7 全局样式 */
+/* TauTerm Liquid Glass v7.1 全局样式 */
 
 @import "./tokens.css";
 
@@ -114,62 +114,62 @@ body {
   transform-origin: center;
 }
 
-/* Blue + Yellow: narrow asymmetrical ellipses create visible low-frequency landmarks. */
+/* Blue + Yellow：只引用 canonical Google/Gemini palette。 */
 .ambient-field-a {
   background:
     radial-gradient(
       ellipse 42% 68% at 24% 27%,
-      rgba(66, 133, 244, 0.78) 0%,
-      rgba(66, 133, 244, 0.42) 18%,
-      rgba(66, 133, 244, 0.17) 38%,
-      rgba(66, 133, 244, 0.050) 60%,
-      rgba(66, 133, 244, 0.012) 76%,
+      color-mix(in srgb, var(--google-blue) 78%, transparent) 0%,
+      color-mix(in srgb, var(--google-blue) 42%, transparent) 18%,
+      color-mix(in srgb, var(--google-blue) 17%, transparent) 38%,
+      color-mix(in srgb, var(--google-blue) 5%, transparent) 60%,
+      color-mix(in srgb, var(--google-blue) 1.2%, transparent) 76%,
       transparent 92%
     ),
     radial-gradient(
       ellipse 46% 64% at 72% 73%,
-      rgba(251, 188, 5, 0.70) 0%,
-      rgba(251, 188, 5, 0.36) 18%,
-      rgba(251, 188, 5, 0.145) 39%,
-      rgba(251, 188, 5, 0.044) 61%,
-      rgba(251, 188, 5, 0.011) 77%,
+      color-mix(in srgb, var(--google-yellow) 70%, transparent) 0%,
+      color-mix(in srgb, var(--google-yellow) 36%, transparent) 18%,
+      color-mix(in srgb, var(--google-yellow) 14.5%, transparent) 39%,
+      color-mix(in srgb, var(--google-yellow) 4.4%, transparent) 61%,
+      color-mix(in srgb, var(--google-yellow) 1.1%, transparent) 77%,
       transparent 92%
     ),
     radial-gradient(
       ellipse 26% 50% at 54% 45%,
-      rgba(66, 133, 244, 0.17) 0%,
-      rgba(66, 133, 244, 0.055) 45%,
+      color-mix(in srgb, var(--google-blue) 17%, transparent) 0%,
+      color-mix(in srgb, var(--google-blue) 5.5%, transparent) 45%,
       transparent 82%
     );
   animation: ambient-flow-a var(--ambient-field-a-duration) linear infinite;
   animation-delay: -8s;
 }
 
-/* Red + Green moves on a different phase/rotation so the two fields visibly shear past each other. */
+/* Red + Green：同一 canonical palette，不允许组件另造近似品牌色。 */
 .ambient-field-b {
   background:
     radial-gradient(
       ellipse 43% 66% at 76% 26%,
-      rgba(234, 67, 53, 0.72) 0%,
-      rgba(234, 67, 53, 0.38) 18%,
-      rgba(234, 67, 53, 0.155) 39%,
-      rgba(234, 67, 53, 0.046) 61%,
-      rgba(234, 67, 53, 0.011) 77%,
+      color-mix(in srgb, var(--google-red) 72%, transparent) 0%,
+      color-mix(in srgb, var(--google-red) 38%, transparent) 18%,
+      color-mix(in srgb, var(--google-red) 15.5%, transparent) 39%,
+      color-mix(in srgb, var(--google-red) 4.6%, transparent) 61%,
+      color-mix(in srgb, var(--google-red) 1.1%, transparent) 77%,
       transparent 92%
     ),
     radial-gradient(
       ellipse 48% 64% at 28% 72%,
-      rgba(52, 168, 83, 0.72) 0%,
-      rgba(52, 168, 83, 0.38) 18%,
-      rgba(52, 168, 83, 0.155) 39%,
-      rgba(52, 168, 83, 0.046) 61%,
-      rgba(52, 168, 83, 0.011) 77%,
+      color-mix(in srgb, var(--google-green) 72%, transparent) 0%,
+      color-mix(in srgb, var(--google-green) 38%, transparent) 18%,
+      color-mix(in srgb, var(--google-green) 15.5%, transparent) 39%,
+      color-mix(in srgb, var(--google-green) 4.6%, transparent) 61%,
+      color-mix(in srgb, var(--google-green) 1.1%, transparent) 77%,
       transparent 92%
     ),
     radial-gradient(
       ellipse 28% 52% at 48% 56%,
-      rgba(234, 67, 53, 0.14) 0%,
-      rgba(52, 168, 83, 0.045) 48%,
+      color-mix(in srgb, var(--google-red) 14%, transparent) 0%,
+      color-mix(in srgb, var(--google-green) 4.5%, transparent) 48%,
       transparent 84%
     );
   animation: ambient-flow-b var(--ambient-field-b-duration) linear infinite;
