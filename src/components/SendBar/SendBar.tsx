@@ -80,7 +80,7 @@ function SendBarInner({ containerId, engineSessionId }: SendBarProps) {
       <TargetBar containerId={containerId} />
 
       {/* 主体：模式切换器（左） + 内容区（右），作为主发送栏卡片 */}
-      <div className={`${styles.body} liquid-glass`}>
+      <div className={`${styles.body} liquid-glass-content`}>
         {/* 模式切换器 */}
         <div className={styles.modeSwitcher}>
           {modeButtons.map((btn) => (
