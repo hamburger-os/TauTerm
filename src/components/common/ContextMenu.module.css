@@ -33,8 +33,11 @@
   color: var(--color-error);
 }
 
-.menuItem.disabled {
-  opacity: 0.4;
+.menuItem.disabled,
+.menuItem:disabled {
+  opacity: 1;
+  color: var(--control-disabled-text);
+  background: transparent;
   cursor: not-allowed;
 }
 
