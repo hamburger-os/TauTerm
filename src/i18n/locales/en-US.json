@@ -623,9 +623,9 @@
     "performanceQuality": "Effects First",
     "performanceBalanced": "Balanced (Recommended)",
     "performanceCompat": "Compatibility",
-    "performanceQualityDesc": "Full Google ambient with higher intensity, wider motion, and a faster drift. Only small chrome surfaces get stronger sampling; terminal/content surfaces still use no real-time blur.",
-    "performanceBalancedDesc": "Default. Keeps the full four-color Google ambient at a calmer intensity and slower pace with lightweight sampling on small chrome surfaces.",
-    "performanceCompatDesc": "For older PCs, software rendering, or remote desktops: keeps two static Google lights and disables real-time backdrop blur while preserving theme colors, content translucency, and rim highlights."
+    "performanceQualityDesc": "Full four-color Google ambient fields with wider paths and faster continuous drift. Only small chrome surfaces use stronger sampling; terminal and control surfaces still use no real-time blur.",
+    "performanceBalancedDesc": "Default. Keeps the full Google ambient fields on calmer continuous paths with lightweight sampling on small chrome surfaces.",
+    "performanceCompatDesc": "For older PCs, software rendering, or remote desktops: keeps one static Google color field and disables real-time backdrop blur while preserving material and control contrast."
   },
   "updater": {
     "checking": "Checking for updates...",
