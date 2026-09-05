@@ -184,7 +184,7 @@ export default function AboutSettings({
 
       <h4 className={styles.categoryTitle}>{t("settings.buildInfo")}</h4>
       <div className={styles.aboutRow}>
-          <span className={styles.aboutValue}>Tauri + React + xterm.js</span>
+          <span className={styles.aboutValue}>{t("settings.buildStack")}</span>
         </div>
     </div>
   );
