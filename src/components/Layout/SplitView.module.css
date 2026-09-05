@@ -42,7 +42,7 @@
   border: 1px solid var(--glass-border-default);
   border-radius: 50%;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--glass-bg-default) 55%, transparent);
+  background: color-mix(in srgb, var(--bg-secondary) 58%, transparent);
 }
 
 .emptyPaneIcon {
