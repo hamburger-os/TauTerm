@@ -151,7 +151,6 @@ html[data-motion="reduced"] .glow-orb {
 }
 
 .liquid-glass-content {
-  position: relative;
   background: var(--content-surface);
   border: 1px solid var(--content-border);
   box-shadow: var(--content-shadow);
