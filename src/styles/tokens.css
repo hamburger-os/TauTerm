@@ -193,6 +193,7 @@ html[data-performance="compat"] {
   --control-input-focus-border: rgba(66, 133, 244, 0.62);
   --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), inset 0 -1px 0 rgba(0, 0, 0, 0.30);
   --control-disabled-bg: rgba(255, 255, 255, 0.055);
+  --control-disabled-input-bg: rgba(0, 0, 0, 0.50);
   --control-disabled-border: rgba(255, 255, 255, 0.15);
   --control-disabled-text: #9098a4;
   --control-disabled-icon: #818a96;
@@ -317,6 +318,7 @@ html[data-performance="compat"] {
   --control-input-focus-border: rgba(59, 130, 246, 0.54);
   --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), inset 0 -1px 0 rgba(0, 0, 0, 0.34);
   --control-disabled-bg: rgba(255, 255, 255, 0.045);
+  --control-disabled-input-bg: rgba(0, 0, 0, 0.62);
   --control-disabled-border: rgba(255, 255, 255, 0.12);
   --control-disabled-text: #7d838c;
   --control-disabled-icon: #727881;
@@ -431,6 +433,7 @@ html[data-performance="compat"] {
   --control-input-focus-border: rgba(66, 133, 244, 0.60);
   --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
   --control-disabled-bg: rgba(100, 116, 139, 0.07);
+  --control-disabled-input-bg: rgba(255, 255, 255, 0.76);
   --control-disabled-border: rgba(71, 85, 105, 0.22);
   --control-disabled-text: #748091;
   --control-disabled-icon: #7f8a98;
