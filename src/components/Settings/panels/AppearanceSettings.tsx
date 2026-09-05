@@ -28,6 +28,7 @@ export default function AppearanceSettings() {
     setTheme,
     performanceMode,
     setPerformanceMode,
+    systemReducedMotion,
     fontSize,
     setFontSize,
     bufferLines,
@@ -71,6 +72,17 @@ export default function AppearanceSettings() {
         <p className={styles.settingDesc}>
           {t(PERFORMANCE_OPTIONS.find(option => option.id === performanceMode)?.descKey ?? "settings.performanceBalancedDesc")}
         </p>
+        <p className={styles.settingDesc} aria-live="polite">
+          {t("settings.systemMotionStatus")}:{" "}
+          {systemReducedMotion
+            ? t("settings.systemMotionReduced")
+            : t("settings.systemMotionAllowed")}
+        </p>
+        {systemReducedMotion && performanceMode !== "compat" && (
+          <p className={styles.settingDesc}>
+            {t("settings.systemMotionReducedHint")}
+          </p>
+        )}
       </div>
 
       {/* 字体大小 */}
