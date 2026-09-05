@@ -259,7 +259,8 @@ impl LocalShellChannel {
         // 只可能保留 ESC / ESC[ / ESC[6 这类查询前缀。启动窗口结束仍未补全
         // ESC[6n 时，它就是普通终端输出，必须交回 xterm，不能永久扣在后端。
         self.startup_cpr_handled = true;
-        self.pending.extend(std::mem::take(&mut self.startup_cpr_tail));
+        self.pending
+            .extend(std::mem::take(&mut self.startup_cpr_tail));
         true
     }
 
