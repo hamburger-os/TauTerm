@@ -40,7 +40,8 @@
   /* 基础视觉（背景/边框/圆角/过渡）由 liquid-glass-button 提供 */
 }
 
-.toolBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.toolBtn:disabled {
+  cursor: not-allowed; }
 
 /* 集合级删除确认容器：警告图标+说明 与 取消按钮 并排 */
 .toolConfirm {
@@ -236,7 +237,13 @@
   border-radius: var(--radius-sm);
   background: var(--glass-input-bg);
   box-shadow: var(--glass-input-shadow-inner);
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
   flex-shrink: 0;
 }
 
@@ -264,7 +271,10 @@
 }
 
 .checkInput:disabled + .checkTrack {
-  opacity: 0.35;
+  opacity: 1;
+  background: var(--control-disabled-bg);
+  border-color: var(--control-disabled-border);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -437,7 +447,13 @@
   font-weight: 500;
   font-family: var(--font-ui);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 .renameCancelBtn {
@@ -449,7 +465,8 @@
   /* 基础视觉由 liquid-primary-button 提供 */
 }
 
-.renameSaveBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.renameSaveBtn:disabled {
+  cursor: not-allowed; }
 
 /* 危险操作（删除确认）— 复用 Shared.stopBtn accent 色系 */
 .dangerBtn {
