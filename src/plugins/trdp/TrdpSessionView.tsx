@@ -911,7 +911,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         {visibleNav.map(([key, label]) => (
           <button
             key={key}
-            className={styles.navButton + " " + (page === key ? "liquid-primary-button" : "liquid-glass-button")}
+            className={styles.navButton + " liquid-glass-button " + (page === key ? "liquid-theme-selected" : "")}
             onClick={() => setPage(key)}
           >
             {t(label)}
