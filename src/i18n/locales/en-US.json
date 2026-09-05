@@ -623,9 +623,13 @@
     "performanceQuality": "Effects First",
     "performanceBalanced": "Balanced (Recommended)",
     "performanceCompat": "Compatibility",
-    "performanceQualityDesc": "Keeps the complete four-color Google ambient field in clearly visible motion. Small tool/dialog glass uses stronger sampling and saturation while the large workspace still avoids real-time blur. Best visuals, highest GPU cost.",
-    "performanceBalancedDesc": "Default. Keeps the complete four-color Google ambient field moving more calmly with lightweight sampling on small glass surfaces, while large workspace glass stays low-cost.",
-    "performanceCompatDesc": "Keeps the complete four-color Google ambient field but makes it static. Major glass surfaces fall back to one flat translucent fill with no real-time backdrop blur, layered specular effects, or large glass shadows. Lowest GPU cost."
+    "performanceQualityDesc": "Keeps the complete four-color Google ambient field with both diagonal fields moving independently over wider paths so they visibly overlap in motion. Small tool/dialog glass uses stronger sampling and saturation. Best visuals, highest GPU cost.",
+    "performanceBalancedDesc": "Default. Keeps all four Google colors, but animates only one diagonal field while the other remains static and reduces small-glass sampling, cutting continuous compositing work.",
+    "performanceCompatDesc": "Keeps the complete four-color Google ambient field but makes it static. Major glass surfaces fall back to one flat translucent fill with no real-time backdrop blur, layered specular effects, or large glass shadows. Lowest GPU cost.",
+    "systemMotionStatus": "System motion",
+    "systemMotionAllowed": "Enabled",
+    "systemMotionReduced": "Reduced / disabled",
+    "systemMotionReducedHint": "The system currently requests reduced motion, so ambient flow in Effects First and Balanced stays still. Re-enable system animation effects and it will resume immediately."
   },
   "updater": {
     "checking": "Checking for updates...",
