@@ -22,8 +22,6 @@ import styles from "./SplitView.module.css";
 const MIN_PANE_PX = 160;
 const PANE_HEADER_PX = 24;
 const MENU_MARGIN_PX = 8;
-const PANE_EDGE_EPSILON = 1e-6;
-const PANE_RADIUS = "calc(var(--radius-lg) - 2px)";
 const EDGES: SplitEdge[] = ["left", "right", "top", "bottom"];
 
 interface SplitViewProps {
@@ -51,50 +49,6 @@ function rectStyle(rect: PaneRect): React.CSSProperties {
     width: `${rect.width * 100}%`,
     height: `${rect.height * 100}%`,
   };
-}
-
-function paneTouchesLeft(rect: PaneRect): boolean {
-  return rect.left <= PANE_EDGE_EPSILON;
-}
-
-function paneTouchesTop(rect: PaneRect): boolean {
-  return rect.top <= PANE_EDGE_EPSILON;
-}
-
-function paneTouchesRight(rect: PaneRect): boolean {
-  return rect.left + rect.width >= 1 - PANE_EDGE_EPSILON;
-}
-
-function paneTouchesBottom(rect: PaneRect): boolean {
-  return rect.top + rect.height >= 1 - PANE_EDGE_EPSILON;
-}
-
-/**
- * Pane 圆角只属于 Workspace 的真实外轮廓：
- * - 外角圆；
- * - 分屏内部交点全部直角；
- * - 多 Pane 内容区顶部已被 Header 占用，因此 Content 顶角保持直角；
- * - Frame / Header / Content 使用同一几何判定，避免边框与终端底色半径错位。
- */
-function paneFrameRadius(rect: PaneRect): string {
-  const tl = paneTouchesLeft(rect) && paneTouchesTop(rect) ? PANE_RADIUS : "0";
-  const tr = paneTouchesRight(rect) && paneTouchesTop(rect) ? PANE_RADIUS : "0";
-  const br = paneTouchesRight(rect) && paneTouchesBottom(rect) ? PANE_RADIUS : "0";
-  const bl = paneTouchesLeft(rect) && paneTouchesBottom(rect) ? PANE_RADIUS : "0";
-  return `${tl} ${tr} ${br} ${bl}`;
-}
-
-function paneHeaderRadius(rect: PaneRect): string {
-  const tl = paneTouchesLeft(rect) && paneTouchesTop(rect) ? PANE_RADIUS : "0";
-  const tr = paneTouchesRight(rect) && paneTouchesTop(rect) ? PANE_RADIUS : "0";
-  return `${tl} ${tr} 0 0`;
-}
-
-function paneContentRadius(rect: PaneRect, paneCount: number): string {
-  if (paneCount <= 1) return PANE_RADIUS;
-  const br = paneTouchesRight(rect) && paneTouchesBottom(rect) ? PANE_RADIUS : "0";
-  const bl = paneTouchesLeft(rect) && paneTouchesBottom(rect) ? PANE_RADIUS : "0";
-  return `0 0 ${br} ${bl}`;
 }
 
 function insetPaneContent(rect: PaneRect, paneCount: number, viewportHeight: number): PaneRect {
@@ -209,7 +163,13 @@ export default function SplitView({
     if (!root) return;
     const update = () => {
       const bounds = root.getBoundingClientRect();
-      setViewSize({ width: bounds.width, height: bounds.height });
+      const width = Math.round(bounds.width);
+      const height = Math.round(bounds.height);
+      setViewSize(current => (
+        current.width === width && current.height === height
+          ? current
+          : { width, height }
+      ));
     };
     update();
     const observer = new ResizeObserver(update);
@@ -281,19 +241,6 @@ export default function SplitView({
     return result;
   }, [layout.assignments, tabsById]);
 
-  const terminalBorderRadii = useMemo(() => {
-    const result: Record<string, string> = {};
-    for (const [paneId, sessionId] of Object.entries(layout.assignments)) {
-      if (!sessionId) continue;
-      const tab = tabsById.get(sessionId);
-      if (!tab) continue;
-      const plugin = pluginRegistry.get(tab.pluginId);
-      if ((plugin?.manifest.content_type ?? "terminal") !== "terminal") continue;
-      const rect = paneRects[paneId];
-      if (rect) result[sessionId] = paneContentRadius(rect, paneCount);
-    }
-    return result;
-  }, [layout.assignments, paneRects, paneCount, tabsById]);
 
   const handleDividerMouseDown = useCallback((e: React.MouseEvent, divider: DividerGeometry) => {
     e.preventDefault();
@@ -395,7 +342,7 @@ export default function SplitView({
   return (
     <div
       ref={viewRef}
-      className={styles.view}
+      className={`${styles.view} liquid-glass-content`}
       onMouseDown={() => {
         setPaneMenu(null);
         closeDisconnectedSessionMenu();
@@ -413,28 +360,29 @@ export default function SplitView({
           : false;
         const selected = paneId === layout.selectedPaneId;
         const contentRect = insetPaneContent(rect, paneCount, viewSize.height);
-        const needsOwnSurface = !tab || !isTerminal || showDisconnectedPlaceholder;
-        const selectionMaterial = paneCount > 1
+        const ownsPaneBackground = !tab || !isTerminal || showDisconnectedPlaceholder;
+        const paneMaterial = ownsPaneBackground && paneCount > 1
           ? (selected ? "liquid-glass-content-active" : "liquid-glass-content-inactive")
-          : "";
-        const surfaceMaterial = needsOwnSurface
-          ? `liquid-glass-content ${selectionMaterial}`
           : "";
         return (
           <div
             key={`surface-${paneId}`}
-            className={`${styles.paneSurface} ${surfaceMaterial}`}
-            style={{
-              ...rectStyle(contentRect),
-              borderRadius: paneContentRadius(rect, paneCount),
+            className={`${styles.paneSurface} ${paneMaterial}`}
+            style={rectStyle(contentRect)}
+            onMouseDown={(e) => {
+              if (e.button === 0) onSelectPane(paneId);
             }}
-            onMouseDown={() => onSelectPane(paneId)}
             onContextMenu={(e) => {
               if (showDisconnectedPlaceholder && tab) {
                 openDisconnectedMenu(e, paneId, tab);
                 return;
               }
-              if (!isTerminal || !tab) openPaneMenu(e, paneId);
+              if (!isTerminal || !tab) {
+                // Pane-level Close Pane belongs exclusively to Pane Header.
+                // Suppress the WebView default menu on custom/empty content without stealing the gesture.
+                e.preventDefault();
+                e.stopPropagation();
+              }
             }}
           >
             {!tab && (
@@ -450,7 +398,6 @@ export default function SplitView({
 
       <TerminalView
         dockedPlacements={terminalPlacements}
-        dockedBorderRadii={terminalBorderRadii}
         paneCount={paneCount}
         onActivateSession={(sessionId) => {
           const paneId = terminalPaneIds[sessionId];
@@ -458,7 +405,7 @@ export default function SplitView({
         }}
       />
 
-      {/* Pane Chrome：选中态、轻量标题栏、右键关闭入口与边缘分屏入口。 */}
+      {/* Pane Chrome：轻量标题栏、右键关闭入口与边缘分屏入口；Workspace root 独占外框。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
         const sessionId = layout.assignments[paneId] ?? null;
         const tab = sessionId ? tabsById.get(sessionId) : undefined;
@@ -479,17 +426,14 @@ export default function SplitView({
             : styles.lifecycleDisconnected;
         return (
           <div key={`chrome-${paneId}`} className={styles.paneChrome} style={rectStyle(rect)}>
-            <div
-              className={`${styles.paneFrame} ${showSelection ? styles.selectedFrame : ""}`}
-              style={{ borderRadius: paneFrameRadius(rect) }}
-            />
             {paneCount > 1 && (
               <div
                 className={`${styles.paneHeader} ${showSelection ? styles.selectedHeader : ""}`}
-                style={{ borderRadius: paneHeaderRadius(rect) }}
                 onMouseDown={(e) => {
                   e.stopPropagation();
-                  onSelectPane(paneId);
+                  // Secondary-button press must not activate the Pane before contextmenu.
+                  // Otherwise SendBar/RightSidebar can reflow and move the Header out from under the pointer.
+                  if (e.button === 0) onSelectPane(paneId);
                 }}
                 onContextMenu={(e) => openPaneMenu(e, paneId)}
               >

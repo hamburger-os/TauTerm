@@ -149,21 +149,20 @@ Terminal sizing remains the responsibility of each terminal's existing `ResizeOb
 
 ## Pane chrome and disconnected Session actions
 
-Pane chrome is intentionally lightweight.
-
-Single-pane mode should remain visually close to existing TauTerm.
+This section defines interaction semantics only. Visual/material rules for the Workspace surface, Pane Header, dividers, selection treatment and radius ownership are defined exclusively in [`.agents/skills/tauterm-theme/SKILL.md`](../.agents/skills/tauterm-theme/SKILL.md).
 
 In multi-pane mode:
 
-- each Pane gets a lightweight 24px header outside the Session content area;
+- each Pane gets a 24px header outside the Session content area;
 - an occupied Pane shows its Session name in that header, while an empty Pane uses a subdued empty-state label;
-- the selected Pane receives a subtle accent at the top edge and a lightly emphasized header;
 - the header never overlays terminal or custom-renderer content;
+- left-clicking a Pane Header selects that Pane;
 - right-clicking the Pane Header opens the Pane-level context menu (`Close Pane`);
+- a secondary-button press on a non-selected Pane Header does **not** activate the Pane first, so SendBar/RightSidebar changes cannot move the target before the context menu opens;
+- the Pane-level `Close Pane` menu is owned **only** by the Pane Header; right-clicking Pane content never opens it;
 - connected terminal content keeps its existing terminal right-click menu;
 - right-clicking a disconnected terminal placeholder opens Session actions instead of the WebView/browser default context menu;
-- the disconnected Session menu provides the same direct workflow as the Sidebar card: Connect, Configure, Delete, plus Run as administrator where the plugin supports elevation;
-- Pane close is exposed from Pane chrome rather than stealing terminal content right-click.
+- the disconnected Session menu provides the same direct workflow as the Sidebar card: Connect, Configure, Delete, plus Run as administrator where the plugin supports elevation.
 
 Right-clicking a disconnected Pane also selects that Pane first, so a subsequent Connect action continues in the same visible context.
 
@@ -217,6 +216,8 @@ Existing `SessionContext.activeTabId` remains the compatibility bridge for curre
 Sidebar clicks and other existing session-switch entry points update `activeTabId`; Split Layout observes that change and either assigns the Session to the selected Pane or selects the Pane where it is already visible.
 
 Selecting an occupied Pane updates `activeTabId` to that Pane's Session. Selecting a newly-created empty Pane clears the effective active Session context until a Session is assigned. When no active Session exists, Session-scoped auxiliary UI such as the RightSidebar shell must not reserve empty layout space.
+
+SendBar presence follows Session capability/configuration (`sendBarEnabled`), not connection lifecycle. In particular, a disconnected Network Debug Session keeps its SendBar workspace visible when selected; connection state gates the actual send operation instead of creating/removing the bar and reshaping the center layout.
 
 During Workspace restoration, the persisted selected Pane wins over the temporary first-tab selection produced while saved Session configurations are loading. This also applies to a deliberately all-empty Workspace: startup hydration must not populate its selected Pane merely because saved Session configurations exist.
 
@@ -335,3 +336,6 @@ Manual acceptance scenarios should include:
 18. From the same disconnected Pane menu, verify Configure opens the existing Session editor and Delete follows the same confirmation/removal behavior as the Sidebar card.
 19. Save a multi-Pane Workspace with every Pane intentionally empty, restart, and verify the Pane tree, ratios and selected Pane remain empty instead of being populated by the first saved Session.
 20. Display two child Channels from the same SSH/Local Shell parent, select the second child's Pane, restart, and verify that selected Pane receives the single restored parent Session reference while the duplicate Pane restores empty.
+21. Right-click connected Network Debug/custom content and an empty Pane body; verify the Pane-level `Close Pane` menu never appears there.
+22. Right-click a non-selected Pane Header whose Session would change SendBar/RightSidebar layout if activated; verify `Close Pane` opens at the original pointer position and the active Session does not change before an explicit left-click.
+23. Select a disconnected Network Debug Session from either the Sidebar card or its Pane; verify its SendBar is already visible and connecting/disconnecting does not create/remove the SendBar shell.

@@ -62,13 +62,9 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition:
-    left 80ms linear,
-    top 80ms linear,
-    width 80ms linear,
-    height 80ms linear,
-    opacity 80ms linear,
-    border-color var(--transition-fast);
+  /* Split/resize geometry follows the pointer directly. Animating left/top/size adds
+     layout work and makes divider drag feel viscous; only visibility fades. */
+  transition: opacity 80ms linear;
 }
 
 .dockedTerminalBody {

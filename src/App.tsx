@@ -438,16 +438,11 @@ function AppInner() {
           </div>
           {sessionState.tabs.map(tab => {
             const isActive = tab.id === sessionState.activeTabId;
-            const isNetwork = tab.pluginId === "network";
             // 顶部目标栏（TargetBar）仅 TCP/UDP server 显示；其高度需计入发送栏最小高度
             const showTargetBar = isTargetBarVisible(tab.params);
-            let showSendBar = tab.sendBarEnabled !== false;
-            if (isNetwork) {
-              // 网络调试：发送栏与脚本引擎统一绑定容器会话，目标由 SendBar 内 TargetBar 选择
-              const containerConnected = tab.state === "connected" || tab.state === "transferring";
-              // 连接后即显示发送栏：目标栏对 TCP server（含 0 对端等待接入）也常驻可见
-              showSendBar = containerConnected;
-            }
+            // SendBar 是会话能力/配置，不是连接生命周期。Network Debug 与其它会话一致：
+            // 断开态仍保持发送栏布局，发送动作本身由会话状态决定是否可用。
+            const showSendBar = tab.sendBarEnabled !== false;
             return (
               <React.Fragment key={tab.id}>
                 {(showSendBar && isActive) && (

@@ -24,8 +24,6 @@ const DUAL_FRAME_TIMEOUT_DEFAULT_MS = 50;
 interface TerminalViewProps {
   /** 分屏模式下：sessionId → 归一化 Pane 几何。缺省时保持原单视图行为。 */
   dockedPlacements?: Record<string, PaneRect>;
-  /** Split Workspace 为每个终端计算的真实外轮廓圆角；内部交点必须保持直角。 */
-  dockedBorderRadii?: Record<string, string>;
   /** Split Workspace 的 Pane 总数；单 Pane 时不绘制 active/inactive 材质差异。 */
   paneCount?: number;
   /** 用户在可见终端内操作时，请求选中其所属 Pane。 */
@@ -150,7 +148,6 @@ function normalizeDecodedText(text: string): string {
  */
 export default function TerminalView({
   dockedPlacements,
-  dockedBorderRadii,
   paneCount = 1,
   onActivateSession,
 }: TerminalViewProps = {}) {
@@ -614,10 +611,9 @@ export default function TerminalView({
                 if (node) terminalViewportRefs.current.set(tab.id, node);
                 else terminalViewportRefs.current.delete(tab.id);
               }}
-              className={`${styles.terminalWrapper} ${styles.dockedTerminalWrapper} liquid-glass-content ${paneMaterial}`}
+              className={`${styles.terminalWrapper} ${styles.dockedTerminalWrapper} ${paneMaterial}`}
               style={{
                 ...dockedRectStyle(rect),
-                borderRadius: dockedBorderRadii?.[tab.id] ?? "0",
                 opacity: visible ? 1 : 0,
                 visibility: visible ? "visible" : "hidden",
                 pointerEvents: visible ? "auto" : "none",
