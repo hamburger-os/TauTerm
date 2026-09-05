@@ -1,10 +1,20 @@
 import { useTranslation } from "react-i18next";
-import { useTheme, THEMES } from "../../../context/ThemeContext";
+import { useTheme, THEMES, type VisualPerformanceMode } from "../../../context/ThemeContext";
 import OptionButton from "../../common/OptionButton";
 import styles from "../SettingsPage.module.css";
 
 /** 行缓冲滑块步长：1,000 行一档，避免拖动时频繁重设 xterm scrollback */
 const BUFFER_LINES_STEP = 1000;
+
+const PERFORMANCE_OPTIONS: Array<{
+  id: VisualPerformanceMode;
+  labelKey: string;
+  descKey: string;
+}> = [
+  { id: "quality", labelKey: "settings.performanceQuality", descKey: "settings.performanceQualityDesc" },
+  { id: "balanced", labelKey: "settings.performanceBalanced", descKey: "settings.performanceBalancedDesc" },
+  { id: "compat", labelKey: "settings.performanceCompat", descKey: "settings.performanceCompatDesc" },
+];
 
 /**
  * 外观设置面板
@@ -13,7 +23,16 @@ const BUFFER_LINES_STEP = 1000;
  */
 export default function AppearanceSettings() {
   const { t } = useTranslation();
-  const { theme, setTheme, fontSize, setFontSize, bufferLines, setBufferLines } = useTheme();
+  const {
+    theme,
+    setTheme,
+    performanceMode,
+    setPerformanceMode,
+    fontSize,
+    setFontSize,
+    bufferLines,
+    setBufferLines,
+  } = useTheme();
 
   return (
     <div>
@@ -33,6 +52,25 @@ export default function AppearanceSettings() {
             </OptionButton>
           ))}
         </div>
+      </div>
+
+      {/* 视觉性能档：默认 Balanced；Compat 关闭实时背景动画与 backdrop blur */}
+      <h4 className={styles.categoryTitle}>{t("settings.performanceMode")}</h4>
+      <div className={styles.settingGroup}>
+        <div className={styles.optionList}>
+          {PERFORMANCE_OPTIONS.map(option => (
+            <OptionButton
+              key={option.id}
+              selected={performanceMode === option.id}
+              onClick={() => setPerformanceMode(option.id)}
+            >
+              {t(option.labelKey)}
+            </OptionButton>
+          ))}
+        </div>
+        <p className={styles.settingDesc}>
+          {t(PERFORMANCE_OPTIONS.find(option => option.id === performanceMode)?.descKey ?? "settings.performanceBalancedDesc")}
+        </p>
       </div>
 
       {/* 字体大小 */}
