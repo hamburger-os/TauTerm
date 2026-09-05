@@ -1,4 +1,4 @@
-/* 液态玻璃按钮 v3
+/* 液态玻璃按钮 v6
    基础视觉由全局 .liquid-glass-button / .liquid-primary-button 提供
    本模块仅保留布局、尺寸和变体差异化样式 */
 
@@ -22,10 +22,9 @@
 }
 
 .button:disabled {
-  /* opacity 由全局 .liquid-glass-button:disabled 统一管理 */
+  /* disabled 材质由全局 control tokens 统一管理，不降低整个元素 opacity */
   cursor: not-allowed;
   transform: none;
-  filter: grayscale(0.5);
 }
 
 /* ===== 尺寸 ===== */
