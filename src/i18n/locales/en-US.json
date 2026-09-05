@@ -618,7 +618,14 @@
     "securityStatusUnavailable": "Security status is unavailable. Try refreshing.",
     "securityOperationFailed": "The security operation failed. Try again.",
     "securityVaultUnlocked": "Encrypted credential vault unlocked for this app session.",
-    "securityVaultLocked": "Encrypted credential vault locked."
+    "securityVaultLocked": "Encrypted credential vault locked.",
+    "performanceMode": "Visual Performance",
+    "performanceQuality": "Liquid Quality",
+    "performanceBalanced": "Balanced (Recommended)",
+    "performanceCompat": "Compatibility",
+    "performanceQualityDesc": "Keeps the full ambient motion and stronger glass sampling for capable hardware.",
+    "performanceBalancedDesc": "Default. Preserves the Liquid Glass hierarchy while avoiding large-area real-time blur for a smoother UI.",
+    "performanceCompatDesc": "For older PCs, software rendering, or remote desktops: ambient motion is static and real-time backdrop blur is disabled while glass color, rim light, and depth remain."
   },
   "updater": {
     "checking": "Checking for updates...",
