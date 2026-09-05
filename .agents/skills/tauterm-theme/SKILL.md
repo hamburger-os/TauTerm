@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, shared Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "6.0"
+  version: "7.0"
 ---
 
-# TauTerm Liquid Glass v6 — 唯一主题规范源
+# TauTerm Liquid Glass v7 — 唯一主题规范源
 
 > **SSOT**：本文件是 TauTerm 视觉材质、Google Ambient、主题 tint、控件状态与渲染性能规则的唯一规范源。  
 > `tauterm-theme-review` 只描述审查流程，不得维护第二份视觉规则。
@@ -65,7 +65,9 @@ TauTerm 使用一套跨主题共享的 **Liquid Glass Physics**：
 - **禁止 backdrop-filter**。
 - 比 Content Surface 更稳定、更实。
 - 使用 `--control-surface` / `--control-surface-border` / `--control-surface-shadow`。
-- Ambient 可以轻微影响整体 tint，但不能让 button/input/select 的轮廓随背景颜色消失。
+- Control Surface 必须局部重绑标准 button/input token（`--control-button-*` / `--control-input-*`），使内部所有共享控件自动获得更强轮廓。
+- Disabled input 使用独立 `--control-disabled-input-bg`，不能与 Control Surface 本体融成一块。
+- Ambient 可以轻微影响整体 tint，但不能让 button/input/select/toggle/number stepper 的轮廓随背景颜色消失。
 
 ### D. Accent — `.liquid-glass-accent`
 
@@ -110,8 +112,10 @@ Google Ambient 是 TauTerm 的品牌背景，三主题完全共享：
 
 - 只允许 `transform`。
 - 使用闭合多段轨迹 + `linear`，避免 ease-in-out 长时间像静止。
-- Quality：约 24–30s，较大路径。
-- Balanced：约 38–44s，较缓慢路径。
+- 两个 Field 必须使用不同 phase、方向和轻微 rotation，形成可感知的相对剪切运动。
+- Quality：约 18–23s，较大路径。
+- Balanced：约 27–33s，较缓慢路径。
+- 正常观察 3–5 秒应能确认色场正在移动；如果只有截图切换时才感知运动，视为失败。
 - Compat：只保留 1 个静态 Field。
 - 不使用 element `filter: blur`、`mix-blend-mode`、morph、常驻 `will-change`。
 
@@ -145,7 +149,9 @@ Google Ambient 是 TauTerm 的品牌背景，三主题完全共享：
 - Glass 不能主动染成蓝色。
 - Google 四色 Ambient 是主要色彩来源。
 - Content 三主题中偏透。
-- Accent 可以使用 Google Blue，但不能把整个 chrome 染蓝。
+- Google Glow 必须保留独有的 holofoil 高价值强调语言：Blue → Purple → Pink → Yellow。
+- `.liquid-theme-selected` 与 `.liquid-primary-button` 可使用 holofoil，但只限 selected tab / active mode / 主 CTA 等少量高价值状态。
+- 普通 button/chrome 不得全息化；Accent 仍以 Google Blue 为主。
 
 ### Obsidian — Black
 
@@ -154,6 +160,7 @@ Google Ambient 是 TauTerm 的品牌背景，三主题完全共享：
 - 相同 Ambient。
 - Glass Physics 与 Google Glow 相同。
 - 通过更黑 base、更实 content/control tint、更低亮度 edge 形成身份。
+- Obsidian 的 selected/primary surface 使用石墨蓝灰膜，不继承 Google Glow 的彩色 holofoil。
 - 不另外换成蓝紫 Ambient。
 
 ### Frosted — White
@@ -210,6 +217,7 @@ input:disabled { opacity: .4; }
 统一使用：
 
 - `--control-disabled-bg`
+- `--control-disabled-input-bg`
 - `--control-disabled-border`
 - `--control-disabled-text`
 - `--control-disabled-icon`
@@ -247,12 +255,16 @@ Disabled 表示“不可操作”，不是“不可见”。
 
 - 默认状态保持清楚 silhouette。
 - hover 只做轻 tint / edge / 最多 1px lift。
-- active 用 accent tint。
+- 普通 active 用 accent tint。
+- 主题身份型 selected 状态使用 `.liquid-theme-selected`。
+- Google Glow 的主题 selected 可用静态 holofoil gradient，并只在 hover 时 transition background-position；禁止 idle 无限渐变动画。
 - disabled 保持 shape 与 edge，降低 text/accent 强度。
 
-### Toggle / Checkbox
+### Toggle / Checkbox / Number
 
-自绘 track 必须与全局 disabled tokens 一致，不得使用 `opacity: .35` 整体淡出。
+- 自绘 track 必须与全局 disabled tokens 一致，不得使用 `opacity: .35` 整体淡出。
+- number stepper 箭头不能依赖 data-URI SVG 的 `currentColor` 继承；WebView 中应使用主题 token 提供明确 SVG 颜色。
+- disabled stepper 可以降低内部箭头 opacity，但整个 input silhouette 必须保持完整。
 
 ---
 
@@ -392,6 +404,8 @@ npm run build
 - **Disabled 可辨认但不活跃**
 - **Content 透明，Control 稳定**
 - **Quality 更活，Balanced 更缓，Compat 真静态**
+- **Google Glow 的 selected 状态一眼可辨，Obsidian 不得看起来只是同一套蓝按钮**
+- **SendBar 在 disconnected 状态仍能看清 textarea/select/toggle/number/history/send 的完整轮廓**
 
 ## 实现源文件
 
