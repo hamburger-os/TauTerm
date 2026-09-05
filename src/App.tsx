@@ -337,7 +337,7 @@ function AppInner() {
   const activeShowTargetBar = isTargetBarVisible(activeTabForBar?.params);
 
   return (
-    <div className="app-root">
+    <div className={`app-root ${isResizingSidebar || isResizingRightSidebar || isResizingSendBar ? "ui-resizing" : ""}`}>
       {/* 动态光球背景层 (z-index: 0) */}
       <GoogleGlowBackground />
 
