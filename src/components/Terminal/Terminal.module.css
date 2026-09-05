@@ -1,4 +1,4 @@
-/* 终端视图容器 v3 */
+/* 终端视图容器 v4 */
 
 .viewport {
   flex: 1;
@@ -46,7 +46,6 @@
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  contain: paint;
   transition:
     opacity 120ms linear,
     visibility 0s linear 120ms;
