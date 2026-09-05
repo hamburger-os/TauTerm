@@ -1,4 +1,4 @@
-/* TauTerm Liquid Glass v8.1 全局样式 */
+/* TauTerm Liquid Glass v8.2 全局样式 */
 
 @import "./tokens.css";
 
@@ -723,10 +723,13 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
   -webkit-backdrop-filter: none;
 }
 
+/* Compat 关闭 backdrop sampling 后，不能继续使用正常档位的低 alpha veil。
+   否则底层文字/边框会原样穿透，感知上反而比 Quality/Balanced 更“透明”。
+   这里只加厚 Small Chrome / Float；Structural/Content 本来就不依赖 backdrop，不额外变厚。 */
 html[data-performance="compat"] .liquid-glass {
   background:
     var(--liquid-specular-chrome-fill),
-    var(--theme-chrome-veil),
+    var(--theme-chrome-veil-compat),
     var(--liquid-clear-chrome-fill);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -735,7 +738,7 @@ html[data-performance="compat"] .liquid-glass {
 html[data-performance="compat"] .liquid-glass-float {
   background:
     var(--liquid-specular-chrome-fill),
-    var(--theme-float-veil),
+    var(--theme-float-veil-compat),
     var(--liquid-clear-chrome-fill);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
