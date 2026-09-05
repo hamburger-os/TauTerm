@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "3.4"
+  version: "3.5"
 ---
 
 # TauTerm 主题与渲染审查
@@ -31,6 +31,7 @@ rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg 'glass-blur|bg-orb-blur' src
 rg 'liquid-glass-panel|liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
 rg 'data-performance|data-motion|tauterm-performance-mode' src
+rg 'theme-(chrome|panel|content|card|float|control).*veil|liquid-clear-|liquid-specular-' src/styles
 rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glob '*.tsx'
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 ```
@@ -45,7 +46,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 2. SplitView
 3. GoogleGlowBackground / ThemeContext motion
 4. Structural Panel ownership（左右 Sidebar / SendBar / TargetBar）与重复 glass
-5. SendBar / TargetBar / disabled controls
+5. SendBar 左侧竖排布局冻结 / TargetBar / disabled controls
 6. Toolbar / Sidebar / RightSidebar / StatusBar
 7. Dialog / Popover / ContextMenu
 8. 可扩展的大面积面板
