@@ -457,7 +457,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   }, [menu.session, menu.peer, state.tabs, t, connect, disconnect, deleteSession, openChannel, closeChannel, selectPane, onEditSession, loggingSessions, startSessionLog, stopSessionLog, disconnectNetworkPeer, clearNetworkPeer]);
 
   return (
-    <div className={`${styles.sidebar} liquid-glass`}>
+    <div className={styles.sidebar}>
       {/* 顶部：标题 + 新建按钮 */}
       <div className={styles.header}>
         <span className={styles.title}>{t("session.sessions")}</span>
