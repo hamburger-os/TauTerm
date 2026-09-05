@@ -1,4 +1,4 @@
-/* TauTerm Liquid Glass v7.1 全局样式 */
+/* TauTerm Liquid Glass v7.2 全局样式 */
 
 @import "./tokens.css";
 
@@ -314,7 +314,7 @@ html[data-motion="reduced"] .ambient-field {
 }
 
 /* 主题高价值 selected 状态。
-   Google Glow 恢复多色 holofoil；Obsidian/Frosted 使用各自主题膜。
+   三主题使用同一 Gemini canonical hue；主题差异只来自 surface alpha / edge / shadow。
    只在 selected/active tab 等少量元素上使用，不做 idle 动画。 */
 .liquid-glass-button.liquid-theme-selected {
   background: var(--selected-surface);
