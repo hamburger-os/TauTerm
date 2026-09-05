@@ -170,13 +170,13 @@ html[data-performance="compat"] {
   --glass-noise-opacity: 0;
   --glass-blur: 10px; /* legacy alias; global chrome uses --glass-blur-chrome */
   --glass-blur-saturate: 115%;
-  --glass-border-default: rgba(255, 255, 255, 0.13);
-  --glass-border-top: rgba(255, 255, 255, 0.28);
-  --glass-border-left: rgba(255, 255, 255, 0.18);
+  --glass-border-default: rgba(255, 255, 255, 0.16);
+  --glass-border-top: rgba(255, 255, 255, 0.34);
+  --glass-border-left: rgba(255, 255, 255, 0.22);
   --glass-shadow-outer: 0 8px 24px 0 rgba(0, 0, 0, 0.28);
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.20), inset 0 -1px 0 rgba(255, 255, 255, 0.03);
-  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.035) 22%, transparent 46%, rgba(66, 133, 244, 0.035) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(18, 22, 34, 0.84) 0%, rgba(8, 10, 18, 0.74) 100%);
+  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.045) 22%, transparent 46%, rgba(66, 133, 244, 0.06) 100%);
+  --glass-compat-fill: linear-gradient(135deg, rgba(14, 30, 52, 0.88) 0%, rgba(6, 13, 26, 0.82) 100%);
   --content-surface: linear-gradient(180deg, rgba(7, 14, 27, 0.52), rgba(5, 10, 20, 0.64));
   --content-surface-active: linear-gradient(180deg, rgba(8, 18, 34, 0.42), rgba(5, 11, 22, 0.56));
   --content-surface-inactive: linear-gradient(180deg, rgba(6, 12, 23, 0.62), rgba(4, 8, 17, 0.72));
@@ -200,9 +200,9 @@ html[data-performance="compat"] {
   --glass-input-focus-glow: 0 0 20px rgba(66, 133, 244, 0.4);
 
   /* 文字 */
-  --text-primary: #e0e0ff;
-  --text-secondary: #aaaacc;
-  --text-muted: #9494b8;
+  --text-primary: #e7efff;
+  --text-secondary: #aec0dc;
+  --text-muted: #8293ad;
 
   /* 强调色 */
   --accent-primary: #4285F4;
@@ -280,7 +280,7 @@ html[data-performance="compat"] {
   --glass-shadow-outer: 0 8px 24px 0 rgba(0, 0, 0, 0.48);
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 0 -1px 0 rgba(255, 255, 255, 0.02);
   --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.055) 0%, rgba(255, 255, 255, 0.012) 24%, transparent 48%, rgba(96, 165, 250, 0.010) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(18, 19, 24, 0.94) 0%, rgba(4, 5, 8, 0.90) 100%);
+  --glass-compat-fill: linear-gradient(135deg, rgba(16, 17, 20, 0.96) 0%, rgba(3, 4, 5, 0.92) 100%);
   --content-surface: linear-gradient(180deg, rgba(7, 8, 11, 0.68), rgba(3, 4, 6, 0.78));
   --content-surface-active: linear-gradient(180deg, rgba(9, 10, 14, 0.58), rgba(4, 5, 8, 0.70));
   --content-surface-inactive: linear-gradient(180deg, rgba(6, 7, 10, 0.76), rgba(3, 4, 6, 0.84));
@@ -304,9 +304,9 @@ html[data-performance="compat"] {
   --glass-input-focus-glow: 0 0 20px rgba(66, 133, 244, 0.3);
 
   /* 文字 */
-  --text-primary: #e6e6e6;
-  --text-secondary: #a6a6a6;
-  --text-muted: #909090;
+  --text-primary: #e7e8ea;
+  --text-secondary: #a1a4aa;
+  --text-muted: #777b83;
 
   /* 强调色 */
   --accent-primary: #3b82f6;
@@ -376,7 +376,7 @@ html[data-performance="compat"] {
   --glass-shadow-outer: 0 8px 24px 0 rgba(15, 23, 42, 0.08);
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.76), inset 0 -1px 0 rgba(148, 163, 184, 0.08);
   --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.18) 24%, transparent 50%, rgba(59, 130, 246, 0.025) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.90) 100%);
+  --glass-compat-fill: linear-gradient(135deg, rgba(252, 254, 255, 0.96) 0%, rgba(235, 244, 252, 0.90) 100%);
   --content-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.64), rgba(239, 247, 253, 0.76));
   --content-surface-active: linear-gradient(180deg, rgba(255, 255, 255, 0.54), rgba(236, 246, 253, 0.68));
   --content-surface-inactive: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(240, 247, 252, 0.82));
@@ -400,9 +400,9 @@ html[data-performance="compat"] {
   --glass-input-focus-glow: 0 0 0 3px rgba(66, 133, 244, 0.15);
 
   /* 文字 */
-  --text-primary: #1e293b;
-  --text-secondary: #3d4f61;
-  --text-muted: #556270;
+  --text-primary: #1b2b3d;
+  --text-secondary: #43576c;
+  --text-muted: #617184;
 
   /* 强调色 */
   --accent-primary: #3b82f6;
