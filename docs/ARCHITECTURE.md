@@ -57,11 +57,14 @@ graph TB
   "category": "terminal",
   "icon": "ssh-shell",
   "content_type": "terminal",
+  "send_bar": true,
   "capabilities": ["connection", "transfer", "authentication", "credential_store", "network_outbound"],
   "transfer_protocols": ["sftp"],
   "config_schema": { /* JSON Schema */ }
 }
 ```
+
+`send_bar` 是前端插件级能力：`true` 表示该插件可以使用 TauTerm 全局底部 SendBar；会话级 `sendBarEnabled` 只允许关闭它，不能给不支持的插件强行开启。Serial / SSH / Telnet / Network Debug 声明为 `true`；Local Shell / TFTP / iperf / TRDP 声明为 `false`，其中 custom 协议在自己的内容视图中完成发送、发布或测试操作。
 
 ### 后端核心 Trait
 

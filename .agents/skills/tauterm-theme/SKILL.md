@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "8.5"
+  version: "8.6"
 ---
 
-# TauTerm Liquid Glass v8.5 — 唯一主题规范源
+# TauTerm Liquid Glass v8.6 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -289,7 +289,15 @@ Split Workspace 只能有一层 Content 壳体：
 
 ### Disconnected
 
-Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。Session-level disconnected actions 可以属于内容区，但不得借用 Pane-level `Close Pane` 菜单。
+Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disconnected Session（terminal / custom）都允许在内容区打开 Session-level Connect / Configure / Delete 等动作，但不得借用 Pane-level `Close Pane` 菜单。
+
+### Pane-relative Adaptive Content
+
+- `SplitView.paneSurface` 是命名为 `session-pane` 的 inline-size CSS container；custom content 的窄宽度适配必须以真实 Pane 为基准，而不是以 app/window viewport 为基准。
+- TFTP / iperf / TRDP 等 custom content 优先使用 `@container session-pane (...)` 完成重排；**不得为了纯视觉/布局响应再给每个插件增加 ResizeObserver 或轮询**。
+- 当 Pane 变短时，交互控件必须始终可达：负责滚动的容器要明确，包含按钮/表单的 flex 子项不得因默认 shrink + `overflow: hidden` 被压扁裁切。
+- 窄 Pane 可以把多列内容堆叠为单列、把局部区域改为横向滚动，但不能通过隐藏关键控件来“适配”。
+- Pane 自身已有滚动时，插件避免制造无必要的同轴多层滚动；确需内部滚动（日志、传输列表、长表格）时必须限定为明确的数据区域。
 
 ---
 
@@ -370,7 +378,8 @@ rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-
 rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius' src/components/Layout src/components/Terminal
 rg 'liquid-glass-content' src/components/Layout/SplitView.tsx src/components/Terminal/TerminalView.tsx
-rg 'selectedHeader|content-divider|scrollbar-(button|corner)|requestAnimationFrame|onMouseDownCapture' src/components/Layout src/components/Terminal src/styles
+rg 'selectedHeader|content-divider|scrollbar-(button|corner)|requestAnimationFrame|onMouseDownCapture|container-name' src/components/Layout src/components/Terminal src/styles
+rg '@container\s+session-pane|@media\s*\(max-width' src/components src/plugins --glob '*.module.css'
 rg 'modeHeader|modeTitle|flex-direction:\s*row' src/components/SendBar
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 npm run build
@@ -388,6 +397,7 @@ npm run build
 - SendBar Basic / Command / Auto Reply / Script
 - single / 2 / 4 pane
 - Terminal / Network disconnected
+- TFTP / iperf / TRDP in short and narrow Panes; all controls reachable
 - TargetBar visible / hidden
 - Ambient 连续 ≥10s
 - disabled controls 位于四色最亮区域

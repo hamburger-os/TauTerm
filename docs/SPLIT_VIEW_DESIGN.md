@@ -161,7 +161,7 @@ In multi-pane mode:
 - a secondary-button press on a non-selected Pane Header does **not** activate the Pane first, so SendBar/RightSidebar changes cannot move the target before the context menu opens;
 - the Pane-level `Close Pane` menu is owned **only** by the Pane Header; right-clicking Pane content never opens it;
 - connected terminal content keeps its existing terminal right-click menu, and secondary-button interaction does not activate that Pane before the menu opens;
-- right-clicking a disconnected terminal placeholder opens Session actions instead of the WebView/browser default context menu;
+- right-clicking any disconnected Session content surface—terminal placeholder or custom renderer such as TFTP/iperf/TRDP—opens Session actions instead of the WebView/browser default context menu;
 - the disconnected Session menu provides the same direct workflow as the Sidebar card: Connect, Configure, Delete, plus Run as administrator where the plugin supports elevation.
 
 Right-clicking a disconnected Pane also selects that Pane first, so a subsequent Connect action continues in the same visible context.
@@ -217,7 +217,7 @@ Sidebar clicks and other existing session-switch entry points update `activeTabI
 
 Selecting an occupied Pane updates `activeTabId` to that Pane's Session. Selecting a newly-created empty Pane clears the effective active Session context until a Session is assigned. When no active Session exists, Session-scoped auxiliary UI such as the RightSidebar shell must not reserve empty layout space.
 
-SendBar presence follows Session capability/configuration (`sendBarEnabled`), not connection lifecycle. In particular, a disconnected Network Debug Session keeps its SendBar workspace visible when selected; connection state gates the actual send operation instead of creating/removing the bar and reshaping the center layout.
+Global SendBar ownership is declared once by the plugin manifest (`send_bar`). Per-session `sendBarEnabled` can disable that bar only for a plugin that supports it; it cannot enable the global SendBar for custom protocols that own their own send/publish workflow. Presence is still independent of connection lifecycle: a disconnected Network Debug Session keeps its SendBar workspace visible when selected, while TRDP/TFTP/iperf never reserve that bottom bar.
 
 During Workspace restoration, the persisted selected Pane wins over the temporary first-tab selection produced while saved Session configurations are loading. This also applies to a deliberately all-empty Workspace: startup hydration must not populate its selected Pane merely because saved Session configurations exist.
 
@@ -272,7 +272,7 @@ The same Session duplication rule applies: an exact Session is never assigned to
 
 Long-lived plugin/runtime state should continue to live in Session/plugin stores rather than Pane state.
 
-Pane surfaces allow contained scrolling for non-terminal/custom views so controls remain reachable when a Pane becomes short in three- or four-pane layouts. Plugins may still provide their own more specific internal scrolling behavior.
+Pane surfaces publish the shared `session-pane` responsive container for non-terminal/custom views. Exact visual/responsive/performance rules live only in the theme SSOT; the product invariant here is that controls remain reachable as Panes become short or narrow, while plugin runtime state stays independent of Pane geometry.
 
 ## Session deletion and child sessions
 
@@ -327,12 +327,12 @@ Manual acceptance scenarios should include:
 9. Reach four Panes and verify no further split triggers or previews are offered.
 10. Shrink a Pane below the usable split threshold and verify ineligible edges no longer advertise another split.
 11. Select an empty Pane and verify the RightSidebar does not leave an empty shell or resize handle.
-12. Put iperf/TFTP or another custom renderer in a short Pane and verify controls remain reachable by scrolling.
+12. Put iperf/TFTP/TRDP or another custom renderer in short and narrow Panes and verify all controls remain reachable; resizing the Pane must drive its responsive layout without depending on the window width.
 13. Arrange multiple saved Sessions in Panes, resize dividers, select a Pane, close TauTerm and reopen; verify the same Pane tree, ratios, stable Session assignments and selected Pane are restored while Sessions remain disconnected.
 14. Activate a non-first SSH/Local Shell child, switch elsewhere, then click and right-click the parent; verify the recent child is restored rather than always selecting the first child.
 15. Select an Empty Pane, right-click a connected SSH/Local Shell parent and choose New Terminal; verify the newly-created child is placed in the original Empty Pane.
 16. In a multi-pane layout, disconnect the selected SSH/Local Shell child from terminal context menu or the close-current-session shortcut; verify only that child closes, its Pane remains selected and empty, the parent remains valid, and no root-session-not-found error is reported.
-17. Put a saved but disconnected terminal Session in a Pane, right-click the disconnected placeholder, verify the WebView default menu never appears, then choose Connect and verify the Session connects in that Pane.
+17. Put saved but disconnected terminal and custom Sessions (TFTP/iperf/TRDP) in Panes, right-click their content surfaces, verify the WebView default menu never appears, then choose Connect and verify each Session connects in its Pane.
 18. From the same disconnected Pane menu, verify Configure opens the existing Session editor and Delete follows the same confirmation/removal behavior as the Sidebar card.
 19. Save a multi-Pane Workspace with every Pane intentionally empty, restart, and verify the Pane tree, ratios and selected Pane remain empty instead of being populated by the first saved Session.
 20. Display two child Channels from the same SSH/Local Shell parent, select the second child's Pane, restart, and verify that selected Pane receives the single restored parent Session reference while the duplicate Pane restores empty.
@@ -341,3 +341,4 @@ Manual acceptance scenarios should include:
 23. Select a disconnected Network Debug Session from either the Sidebar card or its Pane; verify its SendBar is already visible and connecting/disconnecting does not create/remove the SendBar shell.
 24. Right-click a non-selected connected terminal whose Session would change SendBar/RightSidebar layout; verify the terminal menu opens without changing the active Session first.
 25. Drag dividers quickly, release the mouse (and repeat once while the window loses focus); verify the final ratio matches the pointer and resize state/cursor are always cleaned up.
+26. Select TRDP, TFTP and iperf Sessions and verify none reserves the global bottom SendBar; select Network Debug and verify its global SendBar remains available even while disconnected.

@@ -11,6 +11,8 @@
   position: absolute;
   overflow: auto;
   overscroll-behavior: contain;
+  container-type: inline-size;
+  container-name: session-pane;
   min-width: 0;
   min-height: 0;
   z-index: 1;
