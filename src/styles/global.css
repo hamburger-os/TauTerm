@@ -113,7 +113,7 @@ body {
 
 /* Quality 只增加环境色存在感，不恢复昂贵的大半径实时 blur。 */
 html[data-performance="quality"] .glow-orb {
-  opacity: calc(var(--bg-orb-opacity) * 1.08);
+  opacity: calc(var(--bg-orb-opacity) + 0.04);
 }
 
 /* Compatibility 保留品牌色氛围，但使用两个静态渐变光团。 */
