@@ -9,7 +9,11 @@
   padding: var(--select-padding);
   font-size: var(--text-xs);
   height: var(--select-height);
-  transition: all var(--transition-input);
+  transition:
+    background-color var(--transition-input),
+    border-color var(--transition-input),
+    box-shadow var(--transition-input),
+    color var(--transition-input);
 }
 
 .input {

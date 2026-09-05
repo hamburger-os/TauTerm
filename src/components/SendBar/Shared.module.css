@@ -12,11 +12,14 @@
   cursor: pointer;
 }
 
-.stopBtn:hover {
+.stopBtn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-primary) 22%, transparent);
 }
 
 .stopBtn:disabled {
-  opacity: 0.4;
+  background: var(--control-disabled-bg);
+  color: var(--control-disabled-text);
+  border-color: var(--control-disabled-border);
+  box-shadow: none;
   cursor: not-allowed;
 }

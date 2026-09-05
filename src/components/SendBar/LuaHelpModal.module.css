@@ -70,7 +70,13 @@
   font-size: var(--text-base);
   font-family: var(--font-ui);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
   text-align: left;
 }
 

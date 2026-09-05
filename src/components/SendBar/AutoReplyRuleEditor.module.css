@@ -203,7 +203,13 @@
   border-radius: var(--radius-sm);
   background: var(--glass-input-bg);
   box-shadow: var(--glass-input-shadow-inner);
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
   flex-shrink: 0;
   top: 1px;
 }
@@ -524,7 +530,13 @@
   font-weight: 500;
   font-family: var(--font-ui);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
   color: var(--text-primary);
 }
 
@@ -535,7 +547,14 @@
   font-weight: 500;
   font-family: var(--font-ui);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
 }
 
-.saveBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.saveBtn:disabled {
+  cursor: not-allowed; }

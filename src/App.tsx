@@ -338,7 +338,7 @@ function AppInner() {
 
   return (
     <div className={`app-root ${isResizingSidebar || isResizingRightSidebar || isResizingSendBar ? "ui-resizing" : ""}`}>
-      {/* 动态光球背景层 (z-index: 0) */}
+      {/* Shared Google Ambient Field 背景层 (z-index: 0) */}
       <GoogleGlowBackground />
 
       {/* 顶栏 (z-index: 10) */}

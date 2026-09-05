@@ -26,7 +26,12 @@
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
   user-select: none;
 }
 
@@ -80,7 +85,12 @@
   min-width: 80px;
   text-align: center;
   white-space: nowrap;
-  transition: all var(--transition-fast);
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 /* 录制中 — 按键标签闪烁 */

@@ -1,5 +1,5 @@
 /* ========================================
-   TauTerm Liquid Glass v5 设计令牌
+   TauTerm Liquid Glass v6 设计令牌
    Google Glow (默认) + Obsidian + Frosted
    ======================================== */
 
@@ -54,22 +54,27 @@
   --glass-blur-chrome: 8px;
   --glass-blur-float: 10px;
 
-  /* Shared Google Ambient motion defaults (Balanced).
-     RGB / geometry / trajectory are cross-theme brand constants. */
-  --ambient-orb-opacity: var(--ambient-opacity-balanced);
-  --ambient-blue-dx: 14vw;
-  --ambient-blue-dy: 10vh;
-  --ambient-red-dx: -14vw;
-  --ambient-red-dy: 11vh;
-  --ambient-yellow-dx: 15vw;
-  --ambient-yellow-dy: -10vh;
-  --ambient-green-dx: -13vw;
-  --ambient-green-dy: -11vh;
-  --ambient-scale-peak: 1.07;
-  --ambient-duration-blue: 38s;
-  --ambient-duration-red: 40s;
-  --ambient-duration-yellow: 42s;
-  --ambient-duration-green: 44s;
+  /* Shared Google Ambient field defaults (Balanced).
+     Two oversized fields carry four Google colors; only transform is animated. */
+  --ambient-field-opacity: var(--ambient-opacity-balanced);
+  --ambient-field-a-duration: 38s;
+  --ambient-field-b-duration: 44s;
+  --ambient-a-x1: -7vw;
+  --ambient-a-y1: -4vh;
+  --ambient-a-x2: 9vw;
+  --ambient-a-y2: 4vh;
+  --ambient-a-x3: 13vw;
+  --ambient-a-y3: 11vh;
+  --ambient-a-x4: -5vw;
+  --ambient-a-y4: 8vh;
+  --ambient-b-x1: 6vw;
+  --ambient-b-y1: -5vh;
+  --ambient-b-x2: -10vw;
+  --ambient-b-y2: 5vh;
+  --ambient-b-x3: -12vw;
+  --ambient-b-y3: 12vh;
+  --ambient-b-x4: 7vw;
+  --ambient-b-y4: 8vh;
 
   /* 模糊 */
   --blur-xs: 4px;
@@ -113,102 +118,102 @@
 html[data-performance="quality"] {
   --glass-blur-chrome: 16px;
   --glass-blur-float: 18px;
-  --ambient-orb-opacity: var(--ambient-opacity-quality);
-  --ambient-blue-dx: 20vw;
-  --ambient-blue-dy: 14vh;
-  --ambient-red-dx: -20vw;
-  --ambient-red-dy: 16vh;
-  --ambient-yellow-dx: 22vw;
-  --ambient-yellow-dy: -14vh;
-  --ambient-green-dx: -18vw;
-  --ambient-green-dy: -16vh;
-  --ambient-scale-peak: 1.12;
-  --ambient-duration-blue: 26s;
-  --ambient-duration-red: 28s;
-  --ambient-duration-yellow: 30s;
-  --ambient-duration-green: 32s;
+  --ambient-field-opacity: var(--ambient-opacity-quality);
+  --ambient-field-a-duration: 24s;
+  --ambient-field-b-duration: 29s;
+  --ambient-a-x1: -10vw;
+  --ambient-a-y1: -7vh;
+  --ambient-a-x2: 13vw;
+  --ambient-a-y2: 6vh;
+  --ambient-a-x3: 20vw;
+  --ambient-a-y3: 16vh;
+  --ambient-a-x4: -8vw;
+  --ambient-a-y4: 12vh;
+  --ambient-b-x1: 9vw;
+  --ambient-b-y1: -8vh;
+  --ambient-b-x2: -14vw;
+  --ambient-b-y2: 7vh;
+  --ambient-b-x3: -18vw;
+  --ambient-b-y3: 17vh;
+  --ambient-b-x4: 10vw;
+  --ambient-b-y4: 12vh;
 }
 
 html[data-performance="balanced"] {
   --glass-blur-chrome: 8px;
   --glass-blur-float: 10px;
-  --ambient-orb-opacity: var(--ambient-opacity-balanced);
-  --ambient-blue-dx: 14vw;
-  --ambient-blue-dy: 10vh;
-  --ambient-red-dx: -14vw;
-  --ambient-red-dy: 11vh;
-  --ambient-yellow-dx: 15vw;
-  --ambient-yellow-dy: -10vh;
-  --ambient-green-dx: -13vw;
-  --ambient-green-dy: -11vh;
-  --ambient-scale-peak: 1.07;
-  --ambient-duration-blue: 38s;
-  --ambient-duration-red: 40s;
-  --ambient-duration-yellow: 42s;
-  --ambient-duration-green: 44s;
+  --ambient-field-opacity: var(--ambient-opacity-balanced);
+  --ambient-field-a-duration: 38s;
+  --ambient-field-b-duration: 44s;
 }
 
 html[data-performance="compat"] {
   --glass-blur-chrome: 0px;
   --glass-blur-float: 0px;
-  --ambient-orb-opacity: var(--ambient-opacity-compat);
+  --ambient-field-opacity: var(--ambient-opacity-compat);
 }
 
 /* ===== Level 2: 主题令牌 ===== */
 
-/* Google Glow — 默认深色主题，Google 四色动态光球 + 半透液态玻璃 */
+/* Google Glow — 中性烟晶玻璃 + 共享 Google Ambient；颜色来自环境光而不是蓝色面板。 */
 :root, [data-theme="google-glow"] {
-  /* 深蓝黑基底 + 共享 Google Ambient。三档仅调整感知强度。 */
-  --bg-base: #07111f;
-  --ambient-opacity-quality: 0.60;
-  --ambient-opacity-balanced: 0.48;
-  --ambient-opacity-compat: 0.28;
+  --bg-base: #0a0b0d;
+  --ambient-opacity-quality: 0.58;
+  --ambient-opacity-balanced: 0.46;
+  --ambient-opacity-compat: 0.26;
 
   /* 液态玻璃 */
-  --glass-fill: linear-gradient(135deg, rgba(18, 34, 58, 0.42) 0%, rgba(7, 14, 28, 0.24) 100%);
-  --glass-card-fill: linear-gradient(135deg, rgba(24, 42, 68, 0.48) 0%, rgba(10, 18, 34, 0.30) 100%);
+  --glass-fill: linear-gradient(135deg, rgba(42, 44, 48, 0.30) 0%, rgba(14, 16, 19, 0.20) 100%);
+  --glass-card-fill: linear-gradient(135deg, rgba(44, 46, 50, 0.36) 0%, rgba(18, 20, 23, 0.26) 100%);
   --glass-noise-opacity: 0;
   --glass-blur: 10px; /* legacy alias; global chrome uses --glass-blur-chrome */
-  --glass-blur-saturate: 115%;
-  --glass-border-default: rgba(255, 255, 255, 0.16);
-  --glass-border-top: rgba(255, 255, 255, 0.34);
-  --glass-border-left: rgba(255, 255, 255, 0.22);
-  --glass-shadow-outer: 0 8px 24px 0 rgba(0, 0, 0, 0.28);
-  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.20), inset 0 -1px 0 rgba(255, 255, 255, 0.03);
-  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.045) 22%, transparent 46%, rgba(66, 133, 244, 0.06) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(14, 30, 52, 0.88) 0%, rgba(6, 13, 26, 0.82) 100%);
-  --content-surface: linear-gradient(180deg, rgba(7, 14, 27, 0.52), rgba(5, 10, 20, 0.64));
-  --content-surface-active: linear-gradient(180deg, rgba(8, 18, 34, 0.42), rgba(5, 11, 22, 0.56));
-  --content-surface-inactive: linear-gradient(180deg, rgba(6, 12, 23, 0.62), rgba(4, 8, 17, 0.72));
-  --content-border: rgba(255, 255, 255, 0.07);
-  --content-border-active: rgba(255, 255, 255, 0.15);
-  --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.45);  /* 深色主题下不可见，仅 frosted 浅色主题下生效 */
+  --glass-blur-saturate: 118%;
+  --glass-border-default: rgba(255, 255, 255, 0.10);
+  --glass-border-top: rgba(255, 255, 255, 0.20);
+  --glass-border-left: rgba(255, 255, 255, 0.12);
+  --glass-shadow-outer: 0 10px 28px rgba(0, 0, 0, 0.20);
+  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
+  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.035) 22%, transparent 48%, rgba(255, 255, 255, 0.015) 100%);
+  --glass-compat-fill: linear-gradient(135deg, rgba(30, 32, 36, 0.88) 0%, rgba(12, 14, 17, 0.84) 100%);
+  --content-surface: linear-gradient(180deg, rgba(12, 14, 17, 0.44), rgba(7, 9, 11, 0.54));
+  --content-surface-active: linear-gradient(180deg, rgba(14, 16, 19, 0.34), rgba(8, 10, 12, 0.46));
+  --content-surface-inactive: linear-gradient(180deg, rgba(10, 12, 15, 0.54), rgba(6, 8, 10, 0.64));
+  --content-border: rgba(255, 255, 255, 0.065);
+  --content-border-active: rgba(255, 255, 255, 0.12);
+  --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  --control-surface: linear-gradient(180deg, rgba(27, 29, 33, 0.66), rgba(14, 16, 19, 0.74));
+  --control-surface-border: rgba(255, 255, 255, 0.10);
+  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 0 -1px 0 rgba(0, 0, 0, 0.16);
+  --control-disabled-bg: rgba(24, 26, 30, 0.72);
+  --control-disabled-border: rgba(255, 255, 255, 0.10);
+  --control-disabled-text: #7f8792;
+  --control-disabled-icon: #747c87;
+  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.35);
 
   /* 按钮 */
-  --glass-button-bg: rgba(255, 255, 255, 0.05);
-  --glass-button-border: rgba(255, 255, 255, 0.1);
-  --glass-button-shadow-inset: inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
-  --glass-button-hover-bg: rgba(255, 255, 255, 0.15);
-  --glass-button-hover-border: rgba(255, 255, 255, 0.3);
+  --glass-button-bg: rgba(255, 255, 255, 0.065);
+  --glass-button-border: rgba(255, 255, 255, 0.12);
+  --glass-button-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --glass-button-hover-bg: rgba(255, 255, 255, 0.11);
+  --glass-button-hover-border: rgba(255, 255, 255, 0.20);
 
-  /* 输入框 */
-  --glass-input-bg: rgba(0, 0, 0, 0.25);
-  --glass-input-border: rgba(255, 255, 255, 0.05);
-  --glass-input-shadow-inner: inset 0 2px 5px rgba(0, 0, 0, 0.3);
-  --glass-input-focus-border: rgba(255, 255, 255, 0.25);
-  --glass-input-focus-glow: 0 0 20px rgba(66, 133, 244, 0.4);
+  /* 输入框：稳定凹槽，不依赖底层 Ambient 保持轮廓 */
+  --glass-input-bg: rgba(3, 5, 7, 0.40);
+  --glass-input-border: rgba(255, 255, 255, 0.12);
+  --glass-input-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.045), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+  --glass-input-focus-border: rgba(66, 133, 244, 0.58);
+  --glass-input-focus-glow: 0 0 0 2px rgba(66, 133, 244, 0.16);
 
   /* 文字 */
-  --text-primary: #e7efff;
-  --text-secondary: #aec0dc;
-  --text-muted: #8293ad;
+  --text-primary: #f1f3f6;
+  --text-secondary: #b7bcc5;
+  --text-muted: #858d98;
 
   /* 强调色 */
   --accent-primary: #4285F4;
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #4285F4 0%, #6366f1 100%);
-  --accent-glow: rgba(66, 133, 244, 0.35);
+  --accent-glow: rgba(66, 133, 244, 0.18);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -222,20 +227,18 @@ html[data-performance="compat"] {
   --color-accent: var(--accent-primary);
   --glass-hover: rgba(255, 255, 255, 0.08);
   --glass-fill-secondary: rgba(255, 255, 255, 0.03);
-  --text-tertiary: #8888aa;
+  --text-tertiary: #777f8b;
 
-  /* 全息光效渐变（主按钮等） */
-  --accent-holofoil-gradient: linear-gradient(-45deg,
-    rgba(66, 133, 244, 0.85),
-    rgba(168, 85, 247, 0.85),
-    rgba(236, 72, 153, 0.85),
-    rgba(251, 188, 5, 0.85));
+  /* 主 CTA 只保留克制的主题 accent；Google 四色留给 Ambient。 */
+  --accent-holofoil-gradient: linear-gradient(135deg,
+    rgba(66, 133, 244, 0.90),
+    rgba(96, 165, 250, 0.82));
 
   /* 浮层蒙版 */
-  --overlay-bg: rgba(2, 7, 16, 0.32);
+  --overlay-bg: rgba(0, 0, 0, 0.28);
 
   /* 辅助令牌（跨组件共享的状态与层级令牌，所有 3 套主题各自定义） */
-  --bg-secondary: #0f0f1a;
+  --bg-secondary: #111316;
   --glass-bg-hover: rgba(255, 255, 255, 0.08);
   --glass-bg-active: rgba(255, 255, 255, 0.12);
   --glass-border-hover: rgba(255, 255, 255, 0.25);
@@ -244,64 +247,70 @@ html[data-performance="compat"] {
   --blur-medium: 16px;
   --blur-heavy: 24px;
   --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.6);
-  --glass-rim-glow: 0 4px 16px rgba(255, 255, 255, 0.10);  /* 玻璃边缘高光 — 暗色底上白色半透光晕 */
-  --glass-rim-light: 0 2px 6px rgba(255, 255, 255, 0.07);   /* 玻璃边缘微光 — 小型元素的轻量高光 */
+  --glass-rim-glow: 0 1px 0 rgba(255, 255, 255, 0.10), 0 6px 18px rgba(0, 0, 0, 0.12);
+  --glass-rim-light: 0 1px 0 rgba(255, 255, 255, 0.08), 0 3px 8px rgba(0, 0, 0, 0.08);
   /* 全息主按钮 — 深色主题白色高光边框 */
-  --primary-button-border: rgba(255, 255, 255, 0.5);
-  --primary-button-hover-border: rgba(255, 255, 255, 0.9);
-  --primary-button-shadow: inset 0 1px 2px rgba(255, 255, 255, 0.8), 0 4px 15px rgba(168, 85, 247, 0.3);
-  --primary-button-hover-shadow: inset 0 1px 2px rgba(255, 255, 255, 1), 0 6px 20px rgba(236, 72, 153, 0.4);
+  --primary-button-border: rgba(255, 255, 255, 0.28);
+  --primary-button-hover-border: rgba(255, 255, 255, 0.46);
+  --primary-button-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.30), 0 4px 12px rgba(0, 0, 0, 0.18);
+  --primary-button-hover-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), 0 6px 16px rgba(0, 0, 0, 0.20);
   --primary-button-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
   /* 弹窗背景 */
-  --dialog-bg: rgba(15, 15, 30, 0.95);
-  --dialog-shadow: 0 0 30px rgba(66, 133, 244, 0.15);
+  --dialog-bg: rgba(24, 25, 29, 0.90);
+  --dialog-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
   /* 下拉选项 */
-  --select-option-bg: #12122a;
+  --select-option-bg: #17191d;
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%239494b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }
 
-/* Obsidian — 黑曜石暗色主题，近纯黑底 + 霓虹光球 + 磨砂黑玻璃 */
+/* Obsidian — 与 Google Glow 共用 Glass Physics，仅换成更深的黑曜石 tint。 */
 [data-theme="obsidian"] {
-  /* 近纯黑基底；仍使用完全相同的 Google Ambient，材质更深更实。 */
   --bg-base: #020304;
-  --ambient-opacity-quality: 0.48;
-  --ambient-opacity-balanced: 0.36;
-  --ambient-opacity-compat: 0.22;
+  --ambient-opacity-quality: 0.58;
+  --ambient-opacity-balanced: 0.46;
+  --ambient-opacity-compat: 0.26;
 
   /* 液态玻璃 */
-  --glass-fill: linear-gradient(135deg, rgba(19, 21, 25, 0.70) 0%, rgba(3, 4, 6, 0.54) 100%);
-  --glass-card-fill: linear-gradient(135deg, rgba(25, 27, 32, 0.68) 0%, rgba(8, 9, 12, 0.50) 100%);
+  --glass-fill: linear-gradient(135deg, rgba(24, 25, 28, 0.46) 0%, rgba(5, 6, 7, 0.34) 100%);
+  --glass-card-fill: linear-gradient(135deg, rgba(29, 30, 34, 0.50) 0%, rgba(8, 9, 11, 0.38) 100%);
   --glass-noise-opacity: 0;
   --glass-blur: 10px; /* legacy alias */
-  --glass-blur-saturate: 110%;
-  --glass-border-default: rgba(255, 255, 255, 0.08);
-  --glass-border-top: rgba(255, 255, 255, 0.12);
-  --glass-border-left: rgba(255, 255, 255, 0.08);
-  --glass-shadow-outer: 0 8px 24px 0 rgba(0, 0, 0, 0.48);
-  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 0 -1px 0 rgba(255, 255, 255, 0.02);
-  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.055) 0%, rgba(255, 255, 255, 0.012) 24%, transparent 48%, rgba(96, 165, 250, 0.010) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(16, 17, 20, 0.96) 0%, rgba(3, 4, 5, 0.92) 100%);
-  --content-surface: linear-gradient(180deg, rgba(7, 8, 11, 0.68), rgba(3, 4, 6, 0.78));
-  --content-surface-active: linear-gradient(180deg, rgba(9, 10, 14, 0.58), rgba(4, 5, 8, 0.70));
-  --content-surface-inactive: linear-gradient(180deg, rgba(6, 7, 10, 0.76), rgba(3, 4, 6, 0.84));
+  --glass-blur-saturate: 118%;
+  --glass-border-default: rgba(255, 255, 255, 0.09);
+  --glass-border-top: rgba(255, 255, 255, 0.17);
+  --glass-border-left: rgba(255, 255, 255, 0.10);
+  --glass-shadow-outer: 0 10px 28px rgba(0, 0, 0, 0.30);
+  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.025) 22%, transparent 48%, rgba(255, 255, 255, 0.010) 100%);
+  --glass-compat-fill: linear-gradient(135deg, rgba(22, 23, 26, 0.94) 0%, rgba(4, 5, 6, 0.92) 100%);
+  --content-surface: linear-gradient(180deg, rgba(7, 8, 10, 0.58), rgba(3, 4, 5, 0.68));
+  --content-surface-active: linear-gradient(180deg, rgba(8, 9, 11, 0.48), rgba(4, 5, 6, 0.60));
+  --content-surface-inactive: linear-gradient(180deg, rgba(6, 7, 9, 0.68), rgba(3, 4, 5, 0.76));
   --content-border: rgba(255, 255, 255, 0.055);
-  --content-border-active: rgba(255, 255, 255, 0.12);
+  --content-border-active: rgba(255, 255, 255, 0.105);
   --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.45);  /* 深色主题下不可见，仅 frosted 浅色主题下生效 */
+  --control-surface: linear-gradient(180deg, rgba(18, 19, 22, 0.76), rgba(7, 8, 10, 0.84));
+  --control-surface-border: rgba(255, 255, 255, 0.09);
+  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
+  --control-disabled-bg: rgba(15, 16, 19, 0.82);
+  --control-disabled-border: rgba(255, 255, 255, 0.09);
+  --control-disabled-text: #727780;
+  --control-disabled-icon: #686d75;
+  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.45);
 
   /* 按钮 */
-  --glass-button-bg: rgba(0, 0, 0, 0.4);
-  --glass-button-border: rgba(255, 255, 255, 0.05);
-  --glass-button-shadow-inset: inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
-  --glass-button-hover-bg: rgba(40, 40, 45, 0.6);
-  --glass-button-hover-border: rgba(255, 255, 255, 0.15);
+  --glass-button-bg: rgba(255, 255, 255, 0.045);
+  --glass-button-border: rgba(255, 255, 255, 0.10);
+  --glass-button-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.065);
+  --glass-button-hover-bg: rgba(255, 255, 255, 0.085);
+  --glass-button-hover-border: rgba(255, 255, 255, 0.16);
 
   /* 输入框 */
-  --glass-input-bg: rgba(0, 0, 0, 0.6);
-  --glass-input-border: rgba(255, 255, 255, 0.03);
-  --glass-input-shadow-inner: inset 0 2px 8px rgba(0, 0, 0, 0.8);
-  --glass-input-focus-border: rgba(255, 255, 255, 0.15);
-  --glass-input-focus-glow: 0 0 20px rgba(66, 133, 244, 0.3);
+  --glass-input-bg: rgba(0, 0, 0, 0.52);
+  --glass-input-border: rgba(255, 255, 255, 0.10);
+  --glass-input-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.035), inset 0 -1px 0 rgba(0, 0, 0, 0.28);
+  --glass-input-focus-border: rgba(59, 130, 246, 0.48);
+  --glass-input-focus-glow: 0 0 0 2px rgba(59, 130, 246, 0.14);
 
   /* 文字 */
   --text-primary: #e7e8ea;
@@ -312,7 +321,7 @@ html[data-performance="compat"] {
   --accent-primary: #3b82f6;
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-  --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-glow: rgba(59, 130, 246, 0.16);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -323,11 +332,9 @@ html[data-performance="compat"] {
   --color-info: #4285F4;
 
   /* 全息光效渐变（主按钮等） */
-  --accent-holofoil-gradient: linear-gradient(-45deg,
-    rgba(59, 130, 246, 0.85),
-    rgba(99, 102, 241, 0.85),
-    rgba(139, 92, 246, 0.85),
-    rgba(59, 130, 246, 0.85));
+  --accent-holofoil-gradient: linear-gradient(135deg,
+    rgba(59, 130, 246, 0.84),
+    rgba(71, 85, 105, 0.88));
 
   /* 右侧栏工具面板辅助令牌 — 仅覆盖与 google-glow 不同的 token */
   --glass-hover: rgba(255, 255, 255, 0.06);
@@ -346,58 +353,64 @@ html[data-performance="compat"] {
   --blur-medium: 20px;
   --blur-heavy: 30px;
   --shadow-glass: 0 20px 50px rgba(0, 0, 0, 0.7);
-  --glass-rim-glow: 0 4px 16px rgba(255, 255, 255, 0.08);  /* 玻璃边缘高光 — 暗色底上白色半透光晕 */
-  --glass-rim-light: 0 2px 6px rgba(255, 255, 255, 0.05);   /* 玻璃边缘微光 — 小型元素的轻量高光 */
+  --glass-rim-glow: 0 1px 0 rgba(255, 255, 255, 0.075), 0 6px 18px rgba(0, 0, 0, 0.20);
+  --glass-rim-light: 0 1px 0 rgba(255, 255, 255, 0.055), 0 3px 8px rgba(0, 0, 0, 0.13);
   /* 弹窗背景 */
   --dialog-bg: rgba(8, 8, 12, 0.97);
-  --dialog-shadow: 0 0 30px rgba(59, 130, 246, 0.12);
+  --dialog-shadow: 0 16px 42px rgba(0, 0, 0, 0.36);
   /* 下拉选项 */
   --select-option-bg: #0a0a12;
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%23909090' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }
 
-/* Frosted — 白霜浅色主题，灰白底 + 漫反射光球 + 清透白霜玻璃 */
+/* Frosted — 与暗色主题共用 Glass Physics，仅换成银白/冰霜 tint。 */
 [data-theme="frosted"] {
-  /* 冷白基底；共享 Google Ambient，额外 opacity 仅补偿白底冲淡。 */
-  --bg-base: #edf4fb;
-  --ambient-opacity-quality: 0.70;
-  --ambient-opacity-balanced: 0.56;
-  --ambient-opacity-compat: 0.32;
+  --bg-base: #edf1f4;
+  --ambient-opacity-quality: 0.58;
+  --ambient-opacity-balanced: 0.46;
+  --ambient-opacity-compat: 0.26;
 
   /* 液态玻璃 */
-  --glass-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.64) 0%, rgba(235, 244, 252, 0.46) 100%);
-  --glass-card-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.76) 0%, rgba(238, 247, 255, 0.58) 100%);
+  --glass-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.46) 0%, rgba(241, 245, 248, 0.34) 100%);
+  --glass-card-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.58) 0%, rgba(241, 245, 248, 0.44) 100%);
   --glass-noise-opacity: 0;
   --glass-blur: 10px; /* legacy alias */
-  --glass-blur-saturate: 120%;
-  --glass-border-default: rgba(148, 163, 184, 0.35);
-  --glass-border-top: rgba(148, 163, 184, 0.5);
-  --glass-border-left: rgba(148, 163, 184, 0.4);
-  --glass-shadow-outer: 0 8px 24px 0 rgba(15, 23, 42, 0.08);
-  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.76), inset 0 -1px 0 rgba(148, 163, 184, 0.08);
-  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.18) 24%, transparent 50%, rgba(59, 130, 246, 0.025) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(252, 254, 255, 0.96) 0%, rgba(235, 244, 252, 0.90) 100%);
-  --content-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.64), rgba(239, 247, 253, 0.76));
-  --content-surface-active: linear-gradient(180deg, rgba(255, 255, 255, 0.54), rgba(236, 246, 253, 0.68));
-  --content-surface-inactive: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(240, 247, 252, 0.82));
-  --content-border: rgba(100, 116, 139, 0.20);
-  --content-border-active: rgba(100, 116, 139, 0.34);
+  --glass-blur-saturate: 118%;
+  --glass-border-default: rgba(71, 85, 105, 0.16);
+  --glass-border-top: rgba(255, 255, 255, 0.78);
+  --glass-border-left: rgba(255, 255, 255, 0.56);
+  --glass-shadow-outer: 0 10px 28px rgba(30, 41, 59, 0.10);
+  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.84), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
+  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.16) 22%, transparent 48%, rgba(255, 255, 255, 0.04) 100%);
+  --glass-compat-fill: linear-gradient(135deg, rgba(252, 253, 254, 0.94) 0%, rgba(236, 241, 245, 0.90) 100%);
+  --content-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(242, 246, 249, 0.58));
+  --content-surface-active: linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(239, 244, 248, 0.50));
+  --content-surface-inactive: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(241, 245, 248, 0.68));
+  --content-border: rgba(71, 85, 105, 0.14);
+  --content-border-active: rgba(71, 85, 105, 0.22);
   --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.08);  /* frosted 浅色主题下提供微妙文字深度 */
+  --control-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(241, 245, 248, 0.80));
+  --control-surface-border: rgba(71, 85, 105, 0.18);
+  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
+  --control-disabled-bg: rgba(246, 248, 250, 0.82);
+  --control-disabled-border: rgba(71, 85, 105, 0.18);
+  --control-disabled-text: #7c8795;
+  --control-disabled-icon: #87919d;
+  --glass-shadow-text: 0 1px 2px rgba(15, 23, 42, 0.06);
 
   /* 按钮 */
-  --glass-button-bg: rgba(255, 255, 255, 0.6);
-  --glass-button-border: rgba(148, 163, 184, 0.35);
-  --glass-button-shadow-inset: inset 0 1px 0 0 rgba(255, 255, 255, 0.6);
-  --glass-button-hover-bg: rgba(255, 255, 255, 0.9);
-  --glass-button-hover-border: rgba(255, 255, 255, 0.9);
+  --glass-button-bg: rgba(255, 255, 255, 0.58);
+  --glass-button-border: rgba(71, 85, 105, 0.20);
+  --glass-button-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+  --glass-button-hover-bg: rgba(255, 255, 255, 0.74);
+  --glass-button-hover-border: rgba(71, 85, 105, 0.28);
 
   /* 输入框 */
-  --glass-input-bg: rgba(255, 255, 255, 0.5);
-  --glass-input-border: rgba(148, 163, 184, 0.35);
-  --glass-input-shadow-inner: inset 0 2px 6px rgba(0, 0, 0, 0.05);
-  --glass-input-focus-border: rgba(66, 133, 244, 0.5);
-  --glass-input-focus-glow: 0 0 0 3px rgba(66, 133, 244, 0.15);
+  --glass-input-bg: rgba(255, 255, 255, 0.68);
+  --glass-input-border: rgba(71, 85, 105, 0.24);
+  --glass-input-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.82), inset 0 -1px 0 rgba(71, 85, 105, 0.08);
+  --glass-input-focus-border: rgba(66, 133, 244, 0.55);
+  --glass-input-focus-glow: 0 0 0 2px rgba(66, 133, 244, 0.14);
 
   /* 文字 */
   --text-primary: #1b2b3d;
@@ -408,7 +421,7 @@ html[data-performance="compat"] {
   --accent-primary: #3b82f6;
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
-  --accent-glow: rgba(59, 130, 246, 0.25);
+  --accent-glow: rgba(59, 130, 246, 0.16);
   --accent-primary-muted: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   --text-on-accent: #fff;
 
@@ -425,8 +438,8 @@ html[data-performance="compat"] {
   --text-tertiary: #788090;
 
   /* 全息光效渐变（主按钮等 — 浅色主题使用实色渐变） */
-  --accent-holofoil-gradient: linear-gradient(-45deg,
-    #3b82f6, #6366f1, #8b5cf6, #3b82f6);
+  --accent-holofoil-gradient: linear-gradient(135deg,
+    #3b82f6, #60a5fa);
 
   /* 浮层蒙版 */
   --overlay-bg: rgba(31, 55, 78, 0.12);
@@ -441,8 +454,8 @@ html[data-performance="compat"] {
   --blur-medium: 20px;
   --blur-heavy: 35px;
   --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.06);
-  --glass-rim-glow: 0 4px 16px rgba(0, 0, 0, 0.04);   /* 玻璃边缘高光 — 浅色底上暗色半透阴影（模拟边缘落差） */
-  --glass-rim-light: 0 2px 6px rgba(0, 0, 0, 0.08);    /* 玻璃边缘微光 — 小型元素的轻量阴影 */
+  --glass-rim-glow: 0 1px 0 rgba(255, 255, 255, 0.78), 0 6px 18px rgba(30, 41, 59, 0.08);
+  --glass-rim-light: 0 1px 0 rgba(255, 255, 255, 0.66), 0 3px 8px rgba(30, 41, 59, 0.07);
   /* 全息主按钮 — 浅色主题 slate 边框 + 蓝紫光晕 */
   --primary-button-border: rgba(148, 163, 184, 0.55);
   --primary-button-hover-border: rgba(59, 130, 246, 0.6);

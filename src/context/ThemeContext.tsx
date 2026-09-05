@@ -117,15 +117,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     document.documentElement.dataset.performance = performanceMode;
   }, [performanceMode]);
 
-  // Decorative motion is paused while the window is hidden/unfocused and reduced
-  // when the operating system asks for reduced motion. This is intentionally
-  // independent from the visual performance tier so loading/status semantics remain intact.
+  // Decorative ambient motion pauses only when the document is actually hidden.
+  // Losing focus (screenshot tools, task switcher, another window) must not reset/freeze
+  // the visual field; semantic loading/status animations are never controlled here.
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    let focused = document.hasFocus();
 
     const applyMotionState = () => {
-      const state = document.hidden || !focused
+      const state = document.hidden
         ? "paused"
         : media.matches
           ? "reduced"
@@ -133,19 +132,8 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       document.documentElement.dataset.motion = state;
     };
 
-    const handleFocus = () => {
-      focused = true;
-      applyMotionState();
-    };
-    const handleBlur = () => {
-      focused = false;
-      applyMotionState();
-    };
-
     applyMotionState();
     document.addEventListener("visibilitychange", applyMotionState);
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("blur", handleBlur);
 
     if (typeof media.addEventListener === "function") {
       media.addEventListener("change", applyMotionState);
@@ -155,8 +143,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
     return () => {
       document.removeEventListener("visibilitychange", applyMotionState);
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("blur", handleBlur);
       if (typeof media.removeEventListener === "function") {
         media.removeEventListener("change", applyMotionState);
       } else {
