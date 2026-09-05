@@ -163,13 +163,13 @@ html[data-performance="quality"] {
   --ambient-a-x2: 10vw;
   --ambient-a-y2: -3vh;
   --ambient-a-x3: 14vw;
-  --ambient-a-y3: -2vh;
+  --ambient-a-y3: 10vh;
   --ambient-a-x4: -8vw;
   --ambient-a-y4: 8vh;
   --ambient-b-x1: 11vw;
   --ambient-b-y1: -9vh;
   --ambient-b-x2: -10vw;
-  --ambient-b-y2: 10vh;
+  --ambient-b-y2: -2vh;
   --ambient-b-x3: -14vw;
   --ambient-b-y3: 10vh;
   --ambient-b-x4: 8vw;
