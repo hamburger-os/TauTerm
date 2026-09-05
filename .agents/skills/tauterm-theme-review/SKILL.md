@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "3.2"
+  version: "3.3"
 ---
 
 # TauTerm 主题与渲染审查
@@ -32,7 +32,7 @@ rg 'glass-blur|bg-orb-blur' src
 rg 'liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
 rg 'data-performance|data-motion|tauterm-performance-mode' src
 rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glob '*.tsx'
-rg '#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
+rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 ```
 
 硬编码命中必须再按 SSOT 的允许例外人工筛选。
