@@ -100,6 +100,7 @@ body {
     rgba(66, 133, 244, 0.14) 58%,
     transparent 78%);
   animation: glow-drift-blue var(--ambient-duration-blue) ease-in-out infinite;
+  animation-delay: -7s;
 }
 
 .glow-orb-red {
@@ -109,6 +110,7 @@ body {
     rgba(234, 67, 53, 0.13) 58%,
     transparent 78%);
   animation: glow-drift-red var(--ambient-duration-red) ease-in-out infinite;
+  animation-delay: -13s;
 }
 
 .glow-orb-yellow {
@@ -118,6 +120,7 @@ body {
     rgba(251, 188, 5, 0.12) 58%,
     transparent 78%);
   animation: glow-drift-yellow var(--ambient-duration-yellow) ease-in-out infinite;
+  animation-delay: -19s;
 }
 
 .glow-orb-green {
@@ -127,6 +130,7 @@ body {
     rgba(52, 168, 83, 0.13) 58%,
     transparent 78%);
   animation: glow-drift-green var(--ambient-duration-green) ease-in-out infinite;
+  animation-delay: -23s;
 }
 
 /* Compatibility 保留品牌身份，但只渲染两个静态 Google 光团。 */
