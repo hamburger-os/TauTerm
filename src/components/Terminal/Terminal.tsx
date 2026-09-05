@@ -20,8 +20,8 @@ const SCROLL_BOTTOM_TOLERANCE = 5;
 /** PTY resize 防抖间隔 (ms)：避免拖拽 resize 时 IPC 风暴 */
 const RESIZE_DEBOUNCE_MS = 150;
 
-/** 深色主题终端配色 (google-glow / obsidian) */
-const DARK_TERMINAL_THEME = {
+/** 炫彩流光：冷蓝高亮的透明终端配色 */
+const GOOGLE_TERMINAL_THEME = {
   background: "transparent",
   foreground: "#e0e0ff",
   cursor: "#4285F4",
@@ -42,6 +42,31 @@ const DARK_TERMINAL_THEME = {
   brightBlue: "#60a5fa",
   brightMagenta: "#c084fc",
   brightCyan: "#67e8f9",
+  brightWhite: "#ffffff",
+} as const;
+
+/** 黑曜石：更中性的烟晶终端配色，与炫彩流光拉开材质身份 */
+const OBSIDIAN_TERMINAL_THEME = {
+  background: "transparent",
+  foreground: "#e6e7eb",
+  cursor: "#60a5fa",
+  cursorAccent: "#050608",
+  selectionBackground: "rgba(96, 165, 250, 0.24)",
+  black: "#17191d",
+  red: "#fb5b6b",
+  green: "#3fd49a",
+  yellow: "#e9a93a",
+  blue: "#5b8def",
+  magenta: "#a78bfa",
+  cyan: "#67c7d9",
+  white: "#d8dbe2",
+  brightBlack: "#626873",
+  brightRed: "#ff7a88",
+  brightGreen: "#65e6ae",
+  brightYellow: "#f3bf5b",
+  brightBlue: "#7aa7ff",
+  brightMagenta: "#c4a7ff",
+  brightCyan: "#8adbea",
   brightWhite: "#ffffff",
 } as const;
 
@@ -121,8 +146,11 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
   const { t } = useTranslation();
   const { theme } = useTheme();
-  const isDark = theme === "google-glow" || theme === "obsidian";
-  const terminalTheme = isDark ? DARK_TERMINAL_THEME : LIGHT_TERMINAL_THEME;
+  const terminalTheme = theme === "frosted"
+    ? LIGHT_TERMINAL_THEME
+    : theme === "obsidian"
+      ? OBSIDIAN_TERMINAL_THEME
+      : GOOGLE_TERMINAL_THEME;
 
   // 右键上下文菜单状态
   // 直接用 useState 管理，而非 useContextMenu hook——后者面向 Tab 标签右键菜单，强依赖 session 参数，此处不适用
@@ -170,6 +198,9 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       fontSize: fontSize ?? Number(localStorage.getItem("tauterm-font-size") || "14"),
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "Courier New", monospace',
       theme: terminalTheme,
+      // xterm strips background alpha unless allowTransparency is enabled.
+      // The terminal should reveal TauTerm's stable content surface, never the raw window.
+      allowTransparency: true,
       cursorBlink: true,
       cursorStyle: "underline", // 下划线光标：不遮挡字符内容，串口/TUI 场景可读性优于 bar/block
       allowProposedApi: true,

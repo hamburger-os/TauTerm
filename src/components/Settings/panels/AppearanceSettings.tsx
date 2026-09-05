@@ -54,7 +54,7 @@ export default function AppearanceSettings() {
         </div>
       </div>
 
-      {/* 视觉性能档：默认 Balanced；Compat 关闭实时背景动画与 backdrop blur */}
+      {/* 视觉性能档：主题身份不变；Quality/Balanced 调整 Ambient 丰富度，Compat 静态化并关闭 backdrop blur */}
       <h4 className={styles.categoryTitle}>{t("settings.performanceMode")}</h4>
       <div className={styles.settingGroup}>
         <div className={styles.optionList}>

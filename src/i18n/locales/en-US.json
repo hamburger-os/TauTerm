@@ -620,12 +620,12 @@
     "securityVaultUnlocked": "Encrypted credential vault unlocked for this app session.",
     "securityVaultLocked": "Encrypted credential vault locked.",
     "performanceMode": "Visual Performance",
-    "performanceQuality": "Liquid Quality",
+    "performanceQuality": "Effects First",
     "performanceBalanced": "Balanced (Recommended)",
     "performanceCompat": "Compatibility",
-    "performanceQualityDesc": "Keeps the full ambient motion and stronger glass sampling for capable hardware.",
-    "performanceBalancedDesc": "Default. Preserves the Liquid Glass hierarchy while avoiding large-area real-time blur for a smoother UI.",
-    "performanceCompatDesc": "For older PCs, software rendering, or remote desktops: ambient motion is static and real-time backdrop blur is disabled while glass color, rim light, and depth remain."
+    "performanceQualityDesc": "Full Google ambient with higher intensity, wider motion, and a faster drift. Only small chrome surfaces get stronger sampling; terminal/content surfaces still use no real-time blur.",
+    "performanceBalancedDesc": "Default. Keeps the full four-color Google ambient at a calmer intensity and slower pace with lightweight sampling on small chrome surfaces.",
+    "performanceCompatDesc": "For older PCs, software rendering, or remote desktops: keeps two static Google lights and disables real-time backdrop blur while preserving theme colors, content translucency, and rim highlights."
   },
   "updater": {
     "checking": "Checking for updates...",

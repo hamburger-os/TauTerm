@@ -1,9 +1,11 @@
 /**
- * 轻量环境流光背景。
+ * TauTerm shared Google Ambient background.
  *
- * 视觉保持 Google 四色氛围，但光团已经在 CSS 中使用 radial-gradient 预柔化，
- * 仅执行 transform 动画，不再使用大半径 filter: blur、border-radius morph
- * 或 mix-blend-mode。Compatibility 档自动静态化并减少光团数量。
+ * All themes use the same four Google RGB orbs, geometry and trajectories.
+ * Theme tokens only compensate perceived intensity on different base colors;
+ * performance tiers control motion amplitude/duration and whether animation runs.
+ *
+ * Rendering stays cheap: pre-softened radial gradients + transform-only motion.
  */
 export default function GoogleGlowBackground() {
   return (
@@ -21,40 +23,40 @@ export default function GoogleGlowBackground() {
       <div
         className="glow-orb glow-orb-blue"
         style={{
-          width: "60vw",
-          height: "60vh",
-          top: "-10%",
-          left: "-10%",
+          width: "64vw",
+          height: "62vh",
+          top: "-2%",
+          left: "-5%",
         }}
       />
 
       <div
         className="glow-orb glow-orb-red"
         style={{
-          width: "50vw",
-          height: "60vh",
-          top: "-5%",
-          right: "-5%",
+          width: "58vw",
+          height: "62vh",
+          top: "0%",
+          right: "-4%",
         }}
       />
 
       <div
         className="glow-orb glow-orb-yellow"
         style={{
-          width: "60vw",
-          height: "55vh",
-          top: "40%",
-          left: "-5%",
+          width: "64vw",
+          height: "58vh",
+          bottom: "-6%",
+          left: "-4%",
         }}
       />
 
       <div
         className="glow-orb glow-orb-green"
         style={{
-          width: "55vw",
-          height: "55vh",
-          top: "45%",
-          right: "0%",
+          width: "60vw",
+          height: "60vh",
+          bottom: "-8%",
+          right: "-2%",
         }}
       />
     </div>

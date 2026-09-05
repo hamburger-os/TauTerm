@@ -1,37 +1,40 @@
 ---
 name: tauterm-theme
-description: "Single source of truth for TauTerm Liquid Glass UI, theme tokens, material layering, visual performance tiers, and rendering-performance rules. Use for any React/CSS UI creation or modification, theme work, visual review/fixes, animation, glass/backdrop effects, or appearance/performance settings."
+description: "Single source of truth for TauTerm Liquid Glass UI, shared Google ambient glow, theme identity, material layering, visual performance tiers, and rendering-performance rules. Use for any React/CSS UI creation or modification, theme work, visual review/fixes, animation, glass/backdrop effects, or appearance/performance settings."
 license: MIT
 metadata:
   author: tauterm
-  version: "4.0"
+  version: "5.0"
 ---
 
-# TauTerm Liquid Glass v4 — 唯一主题规范源
+# TauTerm Liquid Glass v5 — 唯一主题规范源
 
-> **SSOT**：本文件是 TauTerm 视觉材质、主题兼容和 UI 渲染性能规则的唯一规范源。  
+> **SSOT**：本文件是 TauTerm 视觉材质、主题身份、Google Ambient、性能档与 UI 渲染性能规则的唯一规范源。  
 > `tauterm-theme-review` 只能描述“如何审查”，不得复制或重新定义本文件中的规则。
 
 ## 目标
 
-TauTerm 的 Liquid Glass 不是“大面积毛玻璃”。设计目标是：
+TauTerm 的 Liquid Glass 不是“大面积毛玻璃”。设计目标：
 
-- **清透**：内容稳定清晰，背景只提供氛围。
-- **边缘光学感**：通过 specular/rim light、薄边框、轻阴影表达玻璃厚度。
-- **克制的动态**：液态反馈集中在活动控件与小面积 chrome，不让整个内容层持续重绘。
-- **老设备可用**：默认 Balanced 必须避免大面积实时 blur；Compatibility 在没有高性能 GPU 时仍保持完整的层次与配色。
-- **三主题一致**：google-glow / obsidian / frosted 使用同一材质语义，只替换 token。
+- **清透**：内容能感知到底层 Google 色光，但文字/数据始终占第一视觉层级。
+- **统一品牌层**：Google 蓝/红/黄/绿环境光是 TauTerm 跨主题共享的视觉 DNA。
+- **主题有独立身份**：主题通过底色、玻璃 tint、内容 surface、边缘高光、阴影和文字体系区分，而不是换一套背景动画。
+- **性能档正交**：Performance 只控制效果丰富度和渲染成本，不改变主题身份。
+- **边缘光学感**：通过 specular/rim light、薄边框、轻阴影表达玻璃厚度；不用增加大面积 blur。
+- **老设备可用**：Balanced 是默认；Compatibility 在无高性能 GPU、软件渲染或远程桌面下仍保持完整配色和层次。
 
-## 1. 材质分层（必须先判断 surface）
+---
+
+## 1. 四层材质语义
 
 ### A. Chrome — `.liquid-glass`
 
 用于 Toolbar、SessionSidebar/RightSidebar 外壳、StatusBar、Dialog/Settings 主框架和小面积固定工具面。
 
 - 可使用轻量 `backdrop-filter`。
-- blur 强度由 `--glass-blur-chrome` 和 `data-performance` 控制。
+- blur 由 `--glass-blur-chrome` + `data-performance` 控制。
 - 使用 `--glass-specular-fill` + `--glass-fill` + rim/shadow。
-- **禁止**用于终端、文件列表、数据表、图表主体等大面积内容层。
+- **禁止**用于 Terminal、文件列表、数据表、图表主体等大面积内容层。
 
 ### B. Content — `.liquid-glass-content`
 
@@ -39,8 +42,11 @@ TauTerm 的 Liquid Glass 不是“大面积毛玻璃”。设计目标是：
 
 - **不得使用 `backdrop-filter`**。
 - 使用稳定半透明 `--content-surface`。
-- 活跃/非活跃分屏分别用 `.liquid-glass-content-active` / `.liquid-glass-content-inactive`。
-- 内容面应该“透一点”，但不能让彩色背景直接抢过文本和数据。
+- active / inactive 分别使用：
+  - `.liquid-glass-content-active`
+  - `.liquid-glass-content-inactive`
+- active pane 必须比 inactive pane **更透**，用透明度而不是粗描边建立焦点。
+- 背景 Google 色应像“玻璃后面的光”，不能把 pane 染成纯红/绿/黄。
 
 ### C. Accent — `.liquid-glass-accent`
 
@@ -53,104 +59,213 @@ TauTerm 的 Liquid Glass 不是“大面积毛玻璃”。设计目标是：
 
 用于 ContextMenu、Toast、Search dropdown、Popover 等 absolute/fixed/createPortal 浮层。
 
-可使用 `--glass-blur-float`，Compatibility 自动禁用 backdrop blur。
+- 可使用 `--glass-blur-float`。
+- Compatibility 自动关闭 backdrop blur。
 
 ### E. Nested cards
 
-使用 `.liquid-glass-card` / `.liquid-glass-mini-card` / `.liquid-glass-status-card`。嵌套在 chrome/content 内部时用 card，而不是再套一层 `.liquid-glass`。
+使用 `.liquid-glass-card` / `.liquid-glass-mini-card` / `.liquid-glass-status-card`。嵌套在 chrome/content 内部时不得再套一层 `.liquid-glass`。
 
-## 2. 性能档（Appearance → Visual Performance）
+---
 
-`ThemeContext` 在 `<html>` 写入 `data-performance`：
+## 2. Brand Ambient：三主题共享同一套 Google 四色流光
 
-| 模式 | 语义 | 要求 |
-|---|---|---|
-| `quality` | 清透优先 | 可提高**小面积** chrome/float 的 blur；仍禁止大面积实时 blur |
-| `balanced` | 默认/推荐 | 10–12px 级 chrome/float sampling；内容面无 backdrop blur |
-| `compat` | 老电脑/软件渲染/远程桌面 | backdrop blur = 0；环境光静态化并减少数量；保留配色、边缘、层次 |
+Google Ambient 是全局品牌层，不属于任何一个主题。
 
-**禁止通过 GPU 型号猜测自动切档。** GPU/WebView/驱动能力很难可靠推断。默认 Balanced，用户可明确选择 Compat。
+### 三主题必须完全一致的部分
 
-## 3. 动态与后台占用
+- Google RGB：
+  - Blue `#4285F4`
+  - Red `#EA4335`
+  - Yellow `#FBBC05`
+  - Green `#34A853`
+- 光团数量（同一 performance mode 下）
+- 光团尺寸
+- gradient stops / softness
+- 初始 geometry
+- 运动轨迹和方向
+- 同一 performance mode 下的动画节奏
+
+### 主题允许不同的唯一 Ambient 参数
+
+主题可定义**感知强度补偿**，用于补偿不同底色：
+
+- 深色主题：较低补偿
+- 浅色 Frosted：允许更高 opacity，以抵消白底对半透明彩色光的冲淡
+
+这不是换一套光团，而是同一品牌层在不同底色上的视觉校准。
+
+### 禁止
+
+- 某主题单独删除某种 Google 色（除 Compatibility 统一降级）
+- 为 Obsidian 换成蓝紫专属背景
+- 为 Frosted 换 pastel 专属 RGB
+- 大面积 `filter: blur(...)`
+- 100px+ 实时 blur
+- 动画 `border-radius` / clip-path morph
+- 全屏 `mix-blend-mode`
+- 常驻 `will-change`
+
+---
+
+## 3. 三主题身份
+
+| 主题 | 第一印象 | Base / Chrome | Content surface | Specular |
+|---|---|---|---|---|
+| `google-glow` 炫彩流光 | 活跃、通透、彩色 | 深蓝黑 / 靛蓝玻璃 | 三者中最透 | 最明显但保持薄 |
+| `obsidian` 黑曜石 | 深邃、烟晶、专业 | 接近纯黑 / 石墨 | 三者中最实 | 最克制 |
+| `frosted` 白霜 | 冰晶、明亮、轻盈 | 银白 / 冷白玻璃 | 中等通透 | 亮白/冰蓝边缘 |
+
+### 规则
+
+1. 三主题**共享同一 Google Ambient**。
+2. 主题区分主要发生在材质而不是背景动画。
+3. Google Glow 与 Obsidian 的静态截图必须在 1 秒内可分辨。
+4. Frosted 不得退化成普通灰白 light theme；必须保留冷白玻璃与 Google 色透射感。
+
+---
+
+## 4. Visual Performance 是效果丰富度，不是主题
+
+`ThemeContext` 在 `<html>` 写入 `data-performance`。
+
+### `quality` — UI 中文“效果优先”
+
+- 完整 4 色 Ambient。
+- Ambient 强度最高。
+- motion amplitude 最大。
+- motion duration 最短，但仍是缓慢环境运动。
+- 小面积 chrome/float 可使用更强 sampling。
+- **Content backdrop blur 始终为 0。**
+
+### `balanced` — 默认/推荐
+
+- 完整 4 色 Ambient。
+- Ambient 强度中等。
+- motion amplitude 中等、节奏更慢。
+- chrome/float sampling 较轻。
+- **Content backdrop blur 始终为 0。**
+
+### `compat` — 兼容
+
+- 可统一减少为 2 个静态 Google 光团。
+- 所有 ambient animation 停止。
+- chrome / float backdrop blur = 0。
+- 主题配色、content transparency hierarchy、specular/rim 仍保留。
+
+### 正交原则
+
+切 Performance：
+
+- 可以改变 opacity / motion amplitude / duration / allowed chrome sampling。
+- 不得改变主题 base color、content tint、文字体系、Google RGB。
+- Quality 与 Balanced 静态截图可以相似，但运行 3–5 秒必须能感知 Quality 更活跃。
+- Compatibility 必须显著静态、路径显著更轻。
+
+**禁止通过 GPU 型号猜测自动切档。** 默认 Balanced，用户明确选择 Compat。
+
+---
+
+## 5. Ambient motion
 
 `ThemeContext` 在 `<html>` 写入 `data-motion`：
 
-- `full`：正常
-- `reduced`：系统 `prefers-reduced-motion`
-- `paused`：窗口隐藏或失焦
+- `full`
+- `reduced`
+- `paused`
 
 规则：
 
-1. 环境背景只能使用 **transform-only** 动画。
-2. 窗口隐藏/失焦时 CSS animation 必须暂停。
-3. reduced-motion 下装饰动画必须停止或缩短。
-4. Loading/状态语义动画可以保留，但不得成为大面积持续合成源。
+1. Ambient 只能使用 **transform-only** animation。
+2. Quality 目标周期约 24–30s；Balanced 约 34–42s。
+3. Quality motion amplitude 目标约 16–22vw / 12–18vh；Balanced 约 10–16vw / 8–12vh。
+4. 光核在运动期间必须进入 viewport，不得长期只把 gradient 边缘放在屏幕内。
+5. 用户正常使用 3–5 秒内应能感知色场发生变化。
+6. 窗口隐藏/失焦时 animation 必须暂停。
+7. `prefers-reduced-motion` 下装饰动画停止。
 
-## 4. 背景流光规则
+---
 
-`GoogleGlowBackground` 是品牌氛围层，不是内容层。
+## 6. Content transparency
 
-必须：
+Content surface 的职责是“稳定文字 + 保留背景光感”，不是遮住背景。
 
-- 使用预柔化 `radial-gradient`。
-- 只动画 `transform`。
-- Balanced/Quality 可保留四色。
-- Compat 静态化并减少光团。
+### 相对透明度
 
-禁止：
+从更透到更实：
 
-- 大面积 `filter: blur(...)`。
-- 100px+ 实时 blur。
-- 动画 `border-radius` / clip-path 做持续 morph。
-- 全屏 `mix-blend-mode`。
-- 常驻 `will-change`。
-- 背景动画导致内容层再次 backdrop capture。
+1. Google Glow active
+2. Frosted active
+3. Google Glow normal
+4. Frosted normal
+5. Obsidian active
+6. inactive surfaces（各自在 normal 基础上更实）
 
-Google 四色是允许的固定品牌色：`#4285F4` / `#EA4335` / `#FBBC05` / `#34A853`。
+### 设计边界
 
-## 5. Backdrop-filter 红线
+- Google Glow 必须能在 Terminal 中感知到 Google 色缓慢经过。
+- Obsidian 仍能看到同一 Google Ambient，但应像隔着深色烟晶。
+- Frosted 中 Google RGB 由白色基底自然混合成较浅色，不另造 pastel palette。
+- 不通过重新开启 content backdrop blur 获得透明感。
+- 不允许背景影响 terminal 字符可读性。
 
-`backdrop-filter` / `-webkit-backdrop-filter` 只能由 `src/styles/global.css` 中的全局材质类实现。
+---
 
-**CSS Module 中出现 backdrop-filter 默认视为 HIGH/CRITICAL 问题。**
+## 7. Modal overlay
+
+所有 modal 使用统一 `.glass-overlay` 行为。
+
+- **Appearance 不得有专门 Theme Preview Overlay。**
+- 不因页面不同改变 modal 交互模型。
+- 每个主题可通过 `--overlay-bg` 调整遮光强度：
+  - Google Glow：中等偏轻，背景 Ambient 仍可辨
+  - Obsidian：较深
+  - Frosted：很轻
+- overlay 只负责聚焦 modal，不应把当前主题身份完全抹掉。
+
+---
+
+## 8. Backdrop-filter 红线
+
+`backdrop-filter` / `-webkit-backdrop-filter` 只能由 `src/styles/global.css` 的全局材质类实现。
+
+**CSS Module 中出现 backdrop-filter 默认视为 HIGH/CRITICAL。**
 
 尤其禁止：
 
 - Terminal / xterm 外壳
-- 大面积 SplitView pane
+- SplitView 大面积 pane
 - FileManager 主体
 - 图表/日志/数据表主体
-- 可展开到大面积的 SendBar
-- glass 内再嵌 glass
+- 可展开 SendBar
+- glass 内嵌 glass
 
-Compatibility 必须能把所有允许的 backdrop blur 统一关掉。
+Compatibility 必须统一关闭所有允许的 backdrop sampling。
 
-## 6. CSS 与 Token 规则
+---
 
-### 颜色
+## 9. CSS / Token 规则
 
-业务组件不得写新的硬编码颜色。使用 `--text-*`、`--accent-*`、`--color-*`、`--glass-*`、`--content-*`。
+业务组件不得新增硬编码颜色。使用：
+
+- `--text-*`
+- `--accent-*`
+- `--color-*`
+- `--glass-*`
+- `--content-*`
+- `--ambient-*`
 
 允许例外：
 
-- Google 四色环境光
+- Google 四色 Brand Ambient
 - 永远为白色的 `#fff` on-accent 文本
 - 已有、注明原因的 SVG data URI 色值
 
-### CSS Module
+任何新增材质 token 必须同时在 google-glow / obsidian / frosted 三主题中有合理值。
 
-CSS Module **可以**定义组件局部视觉状态，但必须满足：
+---
 
-- 颜色/阴影/边框来自 token。
-- 不重建 glass/backdrop 材质。
-- 不复制全局 button/input/toggle 材质。
-- 状态差异（active/hover/selected）尽量只改 token 化的 background/border/opacity。
-
-### 全局材质
-
-涉及 surface、button、input、toggle、float 的共享视觉优先复用全局类。
-
-## 7. 动画与 transition 性能规则
+## 10. 动画与 transition 性能规则
 
 禁止：
 
@@ -158,72 +273,64 @@ CSS Module **可以**定义组件局部视觉状态，但必须满足：
 - 大面积 filter 动画
 - 持续背景渐变 animation
 - 常驻 `will-change`
-- 为了“GPU 加速”无条件添加 `translateZ(0)` / `backface-visibility:hidden`
+- 为了“GPU 加速”无条件增加 `translateZ(0)` / `backface-visibility:hidden`
 
-推荐只声明会变化的属性：
+推荐只 transition 实际变化属性。
 
-```css
-transition:
-  background-color var(--transition-fast),
-  border-color var(--transition-fast),
-  box-shadow var(--transition-fast),
-  transform var(--transition-fast);
-```
+主按钮不得 idle infinite animation。
 
-主按钮全息渐变通过 hover 时 `background-position` 过渡，不做 idle infinite animation。
+---
 
-## 8. Terminal / SplitView 特殊规则
+## 11. Terminal / SplitView
 
-Terminal 是性能最高优先级内容面。
+Terminal 是最高性能优先级内容面。
 
-- xterm 背景可以 transparent，但透明目标应该是 `.liquid-glass-content`，不是最底层动态背景。
-- 非活动 terminal 保留实例/scrollback，但淡出后必须 `visibility:hidden`，避免继续 paint/compositing。
+- xterm 可透明，但透明目标是 `.liquid-glass-content`。
+- 当 xterm theme 使用透明 background 时，必须启用 `allowTransparency: true`，否则 xterm 会把背景 alpha 强制为不透明。
+- 非活动 terminal 保留实例/scrollback，但淡出后 `visibility:hidden`，停止无意义 paint/compositing。
 - 不因切 Tab dispose/recreate xterm。
-- SplitView 仅对可见 pane 绘制 active/inactive content surface。
-- 分屏几何 resize 可以短 transition；拖动过程中不得引入 blur 动画。
-- 不对隐藏 xterm 强行使用未经验证的 `content-visibility`，避免尺寸/fit 回归。
+- active pane 比 inactive pane 更透。
+- 不使用未经验证的 `content-visibility`。
+- resize gesture 期间允许临时关闭 chrome backdrop sampling。
 
-## 9. Sidebar 信息密度
+---
 
-Sidebar 外壳是 chrome；session item 默认应扁平：
+## 12. Sidebar
 
-- 默认项：透明边框/无卡片阴影
-- hover：轻 tint + 轻 border
-- active：更明确 tint + rim
-- 不让每一项都成为独立“玻璃卡”
+Sidebar 外壳是 chrome；session item 默认扁平：
 
-## 10. 控件类
+- 默认：透明边框、无卡片阴影
+- hover：轻 tint + border
+- active：明确 tint + rim
+- 不让所有会话都成为常驻独立玻璃卡
+
+---
+
+## 13. 控件
 
 | 类 | 用途 |
 |---|---|
 | `.liquid-glass-button` | 次要按钮 |
-| `.liquid-glass-ghost-button` | chrome 透明图标按钮 |
-| `.liquid-primary-button` | 主 CTA；不得 idle 无限动画/常驻 blur |
+| `.liquid-glass-ghost-button` | chrome 图标按钮 |
+| `.liquid-primary-button` | 主 CTA |
 | `.liquid-glass-input` | input |
-| `.liquid-glass-select` | 与 input 组合 |
-| `.liquid-glass-textarea` | 与 input 组合 |
+| `.liquid-glass-select` | select |
+| `.liquid-glass-textarea` | textarea |
 | `.liquid-glass-toggle` | toggle |
 | `.liquid-glass-dot` | 状态点 |
-| `.glass-overlay` | 模态遮罩 |
+| `.glass-overlay` | 统一模态遮罩 |
 
-`GlassPanel` 通过 `surface="chrome" | "content" | "accent"` 表达材质语义；大面积内容必须使用 `surface="content"`。
+`GlassPanel.surface` 使用 `chrome | content | accent` 明确材质语义。
 
-## 11. 图标与 emoji
+---
 
-除 `src/components/FileManager/entryIcon.ts` 已定义的文件类型 emoji 外，UI 不使用 emoji 充当控件图标。使用 `Icon` + `src/assets/icons/`。
+## 14. 图标与 emoji
 
-## 12. 三主题要求
+除 `src/components/FileManager/entryIcon.ts` 的文件类型 emoji 外，UI 不使用 emoji 充当控件图标。使用 `Icon` + `src/assets/icons/`。
 
-任何新增材质 token 必须同时在 google-glow、obsidian、frosted 三个主题中定义。
+---
 
-Frosted 必须特别检查：
-
-- 边框是否在浅底可见
-- muted text 对比度
-- 是否存在只适合暗色的黑块/白边
-- content surface 是否足够稳定而非“白雾”
-
-## 13. 提交前检查
+## 15. 提交前检查
 
 至少执行：
 
@@ -232,24 +339,35 @@ rg 'backdrop-filter' src/components src/renderers --glob '*.module.css'
 rg 'transition:\s*all' src --glob '*.css'
 rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg 'liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
-rg 'data-performance|glass-blur-chrome|content-surface' src
+rg 'data-performance|data-motion|ambient-|content-surface' src
 npm run build
 ```
 
-视觉验证至少覆盖：
+视觉验证：
 
 1. google-glow / obsidian / frosted
 2. quality / balanced / compat
-3. 1 pane 与 4 pane
-4. 多个后台 xterm
-5. 窗口失焦后 GPU/动画是否停止
-6. 大量终端输出时交互是否保持流畅
+3. single pane / 4 panes
+4. 3–5 秒内 Google Ambient motion 可感知
+5. active pane 更透，inactive 更安静
+6. modal 打开后仍能辨识主题
+7. 多后台 xterm + 高速输出
+8. focused / unfocused / hidden
+9. resize / split drag
+
+验收原则：
+
+- **Google Glow 要活**
+- **Obsidian 要深**
+- **Frosted 要亮**
+- **三个主题共享同一 Google 光**
+- **Quality 更丰富、Balanced 更克制、Compat 真正静态**
 
 ## 实现源文件
 
-- `src/styles/tokens.css` — 主题与性能 token
-- `src/styles/global.css` — 全局材质类、环境光与降级规则
-- `src/context/ThemeContext.tsx` — theme / performance / motion 状态
-- `src/components/Layout/GoogleGlowBackground.tsx` — 环境光层
-- `src/components/Terminal/TerminalView.tsx` — xterm 实例与可见性策略
-- `src/components/Layout/SplitView.tsx` — pane 内容材质分配
+- `src/styles/tokens.css`
+- `src/styles/global.css`
+- `src/context/ThemeContext.tsx`
+- `src/components/Layout/GoogleGlowBackground.tsx`
+- `src/components/Terminal/TerminalView.tsx`
+- `src/components/Layout/SplitView.tsx`
