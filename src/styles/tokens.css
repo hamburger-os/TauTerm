@@ -1,5 +1,5 @@
 /* ========================================
-   TauTerm Liquid Glass v6 设计令牌
+   TauTerm Liquid Glass v7 设计令牌
    Google Glow (默认) + Obsidian + Frosted
    ======================================== */
 
@@ -57,24 +57,24 @@
   /* Shared Google Ambient field defaults (Balanced).
      Two oversized fields carry four Google colors; only transform is animated. */
   --ambient-field-opacity: var(--ambient-opacity-balanced);
-  --ambient-field-a-duration: 38s;
-  --ambient-field-b-duration: 44s;
-  --ambient-a-x1: -7vw;
-  --ambient-a-y1: -4vh;
-  --ambient-a-x2: 9vw;
+  --ambient-field-a-duration: 27s;
+  --ambient-field-b-duration: 33s;
+  --ambient-a-x1: -18vw;
+  --ambient-a-y1: -9vh;
+  --ambient-a-x2: 16vw;
   --ambient-a-y2: 4vh;
-  --ambient-a-x3: 13vw;
-  --ambient-a-y3: 11vh;
-  --ambient-a-x4: -5vw;
-  --ambient-a-y4: 8vh;
-  --ambient-b-x1: 6vw;
-  --ambient-b-y1: -5vh;
-  --ambient-b-x2: -10vw;
-  --ambient-b-y2: 5vh;
-  --ambient-b-x3: -12vw;
-  --ambient-b-y3: 12vh;
-  --ambient-b-x4: 7vw;
-  --ambient-b-y4: 8vh;
+  --ambient-a-x3: 26vw;
+  --ambient-a-y3: 18vh;
+  --ambient-a-x4: -10vw;
+  --ambient-a-y4: 14vh;
+  --ambient-b-x1: 15vw;
+  --ambient-b-y1: -12vh;
+  --ambient-b-x2: -20vw;
+  --ambient-b-y2: 7vh;
+  --ambient-b-x3: -28vw;
+  --ambient-b-y3: 20vh;
+  --ambient-b-x4: 12vw;
+  --ambient-b-y4: 15vh;
 
   /* 模糊 */
   --blur-xs: 4px;
@@ -119,32 +119,32 @@ html[data-performance="quality"] {
   --glass-blur-chrome: 16px;
   --glass-blur-float: 18px;
   --ambient-field-opacity: var(--ambient-opacity-quality);
-  --ambient-field-a-duration: 24s;
-  --ambient-field-b-duration: 29s;
-  --ambient-a-x1: -10vw;
-  --ambient-a-y1: -7vh;
-  --ambient-a-x2: 13vw;
-  --ambient-a-y2: 6vh;
-  --ambient-a-x3: 20vw;
-  --ambient-a-y3: 16vh;
-  --ambient-a-x4: -8vw;
-  --ambient-a-y4: 12vh;
-  --ambient-b-x1: 9vw;
-  --ambient-b-y1: -8vh;
-  --ambient-b-x2: -14vw;
-  --ambient-b-y2: 7vh;
-  --ambient-b-x3: -18vw;
-  --ambient-b-y3: 17vh;
-  --ambient-b-x4: 10vw;
-  --ambient-b-y4: 12vh;
+  --ambient-field-a-duration: 18s;
+  --ambient-field-b-duration: 23s;
+  --ambient-a-x1: -24vw;
+  --ambient-a-y1: -12vh;
+  --ambient-a-x2: 22vw;
+  --ambient-a-y2: 7vh;
+  --ambient-a-x3: 34vw;
+  --ambient-a-y3: 23vh;
+  --ambient-a-x4: -14vw;
+  --ambient-a-y4: 18vh;
+  --ambient-b-x1: 20vw;
+  --ambient-b-y1: -16vh;
+  --ambient-b-x2: -27vw;
+  --ambient-b-y2: 10vh;
+  --ambient-b-x3: -36vw;
+  --ambient-b-y3: 25vh;
+  --ambient-b-x4: 16vw;
+  --ambient-b-y4: 20vh;
 }
 
 html[data-performance="balanced"] {
   --glass-blur-chrome: 8px;
   --glass-blur-float: 10px;
   --ambient-field-opacity: var(--ambient-opacity-balanced);
-  --ambient-field-a-duration: 38s;
-  --ambient-field-b-duration: 44s;
+  --ambient-field-a-duration: 27s;
+  --ambient-field-b-duration: 33s;
 }
 
 html[data-performance="compat"] {
@@ -181,13 +181,22 @@ html[data-performance="compat"] {
   --content-border: rgba(255, 255, 255, 0.065);
   --content-border-active: rgba(255, 255, 255, 0.12);
   --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  --control-surface: linear-gradient(180deg, rgba(27, 29, 33, 0.66), rgba(14, 16, 19, 0.74));
-  --control-surface-border: rgba(255, 255, 255, 0.10);
-  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 0 -1px 0 rgba(0, 0, 0, 0.16);
-  --control-disabled-bg: rgba(24, 26, 30, 0.72);
-  --control-disabled-border: rgba(255, 255, 255, 0.10);
-  --control-disabled-text: #7f8792;
-  --control-disabled-icon: #747c87;
+  --control-surface: linear-gradient(180deg, rgba(24, 26, 29, 0.88), rgba(11, 13, 16, 0.92));
+  --control-surface-border: rgba(255, 255, 255, 0.14);
+  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.24);
+  --control-button-bg: rgba(255, 255, 255, 0.085);
+  --control-button-border: rgba(255, 255, 255, 0.17);
+  --control-button-hover-bg: rgba(255, 255, 255, 0.14);
+  --control-button-hover-border: rgba(255, 255, 255, 0.25);
+  --control-input-bg: rgba(0, 0, 0, 0.56);
+  --control-input-border: rgba(255, 255, 255, 0.18);
+  --control-input-focus-border: rgba(66, 133, 244, 0.62);
+  --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), inset 0 -1px 0 rgba(0, 0, 0, 0.30);
+  --control-disabled-bg: rgba(255, 255, 255, 0.055);
+  --control-disabled-border: rgba(255, 255, 255, 0.15);
+  --control-disabled-text: #9098a4;
+  --control-disabled-icon: #818a96;
+  --number-spinner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='%23AEB5C0'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='%23AEB5C0'/%3E%3C/svg%3E");
   --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.35);
 
   /* 按钮 */
@@ -229,10 +238,17 @@ html[data-performance="compat"] {
   --glass-fill-secondary: rgba(255, 255, 255, 0.03);
   --text-tertiary: #777f8b;
 
-  /* 主 CTA 只保留克制的主题 accent；Google 四色留给 Ambient。 */
-  --accent-holofoil-gradient: linear-gradient(135deg,
-    rgba(66, 133, 244, 0.90),
-    rgba(96, 165, 250, 0.82));
+  /* Google Glow 的招牌全息膜：只用于 active/selected 高价值状态和主 CTA。 */
+  --accent-holofoil-gradient: linear-gradient(110deg,
+    rgba(66, 133, 244, 0.92) 0%,
+    rgba(52, 168, 83, 0.82) 26%,
+    rgba(251, 188, 5, 0.86) 53%,
+    rgba(234, 67, 53, 0.86) 78%,
+    rgba(66, 133, 244, 0.92) 100%);
+  --selected-surface: var(--accent-holofoil-gradient);
+  --selected-border: rgba(255, 255, 255, 0.42);
+  --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 4px 14px rgba(0, 0, 0, 0.18);
+  --selected-text: #ffffff;
 
   /* 浮层蒙版 */
   --overlay-bg: rgba(0, 0, 0, 0.28);
@@ -271,8 +287,8 @@ html[data-performance="compat"] {
   --ambient-opacity-compat: 0.26;
 
   /* 液态玻璃 */
-  --glass-fill: linear-gradient(135deg, rgba(24, 25, 28, 0.46) 0%, rgba(5, 6, 7, 0.34) 100%);
-  --glass-card-fill: linear-gradient(135deg, rgba(29, 30, 34, 0.50) 0%, rgba(8, 9, 11, 0.38) 100%);
+  --glass-fill: linear-gradient(135deg, rgba(18, 19, 22, 0.72) 0%, rgba(3, 4, 5, 0.60) 100%);
+  --glass-card-fill: linear-gradient(135deg, rgba(22, 23, 27, 0.74) 0%, rgba(5, 6, 8, 0.62) 100%);
   --glass-noise-opacity: 0;
   --glass-blur: 10px; /* legacy alias */
   --glass-blur-saturate: 118%;
@@ -283,19 +299,28 @@ html[data-performance="compat"] {
   --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
   --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.025) 22%, transparent 48%, rgba(255, 255, 255, 0.010) 100%);
   --glass-compat-fill: linear-gradient(135deg, rgba(22, 23, 26, 0.94) 0%, rgba(4, 5, 6, 0.92) 100%);
-  --content-surface: linear-gradient(180deg, rgba(7, 8, 10, 0.58), rgba(3, 4, 5, 0.68));
-  --content-surface-active: linear-gradient(180deg, rgba(8, 9, 11, 0.48), rgba(4, 5, 6, 0.60));
-  --content-surface-inactive: linear-gradient(180deg, rgba(6, 7, 9, 0.68), rgba(3, 4, 5, 0.76));
+  --content-surface: linear-gradient(180deg, rgba(6, 7, 9, 0.72), rgba(2, 3, 4, 0.80));
+  --content-surface-active: linear-gradient(180deg, rgba(7, 8, 10, 0.62), rgba(3, 4, 5, 0.72));
+  --content-surface-inactive: linear-gradient(180deg, rgba(5, 6, 8, 0.80), rgba(2, 3, 4, 0.86));
   --content-border: rgba(255, 255, 255, 0.055);
   --content-border-active: rgba(255, 255, 255, 0.105);
   --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  --control-surface: linear-gradient(180deg, rgba(18, 19, 22, 0.76), rgba(7, 8, 10, 0.84));
-  --control-surface-border: rgba(255, 255, 255, 0.09);
-  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
-  --control-disabled-bg: rgba(15, 16, 19, 0.82);
-  --control-disabled-border: rgba(255, 255, 255, 0.09);
-  --control-disabled-text: #727780;
-  --control-disabled-icon: #686d75;
+  --control-surface: linear-gradient(180deg, rgba(14, 15, 18, 0.92), rgba(4, 5, 7, 0.95));
+  --control-surface-border: rgba(255, 255, 255, 0.12);
+  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.085), inset 0 -1px 0 rgba(0, 0, 0, 0.30);
+  --control-button-bg: rgba(255, 255, 255, 0.065);
+  --control-button-border: rgba(255, 255, 255, 0.14);
+  --control-button-hover-bg: rgba(255, 255, 255, 0.11);
+  --control-button-hover-border: rgba(255, 255, 255, 0.20);
+  --control-input-bg: rgba(0, 0, 0, 0.66);
+  --control-input-border: rgba(255, 255, 255, 0.15);
+  --control-input-focus-border: rgba(59, 130, 246, 0.54);
+  --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), inset 0 -1px 0 rgba(0, 0, 0, 0.34);
+  --control-disabled-bg: rgba(255, 255, 255, 0.045);
+  --control-disabled-border: rgba(255, 255, 255, 0.12);
+  --control-disabled-text: #7d838c;
+  --control-disabled-icon: #727881;
+  --number-spinner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='%23989EA8'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='%23989EA8'/%3E%3C/svg%3E");
   --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.45);
 
   /* 按钮 */
@@ -333,8 +358,13 @@ html[data-performance="compat"] {
 
   /* 全息光效渐变（主按钮等） */
   --accent-holofoil-gradient: linear-gradient(135deg,
-    rgba(59, 130, 246, 0.84),
-    rgba(71, 85, 105, 0.88));
+    rgba(51, 65, 85, 0.96),
+    rgba(30, 41, 59, 0.94),
+    rgba(59, 130, 246, 0.62));
+  --selected-surface: var(--accent-holofoil-gradient);
+  --selected-border: rgba(148, 163, 184, 0.28);
+  --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 4px 12px rgba(0, 0, 0, 0.28);
+  --selected-text: #f8fafc;
 
   /* 右侧栏工具面板辅助令牌 — 仅覆盖与 google-glow 不同的 token */
   --glass-hover: rgba(255, 255, 255, 0.06);
@@ -389,13 +419,22 @@ html[data-performance="compat"] {
   --content-border: rgba(71, 85, 105, 0.14);
   --content-border-active: rgba(71, 85, 105, 0.22);
   --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  --control-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(241, 245, 248, 0.80));
-  --control-surface-border: rgba(71, 85, 105, 0.18);
-  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.88), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
-  --control-disabled-bg: rgba(246, 248, 250, 0.82);
-  --control-disabled-border: rgba(71, 85, 105, 0.18);
-  --control-disabled-text: #7c8795;
-  --control-disabled-icon: #87919d;
+  --control-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(238, 243, 247, 0.90));
+  --control-surface-border: rgba(71, 85, 105, 0.22);
+  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(71, 85, 105, 0.12);
+  --control-button-bg: rgba(255, 255, 255, 0.78);
+  --control-button-border: rgba(71, 85, 105, 0.25);
+  --control-button-hover-bg: rgba(255, 255, 255, 0.92);
+  --control-button-hover-border: rgba(71, 85, 105, 0.34);
+  --control-input-bg: rgba(255, 255, 255, 0.86);
+  --control-input-border: rgba(71, 85, 105, 0.28);
+  --control-input-focus-border: rgba(66, 133, 244, 0.60);
+  --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
+  --control-disabled-bg: rgba(100, 116, 139, 0.07);
+  --control-disabled-border: rgba(71, 85, 105, 0.22);
+  --control-disabled-text: #748091;
+  --control-disabled-icon: #7f8a98;
+  --number-spinner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='%235B6675'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='%235B6675'/%3E%3C/svg%3E");
   --glass-shadow-text: 0 1px 2px rgba(15, 23, 42, 0.06);
 
   /* 按钮 */
@@ -439,7 +478,13 @@ html[data-performance="compat"] {
 
   /* 全息光效渐变（主按钮等 — 浅色主题使用实色渐变） */
   --accent-holofoil-gradient: linear-gradient(135deg,
-    #3b82f6, #60a5fa);
+    rgba(255, 255, 255, 0.96),
+    rgba(219, 234, 254, 0.94),
+    rgba(147, 197, 253, 0.88));
+  --selected-surface: var(--accent-holofoil-gradient);
+  --selected-border: rgba(59, 130, 246, 0.32);
+  --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.96), 0 4px 12px rgba(59, 130, 246, 0.14);
+  --selected-text: #1e3a5f;
 
   /* 浮层蒙版 */
   --overlay-bg: rgba(31, 55, 78, 0.12);
