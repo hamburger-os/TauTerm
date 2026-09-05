@@ -387,6 +387,7 @@ export default function SplitView({
 
       <TerminalView
         dockedPlacements={terminalPlacements}
+        paneCount={paneCount}
         onActivateSession={(sessionId) => {
           const paneId = terminalPaneIds[sessionId];
           if (paneId) onSelectPane(paneId);

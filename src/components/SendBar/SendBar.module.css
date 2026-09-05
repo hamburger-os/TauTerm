@@ -1,16 +1,14 @@
-/* SendBar v8 — Structural Panel shell + horizontal four-mode toolbar. */
+/* SendBar v8.1 — 保留原有左侧竖排模式布局，Structural Panel 只负责统一材质。 */
 .container {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  gap: 4px;
   overflow: hidden;
 }
 
 .body {
   display: flex;
-  flex-direction: column;
   flex: 1;
   min-width: 0;
   min-height: var(--sendbar-min-height);
@@ -18,27 +16,20 @@
   overflow: hidden;
 }
 
-.modeHeader {
-  display: flex;
-  align-items: center;
-  min-height: var(--sendbar-mode-toolbar-height);
-  flex-shrink: 0;
-  gap: 8px;
-  padding: var(--sendbar-mode-toolbar-padding) 6px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--panel-border);
-  background: color-mix(in srgb, var(--glass-input-bg) 18%, transparent);
-}
-
+/* 左侧四模式切换器：属于主面板内部的一个分区，不额外叠加 glass surface。 */
 .modeSwitcher {
   display: flex;
-  align-items: center;
-  gap: var(--sendbar-mode-btn-gap);
+  flex-direction: column;
+  width: 42px;
   flex-shrink: 0;
+  padding: var(--sendbar-mode-switcher-padding);
+  gap: var(--sendbar-mode-btn-gap);
+  border-right: 1px solid var(--panel-divider);
+  background: var(--panel-subsection-fill);
 }
 
 .modeBtn {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
   width: var(--sendbar-mode-btn-size);
@@ -49,17 +40,6 @@
 
 .modeBtn:disabled {
   cursor: not-allowed;
-}
-
-.modeTitle {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.01em;
 }
 
 .content {

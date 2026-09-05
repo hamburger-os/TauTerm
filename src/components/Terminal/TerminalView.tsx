@@ -24,6 +24,8 @@ const DUAL_FRAME_TIMEOUT_DEFAULT_MS = 50;
 interface TerminalViewProps {
   /** 分屏模式下：sessionId → 归一化 Pane 几何。缺省时保持原单视图行为。 */
   dockedPlacements?: Record<string, PaneRect>;
+  /** Split Workspace 的 Pane 总数；单 Pane 时不绘制 active/inactive 材质差异。 */
+  paneCount?: number;
   /** 用户在可见终端内操作时，请求选中其所属 Pane。 */
   onActivateSession?: (sessionId: string) => void;
 }
@@ -144,7 +146,7 @@ function normalizeDecodedText(text: string): string {
  * 通过归一化几何放置到多个 Pane。未被放入 Pane 的终端保持隐藏挂载并保留
  * 最后一次尺寸，避免切换 Pane 导致 xterm dispose / scrollback 丢失 / PTY resize 到 0。
  */
-export default function TerminalView({ dockedPlacements, onActivateSession }: TerminalViewProps = {}) {
+export default function TerminalView({ dockedPlacements, paneCount = 1, onActivateSession }: TerminalViewProps = {}) {
   const { t } = useTranslation();
   const { state, sendData, disconnect, closeChannel, onSessionData, onDataSent } = useSession();
   const { fontSize, bufferLines } = useTheme();
@@ -591,6 +593,9 @@ export default function TerminalView({ dockedPlacements, onActivateSession }: Te
           const rect = placedRect ?? lastDockedRectsRef.current.get(tab.id) ?? FULL_DOCKED_RECT;
           const visible = Boolean(placedRect);
           const isActive = tab.id === state.activeTabId;
+          const paneMaterial = paneCount > 1
+            ? (isActive ? "liquid-glass-content-active" : "liquid-glass-content-inactive")
+            : "";
           const retainedDisconnect = tab.state === "disconnected" && tab.disconnectInfo?.retain_terminal
             ? tab.disconnectInfo
             : null;
@@ -602,7 +607,7 @@ export default function TerminalView({ dockedPlacements, onActivateSession }: Te
                 if (node) terminalViewportRefs.current.set(tab.id, node);
                 else terminalViewportRefs.current.delete(tab.id);
               }}
-              className={`${styles.terminalWrapper} ${styles.dockedTerminalWrapper} liquid-glass-content ${isActive ? "liquid-glass-content-active" : "liquid-glass-content-inactive"}`}
+              className={`${styles.terminalWrapper} ${styles.dockedTerminalWrapper} liquid-glass-content ${paneMaterial}`}
               style={{
                 ...dockedRectStyle(rect),
                 opacity: visible ? 1 : 0,
@@ -657,7 +662,7 @@ export default function TerminalView({ dockedPlacements, onActivateSession }: Te
 
   return (
     <div className={styles.viewport} ref={viewportRef}>
-      <div className={`${styles.terminalArea} liquid-glass-content liquid-glass-content-active`}>
+      <div className={`${styles.terminalArea} liquid-glass-content`}>
         {isActiveTransferring && (
           <motion.div
             className={styles.transferBanner}
