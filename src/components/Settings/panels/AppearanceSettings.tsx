@@ -12,8 +12,7 @@ const PERFORMANCE_OPTIONS: Array<{
   descKey: string;
 }> = [
   { id: "quality", labelKey: "settings.performanceQuality", descKey: "settings.performanceQualityDesc" },
-  { id: "balanced", labelKey: "settings.performanceBalanced", descKey: "settings.performanceBalancedDesc" },
-  { id: "compat", labelKey: "settings.performanceCompat", descKey: "settings.performanceCompatDesc" },
+  { id: "performance", labelKey: "settings.performancePerformance", descKey: "settings.performancePerformanceDesc" },
 ];
 
 /**
@@ -55,7 +54,7 @@ export default function AppearanceSettings() {
         </div>
       </div>
 
-      {/* 视觉性能档：三档都保留完整四色与同一主题材质；只调整 Ambient 动态成本和小面积 backdrop sampling。 */}
+      {/* 两档视觉性能：效果优先保留动态液态玻璃；性能优先使用静态四色 + 低成本半透明表面。 */}
       <h4 className={styles.categoryTitle}>{t("settings.performanceMode")}</h4>
       <div className={styles.settingGroup}>
         <div className={styles.optionList}>
@@ -70,7 +69,7 @@ export default function AppearanceSettings() {
           ))}
         </div>
         <p className={styles.settingDesc}>
-          {t(PERFORMANCE_OPTIONS.find(option => option.id === performanceMode)?.descKey ?? "settings.performanceBalancedDesc")}
+          {t(PERFORMANCE_OPTIONS.find(option => option.id === performanceMode)?.descKey ?? "settings.performanceQualityDesc")}
         </p>
         <p className={styles.settingDesc} aria-live="polite">
           {t("settings.systemMotionStatus")}:{" "}
@@ -78,7 +77,7 @@ export default function AppearanceSettings() {
             ? t("settings.systemMotionReduced")
             : t("settings.systemMotionAllowed")}
         </p>
-        {systemReducedMotion && performanceMode !== "compat" && (
+        {systemReducedMotion && performanceMode === "quality" && (
           <p className={styles.settingDesc}>
             {t("settings.systemMotionReducedHint")}
           </p>
