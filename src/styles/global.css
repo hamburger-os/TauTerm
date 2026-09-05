@@ -1,4 +1,4 @@
-/* TauTerm Liquid Glass v5 全局样式 */
+/* TauTerm Liquid Glass v6 全局样式 */
 
 @import "./tokens.css";
 
@@ -60,93 +60,123 @@ body {
 }
 
 /* ==========================================
-   1. Shared Google Ambient
-   三主题共享完全相同的 RGB / geometry / trajectory。
-   Theme 只提供可见度补偿；Performance 控制 opacity / amplitude / duration。
-   全程 transform-only，不使用实时 blur / blend / morph。
+   1. Shared Google Ambient Field
+   两个超大 Field 承载 Google 四色。Field 大于 viewport，渐变在边界前已经
+   衰减为透明，因此不出现“四个圆片”的可见轮廓。只动画 transform。
    ========================================== */
-@keyframes glow-drift-blue {
-  0%, 100% { transform: translate3d(-2vw, -1vh, 0) scale(0.98); }
-  50% { transform: translate3d(var(--ambient-blue-dx), var(--ambient-blue-dy), 0) scale(var(--ambient-scale-peak)); }
+@keyframes ambient-flow-a {
+  0%, 100% {
+    transform: translate3d(var(--ambient-a-x1), var(--ambient-a-y1), 0) scale(0.99);
+  }
+  25% {
+    transform: translate3d(var(--ambient-a-x2), var(--ambient-a-y2), 0) scale(1.035);
+  }
+  50% {
+    transform: translate3d(var(--ambient-a-x3), var(--ambient-a-y3), 0) scale(1.06);
+  }
+  75% {
+    transform: translate3d(var(--ambient-a-x4), var(--ambient-a-y4), 0) scale(1.025);
+  }
 }
 
-@keyframes glow-drift-red {
-  0%, 100% { transform: translate3d(2vw, -1vh, 0) scale(1.02); }
-  50% { transform: translate3d(var(--ambient-red-dx), var(--ambient-red-dy), 0) scale(var(--ambient-scale-peak)); }
+@keyframes ambient-flow-b {
+  0%, 100% {
+    transform: translate3d(var(--ambient-b-x1), var(--ambient-b-y1), 0) scale(1.025);
+  }
+  25% {
+    transform: translate3d(var(--ambient-b-x2), var(--ambient-b-y2), 0) scale(0.99);
+  }
+  50% {
+    transform: translate3d(var(--ambient-b-x3), var(--ambient-b-y3), 0) scale(1.055);
+  }
+  75% {
+    transform: translate3d(var(--ambient-b-x4), var(--ambient-b-y4), 0) scale(1.015);
+  }
 }
 
-@keyframes glow-drift-yellow {
-  0%, 100% { transform: translate3d(-1vw, 2vh, 0) scale(0.99); }
-  50% { transform: translate3d(var(--ambient-yellow-dx), var(--ambient-yellow-dy), 0) scale(var(--ambient-scale-peak)); }
+.ambient-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  background: var(--bg-base);
 }
 
-@keyframes glow-drift-green {
-  0%, 100% { transform: translate3d(2vw, 2vh, 0) scale(1.01); }
-  50% { transform: translate3d(var(--ambient-green-dx), var(--ambient-green-dy), 0) scale(var(--ambient-scale-peak)); }
-}
-
-.glow-orb {
+.ambient-field {
   position: absolute;
-  border-radius: 50%;
-  opacity: var(--ambient-orb-opacity);
+  width: 150vw;
+  height: 145vh;
+  left: -25vw;
+  top: -22vh;
+  opacity: var(--ambient-field-opacity);
   pointer-events: none;
   transform-origin: center;
 }
 
-.glow-orb-blue {
-  background: radial-gradient(circle at 50% 50%,
-    rgba(66, 133, 244, 0.82) 0%,
-    rgba(66, 133, 244, 0.42) 32%,
-    rgba(66, 133, 244, 0.14) 58%,
-    transparent 78%);
-  animation: glow-drift-blue var(--ambient-duration-blue) ease-in-out infinite;
-  animation-delay: -7s;
+/* Blue + Yellow: giant ellipses, long falloff, no element-level blur. */
+.ambient-field-a {
+  background:
+    radial-gradient(
+      ellipse 54% 58% at 31% 29%,
+      rgba(66, 133, 244, 0.72) 0%,
+      rgba(66, 133, 244, 0.38) 22%,
+      rgba(66, 133, 244, 0.16) 43%,
+      rgba(66, 133, 244, 0.045) 64%,
+      rgba(66, 133, 244, 0.012) 76%,
+      transparent 90%
+    ),
+    radial-gradient(
+      ellipse 56% 60% at 66% 74%,
+      rgba(251, 188, 5, 0.64) 0%,
+      rgba(251, 188, 5, 0.32) 22%,
+      rgba(251, 188, 5, 0.13) 44%,
+      rgba(251, 188, 5, 0.040) 65%,
+      rgba(251, 188, 5, 0.010) 77%,
+      transparent 90%
+    );
+  animation: ambient-flow-a var(--ambient-field-a-duration) linear infinite;
+  animation-delay: -11s;
 }
 
-.glow-orb-red {
-  background: radial-gradient(circle at 50% 50%,
-    rgba(234, 67, 53, 0.78) 0%,
-    rgba(234, 67, 53, 0.38) 32%,
-    rgba(234, 67, 53, 0.13) 58%,
-    transparent 78%);
-  animation: glow-drift-red var(--ambient-duration-red) ease-in-out infinite;
-  animation-delay: -13s;
-}
-
-.glow-orb-yellow {
-  background: radial-gradient(circle at 50% 50%,
-    rgba(251, 188, 5, 0.76) 0%,
-    rgba(251, 188, 5, 0.36) 32%,
-    rgba(251, 188, 5, 0.12) 58%,
-    transparent 78%);
-  animation: glow-drift-yellow var(--ambient-duration-yellow) ease-in-out infinite;
-  animation-delay: -19s;
-}
-
-.glow-orb-green {
-  background: radial-gradient(circle at 50% 50%,
-    rgba(52, 168, 83, 0.78) 0%,
-    rgba(52, 168, 83, 0.38) 32%,
-    rgba(52, 168, 83, 0.13) 58%,
-    transparent 78%);
-  animation: glow-drift-green var(--ambient-duration-green) ease-in-out infinite;
+/* Red + Green crosses Field A so colors naturally travel across pane boundaries. */
+.ambient-field-b {
+  background:
+    radial-gradient(
+      ellipse 55% 60% at 70% 28%,
+      rgba(234, 67, 53, 0.66) 0%,
+      rgba(234, 67, 53, 0.34) 22%,
+      rgba(234, 67, 53, 0.14) 43%,
+      rgba(234, 67, 53, 0.042) 64%,
+      rgba(234, 67, 53, 0.011) 76%,
+      transparent 90%
+    ),
+    radial-gradient(
+      ellipse 58% 61% at 33% 70%,
+      rgba(52, 168, 83, 0.66) 0%,
+      rgba(52, 168, 83, 0.34) 22%,
+      rgba(52, 168, 83, 0.14) 43%,
+      rgba(52, 168, 83, 0.042) 64%,
+      rgba(52, 168, 83, 0.011) 76%,
+      transparent 90%
+    );
+  animation: ambient-flow-b var(--ambient-field-b-duration) linear infinite;
   animation-delay: -23s;
 }
 
-/* Compatibility 保留品牌身份，但只渲染两个静态 Google 光团。 */
-html[data-performance="compat"] .glow-orb {
+/* Compatibility: one static field, no animated compositor work. */
+html[data-performance="compat"] .ambient-field {
   animation: none;
 }
-html[data-performance="compat"] .glow-orb-red,
-html[data-performance="compat"] .glow-orb-yellow {
+html[data-performance="compat"] .ambient-field-b {
   display: none;
 }
 
-html[data-motion="paused"] .glow-orb {
+/* Only decorative Ambient is paused. Losing window focus does not pause it. */
+html[data-motion="paused"] .ambient-field {
   animation-play-state: paused;
 }
-
-html[data-motion="reduced"] .glow-orb {
+html[data-motion="reduced"] .ambient-field {
   animation: none;
 }
 
@@ -180,6 +210,14 @@ html[data-motion="reduced"] .glow-orb {
 
 .liquid-glass-content-inactive {
   background: var(--content-surface-inactive);
+}
+
+/* 高密度交互工作台：SendBar / 参数表单 / 编辑工具。
+   比 content 更稳定，但仍不做 backdrop-filter。 */
+.liquid-control-surface {
+  background: var(--control-surface);
+  border: 1px solid var(--control-surface-border);
+  box-shadow: var(--control-surface-shadow);
 }
 
 .liquid-glass-accent {
@@ -237,11 +275,11 @@ html[data-motion="reduced"] .glow-orb {
     transform var(--transition-button);
 }
 
-.liquid-glass-button:hover {
+.liquid-glass-button:hover:not(:disabled) {
   background: var(--glass-button-hover-bg);
   border-color: var(--glass-button-hover-border);
-  transform: translateY(-2px);
-  box-shadow: var(--glass-rim-glow),
+  transform: translateY(-1px);
+  box-shadow: var(--glass-rim-light),
               var(--glass-button-shadow-inset);
 }
 
@@ -285,7 +323,12 @@ html[data-motion="reduced"] .glow-orb {
 }
 
 .liquid-glass-button:disabled {
-  opacity: 0.5;
+  opacity: 1;
+  background: var(--control-disabled-bg);
+  border-color: var(--control-disabled-border);
+  color: var(--control-disabled-text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--control-disabled-border) 65%, transparent);
+  transform: none;
   cursor: not-allowed;
   pointer-events: none;
 }
@@ -323,7 +366,12 @@ html[data-motion="reduced"] .glow-orb {
 }
 
 .liquid-glass-input:disabled {
-  opacity: 0.4;
+  opacity: 1;
+  background: var(--control-disabled-bg);
+  border-color: var(--control-disabled-border);
+  color: var(--control-disabled-text);
+  -webkit-text-fill-color: var(--control-disabled-text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--control-disabled-border) 55%, transparent);
   cursor: not-allowed;
 }
 
@@ -460,11 +508,12 @@ html[data-motion="reduced"] .glow-orb {
 }
 
 .liquid-primary-button:disabled {
-  background: var(--glass-button-bg);
-  border-color: var(--glass-button-border);
-  color: var(--text-muted);
-  box-shadow: none;
-  opacity: 0.5;
+  background: var(--control-disabled-bg);
+  border-color: var(--control-disabled-border);
+  color: var(--control-disabled-text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--control-disabled-border) 65%, transparent);
+  opacity: 1;
+  transform: none;
   cursor: not-allowed;
 }
 
@@ -582,10 +631,15 @@ html[data-motion="reduced"] .glow-orb {
 
 /* 禁用态 */
 .liquid-glass-toggle > input:disabled + div {
-  opacity: 0.35;
+  opacity: 1;
+  background: var(--control-disabled-bg);
+  border-color: var(--control-disabled-border);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--control-disabled-border) 55%, transparent);
   cursor: not-allowed;
 }
 .liquid-glass-toggle > input:disabled + div::after {
+  background: var(--control-disabled-icon);
+  box-shadow: none;
   cursor: not-allowed;
 }
 
@@ -648,13 +702,6 @@ html[data-performance="compat"] .liquid-glass-float {
   -webkit-backdrop-filter: none;
 }
 
-/* 窗口失焦/隐藏时暂停所有 CSS animation，避免后台持续占用合成器。 */
-html[data-motion="paused"] *,
-html[data-motion="paused"] *::before,
-html[data-motion="paused"] *::after {
-  animation-play-state: paused !important;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .liquid-glass-button,
   .liquid-glass-input,
@@ -665,7 +712,7 @@ html[data-motion="paused"] *::after {
   }
 
   .liquid-primary-button:hover:not(:disabled),
-  .liquid-glass-button:hover {
+  .liquid-glass-button:hover:not(:disabled) {
     transform: none;
   }
 }
