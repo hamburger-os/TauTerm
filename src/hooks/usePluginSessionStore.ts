@@ -48,6 +48,8 @@ export interface PluginSessionStoreOptions<TState> {
    * 缺省 false = 断开时执行 init 返回的清理并注销会话（重连时重注册）。
    */
   keepAlive?: boolean;
+  /** 会话永久删除时释放插件自有的模块级资源/注册表。 */
+  onRelease?: () => void;
   /** 会话断开时的状态处理（返回补丁）；缺省：keepAlive ? 原样保留 : 清空重建 */
   onSessionDisconnected?: (state: TState) => Partial<TState> | undefined;
   /**
@@ -248,8 +250,14 @@ function ensureSession<TState>(
  * 不再有存续意义——不清理则每个创建过的会话永久泄漏监听器与 Map 条目。
  */
 export function releaseSessionStore(sessionId: string): void {
+  const opts = sessionOpts.get(sessionId);
   cleanupFns.get(sessionId)?.();
   cleanupFns.delete(sessionId);
+  try {
+    opts?.onRelease?.();
+  } catch (error) {
+    console.warn(`[usePluginSessionStore] 释放插件资源失败 (${sessionId}):`, error);
+  }
   sessionOpts.delete(sessionId);
   clearSessionWatchdogs(sessionId);
   stores.delete(sessionId);
