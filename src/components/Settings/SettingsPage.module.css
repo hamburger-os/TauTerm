@@ -1,4 +1,4 @@
-/* 设置页 v3 */
+/* 设置页 v4 */
 
 .overlay {
   z-index: var(--z-overlay);
@@ -14,9 +14,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* GPU compositing layer is provided by the .liquid-glass global class
-     (backface-visibility: hidden), which ensures backdrop-filter blur
-     texture is captured before the wrapper's animation plays. */
+  /* Chrome material comes from .liquid-glass; Compatibility mode can
+     disable backdrop sampling centrally without component overrides. */
 }
 
 /* 标题栏 */
