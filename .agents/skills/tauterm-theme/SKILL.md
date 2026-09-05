@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "8.7"
+  version: "8.8"
 ---
 
-# TauTerm Liquid Glass v8.7 — 唯一主题规范源
+# TauTerm Liquid Glass v8.8 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -135,8 +135,9 @@ Ambient 的几何、颜色和强度是跨主题共享源；主题不得定义自
 
 动态档只动画 transform：translate + 轻 rotation + 轻 scale。
 
-- Balanced：约 20s / 24s，低频连续流动
-- Quality：约 12s / 15s，路径更明显、流动更易感知
+- Balanced：约 20s / 24s，低频连续流动；横向 transform 路径约 ±10–12vw、纵向约 ±6–8vh
+- Quality：约 12s / 15s，横向路径约 ±13–15vw、纵向约 ±8–10vh，位移必须明显
+- 为了放大运动感，优先把色团中心向内收并扩大 transform 路径；**不得仅为了飘得更远而扩大 Ambient raster layer**
 - 正常观察 3–5 秒必须能感知 Quality / Balanced 的位置变化
 - Compat：两层都保留，完整四色同时可见，但静态
 - layout drag / resize 时暂停纯装饰 Ambient，释放后恢复
@@ -372,10 +373,11 @@ Compat：
 - 2 static Ambient Fields，完整四色同时可见
 - backdrop blur = 0，saturate sampling = 0
 - 停止纯装饰 Ambient 合成动画，这是兼容档最主要的 GPU 降级来源之一
-- Structural / Content 保持正常 clear base + theme veil，不额外变厚
-- **依赖 backdrop 的 Small Chrome / Float 必须切换到更实的 `--theme-*-veil-compat` fallback**，避免底层文字和边框无模糊地直接穿透
+- **所有主要 surface 退化为单层 flat translucent fill**：Chrome / Panel / Content / Control / Card / Float 分别只引用一个 `--compat-*-fill`
+- Compat 不叠 specular + clear + veil 多层背景，不保留大面积 glass shadow；现有 1px 结构 border 可以保留
+- flat translucent fill 必须足够实，不能让后层文字形成清晰重影；Google Glow 仍可透出少量四色，Obsidian / Frosted 只通过黑/白基底和 fill 区分
 - Compat 必须感知上比 Balanced 更稳、更实，绝不能出现“关闭 blur 后反而更透明、更玻璃、文字重叠更严重”的倒挂
-- Compat 仍是 Liquid Glass，不得退回死板的完全 opaque surface
+- Compat 是最低成本的半透明降级材质，不要求维持 Quality/Balanced 的高光层次
 
 交互降载：
 - Sidebar / SendBar / Split divider 等布局拖动期间，暂时关闭 Small Chrome / Float backdrop sampling，并暂停 Ambient 装饰动画
@@ -391,7 +393,7 @@ rg 'transition:\s*all' src --glob '*.css'
 rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg -U ':disabled[^\{]*\{[^\}]*opacity\s*:\s*0\.' src --glob '*.css'
 rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-float|liquid-glass' src --glob '*.tsx'
-rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
+rg 'theme-(chrome|panel|content|card|float|control).*veil|compat-(chrome|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius' src/components/Layout src/components/Terminal
 rg 'liquid-glass-content' src/components/Layout/SplitView.tsx src/components/Terminal/TerminalView.tsx
 rg 'selectedHeader|content-divider|scrollbar-(button|corner)|requestAnimationFrame|onMouseDownCapture|container-name' src/components/Layout src/components/Terminal src/styles
@@ -435,8 +437,9 @@ npm run build
 - **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮，横纵滚动条交汇处没有白色 corner 方块**
 - **右键未选中 Pane Header 或已连接 Terminal 时都不会先切换 active Session；Close Pane 菜单只从 Header 出现**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
-- **Quality / Balanced 正常观察 3–5 秒能看出 Ambient 位置变化；Compat 保留两层完整四色但静态**
-- **Compat 仍然是玻璃，但 Small Chrome/Float 的可读性不能低于 Balanced，也不能出现“兼容档最透明”**
+- **Quality / Balanced 正常观察 3–5 秒能看出 Ambient 明显位移；扩大路径不能靠扩大 raster layer 换取**
+- **Compat 保留两层完整四色但静态；主要 surface 是单层半透明纯色，没有 backdrop、specular 多层和大面积 glass shadow**
+- **Compat 的后层文字不能形成清晰重影，也不能出现“兼容档最透明”**
 
 ## 实现源文件
 
