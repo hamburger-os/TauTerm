@@ -1,5 +1,5 @@
 /* ========================================
-   TauTerm Liquid Glass v5 设计令牌
+   TauTerm Liquid Glass v6 设计令牌
    Google Glow (默认) + Obsidian + Frosted
    ======================================== */
 
@@ -54,22 +54,27 @@
   --glass-blur-chrome: 8px;
   --glass-blur-float: 10px;
 
-  /* Shared Google Ambient motion defaults (Balanced).
-     RGB / geometry / trajectory are cross-theme brand constants. */
-  --ambient-orb-opacity: var(--ambient-opacity-balanced);
-  --ambient-blue-dx: 14vw;
-  --ambient-blue-dy: 10vh;
-  --ambient-red-dx: -14vw;
-  --ambient-red-dy: 11vh;
-  --ambient-yellow-dx: 15vw;
-  --ambient-yellow-dy: -10vh;
-  --ambient-green-dx: -13vw;
-  --ambient-green-dy: -11vh;
-  --ambient-scale-peak: 1.07;
-  --ambient-duration-blue: 38s;
-  --ambient-duration-red: 40s;
-  --ambient-duration-yellow: 42s;
-  --ambient-duration-green: 44s;
+  /* Shared Google Ambient field defaults (Balanced).
+     Two oversized fields carry four Google colors; only transform is animated. */
+  --ambient-field-opacity: var(--ambient-opacity-balanced);
+  --ambient-field-a-duration: 38s;
+  --ambient-field-b-duration: 44s;
+  --ambient-a-x1: -7vw;
+  --ambient-a-y1: -4vh;
+  --ambient-a-x2: 9vw;
+  --ambient-a-y2: 4vh;
+  --ambient-a-x3: 13vw;
+  --ambient-a-y3: 11vh;
+  --ambient-a-x4: -5vw;
+  --ambient-a-y4: 8vh;
+  --ambient-b-x1: 6vw;
+  --ambient-b-y1: -5vh;
+  --ambient-b-x2: -10vw;
+  --ambient-b-y2: 5vh;
+  --ambient-b-x3: -12vw;
+  --ambient-b-y3: 12vh;
+  --ambient-b-x4: 7vw;
+  --ambient-b-y4: 8vh;
 
   /* 模糊 */
   --blur-xs: 4px;
@@ -113,45 +118,39 @@
 html[data-performance="quality"] {
   --glass-blur-chrome: 16px;
   --glass-blur-float: 18px;
-  --ambient-orb-opacity: var(--ambient-opacity-quality);
-  --ambient-blue-dx: 20vw;
-  --ambient-blue-dy: 14vh;
-  --ambient-red-dx: -20vw;
-  --ambient-red-dy: 16vh;
-  --ambient-yellow-dx: 22vw;
-  --ambient-yellow-dy: -14vh;
-  --ambient-green-dx: -18vw;
-  --ambient-green-dy: -16vh;
-  --ambient-scale-peak: 1.12;
-  --ambient-duration-blue: 26s;
-  --ambient-duration-red: 28s;
-  --ambient-duration-yellow: 30s;
-  --ambient-duration-green: 32s;
+  --ambient-field-opacity: var(--ambient-opacity-quality);
+  --ambient-field-a-duration: 24s;
+  --ambient-field-b-duration: 29s;
+  --ambient-a-x1: -10vw;
+  --ambient-a-y1: -7vh;
+  --ambient-a-x2: 13vw;
+  --ambient-a-y2: 6vh;
+  --ambient-a-x3: 20vw;
+  --ambient-a-y3: 16vh;
+  --ambient-a-x4: -8vw;
+  --ambient-a-y4: 12vh;
+  --ambient-b-x1: 9vw;
+  --ambient-b-y1: -8vh;
+  --ambient-b-x2: -14vw;
+  --ambient-b-y2: 7vh;
+  --ambient-b-x3: -18vw;
+  --ambient-b-y3: 17vh;
+  --ambient-b-x4: 10vw;
+  --ambient-b-y4: 12vh;
 }
 
 html[data-performance="balanced"] {
   --glass-blur-chrome: 8px;
   --glass-blur-float: 10px;
-  --ambient-orb-opacity: var(--ambient-opacity-balanced);
-  --ambient-blue-dx: 14vw;
-  --ambient-blue-dy: 10vh;
-  --ambient-red-dx: -14vw;
-  --ambient-red-dy: 11vh;
-  --ambient-yellow-dx: 15vw;
-  --ambient-yellow-dy: -10vh;
-  --ambient-green-dx: -13vw;
-  --ambient-green-dy: -11vh;
-  --ambient-scale-peak: 1.07;
-  --ambient-duration-blue: 38s;
-  --ambient-duration-red: 40s;
-  --ambient-duration-yellow: 42s;
-  --ambient-duration-green: 44s;
+  --ambient-field-opacity: var(--ambient-opacity-balanced);
+  --ambient-field-a-duration: 38s;
+  --ambient-field-b-duration: 44s;
 }
 
 html[data-performance="compat"] {
   --glass-blur-chrome: 0px;
   --glass-blur-float: 0px;
-  --ambient-orb-opacity: var(--ambient-opacity-compat);
+  --ambient-field-opacity: var(--ambient-opacity-compat);
 }
 
 /* ===== Level 2: 主题令牌 ===== */
@@ -160,9 +159,9 @@ html[data-performance="compat"] {
 :root, [data-theme="google-glow"] {
   /* 深蓝黑基底 + 共享 Google Ambient。三档仅调整感知强度。 */
   --bg-base: #07111f;
-  --ambient-opacity-quality: 0.60;
-  --ambient-opacity-balanced: 0.48;
-  --ambient-opacity-compat: 0.28;
+  --ambient-opacity-quality: 0.58;
+  --ambient-opacity-balanced: 0.46;
+  --ambient-opacity-compat: 0.26;
 
   /* 液态玻璃 */
   --glass-fill: linear-gradient(135deg, rgba(18, 34, 58, 0.42) 0%, rgba(7, 14, 28, 0.24) 100%);
@@ -264,9 +263,9 @@ html[data-performance="compat"] {
 [data-theme="obsidian"] {
   /* 近纯黑基底；仍使用完全相同的 Google Ambient，材质更深更实。 */
   --bg-base: #020304;
-  --ambient-opacity-quality: 0.48;
-  --ambient-opacity-balanced: 0.36;
-  --ambient-opacity-compat: 0.22;
+  --ambient-opacity-quality: 0.58;
+  --ambient-opacity-balanced: 0.46;
+  --ambient-opacity-compat: 0.26;
 
   /* 液态玻璃 */
   --glass-fill: linear-gradient(135deg, rgba(19, 21, 25, 0.70) 0%, rgba(3, 4, 6, 0.54) 100%);
@@ -360,9 +359,9 @@ html[data-performance="compat"] {
 [data-theme="frosted"] {
   /* 冷白基底；共享 Google Ambient，额外 opacity 仅补偿白底冲淡。 */
   --bg-base: #edf4fb;
-  --ambient-opacity-quality: 0.70;
-  --ambient-opacity-balanced: 0.56;
-  --ambient-opacity-compat: 0.32;
+  --ambient-opacity-quality: 0.58;
+  --ambient-opacity-balanced: 0.46;
+  --ambient-opacity-compat: 0.26;
 
   /* 液态玻璃 */
   --glass-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.64) 0%, rgba(235, 244, 252, 0.46) 100%);
