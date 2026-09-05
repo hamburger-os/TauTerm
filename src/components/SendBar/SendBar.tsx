@@ -86,7 +86,7 @@ function SendBarInner({ containerId, engineSessionId }: SendBarProps) {
           {modeButtons.map((btn) => (
             <button
               key={btn.mode}
-              className={`${styles.modeBtn} liquid-glass-button ${mode === btn.mode ? "active" : ""}`}
+              className={`${styles.modeBtn} liquid-glass-button ${mode === btn.mode ? "liquid-theme-selected" : ""}`}
               onClick={() => handleModeChange(btn.mode)}
               disabled={isChildRunning}
               title={isChildRunning ? (t("sendBar.modeLocked")) : btn.title}

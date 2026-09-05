@@ -1,4 +1,4 @@
-/* TauTerm Liquid Glass v6 全局样式 */
+/* TauTerm Liquid Glass v7.2 全局样式 */
 
 @import "./tokens.css";
 
@@ -61,36 +61,36 @@ body {
 
 /* ==========================================
    1. Shared Google Ambient Field
-   两个超大 Field 承载 Google 四色。Field 大于 viewport，渐变在边界前已经
-   衰减为透明，因此不出现“四个圆片”的可见轮廓。只动画 transform。
+   两个不对称超大色场通过 translate/rotate/scale 形成持续相对运动。
+   颜色梯度本身静态 rasterize，不动画 background/filter。
    ========================================== */
 @keyframes ambient-flow-a {
   0%, 100% {
-    transform: translate3d(var(--ambient-a-x1), var(--ambient-a-y1), 0) scale(0.99);
+    transform: translate3d(var(--ambient-a-x1), var(--ambient-a-y1), 0) rotate(-4deg) scale(0.985);
   }
-  25% {
-    transform: translate3d(var(--ambient-a-x2), var(--ambient-a-y2), 0) scale(1.035);
+  24% {
+    transform: translate3d(var(--ambient-a-x2), var(--ambient-a-y2), 0) rotate(1.5deg) scale(1.025);
   }
-  50% {
-    transform: translate3d(var(--ambient-a-x3), var(--ambient-a-y3), 0) scale(1.06);
+  49% {
+    transform: translate3d(var(--ambient-a-x3), var(--ambient-a-y3), 0) rotate(5deg) scale(1.055);
   }
-  75% {
-    transform: translate3d(var(--ambient-a-x4), var(--ambient-a-y4), 0) scale(1.025);
+  73% {
+    transform: translate3d(var(--ambient-a-x4), var(--ambient-a-y4), 0) rotate(-1deg) scale(1.015);
   }
 }
 
 @keyframes ambient-flow-b {
   0%, 100% {
-    transform: translate3d(var(--ambient-b-x1), var(--ambient-b-y1), 0) scale(1.025);
+    transform: translate3d(var(--ambient-b-x1), var(--ambient-b-y1), 0) rotate(4deg) scale(1.025);
   }
-  25% {
-    transform: translate3d(var(--ambient-b-x2), var(--ambient-b-y2), 0) scale(0.99);
+  27% {
+    transform: translate3d(var(--ambient-b-x2), var(--ambient-b-y2), 0) rotate(-2deg) scale(0.99);
   }
-  50% {
-    transform: translate3d(var(--ambient-b-x3), var(--ambient-b-y3), 0) scale(1.055);
+  53% {
+    transform: translate3d(var(--ambient-b-x3), var(--ambient-b-y3), 0) rotate(-5.5deg) scale(1.05);
   }
-  75% {
-    transform: translate3d(var(--ambient-b-x4), var(--ambient-b-y4), 0) scale(1.015);
+  78% {
+    transform: translate3d(var(--ambient-b-x4), var(--ambient-b-y4), 0) rotate(1deg) scale(1.015);
   }
 }
 
@@ -105,66 +105,77 @@ body {
 
 .ambient-field {
   position: absolute;
-  width: 150vw;
-  height: 145vh;
-  left: -25vw;
-  top: -22vh;
+  width: 140vw;
+  height: 136vh;
+  left: -20vw;
+  top: -18vh;
   opacity: var(--ambient-field-opacity);
   pointer-events: none;
   transform-origin: center;
 }
 
-/* Blue + Yellow: giant ellipses, long falloff, no element-level blur. */
+/* Blue + Yellow：只引用 canonical Google/Gemini palette。 */
 .ambient-field-a {
   background:
     radial-gradient(
-      ellipse 54% 58% at 31% 29%,
-      rgba(66, 133, 244, 0.72) 0%,
-      rgba(66, 133, 244, 0.38) 22%,
-      rgba(66, 133, 244, 0.16) 43%,
-      rgba(66, 133, 244, 0.045) 64%,
-      rgba(66, 133, 244, 0.012) 76%,
-      transparent 90%
+      ellipse 42% 68% at 24% 27%,
+      color-mix(in srgb, var(--google-blue) 78%, transparent) 0%,
+      color-mix(in srgb, var(--google-blue) 42%, transparent) 18%,
+      color-mix(in srgb, var(--google-blue) 17%, transparent) 38%,
+      color-mix(in srgb, var(--google-blue) 5%, transparent) 60%,
+      color-mix(in srgb, var(--google-blue) 1.2%, transparent) 76%,
+      transparent 92%
     ),
     radial-gradient(
-      ellipse 56% 60% at 66% 74%,
-      rgba(251, 188, 5, 0.64) 0%,
-      rgba(251, 188, 5, 0.32) 22%,
-      rgba(251, 188, 5, 0.13) 44%,
-      rgba(251, 188, 5, 0.040) 65%,
-      rgba(251, 188, 5, 0.010) 77%,
-      transparent 90%
+      ellipse 46% 64% at 72% 73%,
+      color-mix(in srgb, var(--google-yellow) 70%, transparent) 0%,
+      color-mix(in srgb, var(--google-yellow) 36%, transparent) 18%,
+      color-mix(in srgb, var(--google-yellow) 14.5%, transparent) 39%,
+      color-mix(in srgb, var(--google-yellow) 4.4%, transparent) 61%,
+      color-mix(in srgb, var(--google-yellow) 1.1%, transparent) 77%,
+      transparent 92%
+    ),
+    radial-gradient(
+      ellipse 26% 50% at 54% 45%,
+      color-mix(in srgb, var(--google-blue) 17%, transparent) 0%,
+      color-mix(in srgb, var(--google-blue) 5.5%, transparent) 45%,
+      transparent 82%
     );
   animation: ambient-flow-a var(--ambient-field-a-duration) linear infinite;
-  animation-delay: -11s;
+  animation-delay: -8s;
 }
 
-/* Red + Green crosses Field A so colors naturally travel across pane boundaries. */
+/* Red + Green：同一 canonical palette，不允许组件另造近似品牌色。 */
 .ambient-field-b {
   background:
     radial-gradient(
-      ellipse 55% 60% at 70% 28%,
-      rgba(234, 67, 53, 0.66) 0%,
-      rgba(234, 67, 53, 0.34) 22%,
-      rgba(234, 67, 53, 0.14) 43%,
-      rgba(234, 67, 53, 0.042) 64%,
-      rgba(234, 67, 53, 0.011) 76%,
-      transparent 90%
+      ellipse 43% 66% at 76% 26%,
+      color-mix(in srgb, var(--google-red) 72%, transparent) 0%,
+      color-mix(in srgb, var(--google-red) 38%, transparent) 18%,
+      color-mix(in srgb, var(--google-red) 15.5%, transparent) 39%,
+      color-mix(in srgb, var(--google-red) 4.6%, transparent) 61%,
+      color-mix(in srgb, var(--google-red) 1.1%, transparent) 77%,
+      transparent 92%
     ),
     radial-gradient(
-      ellipse 58% 61% at 33% 70%,
-      rgba(52, 168, 83, 0.66) 0%,
-      rgba(52, 168, 83, 0.34) 22%,
-      rgba(52, 168, 83, 0.14) 43%,
-      rgba(52, 168, 83, 0.042) 64%,
-      rgba(52, 168, 83, 0.011) 76%,
-      transparent 90%
+      ellipse 48% 64% at 28% 72%,
+      color-mix(in srgb, var(--google-green) 72%, transparent) 0%,
+      color-mix(in srgb, var(--google-green) 38%, transparent) 18%,
+      color-mix(in srgb, var(--google-green) 15.5%, transparent) 39%,
+      color-mix(in srgb, var(--google-green) 4.6%, transparent) 61%,
+      color-mix(in srgb, var(--google-green) 1.1%, transparent) 77%,
+      transparent 92%
+    ),
+    radial-gradient(
+      ellipse 28% 52% at 48% 56%,
+      color-mix(in srgb, var(--google-red) 14%, transparent) 0%,
+      color-mix(in srgb, var(--google-green) 4.5%, transparent) 48%,
+      transparent 84%
     );
   animation: ambient-flow-b var(--ambient-field-b-duration) linear infinite;
-  animation-delay: -23s;
+  animation-delay: -17s;
 }
 
-/* Compatibility: one static field, no animated compositor work. */
 html[data-performance="compat"] .ambient-field {
   animation: none;
 }
@@ -172,7 +183,6 @@ html[data-performance="compat"] .ambient-field-b {
   display: none;
 }
 
-/* Only decorative Ambient is paused. Losing window focus does not pause it. */
 html[data-motion="paused"] .ambient-field {
   animation-play-state: paused;
 }
@@ -216,6 +226,18 @@ html[data-motion="reduced"] .ambient-field {
 /* 高密度交互工作台：SendBar / 参数表单 / 编辑工具。
    比 content 更稳定，但仍不做 backdrop-filter。 */
 .liquid-control-surface {
+  /* Control Deck 在动态 Ambient 上必须建立自己的稳定对比度环境。
+     通过局部重绑共享 control token，让所有标准 button/input/toggle 自动增强，
+     仍然不使用 backdrop-filter。 */
+  --glass-button-bg: var(--control-button-bg);
+  --glass-button-border: var(--control-button-border);
+  --glass-button-hover-bg: var(--control-button-hover-bg);
+  --glass-button-hover-border: var(--control-button-hover-border);
+  --glass-input-bg: var(--control-input-bg);
+  --glass-input-border: var(--control-input-border);
+  --glass-input-focus-border: var(--control-input-focus-border);
+  --glass-input-shadow-inner: var(--control-input-shadow);
+
   background: var(--control-surface);
   border: 1px solid var(--control-surface-border);
   box-shadow: var(--control-surface-shadow);
@@ -289,6 +311,36 @@ html[data-motion="reduced"] .ambient-field {
   color: var(--accent-primary);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-primary) 25%, transparent);
   transform: translateY(0);
+}
+
+/* 主题高价值 selected 状态。
+   三主题使用同一 Gemini canonical hue；主题差异只来自 surface alpha / edge / shadow。
+   只在 selected/active tab 等少量元素上使用，不做 idle 动画。 */
+.liquid-glass-button.liquid-theme-selected {
+  background: var(--selected-surface);
+  background-size: 220% 220%;
+  background-position: 12% 50%;
+  border-color: var(--selected-border);
+  color: var(--selected-text);
+  box-shadow: var(--selected-shadow);
+  text-shadow: var(--primary-button-text-shadow);
+  transform: translateY(0);
+  transition:
+    background-position 520ms ease,
+    border-color var(--transition-button),
+    box-shadow var(--transition-button),
+    color var(--transition-button),
+    transform var(--transition-button);
+}
+
+.liquid-glass-button.liquid-theme-selected:hover:not(:disabled) {
+  background: var(--selected-surface);
+  background-size: 220% 220%;
+  background-position: 86% 50%;
+  border-color: var(--selected-border);
+  color: var(--selected-text);
+  box-shadow: var(--selected-shadow);
+  transform: translateY(-1px);
 }
 
 /* ==========================================
@@ -368,7 +420,7 @@ html[data-motion="reduced"] .ambient-field {
 
 .liquid-glass-input:disabled {
   opacity: 1;
-  background: var(--control-disabled-bg);
+  background: var(--control-disabled-input-bg);
   border-color: var(--control-disabled-border);
   color: var(--control-disabled-text);
   -webkit-text-fill-color: var(--control-disabled-text);
@@ -382,7 +434,7 @@ html[data-motion="reduced"] .ambient-field {
 }
 
 /* 数字输入框微调箭头 —— 统一主题样式
-   - WebKit: 使用内联 SVG currentColor 绘制 ▲▼ 箭头，颜色随主题 token 自动适配
+   - WebKit: 使用主题 --number-spinner SVG，避免 data-URI currentColor 无法继承宿主颜色
    - Firefox: 隐藏原生微调按钮（Tauri 全平台使用 WebKit webview，保留以保持一致性） */
 .liquid-glass-input[type="number"] {
   -moz-appearance: textfield;
@@ -393,11 +445,11 @@ html[data-motion="reduced"] .ambient-field {
   -webkit-appearance: none;
   height: 24px;
   width: 22px;
-  opacity: 0.55;
+  opacity: 0.86;
   cursor: pointer;
   color: var(--text-secondary);
   background-color: var(--glass-input-bg);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='currentColor'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='currentColor'/%3E%3C/svg%3E");
+  background-image: var(--number-spinner);
   background-repeat: no-repeat;
   background-position: center;
   background-size: 12px 20px;
@@ -408,7 +460,7 @@ html[data-motion="reduced"] .ambient-field {
 .liquid-glass-input[type="number"]::-webkit-outer-spin-button:hover,
 .liquid-glass-input[type="number"]::-webkit-inner-spin-button:hover {
   opacity: 1;
-  background-color: var(--glass-bg-hover);
+  background-color: var(--glass-button-hover-bg);
 }
 
 .liquid-glass-input[type="number"]::-webkit-outer-spin-button:active,
@@ -418,7 +470,9 @@ html[data-motion="reduced"] .ambient-field {
 
 .liquid-glass-input[type="number"]:disabled::-webkit-outer-spin-button,
 .liquid-glass-input[type="number"]:disabled::-webkit-inner-spin-button {
-  opacity: 0.3;
+  opacity: 0.62;
+  background-color: var(--control-disabled-input-bg);
+  border-left-color: var(--control-disabled-border);
   cursor: not-allowed;
 }
 

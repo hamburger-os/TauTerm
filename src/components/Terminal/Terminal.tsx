@@ -20,30 +20,75 @@ const SCROLL_BOTTOM_TOLERANCE = 5;
 /** PTY resize 防抖间隔 (ms)：避免拖拽 resize 时 IPC 风暴 */
 const RESIZE_DEBOUNCE_MS = 150;
 
-/** 炫彩流光：冷蓝高亮的透明终端配色 */
-const GOOGLE_TERMINAL_THEME = {
-  background: "transparent",
-  foreground: "#e0e0ff",
-  cursor: "#4285F4",
-  cursorAccent: "#060610",
-  selectionBackground: "rgba(66, 133, 244, 0.3)",
-  black: "#1a1a2e",
-  red: "#ff4757",
-  green: "#34d399",
-  yellow: "#ffa502",
-  blue: "#4285F4",
-  magenta: "#a855f7",
-  cyan: "#60a5fa",
-  white: "#e0e0ff",
-  brightBlack: "#555577",
-  brightRed: "#ff6b81",
-  brightGreen: "#4ade80",
-  brightYellow: "#ffbe76",
-  brightBlue: "#60a5fa",
-  brightMagenta: "#c084fc",
-  brightCyan: "#67e8f9",
-  brightWhite: "#ffffff",
-} as const;
+/** 从 CSS canonical palette 读取 Google/Gemini 品牌色。
+ * 不在 TS 中复制十六进制品牌值，避免 Ambient / Button / Terminal 三套颜色漂移。 */
+function readRequiredCssColor(token: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  if (!value) throw new Error(`Missing required theme color token: ${token}`);
+  return value;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const normalized = hex.trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    throw new Error(`Expected #RRGGBB theme color, got: ${hex}`);
+  }
+  return [
+    Number.parseInt(normalized.slice(0, 2), 16),
+    Number.parseInt(normalized.slice(2, 4), 16),
+    Number.parseInt(normalized.slice(4, 6), 16),
+  ];
+}
+
+function withAlpha(hex: string, alpha: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function mixHex(a: string, b: string, amount: number): string {
+  const [ar, ag, ab] = hexToRgb(a);
+  const [br, bg, bb] = hexToRgb(b);
+  const mix = (x: number, y: number) => Math.round(x + (y - x) * amount);
+  return `#${[mix(ar, br), mix(ag, bg), mix(ab, bb)]
+    .map(channel => channel.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+/** 炫彩流光终端：所有彩色 ANSI 基色均来自 canonical Google/Gemini palette。
+ * Purple/Cyan/bright variants 只是标准四色之间或与白色的派生混色，不是新的品牌 token。 */
+function createGoogleTerminalTheme() {
+  const blue = readRequiredCssColor("--google-blue");
+  const red = readRequiredCssColor("--google-red");
+  const yellow = readRequiredCssColor("--google-yellow");
+  const green = readRequiredCssColor("--google-green");
+  const white = "#ffffff";
+  const magenta = mixHex(blue, red, 0.5);
+  const cyan = mixHex(blue, green, 0.48);
+
+  return {
+    background: "transparent",
+    foreground: "#e8eaf0",
+    cursor: blue,
+    cursorAccent: "#060709",
+    selectionBackground: withAlpha(blue, 0.3),
+    black: "#17191d",
+    red,
+    green,
+    yellow,
+    blue,
+    magenta,
+    cyan,
+    white: "#e8eaf0",
+    brightBlack: "#626873",
+    brightRed: mixHex(red, white, 0.24),
+    brightGreen: mixHex(green, white, 0.22),
+    brightYellow: mixHex(yellow, white, 0.18),
+    brightBlue: mixHex(blue, white, 0.20),
+    brightMagenta: mixHex(magenta, white, 0.22),
+    brightCyan: mixHex(cyan, white, 0.22),
+    brightWhite: white,
+  } as const;
+}
 
 /** 黑曜石：更中性的烟晶终端配色，与炫彩流光拉开材质身份 */
 const OBSIDIAN_TERMINAL_THEME = {
@@ -146,11 +191,13 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
   const { t } = useTranslation();
   const { theme } = useTheme();
-  const terminalTheme = theme === "frosted"
-    ? LIGHT_TERMINAL_THEME
-    : theme === "obsidian"
-      ? OBSIDIAN_TERMINAL_THEME
-      : GOOGLE_TERMINAL_THEME;
+  const terminalTheme = useMemo(() => (
+    theme === "frosted"
+      ? LIGHT_TERMINAL_THEME
+      : theme === "obsidian"
+        ? OBSIDIAN_TERMINAL_THEME
+        : createGoogleTerminalTheme()
+  ), [theme]);
 
   // 右键上下文菜单状态
   // 直接用 useState 管理，而非 useContextMenu hook——后者面向 Tab 标签右键菜单，强依赖 session 参数，此处不适用

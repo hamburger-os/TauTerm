@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, shared Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "6.0"
+  version: "7.2"
 ---
 
-# TauTerm Liquid Glass v6 — 唯一主题规范源
+# TauTerm Liquid Glass v7.2 — 唯一主题规范源
 
 > **SSOT**：本文件是 TauTerm 视觉材质、Google Ambient、主题 tint、控件状态与渲染性能规则的唯一规范源。  
 > `tauterm-theme-review` 只描述审查流程，不得维护第二份视觉规则。
@@ -65,7 +65,9 @@ TauTerm 使用一套跨主题共享的 **Liquid Glass Physics**：
 - **禁止 backdrop-filter**。
 - 比 Content Surface 更稳定、更实。
 - 使用 `--control-surface` / `--control-surface-border` / `--control-surface-shadow`。
-- Ambient 可以轻微影响整体 tint，但不能让 button/input/select 的轮廓随背景颜色消失。
+- Control Surface 必须局部重绑标准 button/input token（`--control-button-*` / `--control-input-*`），使内部所有共享控件自动获得更强轮廓。
+- Disabled input 使用独立 `--control-disabled-input-bg`，不能与 Control Surface 本体融成一块。
+- Ambient 可以轻微影响整体 tint，但不能让 button/input/select/toggle/number stepper 的轮廓随背景颜色消失。
 
 ### D. Accent — `.liquid-glass-accent`
 
@@ -89,12 +91,22 @@ TauTerm 使用一套跨主题共享的 **Liquid Glass Physics**：
 
 ## 2. Shared Google Ambient Field
 
-Google Ambient 是 TauTerm 的品牌背景，三主题完全共享：
+Google Ambient 是 TauTerm 的品牌背景，三主题完全共享。**Google/Gemini 品牌色只有这一套 canonical palette**：
 
-- Blue `#4285F4`
-- Red `#EA4335`
-- Yellow `#FBBC05`
-- Green `#34A853`
+- `--google-red: #FE3734`
+- `--google-yellow: #F4BA00`
+- `--google-green: #02BE66`
+- `--google-blue: #0B8AFF`
+- 同步维护对应 `--google-*-rgb`，只为 alpha 场景服务
+- `--google-brand-gradient` / `--google-brand-gradient-soft` 只能由以上四个 token 组合
+- 该色谱由用户提供的 Gemini mark 采样校准，**不得替换回传统 Google brand palette**
+
+实现规则：
+
+- 代码里的品牌色十六进制值只允许出现在 `src/styles/tokens.css` 的 canonical palette 定义块。
+- Ambient、Google Glow selected/primary、主题预览、后续任何 Gemini/Google 光效都必须引用 `--google-*` / `--google-brand-gradient`。
+- 禁止另外定义“接近 Google”的紫、粉、蓝、黄作为品牌色。
+- 渐变插值自然产生的紫/橙过渡是允许的，但它们不是独立 token，也不能被组件硬编码。
 
 ### 架构
 
@@ -102,7 +114,7 @@ Google Ambient 是 TauTerm 的品牌背景，三主题完全共享：
 
 - Field A：Blue + Yellow
 - Field B：Red + Green
-- Field 约 150vw × 145vh，并超出 viewport。
+- Field 约 140vw × 136vh，并超出 viewport。
 - 每个 radial-gradient 使用长 falloff，在 Field 边界前已经近乎透明。
 - 颜色必须跨越 pane divider，不允许长期表现成“左上蓝 / 右上红 / 左下黄 / 右下绿”的四象限。
 
@@ -110,8 +122,10 @@ Google Ambient 是 TauTerm 的品牌背景，三主题完全共享：
 
 - 只允许 `transform`。
 - 使用闭合多段轨迹 + `linear`，避免 ease-in-out 长时间像静止。
-- Quality：约 24–30s，较大路径。
-- Balanced：约 38–44s，较缓慢路径。
+- 两个 Field 必须使用不同 phase、方向和轻微 rotation，形成可感知的相对剪切运动。
+- Quality：约 18–23s，较大路径。
+- Balanced：约 27–33s，较缓慢路径。
+- 正常观察 3–5 秒应能确认色场正在移动；如果只有截图切换时才感知运动，视为失败。
 - Compat：只保留 1 个静态 Field。
 - 不使用 element `filter: blur`、`mix-blend-mode`、morph、常驻 `will-change`。
 
@@ -145,7 +159,11 @@ Google Ambient 是 TauTerm 的品牌背景，三主题完全共享：
 - Glass 不能主动染成蓝色。
 - Google 四色 Ambient 是主要色彩来源。
 - Content 三主题中偏透。
-- Accent 可以使用 Google Blue，但不能把整个 chrome 染蓝。
+- Google Glow 必须保留高价值 Gemini spectrum 渐变；颜色源只能是 canonical 四色。
+- `.liquid-theme-selected` 与 `.liquid-primary-button` 可使用 `--google-brand-gradient`，只限 selected tab / active mode / 主 CTA 等少量高价值状态。
+- 渐变顺序参考 Gemini mark 的空间色谱：Yellow → Green → Blue → Red；不同组件不得自行换一套 stop hue。
+- 中间出现的 Purple / Orange 只能来自四色渐变的自然插值，不允许独立定义为 Google/Gemini 品牌色。
+- 普通 button/chrome 不得全息化；Accent 主色仍引用 `--google-blue`。
 
 ### Obsidian — Black
 
@@ -154,14 +172,16 @@ Google Ambient 是 TauTerm 的品牌背景，三主题完全共享：
 - 相同 Ambient。
 - Glass Physics 与 Google Glow 相同。
 - 通过更黑 base、更实 content/control tint、更低亮度 edge 形成身份。
-- 不另外换成蓝紫 Ambient。
+- Obsidian 的 selected/primary 仍使用同一 canonical Gemini hue，只通过更低 alpha、边框和阴影形成黑曜石材质。
+- 不另外换成蓝紫 Ambient，也不得另造蓝灰“品牌渐变”。
 
 ### Frosted — White
 
 第一印象：**银白 / 冰霜 tint**
 
 - 相同 Ambient RGB / geometry / motion / opacity。
-- Google 色通过白色材质自然表现为较浅颜色，不另建 pastel palette。
+- Google/Gemini 色通过白色材质自然表现为较浅颜色，不另建 pastel palette。
+- selected/primary 继续使用 canonical Gemini hue，只改变浅色主题下的 edge / shadow / text 对比。
 - 需要同时拥有亮顶部 specular 和微弱的暗边缘，不能退化成纯白平面。
 
 ---
@@ -210,6 +230,7 @@ input:disabled { opacity: .4; }
 统一使用：
 
 - `--control-disabled-bg`
+- `--control-disabled-input-bg`
 - `--control-disabled-border`
 - `--control-disabled-text`
 - `--control-disabled-icon`
@@ -247,12 +268,16 @@ Disabled 表示“不可操作”，不是“不可见”。
 
 - 默认状态保持清楚 silhouette。
 - hover 只做轻 tint / edge / 最多 1px lift。
-- active 用 accent tint。
+- 普通 active 用 accent tint。
+- 主题身份型 selected 状态使用 `.liquid-theme-selected`。
+- Google Glow 的主题 selected 使用静态 `--google-brand-gradient`，并只在 hover 时 transition background-position；禁止 idle 无限渐变动画。
 - disabled 保持 shape 与 edge，降低 text/accent 强度。
 
-### Toggle / Checkbox
+### Toggle / Checkbox / Number
 
-自绘 track 必须与全局 disabled tokens 一致，不得使用 `opacity: .35` 整体淡出。
+- 自绘 track 必须与全局 disabled tokens 一致，不得使用 `opacity: .35` 整体淡出。
+- number stepper 箭头不能依赖 data-URI SVG 的 `currentColor` 继承；WebView 中应使用主题 token 提供明确 SVG 颜色。
+- disabled stepper 可以降低内部箭头 opacity，但整个 input silhouette 必须保持完整。
 
 ---
 
@@ -278,6 +303,8 @@ CSS Module 出现 backdrop-filter 默认视为 HIGH/CRITICAL。
 
 - xterm `background: "transparent"` 时必须 `allowTransparency: true`。
 - xterm 透明目标是 Content Surface，不是 raw window。
+- Google Glow 的 xterm cursor / ANSI Blue/Red/Yellow/Green 必须在运行时读取 `--google-*` canonical token；TS 中不得复制 Google 品牌十六进制值。
+- ANSI Purple/Cyan/bright variants 可以从 canonical 四色派生混色，但不能被定义成新的 Google/Gemini 品牌 token。
 - inactive terminal 保留实例/scrollback，淡出后 `visibility:hidden`。
 - active pane 比 inactive 更透。
 - 不使用未经验证的 `content-visibility`。
@@ -364,6 +391,9 @@ rg 'liquid-glass-content|liquid-control-surface|liquid-glass-float|liquid-glass'
 # Ambient 旧 Orb / 全局动画暂停不可回归
 rg 'glow-orb|data-motion="paused".*\*' src --glob '*.css' --glob '*.tsx'
 
+# Canonical Google/Gemini palette：品牌十六进制只能出现在 tokens.css canonical block
+rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
+
 npm run build
 ```
 
@@ -392,6 +422,8 @@ npm run build
 - **Disabled 可辨认但不活跃**
 - **Content 透明，Control 稳定**
 - **Quality 更活，Balanced 更缓，Compat 真静态**
+- **Google Glow 的 selected 状态一眼可辨，Obsidian 不得看起来只是同一套蓝按钮**
+- **SendBar 在 disconnected 状态仍能看清 textarea/select/toggle/number/history/send 的完整轮廓**
 
 ## 实现源文件
 

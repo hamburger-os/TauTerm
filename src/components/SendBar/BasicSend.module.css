@@ -48,6 +48,8 @@
   gap: 6px;
   flex-shrink: 0;
   flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px solid var(--control-surface-border);
 }
 
 /* 功能组分隔线 */
@@ -55,7 +57,7 @@
   width: 1px;
   height: var(--select-height);
   margin: 0 2px;
-  background: var(--glass-border-default);
+  background: var(--control-surface-border);
   flex-shrink: 0;
   align-self: center;
 }
@@ -92,12 +94,6 @@
   cursor: not-allowed;
 }
 
-.modeActive {
-  color: var(--accent-primary);
-  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
-}
-
 .intervalInput {
   width: 64px;
   box-sizing: border-box;
@@ -117,7 +113,7 @@
 
 .intervalUnit {
   flex: 0 0 auto;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   font-family: var(--font-mono);
 }
@@ -129,6 +125,8 @@
 }
 
 .historyBtn {
+  min-width: var(--select-height);
+  min-height: var(--select-height);
   padding: 4px 6px;
   color: var(--text-secondary);
   font-size: var(--text-xs);

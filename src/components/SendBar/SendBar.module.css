@@ -25,9 +25,10 @@
   flex-direction: column;
   width: 42px;
   flex-shrink: 0;
-  border-right: 1px solid var(--glass-border-default);
+  border-right: 1px solid var(--control-surface-border);
   padding: var(--sendbar-mode-switcher-padding);
   gap: var(--sendbar-mode-btn-gap);
+  background: color-mix(in srgb, var(--bg-secondary) 44%, transparent);
 }
 
 .modeBtn {
