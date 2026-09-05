@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "8.2"
+  version: "8.3"
 ---
 
-# TauTerm Liquid Glass v8.2 — 唯一主题规范源
+# TauTerm Liquid Glass v8.3 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -245,39 +245,47 @@ Float、Card、Accent 也必须从同一 clear physics 派生，不能各自造�
 
 ## 9. Terminal / SplitView
 
-### 材质
+### Workspace Surface Ownership
 
-Terminal xterm 本体透明到 `.liquid-glass-content`。
+Split Workspace 只能有一层 Content 壳体：
 
-Content 与 Structural Panel 共用 clear physics，但：
+- `SplitView` root 是唯一的基础 `.liquid-glass-content` owner，统一负责 Workspace 的 background / border / shadow / radius。
+- Pane 内容与 docked Terminal wrapper **不得再次附加基础 `.liquid-glass-content`**；多 Pane 只允许叠加 active / inactive veil state。
+- Workspace root 统一裁剪四个真实外角；Pane 子矩形保持直角，不再维护 pane-local corner geometry。
+- 内部边界只由 Pane Header 的分隔线和 Divider 表达；禁止恢复 `paneFrame` / selected perimeter frame。
+- selected 状态只通过 Header 的克制 accent / veil 表达，不给中间内容区再套一层边框或阴影。
 
-- Content veil 更实；
-- specular 更弱；
-- outer shadow 更少；
-- 重点是文字稳定和长时间阅读。
+这样 Terminal 仍是 Content 材质，但一个 Workspace 只付出一次外壳边框/阴影成本，也不会出现“分屏后又套了一层框”的视觉噪音。
 
 ### 单 Pane
 
 只有一个 Pane 时：
 
-- 不显示 selected top line；
-- 不显示 selected frame；
-- Terminal 不套 active/inactive material；
-- Content 使用 neutral `.liquid-glass-content`。
+- 不显示 Pane Header；
+- 不显示 selected frame / selected material；
+- Workspace root 使用 neutral `.liquid-glass-content`；
+- Terminal / custom content 本体透明到这一个 root surface。
 
 ### 多 Pane
 
 只有 `paneCount > 1` 时：
 
-- selected pane 可使用 active veil；
-- 其它 pane 可使用 inactive veil；
+- selected pane 可叠加 active veil；
+- 其它 pane 可叠加 inactive veil；
 - Pane Header 使用 `--theme-content-header-veil` + 同一 content clear base；
-- Pane 圆角必须遵循 **outer-corner only**：Workspace 四个真实外角可圆，所有内部 Split 交点必须为直角；
-- Pane Frame、Header、Content/Terminal 必须使用同一套 corner geometry，禁止各自写固定四角圆角。
+- Divider 是 1px 语义分隔线 + 更宽 hit-zone，不是第二层 Card 边框；
+- 所有 Pane 内部交点保持直角，外角由 Workspace root 的 overflow clipping 自动完成。
+
+### Context / Interaction Stability
+
+- `Close Pane` 右键菜单只属于 **Pane Header**；Pane content 绝不打开 Pane-level close menu。
+- 对未选中的 Pane Header 按下右键时，**不得先激活该 Pane**。必须等 `contextmenu` 在原几何位置打开菜单，避免 SendBar / RightSidebar 切换导致标题栏在指针下发生位移。
+- 左键点击 Header / content 才执行 Pane selection。
+- Divider resize / Pane geometry 改变不得对 `left/top/width/height` 做 CSS transition；拖动必须直接跟手。
 
 ### Disconnected
 
-Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。
+Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。Session-level disconnected actions 可以属于内容区，但不得借用 Pane-level `Close Pane` 菜单。
 
 ---
 
@@ -356,7 +364,8 @@ rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg -U ':disabled[^\{]*\{[^\}]*opacity\s*:\s*0\.' src --glob '*.css'
 rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-float|liquid-glass' src --glob '*.tsx'
 rg 'theme-(chrome|panel|content|card|float|control).*veil|theme-(chrome|float)-veil-compat|liquid-clear-|liquid-specular-' src/styles
-rg 'border-radius.*pane|pane(Frame|Header|Content)Radius|dockedBorderRadii' src/components/Layout src/components/Terminal
+rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius' src/components/Layout src/components/Terminal
+rg 'liquid-glass-content' src/components/Layout/SplitView.tsx src/components/Terminal/TerminalView.tsx
 rg 'modeHeader|modeTitle|flex-direction:\s*row' src/components/SendBar
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 npm run build
@@ -388,7 +397,9 @@ npm run build
 - **白霜 = clear glass + white veil**
 - **三个主题都有清澈、柔亮、边缘高光的液态玻璃质感**
 - **单 Pane 没有 active/selected 材质差异**
-- **多 Pane 只有 Workspace 外角圆，内部交点直**
+- **中间 Workspace 只有一层 Content 外框/阴影；分屏后不出现 Pane 套 Card 的第二层框**
+- **多 Pane 只有 Workspace root 拥有外角，Pane 子矩形与内部交点保持直角**
+- **右键未选中 Pane Header 时不会先切换 active Session；Close Pane 菜单只从 Header 出现**
 - **Compat 仍然是玻璃，但 Small Chrome/Float 的可读性不能低于 Balanced，也不能出现“兼容档最透明”**
 
 ## 实现源文件

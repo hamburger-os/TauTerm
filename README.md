@@ -78,7 +78,7 @@ On Windows, TauTerm can bridge a serial session through bundled com0com virtual 
 
 ![TCP loopback receive log](docs/assets/network-tcp-loopback-en.png)
 
-Run TCP client/server and UDP client/server workflows in the same app, including peer selection, per-peer statistics, Text/HEX inspection and scripted sending. TFTP, Telnet and iPerf2/iPerf3 complement the same network-debugging workspace.
+Run TCP client/server and UDP client/server workflows in the same app, including peer selection, per-peer statistics, Text/HEX inspection and scripted sending. Network Debug keeps its four-mode SendBar available as part of the selected Session workspace even while disconnected; connection state gates sending rather than creating/removing the bar. TFTP, Telnet and iPerf2/iPerf3 complement the same network-debugging workspace.
 
 ### TRDP Node and Monitor
 

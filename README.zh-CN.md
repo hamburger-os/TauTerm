@@ -78,7 +78,7 @@ Windows 可通过安装包自带的 com0com 建立虚拟 COM 对；Linux/macOS �
 
 ![TCP 回环收发日志](docs/assets/network-tcp-loopback-en.png)
 
-在同一个应用内运行 TCP 客户端/服务端与 UDP 客户端/服务端工作流，支持对端选择、逐对端统计、Text/HEX 查看和脚本发送。TFTP、Telnet 与 iPerf2/iPerf3 则补齐同一套网络调试环境。
+在同一个应用内运行 TCP 客户端/服务端与 UDP 客户端/服务端工作流，支持对端选择、逐对端统计、Text/HEX 查看和脚本发送。网络调试会话即使处于未连接状态，也会保留所选会话的四模式发送栏；连接状态只决定发送动作是否可用，不再通过创建/移除发送栏改变工作区布局。TFTP、Telnet 与 iPerf2/iPerf3 则补齐同一套网络调试环境。
 
 ### TRDP Node 与 Monitor
 
