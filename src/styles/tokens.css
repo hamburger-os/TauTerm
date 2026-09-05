@@ -1,5 +1,5 @@
 /* ========================================
-   TauTerm Liquid Glass v7 设计令牌
+   TauTerm Liquid Glass v7.1 设计令牌
    Google Glow (默认) + Obsidian + Frosted
    ======================================== */
 
@@ -49,6 +49,21 @@
   --transition-button: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-input: 0.3s ease;
   --transition-knob: 200ms ease;
+
+  /* Canonical Google / Gemini brand palette.
+     任何 Google/Gemini Ambient、selected gradient、brand accent 都只能引用这里，
+     禁止在组件或主题块中重复硬编码另一套“近似 Google 色”。 */
+  --google-blue: #4285F4;
+  --google-red: #EA4335;
+  --google-yellow: #FBBC05;
+  --google-green: #34A853;
+  --google-brand-gradient: linear-gradient(
+    -45deg,
+    var(--google-blue) 0%,
+    var(--google-red) 34%,
+    var(--google-yellow) 66%,
+    var(--google-green) 100%
+  );
 
   /* 默认使用 Balanced。Performance 只控制渲染丰富度，不改变主题身份。 */
   --glass-blur-chrome: 8px;
@@ -211,8 +226,8 @@ html[data-performance="compat"] {
   --glass-input-bg: rgba(3, 5, 7, 0.40);
   --glass-input-border: rgba(255, 255, 255, 0.12);
   --glass-input-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.045), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
-  --glass-input-focus-border: rgba(66, 133, 244, 0.58);
-  --glass-input-focus-glow: 0 0 0 2px rgba(66, 133, 244, 0.16);
+  --glass-input-focus-border: color-mix(in srgb, var(--google-blue) 58%, transparent);
+  --glass-input-focus-glow: 0 0 0 2px color-mix(in srgb, var(--google-blue) 16%, transparent);
 
   /* 文字 */
   --text-primary: #f1f3f6;
@@ -220,7 +235,7 @@ html[data-performance="compat"] {
   --text-muted: #858d98;
 
   /* 强调色 */
-  --accent-primary: #4285F4;
+  --accent-primary: var(--google-blue);
   --accent-secondary: #60a5fa;
   --accent-gradient: linear-gradient(135deg, #4285F4 0%, #6366f1 100%);
   --accent-glow: rgba(66, 133, 244, 0.18);
@@ -231,7 +246,7 @@ html[data-performance="compat"] {
   --color-success: #34d399;
   --color-error: #ff4757;
   --color-warning: #ffa502;
-  --color-info: #4285F4;
+  --color-info: var(--google-blue);
 
   /* 右侧栏工具面板辅助令牌 */
   --color-accent: var(--accent-primary);
@@ -239,13 +254,10 @@ html[data-performance="compat"] {
   --glass-fill-secondary: rgba(255, 255, 255, 0.03);
   --text-tertiary: #777f8b;
 
-  /* Google Glow 的招牌全息膜：只用于 active/selected 高价值状态和主 CTA。 */
-  --accent-holofoil-gradient: linear-gradient(-45deg,
-    rgba(66, 133, 244, 0.90) 0%,
-    rgba(168, 85, 247, 0.88) 30%,
-    rgba(236, 72, 153, 0.86) 62%,
-    rgba(251, 188, 5, 0.88) 100%);
-  --selected-surface: var(--accent-holofoil-gradient);
+  /* Google Glow 的品牌膜与 Ambient 使用同一套 Google/Gemini 四色。
+     中间出现的紫/橙只能由标准色自然混合产生，不定义额外品牌色。 */
+  --accent-holofoil-gradient: var(--google-brand-gradient);
+  --selected-surface: var(--google-brand-gradient);
   --selected-border: rgba(255, 255, 255, 0.42);
   --selected-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 4px 14px rgba(0, 0, 0, 0.18);
   --selected-text: #ffffff;
@@ -258,7 +270,7 @@ html[data-performance="compat"] {
   --glass-bg-hover: rgba(255, 255, 255, 0.08);
   --glass-bg-active: rgba(255, 255, 255, 0.12);
   --glass-border-hover: rgba(255, 255, 255, 0.25);
-  --glass-border-focus: rgba(66, 133, 244, 0.5);
+  --glass-border-focus: color-mix(in srgb, var(--google-blue) 50%, transparent);
   --blur-light: 8px;
   --blur-medium: 16px;
   --blur-heavy: 24px;
@@ -355,7 +367,7 @@ html[data-performance="compat"] {
   --color-success: #34d399;
   --color-error: #ff4757;
   --color-warning: #ffa502;
-  --color-info: #4285F4;
+  --color-info: var(--google-blue);
 
   /* 全息光效渐变（主按钮等） */
   --accent-holofoil-gradient: linear-gradient(135deg,
@@ -501,7 +513,7 @@ html[data-performance="compat"] {
   --glass-bg-hover: rgba(255, 255, 255, 0.7);
   --glass-bg-active: rgba(255, 255, 255, 0.9);
   --glass-border-hover: rgba(100, 116, 139, 0.5);
-  --glass-border-focus: rgba(66, 133, 244, 0.5);
+  --glass-border-focus: color-mix(in srgb, var(--google-blue) 50%, transparent);
   --blur-light: 8px;
   --blur-medium: 20px;
   --blur-heavy: 35px;
