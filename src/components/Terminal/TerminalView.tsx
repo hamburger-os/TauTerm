@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { useSession } from "../../context/SessionContext";
 import { useTheme } from "../../context/ThemeContext";
 import { useKeyboard } from "../../hooks/useKeyboard";
@@ -602,7 +602,7 @@ export default function TerminalView({ dockedPlacements, onActivateSession }: Te
                 if (node) terminalViewportRefs.current.set(tab.id, node);
                 else terminalViewportRefs.current.delete(tab.id);
               }}
-              className={`${styles.terminalWrapper} ${styles.dockedTerminalWrapper}`}
+              className={`${styles.terminalWrapper} ${styles.dockedTerminalWrapper} liquid-glass-content ${isActive ? "liquid-glass-content-active" : "liquid-glass-content-inactive"}`}
               style={{
                 ...dockedRectStyle(rect),
                 opacity: visible ? 1 : 0,
@@ -657,7 +657,7 @@ export default function TerminalView({ dockedPlacements, onActivateSession }: Te
 
   return (
     <div className={styles.viewport} ref={viewportRef}>
-      <div className={`${styles.terminalArea} liquid-glass`}>
+      <div className={`${styles.terminalArea} liquid-glass-content liquid-glass-content-active`}>
         {isActiveTransferring && (
           <motion.div
             className={styles.transferBanner}
@@ -686,24 +686,18 @@ export default function TerminalView({ dockedPlacements, onActivateSession }: Te
         )}
 
         <div className={styles.terminalsContainer}>
-          <AnimatePresence>
-            {terminalTabs.map(tab => {
-              const isActive = tab.id === state.activeTabId;
-              return (
-                <motion.div
-                  key={tab.id}
-                  className={styles.terminalWrapper}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: isActive ? 1 : 0 }}
-                  exit={{ opacity: 0 }}
-                  style={{ pointerEvents: isActive ? "auto" : "none" }}
-                  transition={{ duration: 0.15 }}
-                >
-                  {renderTerminalBody(tab, isActive)}
-                </motion.div>
-              );
-            })}
-          </AnimatePresence>
+          {terminalTabs.map(tab => {
+            const isActive = tab.id === state.activeTabId;
+            return (
+              <div
+                key={tab.id}
+                className={`${styles.terminalWrapper} ${styles.stackedTerminalWrapper} ${isActive ? styles.stackedTerminalActive : ""}`}
+                aria-hidden={!isActive}
+              >
+                {renderTerminalBody(tab, isActive)}
+              </div>
+            );
+          })}
 
           {terminalTabs.length === 0 && (
             <div className={styles.emptyState}>
