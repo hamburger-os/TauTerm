@@ -131,7 +131,7 @@ body {
   animation-delay: -4s;
 }
 
-/* 对角 B：Blue + Yellow。Quality 中与 Field A 独立交叉运动；Balanced 中保持静态。 */
+/* 对角 B：Blue + Yellow。效果优先时与 Field A 独立交叉运动。 */
 .ambient-field-b {
   background:
     radial-gradient(ellipse 34% 42% at 70% 30%,
