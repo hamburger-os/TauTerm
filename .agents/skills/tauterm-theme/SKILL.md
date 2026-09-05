@@ -73,7 +73,7 @@ metadata:
 
 ### Theme Veil
 
-每个主题只定义：
+每个主题用以下 veil 建立视觉身份；允许对 border/shadow 做最低限度的对比补偿：
 
 - `--theme-chrome-veil`
 - `--theme-panel-veil`
