@@ -428,7 +428,7 @@ html[data-motion="reduced"] .ambient-field {
 }
 
 /* 数字输入框微调箭头 —— 统一主题样式
-   - WebKit: 使用内联 SVG currentColor 绘制 ▲▼ 箭头，颜色随主题 token 自动适配
+   - WebKit: 使用主题 --number-spinner SVG，避免 data-URI currentColor 无法继承宿主颜色
    - Firefox: 隐藏原生微调按钮（Tauri 全平台使用 WebKit webview，保留以保持一致性） */
 .liquid-glass-input[type="number"] {
   -moz-appearance: textfield;
@@ -454,7 +454,7 @@ html[data-motion="reduced"] .ambient-field {
 .liquid-glass-input[type="number"]::-webkit-outer-spin-button:hover,
 .liquid-glass-input[type="number"]::-webkit-inner-spin-button:hover {
   opacity: 1;
-  background-color: var(--glass-bg-hover);
+  background-color: var(--glass-button-hover-bg);
 }
 
 .liquid-glass-input[type="number"]::-webkit-outer-spin-button:active,
@@ -465,6 +465,8 @@ html[data-motion="reduced"] .ambient-field {
 .liquid-glass-input[type="number"]:disabled::-webkit-outer-spin-button,
 .liquid-glass-input[type="number"]:disabled::-webkit-inner-spin-button {
   opacity: 0.62;
+  background-color: var(--control-disabled-input-bg);
+  border-left-color: var(--control-disabled-border);
   cursor: not-allowed;
 }
 
