@@ -39,10 +39,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--glass-border-default);
+  border: 1px solid var(--content-border);
+  border-top-color: var(--content-border-top);
   border-radius: 50%;
   color: var(--text-secondary);
-  background: color-mix(in srgb, var(--bg-secondary) 58%, transparent);
+  background:
+    var(--liquid-specular-content-fill),
+    var(--theme-card-veil),
+    var(--liquid-clear-card-fill);
 }
 
 .emptyPaneIcon {
@@ -102,8 +106,11 @@
   align-items: center;
   min-width: 0;
   padding: 0 8px;
-  border-bottom: 1px solid var(--glass-border-default);
-  background: var(--control-surface);
+  border-bottom: 1px solid var(--content-border);
+  background:
+    var(--liquid-specular-content-fill),
+    var(--theme-content-header-veil),
+    var(--liquid-clear-content-fill);
   color: var(--text-secondary);
   pointer-events: auto;
   cursor: default;
@@ -113,11 +120,11 @@
 .paneHeader:hover,
 .selectedHeader {
   color: var(--text-primary);
-  border-bottom-color: color-mix(in srgb, var(--accent-primary) 42%, var(--glass-border-default));
+  border-bottom-color: color-mix(in srgb, var(--accent-primary) 42%, var(--content-border));
 }
 
 .selectedHeader {
-  background: color-mix(in srgb, var(--accent-primary) 9%, var(--bg-secondary));
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--accent-primary) 18%, transparent);
 }
 
 .paneHeaderTitle {
