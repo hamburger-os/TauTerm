@@ -267,6 +267,50 @@ export function pruneAssignments(
   return changed ? { ...state, assignments } : state;
 }
 
+/**
+ * 父容器断开后，运行时 child Session 会消失，但稳定 root/config Session 仍存在。
+ * 仅把 child 回退到已经 disconnected 的 root，避免“关闭单个 child”被误判成
+ * “父会话断开”。同一个 root 最多占一个 Pane，优先保留当前选中的 Pane。
+ */
+export function remapRemovedChildrenToDisconnectedRoots(
+  state: SplitLayoutState,
+  validSessionIds: ReadonlySet<string>,
+  disconnectedRootIds: ReadonlySet<string>,
+  stableSessionIds: ReadonlyMap<string, string>,
+): SplitLayoutState {
+  let changed = false;
+  const assignments = { ...state.assignments };
+  const paneIds = collectPaneIds(state.root);
+  const orderedPaneIds = [
+    state.selectedPaneId,
+    ...paneIds.filter(paneId => paneId !== state.selectedPaneId),
+  ];
+  const occupiedStableIds = new Set(
+    Object.values(assignments).filter(
+      (sessionId): sessionId is string => Boolean(sessionId && validSessionIds.has(sessionId)),
+    ),
+  );
+
+  for (const paneId of orderedPaneIds) {
+    const assigned = assignments[paneId];
+    if (!assigned || validSessionIds.has(assigned)) continue;
+    const stableId = stableSessionIds.get(assigned);
+    if (
+      stableId
+      && stableId !== assigned
+      && validSessionIds.has(stableId)
+      && disconnectedRootIds.has(stableId)
+      && !occupiedStableIds.has(stableId)
+    ) {
+      assignments[paneId] = stableId;
+      occupiedStableIds.add(stableId);
+      changed = true;
+    }
+  }
+
+  return changed ? { ...state, assignments } : state;
+}
+
 export function computePaneRects(
   root: LayoutNode,
 ): Record<PaneId, PaneRect> {
