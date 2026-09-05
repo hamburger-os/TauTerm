@@ -15,6 +15,7 @@ registerPlugin({
     description: "Telnet 终端",
     icon: "globe",
     content_type: "terminal",
+    send_bar: true,
     capabilities: ["connection"],
     transfer_protocols: [],
   },

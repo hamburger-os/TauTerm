@@ -13,6 +13,7 @@ registerPlugin({
     description: "TFTP 文件传输",
     icon: "package",
     content_type: "custom",
+    send_bar: false,
     capabilities: ["connection", "transfer"],
     transfer_protocols: [],
   },

@@ -10,6 +10,7 @@ registerPlugin({
     description: "Local Shell",
     icon: "ssh-shell",
     content_type: "terminal",
+    send_bar: false,
     capabilities: ["connection", "endpoint_discovery", "multi_session", "elevated_session"],
     transfer_protocols: [],
   },

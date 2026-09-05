@@ -338,8 +338,11 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setError(null);
     setConnecting(true);
 
-    // 网络调试启用全局发送栏（发送目标由发送栏内 TargetBar 选择）
-    const effectiveSendBarEnabled = isLocalShell ? false : (isSsh ? sshSendBarEnabled : (isTftp || isIperf ? false : (isTelnet ? telnetSendBarEnabled : sendBarEnabled)));
+    // 全局 SendBar 能力由 PluginManifest 单点声明；会话开关只在插件支持时生效。
+    const requestedSendBarEnabled = isSsh
+      ? sshSendBarEnabled
+      : (isTelnet ? telnetSendBarEnabled : sendBarEnabled);
+    const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(selectedMode, requestedSendBarEnabled);
     const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isLocalShell || isTftp || isTelnet || isIperf || isNetwork ? false : transferEnabled);
 
     let tftpExposureConfirmed = false;

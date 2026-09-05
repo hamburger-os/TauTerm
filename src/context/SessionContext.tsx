@@ -648,6 +648,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const connect = useCallback(async (opts: ConnectOptions) => {
     const { endpoint, params, name, pluginId, transferEnabled, transferProtocol, sendBarEnabled, journaldEnabled, sessionId, initialElevated } = opts;
+    const effectivePluginId = pluginId || "serial";
+    const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
     dispatch({ type: "SET_ERROR", error: null });
     // 如果已知 sessionId（已创建离线配置），立即将 tab 状态设为 connecting
     if (sessionId) {
@@ -660,10 +662,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const sid = await invoke<string>("connect_session", {
         request: {
         endpoint, params, name,
-        pluginId: pluginId || "serial",
+        pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
-        sendBarEnabled: sendBarEnabled ?? true,
+        sendBarEnabled: effectiveSendBarEnabled,
         journaldEnabled: journaldEnabled ?? false,
         sessionId: sessionId || null,
         initialElevated: initialElevated ?? false,
@@ -684,6 +686,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "SET_ERROR", error: null });
     try {
       const pid = pluginId || "serial";
+      const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(pid, sendBarEnabled);
       // 协议无关的默认名：从 plugin-registry 查询 manifest.name，避免硬编码 "Serial @ ..."
       // 导致未来 telnet/tftp 等会话误显示为 "Serial"。回退为大写的 pluginId。
       const pluginName = (pluginRegistry.get(pid)?.manifest.name) || pid.toUpperCase();
@@ -705,7 +708,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         pluginId: pid,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
-        sendBarEnabled: sendBarEnabled ?? true,
+        sendBarEnabled: effectiveSendBarEnabled,
 
         },});
       dispatch({
@@ -722,7 +725,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           connectedAt: null,
           transferEnabled: transferEnabled ?? true,
           transferProtocol,
-          sendBarEnabled: sendBarEnabled ?? true,
+          sendBarEnabled: effectiveSendBarEnabled,
           virtualPortEnabled: (params.virtual_port_enabled as boolean) ?? false,
           virtualPortCount: (params.virtual_port_count as number) ?? 0,
           fileServiceEnabled: (params.file_service_enabled as boolean) ?? false,
@@ -883,6 +886,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_ERROR", error: "无法确定会话的协议类型 (pluginId)" });
       return;
     }
+    const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
     try {
       await invoke("save_session_config", {
         request: {
@@ -892,7 +896,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
-        sendBarEnabled: sendBarEnabled ?? true,
+        sendBarEnabled: effectiveSendBarEnabled,
         sessionId, // 复用已有 UUID
 
         },});
@@ -910,8 +914,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       name: name || tab?.name || `${(tab?.pluginId && pluginRegistry.get(tab.pluginId)?.manifest.name) || tab?.pluginId?.toUpperCase() || "Serial"} @ ${endpoint}`,
       transferEnabled,
       transferProtocol,
-      sendBarEnabled,
-      pluginId: tab?.pluginId, // 保持原有 pluginId，为将来插件切换预留
+      sendBarEnabled: effectiveSendBarEnabled,
+      pluginId: effectivePluginId,
       journaldEnabled: journaldEnabled ?? (params?.journald_enabled as boolean) ?? tab?.journaldEnabled,
       fileServiceEnabled: (params?.file_service_enabled as boolean) ?? tab?.fileServiceEnabled,
       fileServiceProtocol: (params?.file_service_protocol as string) ?? tab?.fileServiceProtocol,
@@ -928,7 +932,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           pluginId: effectivePluginId,
           transferEnabled: transferEnabled ?? true,
           transferProtocol: transferProtocol || "ymodem",
-          sendBarEnabled: sendBarEnabled ?? true,
+          sendBarEnabled: effectiveSendBarEnabled,
           journaldEnabled: (params?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
           sessionId, // 保持 UUID 连续性
 
@@ -987,25 +991,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         virtual_port_count?: number;
       }>>("load_sessions");
       if (saved && saved.length > 0) {
-        const tabs: TabInfo[] = saved.map((s) => ({
-          id: s.id,
-          name: s.name,
-          connection_type: s.connection_type,
-          endpoint: s.endpoint,
-          state: "disconnected" as ConnectionStatus,
-          pluginId: s.plugin_id || "serial",
-          params: s.params,
-          stats: { txBytes: 0, rxBytes: 0 },
-          connectedAt: null,
-          transferEnabled: s.transfer_enabled ?? true,
-          transferProtocol: s.transfer_protocol,
-          sendBarEnabled: s.send_bar_enabled ?? true,
-          virtualPortEnabled: s.virtual_port_enabled ?? false,
-          virtualPortCount: s.virtual_port_count ?? 0,
-          fileServiceEnabled: (s.params?.file_service_enabled as boolean) ?? false,
-          fileServiceProtocol: s.params?.file_service_protocol as string | undefined,
-          journaldEnabled: (s.params?.journald_enabled as boolean) ?? false,
-        }));
+        const tabs: TabInfo[] = saved.map((s) => {
+          const pluginId = s.plugin_id || "serial";
+          return {
+            id: s.id,
+            name: s.name,
+            connection_type: s.connection_type,
+            endpoint: s.endpoint,
+            state: "disconnected" as ConnectionStatus,
+            pluginId,
+            params: s.params,
+            stats: { txBytes: 0, rxBytes: 0 },
+            connectedAt: null,
+            transferEnabled: s.transfer_enabled ?? true,
+            transferProtocol: s.transfer_protocol,
+            sendBarEnabled: pluginRegistry.resolveSendBarEnabled(pluginId, s.send_bar_enabled),
+            virtualPortEnabled: s.virtual_port_enabled ?? false,
+            virtualPortCount: s.virtual_port_count ?? 0,
+            fileServiceEnabled: (s.params?.file_service_enabled as boolean) ?? false,
+            fileServiceProtocol: s.params?.file_service_protocol as string | undefined,
+            journaldEnabled: (s.params?.journald_enabled as boolean) ?? false,
+          };
+        });
         dispatch({ type: "SET_TABS", tabs });
         if (tabs.length > 0) {
           dispatch({ type: "SET_ACTIVE", id: tabs[0].id });
@@ -1212,6 +1219,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
+          const eventPluginId = event.payload.plugin_id || event.payload.connection_type || "serial";
+          const eventSendBarEnabled = pluginRegistry.resolveSendBarEnabled(eventPluginId, event.payload.send_bar_enabled);
           const vPairs = event.payload.virtual_endpoints;
           const parentId = event.payload.parent_id ?? null;
           const isContainer = event.payload.is_container ?? false;
@@ -1232,8 +1241,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               name: event.payload.name || `${(event.payload.plugin_id && pluginRegistry.get(event.payload.plugin_id)?.manifest.name) || event.payload.plugin_id?.toUpperCase() || "Serial"} @ ${event.payload.endpoint}`,
               transferEnabled: event.payload.transfer_enabled,
               transferProtocol: event.payload.transfer_protocol,
-              sendBarEnabled: event.payload.send_bar_enabled,
-              pluginId: event.payload.plugin_id || "serial",
+              sendBarEnabled: eventSendBarEnabled,
+              pluginId: eventPluginId,
               connectedAt: event.payload.connected_at ?? Date.now(),
               journaldEnabled: event.payload.journald_enabled ?? false,
               fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean),
@@ -1261,13 +1270,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 connection_type: event.payload.connection_type,
                 endpoint: event.payload.endpoint,
                 state: "connected",
-                pluginId: event.payload.plugin_id || "ssh",
+                pluginId: eventPluginId,
                 params: event.payload.params,
                 stats: { txBytes: 0, rxBytes: 0 },
                 connectedAt: event.payload.connected_at ?? Date.now(),
                 transferEnabled: event.payload.transfer_enabled ?? false,
                 transferProtocol: event.payload.transfer_protocol,
-                sendBarEnabled: event.payload.send_bar_enabled ?? true,
+                sendBarEnabled: eventSendBarEnabled,
                 parentId,
                 channelIndex: event.payload.channel_index,
                 elevated: event.payload.elevated ?? false,
@@ -1285,13 +1294,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 connection_type: event.payload.connection_type,
                 endpoint: event.payload.endpoint,
                 state: "connected",
-                pluginId: event.payload.plugin_id || event.payload.connection_type,
+                pluginId: eventPluginId,
                 params: event.payload.params,
                 stats: { txBytes: 0, rxBytes: 0 },
                 connectedAt: event.payload.connected_at ?? Date.now(),
                 transferEnabled: event.payload.transfer_enabled ?? false,
                 transferProtocol: event.payload.transfer_protocol,
-                sendBarEnabled: event.payload.send_bar_enabled ?? true,
+                sendBarEnabled: eventSendBarEnabled,
                 isContainer: true,
                 fileServiceEnabled: event.payload.file_service_enabled ?? false,
                 fileServiceProtocol: event.payload.file_service_protocol,
@@ -1312,7 +1321,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 connection_type: event.payload.connection_type,
                 endpoint: event.payload.endpoint,
                 state: "connected",
-                pluginId: event.payload.plugin_id || "serial",
+                pluginId: eventPluginId,
                 // 早于本事件到达的回显状态（telnet-echo-state 暂存）；非 telnet 会话为 undefined
                 localEcho: pendingEcho,
                 params: event.payload.params,
@@ -1320,7 +1329,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 connectedAt: event.payload.connected_at ?? Date.now(),
                 transferEnabled: event.payload.transfer_enabled ?? true,
                 transferProtocol: event.payload.transfer_protocol,
-                sendBarEnabled: event.payload.send_bar_enabled ?? true,
+                sendBarEnabled: eventSendBarEnabled,
                 virtualVirtualEndpoints: vPairs,
                 virtualPortEnabled: (event.payload.params?.virtual_port_enabled as boolean) ?? false,
                 virtualPortCount: (event.payload.params?.virtual_port_count as number) ?? 0,

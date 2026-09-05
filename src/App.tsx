@@ -334,7 +334,10 @@ function AppInner() {
   // 发送栏主体（body）高度由 sendBarPct 控制，目标栏为额外固定高度，
   // 使 body 高度在有无目标栏时保持一致（而非被目标栏挤占 42px）。
   const activeTabForBar = sessionState.tabs.find(t => t.id === sessionState.activeTabId);
-  const activeShowTargetBar = isTargetBarVisible(activeTabForBar?.params);
+  const activeShowSendBar = activeTabForBar
+    ? pluginRegistry.resolveSendBarEnabled(activeTabForBar.pluginId, activeTabForBar.sendBarEnabled)
+    : false;
+  const activeShowTargetBar = activeShowSendBar && isTargetBarVisible(activeTabForBar?.params);
 
   return (
     <div className={`app-root ${isResizingSidebar || isResizingRightSidebar || isResizingSendBar ? "ui-resizing" : ""}`}>
@@ -438,11 +441,11 @@ function AppInner() {
           </div>
           {sessionState.tabs.map(tab => {
             const isActive = tab.id === sessionState.activeTabId;
-            // 顶部目标栏（TargetBar）仅 TCP/UDP server 显示；其高度需计入发送栏最小高度
-            const showTargetBar = isTargetBarVisible(tab.params);
-            // SendBar 是会话能力/配置，不是连接生命周期。Network Debug 与其它会话一致：
-            // 断开态仍保持发送栏布局，发送动作本身由会话状态决定是否可用。
-            const showSendBar = tab.sendBarEnabled !== false;
+            // PluginManifest 是全局 SendBar 能力的唯一来源；会话配置只能在支持时关闭它。
+            // SendBar 仍与连接生命周期解耦：支持它的会话断开后也保留布局，发送动作单独禁用。
+            const showSendBar = pluginRegistry.resolveSendBarEnabled(tab.pluginId, tab.sendBarEnabled);
+            // 顶部目标栏（TargetBar）仅在实际存在 SendBar 且目标选择适用时显示。
+            const showTargetBar = showSendBar && isTargetBarVisible(tab.params);
             return (
               <React.Fragment key={tab.id}>
                 {(showSendBar && isActive) && (

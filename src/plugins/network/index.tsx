@@ -112,6 +112,7 @@ registerPlugin({
     description: "TCP/UDP 网络调试助手",
     icon: "globe",
     content_type: "custom",
+    send_bar: true,
     capabilities: ["connection", "network_outbound", "network_listen"],
     transfer_protocols: [],
   },
