@@ -72,8 +72,8 @@ export function bitwiseOp(a: number, b: number, op: BitOp): BitOpResult {
 // ══════════════════════════════════════════════════════════════════
 
 // 常见 C 类型大小和对齐（ILP32 / 嵌入式 32 位通用值）
-// 注意：64 位系统上 LP64（Linux/macOS）的 long/pointer 为 8 字节，
-// LLP64（Windows 64-bit）的 long 为 4 字节、pointer 为 8 字节。
+// 注意：64 位系统中，LP64 的 long/pointer 为 8 字节；
+// LLP64 的 long 为 4 字节、pointer 为 8 字节。
 // 当前表格以嵌入式 32 位场景为目标，非 64 位 ABI。
 const TYPE_SIZES: Record<string, { size: number; align: number }> = {
   char: { size: 1, align: 1 },
