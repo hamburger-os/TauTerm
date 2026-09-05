@@ -1,5 +1,5 @@
 /* ========================================
-   TauTerm Liquid Glass v8.1 设计令牌
+   TauTerm Liquid Glass v8.2 设计令牌
    Google Glow (默认) + Obsidian + Frosted
    ======================================== */
 
@@ -246,20 +246,23 @@ html[data-performance="compat"] {
 /* Google Glow — 中性烟晶玻璃 + 共享 Google Ambient；颜色来自环境光而不是蓝色面板。 */
 :root, [data-theme="google-glow"] {
   --bg-base: #0a0b0d;
-  --ambient-opacity-quality: 0.58;
-  --ambient-opacity-balanced: 0.46;
+  --ambient-opacity-quality: 0.64;
+  --ambient-opacity-balanced: 0.52;
   --ambient-opacity-compat: 0.26;
 
-  /* 共享 Clear Glass + 极轻中性 veil：三主题中最透亮，让 Ambient 真正参与材质。 */
-  --theme-chrome-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.12), rgba(4, 7, 10, 0.055));
-  --theme-panel-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.080), rgba(4, 7, 10, 0.030));
-  --theme-content-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.30), rgba(3, 6, 9, 0.38));
-  --theme-content-active-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.25), rgba(3, 6, 9, 0.33));
-  --theme-content-inactive-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.36), rgba(3, 6, 9, 0.44));
-  --theme-content-header-veil: linear-gradient(180deg, rgba(8, 11, 15, 0.34), rgba(4, 7, 10, 0.42));
-  --theme-card-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.14), rgba(4, 7, 10, 0.07));
-  --theme-float-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.20), rgba(4, 7, 10, 0.11));
-  --theme-control-veil: linear-gradient(180deg, rgba(7, 10, 13, 0.62), rgba(3, 6, 8, 0.70));
+  /* 共享 Clear Glass + 更轻的中性 veil：Google Glow 明确是三主题中最亮、最透的一层。 */
+  --theme-chrome-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.075), rgba(4, 7, 10, 0.028));
+  --theme-panel-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.045), rgba(4, 7, 10, 0.014));
+  --theme-content-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.26), rgba(3, 6, 9, 0.33));
+  --theme-content-active-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.21), rgba(3, 6, 9, 0.28));
+  --theme-content-inactive-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.32), rgba(3, 6, 9, 0.40));
+  --theme-content-header-veil: linear-gradient(180deg, rgba(8, 11, 15, 0.29), rgba(4, 7, 10, 0.37));
+  --theme-card-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.10), rgba(4, 7, 10, 0.040));
+  --theme-float-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.15), rgba(4, 7, 10, 0.070));
+  --theme-control-veil: linear-gradient(180deg, rgba(7, 10, 13, 0.58), rgba(3, 6, 8, 0.66));
+  /* Compat 无 backdrop sampling，必须靠更实的 fallback veil 保证文字不会与底层 UI 竞争。 */
+  --theme-chrome-veil-compat: linear-gradient(135deg, rgba(7, 10, 14, 0.62), rgba(4, 7, 10, 0.52));
+  --theme-float-veil-compat: linear-gradient(135deg, rgba(7, 10, 14, 0.70), rgba(4, 7, 10, 0.60));
 
   --glass-fill: var(--theme-chrome-veil);
   --glass-card-fill: var(--theme-card-veil);
@@ -394,16 +397,18 @@ html[data-performance="compat"] {
   --ambient-opacity-balanced: 0.46;
   --ambient-opacity-compat: 0.26;
 
-  /* 与 Google Glow 完全相同的 Clear Glass Physics，只增加黑色 veil。 */
-  --theme-chrome-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.46), rgba(0, 0, 0, 0.36));
-  --theme-panel-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.40), rgba(0, 0, 0, 0.30));
-  --theme-content-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.64), rgba(0, 0, 0, 0.72));
-  --theme-content-active-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.58), rgba(0, 0, 0, 0.66));
-  --theme-content-inactive-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.70), rgba(0, 0, 0, 0.77));
-  --theme-content-header-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.74));
-  --theme-card-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.46), rgba(0, 0, 0, 0.34));
-  --theme-float-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.54), rgba(0, 0, 0, 0.42));
-  --theme-control-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.74), rgba(0, 0, 0, 0.80));
+  /* 与 Google Glow 完全相同的 Clear Glass Physics，只增加更明确的黑曜石 veil。 */
+  --theme-chrome-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.60), rgba(0, 0, 0, 0.50));
+  --theme-panel-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.56), rgba(0, 0, 0, 0.46));
+  --theme-content-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.76), rgba(0, 0, 0, 0.84));
+  --theme-content-active-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.70), rgba(0, 0, 0, 0.79));
+  --theme-content-inactive-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.88));
+  --theme-content-header-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.80), rgba(0, 0, 0, 0.86));
+  --theme-card-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.60), rgba(0, 0, 0, 0.48));
+  --theme-float-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.56));
+  --theme-control-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.90));
+  --theme-chrome-veil-compat: linear-gradient(135deg, rgba(0, 0, 0, 0.88), rgba(0, 0, 0, 0.82));
+  --theme-float-veil-compat: linear-gradient(135deg, rgba(0, 0, 0, 0.92), rgba(0, 0, 0, 0.86));
 
   --glass-fill: var(--theme-chrome-veil);
   --glass-card-fill: var(--theme-card-veil);
@@ -544,6 +549,8 @@ html[data-performance="compat"] {
   --theme-card-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.58), rgba(241, 247, 251, 0.42));
   --theme-float-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(241, 247, 251, 0.48));
   --theme-control-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(239, 246, 250, 0.82));
+  --theme-chrome-veil-compat: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(241, 247, 251, 0.78));
+  --theme-float-veil-compat: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(241, 247, 251, 0.82));
 
   --glass-fill: var(--theme-chrome-veil);
   --glass-card-fill: var(--theme-card-veil);
