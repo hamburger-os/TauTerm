@@ -33,7 +33,6 @@ rg 'liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' sr
 rg 'data-performance|data-motion|tauterm-performance-mode' src
 rg '#[0-9a-fA-F]{3,8}|rgba?\(' src/components src/renderers --glob '*.css' --glob '*.tsx'
 rg '#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
-rg 'A855F7|EC4899|8B5CF6|D946EF' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
 ```
 
 硬编码命中必须再按 SSOT 的允许例外人工筛选。
