@@ -85,7 +85,6 @@
   position: absolute;
   inset: 1px;
   border: 1px solid transparent;
-  border-radius: calc(var(--radius-lg) - 2px);
   pointer-events: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
@@ -114,6 +113,7 @@
   color: var(--text-secondary);
   pointer-events: auto;
   cursor: default;
+  overflow: hidden;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
