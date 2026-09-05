@@ -166,7 +166,7 @@ html[data-motion="reduced"] .glow-orb {
 }
 
 .liquid-glass-accent {
-  background: color-mix(in srgb, var(--glass-card-fill) 82%, transparent);
+  background: var(--glass-specular-fill), var(--glass-card-fill);
   border: 1px solid var(--glass-border-default);
   box-shadow: var(--glass-rim-light), inset 0 1px 0 var(--glass-border-top);
 }
