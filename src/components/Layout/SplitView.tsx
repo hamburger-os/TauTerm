@@ -22,6 +22,8 @@ import styles from "./SplitView.module.css";
 const MIN_PANE_PX = 160;
 const PANE_HEADER_PX = 24;
 const MENU_MARGIN_PX = 8;
+const PANE_EDGE_EPSILON = 1e-6;
+const PANE_RADIUS = "calc(var(--radius-lg) - 2px)";
 const EDGES: SplitEdge[] = ["left", "right", "top", "bottom"];
 
 interface SplitViewProps {
@@ -49,6 +51,50 @@ function rectStyle(rect: PaneRect): React.CSSProperties {
     width: `${rect.width * 100}%`,
     height: `${rect.height * 100}%`,
   };
+}
+
+function paneTouchesLeft(rect: PaneRect): boolean {
+  return rect.left <= PANE_EDGE_EPSILON;
+}
+
+function paneTouchesTop(rect: PaneRect): boolean {
+  return rect.top <= PANE_EDGE_EPSILON;
+}
+
+function paneTouchesRight(rect: PaneRect): boolean {
+  return rect.left + rect.width >= 1 - PANE_EDGE_EPSILON;
+}
+
+function paneTouchesBottom(rect: PaneRect): boolean {
+  return rect.top + rect.height >= 1 - PANE_EDGE_EPSILON;
+}
+
+/**
+ * Pane 圆角只属于 Workspace 的真实外轮廓：
+ * - 外角圆；
+ * - 分屏内部交点全部直角；
+ * - 多 Pane 内容区顶部已被 Header 占用，因此 Content 顶角保持直角；
+ * - Frame / Header / Content 使用同一几何判定，避免边框与终端底色半径错位。
+ */
+function paneFrameRadius(rect: PaneRect): string {
+  const tl = paneTouchesLeft(rect) && paneTouchesTop(rect) ? PANE_RADIUS : "0";
+  const tr = paneTouchesRight(rect) && paneTouchesTop(rect) ? PANE_RADIUS : "0";
+  const br = paneTouchesRight(rect) && paneTouchesBottom(rect) ? PANE_RADIUS : "0";
+  const bl = paneTouchesLeft(rect) && paneTouchesBottom(rect) ? PANE_RADIUS : "0";
+  return `${tl} ${tr} ${br} ${bl}`;
+}
+
+function paneHeaderRadius(rect: PaneRect): string {
+  const tl = paneTouchesLeft(rect) && paneTouchesTop(rect) ? PANE_RADIUS : "0";
+  const tr = paneTouchesRight(rect) && paneTouchesTop(rect) ? PANE_RADIUS : "0";
+  return `${tl} ${tr} 0 0`;
+}
+
+function paneContentRadius(rect: PaneRect, paneCount: number): string {
+  if (paneCount <= 1) return PANE_RADIUS;
+  const br = paneTouchesRight(rect) && paneTouchesBottom(rect) ? PANE_RADIUS : "0";
+  const bl = paneTouchesLeft(rect) && paneTouchesBottom(rect) ? PANE_RADIUS : "0";
+  return `0 0 ${br} ${bl}`;
 }
 
 function insetPaneContent(rect: PaneRect, paneCount: number, viewportHeight: number): PaneRect {
@@ -235,6 +281,20 @@ export default function SplitView({
     return result;
   }, [layout.assignments, tabsById]);
 
+  const terminalBorderRadii = useMemo(() => {
+    const result: Record<string, string> = {};
+    for (const [paneId, sessionId] of Object.entries(layout.assignments)) {
+      if (!sessionId) continue;
+      const tab = tabsById.get(sessionId);
+      if (!tab) continue;
+      const plugin = pluginRegistry.get(tab.pluginId);
+      if ((plugin?.manifest.content_type ?? "terminal") !== "terminal") continue;
+      const rect = paneRects[paneId];
+      if (rect) result[sessionId] = paneContentRadius(rect, paneCount);
+    }
+    return result;
+  }, [layout.assignments, paneRects, paneCount, tabsById]);
+
   const handleDividerMouseDown = useCallback((e: React.MouseEvent, divider: DividerGeometry) => {
     e.preventDefault();
     e.stopPropagation();
@@ -364,7 +424,10 @@ export default function SplitView({
           <div
             key={`surface-${paneId}`}
             className={`${styles.paneSurface} ${surfaceMaterial}`}
-            style={rectStyle(contentRect)}
+            style={{
+              ...rectStyle(contentRect),
+              borderRadius: paneContentRadius(rect, paneCount),
+            }}
             onMouseDown={() => onSelectPane(paneId)}
             onContextMenu={(e) => {
               if (showDisconnectedPlaceholder && tab) {
@@ -387,6 +450,7 @@ export default function SplitView({
 
       <TerminalView
         dockedPlacements={terminalPlacements}
+        dockedBorderRadii={terminalBorderRadii}
         paneCount={paneCount}
         onActivateSession={(sessionId) => {
           const paneId = terminalPaneIds[sessionId];
@@ -415,10 +479,14 @@ export default function SplitView({
             : styles.lifecycleDisconnected;
         return (
           <div key={`chrome-${paneId}`} className={styles.paneChrome} style={rectStyle(rect)}>
-            <div className={`${styles.paneFrame} ${showSelection ? styles.selectedFrame : ""}`} />
+            <div
+              className={`${styles.paneFrame} ${showSelection ? styles.selectedFrame : ""}`}
+              style={{ borderRadius: paneFrameRadius(rect) }}
+            />
             {paneCount > 1 && (
               <div
                 className={`${styles.paneHeader} ${showSelection ? styles.selectedHeader : ""}`}
+                style={{ borderRadius: paneHeaderRadius(rect) }}
                 onMouseDown={(e) => {
                   e.stopPropagation();
                   onSelectPane(paneId);
