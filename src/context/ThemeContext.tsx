@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
 
-export type ThemeId = "google-glow" | "obsidian" | "frosted";
-export type VisualPerformanceMode = "quality" | "balanced" | "compat";
+export type ThemeId = "spectrum-flow" | "obsidian" | "frosted";
+export type VisualPerformanceMode = "quality" | "performance";
 
 interface ThemeInfo {
   id: ThemeId;
@@ -10,7 +10,7 @@ interface ThemeInfo {
 }
 
 export const THEMES: ThemeInfo[] = [
-  { id: "google-glow", name: "炫彩流光", nameEn: "Google Glow" },
+  { id: "spectrum-flow", name: "炫彩流光", nameEn: "Spectrum Flow" },
   { id: "obsidian", name: "黑曜石", nameEn: "Obsidian" },
   { id: "frosted", name: "白霜", nameEn: "Frosted" },
 ];
@@ -25,10 +25,10 @@ const BUFFER_LINES_MIN = 1000;
 const BUFFER_LINES_MAX = 100000;
 const BUFFER_LINES_DEFAULT = 10000;
 
-const PERFORMANCE_MODE_DEFAULT: VisualPerformanceMode = "balanced";
+const PERFORMANCE_MODE_DEFAULT: VisualPerformanceMode = "quality";
 
 function isPerformanceMode(value: string | null): value is VisualPerformanceMode {
-  return value === "quality" || value === "balanced" || value === "compat";
+  return value === "quality" || value === "performance";
 }
 
 /** 从 localStorage 读取数值，带校验和默认值回退 */
@@ -45,10 +45,10 @@ interface ThemeContextValue {
   theme: ThemeId;
   themes: ThemeInfo[];
   setTheme: (theme: ThemeId) => void;
-  /** 视觉性能档：quality / balanced / compat，默认 balanced */
+  /** 视觉性能档：quality / performance，默认 quality */
   performanceMode: VisualPerformanceMode;
   setPerformanceMode: (mode: VisualPerformanceMode) => void;
-  /** 系统是否请求减少动态效果（Windows“动画效果”关闭等） */
+  /** 系统是否请求减少动态效果 */
   systemReducedMotion: boolean;
   /** 终端字体大小 (px)，范围 8–32，默认 14 */
   fontSize: number;
@@ -63,9 +63,9 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeId>(() => {
     const stored = localStorage.getItem("tauterm-theme");
-    return stored === "google-glow" || stored === "obsidian" || stored === "frosted"
+    return stored === "spectrum-flow" || stored === "obsidian" || stored === "frosted"
       ? stored
-      : "google-glow";
+      : "spectrum-flow";
   });
 
   const [performanceMode, setPerformanceModeState] = useState<VisualPerformanceMode>(() => {
@@ -170,7 +170,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       }
       if (e.key === "tauterm-theme" && e.newValue) {
         const v = e.newValue as ThemeId;
-        if (v === "google-glow" || v === "obsidian" || v === "frosted") {
+        if (v === "spectrum-flow" || v === "obsidian" || v === "frosted") {
           setThemeState(v);
         }
       }
