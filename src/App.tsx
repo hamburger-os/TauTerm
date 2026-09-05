@@ -371,7 +371,7 @@ function AppInner() {
         {/* 主内容区：终端 + 传输面板 + 发送栏 */}
         <div className="main-content" ref={mainContentRef}>
           <div className="terminal-transmission-row" style={{ flex: `${100 - sendBarPct} 1 calc(${100 - sendBarPct}% - ${activeShowTargetBar ? targetBarHeight : 0}px)` }}>
-            <main className="terminal-viewport liquid-glass">
+            <main className="terminal-viewport">
               <TabContentDispatcher />
             </main>
             {/* 右侧栏 (按会话隔离，每 tab 一个独立实例；TFTP custom 内容类型无右侧栏) */}
