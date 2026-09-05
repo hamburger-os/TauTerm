@@ -616,6 +616,14 @@ html[data-motion="reduced"] .glow-orb {
 /* ==========================================
    16. 性能与动态降级
    ========================================== */
+/* Drag-resize changes large surface geometry every pointer frame. Suspend
+   chrome sampling only for the gesture; the full material returns on mouseup. */
+.ui-resizing .liquid-glass,
+.ui-resizing .liquid-glass-float {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 html[data-performance="compat"] .liquid-glass,
 html[data-performance="compat"] .liquid-glass-float {
   background: var(--glass-specular-fill), var(--glass-compat-fill);
