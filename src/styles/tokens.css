@@ -1,5 +1,5 @@
 /* ========================================
-   TauTerm Liquid Glass v8.0 设计令牌
+   TauTerm Liquid Glass v8.1 设计令牌
    Google Glow (默认) + Obsidian + Frosted
    ======================================== */
 
@@ -89,6 +89,62 @@
   --glass-blur-chrome: 8px;
   --glass-blur-float: 10px;
 
+  /* Liquid Glass Physics v8.1
+     三个主题共享同一透明玻璃本体；主题只提供一层 veil（透明 / 黑 / 白）。
+     大面积 Structural / Content surface 不做 backdrop sampling，靠这些低成本静态层模拟
+     清澈、柔亮、边缘高光和轻微内部雾化。 */
+  --liquid-clear-chrome-fill: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.105) 0%,
+    rgba(255, 255, 255, 0.026) 38%,
+    rgba(255, 255, 255, 0.012) 62%,
+    rgba(255, 255, 255, 0.052) 100%
+  );
+  --liquid-clear-panel-fill: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.085) 0%,
+    rgba(255, 255, 255, 0.020) 38%,
+    rgba(255, 255, 255, 0.010) 64%,
+    rgba(255, 255, 255, 0.038) 100%
+  );
+  --liquid-clear-content-fill: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.030) 0%,
+    rgba(255, 255, 255, 0.010) 58%,
+    rgba(255, 255, 255, 0.018) 100%
+  );
+  --liquid-clear-card-fill: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.105) 0%,
+    rgba(255, 255, 255, 0.022) 46%,
+    rgba(255, 255, 255, 0.050) 100%
+  );
+  --liquid-clear-control-fill: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.052) 0%,
+    rgba(255, 255, 255, 0.012) 100%
+  );
+  --liquid-specular-chrome-fill: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.075) 16%,
+    rgba(255, 255, 255, 0.018) 34%,
+    transparent 58%
+  );
+  --liquid-specular-panel-fill: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.18) 0%,
+    rgba(255, 255, 255, 0.055) 18%,
+    rgba(255, 255, 255, 0.014) 36%,
+    transparent 60%
+  );
+  --liquid-specular-content-fill: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0.075) 0%,
+    rgba(255, 255, 255, 0.020) 20%,
+    transparent 48%
+  );
+
   /* Shared Google Ambient defaults (Balanced).
      两个对角 Field 保持总体象限身份，同时以较短闭合轨迹反向运动，3–5 秒内必须可感知。 */
   --ambient-field-opacity: var(--ambient-opacity-balanced);
@@ -115,20 +171,15 @@
   --blur-xs: 4px;
 
   /* 布局常量 */
-  /* SendBar v8：四模式使用横向模式条。最小高度只由模式条 + 内容区决定，
-     不再为了竖排四个按钮强迫整个发送栏变高。 */
-  --sendbar-mode-btn-size: 32px;
-  --sendbar-mode-btn-gap: 4px;
-  --sendbar-mode-toolbar-padding: 4px;
-  --sendbar-mode-toolbar-height: calc(
-    var(--sendbar-mode-btn-size)
-    + 2 * var(--sendbar-mode-toolbar-padding)
-    + 1px
-  );
-  --sendbar-content-min-height: 92px;
+  /* SendBar：保留用户原始左侧竖排四模式布局。 */
+  --sendbar-mode-btn-size: 36px;
+  --sendbar-mode-btn-gap: 2px;
+  --sendbar-mode-switcher-padding: 2px;
+  --sendbar-mode-count: 4;
   --sendbar-min-height: calc(
-    var(--sendbar-mode-toolbar-height)
-    + var(--sendbar-content-min-height)
+    var(--sendbar-mode-count) * var(--sendbar-mode-btn-size)
+    + (var(--sendbar-mode-count) - 1) * var(--sendbar-mode-btn-gap)
+    + 2 * var(--sendbar-mode-switcher-padding)
     + 2px
   );
   /* 顶部目标栏（TargetBar）垂直 padding，供 TargetBar.module.css 与下方高度派生共用 */
@@ -199,49 +250,66 @@ html[data-performance="compat"] {
   --ambient-opacity-balanced: 0.46;
   --ambient-opacity-compat: 0.26;
 
-  /* 液态玻璃 */
-  --glass-fill: linear-gradient(135deg, rgba(42, 44, 48, 0.30) 0%, rgba(14, 16, 19, 0.20) 100%);
-  --glass-card-fill: linear-gradient(135deg, rgba(44, 46, 50, 0.36) 0%, rgba(18, 20, 23, 0.26) 100%);
+  /* 共享 Clear Glass + 极轻中性 veil：三主题中最透亮，让 Ambient 真正参与材质。 */
+  --theme-chrome-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.12), rgba(4, 7, 10, 0.055));
+  --theme-panel-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.080), rgba(4, 7, 10, 0.030));
+  --theme-content-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.30), rgba(3, 6, 9, 0.38));
+  --theme-content-active-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.25), rgba(3, 6, 9, 0.33));
+  --theme-content-inactive-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.36), rgba(3, 6, 9, 0.44));
+  --theme-content-header-veil: linear-gradient(180deg, rgba(8, 11, 15, 0.34), rgba(4, 7, 10, 0.42));
+  --theme-card-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.14), rgba(4, 7, 10, 0.07));
+  --theme-float-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.20), rgba(4, 7, 10, 0.11));
+  --theme-control-veil: linear-gradient(180deg, rgba(7, 10, 13, 0.62), rgba(3, 6, 8, 0.70));
+
+  --glass-fill: var(--theme-chrome-veil);
+  --glass-card-fill: var(--theme-card-veil);
   --glass-noise-opacity: 0;
-  --glass-blur: 10px; /* legacy alias; global chrome uses --glass-blur-chrome */
-  --glass-blur-saturate: 118%;
-  --glass-border-default: rgba(255, 255, 255, 0.10);
-  --glass-border-top: rgba(255, 255, 255, 0.20);
-  --glass-border-left: rgba(255, 255, 255, 0.12);
-  --glass-shadow-outer: 0 10px 28px rgba(0, 0, 0, 0.20);
-  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.14);
-  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.035) 22%, transparent 48%, rgba(255, 255, 255, 0.015) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(30, 32, 36, 0.88) 0%, rgba(12, 14, 17, 0.84) 100%);
-  --panel-fill: linear-gradient(135deg, rgba(38, 40, 44, 0.22) 0%, rgba(12, 14, 17, 0.14) 100%);
-  --panel-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.025) 24%, transparent 52%);
-  --panel-border: rgba(255, 255, 255, 0.10);
-  --panel-border-top: rgba(255, 255, 255, 0.18);
-  --panel-border-left: rgba(255, 255, 255, 0.12);
-  --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.12);
-  --content-surface: linear-gradient(180deg, rgba(12, 14, 17, 0.44), rgba(7, 9, 11, 0.54));
-  --content-surface-active: linear-gradient(180deg, rgba(14, 16, 19, 0.34), rgba(8, 10, 12, 0.46));
-  --content-surface-inactive: linear-gradient(180deg, rgba(10, 12, 15, 0.54), rgba(6, 8, 10, 0.64));
-  --content-border: rgba(255, 255, 255, 0.065);
-  --content-border-active: rgba(255, 255, 255, 0.12);
-  --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
-  --control-surface: linear-gradient(180deg, rgba(24, 26, 29, 0.92), rgba(11, 13, 16, 0.95));
+  --glass-blur: 10px;
+  --glass-blur-saturate: 122%;
+  --glass-border-default: rgba(255, 255, 255, 0.12);
+  --glass-border-top: rgba(255, 255, 255, 0.28);
+  --glass-border-left: rgba(255, 255, 255, 0.18);
+  --glass-shadow-outer: 0 10px 28px rgba(0, 0, 0, 0.12);
+  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+  --glass-specular-fill: var(--liquid-specular-chrome-fill);
+  --glass-compat-fill: var(--theme-chrome-veil);
+
+  --panel-fill: var(--theme-panel-veil);
+  --panel-specular-fill: var(--liquid-specular-panel-fill);
+  --panel-border: rgba(255, 255, 255, 0.12);
+  --panel-border-top: rgba(255, 255, 255, 0.30);
+  --panel-border-left: rgba(255, 255, 255, 0.18);
+  --panel-divider: rgba(255, 255, 255, 0.10);
+  --panel-subsection-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.040), rgba(255, 255, 255, 0.012));
+  --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.20), inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+
+  --content-surface: var(--theme-content-veil);
+  --content-surface-active: var(--theme-content-active-veil);
+  --content-surface-inactive: var(--theme-content-inactive-veil);
+  --content-border: rgba(255, 255, 255, 0.075);
+  --content-border-top: rgba(255, 255, 255, 0.14);
+  --content-border-left: rgba(255, 255, 255, 0.095);
+  --content-border-active: rgba(255, 255, 255, 0.13);
+  --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.060), inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+
+  --control-surface: var(--theme-control-veil);
   --control-surface-border: rgba(255, 255, 255, 0.14);
-  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.24);
+  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
   --control-button-bg: rgba(255, 255, 255, 0.085);
   --control-button-border: rgba(255, 255, 255, 0.17);
   --control-button-hover-bg: rgba(255, 255, 255, 0.14);
   --control-button-hover-border: rgba(255, 255, 255, 0.25);
-  --control-input-bg: rgba(0, 0, 0, 0.56);
+  --control-input-bg: rgba(0, 0, 0, 0.52);
   --control-input-border: rgba(255, 255, 255, 0.18);
   --control-input-focus-border: color-mix(in srgb, var(--google-blue) 62%, transparent);
-  --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), inset 0 -1px 0 rgba(0, 0, 0, 0.30);
+  --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.050), inset 0 -1px 0 rgba(0, 0, 0, 0.28);
   --control-disabled-bg: rgba(255, 255, 255, 0.055);
-  --control-disabled-input-bg: rgba(0, 0, 0, 0.50);
+  --control-disabled-input-bg: rgba(0, 0, 0, 0.46);
   --control-disabled-border: rgba(255, 255, 255, 0.15);
-  --control-disabled-text: #9098a4;
-  --control-disabled-icon: #818a96;
-  --number-spinner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='%23AEB5C0'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='%23AEB5C0'/%3E%3C/svg%3E");
-  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --control-disabled-text: #9aa2ad;
+  --control-disabled-icon: #89929e;
+  --number-spinner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='%23B7BEC8'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='%23B7BEC8'/%3E%3C/svg%3E");
+  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.28);
 
   /* 按钮 */
   --glass-button-bg: rgba(255, 255, 255, 0.065);
@@ -326,49 +394,66 @@ html[data-performance="compat"] {
   --ambient-opacity-balanced: 0.46;
   --ambient-opacity-compat: 0.26;
 
-  /* 液态玻璃 */
-  --glass-fill: linear-gradient(135deg, rgba(18, 19, 22, 0.72) 0%, rgba(3, 4, 5, 0.60) 100%);
-  --glass-card-fill: linear-gradient(135deg, rgba(22, 23, 27, 0.74) 0%, rgba(5, 6, 8, 0.62) 100%);
+  /* 与 Google Glow 完全相同的 Clear Glass Physics，只增加黑色 veil。 */
+  --theme-chrome-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.46), rgba(0, 0, 0, 0.36));
+  --theme-panel-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.40), rgba(0, 0, 0, 0.30));
+  --theme-content-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.64), rgba(0, 0, 0, 0.72));
+  --theme-content-active-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.58), rgba(0, 0, 0, 0.66));
+  --theme-content-inactive-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.70), rgba(0, 0, 0, 0.77));
+  --theme-content-header-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.74));
+  --theme-card-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.46), rgba(0, 0, 0, 0.34));
+  --theme-float-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.54), rgba(0, 0, 0, 0.42));
+  --theme-control-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.74), rgba(0, 0, 0, 0.80));
+
+  --glass-fill: var(--theme-chrome-veil);
+  --glass-card-fill: var(--theme-card-veil);
   --glass-noise-opacity: 0;
-  --glass-blur: 10px; /* legacy alias */
-  --glass-blur-saturate: 118%;
-  --glass-border-default: rgba(255, 255, 255, 0.09);
-  --glass-border-top: rgba(255, 255, 255, 0.17);
-  --glass-border-left: rgba(255, 255, 255, 0.10);
+  --glass-blur: 10px;
+  --glass-blur-saturate: 122%;
+  --glass-border-default: rgba(255, 255, 255, 0.10);
+  --glass-border-top: rgba(255, 255, 255, 0.24);
+  --glass-border-left: rgba(255, 255, 255, 0.15);
   --glass-shadow-outer: 0 10px 28px rgba(0, 0, 0, 0.30);
-  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
-  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.025) 22%, transparent 48%, rgba(255, 255, 255, 0.010) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(22, 23, 26, 0.94) 0%, rgba(4, 5, 6, 0.92) 100%);
-  --panel-fill: linear-gradient(135deg, rgba(20, 21, 24, 0.40) 0%, rgba(4, 5, 7, 0.28) 100%);
-  --panel-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0.018) 24%, transparent 52%);
-  --panel-border: rgba(255, 255, 255, 0.09);
-  --panel-border-top: rgba(255, 255, 255, 0.15);
-  --panel-border-left: rgba(255, 255, 255, 0.10);
-  --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.09), inset 0 -1px 0 rgba(0, 0, 0, 0.18);
-  --content-surface: linear-gradient(180deg, rgba(6, 7, 9, 0.72), rgba(2, 3, 4, 0.80));
-  --content-surface-active: linear-gradient(180deg, rgba(7, 8, 10, 0.62), rgba(3, 4, 5, 0.72));
-  --content-surface-inactive: linear-gradient(180deg, rgba(5, 6, 8, 0.80), rgba(2, 3, 4, 0.86));
-  --content-border: rgba(255, 255, 255, 0.055);
+  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+  --glass-specular-fill: var(--liquid-specular-chrome-fill);
+  --glass-compat-fill: var(--theme-chrome-veil);
+
+  --panel-fill: var(--theme-panel-veil);
+  --panel-specular-fill: var(--liquid-specular-panel-fill);
+  --panel-border: rgba(255, 255, 255, 0.10);
+  --panel-border-top: rgba(255, 255, 255, 0.25);
+  --panel-border-left: rgba(255, 255, 255, 0.15);
+  --panel-divider: rgba(255, 255, 255, 0.085);
+  --panel-subsection-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.030), rgba(255, 255, 255, 0.008));
+  --panel-shadow: 0 8px 24px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+
+  --content-surface: var(--theme-content-veil);
+  --content-surface-active: var(--theme-content-active-veil);
+  --content-surface-inactive: var(--theme-content-inactive-veil);
+  --content-border: rgba(255, 255, 255, 0.060);
+  --content-border-top: rgba(255, 255, 255, 0.12);
+  --content-border-left: rgba(255, 255, 255, 0.080);
   --content-border-active: rgba(255, 255, 255, 0.105);
-  --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
-  --control-surface: linear-gradient(180deg, rgba(14, 15, 18, 0.95), rgba(4, 5, 7, 0.97));
+  --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), inset 0 -1px 0 rgba(0, 0, 0, 0.16);
+
+  --control-surface: var(--theme-control-veil);
   --control-surface-border: rgba(255, 255, 255, 0.12);
   --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.085), inset 0 -1px 0 rgba(0, 0, 0, 0.30);
   --control-button-bg: rgba(255, 255, 255, 0.065);
   --control-button-border: rgba(255, 255, 255, 0.14);
   --control-button-hover-bg: rgba(255, 255, 255, 0.11);
   --control-button-hover-border: rgba(255, 255, 255, 0.20);
-  --control-input-bg: rgba(0, 0, 0, 0.66);
+  --control-input-bg: rgba(0, 0, 0, 0.62);
   --control-input-border: rgba(255, 255, 255, 0.15);
   --control-input-focus-border: color-mix(in srgb, var(--google-blue) 54%, transparent);
   --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), inset 0 -1px 0 rgba(0, 0, 0, 0.34);
   --control-disabled-bg: rgba(255, 255, 255, 0.045);
-  --control-disabled-input-bg: rgba(0, 0, 0, 0.62);
+  --control-disabled-input-bg: rgba(0, 0, 0, 0.58);
   --control-disabled-border: rgba(255, 255, 255, 0.12);
-  --control-disabled-text: #7d838c;
-  --control-disabled-icon: #727881;
-  --number-spinner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='%23989EA8'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='%23989EA8'/%3E%3C/svg%3E");
-  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --control-disabled-text: #858b94;
+  --control-disabled-icon: #777e88;
+  --number-spinner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='%239EA5AF'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='%239EA5AF'/%3E%3C/svg%3E");
+  --glass-shadow-text: 0 1px 3px rgba(0, 0, 0, 0.42);
 
   /* 按钮 */
   --glass-button-bg: rgba(255, 255, 255, 0.045);
@@ -449,45 +534,62 @@ html[data-performance="compat"] {
   --ambient-opacity-balanced: 0.46;
   --ambient-opacity-compat: 0.26;
 
-  /* 液态玻璃 */
-  --glass-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.46) 0%, rgba(241, 245, 248, 0.34) 100%);
-  --glass-card-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.58) 0%, rgba(241, 245, 248, 0.44) 100%);
+  /* 与其它主题完全相同的 Clear Glass Physics，只增加乳白 veil；不是实心白卡片。 */
+  --theme-chrome-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.54), rgba(242, 248, 252, 0.38));
+  --theme-panel-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.44), rgba(241, 247, 251, 0.28));
+  --theme-content-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.50), rgba(241, 247, 251, 0.58));
+  --theme-content-active-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(241, 247, 251, 0.52));
+  --theme-content-inactive-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(241, 247, 251, 0.64));
+  --theme-content-header-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(240, 247, 252, 0.64));
+  --theme-card-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.58), rgba(241, 247, 251, 0.42));
+  --theme-float-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(241, 247, 251, 0.48));
+  --theme-control-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(239, 246, 250, 0.82));
+
+  --glass-fill: var(--theme-chrome-veil);
+  --glass-card-fill: var(--theme-card-veil);
   --glass-noise-opacity: 0;
-  --glass-blur: 10px; /* legacy alias */
-  --glass-blur-saturate: 118%;
+  --glass-blur: 10px;
+  --glass-blur-saturate: 122%;
   --glass-border-default: rgba(71, 85, 105, 0.16);
-  --glass-border-top: rgba(255, 255, 255, 0.78);
-  --glass-border-left: rgba(255, 255, 255, 0.56);
-  --glass-shadow-outer: 0 10px 28px rgba(30, 41, 59, 0.10);
-  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.84), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
-  --glass-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.16) 22%, transparent 48%, rgba(255, 255, 255, 0.04) 100%);
-  --glass-compat-fill: linear-gradient(135deg, rgba(252, 253, 254, 0.94) 0%, rgba(236, 241, 245, 0.90) 100%);
-  --panel-fill: linear-gradient(135deg, rgba(255, 255, 255, 0.56) 0%, rgba(238, 243, 247, 0.40) 100%);
-  --panel-specular-fill: linear-gradient(120deg, rgba(255, 255, 255, 0.82) 0%, rgba(255, 255, 255, 0.24) 24%, transparent 52%);
-  --panel-border: rgba(71, 85, 105, 0.16);
-  --panel-border-top: rgba(255, 255, 255, 0.78);
-  --panel-border-left: rgba(255, 255, 255, 0.52);
-  --panel-shadow: 0 8px 22px rgba(30, 41, 59, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.72), inset 0 -1px 0 rgba(71, 85, 105, 0.08);
-  --content-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(242, 246, 249, 0.58));
-  --content-surface-active: linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(239, 244, 248, 0.50));
-  --content-surface-inactive: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(241, 245, 248, 0.68));
-  --content-border: rgba(71, 85, 105, 0.14);
-  --content-border-active: rgba(71, 85, 105, 0.22);
-  --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  --control-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(238, 243, 247, 0.95));
-  --control-surface-border: rgba(71, 85, 105, 0.22);
-  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(71, 85, 105, 0.12);
-  --control-button-bg: rgba(255, 255, 255, 0.78);
-  --control-button-border: rgba(71, 85, 105, 0.25);
-  --control-button-hover-bg: rgba(255, 255, 255, 0.92);
-  --control-button-hover-border: rgba(71, 85, 105, 0.34);
-  --control-input-bg: rgba(255, 255, 255, 0.86);
-  --control-input-border: rgba(71, 85, 105, 0.28);
+  --glass-border-top: rgba(255, 255, 255, 0.86);
+  --glass-border-left: rgba(255, 255, 255, 0.62);
+  --glass-shadow-outer: 0 10px 28px rgba(30, 41, 59, 0.08);
+  --glass-shadow-inner: inset 0 1px 0 rgba(255, 255, 255, 0.90), inset 0 -1px 0 rgba(71, 85, 105, 0.09);
+  --glass-specular-fill: var(--liquid-specular-chrome-fill);
+  --glass-compat-fill: var(--theme-chrome-veil);
+
+  --panel-fill: var(--theme-panel-veil);
+  --panel-specular-fill: var(--liquid-specular-panel-fill);
+  --panel-border: rgba(71, 85, 105, 0.15);
+  --panel-border-top: rgba(255, 255, 255, 0.88);
+  --panel-border-left: rgba(255, 255, 255, 0.58);
+  --panel-divider: rgba(71, 85, 105, 0.13);
+  --panel-subsection-fill: linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.08));
+  --panel-shadow: 0 8px 22px rgba(30, 41, 59, 0.07), inset 0 1px 0 rgba(255, 255, 255, 0.82), inset 0 -1px 0 rgba(71, 85, 105, 0.08);
+
+  --content-surface: var(--theme-content-veil);
+  --content-surface-active: var(--theme-content-active-veil);
+  --content-surface-inactive: var(--theme-content-inactive-veil);
+  --content-border: rgba(71, 85, 105, 0.13);
+  --content-border-top: rgba(255, 255, 255, 0.68);
+  --content-border-left: rgba(255, 255, 255, 0.40);
+  --content-border-active: rgba(71, 85, 105, 0.20);
+  --content-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), inset 0 -1px 0 rgba(71, 85, 105, 0.07);
+
+  --control-surface: var(--theme-control-veil);
+  --control-surface-border: rgba(71, 85, 105, 0.21);
+  --control-surface-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
+  --control-button-bg: rgba(255, 255, 255, 0.72);
+  --control-button-border: rgba(71, 85, 105, 0.24);
+  --control-button-hover-bg: rgba(255, 255, 255, 0.88);
+  --control-button-hover-border: rgba(71, 85, 105, 0.32);
+  --control-input-bg: rgba(255, 255, 255, 0.80);
+  --control-input-border: rgba(71, 85, 105, 0.26);
   --control-input-focus-border: color-mix(in srgb, var(--google-blue) 60%, transparent);
-  --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(71, 85, 105, 0.10);
+  --control-input-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.94), inset 0 -1px 0 rgba(71, 85, 105, 0.09);
   --control-disabled-bg: rgba(100, 116, 139, 0.07);
-  --control-disabled-input-bg: rgba(255, 255, 255, 0.76);
-  --control-disabled-border: rgba(71, 85, 105, 0.22);
+  --control-disabled-input-bg: rgba(255, 255, 255, 0.70);
+  --control-disabled-border: rgba(71, 85, 105, 0.21);
   --control-disabled-text: #748091;
   --control-disabled-icon: #7f8a98;
   --number-spinner: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='20' viewBox='0 0 12 20'%3E%3Cpolygon points='6,3 1,8 11,8' fill='%235B6675'/%3E%3Cpolygon points='6,17 1,12 11,12' fill='%235B6675'/%3E%3C/svg%3E");
