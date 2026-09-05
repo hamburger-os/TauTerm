@@ -151,26 +151,26 @@
   );
 
   /* Shared Google Ambient defaults (Balanced).
-     两个对角 Field 保持总体象限身份，同时以较短闭合轨迹反向运动，3–5 秒内必须可感知。 */
+     不扩大纹理层，只把四色中心向内收并加大 transform 路径：位移更明显，合成成本基本不变。 */
   --ambient-field-opacity: var(--ambient-opacity-balanced);
   --ambient-field-a-duration: 20s;
   --ambient-field-b-duration: 24s;
-  --ambient-a-x1: -6vw;
-  --ambient-a-y1: -4vh;
-  --ambient-a-x2: 5vw;
+  --ambient-a-x1: -11vw;
+  --ambient-a-y1: -7vh;
+  --ambient-a-x2: 10vw;
   --ambient-a-y2: -2vh;
-  --ambient-a-x3: 8vw;
-  --ambient-a-y3: 6vh;
-  --ambient-a-x4: -4vw;
-  --ambient-a-y4: 5vh;
-  --ambient-b-x1: 6vw;
-  --ambient-b-y1: -5vh;
-  --ambient-b-x2: -5vw;
-  --ambient-b-y2: -1vh;
-  --ambient-b-x3: -7vw;
-  --ambient-b-y3: 6vh;
-  --ambient-b-x4: 4vw;
-  --ambient-b-y4: 4vh;
+  --ambient-a-x3: 12vw;
+  --ambient-a-y3: 8vh;
+  --ambient-a-x4: -9vw;
+  --ambient-a-y4: 6vh;
+  --ambient-b-x1: 11vw;
+  --ambient-b-y1: -8vh;
+  --ambient-b-x2: -10vw;
+  --ambient-b-y2: -2vh;
+  --ambient-b-x3: -12vw;
+  --ambient-b-y3: 8vh;
+  --ambient-b-x4: 9vw;
+  --ambient-b-y4: 6vh;
 
   /* 模糊 */
   --blur-xs: 4px;
@@ -215,22 +215,22 @@ html[data-performance="quality"] {
   --ambient-field-opacity: var(--ambient-opacity-quality);
   --ambient-field-a-duration: 12s;
   --ambient-field-b-duration: 15s;
-  --ambient-a-x1: -8vw;
-  --ambient-a-y1: -6vh;
-  --ambient-a-x2: 8vw;
-  --ambient-a-y2: -3vh;
-  --ambient-a-x3: 10vw;
-  --ambient-a-y3: 7vh;
-  --ambient-a-x4: -7vw;
-  --ambient-a-y4: 6vh;
-  --ambient-b-x1: 8vw;
-  --ambient-b-y1: -7vh;
-  --ambient-b-x2: -8vw;
-  --ambient-b-y2: -2vh;
-  --ambient-b-x3: -10vw;
-  --ambient-b-y3: 7vh;
-  --ambient-b-x4: 7vw;
-  --ambient-b-y4: 6vh;
+  --ambient-a-x1: -15vw;
+  --ambient-a-y1: -10vh;
+  --ambient-a-x2: 14vw;
+  --ambient-a-y2: -4vh;
+  --ambient-a-x3: 15vw;
+  --ambient-a-y3: 10vh;
+  --ambient-a-x4: -13vw;
+  --ambient-a-y4: 8vh;
+  --ambient-b-x1: 15vw;
+  --ambient-b-y1: -10vh;
+  --ambient-b-x2: -14vw;
+  --ambient-b-y2: -3vh;
+  --ambient-b-x3: -15vw;
+  --ambient-b-y3: 10vh;
+  --ambient-b-x4: 13vw;
+  --ambient-b-y4: 8vh;
 }
 
 html[data-performance="balanced"] {
@@ -264,9 +264,13 @@ html[data-performance="compat"] {
   --theme-card-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.10), rgba(4, 7, 10, 0.040));
   --theme-float-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.15), rgba(4, 7, 10, 0.070));
   --theme-control-veil: linear-gradient(180deg, rgba(7, 10, 13, 0.58), rgba(3, 6, 8, 0.66));
-  /* Compat 无 backdrop sampling，必须靠更实的 fallback veil 保证文字不会与底层 UI 竞争。 */
-  --theme-chrome-veil-compat: linear-gradient(135deg, rgba(7, 10, 14, 0.76), rgba(4, 7, 10, 0.68));
-  --theme-float-veil-compat: linear-gradient(135deg, rgba(7, 10, 14, 0.84), rgba(4, 7, 10, 0.76));
+  /* Compat：单层半透明纯色，不做 backdrop、specular gradient 或大阴影。 */
+  --compat-chrome-fill: rgba(8, 11, 15, 0.90);
+  --compat-panel-fill: rgba(8, 11, 15, 0.78);
+  --compat-content-fill: rgba(6, 9, 12, 0.82);
+  --compat-control-fill: rgba(5, 8, 11, 0.90);
+  --compat-card-fill: rgba(8, 11, 15, 0.84);
+  --compat-float-fill: rgba(6, 9, 12, 0.93);
 
   --glass-fill: var(--theme-chrome-veil);
   --glass-card-fill: var(--theme-card-veil);
@@ -407,8 +411,12 @@ html[data-performance="compat"] {
   --theme-card-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.60), rgba(0, 0, 0, 0.48));
   --theme-float-veil: linear-gradient(135deg, rgba(0, 0, 0, 0.68), rgba(0, 0, 0, 0.56));
   --theme-control-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.90));
-  --theme-chrome-veil-compat: linear-gradient(135deg, rgba(0, 0, 0, 0.93), rgba(0, 0, 0, 0.89));
-  --theme-float-veil-compat: linear-gradient(135deg, rgba(0, 0, 0, 0.96), rgba(0, 0, 0, 0.92));
+  --compat-chrome-fill: rgba(0, 0, 0, 0.94);
+  --compat-panel-fill: rgba(0, 0, 0, 0.88);
+  --compat-content-fill: rgba(0, 0, 0, 0.92);
+  --compat-control-fill: rgba(0, 0, 0, 0.95);
+  --compat-card-fill: rgba(0, 0, 0, 0.91);
+  --compat-float-fill: rgba(0, 0, 0, 0.96);
 
   --glass-fill: var(--theme-chrome-veil);
   --glass-card-fill: var(--theme-card-veil);
@@ -545,8 +553,12 @@ html[data-performance="compat"] {
   --theme-card-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.58), rgba(241, 247, 251, 0.42));
   --theme-float-veil: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(241, 247, 251, 0.48));
   --theme-control-veil: linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(239, 246, 250, 0.82));
-  --theme-chrome-veil-compat: linear-gradient(135deg, rgba(255, 255, 255, 0.93), rgba(241, 247, 251, 0.87));
-  --theme-float-veil-compat: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(241, 247, 251, 0.91));
+  --compat-chrome-fill: rgba(247, 250, 252, 0.90);
+  --compat-panel-fill: rgba(247, 250, 252, 0.82);
+  --compat-content-fill: rgba(247, 250, 252, 0.86);
+  --compat-control-fill: rgba(247, 250, 252, 0.92);
+  --compat-card-fill: rgba(247, 250, 252, 0.88);
+  --compat-float-fill: rgba(247, 250, 252, 0.94);
 
   --glass-fill: var(--theme-chrome-veil);
   --glass-card-fill: var(--theme-card-veil);

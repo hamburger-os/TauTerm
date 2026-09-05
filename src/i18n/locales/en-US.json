@@ -625,7 +625,7 @@
     "performanceCompat": "Compatibility",
     "performanceQualityDesc": "Keeps the complete four-color Google ambient field in clearly visible motion. Small tool/dialog glass uses stronger sampling and saturation while the large workspace still avoids real-time blur. Best visuals, highest GPU cost.",
     "performanceBalancedDesc": "Default. Keeps the complete four-color Google ambient field moving more calmly with lightweight sampling on small glass surfaces, while large workspace glass stays low-cost.",
-    "performanceCompatDesc": "Keeps the complete four-color Google ambient field but makes it static, disables real-time backdrop blur, and uses denser compatibility veils so underlying text does not bleed through. Lowest GPU cost."
+    "performanceCompatDesc": "Keeps the complete four-color Google ambient field but makes it static. Major glass surfaces fall back to one flat translucent fill with no real-time backdrop blur, layered specular effects, or large glass shadows. Lowest GPU cost."
   },
   "updater": {
     "checking": "Checking for updates...",

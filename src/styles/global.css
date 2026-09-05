@@ -115,18 +115,18 @@ body {
 /* 对角 A：左上 Red → 右下 Green。更紧凑的软光团让 transform 位移在 3–5 秒内可感知。 */
 .ambient-field-a {
   background:
-    radial-gradient(ellipse 40% 54% at 19% 19%,
+    radial-gradient(ellipse 36% 50% at 24% 24%,
       color-mix(in srgb, var(--google-red) 82%, transparent) 0%,
       color-mix(in srgb, var(--google-red) 44%, transparent) 22%,
       color-mix(in srgb, var(--google-red) 16%, transparent) 46%,
-      color-mix(in srgb, var(--google-red) 4%, transparent) 70%,
-      transparent 92%),
-    radial-gradient(ellipse 42% 56% at 81% 81%,
+      color-mix(in srgb, var(--google-red) 4%, transparent) 72%,
+      transparent 94%),
+    radial-gradient(ellipse 38% 52% at 76% 76%,
       color-mix(in srgb, var(--google-green) 80%, transparent) 0%,
       color-mix(in srgb, var(--google-green) 42%, transparent) 22%,
       color-mix(in srgb, var(--google-green) 15%, transparent) 46%,
-      color-mix(in srgb, var(--google-green) 4%, transparent) 70%,
-      transparent 92%);
+      color-mix(in srgb, var(--google-green) 4%, transparent) 72%,
+      transparent 94%);
   animation: ambient-flow-a var(--ambient-field-a-duration) linear infinite;
   animation-delay: -4s;
 }
@@ -134,18 +134,18 @@ body {
 /* 对角 B：右上 Blue → 左下 Yellow。 */
 .ambient-field-b {
   background:
-    radial-gradient(ellipse 40% 54% at 81% 19%,
+    radial-gradient(ellipse 36% 50% at 76% 24%,
       color-mix(in srgb, var(--google-blue) 82%, transparent) 0%,
       color-mix(in srgb, var(--google-blue) 44%, transparent) 22%,
       color-mix(in srgb, var(--google-blue) 16%, transparent) 46%,
-      color-mix(in srgb, var(--google-blue) 4%, transparent) 70%,
-      transparent 92%),
-    radial-gradient(ellipse 42% 56% at 19% 81%,
+      color-mix(in srgb, var(--google-blue) 4%, transparent) 72%,
+      transparent 94%),
+    radial-gradient(ellipse 38% 52% at 24% 76%,
       color-mix(in srgb, var(--google-yellow) 80%, transparent) 0%,
       color-mix(in srgb, var(--google-yellow) 42%, transparent) 22%,
       color-mix(in srgb, var(--google-yellow) 15%, transparent) 46%,
-      color-mix(in srgb, var(--google-yellow) 4%, transparent) 70%,
-      transparent 92%);
+      color-mix(in srgb, var(--google-yellow) 4%, transparent) 72%,
+      transparent 94%);
   animation: ambient-flow-b var(--ambient-field-b-duration) linear infinite;
   animation-delay: -9s;
 }
@@ -743,25 +743,46 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
   animation-play-state: paused;
 }
 
-/* Compat 关闭 backdrop sampling 后，不能继续使用正常档位的低 alpha veil。
-   否则底层文字/边框会原样穿透，感知上反而比 Quality/Balanced 更“透明”。
-   这里只加厚 Small Chrome / Float；Structural/Content 本来就不依赖 backdrop，不额外变厚。 */
+/* Compat 是最低成本的“平面半透明”模式：
+   - 完整四色 Ambient 仍在底层，但静态；
+   - 所有主要玻璃 surface 只保留一层半透明纯色 + 现有 1px border；
+   - 不做 backdrop sampling、不叠 specular/clear 多层 gradient，也不保留大面积 glass shadow。
+   透明度本身不是主要成本；实时 backdrop blur 和持续合成才是。 */
 html[data-performance="compat"] .liquid-glass {
-  background:
-    var(--liquid-specular-chrome-fill),
-    var(--theme-chrome-veil-compat),
-    var(--liquid-clear-chrome-fill);
+  background: var(--compat-chrome-fill);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+html[data-performance="compat"] .liquid-glass-panel {
+  background: var(--compat-panel-fill);
+  box-shadow: none;
+}
+
+html[data-performance="compat"] .liquid-glass-content,
+html[data-performance="compat"] .liquid-glass-content-active,
+html[data-performance="compat"] .liquid-glass-content-inactive {
+  background: var(--compat-content-fill);
+  box-shadow: none;
+}
+
+html[data-performance="compat"] .liquid-control-surface {
+  background: var(--compat-control-fill);
+  box-shadow: none;
+}
+
+html[data-performance="compat"] .liquid-glass-card,
+html[data-performance="compat"] .liquid-glass-mini-card {
+  background: var(--compat-card-fill);
+  box-shadow: none;
 }
 
 html[data-performance="compat"] .liquid-glass-float {
-  background:
-    var(--liquid-specular-chrome-fill),
-    var(--theme-float-veil-compat),
-    var(--liquid-clear-chrome-fill);
+  background: var(--compat-float-fill);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  box-shadow: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
