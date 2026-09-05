@@ -112,42 +112,49 @@ body {
   transform-origin: center;
 }
 
-/* 对角 A：左上 Red → 右下 Green。更紧凑的软光团让 transform 位移在 3–5 秒内可感知。 */
+/* 对角 A：Red + Green。色团中心向内收、边缘更早淡出，为大范围 transform 留出透明安全边。 */
 .ambient-field-a {
   background:
-    radial-gradient(ellipse 36% 50% at 24% 24%,
-      color-mix(in srgb, var(--google-red) 82%, transparent) 0%,
-      color-mix(in srgb, var(--google-red) 44%, transparent) 22%,
-      color-mix(in srgb, var(--google-red) 16%, transparent) 46%,
+    radial-gradient(ellipse 30% 36% at 30% 30%,
+      color-mix(in srgb, var(--google-red) 84%, transparent) 0%,
+      color-mix(in srgb, var(--google-red) 46%, transparent) 24%,
+      color-mix(in srgb, var(--google-red) 17%, transparent) 50%,
       color-mix(in srgb, var(--google-red) 4%, transparent) 72%,
-      transparent 94%),
-    radial-gradient(ellipse 38% 52% at 76% 76%,
-      color-mix(in srgb, var(--google-green) 80%, transparent) 0%,
-      color-mix(in srgb, var(--google-green) 42%, transparent) 22%,
-      color-mix(in srgb, var(--google-green) 15%, transparent) 46%,
+      transparent 90%),
+    radial-gradient(ellipse 30% 36% at 70% 70%,
+      color-mix(in srgb, var(--google-green) 82%, transparent) 0%,
+      color-mix(in srgb, var(--google-green) 44%, transparent) 24%,
+      color-mix(in srgb, var(--google-green) 16%, transparent) 50%,
       color-mix(in srgb, var(--google-green) 4%, transparent) 72%,
-      transparent 94%);
+      transparent 90%);
   animation: ambient-flow-a var(--ambient-field-a-duration) linear infinite;
   animation-delay: -4s;
 }
 
-/* 对角 B：右上 Blue → 左下 Yellow。 */
+/* 对角 B：Blue + Yellow。Quality 中与 Field A 独立交叉运动；Balanced 中保持静态。 */
 .ambient-field-b {
   background:
-    radial-gradient(ellipse 36% 50% at 76% 24%,
-      color-mix(in srgb, var(--google-blue) 82%, transparent) 0%,
-      color-mix(in srgb, var(--google-blue) 44%, transparent) 22%,
-      color-mix(in srgb, var(--google-blue) 16%, transparent) 46%,
+    radial-gradient(ellipse 30% 36% at 70% 30%,
+      color-mix(in srgb, var(--google-blue) 84%, transparent) 0%,
+      color-mix(in srgb, var(--google-blue) 46%, transparent) 24%,
+      color-mix(in srgb, var(--google-blue) 17%, transparent) 50%,
       color-mix(in srgb, var(--google-blue) 4%, transparent) 72%,
-      transparent 94%),
-    radial-gradient(ellipse 38% 52% at 24% 76%,
-      color-mix(in srgb, var(--google-yellow) 80%, transparent) 0%,
-      color-mix(in srgb, var(--google-yellow) 42%, transparent) 22%,
-      color-mix(in srgb, var(--google-yellow) 15%, transparent) 46%,
+      transparent 90%),
+    radial-gradient(ellipse 30% 36% at 30% 70%,
+      color-mix(in srgb, var(--google-yellow) 82%, transparent) 0%,
+      color-mix(in srgb, var(--google-yellow) 44%, transparent) 24%,
+      color-mix(in srgb, var(--google-yellow) 16%, transparent) 50%,
       color-mix(in srgb, var(--google-yellow) 4%, transparent) 72%,
-      transparent 94%);
+      transparent 90%);
   animation: ambient-flow-b var(--ambient-field-b-duration) linear infinite;
   animation-delay: -9s;
+}
+
+/* Balanced 保留完整两层四色，但只动画 Red/Green Field A；Blue/Yellow Field B 静态，
+   直接把持续 transform 合成层从 2 个降到 1 个。 */
+html[data-performance="balanced"] .ambient-field-b {
+  animation: none;
+  transform: none;
 }
 
 /* Compatibility 仍保留两层、完整四色，只停止装饰合成动画与 backdrop sampling。
