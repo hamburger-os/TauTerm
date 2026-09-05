@@ -623,9 +623,9 @@
     "performanceQuality": "效果优先",
     "performanceBalanced": "平衡（推荐）",
     "performanceCompat": "兼容",
-    "performanceQualityDesc": "完整 Google 四色流光：更高环境光强度、更大的移动幅度和更快的流动节奏；仅增强小面积玻璃采样，终端内容区仍不使用实时模糊。",
-    "performanceBalancedDesc": "默认方案。保留完整 Google 四色流光，以更克制的强度和较慢节奏运行，小面积玻璃使用轻量采样，兼顾质感与流畅度。",
-    "performanceCompatDesc": "面向老电脑、软件渲染或远程桌面：仅保留两个静态 Google 光团，并关闭实时 backdrop blur；主题配色、内容通透层次和边缘高光仍保留。"
+    "performanceQualityDesc": "完整 Google 四色环境场：更大的移动路径和更快的连续流动；仅增强小面积玻璃采样，终端和控制工作台仍不使用实时模糊。",
+    "performanceBalancedDesc": "默认方案。保留完整 Google 四色环境场，以更缓慢的连续路径运行，小面积玻璃使用轻量采样，兼顾质感与流畅度。",
+    "performanceCompatDesc": "面向老电脑、软件渲染或远程桌面：仅保留一个静态 Google 色彩场，并关闭实时 backdrop blur；主题材质和控件对比度仍完整保留。"
   },
   "updater": {
     "checking": "正在检查更新...",
