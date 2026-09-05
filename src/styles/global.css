@@ -73,8 +73,8 @@ body {
 }
 
 /* ==========================================
-   1. Shared Google Ambient Field
-   Gemini 二维空间固定为：左上 Red / 左下 Yellow / 右下 Green / 右上 Blue。
+   1. Shared Spectrum Ambient Field
+   四色环境空间固定为：左上 Red / 左下 Yellow / 右下 Green / 右上 Blue。
    两个对角 Field 只动画 transform，方向、相位与 rotation 相反，制造“流过玻璃”的相对剪切感。
    ========================================== */
 @keyframes ambient-flow-a {
@@ -115,17 +115,17 @@ body {
 /* 对角 A：Red + Green。色团中心向内收、边缘更早淡出，为大范围 transform 留出透明安全边。 */
 .ambient-field-a {
   background:
-    radial-gradient(ellipse 30% 36% at 30% 30%,
-      color-mix(in srgb, var(--google-red) 84%, transparent) 0%,
-      color-mix(in srgb, var(--google-red) 46%, transparent) 24%,
-      color-mix(in srgb, var(--google-red) 17%, transparent) 50%,
-      color-mix(in srgb, var(--google-red) 4%, transparent) 72%,
+    radial-gradient(ellipse 34% 42% at 30% 30%,
+      color-mix(in srgb, var(--spectrum-red) 84%, transparent) 0%,
+      color-mix(in srgb, var(--spectrum-red) 46%, transparent) 24%,
+      color-mix(in srgb, var(--spectrum-red) 17%, transparent) 50%,
+      color-mix(in srgb, var(--spectrum-red) 4%, transparent) 72%,
       transparent 90%),
-    radial-gradient(ellipse 30% 36% at 70% 70%,
-      color-mix(in srgb, var(--google-green) 82%, transparent) 0%,
-      color-mix(in srgb, var(--google-green) 44%, transparent) 24%,
-      color-mix(in srgb, var(--google-green) 16%, transparent) 50%,
-      color-mix(in srgb, var(--google-green) 4%, transparent) 72%,
+    radial-gradient(ellipse 34% 42% at 70% 70%,
+      color-mix(in srgb, var(--spectrum-green) 82%, transparent) 0%,
+      color-mix(in srgb, var(--spectrum-green) 44%, transparent) 24%,
+      color-mix(in srgb, var(--spectrum-green) 16%, transparent) 50%,
+      color-mix(in srgb, var(--spectrum-green) 4%, transparent) 72%,
       transparent 90%);
   animation: ambient-flow-a var(--ambient-field-a-duration) linear infinite;
   animation-delay: -4s;
@@ -134,38 +134,31 @@ body {
 /* 对角 B：Blue + Yellow。Quality 中与 Field A 独立交叉运动；Balanced 中保持静态。 */
 .ambient-field-b {
   background:
-    radial-gradient(ellipse 30% 36% at 70% 30%,
-      color-mix(in srgb, var(--google-blue) 84%, transparent) 0%,
-      color-mix(in srgb, var(--google-blue) 46%, transparent) 24%,
-      color-mix(in srgb, var(--google-blue) 17%, transparent) 50%,
-      color-mix(in srgb, var(--google-blue) 4%, transparent) 72%,
+    radial-gradient(ellipse 34% 42% at 70% 30%,
+      color-mix(in srgb, var(--spectrum-blue) 84%, transparent) 0%,
+      color-mix(in srgb, var(--spectrum-blue) 46%, transparent) 24%,
+      color-mix(in srgb, var(--spectrum-blue) 17%, transparent) 50%,
+      color-mix(in srgb, var(--spectrum-blue) 4%, transparent) 72%,
       transparent 90%),
-    radial-gradient(ellipse 30% 36% at 30% 70%,
-      color-mix(in srgb, var(--google-yellow) 82%, transparent) 0%,
-      color-mix(in srgb, var(--google-yellow) 44%, transparent) 24%,
-      color-mix(in srgb, var(--google-yellow) 16%, transparent) 50%,
-      color-mix(in srgb, var(--google-yellow) 4%, transparent) 72%,
+    radial-gradient(ellipse 34% 42% at 30% 70%,
+      color-mix(in srgb, var(--spectrum-yellow) 82%, transparent) 0%,
+      color-mix(in srgb, var(--spectrum-yellow) 44%, transparent) 24%,
+      color-mix(in srgb, var(--spectrum-yellow) 16%, transparent) 50%,
+      color-mix(in srgb, var(--spectrum-yellow) 4%, transparent) 72%,
       transparent 90%);
   animation: ambient-flow-b var(--ambient-field-b-duration) linear infinite;
   animation-delay: -9s;
 }
 
-/* Balanced 保留完整两层四色，但只动画 Red/Green Field A；Blue/Yellow Field B 静态，
-   直接把持续 transform 合成层从 2 个降到 1 个。 */
-html[data-performance="balanced"] .ambient-field-b {
-  animation: none;
-  transform: none;
-}
-
-/* Compatibility 仍保留两层、完整四色，只停止装饰合成动画与 backdrop sampling。
+/* 性能优先保留两层完整四色，但停止环境动画和背景采样。
    系统 reduced-motion 同样静态化；窗口仅失焦时不会冻结。 */
-html[data-performance="compat"] .ambient-field { animation: none; }
+html[data-performance="performance"] .ambient-field { animation: none; }
 html[data-motion="paused"] .ambient-field { animation-play-state: paused; }
 html[data-motion="reduced"] .ambient-field { animation: none; }
 
 /* ==========================================
    4. Liquid Glass 材质分层
-   chrome: 小面积导航/工具/弹窗，可轻量 backdrop sampling
+   shell surface: 小面积导航/工具/弹窗，可轻量 backdrop sampling
    content: 终端/文件/数据主体，稳定半透明表面，不使用 backdrop-filter
    control: 高密度参数编辑区，稳定控件对比度且不使用 backdrop-filter
    accent: 小型交互强调，靠 tint + rim light，不常驻模糊
@@ -173,11 +166,11 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 .liquid-glass {
   position: relative;
   background:
-    var(--liquid-specular-chrome-fill),
-    var(--theme-chrome-veil),
-    var(--liquid-clear-chrome-fill);
-  backdrop-filter: blur(var(--glass-blur-chrome)) saturate(var(--glass-blur-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur-chrome)) saturate(var(--glass-blur-saturate));
+    var(--liquid-specular-shell-fill),
+    var(--theme-shell-veil),
+    var(--liquid-clear-shell-fill);
+  backdrop-filter: blur(var(--glass-blur-shell)) saturate(var(--glass-blur-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur-shell)) saturate(var(--glass-blur-saturate));
   border: 1px solid var(--glass-border-default);
   border-top-color: var(--glass-border-top);
   border-left-color: var(--glass-border-left);
@@ -185,7 +178,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 }
 
 /* Structural Panel：左/右 Sidebar、SendBar、TargetBar 共用同一材质。
-   不做 backdrop sampling；比 Chrome 更透，靠 specular edge + 轻阴影形成液态玻璃轮廓。 */
+   不做 backdrop sampling；比 Shell Surface 更透，靠 specular edge + 轻阴影形成液态玻璃轮廓。 */
 .liquid-glass-panel {
   position: relative;
   background:
@@ -251,7 +244,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 
 .liquid-glass-accent {
   background:
-    var(--liquid-specular-chrome-fill),
+    var(--liquid-specular-shell-fill),
     var(--theme-card-veil),
     var(--liquid-clear-card-fill);
   border: 1px solid var(--glass-border-default);
@@ -264,7 +257,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
    ========================================== */
 .liquid-glass-card {
   background:
-    var(--liquid-specular-chrome-fill),
+    var(--liquid-specular-shell-fill),
     var(--theme-card-veil),
     var(--liquid-clear-card-fill);
   border: 1px solid var(--glass-border-default);
@@ -326,7 +319,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 }
 
 /* 主题高价值 selected 状态。
-   三主题使用同一 Gemini canonical hue；主题差异只来自 surface alpha / edge / shadow。
+   三主题使用同一四色环境色相；主题差异只来自 surface alpha / edge / shadow。
    只在 selected/active tab 等少量元素上使用，不做 idle 动画。 */
 .liquid-glass-button.liquid-theme-selected {
   background: var(--selected-surface);
@@ -442,7 +435,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 
 /* 数字输入框微调箭头 —— 统一主题样式
    - WebKit: 使用主题 --number-spinner SVG，避免 data-URI currentColor 无法继承宿主颜色
-   - Firefox: 隐藏原生微调按钮（Tauri 全平台使用 WebKit webview，保留以保持一致性） */
+   - 隐藏原生数字输入微调按钮，保持跨平台控件一致性。 */
 .liquid-glass-input[type="number"] {
   -moz-appearance: textfield;
 }
@@ -519,7 +512,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 }
 
 /* ==========================================
-   8. Gemini Prism 主按钮
+   8. 四色棱镜主按钮
    Idle 始终完整显示四色空间关系；hover 不换色，只提升尺度、边缘与阴影。
    ========================================== */
 .liquid-primary-button {
@@ -596,9 +589,9 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
    ========================================== */
 .liquid-glass-float {
   background:
-    var(--liquid-specular-chrome-fill),
+    var(--liquid-specular-shell-fill),
     var(--theme-float-veil),
-    var(--liquid-clear-chrome-fill);
+    var(--liquid-clear-shell-fill);
   backdrop-filter: blur(var(--glass-blur-float)) saturate(var(--glass-blur-saturate));
   -webkit-backdrop-filter: blur(var(--glass-blur-float)) saturate(var(--glass-blur-saturate));
   border: 1px solid var(--glass-border-default);
@@ -738,7 +731,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
    16. 性能与动态降级
    ========================================== */
 /* Drag-resize changes large surface geometry every pointer frame. Suspend
-   chrome sampling only for the gesture; the full material returns on mouseup. */
+   shell surface sampling only for the gesture; the full material returns on mouseup. */
 .ui-resizing .liquid-glass,
 .ui-resizing .liquid-glass-float {
   backdrop-filter: none;
@@ -750,43 +743,43 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
   animation-play-state: paused;
 }
 
-/* Compat 是最低成本的“平面半透明”模式：
+/* 性能优先是最低成本的“平面半透明”模式：
    - 完整四色 Ambient 仍在底层，但静态；
    - 所有主要玻璃 surface 只保留一层半透明纯色 + 现有 1px border；
    - 不做 backdrop sampling、不叠 specular/clear 多层 gradient，也不保留大面积 glass shadow。
    透明度本身不是主要成本；实时 backdrop blur 和持续合成才是。 */
-html[data-performance="compat"] .liquid-glass {
-  background: var(--compat-chrome-fill);
+html[data-performance="performance"] .liquid-glass {
+  background: var(--performance-shell-fill);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
 }
 
-html[data-performance="compat"] .liquid-glass-panel {
-  background: var(--compat-panel-fill);
+html[data-performance="performance"] .liquid-glass-panel {
+  background: var(--performance-panel-fill);
   box-shadow: none;
 }
 
-html[data-performance="compat"] .liquid-glass-content,
-html[data-performance="compat"] .liquid-glass-content-active,
-html[data-performance="compat"] .liquid-glass-content-inactive {
-  background: var(--compat-content-fill);
+html[data-performance="performance"] .liquid-glass-content,
+html[data-performance="performance"] .liquid-glass-content-active,
+html[data-performance="performance"] .liquid-glass-content-inactive {
+  background: var(--performance-content-fill);
   box-shadow: none;
 }
 
-html[data-performance="compat"] .liquid-control-surface {
-  background: var(--compat-control-fill);
+html[data-performance="performance"] .liquid-control-surface {
+  background: var(--performance-control-fill);
   box-shadow: none;
 }
 
-html[data-performance="compat"] .liquid-glass-card,
-html[data-performance="compat"] .liquid-glass-mini-card {
-  background: var(--compat-card-fill);
+html[data-performance="performance"] .liquid-glass-card,
+html[data-performance="performance"] .liquid-glass-mini-card {
+  background: var(--performance-card-fill);
   box-shadow: none;
 }
 
-html[data-performance="compat"] .liquid-glass-float {
-  background: var(--compat-float-fill);
+html[data-performance="performance"] .liquid-glass-float {
+  background: var(--performance-float-fill);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: none;
