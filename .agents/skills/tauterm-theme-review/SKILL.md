@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "4.2"
+  version: "4.3"
 ---
 
 # TauTerm 主题与渲染审查
@@ -55,7 +55,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 7. Dialog / Popover / ContextMenu
 8. 可扩展的大面积面板
 9. Frosted theme
-10. Performance modes（按 SSOT 检查档位差异、Ambient 路径可感知性、Compatibility flat fill 与透明度倒挂）
+10. Performance modes（按 SSOT 检查 Quality 两动态层 / Balanced 单动态层 / Compat 静态层、Ambient 交叠可感知性、系统 reduced-motion 状态提示与 Compatibility flat fill）
 11. SplitView Workspace surface ownership / nested frame / interaction stability / resize cadence（判断规则只读 SSOT）
 12. Custom renderer 在短/窄 Pane 中的可达性与 Pane-relative adaptation（判断规则只读 SSOT）
 
@@ -67,7 +67,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 - single pane / 2 panes / 4 panes
 - 多 xterm 后台挂载
 - focused / unfocused / hidden
-- reduced motion
+- reduced motion（同时验证设置页状态提示会实时更新）
 - 高速终端输出
 - resize / split drag
 - short / narrow custom-renderer panes

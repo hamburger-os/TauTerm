@@ -48,6 +48,8 @@ interface ThemeContextValue {
   /** 视觉性能档：quality / balanced / compat，默认 balanced */
   performanceMode: VisualPerformanceMode;
   setPerformanceMode: (mode: VisualPerformanceMode) => void;
+  /** 系统是否请求减少动态效果（Windows“动画效果”关闭等） */
+  systemReducedMotion: boolean;
   /** 终端字体大小 (px)，范围 8–32，默认 14 */
   fontSize: number;
   setFontSize: (n: number) => void;
@@ -70,6 +72,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem("tauterm-performance-mode");
     return isPerformanceMode(stored) ? stored : PERFORMANCE_MODE_DEFAULT;
   });
+
+  const [systemReducedMotion, setSystemReducedMotion] = useState<boolean>(() =>
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
 
   const [fontSize, setFontSizeState] = useState<number>(() =>
     readStoredNumber("tauterm-font-size", FONT_SIZE_MIN, FONT_SIZE_MAX, FONT_SIZE_DEFAULT),
@@ -119,6 +125,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
 
     const applyMotionState = () => {
+      setSystemReducedMotion(media.matches);
       const state = document.hidden
         ? "paused"
         : media.matches
@@ -183,6 +190,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         setTheme,
         performanceMode,
         setPerformanceMode,
+        systemReducedMotion,
         fontSize,
         setFontSize,
         bufferLines,

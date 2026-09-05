@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, Gemini/Google 
 license: MIT
 metadata:
   author: tauterm
-  version: "8.8"
+  version: "8.9"
 ---
 
-# TauTerm Liquid Glass v8.8 — 唯一主题规范源
+# TauTerm Liquid Glass v8.9 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、Gemini 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -135,14 +135,14 @@ Ambient 的几何、颜色和强度是跨主题共享源；主题不得定义自
 
 动态档只动画 transform：translate + 轻 rotation + 轻 scale。
 
-- Balanced：约 20s / 24s，低频连续流动；横向 transform 路径约 ±10–12vw、纵向约 ±6–8vh
-- Quality：约 12s / 15s，横向路径约 ±13–15vw、纵向约 ±8–10vh，位移必须明显
-- 为了放大运动感，优先把色团中心向内收并扩大 transform 路径；**不得仅为了飘得更远而扩大 Ambient raster layer**
+- Balanced：两层四色都保留，但只动画 Field A（Red + Green）；Field B（Blue + Yellow）静态。持续 transform 合成层从 2 个降到 1 个，约 22s 的低频路径
+- Quality：Field A / Field B 两层都独立动画，约 13s / 16s；横向路径可达约 ±18–21vw、纵向约 ±10–13vh，两组对角光场运动中应明显交叠
+- 为了放大运动感，优先把色团中心向内收、让 gradient 边缘在 raster 边界前归零，再扩大 transform 路径；**不得仅为了飘得更远而扩大 Ambient raster layer**
 - 正常观察 3–5 秒必须能感知 Quality / Balanced 的位置变化
 - Compat：两层都保留，完整四色同时可见，但静态
 - layout drag / resize 时暂停纯装饰 Ambient，释放后恢复
 - hidden 时暂停；仅 unfocused 不暂停
-- reduced motion 停止装饰动画
+- reduced motion 停止装饰动画；设置页必须实时显示系统 motion 偏好，不能让用户在 Quality/Balanced 静止时不知道原因
 
 禁止 `filter: blur()`、`mix-blend-mode`、持续 background animation、常驻 `will-change`。
 
@@ -359,15 +359,15 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 
 Quality：
 - 2 dynamic Ambient Fields，完整四色
-- 更明显的 transform 路径与更快的低频流动
-- Small Chrome / Float 使用更高 blur sampling 与适度更高 saturate
+- 两层独立大范围 transform，允许红/绿与蓝/黄光场在中心区域交叠
+- Small Chrome / Float 使用更高 blur sampling 与 saturate
 - 大面积 Structural / Content 仍然不做 backdrop sampling
 
 Balanced：
-- 2 dynamic Ambient Fields，完整四色
-- 默认约 20s / 24s motion
-- Small Chrome / Float 使用 8–10px 级轻量 sampling
-- 默认推荐档
+- 2 Ambient Fields、完整四色，但只有 Field A 动态，Field B 静态
+- 默认约 22s motion；持续 transform 合成层数量必须低于 Quality
+- Small Chrome / Float 使用约 6–8px 的更轻 sampling
+- 默认推荐档；必须在实现成本上与 Quality 有结构性差异，而不是只改 animation duration
 
 Compat：
 - 2 static Ambient Fields，完整四色同时可见
@@ -437,7 +437,8 @@ npm run build
 - **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮，横纵滚动条交汇处没有白色 corner 方块**
 - **右键未选中 Pane Header 或已连接 Terminal 时都不会先切换 active Session；Close Pane 菜单只从 Header 出现**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
-- **Quality / Balanced 正常观察 3–5 秒能看出 Ambient 明显位移；扩大路径不能靠扩大 raster layer 换取**
+- **Quality / Balanced 正常观察 3–5 秒能看出 Ambient 明显位移；Quality 两层独立运动并可出现明显交叠，Balanced 只有一层持续运动**
+- **系统 reduced-motion 生效时，设置页必须明确显示“系统动态效果已关闭/减少动态效果”，并解释 Quality/Balanced 因此静止**
 - **Compat 保留两层完整四色但静态；主要 surface 是单层半透明纯色，没有 backdrop、specular 多层和大面积 glass shadow**
 - **Compat 的后层文字不能形成清晰重影，也不能出现“兼容档最透明”**
 
