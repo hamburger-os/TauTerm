@@ -94,12 +94,6 @@
   cursor: not-allowed;
 }
 
-.modeActive {
-  color: var(--accent-primary);
-  border-color: color-mix(in srgb, var(--accent-primary) 30%, transparent);
-  background: color-mix(in srgb, var(--accent-primary) 8%, transparent);
-}
-
 .intervalInput {
   width: 64px;
   box-sizing: border-box;
