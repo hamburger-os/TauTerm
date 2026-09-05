@@ -286,6 +286,7 @@ Compatibility 必须统一关闭所有允许的 backdrop sampling。
 Terminal 是最高性能优先级内容面。
 
 - xterm 可透明，但透明目标是 `.liquid-glass-content`。
+- 当 xterm theme 使用透明 background 时，必须启用 `allowTransparency: true`，否则 xterm 会把背景 alpha 强制为不透明。
 - 非活动 terminal 保留实例/scrollback，但淡出后 `visibility:hidden`，停止无意义 paint/compositing。
 - 不因切 Tab dispose/recreate xterm。
 - active pane 比 inactive pane 更透。
