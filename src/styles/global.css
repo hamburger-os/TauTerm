@@ -184,6 +184,7 @@ html[data-motion="reduced"] .ambient-field {
    4. Liquid Glass 材质分层
    chrome: 小面积导航/工具/弹窗，可轻量 backdrop sampling
    content: 终端/文件/数据主体，稳定半透明表面，不使用 backdrop-filter
+   control: SendBar/参数编辑等交互工作台，稳定控件对比度且不使用 backdrop-filter
    accent: 小型交互强调，靠 tint + rim light，不常驻模糊
    ========================================== */
 .liquid-glass {
