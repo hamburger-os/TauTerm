@@ -414,7 +414,7 @@ html[data-motion="reduced"] .ambient-field {
 
 .liquid-glass-input:disabled {
   opacity: 1;
-  background: var(--control-disabled-bg);
+  background: var(--control-disabled-input-bg);
   border-color: var(--control-disabled-border);
   color: var(--control-disabled-text);
   -webkit-text-fill-color: var(--control-disabled-text);
