@@ -60,7 +60,7 @@ type TrdpObject = {
   name: string;
   comId: number;
   link: LinkChoice;
-  state: "stopped" | "running";
+  state: "stopped" | "starting" | "running" | "stopping" | "sending" | "error";
   destination: string;
   source: string;
   cycleUs: number;
@@ -334,11 +334,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
   const [captureRunning, setCaptureRunning] = useState(false);
   const [captureDroppedFrames, setCaptureDroppedFrames] = useState(0);
-  const captureStartPending = useRef<{
-    source: "offline" | "live" | null;
-    frames: TrdpEvent[];
-    droppedFrames: number;
-  } | null>(null);
+  const packetBatchRef = useRef<TrdpEvent[]>([]);
+  const captureBatchRef = useRef<TrdpEvent[]>([]);
+  const batchTimerRef = useRef<number | null>(null);
   const [objects, setObjects] = useState<TrdpObject[]>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -393,6 +391,29 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     let disposed = false;
+
+    const flushBatches = () => {
+      batchTimerRef.current = null;
+      const packets = packetBatchRef.current.splice(0);
+      const captured = captureBatchRef.current.splice(0);
+      if (packets.length > 0) {
+        setEvents(prev => [...prev, ...packets].slice(-5000));
+      }
+      if (captured.length > 0) {
+        setCaptureFrames(prev => {
+          const next = [...prev, ...captured];
+          const overflow = Math.max(0, next.length - LIVE_CAPTURE_FRAME_LIMIT);
+          if (overflow > 0) setCaptureDroppedFrames(count => count + overflow);
+          return overflow > 0 ? next.slice(overflow) : next;
+        });
+      }
+    };
+
+    const scheduleFlush = () => {
+      if (batchTimerRef.current !== null) return;
+      batchTimerRef.current = window.setTimeout(flushBatches, 40);
+    };
+
     const unlisten = listen<TrdpEvent>("trdp-event", ({ payload }) => {
       if (disposed || payload.session_id !== sessionId) return;
       if (payload.event === "md_session" && payload.md_session_id && payload.timestamp_us !== undefined) {
@@ -404,11 +425,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         }
       }
       if (payload.event === "capture_frame") {
-        setCaptureFrames(prev => {
-          if (prev.length < LIVE_CAPTURE_FRAME_LIMIT) return [...prev, payload];
-          setCaptureDroppedFrames(count => count + 1);
-          return [...prev.slice(1), payload];
-        });
+        captureBatchRef.current.push(payload);
+        scheduleFlush();
       }
       if (payload.event === "packet") {
         let packet = payload;
@@ -422,45 +440,25 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             packet = { ...payload, latency_us: payload.timestamp_us - started };
           }
         }
-        setEvents(prev => [...prev, packet].slice(-5000));
+        packetBatchRef.current.push(packet);
+        scheduleFlush();
         if (payload.about_to_die && payload.md_session_id) {
           mdRequestStartedUs.current.delete(payload.md_session_id);
         }
       }
-      if (payload.event === "ack" && payload.command === "capture_start") {
-        captureStartPending.current = null;
-        setCaptureSource("live");
-        setCaptureRunning(true);
-      }
-      if (payload.event === "ack" && payload.command === "capture_stop") {
-        setCaptureRunning(false);
-      }
-      if (payload.event === "ack" && payload.id) {
-        setObjects(prev => prev.map(item => {
-          if (item.id !== payload.id) return item;
-          if (payload.command === "object_stop") return { ...item, state: "stopped" };
-          if (payload.command === "object_start") {
-            return { ...item, state: isOneShotKind(item.kind) ? "stopped" : "running" };
-          }
-          return item;
-        }));
-      }
-      if (payload.error) {
-        const pendingCapture = captureStartPending.current;
-        if (pendingCapture) {
-          captureStartPending.current = null;
-          setCaptureFrames(pendingCapture.frames);
-          setCaptureSource(pendingCapture.source);
-          setCaptureDroppedFrames(pendingCapture.droppedFrames);
-          // Native capture_start stops the previous capture before attempting
-          // the replacement. A failed restart therefore never restores a
-          // "running" state, even though the previous capture buffer is kept.
-          setCaptureRunning(false);
-        }
-        setError(payload.error);
-      }
+      if (payload.error) setError(payload.error);
     });
-    return () => { disposed = true; void unlisten.then(fn => fn()); };
+
+    return () => {
+      disposed = true;
+      if (batchTimerRef.current !== null) {
+        window.clearTimeout(batchTimerRef.current);
+        batchTimerRef.current = null;
+      }
+      packetBatchRef.current = [];
+      captureBatchRef.current = [];
+      void unlisten.then(fn => fn());
+    };
   }, [sessionId]);
 
   const datasetByComId = useMemo(() => {
@@ -560,48 +558,60 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function startObject(obj: TrdpObject) {
-    if (obj.kind === "pd_request") {
-      // PD Request is a Send action in the UI. The native side may retain a
-      // subscriber handle for the reply window, so replace any previous handle
-      // before issuing the next request with the same object id.
-      await command("object_stop", { id: obj.id, kind: obj.kind });
+    const oneShot = isOneShotKind(obj.kind);
+    patchObject(obj.id, { state: oneShot ? "sending" : "starting" });
+    try {
+      if (obj.kind === "pd_request") {
+        // A PD Request retains a native subscriber during its reply window.
+        // Explicitly replace that handle before a repeated Send.
+        await command("object_stop", { id: obj.id, kind: obj.kind });
+      }
+      await command("object_start", {
+        object: {
+          id: obj.id,
+          kind: obj.kind,
+          name: obj.name,
+          com_id: obj.comId,
+          link: obj.link,
+          destination: obj.destination,
+          source: obj.source,
+          cycle_us: obj.cycleUs,
+          timeout_us: obj.timeoutMode === "disabled" ? 0xffff_ffff : obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
+          timeout_behavior: obj.timeoutBehavior,
+          payload_hex: obj.payloadHex,
+          transport: obj.transport,
+          etb_topo_count: obj.etbTopoCount,
+          op_trn_topo_count: obj.opTrnTopoCount,
+          red_id: obj.redId,
+          red_state: obj.redState,
+          num_replies: obj.numReplies,
+          reply_timeout_us: obj.replyTimeoutUs,
+          response_mode: obj.responseMode,
+          confirm_timeout_us: obj.confirmTimeoutUs,
+          reply_com_id: obj.replyComId,
+          reply_ip: obj.replyIp,
+          source_uri: obj.sourceUri,
+          dest_uri: obj.destUri,
+        },
+      });
+      patchObject(obj.id, { state: oneShot ? "stopped" : "running" });
+    } catch {
+      patchObject(obj.id, { state: "error" });
     }
-    await command("object_start", {
-      object: {
-        id: obj.id,
-        kind: obj.kind,
-        name: obj.name,
-        com_id: obj.comId,
-        link: obj.link,
-        destination: obj.destination,
-        source: obj.source,
-        cycle_us: obj.cycleUs,
-        timeout_us: obj.timeoutMode === "disabled" ? 0xffff_ffff : obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
-        timeout_behavior: obj.timeoutBehavior,
-        payload_hex: obj.payloadHex,
-        transport: obj.transport,
-        etb_topo_count: obj.etbTopoCount,
-        op_trn_topo_count: obj.opTrnTopoCount,
-        red_id: obj.redId,
-        red_state: obj.redState,
-        num_replies: obj.numReplies,
-        reply_timeout_us: obj.replyTimeoutUs,
-        response_mode: obj.responseMode,
-        confirm_timeout_us: obj.confirmTimeoutUs,
-        reply_com_id: obj.replyComId,
-        reply_ip: obj.replyIp,
-        source_uri: obj.sourceUri,
-        dest_uri: obj.destUri,
-      },
-    });
   }
 
   async function stopObject(obj: TrdpObject) {
-    await command("object_stop", { id: obj.id, kind: obj.kind });
+    patchObject(obj.id, { state: "stopping" });
+    try {
+      await command("object_stop", { id: obj.id, kind: obj.kind });
+      patchObject(obj.id, { state: "stopped" });
+    } catch {
+      patchObject(obj.id, { state: "error" });
+    }
   }
 
   async function removeObject(obj: TrdpObject) {
-    if (obj.state === "running") return;
+    if (obj.state !== "stopped" && obj.state !== "error") return;
     // PD Request is one-shot in the UI but TCNOpen retains a subscriber handle
     // for its reply window. Clean that native handle only while this Node
     // session is actually connected. Once disconnected, the side-channel and
@@ -832,7 +842,6 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       frames: captureFrames,
       droppedFrames: captureDroppedFrames,
     };
-    captureStartPending.current = previousCapture;
     setCaptureFrames([]);
     setCaptureDroppedFrames(0);
     setCaptureRunning(false);
@@ -842,14 +851,22 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         interface_b: interfaceB,
         filter,
       });
+      setCaptureSource("live");
+      setCaptureRunning(true);
     } catch {
-      if (captureStartPending.current === previousCapture) {
-        captureStartPending.current = null;
-        setCaptureFrames(previousCapture.frames);
-        setCaptureSource(previousCapture.source);
-        setCaptureDroppedFrames(previousCapture.droppedFrames);
-        setCaptureRunning(false);
-      }
+      setCaptureFrames(previousCapture.frames);
+      setCaptureSource(previousCapture.source);
+      setCaptureDroppedFrames(previousCapture.droppedFrames);
+      setCaptureRunning(false);
+    }
+  }
+
+  async function stopLiveCapture() {
+    try {
+      await command("capture_stop");
+      setCaptureRunning(false);
+    } catch {
+      // command() owns the error banner; keep the current state unchanged.
     }
   }
 
@@ -893,6 +910,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     return t(`trdp.objectKind.${kind}`);
   }
 
+  function objectStateLabel(state: TrdpObject["state"]) {
+    return t(`trdp.status.${state}`);
+  }
+
   function objectSummaryTable(items: TrdpObject[], selectedId: string | null, onSelect: (id: string) => void) {
     return (
       <div className={styles.tableWrap}>
@@ -914,7 +935,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 <td>{obj.comId}</td>
                 <td>{obj.link === "both" ? "A+B" : obj.link.toUpperCase()}</td>
                 <td>{obj.destination}</td>
-                <td>{obj.state === "running" ? t("trdp.overview.running") : t("trdp.overview.stopped")}</td>
+                <td>{objectStateLabel(obj.state)}</td>
               </tr>
             ))}
           </tbody>
@@ -926,6 +947,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   function renderObjectDetail(obj: TrdpObject | undefined) {
     if (!obj) return <div className={`${styles.infoCard} liquid-glass-card`}>{t("trdp.empty.selectObject")}</div>;
     const oneShot = isOneShotKind(obj.kind);
+    const busy = obj.state === "starting" || obj.state === "stopping" || obj.state === "sending";
     const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
     const inputClass = `${styles.detailInput} liquid-glass-input`;
     const selectClass = `${styles.detailInput} liquid-glass-input liquid-glass-select`;
@@ -938,9 +960,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           </div>
           <div className={styles.rowActions}>
             {oneShot ? (
-              <button className={`${styles.compactButton} liquid-primary-button`} onClick={() => void startObject(obj)}>{t("trdp.actions.send")}</button>
+              <button className={`${styles.compactButton} liquid-primary-button`} onClick={() => void startObject(obj)} disabled={busy}>{t("trdp.actions.send")}</button>
             ) : (
-              <button className={`${styles.compactButton} ${obj.state === "running" ? "liquid-glass-button" : "liquid-primary-button"}`} onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>
+              <button className={`${styles.compactButton} ${obj.state === "running" ? "liquid-glass-button" : "liquid-primary-button"}`} onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))} disabled={busy}>
                 {obj.state === "running" ? t("trdp.actions.stop") : t("trdp.actions.start")}
               </button>
             )}
@@ -950,7 +972,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && (
               <button className={`${styles.compactButton} liquid-glass-button`} onClick={() => void openStructuredEditor(obj)}>{t("trdp.actions.dataset")}</button>
             )}
-            <button className={`${styles.compactButton} liquid-glass-button`} onClick={() => void removeObject(obj)} disabled={obj.state === "running"}>{t("trdp.actions.remove")}</button>
+            <button className={`${styles.compactButton} liquid-glass-button`} onClick={() => void removeObject(obj)} disabled={obj.state !== "stopped" && obj.state !== "error"}>{t("trdp.actions.remove")}</button>
           </div>
         </div>
 
@@ -1191,7 +1213,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()}>{t("trdp.actions.openCapture")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void importXml()}>{t("trdp.actions.importXml")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>{t("trdp.actions.saveCapture")}</button>
-                  {mode === "monitor" && <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void command("capture_stop")} disabled={!captureRunning}>{t("trdp.actions.stopCapture")}</button>}
+                  {mode === "monitor" && <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void stopLiveCapture()} disabled={!captureRunning}>{t("trdp.actions.stopCapture")}</button>}
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>{t("trdp.actions.clear")}</button>
                 </div>
               </div>
