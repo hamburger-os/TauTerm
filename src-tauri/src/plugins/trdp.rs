@@ -229,20 +229,23 @@ impl TrdpSideChannel {
                 }
                 let mut payload = serde_json::from_str::<Value>(&line)
                     .unwrap_or_else(|_| json!({ "event": "bridge_output", "message": line }));
-                let event_name = payload.get("event").and_then(Value::as_str);
+                let event_name = payload
+                    .get("event")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
                 let request_id = payload
                     .get("request_id")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
 
-                if matches!(event_name, Some("ack") | Some("error")) {
+                if matches!(event_name.as_deref(), Some("ack") | Some("error")) {
                     if let Some(request_id) = request_id {
                         let waiter = pending
                             .lock()
                             .ok()
                             .and_then(|mut requests| requests.remove(&request_id));
                         if let Some(waiter) = waiter {
-                            let result = if event_name == Some("error") {
+                            let result = if event_name.as_deref() == Some("error") {
                                 Err(payload
                                     .get("error")
                                     .and_then(Value::as_str)
