@@ -374,6 +374,10 @@ typedef struct
 } TRDP_DATASET_ELEMENT_T;
 
 /**    Dataset definition    */
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4200)
+#endif
 typedef struct TRDP_DATASET
 {
     UINT32                  id;         /**< dataset identifier > 1000                                  */
@@ -382,6 +386,9 @@ typedef struct TRDP_DATASET
     TRDP_EXTRA_LABEL_T      name;       /**< Dataset name #349                                          */
     TRDP_DATASET_ELEMENT_T  pElement[]; /**< Pointer to a dataset element, used as array                */
 } TRDP_DATASET_T;
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 /**    ComId - data set mapping element definition    */
 typedef struct
