@@ -44,6 +44,8 @@ pub struct TrdpSideChannel {
     alive: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
     shutting_down: Arc<AtomicBool>,
+    lifecycle: Arc<Mutex<()>>,
+    connected_announced: Arc<AtomicBool>,
     capture_id: Arc<Mutex<Option<String>>>,
     capture_control: Mutex<()>,
 }
@@ -61,6 +63,8 @@ impl TrdpSideChannel {
             alive: Arc::new(AtomicBool::new(false)),
             ready: Arc::new(AtomicBool::new(false)),
             shutting_down: Arc::new(AtomicBool::new(false)),
+            lifecycle: Arc::new(Mutex::new(())),
+            connected_announced: Arc::new(AtomicBool::new(false)),
             capture_id: Arc::new(Mutex::new(None)),
             capture_control: Mutex::new(()),
         }
@@ -245,6 +249,8 @@ impl TrdpSideChannel {
         let alive = Arc::clone(&self.alive);
         let ready = Arc::clone(&self.ready);
         let shutting_down = Arc::clone(&self.shutting_down);
+        let lifecycle = Arc::clone(&self.lifecycle);
+        let connected_announced = Arc::clone(&self.connected_announced);
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             let mut decoder = capture::TrdpStreamDecoder::new(pd_ports, md_ports);
@@ -378,6 +384,7 @@ impl TrdpSideChannel {
                 let _ = event_app.emit("trdp-event", payload);
             }
 
+            let lifecycle_guard = lifecycle.lock().ok();
             alive.store(false, Ordering::Release);
             if let Ok(mut requests) = pending.lock() {
                 for (_, waiter) in requests.drain() {
@@ -394,14 +401,17 @@ impl TrdpSideChannel {
                         crate::kernel::session_store::SessionStore::sessions_file_path(&event_app);
                     let _ = store.save_to_disk(&path);
                 }
-                let _ = event_app.emit(
-                    "session-disconnected",
-                    json!({
-                        "session_id": event_session_id,
-                        "reason": "TRDP native runtime exited unexpectedly"
-                    }),
-                );
+                if connected_announced.load(Ordering::Acquire) {
+                    let _ = event_app.emit(
+                        "session-disconnected",
+                        json!({
+                            "session_id": event_session_id,
+                            "reason": "TRDP native runtime exited unexpectedly"
+                        }),
+                    );
+                }
             }
+            drop(lifecycle_guard);
         });
 
         let error_session_id = session_id.to_string();
@@ -597,6 +607,21 @@ pub async fn connect_session_trdp(
         }
     }
 
+    let lifecycle_guard = side_channel
+        .lifecycle
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if mode == "node"
+        && (!side_channel.alive.load(Ordering::Acquire)
+            || !side_channel.ready.load(Ordering::Acquire))
+    {
+        drop(lifecycle_guard);
+        if let Ok(mut store) = state.session_store.lock() {
+            let _ = store.close_session(&session_id);
+        }
+        return Err("TRDP native runtime exited during connection startup".to_string());
+    }
+
     let connected_at = {
         let store = state
             .session_store
@@ -611,6 +636,9 @@ pub async fn connect_session_trdp(
         }
         connected_at
     };
+    side_channel
+        .connected_announced
+        .store(true, Ordering::Release);
     let _ = app.emit(
         "session-connected",
         json!({
@@ -626,6 +654,7 @@ pub async fn connect_session_trdp(
             "send_bar_enabled": false,
         }),
     );
+    drop(lifecycle_guard);
     Ok(session_id)
 }
 
