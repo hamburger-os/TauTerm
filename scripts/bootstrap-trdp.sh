@@ -55,12 +55,8 @@ printf '%s\n%s\n' \
   '{"command":"shutdown"}' \
   | "$OUT/tauterm-trdp-bridge" | grep -q '"command":"shutdown"'
 
-set +e
-"$TOOLS_OUT/trdp-test-peer" >/dev/null 2>&1
-peer_status=$?
-set -e
-if [[ $peer_status -ne 2 ]]; then
-  echo "TRDP reference peer usage smoke test failed: exit $peer_status" >&2
+if ! "$TOOLS_OUT/trdp-test-peer" --help | grep -q '^usage:'; then
+  echo "TRDP reference peer help smoke test failed" >&2
   exit 1
 fi
 
