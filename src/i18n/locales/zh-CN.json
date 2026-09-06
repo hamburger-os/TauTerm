@@ -622,12 +622,12 @@
     "performanceMode": "视觉性能",
     "performanceQuality": "效果优先",
     "performancePerformance": "性能优先",
-    "performanceQualityDesc": "完整四色环境光持续大范围流动，两组对角光场在运动中可明显交叠；小面积工具和弹窗使用更丰富的液态玻璃采样。视觉效果更强，GPU 开销更高。",
-    "performancePerformanceDesc": "完整四色环境光全部保留但保持静态；主要玻璃表面使用单层半透明材质，并关闭实时背景模糊、复杂高光和大面积阴影。GPU 开销最低，优先保证流畅度。",
+    "performanceQualityDesc": "完整四色环境光持续大范围流动，两组对角光场在运动中可明显交叠；高价值四色按钮也会缓慢流动，小面积工具和弹窗使用更丰富的液态玻璃采样。视觉效果更强，GPU 开销更高。",
+    "performancePerformanceDesc": "完整四色环境光和四色按钮全部保留但保持静态；主要玻璃表面使用单层半透明材质，并关闭实时背景模糊、复杂高光和大面积阴影。GPU 开销最低，优先保证流畅度。",
     "systemMotionStatus": "系统动态效果",
     "systemMotionAllowed": "已开启",
     "systemMotionReduced": "已关闭 / 减少动态效果",
-    "systemMotionReducedHint": "系统当前要求减少动态效果，因此“效果优先”的环境流光会保持静止；开启系统动画效果后会立即恢复。“性能优先”本身使用静态环境光。"
+    "systemMotionReducedHint": "系统当前要求减少动态效果，因此“效果优先”的环境流光和四色按钮会保持静止；开启系统动画效果后会立即恢复。“性能优先”本身使用静态环境光和静态按钮。"
   },
   "updater": {
     "checking": "正在检查更新...",
