@@ -1063,7 +1063,8 @@ pub fn trdp_command(
     let operation = command
         .get("command")
         .and_then(Value::as_str)
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_string();
 
     if operation == "runtime_state" {
         let states = trdp
@@ -1080,7 +1081,7 @@ pub fn trdp_command(
         .map_err(|error| error.to_string())?
         .is_none()
     {
-        trdp.start(app, &session_id)?;
+        trdp.start(app.clone(), &session_id)?;
     }
     if operation == "capture_start" {
         let _control = trdp
@@ -1151,7 +1152,7 @@ pub fn trdp_command(
     );
 
     if let Some(id) = tracked_object.as_deref() {
-        let pending_state = match operation {
+        let pending_state = match operation.as_str() {
             "object_start" => Some(if persistent_object {
                 "starting"
             } else {
@@ -1184,7 +1185,7 @@ pub fn trdp_command(
                 .object_states
                 .lock()
                 .map_err(|error| error.to_string())?;
-            match (operation, result.is_ok(), persistent_object) {
+            match (operation.as_str(), result.is_ok(), persistent_object) {
                 ("object_start", true, true) => {
                     states.insert(id.clone(), "running".to_string());
                     Some("running")
