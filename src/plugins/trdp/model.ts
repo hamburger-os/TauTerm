@@ -30,7 +30,6 @@ export type TrdpEvent = {
   op_trn_topo_count?: number;
   data_len?: number;
   payload_hex?: string;
-  raw_frame_hex?: string;
   link_type?: number;
   crc_valid?: boolean;
   protocol_valid?: boolean;
