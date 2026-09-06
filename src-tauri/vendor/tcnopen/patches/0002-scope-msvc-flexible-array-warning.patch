@@ -1,0 +1,23 @@
+--- a/src/api/trdp_types.h
++++ b/src/api/trdp_types.h
+@@ -374,13 +374,20 @@
+ } TRDP_DATASET_ELEMENT_T;
+ 
+ /**    Dataset definition    */
++#if defined(_MSC_VER)
++#pragma warning(push)
++#pragma warning(disable : 4200)
++#endif
+ typedef struct TRDP_DATASET
+ {
+     UINT32                  id;         /**< dataset identifier > 1000                                  */
+     UINT16                  reserved1;  /**< Reserved for future use, must be zero                      */
+     UINT16                  numElement; /**< Number of elements                                         */
+     TRDP_EXTRA_LABEL_T      name;       /**< Dataset name #349                                          */
+     TRDP_DATASET_ELEMENT_T  pElement[]; /**< Pointer to a dataset element, used as array                */
+ } TRDP_DATASET_T;
++#if defined(_MSC_VER)
++#pragma warning(pop)
++#endif
+ 
+ /**    ComId - data set mapping element definition    */
