@@ -48,10 +48,10 @@
   --transition-input: 0.3s ease;
   --transition-knob: 200ms ease;
 
-  /* Canonical 四色环境 spectrum — sampled from the user-provided 四色环境 mark.
-     这四个锚点是 TauTerm 唯一 四色环境 色谱来源。
+  /* TauTerm canonical four-color spectrum.
+     这四个锚点是 TauTerm 唯一的环境色谱来源。
      Ambient、holofoil、selected state、Spectrum Flow terminal ANSI 等只能引用这些 token，
-     禁止再写传统 外部品牌色板 或“接近 四色环境”的另一套色值。 */
+     禁止在组件中复制或另建近似色板。 */
   --spectrum-red: #FE3734;
   --spectrum-yellow: #F4BA00;
   --spectrum-green: #02BE66;
@@ -63,7 +63,7 @@
   --spectrum-green-rgb: 2, 190, 102;
   --spectrum-blue-rgb: 11, 138, 255;
 
-  /* 四色环境 mark 的二维空间顺序是唯一标准：
+  /* 四色环境的二维空间顺序固定：
      左上 Red / 左下 Yellow / 右下 Green / 右上 Blue。
      conic 从左上开始沿四角连续插值，使任意宽高比控件都能同时看到完整四色。 */
   --spectrum-gradient: conic-gradient(
