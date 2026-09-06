@@ -377,3 +377,7 @@ jobs:
         run: |
           if (-not (Test-Path 'src-tauri/binaries/tauterm-trdp-bridge.exe')) { throw 'bridge missing' }
           if (-not (Test-Path 'tools/trdp-test-peer/bin/trdp-test-peer.exe')) { throw 'peer missing' }
+
+      - name: Verify bootstrap under Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/bootstrap-trdp.ps1

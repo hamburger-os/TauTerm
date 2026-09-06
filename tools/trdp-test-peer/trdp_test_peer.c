@@ -190,9 +190,9 @@ static int mode_has_tcp(const char *mode) {
     return length >= 4u && strcmp(mode + length - 4u, "-tcp") == 0;
 }
 
-static void usage(const char *program) {
+static void usage(FILE *stream, const char *program) {
     fprintf(
-        stderr,
+        stream,
         "usage: %s <pd-publisher|pd-pull-provider|pd-subscriber|md-requester|md-requester-tcp|md-replier|md-replier-query|md-replier-tcp|md-replier-query-tcp> <own-ip> <peer/multicast-ip> <comid> [seconds]\n",
         program
     );
@@ -210,8 +210,12 @@ int main(int argc, char **argv) {
     TRDP_PROCESS_CONFIG_T process;
     TRDP_ERR_T error = TRDP_NO_ERR;
 
+    if (argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) {
+        usage(stdout, argv[0]);
+        return 0;
+    }
     if (argc < 5) {
-        usage(argv[0]);
+        usage(stderr, argv[0]);
         return 2;
     }
     mode = argv[1];
@@ -225,7 +229,7 @@ int main(int argc, char **argv) {
         }
     }
     if (comid == 0u) {
-        usage(argv[0]);
+        usage(stderr, argv[0]);
         return 2;
     }
 
@@ -390,7 +394,7 @@ int main(int argc, char **argv) {
             NULL
         );
     } else {
-        usage(argv[0]);
+        usage(stderr, argv[0]);
         (void)tlc_closeSession(app);
         (void)tlc_terminate();
         return 2;

@@ -107,8 +107,10 @@ if ($LASTEXITCODE -ne 0 -or ($SmokeOutput -join "`n") -notmatch '"command":"shut
   throw "TRDP bridge smoke test failed"
 }
 
-& $PeerExe *> $null
-if ($LASTEXITCODE -ne 2) { throw "TRDP reference peer usage smoke test failed" }
+$PeerHelp = & $PeerExe --help
+if ($LASTEXITCODE -ne 0 -or ($PeerHelp -join "`n") -notmatch '^usage:') {
+  throw "TRDP reference peer help smoke test failed"
+}
 
 Write-Host "TRDP bridge ready: $BridgeExe"
 Write-Host "Reference peer ready: $PeerExe"
