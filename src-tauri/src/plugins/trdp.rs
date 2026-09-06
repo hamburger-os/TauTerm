@@ -358,6 +358,12 @@ impl TrdpSideChannel {
                                     .unwrap_or("TRDP bridge operation failed")
                                     .to_string())
                             } else {
+                                if matches!(
+                                    payload.get("command").and_then(Value::as_str),
+                                    Some("open") | Some("monitor_open")
+                                ) {
+                                    ready.store(true, Ordering::Release);
+                                }
                                 Ok(payload)
                             };
                             let _ = waiter.send(result);
@@ -439,9 +445,12 @@ impl TrdpSideChannel {
         };
 
         match self.request(open_command, Self::REQUEST_TIMEOUT) {
-            Ok(_) => {
-                self.ready.store(true, Ordering::Release);
+            Ok(_) if self.ready.load(Ordering::Acquire) && self.alive.load(Ordering::Acquire) => {
                 Ok(())
+            }
+            Ok(_) => {
+                <Self as SideChannel>::shutdown(self);
+                Err("TRDP bridge exited during startup".to_string())
             }
             Err(error) => {
                 <Self as SideChannel>::shutdown(self);
