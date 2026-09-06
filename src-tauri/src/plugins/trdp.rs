@@ -293,23 +293,22 @@ impl TrdpSideChannel {
                     let raw_frame_hex = payload
                         .get("raw_frame_hex")
                         .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    let packets = decoder.feed_hex_frame(
-                        &raw_frame_hex,
+                        .unwrap_or_default();
+                    let Some(raw_frame) = capture::decode_raw_frame_hex(raw_frame_hex) else {
+                        continue;
+                    };
+                    let packets = decoder.feed_frame(
+                        &raw_frame,
                         link_type,
                         timestamp_us,
                         &link,
                     );
-                    let raw = capture::TrdpRawFrame {
-                        link,
-                        timestamp_us,
-                        raw_frame_hex,
-                        link_type,
-                    };
                     let stats = capture::append_live_capture(
                         &current_capture_id,
-                        raw,
+                        link,
+                        timestamp_us,
+                        link_type,
+                        raw_frame,
                         packets.clone(),
                     );
                     for packet in packets {
