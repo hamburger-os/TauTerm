@@ -65,6 +65,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const captureIdRef = useRef<string | null>(null);
   const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
   const [captureRunning, setCaptureRunning] = useState(false);
+  const [captureTransitioning, setCaptureTransitioning] = useState(false);
   const [captureFrameCount, setCaptureFrameCount] = useState(0);
   const [capturePacketCount, setCapturePacketCount] = useState(0);
   const [captureDroppedFrames, setCaptureDroppedFrames] = useState(0);
@@ -351,6 +352,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   function clearCaptureView() {
     adoptCapture(null);
     setCaptureSource(null);
+    setCaptureTransitioning(true);
     setCaptureRunning(false);
     setCaptureFrameCount(0);
     setCapturePacketCount(0);
@@ -482,6 +484,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function openCapture() {
+    if (captureRunning || captureTransitioning) return;
     const path = await open({ multiple: false, filters: [{ name: "Packet Capture", extensions: ["pcap", "pcapng"] }] });
     if (typeof path !== "string") return;
     const pdPort = paramNumber(params, "pd_port", 17224);
@@ -689,6 +692,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function startLiveCapture() {
+    if (captureTransitioning || captureRunning) return;
     if (!captureInterfaceA) {
       setError(t("trdp.captureInterfaces.choose"));
       return;
@@ -736,15 +740,21 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       setCapturePacketCount(previous.packetCount);
       setCaptureDroppedFrames(previous.droppedFrames);
       setEvents(previous.events);
+    } finally {
+      setCaptureTransitioning(false);
     }
   }
 
   async function stopLiveCapture() {
+    if (captureTransitioning || !captureRunning) return;
+    setCaptureTransitioning(true);
     try {
       await command("capture_stop");
       setCaptureRunning(false);
     } catch {
       // command() owns the error banner; keep the current state unchanged.
+    } finally {
+      setCaptureTransitioning(false);
     }
   }
 
@@ -1089,7 +1099,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 </div>
                 <div className={styles.toolbar}>
                   {mode === "monitor" && <button className={`${styles.actionButton} ${liveCaptureSetupOpen ? "liquid-theme-selected" : "liquid-glass-button"}`} onClick={() => void openLiveCaptureSetup()}>{t("trdp.actions.liveCapture")}</button>}
-                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()}>{t("trdp.actions.openCapture")}</button>
+                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()} disabled={captureRunning || captureTransitioning}>{t("trdp.actions.openCapture")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void importXml()}>{t("trdp.actions.importXml")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={!captureId}>{t("trdp.actions.saveCapture")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={clearCaptureView} disabled={captureRunning}>{t("trdp.actions.clear")}</button>
@@ -1115,9 +1125,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                   <div className={styles.toolbar}>
                     <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void refreshCaptureInterfaces()} disabled={captureInterfacesLoading}>{t("trdp.actions.refreshInterfaces")}</button>
                     {captureRunning ? (
-                      <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void stopLiveCapture()}>{t("trdp.actions.stopCapture")}</button>
+                      <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void stopLiveCapture()} disabled={captureTransitioning}>{t("trdp.actions.stopCapture")}</button>
                     ) : (
-                      <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => void startLiveCapture()} disabled={captureInterfacesLoading || !captureInterfaceA}>{t("trdp.actions.startCapture")}</button>
+                      <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => void startLiveCapture()} disabled={captureInterfacesLoading || captureTransitioning || !captureInterfaceA}>{t("trdp.actions.startCapture")}</button>
                     )}
                   </div>
                 </div>
