@@ -65,7 +65,20 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const captureIdRef = useRef<string | null>(null);
   const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
   const [captureRunning, setCaptureRunning] = useState(false);
+  const captureRunningRef = useRef(false);
   const [captureTransitioning, setCaptureTransitioning] = useState(false);
+  const captureTransitioningRef = useRef(false);
+  const viewMountedRef = useRef(true);
+
+  function updateCaptureRunning(value: boolean) {
+    captureRunningRef.current = value;
+    setCaptureRunning(value);
+  }
+
+  function updateCaptureTransitioning(value: boolean) {
+    captureTransitioningRef.current = value;
+    setCaptureTransitioning(value);
+  }
   const [captureFrameCount, setCaptureFrameCount] = useState(0);
   const [capturePacketCount, setCapturePacketCount] = useState(0);
   const [captureDroppedFrames, setCaptureDroppedFrames] = useState(0);
@@ -190,11 +203,19 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   ]);
 
   useEffect(() => {
+    viewMountedRef.current = true;
     return () => {
+      viewMountedRef.current = false;
+      if (captureRunningRef.current || captureTransitioningRef.current) {
+        void invoke("trdp_command", {
+          sessionId,
+          command: { command: "capture_stop" },
+        });
+      }
       const current = captureIdRef.current;
       if (current) void invoke("trdp_release_capture", { captureId: current });
     };
-  }, []);
+  }, [sessionId]);
 
 
   useEffect(() => {
@@ -350,10 +371,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   function clearCaptureView() {
+    if (captureTransitioning) return;
     adoptCapture(null);
     setCaptureSource(null);
-    setCaptureTransitioning(true);
-    setCaptureRunning(false);
+    updateCaptureRunning(false);
     setCaptureFrameCount(0);
     setCapturePacketCount(0);
     setCaptureDroppedFrames(0);
@@ -492,7 +513,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const result = await invoke<CaptureResult>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
     adoptCapture(result.capture_id);
     setCaptureSource("offline");
-    setCaptureRunning(false);
+    updateCaptureRunning(false);
     setCaptureFrameCount(result.frame_count);
     setCapturePacketCount(result.packet_count);
     setCaptureDroppedFrames(result.dropped_frames);
@@ -715,7 +736,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       droppedFrames: captureDroppedFrames,
       events,
     };
-    setCaptureRunning(false);
+    updateCaptureTransitioning(true);
+    updateCaptureRunning(false);
     setCaptureFrameCount(0);
     setCapturePacketCount(0);
     setCaptureDroppedFrames(0);
@@ -728,33 +750,37 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         interface_b: interfaceB,
         filter,
       });
+      if (!viewMountedRef.current) {
+        void invoke("trdp_release_capture", { captureId: result.capture_id });
+        return;
+      }
       adoptCapture(result.capture_id);
       setCaptureSource("live");
-      setCaptureRunning(true);
+      updateCaptureRunning(true);
     } catch {
       captureIdRef.current = previous.captureId;
       setCaptureId(previous.captureId);
       setCaptureSource(previous.source);
-      setCaptureRunning(previous.running);
+      updateCaptureRunning(previous.running);
       setCaptureFrameCount(previous.frameCount);
       setCapturePacketCount(previous.packetCount);
       setCaptureDroppedFrames(previous.droppedFrames);
       setEvents(previous.events);
     } finally {
-      setCaptureTransitioning(false);
+      updateCaptureTransitioning(false);
     }
   }
 
   async function stopLiveCapture() {
     if (captureTransitioning || !captureRunning) return;
-    setCaptureTransitioning(true);
+    updateCaptureTransitioning(true);
     try {
       await command("capture_stop");
-      setCaptureRunning(false);
+      updateCaptureRunning(false);
     } catch {
       // command() owns the error banner; keep the current state unchanged.
     } finally {
-      setCaptureTransitioning(false);
+      updateCaptureTransitioning(false);
     }
   }
 
@@ -1102,7 +1128,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()} disabled={captureRunning || captureTransitioning}>{t("trdp.actions.openCapture")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void importXml()}>{t("trdp.actions.importXml")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={!captureId}>{t("trdp.actions.saveCapture")}</button>
-                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={clearCaptureView} disabled={captureRunning}>{t("trdp.actions.clear")}</button>
+                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={clearCaptureView} disabled={captureRunning || captureTransitioning}>{t("trdp.actions.clear")}</button>
                 </div>
               </div>
               <div className={styles.captureStatus}>
