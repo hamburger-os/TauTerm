@@ -172,13 +172,6 @@
   margin: 4px 0 12px;
 }
 
-.aboutDesc {
-  color: var(--text-secondary);
-  font-size: var(--text-base);
-  margin-bottom: 20px;
-  line-height: 1.5;
-}
-
 .aboutRow {
   display: flex;
   justify-content: space-between;
