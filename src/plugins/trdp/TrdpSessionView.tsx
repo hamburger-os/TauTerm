@@ -31,6 +31,7 @@ import {
   type ObjectKind,
   type Page,
   type RedundancyState,
+  type RuntimeState,
   type StructuredEditor,
   type TrdpEvent,
   type TrdpObject,
@@ -144,6 +145,23 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       if (workspace?.format === "tauterm-trdp-workspace/v2") {
         setWorkspaceDraft(workspaceDraftFromWorkspace(workspace));
         setWorkspaceName(workspace.name ?? null);
+        if (mode === "node") {
+          void invoke<RuntimeState>("trdp_command", {
+            sessionId,
+            command: { command: "runtime_state" },
+          }).then(runtime => {
+            if (cancelled) return;
+            setWorkspaceDraft(previous => ({
+              ...previous,
+              objects: previous.objects.map(object => ({
+                ...object,
+                state: runtime.objects[object.id] ?? "stopped",
+              })),
+            }));
+          }).catch(() => {
+            // A disconnected session has no sidechannel; persisted objects stay stopped.
+          });
+        }
         setWorkspaceXmlPath(workspace.xml ?? null);
         setXmlImport(null);
         setDecoded(null);
@@ -175,7 +193,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       }
     });
     return () => { cancelled = true; };
-  }, [sessionId]);
+  }, [sessionId, mode]);
 
   useEffect(() => {
     if (!workspaceLoaded) return;
