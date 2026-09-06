@@ -8,6 +8,7 @@
 #endif
 
 #define NODE_MAX_OBJECTS 256
+#define NODE_COMMAND_QUEUE_CAPACITY 128
 
 typedef enum {
     NODE_OBJECT_NONE = 0,
@@ -49,14 +50,119 @@ typedef struct {
     int active;
 } node_link_t;
 
+typedef struct {
+    char command[32];
+    char *line;
+} node_command_t;
+
 static node_link_t g_links[2];
 static node_object_t g_objects[NODE_MAX_OBJECTS];
 static bridge_mutex_t g_node_mutex;
+static bridge_mutex_t g_queue_mutex;
 static int g_node_mutex_ready;
+static int g_queue_mutex_ready;
 static volatile int g_node_running;
 static int g_tlc_initialized;
 static bridge_thread_t g_node_thread;
 static int g_node_thread_active;
+static node_command_t g_command_queue[NODE_COMMAND_QUEUE_CAPACITY];
+static unsigned int g_command_head;
+static unsigned int g_command_tail;
+static unsigned int g_command_count;
+
+static void clear_command_queue(void) {
+    unsigned int index;
+    if (!g_queue_mutex_ready) {
+        return;
+    }
+    bridge_mutex_lock(&g_queue_mutex);
+    for (index = 0u; index < NODE_COMMAND_QUEUE_CAPACITY; ++index) {
+        free(g_command_queue[index].line);
+        g_command_queue[index].line = NULL;
+        g_command_queue[index].command[0] = '\0';
+    }
+    g_command_head = 0u;
+    g_command_tail = 0u;
+    g_command_count = 0u;
+    bridge_mutex_unlock(&g_queue_mutex);
+}
+
+static int take_node_command(node_command_t *output) {
+    if (output == NULL || !g_queue_mutex_ready) {
+        return 0;
+    }
+    bridge_mutex_lock(&g_queue_mutex);
+    if (g_command_count == 0u) {
+        bridge_mutex_unlock(&g_queue_mutex);
+        return 0;
+    }
+    *output = g_command_queue[g_command_head];
+    memset(&g_command_queue[g_command_head], 0, sizeof(g_command_queue[g_command_head]));
+    g_command_head = (g_command_head + 1u) % NODE_COMMAND_QUEUE_CAPACITY;
+    --g_command_count;
+    bridge_mutex_unlock(&g_queue_mutex);
+    return 1;
+}
+
+int node_submit(const char *command, const char *line) {
+    size_t length;
+    char *copy;
+    node_command_t *slot;
+    if (!g_tlc_initialized || !g_node_thread_active || !g_queue_mutex_ready) {
+        bridge_emit_error("TRDP Node is not open");
+        return 0;
+    }
+    if (command == NULL || line == NULL || strlen(command) >= sizeof(g_command_queue[0].command)) {
+        bridge_emit_error("invalid TRDP Node command");
+        return 0;
+    }
+    length = strlen(line);
+    copy = (char *)malloc(length + 1u);
+    if (copy == NULL) {
+        bridge_emit_error("TRDP Node command allocation failed");
+        return 0;
+    }
+    memcpy(copy, line, length + 1u);
+
+    bridge_mutex_lock(&g_queue_mutex);
+    if (g_command_count >= NODE_COMMAND_QUEUE_CAPACITY) {
+        bridge_mutex_unlock(&g_queue_mutex);
+        free(copy);
+        bridge_emit_error("TRDP Node command queue is full");
+        return 0;
+    }
+    slot = &g_command_queue[g_command_tail];
+    memset(slot, 0, sizeof(*slot));
+    (void)snprintf(slot->command, sizeof(slot->command), "%s", command);
+    slot->line = copy;
+    g_command_tail = (g_command_tail + 1u) % NODE_COMMAND_QUEUE_CAPACITY;
+    ++g_command_count;
+    bridge_mutex_unlock(&g_queue_mutex);
+    return 1;
+}
+
+static void execute_node_command(node_command_t *command) {
+    if (command == NULL || command->line == NULL) {
+        return;
+    }
+    bridge_request_begin(command->line);
+    if (strcmp(command->command, "object_start") == 0) {
+        node_object_start(command->line);
+    } else if (strcmp(command->command, "object_update") == 0) {
+        node_object_update(command->line);
+    } else if (strcmp(command->command, "object_stop") == 0) {
+        node_object_stop(command->line);
+    } else if (strcmp(command->command, "md_confirm") == 0) {
+        node_md_confirm(command->line);
+    } else if (strcmp(command->command, "md_abort") == 0) {
+        node_md_abort(command->line);
+    } else {
+        bridge_emit_error("unknown queued TRDP Node command");
+    }
+    bridge_request_end();
+    free(command->line);
+    command->line = NULL;
+}
 
 static void trdp_debug_log(
     void *ref,
@@ -441,19 +547,30 @@ static void *node_process_loop(void *unused)
     for (;;) {
         int index;
         int running;
+        node_command_t pending;
+
         bridge_mutex_lock(&g_node_mutex);
         running = g_node_running;
         bridge_mutex_unlock(&g_node_mutex);
         if (!running) {
             break;
         }
+
+        /*
+         * Drain control work before protocol processing. All TCNOpen calls
+         * after node_open now execute on this one owner thread, so object
+         * lifecycle commands cannot race tlc_process callbacks.
+         */
+        while (take_node_command(&pending)) {
+            execute_node_command(&pending);
+        }
+
         for (index = 0; index < 2; ++index) {
             if (g_links[index].active) {
                 TRDP_FDS_T read_fds;
                 TRDP_TIME_T interval;
                 TRDP_SOCK_T no_desc = 0;
                 INT32 ready;
-                bridge_mutex_lock(&g_node_mutex);
                 FD_ZERO(&read_fds);
                 if (tlc_getInterval(g_links[index].app, &interval, &read_fds, &no_desc) == TRDP_NO_ERR) {
                     if (interval.tv_sec > 0 || interval.tv_usec > 10000) {
@@ -466,10 +583,8 @@ static void *node_process_loop(void *unused)
                     }
                     (void)tlc_process(g_links[index].app, &read_fds, &ready);
                 }
-                bridge_mutex_unlock(&g_node_mutex);
             }
         }
-        bridge_sleep_ms(1u);
     }
 #ifdef _WIN32
     return 0u;
@@ -754,6 +869,11 @@ void node_open(const char *line) {
         bridge_mutex_init(&g_node_mutex);
         g_node_mutex_ready = 1;
     }
+    if (!g_queue_mutex_ready) {
+        bridge_mutex_init(&g_queue_mutex);
+        g_queue_mutex_ready = 1;
+    }
+    clear_command_queue();
     if (g_tlc_initialized) {
         bridge_emit_error("TRDP Node is already open");
         return;
@@ -1161,6 +1281,11 @@ void node_shutdown(void) {
     if (g_tlc_initialized) {
         (void)tlc_terminate();
         g_tlc_initialized = 0;
+    }
+    clear_command_queue();
+    if (g_queue_mutex_ready) {
+        bridge_mutex_destroy(&g_queue_mutex);
+        g_queue_mutex_ready = 0;
     }
     if (g_node_mutex_ready) {
         bridge_mutex_destroy(&g_node_mutex);
