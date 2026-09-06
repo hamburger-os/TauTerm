@@ -32,11 +32,14 @@ pub struct TrdpCaptureInterface {
     pub description: String,
 }
 
+type PendingRequest = mpsc::Sender<Result<Value, String>>;
+type PendingRequests = Arc<Mutex<HashMap<String, PendingRequest>>>;
+
 pub struct TrdpSideChannel {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
     params: Mutex<Value>,
-    pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>,
+    pending: PendingRequests,
     next_request_id: AtomicU64,
     alive: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
