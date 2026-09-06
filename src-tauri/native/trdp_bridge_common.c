@@ -217,25 +217,69 @@ void bridge_emit_trdp_error(const char *operation, TRDP_ERR_T error) {
 }
 
 static const char *find_key(const char *line, const char *key) {
-    char needle[96];
-    const char *cursor;
-    (void)snprintf(needle, sizeof(needle), "\"%s\"", key);
-    cursor = strstr(line, needle);
-    if (cursor == NULL) {
+    const char *cursor = line;
+    size_t key_length;
+    if (line == NULL || key == NULL) {
         return NULL;
     }
-    cursor += strlen(needle);
-    while (*cursor != '\0' && isspace((unsigned char)*cursor)) {
+    key_length = strlen(key);
+
+    /*
+     * Scan JSON string tokens structurally instead of using strstr(). This
+     * deliberately supports the small JSON envelope emitted by Rust without
+     * mistaking an escaped key-looking substring inside a user string value
+     * for an object member name. Nested objects are allowed: the first real
+     * member whose unescaped ASCII key matches is returned.
+     */
+    while (*cursor != '\0') {
+        const char *start;
+        const char *end;
+        const char *after;
+        int escaped = 0;
+        if (*cursor != '"') {
+            ++cursor;
+            continue;
+        }
+        start = ++cursor;
+        while (*cursor != '\0') {
+            if (escaped) {
+                escaped = 0;
+                ++cursor;
+                continue;
+            }
+            if (*cursor == '\\') {
+                escaped = 1;
+                ++cursor;
+                continue;
+            }
+            if (*cursor == '"') {
+                break;
+            }
+            ++cursor;
+        }
+        if (*cursor != '"') {
+            return NULL;
+        }
+        end = cursor;
+        after = cursor + 1;
+        while (*after != '\0' && isspace((unsigned char)*after)) {
+            ++after;
+        }
+        if (
+            *after == ':'
+            && (size_t)(end - start) == key_length
+            && memchr(start, '\\', key_length) == NULL
+            && memcmp(start, key, key_length) == 0
+        ) {
+            ++after;
+            while (*after != '\0' && isspace((unsigned char)*after)) {
+                ++after;
+            }
+            return after;
+        }
         ++cursor;
     }
-    if (*cursor != ':') {
-        return NULL;
-    }
-    ++cursor;
-    while (*cursor != '\0' && isspace((unsigned char)*cursor)) {
-        ++cursor;
-    }
-    return cursor;
+    return NULL;
 }
 
 int bridge_json_string(
