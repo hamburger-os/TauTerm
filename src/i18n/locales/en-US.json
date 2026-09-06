@@ -1,7 +1,6 @@
 {
   "app": {
-    "title": "TauTerm",
-    "description": "Cross-platform Full Terminal Emulator"
+    "title": "TauTerm"
   },
   "connectionType": {
     "label": "Connection Type",
