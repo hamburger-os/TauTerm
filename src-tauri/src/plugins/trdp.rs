@@ -597,7 +597,9 @@ pub async fn connect_session_trdp(
             .get_session(&session_id)
             .and_then(|handle| handle.connected_at);
         let path = crate::kernel::session_store::SessionStore::sessions_file_path(&app);
-        store.save_to_disk(&path)?;
+        if let Err(error) = store.save_to_disk(&path) {
+            log::warn!("TRDP 会话状态持久化失败: {error}");
+        }
         connected_at
     };
     let _ = app.emit(
