@@ -52,6 +52,10 @@ type TrdpEvent = {
   src_uri?: string;
   dest_uri?: string;
   md_session_id?: string;
+  capture_id?: string;
+  frame_count?: number;
+  packet_count?: number;
+  dropped_frames?: number;
   error?: string;
 };
 
@@ -141,6 +145,13 @@ type EncodedDataset = {
   dataset_id: number;
   payload_bytes: number;
   payload_hex: string;
+};
+type CaptureResult = {
+  capture_id: string;
+  frame_count: number;
+  packet_count: number;
+  dropped_frames: number;
+  packets: TrdpEvent[];
 };
 type StructuredEditor = {
   objectId: string;
@@ -335,12 +346,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const storageKey = `tauterm:trdp:${sessionId}:workspace-v2`;
   const [page, setPage] = useState<Page>(mode === "monitor" ? "analysis" : "overview");
   const [events, setEvents] = useState<TrdpEvent[]>([]);
-  const [captureFrames, setCaptureFrames] = useState<TrdpEvent[]>([]);
+  const [captureId, setCaptureId] = useState<string | null>(null);
+  const captureIdRef = useRef<string | null>(null);
   const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
   const [captureRunning, setCaptureRunning] = useState(false);
+  const [captureFrameCount, setCaptureFrameCount] = useState(0);
+  const [capturePacketCount, setCapturePacketCount] = useState(0);
   const [captureDroppedFrames, setCaptureDroppedFrames] = useState(0);
   const packetBatchRef = useRef<TrdpEvent[]>([]);
-  const captureBatchRef = useRef<TrdpEvent[]>([]);
   const batchTimerRef = useRef<number | null>(null);
   const [workspaceDraft, setWorkspaceDraft] = useState<WorkspaceDraft>(() => {
     try {
@@ -418,22 +431,21 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }, [workspaceDraft, storageKey]);
 
   useEffect(() => {
+    return () => {
+      const current = captureIdRef.current;
+      if (current) void invoke("trdp_release_capture", { captureId: current });
+    };
+  }, []);
+
+
+  useEffect(() => {
     let disposed = false;
 
     const flushBatches = () => {
       batchTimerRef.current = null;
       const packets = packetBatchRef.current.splice(0);
-      const captured = captureBatchRef.current.splice(0);
       if (packets.length > 0) {
         setEvents(prev => [...prev, ...packets].slice(-5000));
-      }
-      if (captured.length > 0) {
-        setCaptureFrames(prev => {
-          const next = [...prev, ...captured];
-          const overflow = Math.max(0, next.length - LIVE_CAPTURE_FRAME_LIMIT);
-          if (overflow > 0) setCaptureDroppedFrames(count => count + overflow);
-          return overflow > 0 ? next.slice(overflow) : next;
-        });
       }
     };
 
@@ -452,9 +464,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           if (typeof oldest === "string") starts.delete(oldest);
         }
       }
-      if (payload.event === "capture_frame") {
-        captureBatchRef.current.push(payload);
-        scheduleFlush();
+      if (payload.event === "capture_progress") {
+        if (payload.capture_id) {
+          captureIdRef.current = payload.capture_id;
+          setCaptureId(payload.capture_id);
+        }
+        setCaptureFrameCount(payload.frame_count ?? 0);
+        setCapturePacketCount(payload.packet_count ?? 0);
+        setCaptureDroppedFrames(payload.dropped_frames ?? 0);
       }
       if (payload.event === "packet") {
         let packet = payload;
@@ -484,7 +501,6 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         batchTimerRef.current = null;
       }
       packetBatchRef.current = [];
-      captureBatchRef.current = [];
       void unlisten.then(fn => fn());
     };
   }, [sessionId]);
@@ -568,6 +584,28 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       throw cause;
     }
   }
+
+  function adoptCapture(nextCaptureId: string | null) {
+    const previous = captureIdRef.current;
+    captureIdRef.current = nextCaptureId;
+    setCaptureId(nextCaptureId);
+    if (previous && previous !== nextCaptureId) {
+      void invoke("trdp_release_capture", { captureId: previous });
+    }
+  }
+
+  function clearCaptureView() {
+    adoptCapture(null);
+    setCaptureSource(null);
+    setCaptureRunning(false);
+    setCaptureFrameCount(0);
+    setCapturePacketCount(0);
+    setCaptureDroppedFrames(0);
+    setEvents([]);
+    setSelectedPacket(null);
+    setDecoded(null);
+  }
+
 
   function addObject(kind: ObjectKind) {
     const item = createObject(kind, objects.filter(candidate => candidate.kind === kind).length + 1);
@@ -683,22 +721,24 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     if (typeof path !== "string") return;
     const pdPort = paramNumber(params, "pd_port", 17224);
     const mdPorts = [...new Set([paramNumber(params, "md_udp_port", 17225), paramNumber(params, "md_tcp_port", 17225)])];
-    const packets = await invoke<TrdpEvent[]>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
-    // The current capture is a separate data source from the rolling event log.
-    // Replacing it here prevents Save from accidentally mixing multiple files
-    // or stale live-capture traffic.
-    setCaptureFrames(packets);
+    const result = await invoke<CaptureResult>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
+    adoptCapture(result.capture_id);
     setCaptureSource("offline");
     setCaptureRunning(false);
-    setCaptureDroppedFrames(0);
-    setEvents(packets.slice(-5000));
+    setCaptureFrameCount(result.frame_count);
+    setCapturePacketCount(result.packet_count);
+    setCaptureDroppedFrames(result.dropped_frames);
+    setEvents(result.packets.slice(-5000));
+    setSelectedPacket(null);
+    setDecoded(null);
     setPage("analysis");
   }
 
   async function saveCapture() {
+    if (!captureId) return;
     const path = await save({ filters: [{ name: "PCAPNG", extensions: ["pcapng"] }] });
     if (!path) return;
-    await invoke("trdp_save_capture", { path, packets: captureFrames });
+    await invoke("trdp_save_capture", { path, captureId });
   }
 
   async function importXml() {
@@ -900,27 +940,40 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           paramNumber(params, "md_tcp_port", 17225),
         )
       : captureFilter;
-    const previousCapture = {
+    const previous = {
+      captureId,
       source: captureSource,
-      frames: captureFrames,
+      running: captureRunning,
+      frameCount: captureFrameCount,
+      packetCount: capturePacketCount,
       droppedFrames: captureDroppedFrames,
+      events,
     };
-    setCaptureFrames([]);
-    setCaptureDroppedFrames(0);
     setCaptureRunning(false);
+    setCaptureFrameCount(0);
+    setCapturePacketCount(0);
+    setCaptureDroppedFrames(0);
+    setEvents([]);
+    setSelectedPacket(null);
+    setDecoded(null);
     try {
-      await command("capture_start", {
+      const result = await command<{ capture_id: string }>("capture_start", {
         interface: interfaceA,
         interface_b: interfaceB,
         filter,
       });
+      adoptCapture(result.capture_id);
       setCaptureSource("live");
       setCaptureRunning(true);
     } catch {
-      setCaptureFrames(previousCapture.frames);
-      setCaptureSource(previousCapture.source);
-      setCaptureDroppedFrames(previousCapture.droppedFrames);
-      setCaptureRunning(false);
+      captureIdRef.current = previous.captureId;
+      setCaptureId(previous.captureId);
+      setCaptureSource(previous.source);
+      setCaptureRunning(previous.running);
+      setCaptureFrameCount(previous.frameCount);
+      setCapturePacketCount(previous.packetCount);
+      setCaptureDroppedFrames(previous.droppedFrames);
+      setEvents(previous.events);
     }
   }
 
@@ -1276,15 +1329,16 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                   {mode === "monitor" && <button className={`${styles.actionButton} ${liveCaptureSetupOpen ? "liquid-theme-selected" : "liquid-glass-button"}`} onClick={() => void openLiveCaptureSetup()}>{t("trdp.actions.liveCapture")}</button>}
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()}>{t("trdp.actions.openCapture")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void importXml()}>{t("trdp.actions.importXml")}</button>
-                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>{t("trdp.actions.saveCapture")}</button>
+                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={!captureId}>{t("trdp.actions.saveCapture")}</button>
                   {mode === "monitor" && <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void stopLiveCapture()} disabled={!captureRunning}>{t("trdp.actions.stopCapture")}</button>}
-                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>{t("trdp.actions.clear")}</button>
+                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={clearCaptureView}>{t("trdp.actions.clear")}</button>
                 </div>
               </div>
               <div className={styles.captureStatus}>
                 {captureRunning ? t("trdp.overview.running") : captureSource ? t("trdp.overview.stopped") : t("trdp.overview.notStarted")}
                 {captureSource ? <> · {t("trdp.overview.source")} {t(`trdp.overview.${captureSource}`)}</> : null}
-                {" · "}{t("trdp.overview.bufferedFrames")} {captureFrames.length}
+                {" · "}{t("trdp.overview.bufferedFrames")} {captureFrameCount}
+                {" · "}{t("trdp.table.packets")} {capturePacketCount}
                 {captureDroppedFrames > 0 ? <> · ⚠ {captureDroppedFrames} {t("trdp.overview.droppedFrames")} ({LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()})</> : null}
               </div>
 
