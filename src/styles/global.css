@@ -603,8 +603,8 @@ html[data-performance="quality"] .liquid-glass-button.liquid-theme-selected:not(
 }
 
 /* 与 Ambient 一致：布局拖动/隐藏暂停纯装饰按钮流光；系统 reduced-motion 则静态化。 */
-html[data-performance="quality"] .ui-resizing .liquid-primary-button:not(:disabled)::before,
-html[data-performance="quality"] .ui-resizing .liquid-glass-button.liquid-theme-selected:not(:disabled)::before,
+.ui-resizing .liquid-primary-button:not(:disabled)::before,
+.ui-resizing .liquid-glass-button.liquid-theme-selected:not(:disabled)::before,
 html[data-motion="paused"][data-performance="quality"] .liquid-primary-button:not(:disabled)::before,
 html[data-motion="paused"][data-performance="quality"] .liquid-glass-button.liquid-theme-selected:not(:disabled)::before {
   animation-play-state: paused;
