@@ -1010,11 +1010,9 @@ pub fn trdp_command(
             let dataset_id = command
                 .get("dataset_id")
                 .and_then(Value::as_u64)
-                .ok_or("dataset_decode requires dataset_id")
-                .and_then(|value| {
-                    u32::try_from(value)
-                        .map_err(|_| "dataset_decode dataset_id exceeds u32".to_string())
-                })?;
+                .ok_or("dataset_decode requires dataset_id")?;
+            let dataset_id = u32::try_from(dataset_id)
+                .map_err(|_| "dataset_decode dataset_id exceeds u32".to_string())?;
             let payload_hex = command
                 .get("payload_hex")
                 .and_then(Value::as_str)
@@ -1029,11 +1027,9 @@ pub fn trdp_command(
             let dataset_id = command
                 .get("dataset_id")
                 .and_then(Value::as_u64)
-                .ok_or("dataset_encode requires dataset_id")
-                .and_then(|value| {
-                    u32::try_from(value)
-                        .map_err(|_| "dataset_encode dataset_id exceeds u32".to_string())
-                })?;
+                .ok_or("dataset_encode requires dataset_id")?;
+            let dataset_id = u32::try_from(dataset_id)
+                .map_err(|_| "dataset_encode dataset_id exceeds u32".to_string())?;
             let values = command
                 .get("values")
                 .cloned()
