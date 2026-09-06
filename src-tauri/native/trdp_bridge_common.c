@@ -15,6 +15,20 @@
 static bridge_mutex_t g_output_mutex;
 static int g_common_ready;
 
+#ifdef _WIN32
+#define BRIDGE_THREAD_LOCAL __declspec(thread)
+#else
+#define BRIDGE_THREAD_LOCAL _Thread_local
+#endif
+
+/*
+ * Request correlation is thread-local by design. stdin commands run on the
+ * bridge control thread while queued TCNOpen commands run on the Node runtime
+ * thread. Asynchronous protocol callbacks therefore never inherit an unrelated
+ * request id from another thread.
+ */
+static BRIDGE_THREAD_LOCAL char g_request_id[64];
+
 void bridge_mutex_init(bridge_mutex_t *mutex) {
 #ifdef _WIN32
     InitializeCriticalSection(mutex);
@@ -109,6 +123,25 @@ void bridge_output_unlock(void) {
     bridge_mutex_unlock(&g_output_mutex);
 }
 
+void bridge_request_begin(const char *line) {
+    g_request_id[0] = '\0';
+    if (line != NULL) {
+        (void)bridge_json_string(line, "request_id", g_request_id, sizeof(g_request_id), "");
+    }
+}
+
+void bridge_request_end(void) {
+    g_request_id[0] = '\0';
+}
+
+static void bridge_emit_request_id(FILE *file) {
+    if (g_request_id[0] != '\0') {
+        fputs(",\"request_id\":\"", file);
+        bridge_json_escape(file, g_request_id);
+        fputc('"', file);
+    }
+}
+
 void bridge_json_escape(FILE *file, const char *text) {
     const unsigned char *cursor = (const unsigned char *)(text != NULL ? text : "");
     while (*cursor != 0u) {
@@ -149,6 +182,7 @@ void bridge_emit_ack(const char *command, const char *id) {
     fputs("{\"event\":\"ack\",\"command\":\"", stdout);
     bridge_json_escape(stdout, command);
     fputs("\"", stdout);
+    bridge_emit_request_id(stdout);
     if (id != NULL && *id != '\0') {
         fputs(",\"id\":\"", stdout);
         bridge_json_escape(stdout, id);
@@ -163,7 +197,9 @@ void bridge_emit_error(const char *message) {
     bridge_output_lock();
     fputs("{\"event\":\"error\",\"error\":\"", stdout);
     bridge_json_escape(stdout, message != NULL ? message : "unknown error");
-    fputs("\"}\n", stdout);
+    fputc('"', stdout);
+    bridge_emit_request_id(stdout);
+    fputs("}\n", stdout);
     fflush(stdout);
     bridge_output_unlock();
 }
@@ -181,25 +217,69 @@ void bridge_emit_trdp_error(const char *operation, TRDP_ERR_T error) {
 }
 
 static const char *find_key(const char *line, const char *key) {
-    char needle[96];
-    const char *cursor;
-    (void)snprintf(needle, sizeof(needle), "\"%s\"", key);
-    cursor = strstr(line, needle);
-    if (cursor == NULL) {
+    const char *cursor = line;
+    size_t key_length;
+    if (line == NULL || key == NULL) {
         return NULL;
     }
-    cursor += strlen(needle);
-    while (*cursor != '\0' && isspace((unsigned char)*cursor)) {
+    key_length = strlen(key);
+
+    /*
+     * Scan JSON string tokens structurally instead of using strstr(). This
+     * deliberately supports the small JSON envelope emitted by Rust without
+     * mistaking an escaped key-looking substring inside a user string value
+     * for an object member name. Nested objects are allowed: the first real
+     * member whose unescaped ASCII key matches is returned.
+     */
+    while (*cursor != '\0') {
+        const char *start;
+        const char *end;
+        const char *after;
+        int escaped = 0;
+        if (*cursor != '"') {
+            ++cursor;
+            continue;
+        }
+        start = ++cursor;
+        while (*cursor != '\0') {
+            if (escaped) {
+                escaped = 0;
+                ++cursor;
+                continue;
+            }
+            if (*cursor == '\\') {
+                escaped = 1;
+                ++cursor;
+                continue;
+            }
+            if (*cursor == '"') {
+                break;
+            }
+            ++cursor;
+        }
+        if (*cursor != '"') {
+            return NULL;
+        }
+        end = cursor;
+        after = cursor + 1;
+        while (*after != '\0' && isspace((unsigned char)*after)) {
+            ++after;
+        }
+        if (
+            *after == ':'
+            && (size_t)(end - start) == key_length
+            && memchr(start, '\\', key_length) == NULL
+            && memcmp(start, key, key_length) == 0
+        ) {
+            ++after;
+            while (*after != '\0' && isspace((unsigned char)*after)) {
+                ++after;
+            }
+            return after;
+        }
         ++cursor;
     }
-    if (*cursor != ':') {
-        return NULL;
-    }
-    ++cursor;
-    while (*cursor != '\0' && isspace((unsigned char)*cursor)) {
-        ++cursor;
-    }
-    return cursor;
+    return NULL;
 }
 
 int bridge_json_string(

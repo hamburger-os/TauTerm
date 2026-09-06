@@ -3,8 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ConnectFormProps } from "../../core/plugin-registry";
 import Icon from "../../components/common/Icon";
 import styles from "./TrdpConnectForm.module.css";
-
-const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
+import { STANDARD_CAPTURE_FILTER } from "./model";
 
 function str(params: Record<string, unknown>, key: string, fallback = "") {
   const value = params[key];

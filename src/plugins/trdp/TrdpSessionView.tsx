@@ -6,158 +6,39 @@ import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
 import Icon from "../../components/common/Icon";
 import styles from "./TrdpSessionView.module.css";
+import { TrdpAnalysisTables, TrdpPacketInspector } from "./TrdpPanels";
 
-type Page = "overview" | "pd" | "md" | "analysis";
-type LinkChoice = "a" | "b" | "both";
-type CaptureInterface = { name: string; description: string };
-type ObjectKind = "pd_publisher" | "pd_subscriber" | "pd_request" | "md_request" | "md_listener" | "md_notify";
-
-type TrdpEvent = {
-  session_id?: string;
-  event?: string;
-  command?: string;
-  kind?: string;
-  id?: string;
-  link?: string;
-  com_id?: number;
-  src_ip?: string;
-  dest_ip?: string;
-  src_port?: number;
-  dest_port?: number;
-  transport?: string;
-  msg_type?: string;
-  seq_count?: number;
-  protocol_version?: number;
-  etb_topo_count?: number;
-  op_trn_topo_count?: number;
-  data_len?: number;
-  payload_hex?: string;
-  raw_frame_hex?: string;
-  link_type?: number;
-  crc_valid?: boolean;
-  protocol_valid?: boolean;
-  timestamp_us?: number;
-  latency_us?: number;
-  result_code?: number;
-  reply_status?: number;
-  user_status?: number;
-  num_replies?: number;
-  num_expected_replies?: number;
-  num_reply_queries?: number;
-  num_confirm_sent?: number;
-  num_confirm_timeout?: number;
-  reply_timeout_us?: number;
-  about_to_die?: boolean;
-  src_uri?: string;
-  dest_uri?: string;
-  md_session_id?: string;
-  error?: string;
-};
-
-type TrdpObject = {
-  id: string;
-  kind: ObjectKind;
-  name: string;
-  comId: number;
-  link: LinkChoice;
-  state: "stopped" | "running";
-  destination: string;
-  source: string;
-  cycleUs: number;
-  timeoutMode: "auto" | "custom" | "disabled";
-  timeoutUs: number;
-  timeoutBehavior: "keep" | "zero";
-  payloadHex: string;
-  transport: "udp" | "tcp";
-  etbTopoCount: number;
-  opTrnTopoCount: number;
-  redId: number;
-  redState: "leader" | "follower";
-  numReplies: number;
-  replyTimeoutUs: number;
-  responseMode: "reply" | "query";
-  confirmTimeoutUs: number;
-  replyComId: number;
-  replyIp: string;
-  sourceUri: string;
-  destUri: string;
-};
-
-type XmlElement = {
-  name: string;
-  data_type: string;
-  type_id: number;
-  array_size: number;
-  dynamic: boolean;
-  unit?: string;
-  scale?: number;
-  offset?: number;
-};
-type XmlDataset = { id: number; name: string; elements: XmlElement[] };
-type XmlTelegram = {
-  name: string;
-  traffic_kind: "pd" | "md" | "unknown" | "ambiguous";
-  com_id: number;
-  dataset_id: number;
-  cycle_us?: number;
-  timeout_us?: number;
-  timeout_behavior?: "zero" | "keep";
-  sources: string[];
-  destinations: string[];
-  sdt_detected: boolean;
-};
-type XmlImport = {
-  path: string;
-  datasets: XmlDataset[];
-  telegrams: XmlTelegram[];
-  pd_port: number;
-  md_udp_port: number;
-  md_tcp_port: number;
-  sdt_detected: boolean;
-  warnings: string[];
-};
-type DecodedField = { type: string; type_id?: number; unit?: string; raw?: unknown; value?: unknown; error?: string };
-type DecodedDataset = {
-  dataset_id: number;
-  dataset_name: string;
-  consumed_bytes: number;
-  payload_bytes: number;
-  fields: Record<string, DecodedField>;
-};
-type Workspace = {
-  format: string;
-  name?: string;
-  xml?: string;
-  objects?: Array<Record<string, unknown>>;
-};
-type EncodedDataset = {
-  dataset_id: number;
-  payload_bytes: number;
-  payload_hex: string;
-};
-type StructuredEditor = {
-  objectId: string;
-  datasetId: number;
-  drafts: Record<string, string>;
-};
-
-type FlowRow = {
-  key: string;
-  msg: string;
-  comId: number;
-  src: string;
-  dst: string;
-  count: number;
-  lastSeq?: number;
-  size?: number;
-  link: string;
-  missed: number;
-  errors: number;
-  minIntervalUs?: number;
-  avgIntervalUs?: number;
-  maxIntervalUs?: number;
-  jitterUs?: number;
-};
+import {
+  LIVE_CAPTURE_FRAME_LIMIT,
+  STANDARD_CAPTURE_FILTER,
+  captureFilterForPorts,
+  createObject,
+  defaultDatasetValues,
+  draftsFromDecoded,
+  draftsFromValues,
+  isIpv4Text,
+  isOneShotKind,
+  missedBetween,
+  paramNumber,
+  workspaceDraftFromWorkspace,
+  workspaceFromDraft,
+  type CaptureInterface,
+  type CaptureResult,
+  type DecodedDataset,
+  type EncodedDataset,
+  type FlowRow,
+  type LinkChoice,
+  type ObjectKind,
+  type Page,
+  type RedundancyState,
+  type RuntimeState,
+  type StructuredEditor,
+  type TrdpEvent,
+  type TrdpObject,
+  type Workspace,
+  type WorkspaceDraft,
+  type XmlImport,
+} from "./model";
 
 const nav: Array<[Page, string]> = [
   ["overview", "trdp.nav.overview"],
@@ -166,196 +47,67 @@ const nav: Array<[Page, string]> = [
   ["analysis", "trdp.nav.analysis"],
 ];
 
-const U32 = 0x1_0000_0000;
-const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
-const LIVE_CAPTURE_FRAME_LIMIT = 50_000;
-
-function captureFilterForPorts(pdPort: number, mdUdpPort: number, mdTcpPort: number) {
-  return `udp port ${pdPort} or udp port ${mdUdpPort} or tcp port ${mdTcpPort}`;
-}
-
-function paramNumber(params: Record<string, unknown> | undefined, key: string, fallback: number) {
-  const value = params?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function isIpv4Text(value: string) {
-  const parts = value.split(".");
-  return parts.length === 4 && parts.every(part => {
-    if (!/^\d{1,3}$/.test(part)) return false;
-    const octet = Number(part);
-    return octet >= 0 && octet <= 255;
-  });
-}
-
-function isKind(value: unknown): value is ObjectKind {
-  return typeof value === "string" && ["pd_publisher", "pd_subscriber", "pd_request", "md_request", "md_listener", "md_notify"].includes(value);
-}
-
-function isOneShotKind(kind: ObjectKind) {
-  return kind === "pd_request" || kind === "md_request" || kind === "md_notify";
-}
-
-function createObject(kind: ObjectKind, index: number): TrdpObject {
-  const subscriber = kind === "pd_subscriber" || kind === "pd_request";
-  return {
-    id: crypto.randomUUID(),
-    kind,
-    name: `${kind} ${index}`,
-    comId: 1000,
-    link: "a",
-    state: "stopped",
-    destination: kind.startsWith("pd_") ? "239.255.1.1" : "10.0.0.2",
-    source: "0.0.0.0",
-    cycleUs: 100000,
-    timeoutMode: "auto",
-    timeoutUs: subscriber ? 300000 : 100000,
-    timeoutBehavior: "keep",
-    payloadHex: kind === "pd_subscriber" ? "" : "00000000",
-    transport: "udp",
-    etbTopoCount: 0,
-    opTrnTopoCount: 0,
-    redId: 0,
-    redState: "leader",
-    numReplies: 1,
-    replyTimeoutUs: 5000000,
-    responseMode: "reply",
-    confirmTimeoutUs: 2000000,
-    replyComId: 0,
-    replyIp: "0.0.0.0",
-    sourceUri: "",
-    destUri: "",
-  };
-}
-
-function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObject | null {
-  if (!isKind(raw.kind)) return null;
-  const base = createObject(raw.kind, index + 1);
-  const link = raw.link === "b" || raw.link === "both" ? raw.link : "a";
-  const parsedTimeoutUs = Number(raw.timeout_us);
-  const hasCustomTimeout = raw.timeout_us !== undefined
-    && Number.isFinite(parsedTimeoutUs)
-    && parsedTimeoutUs > 0;
-  const timeoutMode = raw.timeout_mode === "custom"
-    ? "custom"
-    : raw.timeout_mode === "disabled"
-      ? "disabled"
-      : raw.timeout_mode === "auto"
-        ? "auto"
-        : hasCustomTimeout
-          ? "custom"
-          : "auto";
-  return {
-    ...base,
-    id: typeof raw.id === "string" && raw.id ? raw.id : crypto.randomUUID(),
-    name: typeof raw.name === "string" ? raw.name : base.name,
-    comId: Number(raw.com_id ?? base.comId),
-    link,
-    state: "stopped",
-    destination: typeof raw.destination === "string" ? raw.destination : base.destination,
-    source: typeof raw.source === "string" ? raw.source : base.source,
-    cycleUs: Number(raw.cycle_us ?? base.cycleUs),
-    timeoutMode,
-    timeoutUs: hasCustomTimeout ? parsedTimeoutUs : base.timeoutUs,
-    timeoutBehavior: raw.timeout_behavior === "zero" ? "zero" : "keep",
-    payloadHex: typeof raw.payload_hex === "string" ? raw.payload_hex.toUpperCase() : base.payloadHex,
-    transport: raw.transport === "tcp" ? "tcp" : "udp",
-    etbTopoCount: Number(raw.etb_topo_count ?? 0),
-    opTrnTopoCount: Number(raw.op_trn_topo_count ?? 0),
-    redId: Number(raw.red_id ?? 0),
-    redState: raw.red_state === "follower" ? "follower" : "leader",
-    numReplies: Number(raw.num_replies ?? 1),
-    replyTimeoutUs: Number(raw.reply_timeout_us ?? 5000000),
-    responseMode: raw.response_mode === "query" ? "query" : "reply",
-    confirmTimeoutUs: Number(raw.confirm_timeout_us ?? 2000000),
-    replyComId: Number(raw.reply_com_id ?? 0),
-    replyIp: typeof raw.reply_ip === "string" ? raw.reply_ip : "0.0.0.0",
-    sourceUri: typeof raw.source_uri === "string" ? raw.source_uri : "",
-    destUri: typeof raw.dest_uri === "string" ? raw.dest_uri : "",
-  };
-}
-
-function displayValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value === null || value === undefined) return "—";
-  try { return JSON.stringify(value); } catch { return String(value); }
-}
-
-function missedBetween(previous: number, current: number) {
-  const distance = (current - previous + U32) % U32;
-  return distance > 1 && distance < 0x8000_0000 ? distance - 1 : 0;
-}
-
-function defaultDatasetValues(imported: XmlImport, datasetId: number, visiting = new Set<number>()): Record<string, unknown> {
-  if (visiting.has(datasetId)) return {};
-  const dataset = imported.datasets.find(item => item.id === datasetId);
-  if (!dataset) return {};
-  const nextVisiting = new Set(visiting);
-  nextVisiting.add(datasetId);
-  const result: Record<string, unknown> = {};
-  for (const element of dataset.elements) {
-    const singleValue = () => {
-      if (element.type_id >= 1000) return defaultDatasetValues(imported, element.type_id, nextVisiting);
-      if (element.type_id === 15) return { seconds: 0, ticks: 0 };
-      if (element.type_id === 16) return { seconds: 0, microseconds: 0 };
-      return 0;
-    };
-    if (element.dynamic) {
-      result[element.name] = [];
-    } else if (element.array_size > 1) {
-      result[element.name] = Array.from({ length: element.array_size }, singleValue);
-    } else {
-      result[element.name] = singleValue();
-    }
-  }
-  return result;
-}
-
-function draftsFromValues(values: Record<string, unknown>): Record<string, string> {
-  return Object.fromEntries(Object.entries(values).map(([name, value]) => [name, JSON.stringify(value)]));
-}
-
-function draftsFromDecoded(decoded: DecodedDataset): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(decoded.fields).map(([name, field]) => [name, JSON.stringify(field.value ?? field.raw ?? null)]),
-  );
-}
-
 export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation();
   const { state } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = tab?.params as Record<string, unknown> | undefined;
   const mode = (params?.mode as string | undefined) ?? "node";
-  const storageKey = `tauterm:trdp:${sessionId}:objects`;
+  const configuredXmlPath = (
+    typeof params?.xml_path === "string" && params.xml_path.trim()
+      ? params.xml_path
+      : null
+  );
+  const configuredWorkspace = (
+    params?.trdp_workspace
+    && typeof params.trdp_workspace === "object"
+    && !Array.isArray(params.trdp_workspace)
+  )
+    ? params.trdp_workspace as Workspace
+    : undefined;
   const [page, setPage] = useState<Page>(mode === "monitor" ? "analysis" : "overview");
   const [events, setEvents] = useState<TrdpEvent[]>([]);
-  const [captureFrames, setCaptureFrames] = useState<TrdpEvent[]>([]);
+  const [captureId, setCaptureId] = useState<string | null>(null);
+  const captureIdRef = useRef<string | null>(null);
   const [captureSource, setCaptureSource] = useState<"offline" | "live" | null>(null);
   const [captureRunning, setCaptureRunning] = useState(false);
+  const captureRunningRef = useRef(false);
+  const [captureTransitioning, setCaptureTransitioning] = useState(false);
+  const captureTransitioningRef = useRef(false);
+  const viewMountedRef = useRef(true);
+
+  function updateCaptureRunning(value: boolean) {
+    captureRunningRef.current = value;
+    setCaptureRunning(value);
+  }
+
+  function updateCaptureTransitioning(value: boolean) {
+    captureTransitioningRef.current = value;
+    setCaptureTransitioning(value);
+  }
+  const [captureFrameCount, setCaptureFrameCount] = useState(0);
+  const [capturePacketCount, setCapturePacketCount] = useState(0);
   const [captureDroppedFrames, setCaptureDroppedFrames] = useState(0);
-  const captureStartPending = useRef<{
-    source: "offline" | "live" | null;
-    frames: TrdpEvent[];
-    droppedFrames: number;
-  } | null>(null);
-  const [objects, setObjects] = useState<TrdpObject[]>(() => {
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (!saved) return [];
-      const parsed = JSON.parse(saved) as TrdpObject[];
-      return Array.isArray(parsed)
-        ? parsed.map(item => ({
-            ...item,
-            state: "stopped" as const,
-            timeoutMode: item.timeoutMode
-              ?? (item.kind === "pd_subscriber" || item.kind === "pd_request" ? "custom" : "auto"),
-          }))
-        : [];
-    } catch { return []; }
-  });
+  const packetBatchRef = useRef<TrdpEvent[]>([]);
+  const batchTimerRef = useRef<number | null>(null);
+  const [workspaceDraft, setWorkspaceDraft] = useState<WorkspaceDraft>(
+    () => workspaceDraftFromWorkspace(configuredWorkspace),
+  );
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+  const objects = workspaceDraft.objects;
+  const redundancyGroups = workspaceDraft.redundancyGroups;
+
+  function setObjects(update: TrdpObject[] | ((previous: TrdpObject[]) => TrdpObject[])) {
+    setWorkspaceDraft(previous => ({
+      ...previous,
+      objects: typeof update === "function" ? update(previous.objects) : update,
+    }));
+  }
   const [xmlImport, setXmlImport] = useState<XmlImport | null>(null);
-  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
+  const [workspaceName, setWorkspaceName] = useState<string | null>(configuredWorkspace?.name ?? null);
+  const [workspaceXmlPath, setWorkspaceXmlPath] = useState<string | null>(
+    configuredWorkspace?.xml ?? null,
+  );
   const [decoded, setDecoded] = useState<DecodedDataset | null>(null);
   const [selectedPacket, setSelectedPacket] = useState<TrdpEvent | null>(null);
   const mdRequestStartedUs = useRef(new Map<string, number>());
@@ -388,11 +140,136 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [captureFilter, setCaptureFilter] = useState(initialCaptureFilter);
 
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify(objects)); } catch { /* best effort */ }
-  }, [objects, storageKey]);
+    let cancelled = false;
+    setWorkspaceLoaded(false);
+    void invoke<Workspace | null>("trdp_command", {
+      sessionId,
+      command: { command: "workspace_get" },
+    }).then(workspace => {
+      if (cancelled) return;
+      if (workspace?.format === "tauterm-trdp-workspace/v2") {
+        setWorkspaceDraft(workspaceDraftFromWorkspace(workspace));
+        setWorkspaceName(workspace.name ?? null);
+        if (mode === "node") {
+          void invoke<RuntimeState>("trdp_command", {
+            sessionId,
+            command: { command: "runtime_state" },
+          }).then(runtime => {
+            if (cancelled) return;
+            setWorkspaceDraft(previous => ({
+              ...previous,
+              objects: previous.objects.map(object => ({
+                ...object,
+                state: runtime.objects[object.id] ?? "stopped",
+              })),
+            }));
+          }).catch(() => {
+            // A disconnected session has no sidechannel; persisted objects stay stopped.
+          });
+        }
+        setWorkspaceXmlPath(workspace.xml ?? null);
+        setXmlImport(null);
+        setDecoded(null);
+        if (workspace.xml) {
+          void invoke<XmlImport>("trdp_command", {
+            sessionId,
+            command: { command: "xml_import", path: workspace.xml },
+          }).then(imported => {
+            if (!cancelled) {
+              setXmlImport(imported);
+              setWorkspaceXmlPath(imported.path);
+            }
+          }).catch(cause => {
+            if (!cancelled) console.warn("TRDP Workspace XML 恢复失败:", cause);
+          });
+        }
+      } else {
+        setWorkspaceDraft(workspaceDraftFromWorkspace(null));
+        setWorkspaceName(null);
+        setWorkspaceXmlPath(configuredXmlPath);
+        setXmlImport(null);
+        setDecoded(null);
+        if (configuredXmlPath) {
+          void invoke<XmlImport>("trdp_command", {
+            sessionId,
+            command: { command: "xml_import", path: configuredXmlPath },
+          }).then(imported => {
+            if (!cancelled) {
+              setXmlImport(imported);
+              setWorkspaceXmlPath(imported.path);
+            }
+          }).catch(cause => {
+            if (!cancelled) console.warn("TRDP 配置 XML 自动导入失败:", cause);
+          });
+        }
+      }
+      setWorkspaceLoaded(true);
+    }).catch(cause => {
+      if (!cancelled) {
+        console.warn("TRDP Workspace 恢复失败:", cause);
+        setWorkspaceLoaded(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [sessionId, mode, configuredXmlPath]);
+
+  useEffect(() => {
+    if (!workspaceLoaded) return;
+    const timer = window.setTimeout(() => {
+      const workspace = workspaceFromDraft(
+        workspaceDraft,
+        workspaceName ?? undefined,
+        xmlImport?.path ?? workspaceXmlPath ?? undefined,
+      );
+      void invoke("trdp_command", {
+        sessionId,
+        command: { command: "workspace_store", workspace },
+      }).catch(cause => {
+        console.warn("TRDP Workspace 持久化失败:", cause);
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [
+    sessionId,
+    workspaceLoaded,
+    workspaceDraft,
+    workspaceName,
+    workspaceXmlPath,
+    xmlImport?.path,
+  ]);
+
+  useEffect(() => {
+    viewMountedRef.current = true;
+    return () => {
+      viewMountedRef.current = false;
+      if (captureRunningRef.current || captureTransitioningRef.current) {
+        void invoke("trdp_command", {
+          sessionId,
+          command: { command: "capture_stop" },
+        });
+      }
+      const current = captureIdRef.current;
+      if (current) void invoke("trdp_release_capture", { captureId: current });
+    };
+  }, [sessionId]);
+
 
   useEffect(() => {
     let disposed = false;
+
+    const flushBatches = () => {
+      batchTimerRef.current = null;
+      const packets = packetBatchRef.current.splice(0);
+      if (packets.length > 0) {
+        setEvents(prev => [...prev, ...packets].slice(-5000));
+      }
+    };
+
+    const scheduleFlush = () => {
+      if (batchTimerRef.current !== null) return;
+      batchTimerRef.current = window.setTimeout(flushBatches, 40);
+    };
+
     const unlisten = listen<TrdpEvent>("trdp-event", ({ payload }) => {
       if (disposed || payload.session_id !== sessionId) return;
       if (payload.event === "md_session" && payload.md_session_id && payload.timestamp_us !== undefined) {
@@ -403,12 +280,18 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           if (typeof oldest === "string") starts.delete(oldest);
         }
       }
-      if (payload.event === "capture_frame") {
-        setCaptureFrames(prev => {
-          if (prev.length < LIVE_CAPTURE_FRAME_LIMIT) return [...prev, payload];
-          setCaptureDroppedFrames(count => count + 1);
-          return [...prev.slice(1), payload];
-        });
+      if (payload.event === "capture_progress") {
+        setCaptureFrameCount(payload.frame_count ?? 0);
+        setCapturePacketCount(payload.packet_count ?? 0);
+        setCaptureDroppedFrames(payload.dropped_frames ?? 0);
+      }
+      if (payload.event === "object_state" && payload.id && payload.state) {
+        setWorkspaceDraft(previous => ({
+          ...previous,
+          objects: previous.objects.map(object => (
+            object.id === payload.id ? { ...object, state: payload.state! } : object
+          )),
+        }));
       }
       if (payload.event === "packet") {
         let packet = payload;
@@ -422,45 +305,24 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             packet = { ...payload, latency_us: payload.timestamp_us - started };
           }
         }
-        setEvents(prev => [...prev, packet].slice(-5000));
+        packetBatchRef.current.push(packet);
+        scheduleFlush();
         if (payload.about_to_die && payload.md_session_id) {
           mdRequestStartedUs.current.delete(payload.md_session_id);
         }
       }
-      if (payload.event === "ack" && payload.command === "capture_start") {
-        captureStartPending.current = null;
-        setCaptureSource("live");
-        setCaptureRunning(true);
-      }
-      if (payload.event === "ack" && payload.command === "capture_stop") {
-        setCaptureRunning(false);
-      }
-      if (payload.event === "ack" && payload.id) {
-        setObjects(prev => prev.map(item => {
-          if (item.id !== payload.id) return item;
-          if (payload.command === "object_stop") return { ...item, state: "stopped" };
-          if (payload.command === "object_start") {
-            return { ...item, state: isOneShotKind(item.kind) ? "stopped" : "running" };
-          }
-          return item;
-        }));
-      }
-      if (payload.error) {
-        const pendingCapture = captureStartPending.current;
-        if (pendingCapture) {
-          captureStartPending.current = null;
-          setCaptureFrames(pendingCapture.frames);
-          setCaptureSource(pendingCapture.source);
-          setCaptureDroppedFrames(pendingCapture.droppedFrames);
-          // Native capture_start stops the previous capture before attempting
-          // the replacement. A failed restart therefore never restores a
-          // "running" state, even though the previous capture buffer is kept.
-          setCaptureRunning(false);
-        }
-        setError(payload.error);
-      }
+      if (payload.error) setError(payload.error);
     });
-    return () => { disposed = true; void unlisten.then(fn => fn()); };
+
+    return () => {
+      disposed = true;
+      if (batchTimerRef.current !== null) {
+        window.clearTimeout(batchTimerRef.current);
+        batchTimerRef.current = null;
+      }
+      packetBatchRef.current = [];
+      void unlisten.then(fn => fn());
+    };
   }, [sessionId]);
 
   const datasetByComId = useMemo(() => {
@@ -543,6 +405,29 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     }
   }
 
+  function adoptCapture(nextCaptureId: string | null) {
+    const previous = captureIdRef.current;
+    captureIdRef.current = nextCaptureId;
+    setCaptureId(nextCaptureId);
+    if (previous && previous !== nextCaptureId) {
+      void invoke("trdp_release_capture", { captureId: previous });
+    }
+  }
+
+  function clearCaptureView() {
+    if (captureTransitioning) return;
+    adoptCapture(null);
+    setCaptureSource(null);
+    updateCaptureRunning(false);
+    setCaptureFrameCount(0);
+    setCapturePacketCount(0);
+    setCaptureDroppedFrames(0);
+    setEvents([]);
+    setSelectedPacket(null);
+    setDecoded(null);
+  }
+
+
   function addObject(kind: ObjectKind) {
     const item = createObject(kind, objects.filter(candidate => candidate.kind === kind).length + 1);
     setObjects(prev => [...prev, item]);
@@ -556,52 +441,75 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   function patchObject(id: string, patch: Partial<TrdpObject>) {
-    setObjects(prev => prev.map(item => item.id === id ? { ...item, ...patch } : item));
-  }
-
-  async function startObject(obj: TrdpObject) {
-    if (obj.kind === "pd_request") {
-      // PD Request is a Send action in the UI. The native side may retain a
-      // subscriber handle for the reply window, so replace any previous handle
-      // before issuing the next request with the same object id.
-      await command("object_stop", { id: obj.id, kind: obj.kind });
-    }
-    await command("object_start", {
-      object: {
-        id: obj.id,
-        kind: obj.kind,
-        name: obj.name,
-        com_id: obj.comId,
-        link: obj.link,
-        destination: obj.destination,
-        source: obj.source,
-        cycle_us: obj.cycleUs,
-        timeout_us: obj.timeoutMode === "disabled" ? 0xffff_ffff : obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
-        timeout_behavior: obj.timeoutBehavior,
-        payload_hex: obj.payloadHex,
-        transport: obj.transport,
-        etb_topo_count: obj.etbTopoCount,
-        op_trn_topo_count: obj.opTrnTopoCount,
-        red_id: obj.redId,
-        red_state: obj.redState,
-        num_replies: obj.numReplies,
-        reply_timeout_us: obj.replyTimeoutUs,
-        response_mode: obj.responseMode,
-        confirm_timeout_us: obj.confirmTimeoutUs,
-        reply_com_id: obj.replyComId,
-        reply_ip: obj.replyIp,
-        source_uri: obj.sourceUri,
-        dest_uri: obj.destUri,
-      },
+    setWorkspaceDraft(previous => {
+      const redundancyGroups = { ...previous.redundancyGroups };
+      if (patch.redId !== undefined && patch.redId > 0) {
+        const key = String(patch.redId);
+        if (!redundancyGroups[key]) redundancyGroups[key] = "leader";
+      }
+      return {
+        ...previous,
+        objects: previous.objects.map(item => item.id === id ? { ...item, ...patch } : item),
+        redundancyGroups,
+      };
     });
   }
 
+  async function startObject(obj: TrdpObject) {
+    const oneShot = isOneShotKind(obj.kind);
+    patchObject(obj.id, { state: oneShot ? "sending" : "starting" });
+    try {
+      if (obj.kind === "pd_request") {
+        // A PD Request retains a native subscriber during its reply window.
+        // Explicitly replace that handle before a repeated Send.
+        await command("object_stop", { id: obj.id, kind: obj.kind });
+      }
+      await command("object_start", {
+        object: {
+          id: obj.id,
+          kind: obj.kind,
+          name: obj.name,
+          com_id: obj.comId,
+          link: obj.link,
+          destination: obj.destination,
+          source: obj.source,
+          cycle_us: obj.cycleUs,
+          timeout_us: obj.timeoutMode === "disabled" ? 0xffff_ffff : obj.timeoutMode === "custom" ? obj.timeoutUs : 0,
+          timeout_behavior: obj.timeoutBehavior,
+          payload_hex: obj.payloadHex,
+          transport: obj.transport,
+          etb_topo_count: obj.etbTopoCount,
+          op_trn_topo_count: obj.opTrnTopoCount,
+          red_id: obj.redId,
+          red_state: obj.redId > 0 ? (redundancyGroups[String(obj.redId)] ?? "leader") : "leader",
+          num_replies: obj.numReplies,
+          reply_timeout_us: obj.replyTimeoutUs,
+          response_mode: obj.responseMode,
+          confirm_timeout_us: obj.confirmTimeoutUs,
+          reply_com_id: obj.replyComId,
+          reply_ip: obj.replyIp,
+          source_uri: obj.sourceUri,
+          dest_uri: obj.destUri,
+        },
+      });
+      patchObject(obj.id, { state: oneShot ? "stopped" : "running" });
+    } catch {
+      patchObject(obj.id, { state: "error" });
+    }
+  }
+
   async function stopObject(obj: TrdpObject) {
-    await command("object_stop", { id: obj.id, kind: obj.kind });
+    patchObject(obj.id, { state: "stopping" });
+    try {
+      await command("object_stop", { id: obj.id, kind: obj.kind });
+      patchObject(obj.id, { state: "stopped" });
+    } catch {
+      patchObject(obj.id, { state: "error" });
+    }
   }
 
   async function removeObject(obj: TrdpObject) {
-    if (obj.state === "running") return;
+    if (obj.state !== "stopped" && obj.state !== "error") return;
     // PD Request is one-shot in the UI but TCNOpen retains a subscriber handle
     // for its reply window. Clean that native handle only while this Node
     // session is actually connected. Once disconnected, the side-channel and
@@ -613,31 +521,57 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     setObjects(prev => prev.filter(item => item.id !== obj.id));
   }
 
+  async function updateRedundancyGroup(redId: number, nextState: RedundancyState) {
+    if (redId <= 0) return;
+    const key = String(redId);
+    const previousState = redundancyGroups[key] ?? "leader";
+    setWorkspaceDraft(previous => ({
+      ...previous,
+      redundancyGroups: { ...previous.redundancyGroups, [key]: nextState },
+    }));
+    const hasRunningPublisher = objects.some(
+      item => item.kind === "pd_publisher" && item.redId === redId && item.state === "running",
+    );
+    if (tab?.state === "connected" && hasRunningPublisher) {
+      try {
+        await command("redundancy_set", { red_id: redId, red_state: nextState, link: "both" });
+      } catch {
+        setWorkspaceDraft(previous => ({
+          ...previous,
+          redundancyGroups: { ...previous.redundancyGroups, [key]: previousState },
+        }));
+      }
+    }
+  }
+
   async function updatePayload(obj: TrdpObject) {
     await command("object_update", { id: obj.id, payload_hex: obj.payloadHex });
   }
 
   async function openCapture() {
+    if (captureRunning || captureTransitioning) return;
     const path = await open({ multiple: false, filters: [{ name: "Packet Capture", extensions: ["pcap", "pcapng"] }] });
     if (typeof path !== "string") return;
     const pdPort = paramNumber(params, "pd_port", 17224);
     const mdPorts = [...new Set([paramNumber(params, "md_udp_port", 17225), paramNumber(params, "md_tcp_port", 17225)])];
-    const packets = await invoke<TrdpEvent[]>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
-    // The current capture is a separate data source from the rolling event log.
-    // Replacing it here prevents Save from accidentally mixing multiple files
-    // or stale live-capture traffic.
-    setCaptureFrames(packets);
+    const result = await invoke<CaptureResult>("trdp_open_capture", { path, pdPorts: [pdPort], mdPorts });
+    adoptCapture(result.capture_id);
     setCaptureSource("offline");
-    setCaptureRunning(false);
-    setCaptureDroppedFrames(0);
-    setEvents(packets.slice(-5000));
+    updateCaptureRunning(false);
+    setCaptureFrameCount(result.frame_count);
+    setCapturePacketCount(result.packet_count);
+    setCaptureDroppedFrames(result.dropped_frames);
+    setEvents(result.packets.slice(-5000));
+    setSelectedPacket(null);
+    setDecoded(null);
     setPage("analysis");
   }
 
   async function saveCapture() {
+    if (!captureId) return;
     const path = await save({ filters: [{ name: "PCAPNG", extensions: ["pcapng"] }] });
     if (!path) return;
-    await invoke("trdp_save_capture", { path, packets: captureFrames });
+    await invoke("trdp_save_capture", { path, captureId });
   }
 
   async function importXml() {
@@ -650,6 +584,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     }
     const imported = await command<XmlImport>("xml_import", { path });
     setXmlImport(imported);
+    setWorkspaceXmlPath(imported.path);
     setDecoded(null);
   }
 
@@ -657,9 +592,17 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const selected = await open({ multiple: false, filters: [{ name: "TauTerm TRDP Workspace", extensions: ["json"] }] });
     if (typeof selected !== "string") return;
     const workspace = await command<Workspace>("workspace_import", { path: selected });
-    const imported = (workspace.objects ?? []).map(workspaceObject).filter((item): item is TrdpObject => item !== null);
-    setObjects(imported.map(item => ({ ...item, state: "stopped" })));
+    setWorkspaceDraft(workspaceDraftFromWorkspace(workspace));
     setWorkspaceName(workspace.name ?? selected);
+    setXmlImport(null);
+    setDecoded(null);
+    const importedXmlPath = workspace.xml_path ?? workspace.xml ?? null;
+    setWorkspaceXmlPath(importedXmlPath);
+    if (importedXmlPath) {
+      const importedXml = await command<XmlImport>("xml_import", { path: importedXmlPath });
+      setXmlImport(importedXml);
+      setWorkspaceXmlPath(importedXml.path);
+    }
   }
 
   async function inspectPacket(event: TrdpEvent) {
@@ -814,6 +757,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   async function startLiveCapture() {
+    if (captureTransitioning || captureRunning) return;
     if (!captureInterfaceA) {
       setError(t("trdp.captureInterfaces.choose"));
       return;
@@ -827,29 +771,60 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           paramNumber(params, "md_tcp_port", 17225),
         )
       : captureFilter;
-    const previousCapture = {
+    const previous = {
+      captureId,
       source: captureSource,
-      frames: captureFrames,
+      running: captureRunning,
+      frameCount: captureFrameCount,
+      packetCount: capturePacketCount,
       droppedFrames: captureDroppedFrames,
+      events,
     };
-    captureStartPending.current = previousCapture;
-    setCaptureFrames([]);
+    updateCaptureTransitioning(true);
+    updateCaptureRunning(false);
+    setCaptureFrameCount(0);
+    setCapturePacketCount(0);
     setCaptureDroppedFrames(0);
-    setCaptureRunning(false);
+    setEvents([]);
+    setSelectedPacket(null);
+    setDecoded(null);
     try {
-      await command("capture_start", {
+      const result = await command<{ capture_id: string }>("capture_start", {
         interface: interfaceA,
         interface_b: interfaceB,
         filter,
       });
-    } catch {
-      if (captureStartPending.current === previousCapture) {
-        captureStartPending.current = null;
-        setCaptureFrames(previousCapture.frames);
-        setCaptureSource(previousCapture.source);
-        setCaptureDroppedFrames(previousCapture.droppedFrames);
-        setCaptureRunning(false);
+      if (!viewMountedRef.current) {
+        void invoke("trdp_release_capture", { captureId: result.capture_id });
+        return;
       }
+      adoptCapture(result.capture_id);
+      setCaptureSource("live");
+      updateCaptureRunning(true);
+    } catch {
+      captureIdRef.current = previous.captureId;
+      setCaptureId(previous.captureId);
+      setCaptureSource(previous.source);
+      updateCaptureRunning(previous.running);
+      setCaptureFrameCount(previous.frameCount);
+      setCapturePacketCount(previous.packetCount);
+      setCaptureDroppedFrames(previous.droppedFrames);
+      setEvents(previous.events);
+    } finally {
+      updateCaptureTransitioning(false);
+    }
+  }
+
+  async function stopLiveCapture() {
+    if (captureTransitioning || !captureRunning) return;
+    updateCaptureTransitioning(true);
+    try {
+      await command("capture_stop");
+      updateCaptureRunning(false);
+    } catch {
+      // command() owns the error banner; keep the current state unchanged.
+    } finally {
+      updateCaptureTransitioning(false);
     }
   }
 
@@ -893,6 +868,10 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     return t(`trdp.objectKind.${kind}`);
   }
 
+  function objectStateLabel(state: TrdpObject["state"]) {
+    return t(`trdp.status.${state}`);
+  }
+
   function objectSummaryTable(items: TrdpObject[], selectedId: string | null, onSelect: (id: string) => void) {
     return (
       <div className={styles.tableWrap}>
@@ -914,7 +893,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 <td>{obj.comId}</td>
                 <td>{obj.link === "both" ? "A+B" : obj.link.toUpperCase()}</td>
                 <td>{obj.destination}</td>
-                <td>{obj.state === "running" ? t("trdp.overview.running") : t("trdp.overview.stopped")}</td>
+                <td>{objectStateLabel(obj.state)}</td>
               </tr>
             ))}
           </tbody>
@@ -926,7 +905,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   function renderObjectDetail(obj: TrdpObject | undefined) {
     if (!obj) return <div className={`${styles.infoCard} liquid-glass-card`}>{t("trdp.empty.selectObject")}</div>;
     const oneShot = isOneShotKind(obj.kind);
+    const busy = obj.state === "starting" || obj.state === "stopping" || obj.state === "sending";
     const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
+    const redundancyState = obj.redId > 0 ? (redundancyGroups[String(obj.redId)] ?? "leader") : "leader";
     const inputClass = `${styles.detailInput} liquid-glass-input`;
     const selectClass = `${styles.detailInput} liquid-glass-input liquid-glass-select`;
     return (
@@ -938,9 +919,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           </div>
           <div className={styles.rowActions}>
             {oneShot ? (
-              <button className={`${styles.compactButton} liquid-primary-button`} onClick={() => void startObject(obj)}>{t("trdp.actions.send")}</button>
+              <button className={`${styles.compactButton} liquid-primary-button`} onClick={() => void startObject(obj)} disabled={busy}>{t("trdp.actions.send")}</button>
             ) : (
-              <button className={`${styles.compactButton} ${obj.state === "running" ? "liquid-glass-button" : "liquid-primary-button"}`} onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))}>
+              <button className={`${styles.compactButton} ${obj.state === "running" ? "liquid-glass-button" : "liquid-primary-button"}`} onClick={() => void (obj.state === "running" ? stopObject(obj) : startObject(obj))} disabled={busy}>
                 {obj.state === "running" ? t("trdp.actions.stop") : t("trdp.actions.start")}
               </button>
             )}
@@ -950,7 +931,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             {obj.kind !== "pd_subscriber" && datasetByComId.has(obj.comId) && (
               <button className={`${styles.compactButton} liquid-glass-button`} onClick={() => void openStructuredEditor(obj)}>{t("trdp.actions.dataset")}</button>
             )}
-            <button className={`${styles.compactButton} liquid-glass-button`} onClick={() => void removeObject(obj)} disabled={obj.state === "running"}>{t("trdp.actions.remove")}</button>
+            <button className={`${styles.compactButton} liquid-glass-button`} onClick={() => void removeObject(obj)} disabled={obj.state !== "stopped" && obj.state !== "error"}>{t("trdp.actions.remove")}</button>
           </div>
         </div>
 
@@ -978,7 +959,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             <label><span>OpTrn</span><input className={inputClass} type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label>
             {subscriber && <label><span>{t("trdp.advanced.timeoutBehavior")}</span><select className={selectClass} value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">{t("trdp.advanced.keepLast")}</option><option value="zero">{t("trdp.advanced.setZero")}</option></select></label>}
             {obj.kind === "pd_request" && <><label><span>{t("trdp.advanced.replyComId")}</span><input className={inputClass} type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><label><span>{t("trdp.advanced.replyIp")}</span><input className={inputClass} value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label></>}
-            {obj.kind === "pd_publisher" && <><label><span>{t("trdp.advanced.redId")}</span><input className={inputClass} type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><label><span>{t("trdp.advanced.redState")}</span><select className={selectClass} value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">{t("trdp.advanced.leader")}</option><option value="follower">{t("trdp.advanced.follower")}</option></select></label></>}
+            {obj.kind === "pd_publisher" && <><label><span>{t("trdp.advanced.redId")}</span><input className={inputClass} type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><label><span>{t("trdp.advanced.redState")}</span><select className={selectClass} value={redundancyState} disabled={obj.redId <= 0} onChange={event => void updateRedundancyGroup(obj.redId, event.target.value as RedundancyState)}><option value="leader">{t("trdp.advanced.leader")}</option><option value="follower">{t("trdp.advanced.follower")}</option></select></label></>}
             {obj.kind.startsWith("md_") && <><label><span>{t("trdp.advanced.sourceUri")}</span><input className={inputClass} value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><label><span>{t("trdp.advanced.destinationUri")}</span><input className={inputClass} value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label></>}
             {obj.kind === "md_request" && <><label><span>{t("trdp.advanced.replies")}</span><input className={inputClass} type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><label><span>{t("trdp.advanced.replyTimeout")}</span><input className={inputClass} type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
             {obj.kind === "md_listener" && <><label><span>{t("trdp.advanced.response")}</span><select className={selectClass} value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <label><span>{t("trdp.advanced.confirmTimeout")}</span><input className={inputClass} type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label>}</>}
@@ -1133,9 +1114,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
               <h2 className={styles.sectionTitle}>{t("trdp.nav.pd")}</h2>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("pd_publisher")}>{t("trdp.actions.addPublisher")}</button>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("pd_subscriber")}>{t("trdp.actions.addSubscriber")}</button>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("pd_request")}>{t("trdp.actions.addPdRequest")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("pd_publisher")}>{t("trdp.actions.addPublisher")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("pd_subscriber")}>{t("trdp.actions.addSubscriber")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("pd_request")}>{t("trdp.actions.addPdRequest")}</button>
             </div>
             <div className={styles.filterBar}>
               {(["all", "publisher", "subscriber", "request"] as const).map(filter => (
@@ -1159,9 +1140,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
               <h2 className={styles.sectionTitle}>{t("trdp.nav.md")}</h2>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("md_request")}>{t("trdp.actions.addRequest")}</button>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("md_listener")}>{t("trdp.actions.addListener")}</button>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("md_notify")}>{t("trdp.actions.addNotify")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("md_request")}>{t("trdp.actions.addRequest")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("md_listener")}>{t("trdp.actions.addListener")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("md_notify")}>{t("trdp.actions.addNotify")}</button>
             </div>
             <div className={styles.filterBar}>
               {(["all", "request", "listener", "notify"] as const).map(filter => (
@@ -1188,17 +1169,17 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 </div>
                 <div className={styles.toolbar}>
                   {mode === "monitor" && <button className={`${styles.actionButton} ${liveCaptureSetupOpen ? "liquid-theme-selected" : "liquid-glass-button"}`} onClick={() => void openLiveCaptureSetup()}>{t("trdp.actions.liveCapture")}</button>}
-                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()}>{t("trdp.actions.openCapture")}</button>
+                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()} disabled={captureRunning || captureTransitioning}>{t("trdp.actions.openCapture")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void importXml()}>{t("trdp.actions.importXml")}</button>
-                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={captureFrames.length === 0}>{t("trdp.actions.saveCapture")}</button>
-                  {mode === "monitor" && <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void command("capture_stop")} disabled={!captureRunning}>{t("trdp.actions.stopCapture")}</button>}
-                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => { setEvents([]); setSelectedPacket(null); setDecoded(null); }}>{t("trdp.actions.clear")}</button>
+                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={!captureId}>{t("trdp.actions.saveCapture")}</button>
+                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={clearCaptureView} disabled={captureRunning || captureTransitioning}>{t("trdp.actions.clear")}</button>
                 </div>
               </div>
               <div className={styles.captureStatus}>
                 {captureRunning ? t("trdp.overview.running") : captureSource ? t("trdp.overview.stopped") : t("trdp.overview.notStarted")}
                 {captureSource ? <> · {t("trdp.overview.source")} {t(`trdp.overview.${captureSource}`)}</> : null}
-                {" · "}{t("trdp.overview.bufferedFrames")} {captureFrames.length}
+                {" · "}{t("trdp.overview.bufferedFrames")} {captureFrameCount}
+                {" · "}{t("trdp.table.packets")} {capturePacketCount}
                 {captureDroppedFrames > 0 ? <> · ⚠ {captureDroppedFrames} {t("trdp.overview.droppedFrames")} ({LIVE_CAPTURE_FRAME_LIMIT.toLocaleString()})</> : null}
               </div>
 
@@ -1213,47 +1194,32 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                   </div>
                   <div className={styles.toolbar}>
                     <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void refreshCaptureInterfaces()} disabled={captureInterfacesLoading}>{t("trdp.actions.refreshInterfaces")}</button>
-                    <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => void startLiveCapture()} disabled={captureInterfacesLoading || captureRunning || !captureInterfaceA}>{t("trdp.actions.startCapture")}</button>
+                    {captureRunning ? (
+                      <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void stopLiveCapture()} disabled={captureTransitioning}>{t("trdp.actions.stopCapture")}</button>
+                    ) : (
+                      <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => void startLiveCapture()} disabled={captureInterfacesLoading || captureTransitioning || !captureInterfaceA}>{t("trdp.actions.startCapture")}</button>
+                    )}
                   </div>
                 </div>
               )}
             </div>
 
-            <div className={styles.analysisGrid}>
-              <div className={styles.analysisPane}>
-                <h3 className={styles.subheading}>{t("trdp.section.flows")}</h3>
-                <div className={styles.tableWrap}>
-                  <table className={`${styles.table} ${styles.analysisTable}`}>
-                    <thead><tr><th>{t("trdp.table.link")}</th><th>{t("trdp.table.type")}</th><th>ComID</th><th>{t("trdp.table.source")}</th><th>{t("trdp.table.destination")}</th><th>{t("trdp.table.packets")}</th><th>{t("trdp.table.errors")}</th></tr></thead>
-                    <tbody>{flows.length === 0 ? <tr><td colSpan={7} className={styles.emptyState}>{t("trdp.empty.noTraffic")}</td></tr> : flows.map(flow => <tr key={flow.key}><td>{flow.link}</td><td>{flow.msg}</td><td>{flow.comId}</td><td>{flow.src}</td><td>{flow.dst}</td><td>{flow.count}</td><td>{flow.errors}</td></tr>)}</tbody>
-                  </table>
-                </div>
-              </div>
-              <div className={styles.analysisPane}>
-                <h3 className={styles.subheading}>{t("trdp.section.packets")}</h3>
-                <div className={styles.tableWrap}>
-                  <table className={`${styles.table} ${styles.monoTable} ${styles.analysisTable}`}>
-                    <thead><tr><th>#</th><th>{t("trdp.table.link")}</th><th>{t("trdp.table.type")}</th><th>ComID</th><th>{t("trdp.table.sourceDestination")}</th><th>{t("trdp.table.seq")}</th><th>{t("trdp.table.length")}</th></tr></thead>
-                    <tbody>{packetRows.length === 0 ? <tr><td colSpan={7} className={styles.emptyState}>{t("trdp.empty.noPackets")}</td></tr> : packetRows.map((event, index) => <tr key={`${String(event.timestamp_us ?? 0)}-${index}`} className={selectedPacket === event ? styles.selectedRow : ""} onClick={() => void inspectPacket(event)}><td>{events.length - index}</td><td>{event.link ?? "—"}</td><td>{event.msg_type ?? event.kind ?? "—"}</td><td>{event.com_id ?? "—"}</td><td>{event.src_ip ?? "—"} → {event.dest_ip ?? "—"}</td><td>{event.seq_count ?? "—"}</td><td>{event.data_len ?? "—"}</td></tr>)}</tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+            <TrdpAnalysisTables
+              flows={flows}
+              events={events}
+              packetRows={packetRows}
+              selectedPacket={selectedPacket}
+              onInspectPacket={event => { void inspectPacket(event); }}
+            />
 
-            <div className={`${styles.packetCard} liquid-glass-card`}>
-              <h3>{t("trdp.section.packetInspector")}</h3>
-              {!selectedPacket ? <div className={styles.emptyInspector}>{t("trdp.empty.selectPacket")}</div> : <>
-                <div>{t("trdp.overview.protocol")} {selectedPacket.protocol_version ?? "—"} ({selectedPacket.protocol_valid === undefined ? t("trdp.inspector.notChecked") : selectedPacket.protocol_valid ? t("trdp.inspector.valid") : t("trdp.inspector.invalid")}) · CRC {selectedPacket.crc_valid === undefined ? t("trdp.inspector.notChecked") : selectedPacket.crc_valid ? t("trdp.inspector.valid") : t("trdp.inspector.invalid")} · {t("trdp.inspector.result")} {selectedPacket.result_code ?? "—"}</div>
-                <div>ComID {selectedPacket.com_id ?? "—"} · {selectedPacket.src_ip ?? "—"} → {selectedPacket.dest_ip ?? "—"} · Seq {selectedPacket.seq_count ?? "—"} · ETB/Op {selectedPacket.etb_topo_count ?? "—"}/{selectedPacket.op_trn_topo_count ?? "—"}</div>
-                {selectedPacket.md_session_id && <div>MD Session UUID: <code>{selectedPacket.md_session_id}</code> · {t("trdp.inspector.requestReplyLatency")} {mdLatencyUs(selectedPacket) ?? "—"} µs · {t("trdp.inspector.replies")} {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}{selectedPacket.msg_type === "Mq" && <button className={`${styles.compactButton} liquid-glass-button`} onClick={() => void confirmMessage(selectedPacket)}>{t("trdp.actions.confirm")} (Mc)</button>}</div>}
-                <div className={styles.payload}>{t("trdp.inspector.rawPayload")}: <code>{selectedPacket.payload_hex || "—"}</code></div>
-                {decoded ? <>
-                  <h4>{decoded.dataset_name} · Dataset {decoded.dataset_id}</h4>
-                  <div>{decoded.consumed_bytes}/{decoded.payload_bytes} {t("trdp.inspector.bytesDecoded")}</div>
-                  <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>{t("trdp.table.field")}</th><th>{t("trdp.table.type")}</th><th>{t("trdp.table.value")}</th><th>{t("trdp.table.unit")}</th></tr></thead><tbody>{Object.entries(decoded.fields).map(([name, field]) => <tr key={name}><td>{name}</td><td>{field.type}</td><td>{field.error ?? displayValue(field.value)}</td><td>{field.unit ?? "—"}</td></tr>)}</tbody></table></div>
-                </> : xmlImport && selectedPacket.com_id !== undefined ? <div>{t("trdp.inspector.noMapping")} ComID {selectedPacket.com_id}.</div> : <div>{t("trdp.inspector.importXmlToDecode")}</div>}
-              </>}
-            </div>
+            <TrdpPacketInspector
+              selectedPacket={selectedPacket}
+              decoded={decoded}
+              xmlImport={xmlImport}
+              onConfirmMessage={event => { void confirmMessage(event); }}
+              mdLatencyUs={mdLatencyUs}
+              observedMdReplies={observedMdReplies}
+            />
           </section>
         )}
       </div>

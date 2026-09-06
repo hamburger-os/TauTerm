@@ -1240,7 +1240,13 @@
       "custom": "自定义",
       "disabled": "禁用",
       "keep": "保持",
-      "zero": "置零"
+      "zero": "置零",
+      "stopped": "已停止",
+      "starting": "正在启动",
+      "running": "运行中",
+      "stopping": "正在停止",
+      "sending": "发送中",
+      "error": "错误"
     },
     "filter": {
       "all": "全部",

@@ -2134,12 +2134,12 @@ pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
 #[tauri::command]
 pub fn save_session_config(
     app: AppHandle,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     request: SaveSessionConfigRequest,
 ) -> Result<String, String> {
     let SaveSessionConfigRequest {
         endpoint,
-        params,
+        mut params,
         name,
         plugin_id,
         transfer_enabled,
@@ -2159,6 +2159,35 @@ pub fn save_session_config(
     } else {
         uuid::Uuid::new_v4().to_string()
     };
+
+    // TRDP Workspace is edited and persisted by the custom session view rather
+    // than the connection form. Reconfiguring a saved/disconnected TRDP
+    // session must therefore preserve the latest Workspace even when the form's
+    // params snapshot does not contain it.
+    if pid == "trdp" && params.get("trdp_workspace").is_none() {
+        let active_workspace = state.session_store.lock().ok().and_then(|store| {
+            store
+                .get_session(&id)
+                .and_then(|handle| handle.params.get("trdp_workspace"))
+                .cloned()
+        });
+        let persisted_workspace = active_workspace.or_else(|| {
+            let path = SessionStore::sessions_file_path(&app);
+            SessionStore::load_from_disk(&path)
+                .ok()?
+                .into_iter()
+                .find(|saved| saved.id == id)?
+                .params
+                .get("trdp_workspace")
+                .cloned()
+        });
+        if let Some(workspace) = persisted_workspace {
+            params
+                .as_object_mut()
+                .ok_or("TRDP 会话参数必须是 JSON object")?
+                .insert("trdp_workspace".to_string(), workspace);
+        }
+    }
     let session_name = match name.filter(|value| !value.trim().is_empty()) {
         Some(name) => name,
         None if pid == "local-shell" => {

@@ -24,8 +24,8 @@ typedef pthread_t bridge_thread_t;
 typedef pthread_mutex_t bridge_mutex_t;
 #endif
 
-#define BRIDGE_MAX_LINE 131072
-#define BRIDGE_MAX_PAYLOAD 65536
+#define BRIDGE_MAX_PAYLOAD 65536u
+#define BRIDGE_MAX_LINE (BRIDGE_MAX_PAYLOAD * 2u + 16384u)
 #define BRIDGE_PD_PORT 17224u
 #define BRIDGE_MD_PORT 17225u
 
@@ -156,6 +156,8 @@ void bridge_output_unlock(void);
 void bridge_json_escape(FILE *file, const char *text);
 void bridge_print_hex(FILE *file, const UINT8 *data, UINT32 size);
 void bridge_print_ip(FILE *file, UINT32 ip);
+void bridge_request_begin(const char *line);
+void bridge_request_end(void);
 void bridge_emit_ack(const char *command, const char *id);
 void bridge_emit_error(const char *message);
 void bridge_emit_trdp_error(const char *operation, TRDP_ERR_T error);
@@ -179,6 +181,8 @@ void node_object_update(const char *line);
 void node_object_stop(const char *line);
 void node_md_confirm(const char *line);
 void node_md_abort(const char *line);
+void node_redundancy_set(const char *line);
+int node_submit(const char *command, const char *line);
 void node_shutdown(void);
 
 void capture_list(void);

@@ -1240,7 +1240,13 @@
       "custom": "Custom",
       "disabled": "Disabled",
       "keep": "Keep",
-      "zero": "Zero"
+      "zero": "Zero",
+      "stopped": "Stopped",
+      "starting": "Starting",
+      "running": "Running",
+      "stopping": "Stopping",
+      "sending": "Sending",
+      "error": "Error"
     },
     "filter": {
       "all": "All",

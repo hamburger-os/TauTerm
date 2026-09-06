@@ -100,6 +100,19 @@ jobs:
           grep -q '"event":"capture_interfaces"' <<<"$OUTPUT"
           grep -q '"interfaces":\[' <<<"$OUTPUT"
 
+      - name: Verify correlated bridge responses
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRIDGE="$PWD/src-tauri/binaries/tauterm-trdp-bridge"
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            export ASAN_OPTIONS="abort_on_error=1:detect_leaks=0"
+            export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1"
+          fi
+          OUTPUT="$(printf '%s\n' '{"command":"monitor_open","request_id":"ci-correlation"}' '{"command":"shutdown"}' | "$BRIDGE")"
+          printf '%s\n' "$OUTPUT"
+          grep -q '"event":"ack","command":"monitor_open","request_id":"ci-correlation"' <<<"$OUTPUT"
+
       - name: Linux TCNOpen interoperability
         if: runner.os == 'Linux'
         shell: bash
