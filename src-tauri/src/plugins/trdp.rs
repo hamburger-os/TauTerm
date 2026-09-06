@@ -1149,26 +1149,51 @@ pub fn trdp_command(
                 .lock()
                 .map_err(|error| error.to_string())?
                 .insert(id.to_string(), next.to_string());
+            let _ = app.emit(
+                "trdp-event",
+                json!({
+                    "event": "object_state",
+                    "session_id": session_id,
+                    "id": id,
+                    "state": next,
+                }),
+            );
         }
     }
 
     let result = trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
     if let Some(id) = tracked_object {
-        let mut states = trdp
-            .object_states
-            .lock()
-            .map_err(|error| error.to_string())?;
-        match (operation, result.is_ok(), persistent_object) {
-            ("object_start", true, true) => {
-                states.insert(id, "running".to_string());
+        let next_state = {
+            let mut states = trdp
+                .object_states
+                .lock()
+                .map_err(|error| error.to_string())?;
+            match (operation, result.is_ok(), persistent_object) {
+                ("object_start", true, true) => {
+                    states.insert(id.clone(), "running".to_string());
+                    Some("running")
+                }
+                ("object_start", true, false) | ("object_stop", true, _) => {
+                    states.remove(&id);
+                    Some("stopped")
+                }
+                ("object_start" | "object_stop", false, _) => {
+                    states.insert(id.clone(), "error".to_string());
+                    Some("error")
+                }
+                _ => None,
             }
-            ("object_start", true, false) | ("object_stop", true, _) => {
-                states.remove(&id);
-            }
-            ("object_start" | "object_stop", false, _) => {
-                states.insert(id, "error".to_string());
-            }
-            _ => {}
+        };
+        if let Some(next_state) = next_state {
+            let _ = app.emit(
+                "trdp-event",
+                json!({
+                    "event": "object_state",
+                    "session_id": session_id,
+                    "id": id,
+                    "state": next_state,
+                }),
+            );
         }
     }
     result
