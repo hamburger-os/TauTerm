@@ -145,26 +145,6 @@ pub fn capture_packets(capture_id: &str, offset: usize, limit: usize) -> Result<
     Ok(capture.packets[start..end].to_vec())
 }
 
-pub fn capture_result(capture_id: &str) -> Result<TrdpCaptureResult, String> {
-    let store = capture_store()
-        .lock()
-        .map_err(|error| error.to_string())?;
-    let capture = store
-        .get(capture_id)
-        .ok_or_else(|| "TRDP capture 不存在或已释放".to_string())?;
-    let preview_start = capture
-        .packets
-        .len()
-        .saturating_sub(OPEN_PACKET_PREVIEW_LIMIT);
-    Ok(TrdpCaptureResult {
-        capture_id: capture_id.to_string(),
-        frame_count: capture.frames.len(),
-        packet_count: capture.packets.len(),
-        dropped_frames: capture.dropped_frames,
-        packets: capture.packets[preview_start..].to_vec(),
-    })
-}
-
 #[derive(Debug, Clone)]
 struct CapturePorts {
     pd: Vec<u16>,
@@ -225,10 +205,6 @@ impl TrdpStreamDecoder {
             ports: CapturePorts::new(pd_ports, md_ports),
             tcp_flows: HashMap::new(),
         }
-    }
-
-    pub fn default_ports() -> Self {
-        Self::new(vec![STANDARD_PD_PORT], vec![STANDARD_MD_PORT])
     }
 
     pub fn reset(&mut self) {
@@ -704,6 +680,7 @@ fn decode_trdp_payload(
     })
 }
 
+#[cfg(test)]
 fn decode_frame(
     frame: &[u8],
     linktype: u32,
@@ -1267,7 +1244,7 @@ mod tests {
             frame
         }
 
-        let mut telegram = vec![0u8; 120];
+        let mut telegram = [0u8; 120];
         telegram[0..4].copy_from_slice(&17u32.to_be_bytes());
         telegram[4..6].copy_from_slice(&0x0100u16.to_be_bytes());
         telegram[6..8].copy_from_slice(b"Mp");
@@ -1280,7 +1257,7 @@ mod tests {
         telegram[112..116].copy_from_slice(&crc.to_le_bytes());
         telegram[116..120].copy_from_slice(&[1, 2, 3, 4]);
 
-        let mut decoder = TrdpStreamDecoder::default_ports();
+        let mut decoder = TrdpStreamDecoder::new(vec![STANDARD_PD_PORT], vec![STANDARD_MD_PORT]);
         let first = tcp_frame(1_000, &telegram[..60]);
         let second = tcp_frame(1_060, &telegram[60..]);
         assert!(decoder
