@@ -1,11 +1,11 @@
 /**
- * TauTerm shared Google Ambient field.
+ * TauTerm shared four-color ambient field.
  *
- * Two oversized raster-friendly gradient fields carry the same Google RGB set
+ * Two oversized raster-friendly gradient fields carry the same four-color spectrum
  * across every theme. The fields are intentionally larger than the viewport so
- * no radial-gradient edge can read as a visible "orb". Animation is transform-only.
+ * no radial-gradient edge reads as a visible hard boundary. Animation is transform-only.
  */
-export default function GoogleGlowBackground() {
+export default function SpectrumAmbientBackground() {
   return (
     <div className="ambient-root" aria-hidden="true">
       <div className="ambient-field ambient-field-a" />

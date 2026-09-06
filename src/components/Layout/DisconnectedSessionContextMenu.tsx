@@ -15,7 +15,7 @@ interface DisconnectedSessionContextMenuProps {
  * Session-card-equivalent menu for a disconnected Session shown inside a Pane.
  *
  * Keeping this menu next to SplitView avoids treating the disconnected placeholder as browser
- * chrome. The Session remains a normal saved configuration: Connect / Configure / Delete work
+ * surface. The Session remains a normal saved configuration: Connect / Configure / Delete work
  * exactly from the work area without requiring a trip back to the left Sidebar.
  */
 export default function DisconnectedSessionContextMenu({

@@ -6,7 +6,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: transparent; /* 由 GoogleGlowBackground 提供底色 */
+  background: transparent; /* 由共享四色环境背景提供底色 */
   color: var(--text-primary);
   font-family: var(--font-ui);
 }

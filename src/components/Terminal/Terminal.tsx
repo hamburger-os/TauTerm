@@ -20,7 +20,7 @@ const SCROLL_BOTTOM_TOLERANCE = 5;
 /** PTY resize 防抖间隔 (ms)：避免拖拽 resize 时 IPC 风暴 */
 const RESIZE_DEBOUNCE_MS = 150;
 
-/** 从 CSS canonical palette 读取 Google/Gemini 品牌色。
+/** 从 CSS canonical spectrum 读取 TauTerm 四色环境锚点。
  * 不在 TS 中复制十六进制品牌值，避免 Ambient / Button / Terminal 三套颜色漂移。 */
 function readRequiredCssColor(token: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
@@ -54,13 +54,13 @@ function mixHex(a: string, b: string, amount: number): string {
     .join("")}`;
 }
 
-/** 炫彩流光终端：所有彩色 ANSI 基色均来自 canonical Google/Gemini palette。
+/** 炫彩流光终端：所有彩色 ANSI 基色均来自 canonical four-color spectrum。
  * Purple/Cyan/bright variants 只是标准四色之间或与白色的派生混色，不是新的品牌 token。 */
-function createGoogleTerminalTheme() {
-  const blue = readRequiredCssColor("--google-blue");
-  const red = readRequiredCssColor("--google-red");
-  const yellow = readRequiredCssColor("--google-yellow");
-  const green = readRequiredCssColor("--google-green");
+function createSpectrumTerminalTheme() {
+  const blue = readRequiredCssColor("--spectrum-blue");
+  const red = readRequiredCssColor("--spectrum-red");
+  const yellow = readRequiredCssColor("--spectrum-yellow");
+  const green = readRequiredCssColor("--spectrum-green");
   const white = "#ffffff";
   const magenta = mixHex(blue, red, 0.5);
   const cyan = mixHex(blue, green, 0.48);
@@ -196,7 +196,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       ? LIGHT_TERMINAL_THEME
       : theme === "obsidian"
         ? OBSIDIAN_TERMINAL_THEME
-        : createGoogleTerminalTheme()
+        : createSpectrumTerminalTheme()
   ), [theme]);
 
   // 右键上下文菜单状态
@@ -277,8 +277,8 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     fitAddonRef.current = fitAddon;
 
     // 必须先订阅 xterm 输入，再向父层暴露 write。
-    // 父层会在 onTermReady 中同步回放连接初期缓存的 PTY 数据；PowerShell / cmd /
-    // Git Bash 等启动阶段可能输出 ESC[6n（DSR）并等待终端应答。如果此时 onData 尚未
+    // 父层会在 onTermReady 中同步回放连接初期缓存的 PTY 数据；某些本地 Shell
+    // 启动阶段可能输出 ESC[6n（DSR）并等待终端应答。如果此时 onData 尚未
     // 注册，xterm 生成的 ESC[row;colR 响应会被丢掉，表现为“连接成功但终端空白、回车无反应”。
     const inputDisposable = term.onData((data) => {
       onDataRef.current?.(data);

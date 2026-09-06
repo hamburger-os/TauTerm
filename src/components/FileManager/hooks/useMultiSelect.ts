@@ -82,7 +82,7 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
 
   // ── Right-click: auto-select only if not already in selection ──
   //
-  // Matches Windows Explorer / macOS Finder behavior:
+  // Matches common desktop file-manager selection behavior:
   // - Right-click unselected file → clear + select it (single-item menu)
   // - Right-click file that's already in multi-select → keep selection (batch menu)
   // - Ctrl+right-click → toggle file in/out of selection

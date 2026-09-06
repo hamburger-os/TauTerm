@@ -74,7 +74,7 @@ export interface TabInfo {
   parentId?: string | null;
   /** 子 channel 在父会话中的自动编号（从 0 开始） */
   channelIndex?: number;
-  /** Local Shell 子会话是否经 Windows UAC helper 启动。 */
+  /** Local Shell 子会话是否经系统提权 helper 启动。 */
   elevated?: boolean;
   /** 根会话是否是可创建多个子终端的容器。 */
   isContainer?: boolean;

@@ -30,7 +30,7 @@ export function useCom0comStatus() {
       }
       setOrphanCount(status.orphan_count ?? 0);
     } catch {
-      // Non-Windows platforms may not support this command, silently ignore
+      // Platforms without this capability may reject the command; silently ignore.
     }
   }, []);
 

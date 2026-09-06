@@ -29,7 +29,7 @@
 
 **负向提示词：**
 
-`no background, no tile, no black matte, no frame, no external drop shadow, no green or teal cast, no dark navy body, no purple or indigo, no silver metal, no split two-tone halves, no central seam, no rainbow, no neon, no high-contrast chrome, no wireframe-only outline, no sharp knife-like edge, no letters, no numbers, no tiny interior decoration, no duplicated glyph, no cropped edge, no opaque canvas fringe.`
+`no background, no tile, no black matte, no frame, no external drop shadow, no green or teal cast, no dark navy body, no purple or indigo, no silver metal, no split two-tone halves, no central seam, no rainbow, no neon, no high-contrast mirror-metal sheen, no wireframe-only outline, no sharp knife-like edge, no letters, no numbers, no tiny interior decoration, no duplicated glyph, no cropped edge, no opaque canvas fringe.`
 
 ## 语义注册表与真实使用位置
 
