@@ -126,7 +126,7 @@ impl TrdpSideChannel {
             .into_iter()
             .find(Self::bridge_candidate_is_usable)
             .ok_or_else(|| {
-                "TRDP 原生桥接组件未就绪。开发环境请重新运行 Tauri 开发启动流程；发布包请确认对应架构组件已随应用安装。".to_string()
+                "TRDP 原生桥接组件未就绪。开发模式请先运行 `npm run trdp:build`；普通开发与离线抓包分析不需要该组件。发布包请确认对应架构组件已随应用安装。".to_string()
             })?;
 
         let mut child = Command::new(&bridge)
@@ -438,7 +438,7 @@ pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterfac
         .into_iter()
         .find(TrdpSideChannel::bridge_candidate_is_usable)
         .ok_or_else(|| {
-            "TRDP 原生桥接组件未就绪。开发环境请重新运行 Tauri 开发启动流程；发布包请确认对应架构组件已随应用安装。".to_string()
+            "TRDP 原生桥接组件未就绪。开发模式请先运行 `npm run trdp:build`；普通开发与离线抓包分析不需要该组件。发布包请确认对应架构组件已随应用安装。".to_string()
         })?;
 
     let mut child = Command::new(&bridge)
