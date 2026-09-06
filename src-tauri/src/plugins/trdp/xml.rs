@@ -187,11 +187,11 @@ fn finish_dataset(
     warnings: &mut Vec<String>,
 ) {
     let Some(id) = builder.id else {
-        state.warnings.push("忽略缺少数字 id 的 <data-set>".to_string());
+        warnings.push("忽略缺少数字 id 的 <data-set>".to_string());
         return;
     };
     if !dataset_ids.insert(id) {
-        state.warnings.push(format!(
+        warnings.push(format!(
             "Dataset {id} 重复定义；保留全部定义供预览，请在使用前修正配置"
         ));
     }
@@ -201,7 +201,7 @@ fn finish_dataset(
         .take(builder.elements.len().saturating_sub(1))
         .any(|element| element.dynamic)
     {
-        state.warnings.push(format!(
+        warnings.push(format!(
             "Dataset {id} 在非末尾位置包含动态数组；解码仅在后续字段固定长度时可确定边界"
         ));
     }
@@ -218,20 +218,20 @@ fn finish_telegram(
     warnings: &mut Vec<String>,
 ) {
     let Some(com_id) = builder.com_id else {
-        state.warnings.push("忽略缺少 com-id 的 <telegram>".to_string());
+        warnings.push("忽略缺少 com-id 的 <telegram>".to_string());
         return;
     };
     let traffic_kind = match (builder.has_pd, builder.has_md) {
         (true, false) => "pd",
         (false, true) => "md",
         (true, true) => {
-            state.warnings.push(format!(
+            warnings.push(format!(
                 "ComID {com_id} 同时包含 pd-parameter 与 md-parameter；不会自动生成模板"
             ));
             "ambiguous"
         }
         (false, false) => {
-            state.warnings.push(format!(
+            warnings.push(format!(
                 "ComID {com_id} 未声明 pd-parameter/md-parameter；协议类型标记为 unknown"
             ));
             "unknown"
@@ -261,7 +261,7 @@ fn process_node(
             if state.current_dataset.is_some() {
                 return Err("TRDP XML 包含嵌套 <data-set>，配置结构无效".to_string());
             }
-            *state.current_dataset = Some(DatasetBuilder {
+            state.current_dataset = Some(DatasetBuilder {
                 id: attr_u32(attributes, "id"),
                 name: attributes.get("name").cloned(),
                 elements: Vec::new(),
@@ -304,7 +304,7 @@ fn process_node(
             if state.current_telegram.is_some() {
                 return Err("TRDP XML 包含嵌套 <telegram>，配置结构无效".to_string());
             }
-            *state.current_telegram = Some(TelegramBuilder {
+            state.current_telegram = Some(TelegramBuilder {
                 com_id: attr_u32(attributes, "com-id"),
                 dataset_id: attr_u32(attributes, "data-set-id").unwrap_or(0),
                 name: attributes.get("name").cloned(),
@@ -353,7 +353,7 @@ fn process_node(
         "sdt-parameter" => {
             state.sdt_detected = true;
             if let Some(telegram) = state.current_telegram.as_mut() {
-                telegram.state.sdt_detected = true;
+                telegram.sdt_detected = true;
             }
         }
         "pd-com-parameter" => {
