@@ -181,6 +181,7 @@ void node_object_update(const char *line);
 void node_object_stop(const char *line);
 void node_md_confirm(const char *line);
 void node_md_abort(const char *line);
+void node_redundancy_set(const char *line);
 int node_submit(const char *command, const char *line);
 void node_shutdown(void);
 
