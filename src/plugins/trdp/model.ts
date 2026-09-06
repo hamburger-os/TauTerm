@@ -146,6 +146,64 @@ export type WorkspaceDraft = {
   objects: TrdpObject[];
   redundancyGroups: Record<string, RedundancyState>;
 };
+
+
+function workspaceWireObject(object: TrdpObject): Record<string, unknown> {
+  return {
+    id: object.id,
+    kind: object.kind,
+    name: object.name,
+    com_id: object.comId,
+    link: object.link,
+    destination: object.destination,
+    source: object.source,
+    cycle_us: object.cycleUs,
+    timeout_mode: object.timeoutMode,
+    timeout_us: object.timeoutUs,
+    timeout_behavior: object.timeoutBehavior,
+    payload_hex: object.payloadHex,
+    transport: object.transport,
+    etb_topo_count: object.etbTopoCount,
+    op_trn_topo_count: object.opTrnTopoCount,
+    red_id: object.redId,
+    num_replies: object.numReplies,
+    reply_timeout_us: object.replyTimeoutUs,
+    response_mode: object.responseMode,
+    confirm_timeout_us: object.confirmTimeoutUs,
+    reply_com_id: object.replyComId,
+    reply_ip: object.replyIp,
+    source_uri: object.sourceUri,
+    dest_uri: object.destUri,
+  };
+}
+
+export function workspaceDraftFromWorkspace(workspace: Workspace | null | undefined): WorkspaceDraft {
+  if (!workspace || workspace.format !== "tauterm-trdp-workspace/v2" || !Array.isArray(workspace.objects)) {
+    return { format: "tauterm-trdp-draft/v2", objects: [], redundancyGroups: {} };
+  }
+  return {
+    format: "tauterm-trdp-draft/v2",
+    objects: workspace.objects
+      .map(workspaceObject)
+      .filter((item): item is TrdpObject => item !== null)
+      .map(item => ({ ...item, state: "stopped" })),
+    redundancyGroups: workspace.redundancy_groups ?? {},
+  };
+}
+
+export function workspaceFromDraft(
+  draft: WorkspaceDraft,
+  name?: string,
+  xml?: string,
+): Workspace {
+  return {
+    format: "tauterm-trdp-workspace/v2",
+    ...(name ? { name } : {}),
+    ...(xml ? { xml } : {}),
+    objects: draft.objects.map(workspaceWireObject),
+    redundancy_groups: { ...draft.redundancyGroups },
+  };
+}
 export type EncodedDataset = {
   dataset_id: number;
   payload_bytes: number;
