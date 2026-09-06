@@ -28,6 +28,7 @@ const DOC_FILES = [
   'README.md',
   'README.zh-CN.md',
   'docs/ARCHITECTURE.md',
+  'docs/TRDP.md',
   'docs/BUILDING.md',
   'docs/RELEASING.md',
   'docs/SUPPORTED_PLATFORMS.md',
