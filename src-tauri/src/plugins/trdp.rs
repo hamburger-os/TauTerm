@@ -825,6 +825,20 @@ pub fn trdp_command(
                 .ok_or("workspace_import requires path")?;
             return import_workspace(path);
         }
+        Some("workspace_get") => {
+            let store = state
+                .session_store
+                .lock()
+                .map_err(|error| error.to_string())?;
+            let handle = store
+                .get_session(&session_id)
+                .ok_or("TRDP 会话不存在")?;
+            return Ok(handle
+                .params
+                .get("trdp_workspace")
+                .cloned()
+                .unwrap_or(Value::Null));
+        }
         Some("workspace_store") => {
             let workspace = command
                 .get("workspace")
