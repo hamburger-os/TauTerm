@@ -1103,7 +1103,6 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
               mdLatencyUs={mdLatencyUs}
               observedMdReplies={observedMdReplies}
             />
-            </div>
           </section>
         )}
       </div>
