@@ -369,7 +369,7 @@ impl TrdpStreamDecoder {
         let payload_sequence = sequence.wrapping_add(u32::from(flags & 0x02 != 0));
         let key = TcpFlowKey {
             link: context.link.to_string(),
-            context.source_ip,
+            source_ip: context.source_ip,
             destination_ip: context.destination_ip,
             source_port,
             destination_port,
