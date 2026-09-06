@@ -219,7 +219,6 @@ impl TrdpSideChannel {
 
         let event_session_id = session_id.to_string();
         let event_app = app.clone();
-        let pending = Arc::clone(&self.pending);
         let capture_id = Arc::clone(&self.capture_id);
         let pd_ports = vec![
             params
@@ -478,11 +477,6 @@ impl SideChannel for TrdpSideChannel {
             }
         }
         self.alive.store(false, Ordering::Release);
-        if let Ok(mut capture_id) = self.capture_id.lock() {
-            if let Some(capture_id) = capture_id.take() {
-                capture::release_capture(&capture_id);
-            }
-        }
         if let Ok(mut requests) = self.pending.lock() {
             for (_, waiter) in requests.drain() {
                 let _ = waiter.send(Err("TRDP bridge stopped".to_string()));
