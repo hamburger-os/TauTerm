@@ -9,7 +9,7 @@ metadata:
 
 # TauTerm Liquid Glass v9.0 — 唯一主题规范源
 
-> **SSOT**：TauTerm 的主题、材质、四色环境 色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
+> **SSOT**：TauTerm 的主题、材质、四色环境色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
 
 ## 1. 设计模型
@@ -34,9 +34,9 @@ metadata:
 
 ---
 
-## 2. Canonical 四色环境 Spectrum
+## 2. Canonical 四色环境色谱
 
-唯一品牌色：
+唯一四色锚点：
 
 - `--spectrum-red: #FE3734`
 - `--spectrum-yellow: #F4BA00`
@@ -387,7 +387,7 @@ rg 'transition:\s*all' src --glob '*.css'
 rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg -U ':disabled[^\{]*\{[^\}]*opacity\s*:\s*0\.' src --glob '*.css'
 rg 'liquid-glass-panel|liquid-glass-content|liquid-control-surface|liquid-glass-float|liquid-glass' src --glob '*.tsx'
-rg 'theme-(shell surface|panel|content|card|float|control).*veil|performance-(shell surface|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
+rg 'theme-(shell|panel|content|card|float|control).*veil|performance-(shell|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius' src/components/Layout src/components/Terminal
 rg 'liquid-glass-content' src/components/Layout/SplitView.tsx src/components/Terminal/TerminalView.tsx
 rg 'selectedHeader|content-divider|scrollbar-(button|corner)|requestAnimationFrame|onMouseDownCapture|container-name' src/components/Layout src/components/Terminal src/styles
@@ -442,7 +442,7 @@ npm run build
 - `src/styles/global.css`
 - `src/context/ThemeContext.tsx`
 - `src/App.tsx`
-- `src/components/Layout/SpectrumGlowBackground.tsx`
+- `src/components/Layout/SpectrumAmbientBackground.tsx`
 - `src/components/Settings/panels/AppearanceSettings.tsx`
 - `src/i18n/locales/zh-CN.json`
 - `src/i18n/locales/en-US.json`
