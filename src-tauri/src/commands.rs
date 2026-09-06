@@ -2165,16 +2165,12 @@ pub fn save_session_config(
     // session must therefore preserve the latest Workspace even when the form's
     // params snapshot does not contain it.
     if pid == "trdp" && params.get("trdp_workspace").is_none() {
-        let active_workspace = state
-            .session_store
-            .lock()
-            .ok()
-            .and_then(|store| {
-                store
-                    .get_session(&id)
-                    .and_then(|handle| handle.params.get("trdp_workspace"))
-                    .cloned()
-            });
+        let active_workspace = state.session_store.lock().ok().and_then(|store| {
+            store
+                .get_session(&id)
+                .and_then(|handle| handle.params.get("trdp_workspace"))
+                .cloned()
+        });
         let persisted_workspace = active_workspace.or_else(|| {
             let path = SessionStore::sessions_file_path(&app);
             SessionStore::load_from_disk(&path)
