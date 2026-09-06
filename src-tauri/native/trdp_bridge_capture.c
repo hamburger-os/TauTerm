@@ -211,7 +211,7 @@ void capture_list(void) {
     int first = 1;
 
     if (!load_pcap()) {
-        bridge_emit_error("Npcap/libpcap is unavailable");
+        bridge_emit_error("pcap-compatible capture runtime is unavailable");
         return;
     }
     if (dyn_findalldevs == NULL || dyn_freealldevs == NULL) {
@@ -852,7 +852,7 @@ void capture_start(const char *line) {
     (void)bridge_json_string(line, "interface_b", interface_b, sizeof(interface_b), "");
     (void)bridge_json_string(line, "filter", filter, sizeof(filter), filter);
     if (!load_pcap()) {
-        bridge_emit_error("libpcap/Npcap not found. Windows users must install Npcap separately.");
+        bridge_emit_error("pcap-compatible capture runtime not found. Install a system capture driver/runtime that provides the pcap API.");
         return;
     }
     capture_stop();

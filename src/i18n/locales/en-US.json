@@ -1034,11 +1034,14 @@
   },
   "trdp": {
     "nav": {
-      "overview": "Overview · TRDP Application Session",
+      "overview": "Overview",
       "publishers": "Publishers · PD Publisher",
       "subscribers": "Subscribers · PD Subscriber / Request",
       "messages": "Messages · MD Request / Reply / Notify",
-      "traffic": "Traffic · Packet Inspector"
+      "traffic": "Traffic · Packet Inspector",
+      "pd": "PD",
+      "md": "MD",
+      "analysis": "Analysis"
     },
     "actions": {
       "send": "Send",
@@ -1065,7 +1068,9 @@
       "addListener": "+ Listener/Replier",
       "addNotify": "+ Notify",
       "clear": "Clear",
-      "confirm": "Confirm"
+      "confirm": "Confirm",
+      "liveCapture": "Live Capture",
+      "refreshInterfaces": "Refresh Interfaces"
     },
     "captureInterfaces": {
       "loading": "Loading capture interfaces…",
@@ -1076,7 +1081,7 @@
     "form": {
       "sessionMode": "Session mode",
       "nodeOption": "Node — PD Publisher/Subscriber + MD",
-      "monitorOption": "Monitor — passive capture & pcap analysis",
+      "monitorOption": "Monitor / Analysis — passive traffic and pcap analysis",
       "linkALocalIp": "Link A local IP",
       "linkAHint": "Use a specific interface IPv4 when possible; 0.0.0.0 is for experimental setups only.",
       "enableLinkB": "Enable A/B links",
@@ -1091,10 +1096,11 @@
       "captureFilter": "Capture filter",
       "autoFilterHint": "Changing the advanced PD/MD ports updates the filter automatically.",
       "customFilterHint": "Custom mode uses a raw BPF expression.",
-      "monitorNote": "Live capture requires a compatible capture driver installed on the system. Offline .pcap/.pcapng analysis does not require a capture driver.",
+      "monitorNote": "Creating the session does not access capture interfaces. In Analysis, choose Live Capture or open a .pcap/.pcapng file; offline analysis does not require a live capture runtime.",
       "pdUdpPort": "PD UDP port",
       "mdUdpPort": "MD UDP port",
-      "mdTcpPort": "MD TCP port"
+      "mdTcpPort": "MD TCP port",
+      "monitorWorkspace": "Create a passive analysis session"
     },
     "table": {
       "name": "Name",
@@ -1135,7 +1141,9 @@
       "subscriberDiagnostics": "Subscriber diagnostics",
       "flows": "Flows",
       "packets": "Packets",
-      "packetInspector": "Packet Inspector"
+      "packetInspector": "Packet Inspector",
+      "objectDetails": "Object details",
+      "captureSource": "Data source"
     },
     "empty": {
       "xmlNoTelegram": "No Telegrams to display in this XML.",
@@ -1144,7 +1152,10 @@
       "noPdTraffic": "No PD traffic received yet.",
       "noMdObject": "No MD object yet. Use the actions above to add one.",
       "noTraffic": "No traffic yet. Open a capture file or start live capture in Monitor mode.",
-      "noPackets": "No packets available for inspection."
+      "noPackets": "No packets available for inspection.",
+      "noObjects": "No objects match the current filter.",
+      "selectObject": "Select an object to inspect and edit its details.",
+      "selectPacket": "Select a packet to inspect protocol fields, Dataset values, and raw payload."
     },
     "overview": {
       "protocol": "Protocol",
@@ -1174,7 +1185,9 @@
       "linkA": "Link A",
       "linkB": "Link B",
       "captureA": "Capture A",
-      "captureB": "Capture B"
+      "captureB": "Capture B",
+      "objects": "Objects",
+      "activeObjects": "running"
     },
     "inspector": {
       "notChecked": "not checked",
@@ -1212,7 +1225,8 @@
       "replies": "Replies",
       "replyTimeout": "Reply timeout µs",
       "response": "Response",
-      "confirmTimeout": "Confirm timeout µs"
+      "confirmTimeout": "Confirm timeout µs",
+      "timeoutUs": "Timeout µs"
     },
     "structured": {
       "hint": "Enter a valid JSON value for each field; arrays and nested Datasets use JSON arrays/objects. Fields → HEX encodes according to XML types, network byte order and scale/offset; HEX remains the wire truth source.",
@@ -1227,6 +1241,26 @@
       "disabled": "Disabled",
       "keep": "Keep",
       "zero": "Zero"
+    },
+    "filter": {
+      "all": "All",
+      "publisher": "Publish",
+      "subscriber": "Subscribe",
+      "request": "Request",
+      "listener": "Listen / Reply",
+      "notify": "Notify"
+    },
+    "objectKind": {
+      "pd_publisher": "PD Publisher",
+      "pd_subscriber": "PD Subscriber",
+      "pd_request": "PD Request",
+      "md_request": "MD Request",
+      "md_listener": "MD Listener / Reply",
+      "md_notify": "MD Notify"
+    },
+    "analysis": {
+      "monitorHint": "Live capture and offline files share the same flow, packet, and Dataset inspector. System interfaces are read only after Live Capture is selected.",
+      "nodeHint": "Inspect traffic produced or received by this node, or open a capture file for offline comparison."
     }
   }
 }

@@ -14,9 +14,24 @@ fn main() {
         } else {
             format!("tauterm-trdp-bridge-{target}")
         };
-        let placeholder = std::path::Path::new("binaries").join(helper_name);
-        if !placeholder.exists() {
-            std::fs::write(&placeholder, b"placeholder")
+        let binaries = std::path::Path::new("binaries");
+        let placeholder = binaries.join(helper_name);
+        let local_helper = binaries.join(if target_os == "windows" {
+            "tauterm-trdp-bridge.exe"
+        } else {
+            "tauterm-trdp-bridge"
+        });
+
+        // `tauri dev` runs beforeDevCommand before Cargo/build.rs. If that hook
+        // has already prepared the native helper, copy the real executable into
+        // Tauri's target-triple sidecar slot instead of leaving a placeholder
+        // that would later be copied to target/debug and fail with an OS loader
+        // error. Release bundling still replaces this path in beforeBundleCommand.
+        if local_helper.is_file() {
+            std::fs::copy(&local_helper, &placeholder)
+                .expect("failed to stage TRDP bridge sidecar for development");
+        } else if !placeholder.exists() {
+            std::fs::write(&placeholder, b"TAUTERM_TRDP_PLACEHOLDER")
                 .expect("failed to create TRDP bridge sidecar placeholder");
         }
     }
