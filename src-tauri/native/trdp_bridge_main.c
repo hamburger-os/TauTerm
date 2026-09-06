@@ -30,6 +30,7 @@ int main(void) {
             || strcmp(command, "object_stop") == 0
             || strcmp(command, "md_confirm") == 0
             || strcmp(command, "md_abort") == 0
+            || strcmp(command, "redundancy_set") == 0
         ) {
             /*
              * Active TCNOpen calls are serialized onto the Node runtime thread.
