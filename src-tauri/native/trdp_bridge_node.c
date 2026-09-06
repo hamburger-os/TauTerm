@@ -156,6 +156,8 @@ static void execute_node_command(node_command_t *command) {
         node_md_confirm(command->line);
     } else if (strcmp(command->command, "md_abort") == 0) {
         node_md_abort(command->line);
+    } else if (strcmp(command->command, "redundancy_set") == 0) {
+        node_redundancy_set(command->line);
     } else {
         bridge_emit_error("unknown queued TRDP Node command");
     }
@@ -1252,6 +1254,57 @@ void node_md_abort(const char *line) {
         return;
     }
     bridge_emit_ack("md_abort", session_text);
+}
+
+void node_redundancy_set(const char *line) {
+    char link_selection[8] = "both";
+    char red_state[16] = "leader";
+    UINT32 red_id = bridge_json_u32(line, "red_id", 0u);
+    BOOL8 leader;
+    TRDP_ERR_T error = TRDP_NO_ERR;
+    int applied = 0;
+    int index;
+
+    if (red_id == 0u) {
+        bridge_emit_error("redundancy_set requires non-zero red_id");
+        return;
+    }
+    if (!bridge_json_string(line, "link", link_selection, sizeof(link_selection), "both")
+        || !bridge_json_string(line, "red_state", red_state, sizeof(red_state), "leader")) {
+        bridge_emit_error("redundancy_set contains an invalid string field");
+        return;
+    }
+    if (!(strcmp(link_selection, "a") == 0
+        || strcmp(link_selection, "b") == 0
+        || strcmp(link_selection, "both") == 0)
+        || !(strcmp(red_state, "leader") == 0 || strcmp(red_state, "follower") == 0)) {
+        bridge_emit_error("redundancy_set contains an invalid enum value");
+        return;
+    }
+    leader = strcmp(red_state, "follower") == 0 ? FALSE : TRUE;
+
+    bridge_mutex_lock(&g_node_mutex);
+    for (index = 0; index < 2; ++index) {
+        if (!g_links[index].active || !link_selected(link_selection, index)) {
+            continue;
+        }
+        error = tlp_setRedundant(g_links[index].app, red_id, leader);
+        if (error != TRDP_NO_ERR) {
+            break;
+        }
+        ++applied;
+    }
+    bridge_mutex_unlock(&g_node_mutex);
+
+    if (error != TRDP_NO_ERR) {
+        bridge_emit_trdp_error("tlp_setRedundant", error);
+        return;
+    }
+    if (applied == 0) {
+        bridge_emit_error("selected TRDP link is not active");
+        return;
+    }
+    bridge_emit_ack("redundancy_set", NULL);
 }
 
 void node_shutdown(void) {
