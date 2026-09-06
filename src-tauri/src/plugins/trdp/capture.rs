@@ -66,6 +66,8 @@ pub struct TrdpCaptureResult {
 struct StoredCapture {
     frames: Vec<StoredFrame>,
     source_path: Option<PathBuf>,
+    pd_ports: Vec<u16>,
+    md_ports: Vec<u16>,
     packets: Vec<TrdpPacket>,
     dropped_frames: u64,
     live: bool,
@@ -91,6 +93,8 @@ pub fn create_live_capture() -> String {
             StoredCapture {
                 frames: Vec::new(),
                 source_path: None,
+                pd_ports: Vec::new(),
+                md_ports: Vec::new(),
                 packets: Vec::new(),
                 dropped_frames: 0,
                 live: true,
@@ -147,15 +151,30 @@ pub fn capture_packets(
     offset: usize,
     limit: usize,
 ) -> Result<Vec<TrdpPacket>, String> {
-    let store = capture_store().lock().map_err(|error| error.to_string())?;
-    let capture = store
-        .get(capture_id)
-        .ok_or_else(|| "TRDP capture 不存在或已释放".to_string())?;
-    let start = offset.min(capture.packets.len());
-    let end = start
-        .saturating_add(limit.min(5_000))
-        .min(capture.packets.len());
-    Ok(capture.packets[start..end].to_vec())
+    let page_limit = limit.min(5_000);
+    let offline = {
+        let store = capture_store().lock().map_err(|error| error.to_string())?;
+        let capture = store
+            .get(capture_id)
+            .ok_or_else(|| "TRDP capture 不存在或已释放".to_string())?;
+        if let Some(path) = &capture.source_path {
+            Some((
+                path.clone(),
+                capture.pd_ports.clone(),
+                capture.md_ports.clone(),
+            ))
+        } else {
+            let start = offset.min(capture.packets.len());
+            let end = start
+                .saturating_add(page_limit)
+                .min(capture.packets.len());
+            return Ok(capture.packets[start..end].to_vec());
+        }
+    };
+
+    let (path, pd_ports, md_ports) =
+        offline.ok_or_else(|| "TRDP capture source unavailable".to_string())?;
+    capture_packets_from_file(&path, pd_ports, md_ports, offset, page_limit)
 }
 
 #[derive(Debug, Clone)]
@@ -1011,6 +1030,42 @@ where
     }
 }
 
+fn capture_packets_from_file(
+    path: &Path,
+    pd_ports: Vec<u16>,
+    md_ports: Vec<u16>,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<TrdpPacket>, String> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut decoder = TrdpStreamDecoder::new(pd_ports, md_ports);
+    let end = offset.saturating_add(limit);
+    let mut index = 0usize;
+    let mut page = Vec::with_capacity(limit);
+    visit_capture_file(path, |record| {
+        match record {
+            CaptureRecord::SectionStart => decoder.reset(),
+            CaptureRecord::Frame(frame) => {
+                for packet in decoder.feed_frame(
+                    &frame.bytes,
+                    frame.link_type,
+                    frame.timestamp_us,
+                    &frame.link,
+                ) {
+                    if index >= offset && index < end {
+                        page.push(packet);
+                    }
+                    index = index.saturating_add(1);
+                }
+            }
+        }
+        Ok(())
+    })?;
+    Ok(page)
+}
+
 pub fn trdp_open_capture(
     path: String,
     pd_ports: Option<Vec<u16>>,
@@ -1025,31 +1080,39 @@ pub fn trdp_open_capture(
         md_ports.unwrap_or_else(|| vec![STANDARD_MD_PORT]),
     );
     let mut decoder = TrdpStreamDecoder::new(ports.pd.clone(), ports.md.clone());
-    let mut packets = Vec::new();
+    let mut packet_preview = std::collections::VecDeque::with_capacity(OPEN_PACKET_PREVIEW_LIMIT);
+    let mut packet_count = 0usize;
     let mut frame_count = 0usize;
     visit_capture_file(&path_buf, |record| {
         match record {
             CaptureRecord::SectionStart => decoder.reset(),
             CaptureRecord::Frame(frame) => {
                 frame_count = frame_count.saturating_add(1);
-                packets.extend(decoder.feed_frame(
+                for packet in decoder.feed_frame(
                     &frame.bytes,
                     frame.link_type,
                     frame.timestamp_us,
                     &frame.link,
-                ));
+                ) {
+                    packet_count = packet_count.saturating_add(1);
+                    if packet_preview.len() == OPEN_PACKET_PREVIEW_LIMIT {
+                        packet_preview.pop_front();
+                    }
+                    packet_preview.push_back(packet);
+                }
             }
         }
         Ok(())
     })?;
+    let preview = packet_preview.into_iter().collect::<Vec<_>>();
 
     let capture_id = Uuid::new_v4().to_string();
     let result = TrdpCaptureResult {
         capture_id: capture_id.clone(),
         frame_count,
-        packet_count: packets.len(),
+        packet_count,
         dropped_frames: 0,
-        packets: packets[packets.len().saturating_sub(OPEN_PACKET_PREVIEW_LIMIT)..].to_vec(),
+        packets: preview.clone(),
     };
     capture_store()
         .lock()
@@ -1059,7 +1122,9 @@ pub fn trdp_open_capture(
             StoredCapture {
                 frames: Vec::new(),
                 source_path: Some(path_buf),
-                packets,
+                pd_ports: ports.pd,
+                md_ports: ports.md,
+                packets: preview,
                 dropped_frames: 0,
                 live: false,
             },
