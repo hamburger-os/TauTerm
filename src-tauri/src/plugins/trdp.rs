@@ -45,6 +45,7 @@ pub struct TrdpSideChannel {
     alive: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
     shutting_down: Arc<AtomicBool>,
+    closed: AtomicBool,
     lifecycle: Arc<Mutex<()>>,
     connected_announced: Arc<AtomicBool>,
     capture_id: Arc<Mutex<Option<String>>>,
@@ -66,11 +67,56 @@ impl TrdpSideChannel {
             alive: Arc::new(AtomicBool::new(false)),
             ready: Arc::new(AtomicBool::new(false)),
             shutting_down: Arc::new(AtomicBool::new(false)),
+            closed: AtomicBool::new(false),
             lifecycle: Arc::new(Mutex::new(())),
             connected_announced: Arc::new(AtomicBool::new(false)),
             capture_id: Arc::new(Mutex::new(None)),
             capture_control: Mutex::new(()),
             object_states: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn stop_process(&self, permanent: bool) {
+        if permanent {
+            self.closed.store(true, Ordering::Release);
+        }
+        self.shutting_down.store(true, Ordering::Release);
+        self.ready.store(false, Ordering::Release);
+
+        if self.alive.load(Ordering::Acquire) {
+            let _ = self.send_line(&json!({ "command": "shutdown" }));
+        }
+        if let Ok(mut input) = self.stdin.lock() {
+            input.take();
+        }
+
+        if let Ok(mut child) = self.child.lock() {
+            if let Some(mut process) = child.take() {
+                let mut exited = false;
+                for _ in 0..25 {
+                    match process.try_wait() {
+                        Ok(Some(_)) => {
+                            exited = true;
+                            break;
+                        }
+                        Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                        Err(_) => break,
+                    }
+                }
+                if !exited {
+                    let _ = process.kill();
+                    let _ = process.wait();
+                }
+            }
+        }
+        self.alive.store(false, Ordering::Release);
+        if let Ok(mut states) = self.object_states.lock() {
+            states.clear();
+        }
+        if let Ok(mut requests) = self.pending.lock() {
+            for (_, waiter) in requests.drain() {
+                let _ = waiter.send(Err("TRDP bridge stopped".to_string()));
+            }
         }
     }
 
@@ -180,6 +226,9 @@ impl TrdpSideChannel {
             .start_control
             .lock()
             .map_err(|error| error.to_string())?;
+        if self.closed.load(Ordering::Acquire) {
+            return Err("TRDP 会话已关闭".to_string());
+        }
         if self
             .child
             .lock()
@@ -224,6 +273,10 @@ impl TrdpSideChannel {
 
         *self.stdin.lock().map_err(|error| error.to_string())? = Some(stdin);
         *self.child.lock().map_err(|error| error.to_string())? = Some(child);
+        if self.closed.load(Ordering::Acquire) {
+            self.stop_process(false);
+            return Err("TRDP 会话已关闭".to_string());
+        }
         self.shutting_down.store(false, Ordering::Release);
         self.ready.store(false, Ordering::Release);
         self.alive.store(true, Ordering::Release);
@@ -471,11 +524,11 @@ impl TrdpSideChannel {
                 Ok(())
             }
             Ok(_) => {
-                <Self as SideChannel>::shutdown(self);
+                self.stop_process(false);
                 Err("TRDP bridge exited during startup".to_string())
             }
             Err(error) => {
-                <Self as SideChannel>::shutdown(self);
+                self.stop_process(false);
                 Err(error)
             }
         }
@@ -488,45 +541,9 @@ impl SideChannel for TrdpSideChannel {
     }
 
     fn shutdown(&self) {
-        self.shutting_down.store(true, Ordering::Release);
-        self.ready.store(false, Ordering::Release);
-
-        if self.alive.load(Ordering::Acquire) {
-            let _ = self.send_line(&json!({ "command": "shutdown" }));
-        }
-        if let Ok(mut input) = self.stdin.lock() {
-            input.take();
-        }
-
-        if let Ok(mut child) = self.child.lock() {
-            if let Some(mut process) = child.take() {
-                let mut exited = false;
-                for _ in 0..25 {
-                    match process.try_wait() {
-                        Ok(Some(_)) => {
-                            exited = true;
-                            break;
-                        }
-                        Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-                        Err(_) => break,
-                    }
-                }
-                if !exited {
-                    let _ = process.kill();
-                    let _ = process.wait();
-                }
-            }
-        }
-        self.alive.store(false, Ordering::Release);
-        if let Ok(mut states) = self.object_states.lock() {
-            states.clear();
-        }
-        if let Ok(mut requests) = self.pending.lock() {
-            for (_, waiter) in requests.drain() {
-                let _ = waiter.send(Err("TRDP bridge stopped".to_string()));
-            }
-        }
+        self.stop_process(true);
     }
+}
 }
 
 /// Single connection router exposed to the frontend as `connect_session`.
