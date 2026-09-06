@@ -45,6 +45,7 @@ pub struct TrdpSideChannel {
     ready: Arc<AtomicBool>,
     shutting_down: Arc<AtomicBool>,
     capture_id: Arc<Mutex<Option<String>>>,
+    capture_control: Mutex<()>,
 }
 
 impl TrdpSideChannel {
@@ -61,6 +62,7 @@ impl TrdpSideChannel {
             ready: Arc::new(AtomicBool::new(false)),
             shutting_down: Arc::new(AtomicBool::new(false)),
             capture_id: Arc::new(Mutex::new(None)),
+            capture_control: Mutex::new(()),
         }
     }
 
@@ -949,6 +951,10 @@ pub fn trdp_command(
         .unwrap_or_default();
 
     if operation == "capture_start" {
+        let _control = trdp
+            .capture_control
+            .lock()
+            .map_err(|error| error.to_string())?;
         let previous_capture = trdp
             .capture_id
             .lock()
@@ -973,6 +979,14 @@ pub fn trdp_command(
                 return Err(error);
             }
         }
+    }
+
+    if operation == "capture_stop" {
+        let _control = trdp
+            .capture_control
+            .lock()
+            .map_err(|error| error.to_string())?;
+        return trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
     }
 
     trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT)
