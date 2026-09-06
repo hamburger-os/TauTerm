@@ -1071,7 +1071,7 @@
     "captureInterfaces": {
       "loading": "正在读取抓包接口…",
       "choose": "请选择抓包接口",
-      "empty": "未检测到可用的 Npcap/libpcap 抓包接口。",
+      "empty": "未检测到可用的抓包接口。",
       "error": "读取抓包接口失败"
     },
     "form": {
