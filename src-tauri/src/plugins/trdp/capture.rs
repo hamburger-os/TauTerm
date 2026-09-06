@@ -197,6 +197,19 @@ struct TcpFlow {
     buffer: Vec<u8>,
 }
 
+struct IpFrame<'a> {
+    frame: &'a [u8],
+    linktype: u32,
+    timestamp_us: u64,
+    link: &'a str,
+    source_ip: u32,
+    destination_ip: u32,
+    source_text: String,
+    destination_text: String,
+    transport_offset: usize,
+    ip_end: usize,
+}
+
 #[derive(Debug)]
 pub struct TrdpStreamDecoder {
     ports: CapturePorts,
@@ -264,82 +277,65 @@ impl TrdpStreamDecoder {
         let Some(destination_bytes) = frame.get(ip + 16..ip + 20) else {
             return Vec::new();
         };
-        let source_ip = u32::from_be_bytes(source_bytes.try_into().unwrap_or([0; 4]));
-        let destination_ip = u32::from_be_bytes(destination_bytes.try_into().unwrap_or([0; 4]));
-        let source_text = ipv4(source_bytes);
-        let destination_text = ipv4(destination_bytes);
-        let transport_offset = ip + ip_header_length;
+        let Some(source_ip) = be32(frame, ip + 12) else {
+            return Vec::new();
+        };
+        let Some(destination_ip) = be32(frame, ip + 16) else {
+            return Vec::new();
+        };
+        let context = IpFrame {
+            frame,
+            linktype,
+            timestamp_us,
+            link,
+            source_ip,
+            destination_ip,
+            source_text: ipv4(source_bytes),
+            destination_text: ipv4(destination_bytes),
+            transport_offset: ip + ip_header_length,
+            ip_end,
+        };
 
         match frame.get(ip + 9).copied() {
-            Some(17) => self.feed_udp(
-                frame,
-                linktype,
-                timestamp_us,
-                link,
-                source_text,
-                destination_text,
-                transport_offset,
-                ip_end,
-            ),
-            Some(6) => self.feed_tcp(
-                frame,
-                linktype,
-                timestamp_us,
-                link,
-                source_ip,
-                destination_ip,
-                source_text,
-                destination_text,
-                transport_offset,
-                ip_end,
-            ),
+            Some(17) => self.feed_udp(&context),
+            Some(6) => self.feed_tcp(&context),
             _ => Vec::new(),
         }
     }
 
-    fn feed_udp(
-        &self,
-        frame: &[u8],
-        linktype: u32,
-        timestamp_us: u64,
-        link: &str,
-        source_ip: String,
-        destination_ip: String,
-        transport_offset: usize,
-        ip_end: usize,
-    ) -> Vec<TrdpPacket> {
-        if transport_offset + 8 > ip_end {
+    fn feed_udp(&self, context: &IpFrame<'_>) -> Vec<TrdpPacket> {
+        if context.transport_offset + 8 > context.ip_end {
             return Vec::new();
         }
-        let Some(source_port) = be16(frame, transport_offset) else {
+        let Some(source_port) = be16(context.frame, context.transport_offset) else {
             return Vec::new();
         };
-        let Some(destination_port) = be16(frame, transport_offset + 2) else {
+        let Some(destination_port) = be16(context.frame, context.transport_offset + 2) else {
             return Vec::new();
         };
-        let Some(udp_length) = be16(frame, transport_offset + 4).map(usize::from) else {
+        let Some(udp_length) = be16(context.frame, context.transport_offset + 4).map(usize::from) else {
             return Vec::new();
         };
         if !self.ports.accepts(source_port, destination_port)
             || udp_length < 8
-            || transport_offset + udp_length > ip_end
+            || context.transport_offset + udp_length > context.ip_end
         {
             return Vec::new();
         }
-        let payload_start = transport_offset + 8;
-        let payload_end = transport_offset + udp_length;
+        let payload_start = context.transport_offset + 8;
+        let payload_end = context.transport_offset + udp_length;
         let Some(packet) = decode_trdp_payload(
-            &frame[payload_start..payload_end],
+            &context.frame[payload_start..payload_end],
             PacketOrigin {
-                link,
-                timestamp_us,
-                source_ip: &source_ip,
-                destination_ip: &destination_ip,
+                link: context.link,
+                timestamp_us: context.timestamp_us,
+                source_ip: &context.source_text,
+                destination_ip: &context.destination_text,
                 source_port,
                 destination_port,
                 transport: "udp",
-                linktype,
-                raw_frame: frame,
+                linktype: context.linktype,
+                raw_frame: context.frame,
             },
             true,
         ) else {
@@ -348,46 +344,33 @@ impl TrdpStreamDecoder {
         vec![packet]
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn feed_tcp(
-        &mut self,
-        frame: &[u8],
-        linktype: u32,
-        timestamp_us: u64,
-        link: &str,
-        source_ip: u32,
-        destination_ip: u32,
-        source_text: String,
-        destination_text: String,
-        transport_offset: usize,
-        ip_end: usize,
-    ) -> Vec<TrdpPacket> {
-        if transport_offset + 20 > ip_end {
+    fn feed_tcp(&mut self, context: &IpFrame<'_>) -> Vec<TrdpPacket> {
+        if context.transport_offset + 20 > context.ip_end {
             return Vec::new();
         }
-        let Some(source_port) = be16(frame, transport_offset) else {
+        let Some(source_port) = be16(context.frame, context.transport_offset) else {
             return Vec::new();
         };
-        let Some(destination_port) = be16(frame, transport_offset + 2) else {
+        let Some(destination_port) = be16(context.frame, context.transport_offset + 2) else {
             return Vec::new();
         };
         if !self.ports.accepts(source_port, destination_port) {
             return Vec::new();
         }
-        let header_length = ((frame[transport_offset + 12] >> 4) as usize) * 4;
-        if header_length < 20 || transport_offset + header_length > ip_end {
+        let header_length = ((context.frame[context.transport_offset + 12] >> 4) as usize) * 4;
+        if header_length < 20 || context.transport_offset + header_length > context.ip_end {
             return Vec::new();
         }
-        let Some(sequence) = be32(frame, transport_offset + 4) else {
+        let Some(sequence) = be32(context.frame, context.transport_offset + 4) else {
             return Vec::new();
         };
-        let flags = frame[transport_offset + 13];
-        let payload = &frame[transport_offset + header_length..ip_end];
+        let flags = context.frame[context.transport_offset + 13];
+        let payload = &context.frame[context.transport_offset + header_length..context.ip_end];
         let payload_sequence = sequence.wrapping_add(u32::from(flags & 0x02 != 0));
         let key = TcpFlowKey {
-            link: link.to_string(),
-            source_ip,
-            destination_ip,
+            link: context.link.to_string(),
+            context.source_ip,
+            destination_ip: context.destination_ip,
             source_port,
             destination_port,
         };
@@ -471,15 +454,15 @@ impl TrdpStreamDecoder {
             if let Some(packet) = decode_trdp_payload(
                 &telegram,
                 PacketOrigin {
-                    link,
-                    timestamp_us,
-                    source_ip: &source_text,
-                    destination_ip: &destination_text,
+                    link: context.link,
+                    timestamp_us: context.timestamp_us,
+                    source_ip: &context.source_text,
+                    destination_ip: &context.destination_text,
                     source_port,
                     destination_port,
                     transport: "tcp",
-                    linktype,
-                    raw_frame: frame,
+                    linktype: context.linktype,
+                    raw_frame: context.frame,
                 },
                 true,
             ) {
@@ -1062,33 +1045,33 @@ fn save_frames(path: &Path, frames: Vec<TrdpRawFrame>) -> Result<(), String> {
     }
 
     for raw in frames {
-        let Some(frame) = decode_hex(&raw.raw_frame_hex) else {
+        let Some(frame_bytes) = decode_hex(&raw.raw_frame_hex) else {
             continue;
         };
-        if frame.is_empty() {
+        if frame_bytes.is_empty() {
             continue;
         }
-        let link = if frame.link.trim().is_empty() {
+        let link = if raw.link.trim().is_empty() {
             "capture"
         } else {
             raw.link.as_str()
         };
-        let linktype = frame.link_type;
+        let linktype = raw.link_type;
         let interface_index = interfaces
             .iter()
             .position(|item| item.0 == link && item.1 == linktype)
             .unwrap_or(0) as u32;
-        let padded_length = (frame.len() + 3) & !3;
+        let padded_length = (frame_bytes.len() + 3) & !3;
         let block_length = 32 + padded_length;
         append_u32(&mut output, 6);
         append_u32(&mut output, block_length as u32);
         append_u32(&mut output, interface_index);
         append_u32(&mut output, (raw.timestamp_us >> 32) as u32);
         append_u32(&mut output, raw.timestamp_us as u32);
-        append_u32(&mut output, frame.len() as u32);
-        append_u32(&mut output, frame.len() as u32);
-        output.extend_from_slice(&frame);
-        output.resize(output.len() + (padded_length - frame.len()), 0);
+        append_u32(&mut output, frame_bytes.len() as u32);
+        append_u32(&mut output, frame_bytes.len() as u32);
+        output.extend_from_slice(&frame_bytes);
+        output.resize(output.len() + (padded_length - frame_bytes.len()), 0);
         append_u32(&mut output, block_length as u32);
     }
     fs::write(path, output).map_err(|error| format!("保存 pcapng 失败: {error}"))
