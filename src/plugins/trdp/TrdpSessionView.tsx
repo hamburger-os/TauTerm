@@ -85,6 +85,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
   const [xmlImport, setXmlImport] = useState<XmlImport | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string | null>(configuredWorkspace?.name ?? null);
+  const [workspaceXmlPath, setWorkspaceXmlPath] = useState<string | null>(
+    configuredWorkspace?.xml ?? null,
+  );
   const [decoded, setDecoded] = useState<DecodedDataset | null>(null);
   const [selectedPacket, setSelectedPacket] = useState<TrdpEvent | null>(null);
   const mdRequestStartedUs = useRef(new Map<string, number>());
@@ -127,16 +130,28 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       if (workspace?.format === "tauterm-trdp-workspace/v2") {
         setWorkspaceDraft(workspaceDraftFromWorkspace(workspace));
         setWorkspaceName(workspace.name ?? null);
+        setWorkspaceXmlPath(workspace.xml ?? null);
+        setXmlImport(null);
+        setDecoded(null);
         if (workspace.xml) {
           void invoke<XmlImport>("trdp_command", {
             sessionId,
             command: { command: "xml_import", path: workspace.xml },
           }).then(imported => {
-            if (!cancelled) setXmlImport(imported);
+            if (!cancelled) {
+              setXmlImport(imported);
+              setWorkspaceXmlPath(imported.path);
+            }
           }).catch(cause => {
             if (!cancelled) console.warn("TRDP Workspace XML 恢复失败:", cause);
           });
         }
+      } else {
+        setWorkspaceDraft(workspaceDraftFromWorkspace(null));
+        setWorkspaceName(null);
+        setWorkspaceXmlPath(null);
+        setXmlImport(null);
+        setDecoded(null);
       }
       setWorkspaceLoaded(true);
     }).catch(cause => {
@@ -154,7 +169,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       const workspace = workspaceFromDraft(
         workspaceDraft,
         workspaceName ?? undefined,
-        xmlImport?.path,
+        xmlImport?.path ?? workspaceXmlPath ?? undefined,
       );
       void invoke("trdp_command", {
         sessionId,
@@ -164,7 +179,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [sessionId, workspaceLoaded, workspaceDraft, workspaceName, xmlImport?.path]);
+  }, [
+    sessionId,
+    workspaceLoaded,
+    workspaceDraft,
+    workspaceName,
+    workspaceXmlPath,
+    xmlImport?.path,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -483,6 +505,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     }
     const imported = await command<XmlImport>("xml_import", { path });
     setXmlImport(imported);
+    setWorkspaceXmlPath(imported.path);
     setDecoded(null);
   }
 
@@ -492,10 +515,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const workspace = await command<Workspace>("workspace_import", { path: selected });
     setWorkspaceDraft(workspaceDraftFromWorkspace(workspace));
     setWorkspaceName(workspace.name ?? selected);
-    if (workspace.xml_path) {
-      const importedXml = await command<XmlImport>("xml_import", { path: workspace.xml_path });
+    setXmlImport(null);
+    setDecoded(null);
+    const importedXmlPath = workspace.xml_path ?? workspace.xml ?? null;
+    setWorkspaceXmlPath(importedXmlPath);
+    if (importedXmlPath) {
+      const importedXml = await command<XmlImport>("xml_import", { path: importedXmlPath });
       setXmlImport(importedXml);
-      setDecoded(null);
+      setWorkspaceXmlPath(importedXml.path);
     }
   }
 
