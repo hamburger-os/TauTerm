@@ -12,5 +12,16 @@
   },
   "archive_sha256": null,
   "refresh_tool": "scripts/vendor_tcnopen.py",
-  "notes": "Vendored files retain their upstream MPL-2.0 notices and are not modified by TauTerm."
+  "notes": "Vendored files are the official TCNOpen 3.0.0.0 release normalized to UTF-8 plus the ordered downstream patch series declared here. Upstream MPL-2.0 notices are retained.",
+  "downstream_patches": [
+    {
+      "file": "patches/0001-restore-ahw-history-initials.patch",
+      "reason": "Restore the corrupted 2023 history author initials in trdp_if_light.h so the vendored UTF-8 source no longer contains the replacement character that triggers localized MSVC C4819.",
+      "evidence": "Later TCNOpen source identifies the same 2023-01-13 Ticket #412 history entry as AHW."
+    },
+    {
+      "file": "patches/0002-scope-msvc-flexible-array-warning.patch",
+      "reason": "Scope MSVC C4200 suppression to TCNOpen's intentional C flexible-array member without changing TRDP_DATASET_T layout or disabling the warning for TauTerm-owned code."
+    }
+  ]
 }
