@@ -1,7 +1,6 @@
 {
   "app": {
-    "title": "TauTerm",
-    "description": "跨平台全功能终端模拟器"
+    "title": "TauTerm"
   },
   "connectionType": {
     "label": "连接类型",
