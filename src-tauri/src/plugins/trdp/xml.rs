@@ -98,10 +98,7 @@ impl Default for ParseState {
 }
 
 fn local_name(bytes: &[u8]) -> String {
-    let local = bytes
-        .rsplit(|byte| *byte == b':')
-        .next()
-        .unwrap_or(bytes);
+    let local = bytes.rsplit(|byte| *byte == b':').next().unwrap_or(bytes);
     String::from_utf8_lossy(local).to_ascii_lowercase()
 }
 
@@ -296,7 +293,9 @@ fn process_node(
                     dynamic: array_size == 0,
                     unit: attributes.get("unit").cloned(),
                     scale: attributes.get("scale").and_then(|value| value.parse().ok()),
-                    offset: attributes.get("offset").and_then(|value| value.parse().ok()),
+                    offset: attributes
+                        .get("offset")
+                        .and_then(|value| value.parse().ok()),
                 });
             }
         }
@@ -357,15 +356,21 @@ fn process_node(
             }
         }
         "pd-com-parameter" => {
-            if let Some(value) = attr_u32(attributes, "port").and_then(|value| u16::try_from(value).ok()) {
+            if let Some(value) =
+                attr_u32(attributes, "port").and_then(|value| u16::try_from(value).ok())
+            {
                 state.pd_port = value;
             }
         }
         "md-com-parameter" => {
-            if let Some(value) = attr_u32(attributes, "udp-port").and_then(|value| u16::try_from(value).ok()) {
+            if let Some(value) =
+                attr_u32(attributes, "udp-port").and_then(|value| u16::try_from(value).ok())
+            {
                 state.md_udp_port = value;
             }
-            if let Some(value) = attr_u32(attributes, "tcp-port").and_then(|value| u16::try_from(value).ok()) {
+            if let Some(value) =
+                attr_u32(attributes, "tcp-port").and_then(|value| u16::try_from(value).ok())
+            {
                 state.md_tcp_port = value;
             }
         }
@@ -397,7 +402,12 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
                 process_node(&name, &attributes, &mut state)?;
                 if name == "data-set" {
                     if let Some(builder) = state.current_dataset.take() {
-                        finish_dataset(builder, &mut datasets, &mut dataset_ids, &mut state.warnings);
+                        finish_dataset(
+                            builder,
+                            &mut datasets,
+                            &mut dataset_ids,
+                            &mut state.warnings,
+                        );
                     }
                 } else if name == "telegram" {
                     if let Some(builder) = state.current_telegram.take() {
@@ -409,7 +419,12 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
                 let name = local_name(end.name().as_ref());
                 if name == "data-set" {
                     if let Some(builder) = state.current_dataset.take() {
-                        finish_dataset(builder, &mut datasets, &mut dataset_ids, &mut state.warnings);
+                        finish_dataset(
+                            builder,
+                            &mut datasets,
+                            &mut dataset_ids,
+                            &mut state.warnings,
+                        );
                     }
                 } else if name == "telegram" {
                     if let Some(builder) = state.current_telegram.take() {
