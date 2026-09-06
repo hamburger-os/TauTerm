@@ -215,6 +215,9 @@ export type CaptureResult = {
   dropped_frames: number;
   packets: TrdpEvent[];
 };
+export type RuntimeState = {
+  objects: Record<string, TrdpObject["state"]>;
+};
 export type StructuredEditor = {
   objectId: string;
   datasetId: number;
