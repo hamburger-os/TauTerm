@@ -515,7 +515,7 @@ pub async fn connect_session_trdp(
 
     let ConnectSessionRequest {
         endpoint,
-        params,
+        mut params,
         name,
         transfer_enabled,
         transfer_protocol,
@@ -523,6 +523,27 @@ pub async fn connect_session_trdp(
         session_id,
         ..
     } = request;
+    if params.get("trdp_workspace").is_none() {
+        if let Some(reconnect_id) = session_id.as_deref() {
+            let existing_workspace = {
+                let store = state
+                    .session_store
+                    .lock()
+                    .map_err(|error| error.to_string())?;
+                store
+                    .get_session(reconnect_id)
+                    .and_then(|handle| handle.params.get("trdp_workspace"))
+                    .cloned()
+            };
+            if let Some(workspace) = existing_workspace {
+                let params_object = params
+                    .as_object_mut()
+                    .ok_or("TRDP 会话参数必须是 JSON object")?;
+                params_object.insert("trdp_workspace".to_string(), workspace);
+            }
+        }
+    }
+
     let mode = params.get("mode").and_then(Value::as_str).unwrap_or("node");
     if !matches!(mode, "node" | "monitor") {
         return Err(format!("未知 TRDP 会话模式: {mode}"));
@@ -572,9 +593,12 @@ pub async fn connect_session_trdp(
             .session_store
             .lock()
             .map_err(|error| error.to_string())?;
-        store
+        let connected_at = store
             .get_session(&session_id)
-            .and_then(|handle| handle.connected_at)
+            .and_then(|handle| handle.connected_at);
+        let path = crate::kernel::session_store::SessionStore::sessions_file_path(&app);
+        store.save_to_disk(&path)?;
+        connected_at
     };
     let _ = app.emit(
         "session-connected",
