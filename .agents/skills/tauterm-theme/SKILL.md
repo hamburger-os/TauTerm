@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, four-color amb
 license: MIT
 metadata:
   author: tauterm
-  version: "9.1"
+  version: "9.2"
 ---
 
-# TauTerm Liquid Glass v9.1 — 唯一主题规范源
+# TauTerm Liquid Glass v9.2 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、四色环境色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -309,13 +309,16 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 
 ## 10. 四色棱镜按钮
 
-高价值 Primary / Selected 可使用完整四色 Prism。
+高价值 Primary / Selected 可使用完整四色 Prism；普通按钮不全息化。
 
-Idle：完整四色同时可见。  
-Hover：**不换色**，只允许 lift、scale、edge/shadow 增强。  
-Active：轻微压下。
-
-普通按钮不全息化。
+- **效果优先 / Quality**：四色 Prism 必须缓慢流动。实现只允许小面积 pseudo layer 的 **transform-only** 动画；不得通过持续 background-position、gradient 参数或 filter 动画制造流动，避免每帧重绘。
+- **性能优先 / Performance**：保持当前静态四色 Prism，不创建持续动画层。
+- 任意时刻都要同时保留 Red / Yellow / Green / Blue 四个锚点；流动只能改变它们在按钮内部的位置关系，不能退化成单色扫光。
+- 动画应是低频连续流动，不做高频闪烁；默认约 8s 一轮即可。
+- 系统 reduced-motion 时静态；layout drag / resize 与 hidden/paused 状态下暂停。
+- Hover：**不换色**，只允许 lift、scale、edge/shadow 增强。
+- Active：轻微压下。
+- Disabled：使用统一 disabled surface，不保留动态 Prism。
 
 ---
 
@@ -346,7 +349,7 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 - `transition: all`
 - 大面积 `filter: blur`
 - `mix-blend-mode`
-- 持续 gradient/background animation
+- 持续 gradient/background animation（唯一例外：效果优先下小面积四色 Prism 按钮可使用 transform-only pseudo layer 流动；仍禁止动画 gradient/background 本身）
 - 常驻 `will-change`
 - 无条件 `translateZ(0)`
 - 纯装饰用途持续 layout polling / ResizeObserver
@@ -362,6 +365,7 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 - 两层独立大范围 transform，红/绿与蓝/黄光场在中心区域明显交叠
 - 色团尺寸比旧实现更大，但 Ambient raster layer 尺寸保持不变
 - Small Shell Surface / Float 使用更高 blur sampling 与 saturate
+- 高价值四色 Prism 按钮使用小面积 transform-only 流动层
 - 大面积 Structural / Content 仍然不做 backdrop sampling
 - 目标：最大化液态玻璃层次与流动感
 
@@ -369,6 +373,7 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 - 2 static Ambient Fields，完整四色同时可见
 - backdrop blur = 0，saturate sampling = 0
 - 完全停止 Ambient 装饰动画
+- 四色 Prism 按钮保持静态，不创建持续按钮动画层
 - **所有主要 surface 退化为单层 flat translucent fill**：Shell Surface / Panel / Content / Control / Card / Float 分别只引用一个 `--performance-*-fill`
 - 不叠 specular + clear + veil 多层背景，不保留大面积 glass shadow；现有 1px 结构 border 可以保留
 - flat translucent fill 必须足够实，不能让后层文字形成清晰重影；炫彩流光使用更明亮的中性烟晶 fill，黑曜石使用深黑 fill，白霜使用浅色 fill
@@ -433,9 +438,9 @@ npm run build
 - **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮，横纵滚动条交汇处没有白色 corner 方块**
 - **右键未选中 Pane Header 或已连接 Terminal 时都不会先切换 active Session；Close Pane 菜单只从 Header 出现**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
-- **效果优先正常观察 3–5 秒能看出两层 Ambient 明显位移与交叠；色团更大但 raster layer 不扩大**
+- **效果优先正常观察 3–5 秒能看出两层 Ambient 明显位移与交叠；四色 Prism 按钮也能感知低频连续流动；色团更大但 raster layer 不扩大**
 - **系统 reduced-motion 生效时，设置页必须明确显示“系统动态效果已关闭/减少动态效果”，并解释效果优先因此静止**
-- **性能优先保留两层完整四色但静态；主要 surface 是单层半透明纯色，没有 backdrop、specular 多层和大面积 glass shadow**
+- **性能优先保留两层完整四色但静态；四色 Prism 按钮也必须静态；主要 surface 是单层半透明纯色，没有 backdrop、specular 多层和大面积 glass shadow**
 - **性能优先的后层文字不能形成清晰重影，持续 GPU 开销必须显著低于效果优先**
 
 ## 实现源文件
