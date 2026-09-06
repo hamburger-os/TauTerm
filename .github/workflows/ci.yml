@@ -119,7 +119,11 @@ jobs:
 
           base = json.loads(Path("src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
           assert base["build"]["beforeBundleCommand"] == "node scripts/prepare-service-bin.js"
+          assert base["build"]["beforeDevCommand"] == "npm run dev"
           assert "binaries/tauterm-trdp-bridge" in base["bundle"]["externalBin"]
+
+          package = json.loads(Path("package.json").read_text(encoding="utf-8"))
+          assert package["scripts"]["trdp:build"] == "node scripts/prepare-service-bin.js --trdp-only"
 
           prepare = Path("scripts/prepare-service-bin.js").read_text(encoding="utf-8")
           assert "TAURI_ENV_TARGET_TRIPLE" in prepare
