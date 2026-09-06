@@ -173,10 +173,6 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         }
       }
       if (payload.event === "capture_progress") {
-        if (payload.capture_id) {
-          captureIdRef.current = payload.capture_id;
-          setCaptureId(payload.capture_id);
-        }
         setCaptureFrameCount(payload.frame_count ?? 0);
         setCapturePacketCount(payload.packet_count ?? 0);
         setCaptureDroppedFrames(payload.dropped_frames ?? 0);
@@ -1038,7 +1034,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()}>{t("trdp.actions.openCapture")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void importXml()}>{t("trdp.actions.importXml")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={!captureId}>{t("trdp.actions.saveCapture")}</button>
-                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={clearCaptureView}>{t("trdp.actions.clear")}</button>
+                  <button className={`${styles.actionButton} liquid-glass-button`} onClick={clearCaptureView} disabled={captureRunning}>{t("trdp.actions.clear")}</button>
                 </div>
               </div>
               <div className={styles.captureStatus}>
