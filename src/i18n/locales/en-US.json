@@ -39,7 +39,7 @@
     "addArgument": "Add argument",
     "removeArgument": "Remove argument",
     "argumentsHint": "Each row is passed as one argv item; quoting is not required.",
-    "wslArgumentsHint": "Distribution and working-directory arguments are managed automatically; these additional arguments are appended to wsl.exe.",
+    "wslArgumentsHint": "Distribution and working-directory arguments are managed automatically; these additional arguments are appended to the subsystem launcher.",
     "unexpectedExit": "Session ended unexpectedly",
     "exitCode": "Exit code: {{code}}",
     "administrator": "Administrator",
