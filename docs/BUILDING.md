@@ -9,7 +9,7 @@
 | **Node.js** | 22.x | 前端运行时与包管理器（CI 与发布工作流固定使用 Node 22） |
 | **Rust** | 仓库锁定版本 | 由根目录 `rust-toolchain.toml` 精确锁定稳定版，并声明 clippy 与 rustfmt |
 | **npm** | 随 Node.js 22 附带 | 依赖安装与脚本运行 |
-| **CMake** | >= 3.20 | 构建 vendored TCNOpen/TRDP native helper 与 reference peer |
+| **CMake** | >= 3.20 | 仅在开发 TRDP Node/实时抓包、构建 TRDP native helper 或正式打包时需要；普通开发与离线抓包分析不需要 |
 | **C 编译器** | 平台原生 | Windows 使用 MSVC；Linux/macOS 使用系统 C toolchain |
 | **NSIS** | >= 3.0 | Windows 安装包构建工具（仅 Windows 构建需要） |
 
@@ -69,7 +69,7 @@ npm run toolchain:check
 
 `rust-toolchain.toml` 声明仓库所需的 `rustfmt` 与 `clippy` 组件；具体链接器与 Windows SDK/MSVC 环境取决于目标平台。
 
-TRDP native helper 使用 CMake + MSVC 构建。请确保 `cmake` 可用，并安装 Visual Studio Build Tools / Desktop development with C++ 或等价的 x64 MSVC 工具链。当前 Windows 发布目标为 x86_64。
+TRDP native helper 使用 CMake + MSVC 构建。只有开发 TRDP Node/实时抓包或执行正式打包时才需要这些工具；普通 `npm run tauri dev`、其它协议开发以及 TRDP 离线 `.pcap/.pcapng` 分析不应被 CMake 阻塞。需要 TRDP 原生能力时，请确保 `cmake` 可用，并安装 Visual Studio Build Tools / Desktop development with C++ 或等价的 x64 MSVC 工具链。当前 Windows 发布目标为 x86_64。
 
 ---
 
@@ -195,7 +195,7 @@ bash scripts/bootstrap-trdp.sh
 - `src-tauri/binaries/tauterm-trdp-bridge[.exe]`
 - `tools/trdp-test-peer/bin/trdp-test-peer[.exe]`
 
-`npm run tauri dev` 会通过 `beforeDevCommand` 自动准备 TRDP 原生 helper；`build.rs` 随后把真实可执行文件放入当前 target triple 的 sidecar 位置。正常开发无需手动预执行 bootstrap。
+`npm run tauri dev` **不会**自动构建 TRDP 原生 helper，因此普通开发不依赖 CMake/C 编译工具链。需要调试 TRDP Node 或 Monitor 实时抓包时，先显式运行一次 `npm run trdp:build`；`build.rs` 会在后续开发构建中复用该 helper。Monitor 的离线 `.pcap/.pcapng` 分析不需要 helper。
 
 开发/CI 如需显式覆盖 helper，可以设置环境变量 `TAUTERM_TRDP_BRIDGE` 指向可信的可执行文件。会话配置/Workspace 不接受任意 bridge executable 路径，避免导入配置时形成隐式代码执行入口。
 
@@ -220,10 +220,11 @@ bash scripts/bootstrap-trdp.sh
 
 | 命令 | 用途 |
 |------|------|
-| `npm run tauri dev` | 启动完整 Tauri 开发环境（Vite + Rust 后端 + 桌面窗口） |
+| `npm run tauri dev` | 启动完整 Tauri 开发环境（Vite + Rust 后端 + 桌面窗口），不隐式构建 TRDP native helper |
 | `npm run dev` | 仅启动 Vite 前端开发服务器 |
 | `npm run build` | 执行 TypeScript 检查并构建前端生产资源 |
 | `npm run preview` | 本地预览已经构建的前端资源 |
+| `npm run trdp:build` | 显式构建 TRDP native helper 与 reference peer；仅调试 TRDP Node/实时抓包时需要 |
 | `npm run tauri:build` | Windows 使用开发打包配置生成 NSIS 安装包 |
 | `npm run tauri -- build` | 使用当前平台的标准 Tauri 配置构建安装包 |
 | `npm run build:release` | 更新并固定当前 stable Rust，运行完整质量检查，再构建当前平台的正式产物 |
@@ -278,12 +279,11 @@ cd TauTerm
 # 安装前端依赖
 npm install
 
-# 如需调试 TRDP，会话启动前先构建 native helper：
-# Linux/macOS: bash scripts/bootstrap-trdp.sh
-# Windows:     ./scripts/bootstrap-trdp.ps1
-
-# 启动开发模式（同时启动 Vite 开发服务器和 Tauri 桌面窗口）
+# 普通开发直接启动；不要求 CMake
 npm run tauri dev
+
+# 只有调试 TRDP Node / 实时抓包时，另行显式构建 native helper
+npm run trdp:build
 ```
 
 - Vite 开发服务器运行在 `http://localhost:5173`
