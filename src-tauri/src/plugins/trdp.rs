@@ -16,7 +16,7 @@ use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -632,6 +632,14 @@ fn validate_workspace_object(value: &Value, index: usize) -> Result<(), String> 
         }
     }
 
+    let id = object
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("TRDP Workspace objects[{index}] 缺少 id"))?;
+    if id.trim().is_empty() {
+        return Err(format!("TRDP Workspace objects[{index}].id 不能为空"));
+    }
+
     let kind = object
         .get("kind")
         .and_then(Value::as_str)
@@ -732,10 +740,30 @@ fn validate_workspace_value(value: &Value) -> Result<(), String> {
         .get("objects")
         .and_then(Value::as_array)
         .ok_or("TRDP Workspace objects 必须是数组")?;
+    let mut object_ids = HashSet::new();
+    let mut referenced_redundancy_groups = HashSet::new();
     for (index, item) in objects.iter().enumerate() {
         validate_workspace_object(item, index)?;
+        let item_object = item
+            .as_object()
+            .ok_or_else(|| format!("TRDP Workspace objects[{index}] 必须是 object"))?;
+        let id = item_object
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("TRDP Workspace objects[{index}] 缺少 id"))?;
+        if !object_ids.insert(id.to_string()) {
+            return Err(format!("TRDP Workspace object id 重复: {id}"));
+        }
+        if let Some(red_id) = item_object
+            .get("red_id")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+        {
+            referenced_redundancy_groups.insert(red_id as u32);
+        }
     }
 
+    let mut redundancy_group_ids = HashSet::new();
     if let Some(groups) = object.get("redundancy_groups") {
         let groups = groups
             .as_object()
@@ -752,6 +780,14 @@ fn validate_workspace_value(value: &Value) -> Result<(), String> {
                     "TRDP redundancy group {red_id} 状态必须为 leader 或 follower"
                 ));
             }
+            redundancy_group_ids.insert(parsed);
+        }
+    }
+    for red_id in referenced_redundancy_groups {
+        if !redundancy_group_ids.contains(&red_id) {
+            return Err(format!(
+                "TRDP object 引用了未定义的 redundancy group {red_id}"
+            ));
         }
     }
 
@@ -1070,6 +1106,30 @@ mod tests {
     }
 
     #[test]
+    fn workspace_v2_rejects_duplicate_ids_and_missing_redundancy_groups() {
+        let duplicate_ids = json!({
+            "format": "tauterm-trdp-workspace/v2",
+            "objects": [
+                {"id":"same","kind":"pd_subscriber","com_id":1},
+                {"id":"same","kind":"pd_subscriber","com_id":2}
+            ]
+        });
+        assert!(validate_workspace_value(&duplicate_ids)
+            .expect_err("duplicate ids must fail")
+            .contains("重复"));
+
+        let missing_group = json!({
+            "format": "tauterm-trdp-workspace/v2",
+            "objects": [
+                {"id":"publisher-1","kind":"pd_publisher","com_id":1,"red_id":7}
+            ]
+        });
+        assert!(validate_workspace_value(&missing_group)
+            .expect_err("missing redundancy group must fail")
+            .contains("redundancy group 7"));
+    }
+
+    #[test]
     fn workspace_import_is_v2_only_and_resolves_relative_xml() {
         let directory = tempfile::tempdir().expect("tempdir");
         let xml_path = directory.path().join("node.xml");
@@ -1084,6 +1144,7 @@ mod tests {
                 "format": "tauterm-trdp-workspace/v2",
                 "xml": "node.xml",
                 "objects": [{
+                    "id": "subscriber-1",
                     "kind": "pd_subscriber",
                     "com_id": 1001,
                     "destination": "239.1.1.1",
