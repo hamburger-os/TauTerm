@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
+use std::fs::{self, File};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
@@ -64,12 +65,15 @@ pub struct TrdpCaptureResult {
 #[derive(Debug)]
 struct StoredCapture {
     frames: Vec<StoredFrame>,
+    source_path: Option<PathBuf>,
     packets: Vec<TrdpPacket>,
     dropped_frames: u64,
     live: bool,
 }
 
 const LIVE_FRAME_LIMIT: usize = 50_000;
+const MAX_CAPTURE_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const MAX_PCAPNG_BLOCK_BYTES: usize = 64 * 1024 * 1024;
 const OPEN_PACKET_PREVIEW_LIMIT: usize = 5_000;
 const TCP_FLOW_LIMIT: usize = 64;
 const TCP_BUFFER_CAP: usize = 131_072;
@@ -86,6 +90,7 @@ pub fn create_live_capture() -> String {
             id.clone(),
             StoredCapture {
                 frames: Vec::new(),
+                source_path: None,
                 packets: Vec::new(),
                 dropped_frames: 0,
                 live: true,
@@ -700,32 +705,60 @@ fn decode_frame(
         .next()
 }
 
-fn parse_pcap(
-    data: &[u8],
-    ports: &CapturePorts,
-) -> Result<(Vec<StoredFrame>, Vec<TrdpPacket>), String> {
-    if data.len() < 24 {
+enum CaptureRecord {
+    SectionStart,
+    Frame(StoredFrame),
+}
+
+fn read_exact_or_eof<R: Read>(reader: &mut R, buffer: &mut [u8]) -> Result<bool, String> {
+    let mut offset = 0usize;
+    while offset < buffer.len() {
+        match reader.read(&mut buffer[offset..]) {
+            Ok(0) if offset == 0 => return Ok(false),
+            Ok(0) => return Err("抓包文件在记录中途结束".to_string()),
+            Ok(read) => offset += read,
+            Err(error) => return Err(format!("读取抓包失败: {error}")),
+        }
+    }
+    Ok(true)
+}
+
+fn visit_pcap<R: Read, F>(reader: &mut R, visitor: &mut F) -> Result<(), String>
+where
+    F: FnMut(CaptureRecord) -> Result<(), String>,
+{
+    let mut header = [0u8; 24];
+    if !read_exact_or_eof(reader, &mut header)? {
         return Err("pcap 文件过短".into());
     }
-    let (little_endian, nanoseconds) = match &data[..4] {
+    let (little_endian, nanoseconds) = match &header[..4] {
         [0xd4, 0xc3, 0xb2, 0xa1] => (true, false),
         [0xa1, 0xb2, 0xc3, 0xd4] => (false, false),
         [0x4d, 0x3c, 0xb2, 0xa1] => (true, true),
         [0xa1, 0xb2, 0x3c, 0x4d] => (false, true),
         _ => return Err("不支持的 pcap magic".into()),
     };
-    let linktype = read_u32(data, 20, little_endian).ok_or("pcap header invalid")?;
-    let mut offset = 24usize;
-    let mut frames = Vec::new();
-    let mut packets = Vec::new();
-    let mut decoder = TrdpStreamDecoder::new(ports.pd.clone(), ports.md.clone());
-    while offset + 16 <= data.len() {
-        let seconds = read_u32(data, offset, little_endian).unwrap_or(0) as u64;
-        let fraction = read_u32(data, offset + 4, little_endian).unwrap_or(0) as u64;
-        let captured_length = read_u32(data, offset + 8, little_endian).unwrap_or(0) as usize;
-        offset += 16;
-        if offset + captured_length > data.len() {
-            return Err("pcap packet length exceeds file size".into());
+    let linktype = read_u32(&header, 20, little_endian).ok_or("pcap header invalid")?;
+    visitor(CaptureRecord::SectionStart)?;
+
+    loop {
+        let mut record = [0u8; 16];
+        if !read_exact_or_eof(reader, &mut record)? {
+            break;
+        }
+        let seconds = read_u32(&record, 0, little_endian).unwrap_or(0) as u64;
+        let fraction = read_u32(&record, 4, little_endian).unwrap_or(0) as u64;
+        let captured_length =
+            read_u32(&record, 8, little_endian).ok_or("pcap packet length invalid")? as usize;
+        if captured_length > MAX_CAPTURE_FRAME_BYTES {
+            return Err(format!(
+                "pcap packet 过大: {captured_length} bytes（上限 {MAX_CAPTURE_FRAME_BYTES}）"
+            ));
+        }
+
+        let mut bytes = vec![0u8; captured_length];
+        if captured_length > 0 && !read_exact_or_eof(reader, &mut bytes)? {
+            return Err("pcap packet data missing".into());
         }
         let timestamp_us = seconds.saturating_mul(1_000_000)
             + if nanoseconds {
@@ -733,18 +766,14 @@ fn parse_pcap(
             } else {
                 fraction
             };
-        let frame = &data[offset..offset + captured_length];
-        let link = "capture".to_string();
-        packets.extend(decoder.feed_frame(frame, linktype, timestamp_us, &link));
-        frames.push(StoredFrame {
-            link,
+        visitor(CaptureRecord::Frame(StoredFrame {
+            link: "capture".to_string(),
             timestamp_us,
-            bytes: frame.to_vec(),
+            bytes,
             link_type: linktype,
-        });
-        offset += captured_length;
+        }))?;
     }
-    Ok((frames, packets))
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -805,67 +834,106 @@ fn pcapng_timestamp_to_us(raw: u64, resolution: u8, base2: bool) -> u64 {
     }
 }
 
-fn parse_pcapng(
-    data: &[u8],
-    ports: &CapturePorts,
-) -> Result<(Vec<StoredFrame>, Vec<TrdpPacket>), String> {
-    let mut offset = 0usize;
+fn visit_pcapng<R: Read, F>(reader: &mut R, visitor: &mut F) -> Result<(), String>
+where
+    F: FnMut(CaptureRecord) -> Result<(), String>,
+{
     let mut little_endian = true;
+    let mut have_section = false;
+    let mut section_index = 0usize;
     let mut interfaces: Vec<PcapNgInterface> = Vec::new();
-    let mut frames = Vec::new();
-    let mut packets = Vec::new();
-    let mut decoder = TrdpStreamDecoder::new(ports.pd.clone(), ports.md.clone());
 
-    while offset + 12 <= data.len() {
-        let section_header = data.get(offset..offset + 4) == Some(&[0x0a, 0x0d, 0x0d, 0x0a]);
+    loop {
+        let mut prefix = [0u8; 8];
+        if !read_exact_or_eof(reader, &mut prefix)? {
+            break;
+        }
+        let section_header = prefix[..4] == [0x0a, 0x0d, 0x0d, 0x0a];
+        let mut initial = Vec::with_capacity(12);
+        initial.extend_from_slice(&prefix);
+
         if section_header {
-            little_endian = match data.get(offset + 8..offset + 12) {
-                Some([0x4d, 0x3c, 0x2b, 0x1a]) => true,
-                Some([0x1a, 0x2b, 0x3c, 0x4d]) => false,
+            let mut byte_order_magic = [0u8; 4];
+            if !read_exact_or_eof(reader, &mut byte_order_magic)? {
+                return Err("pcapng Section Header 缺少 byte-order magic".into());
+            }
+            initial.extend_from_slice(&byte_order_magic);
+            little_endian = match byte_order_magic {
+                [0x4d, 0x3c, 0x2b, 0x1a] => true,
+                [0x1a, 0x2b, 0x3c, 0x4d] => false,
                 _ => return Err("pcapng byte-order magic invalid".into()),
             };
-            interfaces.clear();
-            decoder.reset();
+            have_section = true;
+        } else if !have_section {
+            return Err("pcapng 缺少 Section Header".into());
         }
 
-        let block_type = if section_header {
-            0x0a0d0d0a
-        } else {
-            read_u32(data, offset, little_endian).ok_or("pcapng block invalid")?
-        };
         let block_length =
-            read_u32(data, offset + 4, little_endian).ok_or("pcapng length invalid")? as usize;
-        if block_length < 12 || offset + block_length > data.len() {
-            return Err("pcapng block length exceeds file size".into());
+            read_u32(&initial, 4, little_endian).ok_or("pcapng length invalid")? as usize;
+        if block_length < 12
+            || !block_length.is_multiple_of(4)
+            || block_length > MAX_PCAPNG_BLOCK_BYTES
+        {
+            return Err(format!("pcapng block length invalid: {block_length}"));
         }
-        let trailing_length = read_u32(data, offset + block_length - 4, little_endian)
+        if initial.len() > block_length {
+            return Err("pcapng block length smaller than header".into());
+        }
+
+        let mut block = vec![0u8; block_length];
+        block[..initial.len()].copy_from_slice(&initial);
+        if block_length > initial.len()
+            && !read_exact_or_eof(reader, &mut block[initial.len()..])?
+        {
+            return Err("pcapng block truncated".into());
+        }
+        let trailing_length = read_u32(&block, block_length - 4, little_endian)
             .ok_or("pcapng trailing length invalid")? as usize;
         if trailing_length != block_length {
             return Err("pcapng block length mismatch".into());
         }
 
+        let block_type = if section_header {
+            0x0a0d0d0a
+        } else {
+            read_u32(&block, 0, little_endian).ok_or("pcapng block invalid")?
+        };
         match block_type {
+            0x0a0d0d0a => {
+                interfaces.clear();
+                visitor(CaptureRecord::SectionStart)?;
+                section_index = section_index.saturating_add(1);
+            }
             1 if block_length >= 20 => {
-                let linktype = read_u16(data, offset + 8, little_endian).unwrap_or(1) as u32;
+                let linktype = read_u16(&block, 8, little_endian).unwrap_or(1) as u32;
                 let (timestamp_resolution, timestamp_base2, link) =
-                    parse_idb_options(data, offset, block_length, little_endian);
+                    parse_idb_options(&block, 0, block_length, little_endian);
                 let interface_index = interfaces.len();
                 interfaces.push(PcapNgInterface {
                     linktype,
                     timestamp_resolution,
                     timestamp_base2,
-                    link: link.unwrap_or_else(|| format!("capture:{interface_index}")),
+                    link: link.unwrap_or_else(|| {
+                        format!(
+                            "capture:{}:{}",
+                            section_index.saturating_sub(1),
+                            interface_index
+                        )
+                    }),
                 });
             }
             6 if block_length >= 32 => {
-                let interface_index =
-                    read_u32(data, offset + 8, little_endian).unwrap_or(0) as usize;
-                let timestamp_high = read_u32(data, offset + 12, little_endian).unwrap_or(0) as u64;
-                let timestamp_low = read_u32(data, offset + 16, little_endian).unwrap_or(0) as u64;
-                let captured_length =
-                    read_u32(data, offset + 20, little_endian).unwrap_or(0) as usize;
-                let packet_start = offset + 28;
-                if packet_start + captured_length > offset + block_length - 4 {
+                let interface_index = read_u32(&block, 8, little_endian).unwrap_or(0) as usize;
+                let timestamp_high = read_u32(&block, 12, little_endian).unwrap_or(0) as u64;
+                let timestamp_low = read_u32(&block, 16, little_endian).unwrap_or(0) as u64;
+                let captured_length = read_u32(&block, 20, little_endian).unwrap_or(0) as usize;
+                if captured_length > MAX_CAPTURE_FRAME_BYTES {
+                    return Err(format!(
+                        "pcapng packet 过大: {captured_length} bytes（上限 {MAX_CAPTURE_FRAME_BYTES}）"
+                    ));
+                }
+                let packet_start = 28usize;
+                if packet_start.saturating_add(captured_length) > block_length - 4 {
                     return Err("pcapng packet length exceeds block size".into());
                 }
                 let interface =
@@ -876,7 +944,11 @@ fn parse_pcapng(
                             linktype: LINKTYPE_ETHERNET,
                             timestamp_resolution: 6,
                             timestamp_base2: false,
-                            link: format!("capture:{interface_index}"),
+                            link: format!(
+                                "capture:{}:{}",
+                                section_index.saturating_sub(1),
+                                interface_index
+                            ),
                         });
                 let raw_timestamp = (timestamp_high << 32) | timestamp_low;
                 let timestamp_us = pcapng_timestamp_to_us(
@@ -884,25 +956,59 @@ fn parse_pcapng(
                     interface.timestamp_resolution,
                     interface.timestamp_base2,
                 );
-                let frame = &data[packet_start..packet_start + captured_length];
-                packets.extend(decoder.feed_frame(
-                    frame,
-                    interface.linktype,
+                visitor(CaptureRecord::Frame(StoredFrame {
+                    link: interface.link,
                     timestamp_us,
-                    &interface.link,
-                ));
-                frames.push(StoredFrame {
-                    link: interface.link.clone(),
-                    timestamp_us,
-                    bytes: frame.to_vec(),
+                    bytes: block[packet_start..packet_start + captured_length].to_vec(),
                     link_type: interface.linktype,
+                }))?;
+            }
+            3 if block_length >= 16 => {
+                let interface = interfaces.first().cloned().unwrap_or(PcapNgInterface {
+                    linktype: LINKTYPE_ETHERNET,
+                    timestamp_resolution: 6,
+                    timestamp_base2: false,
+                    link: format!("capture:{}:0", section_index.saturating_sub(1)),
                 });
+                let original_length = read_u32(&block, 8, little_endian).unwrap_or(0) as usize;
+                let available = block_length.saturating_sub(16);
+                let captured_length = original_length.min(available);
+                if captured_length > MAX_CAPTURE_FRAME_BYTES {
+                    return Err(format!(
+                        "pcapng simple packet 过大: {captured_length} bytes"
+                    ));
+                }
+                visitor(CaptureRecord::Frame(StoredFrame {
+                    link: interface.link,
+                    timestamp_us: 0,
+                    bytes: block[12..12 + captured_length].to_vec(),
+                    link_type: interface.linktype,
+                }))?;
             }
             _ => {}
         }
-        offset += block_length;
     }
-    Ok((frames, packets))
+    Ok(())
+}
+
+fn visit_capture_file<F>(path: &Path, mut visitor: F) -> Result<(), String>
+where
+    F: FnMut(CaptureRecord) -> Result<(), String>,
+{
+    let file = File::open(path).map_err(|error| format!("读取抓包失败: {error}"))?;
+    let mut reader = BufReader::new(file);
+    let mut magic = [0u8; 4];
+    if !read_exact_or_eof(&mut reader, &mut magic)? {
+        return Err("抓包文件为空".into());
+    }
+    reader
+        .seek(SeekFrom::Start(0))
+        .map_err(|error| format!("抓包 seek 失败: {error}"))?;
+    if magic == [0x0a, 0x0d, 0x0d, 0x0a] {
+        visit_pcapng(&mut reader, &mut visitor)
+    } else {
+        visit_pcap(&mut reader, &mut visitor)
+    }
 }
 
 pub fn trdp_open_capture(
@@ -910,20 +1016,37 @@ pub fn trdp_open_capture(
     pd_ports: Option<Vec<u16>>,
     md_ports: Option<Vec<u16>>,
 ) -> Result<TrdpCaptureResult, String> {
-    let data = fs::read(&path).map_err(|error| format!("读取抓包失败: {error}"))?;
+    let path_buf = PathBuf::from(&path);
+    if !path_buf.is_file() {
+        return Err(format!("抓包文件不存在: {}", path_buf.display()));
+    }
     let ports = CapturePorts::new(
         pd_ports.unwrap_or_else(|| vec![STANDARD_PD_PORT]),
         md_ports.unwrap_or_else(|| vec![STANDARD_MD_PORT]),
     );
-    let (frames, packets) = if data.starts_with(&[0x0a, 0x0d, 0x0d, 0x0a]) {
-        parse_pcapng(&data, &ports)?
-    } else {
-        parse_pcap(&data, &ports)?
-    };
+    let mut decoder = TrdpStreamDecoder::new(ports.pd.clone(), ports.md.clone());
+    let mut packets = Vec::new();
+    let mut frame_count = 0usize;
+    visit_capture_file(&path_buf, |record| {
+        match record {
+            CaptureRecord::SectionStart => decoder.reset(),
+            CaptureRecord::Frame(frame) => {
+                frame_count = frame_count.saturating_add(1);
+                packets.extend(decoder.feed_frame(
+                    &frame.bytes,
+                    frame.link_type,
+                    frame.timestamp_us,
+                    &frame.link,
+                ));
+            }
+        }
+        Ok(())
+    })?;
+
     let capture_id = Uuid::new_v4().to_string();
     let result = TrdpCaptureResult {
         capture_id: capture_id.clone(),
-        frame_count: frames.len(),
+        frame_count,
         packet_count: packets.len(),
         dropped_frames: 0,
         packets: packets[packets.len().saturating_sub(OPEN_PACKET_PREVIEW_LIMIT)..].to_vec(),
@@ -934,25 +1057,14 @@ pub fn trdp_open_capture(
         .insert(
             capture_id,
             StoredCapture {
-                frames,
+                frames: Vec::new(),
+                source_path: Some(path_buf),
                 packets,
                 dropped_frames: 0,
                 live: false,
             },
         );
     Ok(result)
-}
-
-pub fn trdp_save_capture(path: String, capture_id: String) -> Result<(), String> {
-    let frames = {
-        let store = capture_store().lock().map_err(|error| error.to_string())?;
-        store
-            .get(&capture_id)
-            .ok_or_else(|| "TRDP capture 不存在或已释放".to_string())?
-            .frames
-            .clone()
-    };
-    save_frames(Path::new(&path), frames)
 }
 
 fn append_u16(output: &mut Vec<u8>, value: u16) {
@@ -971,82 +1083,170 @@ fn append_pcapng_option(output: &mut Vec<u8>, code: u16, value: &[u8]) {
     output.resize(output.len() + padding, 0);
 }
 
-fn append_interface_description(output: &mut Vec<u8>, linktype: u32, link: &str) {
-    let mut body = Vec::new();
-    append_u16(&mut body, linktype as u16);
-    append_u16(&mut body, 0);
-    append_u32(&mut body, 65_535);
-    append_pcapng_option(&mut body, 2, link.as_bytes());
-    append_pcapng_option(&mut body, 9, &[6]);
-    append_pcapng_option(&mut body, 0, &[]);
-    let block_length = 12 + body.len();
-    append_u32(output, 1);
-    append_u32(output, block_length as u32);
-    output.extend_from_slice(&body);
-    append_u32(output, block_length as u32);
+struct PcapNgWriter {
+    writer: BufWriter<File>,
+    interfaces: Vec<(String, u32)>,
 }
 
-fn save_frames(path: &Path, frames: Vec<StoredFrame>) -> Result<(), String> {
-    let mut output = Vec::new();
-    append_u32(&mut output, 0x0a0d0d0a);
-    append_u32(&mut output, 28);
-    append_u32(&mut output, 0x1a2b3c4d);
-    output.extend_from_slice(&1u16.to_le_bytes());
-    output.extend_from_slice(&0u16.to_le_bytes());
-    output.extend_from_slice(&u64::MAX.to_le_bytes());
-    append_u32(&mut output, 28);
-
-    let mut interfaces: Vec<(String, u32)> = Vec::new();
-    for frame in &frames {
-        let link = if frame.link.trim().is_empty() {
-            "capture".to_string()
-        } else {
-            frame.link.clone()
+impl PcapNgWriter {
+    fn new(path: &Path) -> Result<Self, String> {
+        let file = File::create(path).map_err(|error| format!("创建 pcapng 失败: {error}"))?;
+        let mut writer = Self {
+            writer: BufWriter::new(file),
+            interfaces: Vec::new(),
         };
-        let linktype = frame.link_type;
-        if !interfaces
-            .iter()
-            .any(|item| item.0 == link && item.1 == linktype)
-        {
-            interfaces.push((link, linktype));
-        }
-    }
-    if interfaces.is_empty() {
-        interfaces.push(("capture".into(), LINKTYPE_ETHERNET));
-    }
-    for (link, linktype) in &interfaces {
-        append_interface_description(&mut output, *linktype, link);
+        let mut header = Vec::with_capacity(28);
+        append_u32(&mut header, 0x0a0d0d0a);
+        append_u32(&mut header, 28);
+        append_u32(&mut header, 0x1a2b3c4d);
+        header.extend_from_slice(&1u16.to_le_bytes());
+        header.extend_from_slice(&0u16.to_le_bytes());
+        header.extend_from_slice(&u64::MAX.to_le_bytes());
+        append_u32(&mut header, 28);
+        writer
+            .writer
+            .write_all(&header)
+            .map_err(|error| format!("写入 pcapng header 失败: {error}"))?;
+        Ok(writer)
     }
 
-    for raw in frames {
-        if raw.bytes.is_empty() {
-            continue;
+    fn ensure_interface(&mut self, link: &str, linktype: u32) -> Result<u32, String> {
+        if let Some(index) = self
+            .interfaces
+            .iter()
+            .position(|item| item.0 == link && item.1 == linktype)
+        {
+            return Ok(index as u32);
         }
-        let frame_bytes = raw.bytes;
+
+        let mut body = Vec::new();
+        append_u16(&mut body, linktype as u16);
+        append_u16(&mut body, 0);
+        append_u32(&mut body, 65_535);
+        append_pcapng_option(&mut body, 2, link.as_bytes());
+        append_pcapng_option(&mut body, 9, &[6]);
+        append_pcapng_option(&mut body, 0, &[]);
+        let block_length = 12 + body.len();
+        let mut block = Vec::with_capacity(block_length);
+        append_u32(&mut block, 1);
+        append_u32(&mut block, block_length as u32);
+        block.extend_from_slice(&body);
+        append_u32(&mut block, block_length as u32);
+        self.writer
+            .write_all(&block)
+            .map_err(|error| format!("写入 pcapng interface 失败: {error}"))?;
+        self.interfaces.push((link.to_string(), linktype));
+        Ok((self.interfaces.len() - 1) as u32)
+    }
+
+    fn write_frame(&mut self, raw: &StoredFrame) -> Result<(), String> {
+        if raw.bytes.is_empty() {
+            return Ok(());
+        }
         let link = if raw.link.trim().is_empty() {
             "capture"
         } else {
             raw.link.as_str()
         };
-        let linktype = raw.link_type;
-        let interface_index = interfaces
-            .iter()
-            .position(|item| item.0 == link && item.1 == linktype)
-            .unwrap_or(0) as u32;
-        let padded_length = (frame_bytes.len() + 3) & !3;
+        let interface_index = self.ensure_interface(link, raw.link_type)?;
+        let padded_length = (raw.bytes.len() + 3) & !3;
         let block_length = 32 + padded_length;
-        append_u32(&mut output, 6);
-        append_u32(&mut output, block_length as u32);
-        append_u32(&mut output, interface_index);
-        append_u32(&mut output, (raw.timestamp_us >> 32) as u32);
-        append_u32(&mut output, raw.timestamp_us as u32);
-        append_u32(&mut output, frame_bytes.len() as u32);
-        append_u32(&mut output, frame_bytes.len() as u32);
-        output.extend_from_slice(&frame_bytes);
-        output.resize(output.len() + (padded_length - frame_bytes.len()), 0);
-        append_u32(&mut output, block_length as u32);
+        let mut header = Vec::with_capacity(28);
+        append_u32(&mut header, 6);
+        append_u32(&mut header, block_length as u32);
+        append_u32(&mut header, interface_index);
+        append_u32(&mut header, (raw.timestamp_us >> 32) as u32);
+        append_u32(&mut header, raw.timestamp_us as u32);
+        append_u32(&mut header, raw.bytes.len() as u32);
+        append_u32(&mut header, raw.bytes.len() as u32);
+        self.writer
+            .write_all(&header)
+            .and_then(|_| self.writer.write_all(&raw.bytes))
+            .map_err(|error| format!("写入 pcapng frame 失败: {error}"))?;
+        let padding = padded_length - raw.bytes.len();
+        if padding > 0 {
+            self.writer
+                .write_all(&[0u8; 3][..padding])
+                .map_err(|error| format!("写入 pcapng padding 失败: {error}"))?;
+        }
+        self.writer
+            .write_all(&(block_length as u32).to_le_bytes())
+            .map_err(|error| format!("写入 pcapng block footer 失败: {error}"))
     }
-    fs::write(path, output).map_err(|error| format!("保存 pcapng 失败: {error}"))
+
+    fn finish(mut self) -> Result<(), String> {
+        if self.interfaces.is_empty() {
+            let _ = self.ensure_interface("capture", LINKTYPE_ETHERNET)?;
+        }
+        self.writer
+            .flush()
+            .map_err(|error| format!("刷新 pcapng 失败: {error}"))
+    }
+}
+
+fn save_frames(path: &Path, frames: Vec<StoredFrame>) -> Result<(), String> {
+    let mut writer = PcapNgWriter::new(path)?;
+    for frame in &frames {
+        writer.write_frame(frame)?;
+    }
+    writer.finish()
+}
+
+fn convert_capture_to_pcapng(source: &Path, destination: &Path) -> Result<(), String> {
+    let mut writer = PcapNgWriter::new(destination)?;
+    visit_capture_file(source, |record| {
+        if let CaptureRecord::Frame(frame) = record {
+            writer.write_frame(&frame)?;
+        }
+        Ok(())
+    })?;
+    writer.finish()
+}
+
+pub fn trdp_save_capture(path: String, capture_id: String) -> Result<(), String> {
+    enum SaveSource {
+        Live(Vec<StoredFrame>),
+        Offline(PathBuf),
+    }
+
+    let source = {
+        let store = capture_store().lock().map_err(|error| error.to_string())?;
+        let capture = store
+            .get(&capture_id)
+            .ok_or_else(|| "TRDP capture 不存在或已释放".to_string())?;
+        match &capture.source_path {
+            Some(path) => SaveSource::Offline(path.clone()),
+            None => SaveSource::Live(capture.frames.clone()),
+        }
+    };
+
+    let destination = PathBuf::from(path);
+    match source {
+        SaveSource::Live(frames) => save_frames(&destination, frames),
+        SaveSource::Offline(source) => {
+            let same_file = fs::canonicalize(&source)
+                .ok()
+                .zip(fs::canonicalize(&destination).ok())
+                .is_some_and(|(left, right)| left == right);
+            if !same_file {
+                return convert_capture_to_pcapng(&source, &destination);
+            }
+
+            let file_name = destination
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("capture.pcapng");
+            let temporary = destination.with_file_name(format!(
+                ".{file_name}.tauterm-{}.tmp",
+                Uuid::new_v4()
+            ));
+            convert_capture_to_pcapng(&source, &temporary)?;
+            fs::remove_file(&destination)
+                .map_err(|error| format!("替换原抓包失败: {error}"))?;
+            fs::rename(&temporary, &destination)
+                .map_err(|error| format!("写回 pcapng 失败: {error}"))
+        }
+    }
 }
 
 #[cfg(test)]
