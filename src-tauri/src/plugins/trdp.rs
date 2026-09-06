@@ -132,14 +132,8 @@ impl TrdpSideChannel {
         let object = command
             .as_object_mut()
             .ok_or("TRDP bridge command must be a JSON object")?;
-        let request_id = format!(
-            "r{}",
-            self.next_request_id.fetch_add(1, Ordering::Relaxed)
-        );
-        object.insert(
-            "request_id".to_string(),
-            Value::String(request_id.clone()),
-        );
+        let request_id = format!("r{}", self.next_request_id.fetch_add(1, Ordering::Relaxed));
+        object.insert("request_id".to_string(), Value::String(request_id.clone()));
 
         let (tx, rx) = mpsc::channel();
         self.pending
@@ -223,13 +217,11 @@ impl TrdpSideChannel {
         let event_session_id = session_id.to_string();
         let event_app = app.clone();
         let capture_id = Arc::clone(&self.capture_id);
-        let pd_ports = vec![
-            params
-                .get("pd_port")
-                .and_then(Value::as_u64)
-                .and_then(|value| u16::try_from(value).ok())
-                .unwrap_or(17224),
-        ];
+        let pd_ports = vec![params
+            .get("pd_port")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(17224)];
         let md_ports = {
             let udp = params
                 .get("md_udp_port")
@@ -241,7 +233,11 @@ impl TrdpSideChannel {
                 .and_then(Value::as_u64)
                 .and_then(|value| u16::try_from(value).ok())
                 .unwrap_or(17225);
-            if udp == tcp { vec![udp] } else { vec![udp, tcp] }
+            if udp == tcp {
+                vec![udp]
+            } else {
+                vec![udp, tcp]
+            }
         };
         let pending = Arc::clone(&self.pending);
         let alive = Arc::clone(&self.alive);
@@ -268,10 +264,7 @@ impl TrdpSideChannel {
                     .map(str::to_owned);
 
                 if event_name.as_deref() == Some("capture_frame") {
-                    let current_capture_id = capture_id
-                        .lock()
-                        .ok()
-                        .and_then(|value| value.clone());
+                    let current_capture_id = capture_id.lock().ok().and_then(|value| value.clone());
                     let Some(current_capture_id) = current_capture_id else {
                         continue;
                     };
@@ -300,12 +293,7 @@ impl TrdpSideChannel {
                     let Some(raw_frame) = capture::decode_raw_frame_hex(raw_frame_hex) else {
                         continue;
                     };
-                    let packets = decoder.feed_frame(
-                        &raw_frame,
-                        link_type,
-                        timestamp_us,
-                        &link,
-                    );
+                    let packets = decoder.feed_frame(&raw_frame, link_type, timestamp_us, &link);
                     let stats = capture::append_live_capture(
                         &current_capture_id,
                         link,
@@ -326,7 +314,8 @@ impl TrdpSideChannel {
                         }
                     }
                     if let Some((frame_count, packet_count, dropped_frames)) = stats {
-                        if frame_count == 1 || last_progress.elapsed() >= Duration::from_millis(100) {
+                        if frame_count == 1 || last_progress.elapsed() >= Duration::from_millis(100)
+                        {
                             last_progress = Instant::now();
                             let _ = event_app.emit(
                                 "trdp-event",
@@ -376,10 +365,7 @@ impl TrdpSideChannel {
                 }
 
                 if let Some(object) = payload.as_object_mut() {
-                    object.insert(
-                        "session_id".into(),
-                        Value::String(event_session_id.clone()),
-                    );
+                    object.insert("session_id".into(), Value::String(event_session_id.clone()));
                 }
                 let _ = event_app.emit("trdp-event", payload);
             }
@@ -396,9 +382,8 @@ impl TrdpSideChannel {
                 let state: State<'_, AppState> = event_app.state();
                 if let Ok(mut store) = state.session_store.lock() {
                     store.mark_disconnected(&event_session_id);
-                    let path = crate::kernel::session_store::SessionStore::sessions_file_path(
-                        &event_app,
-                    );
+                    let path =
+                        crate::kernel::session_store::SessionStore::sessions_file_path(&event_app);
                     let _ = store.save_to_disk(&path);
                 }
                 let _ = event_app.emit(
@@ -422,10 +407,7 @@ impl TrdpSideChannel {
         let open_command = if params.get("mode").and_then(Value::as_str) == Some("monitor") {
             json!({ "command": "monitor_open" })
         } else {
-            let mut object = params
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
+            let mut object = params.as_object().cloned().unwrap_or_default();
             object.insert("command".into(), Value::String("open".into()));
             Value::Object(object)
         };
@@ -688,9 +670,9 @@ fn validate_workspace_object(value: &Value, index: usize) -> Result<(), String> 
 
     let validate_enum = |field: &str, accepted: &[&str]| -> Result<(), String> {
         if let Some(raw) = object.get(field) {
-            let value = raw.as_str().ok_or_else(|| {
-                format!("TRDP Workspace objects[{index}].{field} 必须是字符串")
-            })?;
+            let value = raw
+                .as_str()
+                .ok_or_else(|| format!("TRDP Workspace objects[{index}].{field} 必须是字符串"))?;
             if !accepted.contains(&value) {
                 return Err(format!(
                     "TRDP Workspace objects[{index}].{field} 无效: {value}"
@@ -729,13 +711,7 @@ fn validate_workspace_object(value: &Value, index: usize) -> Result<(), String> 
 }
 
 fn import_workspace(path: &str) -> Result<Value, String> {
-    const ALLOWED_TOP_LEVEL: &[&str] = &[
-        "format",
-        "name",
-        "xml",
-        "objects",
-        "redundancy_groups",
-    ];
+    const ALLOWED_TOP_LEVEL: &[&str] = &["format", "name", "xml", "objects", "redundancy_groups"];
 
     let text =
         fs::read_to_string(path).map_err(|error| format!("读取 TRDP Workspace 失败: {error}"))?;
@@ -751,8 +727,7 @@ fn import_workspace(path: &str) -> Result<Value, String> {
     }
     if object.get("format").and_then(Value::as_str) != Some("tauterm-trdp-workspace/v2") {
         return Err(
-            "不支持的 TRDP Workspace format，当前仅接受 tauterm-trdp-workspace/v2"
-                .to_string(),
+            "不支持的 TRDP Workspace format，当前仅接受 tauterm-trdp-workspace/v2".to_string(),
         );
     }
 
@@ -893,10 +868,7 @@ pub fn trdp_command(
             .map_err(|error| error.to_string())?
             .clone();
         let new_capture = capture::create_live_capture();
-        *trdp
-            .capture_id
-            .lock()
-            .map_err(|error| error.to_string())? = Some(new_capture.clone());
+        *trdp.capture_id.lock().map_err(|error| error.to_string())? = Some(new_capture.clone());
 
         match trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT) {
             Ok(_) => {
