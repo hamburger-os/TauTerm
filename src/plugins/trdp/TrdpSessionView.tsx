@@ -9,6 +9,7 @@ import styles from "./TrdpSessionView.module.css";
 
 type Page = "overview" | "pd" | "md" | "analysis";
 type LinkChoice = "a" | "b" | "both";
+type RedundancyState = "leader" | "follower";
 type CaptureInterface = { name: string; description: string };
 type ObjectKind = "pd_publisher" | "pd_subscriber" | "pd_request" | "md_request" | "md_listener" | "md_notify";
 
@@ -72,7 +73,6 @@ type TrdpObject = {
   etbTopoCount: number;
   opTrnTopoCount: number;
   redId: number;
-  redState: "leader" | "follower";
   numReplies: number;
   replyTimeoutUs: number;
   responseMode: "reply" | "query";
@@ -125,10 +125,17 @@ type DecodedDataset = {
   fields: Record<string, DecodedField>;
 };
 type Workspace = {
-  format: string;
+  format: "tauterm-trdp-workspace/v2";
   name?: string;
   xml?: string;
-  objects?: Array<Record<string, unknown>>;
+  xml_path?: string;
+  objects: Array<Record<string, unknown>>;
+  redundancy_groups?: Record<string, RedundancyState>;
+};
+type WorkspaceDraft = {
+  format: "tauterm-trdp-draft/v2";
+  objects: TrdpObject[];
+  redundancyGroups: Record<string, RedundancyState>;
 };
 type EncodedDataset = {
   dataset_id: number;
@@ -216,7 +223,6 @@ function createObject(kind: ObjectKind, index: number): TrdpObject {
     etbTopoCount: 0,
     opTrnTopoCount: 0,
     redId: 0,
-    redState: "leader",
     numReplies: 1,
     replyTimeoutUs: 5000000,
     responseMode: "reply",
@@ -263,7 +269,6 @@ function workspaceObject(raw: Record<string, unknown>, index: number): TrdpObjec
     etbTopoCount: Number(raw.etb_topo_count ?? 0),
     opTrnTopoCount: Number(raw.op_trn_topo_count ?? 0),
     redId: Number(raw.red_id ?? 0),
-    redState: raw.red_state === "follower" ? "follower" : "leader",
     numReplies: Number(raw.num_replies ?? 1),
     replyTimeoutUs: Number(raw.reply_timeout_us ?? 5000000),
     responseMode: raw.response_mode === "query" ? "query" : "reply",
@@ -327,7 +332,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = tab?.params as Record<string, unknown> | undefined;
   const mode = (params?.mode as string | undefined) ?? "node";
-  const storageKey = `tauterm:trdp:${sessionId}:objects`;
+  const storageKey = `tauterm:trdp:${sessionId}:workspace-v2`;
   const [page, setPage] = useState<Page>(mode === "monitor" ? "analysis" : "overview");
   const [events, setEvents] = useState<TrdpEvent[]>([]);
   const [captureFrames, setCaptureFrames] = useState<TrdpEvent[]>([]);
@@ -337,21 +342,44 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const packetBatchRef = useRef<TrdpEvent[]>([]);
   const captureBatchRef = useRef<TrdpEvent[]>([]);
   const batchTimerRef = useRef<number | null>(null);
-  const [objects, setObjects] = useState<TrdpObject[]>(() => {
+  const [workspaceDraft, setWorkspaceDraft] = useState<WorkspaceDraft>(() => {
     try {
       const saved = localStorage.getItem(storageKey);
-      if (!saved) return [];
-      const parsed = JSON.parse(saved) as TrdpObject[];
-      return Array.isArray(parsed)
-        ? parsed.map(item => ({
-            ...item,
-            state: "stopped" as const,
-            timeoutMode: item.timeoutMode
-              ?? (item.kind === "pd_subscriber" || item.kind === "pd_request" ? "custom" : "auto"),
-          }))
-        : [];
-    } catch { return []; }
+      if (!saved) {
+        return { format: "tauterm-trdp-draft/v2", objects: [], redundancyGroups: {} };
+      }
+      const parsed = JSON.parse(saved) as Partial<WorkspaceDraft>;
+      if (
+        parsed.format !== "tauterm-trdp-draft/v2"
+        || !Array.isArray(parsed.objects)
+        || !parsed.redundancyGroups
+        || typeof parsed.redundancyGroups !== "object"
+      ) {
+        return { format: "tauterm-trdp-draft/v2", objects: [], redundancyGroups: {} };
+      }
+      return {
+        format: "tauterm-trdp-draft/v2",
+        objects: parsed.objects.map(item => ({
+          ...item,
+          state: "stopped" as const,
+          timeoutMode: item.timeoutMode
+            ?? (item.kind === "pd_subscriber" || item.kind === "pd_request" ? "custom" : "auto"),
+        })),
+        redundancyGroups: parsed.redundancyGroups,
+      };
+    } catch {
+      return { format: "tauterm-trdp-draft/v2", objects: [], redundancyGroups: {} };
+    }
   });
+  const objects = workspaceDraft.objects;
+  const redundancyGroups = workspaceDraft.redundancyGroups;
+
+  function setObjects(update: TrdpObject[] | ((previous: TrdpObject[]) => TrdpObject[])) {
+    setWorkspaceDraft(previous => ({
+      ...previous,
+      objects: typeof update === "function" ? update(previous.objects) : update,
+    }));
+  }
   const [xmlImport, setXmlImport] = useState<XmlImport | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string | null>(null);
   const [decoded, setDecoded] = useState<DecodedDataset | null>(null);
@@ -386,8 +414,8 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [captureFilter, setCaptureFilter] = useState(initialCaptureFilter);
 
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify(objects)); } catch { /* best effort */ }
-  }, [objects, storageKey]);
+    try { localStorage.setItem(storageKey, JSON.stringify(workspaceDraft)); } catch { /* best effort */ }
+  }, [workspaceDraft, storageKey]);
 
   useEffect(() => {
     let disposed = false;
@@ -583,7 +611,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           etb_topo_count: obj.etbTopoCount,
           op_trn_topo_count: obj.opTrnTopoCount,
           red_id: obj.redId,
-          red_state: obj.redState,
+          red_state: obj.redId > 0 ? (redundancyGroups[String(obj.redId)] ?? "leader") : "leader",
           num_replies: obj.numReplies,
           reply_timeout_us: obj.replyTimeoutUs,
           response_mode: obj.responseMode,
@@ -621,6 +649,29 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       await command("object_stop", { id: obj.id, kind: obj.kind });
     }
     setObjects(prev => prev.filter(item => item.id !== obj.id));
+  }
+
+  async function updateRedundancyGroup(redId: number, nextState: RedundancyState) {
+    if (redId <= 0) return;
+    const key = String(redId);
+    const previousState = redundancyGroups[key] ?? "leader";
+    setWorkspaceDraft(previous => ({
+      ...previous,
+      redundancyGroups: { ...previous.redundancyGroups, [key]: nextState },
+    }));
+    const hasRunningPublisher = objects.some(
+      item => item.kind === "pd_publisher" && item.redId === redId && item.state === "running",
+    );
+    if (tab?.state === "connected" && hasRunningPublisher) {
+      try {
+        await command("redundancy_set", { red_id: redId, red_state: nextState, link: "both" });
+      } catch {
+        setWorkspaceDraft(previous => ({
+          ...previous,
+          redundancyGroups: { ...previous.redundancyGroups, [key]: previousState },
+        }));
+      }
+    }
   }
 
   async function updatePayload(obj: TrdpObject) {
@@ -667,9 +718,21 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const selected = await open({ multiple: false, filters: [{ name: "TauTerm TRDP Workspace", extensions: ["json"] }] });
     if (typeof selected !== "string") return;
     const workspace = await command<Workspace>("workspace_import", { path: selected });
-    const imported = (workspace.objects ?? []).map(workspaceObject).filter((item): item is TrdpObject => item !== null);
-    setObjects(imported.map(item => ({ ...item, state: "stopped" })));
+    const imported = workspace.objects
+      .map(workspaceObject)
+      .filter((item): item is TrdpObject => item !== null)
+      .map(item => ({ ...item, state: "stopped" as const }));
+    setWorkspaceDraft({
+      format: "tauterm-trdp-draft/v2",
+      objects: imported,
+      redundancyGroups: workspace.redundancy_groups ?? {},
+    });
     setWorkspaceName(workspace.name ?? selected);
+    if (workspace.xml_path) {
+      const importedXml = await command<XmlImport>("xml_import", { path: workspace.xml_path });
+      setXmlImport(importedXml);
+      setDecoded(null);
+    }
   }
 
   async function inspectPacket(event: TrdpEvent) {
@@ -949,6 +1012,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const oneShot = isOneShotKind(obj.kind);
     const busy = obj.state === "starting" || obj.state === "stopping" || obj.state === "sending";
     const subscriber = obj.kind === "pd_subscriber" || obj.kind === "pd_request";
+    const redundancyState = obj.redId > 0 ? (redundancyGroups[String(obj.redId)] ?? "leader") : "leader";
     const inputClass = `${styles.detailInput} liquid-glass-input`;
     const selectClass = `${styles.detailInput} liquid-glass-input liquid-glass-select`;
     return (
@@ -1000,7 +1064,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
             <label><span>OpTrn</span><input className={inputClass} type="number" min={0} value={obj.opTrnTopoCount} onChange={event => patchObject(obj.id, { opTrnTopoCount: Number(event.target.value) })} /></label>
             {subscriber && <label><span>{t("trdp.advanced.timeoutBehavior")}</span><select className={selectClass} value={obj.timeoutBehavior} onChange={event => patchObject(obj.id, { timeoutBehavior: event.target.value as "keep" | "zero" })}><option value="keep">{t("trdp.advanced.keepLast")}</option><option value="zero">{t("trdp.advanced.setZero")}</option></select></label>}
             {obj.kind === "pd_request" && <><label><span>{t("trdp.advanced.replyComId")}</span><input className={inputClass} type="number" min={0} value={obj.replyComId} onChange={event => patchObject(obj.id, { replyComId: Number(event.target.value) })} /></label><label><span>{t("trdp.advanced.replyIp")}</span><input className={inputClass} value={obj.replyIp} onChange={event => patchObject(obj.id, { replyIp: event.target.value })} /></label></>}
-            {obj.kind === "pd_publisher" && <><label><span>{t("trdp.advanced.redId")}</span><input className={inputClass} type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><label><span>{t("trdp.advanced.redState")}</span><select className={selectClass} value={obj.redState} onChange={event => patchObject(obj.id, { redState: event.target.value as "leader" | "follower" })}><option value="leader">{t("trdp.advanced.leader")}</option><option value="follower">{t("trdp.advanced.follower")}</option></select></label></>}
+            {obj.kind === "pd_publisher" && <><label><span>{t("trdp.advanced.redId")}</span><input className={inputClass} type="number" min={0} value={obj.redId} onChange={event => patchObject(obj.id, { redId: Number(event.target.value) })} /></label><label><span>{t("trdp.advanced.redState")}</span><select className={selectClass} value={redundancyState} disabled={obj.redId <= 0} onChange={event => void updateRedundancyGroup(obj.redId, event.target.value as RedundancyState)}><option value="leader">{t("trdp.advanced.leader")}</option><option value="follower">{t("trdp.advanced.follower")}</option></select></label></>}
             {obj.kind.startsWith("md_") && <><label><span>{t("trdp.advanced.sourceUri")}</span><input className={inputClass} value={obj.sourceUri} onChange={event => patchObject(obj.id, { sourceUri: event.target.value })} /></label><label><span>{t("trdp.advanced.destinationUri")}</span><input className={inputClass} value={obj.destUri} onChange={event => patchObject(obj.id, { destUri: event.target.value })} /></label></>}
             {obj.kind === "md_request" && <><label><span>{t("trdp.advanced.replies")}</span><input className={inputClass} type="number" min={1} value={obj.numReplies} onChange={event => patchObject(obj.id, { numReplies: Number(event.target.value) })} /></label><label><span>{t("trdp.advanced.replyTimeout")}</span><input className={inputClass} type="number" min={1} value={obj.replyTimeoutUs} onChange={event => patchObject(obj.id, { replyTimeoutUs: Number(event.target.value) })} /></label></>}
             {obj.kind === "md_listener" && <><label><span>{t("trdp.advanced.response")}</span><select className={selectClass} value={obj.responseMode} onChange={event => patchObject(obj.id, { responseMode: event.target.value as "reply" | "query" })}><option value="reply">Reply (Mp)</option><option value="query">ReplyQuery (Mq)</option></select></label>{obj.responseMode === "query" && <label><span>{t("trdp.advanced.confirmTimeout")}</span><input className={inputClass} type="number" min={1} value={obj.confirmTimeoutUs} onChange={event => patchObject(obj.id, { confirmTimeoutUs: Number(event.target.value) })} /></label>}</>}
