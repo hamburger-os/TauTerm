@@ -409,9 +409,33 @@ impl TrdpSideChannel {
         let open_command = if params.get("mode").and_then(Value::as_str) == Some("monitor") {
             json!({ "command": "monitor_open" })
         } else {
-            let mut object = params.as_object().cloned().unwrap_or_default();
-            object.insert("command".into(), Value::String("open".into()));
-            Value::Object(object)
+            json!({
+                "command": "open",
+                "link_a_ip": params
+                    .get("link_a_ip")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String("0.0.0.0".into())),
+                "link_b_enabled": params
+                    .get("link_b_enabled")
+                    .cloned()
+                    .unwrap_or(Value::Bool(false)),
+                "link_b_ip": params
+                    .get("link_b_ip")
+                    .cloned()
+                    .unwrap_or_else(|| Value::String("0.0.0.0".into())),
+                "pd_port": params
+                    .get("pd_port")
+                    .cloned()
+                    .unwrap_or_else(|| json!(17224)),
+                "md_udp_port": params
+                    .get("md_udp_port")
+                    .cloned()
+                    .unwrap_or_else(|| json!(17225)),
+                "md_tcp_port": params
+                    .get("md_tcp_port")
+                    .cloned()
+                    .unwrap_or_else(|| json!(17225)),
+            })
         };
 
         match self.request(open_command, Self::REQUEST_TIMEOUT) {
