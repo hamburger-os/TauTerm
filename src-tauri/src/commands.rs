@@ -372,7 +372,7 @@ async fn connect_session_serial(
 ) -> Result<String, String> {
     let ConnectSessionRequest {
         endpoint,
-        mut params,
+        params,
         name,
         transfer_enabled,
         transfer_protocol,
@@ -2139,7 +2139,7 @@ pub fn save_session_config(
 ) -> Result<String, String> {
     let SaveSessionConfigRequest {
         endpoint,
-        params,
+        mut params,
         name,
         plugin_id,
         transfer_enabled,
