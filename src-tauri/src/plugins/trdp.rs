@@ -756,9 +756,7 @@ fn validate_workspace_value(value: &Value) -> Result<(), String> {
     }
 
     if let Some(xml) = object.get("xml") {
-        let xml = xml
-            .as_str()
-            .ok_or("TRDP Workspace xml 必须是路径字符串")?;
+        let xml = xml.as_str().ok_or("TRDP Workspace xml 必须是路径字符串")?;
         if xml.trim().is_empty() {
             return Err("TRDP Workspace xml 不能为空路径".to_string());
         }
@@ -773,11 +771,7 @@ fn import_workspace(path: &str) -> Result<Value, String> {
         .map_err(|error| format!("TRDP Workspace JSON 无效: {error}"))?;
     validate_workspace_value(&value)?;
 
-    if let Some(xml) = value
-        .get("xml")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-    {
+    if let Some(xml) = value.get("xml").and_then(Value::as_str).map(str::to_owned) {
         let workspace_path = std::path::Path::new(path);
         let xml_path = if std::path::Path::new(&xml).is_absolute() {
             PathBuf::from(&xml)
@@ -1043,7 +1037,6 @@ pub fn trdp_decode_dataset(
 ) -> Result<Value, String> {
     xml::trdp_decode_dataset(path, dataset_id, payload_hex)
 }
-
 
 #[cfg(test)]
 mod tests {
