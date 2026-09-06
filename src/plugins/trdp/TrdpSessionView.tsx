@@ -267,6 +267,14 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         setCapturePacketCount(payload.packet_count ?? 0);
         setCaptureDroppedFrames(payload.dropped_frames ?? 0);
       }
+      if (payload.event === "object_state" && payload.id && payload.state) {
+        setWorkspaceDraft(previous => ({
+          ...previous,
+          objects: previous.objects.map(object => (
+            object.id === payload.id ? { ...object, state: payload.state! } : object
+          )),
+        }));
+      }
       if (payload.event === "packet") {
         let packet = payload;
         if (
