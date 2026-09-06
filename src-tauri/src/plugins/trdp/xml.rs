@@ -72,6 +72,31 @@ struct TelegramBuilder {
     sdt_detected: bool,
 }
 
+#[derive(Debug)]
+struct ParseState {
+    current_dataset: Option<DatasetBuilder>,
+    current_telegram: Option<TelegramBuilder>,
+    warnings: Vec<String>,
+    pd_port: u16,
+    md_udp_port: u16,
+    md_tcp_port: u16,
+    sdt_detected: bool,
+}
+
+impl Default for ParseState {
+    fn default() -> Self {
+        Self {
+            current_dataset: None,
+            current_telegram: None,
+            warnings: Vec::new(),
+            pd_port: 17224,
+            md_udp_port: 17225,
+            md_tcp_port: 17225,
+            sdt_detected: false,
+        }
+    }
+}
+
 fn local_name(bytes: &[u8]) -> String {
     let local = bytes
         .rsplit(|byte| *byte == b':')
@@ -162,11 +187,11 @@ fn finish_dataset(
     warnings: &mut Vec<String>,
 ) {
     let Some(id) = builder.id else {
-        warnings.push("忽略缺少数字 id 的 <data-set>".to_string());
+        state.warnings.push("忽略缺少数字 id 的 <data-set>".to_string());
         return;
     };
     if !dataset_ids.insert(id) {
-        warnings.push(format!(
+        state.warnings.push(format!(
             "Dataset {id} 重复定义；保留全部定义供预览，请在使用前修正配置"
         ));
     }
@@ -176,7 +201,7 @@ fn finish_dataset(
         .take(builder.elements.len().saturating_sub(1))
         .any(|element| element.dynamic)
     {
-        warnings.push(format!(
+        state.warnings.push(format!(
             "Dataset {id} 在非末尾位置包含动态数组；解码仅在后续字段固定长度时可确定边界"
         ));
     }
@@ -193,20 +218,20 @@ fn finish_telegram(
     warnings: &mut Vec<String>,
 ) {
     let Some(com_id) = builder.com_id else {
-        warnings.push("忽略缺少 com-id 的 <telegram>".to_string());
+        state.warnings.push("忽略缺少 com-id 的 <telegram>".to_string());
         return;
     };
     let traffic_kind = match (builder.has_pd, builder.has_md) {
         (true, false) => "pd",
         (false, true) => "md",
         (true, true) => {
-            warnings.push(format!(
+            state.warnings.push(format!(
                 "ComID {com_id} 同时包含 pd-parameter 与 md-parameter；不会自动生成模板"
             ));
             "ambiguous"
         }
         (false, false) => {
-            warnings.push(format!(
+            state.warnings.push(format!(
                 "ComID {com_id} 未声明 pd-parameter/md-parameter；协议类型标记为 unknown"
             ));
             "unknown"
@@ -229,27 +254,21 @@ fn finish_telegram(
 fn process_node(
     name: &str,
     attributes: &HashMap<String, String>,
-    current_dataset: &mut Option<DatasetBuilder>,
-    current_telegram: &mut Option<TelegramBuilder>,
-    warnings: &mut Vec<String>,
-    pd_port: &mut u16,
-    md_udp_port: &mut u16,
-    md_tcp_port: &mut u16,
-    sdt_detected: &mut bool,
+    state: &mut ParseState,
 ) -> Result<(), String> {
     match name {
         "data-set" => {
-            if current_dataset.is_some() {
+            if state.current_dataset.is_some() {
                 return Err("TRDP XML 包含嵌套 <data-set>，配置结构无效".to_string());
             }
-            *current_dataset = Some(DatasetBuilder {
+            *state.current_dataset = Some(DatasetBuilder {
                 id: attr_u32(attributes, "id"),
                 name: attributes.get("name").cloned(),
                 elements: Vec::new(),
             });
         }
         "element" => {
-            if let Some(dataset) = current_dataset.as_mut() {
+            if let Some(dataset) = state.current_dataset.as_mut() {
                 let raw_type = attributes
                     .get("type")
                     .cloned()
@@ -260,7 +279,7 @@ fn process_node(
                     .cloned()
                     .unwrap_or_else(|| "unnamed".to_string());
                 if element_type_id == 0 {
-                    warnings.push(format!(
+                    state.warnings.push(format!(
                         "Dataset {} 字段 {name} 使用未知类型 {raw_type}",
                         dataset
                             .id
@@ -282,10 +301,10 @@ fn process_node(
             }
         }
         "telegram" => {
-            if current_telegram.is_some() {
+            if state.current_telegram.is_some() {
                 return Err("TRDP XML 包含嵌套 <telegram>，配置结构无效".to_string());
             }
-            *current_telegram = Some(TelegramBuilder {
+            *state.current_telegram = Some(TelegramBuilder {
                 com_id: attr_u32(attributes, "com-id"),
                 dataset_id: attr_u32(attributes, "data-set-id").unwrap_or(0),
                 name: attributes.get("name").cloned(),
@@ -300,7 +319,7 @@ fn process_node(
             });
         }
         "pd-parameter" => {
-            if let Some(telegram) = current_telegram.as_mut() {
+            if let Some(telegram) = state.current_telegram.as_mut() {
                 telegram.has_pd = true;
                 telegram.cycle_us = attr_u32(attributes, "cycle");
                 telegram.timeout_us = attr_u32(attributes, "timeout");
@@ -313,41 +332,41 @@ fn process_node(
             }
         }
         "md-parameter" => {
-            if let Some(telegram) = current_telegram.as_mut() {
+            if let Some(telegram) = state.current_telegram.as_mut() {
                 telegram.has_md = true;
             }
         }
         "source" => {
-            if let Some(telegram) = current_telegram.as_mut() {
+            if let Some(telegram) = state.current_telegram.as_mut() {
                 if let Some(uri) = attributes.get("uri1").or_else(|| attributes.get("uri")) {
                     telegram.sources.push(uri.clone());
                 }
             }
         }
         "destination" => {
-            if let Some(telegram) = current_telegram.as_mut() {
+            if let Some(telegram) = state.current_telegram.as_mut() {
                 if let Some(uri) = attributes.get("uri") {
                     telegram.destinations.push(uri.clone());
                 }
             }
         }
         "sdt-parameter" => {
-            *sdt_detected = true;
-            if let Some(telegram) = current_telegram.as_mut() {
-                telegram.sdt_detected = true;
+            state.sdt_detected = true;
+            if let Some(telegram) = state.current_telegram.as_mut() {
+                telegram.state.sdt_detected = true;
             }
         }
         "pd-com-parameter" => {
             if let Some(value) = attr_u32(attributes, "port").and_then(|value| u16::try_from(value).ok()) {
-                *pd_port = value;
+                state.pd_port = value;
             }
         }
         "md-com-parameter" => {
             if let Some(value) = attr_u32(attributes, "udp-port").and_then(|value| u16::try_from(value).ok()) {
-                *md_udp_port = value;
+                state.md_udp_port = value;
             }
             if let Some(value) = attr_u32(attributes, "tcp-port").and_then(|value| u16::try_from(value).ok()) {
-                *md_tcp_port = value;
+                state.md_tcp_port = value;
             }
         }
         _ => {}
@@ -360,67 +379,41 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
     let mut reader = Reader::from_str(&xml);
     reader.config_mut().trim_text(true);
 
-    let mut warnings = Vec::new();
+    let mut state = ParseState::default();
     let mut datasets = Vec::new();
     let mut telegrams = Vec::new();
     let mut dataset_ids = HashSet::new();
-    let mut current_dataset: Option<DatasetBuilder> = None;
-    let mut current_telegram: Option<TelegramBuilder> = None;
-    let mut pd_port = 17224u16;
-    let mut md_udp_port = 17225u16;
-    let mut md_tcp_port = 17225u16;
-    let mut sdt_detected = false;
 
     loop {
         match reader.read_event() {
             Ok(Event::Start(start)) => {
                 let name = local_name(start.name().as_ref());
                 let attributes = xml_attributes(&start)?;
-                process_node(
-                    &name,
-                    &attributes,
-                    &mut current_dataset,
-                    &mut current_telegram,
-                    &mut warnings,
-                    &mut pd_port,
-                    &mut md_udp_port,
-                    &mut md_tcp_port,
-                    &mut sdt_detected,
-                )?;
+                process_node(&name, &attributes, &mut state)?;
             }
             Ok(Event::Empty(start)) => {
                 let name = local_name(start.name().as_ref());
                 let attributes = xml_attributes(&start)?;
-                process_node(
-                    &name,
-                    &attributes,
-                    &mut current_dataset,
-                    &mut current_telegram,
-                    &mut warnings,
-                    &mut pd_port,
-                    &mut md_udp_port,
-                    &mut md_tcp_port,
-                    &mut sdt_detected,
-                )?;
+                process_node(&name, &attributes, &mut state)?;
                 if name == "data-set" {
-                    if let Some(builder) = current_dataset.take() {
-                        finish_dataset(builder, &mut datasets, &mut dataset_ids, &mut warnings);
+                    if let Some(builder) = state.current_dataset.take() {
+                        finish_dataset(builder, &mut datasets, &mut dataset_ids, &mut state.warnings);
                     }
                 } else if name == "telegram" {
-                    if let Some(builder) = current_telegram.take() {
-                        finish_telegram(builder, &mut telegrams, &mut warnings);
+                    if let Some(builder) = state.current_telegram.take() {
+                        finish_telegram(builder, &mut telegrams, &mut state.warnings);
                     }
                 }
             }
             Ok(Event::End(end)) => {
                 let name = local_name(end.name().as_ref());
                 if name == "data-set" {
-                    if let Some(builder) = current_dataset.take() {
-                        finish_dataset(builder, &mut datasets, &mut dataset_ids, &mut warnings);
+                    if let Some(builder) = state.current_dataset.take() {
+                        finish_dataset(builder, &mut datasets, &mut dataset_ids, &mut state.warnings);
                     }
                 } else if name == "telegram" {
-                    if let Some(builder) = current_telegram.take() {
-                        finish_telegram(builder, &mut telegrams, &mut warnings);
+                    if let Some(builder) = state.current_telegram.take() {
+                        finish_telegram(builder, &mut telegrams, &mut state.warnings);
                     }
                 }
             }
@@ -435,14 +428,14 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         }
     }
 
-    if current_dataset.is_some() || current_telegram.is_some() {
+    if state.current_dataset.is_some() || state.current_telegram.is_some() {
         return Err("TRDP XML 在 Dataset/Telegram 内意外结束".to_string());
     }
 
     let known_dataset_ids: HashSet<u32> = datasets.iter().map(|dataset| dataset.id).collect();
     for telegram in &telegrams {
         if telegram.dataset_id != 0 && !known_dataset_ids.contains(&telegram.dataset_id) {
-            warnings.push(format!(
+            state.warnings.push(format!(
                 "ComID {} 引用了不存在的 Dataset {}",
                 telegram.com_id, telegram.dataset_id
             ));
@@ -451,10 +444,10 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
 
     let lowercase = xml.to_ascii_lowercase();
     if lowercase.contains("sdtv2") || lowercase.contains("sdtv4") {
-        sdt_detected = true;
+        state.sdt_detected = true;
     }
-    if sdt_detected {
-        warnings.push(
+    if state.sdt_detected {
+        state.warnings.push(
             "检测到 SDT 配置：TauTerm 仅展示元数据，不执行 SDTv2/SDTv4 安全验证。".to_string(),
         );
     }
@@ -463,11 +456,11 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         path: path.to_string(),
         datasets,
         telegrams,
-        pd_port,
-        md_udp_port,
-        md_tcp_port,
-        sdt_detected,
-        warnings,
+        pd_port: state.pd_port,
+        md_udp_port: state.md_udp_port,
+        md_tcp_port: state.md_tcp_port,
+        sdt_detected: state.sdt_detected,
+        warnings: state.warnings,
     })
 }
 
