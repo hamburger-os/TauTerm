@@ -544,7 +544,6 @@ impl SideChannel for TrdpSideChannel {
         self.stop_process(true);
     }
 }
-}
 
 /// Single connection router exposed to the frontend as `connect_session`.
 /// Non-TRDP requests delegate to the existing microkernel command; TRDP sessions
