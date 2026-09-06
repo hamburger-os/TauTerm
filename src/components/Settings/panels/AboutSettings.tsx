@@ -53,7 +53,7 @@ export default function AboutSettings({
     <div className={styles.aboutSection}>
       <h3 className={styles.panelTitle}>TauTerm</h3>
 
-      {/* 版本 + 描述 + 更新操作区 */}
+      {/* 版本 + 更新操作区 */}
       <div className={styles.updateSection}>
         {appVersion && <p className={styles.aboutVersion}>{appVersion}</p>}
 
@@ -73,7 +73,6 @@ export default function AboutSettings({
           </div>
         )}
 
-        <p className={styles.aboutDesc}>{t("app.description")}</p>
 
         {/* 更新按钮 */}
         {updateInfo.phase === "idle" && (
