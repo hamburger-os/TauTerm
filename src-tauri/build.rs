@@ -22,12 +22,12 @@ fn main() {
             "tauterm-trdp-bridge"
         });
 
-        // Development does not build TRDP implicitly. If the developer explicitly
-        // ran `npm run trdp:build`, copy that real helper into Tauri's target-triple
-        // sidecar slot. Otherwise leave a marker only for externalBin validation;
-        // runtime discovery rejects that marker and offline Monitor analysis remains
-        // available without the native TRDP toolchain. Release bundling still
-        // replaces this path in beforeBundleCommand.
+        // `tauri dev` prepares the native helper in beforeDevCommand. Copy that
+        // real executable into Tauri's target-triple sidecar slot so every desktop
+        // development run exercises the complete TRDP-capable application. The
+        // placeholder remains only as a validation fallback and runtime discovery
+        // rejects it defensively. Release bundling replaces this path again in
+        // beforeBundleCommand.
         if local_helper.is_file() {
             std::fs::copy(&local_helper, &placeholder)
                 .expect("failed to stage TRDP bridge sidecar for development");
