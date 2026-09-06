@@ -115,7 +115,12 @@ pub fn append_live_capture(
     if !capture.live {
         return None;
     }
-    capture.frames.push(StoredFrame { link, timestamp_us, bytes, link_type });
+    capture.frames.push(StoredFrame {
+        link,
+        timestamp_us,
+        bytes,
+        link_type,
+    });
     if capture.frames.len() > LIVE_FRAME_LIMIT {
         let overflow = capture.frames.len() - LIVE_FRAME_LIMIT;
         capture.frames.drain(..overflow);
@@ -133,15 +138,19 @@ pub fn append_live_capture(
     ))
 }
 
-pub fn capture_packets(capture_id: &str, offset: usize, limit: usize) -> Result<Vec<TrdpPacket>, String> {
-    let store = capture_store()
-        .lock()
-        .map_err(|error| error.to_string())?;
+pub fn capture_packets(
+    capture_id: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<TrdpPacket>, String> {
+    let store = capture_store().lock().map_err(|error| error.to_string())?;
     let capture = store
         .get(capture_id)
         .ok_or_else(|| "TRDP capture 不存在或已释放".to_string())?;
     let start = offset.min(capture.packets.len());
-    let end = start.saturating_add(limit.min(5_000)).min(capture.packets.len());
+    let end = start
+        .saturating_add(limit.min(5_000))
+        .min(capture.packets.len());
     Ok(capture.packets[start..end].to_vec())
 }
 
@@ -279,7 +288,8 @@ impl TrdpStreamDecoder {
         let Some(destination_port) = be16(context.frame, context.transport_offset + 2) else {
             return Vec::new();
         };
-        let Some(udp_length) = be16(context.frame, context.transport_offset + 4).map(usize::from) else {
+        let Some(udp_length) = be16(context.frame, context.transport_offset + 4).map(usize::from)
+        else {
             return Vec::new();
         };
         if !self.ports.accepts(source_port, destination_port)
@@ -578,9 +588,7 @@ fn valid_md_type(data: &[u8]) -> bool {
 }
 
 fn valid_pd_type(data: &[u8]) -> bool {
-    data.len() >= 24
-        && data[6] == b'P'
-        && matches!(data[7], b'd' | b'p' | b'r' | b'e')
+    data.len() >= 24 && data[6] == b'P' && matches!(data[7], b'd' | b'p' | b'r' | b'e')
 }
 
 struct PacketOrigin<'a> {
@@ -722,7 +730,11 @@ fn parse_pcap(
             return Err("pcap packet length exceeds file size".into());
         }
         let timestamp_us = seconds.saturating_mul(1_000_000)
-            + if nanoseconds { fraction / 1_000 } else { fraction };
+            + if nanoseconds {
+                fraction / 1_000
+            } else {
+                fraction
+            };
         let frame = &data[offset..offset + captured_length];
         let link = "capture".to_string();
         packets.extend(decoder.feed_frame(frame, linktype, timestamp_us, &link));
@@ -935,9 +947,7 @@ pub fn trdp_open_capture(
 
 pub fn trdp_save_capture(path: String, capture_id: String) -> Result<(), String> {
     let frames = {
-        let store = capture_store()
-            .lock()
-            .map_err(|error| error.to_string())?;
+        let store = capture_store().lock().map_err(|error| error.to_string())?;
         store
             .get(&capture_id)
             .ok_or_else(|| "TRDP capture 不存在或已释放".to_string())?
