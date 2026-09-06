@@ -476,7 +476,7 @@ fn detect_windows_shell_presets() -> Vec<ShellPreset> {
         &mut presets,
         "windows-powershell",
         "powershell.exe",
-        "Script Shell (compat)",
+        "Script Shell (classic)",
     );
     push_resolved_native(&mut presets, "cmd", "cmd.exe", "Command Shell");
 
@@ -780,7 +780,7 @@ mod tests {
         assert_eq!(shell_display_label(Path::new("pwsh.exe")), "Script Shell");
         assert_eq!(
             shell_display_label(Path::new("powershell.exe")),
-            "Script Shell (compat)"
+            "Script Shell (classic)"
         );
         assert_eq!(shell_display_label(Path::new("cmd.exe")), "Command Shell");
         assert_eq!(
