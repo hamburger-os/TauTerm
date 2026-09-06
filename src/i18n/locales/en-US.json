@@ -622,12 +622,12 @@
     "performanceMode": "Visual Performance",
     "performanceQuality": "Effects First",
     "performancePerformance": "Performance First",
-    "performanceQualityDesc": "Keeps the complete four-color ambient light in wide continuous motion, with both diagonal fields visibly overlapping as they travel. Small tools and dialogs use richer liquid-glass sampling. Stronger visuals with higher GPU cost.",
-    "performancePerformanceDesc": "Keeps the complete four-color ambient light but makes it static. Major glass surfaces use a single translucent material with no real-time backdrop blur, layered highlights, or large shadows. Lowest GPU cost and maximum smoothness.",
+    "performanceQualityDesc": "Keeps the complete four-color ambient light in wide continuous motion, with both diagonal fields visibly overlapping as they travel. High-value four-color buttons also flow slowly, while small tools and dialogs use richer liquid-glass sampling. Stronger visuals with higher GPU cost.",
+    "performancePerformanceDesc": "Keeps the complete four-color ambient light and four-color buttons but makes both static. Major glass surfaces use a single translucent material with no real-time backdrop blur, layered highlights, or large shadows. Lowest GPU cost and maximum smoothness.",
     "systemMotionStatus": "System motion",
     "systemMotionAllowed": "Enabled",
     "systemMotionReduced": "Reduced / disabled",
-    "systemMotionReducedHint": "The system currently requests reduced motion, so ambient flow in Effects First stays still. Re-enable system animation effects and it will resume immediately. Performance First is static by design."
+    "systemMotionReducedHint": "The system currently requests reduced motion, so ambient flow and four-color button motion in Effects First stay still. Re-enable system animation effects and they will resume immediately. Performance First is static by design."
   },
   "updater": {
     "checking": "Checking for updates...",

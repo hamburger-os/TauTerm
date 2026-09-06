@@ -4,7 +4,7 @@ description: "Audit TauTerm UI for theme, Liquid Glass material, and rendering-p
 license: MIT
 metadata:
   author: tauterm
-  version: "4.4"
+  version: "4.5"
 ---
 
 # TauTerm 主题与渲染审查
@@ -31,7 +31,7 @@ rg 'filter:\s*blur|mix-blend-mode|will-change' src --glob '*.css' --glob '*.tsx'
 rg 'glass-blur|bg-orb-blur' src
 rg 'liquid-glass-panel|liquid-glass-content|liquid-glass-accent|liquid-glass-float|liquid-glass' src --glob '*.tsx'
 rg 'data-performance|data-motion|tauterm-performance-mode' src
-rg 'ambient-opacity-(quality|performance)|ambient-field-(opacity|a-duration|b-duration)' src/styles/tokens.css
+rg 'ambient-opacity-(quality|performance)|ambient-field-(opacity|a-duration|b-duration)|prism-button-flow|liquid-theme-selected|liquid-primary-button' src/styles src/components src/plugins
 rg 'theme-(shell|panel|content|card|float|control).*veil|performance-(shell|panel|content|control|card|float)-fill|liquid-clear-|liquid-specular-' src/styles
 rg 'paneFrame|selectedFrame|dockedBorderRadii|pane(Frame|Header|Content)Radius|liquid-glass-content|selectedHeader|requestAnimationFrame|onMouseDownCapture' src/components/Layout/SplitView* src/components/Terminal/TerminalView.tsx
 rg 'content-divider|scrollbar-(button|corner)|container-name' src/styles src/components/Layout
@@ -55,7 +55,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 7. Dialog / Popover / ContextMenu
 8. 可扩展的大面积面板
 9. Frosted theme
-10. Performance modes（按 SSOT 检查效果优先双动态层 / 性能优先全静态层、Ambient 交叠可感知性、系统 reduced-motion 状态提示与低成本 flat fill）
+10. Performance modes（按 SSOT 检查效果优先 Ambient + 小面积 Prism 动态、性能优先 Ambient + Prism 全静态、系统 reduced-motion 状态提示与低成本 flat fill）
 11. SplitView Workspace surface ownership / nested frame / interaction stability / resize cadence（判断规则只读 SSOT）
 12. Custom renderer 在短/窄 Pane 中的可达性与 Pane-relative adaptation（判断规则只读 SSOT）
 
@@ -67,7 +67,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 - single pane / 2 panes / 4 panes
 - 多 xterm 后台挂载
 - focused / unfocused / hidden
-- reduced motion（同时验证设置页状态提示会实时更新）
+- reduced motion（同时验证设置页状态提示会实时更新，四色 Prism 不再流动）
 - 高速终端输出
 - resize / split drag
 - short / narrow custom-renderer panes
