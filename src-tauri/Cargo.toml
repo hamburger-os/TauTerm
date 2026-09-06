@@ -50,6 +50,7 @@ atomic-write-file = "0.3.1"
 encoding_rs = "0.8"
 riperf3 = { path = "vendor/riperf3" }
 portable-pty = "0.9.0"
+quick-xml = "0.41"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
