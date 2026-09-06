@@ -53,6 +53,7 @@ export type TrdpEvent = {
   packet_count?: number;
   dropped_frames?: number;
   error?: string;
+  state?: TrdpObject["state"];
 };
 
 export type TrdpObject = {
