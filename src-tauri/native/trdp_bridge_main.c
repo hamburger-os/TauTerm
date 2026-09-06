@@ -13,8 +13,10 @@ int main(void) {
     bridge_common_init();
     while (running && fgets(line, BRIDGE_MAX_LINE, stdin) != NULL) {
         char command[64] = {0};
+        bridge_request_begin(line);
         if (!bridge_json_string(line, "command", command, sizeof(command), NULL)) {
             bridge_emit_error("missing command");
+            bridge_request_end();
             continue;
         }
 
@@ -22,16 +24,19 @@ int main(void) {
             node_open(line);
         } else if (strcmp(command, "monitor_open") == 0) {
             bridge_emit_ack("monitor_open", NULL);
-        } else if (strcmp(command, "object_start") == 0) {
-            node_object_start(line);
-        } else if (strcmp(command, "object_update") == 0) {
-            node_object_update(line);
-        } else if (strcmp(command, "object_stop") == 0) {
-            node_object_stop(line);
-        } else if (strcmp(command, "md_confirm") == 0) {
-            node_md_confirm(line);
-        } else if (strcmp(command, "md_abort") == 0) {
-            node_md_abort(line);
+        } else if (
+            strcmp(command, "object_start") == 0
+            || strcmp(command, "object_update") == 0
+            || strcmp(command, "object_stop") == 0
+            || strcmp(command, "md_confirm") == 0
+            || strcmp(command, "md_abort") == 0
+        ) {
+            /*
+             * Active TCNOpen calls are serialized onto the Node runtime thread.
+             * node_submit copies the complete line so request_id survives after
+             * this control-thread iteration returns.
+             */
+            (void)node_submit(command, line);
         } else if (strcmp(command, "capture_list") == 0) {
             capture_list();
         } else if (strcmp(command, "capture_start") == 0) {
@@ -45,6 +50,7 @@ int main(void) {
         } else {
             bridge_emit_error("unknown TRDP bridge command");
         }
+        bridge_request_end();
     }
 
     capture_shutdown();
