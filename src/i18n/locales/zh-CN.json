@@ -1034,11 +1034,14 @@
   },
   "trdp": {
     "nav": {
-      "overview": "概览 · TRDP 应用会话",
+      "overview": "总览",
       "publishers": "发布 · PD Publisher",
       "subscribers": "订阅 · PD Subscriber / Request",
       "messages": "消息 · MD Request / Reply / Notify",
-      "traffic": "流量 · 报文检查"
+      "traffic": "流量 · 报文检查",
+      "pd": "PD",
+      "md": "MD",
+      "analysis": "分析"
     },
     "actions": {
       "send": "发送",
@@ -1065,7 +1068,9 @@
       "addListener": "+ 监听/应答",
       "addNotify": "+ 通知",
       "clear": "清空",
-      "confirm": "确认"
+      "confirm": "确认",
+      "liveCapture": "实时抓包",
+      "refreshInterfaces": "刷新接口"
     },
     "captureInterfaces": {
       "loading": "正在读取抓包接口…",
@@ -1076,7 +1081,7 @@
     "form": {
       "sessionMode": "会话模式",
       "nodeOption": "节点 — PD Publisher/Subscriber + MD",
-      "monitorOption": "监控 — 被动抓包与 pcap 分析",
+      "monitorOption": "监控/分析 — 被动流量与 pcap 分析",
       "linkALocalIp": "链路 A 本机 IP",
       "linkAHint": "建议填写具体接口 IPv4；0.0.0.0 仅用于实验环境。",
       "enableLinkB": "启用 A/B 双链路",
@@ -1091,10 +1096,11 @@
       "captureFilter": "抓包过滤器",
       "autoFilterHint": "修改高级 PD/MD 端口时过滤器会自动同步。",
       "customFilterHint": "自定义模式使用原始 BPF 表达式。",
-      "monitorNote": "实时抓包需要系统中存在兼容的抓包驱动；离线打开 .pcap/.pcapng 文件不需要抓包驱动。",
+      "monitorNote": "创建会话时不会访问抓包接口。进入“分析”后再选择实时抓包或打开 .pcap/.pcapng 文件；离线分析不依赖实时抓包环境。",
       "pdUdpPort": "PD UDP 端口",
       "mdUdpPort": "MD UDP 端口",
-      "mdTcpPort": "MD TCP 端口"
+      "mdTcpPort": "MD TCP 端口",
+      "monitorWorkspace": "创建被动分析会话"
     },
     "table": {
       "name": "名称",
@@ -1135,7 +1141,9 @@
       "subscriberDiagnostics": "Subscriber 诊断",
       "flows": "流",
       "packets": "数据包",
-      "packetInspector": "报文检查"
+      "packetInspector": "报文检查",
+      "objectDetails": "对象详情",
+      "captureSource": "数据源"
     },
     "empty": {
       "xmlNoTelegram": "XML 中没有可显示的 Telegram。",
@@ -1144,7 +1152,10 @@
       "noPdTraffic": "尚未收到 PD 流量。",
       "noMdObject": "暂无 MD 对象，请点击右上角添加。",
       "noTraffic": "暂无流量。请打开抓包文件，或在 Monitor 模式启动实时抓包。",
-      "noPackets": "暂无可检查的数据包。"
+      "noPackets": "暂无可检查的数据包。",
+      "noObjects": "当前筛选下没有对象。",
+      "selectObject": "请选择一个对象查看和编辑详细参数。",
+      "selectPacket": "请选择一条报文查看协议、Dataset 与原始 Payload。"
     },
     "overview": {
       "protocol": "协议",
@@ -1174,7 +1185,9 @@
       "linkA": "链路 A",
       "linkB": "链路 B",
       "captureA": "抓包 A",
-      "captureB": "抓包 B"
+      "captureB": "抓包 B",
+      "objects": "对象",
+      "activeObjects": "运行中"
     },
     "inspector": {
       "notChecked": "未检查",
@@ -1212,7 +1225,8 @@
       "replies": "Replies",
       "replyTimeout": "Reply 超时 µs",
       "response": "响应",
-      "confirmTimeout": "Confirm 超时 µs"
+      "confirmTimeout": "Confirm 超时 µs",
+      "timeoutUs": "超时 µs"
     },
     "structured": {
       "hint": "每个字段输入合法 JSON 值；数组/嵌套 Dataset 使用 JSON array/object。字段 → HEX 会按 XML 类型、网络字节序及 scale/offset 编码，HEX 仍是最终 wire truth source。",
@@ -1227,6 +1241,26 @@
       "disabled": "禁用",
       "keep": "保持",
       "zero": "置零"
+    },
+    "filter": {
+      "all": "全部",
+      "publisher": "发布",
+      "subscriber": "订阅",
+      "request": "请求",
+      "listener": "监听/应答",
+      "notify": "通知"
+    },
+    "objectKind": {
+      "pd_publisher": "PD Publisher",
+      "pd_subscriber": "PD Subscriber",
+      "pd_request": "PD Request",
+      "md_request": "MD Request",
+      "md_listener": "MD Listener / Reply",
+      "md_notify": "MD Notify"
+    },
+    "analysis": {
+      "monitorHint": "实时抓包与离线文件共用同一套流、报文和 Dataset 检查器；只有选择实时抓包时才读取系统接口。",
+      "nodeHint": "查看当前节点产生/接收的流量，也可打开抓包文件进行离线对照分析。"
     }
   }
 }

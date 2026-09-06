@@ -1,21 +1,10 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import type { ConnectFormProps } from "../../core/plugin-registry";
 import Icon from "../../components/common/Icon";
 import styles from "./TrdpConnectForm.module.css";
 
-type CaptureInterface = {
-  name: string;
-  description: string;
-};
-
 const STANDARD_CAPTURE_FILTER = "udp port 17224 or udp port 17225 or tcp port 17225";
-
-function captureFilterForPorts(pdPort: number, mdUdpPort: number, mdTcpPort: number) {
-  return `udp port ${pdPort} or udp port ${mdUdpPort} or tcp port ${mdTcpPort}`;
-}
 
 function str(params: Record<string, unknown>, key: string, fallback = "") {
   const value = params[key];
@@ -35,30 +24,6 @@ function num(params: Record<string, unknown>, key: string, fallback: number) {
 export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) {
   const { t } = useTranslation();
   const mode = str(params, "mode", "node") as "node" | "monitor";
-  const [captureInterfaces, setCaptureInterfaces] = useState<CaptureInterface[]>([]);
-  const [captureInterfacesLoading, setCaptureInterfacesLoading] = useState(false);
-  const [captureInterfacesError, setCaptureInterfacesError] = useState("");
-
-  useEffect(() => {
-    if (mode !== "monitor") return;
-    let cancelled = false;
-    setCaptureInterfacesLoading(true);
-    setCaptureInterfacesError("");
-    void invoke<CaptureInterface[]>("trdp_capture_interfaces")
-      .then(items => {
-        if (!cancelled) setCaptureInterfaces(items);
-      })
-      .catch(error => {
-        if (!cancelled) {
-          setCaptureInterfaces([]);
-          setCaptureInterfacesError(String(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setCaptureInterfacesLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [mode]);
   const patch = (next: Record<string, unknown>) => onChange({
     mode: "node",
     link_a_ip: "0.0.0.0",
@@ -79,14 +44,6 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
     ...params,
     ...next,
   });
-
-  const captureFilterValue = str(params, "capture_filter", STANDARD_CAPTURE_FILTER);
-  const captureFilterAuto = bool(params, "capture_filter_auto", captureFilterValue === STANDARD_CAPTURE_FILTER);
-  const effectiveCaptureFilter = captureFilterForPorts(
-    num(params, "pd_port", 17224),
-    num(params, "md_udp_port", 17225),
-    num(params, "md_tcp_port", 17225),
-  );
 
   async function chooseXml() {
     const path = await open({
@@ -206,116 +163,21 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           </div>
 
           <details className={`${styles.details} liquid-glass-card`}>
-            <summary>{t("trdp.actions.advanced")}</summary>
+            <summary className={styles.detailsSummary}><Icon name="chevron-right" size="xs" className={styles.detailsChevron} />{t("trdp.actions.advanced")}</summary>
             <div className={styles.detailsBody}>{portFields}</div>
           </details>
         </>
       ) : (
         <>
-          <div className={styles.field}>
-            <label className={styles.label}>{t("trdp.form.captureInterfaceA")}</label>
-            <select
-              className={`${styles.select} liquid-glass-input liquid-glass-select`}
-              value={str(params, "capture_interface")}
-              onChange={e => {
-                const next = e.target.value;
-                patch({
-                  capture_interface: next,
-                  ...(next && next === str(params, "capture_interface_b") ? { capture_interface_b: "" } : {}),
-                });
-              }}
-              disabled={captureInterfacesLoading}
-            >
-              <option value="">
-                {captureInterfacesLoading
-                  ? t("trdp.captureInterfaces.loading")
-                  : t("trdp.captureInterfaces.choose")}
-              </option>
-              {captureInterfaces.map(item => (
-                <option key={item.name} value={item.name}>
-                  {item.description ? `${item.description} — ${item.name}` : item.name}
-                </option>
-              ))}
-            </select>
-            {captureInterfacesError && <small className={styles.hint}>{t("trdp.captureInterfaces.error")}: {captureInterfacesError}</small>}
-            {!captureInterfacesLoading && !captureInterfacesError && captureInterfaces.length === 0 && (
-              <small className={styles.hint}>{t("trdp.captureInterfaces.empty")}</small>
-            )}
-          </div>
-
-          <label className={`liquid-glass-toggle ${styles.toggle}`}>
-            <input
-              type="checkbox"
-              checked={bool(params, "capture_interface_b_enabled")}
-              onChange={e => patch({ capture_interface_b_enabled: e.target.checked })}
-            />
-            <div />
-            <span>{t("trdp.form.captureLinkB")}</span>
-          </label>
-
-          {bool(params, "capture_interface_b_enabled") && (
-            <div className={styles.field}>
-              <label className={styles.label}>{t("trdp.form.captureInterfaceB")}</label>
-              <select
-                className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                value={str(params, "capture_interface_b")}
-                onChange={e => patch({ capture_interface_b: e.target.value })}
-                disabled={captureInterfacesLoading}
-              >
-                <option value="">
-                  {captureInterfacesLoading
-                    ? t("trdp.captureInterfaces.loading")
-                    : t("trdp.captureInterfaces.choose")}
-                </option>
-                {captureInterfaces
-                  .filter(item => item.name !== str(params, "capture_interface"))
-                  .map(item => (
-                    <option key={item.name} value={item.name}>
-                      {item.description ? `${item.description} — ${item.name}` : item.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          )}
-
-          <label className={`liquid-glass-toggle ${styles.toggle}`}>
-            <input
-              type="checkbox"
-              checked={captureFilterAuto}
-              onChange={e => patch(e.target.checked
-                ? { capture_filter_auto: true }
-                : { capture_filter_auto: false, capture_filter: effectiveCaptureFilter })}
-            />
-            <div />
-            <span>{t("trdp.form.autoFilter")}</span>
-          </label>
-
-          <div className={styles.field}>
-            <label className={styles.label}>{t("trdp.form.captureFilter")}</label>
-            {captureFilterAuto
-              ? <code className={styles.filterPreview}>{effectiveCaptureFilter}</code>
-              : (
-                <input
-                  className={`${styles.input} liquid-glass-input`}
-                  value={captureFilterValue}
-                  onChange={e => patch({ capture_filter: e.target.value })}
-                />
-              )}
-            <small className={styles.hint}>
-              {captureFilterAuto
-                ? t("trdp.form.autoFilterHint")
-                : t("trdp.form.customFilterHint")}
-            </small>
+          <div className={`${styles.monitorIntro} liquid-glass-card`}>
+            <strong>{t("trdp.form.monitorWorkspace")}</strong>
+            <p>{t("trdp.form.monitorNote")}</p>
           </div>
 
           <details className={`${styles.details} liquid-glass-card`}>
-            <summary>{t("trdp.actions.advanced")}</summary>
+            <summary className={styles.detailsSummary}><Icon name="chevron-right" size="xs" className={styles.detailsChevron} />{t("trdp.actions.advanced")}</summary>
             <div className={styles.detailsBody}>{portFields}</div>
           </details>
-
-          <p className={styles.note}>
-            {t("trdp.form.monitorNote")}
-          </p>
         </>
       )}
     </div>

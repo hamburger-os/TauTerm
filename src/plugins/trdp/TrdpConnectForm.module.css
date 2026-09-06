@@ -81,13 +81,30 @@
   overflow: hidden;
 }
 
-.details > summary {
+.detailsSummary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   cursor: pointer;
   user-select: none;
+  list-style: none;
   padding: 7px 10px;
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-weight: 500;
+}
+
+.detailsSummary::-webkit-details-marker {
+  display: none;
+}
+
+.detailsChevron {
+  flex: 0 0 auto;
+  transition: transform 120ms ease;
+}
+
+.details[open] .detailsChevron {
+  transform: rotate(90deg);
 }
 
 .detailsBody {
@@ -120,4 +137,20 @@
   .ports {
     grid-template-columns: 1fr;
   }
+}
+
+.monitorIntro {
+  padding: 12px;
+  margin-bottom: 14px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.monitorIntro strong {
+  color: var(--text-primary);
+}
+
+.monitorIntro p {
+  margin: 5px 0 0;
 }

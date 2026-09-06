@@ -17,18 +17,18 @@ A Node owns one TCNOpen application session per enabled TauTerm link and can hos
 - **MD Request**
 - **MD Listener / Replier**
 
-The session view is split into Overview, Publishers, Subscribers, Messages and Traffic. TRDP intentionally does **not** use TauTerm's generic global SendBar: Node transmit actions are bound to their PD/MD objects, while Monitor is passive. Objects are created in **Stopped** state. Transmitting objects are never auto-started when a saved TauTerm configuration or Workspace is restored; use **Start** or **Send** explicitly. PD Request is a one-shot **Send** action in the UI and remains Stopped; the native side may keep a temporary subscriber handle for the reply window, which is replaced on the next Send and cleaned when the object/session is removed.
+The Node session view is organized as **Overview, PD, MD and Analysis**. PD Publisher/Subscriber/Request objects share one object workbench, and MD Request/Listener/Notify objects share another; each workbench uses a compact object list plus a responsive detail editor. TRDP intentionally does **not** use TauTerm's generic global SendBar: Node transmit actions are bound to their PD/MD objects, while Monitor is passive. Objects are created in **Stopped** state. Transmitting objects are never auto-started when a saved TauTerm configuration or Workspace is restored; use **Start** or **Send** explicitly. PD Request is a one-shot **Send** action in the UI and remains Stopped; the native side may keep a temporary subscriber handle for the reply window, which is replaced on the next Send and cleaned when the object/session is removed.
 
 ### Monitor
 
-Monitor is passive. It can:
+Monitor is passive and opens directly into the **Analysis** workbench. Creating a Monitor session does not enumerate capture interfaces or require a live-capture runtime. The user chooses the data source inside Analysis:
 
-- capture one or two interfaces live;
-- inspect PD and MD traffic;
-- preserve which TauTerm capture link (A/B) observed a frame;
-- open `.pcap` and `.pcapng` files;
-- save inspected raw frames as `.pcapng`;
-- reassemble MD/TCP streams during live capture.
+- **Live Capture** lazily enumerates one or two system interfaces only when requested;
+- **Open Capture** reads `.pcap` and `.pcapng` without requiring live-capture support;
+- both sources feed the same Flow → Packet → Detail / Dataset inspector;
+- TauTerm preserves which capture link (A/B) observed a frame;
+- inspected raw frames can be saved as `.pcapng`;
+- MD/TCP streams are reassembled during live capture.
 
 A passive monitor only sees traffic presented to the selected NIC. On a switched network, use a SPAN/mirror port, TAP, or other capture arrangement when the traffic is not already delivered to the host.
 
@@ -53,7 +53,7 @@ The standard defaults are:
 | MD UDP | 17225 |
 | MD TCP | 17225 |
 
-Node and offline Monitor allow advanced custom port values. Live Monitor offers **Auto** and **Custom** capture-filter modes. Auto starts with the standard ports (PD UDP/17224, MD UDP/TCP/17225) and regenerates the BPF expression from the currently configured PD/MD ports; Custom passes the user-supplied libpcap/Npcap BPF expression unchanged.
+Node and Monitor session creation allow advanced custom port values. Live Capture offers **Auto** and **Custom** capture-filter modes inside Analysis. Auto starts with the standard ports (PD UDP/17224, MD UDP/TCP/17225) and regenerates the BPF expression from the currently configured PD/MD ports; Custom passes the user-supplied pcap-compatible BPF expression unchanged.
 
 ## PD behavior
 
@@ -195,7 +195,7 @@ Outputs:
 - `src-tauri/binaries/tauterm-trdp-bridge.exe`
 - `tools/trdp-test-peer/bin/trdp-test-peer.exe`
 
-When building a Tauri installer/package, `beforeBundleCommand` runs the same bootstrap automatically and stages the helper using Tauri `bundle.externalBin` with the target-triple sidecar name. Developers who want to exercise TRDP from `tauri dev` should run the bootstrap once first.
+When building a Tauri installer/package, `beforeBundleCommand` runs the same bootstrap automatically and stages the helper using Tauri `bundle.externalBin` with the target-triple sidecar name. `tauri dev` now prepares the native helper automatically in `beforeDevCommand`; `build.rs` then stages the real executable into the target-triple sidecar slot so the development runtime never launches the placeholder marker.
 
 See [BUILDING.md](BUILDING.md) for the complete application build environment.
 

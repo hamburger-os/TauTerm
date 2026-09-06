@@ -19,8 +19,9 @@ import { spawnSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
+const trdpOnly = process.argv.includes('--trdp-only');
 
-function runTrdpBootstrap() {
+function runTrdpBootstrap({ stageTauriSidecar = true } = {}) {
   const windows = process.platform === 'win32';
   const command = windows ? 'powershell.exe' : 'bash';
   const script = windows
@@ -56,24 +57,31 @@ function runTrdpBootstrap() {
     process.exit(1);
   }
 
-  const targetTriple = process.env.TAURI_ENV_TARGET_TRIPLE;
-  if (!targetTriple) {
-    console.error('❌ ERROR: TAURI_ENV_TARGET_TRIPLE is unavailable in beforeBundleCommand');
-    process.exit(1);
-  }
-  const extension = windows ? '.exe' : '';
-  const sidecar = join(
-    root,
-    'src-tauri',
-    'binaries',
-    `tauterm-trdp-bridge-${targetTriple}${extension}`,
-  );
-  copyFileSync(helper, sidecar);
   console.log(`✅ Prepared TRDP bridge -> ${helper}`);
-  console.log(`✅ Prepared Tauri sidecar -> ${sidecar}`);
+
+  if (stageTauriSidecar) {
+    const targetTriple = process.env.TAURI_ENV_TARGET_TRIPLE;
+    if (!targetTriple) {
+      console.error('❌ ERROR: TAURI_ENV_TARGET_TRIPLE is unavailable in beforeBundleCommand');
+      process.exit(1);
+    }
+    const extension = windows ? '.exe' : '';
+    const sidecar = join(
+      root,
+      'src-tauri',
+      'binaries',
+      `tauterm-trdp-bridge-${targetTriple}${extension}`,
+    );
+    copyFileSync(helper, sidecar);
+    console.log(`✅ Prepared Tauri sidecar -> ${sidecar}`);
+  }
 }
 
-runTrdpBootstrap();
+runTrdpBootstrap({ stageTauriSidecar: !trdpOnly });
+
+if (trdpOnly) {
+  process.exit(0);
+}
 
 // Non-Windows platforms have no TauTerm service binary.
 if (process.platform !== 'win32') {

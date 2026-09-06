@@ -83,6 +83,29 @@ impl TrdpSideChannel {
         candidates
     }
 
+    fn bridge_candidate_is_usable(path: &PathBuf) -> bool {
+        let Ok(metadata) = fs::metadata(path) else {
+            return false;
+        };
+        if !metadata.is_file() {
+            return false;
+        }
+
+        // Tauri validates externalBin before the native helper is built, so
+        // build.rs may create a tiny marker file. Never try to execute that
+        // marker: on Windows that surfaces as ERROR_BAD_EXE_FORMAT (216).
+        if metadata.len() <= 64 {
+            if let Ok(bytes) = fs::read(path) {
+                if bytes.starts_with(b"placeholder")
+                    || bytes.starts_with(b"TAUTERM_TRDP_PLACEHOLDER")
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     fn start(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
         if self
             .child
@@ -101,9 +124,9 @@ impl TrdpSideChannel {
         let resource_dir = app.path().resource_dir().ok();
         let bridge = Self::bridge_candidates(resource_dir)
             .into_iter()
-            .find(|path| path.is_file())
+            .find(Self::bridge_candidate_is_usable)
             .ok_or_else(|| {
-                "TCNOpen bridge 未安装。运行 scripts/bootstrap-trdp.ps1（Windows）或 scripts/bootstrap-trdp.sh（Linux/macOS）后重新连接。".to_string()
+                "TRDP 原生桥接组件未就绪。开发环境请重新运行 Tauri 开发启动流程；发布包请确认对应架构组件已随应用安装。".to_string()
             })?;
 
         let mut child = Command::new(&bridge)
@@ -413,8 +436,10 @@ pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterfac
     let resource_dir = app.path().resource_dir().ok();
     let bridge = TrdpSideChannel::bridge_candidates(resource_dir)
         .into_iter()
-        .find(|path| path.is_file())
-        .ok_or_else(|| "TCNOpen bridge 未安装。请先构建/安装 tauterm-trdp-bridge。".to_string())?;
+        .find(TrdpSideChannel::bridge_candidate_is_usable)
+        .ok_or_else(|| {
+            "TRDP 原生桥接组件未就绪。开发环境请重新运行 Tauri 开发启动流程；发布包请确认对应架构组件已随应用安装。".to_string()
+        })?;
 
     let mut child = Command::new(&bridge)
         .stdin(Stdio::piped())
