@@ -5,6 +5,10 @@ node_modules/
 dist/
 build/
 
+# Native helper build output
+.cache/trdp-native-build/
+tools/trdp-test-peer/bin/
+
 # Rust
 src-tauri/target/
 # 服务二进制构建产物（build.rs 占位 + prepare-service-bin.js 覆盖）

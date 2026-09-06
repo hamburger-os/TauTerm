@@ -44,6 +44,7 @@ Also ensure the Windows C++ build tools are installed (Desktop development with 
 "@
 }
 
+Write-Host "Using CMake: $CMake"
 $VersionText = & $CMake --version | Select-Object -First 1
 if ($VersionText -notmatch 'cmake version (\d+)\.(\d+)') {
   throw "Unable to determine CMake version from: $VersionText"
@@ -66,6 +67,7 @@ Install Visual Studio Build Tools with the 'Desktop development with C++' worklo
 "@
 }
 $VsInstall = & $VsWhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+if ($VsInstall) { Write-Host "Using Windows C++ Build Tools: $VsInstall" }
 if (-not $VsInstall) {
   throw @"
 MSVC x64/x86 build tools were not found.
