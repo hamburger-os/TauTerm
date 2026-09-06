@@ -5924,6 +5924,7 @@ dependencies = [
  "log",
  "mlua",
  "portable-pty",
+ "quick-xml",
  "regex",
  "riperf3",
  "russh",
