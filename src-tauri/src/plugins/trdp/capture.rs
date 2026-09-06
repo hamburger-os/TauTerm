@@ -332,7 +332,6 @@ impl TrdpStreamDecoder {
                 destination_port,
                 transport: "udp",
                 linktype: context.linktype,
-                raw_frame: context.frame,
             },
             true,
         ) else {
@@ -459,8 +458,7 @@ impl TrdpStreamDecoder {
                     destination_port,
                     transport: "tcp",
                     linktype: context.linktype,
-                    raw_frame: context.frame,
-                },
+                    },
                 true,
             ) {
                 packets.push(packet);
@@ -621,7 +619,6 @@ struct PacketOrigin<'a> {
     destination_port: u16,
     transport: &'a str,
     linktype: u32,
-    raw_frame: &'a [u8],
 }
 
 fn decode_trdp_payload(
