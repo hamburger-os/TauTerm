@@ -63,7 +63,7 @@ rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob 
 
 必须覆盖：
 
-- 3 themes × 3 performance modes
+- 3 themes × 2 performance modes
 - single pane / 2 panes / 4 panes
 - 多 xterm 后台挂载
 - focused / unfocused / hidden
