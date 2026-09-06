@@ -73,6 +73,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [workspaceDraft, setWorkspaceDraft] = useState<WorkspaceDraft>(
     () => workspaceDraftFromWorkspace(configuredWorkspace),
   );
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const objects = workspaceDraft.objects;
   const redundancyGroups = workspaceDraft.redundancyGroups;
 
@@ -116,6 +117,39 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [captureFilter, setCaptureFilter] = useState(initialCaptureFilter);
 
   useEffect(() => {
+    let cancelled = false;
+    setWorkspaceLoaded(false);
+    void invoke<Workspace | null>("trdp_command", {
+      sessionId,
+      command: { command: "workspace_get" },
+    }).then(workspace => {
+      if (cancelled) return;
+      if (workspace?.format === "tauterm-trdp-workspace/v2") {
+        setWorkspaceDraft(workspaceDraftFromWorkspace(workspace));
+        setWorkspaceName(workspace.name ?? null);
+        if (workspace.xml) {
+          void invoke<XmlImport>("trdp_command", {
+            sessionId,
+            command: { command: "xml_import", path: workspace.xml },
+          }).then(imported => {
+            if (!cancelled) setXmlImport(imported);
+          }).catch(cause => {
+            if (!cancelled) console.warn("TRDP Workspace XML 恢复失败:", cause);
+          });
+        }
+      }
+      setWorkspaceLoaded(true);
+    }).catch(cause => {
+      if (!cancelled) {
+        console.warn("TRDP Workspace 恢复失败:", cause);
+        setWorkspaceLoaded(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!workspaceLoaded) return;
     const timer = window.setTimeout(() => {
       const workspace = workspaceFromDraft(
         workspaceDraft,
@@ -130,22 +164,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       });
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [sessionId, workspaceDraft, workspaceName, xmlImport?.path]);
-
-  useEffect(() => {
-    const xmlPath = configuredWorkspace?.xml;
-    if (!xmlPath || xmlImport?.path === xmlPath) return;
-    let cancelled = false;
-    void invoke<XmlImport>("trdp_command", {
-      sessionId,
-      command: { command: "xml_import", path: xmlPath },
-    }).then(imported => {
-      if (!cancelled) setXmlImport(imported);
-    }).catch(cause => {
-      if (!cancelled) console.warn("TRDP Workspace XML 恢复失败:", cause);
-    });
-    return () => { cancelled = true; };
-  }, [sessionId, configuredWorkspace?.xml, xmlImport?.path]);
+  }, [sessionId, workspaceLoaded, workspaceDraft, workspaceName, xmlImport?.path]);
 
   useEffect(() => {
     return () => {
