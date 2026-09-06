@@ -8,8 +8,18 @@ BUILD="$ROOT/.cache/trdp-native-build"
 OUT="$ROOT/src-tauri/binaries"
 TOOLS_OUT="$ROOT/tools/trdp-test-peer/bin"
 
-command -v cmake >/dev/null || { echo "cmake 3.20+ is required" >&2; exit 1; }
-command -v cc >/dev/null || { echo "a C compiler is required" >&2; exit 1; }
+command -v cmake >/dev/null || { echo "cmake 3.20+ is required for the complete TRDP development build" >&2; exit 1; }
+command -v cc >/dev/null || { echo "a C compiler is required for the complete TRDP development build" >&2; exit 1; }
+
+cmake_version="$(cmake --version | awk 'NR==1 { print $3 }')"
+cmake_major="${cmake_version%%.*}"
+cmake_rest="${cmake_version#*.}"
+cmake_minor="${cmake_rest%%.*}"
+if [[ ! "$cmake_major" =~ ^[0-9]+$ || ! "$cmake_minor" =~ ^[0-9]+$ ]] ||
+   (( cmake_major < 3 || (cmake_major == 3 && cmake_minor < 20) )); then
+  echo "cmake 3.20+ is required; found ${cmake_version:-unknown}" >&2
+  exit 1
+fi
 
 if [[ ! -f "$VENDOR/src/api/trdp_if_light.h" || ! -f "$VENDOR/src/common/trdp_private.h" ]]; then
   echo "Vendored TCNOpen 3.0.0.0 source is incomplete under $VENDOR" >&2

@@ -126,7 +126,7 @@ impl TrdpSideChannel {
             .into_iter()
             .find(Self::bridge_candidate_is_usable)
             .ok_or_else(|| {
-                "TRDP 原生桥接组件未就绪。开发模式请先运行 `npm run trdp:build`；普通开发与离线抓包分析不需要该组件。发布包请确认对应架构组件已随应用安装。".to_string()
+                "TRDP 原生桥接组件未就绪。`npm run tauri dev` 会自动构建该组件；如果开发启动失败，请确认 CMake 3.20+ 与 Windows C++ 构建工具链可用。也可单独运行 `npm run trdp:build` 诊断原生构建。".to_string()
             })?;
 
         let mut child = Command::new(&bridge)
@@ -438,7 +438,7 @@ pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterfac
         .into_iter()
         .find(TrdpSideChannel::bridge_candidate_is_usable)
         .ok_or_else(|| {
-            "TRDP 原生桥接组件未就绪。开发模式请先运行 `npm run trdp:build`；普通开发与离线抓包分析不需要该组件。发布包请确认对应架构组件已随应用安装。".to_string()
+            "TRDP 原生桥接组件未就绪。`npm run tauri dev` 会自动构建该组件；如果开发启动失败，请确认 CMake 3.20+ 与 Windows C++ 构建工具链可用。也可单独运行 `npm run trdp:build` 诊断原生构建。".to_string()
         })?;
 
     let mut child = Command::new(&bridge)
