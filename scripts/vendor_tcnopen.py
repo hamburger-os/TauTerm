@@ -256,14 +256,12 @@ def apply_patch(
     reverse: bool = False,
 ) -> None:
     parsed = _parse_patch(patch_path)
-    file_patches = reversed(parsed) if reverse else parsed
-    for relative, hunks in file_patches:
+    for relative, hunks in parsed:
         if relative not in files:
             raise RuntimeError(f"{patch_path}: missing target in source set: {relative}")
-        effective_hunks = list(reversed(hunks)) if reverse else hunks
         files[relative] = _apply_file_hunks(
             files[relative],
-            effective_hunks,
+            hunks,
             reverse=reverse,
             label=f"{patch_path.name}:{relative}",
         )
