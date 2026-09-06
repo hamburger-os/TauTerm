@@ -238,26 +238,27 @@ html[data-performance="performance"] {
 
 /* ===== Level 2: 主题令牌 ===== */
 
-/* Spectrum Flow — 中性烟晶玻璃 + 共享 Spectrum Ambient；颜色来自环境光而不是蓝色面板。 */
+/* Spectrum Flow — 明亮中性烟晶玻璃 + 共享 Spectrum Ambient；颜色来自环境光而不是固有深色面板。 */
 :root, [data-theme="spectrum-flow"] {
-  --bg-base: #101318;
+  --bg-base: #15181d;
   /* 共享 Clear Glass + 更轻的中性 veil：Spectrum Flow 明确是三主题中最亮、最透的一层。 */
-  --theme-shell-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.075), rgba(4, 7, 10, 0.028));
-  --theme-panel-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.045), rgba(4, 7, 10, 0.014));
-  --theme-content-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.26), rgba(3, 6, 9, 0.33));
-  --theme-content-active-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.21), rgba(3, 6, 9, 0.28));
-  --theme-content-inactive-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.32), rgba(3, 6, 9, 0.40));
-  --theme-content-header-veil: linear-gradient(180deg, rgba(8, 11, 15, 0.29), rgba(4, 7, 10, 0.37));
-  --theme-card-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.10), rgba(4, 7, 10, 0.040));
-  --theme-float-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.15), rgba(4, 7, 10, 0.070));
-  --theme-control-veil: linear-gradient(180deg, rgba(7, 10, 13, 0.58), rgba(3, 6, 8, 0.66));
-  /* Performance First：单层半透明纯色，不做 backdrop、specular gradient 或大阴影。 */
-  --performance-shell-fill: rgba(8, 11, 15, 0.90);
-  --performance-panel-fill: rgba(8, 11, 15, 0.78);
-  --performance-content-fill: rgba(6, 9, 12, 0.82);
-  --performance-control-fill: rgba(5, 8, 11, 0.90);
-  --performance-card-fill: rgba(8, 11, 15, 0.84);
-  --performance-float-fill: rgba(6, 9, 12, 0.93);
+  --theme-shell-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.060), rgba(4, 7, 10, 0.018));
+  --theme-panel-veil: linear-gradient(135deg, rgba(7, 10, 14, 0.032), rgba(4, 7, 10, 0.010));
+  --theme-content-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.22), rgba(3, 6, 9, 0.29));
+  --theme-content-active-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.17), rgba(3, 6, 9, 0.24));
+  --theme-content-inactive-veil: linear-gradient(180deg, rgba(6, 9, 12, 0.28), rgba(3, 6, 9, 0.35));
+  --theme-content-header-veil: linear-gradient(180deg, rgba(8, 11, 15, 0.25), rgba(4, 7, 10, 0.32));
+  --theme-card-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.075), rgba(4, 7, 10, 0.026));
+  --theme-float-veil: linear-gradient(135deg, rgba(8, 11, 15, 0.11), rgba(4, 7, 10, 0.045));
+  --theme-control-veil: linear-gradient(180deg, rgba(7, 10, 13, 0.52), rgba(3, 6, 8, 0.60));
+  /* Performance First：仍是单层纯色，但使用更明亮的中性烟晶填充，而不是接近黑曜石的黑色 fallback。
+     提亮靠 RGB 明度，不靠大幅降低 alpha，避免无 blur 时后层文字清晰穿透。 */
+  --performance-shell-fill: rgba(34, 36, 40, 0.88);
+  --performance-panel-fill: rgba(31, 33, 37, 0.80);
+  --performance-content-fill: rgba(25, 27, 31, 0.84);
+  --performance-control-fill: rgba(27, 29, 33, 0.90);
+  --performance-card-fill: rgba(30, 32, 36, 0.86);
+  --performance-float-fill: rgba(36, 38, 42, 0.92);
 
   --glass-fill: var(--theme-shell-veil);
   --glass-card-fill: var(--theme-card-veil);
@@ -378,10 +379,10 @@ html[data-performance="performance"] {
   --primary-button-hover-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.38), 0 6px 16px rgba(0, 0, 0, 0.20);
   --primary-button-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
   /* 弹窗背景 */
-  --dialog-bg: rgba(24, 25, 29, 0.90);
+  --dialog-bg: rgba(31, 33, 37, 0.88);
   --dialog-shadow: 0 16px 42px rgba(0, 0, 0, 0.24);
   /* 下拉选项 */
-  --select-option-bg: #17191d;
+  --select-option-bg: #202329;
   --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%239494b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
 }
 
