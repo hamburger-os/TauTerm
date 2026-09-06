@@ -16,8 +16,6 @@
 #define LINKTYPE_LINUX_SLL 113
 #define LINKTYPE_LINUX_SLL2 276
 #define CAPTURE_COUNT 2
-#define TCP_FLOW_COUNT 32
-#define TCP_BUFFER_CAP 131072u
 
 typedef struct pcap pcap_t;
 typedef unsigned int bpf_u_int32;
@@ -61,21 +59,8 @@ typedef int (*fn_pcap_findalldevs)(struct bridge_pcap_if **, char *);
 typedef void (*fn_pcap_freealldevs)(struct bridge_pcap_if *);
 
 typedef struct {
-    uint32_t source_ip;
-    uint32_t destination_ip;
-    uint16_t source_port;
-    uint16_t destination_port;
-    uint32_t expected_sequence;
-    unsigned char *buffer;
-    size_t length;
-    int initialized;
-    int active;
-} tcp_flow_t;
-
-typedef struct {
     pcap_t *pcap;
     bridge_thread_t thread;
-    tcp_flow_t flows[TCP_FLOW_COUNT];
     char interface_name[512];
     char label;
     int linktype;
@@ -95,17 +80,6 @@ static fn_pcap_findalldevs dyn_findalldevs;
 static fn_pcap_freealldevs dyn_freealldevs;
 static void *g_pcap_library;
 static capture_context_t g_capture[CAPTURE_COUNT];
-
-static uint16_t read_be16(const unsigned char *data) {
-    return (uint16_t)(((uint16_t)data[0] << 8) | (uint16_t)data[1]);
-}
-
-static uint32_t read_be32(const unsigned char *data) {
-    return ((uint32_t)data[0] << 24)
-        | ((uint32_t)data[1] << 16)
-        | ((uint32_t)data[2] << 8)
-        | (uint32_t)data[3];
-}
 
 static void *dynamic_symbol(const char *name) {
 #ifdef _WIN32
@@ -246,78 +220,6 @@ void capture_list(void) {
     dyn_freealldevs(devices);
 }
 
-static int network_offset(
-    const unsigned char *frame,
-    size_t length,
-    int linktype,
-    size_t *offset
-) {
-    if (linktype == LINKTYPE_ETHERNET) {
-        uint16_t ether_type;
-        size_t cursor = 14u;
-        if (length < cursor) {
-            return 0;
-        }
-        ether_type = read_be16(frame + 12u);
-        while (ether_type == 0x8100u || ether_type == 0x88a8u || ether_type == 0x9100u) {
-            if (length < cursor + 4u) {
-                return 0;
-            }
-            ether_type = read_be16(frame + cursor + 2u);
-            cursor += 4u;
-        }
-        if (ether_type != 0x0800u) {
-            return 0;
-        }
-        *offset = cursor;
-        return 1;
-    }
-    if (linktype == LINKTYPE_LINUX_SLL) {
-        if (length < 16u || read_be16(frame + 14u) != 0x0800u) {
-            return 0;
-        }
-        *offset = 16u;
-        return 1;
-    }
-    if (linktype == LINKTYPE_LINUX_SLL2) {
-        if (length < 20u || read_be16(frame) != 0x0800u) {
-            return 0;
-        }
-        *offset = 20u;
-        return 1;
-    }
-    if (linktype == LINKTYPE_NULL) {
-        if (length < 5u || (frame[4] >> 4) != 4u) {
-            return 0;
-        }
-        *offset = 4u;
-        return 1;
-    }
-    if (linktype == LINKTYPE_RAW) {
-        if (length < 1u || (frame[0] >> 4) != 4u) {
-            return 0;
-        }
-        *offset = 0u;
-        return 1;
-    }
-    return 0;
-}
-
-static int valid_md_type(const unsigned char *data, size_t length) {
-    if (length < 24u || data[6] != 'M') {
-        return 0;
-    }
-    return data[7] == 'n' || data[7] == 'r' || data[7] == 'p'
-        || data[7] == 'q' || data[7] == 'c' || data[7] == 'e';
-}
-
-static int valid_pd_type(const unsigned char *data, size_t length) {
-    if (length < 24u || data[6] != 'P') {
-        return 0;
-    }
-    return data[7] == 'd' || data[7] == 'p' || data[7] == 'r' || data[7] == 'e';
-}
-
 static void emit_capture_frame(
     capture_context_t *context,
     const struct bridge_pcap_pkthdr *header,
@@ -339,379 +241,21 @@ static void emit_capture_frame(
     bridge_output_unlock();
 }
 
-static void emit_trdp(
-    capture_context_t *context,
-    const struct bridge_pcap_pkthdr *header,
-    const unsigned char *raw_frame,
-    uint32_t source_ip,
-    uint32_t destination_ip,
-    uint16_t source_port,
-    uint16_t destination_port,
-    const char *transport,
-    const unsigned char *trdp,
-    size_t trdp_length
-) {
-    size_t header_length;
-    size_t data_length;
-    size_t available;
-    UINT32 stored_fcs;
-    UINT32 computed_fcs;
-    int crc_valid;
-    int protocol_valid;
-    char message_type[3];
-
-    if (valid_md_type(trdp, trdp_length)) {
-        header_length = 116u;
-    } else if (valid_pd_type(trdp, trdp_length)) {
-        header_length = 40u;
-    } else {
-        return;
-    }
-    if (trdp_length < header_length) {
-        return;
-    }
-    data_length = (size_t)read_be32(trdp + 20u);
-    available = trdp_length - header_length;
-    if (available > data_length) {
-        available = data_length;
-    }
-    message_type[0] = (char)trdp[6];
-    message_type[1] = (char)trdp[7];
-    message_type[2] = '\0';
-    memcpy(&stored_fcs, trdp + header_length - SIZE_OF_FCS, SIZE_OF_FCS);
-    computed_fcs = vos_crc32(INITFCS, trdp, (UINT32)(header_length - SIZE_OF_FCS));
-    crc_valid = stored_fcs == MAKE_LE(computed_fcs);
-    protocol_valid = (read_be16(trdp + 4u) & 0xff00u) == 0x0100u
-        && data_length <= trdp_length - header_length;
-
-    bridge_output_lock();
-    fprintf(
-        stdout,
-        "{\"event\":\"packet\",\"kind\":\"capture\",\"link\":\"%c\","
-        "\"link_type\":%d,\"timestamp_us\":%llu,\"transport\":\"%s\","
-        "\"src_port\":%u,\"dest_port\":%u,\"msg_type\":\"%s\","
-        "\"com_id\":%u,\"seq_count\":%u,\"protocol_version\":%u,"
-        "\"etb_topo_count\":%u,\"op_trn_topo_count\":%u,"
-        "\"crc_valid\":%s,\"protocol_valid\":%s,"
-        "\"src_ip\":\"%u.%u.%u.%u\",\"dest_ip\":\"%u.%u.%u.%u\","
-        "\"data_len\":%u,\"payload_hex\":\"",
-        context->label,
-        context->linktype,
-        (unsigned long long)header->ts.tv_sec * 1000000ULL + (unsigned long long)header->ts.tv_usec,
-        transport,
-        (unsigned int)source_port,
-        (unsigned int)destination_port,
-        message_type,
-        (unsigned int)read_be32(trdp + 8u),
-        (unsigned int)read_be32(trdp),
-        (unsigned int)read_be16(trdp + 4u),
-        (unsigned int)read_be32(trdp + 12u),
-        (unsigned int)read_be32(trdp + 16u),
-        crc_valid ? "true" : "false",
-        protocol_valid ? "true" : "false",
-        (unsigned int)((source_ip >> 24) & 0xffu),
-        (unsigned int)((source_ip >> 16) & 0xffu),
-        (unsigned int)((source_ip >> 8) & 0xffu),
-        (unsigned int)(source_ip & 0xffu),
-        (unsigned int)((destination_ip >> 24) & 0xffu),
-        (unsigned int)((destination_ip >> 16) & 0xffu),
-        (unsigned int)((destination_ip >> 8) & 0xffu),
-        (unsigned int)(destination_ip & 0xffu),
-        (unsigned int)data_length
-    );
-    bridge_print_hex(stdout, trdp + header_length, (UINT32)available);
-    fputs("\",\"raw_frame_hex\":\"", stdout);
-    bridge_print_hex(stdout, raw_frame, header->caplen);
-    fputs("\"", stdout);
-    if (valid_md_type(trdp, trdp_length) && trdp_length >= 116u) {
-        static const char digits[] = "0123456789abcdef";
-        char source_uri[33] = {0};
-        char destination_uri[33] = {0};
-        int32_t raw_reply_status = (int32_t)read_be32(trdp + 24u);
-        int32_t reply_status = raw_reply_status >= 0 ? 0 : raw_reply_status;
-        uint16_t user_status = raw_reply_status >= 0 ? (uint16_t)raw_reply_status : 0u;
-        size_t index;
-
-        memcpy(source_uri, trdp + 48u, 32u);
-        memcpy(destination_uri, trdp + 80u, 32u);
-        fprintf(
-            stdout,
-            ",\"reply_status\":%d,\"user_status\":%u,\"reply_timeout_us\":%u,"
-            "\"src_uri\":\"",
-            (int)reply_status,
-            (unsigned int)user_status,
-            (unsigned int)read_be32(trdp + 44u)
-        );
-        bridge_json_escape(stdout, source_uri);
-        fputs("\",\"dest_uri\":\"", stdout);
-        bridge_json_escape(stdout, destination_uri);
-        fputs("\",\"md_session_id\":\"", stdout);
-        for (index = 0u; index < 16u; ++index) {
-            unsigned char value = trdp[28u + index];
-            fputc(digits[(value >> 4) & 0x0fu], stdout);
-            fputc(digits[value & 0x0fu], stdout);
-            if (index == 3u || index == 5u || index == 7u || index == 9u) {
-                fputc('-', stdout);
-            }
-        }
-        fputc('"', stdout);
-    }
-    fputs("}\n", stdout);
-    fflush(stdout);
-    bridge_output_unlock();
-}
-
-static void reset_flow(tcp_flow_t *flow) {
-    if (flow == NULL) {
-        return;
-    }
-    free(flow->buffer);
-    memset(flow, 0, sizeof(*flow));
-}
-
-static tcp_flow_t *flow_for(
-    capture_context_t *context,
-    uint32_t source_ip,
-    uint32_t destination_ip,
-    uint16_t source_port,
-    uint16_t destination_port
-) {
-    int index;
-    tcp_flow_t *free_slot = NULL;
-    for (index = 0; index < TCP_FLOW_COUNT; ++index) {
-        tcp_flow_t *flow = &context->flows[index];
-        if (flow->active
-            && flow->source_ip == source_ip
-            && flow->destination_ip == destination_ip
-            && flow->source_port == source_port
-            && flow->destination_port == destination_port) {
-            return flow;
-        }
-        if (!flow->active && free_slot == NULL) {
-            free_slot = flow;
-        }
-    }
-    if (free_slot == NULL) {
-        free_slot = &context->flows[0];
-        reset_flow(free_slot);
-    }
-    free_slot->buffer = (unsigned char *)malloc(TCP_BUFFER_CAP);
-    if (free_slot->buffer == NULL) {
-        return NULL;
-    }
-    free_slot->source_ip = source_ip;
-    free_slot->destination_ip = destination_ip;
-    free_slot->source_port = source_port;
-    free_slot->destination_port = destination_port;
-    free_slot->active = 1;
-    return free_slot;
-}
-
-static void process_tcp_payload(
-    capture_context_t *context,
-    const struct bridge_pcap_pkthdr *header,
-    const unsigned char *frame,
-    uint32_t source_ip,
-    uint32_t destination_ip,
-    uint16_t source_port,
-    uint16_t destination_port,
-    uint32_t sequence,
-    unsigned char flags,
-    const unsigned char *payload,
-    size_t payload_length
-) {
-    tcp_flow_t *flow;
-    uint32_t payload_sequence = sequence + ((flags & 0x02u) != 0u ? 1u : 0u);
-    size_t trim = 0u;
-
-    flow = flow_for(context, source_ip, destination_ip, source_port, destination_port);
-    if (flow == NULL) {
-        return;
-    }
-    if ((flags & 0x04u) != 0u || (flags & 0x02u) != 0u) {
-        flow->length = 0u;
-        flow->expected_sequence = payload_sequence;
-        flow->initialized = 1;
-    }
-    if (!flow->initialized) {
-        flow->expected_sequence = payload_sequence;
-        flow->initialized = 1;
-    }
-    if (payload_length > 0u) {
-        int32_t delta = (int32_t)(payload_sequence - flow->expected_sequence);
-        if (delta > 0) {
-            flow->length = 0u;
-            flow->expected_sequence = payload_sequence;
-        } else if (delta < 0) {
-            uint32_t overlap = flow->expected_sequence - payload_sequence;
-            if ((size_t)overlap >= payload_length) {
-                payload_length = 0u;
-            } else {
-                trim = (size_t)overlap;
-            }
-        }
-        if (payload_length > trim) {
-            size_t append = payload_length - trim;
-            if (flow->length + append > TCP_BUFFER_CAP) {
-                flow->length = 0u;
-                if (append > TCP_BUFFER_CAP) {
-                    append = TCP_BUFFER_CAP;
-                    trim = payload_length - append;
-                }
-            }
-            memcpy(flow->buffer + flow->length, payload + trim, append);
-            flow->length += append;
-            flow->expected_sequence += (uint32_t)append;
-        }
-    }
-
-    while (flow->length >= 24u) {
-        size_t start = 0u;
-        size_t data_length;
-        size_t total;
-        while (start + 24u <= flow->length && !valid_md_type(flow->buffer + start, flow->length - start)) {
-            ++start;
-        }
-        if (start > 0u) {
-            memmove(flow->buffer, flow->buffer + start, flow->length - start);
-            flow->length -= start;
-        }
-        if (flow->length < 116u || !valid_md_type(flow->buffer, flow->length)) {
-            break;
-        }
-        data_length = (size_t)read_be32(flow->buffer + 20u);
-        if (data_length > BRIDGE_MAX_PAYLOAD) {
-            flow->length = 0u;
-            break;
-        }
-        total = 116u + data_length;
-        if (flow->length < total) {
-            break;
-        }
-        emit_trdp(
-            context,
-            header,
-            frame,
-            source_ip,
-            destination_ip,
-            source_port,
-            destination_port,
-            "tcp",
-            flow->buffer,
-            total
-        );
-        memmove(flow->buffer, flow->buffer + total, flow->length - total);
-        flow->length -= total;
-    }
-    if ((flags & 0x05u) != 0u) {
-        reset_flow(flow);
-    }
-}
-
+/*
+ * The native capture layer deliberately stays transport-agnostic: it owns
+ * libpcap/Npcap access only. Rust receives the raw frame and performs the
+ * canonical UDP/TCP/TRDP decode and TCP stream reassembly for both live and
+ * offline capture paths.
+ */
 static void process_frame(
     capture_context_t *context,
     const struct bridge_pcap_pkthdr *header,
     const unsigned char *frame
 ) {
-    size_t ip_offset;
-    size_t ip_header_length;
-    size_t transport_offset;
-    size_t ip_total_length;
-    size_t ip_end;
-    uint16_t fragment;
-    uint32_t source_ip;
-    uint32_t destination_ip;
-    unsigned char protocol;
-
-    if (header == NULL || frame == NULL) {
+    if (context == NULL || header == NULL || frame == NULL) {
         return;
     }
     emit_capture_frame(context, header, frame);
-    if (!network_offset(frame, (size_t)header->caplen, context->linktype, &ip_offset)
-        || (size_t)header->caplen < ip_offset + 20u
-        || (frame[ip_offset] >> 4) != 4u) {
-        return;
-    }
-    ip_header_length = (size_t)(frame[ip_offset] & 0x0fu) * 4u;
-    ip_total_length = (size_t)read_be16(frame + ip_offset + 2u);
-    if (ip_header_length < 20u
-        || ip_total_length < ip_header_length
-        || (size_t)header->caplen < ip_offset + ip_total_length) {
-        return;
-    }
-    ip_end = ip_offset + ip_total_length;
-    fragment = read_be16(frame + ip_offset + 6u);
-    if ((fragment & 0x3fffu) != 0u) {
-        return;
-    }
-    source_ip = read_be32(frame + ip_offset + 12u);
-    destination_ip = read_be32(frame + ip_offset + 16u);
-    protocol = frame[ip_offset + 9u];
-    transport_offset = ip_offset + ip_header_length;
-
-    if (protocol == 17u) {
-        uint16_t source_port;
-        uint16_t destination_port;
-        size_t trdp_offset;
-        size_t udp_length;
-        if (transport_offset + 8u > ip_end) {
-            return;
-        }
-        source_port = read_be16(frame + transport_offset);
-        destination_port = read_be16(frame + transport_offset + 2u);
-        udp_length = (size_t)read_be16(frame + transport_offset + 4u);
-        if (udp_length < 8u || transport_offset + udp_length > ip_end) {
-            return;
-        }
-        trdp_offset = transport_offset + 8u;
-        if (transport_offset + udp_length <= trdp_offset) {
-            return;
-        }
-        emit_trdp(
-            context,
-            header,
-            frame,
-            source_ip,
-            destination_ip,
-            source_port,
-            destination_port,
-            "udp",
-            frame + trdp_offset,
-            transport_offset + udp_length - trdp_offset
-        );
-    } else if (protocol == 6u) {
-        size_t tcp_header_length;
-        size_t payload_offset;
-        uint16_t source_port;
-        uint16_t destination_port;
-        uint32_t sequence;
-        unsigned char flags;
-        if (transport_offset + 20u > ip_end) {
-            return;
-        }
-        tcp_header_length = (size_t)(frame[transport_offset + 12u] >> 4) * 4u;
-        if (tcp_header_length < 20u || transport_offset + tcp_header_length > ip_end) {
-            return;
-        }
-        source_port = read_be16(frame + transport_offset);
-        destination_port = read_be16(frame + transport_offset + 2u);
-        sequence = read_be32(frame + transport_offset + 4u);
-        flags = frame[transport_offset + 13u];
-        payload_offset = transport_offset + tcp_header_length;
-        process_tcp_payload(
-            context,
-            header,
-            frame,
-            source_ip,
-            destination_ip,
-            source_port,
-            destination_port,
-            sequence,
-            flags,
-            frame + payload_offset,
-            ip_end - payload_offset
-        );
-    }
 }
 
 #ifdef _WIN32
@@ -739,7 +283,6 @@ static void *capture_loop(void *context_ptr)
 }
 
 static void stop_context(capture_context_t *context) {
-    int index;
     if (context == NULL) {
         return;
     }
@@ -753,9 +296,6 @@ static void stop_context(capture_context_t *context) {
     if (context->pcap != NULL && dyn_close != NULL) {
         dyn_close(context->pcap);
         context->pcap = NULL;
-    }
-    for (index = 0; index < TCP_FLOW_COUNT; ++index) {
-        reset_flow(&context->flows[index]);
     }
     context->interface_name[0] = '\0';
 }
