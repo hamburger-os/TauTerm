@@ -89,7 +89,11 @@ target_compile_definitions(tauterm_tcnopen PRIVATE ${TCNOPEN_PLATFORM_DEFINITION
 set_target_properties(tauterm_tcnopen PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(MSVC)
-    target_compile_options(tauterm_tcnopen PRIVATE /W3 /wd4068)
+    # TCNOpen is vendored upstream code. On localized Windows code pages its
+    # historical comments can trigger C4819, and its C99 flexible-array member
+    # triggers MSVC C4200. Suppress those two upstream-only diagnostics while
+    # keeping normal warnings enabled for the library build.
+    target_compile_options(tauterm_tcnopen PRIVATE /W3 /wd4068 /wd4819 /wd4200)
 else()
     target_compile_options(tauterm_tcnopen PRIVATE
         -Wall
@@ -109,6 +113,8 @@ set(BRIDGE_SOURCES
 add_executable(tauterm-trdp-bridge ${BRIDGE_SOURCES})
 target_include_directories(tauterm-trdp-bridge PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
+)
+target_include_directories(tauterm-trdp-bridge SYSTEM PRIVATE
     "${TCNOPEN_API}"
     "${TCNOPEN_VOS_API}"
 )
@@ -118,7 +124,7 @@ target_link_libraries(tauterm-trdp-bridge PRIVATE tauterm_tcnopen ${TCNOPEN_PLAT
 add_executable(trdp-test-peer
     "${CMAKE_CURRENT_LIST_DIR}/../../tools/trdp-test-peer/trdp_test_peer.c"
 )
-target_include_directories(trdp-test-peer PRIVATE
+target_include_directories(trdp-test-peer SYSTEM PRIVATE
     "${TCNOPEN_API}"
     "${TCNOPEN_VOS_API}"
 )
@@ -126,8 +132,10 @@ target_compile_definitions(trdp-test-peer PRIVATE ${TCNOPEN_PLATFORM_DEFINITIONS
 target_link_libraries(trdp-test-peer PRIVATE tauterm_tcnopen ${TCNOPEN_PLATFORM_LIBRARIES})
 
 if(MSVC)
-    target_compile_options(tauterm-trdp-bridge PRIVATE /W4 /WX)
-    target_compile_options(trdp-test-peer PRIVATE /W4 /WX)
+    # Keep /WX for TauTerm-owned native sources, but do not let known warnings
+    # from the vendored TCNOpen headers fail localized Windows builds.
+    target_compile_options(tauterm-trdp-bridge PRIVATE /W4 /WX /wd4819 /wd4200)
+    target_compile_options(trdp-test-peer PRIVATE /W4 /WX /wd4819 /wd4200)
 else()
     target_compile_options(tauterm-trdp-bridge PRIVATE -Wall -Wextra -Werror)
     target_compile_options(trdp-test-peer PRIVATE -Wall -Wextra -Werror)
