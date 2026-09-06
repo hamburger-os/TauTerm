@@ -49,6 +49,7 @@ pub struct TrdpSideChannel {
     connected_announced: Arc<AtomicBool>,
     capture_id: Arc<Mutex<Option<String>>>,
     capture_control: Mutex<()>,
+    object_states: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl TrdpSideChannel {
@@ -69,6 +70,7 @@ impl TrdpSideChannel {
             connected_announced: Arc::new(AtomicBool::new(false)),
             capture_id: Arc::new(Mutex::new(None)),
             capture_control: Mutex::new(()),
+            object_states: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -257,6 +259,7 @@ impl TrdpSideChannel {
         let shutting_down = Arc::clone(&self.shutting_down);
         let lifecycle = Arc::clone(&self.lifecycle);
         let connected_announced = Arc::clone(&self.connected_announced);
+        let object_states = Arc::clone(&self.object_states);
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             let mut decoder = capture::TrdpStreamDecoder::new(pd_ports, md_ports);
@@ -398,6 +401,9 @@ impl TrdpSideChannel {
                 }
             }
 
+            if let Ok(mut states) = object_states.lock() {
+                states.clear();
+            }
             let was_ready = ready.swap(false, Ordering::AcqRel);
             if was_ready && !shutting_down.load(Ordering::Acquire) {
                 let state: State<'_, AppState> = event_app.state();
@@ -512,6 +518,9 @@ impl SideChannel for TrdpSideChannel {
             }
         }
         self.alive.store(false, Ordering::Release);
+        if let Ok(mut states) = self.object_states.lock() {
+            states.clear();
+        }
         if let Ok(mut requests) = self.pending.lock() {
             for (_, waiter) in requests.drain() {
                 let _ = waiter.send(Err("TRDP bridge stopped".to_string()));
@@ -1039,6 +1048,20 @@ pub fn trdp_command(
         .as_any()
         .downcast_ref::<TrdpSideChannel>()
         .ok_or("会话不是 TRDP 会话")?;
+    let operation = command
+        .get("command")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    if operation == "runtime_state" {
+        let states = trdp
+            .object_states
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone();
+        return Ok(json!({ "objects": states }));
+    }
+
     if trdp
         .child
         .lock()
@@ -1047,11 +1070,6 @@ pub fn trdp_command(
     {
         trdp.start(app, &session_id)?;
     }
-    let operation = command
-        .get("command")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-
     if operation == "capture_start" {
         let _control = trdp
             .capture_control
@@ -1091,7 +1109,69 @@ pub fn trdp_command(
         return trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
     }
 
-    trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT)
+    let tracked_object = command
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            command
+                .get("object")
+                .and_then(Value::as_object)
+                .and_then(|object| object.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let tracked_kind = command
+        .get("kind")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            command
+                .get("object")
+                .and_then(Value::as_object)
+                .and_then(|object| object.get("kind"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    let persistent_object = matches!(
+        tracked_kind.as_deref(),
+        Some("pd_publisher") | Some("pd_subscriber") | Some("md_listener")
+    );
+
+    if let Some(id) = tracked_object.as_deref() {
+        let pending_state = match operation {
+            "object_start" => Some(if persistent_object { "starting" } else { "sending" }),
+            "object_stop" => Some("stopping"),
+            _ => None,
+        };
+        if let Some(next) = pending_state {
+            trdp.object_states
+                .lock()
+                .map_err(|error| error.to_string())?
+                .insert(id.to_string(), next.to_string());
+        }
+    }
+
+    let result = trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
+    if let Some(id) = tracked_object {
+        let mut states = trdp
+            .object_states
+            .lock()
+            .map_err(|error| error.to_string())?;
+        match (operation, result.is_ok(), persistent_object) {
+            ("object_start", true, true) => {
+                states.insert(id, "running".to_string());
+            }
+            ("object_start", true, false) | ("object_stop", true, _) => {
+                states.remove(&id);
+            }
+            ("object_start" | "object_stop", false, _) => {
+                states.insert(id, "error".to_string());
+            }
+            _ => {}
+        }
+    }
+    result
 }
 
 #[tauri::command]
