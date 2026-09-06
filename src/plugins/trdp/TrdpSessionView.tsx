@@ -53,6 +53,11 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = tab?.params as Record<string, unknown> | undefined;
   const mode = (params?.mode as string | undefined) ?? "node";
+  const configuredXmlPath = (
+    typeof params?.xml_path === "string" && params.xml_path.trim()
+      ? params.xml_path
+      : null
+  );
   const configuredWorkspace = (
     params?.trdp_workspace
     && typeof params.trdp_workspace === "object"
@@ -181,9 +186,22 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       } else {
         setWorkspaceDraft(workspaceDraftFromWorkspace(null));
         setWorkspaceName(null);
-        setWorkspaceXmlPath(null);
+        setWorkspaceXmlPath(configuredXmlPath);
         setXmlImport(null);
         setDecoded(null);
+        if (configuredXmlPath) {
+          void invoke<XmlImport>("trdp_command", {
+            sessionId,
+            command: { command: "xml_import", path: configuredXmlPath },
+          }).then(imported => {
+            if (!cancelled) {
+              setXmlImport(imported);
+              setWorkspaceXmlPath(imported.path);
+            }
+          }).catch(cause => {
+            if (!cancelled) console.warn("TRDP 配置 XML 自动导入失败:", cause);
+          });
+        }
       }
       setWorkspaceLoaded(true);
     }).catch(cause => {
@@ -193,7 +211,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
       }
     });
     return () => { cancelled = true; };
-  }, [sessionId, mode]);
+  }, [sessionId, mode, configuredXmlPath]);
 
   useEffect(() => {
     if (!workspaceLoaded) return;
