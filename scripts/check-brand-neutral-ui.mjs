@@ -48,7 +48,7 @@ for (const file of files) {
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     for (const word of forbidden) {
-      const pattern = new RegExp(`\\b${word.replace(/[.*+?^\${}()|[\\]\\]/g, "\\$&")}\\b`, "i");
+      const pattern = new RegExp(`\\b${word.replaceAll(" ", "\\s+")}\\b`, "i");
       if (pattern.test(line)) {
         failures.push(`${file}:${index + 1}: forbidden UI/theme brand term "${word}"`);
       }
