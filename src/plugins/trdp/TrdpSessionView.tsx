@@ -1330,7 +1330,6 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void openCapture()}>{t("trdp.actions.openCapture")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void importXml()}>{t("trdp.actions.importXml")}</button>
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void saveCapture()} disabled={!captureId}>{t("trdp.actions.saveCapture")}</button>
-                  {mode === "monitor" && <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void stopLiveCapture()} disabled={!captureRunning}>{t("trdp.actions.stopCapture")}</button>}
                   <button className={`${styles.actionButton} liquid-glass-button`} onClick={clearCaptureView}>{t("trdp.actions.clear")}</button>
                 </div>
               </div>
@@ -1353,7 +1352,11 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                   </div>
                   <div className={styles.toolbar}>
                     <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void refreshCaptureInterfaces()} disabled={captureInterfacesLoading}>{t("trdp.actions.refreshInterfaces")}</button>
-                    <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => void startLiveCapture()} disabled={captureInterfacesLoading || captureRunning || !captureInterfaceA}>{t("trdp.actions.startCapture")}</button>
+                    {captureRunning ? (
+                      <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => void stopLiveCapture()}>{t("trdp.actions.stopCapture")}</button>
+                    ) : (
+                      <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => void startLiveCapture()} disabled={captureInterfacesLoading || !captureInterfaceA}>{t("trdp.actions.startCapture")}</button>
+                    )}
                   </div>
                 </div>
               )}
