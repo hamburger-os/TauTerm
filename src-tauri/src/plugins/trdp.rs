@@ -866,9 +866,7 @@ pub fn trdp_command(
                 .session_store
                 .lock()
                 .map_err(|error| error.to_string())?;
-            let handle = store
-                .get_session(&session_id)
-                .ok_or("TRDP 会话不存在")?;
+            let handle = store.get_session(&session_id).ok_or("TRDP 会话不存在")?;
             return Ok(handle
                 .params
                 .get("trdp_workspace")
