@@ -484,22 +484,212 @@ fn side_channel(
         .ok_or_else(|| "TRDP 会话不存在或已断开".to_string())
 }
 
-fn import_workspace(path: &str) -> Result<Value, String> {
-    let text =
-        fs::read_to_string(path).map_err(|error| format!("读取 TRDP Workspace 失败: {error}"))?;
-    let value: Value = serde_json::from_str(&text)
-        .map_err(|error| format!("TRDP Workspace JSON 无效: {error}"))?;
+fn validate_workspace_object(value: &Value, index: usize) -> Result<(), String> {
+    const ALLOWED_KEYS: &[&str] = &[
+        "id",
+        "kind",
+        "name",
+        "com_id",
+        "link",
+        "destination",
+        "source",
+        "cycle_us",
+        "timeout_mode",
+        "timeout_us",
+        "timeout_behavior",
+        "payload_hex",
+        "transport",
+        "etb_topo_count",
+        "op_trn_topo_count",
+        "red_id",
+        "num_replies",
+        "reply_timeout_us",
+        "response_mode",
+        "confirm_timeout_us",
+        "reply_com_id",
+        "reply_ip",
+        "source_uri",
+        "dest_uri",
+    ];
+    const U32_FIELDS: &[&str] = &[
+        "com_id",
+        "cycle_us",
+        "timeout_us",
+        "etb_topo_count",
+        "op_trn_topo_count",
+        "red_id",
+        "num_replies",
+        "reply_timeout_us",
+        "confirm_timeout_us",
+        "reply_com_id",
+    ];
+
     let object = value
         .as_object()
-        .ok_or("TRDP Workspace 顶层必须是 JSON object")?;
-    if object.get("format").and_then(Value::as_str) != Some("tauterm-trdp-workspace/v1") {
-        return Err("不支持的 TRDP Workspace format，期望 tauterm-trdp-workspace/v1".to_string());
-    }
-    if let Some(objects) = object.get("objects") {
-        if !objects.is_array() {
-            return Err("TRDP Workspace objects 必须是数组".to_string());
+        .ok_or_else(|| format!("TRDP Workspace objects[{index}] 必须是 object"))?;
+    for key in object.keys() {
+        if !ALLOWED_KEYS.contains(&key.as_str()) {
+            return Err(format!(
+                "TRDP Workspace objects[{index}] 包含不支持字段 {key}"
+            ));
         }
     }
+
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("TRDP Workspace objects[{index}] 缺少 kind"))?;
+    if !matches!(
+        kind,
+        "pd_publisher"
+            | "pd_subscriber"
+            | "pd_request"
+            | "md_request"
+            | "md_listener"
+            | "md_notify"
+    ) {
+        return Err(format!("TRDP Workspace objects[{index}] kind 无效: {kind}"));
+    }
+
+    for field in U32_FIELDS {
+        if let Some(raw) = object.get(*field) {
+            let Some(number) = raw.as_u64() else {
+                return Err(format!(
+                    "TRDP Workspace objects[{index}].{field} 必须是无符号整数"
+                ));
+            };
+            if number > u64::from(u32::MAX) {
+                return Err(format!(
+                    "TRDP Workspace objects[{index}].{field} 超出 u32 范围"
+                ));
+            }
+        }
+    }
+    if object.get("com_id").and_then(Value::as_u64).unwrap_or(0) == 0 {
+        return Err(format!(
+            "TRDP Workspace objects[{index}].com_id 必须为非零整数"
+        ));
+    }
+
+    let validate_enum = |field: &str, accepted: &[&str]| -> Result<(), String> {
+        if let Some(raw) = object.get(field) {
+            let value = raw.as_str().ok_or_else(|| {
+                format!("TRDP Workspace objects[{index}].{field} 必须是字符串")
+            })?;
+            if !accepted.contains(&value) {
+                return Err(format!(
+                    "TRDP Workspace objects[{index}].{field} 无效: {value}"
+                ));
+            }
+        }
+        Ok(())
+    };
+    validate_enum("link", &["a", "b", "both"])?;
+    validate_enum("timeout_mode", &["auto", "custom", "disabled"])?;
+    validate_enum("timeout_behavior", &["keep", "zero"])?;
+    validate_enum("transport", &["udp", "tcp"])?;
+    validate_enum("response_mode", &["reply", "query"])?;
+
+    if let Some(payload) = object.get("payload_hex").and_then(Value::as_str) {
+        if payload.len() > 131_072
+            || !payload.len().is_multiple_of(2)
+            || !payload.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(format!(
+                "TRDP Workspace objects[{index}].payload_hex 不是有效的受支持 HEX payload"
+            ));
+        }
+    }
+
+    for field in ["source", "destination", "reply_ip"] {
+        if let Some(text) = object.get(field).and_then(Value::as_str) {
+            if text.parse::<std::net::Ipv4Addr>().is_err() {
+                return Err(format!(
+                    "TRDP Workspace objects[{index}].{field} 不是有效 IPv4 地址"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn import_workspace(path: &str) -> Result<Value, String> {
+    const ALLOWED_TOP_LEVEL: &[&str] = &[
+        "format",
+        "name",
+        "xml",
+        "objects",
+        "redundancy_groups",
+    ];
+
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("读取 TRDP Workspace 失败: {error}"))?;
+    let mut value: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("TRDP Workspace JSON 无效: {error}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or("TRDP Workspace 顶层必须是 JSON object")?;
+    for key in object.keys() {
+        if !ALLOWED_TOP_LEVEL.contains(&key.as_str()) {
+            return Err(format!("TRDP Workspace 包含不支持字段 {key}"));
+        }
+    }
+    if object.get("format").and_then(Value::as_str) != Some("tauterm-trdp-workspace/v2") {
+        return Err(
+            "不支持的 TRDP Workspace format，当前仅接受 tauterm-trdp-workspace/v2"
+                .to_string(),
+        );
+    }
+
+    let objects = object
+        .get("objects")
+        .and_then(Value::as_array)
+        .ok_or("TRDP Workspace objects 必须是数组")?;
+    for (index, item) in objects.iter().enumerate() {
+        validate_workspace_object(item, index)?;
+    }
+
+    if let Some(groups) = object.get("redundancy_groups") {
+        let groups = groups
+            .as_object()
+            .ok_or("TRDP Workspace redundancy_groups 必须是 object")?;
+        for (red_id, state) in groups {
+            let parsed = red_id
+                .parse::<u32>()
+                .map_err(|_| format!("TRDP redundancy group id 无效: {red_id}"))?;
+            if parsed == 0 {
+                return Err("TRDP redundancy group id 不能为 0".to_string());
+            }
+            if !matches!(state.as_str(), Some("leader" | "follower")) {
+                return Err(format!(
+                    "TRDP redundancy group {red_id} 状态必须为 leader 或 follower"
+                ));
+            }
+        }
+    }
+
+    if let Some(xml) = object.get("xml").and_then(Value::as_str) {
+        let workspace_path = std::path::Path::new(path);
+        let xml_path = if std::path::Path::new(xml).is_absolute() {
+            PathBuf::from(xml)
+        } else {
+            workspace_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(xml)
+        };
+        if !xml_path.is_file() {
+            return Err(format!(
+                "TRDP Workspace 引用的 XML 不存在: {}",
+                xml_path.display()
+            ));
+        }
+        object.insert(
+            "xml_path".to_string(),
+            Value::String(xml_path.to_string_lossy().into_owned()),
+        );
+    }
+
     Ok(value)
 }
 
