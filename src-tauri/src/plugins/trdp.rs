@@ -1140,7 +1140,11 @@ pub fn trdp_command(
 
     if let Some(id) = tracked_object.as_deref() {
         let pending_state = match operation {
-            "object_start" => Some(if persistent_object { "starting" } else { "sending" }),
+            "object_start" => Some(if persistent_object {
+                "starting"
+            } else {
+                "sending"
+            }),
             "object_stop" => Some("stopping"),
             _ => None,
         };
