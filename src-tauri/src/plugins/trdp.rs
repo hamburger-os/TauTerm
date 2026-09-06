@@ -710,18 +710,15 @@ fn validate_workspace_object(value: &Value, index: usize) -> Result<(), String> 
     Ok(())
 }
 
-fn import_workspace(path: &str) -> Result<Value, String> {
-    const ALLOWED_TOP_LEVEL: &[&str] = &["format", "name", "xml", "objects", "redundancy_groups"];
+const WORKSPACE_TOP_LEVEL_KEYS: &[&str] =
+    &["format", "name", "xml", "objects", "redundancy_groups"];
 
-    let text =
-        fs::read_to_string(path).map_err(|error| format!("读取 TRDP Workspace 失败: {error}"))?;
-    let mut value: Value = serde_json::from_str(&text)
-        .map_err(|error| format!("TRDP Workspace JSON 无效: {error}"))?;
+fn validate_workspace_value(value: &Value) -> Result<(), String> {
     let object = value
-        .as_object_mut()
+        .as_object()
         .ok_or("TRDP Workspace 顶层必须是 JSON object")?;
     for key in object.keys() {
-        if !ALLOWED_TOP_LEVEL.contains(&key.as_str()) {
+        if !WORKSPACE_TOP_LEVEL_KEYS.contains(&key.as_str()) {
             return Err(format!("TRDP Workspace 包含不支持字段 {key}"));
         }
     }
@@ -758,15 +755,37 @@ fn import_workspace(path: &str) -> Result<Value, String> {
         }
     }
 
-    if let Some(xml) = object.get("xml").and_then(Value::as_str) {
+    if let Some(xml) = object.get("xml") {
+        let xml = xml
+            .as_str()
+            .ok_or("TRDP Workspace xml 必须是路径字符串")?;
+        if xml.trim().is_empty() {
+            return Err("TRDP Workspace xml 不能为空路径".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn import_workspace(path: &str) -> Result<Value, String> {
+    let text =
+        fs::read_to_string(path).map_err(|error| format!("读取 TRDP Workspace 失败: {error}"))?;
+    let mut value: Value = serde_json::from_str(&text)
+        .map_err(|error| format!("TRDP Workspace JSON 无效: {error}"))?;
+    validate_workspace_value(&value)?;
+
+    if let Some(xml) = value
+        .get("xml")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    {
         let workspace_path = std::path::Path::new(path);
-        let xml_path = if std::path::Path::new(xml).is_absolute() {
-            PathBuf::from(xml)
+        let xml_path = if std::path::Path::new(&xml).is_absolute() {
+            PathBuf::from(&xml)
         } else {
             workspace_path
                 .parent()
                 .unwrap_or_else(|| std::path::Path::new("."))
-                .join(xml)
+                .join(&xml)
         };
         if !xml_path.is_file() {
             return Err(format!(
@@ -774,10 +793,12 @@ fn import_workspace(path: &str) -> Result<Value, String> {
                 xml_path.display()
             ));
         }
-        object.insert(
-            "xml_path".to_string(),
-            Value::String(xml_path.to_string_lossy().into_owned()),
-        );
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "xml_path".to_string(),
+                Value::String(xml_path.to_string_lossy().into_owned()),
+            );
+        }
     }
 
     Ok(value)
@@ -809,6 +830,30 @@ pub fn trdp_command(
                 .and_then(Value::as_str)
                 .ok_or("workspace_import requires path")?;
             return import_workspace(path);
+        }
+        Some("workspace_store") => {
+            let workspace = command
+                .get("workspace")
+                .cloned()
+                .ok_or("workspace_store requires workspace")?;
+            validate_workspace_value(&workspace)?;
+            {
+                let mut store = state
+                    .session_store
+                    .lock()
+                    .map_err(|error| error.to_string())?;
+                let handle = store
+                    .get_session_mut(&session_id)
+                    .ok_or("TRDP 会话不存在")?;
+                let params = handle
+                    .params
+                    .as_object_mut()
+                    .ok_or("TRDP 会话参数不是 JSON object")?;
+                params.insert("trdp_workspace".to_string(), workspace);
+                let path = crate::kernel::session_store::SessionStore::sessions_file_path(&app);
+                store.save_to_disk(&path)?;
+            }
+            return Ok(json!({ "stored": true }));
         }
         Some("dataset_decode") => {
             let path = command
