@@ -156,6 +156,8 @@ void bridge_output_unlock(void);
 void bridge_json_escape(FILE *file, const char *text);
 void bridge_print_hex(FILE *file, const UINT8 *data, UINT32 size);
 void bridge_print_ip(FILE *file, UINT32 ip);
+void bridge_request_begin(const char *line);
+void bridge_request_end(void);
 void bridge_emit_ack(const char *command, const char *id);
 void bridge_emit_error(const char *message);
 void bridge_emit_trdp_error(const char *operation, TRDP_ERR_T error);
@@ -179,6 +181,7 @@ void node_object_update(const char *line);
 void node_object_stop(const char *line);
 void node_md_confirm(const char *line);
 void node_md_abort(const char *line);
+int node_submit(const char *command, const char *line);
 void node_shutdown(void);
 
 void capture_list(void);
