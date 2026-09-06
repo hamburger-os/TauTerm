@@ -24,8 +24,8 @@ typedef pthread_t bridge_thread_t;
 typedef pthread_mutex_t bridge_mutex_t;
 #endif
 
-#define BRIDGE_MAX_LINE 131072
-#define BRIDGE_MAX_PAYLOAD 65536
+#define BRIDGE_MAX_PAYLOAD 65536u
+#define BRIDGE_MAX_LINE (BRIDGE_MAX_PAYLOAD * 2u + 16384u)
 #define BRIDGE_PD_PORT 17224u
 #define BRIDGE_MD_PORT 17225u
 
