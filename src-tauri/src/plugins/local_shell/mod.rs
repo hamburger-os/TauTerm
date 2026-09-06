@@ -66,7 +66,7 @@ impl LocalShellConfig {
             return Err("Local shell mode must be auto, path, or custom".into());
         }
         if !matches!(self.shell_kind.as_str(), "native" | "wsl" | "custom") {
-            return Err("Local shell kind must be native, wsl, or custom".into());
+            return Err("Local shell kind is invalid".into());
         }
         if self.executable.contains('\0') || self.cwd.contains('\0') {
             return Err("Shell executable and working directory cannot contain NUL".into());
@@ -215,7 +215,7 @@ fn shell_display_label(executable: &Path) -> String {
         .unwrap_or("Shell");
     match stem.to_ascii_lowercase().as_str() {
         "pwsh" => "Script Shell".into(),
-        "powershell" => "Script Shell (compat)".into(),
+        "powershell" => "Script Shell (classic)".into(),
         "cmd" => "Command Shell".into(),
         "wsl" => "Linux Subsystem".into(),
         "nu" => "Structured Shell".into(),
@@ -842,7 +842,7 @@ mod tests {
         let default_index = presets
             .iter()
             .position(|preset| preset.id == "wsl-default")
-            .expect("WSL default preset");
+            .expect("default subsystem preset");
         assert!(presets
             .iter()
             .skip(default_index + 1)
