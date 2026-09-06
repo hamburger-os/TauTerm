@@ -38,6 +38,7 @@ type PendingRequests = Arc<Mutex<HashMap<String, PendingRequest>>>;
 pub struct TrdpSideChannel {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
+    start_control: Mutex<()>,
     params: Mutex<Value>,
     pending: PendingRequests,
     next_request_id: AtomicU64,
@@ -57,6 +58,7 @@ impl TrdpSideChannel {
         Self {
             child: Mutex::new(None),
             stdin: Mutex::new(None),
+            start_control: Mutex::new(()),
             params: Mutex::new(params),
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_request_id: AtomicU64::new(1),
@@ -172,6 +174,10 @@ impl TrdpSideChannel {
     }
 
     fn start(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
+        let _start_guard = self
+            .start_control
+            .lock()
+            .map_err(|error| error.to_string())?;
         if self
             .child
             .lock()
