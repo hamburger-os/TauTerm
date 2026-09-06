@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, four-color amb
 license: MIT
 metadata:
   author: tauterm
-  version: "9.0"
+  version: "9.1"
 ---
 
-# TauTerm Liquid Glass v9.0 — 唯一主题规范源
+# TauTerm Liquid Glass v9.1 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、四色环境色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -105,8 +105,9 @@ Surface 的背景组合顺序固定为：
 - Ambient 能明显穿过 Sidebar / SendBar / Dialog。
 - Structural Panel 不应看起来像红蓝绿黄实心色块；颜色来自背后的 Ambient。
 - 保持中性清透，不加 Navy Blue 固有底色。
-- 目标是 airy / luminous / clear / prismatic。
-- Spectrum Flow 与 Obsidian 必须在正常截图里一眼能区分，不接受“只是稍微亮一点”的差异。
+- 目标是 airy / luminous / clear / prismatic；基础中性明度必须高于 Obsidian，而不是仅靠 Ambient 颜色制造差异。
+- **Performance 模式也必须保持明显的明亮烟晶身份**：可以用更高 RGB 明度的单层半透明 fill，但不要通过大幅降低 alpha 来提亮，否则无 blur 时容易出现后层文字穿透。
+- Spectrum Flow 与 Obsidian 必须在正常截图里一眼能区分；在 Performance 模式下同样不接受“只是稍微亮一点”的差异。
 
 ### Obsidian / 黑曜石
 
@@ -370,8 +371,9 @@ Input 需要稳定凹槽和清楚 border；focus 只允许克制 ring。
 - 完全停止 Ambient 装饰动画
 - **所有主要 surface 退化为单层 flat translucent fill**：Shell Surface / Panel / Content / Control / Card / Float 分别只引用一个 `--performance-*-fill`
 - 不叠 specular + clear + veil 多层背景，不保留大面积 glass shadow；现有 1px 结构 border 可以保留
-- flat translucent fill 必须足够实，不能让后层文字形成清晰重影；炫彩流光仍可透出少量四色，黑曜石 / 白霜只通过黑/白基底和 fill 区分
-- 目标：最低持续 GPU 开销与最高交互流畅度
+- flat translucent fill 必须足够实，不能让后层文字形成清晰重影；炫彩流光使用更明亮的中性烟晶 fill，黑曜石使用深黑 fill，白霜使用浅色 fill
+- 性能优先下的主题区分优先靠 **fill 自身明度 / 中性色相**，而不是降低 alpha 或增加额外特效；这不会破坏低成本路径
+- 目标：最低持续 GPU 开销与最高交互流畅度，同时保持三主题一眼可分
 
 交互降载：
 - Sidebar / SendBar / Split divider 等布局拖动期间，暂时关闭 Small Shell Surface / Float backdrop sampling，并暂停 Ambient 装饰动画
@@ -420,7 +422,7 @@ npm run build
 - **左栏、右栏、SendBar、TargetBar 是同一种 Structural Glass**
 - **Terminal 是同一种玻璃的克制 Content 版本**
 - **三主题使用同一份 Ambient 几何 / 色值 / 强度；差异只来自底色、Theme Veil 与必要的对比补偿**
-- **炫彩流光明显最透亮，Ambient 穿透最清楚**
+- **炫彩流光明显最透亮，Ambient 穿透最清楚；性能优先下也必须保持明亮烟晶观感，不能收敛成接近黑曜石的近黑表面**
 - **黑曜石 = 同一 clear glass + black base / 更厚 black veil，必须明显比炫彩流光更黑**
 - **白霜 = 同一 clear glass + white base / white veil**
 - **三个主题都有清澈、柔亮、边缘高光的液态玻璃质感**
