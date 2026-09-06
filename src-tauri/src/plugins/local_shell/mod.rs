@@ -88,7 +88,7 @@ impl LocalShellConfig {
         }
 
         if self.wsl_distro.contains('\0') || self.wsl_distro.len() > MAX_ARGUMENT_LENGTH {
-            return Err("WSL distribution name is invalid".into());
+            return Err("Linux subsystem distribution name is invalid".into());
         }
 
         if self.shell_kind == "wsl" {
@@ -853,10 +853,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn decodes_utf16_wsl_output() {
-        let bytes = "Ubuntu-22.04\r\n"
+        let bytes = "Distro-22.04\r\n"
             .encode_utf16()
             .flat_map(u16::to_le_bytes)
             .collect::<Vec<_>>();
-        assert_eq!(decode_windows_output(&bytes), "Ubuntu-22.04\r\n");
+        assert_eq!(decode_windows_output(&bytes), "Distro-22.04\r\n");
     }
 }
