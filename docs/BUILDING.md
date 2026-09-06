@@ -188,7 +188,9 @@ node --version && npm --version && rustc --version && cargo --version
 
 ## TRDP native helper 与 vendored TCNOpen
 
-TauTerm 把 **TCNOpen TRDP 3.0.0.0** 源码固定在 `src-tauri/vendor/tcnopen/`。普通源码构建不需要联网下载 TCNOpen，也不需要额外安装 TCNOpen SDK。
+TauTerm 把 **TCNOpen TRDP 3.0.0.0** 源码固定在 `src-tauri/vendor/tcnopen/`。提交到仓库的是“官方 3.0.0.0 release 规范化为 UTF-8/LF + `SOURCE.json` 声明的有序 downstream patch series”的确定性结果；patch 文件位于 `src-tauri/vendor/tcnopen/patches/`。普通源码构建直接使用已经应用 patch 的 vendored 源码，不联网下载 TCNOpen，也不需要额外安装 TCNOpen SDK。
+
+维护者使用 `python scripts/vendor_tcnopen.py --check` 时，会从官方 release 重新生成基线、依次应用 downstream patches，再与提交的 vendor tree 比较；CI 使用 `--check-patches` 做离线 patch round-trip 校验。需要刷新上游版本时使用 `--update`，不能直接对 vendored 文件做未记录的修改。
 
 手动构建 TRDP helper 与 reference peer：
 
