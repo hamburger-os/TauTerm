@@ -1301,15 +1301,34 @@ pub fn trdp_save_capture(path: String, capture_id: String) -> Result<(), String>
                 .file_name()
                 .and_then(|value| value.to_str())
                 .unwrap_or("capture.pcapng");
-            let temporary = destination.with_file_name(format!(
-                ".{file_name}.tauterm-{}.tmp",
-                Uuid::new_v4()
-            ));
+            let token = Uuid::new_v4();
+            let temporary =
+                destination.with_file_name(format!(".{file_name}.tauterm-{token}.tmp"));
+            let backup =
+                destination.with_file_name(format!(".{file_name}.tauterm-{token}.backup"));
+
             convert_capture_to_pcapng(&source, &temporary)?;
-            fs::remove_file(&destination)
-                .map_err(|error| format!("替换原抓包失败: {error}"))?;
-            fs::rename(&temporary, &destination)
-                .map_err(|error| format!("写回 pcapng 失败: {error}"))
+            fs::rename(&destination, &backup)
+                .map_err(|error| format!("暂存原抓包失败: {error}"))?;
+            match fs::rename(&temporary, &destination) {
+                Ok(()) => {
+                    let _ = fs::remove_file(&backup);
+                    Ok(())
+                }
+                Err(error) => {
+                    let restore = fs::rename(&backup, &destination);
+                    let _ = fs::remove_file(&temporary);
+                    match restore {
+                        Ok(()) => Err(format!(
+                            "写回 pcapng 失败，原抓包已恢复: {error}"
+                        )),
+                        Err(restore_error) => Err(format!(
+                            "写回 pcapng 失败且自动恢复失败: {error}; 原文件保留于 {} ({restore_error})",
+                            backup.display()
+                        )),
+                    }
+                }
+            }
         }
     }
 }
