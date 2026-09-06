@@ -320,7 +320,7 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 
 /* 主题高价值 selected 状态。
    三主题使用同一四色环境色相；主题差异只来自 surface alpha / edge / shadow。
-   只在 selected/active tab 等少量元素上使用，不做 idle 动画。 */
+   只在 selected/active tab 等少量元素上使用；效果优先允许小面积 transform-only 色谱流动。 */
 .liquid-glass-button.liquid-theme-selected {
   background: var(--selected-surface);
   border-color: var(--selected-border);
@@ -552,6 +552,67 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
   opacity: 1;
   transform: none;
   cursor: not-allowed;
+}
+
+/* 效果优先：只让已经是四色棱镜的高价值按钮流动。
+   使用一个小型 oversized pseudo layer，仅动画 transform；不动画 background-position / gradient，
+   避免每帧重绘渐变。性能优先不创建该层，因此保持现有静态四色按钮。 */
+html[data-performance="quality"] .liquid-primary-button:not(:disabled),
+html[data-performance="quality"] .liquid-glass-button.liquid-theme-selected:not(:disabled) {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+html[data-performance="quality"] .liquid-primary-button:not(:disabled) {
+  --prism-flow-surface: var(--accent-holofoil-gradient);
+}
+
+html[data-performance="quality"] .liquid-glass-button.liquid-theme-selected:not(:disabled) {
+  --prism-flow-surface: var(--selected-surface);
+}
+
+html[data-performance="quality"] .liquid-primary-button:not(:disabled)::before,
+html[data-performance="quality"] .liquid-glass-button.liquid-theme-selected:not(:disabled)::before {
+  content: "";
+  position: absolute;
+  inset: -68%;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--prism-flow-surface);
+  transform-origin: 50% 50%;
+  animation: prism-button-flow 8s linear infinite;
+}
+
+@keyframes prism-button-flow {
+  0% {
+    transform: translate3d(-6%, -5%, 0) rotate(0deg) scale(1.04);
+  }
+  25% {
+    transform: translate3d(6%, -3%, 0) rotate(90deg) scale(1.08);
+  }
+  50% {
+    transform: translate3d(5%, 6%, 0) rotate(180deg) scale(1.04);
+  }
+  75% {
+    transform: translate3d(-6%, 4%, 0) rotate(270deg) scale(1.08);
+  }
+  100% {
+    transform: translate3d(-6%, -5%, 0) rotate(360deg) scale(1.04);
+  }
+}
+
+/* 与 Ambient 一致：布局拖动/隐藏暂停纯装饰按钮流光；系统 reduced-motion 则静态化。 */
+html[data-performance="quality"] .ui-resizing .liquid-primary-button:not(:disabled)::before,
+html[data-performance="quality"] .ui-resizing .liquid-glass-button.liquid-theme-selected:not(:disabled)::before,
+html[data-motion="paused"][data-performance="quality"] .liquid-primary-button:not(:disabled)::before,
+html[data-motion="paused"][data-performance="quality"] .liquid-glass-button.liquid-theme-selected:not(:disabled)::before {
+  animation-play-state: paused;
+}
+
+html[data-motion="reduced"][data-performance="quality"] .liquid-primary-button:not(:disabled)::before,
+html[data-motion="reduced"][data-performance="quality"] .liquid-glass-button.liquid-theme-selected:not(:disabled)::before {
+  animation: none;
 }
 
 /* ==========================================
@@ -786,6 +847,11 @@ html[data-performance="performance"] .liquid-glass-float {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  html[data-performance="quality"] .liquid-primary-button:not(:disabled)::before,
+  html[data-performance="quality"] .liquid-glass-button.liquid-theme-selected:not(:disabled)::before {
+    animation: none;
+  }
+
   .liquid-glass-button,
   .liquid-glass-input,
   .liquid-primary-button,
