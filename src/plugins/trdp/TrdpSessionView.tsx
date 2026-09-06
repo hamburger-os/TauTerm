@@ -374,7 +374,18 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   }
 
   function patchObject(id: string, patch: Partial<TrdpObject>) {
-    setObjects(prev => prev.map(item => item.id === id ? { ...item, ...patch } : item));
+    setWorkspaceDraft(previous => {
+      const redundancyGroups = { ...previous.redundancyGroups };
+      if (patch.redId !== undefined && patch.redId > 0) {
+        const key = String(patch.redId);
+        if (!redundancyGroups[key]) redundancyGroups[key] = "leader";
+      }
+      return {
+        ...previous,
+        objects: previous.objects.map(item => item.id === id ? { ...item, ...patch } : item),
+        redundancyGroups,
+      };
+    });
   }
 
   async function startObject(obj: TrdpObject) {
