@@ -57,7 +57,14 @@ jobs:
           assert meta["license"] == "MPL-2.0"
           assert Path("src-tauri/vendor/tcnopen/src/api/trdp_if_light.h").is_file()
           assert Path("src-tauri/vendor/tcnopen/src/common/trdp_private.h").is_file()
+          patches = meta.get("downstream_patches", [])
+          assert len(patches) == 2
+          assert [entry["file"] for entry in patches] == [
+              "patches/0001-restore-ahw-history-initials.patch",
+              "patches/0002-scope-msvc-flexible-array-warning.patch",
+          ]
           PY
+          python3 scripts/vendor_tcnopen.py --check-patches
 
       - name: Build vendored TCNOpen 3.0.0.0 and native helpers
         shell: bash
@@ -351,6 +358,15 @@ jobs:
           python -m py_compile scripts/vendor_tcnopen.py
           $meta = Get-Content 'src-tauri/vendor/tcnopen/SOURCE.json' -Raw | ConvertFrom-Json
           if ($meta.version -ne '3.0.0.0' -or $meta.license -ne 'MPL-2.0') { throw 'bad TCNOpen vendor metadata' }
+          if ($meta.downstream_patches.Count -ne 2) { throw 'unexpected TCNOpen downstream patch count' }
+          python scripts/vendor_tcnopen.py --check-patches
+
+      - name: Verify strict patched-vendor MSVC policy
+        shell: pwsh
+        run: |
+          $cmake = Get-Content 'src-tauri/native/CMakeLists.txt' -Raw
+          if ($cmake -match '/wd4819' -or $cmake -match '/wd4200') { throw 'global TCNOpen warning suppression reintroduced' }
+          if ($cmake -notmatch '/W4 /WX /utf-8') { throw 'strict MSVC bridge policy missing' }
 
       - name: Build vendored TCNOpen 3.0.0.0 and native helpers
         shell: pwsh
