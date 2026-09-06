@@ -1045,9 +1045,10 @@ mod tests {
         .expect("workspace");
 
         let imported = import_workspace(&workspace_path.to_string_lossy()).expect("import v2");
+        let expected_xml = xml_path.to_string_lossy().into_owned();
         assert_eq!(
             imported.get("xml_path").and_then(Value::as_str),
-            Some(xml_path.to_string_lossy().as_ref())
+            Some(expected_xml.as_str())
         );
 
         fs::write(
