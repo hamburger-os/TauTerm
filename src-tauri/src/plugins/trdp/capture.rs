@@ -45,12 +45,12 @@ pub struct TrdpPacket {
     pub sdt_detected: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrdpRawFrame {
-    pub link: String,
-    pub timestamp_us: u64,
-    pub raw_frame_hex: String,
-    pub link_type: u32,
+#[derive(Debug, Clone)]
+struct StoredFrame {
+    link: String,
+    timestamp_us: u64,
+    bytes: Vec<u8>,
+    link_type: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,7 +64,7 @@ pub struct TrdpCaptureResult {
 
 #[derive(Debug)]
 struct StoredCapture {
-    frames: Vec<TrdpRawFrame>,
+    frames: Vec<StoredFrame>,
     packets: Vec<TrdpPacket>,
     dropped_frames: u64,
     live: bool,
@@ -104,7 +104,10 @@ pub fn release_capture(capture_id: &str) {
 
 pub fn append_live_capture(
     capture_id: &str,
-    frame: TrdpRawFrame,
+    link: String,
+    timestamp_us: u64,
+    link_type: u32,
+    bytes: Vec<u8>,
     packets: Vec<TrdpPacket>,
 ) -> Option<(usize, usize, u64)> {
     let mut store = capture_store().lock().ok()?;
@@ -112,7 +115,7 @@ pub fn append_live_capture(
     if !capture.live {
         return None;
     }
-    capture.frames.push(frame);
+    capture.frames.push(StoredFrame { link, timestamp_us, bytes, link_type });
     if capture.frames.len() > LIVE_FRAME_LIMIT {
         let overflow = capture.frames.len() - LIVE_FRAME_LIMIT;
         capture.frames.drain(..overflow);
@@ -230,19 +233,6 @@ impl TrdpStreamDecoder {
 
     pub fn reset(&mut self) {
         self.tcp_flows.clear();
-    }
-
-    pub fn feed_hex_frame(
-        &mut self,
-        raw_frame_hex: &str,
-        linktype: u32,
-        timestamp_us: u64,
-        link: &str,
-    ) -> Vec<TrdpPacket> {
-        let Some(frame) = decode_hex(raw_frame_hex) else {
-            return Vec::new();
-        };
-        self.feed_frame(&frame, linktype, timestamp_us, link)
     }
 
     pub fn feed_frame(
@@ -528,7 +518,7 @@ fn hex(data: &[u8]) -> String {
     output
 }
 
-fn decode_hex(value: &str) -> Option<Vec<u8>> {
+pub fn decode_raw_frame_hex(value: &str) -> Option<Vec<u8>> {
     if !value.len().is_multiple_of(2) {
         return None;
     }
@@ -730,7 +720,7 @@ fn decode_frame(
 fn parse_pcap(
     data: &[u8],
     ports: &CapturePorts,
-) -> Result<(Vec<TrdpRawFrame>, Vec<TrdpPacket>), String> {
+) -> Result<(Vec<StoredFrame>, Vec<TrdpPacket>), String> {
     if data.len() < 24 {
         return Err("pcap 文件过短".into());
     }
@@ -757,14 +747,14 @@ fn parse_pcap(
         let timestamp_us = seconds.saturating_mul(1_000_000)
             + if nanoseconds { fraction / 1_000 } else { fraction };
         let frame = &data[offset..offset + captured_length];
-        let raw = TrdpRawFrame {
-            link: "capture".into(),
+        let link = "capture".to_string();
+        packets.extend(decoder.feed_frame(frame, linktype, timestamp_us, &link));
+        frames.push(StoredFrame {
+            link,
             timestamp_us,
-            raw_frame_hex: hex(frame),
+            bytes: frame.to_vec(),
             link_type: linktype,
-        };
-        packets.extend(decoder.feed_frame(frame, linktype, timestamp_us, &raw.link));
-        frames.push(raw);
+        });
         offset += captured_length;
     }
     Ok((frames, packets))
@@ -831,7 +821,7 @@ fn pcapng_timestamp_to_us(raw: u64, resolution: u8, base2: bool) -> u64 {
 fn parse_pcapng(
     data: &[u8],
     ports: &CapturePorts,
-) -> Result<(Vec<TrdpRawFrame>, Vec<TrdpPacket>), String> {
+) -> Result<(Vec<StoredFrame>, Vec<TrdpPacket>), String> {
     let mut offset = 0usize;
     let mut little_endian = true;
     let mut interfaces: Vec<PcapNgInterface> = Vec::new();
@@ -908,19 +898,18 @@ fn parse_pcapng(
                     interface.timestamp_base2,
                 );
                 let frame = &data[packet_start..packet_start + captured_length];
-                let raw = TrdpRawFrame {
-                    link: interface.link.clone(),
-                    timestamp_us,
-                    raw_frame_hex: hex(frame),
-                    link_type: interface.linktype,
-                };
                 packets.extend(decoder.feed_frame(
                     frame,
                     interface.linktype,
                     timestamp_us,
                     &interface.link,
                 ));
-                frames.push(raw);
+                frames.push(StoredFrame {
+                    link: interface.link.clone(),
+                    timestamp_us,
+                    bytes: frame.to_vec(),
+                    link_type: interface.linktype,
+                });
             }
             _ => {}
         }
@@ -1012,7 +1001,7 @@ fn append_interface_description(output: &mut Vec<u8>, linktype: u32, link: &str)
     append_u32(output, block_length as u32);
 }
 
-fn save_frames(path: &Path, frames: Vec<TrdpRawFrame>) -> Result<(), String> {
+fn save_frames(path: &Path, frames: Vec<StoredFrame>) -> Result<(), String> {
     let mut output = Vec::new();
     append_u32(&mut output, 0x0a0d0d0a);
     append_u32(&mut output, 28);
@@ -1045,12 +1034,10 @@ fn save_frames(path: &Path, frames: Vec<TrdpRawFrame>) -> Result<(), String> {
     }
 
     for raw in frames {
-        let Some(frame_bytes) = decode_hex(&raw.raw_frame_hex) else {
-            continue;
-        };
-        if frame_bytes.is_empty() {
+        if raw.bytes.is_empty() {
             continue;
         }
+        let frame_bytes = raw.bytes;
         let link = if raw.link.trim().is_empty() {
             "capture"
         } else {
@@ -1342,16 +1329,16 @@ mod tests {
         let file = tempfile::NamedTempFile::new().expect("tempfile");
         let path = file.path().to_string_lossy().to_string();
         let frames = vec![
-            TrdpRawFrame {
+            StoredFrame {
                 link: a.link.clone(),
                 timestamp_us: a.timestamp_us,
-                raw_frame_hex: a.raw_frame_hex.clone(),
+                bytes: decode_raw_frame_hex(&a.raw_frame_hex).expect("frame A"),
                 link_type: a.link_type.unwrap_or(LINKTYPE_ETHERNET),
             },
-            TrdpRawFrame {
+            StoredFrame {
                 link: b.link.clone(),
                 timestamp_us: b.timestamp_us,
-                raw_frame_hex: b.raw_frame_hex.clone(),
+                bytes: decode_raw_frame_hex(&b.raw_frame_hex).expect("frame B"),
                 link_type: b.link_type.unwrap_or(LINKTYPE_ETHERNET),
             },
         ];
