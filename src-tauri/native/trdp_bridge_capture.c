@@ -1,6 +1,4 @@
 #include "trdp_bridge.h"
-#include "vos_utils.h"
-
 #include <stdlib.h>
 #include <string.h>
 
