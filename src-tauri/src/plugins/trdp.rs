@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +41,7 @@ pub struct TrdpSideChannel {
     alive: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
     shutting_down: Arc<AtomicBool>,
+    capture_id: Arc<Mutex<Option<String>>>,
 }
 
 impl TrdpSideChannel {
@@ -56,6 +57,7 @@ impl TrdpSideChannel {
             alive: Arc::new(AtomicBool::new(false)),
             ready: Arc::new(AtomicBool::new(false)),
             shutting_down: Arc::new(AtomicBool::new(false)),
+            capture_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -218,11 +220,36 @@ impl TrdpSideChannel {
         let event_session_id = session_id.to_string();
         let event_app = app.clone();
         let pending = Arc::clone(&self.pending);
+        let capture_id = Arc::clone(&self.capture_id);
+        let pd_ports = vec![
+            params
+                .get("pd_port")
+                .and_then(Value::as_u64)
+                .and_then(|value| u16::try_from(value).ok())
+                .unwrap_or(17224),
+        ];
+        let md_ports = {
+            let udp = params
+                .get("md_udp_port")
+                .and_then(Value::as_u64)
+                .and_then(|value| u16::try_from(value).ok())
+                .unwrap_or(17225);
+            let tcp = params
+                .get("md_tcp_port")
+                .and_then(Value::as_u64)
+                .and_then(|value| u16::try_from(value).ok())
+                .unwrap_or(17225);
+            if udp == tcp { vec![udp] } else { vec![udp, tcp] }
+        };
+        let pending = Arc::clone(&self.pending);
         let alive = Arc::clone(&self.alive);
         let ready = Arc::clone(&self.ready);
         let shutting_down = Arc::clone(&self.shutting_down);
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
+            let mut decoder = capture::TrdpStreamDecoder::new(pd_ports, md_ports);
+            let mut decoder_capture_id: Option<String> = None;
+            let mut last_progress = Instant::now();
             for line in reader.lines().map_while(Result::ok) {
                 if line.trim().is_empty() {
                     continue;
@@ -237,6 +264,93 @@ impl TrdpSideChannel {
                     .get("request_id")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
+
+                if event_name.as_deref() == Some("capture_frame") {
+                    let current_capture_id = capture_id
+                        .lock()
+                        .ok()
+                        .and_then(|value| value.clone());
+                    let Some(current_capture_id) = current_capture_id else {
+                        continue;
+                    };
+                    if decoder_capture_id.as_deref() != Some(current_capture_id.as_str()) {
+                        decoder.reset();
+                        decoder_capture_id = Some(current_capture_id.clone());
+                    }
+                    let link = payload
+                        .get("link")
+                        .and_then(Value::as_str)
+                        .unwrap_or("capture")
+                        .to_string();
+                    let link_type = payload
+                        .get("link_type")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .unwrap_or(1);
+                    let timestamp_us = payload
+                        .get("timestamp_us")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default();
+                    let raw_frame_hex = payload
+                        .get("raw_frame_hex")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    let packets = decoder.feed_hex_frame(
+                        &raw_frame_hex,
+                        link_type,
+                        timestamp_us,
+                        &link,
+                    );
+                    let raw = capture::TrdpRawFrame {
+                        link,
+                        timestamp_us,
+                        raw_frame_hex,
+                        link_type,
+                    };
+                    let stats = capture::append_live_capture(
+                        &current_capture_id,
+                        raw,
+                        packets.clone(),
+                    );
+                    for packet in packets {
+                        if let Ok(mut value) = serde_json::to_value(packet) {
+                            if let Some(object) = value.as_object_mut() {
+                                object.insert(
+                                    "session_id".into(),
+                                    Value::String(event_session_id.clone()),
+                                );
+                            }
+                            let _ = event_app.emit("trdp-event", value);
+                        }
+                    }
+                    if let Some((frame_count, packet_count, dropped_frames)) = stats {
+                        if frame_count == 1 || last_progress.elapsed() >= Duration::from_millis(100) {
+                            last_progress = Instant::now();
+                            let _ = event_app.emit(
+                                "trdp-event",
+                                json!({
+                                    "event": "capture_progress",
+                                    "session_id": event_session_id,
+                                    "capture_id": current_capture_id,
+                                    "frame_count": frame_count,
+                                    "packet_count": packet_count,
+                                    "dropped_frames": dropped_frames,
+                                }),
+                            );
+                        }
+                    }
+                    continue;
+                }
+
+                // Native live-capture decoding is deliberately ignored. Raw
+                // capture frames are decoded above by the same Rust decoder
+                // used for offline pcap/pcapng, keeping one canonical model.
+                if event_name.as_deref() == Some("packet")
+                    && payload.get("kind").and_then(Value::as_str) == Some("capture")
+                {
+                    continue;
+                }
 
                 if matches!(event_name.as_deref(), Some("ack") | Some("error")) {
                     if let Some(request_id) = request_id {
@@ -364,6 +478,11 @@ impl SideChannel for TrdpSideChannel {
             }
         }
         self.alive.store(false, Ordering::Release);
+        if let Ok(mut capture_id) = self.capture_id.lock() {
+            if let Some(capture_id) = capture_id.take() {
+                capture::release_capture(&capture_id);
+            }
+        }
         if let Ok(mut requests) = self.pending.lock() {
             for (_, waiter) in requests.drain() {
                 let _ = waiter.send(Err("TRDP bridge stopped".to_string()));
@@ -660,7 +779,7 @@ fn import_workspace(path: &str) -> Result<Value, String> {
             if parsed == 0 {
                 return Err("TRDP redundancy group id 不能为 0".to_string());
             }
-            if !matches!(state.as_str(), Some("leader" | "follower")) {
+            if !matches!(state.as_str(), Some("leader") | Some("follower")) {
                 return Err(format!(
                     "TRDP redundancy group {red_id} 状态必须为 leader 或 follower"
                 ));
@@ -766,6 +885,41 @@ pub fn trdp_command(
     {
         trdp.start(app, &session_id)?;
     }
+    let operation = command
+        .get("command")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    if operation == "capture_start" {
+        let previous_capture = trdp
+            .capture_id
+            .lock()
+            .map_err(|error| error.to_string())?
+            .clone();
+        let new_capture = capture::create_live_capture();
+        *trdp
+            .capture_id
+            .lock()
+            .map_err(|error| error.to_string())? = Some(new_capture.clone());
+
+        match trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT) {
+            Ok(_) => {
+                if let Some(previous_capture) = previous_capture {
+                    capture::release_capture(&previous_capture);
+                }
+                return Ok(json!({ "capture_id": new_capture }));
+            }
+            Err(error) => {
+                capture::release_capture(&new_capture);
+                *trdp
+                    .capture_id
+                    .lock()
+                    .map_err(|lock_error| lock_error.to_string())? = previous_capture;
+                return Err(error);
+            }
+        }
+    }
+
     trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT)
 }
 
@@ -840,13 +994,27 @@ pub fn trdp_open_capture(
     path: String,
     pd_ports: Option<Vec<u16>>,
     md_ports: Option<Vec<u16>>,
-) -> Result<Vec<capture::TrdpPacket>, String> {
+) -> Result<capture::TrdpCaptureResult, String> {
     capture::trdp_open_capture(path, pd_ports, md_ports)
 }
 
 #[tauri::command]
-pub fn trdp_save_capture(path: String, packets: Vec<capture::TrdpPacket>) -> Result<(), String> {
-    capture::trdp_save_capture(path, packets)
+pub fn trdp_capture_packets(
+    capture_id: String,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<capture::TrdpPacket>, String> {
+    capture::capture_packets(&capture_id, offset, limit)
+}
+
+#[tauri::command]
+pub fn trdp_save_capture(path: String, capture_id: String) -> Result<(), String> {
+    capture::trdp_save_capture(path, capture_id)
+}
+
+#[tauri::command]
+pub fn trdp_release_capture(capture_id: String) {
+    capture::release_capture(&capture_id);
 }
 
 #[tauri::command]
