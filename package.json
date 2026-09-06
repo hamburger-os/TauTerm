@@ -9,6 +9,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "trdp:build": "node scripts/prepare-service-bin.js --trdp-only",
     "tauri:build": "tauri build --config src-tauri/tauri.dev.conf.json --bundles nsis",
     "build:release": "node scripts/build-release.js",
     "check-com0com": "node scripts/check-com0com.js",
