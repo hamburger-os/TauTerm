@@ -1261,6 +1261,55 @@ mod tests {
         .is_some());
     }
     #[test]
+    fn reassembles_segmented_md_tcp_with_the_canonical_decoder() {
+        fn tcp_frame(sequence: u32, payload: &[u8]) -> Vec<u8> {
+            let mut frame = vec![0u8; 14 + 20 + 20 + payload.len()];
+            frame[12..14].copy_from_slice(&0x0800u16.to_be_bytes());
+            frame[14] = 0x45;
+            let ip_total = u16::try_from(20 + 20 + payload.len()).expect("ip length");
+            frame[16..18].copy_from_slice(&ip_total.to_be_bytes());
+            frame[23] = 6;
+            frame[26..30].copy_from_slice(&[10, 0, 0, 1]);
+            frame[30..34].copy_from_slice(&[10, 0, 0, 2]);
+            frame[34..36].copy_from_slice(&STANDARD_MD_PORT.to_be_bytes());
+            frame[36..38].copy_from_slice(&STANDARD_MD_PORT.to_be_bytes());
+            frame[38..42].copy_from_slice(&sequence.to_be_bytes());
+            frame[46] = 0x50;
+            frame[47] = 0x18;
+            frame[54..].copy_from_slice(payload);
+            frame
+        }
+
+        let mut telegram = vec![0u8; 120];
+        telegram[0..4].copy_from_slice(&17u32.to_be_bytes());
+        telegram[4..6].copy_from_slice(&0x0100u16.to_be_bytes());
+        telegram[6..8].copy_from_slice(b"Mp");
+        telegram[8..12].copy_from_slice(&7201u32.to_be_bytes());
+        telegram[20..24].copy_from_slice(&4u32.to_be_bytes());
+        for (index, byte) in telegram[28..44].iter_mut().enumerate() {
+            *byte = index as u8;
+        }
+        let crc = trdp_crc32(&telegram[..112]);
+        telegram[112..116].copy_from_slice(&crc.to_le_bytes());
+        telegram[116..120].copy_from_slice(&[1, 2, 3, 4]);
+
+        let mut decoder = TrdpStreamDecoder::default_ports();
+        let first = tcp_frame(1_000, &telegram[..60]);
+        let second = tcp_frame(1_060, &telegram[60..]);
+        assert!(decoder
+            .feed_frame(&first, LINKTYPE_ETHERNET, 10, "A")
+            .is_empty());
+        let packets = decoder.feed_frame(&second, LINKTYPE_ETHERNET, 20, "A");
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].transport, "tcp");
+        assert_eq!(packets[0].msg_type, "Mp");
+        assert_eq!(packets[0].com_id, 7201);
+        assert_eq!(packets[0].payload_hex, "01020304");
+        assert_eq!(packets[0].link, "A");
+        assert_eq!(packets[0].crc_valid, Some(true));
+    }
+
+    #[test]
     fn pcapng_round_trip_preserves_link_provenance() {
         fn pd_frame(com_id: u32) -> Vec<u8> {
             let mut frame = vec![0u8; 14 + 20 + 8 + 44];
