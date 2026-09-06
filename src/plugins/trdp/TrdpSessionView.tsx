@@ -996,9 +996,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
               <h2 className={styles.sectionTitle}>{t("trdp.nav.pd")}</h2>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("pd_publisher")}>{t("trdp.actions.addPublisher")}</button>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("pd_subscriber")}>{t("trdp.actions.addSubscriber")}</button>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("pd_request")}>{t("trdp.actions.addPdRequest")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("pd_publisher")}>{t("trdp.actions.addPublisher")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("pd_subscriber")}>{t("trdp.actions.addSubscriber")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("pd_request")}>{t("trdp.actions.addPdRequest")}</button>
             </div>
             <div className={styles.filterBar}>
               {(["all", "publisher", "subscriber", "request"] as const).map(filter => (
@@ -1022,9 +1022,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
               <h2 className={styles.sectionTitle}>{t("trdp.nav.md")}</h2>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("md_request")}>{t("trdp.actions.addRequest")}</button>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("md_listener")}>{t("trdp.actions.addListener")}</button>
-              <button className={`${styles.actionButton} liquid-primary-button`} onClick={() => addObject("md_notify")}>{t("trdp.actions.addNotify")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("md_request")}>{t("trdp.actions.addRequest")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("md_listener")}>{t("trdp.actions.addListener")}</button>
+              <button className={`${styles.actionButton} liquid-glass-button`} onClick={() => addObject("md_notify")}>{t("trdp.actions.addNotify")}</button>
             </div>
             <div className={styles.filterBar}>
               {(["all", "request", "listener", "notify"] as const).map(filter => (
