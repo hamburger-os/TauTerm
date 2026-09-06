@@ -26,6 +26,9 @@ const forbidden = [
   "Chrome",
   "Firefox",
   "Mozilla",
+  "Windows",
+  "macOS",
+  "WSL",
   "PowerShell",
   "Git Bash",
   "Ubuntu",
@@ -35,9 +38,6 @@ const forbidden = [
   "Keychain",
   "Credential Manager",
   "Secret Service",
-  "Tauri",
-  "React",
-  "xterm",
 ];
 
 const failures = [];
