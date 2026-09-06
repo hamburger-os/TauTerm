@@ -165,9 +165,7 @@ pub fn capture_packets(
             ))
         } else {
             let start = offset.min(capture.packets.len());
-            let end = start
-                .saturating_add(page_limit)
-                .min(capture.packets.len());
+            let end = start.saturating_add(page_limit).min(capture.packets.len());
             return Ok(capture.packets[start..end].to_vec());
         }
     };
@@ -901,8 +899,7 @@ where
 
         let mut block = vec![0u8; block_length];
         block[..initial.len()].copy_from_slice(&initial);
-        if block_length > initial.len()
-            && !read_exact_or_eof(reader, &mut block[initial.len()..])?
+        if block_length > initial.len() && !read_exact_or_eof(reader, &mut block[initial.len()..])?
         {
             return Err("pcapng block truncated".into());
         }
@@ -1302,10 +1299,8 @@ pub fn trdp_save_capture(path: String, capture_id: String) -> Result<(), String>
                 .and_then(|value| value.to_str())
                 .unwrap_or("capture.pcapng");
             let token = Uuid::new_v4();
-            let temporary =
-                destination.with_file_name(format!(".{file_name}.tauterm-{token}.tmp"));
-            let backup =
-                destination.with_file_name(format!(".{file_name}.tauterm-{token}.backup"));
+            let temporary = destination.with_file_name(format!(".{file_name}.tauterm-{token}.tmp"));
+            let backup = destination.with_file_name(format!(".{file_name}.tauterm-{token}.backup"));
 
             convert_capture_to_pcapng(&source, &temporary)?;
             fs::rename(&destination, &backup)
