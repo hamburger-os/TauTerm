@@ -20,7 +20,8 @@ import {
   isOneShotKind,
   missedBetween,
   paramNumber,
-  workspaceObject,
+  workspaceDraftFromWorkspace,
+  workspaceFromDraft,
   type CaptureInterface,
   type CaptureResult,
   type DecodedDataset,
@@ -51,7 +52,13 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = tab?.params as Record<string, unknown> | undefined;
   const mode = (params?.mode as string | undefined) ?? "node";
-  const storageKey = `tauterm:trdp:${sessionId}:workspace-v2`;
+  const configuredWorkspace = (
+    params?.trdp_workspace
+    && typeof params.trdp_workspace === "object"
+    && !Array.isArray(params.trdp_workspace)
+  )
+    ? params.trdp_workspace as Workspace
+    : undefined;
   const [page, setPage] = useState<Page>(mode === "monitor" ? "analysis" : "overview");
   const [events, setEvents] = useState<TrdpEvent[]>([]);
   const [captureId, setCaptureId] = useState<string | null>(null);
@@ -63,35 +70,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [captureDroppedFrames, setCaptureDroppedFrames] = useState(0);
   const packetBatchRef = useRef<TrdpEvent[]>([]);
   const batchTimerRef = useRef<number | null>(null);
-  const [workspaceDraft, setWorkspaceDraft] = useState<WorkspaceDraft>(() => {
-    try {
-      const saved = localStorage.getItem(storageKey);
-      if (!saved) {
-        return { format: "tauterm-trdp-draft/v2", objects: [], redundancyGroups: {} };
-      }
-      const parsed = JSON.parse(saved) as Partial<WorkspaceDraft>;
-      if (
-        parsed.format !== "tauterm-trdp-draft/v2"
-        || !Array.isArray(parsed.objects)
-        || !parsed.redundancyGroups
-        || typeof parsed.redundancyGroups !== "object"
-      ) {
-        return { format: "tauterm-trdp-draft/v2", objects: [], redundancyGroups: {} };
-      }
-      return {
-        format: "tauterm-trdp-draft/v2",
-        objects: parsed.objects.map(item => ({
-          ...item,
-          state: "stopped" as const,
-          timeoutMode: item.timeoutMode
-            ?? (item.kind === "pd_subscriber" || item.kind === "pd_request" ? "custom" : "auto"),
-        })),
-        redundancyGroups: parsed.redundancyGroups,
-      };
-    } catch {
-      return { format: "tauterm-trdp-draft/v2", objects: [], redundancyGroups: {} };
-    }
-  });
+  const [workspaceDraft, setWorkspaceDraft] = useState<WorkspaceDraft>(
+    () => workspaceDraftFromWorkspace(configuredWorkspace),
+  );
   const objects = workspaceDraft.objects;
   const redundancyGroups = workspaceDraft.redundancyGroups;
 
@@ -102,7 +83,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     }));
   }
   const [xmlImport, setXmlImport] = useState<XmlImport | null>(null);
-  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
+  const [workspaceName, setWorkspaceName] = useState<string | null>(configuredWorkspace?.name ?? null);
   const [decoded, setDecoded] = useState<DecodedDataset | null>(null);
   const [selectedPacket, setSelectedPacket] = useState<TrdpEvent | null>(null);
   const mdRequestStartedUs = useRef(new Map<string, number>());
@@ -135,8 +116,36 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
   const [captureFilter, setCaptureFilter] = useState(initialCaptureFilter);
 
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify(workspaceDraft)); } catch { /* best effort */ }
-  }, [workspaceDraft, storageKey]);
+    const timer = window.setTimeout(() => {
+      const workspace = workspaceFromDraft(
+        workspaceDraft,
+        workspaceName ?? undefined,
+        xmlImport?.path,
+      );
+      void invoke("trdp_command", {
+        sessionId,
+        command: { command: "workspace_store", workspace },
+      }).catch(cause => {
+        console.warn("TRDP Workspace 持久化失败:", cause);
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [sessionId, workspaceDraft, workspaceName, xmlImport?.path]);
+
+  useEffect(() => {
+    const xmlPath = configuredWorkspace?.xml;
+    if (!xmlPath || xmlImport?.path === xmlPath) return;
+    let cancelled = false;
+    void invoke<XmlImport>("trdp_command", {
+      sessionId,
+      command: { command: "xml_import", path: xmlPath },
+    }).then(imported => {
+      if (!cancelled) setXmlImport(imported);
+    }).catch(cause => {
+      if (!cancelled) console.warn("TRDP Workspace XML 恢复失败:", cause);
+    });
+    return () => { cancelled = true; };
+  }, [sessionId, configuredWorkspace?.xml, xmlImport?.path]);
 
   useEffect(() => {
     return () => {
@@ -462,15 +471,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     const selected = await open({ multiple: false, filters: [{ name: "TauTerm TRDP Workspace", extensions: ["json"] }] });
     if (typeof selected !== "string") return;
     const workspace = await command<Workspace>("workspace_import", { path: selected });
-    const imported = workspace.objects
-      .map(workspaceObject)
-      .filter((item): item is TrdpObject => item !== null)
-      .map(item => ({ ...item, state: "stopped" as const }));
-    setWorkspaceDraft({
-      format: "tauterm-trdp-draft/v2",
-      objects: imported,
-      redundancyGroups: workspace.redundancy_groups ?? {},
-    });
+    setWorkspaceDraft(workspaceDraftFromWorkspace(workspace));
     setWorkspaceName(workspace.name ?? selected);
     if (workspace.xml_path) {
       const importedXml = await command<XmlImport>("xml_import", { path: workspace.xml_path });
