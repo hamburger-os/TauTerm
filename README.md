@@ -84,7 +84,7 @@ Run TCP client/server and UDP client/server workflows in the same app, including
 
 TRDP is a first-party custom session for railway/industrial debugging. **Node** sessions can combine PD Publisher, PD Subscriber, PD Request, MD Notify, MD Request and MD Listener/Replier roles. **Monitor** sessions provide passive one/two-interface live capture plus offline pcap/pcapng inspection, including A/B link provenance; live capture also reassembles MD/TCP streams.
 
-TCNOpen TRDP 3.0.0.0 is vendored as MPL-2.0 source and built into a separate TauTerm sidecar. Windows live capture uses a separately installed Npcap; Linux/macOS use the system libpcap. Offline capture analysis does not require either capture runtime. See [TRDP Sessions](docs/TRDP.md).
+TCNOpen TRDP 3.0.0.0 is vendored as MPL-2.0 source and built into a separate TauTerm sidecar. Windows live capture uses a separately installed Npcap; Linux/macOS use the system libpcap. Offline capture analysis does not require either capture runtime.
 
 ---
 
@@ -233,6 +233,6 @@ The open-source license applies to this repository. The product strategy allows 
 
 The Windows installer bundles [com0com](https://com0com.sourceforge.net/) as a separate third-party GPL component; its license is unaffected by TauTerm's dual licensing.
 
-TRDP uses vendored **TCNOpen TRDP 3.0.0.0** source under MPL-2.0. The MPL-covered upstream files remain separate from TauTerm-owned MIT OR Apache-2.0 code; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and [docs/TRDP.md](docs/TRDP.md).
+TRDP uses vendored **TCNOpen TRDP 3.0.0.0** source under MPL-2.0. The MPL-covered upstream files remain separate from TauTerm-owned MIT OR Apache-2.0 code; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 <p align="center"><strong>TauTerm — one terminal for the server room and the lab bench.</strong></p>

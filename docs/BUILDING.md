@@ -195,7 +195,7 @@ bash scripts/bootstrap-trdp.sh
 - `src-tauri/binaries/tauterm-trdp-bridge[.exe]`
 - `tools/trdp-test-peer/bin/trdp-test-peer[.exe]`
 
-`npm run tauri dev` 不执行 Tauri 的 `beforeBundleCommand`，因此如果开发时要真正打开 TRDP Node/Monitor，会话启动前至少手动运行一次对应平台 bootstrap。纯前端/普通协议开发不需要这一步。
+`npm run tauri dev` 会通过 `beforeDevCommand` 自动准备 TRDP 原生 helper；`build.rs` 随后把真实可执行文件放入当前 target triple 的 sidecar 位置。正常开发无需手动预执行 bootstrap。
 
 开发/CI 如需显式覆盖 helper，可以设置环境变量 `TAUTERM_TRDP_BRIDGE` 指向可信的可执行文件。会话配置/Workspace 不接受任意 bridge executable 路径，避免导入配置时形成隐式代码执行入口。
 
@@ -211,8 +211,6 @@ bash scripts/bootstrap-trdp.sh
 - Windows：用户自行安装 Npcap；TauTerm 动态加载 `wpcap.dll`，不分发 Npcap。
 - Linux/macOS：TauTerm 动态加载系统 libpcap。
 - 离线 `.pcap/.pcapng` 分析不依赖 Npcap/libpcap。
-
-完整 TRDP 功能、样例、SDT 边界和 reference peer 说明见 [TRDP.md](TRDP.md)。
 
 ---
 
