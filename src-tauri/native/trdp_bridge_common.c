@@ -15,6 +15,20 @@
 static bridge_mutex_t g_output_mutex;
 static int g_common_ready;
 
+#ifdef _WIN32
+#define BRIDGE_THREAD_LOCAL __declspec(thread)
+#else
+#define BRIDGE_THREAD_LOCAL _Thread_local
+#endif
+
+/*
+ * Request correlation is thread-local by design. stdin commands run on the
+ * bridge control thread while queued TCNOpen commands run on the Node runtime
+ * thread. Asynchronous protocol callbacks therefore never inherit an unrelated
+ * request id from another thread.
+ */
+static BRIDGE_THREAD_LOCAL char g_request_id[64];
+
 void bridge_mutex_init(bridge_mutex_t *mutex) {
 #ifdef _WIN32
     InitializeCriticalSection(mutex);
@@ -109,6 +123,25 @@ void bridge_output_unlock(void) {
     bridge_mutex_unlock(&g_output_mutex);
 }
 
+void bridge_request_begin(const char *line) {
+    g_request_id[0] = '\0';
+    if (line != NULL) {
+        (void)bridge_json_string(line, "request_id", g_request_id, sizeof(g_request_id), "");
+    }
+}
+
+void bridge_request_end(void) {
+    g_request_id[0] = '\0';
+}
+
+static void bridge_emit_request_id(FILE *file) {
+    if (g_request_id[0] != '\0') {
+        fputs(",\"request_id\":\"", file);
+        bridge_json_escape(file, g_request_id);
+        fputc('"', file);
+    }
+}
+
 void bridge_json_escape(FILE *file, const char *text) {
     const unsigned char *cursor = (const unsigned char *)(text != NULL ? text : "");
     while (*cursor != 0u) {
@@ -149,6 +182,7 @@ void bridge_emit_ack(const char *command, const char *id) {
     fputs("{\"event\":\"ack\",\"command\":\"", stdout);
     bridge_json_escape(stdout, command);
     fputs("\"", stdout);
+    bridge_emit_request_id(stdout);
     if (id != NULL && *id != '\0') {
         fputs(",\"id\":\"", stdout);
         bridge_json_escape(stdout, id);
@@ -163,7 +197,9 @@ void bridge_emit_error(const char *message) {
     bridge_output_lock();
     fputs("{\"event\":\"error\",\"error\":\"", stdout);
     bridge_json_escape(stdout, message != NULL ? message : "unknown error");
-    fputs("\"}\n", stdout);
+    fputc('"', stdout);
+    bridge_emit_request_id(stdout);
+    fputs("}\n", stdout);
     fflush(stdout);
     bridge_output_unlock();
 }
