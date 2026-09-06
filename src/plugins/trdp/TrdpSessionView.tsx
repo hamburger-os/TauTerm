@@ -14,7 +14,6 @@ import {
   captureFilterForPorts,
   createObject,
   defaultDatasetValues,
-  displayValue,
   draftsFromDecoded,
   draftsFromValues,
   isIpv4Text,
