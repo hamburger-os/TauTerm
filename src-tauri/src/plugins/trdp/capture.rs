@@ -1611,5 +1611,16 @@ mod tests {
         assert_eq!(reopened.packets[0].link, "A");
         assert_eq!(reopened.packets[1].link, "B");
         assert_eq!(reopened.packets[0].link_type, Some(LINKTYPE_ETHERNET));
+
+        {
+            let store = capture_store().lock().expect("capture store");
+            let stored = store.get(&reopened.capture_id).expect("stored capture");
+            assert!(stored.frames.is_empty(), "offline raw frames must stay on disk");
+            assert!(stored.source_path.is_some());
+        }
+        let second = capture_packets(&reopened.capture_id, 1, 1).expect("paged packet");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].com_id, 2002);
+        release_capture(&reopened.capture_id);
     }
 }
