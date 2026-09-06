@@ -145,6 +145,9 @@ jobs:
       - name: TypeScript type check
         run: npx tsc --noEmit
 
+      - name: Brand-neutral UI and theme copy
+        run: npm run check:brand-neutral-ui
+
       - name: Split layout invariants
         run: npm run check:split-layout
 
