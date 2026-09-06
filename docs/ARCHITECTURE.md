@@ -225,7 +225,7 @@ graph LR
 
 - **Node 与单一运行时 owner**：每个启用的 TauTerm Link（A/B）对应一个 TCNOpen Application Session；对象控制命令通过队列进入 Node runtime thread，TCNOpen 对象生命周期与 `tlc_process` 不再由多个线程并发驱动。
 - **真实握手与监督**：Rust 为每个 sidecar 请求分配 `request_id` 并等待对应 ACK/Error；只有 native `open` 成功后 Session 才进入 Connected。helper 意外退出会同步把 Session 标记为 Disconnected。
-- **Monitor / CaptureStore**：live sidecar 只负责系统抓包并上送 raw frame；实时与离线 pcap/pcapng 共用 Rust canonical decoder 与 MD/TCP stream reassembly。raw frame 保存在 Rust CaptureStore，UI 只接收报文事件、统计与有限预览，导出不再把完整抓包经 JS 往返。
+- **Monitor / CaptureStore**：live sidecar 只负责系统抓包并上送 raw frame；实时与离线 pcap/pcapng 共用 Rust canonical decoder 与 MD/TCP stream reassembly。实时 raw frame 只保留在有上限的 Rust CaptureStore；离线文件采用流式解析/导出，UI 只接收报文元数据、统计与有限预览，不再让完整抓包经 JS 往返。
 - **A/B 与 redundancy 分离**：Link A/B 是网络路径；`redId` 引用 session-level redundancy group，Leader/Follower 以 group 为状态源，不存在 A=Leader/B=Follower 或逐 Publisher 独立状态的隐式映射。
 - **配置模型**：TRDP XML 使用结构化 XML parser；Workspace 采用严格校验的 `tauterm-trdp-workspace/v2`，对象、XML 引用和 redundancy group 在导入时一次验证，导入本身不会自动发送。
 - **Helper 信任边界**：Release 只从 Tauri resource/executable directory 或显式 `TAUTERM_TRDP_BRIDGE` 环境变量解析 sidecar；仓库/CWD 相对查找只允许 debug build。基础 `tauri.conf.json` 通过 `bundle.externalBin` 声明 helper，并由构建流程从 vendored TCNOpen staging。
