@@ -1026,3 +1026,63 @@ pub fn trdp_decode_dataset(
 ) -> Result<Value, String> {
     xml::trdp_decode_dataset(path, dataset_id, payload_hex)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn workspace_v2_rejects_unknown_fields() {
+        let value = json!({
+            "kind": "pd_publisher",
+            "com_id": 1001,
+            "destination": "239.1.1.1",
+            "legacy_flag": true
+        });
+        let error = validate_workspace_object(&value, 0).expect_err("unknown field must fail");
+        assert!(error.contains("legacy_flag"));
+    }
+
+    #[test]
+    fn workspace_import_is_v2_only_and_resolves_relative_xml() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let xml_path = directory.path().join("node.xml");
+        fs::write(&xml_path, "<device />").expect("xml");
+
+        let workspace_path = directory.path().join("workspace.json");
+        let mut file = fs::File::create(&workspace_path).expect("workspace file");
+        write!(
+            file,
+            "{}",
+            json!({
+                "format": "tauterm-trdp-workspace/v2",
+                "xml": "node.xml",
+                "objects": [{
+                    "kind": "pd_subscriber",
+                    "com_id": 1001,
+                    "destination": "239.1.1.1",
+                    "timeout_mode": "auto"
+                }],
+                "redundancy_groups": {
+                    "7": "leader"
+                }
+            })
+        )
+        .expect("workspace");
+
+        let imported = import_workspace(&workspace_path.to_string_lossy()).expect("import v2");
+        assert_eq!(
+            imported.get("xml_path").and_then(Value::as_str),
+            Some(xml_path.to_string_lossy().as_ref())
+        );
+
+        fs::write(
+            &workspace_path,
+            r#"{"format":"tauterm-trdp-workspace/v1","objects":[]}"#,
+        )
+        .expect("legacy workspace");
+        assert!(import_workspace(&workspace_path.to_string_lossy()).is_err());
+    }
+}
