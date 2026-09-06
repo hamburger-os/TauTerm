@@ -1,7 +1,8 @@
-use regex::Regex;
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::Reader;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,17 +50,53 @@ pub struct TrdpXmlImport {
     pub warnings: Vec<String>,
 }
 
-fn attr(tag: &str, name: &str) -> Option<String> {
-    let pattern = format!(r#"(?i)\b{}\s*=\s*[\"']([^\"']*)[\"']"#, regex::escape(name));
-    Regex::new(&pattern)
-        .ok()?
-        .captures(tag)
-        .and_then(|captures| captures.get(1))
-        .map(|value| value.as_str().to_string())
+#[derive(Debug)]
+struct DatasetBuilder {
+    id: Option<u32>,
+    name: Option<String>,
+    elements: Vec<TrdpXmlElement>,
 }
 
-fn attr_u32(tag: &str, name: &str) -> Option<u32> {
-    attr(tag, name)?.trim().parse().ok()
+#[derive(Debug)]
+struct TelegramBuilder {
+    com_id: Option<u32>,
+    dataset_id: u32,
+    name: Option<String>,
+    has_pd: bool,
+    has_md: bool,
+    cycle_us: Option<u32>,
+    timeout_us: Option<u32>,
+    timeout_behavior: Option<String>,
+    sources: Vec<String>,
+    destinations: Vec<String>,
+    sdt_detected: bool,
+}
+
+fn local_name(bytes: &[u8]) -> String {
+    let local = bytes
+        .rsplit(|byte| *byte == b':')
+        .next()
+        .unwrap_or(bytes);
+    String::from_utf8_lossy(local).to_ascii_lowercase()
+}
+
+fn xml_attributes(start: &BytesStart<'_>) -> Result<HashMap<String, String>, String> {
+    let mut result = HashMap::new();
+    for attribute in start.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| format!("TRDP XML attribute 无效: {error}"))?;
+        let key = local_name(attribute.key.as_ref());
+        let raw = std::str::from_utf8(attribute.value.as_ref())
+            .map_err(|error| format!("TRDP XML attribute 不是 UTF-8: {error}"))?;
+        let value = quick_xml::escape::unescape(raw)
+            .map_err(|error| format!("TRDP XML entity 无效: {error}"))?
+            .into_owned();
+        result.insert(key, value);
+    }
+    Ok(result)
+}
+
+fn attr_u32(attributes: &HashMap<String, String>, name: &str) -> Option<u32> {
+    attributes.get(name)?.trim().parse().ok()
 }
 
 fn type_id(value: &str) -> Option<u32> {
@@ -88,8 +125,15 @@ fn type_id(value: &str) -> Option<u32> {
 }
 
 fn type_name(id: u32, original: &str) -> String {
+    if id == 1 {
+        return match original.trim().to_ascii_uppercase().as_str() {
+            "BOOL8" => "BOOL8",
+            "ANTIVALENT8" => "ANTIVALENT8",
+            _ => "BITSET8",
+        }
+        .to_string();
+    }
     match id {
-        1 => "BITSET8",
         2 => "CHAR8",
         3 => "UTF16",
         4 => "INT8",
@@ -111,153 +155,288 @@ fn type_name(id: u32, original: &str) -> String {
     .to_string()
 }
 
+fn finish_dataset(
+    builder: DatasetBuilder,
+    datasets: &mut Vec<TrdpXmlDataset>,
+    dataset_ids: &mut HashSet<u32>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(id) = builder.id else {
+        warnings.push("忽略缺少数字 id 的 <data-set>".to_string());
+        return;
+    };
+    if !dataset_ids.insert(id) {
+        warnings.push(format!(
+            "Dataset {id} 重复定义；保留全部定义供预览，请在使用前修正配置"
+        ));
+    }
+    if builder
+        .elements
+        .iter()
+        .take(builder.elements.len().saturating_sub(1))
+        .any(|element| element.dynamic)
+    {
+        warnings.push(format!(
+            "Dataset {id} 在非末尾位置包含动态数组；解码仅在后续字段固定长度时可确定边界"
+        ));
+    }
+    datasets.push(TrdpXmlDataset {
+        id,
+        name: builder.name.unwrap_or_else(|| format!("Dataset {id}")),
+        elements: builder.elements,
+    });
+}
+
+fn finish_telegram(
+    builder: TelegramBuilder,
+    telegrams: &mut Vec<TrdpXmlTelegram>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(com_id) = builder.com_id else {
+        warnings.push("忽略缺少 com-id 的 <telegram>".to_string());
+        return;
+    };
+    let traffic_kind = match (builder.has_pd, builder.has_md) {
+        (true, false) => "pd",
+        (false, true) => "md",
+        (true, true) => {
+            warnings.push(format!(
+                "ComID {com_id} 同时包含 pd-parameter 与 md-parameter；不会自动生成模板"
+            ));
+            "ambiguous"
+        }
+        (false, false) => {
+            warnings.push(format!(
+                "ComID {com_id} 未声明 pd-parameter/md-parameter；协议类型标记为 unknown"
+            ));
+            "unknown"
+        }
+    };
+    telegrams.push(TrdpXmlTelegram {
+        name: builder.name.unwrap_or_else(|| format!("ComID {com_id}")),
+        traffic_kind: traffic_kind.to_string(),
+        com_id,
+        dataset_id: builder.dataset_id,
+        cycle_us: builder.cycle_us,
+        timeout_us: builder.timeout_us,
+        timeout_behavior: builder.timeout_behavior,
+        sources: builder.sources,
+        destinations: builder.destinations,
+        sdt_detected: builder.sdt_detected,
+    });
+}
+
+fn process_node(
+    name: &str,
+    attributes: &HashMap<String, String>,
+    current_dataset: &mut Option<DatasetBuilder>,
+    current_telegram: &mut Option<TelegramBuilder>,
+    warnings: &mut Vec<String>,
+    pd_port: &mut u16,
+    md_udp_port: &mut u16,
+    md_tcp_port: &mut u16,
+    sdt_detected: &mut bool,
+) -> Result<(), String> {
+    match name {
+        "data-set" => {
+            if current_dataset.is_some() {
+                return Err("TRDP XML 包含嵌套 <data-set>，配置结构无效".to_string());
+            }
+            *current_dataset = Some(DatasetBuilder {
+                id: attr_u32(attributes, "id"),
+                name: attributes.get("name").cloned(),
+                elements: Vec::new(),
+            });
+        }
+        "element" => {
+            if let Some(dataset) = current_dataset.as_mut() {
+                let raw_type = attributes
+                    .get("type")
+                    .cloned()
+                    .unwrap_or_else(|| "0".to_string());
+                let element_type_id = type_id(&raw_type).unwrap_or(0);
+                let name = attributes
+                    .get("name")
+                    .cloned()
+                    .unwrap_or_else(|| "unnamed".to_string());
+                if element_type_id == 0 {
+                    warnings.push(format!(
+                        "Dataset {} 字段 {name} 使用未知类型 {raw_type}",
+                        dataset
+                            .id
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "?".to_string())
+                    ));
+                }
+                let array_size = attr_u32(attributes, "array-size").unwrap_or(1);
+                dataset.elements.push(TrdpXmlElement {
+                    name,
+                    data_type: type_name(element_type_id, &raw_type),
+                    type_id: element_type_id,
+                    array_size,
+                    dynamic: array_size == 0,
+                    unit: attributes.get("unit").cloned(),
+                    scale: attributes.get("scale").and_then(|value| value.parse().ok()),
+                    offset: attributes.get("offset").and_then(|value| value.parse().ok()),
+                });
+            }
+        }
+        "telegram" => {
+            if current_telegram.is_some() {
+                return Err("TRDP XML 包含嵌套 <telegram>，配置结构无效".to_string());
+            }
+            *current_telegram = Some(TelegramBuilder {
+                com_id: attr_u32(attributes, "com-id"),
+                dataset_id: attr_u32(attributes, "data-set-id").unwrap_or(0),
+                name: attributes.get("name").cloned(),
+                has_pd: false,
+                has_md: false,
+                cycle_us: None,
+                timeout_us: None,
+                timeout_behavior: None,
+                sources: Vec::new(),
+                destinations: Vec::new(),
+                sdt_detected: false,
+            });
+        }
+        "pd-parameter" => {
+            if let Some(telegram) = current_telegram.as_mut() {
+                telegram.has_pd = true;
+                telegram.cycle_us = attr_u32(attributes, "cycle");
+                telegram.timeout_us = attr_u32(attributes, "timeout");
+                telegram.timeout_behavior = Some(
+                    attributes
+                        .get("validity-behavior")
+                        .cloned()
+                        .unwrap_or_else(|| "zero".to_string()),
+                );
+            }
+        }
+        "md-parameter" => {
+            if let Some(telegram) = current_telegram.as_mut() {
+                telegram.has_md = true;
+            }
+        }
+        "source" => {
+            if let Some(telegram) = current_telegram.as_mut() {
+                if let Some(uri) = attributes.get("uri1").or_else(|| attributes.get("uri")) {
+                    telegram.sources.push(uri.clone());
+                }
+            }
+        }
+        "destination" => {
+            if let Some(telegram) = current_telegram.as_mut() {
+                if let Some(uri) = attributes.get("uri") {
+                    telegram.destinations.push(uri.clone());
+                }
+            }
+        }
+        "sdt-parameter" => {
+            *sdt_detected = true;
+            if let Some(telegram) = current_telegram.as_mut() {
+                telegram.sdt_detected = true;
+            }
+        }
+        "pd-com-parameter" => {
+            if let Some(value) = attr_u32(attributes, "port").and_then(|value| u16::try_from(value).ok()) {
+                *pd_port = value;
+            }
+        }
+        "md-com-parameter" => {
+            if let Some(value) = attr_u32(attributes, "udp-port").and_then(|value| u16::try_from(value).ok()) {
+                *md_udp_port = value;
+            }
+            if let Some(value) = attr_u32(attributes, "tcp-port").and_then(|value| u16::try_from(value).ok()) {
+                *md_tcp_port = value;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
     let xml = fs::read_to_string(path).map_err(|error| format!("读取 TRDP XML 失败: {error}"))?;
-    // Require whitespace after element names. `\b` is not sufficient because
-    // the hyphen in <data-set-list>/<telegram-list> is itself a word boundary.
-    let dataset_re = Regex::new(r#"(?is)<data-set\s+([^>]*)>(.*?)</data-set>"#)
-        .map_err(|error| error.to_string())?;
-    let element_re =
-        Regex::new(r#"(?is)<element\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
-    let telegram_re = Regex::new(r#"(?is)<telegram\s+([^>]*)>(.*?)</telegram>"#)
-        .map_err(|error| error.to_string())?;
-    let pd_re =
-        Regex::new(r#"(?is)<pd-parameter(?:\s+([^>]*))?/?>"#).map_err(|error| error.to_string())?;
-    let md_re =
-        Regex::new(r#"(?is)<md-parameter(?:\s+([^>]*))?/?>"#).map_err(|error| error.to_string())?;
-    let source_re = Regex::new(r#"(?is)<source\s+([^>]*)"#).map_err(|error| error.to_string())?;
-    let destination_re =
-        Regex::new(r#"(?is)<destination\s+([^>]*)"#).map_err(|error| error.to_string())?;
-    let pd_config_re =
-        Regex::new(r#"(?is)<pd-com-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
-    let md_config_re =
-        Regex::new(r#"(?is)<md-com-parameter\s+([^>]*)/?>"#).map_err(|error| error.to_string())?;
+    let mut reader = Reader::from_str(&xml);
+    reader.config_mut().trim_text(true);
 
     let mut warnings = Vec::new();
     let mut datasets = Vec::new();
+    let mut telegrams = Vec::new();
     let mut dataset_ids = HashSet::new();
-    for capture in dataset_re.captures_iter(&xml) {
-        let tag = capture
-            .get(1)
-            .map(|value| value.as_str())
-            .unwrap_or_default();
-        let body = capture
-            .get(2)
-            .map(|value| value.as_str())
-            .unwrap_or_default();
-        let Some(id) = attr_u32(tag, "id") else {
-            warnings.push("忽略缺少数字 id 的 <data-set>".to_string());
-            continue;
-        };
-        if !dataset_ids.insert(id) {
-            warnings.push(format!(
-                "Dataset {id} 重复定义；保留全部定义供预览，请在使用前修正配置"
-            ));
-        }
-        let name = attr(tag, "name").unwrap_or_else(|| format!("Dataset {id}"));
-        let mut elements = Vec::new();
-        for element in element_re.captures_iter(body) {
-            let attributes = element
-                .get(1)
-                .map(|value| value.as_str())
-                .unwrap_or_default();
-            let raw_type = attr(attributes, "type").unwrap_or_else(|| "0".to_string());
-            let element_type_id = type_id(&raw_type).unwrap_or(0);
-            if element_type_id == 0 {
-                warnings.push(format!(
-                    "Dataset {id} 字段 {} 使用未知类型 {}",
-                    attr(attributes, "name").unwrap_or_else(|| "unnamed".to_string()),
-                    raw_type
+    let mut current_dataset: Option<DatasetBuilder> = None;
+    let mut current_telegram: Option<TelegramBuilder> = None;
+    let mut pd_port = 17224u16;
+    let mut md_udp_port = 17225u16;
+    let mut md_tcp_port = 17225u16;
+    let mut sdt_detected = false;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(start)) => {
+                let name = local_name(start.name().as_ref());
+                let attributes = xml_attributes(&start)?;
+                process_node(
+                    &name,
+                    &attributes,
+                    &mut current_dataset,
+                    &mut current_telegram,
+                    &mut warnings,
+                    &mut pd_port,
+                    &mut md_udp_port,
+                    &mut md_tcp_port,
+                    &mut sdt_detected,
+                )?;
+            }
+            Ok(Event::Empty(start)) => {
+                let name = local_name(start.name().as_ref());
+                let attributes = xml_attributes(&start)?;
+                process_node(
+                    &name,
+                    &attributes,
+                    &mut current_dataset,
+                    &mut current_telegram,
+                    &mut warnings,
+                    &mut pd_port,
+                    &mut md_udp_port,
+                    &mut md_tcp_port,
+                    &mut sdt_detected,
+                )?;
+                if name == "data-set" {
+                    if let Some(builder) = current_dataset.take() {
+                        finish_dataset(builder, &mut datasets, &mut dataset_ids, &mut warnings);
+                    }
+                } else if name == "telegram" {
+                    if let Some(builder) = current_telegram.take() {
+                        finish_telegram(builder, &mut telegrams, &mut warnings);
+                    }
+                }
+            }
+            Ok(Event::End(end)) => {
+                let name = local_name(end.name().as_ref());
+                if name == "data-set" {
+                    if let Some(builder) = current_dataset.take() {
+                        finish_dataset(builder, &mut datasets, &mut dataset_ids, &mut warnings);
+                    }
+                } else if name == "telegram" {
+                    if let Some(builder) = current_telegram.take() {
+                        finish_telegram(builder, &mut telegrams, &mut warnings);
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(format!(
+                    "TRDP XML 解析失败（byte {}）: {error}",
+                    reader.error_position()
                 ));
             }
-            let array_size = attr_u32(attributes, "array-size").unwrap_or(1);
-            elements.push(TrdpXmlElement {
-                name: attr(attributes, "name").unwrap_or_else(|| "unnamed".to_string()),
-                data_type: type_name(element_type_id, &raw_type),
-                type_id: element_type_id,
-                array_size,
-                dynamic: array_size == 0,
-                unit: attr(attributes, "unit"),
-                scale: attr(attributes, "scale").and_then(|value| value.parse().ok()),
-                offset: attr(attributes, "offset").and_then(|value| value.parse().ok()),
-            });
         }
-        if elements
-            .iter()
-            .take(elements.len().saturating_sub(1))
-            .any(|element| element.dynamic)
-        {
-            warnings.push(format!(
-                "Dataset {id} 在非末尾位置包含动态数组；解码仅在后续字段固定长度时可确定边界"
-            ));
-        }
-        datasets.push(TrdpXmlDataset { id, name, elements });
     }
 
-    let mut telegrams = Vec::new();
-    for capture in telegram_re.captures_iter(&xml) {
-        let tag = capture
-            .get(1)
-            .map(|value| value.as_str())
-            .unwrap_or_default();
-        let body = capture
-            .get(2)
-            .map(|value| value.as_str())
-            .unwrap_or_default();
-        let Some(com_id) = attr_u32(tag, "com-id") else {
-            warnings.push("忽略缺少 com-id 的 <telegram>".to_string());
-            continue;
-        };
-        let dataset_id = attr_u32(tag, "data-set-id").unwrap_or(0);
-        let pd_parameter = pd_re.captures(body);
-        let md_parameter = md_re.captures(body);
-        let traffic_kind = match (pd_parameter.is_some(), md_parameter.is_some()) {
-            (true, false) => "pd",
-            (false, true) => "md",
-            (true, true) => {
-                warnings.push(format!(
-                    "ComID {com_id} 同时包含 pd-parameter 与 md-parameter；不会自动生成模板"
-                ));
-                "ambiguous"
-            }
-            (false, false) => {
-                warnings.push(format!(
-                    "ComID {com_id} 未声明 pd-parameter/md-parameter；协议类型标记为 unknown"
-                ));
-                "unknown"
-            }
-        };
-        let pd_attributes = pd_parameter
-            .as_ref()
-            .and_then(|value| value.get(1))
-            .map(|value| value.as_str())
-            .unwrap_or_default();
-        let sources = source_re
-            .captures_iter(body)
-            .filter_map(|value| value.get(1))
-            .filter_map(|value| {
-                attr(value.as_str(), "uri1").or_else(|| attr(value.as_str(), "uri"))
-            })
-            .collect();
-        let destinations = destination_re
-            .captures_iter(body)
-            .filter_map(|value| value.get(1))
-            .filter_map(|value| attr(value.as_str(), "uri"))
-            .collect();
-        telegrams.push(TrdpXmlTelegram {
-            name: attr(tag, "name").unwrap_or_else(|| format!("ComID {com_id}")),
-            traffic_kind: traffic_kind.to_string(),
-            com_id,
-            dataset_id,
-            cycle_us: attr_u32(pd_attributes, "cycle"),
-            timeout_us: attr_u32(pd_attributes, "timeout"),
-            timeout_behavior: pd_parameter.as_ref().map(|_| {
-                attr(pd_attributes, "validity-behavior").unwrap_or_else(|| "zero".to_string())
-            }),
-            sources,
-            destinations,
-            sdt_detected: body.to_ascii_lowercase().contains("<sdt-parameter"),
-        });
+    if current_dataset.is_some() || current_telegram.is_some() {
+        return Err("TRDP XML 在 Dataset/Telegram 内意外结束".to_string());
     }
 
     let known_dataset_ids: HashSet<u32> = datasets.iter().map(|dataset| dataset.id).collect();
@@ -270,33 +449,13 @@ fn parse_xml(path: &str) -> Result<TrdpXmlImport, String> {
         }
     }
 
-    let pd_attributes = pd_config_re
-        .captures(&xml)
-        .and_then(|value| value.get(1))
-        .map(|value| value.as_str())
-        .unwrap_or_default();
-    let md_attributes = md_config_re
-        .captures(&xml)
-        .and_then(|value| value.get(1))
-        .map(|value| value.as_str())
-        .unwrap_or_default();
-    let pd_port = attr_u32(pd_attributes, "port")
-        .and_then(|value| u16::try_from(value).ok())
-        .unwrap_or(17224);
-    let md_udp_port = attr_u32(md_attributes, "udp-port")
-        .and_then(|value| u16::try_from(value).ok())
-        .unwrap_or(17225);
-    let md_tcp_port = attr_u32(md_attributes, "tcp-port")
-        .and_then(|value| u16::try_from(value).ok())
-        .unwrap_or(17225);
-
     let lowercase = xml.to_ascii_lowercase();
-    let sdt_detected = lowercase.contains("<sdt-parameter")
-        || lowercase.contains("sdtv2")
-        || lowercase.contains("sdtv4");
+    if lowercase.contains("sdtv2") || lowercase.contains("sdtv4") {
+        sdt_detected = true;
+    }
     if sdt_detected {
         warnings.push(
-            "检测到 SDT 配置：TauTerm 首版仅展示元数据，不执行 SDTv2/SDTv4 安全验证。".to_string(),
+            "检测到 SDT 配置：TauTerm 仅展示元数据，不执行 SDTv2/SDTv4 安全验证。".to_string(),
         );
     }
 
