@@ -32,7 +32,6 @@ pub struct TrdpPacket {
     pub op_trn_topo_count: u32,
     pub data_len: u32,
     pub payload_hex: String,
-    pub raw_frame_hex: String,
     pub link_type: Option<u32>,
     pub crc_valid: Option<bool>,
     pub protocol_valid: Option<bool>,
@@ -674,7 +673,6 @@ fn decode_trdp_payload(
         op_trn_topo_count,
         data_len,
         payload_hex: hex(payload),
-        raw_frame_hex: hex(origin.raw_frame),
         link_type: Some(origin.linktype),
         crc_valid: Some(crc_valid),
         protocol_valid: Some(protocol_valid),
@@ -1308,8 +1306,10 @@ mod tests {
 
         let (pd, md) = default_ports();
         let ports = CapturePorts::new(pd.clone(), md.clone());
-        let mut a = decode_frame(&pd_frame(2001), LINKTYPE_ETHERNET, 10, &ports).expect("A");
-        let mut b = decode_frame(&pd_frame(2002), LINKTYPE_ETHERNET, 20, &ports).expect("B");
+        let frame_a = pd_frame(2001);
+        let frame_b = pd_frame(2002);
+        let mut a = decode_frame(&frame_a, LINKTYPE_ETHERNET, 10, &ports).expect("A");
+        let mut b = decode_frame(&frame_b, LINKTYPE_ETHERNET, 20, &ports).expect("B");
         a.link = "A".into();
         b.link = "B".into();
 
@@ -1319,13 +1319,13 @@ mod tests {
             StoredFrame {
                 link: a.link.clone(),
                 timestamp_us: a.timestamp_us,
-                bytes: decode_raw_frame_hex(&a.raw_frame_hex).expect("frame A"),
+                bytes: frame_a,
                 link_type: a.link_type.unwrap_or(LINKTYPE_ETHERNET),
             },
             StoredFrame {
                 link: b.link.clone(),
                 timestamp_us: b.timestamp_us,
-                bytes: decode_raw_frame_hex(&b.raw_frame_hex).expect("frame B"),
+                bytes: frame_b,
                 link_type: b.link_type.unwrap_or(LINKTYPE_ETHERNET),
             },
         ];
