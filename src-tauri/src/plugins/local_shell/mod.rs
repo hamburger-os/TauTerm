@@ -619,7 +619,7 @@ fn validate_wsl_working_directory(
             format!("Linux subsystem working directory is unavailable: {cwd}")
         } else {
             format!(
-                "WSL working directory is unavailable: {cwd} ({})",
+                "Linux subsystem working directory is unavailable: {cwd} ({})",
                 reason.trim()
             )
         },
@@ -782,7 +782,7 @@ mod tests {
             shell_display_label(Path::new("powershell.exe")),
             "Script Shell (compat)"
         );
-        assert_eq!(shell_display_label(Path::new("cmd.exe")), "CMD");
+        assert_eq!(shell_display_label(Path::new("cmd.exe")), "Command Shell");
         assert_eq!(
             shell_display_label(Path::new("custom-shell.exe")),
             "custom-shell"
