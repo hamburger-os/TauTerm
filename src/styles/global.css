@@ -115,13 +115,13 @@ body {
 /* 对角 A：Red + Green。色团中心向内收、边缘更早淡出，为大范围 transform 留出透明安全边。 */
 .ambient-field-a {
   background:
-    radial-gradient(ellipse 34% 42% at 30% 30%,
+    radial-gradient(ellipse 38% 46% at 30% 30%,
       color-mix(in srgb, var(--spectrum-red) 84%, transparent) 0%,
       color-mix(in srgb, var(--spectrum-red) 46%, transparent) 24%,
       color-mix(in srgb, var(--spectrum-red) 17%, transparent) 50%,
       color-mix(in srgb, var(--spectrum-red) 4%, transparent) 72%,
       transparent 90%),
-    radial-gradient(ellipse 34% 42% at 70% 70%,
+    radial-gradient(ellipse 38% 46% at 70% 70%,
       color-mix(in srgb, var(--spectrum-green) 82%, transparent) 0%,
       color-mix(in srgb, var(--spectrum-green) 44%, transparent) 24%,
       color-mix(in srgb, var(--spectrum-green) 16%, transparent) 50%,
@@ -134,13 +134,13 @@ body {
 /* 对角 B：Blue + Yellow。效果优先时与 Field A 独立交叉运动。 */
 .ambient-field-b {
   background:
-    radial-gradient(ellipse 34% 42% at 70% 30%,
+    radial-gradient(ellipse 38% 46% at 70% 30%,
       color-mix(in srgb, var(--spectrum-blue) 84%, transparent) 0%,
       color-mix(in srgb, var(--spectrum-blue) 46%, transparent) 24%,
       color-mix(in srgb, var(--spectrum-blue) 17%, transparent) 50%,
       color-mix(in srgb, var(--spectrum-blue) 4%, transparent) 72%,
       transparent 90%),
-    radial-gradient(ellipse 34% 42% at 30% 70%,
+    radial-gradient(ellipse 38% 46% at 30% 70%,
       color-mix(in srgb, var(--spectrum-yellow) 82%, transparent) 0%,
       color-mix(in srgb, var(--spectrum-yellow) 44%, transparent) 24%,
       color-mix(in srgb, var(--spectrum-yellow) 16%, transparent) 50%,
