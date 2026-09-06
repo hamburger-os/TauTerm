@@ -16,11 +16,13 @@ use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::any::Any;
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -34,14 +36,26 @@ pub struct TrdpSideChannel {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
     params: Mutex<Value>,
+    pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>,
+    next_request_id: AtomicU64,
+    alive: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl TrdpSideChannel {
+    const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+
     fn new(params: Value) -> Self {
         Self {
             child: Mutex::new(None),
             stdin: Mutex::new(None),
             params: Mutex::new(params),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            next_request_id: AtomicU64::new(1),
+            alive: Arc::new(AtomicBool::new(false)),
+            ready: Arc::new(AtomicBool::new(false)),
+            shutting_down: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -68,11 +82,6 @@ impl TrdpSideChannel {
                 candidates.push(directory.join("binaries").join(executable));
             }
         }
-        // Repository-relative lookup exists only for local development. A release
-        // build must never execute a helper discovered from the process CWD:
-        // the working directory may be user-controlled. Production resolves
-        // the packaged sidecar from Tauri resources / the executable directory,
-        // unless the launching process explicitly opts into TAUTERM_TRDP_BRIDGE.
         #[cfg(debug_assertions)]
         {
             if let Ok(cwd) = std::env::current_dir() {
@@ -91,9 +100,6 @@ impl TrdpSideChannel {
             return false;
         }
 
-        // Tauri validates externalBin before the native helper is built, so
-        // build.rs may create a tiny marker file. Never try to execute that
-        // marker: on Windows that surfaces as ERROR_BAD_EXE_FORMAT (216).
         if metadata.len() <= 64 {
             if let Ok(bytes) = fs::read(path) {
                 if bytes.starts_with(b"placeholder")
@@ -106,6 +112,60 @@ impl TrdpSideChannel {
         true
     }
 
+    fn send_line(&self, command: &Value) -> Result<(), String> {
+        if !self.alive.load(Ordering::Acquire) {
+            return Err("TRDP bridge 未运行".to_string());
+        }
+        let mut input = self.stdin.lock().map_err(|error| error.to_string())?;
+        let stdin = input.as_mut().ok_or("TRDP bridge stdin unavailable")?;
+        serde_json::to_writer(&mut *stdin, command).map_err(|error| error.to_string())?;
+        stdin.write_all(b"\n").map_err(|error| error.to_string())?;
+        stdin.flush().map_err(|error| error.to_string())
+    }
+
+    fn request(&self, mut command: Value, timeout: Duration) -> Result<Value, String> {
+        let object = command
+            .as_object_mut()
+            .ok_or("TRDP bridge command must be a JSON object")?;
+        let request_id = format!(
+            "r{}",
+            self.next_request_id.fetch_add(1, Ordering::Relaxed)
+        );
+        object.insert(
+            "request_id".to_string(),
+            Value::String(request_id.clone()),
+        );
+
+        let (tx, rx) = mpsc::channel();
+        self.pending
+            .lock()
+            .map_err(|error| error.to_string())?
+            .insert(request_id.clone(), tx);
+
+        if let Err(error) = self.send_line(&command) {
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&request_id);
+            }
+            return Err(error);
+        }
+
+        match rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if let Ok(mut pending) = self.pending.lock() {
+                    pending.remove(&request_id);
+                }
+                Err(format!(
+                    "TRDP bridge request {request_id} timed out after {} ms",
+                    timeout.as_millis()
+                ))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err("TRDP bridge response channel closed".to_string())
+            }
+        }
+    }
+
     fn start(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
         if self
             .child
@@ -113,7 +173,11 @@ impl TrdpSideChannel {
             .map_err(|error| error.to_string())?
             .is_some()
         {
-            return Ok(());
+            return if self.ready.load(Ordering::Acquire) {
+                Ok(())
+            } else {
+                Err("TRDP bridge 正在启动或未就绪".to_string())
+            };
         }
 
         let params = self
@@ -126,7 +190,7 @@ impl TrdpSideChannel {
             .into_iter()
             .find(Self::bridge_candidate_is_usable)
             .ok_or_else(|| {
-                "TRDP 原生桥接组件未就绪。`npm run tauri dev` 会自动构建该组件；如果开发启动失败，请确认 CMake 3.20+ 与 Windows C++ 构建工具链可用。也可单独运行 `npm run trdp:build` 诊断原生构建。".to_string()
+                "TRDP 原生桥接组件未就绪。npm run tauri dev 会自动构建；也可运行 npm run trdp:build 诊断。".to_string()
             })?;
 
         let mut child = Command::new(&bridge)
@@ -146,9 +210,17 @@ impl TrdpSideChannel {
             .ok_or("TRDP bridge stderr unavailable")?;
 
         *self.stdin.lock().map_err(|error| error.to_string())? = Some(stdin);
+        *self.child.lock().map_err(|error| error.to_string())? = Some(child);
+        self.shutting_down.store(false, Ordering::Release);
+        self.ready.store(false, Ordering::Release);
+        self.alive.store(true, Ordering::Release);
 
         let event_session_id = session_id.to_string();
         let event_app = app.clone();
+        let pending = Arc::clone(&self.pending);
+        let alive = Arc::clone(&self.alive);
+        let ready = Arc::clone(&self.ready);
+        let shutting_down = Arc::clone(&self.shutting_down);
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
@@ -157,10 +229,67 @@ impl TrdpSideChannel {
                 }
                 let mut payload = serde_json::from_str::<Value>(&line)
                     .unwrap_or_else(|_| json!({ "event": "bridge_output", "message": line }));
+                let event_name = payload.get("event").and_then(Value::as_str);
+                let request_id = payload
+                    .get("request_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+
+                if matches!(event_name, Some("ack") | Some("error")) {
+                    if let Some(request_id) = request_id {
+                        let waiter = pending
+                            .lock()
+                            .ok()
+                            .and_then(|mut requests| requests.remove(&request_id));
+                        if let Some(waiter) = waiter {
+                            let result = if event_name == Some("error") {
+                                Err(payload
+                                    .get("error")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("TRDP bridge operation failed")
+                                    .to_string())
+                            } else {
+                                Ok(payload)
+                            };
+                            let _ = waiter.send(result);
+                            continue;
+                        }
+                    }
+                }
+
                 if let Some(object) = payload.as_object_mut() {
-                    object.insert("session_id".into(), Value::String(event_session_id.clone()));
+                    object.insert(
+                        "session_id".into(),
+                        Value::String(event_session_id.clone()),
+                    );
                 }
                 let _ = event_app.emit("trdp-event", payload);
+            }
+
+            alive.store(false, Ordering::Release);
+            if let Ok(mut requests) = pending.lock() {
+                for (_, waiter) in requests.drain() {
+                    let _ = waiter.send(Err("TRDP bridge exited before replying".to_string()));
+                }
+            }
+
+            let was_ready = ready.swap(false, Ordering::AcqRel);
+            if was_ready && !shutting_down.load(Ordering::Acquire) {
+                let state: State<'_, AppState> = event_app.state();
+                if let Ok(mut store) = state.session_store.lock() {
+                    store.mark_disconnected(&event_session_id);
+                    let path = crate::kernel::session_store::SessionStore::sessions_file_path(
+                        &event_app,
+                    );
+                    let _ = store.save_to_disk(&path);
+                }
+                let _ = event_app.emit(
+                    "session-disconnected",
+                    json!({
+                        "session_id": event_session_id,
+                        "reason": "TRDP native runtime exited unexpectedly"
+                    }),
+                );
             }
         });
 
@@ -172,25 +301,27 @@ impl TrdpSideChannel {
             }
         });
 
-        *self.child.lock().map_err(|error| error.to_string())? = Some(child);
         let open_command = if params.get("mode").and_then(Value::as_str) == Some("monitor") {
-            "monitor_open"
+            json!({ "command": "monitor_open" })
         } else {
-            "open"
+            let mut object = params
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            object.insert("command".into(), Value::String("open".into()));
+            Value::Object(object)
         };
-        let result = self.send(json!({ "command": open_command, "params": params }));
-        if result.is_err() {
-            <Self as SideChannel>::shutdown(self);
-        }
-        result
-    }
 
-    fn send(&self, command: Value) -> Result<(), String> {
-        let mut input = self.stdin.lock().map_err(|error| error.to_string())?;
-        let stdin = input.as_mut().ok_or("TRDP bridge 尚未启动")?;
-        serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
-        stdin.write_all(b"\n").map_err(|error| error.to_string())?;
-        stdin.flush().map_err(|error| error.to_string())
+        match self.request(open_command, Self::REQUEST_TIMEOUT) {
+            Ok(_) => {
+                self.ready.store(true, Ordering::Release);
+                Ok(())
+            }
+            Err(error) => {
+                <Self as SideChannel>::shutdown(self);
+                Err(error)
+            }
+        }
     }
 }
 
@@ -200,24 +331,39 @@ impl SideChannel for TrdpSideChannel {
     }
 
     fn shutdown(&self) {
+        self.shutting_down.store(true, Ordering::Release);
+        self.ready.store(false, Ordering::Release);
+
+        if self.alive.load(Ordering::Acquire) {
+            let _ = self.send_line(&json!({ "command": "shutdown" }));
+        }
         if let Ok(mut input) = self.stdin.lock() {
-            if let Some(stdin) = input.as_mut() {
-                let _ = stdin.write_all(b"{\"command\":\"shutdown\"}\n");
-                let _ = stdin.flush();
-            }
             input.take();
         }
+
         if let Ok(mut child) = self.child.lock() {
             if let Some(mut process) = child.take() {
+                let mut exited = false;
                 for _ in 0..25 {
                     match process.try_wait() {
-                        Ok(Some(_)) => return,
+                        Ok(Some(_)) => {
+                            exited = true;
+                            break;
+                        }
                         Ok(None) => std::thread::sleep(Duration::from_millis(10)),
                         Err(_) => break,
                     }
                 }
-                let _ = process.kill();
-                let _ = process.wait();
+                if !exited {
+                    let _ = process.kill();
+                    let _ = process.wait();
+                }
+            }
+        }
+        self.alive.store(false, Ordering::Release);
+        if let Ok(mut requests) = self.pending.lock() {
+            for (_, waiter) in requests.drain() {
+                let _ = waiter.send(Err("TRDP bridge stopped".to_string()));
             }
         }
     }
@@ -427,8 +573,7 @@ pub fn trdp_command(
     {
         trdp.start(app, &session_id)?;
     }
-    trdp.send(command)?;
-    Ok(Value::Null)
+    trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT)
 }
 
 #[tauri::command]
