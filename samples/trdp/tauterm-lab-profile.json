@@ -1,18 +1,10 @@
 {
-  "format": "tauterm-trdp-workspace/v1",
+  "format": "tauterm-trdp-workspace/v2",
   "name": "TauTerm TRDP Lab",
-  "mode": "node",
-  "links": {
-    "a": {
-      "local_ip": "10.10.0.10",
-      "enabled": true
-    },
-    "b": {
-      "local_ip": "10.20.0.10",
-      "enabled": false
-    }
-  },
   "xml": "full-node.xml",
+  "redundancy_groups": {
+    "1": "leader"
+  },
   "objects": [
     {
       "id": "status-pub",
@@ -23,7 +15,7 @@
       "destination": "239.255.5.1",
       "cycle_us": 100000,
       "payload_hex": "000000000000000000000000",
-      "auto_start": false
+      "red_id": 1
     },
     {
       "id": "command-sub",
@@ -33,7 +25,6 @@
       "link": "a",
       "destination": "239.255.5.2",
       "payload_hex": "",
-      "auto_start": false,
       "timeout_mode": "auto"
     },
     {
@@ -44,12 +35,7 @@
       "link": "a",
       "destination": "0.0.0.0",
       "transport": "udp",
-      "payload_hex": "000000000000",
-      "auto_start": false
+      "payload_hex": "000000000000"
     }
-  ],
-  "monitor": {
-    "filter": "udp port 17224 or udp port 17225 or tcp port 17225",
-    "implicit_deduplication": false
-  }
+  ]
 }
