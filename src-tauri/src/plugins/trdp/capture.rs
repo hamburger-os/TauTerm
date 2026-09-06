@@ -458,7 +458,7 @@ impl TrdpStreamDecoder {
                     destination_port,
                     transport: "tcp",
                     linktype: context.linktype,
-                    },
+                },
                 true,
             ) {
                 packets.push(packet);
