@@ -724,12 +724,9 @@ async fn connect_session_serial(
                     .unwrap_or_default()
             };
 
-            // 2. 标记断开 — 内部关闭桥接，PlugInMode 使 B 端自动隐藏
-            //    同步保存到磁盘，防止后续崩溃导致配置丢失
+            // 2. 标记运行态断开 — Saved Session Library 由显式配置命令独立持久化
             if let Ok(mut store) = app_state.session_store.lock() {
                 store.mark_disconnected(&session_id);
-                let path = SessionStore::sessions_file_path(&app_disconnect);
-                let _ = store.save_to_disk(&path);
             }
 
             // 3. 从内核驱动删除端口对 → 外部工具感知 COM 端口消失
@@ -794,9 +791,7 @@ async fn connect_session_serial(
             app.clone(),
         )?;
 
-        // 自动保存
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
+        // Runtime Session 只消费 Saved Session 配置；连接生命周期不反向覆盖 Library。
         session_id
     };
 
@@ -1154,8 +1149,6 @@ fn connect_simple_terminal_session(
             let app_state: State<'_, AppState> = app_disconnect.state();
             if let Ok(mut store) = app_state.session_store.lock() {
                 store.mark_disconnected(&session_id);
-                let path = SessionStore::sessions_file_path(&app_disconnect);
-                let _ = store.save_to_disk(&path);
             }
             let _ = app_disconnect.emit(
                 "session-disconnected",
@@ -1186,8 +1179,6 @@ fn connect_simple_terminal_session(
             on_disconnect,
             app.clone(),
         )?;
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
         sid
     };
 
@@ -1460,9 +1451,7 @@ pub async fn disconnect_session(
         let is_iperf = handle.plugin_id == "iperf";
         store.close_session(&session_id)?;
         store.reset_child_counter(&session_id);
-        // 持久化：会话状态已变为 Disconnected，写入磁盘
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
+        // Disconnected 属于运行态，不写回 Saved Session Library。
         (pairs, name, is_tftp, is_iperf)
     };
     // 锁已释放 — close_session 内部已关闭桥接
@@ -1622,11 +1611,18 @@ pub fn rename_session(
     session_id: String,
     new_name: String,
 ) -> Result<(), String> {
-    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-    store.rename_session(&session_id, &new_name)?;
-
-    let path = SessionStore::sessions_file_path(&app);
-    let _ = store.save_to_disk(&path);
+    SessionStore::rename_config_on_disk_transactional(
+        &app,
+        &session_id,
+        &new_name,
+        || {
+            let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+            if store.get_session(&session_id).is_some() {
+                store.rename_session(&session_id, &new_name)?;
+            }
+            Ok(())
+        },
+    )?;
 
     let _ = app.emit(
         "session-renamed",
@@ -1837,8 +1833,6 @@ async fn create_terminal_sub_channel(
                         if !retain {
                             store.reset_child_counter(&pid);
                         }
-                        let path = SessionStore::sessions_file_path(&app_disconnect);
-                        let _ = store.save_to_disk(&path);
                     }
                     (no_live_children, retain)
                 } else {
@@ -1962,9 +1956,6 @@ async fn create_terminal_sub_channel(
         sub.connected_at = connected_at;
         sub.stats_cancel_flag = Some(stats_cancel_flag);
         handle.sub_connections.push(sub);
-
-        let path = crate::kernel::session_store::SessionStore::sessions_file_path(app);
-        let _ = store.save_to_disk(&path);
         (actual_idx, actual_name)
     };
 
@@ -2074,8 +2065,6 @@ pub async fn close_channel(
             Err(_) => {
                 if reset_counter.unwrap_or(false) {
                     store.reset_child_counter(&pid);
-                    let path = SessionStore::sessions_file_path(&app);
-                    let _ = store.save_to_disk(&path);
                 }
                 // 异常终端现场只驻留在前端内存中；父连接关闭后后端已释放
                 // 对应 I/O 资源，此时关闭卡片是幂等的 UI 清理。
@@ -2096,9 +2085,7 @@ pub async fn close_channel(
             if reset_counter.unwrap_or(false) {
                 store.reset_child_counter(&pid);
             }
-            // 持久化：父会话已断开
-            let path = SessionStore::sessions_file_path(&app);
-            let _ = store.save_to_disk(&path);
+            // 父会话断开只改变运行态，不写回 Saved Session Library。
         }
         (pid, last, retain_history, cleanup)
     };
@@ -3750,8 +3737,6 @@ async fn connect_session_tftp(
             None,
             None,
         )?;
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
         sid
     };
 
@@ -4199,8 +4184,6 @@ async fn connect_session_iperf(
             None,
             None,
         )?;
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
         sid
     };
 
