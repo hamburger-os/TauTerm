@@ -245,6 +245,36 @@ pub fn run() {
                     .join("settings.json");
                 if let Err(error) = state.config_store.configure_persistence(settings_path) {
                     log::warn!("配置存储初始化失败: {}", error);
+                } else {
+                    let system_enabled = state
+                        .config_store
+                        .get::<bool>("logging.system_enabled")
+                        .unwrap_or(true);
+                    let system_level = state
+                        .config_store
+                        .get::<String>("logging.system_level")
+                        .unwrap_or_else(|| "info".to_string());
+                    kernel::log_engine::set_system_log_config(system_enabled, &system_level);
+
+                    if let Ok(log_engine) = state.log_engine.lock() {
+                        log_engine.update_config(kernel::log_engine::LogConfigUpdate {
+                            session_enabled: state
+                                .config_store
+                                .get::<bool>("logging.session_enabled"),
+                            file_max_size: state
+                                .config_store
+                                .get::<u64>("logging.file_max_size"),
+                            buffer_size: state
+                                .config_store
+                                .get::<usize>("logging.buffer_size"),
+                            flush_interval_ms: state
+                                .config_store
+                                .get::<u64>("logging.flush_interval_ms"),
+                            retention_days: state
+                                .config_store
+                                .get::<u64>("logging.retention_days"),
+                        });
+                    }
                 }
             }
 
@@ -449,6 +479,7 @@ pub fn run() {
             commands::stop_session_log,
             commands::log_event,
             commands::get_log_status,
+            commands::get_log_health,
             commands::set_system_log_config,
             commands::get_log_dir,
             commands::get_log_config,
