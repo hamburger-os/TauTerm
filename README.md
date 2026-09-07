@@ -82,6 +82,8 @@ Documentation is organized by audience instead of duplicating the same facts in 
 
 - **Users and contributors:** this README, [CONTRIBUTING.md](CONTRIBUTING.md), and [docs/community/](docs/community/).
 - **Architecture/design review:** [docs/README.md](docs/README.md) and [docs/modules/](docs/modules/), maintained in Chinese for the project maintainer.
+- **Maintainer workflow:** [docs/maintainer/DEVELOPMENT.md](docs/maintainer/DEVELOPMENT.md) provides the Chinese daily-development and command guide.
+- **Standards & authoritative references:** [docs/knowledge/](docs/knowledge/) indexes the primary specifications and upstream documentation used to validate implementations.
 - **AI coding agents:** [AGENTS.md](AGENTS.md) and [`.agents/skills/`](.agents/skills/).
 - **Product direction:** [docs/product/](docs/product/) describes future direction and does not imply shipped status.
 - **Release history:** [CHANGELOG.md](CHANGELOG.md) is the single canonical source.

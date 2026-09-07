@@ -60,3 +60,5 @@ flowchart LR
 ## 何时更新本文
 
 修改凭据后端、权限模型、服务/helper IPC、native 加载路径、打包信任边界、更新签名/发布验证策略时，必须同步更新本文。
+
+Tauri/Windows 平台权威资料见 [PLATFORM_SECURITY.md](../knowledge/PLATFORM_SECURITY.md)；第三方分发和许可证依据见 [LICENSE_COMPLIANCE.md](../knowledge/LICENSE_COMPLIANCE.md)。

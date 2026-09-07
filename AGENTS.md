@@ -27,7 +27,8 @@ Documentation is deliberately split by audience.
 |---|---|---|---|
 | AI | `AGENTS.md`, `.agents/skills/` | English preferred | Agent rules, task procedures, machine-oriented engineering contracts |
 | Community | `README.md`, `README.zh-CN.md`, `CONTRIBUTING.md`, `docs/community/` | English and/or Chinese | Public project entry, contributing, build, platform, and release procedures |
-| Maintainer | `docs/README.md`, `docs/modules/`, `docs/product/` | Chinese | Architecture and design review without needing to read implementation code |
+| Maintainer | `docs/README.md`, `docs/modules/`, `docs/maintainer/`, `docs/product/` | Chinese | Architecture, solution review, maintainer operations, and product direction |
+| Knowledge | `docs/knowledge/` | Chinese index + authoritative external sources | Standards, protocol specifications, platform documentation, upstream behavior, and compliance references |
 
 ### Single-source-of-truth rules
 
@@ -37,7 +38,9 @@ A durable fact must have one owner. Other documents link to it instead of restat
 - Released and unreleased change history: `CHANGELOG.md`.
 - Current architecture and module-level design: `docs/README.md` and exactly one owner document under `docs/modules/`.
 - Future product direction and commercial/hardware strategy: `docs/product/`.
-- Build, platform, and release procedures: `docs/community/`.
+- Build, platform, and release procedures for contributors: `docs/community/`.
+- Maintainer daily workflow and command navigation: `docs/maintainer/DEVELOPMENT.md`; executable npm definitions remain in `package.json`.
+- External standards and upstream authoritative references: `docs/knowledge/`; do not copy paid/copyrighted standards into the repository.
 - Visual theme implementation specification: `.agents/skills/tauterm-theme/SKILL.md`.
 - Executable npm command definitions: `package.json`.
 - Security reporting policy: `SECURITY.md`.
@@ -61,14 +64,17 @@ Use this map to decide which design document must change.
 
 | Code / concern | Owner document |
 |---|---|
-| `src-tauri/src/kernel/`, plugin registry and common session contracts | `docs/modules/CORE.md` |
-| application shell, Pane/Workspace layout and restoration | `docs/modules/WORKSPACE.md` |
-| Serial, virtual serial bridge, X/Y/ZModem | `docs/modules/SERIAL.md` |
-| SSH, SFTP, remote file management, journald | `docs/modules/SSH.md` |
+| SessionStore, plugin/channel contracts, common connection routing | `docs/modules/CORE.md` |
+| application shell, Settings, renderers, i18n, shortcuts and shared frontend structure | `docs/modules/UI_FOUNDATION.md` |
+| Pane/Workspace layout and restoration | `docs/modules/WORKSPACE.md` |
+| Serial and virtual serial integration | `docs/modules/SERIAL.md` |
+| shared file transfer abstraction, X/Y/ZModem and SFTP orchestration | `docs/modules/TRANSFER.md` |
+| SSH, remote terminal/channel model, file-manager integration and journald | `docs/modules/SSH.md` |
 | Local Shell, PTY/ConPTY, per-child elevation | `docs/modules/LOCAL_SHELL.md` |
 | TCP/UDP Network Debug, TFTP, Telnet, iperf | `docs/modules/NETWORK.md` |
 | TRDP Node/Monitor, capture, XML/Dataset, native sidecar | `docs/modules/TRDP.md` |
 | SendBar, auto-reply, scripting and communication automation | `docs/modules/AUTOMATION.md` |
+| data batching, logging, statistics and stateless engineering tools | `docs/modules/OBSERVABILITY_TOOLS.md` |
 | credential storage, privileged helpers, packaging/updater trust boundaries | `docs/modules/PLATFORM_SECURITY.md` |
 
 If a change spans modules, update each affected owner document, but keep each fact in the document that owns it.
@@ -76,6 +82,7 @@ If a change spans modules, update each affected owner document, but keep each fa
 ## Working rules
 
 - Inspect the smallest relevant code and documentation surface first.
+- Before changing protocol semantics, terminal/platform behavior, security boundaries, or licensing, read the matching `docs/knowledge/*.md` authority index and verify the relevant primary source.
 - Follow existing architecture unless the task intentionally changes it.
 - Keep protocol-specific behavior inside protocol modules; shared lifecycle and platform concerns belong in the common core.
 - Preserve local-first operation and least-privilege boundaries.
@@ -94,6 +101,8 @@ After changing documentation, run:
 ```bash
 npm run docs:check
 ```
+
+When third-party source, bundled binaries, licenses, or dependency licensing changes, also run `npm run license:check` and `npm run license:cargo`.
 
 The documentation check is a required CI gate.
 

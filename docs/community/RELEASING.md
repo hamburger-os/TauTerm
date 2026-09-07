@@ -28,10 +28,13 @@ Move the completed `Unreleased` entries into:
 ## [X.Y.Z] — YYYY-MM-DD
 ```
 
-Then validate metadata and build the current platform release:
+Then validate metadata, documentation/licensing, and build the current platform release:
 
 ```bash
 npm run release:check -- X.Y.Z
+npm run docs:check
+npm run license:check
+npm run license:cargo
 npm run build:release
 ```
 
@@ -58,7 +61,7 @@ The workflow currently requires these updater targets:
 4. `linux-x86_64-appimage`
 5. `darwin-aarch64-app`
 
-Staging verifies required bundled components and non-empty assets. Assembly verifies updater signatures and generates `latest.json` plus `SHA256SUMS`.
+Staging verifies required bundled components, non-empty assets, and third-party notice resources. Windows staging additionally verifies the com0com GPL license text is present in the installer; Linux/macOS staging verifies the shared `THIRD_PARTY_LICENSES.md` resource. Assembly verifies updater signatures and generates `latest.json` plus `SHA256SUMS`.
 
 The publish job derives a temporary GitHub Release notes file from the corresponding `CHANGELOG.md` section; no second committed release-note document exists.
 

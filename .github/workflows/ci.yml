@@ -74,6 +74,9 @@ jobs:
       - name: Strict Clippy all targets
         run: cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
 
+      - name: Validate Cargo dependency license metadata
+        run: node scripts/check-cargo-licenses.js
+
       - name: Rust tests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
@@ -104,6 +107,9 @@ jobs:
 
       - name: Validate documentation contract
         run: npm run docs:check
+
+      - name: Validate third-party license contract
+        run: npm run license:check
 
       - name: Validate updater release scripts
         run: |

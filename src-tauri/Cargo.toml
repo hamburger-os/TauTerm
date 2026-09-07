@@ -1,7 +1,7 @@
 [package]
 name = "tauterm"
 version = "0.6.0"
-description = "TauTerm - 跨平台全功能终端模拟器"
+description = "Local-first engineering workbench for terminal, device, and network debugging"
 authors = ["TauTerm"]
 edition = "2021"
 license = "MIT OR Apache-2.0"

@@ -13,7 +13,7 @@
   "app": {
     "windows": [
       {
-        "title": "TauTerm - Terminal Emulator",
+        "title": "TauTerm",
         "width": 1440,
         "height": 900,
         "minWidth": 800,
@@ -40,7 +40,10 @@
     },
     "externalBin": [
       "binaries/tauterm-trdp-bridge"
-    ]
+    ],
+    "resources": {
+      "../THIRD_PARTY_LICENSES.md": ""
+    }
   },
   "plugins": {
     "updater": {

@@ -83,13 +83,15 @@ Useful local checks:
 
 ```bash
 npm run docs:check
+npm run license:check
+npm run license:cargo
 npx tsc --noEmit
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-Additional focused checks are defined in `package.json`.
+Additional focused checks are defined in `package.json`. The maintainer-oriented command table and daily workflow are kept in [docs/maintainer/DEVELOPMENT.md](../maintainer/DEVELOPMENT.md).
 
 ## Production packages
 

@@ -60,3 +60,5 @@ flowchart TB
 ## 何时更新本文
 
 修改 Node/Monitor 责任、native runtime ownership、连接判定、抓包数据所有权、XML/Dataset/Workspace 模型、A/B/冗余语义或安全边界时，必须同步更新本文。
+
+IEC/TCNOpen 依据与版本边界见 [TRDP 标准知识索引](../knowledge/TRDP.md)；TCNOpen 的许可证/patch provenance 见根 `THIRD_PARTY_LICENSES.md` 与 `src-tauri/vendor/tcnopen/SOURCE.json`。

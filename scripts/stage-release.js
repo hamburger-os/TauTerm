@@ -72,7 +72,7 @@ function smokeTestWindowsInstaller(files) {
   if (result.status !== 0) fail(`7z failed to inspect ${basename(installer)}.`);
 
   const listing = result.stdout.toLowerCase();
-  for (const required of ["tauterm-service.exe", "setupc.exe", "com0com.sys", "tauterm-trdp-bridge"]) {
+  for (const required of ["tauterm-service.exe", "setupc.exe", "com0com.sys", "tauterm-trdp-bridge", "third_party_licenses.md", "copying-gpl-2.0.txt"]) {
     if (!listing.includes(required)) {
       fail(`NSIS installer is missing required bundled file: ${required}`);
     }
@@ -87,8 +87,24 @@ function smokeTestMacUpdater(files) {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) fail(`tar failed to inspect ${basename(updater)}.`);
-  if (!result.stdout.includes("tauterm-trdp-bridge")) {
-    fail("macOS app updater archive is missing required bundled file: tauterm-trdp-bridge");
+  const listing = result.stdout.toLowerCase();
+  for (const required of ["tauterm-trdp-bridge", "third_party_licenses.md"]) {
+    if (!listing.includes(required)) {
+      fail(`macOS app updater archive is missing required bundled file: ${required}`);
+    }
+  }
+}
+
+function smokeTestLinuxDeb(files) {
+  const deb = findOne(files, ".deb");
+  const result = spawnSync("dpkg-deb", ["-c", deb], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) fail(`dpkg-deb failed to inspect ${basename(deb)}.`);
+  if (!result.stdout.toLowerCase().includes("third_party_licenses.md")) {
+    fail("Linux .deb is missing required bundled file: THIRD_PARTY_LICENSES.md");
   }
 }
 
@@ -104,6 +120,8 @@ const allFiles = walk(bundleRoot);
 const currentFiles = allFiles.filter((file) => isCurrentVersionArtifact(basename(file)));
 if (platform === "windows") {
   smokeTestWindowsInstaller(currentFiles);
+} else if (platform === "linux") {
+  smokeTestLinuxDeb(currentFiles);
 } else if (platform === "macos-arm") {
   smokeTestMacUpdater(currentFiles);
 }

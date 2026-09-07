@@ -2,7 +2,7 @@
 
 ## 目标
 
-核心层负责把不同协议统一成可管理的 Session，同时提供插件注册、I/O、状态、配置、日志和公共生命周期。它不负责解释某个协议的业务语义。
+核心层负责把不同协议统一成可管理的 Session，同时提供插件注册、主 I/O 所有权、状态、配置和公共生命周期。它不负责解释某个协议的业务语义。
 
 ## 当前方案
 
@@ -36,7 +36,10 @@ stateDiagram-v2
 
 ## 代码锚点
 
-- `src-tauri/src/kernel/`
+- `src-tauri/src/kernel/session_store.rs`
+- `src-tauri/src/kernel/plugin_adapter.rs`
+- `src-tauri/src/kernel/plugin_host.rs`
+- `src-tauri/src/kernel/config_store.rs`
 - `src-tauri/src/channel/`
 - `src-tauri/src/commands.rs`
 - `src/core/plugin-registry.ts`
@@ -44,4 +47,6 @@ stateDiagram-v2
 
 ## 何时更新本文
 
-修改 Session 状态机、插件注册契约、公共连接路由、通道模型、父子会话模型、配置/日志公共职责时，必须同步更新本文。
+修改 Session 状态机、插件注册契约、公共连接路由、通道模型、父子会话模型或配置公共职责时，必须同步更新本文。
+
+共享文件传输由 [TRANSFER.md](TRANSFER.md) 负责；数据批处理/日志由 [OBSERVABILITY_TOOLS.md](OBSERVABILITY_TOOLS.md) 负责；应用壳/i18n/Settings 由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 负责。

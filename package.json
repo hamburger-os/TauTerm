@@ -8,6 +8,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "docs:check": "node scripts/check-docs.js",
+    "license:check": "node scripts/check-third-party.js",
+    "license:cargo": "node scripts/check-cargo-licenses.js",
     "preview": "vite preview",
     "tauri": "tauri",
     "trdp:build": "node scripts/prepare-service-bin.js --trdp-only",

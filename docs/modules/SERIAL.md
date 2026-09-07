@@ -39,9 +39,10 @@ flowchart LR
 - `src/plugins/serial/`
 - `src-tauri/src/plugins/serial/`
 - `src-tauri/src/virtual_port/`
-- `src-tauri/src/transfer/`
 - `src/components/Terminal/`
 
 ## 何时更新本文
 
-修改串口连接模型、虚拟串口后端、通道所有权、传输集成方式或设备数据流时，必须同步更新本文。com0com 的维护细节以 `.agents/skills/tauterm-com0com/SKILL.md` 为准。
+修改串口连接模型、虚拟串口后端、通道所有权、传输集成方式或设备数据流时，必须同步更新本文。
+
+共享 X/Y/ZModem 传输生命周期见 [TRANSFER.md](TRANSFER.md)；串口/PTY/电气标准依据见 [终端、串口与自动化知识索引](../knowledge/TERMINAL_SERIAL_AUTOMATION.md)；com0com 的维护细节以 `.agents/skills/tauterm-com0com/SKILL.md` 为准。

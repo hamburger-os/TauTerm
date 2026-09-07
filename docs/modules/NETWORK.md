@@ -47,3 +47,5 @@ iperf 是自包含测试 Session，承载测试配置、运行过程、结果和
 ## 何时更新本文
 
 修改 TCP peer 模型、UDP datagram 模型、目标选择、TFTP 风险边界、Telnet 协商职责、iperf 生命周期或这些模块与公共 Session 的关系时，必须同步更新本文。
+
+TCP/UDP、Telnet、TFTP、iperf 与 Modbus 相关权威依据统一索引在 [NETWORK_PROTOCOLS.md](../knowledge/NETWORK_PROTOCOLS.md)。
