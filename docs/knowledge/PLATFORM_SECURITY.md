@@ -7,6 +7,7 @@
 - Tauri Security: https://v2.tauri.app/security/
 - Capabilities / permissions: https://v2.tauri.app/security/capabilities/
 - Updater plugin: https://v2.tauri.app/plugin/updater/
+- Windows Code Signing: https://v2.tauri.app/distribute/sign/windows/
 - Configuration: https://v2.tauri.app/reference/config/
 
 TauTerm 的 IPC 能力、CSP、资源打包、sidecar/updater 等设计必须与当前 Tauri v2 文档一致。平台专属配置覆盖规则也要按 Tauri 配置合并语义核对，不能假设数组/资源一定自动合并。
