@@ -727,7 +727,8 @@
     "started": "已开始记录日志",
     "stopped": "日志记录已停止",
     "writing": "正在写入",
-    "lossWarning": "检测到日志队列溢出——会话日志 {{session}} 条、系统日志 {{system}} 条未写入；受影响日志流可能不完整。"
+    "lossWarning": "检测到日志队列溢出——会话日志 {{session}} 条、系统日志 {{system}} 条未写入；受影响日志流可能不完整。",
+    "configSaveError": "日志设置未保存：{{error}}。界面已恢复为后端实际状态。"
   },
   "common": {
     "ok": "确定",
