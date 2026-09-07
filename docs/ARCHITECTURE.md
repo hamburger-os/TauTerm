@@ -224,8 +224,9 @@ graph LR
 ```
 
 - **Node 与单一运行时 owner**：每个启用的 TauTerm Link（A/B）对应一个 TCNOpen Application Session；对象控制命令通过队列进入 Node runtime thread，TCNOpen 对象生命周期与 `tlc_process` 不再由多个线程并发驱动。
-- **真实握手与监督**：Rust 为每个 sidecar 请求分配 `request_id` 并等待对应 ACK/Error；只有 native `open` 成功后 Session 才进入 Connected。helper 意外退出会同步把 Session 标记为 Disconnected。
-- **Monitor / CaptureStore**：live sidecar 只负责系统抓包并上送 raw frame；实时与离线 pcap/pcapng 共用 Rust canonical decoder 与 MD/TCP stream reassembly。实时 raw frame 只保留在有上限的 Rust CaptureStore；离线文件采用流式解析/导出，UI 只接收报文元数据、统计与有限预览，不再让完整抓包经 JS 往返。
+- **统一连接入口**：前端侧栏与 Pane 的断线重连统一进入 `SessionContext.reconnectSession`，再通过内核 `connect_session` 按 plugin id 路由；TRDP 插件只实现自身连接语义，不再包裹其他协议的连接入口。Node 在 native `open` ACK 成功后才进入 Connected；helper 意外退出会同步把 Session 标记为 Disconnected。
+- **运行时 / 离线边界**：对象 Start/Stop/Send、实时抓包和 MD Confirm 都要求当前 Session 已连接；pcap/pcapng、XML、Dataset 与 Workspace 分析可在断线状态继续使用。MD Confirm 还必须命中当前 Node runtime 实际持有的 ReplyQuery transaction，离线/Monitor 报文不能触发主动 Confirm。
+- **Monitor / CaptureStore**：live sidecar 只负责系统抓包并上送 raw frame；实时与离线 pcap/pcapng 共用 Rust canonical decoder 与 MD/TCP stream reassembly。实时 raw frame 只保留在有上限的 Rust CaptureStore；离线文件采用流式解析/导出。Flow/丢序/间隔/Jitter 在 Rust 侧按完整 capture 聚合，React 只拿聚合统计和分页报文元数据，避免有限预览被误认为全量统计。
 - **A/B 与 redundancy 分离**：Link A/B 是网络路径；`redId` 引用 session-level redundancy group，Leader/Follower 以 group 为状态源，不存在 A=Leader/B=Follower 或逐 Publisher 独立状态的隐式映射。
 - **配置模型**：TRDP XML 使用结构化 XML parser；Workspace 采用严格校验的 `tauterm-trdp-workspace/v2`，对象、XML 引用和 redundancy group 在导入时一次验证，导入本身不会自动发送。
 - **Helper 信任边界**：Release 只从 Tauri resource/executable directory 或显式 `TAUTERM_TRDP_BRIDGE` 环境变量解析 sidecar；仓库/CWD 相对查找只允许 debug build。基础 `tauri.conf.json` 通过 `bundle.externalBin` 声明 helper，并由构建流程从 vendored TCNOpen staging。
