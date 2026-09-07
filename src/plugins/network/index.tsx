@@ -9,7 +9,8 @@
  * - TCP server 对端计数：connected/max + 选中对端独立 TX/RX 内联
  * - UDP 报文计数：会话级累计 RX/TX 报文数（无对端模型，报文是传输层原生指标）
  */
-import { registerPlugin, type StatusBarContext, type StatusBarItem } from "../../core/plugin-registry";
+import { registerPlugin, type StatusBarContext, type StatusBarItem, type PluginManifest } from "../../core/plugin-registry";
+import manifestJson from "../../plugin-manifests/network.json";
 import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
 import { formatBytes } from "../../utils/format";
@@ -104,18 +105,7 @@ const statusBarItems: StatusBarItem[] = [
 ];
 
 registerPlugin({
-  manifest: {
-    id: "network",
-    name: "Network Debug",
-    version: "1.0.0",
-    category: "network_tool",
-    description: "TCP/UDP 网络调试助手",
-    icon: "globe",
-    content_type: "custom",
-    send_bar: true,
-    capabilities: ["connection", "network_outbound", "network_listen", "session_logging"],
-    transfer_protocols: [],
-  },
+  manifest: manifestJson as PluginManifest,
   customView: NetworkDebugSessionView,
   statusBarItems,
 });
