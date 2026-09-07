@@ -545,24 +545,12 @@ impl SideChannel for TrdpSideChannel {
     }
 }
 
-/// Single connection router exposed to the frontend as `connect_session`.
-/// Non-TRDP requests delegate to the existing microkernel command; TRDP sessions
-/// use the container/side-channel runtime below. The Rust function name remains
-/// unique so Tauri's generated command symbols do not collide across modules.
-#[tauri::command(rename = "connect_session")]
-pub async fn connect_session_trdp(
+/// TRDP connection implementation called by the shared kernel connection router.
+pub async fn connect_session(
     app: AppHandle,
     state: State<'_, AppState>,
     request: ConnectSessionRequest,
 ) -> Result<String, String> {
-    let plugin_id = request
-        .plugin_id
-        .clone()
-        .unwrap_or_else(|| "serial".to_string());
-    if plugin_id != "trdp" {
-        return crate::commands::connect_session(app, state, request).await;
-    }
-
     let ConnectSessionRequest {
         endpoint,
         mut params,
