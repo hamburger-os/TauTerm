@@ -7,7 +7,8 @@ use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
 use crate::channel::DisconnectInfo;
 use crate::kernel::charset::transcode_utf8_to_encoding;
 use crate::kernel::log_engine::{
-    DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus,
+    try_send_session_log, try_send_system_event, DataDirection, DataLogEntry, LogConfigResponse,
+    LogConfigUpdate, LogEntry, LogHealth, LogStatus,
 };
 use crate::kernel::plugin_adapter::{
     ChannelKind, ChannelOpenMode, ProtocolAdapter, TransferProtocolType,
@@ -543,14 +544,17 @@ fn create_on_data_callback(
         let data_for_log = data.clone();
         let data_for_bridge = bridge_tx.as_ref().map(|_| data.clone());
         batcher.push(session_id.clone(), data);
-        let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
-            session_id: session_id.clone(),
-            direction: DataDirection::RX,
-            data_mode: data_mode.clone(),
-            encoding: encoding.clone(),
-            payload: data_for_log,
-            timestamp: Local::now(),
-        }));
+        try_send_session_log(
+            &log_tx,
+            DataLogEntry {
+                session_id: session_id.clone(),
+                direction: DataDirection::RX,
+                data_mode: data_mode.clone(),
+                encoding: encoding.clone(),
+                payload: data_for_log,
+                timestamp: Local::now(),
+            },
+        );
         if let (Some(tx), Some(d)) = (bridge_tx.as_ref(), data_for_bridge) {
             let _ = tx.try_send(d);
         }
@@ -1508,16 +1512,17 @@ pub fn write_data(
     // 异步发送 TX 数据日志（非阻塞，best-effort：失败不影响主流程）
     // 日志记录实际写入设备的字节（转码后），text 格式按会话编码解码回 UTF-8
     if let Ok(log_engine) = state.log_engine.lock() {
-        let _ = log_engine
-            .sender()
-            .try_send(LogEntry::SessionData(DataLogEntry {
+        try_send_session_log(
+            &log_engine.sender(),
+            DataLogEntry {
                 session_id,
                 direction: DataDirection::TX,
                 data_mode,
                 encoding,
                 payload: data_out.clone(),
                 timestamp: Local::now(),
-            }));
+            },
+        );
     }
     Ok(data_out)
 }
@@ -2230,16 +2235,17 @@ fn udp_send_impl(
     // TX 数据日志（非阻塞，best-effort：失败不影响主流程），
     // 记录实际写入设备的字节（转码后），与 send_data 命令的 TX 记账保持同一模式
     if let Ok(log_engine) = state.log_engine.lock() {
-        let _ = log_engine
-            .sender()
-            .try_send(LogEntry::SessionData(DataLogEntry {
+        try_send_session_log(
+            &log_engine.sender(),
+            DataLogEntry {
                 session_id,
                 direction: DataDirection::TX,
                 data_mode,
                 encoding,
                 payload: out.clone(),
                 timestamp: Local::now(),
-            }));
+            },
+        );
     }
     Ok(out)
 }
@@ -2599,11 +2605,7 @@ pub fn stop_session_log(state: State<'_, AppState>, session_id: String) -> Resul
 pub fn log_event(state: State<'_, AppState>, level: String, message: String) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
 
-    let _ = log_engine.sender().try_send(LogEntry::SystemEvent {
-        level,
-        message,
-        timestamp: Local::now(),
-    });
+    try_send_system_event(&log_engine.sender(), level, message, Local::now());
 
     Ok(())
 }
@@ -2615,14 +2617,28 @@ pub fn get_log_status(state: State<'_, AppState>) -> Result<Vec<LogStatus>, Stri
     Ok(log_engine.get_active_logs())
 }
 
+#[tauri::command]
+pub fn get_log_health(state: State<'_, AppState>) -> Result<LogHealth, String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    Ok(log_engine.get_health())
+}
+
 /// 更新系统日志配置（启用/禁用 + 最低日志级别）
 #[tauri::command]
 pub fn set_system_log_config(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     enabled: bool,
     level: String,
 ) -> Result<(), String> {
     crate::kernel::log_engine::set_system_log_config(enabled, &level);
+    state
+        .config_store
+        .set("logging.system_enabled", &enabled)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.system_level", &level)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -2686,6 +2702,29 @@ pub fn update_log_config(
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     log_engine.update_config(config);
+    let current = log_engine.get_config();
+    drop(log_engine);
+
+    state
+        .config_store
+        .set("logging.session_enabled", &current.session_enabled)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.file_max_size", &current.file_max_size)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.buffer_size", &current.buffer_size)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.flush_interval_ms", &current.flush_interval_ms)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.retention_days", &current.retention_days)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
