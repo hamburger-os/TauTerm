@@ -94,6 +94,21 @@ export interface ConnectOptions {
   sessionId?: string;
 }
 
+function persistedSessionParams(
+  pluginId: string,
+  sessionId: string,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  if (pluginId !== "ssh") return params;
+
+  const sanitized = { ...params };
+  delete sanitized.password;
+  delete sanitized.private_key;
+  delete sanitized.passphrase;
+  sanitized.credential_account = `ssh-session:${sessionId}`;
+  return sanitized;
+}
+
 export interface ConnectionTypeInfo {
   id: string;
   label: string;
@@ -159,6 +174,7 @@ type SessionAction =
   | { type: "SET_ACTIVE"; id: string }
   | { type: "SET_CONNECTION_TYPES"; types: ConnectionTypeInfo[] }
   | { type: "SET_ENDPOINTS"; endpoints: EndpointInfo[] }
+  | { type: "REPLACE_ENDPOINTS_FOR_PLUGIN"; pluginId: string; endpoints: EndpointInfo[] }
   | { type: "SET_ERROR"; error: string | null }
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
   | { type: "SET_TAB_DISCONNECTED"; id: string; info?: DisconnectInfo }
@@ -273,6 +289,14 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       return { ...state, connectionTypes: action.types };
     case "SET_ENDPOINTS":
       return { ...state, endpoints: action.endpoints };
+    case "REPLACE_ENDPOINTS_FOR_PLUGIN":
+      return {
+        ...state,
+        endpoints: [
+          ...state.endpoints.filter(endpoint => endpoint.connection_type !== action.pluginId),
+          ...action.endpoints,
+        ],
+      };
     case "SET_ERROR":
       return { ...state, error: action.error };
     case "SET_TAB_STATE":
@@ -487,7 +511,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
 interface SessionContextValue {
   state: SessionState;
   fetchConnectionTypes: () => Promise<void>;
-  refreshEndpoints: () => Promise<void>;
+  refreshEndpoints: (pluginId?: string, force?: boolean) => Promise<void>;
   connect: (opts: ConnectOptions) => Promise<string | null>;
   reconnectSession: (sessionId: string, initialElevated?: boolean) => Promise<string | null>;
   createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
@@ -571,6 +595,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // （tab 尚未创建）时暂存于此，session-connected 创建/更新 tab 时取出
   // 初始化 localEcho，避免事件被静默丢弃导致输入不可见
   const pendingEchoRef = useRef<Map<string, boolean>>(new Map());
+  // 端点发现是硬件/平台 I/O：按插件缓存并合并并发请求，避免重复触发
+  // Windows SetupAPI / WSL 探测导致配置页卡顿。
+  const endpointRefreshesRef = useRef<Map<string, Promise<EndpointInfo[]>>>(new Map());
+  const endpointRefreshCompletedAtRef = useRef<Map<string, number>>(new Map());
 
   // ADD_TAB / session-switched 等不一定经过 switchTab；统一从 activeTabId 回填最近子 Channel。
   useEffect(() => {
@@ -631,20 +659,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const refreshEndpoints = useCallback(async () => {
-    try {
-      const pluginIds = pluginRegistry
-        .getByCapability("endpoint_discovery")
-        .map(plugin => plugin.manifest.id);
-      const results = await Promise.allSettled(
-        pluginIds.map(pluginId => invoke<EndpointInfo[]>("enumerate_endpoints", { pluginId }))
-      );
-      const endpoints = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
-      dispatch({ type: "SET_ENDPOINTS", endpoints });
-      dispatch({ type: "SET_ERROR", error: null });
-    } catch (e) {
-      dispatch({ type: "SET_ERROR", error: `${e}` });
-    }
+  const refreshEndpoints = useCallback(async (pluginId?: string, force = false) => {
+    const discoverableIds = pluginRegistry
+      .getByCapability("endpoint_discovery")
+      .map(plugin => plugin.manifest.id);
+    const pluginIds = pluginId
+      ? (discoverableIds.includes(pluginId) ? [pluginId] : [])
+      : discoverableIds;
+
+    await Promise.all(pluginIds.map(async (currentPluginId) => {
+      const lastCompleted = endpointRefreshCompletedAtRef.current.get(currentPluginId) ?? 0;
+      if (!force && Date.now() - lastCompleted < 5000) return;
+
+      let pending = endpointRefreshesRef.current.get(currentPluginId);
+      if (!pending) {
+        pending = invoke<EndpointInfo[]>("enumerate_endpoints", { pluginId: currentPluginId });
+        endpointRefreshesRef.current.set(currentPluginId, pending);
+      }
+
+      try {
+        const endpoints = await pending;
+        endpointRefreshCompletedAtRef.current.set(currentPluginId, Date.now());
+        dispatch({
+          type: "REPLACE_ENDPOINTS_FOR_PLUGIN",
+          pluginId: currentPluginId,
+          endpoints,
+        });
+      } catch (e) {
+        // 端点发现失败不应把整个 SessionContext 置为错误；保留上一次缓存，
+        // 让配置表单继续可用，用户可通过刷新按钮重试。
+        console.warn(`Endpoint discovery failed for ${currentPluginId}:`, e);
+      } finally {
+        if (endpointRefreshesRef.current.get(currentPluginId) === pending) {
+          endpointRefreshesRef.current.delete(currentPluginId);
+        }
+      }
+    }));
   }, []);
 
   const connect = useCallback(async (opts: ConnectOptions) => {
@@ -757,6 +807,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sendBarEnabled: effectiveSendBarEnabled,
 
         },});
+      const persistedParams = persistedSessionParams(pid, sessionId, params);
       dispatch({
         type: "ADD_TAB",
         tab: {
@@ -766,7 +817,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           endpoint,
           state: "disconnected",
           pluginId: pid,
-          params,
+          params: persistedParams,
           stats: { txBytes: 0, rxBytes: 0 },
           connectedAt: null,
           transferEnabled: transferEnabled ?? true,
@@ -951,12 +1002,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const persistedParams = persistedSessionParams(effectivePluginId, sessionId, params);
+
     // 3. 更新前端 tab 状态
     dispatch({
       type: "UPDATE_TAB_CONFIG",
       id: sessionId,
       endpoint,
-      params,
+      params: persistedParams,
       name: name || tab?.name || `${(tab?.pluginId && pluginRegistry.get(tab.pluginId)?.manifest.name) || tab?.pluginId?.toUpperCase() || "Serial"} @ ${endpoint}`,
       transferEnabled,
       transferProtocol,
@@ -973,13 +1026,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const newSessionId = await invoke<string>("connect_session", {
         request: {
           endpoint,
-          params,
+          params: persistedParams,
           name: name || tab?.name || undefined,
           pluginId: effectivePluginId,
           transferEnabled: transferEnabled ?? true,
           transferProtocol: transferProtocol || "ymodem",
           sendBarEnabled: effectiveSendBarEnabled,
-          journaldEnabled: (params?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
+          journaldEnabled: (persistedParams?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
           sessionId, // 保持 UUID 连续性
 
         },});
@@ -1613,9 +1666,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // Init
   useEffect(() => {
     fetchConnectionTypes();
-    refreshEndpoints();
     loadSavedSessions();
-  }, [fetchConnectionTypes, refreshEndpoints, loadSavedSessions]);
+  }, [fetchConnectionTypes, loadSavedSessions]);
 
   return (
     <SessionContext.Provider value={{

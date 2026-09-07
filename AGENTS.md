@@ -86,7 +86,7 @@ If a change spans modules, update each affected owner document, but keep each fa
 - Follow existing architecture unless the task intentionally changes it.
 - Keep protocol-specific behavior inside protocol modules; shared lifecycle and platform concerns belong in the common core.
 - Preserve local-first operation and least-privilege boundaries.
-- Do not add compatibility layers for obsolete internal designs unless the user explicitly asks for them.
+- TauTerm is pre-stable and under active development. Do not preserve backward or forward compatibility for internal schemas, APIs, configuration formats, or obsolete designs unless the user explicitly asks for it; prefer one clean current model and require reset/reconfiguration when necessary.
 - Do not invent performance claims, compatibility claims, test results, screenshots, or release status.
 - User-facing brand/copy must remain neutral and must not borrow other companies' product identities.
 - UI text changes must keep `src/i18n/locales/en-US.json` and `zh-CN.json` keys aligned.

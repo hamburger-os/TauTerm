@@ -21,6 +21,48 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = join(__dirname, '..');
 const trdpOnly = process.argv.includes('--trdp-only');
 
+function signWindowsBinary(filePath) {
+  if (process.platform !== 'win32') return;
+
+  const required = process.env.TAUTERM_REQUIRE_WINDOWS_CODE_SIGNING === '1';
+  const configured = Boolean(
+    process.env.TAUTERM_WINDOWS_CERT_THUMBPRINT
+      && process.env.TAUTERM_WINDOWS_TIMESTAMP_URL
+  );
+
+  if (!configured && !required) return;
+  if (!configured) {
+    console.error('❌ ERROR: Windows release signing is required but signing environment is incomplete.');
+    process.exit(1);
+  }
+
+  const script = join(root, 'scripts', 'sign-windows-binary.ps1');
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    script,
+    '-FilePath',
+    filePath,
+  ], {
+    cwd: root,
+    stdio: 'inherit',
+    env: process.env,
+  });
+
+  if (result.error) {
+    console.error(`❌ ERROR: failed to start Windows signing helper: ${result.error.message}`);
+    process.exit(1);
+  }
+  if (result.status !== 0) {
+    console.error(`❌ ERROR: Windows signing helper exited with code ${result.status}`);
+    process.exit(result.status ?? 1);
+  }
+}
+
 function runTrdpBootstrap({ stageTauriSidecar = true } = {}) {
   const windows = process.platform === 'win32';
   const command = windows ? 'powershell.exe' : 'bash';
@@ -57,6 +99,7 @@ function runTrdpBootstrap({ stageTauriSidecar = true } = {}) {
     process.exit(1);
   }
 
+  signWindowsBinary(helper);
   console.log(`✅ Prepared TRDP bridge -> ${helper}`);
 
   if (stageTauriSidecar) {
@@ -99,5 +142,6 @@ if (!existsSync(src)) {
 }
 
 mkdirSync(binDir, { recursive: true });
+signWindowsBinary(src);
 copyFileSync(src, dst);
 console.log(`✅ Copied service binary -> ${dst}`);

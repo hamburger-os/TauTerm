@@ -125,6 +125,176 @@ pub struct SaveSessionConfigRequest {
     pub session_id: Option<String>,
 }
 
+const SSH_CREDENTIAL_ACCOUNT_KEY: &str = "credential_account";
+
+fn ssh_credential_account(session_id: &str) -> String {
+    format!("ssh-session:{session_id}")
+}
+
+fn non_empty_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+}
+
+fn ssh_credential_from_params(
+    params: &Value,
+) -> Result<
+    Option<(
+        crate::security::credential_store::CredentialType,
+        crate::security::credential_store::CredentialValue,
+    )>,
+    String,
+> {
+    use crate::security::credential_store::{CredentialType, CredentialValue};
+
+    let auth_method = params
+        .get("auth_method")
+        .and_then(Value::as_str)
+        .unwrap_or("password");
+
+    match auth_method {
+        "password" => Ok(non_empty_param(params, "password").map(|password| {
+            (
+                CredentialType::Password,
+                CredentialValue::Password(password.to_string()),
+            )
+        })),
+        "key" => Ok(non_empty_param(params, "private_key").map(|private_key| {
+            let passphrase = non_empty_param(params, "passphrase").map(str::to_string);
+            (
+                CredentialType::SshKey,
+                CredentialValue::SshKey {
+                    private_key: private_key.to_string(),
+                    passphrase,
+                },
+            )
+        })),
+        other => Err(format!("不支持的 SSH 认证方式: {other}")),
+    }
+}
+
+fn credential_matches_auth(
+    auth_method: &str,
+    credential: &crate::security::credential_store::CredentialValue,
+) -> bool {
+    use crate::security::credential_store::CredentialValue;
+
+    matches!(
+        (auth_method, credential),
+        ("password", CredentialValue::Password(_)) | ("key", CredentialValue::SshKey { .. })
+    )
+}
+
+fn strip_ssh_secret_fields(params: &mut Value) -> Result<(), String> {
+    let object = params
+        .as_object_mut()
+        .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
+    object.remove("password");
+    object.remove("private_key");
+    object.remove("passphrase");
+    Ok(())
+}
+
+/// Enforce the only supported SSH persistence model:
+/// - the credential account is deterministically derived from the Session id;
+/// - plaintext authentication material is accepted only as transient input;
+/// - persisted/session params contain only the credential reference.
+fn secure_ssh_session_params(
+    state: &AppState,
+    session_id: &str,
+    params: &mut Value,
+) -> Result<(), String> {
+    use crate::security::credential_store::CredentialStoreError;
+
+    let auth_method = params
+        .get("auth_method")
+        .and_then(Value::as_str)
+        .unwrap_or("password")
+        .to_string();
+    let account = ssh_credential_account(session_id);
+
+    if let Some((credential_type, credential_value)) = ssh_credential_from_params(params)? {
+        let username = params
+            .get("username")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let host = params
+            .get("host")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let description = format!("SSH {username}@{host}");
+        state
+            .credential_store
+            .store_credential(&account, credential_type, credential_value, &description)
+            .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))?;
+    } else {
+        match state.credential_store.get_credential(&account) {
+            Ok(value) if credential_matches_auth(&auth_method, &value) => {}
+            Ok(_) => return Err("SSH 认证方式已变更，请重新输入对应凭据".into()),
+            Err(CredentialStoreError::NotFound(_)) => {
+                return Err("SSH 会话没有可用的安全凭据，请重新输入密码或私钥".into());
+            }
+            Err(error) => return Err(format!("无法读取 SSH 安全凭据: {error}")),
+        }
+    }
+
+    let object = params
+        .as_object_mut()
+        .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
+    object.insert(
+        SSH_CREDENTIAL_ACCOUNT_KEY.to_string(),
+        Value::String(account),
+    );
+    strip_ssh_secret_fields(params)
+}
+
+fn hydrate_ssh_config(
+    state: &AppState,
+    params: &Value,
+) -> Result<crate::plugins::ssh::SshConfig, String> {
+    use crate::security::credential_store::CredentialValue;
+
+    let mut config: crate::plugins::ssh::SshConfig =
+        serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
+
+    let account = params
+        .get(SSH_CREDENTIAL_ACCOUNT_KEY)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
+
+    let credential = state
+        .credential_store
+        .get_credential(account)
+        .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
+
+    match (config.auth_method.as_str(), credential) {
+        ("password", CredentialValue::Password(password)) => {
+            config.password = Some(password);
+            config.private_key = None;
+            config.passphrase = None;
+        }
+        (
+            "key",
+            CredentialValue::SshKey {
+                private_key,
+                passphrase,
+            },
+        ) => {
+            config.password = None;
+            config.private_key = Some(private_key);
+            config.passphrase = passphrase;
+        }
+        _ => {
+            return Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into());
+        }
+    }
+
+    Ok(config)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JournaldQueryRequest {
@@ -209,17 +379,22 @@ pub fn get_connection_types(state: State<'_, AppState>) -> Vec<ConnectionTypeInf
 // ── 命令：端点枚举 ──────────────────────────────────
 
 #[tauri::command]
-pub fn enumerate_endpoints(
+pub async fn enumerate_endpoints(
     state: State<'_, AppState>,
     plugin_id: Option<String>,
 ) -> Result<Vec<EndpointItem>, String> {
     let pid = plugin_id.unwrap_or_else(|| "serial".into());
     match pid.as_str() {
         "serial" => {
-            let endpoints = state
-                .serial_adapter
-                .discover_endpoints()
-                .map_err(|e| e.to_string())?;
+            // Windows SetupAPI / 第三方串口驱动枚举可能耗时数秒甚至更久。
+            // discover_endpoints 是同步 API，必须放到 blocking worker，不能占用
+            // Tauri 命令分发线程，否则打开任意会话配置页都会出现 UI 假死。
+            let endpoints = tauri::async_runtime::spawn_blocking(|| {
+                crate::plugins::serial::SerialAdapter::new().discover_endpoints()
+            })
+            .await
+            .map_err(|e| format!("serial endpoint discovery task failed: {e}"))?
+            .map_err(|e| e.to_string())?;
             Ok(endpoints
                 .into_iter()
                 .map(|ep| EndpointItem {
@@ -266,10 +441,13 @@ pub fn enumerate_endpoints(
                 .collect())
         }
         "local-shell" => {
-            let endpoints = state
-                .local_shell_adapter
-                .discover_endpoints()
-                .map_err(|e| e.to_string())?;
+            // Shell/WSL 探测会启动平台命令，同样属于不可预测的阻塞 I/O。
+            let endpoints = tauri::async_runtime::spawn_blocking(|| {
+                crate::plugins::local_shell::LocalShellAdapter::new().discover_endpoints()
+            })
+            .await
+            .map_err(|e| format!("local shell endpoint discovery task failed: {e}"))?
+            .map_err(|e| e.to_string())?;
             Ok(endpoints
                 .into_iter()
                 .map(|ep| EndpointItem {
@@ -986,12 +1164,15 @@ async fn connect_session_ssh(
         session_id,
         ..
     } = request;
-    let params_for_config = params.clone();
-    let ssh_config: crate::plugins::ssh::SshConfig = serde_json::from_value(params_for_config)
-        .map_err(|e| format!("SSH 配置解析失败: {}", e))?;
+
+    let effective_session_id = session_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    secure_ssh_session_params(&state, &effective_session_id, &mut params)?;
+    let ssh_config = hydrate_ssh_config(&state, &params)?;
 
     // 将 journald_enabled 提升为 params 的通用字段（不再耦合 SshConfig）。
-    // reconfigure/restore 时优先复用 params 中已有值，保证向前向后兼容。
+    // reconfigure/restore 统一从当前 Session params 读取。
     let journald_enabled_val = if let Some(obj) = params.as_object_mut() {
         if let Some(existing) = obj.get("journald_enabled").and_then(|v| v.as_bool()) {
             existing
@@ -1070,7 +1251,7 @@ async fn connect_session_ssh(
                 transfer_enabled: transfer_enabled_val,
                 transfer_protocol: Some(transfer_protocol_val.clone()),
                 send_bar_enabled: send_bar_enabled_val,
-                id_override: session_id.clone(),
+                id_override: Some(effective_session_id.clone()),
             },
             side_channel,
             channel_factory,
@@ -2108,7 +2289,17 @@ pub fn save_sessions(app: AppHandle, state: State<'_, AppState>) -> Result<(), S
 #[tauri::command]
 pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app);
-    let saved = SessionStore::load_from_disk(&path)?;
+    let mut saved = SessionStore::load_from_disk(&path)?;
+
+    // TauTerm is still in active development: old SSH persistence formats are
+    // not migrated. Secret fields are discarded before data reaches the WebView;
+    // sessions missing the current credential reference must simply be reconfigured.
+    for session in &mut saved {
+        if session.plugin_id == "ssh" {
+            strip_ssh_secret_fields(&mut session.params)?;
+        }
+    }
+
     Ok(saved
         .into_iter()
         .map(|s| SavedSessionInfo {
@@ -2116,8 +2307,6 @@ pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
             name: s.name,
             connection_type: s.plugin_id.clone(),
             endpoint: s.endpoint,
-            // 原样返回 params：会话配置（含 iperf 的 version/listen_ip/listen_port）
-            // 持久化记忆——版本在连接对话框中配置，重启后必须保持用户选择
             params: s.params,
             timestamp: s.timestamp,
             plugin_id: s.plugin_id,
@@ -2160,6 +2349,10 @@ pub fn save_session_config(
     } else {
         uuid::Uuid::new_v4().to_string()
     };
+
+    if pid == "ssh" {
+        secure_ssh_session_params(&state, &id, &mut params)?;
+    }
 
     // TRDP Workspace is edited and persisted by the custom session view rather
     // than the connection form. Reconfiguring a saved/disconnected TRDP
@@ -2234,10 +2427,28 @@ pub fn resolve_local_shell_session_name(params: Value) -> Result<String, String>
 #[tauri::command]
 pub fn delete_session_config(
     app: AppHandle,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    SessionStore::delete_config_from_disk(&app, &session_id)
+    let path = SessionStore::sessions_file_path(&app);
+    let is_ssh = SessionStore::load_from_disk(&path)
+        .ok()
+        .and_then(|sessions| sessions.into_iter().find(|saved| saved.id == session_id))
+        .is_some_and(|saved| saved.plugin_id == "ssh");
+
+    SessionStore::delete_config_from_disk(&app, &session_id)?;
+
+    if is_ssh {
+        let account = ssh_credential_account(&session_id);
+        if let Err(error) = state.credential_store.delete_credential(&account) {
+            log::warn!(
+                "Unable to remove SSH credential after deleting session {}: {}",
+                session_id,
+                error
+            );
+        }
+    }
+    Ok(())
 }
 
 // ── 凭据存储命令 ────────────────────────────────────
@@ -2268,7 +2479,8 @@ pub fn store_credential(
     };
 
     let cv = match ct {
-        CredentialType::Password | CredentialType::Token => CredentialValue::Password(value),
+        CredentialType::Password => CredentialValue::Password(value),
+        CredentialType::Token => CredentialValue::Token(value),
         CredentialType::SshKey => CredentialValue::SshKey {
             private_key: value,
             passphrase: None,
@@ -4322,4 +4534,60 @@ pub async fn iperf_get_status(
         dynamic_params: IperfDynamicParams::default(),
         last_summary: None,
     })
+}
+
+#[cfg(test)]
+mod command_security_tests {
+    use super::*;
+    use crate::security::credential_store::CredentialValue;
+
+    #[test]
+    fn ssh_secret_fields_are_removed_from_persisted_params() {
+        let mut params = serde_json::json!({
+            "host": "example.invalid",
+            "username": "tester",
+            "auth_method": "key",
+            "password": "should-not-persist",
+            "private_key": "private-key-material",
+            "passphrase": "secret",
+            "credential_account": "ssh-session:test"
+        });
+
+        strip_ssh_secret_fields(&mut params).unwrap();
+
+        assert!(params.get("password").is_none());
+        assert!(params.get("private_key").is_none());
+        assert!(params.get("passphrase").is_none());
+        assert_eq!(params["credential_account"], "ssh-session:test");
+    }
+
+    #[test]
+    fn ssh_credential_type_must_match_auth_method() {
+        assert!(credential_matches_auth(
+            "password",
+            &CredentialValue::Password("secret".into())
+        ));
+        assert!(credential_matches_auth(
+            "key",
+            &CredentialValue::SshKey {
+                private_key: "key".into(),
+                passphrase: None,
+            }
+        ));
+        assert!(!credential_matches_auth(
+            "password",
+            &CredentialValue::SshKey {
+                private_key: "key".into(),
+                passphrase: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn ssh_session_credential_account_is_stable() {
+        assert_eq!(
+            ssh_credential_account("00000000-0000-0000-0000-000000000001"),
+            "ssh-session:00000000-0000-0000-0000-000000000001"
+        );
+    }
 }
