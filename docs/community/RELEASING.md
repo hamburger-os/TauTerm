@@ -40,15 +40,11 @@ npm run build:release
 
 `build:release` may update the pinned stable Rust version. Review and commit that toolchain change with the release PR. Merge only after normal CI passes.
 
-## Windows release signing prerequisite
+## Windows release trust status
 
-正式 Windows Release 是 fail-closed 的 Authenticode 发布。仓库 Actions secrets 必须提供：
+当前开发阶段的 Windows 发布**不要求 Authenticode**。Release workflow 仍然 fail-closed 地要求并验证 Tauri updater 签名，但 NSIS、主程序、TauTerm service 和 TRDP helper 当前可能没有 Windows publisher signature，因此 Windows reputation/SmartScreen 提示属于当前已知发布限制。
 
-- `WINDOWS_CODE_SIGNING_PFX_BASE64`：发布者 PFX 证书的 Base64 内容；
-- `WINDOWS_CODE_SIGNING_PFX_PASSWORD`：PFX 导出密码；
-- `WINDOWS_CODE_SIGNING_TIMESTAMP_URL`：证书颁发方提供的 RFC 3161 时间戳服务地址。
-
-PFX 文件和密码不得提交到仓库。Release workflow 会把证书临时导入 runner 的当前用户证书库，用动态 Tauri 配置签名主程序/NSIS 安装器，同时签名 TauTerm 自有的 Windows service 与 TRDP helper；随后逐个验证 Authenticode 签名、签名者和时间戳。任一 secret 缺失、签名失败或验证失败都会终止发布。
+在 TauTerm 进入面向广泛生产分发的 Windows 发布阶段前，应恢复 Authenticode + RFC 3161 时间戳，并在 workflow 中重新建立 signer/timestamp 的 fail-closed 验证。PFX、密码和时间戳配置届时只能来自 Actions secrets，不得提交到仓库。
 
 ## 2. Run the permanent Release workflow
 
