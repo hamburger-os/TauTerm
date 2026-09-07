@@ -299,11 +299,12 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 
 ### Pane-relative Adaptive Content
 
-- `SplitView.paneSurface` 是命名为 `session-pane` 的 inline-size CSS container；custom content 的窄宽度适配必须以真实 Pane 为基准，而不是以 app/window viewport 为基准。
+- `SplitView.paneSurface` 是命名为 `session-pane` 的 **size CSS container**；custom content 的宽度与高度适配都必须以真实 Pane 为基准，而不是以 app/window viewport 为基准。
 - TFTP / iperf / TRDP 等 custom content 优先使用 `@container session-pane (...)` 完成重排；**不得为了纯视觉/布局响应再给每个插件增加 ResizeObserver 或轮询**。
-- 当 Pane 变短时，交互控件必须始终可达：负责滚动的容器要明确，包含按钮/表单的 flex 子项不得因默认 shrink + `overflow: hidden` 被压扁裁切。
-- 窄 Pane 可以把多列内容堆叠为单列、把局部区域改为横向滚动，但不能通过隐藏关键控件来“适配”。
-- Pane 自身已有滚动时，插件避免制造无必要的同轴多层滚动；确需内部滚动（日志、传输列表、长表格）时必须限定为明确的数据区域。
+- 当 Pane 变短时，允许进入紧凑密度，但不能隐藏功能：优先减小空白、卡片 padding、表格空状态高度，并利用已有横向空间减少不必要的纵向堆叠。
+- custom Session 的根视图负责自己的滚动边界；Split Pane surface 不再额外制造同轴外层滚动。确需内部滚动（日志、传输列表、长表格）时必须限定为明确的数据区域。
+- 窄 Pane 可以把复杂对象编辑器堆叠为单列、把局部区域改为横向滚动；但简单设置区在“窄且短”的 2×2 Pane 中应优先利用两列，避免为了宽度适配反而制造过长的纵向页面。
+- 所有关键按钮/表单在 1 / 2 / 4 Pane 与拖动后的短 Pane 中都必须可达。
 
 ---
 
