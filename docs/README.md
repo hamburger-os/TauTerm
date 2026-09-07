@@ -93,6 +93,7 @@ flowchart TB
 下面文档描述长期方向，不代表已经发布：
 
 - [产品战略](product/PRODUCT_STRATEGY.md)
+- [产品成熟度与执行门槛](product/PRODUCT_MATURITY_PLAN.md)
 - [硬件生态方向](product/HARDWARE_ECOSYSTEM.md)
 - [商业化战略](product/COMMERCIALIZATION.md)
 
