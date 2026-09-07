@@ -2396,16 +2396,15 @@ pub fn save_session_config(
                 .and_then(|handle| handle.params.get("trdp_workspace"))
                 .cloned()
         });
-        let persisted_workspace = active_workspace.or_else(|| {
+        let persisted_workspace = if active_workspace.is_some() {
+            active_workspace
+        } else {
             let path = SessionStore::sessions_file_path(&app);
-            SessionStore::load_from_disk(&path)
-                .ok()?
+            SessionStore::load_from_disk(&path)?
                 .into_iter()
-                .find(|saved| saved.id == id)?
-                .params
-                .get("trdp_workspace")
-                .cloned()
-        });
+                .find(|saved| saved.id == id)
+                .and_then(|saved| saved.params.get("trdp_workspace").cloned())
+        };
         if let Some(workspace) = persisted_workspace {
             params
                 .as_object_mut()
