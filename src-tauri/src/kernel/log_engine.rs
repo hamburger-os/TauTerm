@@ -197,6 +197,7 @@ pub enum LogCommand {
         session_name: String,
         port_name: String,
         data_mode: String,
+        response: mpsc::SyncSender<Result<LogStatus, String>>,
     },
     /// 停止会话日志
     StopSession { session_id: String },
@@ -502,8 +503,12 @@ impl LogEngine {
                             session_name,
                             port_name,
                             data_mode,
+                            response,
                         } => {
                             if !cfg.session_enabled {
+                                let _ = response.send(Err(
+                                    "Session Data Log is disabled in Settings".to_string(),
+                                ));
                                 continue;
                             }
                             match LogWriter::new(
@@ -522,20 +527,21 @@ impl LogEngine {
                                         session_name,
                                         port_name
                                     );
+                                    let status = LogStatus {
+                                        session_id: session_id.clone(),
+                                        file_name,
+                                        bytes_written: 0,
+                                    };
                                     if let Ok(mut map) = active_logs.lock() {
-                                        map.insert(
-                                            session_id.clone(),
-                                            LogStatus {
-                                                session_id: session_id.clone(),
-                                                file_name,
-                                                bytes_written: 0,
-                                            },
-                                        );
+                                        map.insert(session_id.clone(), status.clone());
                                     }
                                     writers.insert(session_id, writer);
+                                    let _ = response.send(Ok(status));
                                 }
                                 Err(e) => {
-                                    log::error!("无法创建日志文件: {}", e);
+                                    let message = format!("无法创建日志文件: {}", e);
+                                    let _ = response.send(Err(message.clone()));
+                                    log::error!("{}", message);
                                 }
                             }
                         }
@@ -659,7 +665,6 @@ impl LogEngine {
                                 system_date = Some(today);
                             }
                             Err(e) => {
-                                record_system_log_loss("queue or file write failure");
                                 record_system_log_loss(&format!(
                                     "cannot open system log file {:?}: {}",
                                     sys_path, e
