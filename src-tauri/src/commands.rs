@@ -187,14 +187,27 @@ fn credential_matches_auth(
     )
 }
 
-fn strip_ssh_secret_fields(params: &mut Value) -> Result<(), String> {
+fn strip_ssh_secret_fields(params: &mut Value) -> Result<bool, String> {
     let object = params
         .as_object_mut()
         .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
-    object.remove("password");
-    object.remove("private_key");
-    object.remove("passphrase");
-    Ok(())
+    let mut changed = false;
+    changed |= object.remove("password").is_some();
+    changed |= object.remove("private_key").is_some();
+    changed |= object.remove("passphrase").is_some();
+    Ok(changed)
+}
+
+fn scrub_ssh_secrets_from_saved_sessions(
+    sessions: &mut [crate::kernel::session_store::SavedSession],
+) -> Result<bool, String> {
+    let mut changed = false;
+    for session in sessions {
+        if session.plugin_id == "ssh" {
+            changed |= strip_ssh_secret_fields(&mut session.params)?;
+        }
+    }
+    Ok(changed)
 }
 
 /// Enforce the only supported SSH persistence model:
@@ -247,7 +260,8 @@ fn secure_ssh_session_params(
         SSH_CREDENTIAL_ACCOUNT_KEY.to_string(),
         Value::String(account),
     );
-    strip_ssh_secret_fields(params)
+    strip_ssh_secret_fields(params)?;
+    Ok(())
 }
 
 fn hydrate_ssh_config(
@@ -2291,13 +2305,13 @@ pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app);
     let mut saved = SessionStore::load_from_disk(&path)?;
 
-    // TauTerm is still in active development: old SSH persistence formats are
-    // not migrated. Secret fields are discarded before data reaches the WebView;
-    // sessions missing the current credential reference must simply be reconfigured.
-    for session in &mut saved {
-        if session.plugin_id == "ssh" {
-            strip_ssh_secret_fields(&mut session.params)?;
-        }
+    // SSH has one current persistence model only. Any plaintext authentication
+    // material found in sessions.json is a stale development artifact: scrub it
+    // from disk immediately instead of migrating it. The session card may remain,
+    // but reconnect must be explicitly reconfigured if no current credential
+    // reference exists.
+    if scrub_ssh_secrets_from_saved_sessions(&mut saved)? {
+        SessionStore::replace_saved_sessions(&path, &saved)?;
     }
 
     Ok(saved
@@ -2451,89 +2465,7 @@ pub fn delete_session_config(
     Ok(())
 }
 
-// ── 凭据存储命令 ────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CredentialInfo {
-    pub account: String,
-    pub credential_type: String,
-    pub description: String,
-}
-
-#[tauri::command]
-pub fn store_credential(
-    state: State<'_, AppState>,
-    account: String,
-    credential_type: String,
-    value: String,
-    description: String,
-) -> Result<(), String> {
-    use crate::security::credential_store::{CredentialType, CredentialValue};
-
-    let ct = match credential_type.as_str() {
-        "password" => CredentialType::Password,
-        "ssh_key" => CredentialType::SshKey,
-        "certificate" => CredentialType::Certificate,
-        "token" => CredentialType::Token,
-        other => return Err(format!("未知凭据类型: {}", other)),
-    };
-
-    let cv = match ct {
-        CredentialType::Password => CredentialValue::Password(value),
-        CredentialType::Token => CredentialValue::Token(value),
-        CredentialType::SshKey => CredentialValue::SshKey {
-            private_key: value,
-            passphrase: None,
-        },
-        CredentialType::Certificate => return Err("证书类型需通过文件导入，暂不支持".into()),
-    };
-
-    state
-        .credential_store
-        .store_credential(&account, ct, cv, &description)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_credential(state: State<'_, AppState>, account: String) -> Result<String, String> {
-    let cv = state
-        .credential_store
-        .get_credential(&account)
-        .map_err(|e| e.to_string())?;
-
-    match cv {
-        crate::security::credential_store::CredentialValue::Password(p)
-        | crate::security::credential_store::CredentialValue::Token(p) => Ok(p),
-        other => Err(format!(
-            "不支持的凭据类型: {:?}",
-            std::mem::discriminant(&other)
-        )),
-    }
-}
-
-#[tauri::command]
-pub fn list_credentials(state: State<'_, AppState>) -> Result<Vec<CredentialInfo>, String> {
-    let entries = state
-        .credential_store
-        .list_credentials()
-        .map_err(|e| e.to_string())?;
-    Ok(entries
-        .into_iter()
-        .map(|e| CredentialInfo {
-            account: e.account,
-            credential_type: format!("{:?}", e.credential_type),
-            description: e.description,
-        })
-        .collect())
-}
-
-#[tauri::command]
-pub fn delete_credential(state: State<'_, AppState>, account: String) -> Result<(), String> {
-    state
-        .credential_store
-        .delete_credential(&account)
-        .map_err(|e| e.to_string())
-}
+// ── 凭据存储状态 ────────────────────────────────────
 
 #[tauri::command]
 pub fn credential_storage_status(
@@ -4589,5 +4521,45 @@ mod command_security_tests {
             ssh_credential_account("00000000-0000-0000-0000-000000000001"),
             "ssh-session:00000000-0000-0000-0000-000000000001"
         );
+    }
+}
+
+
+#[cfg(test)]
+mod ssh_persistence_security_tests {
+    use super::*;
+
+    #[test]
+    fn strips_all_plaintext_ssh_secret_fields() {
+        let mut params = serde_json::json!({
+            "host": "example.invalid",
+            "username": "dev",
+            "auth_method": "key",
+            "password": "secret",
+            "private_key": "private-key",
+            "passphrase": "passphrase",
+            "credential_account": "ssh-session:existing"
+        });
+
+        assert!(strip_ssh_secret_fields(&mut params).unwrap());
+        assert!(params.get("password").is_none());
+        assert!(params.get("private_key").is_none());
+        assert!(params.get("passphrase").is_none());
+        assert_eq!(
+            params.get("credential_account").and_then(Value::as_str),
+            Some("ssh-session:existing")
+        );
+    }
+
+    #[test]
+    fn reference_only_ssh_params_need_no_scrub() {
+        let mut params = serde_json::json!({
+            "host": "example.invalid",
+            "username": "dev",
+            "auth_method": "password",
+            "credential_account": "ssh-session:existing"
+        });
+
+        assert!(!strip_ssh_secret_fields(&mut params).unwrap());
     }
 }
