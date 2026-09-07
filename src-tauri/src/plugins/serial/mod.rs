@@ -6,7 +6,7 @@ use crate::channel::error::SessionError;
 use crate::channel::serial_channel::SerialChannel;
 use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
-    EndpointInfo, PluginManifest, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
+    EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
 };
 use serde::{Deserialize, Serialize};
 
@@ -85,28 +85,6 @@ impl SerialAdapter {
         Self
     }
 
-    /// 创建串口插件清单
-    pub fn manifest() -> PluginManifest {
-        PluginManifest {
-            id: "serial".into(),
-            name: "Serial".into(),
-            version: "1.0.0".into(),
-            category: "terminal".into(),
-            description: "串口终端会话".into(),
-            icon: "serial".into(),
-            content_type: "terminal".into(),
-            capabilities: vec![
-                "connection".into(),
-                "transfer".into(),
-                "endpoint_discovery".into(),
-            ],
-            transfer_protocols: vec![
-                TransferProtocolType::ymodem(),
-                TransferProtocolType::xmodem(),
-                TransferProtocolType::zmodem(),
-            ],
-        }
-    }
 
     /// 从 JSON Value 解析串口参数
     fn parse_params(params: &serde_json::Value) -> SerialConfig {
