@@ -186,3 +186,48 @@ pub enum ConfigStoreError {
     #[error("内部锁错误")]
     LockError,
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tauterm-config-store-{}-{}",
+            name,
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    #[test]
+    fn config_store_persists_across_reopen() {
+        let dir = temp_path("reopen");
+        let path = dir.join("settings.json");
+
+        let store = ConfigStore::new();
+        store.configure_persistence(path.clone()).unwrap();
+        store.set("workspace.sample", &42_u64).unwrap();
+
+        let reopened = ConfigStore::new();
+        reopened.configure_persistence(path.clone()).unwrap();
+        assert_eq!(reopened.get::<u64>("workspace.sample"), Some(42));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn config_store_rejects_future_schema_without_migration() {
+        let dir = temp_path("future");
+        let path = dir.join("settings.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, r#"{"version":999,"namespaces":{"test":{"value":1}}}"#).unwrap();
+
+        let store = ConfigStore::new();
+        store.configure_persistence(path.clone()).unwrap();
+        assert_eq!(store.get::<u64>("test.value"), None);
+        assert!(path.with_extension("json.invalid.bak").exists());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
