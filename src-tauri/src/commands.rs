@@ -2357,7 +2357,7 @@ pub fn set_network_send_target(
 
 #[tauri::command]
 pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
-    let path = SessionStore::sessions_file_path(&app);
+    let path = SessionStore::sessions_file_path(&app)?;
     let mut saved = SessionStore::load_from_disk(&path)?;
 
     // SSH has one current persistence model only. Any plaintext authentication
@@ -2439,7 +2439,7 @@ pub fn save_session_config(
         let persisted_workspace = if active_workspace.is_some() {
             active_workspace
         } else {
-            let path = SessionStore::sessions_file_path(&app);
+            let path = SessionStore::sessions_file_path(&app)?;
             SessionStore::load_from_disk(&path)?
                 .into_iter()
                 .find(|saved| saved.id == id)
