@@ -238,11 +238,11 @@ pub fn run() {
             let _ = window.center();
 
             if let Some(state) = app.try_state::<AppState>() {
-                let settings_path = app
+                let config_dir = app
                     .path()
                     .app_config_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                    .join("settings.json");
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let settings_path = config_dir.join("settings.json");
                 if let Err(error) = state.config_store.configure_persistence(settings_path) {
                     log::warn!("配置存储初始化失败: {}", error);
                 } else {
@@ -275,6 +275,13 @@ pub fn run() {
                                 .get::<u64>("logging.retention_days"),
                         });
                     }
+                }
+
+                if let Err(error) = state
+                    .host_key_verifier
+                    .configure_known_hosts(config_dir.join("known_hosts.json"))
+                {
+                    log::warn!("SSH known-host 存储初始化失败: {}", error);
                 }
             }
 
