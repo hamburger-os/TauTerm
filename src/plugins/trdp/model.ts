@@ -54,6 +54,7 @@ export type TrdpEvent = {
   dropped_frames?: number;
   error?: string;
   state?: TrdpObject["state"];
+  can_confirm?: boolean;
 };
 
 export type TrdpObject = {
@@ -209,12 +210,34 @@ export type EncodedDataset = {
   payload_bytes: number;
   payload_hex: string;
 };
+export type CaptureFlowSummary = {
+  key: string;
+  msg: string;
+  com_id: number;
+  src: string;
+  dst: string;
+  count: number;
+  last_seq?: number;
+  size?: number;
+  link: string;
+  missed: number;
+  errors: number;
+  min_interval_us?: number;
+  avg_interval_us?: number;
+  max_interval_us?: number;
+  jitter_us?: number;
+};
+export type CaptureSummary = {
+  packet_count: number;
+  flows: CaptureFlowSummary[];
+};
 export type CaptureResult = {
   capture_id: string;
   frame_count: number;
   packet_count: number;
   dropped_frames: number;
   packets: TrdpEvent[];
+  flows: CaptureFlowSummary[];
 };
 export type RuntimeState = {
   objects: Record<string, TrdpObject["state"]>;
