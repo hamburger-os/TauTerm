@@ -187,7 +187,6 @@ pub enum ConfigStoreError {
     LockError,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,7 +220,11 @@ mod tests {
         let dir = temp_path("future");
         let path = dir.join("settings.json");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(&path, r#"{"version":999,"namespaces":{"test":{"value":1}}}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"version":999,"namespaces":{"test":{"value":1}}}"#,
+        )
+        .unwrap();
 
         let store = ConfigStore::new();
         store.configure_persistence(path.clone()).unwrap();
