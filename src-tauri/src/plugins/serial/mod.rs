@@ -171,10 +171,66 @@ impl ProtocolAdapter for SerialAdapter {
         })?;
         Ok(ports
             .into_iter()
-            .map(|p| EndpointInfo {
-                name: p.port_name.clone(),
-                description: p.port_name,
-                params: None,
+            .map(|port| {
+                let port_name = port.port_name.clone();
+                let (description, identity) = match &port.port_type {
+                    serialport::SerialPortType::UsbPort(info) => {
+                        let label = info
+                            .product
+                            .as_deref()
+                            .or(info.manufacturer.as_deref())
+                            .unwrap_or("USB Serial");
+                        let description = format!(
+                            "{} — {} [{:04X}:{:04X}]",
+                            port_name, label, info.vid, info.pid
+                        );
+                        let stable_id = info.serial_number.as_ref().map(|serial| {
+                            format!("usb:{:04x}:{:04x}:{}", info.vid, info.pid, serial)
+                        });
+                        (
+                            description,
+                            serde_json::json!({
+                                "kind": "usb",
+                                "system_port": port_name,
+                                "vid": info.vid,
+                                "pid": info.pid,
+                                "serial_number": info.serial_number,
+                                "manufacturer": info.manufacturer,
+                                "product": info.product,
+                                "stable_id": stable_id,
+                            }),
+                        )
+                    }
+                    serialport::SerialPortType::BluetoothPort => (
+                        format!("{} — Bluetooth Serial", port_name),
+                        serde_json::json!({
+                            "kind": "bluetooth",
+                            "system_port": port_name,
+                        }),
+                    ),
+                    serialport::SerialPortType::PciPort => (
+                        format!("{} — PCI Serial", port_name),
+                        serde_json::json!({
+                            "kind": "pci",
+                            "system_port": port_name,
+                        }),
+                    ),
+                    serialport::SerialPortType::Unknown => (
+                        port_name.clone(),
+                        serde_json::json!({
+                            "kind": "unknown",
+                            "system_port": port_name,
+                        }),
+                    ),
+                };
+
+                EndpointInfo {
+                    name: port_name,
+                    description,
+                    params: Some(serde_json::json!({
+                        "device_identity": identity,
+                    })),
+                }
             })
             .collect())
     }
