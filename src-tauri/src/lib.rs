@@ -70,7 +70,6 @@ pub struct AppState {
     pub virtual_port_manager: Mutex<Box<dyn VirtualPortBackend>>,
 }
 
-
 fn built_in_plugin_manifests() -> Vec<PluginManifest> {
     const MANIFESTS: [&str; 8] = [
         include_str!("../../src/plugin-manifests/serial.json"),
