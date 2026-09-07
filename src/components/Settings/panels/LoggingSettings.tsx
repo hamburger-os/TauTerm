@@ -36,6 +36,10 @@ export default function LoggingSettings() {
   const configError = loadError ?? systemConfigError ?? sessionConfigError;
   const skipSystemPersistRef = useRef(false);
   const skipSessionPersistRef = useRef(false);
+  const systemPersistQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const sessionPersistQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const systemRevisionRef = useRef(0);
+  const sessionRevisionRef = useRef(0);
   const [health, setHealth] = useState<LogHealth>({
     dropped_session_entries: 0,
     dropped_system_entries: 0,
@@ -83,17 +87,29 @@ export default function LoggingSettings() {
       return;
     }
 
-    void invoke("set_system_log_config", { enabled: systemEnabled, level: systemLevel })
-      .then(() => setSystemConfigError(null))
-      .catch(async error => {
+    const revision = ++systemRevisionRef.current;
+    const desiredEnabled = systemEnabled;
+    const desiredLevel = systemLevel;
+    const persist = async () => {
+      try {
+        await invoke("set_system_log_config", {
+          enabled: desiredEnabled,
+          level: desiredLevel,
+        });
+        if (revision === systemRevisionRef.current) {
+          setSystemConfigError(null);
+        }
+      } catch (error) {
+        if (revision !== systemRevisionRef.current) return;
         setSystemConfigError(String(error));
         try {
           const config = await invoke<{
             system_enabled: boolean;
             system_level: string;
           }>("get_log_config");
+          if (revision !== systemRevisionRef.current) return;
           const needsRestore =
-            config.system_enabled !== systemEnabled || config.system_level !== systemLevel;
+            config.system_enabled !== desiredEnabled || config.system_level !== desiredLevel;
           if (needsRestore) {
             skipSystemPersistRef.current = true;
             setSystemEnabled(config.system_enabled);
@@ -102,7 +118,12 @@ export default function LoggingSettings() {
         } catch {
           // Keep the explicit persistence error visible; do not invent a local success state.
         }
-      });
+      }
+    };
+
+    systemPersistQueueRef.current = systemPersistQueueRef.current
+      .catch(() => undefined)
+      .then(persist);
   }, [hydrated, systemEnabled, systemLevel]);
 
   useEffect(() => {
@@ -112,17 +133,22 @@ export default function LoggingSettings() {
       return;
     }
 
-    void invoke("update_log_config", {
-      config: {
-        session_enabled: enabled,
-        file_max_size: fileMaxSize * 1024 * 1024,
-        buffer_size: bufferSize,
-        flush_interval_ms: flushInterval,
-        retention_days: retentionDays,
-      },
-    })
-      .then(() => setSessionConfigError(null))
-      .catch(async error => {
+    const revision = ++sessionRevisionRef.current;
+    const desired = {
+      session_enabled: enabled,
+      file_max_size: fileMaxSize * 1024 * 1024,
+      buffer_size: bufferSize,
+      flush_interval_ms: flushInterval,
+      retention_days: retentionDays,
+    };
+    const persist = async () => {
+      try {
+        await invoke("update_log_config", { config: desired });
+        if (revision === sessionRevisionRef.current) {
+          setSessionConfigError(null);
+        }
+      } catch (error) {
+        if (revision !== sessionRevisionRef.current) return;
         setSessionConfigError(String(error));
         try {
           const config = await invoke<{
@@ -132,16 +158,17 @@ export default function LoggingSettings() {
             flush_interval_ms: number;
             retention_days: number;
           }>("get_log_config");
+          if (revision !== sessionRevisionRef.current) return;
           const restoredFileMaxSize = Math.max(
             1,
             Math.round(config.file_max_size / (1024 * 1024)),
           );
           const needsRestore =
-            config.session_enabled !== enabled
+            config.session_enabled !== desired.session_enabled
             || restoredFileMaxSize !== fileMaxSize
-            || config.buffer_size !== bufferSize
-            || config.flush_interval_ms !== flushInterval
-            || config.retention_days !== retentionDays;
+            || config.buffer_size !== desired.buffer_size
+            || config.flush_interval_ms !== desired.flush_interval_ms
+            || config.retention_days !== desired.retention_days;
           if (needsRestore) {
             skipSessionPersistRef.current = true;
             setEnabled(config.session_enabled);
@@ -153,7 +180,12 @@ export default function LoggingSettings() {
         } catch {
           // Keep the explicit persistence error visible; do not invent a local success state.
         }
-      });
+      }
+    };
+
+    sessionPersistQueueRef.current = sessionPersistQueueRef.current
+      .catch(() => undefined)
+      .then(persist);
   }, [hydrated, enabled, fileMaxSize, bufferSize, flushInterval, retentionDays]);
 
   useEffect(() => {
