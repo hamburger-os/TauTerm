@@ -137,7 +137,7 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   }, [workspaceLayoutLoaded]);
 
   // Split Tree / assignment / ratio 变化后自动保存；拖动 divider 时短防抖。
-  // Rust ConfigStore 是持久化权威源，localStorage 不再承载工程 Workspace。
+  // Rust ConfigStore 是持久化权威源，浏览器本地存储不再承载工程 Workspace。
   useEffect(() => {
     if (!workspaceLayoutLoaded || restoringWorkspaceRef.current) return;
     const timer = window.setTimeout(persistWorkspaceNow, 160);
