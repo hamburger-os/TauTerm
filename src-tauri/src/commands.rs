@@ -126,7 +126,6 @@ pub struct SaveSessionConfigRequest {
 }
 
 const SSH_CREDENTIAL_ACCOUNT_KEY: &str = "credential_account";
-const SSH_CREDENTIAL_MIGRATION_PENDING_KEY: &str = "credential_migration_pending";
 
 fn ssh_credential_account(session_id: &str) -> String {
     format!("ssh-session:{session_id}")
@@ -195,16 +194,17 @@ fn strip_ssh_secret_fields(params: &mut Value) -> Result<(), String> {
     object.remove("password");
     object.remove("private_key");
     object.remove("passphrase");
-    object.remove(SSH_CREDENTIAL_MIGRATION_PENDING_KEY);
     Ok(())
 }
 
+/// Enforce the only supported SSH persistence model:
+/// - the credential account is deterministically derived from the Session id;
+/// - plaintext authentication material is accepted only as transient input;
+/// - persisted/session params contain only the credential reference.
 fn secure_ssh_session_params(
     state: &AppState,
     session_id: &str,
     params: &mut Value,
-    existing_params: Option<&Value>,
-    require_credential: bool,
 ) -> Result<(), String> {
     use crate::security::credential_store::CredentialStoreError;
 
@@ -213,36 +213,9 @@ fn secure_ssh_session_params(
         .and_then(Value::as_str)
         .unwrap_or("password")
         .to_string();
+    let account = ssh_credential_account(session_id);
 
-    let existing_account = params
-        .get(SSH_CREDENTIAL_ACCOUNT_KEY)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .map(str::to_string)
-        .or_else(|| {
-            existing_params
-                .and_then(|existing| existing.get(SSH_CREDENTIAL_ACCOUNT_KEY))
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .map(str::to_string)
-        });
-
-    let mut credential = ssh_credential_from_params(params)?;
-    if credential.is_none() {
-        if let Some(existing) = existing_params {
-            let existing_auth = existing
-                .get("auth_method")
-                .and_then(Value::as_str)
-                .unwrap_or("password");
-            if existing_auth == auth_method {
-                credential = ssh_credential_from_params(existing)?;
-            }
-        }
-    }
-
-    let account = existing_account.unwrap_or_else(|| ssh_credential_account(session_id));
-
-    if let Some((credential_type, credential_value)) = credential {
+    if let Some((credential_type, credential_value)) = ssh_credential_from_params(params)? {
         let username = params
             .get("username")
             .and_then(Value::as_str)
@@ -259,28 +232,11 @@ fn secure_ssh_session_params(
     } else {
         match state.credential_store.get_credential(&account) {
             Ok(value) if credential_matches_auth(&auth_method, &value) => {}
-            Ok(_) => {
-                return Err("SSH 认证方式已变更，请重新输入对应凭据".into());
-            }
-            Err(CredentialStoreError::NotFound(_)) if !require_credential => {
-                strip_ssh_secret_fields(params)?;
-                return Ok(());
-            }
+            Ok(_) => return Err("SSH 认证方式已变更，请重新输入对应凭据".into()),
             Err(CredentialStoreError::NotFound(_)) => {
                 return Err("SSH 会话没有可用的安全凭据，请重新输入密码或私钥".into());
             }
-            Err(error) if !require_credential => {
-                log::warn!(
-                    "SSH credential lookup unavailable during optional migration (session={}): {}",
-                    session_id,
-                    error
-                );
-                strip_ssh_secret_fields(params)?;
-                return Ok(());
-            }
-            Err(error) => {
-                return Err(format!("无法读取 SSH 安全凭据: {error}"));
-            }
+            Err(error) => return Err(format!("无法读取 SSH 安全凭据: {error}")),
         }
     }
 
@@ -307,7 +263,7 @@ fn hydrate_ssh_config(
         .get(SSH_CREDENTIAL_ACCOUNT_KEY)
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "SSH 会话缺少安全凭据引用".to_string())?;
+        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
 
     let credential = state
         .credential_store
@@ -1212,34 +1168,11 @@ async fn connect_session_ssh(
     let effective_session_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let path = SessionStore::sessions_file_path(&app);
-    let existing_saved = SessionStore::load_from_disk(&path)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|saved| saved.id == effective_session_id);
-    let existing_params = existing_saved.as_ref().map(|saved| &saved.params);
-
-    secure_ssh_session_params(
-        &state,
-        &effective_session_id,
-        &mut params,
-        existing_params,
-        true,
-    )?;
-
-    // 旧版本可能把 SSH 密码/私钥直接写入 sessions.json。连接前成功迁移后立即
-    // 回写为 credential_account 引用，缩短明文凭据在磁盘上的存续时间。
-    if let Some(mut saved) = existing_saved {
-        if saved.params != params {
-            saved.params = params.clone();
-            SessionStore::save_config_to_disk(&app, saved)?;
-        }
-    }
-
+    secure_ssh_session_params(&state, &effective_session_id, &mut params)?;
     let ssh_config = hydrate_ssh_config(&state, &params)?;
 
     // 将 journald_enabled 提升为 params 的通用字段（不再耦合 SshConfig）。
-    // reconfigure/restore 时优先复用 params 中已有值，保证向前向后兼容。
+    // reconfigure/restore 统一从当前 Session params 读取。
     let journald_enabled_val = if let Some(obj) = params.as_object_mut() {
         if let Some(existing) = obj.get("journald_enabled").and_then(|v| v.as_bool()) {
             existing
@@ -2354,55 +2287,16 @@ pub fn save_sessions(app: AppHandle, state: State<'_, AppState>) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn load_sessions(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<Vec<SavedSessionInfo>, String> {
+pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app);
     let mut saved = SessionStore::load_from_disk(&path)?;
 
+    // TauTerm is still in active development: old SSH persistence formats are
+    // not migrated. Secret fields are discarded before data reaches the WebView;
+    // sessions missing the current credential reference must simply be reconfigured.
     for session in &mut saved {
-        if session.plugin_id != "ssh" {
-            continue;
-        }
-
-        let original = session.params.clone();
-        let mut sanitized = original.clone();
-        match secure_ssh_session_params(&state, &session.id, &mut sanitized, None, false) {
-            Ok(()) => {
-                if sanitized != original {
-                    let mut migrated = session.clone();
-                    migrated.params = sanitized.clone();
-                    if let Err(error) = SessionStore::save_config_to_disk(&app, migrated) {
-                        log::warn!(
-                            "Unable to persist migrated SSH credential reference (session={}): {}",
-                            session.id,
-                            error
-                        );
-                    } else {
-                        session.params = sanitized;
-                    }
-                }
-            }
-            Err(error) => {
-                // 绝不把旧 sessions.json 中的明文密码/私钥再次送到 WebView。
-                // 如果 fallback vault 尚未解锁，保留磁盘旧记录以便用户解锁后
-                // 在下一次连接/编辑时完成迁移，但前端只收到脱敏参数。
-                log::warn!(
-                    "SSH credential migration deferred (session={}): {}",
-                    session.id,
-                    error
-                );
-                strip_ssh_secret_fields(&mut session.params)?;
-                session
-                    .params
-                    .as_object_mut()
-                    .ok_or("SSH 会话参数必须是 JSON object")?
-                    .insert(
-                        SSH_CREDENTIAL_MIGRATION_PENDING_KEY.to_string(),
-                        Value::Bool(true),
-                    );
-            }
+        if session.plugin_id == "ssh" {
+            strip_ssh_secret_fields(&mut session.params)?;
         }
     }
 
@@ -2457,13 +2351,7 @@ pub fn save_session_config(
     };
 
     if pid == "ssh" {
-        let path = SessionStore::sessions_file_path(&app);
-        let existing_params = SessionStore::load_from_disk(&path)
-            .unwrap_or_default()
-            .into_iter()
-            .find(|saved| saved.id == id)
-            .map(|saved| saved.params);
-        secure_ssh_session_params(&state, &id, &mut params, existing_params.as_ref(), true)?;
+        secure_ssh_session_params(&state, &id, &mut params)?;
     }
 
     // TRDP Workspace is edited and persisted by the custom session view rather
@@ -2543,23 +2431,15 @@ pub fn delete_session_config(
     session_id: String,
 ) -> Result<(), String> {
     let path = SessionStore::sessions_file_path(&app);
-    let credential_account = SessionStore::load_from_disk(&path)
+    let is_ssh = SessionStore::load_from_disk(&path)
         .ok()
         .and_then(|sessions| sessions.into_iter().find(|saved| saved.id == session_id))
-        .filter(|saved| saved.plugin_id == "ssh")
-        .map(|saved| {
-            saved
-                .params
-                .get(SSH_CREDENTIAL_ACCOUNT_KEY)
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .map(str::to_string)
-                .unwrap_or_else(|| ssh_credential_account(&session_id))
-        });
+        .is_some_and(|saved| saved.plugin_id == "ssh");
 
     SessionStore::delete_config_from_disk(&app, &session_id)?;
 
-    if let Some(account) = credential_account {
+    if is_ssh {
+        let account = ssh_credential_account(&session_id);
         if let Err(error) = state.credential_store.delete_credential(&account) {
             log::warn!(
                 "Unable to remove SSH credential after deleting session {}: {}",
@@ -4670,7 +4550,6 @@ mod command_security_tests {
             "password": "should-not-persist",
             "private_key": "private-key-material",
             "passphrase": "secret",
-            "credential_migration_pending": true,
             "credential_account": "ssh-session:test"
         });
 
@@ -4679,7 +4558,6 @@ mod command_security_tests {
         assert!(params.get("password").is_none());
         assert!(params.get("private_key").is_none());
         assert!(params.get("passphrase").is_none());
-        assert!(params.get("credential_migration_pending").is_none());
         assert_eq!(params["credential_account"], "ssh-session:test");
     }
 
