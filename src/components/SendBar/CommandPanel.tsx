@@ -31,12 +31,13 @@ const CONFIG_STORE_KEY = ASSET_KEYS.commandSets;
 const ACTIVE_CONFIG_STORE_KEY = ASSET_KEYS.activeCommandSet;
 
 function saveConfigs(configs: CommandConfig[]) {
-  persistAsset(CONFIG_STORE_KEY, configs);
+  return persistAsset(CONFIG_STORE_KEY, configs);
 }
 
 function saveActiveConfig(name: string) {
-  if (name) persistAsset(ACTIVE_CONFIG_STORE_KEY, name);
-  else clearAsset(ACTIVE_CONFIG_STORE_KEY);
+  return name
+    ? persistAsset(ACTIVE_CONFIG_STORE_KEY, name)
+    : clearAsset(ACTIVE_CONFIG_STORE_KEY);
 }
 
 export default function CommandPanel({ sessionId, isActive, onRunningChange }: CommandPanelProps) {
@@ -468,22 +469,24 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   }, [configs, showToast, t]);
 
   // ── 加载内置示例 ──
-  const handleLoadExamples = useCallback(() => {
-    setConfigs(prev => {
-      const existingNames = new Set(prev.map(c => c.name));
-      if (existingNames.has(defaultCommands.name)) {
-        showToast("info", t("sendBar.noNewExamples"));
-        return prev;
-      }
-      const newConfig = { ...defaultCommands, name: defaultCommands.name } as CommandConfig;
-      const updated = [...prev, newConfig];
-      saveConfigs(updated);
-      setActiveConfigName(defaultCommands.name);
-      saveActiveConfig(defaultCommands.name);
+  const handleLoadExamples = useCallback(async () => {
+    const existingNames = new Set(configs.map(c => c.name));
+    if (existingNames.has(defaultCommands.name)) {
+      showToast("info", t("sendBar.noNewExamples"));
+      return;
+    }
+    const newConfig = { ...defaultCommands, name: defaultCommands.name } as CommandConfig;
+    const updated = [...configs, newConfig];
+    setConfigs(updated);
+    setActiveConfigName(defaultCommands.name);
+    const [savedConfigs, savedActive] = await Promise.all([
+      saveConfigs(updated),
+      saveActiveConfig(defaultCommands.name),
+    ]);
+    if (savedConfigs && savedActive) {
       showToast("success", t("sendBar.examplesLoaded", { count: 1 }));
-      return updated;
-    });
-  }, [showToast, t]);
+    }
+  }, [configs, showToast, t]);
 
   const handleExport = useCallback(async () => {
     try {
