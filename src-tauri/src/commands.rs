@@ -310,6 +310,7 @@ pub async fn connect_session(
         "telnet" => connect_session_telnet(app, state, request).await,
         "local-shell" => connect_session_local_shell(app, state, request).await,
         "network" => connect_session_network(app, state, request).await,
+        "trdp" => crate::plugins::trdp::connect_session(app, state, request).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
