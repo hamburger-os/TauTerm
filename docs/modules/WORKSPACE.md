@@ -45,6 +45,28 @@ flowchart LR
   Persist --> Restore["下次启动恢复布局\n不恢复运行时连接"]
 ```
 
+
+
+## 分屏质量矩阵
+
+CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级不变量；视觉 E2E 仍在未来稳定 WebView fixture 后补充。
+
+| 布局 | 结构合同 | 内容合同 |
+|---|---|---|
+| 1 Pane | 单 Pane 无额外 Header inset | Terminal/Custom 均填满工作区 |
+| 横向 2 Pane | 50/50 初始几何，可拖动且保留最小 Pane 尺寸 | 自定义视图按 Pane 宽度响应 |
+| 纵向 2 Pane | 50/50 初始几何 | 高度不足时由内容视图自己滚动 |
+| 2×2 | 四个 0.5×0.5 Pane，不复制同一 Session | TFTP/iperf/TRDP/Network 主操作仍可达 |
+
+结构级 UI 合同：
+
+- `SplitView.paneSurface` 是命名 size container（`session-pane`）；
+- custom view 的 Pane surface 本身 `overflow: hidden`，滚动由 TFTP/iperf/TRDP/Network 等内容视图拥有，避免同轴双滚动；
+- Pane Header 的 24px 内容 inset 与实际 header 几何保持一致；
+- TRDP 顶部 tab strip 高度固定，hover/selected 不改变兄弟按钮几何；
+- TRDP Analysis 在窄 Pane 下从双列折叠为单列；
+- TFTP/iperf 在窄 Pane 下将多列配置折叠为纵向布局。
+
 ## 设计边界
 
 - Pane 是显示容器，不拥有协议连接。
