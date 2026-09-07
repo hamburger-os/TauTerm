@@ -1215,9 +1215,34 @@ async fn connect_session_ssh(
         session_id,
         ..
     } = request;
-    let params_for_config = params.clone();
-    let ssh_config: crate::plugins::ssh::SshConfig = serde_json::from_value(params_for_config)
-        .map_err(|e| format!("SSH 配置解析失败: {}", e))?;
+
+    let effective_session_id =
+        session_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let path = SessionStore::sessions_file_path(&app);
+    let existing_saved = SessionStore::load_from_disk(&path)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|saved| saved.id == effective_session_id);
+    let existing_params = existing_saved.as_ref().map(|saved| &saved.params);
+
+    secure_ssh_session_params(
+        &state,
+        &effective_session_id,
+        &mut params,
+        existing_params,
+        true,
+    )?;
+
+    // 旧版本可能把 SSH 密码/私钥直接写入 sessions.json。连接前成功迁移后立即
+    // 回写为 credential_account 引用，缩短明文凭据在磁盘上的存续时间。
+    if let Some(mut saved) = existing_saved {
+        if saved.params != params {
+            saved.params = params.clone();
+            SessionStore::save_config_to_disk(&app, saved)?;
+        }
+    }
+
+    let ssh_config = hydrate_ssh_config(&state, &params)?;
 
     // 将 journald_enabled 提升为 params 的通用字段（不再耦合 SshConfig）。
     // reconfigure/restore 时优先复用 params 中已有值，保证向前向后兼容。
@@ -1299,7 +1324,7 @@ async fn connect_session_ssh(
                 transfer_enabled: transfer_enabled_val,
                 transfer_protocol: Some(transfer_protocol_val.clone()),
                 send_bar_enabled: send_bar_enabled_val,
-                id_override: session_id.clone(),
+                id_override: Some(effective_session_id.clone()),
             },
             side_channel,
             channel_factory,
@@ -2335,9 +2360,64 @@ pub fn save_sessions(app: AppHandle, state: State<'_, AppState>) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
+pub fn load_sessions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app);
-    let saved = SessionStore::load_from_disk(&path)?;
+    let mut saved = SessionStore::load_from_disk(&path)?;
+
+    for session in &mut saved {
+        if session.plugin_id != "ssh" {
+            continue;
+        }
+
+        let original = session.params.clone();
+        let mut sanitized = original.clone();
+        match secure_ssh_session_params(
+            &state,
+            &session.id,
+            &mut sanitized,
+            None,
+            false,
+        ) {
+            Ok(()) => {
+                if sanitized != original {
+                    let mut migrated = session.clone();
+                    migrated.params = sanitized.clone();
+                    if let Err(error) = SessionStore::save_config_to_disk(&app, migrated) {
+                        log::warn!(
+                            "Unable to persist migrated SSH credential reference (session={}): {}",
+                            session.id,
+                            error
+                        );
+                    } else {
+                        session.params = sanitized;
+                    }
+                }
+            }
+            Err(error) => {
+                // 绝不把旧 sessions.json 中的明文密码/私钥再次送到 WebView。
+                // 如果 fallback vault 尚未解锁，保留磁盘旧记录以便用户解锁后
+                // 在下一次连接/编辑时完成迁移，但前端只收到脱敏参数。
+                log::warn!(
+                    "SSH credential migration deferred (session={}): {}",
+                    session.id,
+                    error
+                );
+                strip_ssh_secret_fields(&mut session.params)?;
+                session
+                    .params
+                    .as_object_mut()
+                    .ok_or("SSH 会话参数必须是 JSON object")?
+                    .insert(
+                        SSH_CREDENTIAL_MIGRATION_PENDING_KEY.to_string(),
+                        Value::Bool(true),
+                    );
+            }
+        }
+    }
+
     Ok(saved
         .into_iter()
         .map(|s| SavedSessionInfo {
@@ -2345,8 +2425,6 @@ pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
             name: s.name,
             connection_type: s.plugin_id.clone(),
             endpoint: s.endpoint,
-            // 原样返回 params：会话配置（含 iperf 的 version/listen_ip/listen_port）
-            // 持久化记忆——版本在连接对话框中配置，重启后必须保持用户选择
             params: s.params,
             timestamp: s.timestamp,
             plugin_id: s.plugin_id,
@@ -2389,6 +2467,22 @@ pub fn save_session_config(
     } else {
         uuid::Uuid::new_v4().to_string()
     };
+
+    if pid == "ssh" {
+        let path = SessionStore::sessions_file_path(&app);
+        let existing_params = SessionStore::load_from_disk(&path)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|saved| saved.id == id)
+            .map(|saved| saved.params);
+        secure_ssh_session_params(
+            &state,
+            &id,
+            &mut params,
+            existing_params.as_ref(),
+            true,
+        )?;
+    }
 
     // TRDP Workspace is edited and persisted by the custom session view rather
     // than the connection form. Reconfiguring a saved/disconnected TRDP
@@ -2463,10 +2557,36 @@ pub fn resolve_local_shell_session_name(params: Value) -> Result<String, String>
 #[tauri::command]
 pub fn delete_session_config(
     app: AppHandle,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    SessionStore::delete_config_from_disk(&app, &session_id)
+    let path = SessionStore::sessions_file_path(&app);
+    let credential_account = SessionStore::load_from_disk(&path)
+        .ok()
+        .and_then(|sessions| sessions.into_iter().find(|saved| saved.id == session_id))
+        .filter(|saved| saved.plugin_id == "ssh")
+        .map(|saved| {
+            saved
+                .params
+                .get(SSH_CREDENTIAL_ACCOUNT_KEY)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| ssh_credential_account(&session_id))
+        });
+
+    SessionStore::delete_config_from_disk(&app, &session_id)?;
+
+    if let Some(account) = credential_account {
+        if let Err(error) = state.credential_store.delete_credential(&account) {
+            log::warn!(
+                "Unable to remove SSH credential after deleting session {}: {}",
+                session_id,
+                error
+            );
+        }
+    }
+    Ok(())
 }
 
 // ── 凭据存储命令 ────────────────────────────────────
