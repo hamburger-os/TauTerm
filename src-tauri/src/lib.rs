@@ -459,10 +459,8 @@ pub fn run() {
                                 log::warn!("退出时关闭会话 {} 失败: {}", id, e);
                             }
                         }
-                        let path = SessionStore::sessions_file_path(app_handle);
-                        if let Err(e) = store.save_to_disk(&path) {
-                            log::warn!("保存会话到磁盘失败: {}", e);
-                        }
+                        // Saved Session Library is configuration state, not an exit snapshot.
+                        // Closing runtime resources must never overwrite it.
                     }
                     if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                         vpm.cleanup_all();
