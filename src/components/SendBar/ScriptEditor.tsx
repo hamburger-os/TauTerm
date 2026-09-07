@@ -82,13 +82,14 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
   // 持久化：Lua Script 是可复用工程资产，统一写 Rust ConfigStore。
   const persistScripts = useCallback((updated: ScriptRecord[]) => {
     dispatch({ type: "SET_SCRIPTS", scripts: updated });
-    persistAsset(ASSET_KEYS.scripts, updated);
+    return persistAsset(ASSET_KEYS.scripts, updated);
   }, [dispatch]);
 
   const persistActive = useCallback((id: string | null) => {
     dispatch({ type: "SET_ACTIVE_SCRIPT", id });
-    if (id) persistAsset(ASSET_KEYS.activeScriptId, id);
-    else clearAsset(ASSET_KEYS.activeScriptId);
+    return id
+      ? persistAsset(ASSET_KEYS.activeScriptId, id)
+      : clearAsset(ASSET_KEYS.activeScriptId);
   }, [dispatch]);
 
   // ── 脚本管理 ──
@@ -228,15 +229,16 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     URL.revokeObjectURL(url);
   }, [activeScript]);
 
-  const handleLoadBuiltinExamples = useCallback(() => {
+  const handleLoadBuiltinExamples = useCallback(async () => {
     const existingIds = new Set(scripts.map(s => s.id));
     const newBuiltins = BUILTIN_SCRIPTS.filter(s => !existingIds.has(s.id));
     if (newBuiltins.length === 0) {
       showToast("info", t("sendBar.noNewExamples"));
       return;
     }
-    persistScripts([...scripts, ...newBuiltins]);
-    showToast("success", t("sendBar.builtinScriptsLoaded", { count: newBuiltins.length }));
+    if (await persistScripts([...scripts, ...newBuiltins])) {
+      showToast("success", t("sendBar.builtinScriptsLoaded", { count: newBuiltins.length }));
+    }
   }, [scripts, persistScripts, showToast, t]);
 
   const handleImport = useCallback(() => {
@@ -274,21 +276,21 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     input.click();
   }, [showToast, t]);
 
-  const handleImportOverwrite = useCallback(() => {
+  const handleImportOverwrite = useCallback(async () => {
     if (!importData || !activeScriptId) return;
     const updated = scripts.map(s =>
       s.id === activeScriptId
         ? { ...s, name: importData.name, code: importData.code, updatedAt: Date.now() }
         : s
     );
-    persistScripts(updated);
+    const saved = await persistScripts(updated);
     dispatch({ type: "SET_SCRIPT_CODE", code: importData.code });
     setImportOpen(false);
     setImportData(null);
-    showToast("success", t("sendBar.importScriptSuccess"));
+    if (saved) showToast("success", t("sendBar.importScriptSuccess"));
   }, [importData, activeScriptId, scripts, persistScripts, dispatch, showToast, t]);
 
-  const handleImportAppend = useCallback(() => {
+  const handleImportAppend = useCallback(async () => {
     if (!importData) return;
     const now = Date.now();
     const newScript: ScriptRecord = {
@@ -299,12 +301,16 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
       updatedAt: now,
     };
     const updated = [...scripts, newScript];
-    persistScripts(updated);
-    persistActive(newScript.id);
+    const [savedScripts, savedActive] = await Promise.all([
+      persistScripts(updated),
+      persistActive(newScript.id),
+    ]);
     dispatch({ type: "SET_SCRIPT_CODE", code: newScript.code });
     setImportOpen(false);
     setImportData(null);
-    showToast("success", t("sendBar.importScriptSuccess"));
+    if (savedScripts && savedActive) {
+      showToast("success", t("sendBar.importScriptSuccess"));
+    }
   }, [importData, scripts, persistScripts, persistActive, dispatch, showToast, t]);
 
   // 行号计算
