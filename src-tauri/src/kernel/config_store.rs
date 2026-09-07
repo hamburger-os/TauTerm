@@ -154,6 +154,37 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// 在一个持久化事务中更新多个非敏感配置键。
+    ///
+    /// 所有值先应用到 next snapshot，原子提交成功后才发布到内存，避免多个相关设置
+    /// 出现部分落盘或“运行态已更新、重启后回退”的状态撕裂。
+    pub fn set_batch(
+        &self,
+        entries: &[(&str, serde_json::Value)],
+    ) -> Result<(), ConfigStoreError> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| ConfigStoreError::LockError)?;
+
+        let mut next = self
+            .data
+            .read()
+            .map_err(|_| ConfigStoreError::LockError)?
+            .clone();
+        for (key, value) in entries {
+            let (ns, k) =
+                Self::parse_key(key).ok_or(ConfigStoreError::InvalidKey((*key).to_string()))?;
+            next.entry(ns.to_string())
+                .or_default()
+                .insert(k.to_string(), value.clone());
+        }
+
+        self.persist_snapshot(&next)?;
+        *self.data.write().map_err(|_| ConfigStoreError::LockError)? = next;
+        Ok(())
+    }
+
     pub fn delete(&self, key: &str) -> Result<(), ConfigStoreError> {
         let (ns, k) = Self::parse_key(key).ok_or(ConfigStoreError::InvalidKey(key.to_string()))?;
         let _mutation = self
@@ -235,6 +266,31 @@ mod tests {
         let reopened = ConfigStore::new();
         reopened.configure_persistence(path.clone()).unwrap();
         assert_eq!(reopened.get::<u64>("workspace.sample"), Some(42));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn config_store_batch_is_persisted_as_one_snapshot() {
+        let dir = temp_path("batch");
+        let path = dir.join("settings.json");
+
+        let store = ConfigStore::new();
+        store.configure_persistence(path.clone()).unwrap();
+        store
+            .set_batch(&[
+                ("logging.system_enabled", serde_json::json!(false)),
+                ("logging.system_level", serde_json::json!("warn")),
+            ])
+            .unwrap();
+
+        let reopened = ConfigStore::new();
+        reopened.configure_persistence(path).unwrap();
+        assert_eq!(reopened.get::<bool>("logging.system_enabled"), Some(false));
+        assert_eq!(
+            reopened.get::<String>("logging.system_level"),
+            Some("warn".to_string())
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }
