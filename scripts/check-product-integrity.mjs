@@ -93,8 +93,24 @@ for (const file of sendBarAssetFiles) {
   const source = await readFile(path.join(ROOT, "src", "components", "SendBar", file), "utf8");
   assert.doesNotMatch(source, /localStorage/, `${file}: engineering assets must persist through the backend ConfigStore`);
 }
+const assetStore = await readFile(path.join(ROOT, "src", "components", "SendBar", "assetStore.ts"), "utf8");
+assert.match(assetStore, /writeQueues/, "engineering asset writes must be serialized per key");
+assert.match(assetStore, /subscribeAsset/, "global engineering assets must synchronize mounted SendBars");
+assert.match(assetStore, /ASSET_PERSISTENCE_ERROR_EVENT/, "engineering asset persistence failures must be observable");
+assert.doesNotMatch(
+  assetStore,
+  /invoke\([^\n]+\)\.catch\(\(\) => \{\}\)/,
+  "engineering asset persistence errors must not be silently swallowed",
+);
+
 const commandPanel = await readFile(path.join(ROOT, "src", "components", "SendBar", "CommandPanel.tsx"), "utf8");
-assert.match(commandPanel, /assets\.command_sets/, "Command asset store key is missing");
+assert.match(commandPanel, /ASSET_KEYS\.commandSets/, "Command asset store key is missing");
+assert.match(commandPanel, /subscribeAsset/, "Command assets must synchronize across mounted SendBars");
+assert.doesNotMatch(
+  commandPanel,
+  /invoke\("set_config"/,
+  "CommandPanel must use the shared engineering asset coordinator",
+);
 
 
 /* Pane UI source contract: source-level guard for the 1/2/2x2 responsive workspace.
@@ -131,6 +147,12 @@ assert.match(persistence, /\.commit\(\)/, "atomic persistence must commit only a
 
 const configStore = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "config_store.rs"), "utf8");
 assert.match(configStore, /atomic_write\(&path, json\.as_bytes\(\)\)/, "ConfigStore must use atomic persistence");
+assert.match(configStore, /pub fn set_batch/, "related settings need one ConfigStore persistence transaction");
+assert.match(
+  configStore,
+  /self\.persist_snapshot\(&next\)\?;[\s\S]*self\.data\.write/,
+  "ConfigStore must persist the next snapshot before publishing it in memory",
+);
 
 const sessionStore = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "session_store.rs"), "utf8");
 assert.match(sessionStore, /SESSION_LIBRARY_VERSION:\s*u32\s*=\s*1/, "Session Library must be versioned");
@@ -145,11 +167,17 @@ assert.doesNotMatch(
 const logEngine = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "log_engine.rs"), "utf8");
 assert.match(logEngine, /session_enabled/, "System and Session logging must have separate enable semantics");
 assert.match(logEngine, /SESSION_LOG_ENABLED/, "disabled Session Log producers must stop before the shared queue");
+assert.match(logEngine, /StopAllSessions/, "disabling Session Data Log must close active writers");
 assert.match(logEngine, /dropped_session_entries/, "Session log loss telemetry is missing");
 assert.match(logEngine, /dropped_system_entries/, "System log loss telemetry is missing");
 
 const knownHosts = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "ssh", "known_hosts.rs"), "utf8");
 assert.match(knownHosts, /atomic_write\(&path, json\.as_bytes\(\)\)/, "SSH known-host trust must use atomic persistence");
+assert.match(
+  knownHosts,
+  /self\.persist_snapshot\(&next\)\?;[\s\S]*self[\s\S]*\.hosts[\s\S]*\.write/,
+  "SSH trust must become visible in memory only after durable persistence succeeds",
+);
 
 const ssh = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "ssh", "mod.rs"), "utf8");
 assert.match(ssh, /HostTrustDecision::Changed/, "SSH changed-host-key path must remain fail-closed");
