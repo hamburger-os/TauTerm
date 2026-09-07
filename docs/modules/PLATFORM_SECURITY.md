@@ -10,6 +10,8 @@
 
 凭据存储优先使用操作系统提供的安全存储；不可用时使用应用自己的加密 vault 回退。协议模块不直接决定存储实现，只通过统一凭据接口消费。
 
+SSH 的持久化 Session 只保存稳定的 `credential_account` 引用，不保存密码、私钥正文或 passphrase。连接时由 Rust 后端从安全存储注入短生命周期认证材料；WebView 的 Session 状态和重新打开的配置表单不回填秘密。旧版 `sessions.json` 中若存在 SSH 明文凭据，加载时优先迁移到安全存储，迁移暂不可用时也只向前端返回脱敏配置，并在后续连接/编辑时重试迁移。
+
 ### Windows 特权操作
 
 主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；开发/便携场景可以使用明确的按需 UAC 回退。Local Shell 的管理员 child 是独立的一次性提权路径，不等于给主应用提权。
@@ -20,7 +22,9 @@ TRDP sidecar、抓包库等 native 依赖只能从受控位置解析。生产构
 
 ### 打包与更新
 
-构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验。正式 bundle 前会从锁定的 Cargo/npm 依赖图生成第三方依赖 notice，并与 TauTerm 自有许可证、TCNOpen MPL 许可证和特殊第三方清单一起进入安装包；Windows 再包含 com0com GPL/来源材料。发布流程在公开稳定版本成为 latest updater 之前验证产物集合、签名、合规资源和可下载内容，并把 com0com 对应官方源码作为同一 Release 的 fail-closed 资产。
+构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验。Windows 正式 Release 另外要求 Authenticode 发布者签名：CI 临时导入发布证书，Tauri 对主程序和 NSIS 安装器签名，TauTerm 自己打包的 service/TRDP helper 也使用同一发布者证书签名，并在暂存资产前验证签名、签名者与时间戳；缺少证书或任一验证失败时发布任务直接失败。
+
+正式 bundle 前会从锁定的 Cargo/npm 依赖图生成第三方依赖 notice，并与 TauTerm 自有许可证、TCNOpen MPL 许可证和特殊第三方清单一起进入安装包；Windows 再包含 com0com GPL/来源材料。发布流程在公开稳定版本成为 latest updater 之前验证产物集合、签名、合规资源和可下载内容，并把 com0com 对应官方源码作为同一 Release 的 fail-closed 资产。
 
 具体平台支持矩阵和发布步骤属于社区工程文档，不在本文复制。
 
