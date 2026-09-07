@@ -18,6 +18,8 @@ Monitor 的实时抓包通过 native sidecar 调用系统抓包能力，上送 r
 
 离线 pcap/pcapng、XML、Dataset 和 Workspace 分析可以在 Session 未连接时使用，因为它们不需要主动网络运行时。
 
+TRDP custom view 同时按 Pane 宽度和高度适配：2×2 分屏中的短 Pane 使用紧凑密度，Overview 利用双列卡片减少纵向空白，Monitor 的简单抓包设置保持可读的双列布局；复杂对象编辑和长表仍保留明确的局部/内容滚动，不通过隐藏功能换取适配。
+
 ### 配置与安全语义
 
 Workspace 使用严格版本化 schema。Link A/B 表示网络路径，冗余组是独立业务概念，不把 A/B 隐式等同于主/备。
