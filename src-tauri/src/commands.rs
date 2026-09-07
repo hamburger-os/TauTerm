@@ -2580,6 +2580,9 @@ pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Resu
 
     // 再锁定 log_engine 发送启动命令
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    if !log_engine.get_config().session_enabled {
+        return Err("Session Data Log is disabled in Settings".to_string());
+    }
 
     let cmd = LogEntry::Command(crate::kernel::log_engine::LogCommand::StartSession {
         session_id: session_id.clone(),
@@ -2641,15 +2644,15 @@ pub fn set_system_log_config(
     enabled: bool,
     level: String,
 ) -> Result<(), String> {
+    let _log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set_batch(&[
+            ("logging.system_enabled", serde_json::json!(enabled)),
+            ("logging.system_level", serde_json::json!(level.clone())),
+        ])
+        .map_err(|e| e.to_string())?;
     crate::kernel::log_engine::set_system_log_config(enabled, &level);
-    state
-        .config_store
-        .set("logging.system_enabled", &enabled)
-        .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.system_level", &level)
-        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -2712,30 +2715,39 @@ pub fn update_log_config(
     config: LogConfigUpdate,
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    log_engine.update_config(config);
     let current = log_engine.get_config();
-    drop(log_engine);
+    let next_session_enabled = config.session_enabled.unwrap_or(current.session_enabled);
+    let next_file_max_size = config.file_max_size.unwrap_or(current.file_max_size);
+    let next_buffer_size = config.buffer_size.unwrap_or(current.buffer_size);
+    let next_flush_interval_ms = config
+        .flush_interval_ms
+        .unwrap_or(current.flush_interval_ms);
+    let next_retention_days = config.retention_days.unwrap_or(current.retention_days);
 
     state
         .config_store
-        .set("logging.session_enabled", &current.session_enabled)
+        .set_batch(&[
+            (
+                "logging.session_enabled",
+                serde_json::json!(next_session_enabled),
+            ),
+            (
+                "logging.file_max_size",
+                serde_json::json!(next_file_max_size),
+            ),
+            ("logging.buffer_size", serde_json::json!(next_buffer_size)),
+            (
+                "logging.flush_interval_ms",
+                serde_json::json!(next_flush_interval_ms),
+            ),
+            (
+                "logging.retention_days",
+                serde_json::json!(next_retention_days),
+            ),
+        ])
         .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.file_max_size", &current.file_max_size)
-        .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.buffer_size", &current.buffer_size)
-        .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.flush_interval_ms", &current.flush_interval_ms)
-        .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.retention_days", &current.retention_days)
-        .map_err(|e| e.to_string())?;
+
+    log_engine.update_config(config);
     Ok(())
 }
 
