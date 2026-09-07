@@ -158,50 +158,56 @@ pub fn run() {
             let _ = window.center();
 
             if let Some(state) = app.try_state::<AppState>() {
-                let config_dir = app
-                    .path()
-                    .app_config_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                let settings_path = config_dir.join("settings.json");
-                if let Err(error) = state.config_store.configure_persistence(settings_path) {
-                    log::warn!("配置存储初始化失败: {}", error);
-                } else {
-                    let system_enabled = state
-                        .config_store
-                        .get::<bool>("logging.system_enabled")
-                        .unwrap_or(true);
-                    let system_level = state
-                        .config_store
-                        .get::<String>("logging.system_level")
-                        .unwrap_or_else(|| "info".to_string());
-                    kernel::log_engine::set_system_log_config(system_enabled, &system_level);
+                match app.path().app_config_dir() {
+                    Ok(config_dir) => {
+                        let settings_path = config_dir.join("settings.json");
+                        if let Err(error) = state.config_store.configure_persistence(settings_path) {
+                            log::warn!("配置存储初始化失败: {}", error);
+                        } else {
+                            let system_enabled = state
+                                .config_store
+                                .get::<bool>("logging.system_enabled")
+                                .unwrap_or(true);
+                            let system_level = state
+                                .config_store
+                                .get::<String>("logging.system_level")
+                                .unwrap_or_else(|| "info".to_string());
+                            kernel::log_engine::set_system_log_config(system_enabled, &system_level);
 
-                    if let Ok(log_engine) = state.log_engine.lock() {
-                        log_engine.update_config(kernel::log_engine::LogConfigUpdate {
-                            session_enabled: state
-                                .config_store
-                                .get::<bool>("logging.session_enabled"),
-                            file_max_size: state
-                                .config_store
-                                .get::<u64>("logging.file_max_size"),
-                            buffer_size: state
-                                .config_store
-                                .get::<usize>("logging.buffer_size"),
-                            flush_interval_ms: state
-                                .config_store
-                                .get::<u64>("logging.flush_interval_ms"),
-                            retention_days: state
-                                .config_store
-                                .get::<u64>("logging.retention_days"),
-                        });
+                            if let Ok(log_engine) = state.log_engine.lock() {
+                                log_engine.update_config(kernel::log_engine::LogConfigUpdate {
+                                    session_enabled: state
+                                        .config_store
+                                        .get::<bool>("logging.session_enabled"),
+                                    file_max_size: state
+                                        .config_store
+                                        .get::<u64>("logging.file_max_size"),
+                                    buffer_size: state
+                                        .config_store
+                                        .get::<usize>("logging.buffer_size"),
+                                    flush_interval_ms: state
+                                        .config_store
+                                        .get::<u64>("logging.flush_interval_ms"),
+                                    retention_days: state
+                                        .config_store
+                                        .get::<u64>("logging.retention_days"),
+                                });
+                            }
+                        }
+
+                        if let Err(error) = state
+                            .host_key_verifier
+                            .configure_known_hosts(config_dir.join("known_hosts.json"))
+                        {
+                            log::warn!("SSH known-host 存储初始化失败: {}", error);
+                        }
                     }
-                }
-
-                if let Err(error) = state
-                    .host_key_verifier
-                    .configure_known_hosts(config_dir.join("known_hosts.json"))
-                {
-                    log::warn!("SSH known-host 存储初始化失败: {}", error);
+                    Err(error) => {
+                        log::warn!(
+                            "应用配置目录不可用；ConfigStore 与 SSH known-host 保持 fail-closed: {}",
+                            error
+                        );
+                    }
                 }
             }
 
