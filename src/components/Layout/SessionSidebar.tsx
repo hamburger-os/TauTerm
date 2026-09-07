@@ -292,8 +292,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     // ── 父级 SSH / TFTP / Serial 会话 ──
     if (sessionState === "connected" || sessionState === "transferring") {
       const isLogging = loggingSessions.has(menu.session.id);
-      const isTftp = pluginId === "tftp";
-      const isIperf = pluginId === "iperf";
+      const supportsLogging = capabilities.includes("session_logging");
       const items: ContextMenuItem[] = [];
       if (supportsMultiple) {
         items.push({ id: "connect", label: t("contextMenu.newTerminal") || "New Terminal", icon: "connection" });
@@ -305,8 +304,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         { id: "disconnect", label: t("contextMenu.disconnect") || "Disconnect All", icon: "stop" },
         { id: "configure", label: t("contextMenu.configure") || "Configure", icon: "settings" },
       );
-      // TFTP/iperf 无终端数据流，不需要日志/实时监控功能
-      if (!isTftp && !isIperf) {
+      if (supportsLogging) {
         items.push(
           { id: "toggle_log", label: isLogging ? (t("contextMenu.stopLogging") || "Stop Logging") : (t("contextMenu.startLogging") || "Start Logging"), icon: "log" },
         );
