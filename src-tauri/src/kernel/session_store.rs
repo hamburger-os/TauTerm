@@ -2218,6 +2218,41 @@ impl SessionStore {
         Ok(())
     }
 
+    /// 重命名一个 Saved Session，并在外部运行态更新失败时恢复原 Library。
+    pub fn rename_config_on_disk_transactional<F>(
+        app_handle: &tauri::AppHandle,
+        session_id: &str,
+        new_name: &str,
+        post_commit: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let _guard = SESSIONS_FILE_MUTEX
+            .lock()
+            .map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let path = Self::sessions_file_path(app_handle);
+        let existing = Self::load_from_disk_unlocked(&path)?;
+        let mut next = existing.clone();
+        let target = next
+            .iter_mut()
+            .find(|session| session.id == session_id)
+            .ok_or_else(|| format!("Saved Session 不存在: {}", session_id))?;
+        target.name = new_name.to_string();
+        Self::write_library(&path, next)?;
+
+        if let Err(commit_error) = post_commit() {
+            return match Self::write_library(&path, existing) {
+                Ok(()) => Err(commit_error),
+                Err(rollback_error) => Err(format!(
+                    "{}；Session Library 回滚失败: {}",
+                    commit_error, rollback_error
+                )),
+            };
+        }
+        Ok(())
+    }
+
     /// 从磁盘 Session Library 删除指定配置。
     pub fn delete_config_from_disk(
         app_handle: &tauri::AppHandle,
