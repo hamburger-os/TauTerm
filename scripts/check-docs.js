@@ -1,219 +1,296 @@
 #!/usr/bin/env node
 /**
- * check-docs.js — TauTerm 文档一致性校验
+ * TauTerm documentation contract checker.
  *
- * 校验项：
- *  1. README.md / README.zh-CN.md 的 ## 标题序列一一对应（双语文档镜像）
- *  2. 两版 README 无竞品名 / 负面对比表述（禁拉踩）
- *  3. 所有文档的相对 markdown 链接指向存在的文件
- *  4. CHANGELOG.md 为 Keep a Changelog 格式且含版本段
- *  5. README 篇幅警告（> 400 行）
- *  6. i18n 语言文件 en-US.json / zh-CN.json 的 key 集合一一对应
- *  7. SecuritySettings.tsx 静态引用的 settings.security* key 在两份语言文件中均存在
- *
- * 用法：node scripts/check-docs.js [--root <repo-root>]
- * 退出码：0 = 通过，1 = 存在错误
+ * Canonical policy lives in AGENTS.md and .agents/skills/tauterm-docs/SKILL.md.
+ * This script only enforces rules that can be checked mechanically.
  */
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(
+  process.argv.includes("--root")
+    ? process.argv[process.argv.indexOf("--root") + 1]
+    : path.join(path.dirname(fileURLToPath(import.meta.url)), ".."),
+);
 
-const ROOT = path.resolve(process.argv.includes('--root')
-  ? process.argv[process.argv.indexOf('--root') + 1]
-  : path.join(__dirname, '..'));
-
-const DOC_FILES = [
-  'README.md',
-  'README.zh-CN.md',
-  'docs/ARCHITECTURE.md',
-  'docs/BUILDING.md',
-  'docs/RELEASING.md',
-  'docs/SUPPORTED_PLATFORMS.md',
-  'CONTRIBUTING.md',
-  'CHANGELOG.md',
+const required = [
+  "AGENTS.md",
+  "README.md",
+  "README.zh-CN.md",
+  "CONTRIBUTING.md",
+  "CHANGELOG.md",
+  ".agents/skills/tauterm-docs/SKILL.md",
+  "docs/README.md",
+  "docs/community/BUILDING.md",
+  "docs/community/RELEASING.md",
+  "docs/community/SUPPORTED_PLATFORMS.md",
+  "docs/product/PRODUCT_STRATEGY.md",
+  "docs/product/HARDWARE_ECOSYSTEM.md",
+  "docs/product/COMMERCIALIZATION.md",
+  "docs/modules/CORE.md",
+  "docs/modules/WORKSPACE.md",
+  "docs/modules/SERIAL.md",
+  "docs/modules/SSH.md",
+  "docs/modules/LOCAL_SHELL.md",
+  "docs/modules/NETWORK.md",
+  "docs/modules/TRDP.md",
+  "docs/modules/AUTOMATION.md",
+  "docs/modules/PLATFORM_SECURITY.md",
 ];
 
-const BANNED = /MobaXterm|WindTerm|VOFA\+?|Tabby|Electron/i;
-const CHECK_COUNT = 7;
+const forbiddenLegacy = [
+  "docs/ARCHITECTURE.md",
+  "docs/BUILDING.md",
+  "docs/RELEASING.md",
+  "docs/SUPPORTED_PLATFORMS.md",
+  "docs/PRODUCT_STRATEGY.md",
+  "docs/HARDWARE_ECOSYSTEM.md",
+  "docs/COMMERCIALIZATION.md",
+  "docs/SPLIT_VIEW_DESIGN.md",
+];
 
 const errors = [];
 const warnings = [];
+const checks = [];
 
-function fail(msg) { errors.push(msg); }
-function warn(msg) { warnings.push(msg); }
+function pass(name) {
+  checks.push({ name, ok: true });
+}
+
+function fail(name, message) {
+  checks.push({ name, ok: false });
+  errors.push(message);
+}
+
+function warn(message) {
+  warnings.push(message);
+}
+
+function exists(rel) {
+  return fs.existsSync(path.join(root, rel));
+}
 
 function read(rel) {
-  try {
-    return fs.readFileSync(path.join(ROOT, rel), 'utf8');
-  } catch {
-    fail(`文件不存在: ${rel}`);
-    return null;
+  return fs.readFileSync(path.join(root, rel), "utf8");
+}
+
+function walk(dir, filter = () => true) {
+  const abs = path.join(root, dir);
+  if (!fs.existsSync(abs)) return [];
+  const out = [];
+  for (const entry of fs.readdirSync(abs, { withFileTypes: true })) {
+    const rel = path.posix.join(dir.replaceAll("\\", "/"), entry.name);
+    if (entry.isDirectory()) out.push(...walk(rel, filter));
+    else if (filter(rel)) out.push(rel);
+  }
+  return out;
+}
+
+function markdownFiles() {
+  const rootDocs = [
+    "AGENTS.md",
+    "README.md",
+    "README.zh-CN.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "CHANGELOG.md",
+    "THIRD_PARTY_LICENSES.md",
+  ].filter(exists);
+  const docs = walk("docs", (rel) => rel.endsWith(".md"));
+  const skills = walk(".agents/skills", (rel) => rel.endsWith("/SKILL.md"));
+  return [...new Set([...rootDocs, ...docs, ...skills])];
+}
+
+function checkRequiredFiles() {
+  const missing = required.filter((rel) => !exists(rel));
+  if (missing.length) fail("required files", "Missing canonical documentation: " + missing.join(", "));
+  else pass("required files");
+}
+
+function checkLegacyFiles() {
+  const legacy = forbiddenLegacy.filter(exists);
+  const releaseNotes = walk("docs", (rel) => /RELEASE_NOTES_v.+\.md$/i.test(rel));
+  const found = [...legacy, ...releaseNotes];
+  if (found.length) {
+    fail(
+      "legacy duplicates",
+      "Legacy/duplicated documentation must be removed: " + found.join(", "),
+    );
+  } else {
+    pass("legacy duplicates");
   }
 }
 
 function headings(md) {
-  return (md.match(/^##\s+(.+)$/gm) || []).map((l) => l.replace(/^##\s+/, '').trim());
+  return (md.match(/^##\s+(.+)$/gm) || []).map((line) => line.replace(/^##\s+/, "").trim());
 }
 
-/** GitHub 风格的标题 slug 近似实现（用于锚点校验） */
-function slugify(h) {
-  return h
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .trim()
-    .replace(/\s+/g, '-');
-}
+function checkReadmes() {
+  const en = read("README.md");
+  const zh = read("README.zh-CN.md");
+  const enHeadings = headings(en);
+  const zhHeadings = headings(zh);
 
-function checkLinks(md, rel) {
-  const base = path.dirname(path.join(ROOT, rel));
-  const linkRe = /\[[^\]]*\]\(([^)]+)\)/g;
-  let m;
-  while ((m = linkRe.exec(md)) !== null) {
-    const target = m[1].trim();
-    if (/^(https?:|mailto:)/.test(target)) continue;
-    const [filePart, anchor] = target.split('#');
-    const resolved = filePart
-      ? path.resolve(base, filePart)
-      : path.join(ROOT, rel);
-    if (filePart) {
-      if (!fs.existsSync(resolved)) {
-        fail(`${rel}: 链接目标不存在 -> ${target}`);
-        continue;
-      }
+  if (enHeadings.length !== zhHeadings.length) {
+    fail(
+      "README mirror",
+      "README heading count differs: README.md=" +
+        enHeadings.length +
+        ", README.zh-CN.md=" +
+        zhHeadings.length,
+    );
+  } else {
+    pass("README mirror");
+  }
+
+  for (const heading of zhHeadings) {
+    if (!/\p{Script=Han}/u.test(heading)) {
+      warn("README.zh-CN.md heading may be untranslated: " + heading);
     }
-    if (anchor) {
-      const targetFile = filePart
-        ? path.relative(ROOT, resolved).replace(/\\/g, '/')
-        : rel;
-      const content = read(targetFile);
-      if (content) {
-        const slugs = new Set(
-          content.match(/^#{1,6}\s+(.+)$/gm).map((l) => slugify(l.replace(/^#{1,6}\s+/, ''))),
-        );
-        if (!slugs.has(slugify(anchor))) {
-          warn(`${rel}: 锚点可能失效 -> ${target}（${targetFile} 中未找到匹配标题）`);
-        }
-      }
-    }
+  }
+
+  const banned = /MobaXterm|WindTerm|VOFA\+?|Tabby|Electron/i;
+  const hits = [];
+  for (const rel of ["README.md", "README.zh-CN.md"]) {
+    if (banned.test(read(rel))) hits.push(rel);
+  }
+  if (hits.length) fail("README neutrality", "Named competitor/comparison terms found in: " + hits.join(", "));
+  else pass("README neutrality");
+
+  for (const rel of ["README.md", "README.zh-CN.md"]) {
+    const lines = read(rel).split("\n").length;
+    if (lines > 320) warn(rel + " is " + lines + " lines; keep the public landing page concise.");
   }
 }
 
-/** 递归展平 JSON 对象为点分 key 列表（用于 i18n key 对齐） */
-function flatten(obj, prefix = '') {
-  const out = [];
-  for (const [k, v] of Object.entries(obj)) {
-    const full = prefix ? `${prefix}.${k}` : k;
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      out.push(...flatten(v, full));
-    } else {
-      out.push(full);
+function linkTarget(raw) {
+  const target = raw.trim().replace(/^<|>$/g, "");
+  if (!target || target.startsWith("#")) return null;
+  if (/^(https?:|mailto:|tel:)/i.test(target)) return null;
+  const withoutTitle = target.split(/\s+["']/)[0];
+  return withoutTitle.split("#")[0].split("?")[0];
+}
+
+function checkLinks() {
+  const broken = [];
+  const linkRe = /\[[^\]]*\]\(([^)]+)\)/g;
+
+  for (const rel of markdownFiles()) {
+    const md = read(rel);
+    let match;
+    while ((match = linkRe.exec(md)) !== null) {
+      const target = linkTarget(match[1]);
+      if (!target) continue;
+      const decoded = decodeURIComponent(target);
+      const resolved = path.resolve(path.dirname(path.join(root, rel)), decoded);
+      if (!fs.existsSync(resolved)) broken.push(rel + " -> " + target);
     }
+  }
+
+  if (broken.length) fail("relative links", "Broken relative Markdown links:\n  " + broken.join("\n  "));
+  else pass("relative links");
+}
+
+function checkOwnerLanguage() {
+  const ownerDocs = [
+    "docs/README.md",
+    ...walk("docs/modules", (rel) => rel.endsWith(".md")),
+    ...walk("docs/product", (rel) => rel.endsWith(".md")),
+  ];
+  const wrong = ownerDocs.filter((rel) => !/\p{Script=Han}/u.test(read(rel)));
+  if (wrong.length) fail("maintainer language", "Maintainer documents must be Chinese-first: " + wrong.join(", "));
+  else pass("maintainer language");
+}
+
+function checkChangelog() {
+  const changelog = read("CHANGELOG.md");
+  const okFormat =
+    changelog.includes("Keep a Changelog") &&
+    /^##\s+\[Unreleased\]/m.test(changelog) &&
+    /^##\s+\[\d+\.\d+\.\d+(?:-[^\]]+)?\]/m.test(changelog);
+  if (!okFormat) fail("CHANGELOG", "CHANGELOG.md does not match the repository release-history contract.");
+  else pass("CHANGELOG");
+}
+
+function flatten(obj, prefix = "") {
+  const out = [];
+  for (const [key, value] of Object.entries(obj)) {
+    const full = prefix ? prefix + "." + key : key;
+    if (value && typeof value === "object" && !Array.isArray(value)) out.push(...flatten(value, full));
+    else out.push(full);
   }
   return out;
 }
 
 function checkI18n() {
-  const files = ['src/i18n/locales/en-US.json', 'src/i18n/locales/zh-CN.json'];
-  const parsed = files.map((f) => {
-    const raw = read(f);
-    if (raw == null) return null;
-    try {
-      return JSON.parse(raw);
-    } catch (e) {
-      fail(`${f}: JSON 解析失败: ${e.message}`);
-      return null;
-    }
-  });
-  const [en, zh] = parsed;
-  if (!en || !zh) return;
+  const enPath = "src/i18n/locales/en-US.json";
+  const zhPath = "src/i18n/locales/zh-CN.json";
+  const en = JSON.parse(read(enPath));
+  const zh = JSON.parse(read(zhPath));
   const enSet = new Set(flatten(en));
   const zhSet = new Set(flatten(zh));
-  const onlyEn = [...enSet].filter((k) => !zhSet.has(k)).sort();
-  const onlyZh = [...zhSet].filter((k) => !enSet.has(k)).sort();
-  if (onlyEn.length) fail(`en-US.json 存在 zh-CN.json 缺失的 key（${onlyEn.length}）: ${onlyEn.join(', ')}`);
-  if (onlyZh.length) fail(`zh-CN.json 存在 en-US.json 缺失的 key（${onlyZh.length}）: ${onlyZh.join(', ')}`);
+  const onlyEn = [...enSet].filter((key) => !zhSet.has(key)).sort();
+  const onlyZh = [...zhSet].filter((key) => !enSet.has(key)).sort();
 
-  const securitySource = read('src/components/Settings/panels/SecuritySettings.tsx');
-  if (!securitySource) return;
-  const securityKeys = [...securitySource.matchAll(/\bt\(\s*["'](settings\.security[^"']+)["']\s*[,)]/g)]
-    .map((match) => match[1]);
-  const uniqueSecurityKeys = [...new Set(securityKeys)].sort();
-  if (uniqueSecurityKeys.length === 0) {
-    fail('SecuritySettings.tsx: 未找到静态 settings.security* 翻译引用');
+  if (onlyEn.length || onlyZh.length) {
+    fail(
+      "i18n parity",
+      "i18n key mismatch. only en-US: " +
+        onlyEn.join(", ") +
+        "; only zh-CN: " +
+        onlyZh.join(", "),
+    );
     return;
   }
-  const missingEn = uniqueSecurityKeys.filter((key) => !enSet.has(key));
-  const missingZh = uniqueSecurityKeys.filter((key) => !zhSet.has(key));
-  if (missingEn.length) fail(`SecuritySettings.tsx 引用的 key 在 en-US.json 中缺失（${missingEn.length}）: ${missingEn.join(', ')}`);
-  if (missingZh.length) fail(`SecuritySettings.tsx 引用的 key 在 zh-CN.json 中缺失（${missingZh.length}）: ${missingZh.join(', ')}`);
+
+  const securitySource = read("src/components/Settings/panels/SecuritySettings.tsx");
+  const referenced = [
+    ...securitySource.matchAll(/\bt\(\s*["'](settings\.security[^"']+)["']\s*[,)]/g),
+  ].map((match) => match[1]);
+  const missing = [...new Set(referenced)].filter((key) => !enSet.has(key) || !zhSet.has(key));
+  if (missing.length) {
+    fail("i18n parity", "Security settings reference missing i18n keys: " + missing.join(", "));
+  } else {
+    pass("i18n parity");
+  }
+}
+
+function checkPackageContract() {
+  const pkg = JSON.parse(read("package.json"));
+  if (pkg.scripts?.["docs:check"] !== "node scripts/check-docs.js") {
+    fail("package docs command", 'package.json must define "docs:check": "node scripts/check-docs.js".');
+  } else {
+    pass("package docs command");
+  }
 }
 
 function main() {
-  // 1. 镜像对齐（结构对齐：标题数量一致；标题文本按语言翻译，不要求逐字相同）
-  const en = read('README.md');
-  const zh = read('README.zh-CN.md');
-  if (en && zh) {
-    const enH = headings(en);
-    const zhH = headings(zh);
-    if (enH.length !== zhH.length) {
-      fail(`README.md 与 README.zh-CN.md 的 ## 标题数量不一致（英文版 ${enH.length} 个 vs 中文版 ${zhH.length} 个）` +
-        `\n  英文版: ${enH.join(' | ')}` +
-        `\n  中文版: ${zhH.join(' | ')}`);
-    }
-    for (const h of zhH) {
-      if (!/\p{Script=Han}/u.test(h)) {
-        warn(`README.zh-CN.md: 标题「${h}」不含中文，疑似未翻译的英文标题粘贴`);
-      }
-    }
-  }
-
-  // 2. 禁拉踩
-  for (const rel of ['README.md', 'README.zh-CN.md']) {
-    const md = read(rel);
-    if (!md) continue;
-    const hits = [...md.matchAll(new RegExp(BANNED, 'g'))];
-    if (hits.length) {
-      fail(`${rel}: 命中禁拉踩词 ${hits.length} 处（${[...new Set(hits.map((h) => h[0]))].join(', ')}）— 只描述自身优势，不提竞品`);
-    }
-  }
-
-  // 3. 链接有效
-  for (const rel of DOC_FILES) {
-    const md = read(rel);
-    if (md) checkLinks(md, rel);
-  }
-
-  // 4. CHANGELOG 格式
-  const cl = read('CHANGELOG.md');
-  if (cl) {
-    if (!/Keep a Changelog/.test(cl)) fail('CHANGELOG.md: 缺少 Keep a Changelog 格式声明');
-    if (!/^##\s*\[[\d.]+\]/m.test(cl)) fail('CHANGELOG.md: 未找到版本段（## [x.y.z]）');
-  }
-
-  // 5. README 篇幅
-  for (const rel of ['README.md', 'README.zh-CN.md']) {
-    const md = read(rel);
-    if (!md) continue;
-    const lines = md.split('\n').length;
-    if (lines > 400) warn(`${rel}: ${lines} 行，超出营销文档精简目标（≤ ~350 行）`);
-  }
-
-  // 6. i18n 语言文件 key 对齐
+  checkRequiredFiles();
+  checkLegacyFiles();
+  checkReadmes();
+  checkLinks();
+  checkOwnerLanguage();
+  checkChangelog();
   checkI18n();
+  checkPackageContract();
 
-  // 输出
-  const passCount = errors.length === 0 ? CHECK_COUNT : Math.max(0, CHECK_COUNT - errors.length);
-  console.log(`check-docs: ${passCount}/${CHECK_COUNT} 项通过`);
-  for (const e of errors) console.log(`  ✗ ${e}`);
-  for (const w of warnings) console.log(`  ⚠ ${w}`);
-  if (errors.length === 0) {
-    console.log('  ✓ 文档一致性校验通过');
-    process.exit(0);
+  const passed = checks.filter((check) => check.ok).length;
+  console.log("docs:check " + passed + "/" + checks.length + " checks passed");
+
+  for (const item of checks) {
+    console.log("  " + (item.ok ? "✓" : "✗") + " " + item.name);
   }
-  console.log(`  ${errors.length} 个错误，文档未通过校验`);
-  process.exit(1);
+  for (const item of warnings) console.log("  ⚠ " + item);
+
+  if (errors.length) {
+    console.error("\nDocumentation contract errors:");
+    for (const item of errors) console.error("  - " + item);
+    process.exit(1);
+  }
+
+  console.log("Documentation contract is consistent.");
 }
 
 main();

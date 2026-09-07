@@ -1,10 +1,16 @@
 # Contributing to TauTerm
 
-TauTerm is under active development. Contributions are welcome!
+Thanks for contributing to TauTerm. This guide is the community entry point; implementation rules for AI agents live in [AGENTS.md](AGENTS.md).
 
-## Development Environment Setup
+## Before you start
 
-See [docs/BUILDING.md](docs/BUILDING.md) for platform-specific setup instructions.
+- For bugs and feature work, search existing issues and pull requests first.
+- For security vulnerabilities, use [SECURITY.md](SECURITY.md) instead of a public issue.
+- Keep changes focused. Large architecture changes are easier to review when the design boundary is clear before implementation.
+
+## Development setup
+
+Use the authoritative platform instructions in [docs/community/BUILDING.md](docs/community/BUILDING.md).
 
 Quick start:
 
@@ -15,71 +21,52 @@ npm install
 npm run tauri dev
 ```
 
-### Requirements
+The exact Rust version is pinned in `rust-toolchain.toml`. Executable npm commands are defined in `package.json`; documentation should link to those commands rather than maintain a second exhaustive command catalog.
 
-| Component | Version |
-|-----------|---------|
-| Node.js | 22.x |
-| Rust | Exact stable version pinned in `rust-toolchain.toml` |
-| npm | >= 9 |
-| NSIS | >= 3.0 (Windows only, for installer builds) |
+## Architecture and documentation
 
-## Project Structure
+TauTerm separates common Session/Workspace/platform mechanisms from protocol-specific behavior. The maintainer-facing architecture index is [docs/README.md](docs/README.md).
 
-The project follows a microkernel plugin architecture:
+If your change affects architecture, module responsibility, persistent state, security boundaries, platform behavior, or a user-visible workflow, update the matching document under [docs/modules/](docs/modules/) in the same pull request.
 
-- `src-tauri/src/kernel/` — Microkernel modules (plugin host, session store, config store, etc.)
-- `src-tauri/src/channel/` — I/O abstraction layer (`Channel` / `AsyncChannel` traits)
-- `src-tauri/src/transfer/` — File transfer subsystem (three strategies)
-- `src-tauri/src/plugins/` — Built-in protocol plugins (Serial, SSH, TFTP, Telnet, iperf)
-- `src-tauri/src/virtual_port/` — Virtual serial port bridge (com0com on Windows, in-process `pty.rs` POSIX PTY on Unix; no `socat` required)
-- `src-tauri/src/security/` — Credential store (OS keyring with Argon2id/AES-256-GCM vault fallback)
-- `src/` — React frontend (TypeScript)
-  - `src/core/` — Frontend kernel API (plugin registry, tab host, event bus)
-  - `src/components/` — UI components
-  - `src/plugins/` — Plugin frontend registrations
-  - `src/styles/` — Global CSS tokens and theme definitions
+Documentation follows a single-source-of-truth policy. Do not create a second protocol matrix, roadmap, release-note file, theme specification, or build-command table when an existing canonical document owns that information.
 
-## How to Add a New Protocol Plugin
+For documentation maintenance details, see [`.agents/skills/tauterm-docs/SKILL.md`](.agents/skills/tauterm-docs/SKILL.md).
 
-1. Create a plugin directory under `src-tauri/src/plugins/`
-2. Implement the `ProtocolAdapter` trait (see [Backend Core Traits in docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#后端核心-trait))
-3. Write a `manifest.json` declaring metadata and capabilities
-4. Register frontend components via `registerPlugin()` in `src/plugins/`
-5. Register the plugin in Plugin Host (`src-tauri/src/lib.rs` → `plugin_host.register_plugin()`)
-6. Add protocol routing in `commands.rs` → `connect_session` match branch
+## Code style
 
-A detailed plugin SDK guide will be available with the v1.0 release.
+- **Rust:** use standard Rust conventions and `rustfmt`; strict Clippy warnings are enforced.
+- **TypeScript/React:** TypeScript strict mode is enabled; prefer existing component and context patterns.
+- **Platform code:** keep operating-system differences behind explicit platform boundaries.
+- **UI text:** keep English and Chinese i18n key sets aligned.
+- **Themes:** follow [`.agents/skills/tauterm-theme/SKILL.md`](.agents/skills/tauterm-theme/SKILL.md); do not hard-code a second theme contract in component documentation.
 
-## Theme Development
+## Validation
 
-All UI components follow the **Liquid Glass v3** design system. When creating or modifying components:
+Run the checks relevant to your change. The normal baseline is:
 
-- Use CSS custom properties from `src/styles/tokens.css` — never hardcode colors
-- Test across all three themes: Google Glow (dark), Obsidian (dark), Frosted (light)
-- Reference the `tauterm-theme` skill (`.agents/skills/tauterm-theme/SKILL.md`) for detailed rules
+```bash
+npm run docs:check
+npx tsc --noEmit
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+```
 
-## AI Agent Skills
+Use `npm run tauri dev` for a desktop smoke test when the change affects runtime behavior. Protocol- or platform-specific checks are documented beside their owning implementation or skill.
 
-Project skills for AI coding agents live in the canonical location [`.agents/skills/`](.agents/skills/) (com0com driver reference, docs maintenance, theme writing, theme review). They follow the [Agent Skills standard](https://agentskills.io/) format (a `SKILL.md` plus optional `references/`). Codex reads `.agents/skills/` directly; Trae reads it after enabling the ".agents directory" option in its Skills settings. Other tools use their own directory conventions (e.g. Cursor → `.cursor/skills/`, Copilot → `~/.github/skills/`), so the skills are portable but may need to be copied to the path each tool expects.
+## Pull requests
 
-## Pull Request Process
+A good pull request:
 
-1. Fork the repository and create a feature branch
-2. Make your changes, following existing code style
-3. Verify your changes:
-   - `npx tsc --noEmit` — TypeScript type check
-   - `cargo clippy --no-deps --manifest-path src-tauri/Cargo.toml` — Rust lint
-   - `cargo test --manifest-path src-tauri/Cargo.toml` — Rust tests
-   - `npm run tauri dev` — Manual smoke test
-4. Open a pull request with a clear description of your changes
+1. explains the problem and intended behavior;
+2. keeps unrelated refactors out of the diff;
+3. includes tests or a clear validation path where practical;
+4. updates the canonical documentation when a documented contract changes;
+5. passes CI without suppressing warnings.
 
-## Code Style
-
-- **Rust**: Follow standard Rust conventions (`rustfmt`). Use `thiserror` for error types. Prefer `#[cfg(target_os = "...")]` for platform-specific code.
-- **TypeScript/React**: Use functional components with hooks. CSS Modules for component styles. TypeScript strict mode is enabled.
-- **Commits**: Write descriptive commit messages in English or Chinese. No strict conventional commits format required.
+Commit messages may be English or Chinese. No specific conventional-commit format is required.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the MIT License or the Apache License, Version 2.0, at the option of the user.
+By contributing, you agree that your contribution is licensed under **MIT OR Apache-2.0**, at the recipient's option.

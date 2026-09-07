@@ -25,7 +25,6 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       source_sha: ${{ steps.meta.outputs.source_sha }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
-      notes_file: ${{ steps.meta.outputs.notes_file }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -79,12 +78,10 @@ jobs:
           if [[ "$VERSION" == *-* ]]; then
             PRERELEASE=true
           fi
-          NOTES_FILE="docs/RELEASE_NOTES_${TAG}.md"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
-          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
@@ -341,7 +338,6 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
-          NOTES_FILE: ${{ needs.prepare.outputs.notes_file }}
         run: |
           set -euo pipefail
           CREATED_TAG=false
@@ -389,7 +385,8 @@ jobs:
           git push origin "refs/tags/$TAG"
           CREATED_TAG=true
 
-          CREATE_ARGS=("$TAG" --target "$SOURCE_SHA" --title "$TAG" --notes-file "$NOTES_FILE" --draft)
+          node scripts/release-notes.js "$VERSION" > /tmp/tauterm-release-notes.md
+          CREATE_ARGS=("$TAG" --target "$SOURCE_SHA" --title "$TAG" --notes-file /tmp/tauterm-release-notes.md --draft)
           if [ "$PRERELEASE" = "true" ]; then
             CREATE_ARGS+=(--prerelease)
           fi

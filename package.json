@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "docs:check": "node scripts/check-docs.js",
     "preview": "vite preview",
     "tauri": "tauri",
     "trdp:build": "node scripts/prepare-service-bin.js --trdp-only",

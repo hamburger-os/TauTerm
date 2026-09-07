@@ -102,10 +102,14 @@ jobs:
       - name: Verify synchronized version metadata
         run: npm run version:check
 
+      - name: Validate documentation contract
+        run: npm run docs:check
+
       - name: Validate updater release scripts
         run: |
           node --check scripts/stage-release.js
           node --check scripts/assemble-release.js
+          node --check scripts/release-notes.js
           node --check scripts/verify-published-updater.js
 
       - name: Validate TRDP sidecar bundle contract
