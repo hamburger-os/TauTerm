@@ -76,7 +76,7 @@ impl ConfigStore {
         match serde_json::from_str::<PersistedConfigStore>(&raw) {
             Ok(snapshot) if snapshot.version == CONFIG_STORE_VERSION => Ok(snapshot.namespaces),
             Ok(snapshot) => {
-                Self::backup_invalid(path);
+                Self::backup_invalid(path)?;
                 log::warn!(
                     "配置存储版本不受支持: {} (expected {})，已从空配置启动",
                     snapshot.version,
@@ -85,16 +85,17 @@ impl ConfigStore {
                 Ok(HashMap::new())
             }
             Err(error) => {
-                Self::backup_invalid(path);
+                Self::backup_invalid(path)?;
                 log::warn!("配置存储损坏: {}，已从空配置启动", error);
                 Ok(HashMap::new())
             }
         }
     }
 
-    fn backup_invalid(path: &Path) {
+    fn backup_invalid(path: &Path) -> Result<(), ConfigStoreError> {
         let backup = path.with_extension("json.invalid.bak");
-        let _ = std::fs::copy(path, backup);
+        std::fs::copy(path, backup).map_err(ConfigStoreError::Io)?;
+        Ok(())
     }
 
     fn persist_snapshot(
@@ -107,8 +108,7 @@ impl ConfigStore {
             .map_err(|_| ConfigStoreError::LockError)?
             .clone();
         let Some(path) = path else {
-            // setup 之前的极短窗口只保留内存状态；setup 会随后加载并绑定磁盘。
-            return Ok(());
+            return Err(ConfigStoreError::NotConfigured);
         };
 
         let snapshot = PersistedConfigStore {
@@ -130,6 +130,14 @@ impl ConfigStore {
     pub fn get_or_default<T: DeserializeOwned + Default>(&self, key: &str) -> T {
         self.get(key).unwrap_or_default()
     }
+
+    pub fn persistence_ready(&self) -> bool {
+        self.persistence_path
+            .read()
+            .map(|path| path.is_some())
+            .unwrap_or(false)
+    }
+
 
     pub fn set<T: Serialize>(&self, key: &str, value: &T) -> Result<(), ConfigStoreError> {
         let (ns, k) = Self::parse_key(key).ok_or(ConfigStoreError::InvalidKey(key.to_string()))?;
@@ -235,6 +243,8 @@ pub enum ConfigStoreError {
     Serialization(String),
     #[error("配置存储 I/O 失败: {0}")]
     Io(#[from] std::io::Error),
+    #[error("配置存储尚未绑定持久化文件")]
+    NotConfigured,
     #[error("内部锁错误")]
     LockError,
 }
@@ -249,6 +259,17 @@ mod tests {
             name,
             uuid::Uuid::new_v4()
         ))
+    }
+
+    #[test]
+    fn config_store_rejects_writes_before_persistence_is_configured() {
+        let store = ConfigStore::new();
+        assert!(!store.persistence_ready());
+        assert!(matches!(
+            store.set("workspace.sample", &42_u64),
+            Err(ConfigStoreError::NotConfigured)
+        ));
+        assert_eq!(store.get::<u64>("workspace.sample"), None);
     }
 
     #[test]
