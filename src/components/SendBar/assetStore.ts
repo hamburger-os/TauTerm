@@ -40,7 +40,7 @@ function reportPersistenceError(
     operation,
     error: String(error),
   };
-  console.error(`Failed to persist engineering asset ${key}:`, error);
+  console.error(`Engineering asset storage failed (${operation} · ${key}):`, error);
 
   // One disk/backend failure can affect several asset keys at once. Keep it visible without
   // multiplying identical toasts from every write in the same failure burst.
@@ -53,22 +53,26 @@ function reportPersistenceError(
   }
 }
 
-function enqueueWrite(key: string, operation: () => Promise<void>) {
+function enqueueWrite(key: string, operation: () => Promise<boolean>): Promise<boolean> {
   const previous = writeQueues.get(key) ?? Promise.resolve();
-  const task = previous
+  const result = previous
     .catch(() => {
       // A prior write already reported its own failure; later user edits must still be retriable.
     })
-    .then(operation);
+    .then(operation)
+    .catch(error => {
+      console.error(`Unexpected engineering asset write failure for ${key}:`, error);
+      return false;
+    });
+  const tail = result.then(() => undefined);
 
-  writeQueues.set(key, task);
-  void task.finally(() => {
-    if (writeQueues.get(key) === task) {
+  writeQueues.set(key, tail);
+  void tail.finally(() => {
+    if (writeQueues.get(key) === tail) {
       writeQueues.delete(key);
     }
-  }).catch(() => {
-    // operation() reports the failure; suppress the bookkeeping promise rejection.
   });
+  return result;
 }
 
 export function loadAsset<T>(key: string): Promise<T | null> {
@@ -98,34 +102,36 @@ export function loadAsset<T>(key: string): Promise<T | null> {
   return load;
 }
 
-export function persistAsset(key: string, value: unknown): void {
-  enqueueWrite(key, async () => {
+export function persistAsset(key: string, value: unknown): Promise<boolean> {
+  return enqueueWrite(key, async () => {
     await loadPromises.get(key)?.catch(() => null);
     const previous = cache.has(key) ? cache.get(key) ?? null : null;
     try {
       await invoke("set_config", { key, value });
       cache.set(key, value);
       notify(key, value);
+      return true;
     } catch (error) {
       notify(key, previous);
       reportPersistenceError(key, "save", error);
-      throw error;
+      return false;
     }
   });
 }
 
-export function clearAsset(key: string): void {
-  enqueueWrite(key, async () => {
+export function clearAsset(key: string): Promise<boolean> {
+  return enqueueWrite(key, async () => {
     await loadPromises.get(key)?.catch(() => null);
     const previous = cache.has(key) ? cache.get(key) ?? null : null;
     try {
       await invoke("delete_config", { key });
       cache.set(key, null);
       notify(key, null);
+      return true;
     } catch (error) {
       notify(key, previous);
       reportPersistenceError(key, "delete", error);
-      throw error;
+      return false;
     }
   });
 }
