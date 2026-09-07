@@ -2617,7 +2617,8 @@ pub fn store_credential(
     };
 
     let cv = match ct {
-        CredentialType::Password | CredentialType::Token => CredentialValue::Password(value),
+        CredentialType::Password => CredentialValue::Password(value),
+        CredentialType::Token => CredentialValue::Token(value),
         CredentialType::SshKey => CredentialValue::SshKey {
             private_key: value,
             passphrase: None,
