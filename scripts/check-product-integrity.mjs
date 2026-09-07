@@ -164,6 +164,12 @@ assert.doesNotMatch(
   "Session Library read-modify-write must not overwrite state after a read error",
 );
 
+assert.doesNotMatch(
+  lib,
+  /config_store[\s\S]{0,120}\.set\("log\.dir"/,
+  "runtime log directory must stay owned by LogEngine rather than duplicated in ConfigStore",
+);
+
 const logEngine = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "log_engine.rs"), "utf8");
 assert.match(logEngine, /session_enabled/, "System and Session logging must have separate enable semantics");
 assert.match(logEngine, /SESSION_LOG_ENABLED/, "disabled Session Log producers must stop before the shared queue");
