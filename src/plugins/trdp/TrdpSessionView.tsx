@@ -1314,7 +1314,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
         )}
 
         {page === "analysis" && (
-          <section className={styles.section}>
+          <section className={`${styles.section} ${styles.analysisSection}`}>
             <div className={styles.sectionHeader}>
               <h2 className={styles.sectionTitle}>{t("trdp.nav.analysis")}</h2>
             </div>
@@ -1374,15 +1374,17 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
               onInspectPacket={event => { void inspectPacket(event); }}
             />
 
-            <TrdpPacketInspector
-              selectedPacket={selectedPacket}
-              decoded={decoded}
-              xmlImport={xmlImport}
-              onConfirmMessage={event => { void confirmMessage(event); }}
-              canConfirmMessage={sessionConnected && selectedPacket?.can_confirm === true}
-              mdLatencyUs={mdLatencyUs}
-              observedMdReplies={observedMdReplies}
-            />
+            {selectedPacket && (
+              <TrdpPacketInspector
+                selectedPacket={selectedPacket}
+                decoded={decoded}
+                xmlImport={xmlImport}
+                onConfirmMessage={event => { void confirmMessage(event); }}
+                canConfirmMessage={sessionConnected && selectedPacket.can_confirm === true}
+                mdLatencyUs={mdLatencyUs}
+                observedMdReplies={observedMdReplies}
+              />
+            )}
           </section>
         )}
       </div>
