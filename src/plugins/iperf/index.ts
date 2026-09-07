@@ -1,22 +1,12 @@
 /**
  * iperf 插件前端注册
  */
-import { registerPlugin } from "../../core/plugin-registry";
+import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import manifestJson from "../../plugin-manifests/iperf.json";
 import IperfSessionView from "../../components/Iperf/IperfSessionView";
 
 registerPlugin({
-  manifest: {
-    id: "iperf",
-    name: "iperf",
-    version: "1.0.0",
-    category: "network_tool",
-    description: "iperf 网络测速",
-    icon: "stopwatch",
-    content_type: "custom",
-    send_bar: false,
-    capabilities: ["connection"],
-    transfer_protocols: [],
-  },
+  manifest: manifestJson as PluginManifest,
   customView: IperfSessionView,
 });
 
