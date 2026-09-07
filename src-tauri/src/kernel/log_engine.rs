@@ -595,7 +595,7 @@ impl LogEngine {
                         }
                     }
 
-                    if let Some(ref mut w) = system_writer {
+                    let write_failed = if let Some(ref mut w) = system_writer {
                         let ts = timestamp.format("%Y-%m-%d %H:%M:%S%.3f");
                         let sanitized_msg = sanitize_log(&message);
                         let line =
@@ -603,9 +603,16 @@ impl LogEngine {
                         if let Err(error) = w.write_all(line.as_bytes()) {
                             DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
                             eprintln!("TauTerm: 系统日志写入失败: {}", error);
-                            system_writer = None;
-                            system_date = None;
+                            true
+                        } else {
+                            false
                         }
+                    } else {
+                        false
+                    };
+                    if write_failed {
+                        system_writer = None;
+                        system_date = None;
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
