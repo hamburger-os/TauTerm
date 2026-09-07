@@ -7,8 +7,8 @@ use crate::channel::error::SessionError;
 use crate::channel::local_shell_channel::LocalShellChannel;
 use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
-    ChannelKind, ChannelOpenMode, EndpointInfo, ProtocolAdapter,
-    ProtocolConnection, SessionChannelFactory, TransferProtocolType,
+    ChannelKind, ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection,
+    SessionChannelFactory, TransferProtocolType,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -229,7 +229,6 @@ impl LocalShellAdapter {
     pub fn new() -> Self {
         Self
     }
-
 
     pub fn validate_params(params: &serde_json::Value) -> Result<(), String> {
         let config: LocalShellConfig = serde_json::from_value(params.clone())
