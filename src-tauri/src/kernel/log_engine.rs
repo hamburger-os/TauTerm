@@ -433,28 +433,65 @@ impl LogEngine {
         }
     }
 
-    /// 清理过期日志文件
+    /// 清理过期日志文件。
+    ///
+    /// 该函数在 consumer loop 正式接收消息前运行，因此不能通过 LogBridge 逐文件记录
+    /// 清理结果，否则大量历史文件会把消息重新塞回尚未消费的同一有界队列。
     pub fn cleanup_old_logs(config: &LogConfig) {
         let retention_secs = config.retention_days * 86400;
         let cutoff = std::time::SystemTime::now().checked_sub(Duration::from_secs(retention_secs));
+        let Some(cutoff) = cutoff else {
+            return;
+        };
 
-        if let Some(cutoff) = cutoff {
-            if let Ok(entries) = std::fs::read_dir(&config.log_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_none_or(|e| e != "log") {
-                        continue;
-                    }
-                    if let Ok(meta) = entry.metadata() {
-                        if let Ok(modified) = meta.modified() {
-                            if modified < cutoff {
-                                let _ = std::fs::remove_file(&path);
-                                log::info!("已删除过期日志: {:?}", path);
-                            }
-                        }
+        let entries = match std::fs::read_dir(&config.log_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                eprintln!(
+                    "TauTerm: unable to inspect log retention directory {:?}: {}",
+                    config.log_dir, error
+                );
+                return;
+            }
+        };
+
+        let mut removed = 0_u64;
+        let mut failed = 0_u64;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "log") {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
+            if modified >= cutoff {
+                continue;
+            }
+
+            match std::fs::remove_file(&path) {
+                Ok(()) => removed += 1,
+                Err(error) => {
+                    failed += 1;
+                    if failed == 1 || failed.is_power_of_two() {
+                        eprintln!(
+                            "TauTerm: log retention delete failures={} latest={:?}: {}",
+                            failed, path, error
+                        );
                     }
                 }
             }
+        }
+
+        if removed > 0 || failed > 0 {
+            eprintln!(
+                "TauTerm: log retention cleanup complete (removed={}, failed={})",
+                removed, failed
+            );
         }
     }
 
