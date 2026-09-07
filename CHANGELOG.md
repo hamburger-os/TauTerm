@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Windows release trust chain** — official Windows release builds now fail closed unless the main executable, NSIS installer, TauTerm service, and TRDP helper are Authenticode-signed with the configured publisher certificate and timestamped; release CI verifies the signer and timestamp before staging artifacts.
-- **SSH credential-reference persistence** — saved SSH sessions now persist only a stable credential reference while passwords, private keys, and passphrases stay in the native OS credential store or authenticated encrypted vault. Legacy plaintext SSH session parameters are migrated when secure storage is available and are never returned to the WebView during deferred migration.
+- **SSH credential-reference persistence** — saved SSH sessions now persist only a stable credential reference while passwords, private keys, and passphrases stay in the native OS credential store or authenticated encrypted vault. Session loading never exposes plaintext SSH authentication material to the WebView.
 
 ### Fixed
 - **Session configuration freezes on some Windows systems** — endpoint discovery is now lazy, cached, and executed away from the command/UI path. Local Shell WSL distribution discovery has a bounded timeout, so slow or partially initialized WSL installations no longer freeze Serial/SSH/new-session configuration workflows.
