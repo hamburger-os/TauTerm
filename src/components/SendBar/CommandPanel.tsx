@@ -50,6 +50,8 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     defaultCommands as CommandConfig,
   ]);
   const [activeConfigName, setActiveConfigName] = useState(defaultCommands.name);
+  const configsRef = useRef(configs);
+  configsRef.current = configs;
 
   // Command Set 是可复用工程资产，Rust ConfigStore 是持久化权威源。
   // 研发阶段不读取旧浏览器本地存储，也不保留双写兼容层。
@@ -91,7 +93,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     });
     const unsubscribeActive = subscribeAsset<string>(ACTIVE_CONFIG_STORE_KEY, value => {
       if (!value) {
-        setActiveConfigName(current => current || configs[0]?.name || "");
+        setActiveConfigName(current => current || configsRef.current[0]?.name || "");
         return;
       }
       setActiveConfigName(value);
