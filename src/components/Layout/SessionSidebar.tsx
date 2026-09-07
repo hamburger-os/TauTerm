@@ -405,7 +405,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         break;
       }
     }
-  }, [menu.session, menu.peer, state.tabs, t, connect, disconnect, deleteSession, openChannel, closeChannel, selectPane, onEditSession, loggingSessions, startSessionLog, stopSessionLog, disconnectNetworkPeer, clearNetworkPeer]);
+  }, [menu.session, menu.peer, state.tabs, t, reconnectSession, disconnect, deleteSession, openChannel, closeChannel, selectPane, onEditSession, loggingSessions, startSessionLog, stopSessionLog, disconnectNetworkPeer, clearNetworkPeer]);
 
   return (
     <div className={styles.sidebar}>
