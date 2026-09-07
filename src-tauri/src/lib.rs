@@ -427,6 +427,7 @@ pub fn run() {
             plugins::trdp::trdp_capture_interfaces,
             plugins::trdp::trdp_open_capture,
             plugins::trdp::trdp_capture_packets,
+            plugins::trdp::trdp_capture_summary,
             plugins::trdp::trdp_save_capture,
             plugins::trdp::trdp_release_capture,
             plugins::trdp::trdp_import_xml,
