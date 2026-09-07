@@ -25,8 +25,8 @@ if ($null -ne $signToolCommand) {
 }
 else {
     $kitsRoots = @(
-        (Join-Path $env:ProgramFiles "Windows Kits\\10\\bin"),
-        (Join-Path ([Environment]::GetEnvironmentVariable("ProgramFiles(x86)")) "Windows Kits\\10\\bin")
+        (Join-Path $env:ProgramFiles "Windows Kits\10\bin"),
+        (Join-Path ([Environment]::GetEnvironmentVariable("ProgramFiles(x86)")) "Windows Kits\10\bin")
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path -LiteralPath $_) }
 
     $signTool = $kitsRoots |
