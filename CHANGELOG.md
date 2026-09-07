@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-09-07
+
 ### Changed
 - **Documentation completeness, authority knowledge, and license distribution audit** — adds a curated standards/upstream knowledge layer, restores a Chinese maintainer development/command guide, expands module ownership for frontend foundation, shared transfer, logging/data/tools, removes orphan README screenshots, and hardens third-party distribution for com0com, TCNOpen, riperf3, Lua and package-managed dependencies with generated notices, bundled license texts, corresponding-source release assets, CI review gates and package-stage checks.
 - **Documentation contract and agent interoperability** — adds a tool-neutral root `AGENTS.md`, restructures long-lived documentation into AI/community/Chinese maintainer layers, replaces the monolithic architecture document with concise module design owners, makes documentation consistency a CI gate, and derives GitHub Release notes from the canonical CHANGELOG instead of maintaining duplicate version-specific files.
