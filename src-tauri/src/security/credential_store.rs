@@ -231,24 +231,27 @@ impl CredentialStore {
         if Self::native_available() {
             let entry = Self::entry(account)?;
             let previous = self.native_get(account)?;
-            let mut index = self.read_index()?;
+            let original_index = self.read_index()?;
+            let mut next_index = original_index.clone();
 
             match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => {}
                 Err(error) => return Err(be(error)),
             }
 
-            if index.remove(account) {
-                if let Err(index_error) = self.write_index(&index) {
-                    if let Some(previous) = previous.as_ref() {
-                        if let Err(rollback_error) = Self::native_write_secret(&entry, previous) {
-                            return Err(CredentialStoreError::Backend(format!(
-                                "{}; credential rollback failed: {}",
-                                index_error, rollback_error
-                            )));
-                        }
-                    }
-                    return Err(index_error);
+            if next_index.remove(account) {
+                if let Err(error) = self.write_index(&next_index) {
+                    return match self.restore_native_state(
+                        &entry,
+                        previous.as_ref(),
+                        &original_index,
+                    ) {
+                        Ok(()) => Err(error),
+                        Err(rollback_error) => Err(CredentialStoreError::Backend(format!(
+                            "{}; native credential/index rollback failed: {}",
+                            error, rollback_error
+                        ))),
+                    };
                 }
             }
             Ok(())
@@ -268,27 +271,21 @@ impl CredentialStore {
     fn native_store(&self, a: &str, s: &Stored) -> Result<(), CredentialStoreError> {
         let entry = Self::entry(a)?;
         let previous = self.native_get(a)?;
+        let original_index = self.read_index()?;
+        let mut next_index = original_index.clone();
+
         Self::native_write_secret(&entry, s)?;
 
-        let mut index = match self.read_index() {
-            Ok(index) => index,
-            Err(error) => {
-                return match Self::restore_native_secret(&entry, previous.as_ref()) {
+        if next_index.insert(a.into()) {
+            if let Err(error) = self.write_index(&next_index) {
+                return match self.restore_native_state(
+                    &entry,
+                    previous.as_ref(),
+                    &original_index,
+                ) {
                     Ok(()) => Err(error),
                     Err(rollback_error) => Err(CredentialStoreError::Backend(format!(
-                        "{}; credential rollback failed: {}",
-                        error, rollback_error
-                    ))),
-                };
-            }
-        };
-
-        if index.insert(a.into()) {
-            if let Err(error) = self.write_index(&index) {
-                return match Self::restore_native_secret(&entry, previous.as_ref()) {
-                    Ok(()) => Err(error),
-                    Err(rollback_error) => Err(CredentialStoreError::Backend(format!(
-                        "{}; credential rollback failed: {}",
+                        "{}; native credential/index rollback failed: {}",
                         error, rollback_error
                     ))),
                 };
@@ -317,6 +314,26 @@ impl CredentialStore {
                 Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
                 Err(error) => Err(be(error)),
             },
+        }
+    }
+
+    fn restore_native_state(
+        &self,
+        entry: &keyring::Entry,
+        previous: Option<&Stored>,
+        original_index: &BTreeSet<String>,
+    ) -> Result<(), CredentialStoreError> {
+        let secret_result = Self::restore_native_secret(entry, previous);
+        let index_result = self.write_index(original_index);
+
+        match (secret_result, index_result) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(secret_error), Ok(())) => Err(secret_error),
+            (Ok(()), Err(index_error)) => Err(index_error),
+            (Err(secret_error), Err(index_error)) => Err(CredentialStoreError::Backend(format!(
+                "secret rollback failed: {}; index rollback failed: {}",
+                secret_error, index_error
+            ))),
         }
     }
     fn native_get(&self, a: &str) -> Result<Option<Stored>, CredentialStoreError> {
