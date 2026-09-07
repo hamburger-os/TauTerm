@@ -113,7 +113,7 @@ registerPlugin({
     icon: "globe",
     content_type: "custom",
     send_bar: true,
-    capabilities: ["connection", "network_outbound", "network_listen"],
+    capabilities: ["connection", "network_outbound", "network_listen", "session_logging"],
     transfer_protocols: [],
   },
   customView: NetworkDebugSessionView,
