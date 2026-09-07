@@ -7,7 +7,7 @@ use crate::kernel::persistence::atomic_write;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
 const KNOWN_HOSTS_VERSION: u32 = 1;
 
@@ -36,6 +36,7 @@ pub enum HostTrustDecision {
 pub struct KnownHostStore {
     path: RwLock<Option<PathBuf>>,
     hosts: RwLock<HashMap<String, KnownHostRecord>>,
+    mutation_lock: Mutex<()>,
 }
 
 impl KnownHostStore {
@@ -43,10 +44,15 @@ impl KnownHostStore {
         Self {
             path: RwLock::new(None),
             hosts: RwLock::new(HashMap::new()),
+            mutation_lock: Mutex::new(()),
         }
     }
 
     pub fn configure(&self, path: PathBuf) -> Result<(), String> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "SSH known-host mutation 锁错误".to_string())?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("无法创建 SSH 信任目录: {e}"))?;
         }
@@ -121,58 +127,75 @@ impl KnownHostStore {
     }
 
     pub fn touch(&self, host: &str, port: u16) {
+        let Ok(_mutation) = self.mutation_lock.lock() else {
+            log::warn!("SSH known-host mutation 锁错误");
+            return;
+        };
         let key = Self::key(host, port);
-        if let Ok(mut hosts) = self.hosts.write() {
-            if let Some(record) = hosts.get_mut(&key) {
-                record.last_seen_ms = Self::now_ms();
+        let Ok(mut next) = self.hosts.read().map(|hosts| hosts.clone()) else {
+            log::warn!("SSH known-host 锁错误");
+            return;
+        };
+        let Some(record) = next.get_mut(&key) else {
+            return;
+        };
+        record.last_seen_ms = Self::now_ms();
+
+        match self.persist_snapshot(&next) {
+            Ok(()) => {
+                if let Ok(mut hosts) = self.hosts.write() {
+                    *hosts = next;
+                }
             }
-        }
-        if let Err(error) = self.persist() {
-            log::warn!("更新 SSH known-host last_seen 失败: {error}");
+            Err(error) => log::warn!("更新 SSH known-host last_seen 失败: {error}"),
         }
     }
 
     pub fn trust(&self, host: &str, port: u16, fingerprint: &str) -> Result<(), String> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "SSH known-host mutation 锁错误".to_string())?;
         let key = Self::key(host, port);
         let now = Self::now_ms();
-        {
-            let mut hosts = self
-                .hosts
-                .write()
-                .map_err(|_| "SSH known-host 锁错误".to_string())?;
-            let first_seen = hosts
-                .get(&key)
-                .map(|record| record.first_seen_ms)
-                .unwrap_or(now);
-            hosts.insert(
-                key,
-                KnownHostRecord {
-                    host: host.to_string(),
-                    port,
-                    fingerprint: fingerprint.to_string(),
-                    first_seen_ms: first_seen,
-                    last_seen_ms: now,
-                },
-            );
-        }
-        self.persist()
+        let mut next = self
+            .hosts
+            .read()
+            .map_err(|_| "SSH known-host 锁错误".to_string())?
+            .clone();
+        let first_seen = next
+            .get(&key)
+            .map(|record| record.first_seen_ms)
+            .unwrap_or(now);
+        next.insert(
+            key,
+            KnownHostRecord {
+                host: host.to_string(),
+                port,
+                fingerprint: fingerprint.to_string(),
+                first_seen_ms: first_seen,
+                last_seen_ms: now,
+            },
+        );
+
+        self.persist_snapshot(&next)?;
+        *self
+            .hosts
+            .write()
+            .map_err(|_| "SSH known-host 锁错误".to_string())? = next;
+        Ok(())
     }
 
-    fn persist(&self) -> Result<(), String> {
+    fn persist_snapshot(&self, hosts: &HashMap<String, KnownHostRecord>) -> Result<(), String> {
         let path = self
             .path
             .read()
             .map_err(|_| "SSH known-host 路径锁错误".to_string())?
             .clone()
             .ok_or_else(|| "SSH known-host 存储尚未初始化".to_string())?;
-        let hosts = self
-            .hosts
-            .read()
-            .map_err(|_| "SSH known-host 锁错误".to_string())?
-            .clone();
         let file = KnownHostsFile {
             version: KNOWN_HOSTS_VERSION,
-            hosts,
+            hosts: hosts.clone(),
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("序列化 SSH known-host 失败: {e}"))?;
@@ -192,6 +215,26 @@ mod tests {
 
     fn temp_path() -> PathBuf {
         std::env::temp_dir().join(format!("tauterm-known-hosts-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn failed_trust_write_does_not_create_in_memory_trust() {
+        let dir = temp_path();
+        let path = dir.join("known_hosts.json");
+
+        let store = KnownHostStore::new();
+        store.configure(path).unwrap();
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::write(&dir, b"blocks-directory-recreation").unwrap();
+
+        assert!(store.trust("example.test", 22, "SHA256:first").is_err());
+        assert_eq!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Unknown
+        );
+
+        let _ = std::fs::remove_file(dir);
     }
 
     #[test]
