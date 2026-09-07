@@ -92,9 +92,10 @@ impl LogWriter {
             self.rotate_file()?;
         }
 
-        let file = self.file.as_mut().ok_or_else(|| {
-            std::io::Error::other("session log writer is not open")
-        })?;
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("session log writer is not open"))?;
         file.write_all(line_bytes)?;
         self.bytes_written += line_bytes.len() as u64;
         Ok(())
