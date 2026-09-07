@@ -47,12 +47,17 @@ impl KnownHostStore {
 
     pub fn configure(&self, path: PathBuf) -> Result<(), String> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("无法创建 SSH 信任目录: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("无法创建 SSH 信任目录: {e}"))?;
         }
         let hosts = Self::load(&path)?;
-        *self.hosts.write().map_err(|_| "SSH known-host 锁错误".to_string())? = hosts;
-        *self.path.write().map_err(|_| "SSH known-host 路径锁错误".to_string())? = Some(path);
+        *self
+            .hosts
+            .write()
+            .map_err(|_| "SSH known-host 锁错误".to_string())? = hosts;
+        *self
+            .path
+            .write()
+            .map_err(|_| "SSH known-host 路径锁错误".to_string())? = Some(path);
         Ok(())
     }
 
