@@ -59,6 +59,12 @@ Apache 2.0 要求修改文件保留明显修改声明等条件；TauTerm 通过 
 
 TauTerm 通过 `mlua` 的 vendored Lua 5.4 构建链嵌入 Lua runtime，因此二进制分发 notice 应保留 Lua 的 MIT 许可/版权声明。根 `THIRD_PARTY_LICENSES.md` 保存该 notice。
 
+## Cargo 依赖中的 MPL / 多许可证表达式
+
+当前完整 Cargo graph 中有 6 个已人工审核、未作为 TauTerm fork 维护的 MPL-2.0 crate：`cssparser 0.36.0`、`cssparser-macros 0.6.1`、`dtoa-short 0.3.5`、`option-ext 0.2.0`、`selectors 0.36.1`、`serialport 4.10.0`。这些版本/许可证组合被 `scripts/check-cargo-licenses.js` 精确 allowlist；版本或许可证表达式变化必须重新审核。
+
+Cargo 的 SPDX `OR` 表示使用者可选择其中一个许可证。例如当前 `r-efi` 同时提供 MIT / Apache-2.0 / LGPL 选项，`unescaper` 同时提供 MIT / GPL 选项；TauTerm 选择宽松许可证分支，不应因为表达式里出现 GPL/LGPL 字样就错误判定整个依赖为 copyleft。Cargo manifest 的许可证字段语义见：https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields
+
 ## Npcap / libpcap
 
 TauTerm 当前不再分发 Npcap 或 libpcap：
@@ -70,7 +76,9 @@ TauTerm 当前不再分发 Npcap 或 libpcap：
 
 ## 依赖审查规则
 
-普通 npm/Cargo 依赖的版本由 lockfile 追踪。出现下面任一情况时，应提升到根第三方清单：
+普通 npm/Cargo 依赖的版本由 lockfile 追踪。正式 bundle 前，`scripts/generate-third-party-notices.js` 会从当前 Cargo metadata 与 `package-lock.json` / 已安装 package 生成 `THIRD_PARTY_DEPENDENCY_LICENSES.txt`，记录精确版本、许可证表达式以及依赖分发中实际携带的 LICENSE/COPYING/NOTICE 文本；该文件随安装包分发。它故意采用保守集合，可包含 build/dev 依赖，避免漏掉归属信息。
+
+出现下面任一情况时，还必须提升到根第三方清单并做人工审查：
 
 - 将源码复制到仓库；
 - 对依赖打 patch/fork；

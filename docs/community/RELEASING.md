@@ -61,7 +61,7 @@ The workflow currently requires these updater targets:
 4. `linux-x86_64-appimage`
 5. `darwin-aarch64-app`
 
-Staging verifies required bundled components, non-empty assets, and third-party notice resources. Windows staging additionally verifies the com0com GPL license text is present in the installer; Linux/macOS staging verifies the shared `THIRD_PARTY_LICENSES.md` resource. Assembly first fetches and validates the official com0com 3.0.0.0 corresponding-source ZIP, includes it in the release asset set, then verifies updater signatures and generates `latest.json` plus `SHA256SUMS`.
+Staging verifies required bundled components, non-empty assets, TauTerm's MIT/Apache license texts, the TCNOpen MPL license, the curated `THIRD_PARTY_LICENSES.md`, and the dependency notice generated from the resolved Cargo/npm graph. Windows staging additionally verifies the com0com GPL license text is present in the installer. Assembly first fetches and validates the official com0com 3.0.0.0 corresponding-source ZIP, includes it in the release asset set, then verifies updater signatures and generates `latest.json` plus `SHA256SUMS`.
 
 The publish job derives a temporary GitHub Release notes file from the corresponding `CHANGELOG.md` section; no second committed release-note document exists.
 

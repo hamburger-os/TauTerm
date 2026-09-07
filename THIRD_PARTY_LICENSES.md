@@ -66,6 +66,19 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+### Reviewed package-managed MPL-2.0 crates
+
+The current Cargo graph also contains unmodified MPL-2.0 crates that are not maintained as TauTerm forks:
+
+- `cssparser 0.36.0`
+- `cssparser-macros 0.6.1`
+- `dtoa-short 0.3.5`
+- `option-ext 0.2.0`
+- `selectors 0.36.1`
+- `serialport 4.10.0`
+
+These versions and their MPL-2.0 expressions are explicitly reviewed by `scripts/check-cargo-licenses.js`. An upgrade or license-expression change fails closed and requires another review. Their resolved package metadata and available license/notice texts are included in the generated dependency notice shipped with TauTerm.
+
 ## Runtime/system components not redistributed by TauTerm
 
 ### Npcap
@@ -83,10 +96,12 @@ TauTerm also ships compiled/bundled output from ordinary Rust and npm dependenci
 - `src-tauri/Cargo.lock`
 - `package-lock.json`
 
-Do not manually copy every transitive package into this file. When a dependency is newly vendored, materially modified, separately redistributed, copyleft-licensed, or otherwise needs a distribution notice beyond the package manager's normal metadata, add it to this inventory and to the automated third-party check.
+Do not manually copy every transitive package into this file. Before a production bundle is assembled, `scripts/generate-third-party-notices.js` generates `THIRD_PARTY_DEPENDENCY_LICENSES.txt` from the resolved Cargo/npm dependency graph and the license/notice files present in installed source packages. The generated file is bundled with TauTerm and intentionally uses a conservative dependency set, including build/development dependencies where applicable.
+
+When a dependency is newly vendored, materially modified, separately redistributed, copyleft-licensed, or otherwise needs a distribution obligation beyond ordinary package attribution, add it to this curated inventory and to the automated third-party checks.
 
 ## Distribution contract
 
-`THIRD_PARTY_LICENSES.md` is bundled as an application resource so binary recipients have the notice inventory. Component-local license/provenance files remain beside redistributed or vendored material.
+`THIRD_PARTY_LICENSES.md`, the generated dependency notice, TauTerm's MIT/Apache license texts, and the TCNOpen MPL-2.0 license are bundled as application resources so binary recipients have the relevant terms and attribution inventory. Component-local license/provenance files remain beside redistributed or vendored material.
 
 The mechanically checkable part of this contract is enforced by `scripts/check-third-party.js`. License interpretation and source-delivery obligations still require human review when a distribution model changes.

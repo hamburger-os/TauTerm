@@ -24,6 +24,7 @@ const required = [
   "src-tauri/vendor/riperf3/LICENSE-MIT.txt",
   "src-tauri/vendor/riperf3/LICENSE-APACHE.txt",
   "src-tauri/vendor/riperf3/VENDOR-NOTES.md",
+  "scripts/generate-third-party-notices.js",
 ];
 
 for (const rel of required) {
@@ -41,7 +42,7 @@ if (!/^license\s*=\s*"MIT OR Apache-2\.0"$/m.test(cargoToml)) {
 }
 
 const notice = read("THIRD_PARTY_LICENSES.md");
-for (const marker of ["com0com 3.0.0.0", "TCNOpen TRDP 3.0.0.0", "riperf3 0.8.0", "Lua 5.4", "Npcap", "libpcap"]) {
+for (const marker of ["com0com 3.0.0.0", "TCNOpen TRDP 3.0.0.0", "riperf3 0.8.0", "Lua 5.4", "serialport 4.10.0", "THIRD_PARTY_DEPENDENCY_LICENSES.txt", "Npcap", "libpcap"]) {
   if (!notice.includes(marker)) fail("THIRD_PARTY_LICENSES.md missing inventory marker: " + marker);
 }
 
@@ -112,11 +113,23 @@ for (const [packagePath, metadata] of Object.entries(packageLock.packages ?? {})
 
 const baseConfig = json("src-tauri/tauri.conf.json");
 const windowsConfig = json("src-tauri/tauri.windows.conf.json");
+const commonBundleResources = {
+  "../LICENSE": "LICENSE-MIT",
+  "../LICENSE-APACHE": "LICENSE-APACHE",
+  "../THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md",
+  "vendor/tcnopen/LICENSE": "THIRD_PARTY_TCNOPEN_MPL-2.0.txt",
+  "generated/THIRD_PARTY_DEPENDENCY_LICENSES.txt": "THIRD_PARTY_DEPENDENCY_LICENSES.txt",
+};
 for (const [label, config] of [["base", baseConfig], ["windows", windowsConfig]]) {
   const resources = config.bundle?.resources ?? {};
-  if (!Object.prototype.hasOwnProperty.call(resources, "../THIRD_PARTY_LICENSES.md")) {
-    fail(label + " Tauri bundle resources must include ../THIRD_PARTY_LICENSES.md");
+  for (const [sourcePath, targetPath] of Object.entries(commonBundleResources)) {
+    if (resources[sourcePath] !== targetPath) {
+      fail(label + " Tauri bundle resource mismatch: " + sourcePath + " -> " + targetPath);
+    }
   }
+}
+if (baseConfig.build?.beforeBundleCommand !== "node scripts/generate-third-party-notices.js && node scripts/prepare-service-bin.js") {
+  fail("beforeBundleCommand must generate dependency notices before staging native binaries");
 }
 if (!Object.prototype.hasOwnProperty.call(windowsConfig.bundle?.resources ?? {}, "../resources/com0com/*")) {
   fail("Windows bundle must include the reviewed com0com distribution payload");
