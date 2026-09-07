@@ -35,9 +35,11 @@ export function TrdpAnalysisTables({
   return (
     <div className={styles.analysisGrid}>
       <div className={styles.analysisPane}>
-        <h3 className={styles.subheading}>{t("trdp.section.flows")}</h3>
+        <div className={styles.analysisPaneHeader}>
+          <h3 className={styles.subheading}>{t("trdp.section.flows")}</h3>
+        </div>
         <div className={styles.tableWrap}>
-          <table className={`${styles.table} ${styles.analysisTable}`}>
+          <table className={`${styles.table} ${styles.flowTable}`}>
             <thead>
               <tr>
                 <th>{t("trdp.table.link")}</th>
@@ -96,7 +98,7 @@ export function TrdpAnalysisTables({
           )}
         </div>
         <div className={styles.tableWrap}>
-          <table className={`${styles.table} ${styles.monoTable} ${styles.analysisTable}`}>
+          <table className={`${styles.table} ${styles.monoTable} ${styles.packetTable}`}>
             <thead>
               <tr>
                 <th>#</th>

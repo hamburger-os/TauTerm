@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, four-color amb
 license: MIT
 metadata:
   author: tauterm
-  version: "9.4"
+  version: "9.5"
 ---
 
-# TauTerm Liquid Glass v9.4 — 唯一主题规范源
+# TauTerm Liquid Glass v9.5 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、四色环境色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -199,6 +199,8 @@ Content 与 Structural Panel **必须同宗**：
 
 Float、Card、Accent 也必须从同一 clear physics 派生，不能各自造玻璃渐变。
 
+滚动表格同样遵守单 surface owner：当外层 table wrapper 已负责 border / radius / fill / clipping / scroll 时，内部 table 不得再画第二套外边框和背景；独立 table 才自行拥有 surface。
+
 ---
 
 ## 7. SendBar — 布局冻结
@@ -318,8 +320,8 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 - 动画应是低频连续流动，不做高频闪烁；默认约 8s 一轮即可。
 - 系统 reduced-motion 时静态；layout drag / resize 与 hidden/paused 状态下暂停。
 - Hover：普通动作按钮**不换色**，只允许 lift、scale、edge/shadow 增强。
-- **导航 Tab / 模式切换条例外**：同一条 tab strip 内所有按钮的外部几何必须恒定；selected/hover 只能改变颜色、边缘和阴影，禁止 translate / scale 让当前项看起来更高或更宽。
-- Active：普通动作按钮可轻微压下；导航 Tab 不改变外部尺寸。
+- **导航 Tab / 模式切换条 / 互斥筛选条例外**：同一 selector strip 内所有按钮的外部几何必须恒定；selected/hover 只能改变颜色、边缘和阴影，禁止 translate / scale 让当前项看起来更高或更宽。
+- Active：普通动作按钮可轻微压下；selector strip 不改变外部尺寸。
 - Disabled：使用统一 disabled surface，不保留动态 Prism。
 
 ---
