@@ -2112,6 +2112,22 @@ impl SessionStore {
         }
     }
 
+    /// 以给定快照完整覆盖 sessions.json。
+    ///
+    /// 仅用于已经在内存中完成安全清理/规范化的持久化快照；不会合并旧记录，
+    /// 因而可确保被移除的敏感字段不会继续残留在磁盘上。
+    pub fn replace_saved_sessions(
+        path: &std::path::Path,
+        sessions: &[SavedSession],
+    ) -> Result<(), String> {
+        let _guard = SESSIONS_FILE_MUTEX
+            .lock()
+            .map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let json =
+            serde_json::to_string_pretty(sessions).map_err(|e| format!("序列化失败: {}", e))?;
+        std::fs::write(path, json).map_err(|e| format!("写入文件失败: {}", e))
+    }
+
     /// 保存单个会话配置到磁盘（合并写入，不依赖内存状态）
     pub fn save_config_to_disk(
         app_handle: &tauri::AppHandle,
