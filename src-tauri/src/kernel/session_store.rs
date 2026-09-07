@@ -2136,7 +2136,8 @@ impl SessionStore {
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let content = std::fs::read_to_string(path).map_err(|e| format!("读取会话库失败: {}", e))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("读取会话库失败: {}", e))?;
         if content.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -2154,10 +2155,7 @@ impl SessionStore {
             }
             Err(error) => {
                 Self::backup_invalid_library(path);
-                log::warn!(
-                    "会话库格式无效 ({})，已备份；开发阶段不迁移旧格式",
-                    error
-                );
+                log::warn!("会话库格式无效 ({})，已备份；开发阶段不迁移旧格式", error);
                 Ok(Vec::new())
             }
         }
@@ -2206,7 +2204,6 @@ impl SessionStore {
             .collect();
         Self::write_library(&path, filtered)
     }
-
 }
 
 impl Drop for SessionStore {
