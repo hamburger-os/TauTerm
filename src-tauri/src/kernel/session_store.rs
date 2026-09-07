@@ -2084,9 +2084,11 @@ impl SessionStore {
         atomic_write(path, json.as_bytes()).map_err(|e| format!("写入会话库失败: {}", e))
     }
 
-    fn backup_invalid_library(path: &std::path::Path) {
+    fn backup_invalid_library(path: &std::path::Path) -> Result<(), String> {
         let backup = path.with_extension("json.invalid.bak");
-        let _ = std::fs::copy(path, &backup);
+        std::fs::copy(path, &backup)
+            .map(|_| ())
+            .map_err(|e| format!("备份无效会话库失败: {}", e))
     }
 
     /// 保存运行时根 Session 的最新配置到版本化 Session Library。
@@ -2146,7 +2148,7 @@ impl SessionStore {
         match serde_json::from_str::<SessionLibraryFile>(&content) {
             Ok(library) if library.version == SESSION_LIBRARY_VERSION => Ok(library.sessions),
             Ok(library) => {
-                Self::backup_invalid_library(path);
+                Self::backup_invalid_library(path)?;
                 log::warn!(
                     "会话库版本 {} 不受支持（expected {}），已备份并从空 Library 启动",
                     library.version,
@@ -2155,7 +2157,7 @@ impl SessionStore {
                 Ok(Vec::new())
             }
             Err(error) => {
-                Self::backup_invalid_library(path);
+                Self::backup_invalid_library(path)?;
                 log::warn!("会话库格式无效 ({})，已备份；开发阶段不迁移旧格式", error);
                 Ok(Vec::new())
             }
