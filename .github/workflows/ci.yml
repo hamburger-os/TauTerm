@@ -75,6 +75,7 @@ jobs:
         run: cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
 
       - name: Validate Cargo dependency license metadata
+        if: matrix.os == 'ubuntu-22.04'
         run: node scripts/check-cargo-licenses.js
 
       - name: Rust tests

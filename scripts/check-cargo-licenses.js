@@ -4,7 +4,11 @@ import { spawnSync } from "node:child_process";
 const result = spawnSync(
   "cargo",
   ["metadata", "--locked", "--format-version", "1", "--manifest-path", "src-tauri/Cargo.toml"],
-  { encoding: "utf8" },
+  {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    env: { ...process.env, CARGO_TERM_COLOR: "never" },
+  },
 );
 
 if (result.error) throw result.error;

@@ -221,6 +221,46 @@ function checkOwnerLanguage() {
 }
 
 
+
+function codeAnchorExists(anchor) {
+  const normalized = anchor.replaceAll("\\", "/").replace(/\/$/, "");
+  if (normalized.includes("*")) {
+    const prefix = normalized.slice(0, normalized.indexOf("*"));
+    const parent = path.dirname(path.join(root, prefix));
+    if (!fs.existsSync(parent)) return false;
+    const base = path.basename(prefix);
+    return fs.readdirSync(parent).some((name) => name.startsWith(base));
+  }
+  const abs = path.join(root, normalized);
+  return fs.existsSync(abs);
+}
+
+function checkModuleCodeAnchors() {
+  const failures = [];
+  for (const rel of walk("docs/modules", (file) => file.endsWith(".md"))) {
+    const content = read(rel);
+    const anchorSection = content.split("## 代码锚点")[1]?.split(/^##\s+/m)[0] ?? "";
+    const anchors = [...anchorSection.matchAll(/\`([^\`]+)\`/g)]
+      .map((match) => match[1])
+      .filter((anchor) =>
+        /^(?:src|src-tauri|scripts|resources|tools|\.github)\//.test(anchor),
+      );
+    if (anchors.length === 0) {
+      failures.push(rel + " has no code anchors");
+      continue;
+    }
+    for (const anchor of anchors) {
+      if (!codeAnchorExists(anchor)) failures.push(rel + " -> " + anchor);
+    }
+  }
+
+  if (failures.length) {
+    fail("module code anchors", "Missing/stale module code anchors:\n  " + failures.join("\n  "));
+  } else {
+    pass("module code anchors");
+  }
+}
+
 function checkAssets() {
   const assets = walk("docs/assets", (rel) => !rel.endsWith("/"));
   const markdown = markdownFiles().map((rel) => read(rel)).join("\n");
@@ -331,6 +371,7 @@ function main() {
   checkLegacyFiles();
   checkReadmes();
   checkLinks();
+  checkModuleCodeAnchors();
   checkAssets();
   checkOwnerLanguage();
   checkMaintainerCommandGuide();

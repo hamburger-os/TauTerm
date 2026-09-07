@@ -8,7 +8,7 @@ Security fixes are developed against the current `master` branch and are release
 
 Please do **not** open a public issue for a suspected security vulnerability.
 
-Use GitHub's private vulnerability reporting / Security Advisory flow for this repository so the report, reproduction details, affected versions, and any proof-of-concept material remain private while the issue is triaged.
+Use GitHub's private vulnerability reporting / Security Advisory flow when the repository exposes it, so the report, reproduction details, affected versions, and any proof-of-concept material remain private while the issue is triaged. If no private-reporting entry is available, do not post vulnerability details publicly: use a private contact method published by the repository owner; if none is available, open only a minimal issue asking for a private contact channel and include no vulnerability details.
 
 Include, when possible:
 
