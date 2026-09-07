@@ -10,6 +10,8 @@ SSH 模块把远端终端、文件管理和远端日志放在同一个认证上�
 
 SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过独立的文件或 exec 能力工作，不把文件管理伪装成终端字节流。
 
+持久化 SSH 配置与认证秘密分离：Session/Workspace 只保留 `credential_account`，密码、私钥和 passphrase 由平台安全模块持有。建立连接时后端解析引用并把秘密注入一次连接配置，前端不读取安全存储中的秘密，也不把秘密重新写回 Session 状态。
+
 ## 关键数据流
 
 ```mermaid
