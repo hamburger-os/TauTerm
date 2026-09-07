@@ -125,14 +125,31 @@ const networkCss = await readFile(path.join(ROOT, "src", "components", "Network"
 assert.match(networkCss, /\.dataArea\s*\{[\s\S]*min-height:\s*0;/, "Network Debug must stay pane-bounded");
 assert.match(networkCss, /\.singleList\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/, "Network Debug stream must own its scroll boundary");
 
+const persistence = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "persistence.rs"), "utf8");
+assert.match(persistence, /AtomicWriteFile/, "TauTerm-owned state must keep the shared atomic persistence boundary");
+assert.match(persistence, /\.commit\(\)/, "atomic persistence must commit only after the staged write succeeds");
+
+const configStore = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "config_store.rs"), "utf8");
+assert.match(configStore, /atomic_write\(&path, json\.as_bytes\(\)\)/, "ConfigStore must use atomic persistence");
+
 const sessionStore = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "session_store.rs"), "utf8");
 assert.match(sessionStore, /SESSION_LIBRARY_VERSION:\s*u32\s*=\s*1/, "Session Library must be versioned");
 assert.match(sessionStore, /DEFAULT_MAX_ACTIVE_ROOT_SESSIONS:\s*usize\s*=\s*64/, "active root Session budget contract changed");
+assert.match(sessionStore, /atomic_write\(path, json\.as_bytes\(\)\)/, "Session Library must use atomic persistence");
+assert.doesNotMatch(
+  sessionStore,
+  /load_from_disk_unlocked\([^\n]+\)\.unwrap_or_default\(\)/,
+  "Session Library read-modify-write must not overwrite state after a read error",
+);
 
 const logEngine = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "log_engine.rs"), "utf8");
 assert.match(logEngine, /session_enabled/, "System and Session logging must have separate enable semantics");
+assert.match(logEngine, /SESSION_LOG_ENABLED/, "disabled Session Log producers must stop before the shared queue");
 assert.match(logEngine, /dropped_session_entries/, "Session log loss telemetry is missing");
 assert.match(logEngine, /dropped_system_entries/, "System log loss telemetry is missing");
+
+const knownHosts = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "ssh", "known_hosts.rs"), "utf8");
+assert.match(knownHosts, /atomic_write\(&path, json\.as_bytes\(\)\)/, "SSH known-host trust must use atomic persistence");
 
 const ssh = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "ssh", "mod.rs"), "utf8");
 assert.match(ssh, /HostTrustDecision::Changed/, "SSH changed-host-key path must remain fail-closed");
