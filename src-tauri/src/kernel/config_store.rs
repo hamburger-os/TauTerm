@@ -158,10 +158,7 @@ impl ConfigStore {
     ///
     /// 所有值先应用到 next snapshot，原子提交成功后才发布到内存，避免多个相关设置
     /// 出现部分落盘或“运行态已更新、重启后回退”的状态撕裂。
-    pub fn set_batch(
-        &self,
-        entries: &[(&str, serde_json::Value)],
-    ) -> Result<(), ConfigStoreError> {
+    pub fn set_batch(&self, entries: &[(&str, serde_json::Value)]) -> Result<(), ConfigStoreError> {
         let _mutation = self
             .mutation_lock
             .lock()
