@@ -28,15 +28,10 @@ pub fn maybe_run_elevated_shell_helper() -> bool {
 }
 
 use kernel::config_store::ConfigStore;
-use kernel::i18n_engine::I18nEngine;
-use kernel::ipc_bridge::IpcBridge;
 use kernel::log_engine::{LogBridge, LogConfig, LogEngine};
 use kernel::plugin_host::PluginHost;
 use kernel::session_store::SessionStore;
-use kernel::shortcut_engine::ShortcutEngine;
-use kernel::tab_host::TabHost;
 use kernel::theme_engine::ThemeEngine;
-use kernel::window_manager::WindowManager;
 use plugins::iperf::IperfAdapter;
 use plugins::local_shell::LocalShellAdapter;
 use plugins::network::NetworkAdapter;
@@ -68,13 +63,8 @@ pub struct AppState {
     pub network_adapter: NetworkAdapter,
     pub host_key_verifier: HostKeyVerifier,
     pub config_store: ConfigStore,
-    pub ipc_bridge: IpcBridge,
-    pub tab_host: TabHost,
     pub plugin_host: Mutex<PluginHost>,
-    pub shortcut_engine: ShortcutEngine,
     pub theme_engine: ThemeEngine,
-    pub i18n_engine: I18nEngine,
-    pub window_manager: WindowManager,
     pub credential_store: CredentialStore,
     pub log_engine: Mutex<LogEngine>,
     pub virtual_port_manager: Mutex<Box<dyn VirtualPortBackend>>,
@@ -247,6 +237,17 @@ pub fn run() {
             }
             let _ = window.center();
 
+            if let Some(state) = app.try_state::<AppState>() {
+                let settings_path = app
+                    .path()
+                    .app_config_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("settings.json");
+                if let Err(error) = state.config_store.configure_persistence(settings_path) {
+                    log::warn!("配置存储初始化失败: {}", error);
+                }
+            }
+
             let log_dir = {
                 let exe_dir = std::env::current_exe()
                     .ok()
@@ -388,13 +389,8 @@ pub fn run() {
             network_adapter: NetworkAdapter::new(),
             host_key_verifier: HostKeyVerifier::new(),
             config_store: ConfigStore::new(),
-            ipc_bridge: IpcBridge::new(),
-            tab_host: TabHost::new(10),
             plugin_host: Mutex::new(plugin_host),
-            shortcut_engine: ShortcutEngine::new(),
             theme_engine: ThemeEngine::new(),
-            i18n_engine: I18nEngine::new(),
-            window_manager: WindowManager::new(),
             credential_store: CredentialStore::new(),
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
             #[cfg(target_os = "windows")]
