@@ -94,6 +94,24 @@ export interface ConnectOptions {
   sessionId?: string;
 }
 
+function persistedSessionParams(
+  pluginId: string,
+  sessionId: string,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  if (pluginId !== "ssh") return params;
+
+  const sanitized = { ...params };
+  delete sanitized.password;
+  delete sanitized.private_key;
+  delete sanitized.passphrase;
+  delete sanitized.credential_migration_pending;
+  if (typeof sanitized.credential_account !== "string" || !sanitized.credential_account.trim()) {
+    sanitized.credential_account = `ssh-session:${sessionId}`;
+  }
+  return sanitized;
+}
+
 export interface ConnectionTypeInfo {
   id: string;
   label: string;
@@ -792,6 +810,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sendBarEnabled: effectiveSendBarEnabled,
 
         },});
+      const persistedParams = persistedSessionParams(pid, sessionId, params);
       dispatch({
         type: "ADD_TAB",
         tab: {
@@ -801,7 +820,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           endpoint,
           state: "disconnected",
           pluginId: pid,
-          params,
+          params: persistedParams,
           stats: { txBytes: 0, rxBytes: 0 },
           connectedAt: null,
           transferEnabled: transferEnabled ?? true,
@@ -968,11 +987,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
+    const existingCredentialAccount = tab?.params?.credential_account;
+    const paramsForSave = effectivePluginId === "ssh"
+      && typeof existingCredentialAccount === "string"
+      && existingCredentialAccount.trim()
+      && typeof params.credential_account !== "string"
+      ? { ...params, credential_account: existingCredentialAccount }
+      : params;
     try {
       await invoke("save_session_config", {
         request: {
         endpoint,
-        params,
+        params: paramsForSave,
         name: name || undefined,
         pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
@@ -986,12 +1012,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const persistedParams = persistedSessionParams(effectivePluginId, sessionId, paramsForSave);
+
     // 3. 更新前端 tab 状态
     dispatch({
       type: "UPDATE_TAB_CONFIG",
       id: sessionId,
       endpoint,
-      params,
+      params: persistedParams,
       name: name || tab?.name || `${(tab?.pluginId && pluginRegistry.get(tab.pluginId)?.manifest.name) || tab?.pluginId?.toUpperCase() || "Serial"} @ ${endpoint}`,
       transferEnabled,
       transferProtocol,
@@ -1008,13 +1036,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const newSessionId = await invoke<string>("connect_session", {
         request: {
           endpoint,
-          params,
+          params: persistedParams,
           name: name || tab?.name || undefined,
           pluginId: effectivePluginId,
           transferEnabled: transferEnabled ?? true,
           transferProtocol: transferProtocol || "ymodem",
           sendBarEnabled: effectiveSendBarEnabled,
-          journaldEnabled: (params?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
+          journaldEnabled: (persistedParams?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
           sessionId, // 保持 UUID 连续性
 
         },});
