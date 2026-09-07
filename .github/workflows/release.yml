@@ -145,35 +145,12 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: test -n "${TAURI_SIGNING_PRIVATE_KEY:-}"
-      - name: Prepare Windows Authenticode signing
-        shell: pwsh
-        env:
-          WINDOWS_CODE_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_BASE64 }}
-          WINDOWS_CODE_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PFX_PASSWORD }}
-          WINDOWS_CODE_SIGNING_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODE_SIGNING_TIMESTAMP_URL }}
-        run: |
-          ./scripts/prepare-windows-signing.ps1 `
-            -PfxBase64 "$env:WINDOWS_CODE_SIGNING_PFX_BASE64" `
-            -PfxPassword "$env:WINDOWS_CODE_SIGNING_PFX_PASSWORD" `
-            -TimestampUrl "$env:WINDOWS_CODE_SIGNING_TIMESTAMP_URL"
-      - name: Build signed NSIS bundle
+      - name: Build NSIS bundle
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri -- build --bundles nsis --config "$env:TAUTERM_TAURI_SIGNING_CONFIG"
-      - name: Verify Windows Authenticode signatures
-        shell: pwsh
-        run: |
-          ./scripts/verify-windows-signature.ps1 -FilePath "src-tauri/target/release/tauterm.exe"
-          ./scripts/verify-windows-signature.ps1 -FilePath "src-tauri/target/release/tauterm-service.exe"
-          ./scripts/verify-windows-signature.ps1 -FilePath "src-tauri/binaries/tauterm-trdp-bridge.exe"
-          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*_x64-setup.exe" |
-            Select-Object -First 1 -ExpandProperty FullName
-          if ([string]::IsNullOrWhiteSpace($installer)) {
-            throw "Windows NSIS installer was not produced."
-          }
-          ./scripts/verify-windows-signature.ps1 -FilePath $installer
+        run: npm run tauri -- build --bundles nsis
       - name: Stage and smoke-test Windows release files
         run: node scripts/stage-release.js windows release-stage
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
