@@ -2040,15 +2040,17 @@ impl SessionStore {
     }
 
     /// 获取会话持久化文件路径
-    pub fn sessions_file_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
+    pub fn sessions_file_path(
+        app_handle: &tauri::AppHandle,
+    ) -> Result<std::path::PathBuf, String> {
         use tauri::Manager;
-        let mut path = app_handle
+        let path = app_handle
             .path()
             .app_data_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        std::fs::create_dir_all(&path).ok();
-        path.push("sessions.json");
-        path
+            .map_err(|error| format!("无法解析应用数据目录: {}", error))?;
+        std::fs::create_dir_all(&path)
+            .map_err(|error| format!("无法创建应用数据目录 {:?}: {}", path, error))?;
+        Ok(path.join("sessions.json"))
     }
 
     fn write_library(path: &std::path::Path, sessions: Vec<SavedSession>) -> Result<(), String> {
@@ -2141,7 +2143,7 @@ impl SessionStore {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let path = Self::sessions_file_path(app_handle);
+        let path = Self::sessions_file_path(app_handle)?;
         let existing = Self::load_from_disk_unlocked(&path)?;
         let mut next = existing.clone();
         next.retain(|entry| entry.id != session.id);
@@ -2174,7 +2176,7 @@ impl SessionStore {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let path = Self::sessions_file_path(app_handle);
+        let path = Self::sessions_file_path(app_handle)?;
         let existing = Self::load_from_disk_unlocked(&path)?;
         let mut next = existing.clone();
         let target = next
@@ -2210,7 +2212,7 @@ impl SessionStore {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let path = Self::sessions_file_path(app_handle);
+        let path = Self::sessions_file_path(app_handle)?;
         let existing = Self::load_from_disk_unlocked(&path)?;
         let mut next = existing.clone();
         let target = next
@@ -2256,7 +2258,7 @@ impl SessionStore {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let path = Self::sessions_file_path(app_handle);
+        let path = Self::sessions_file_path(app_handle)?;
         let existing = Self::load_from_disk_unlocked(&path)?;
         let target = existing
             .iter()
