@@ -271,6 +271,12 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     if (sessionConnected) return;
     updateCaptureRunning(false);
     updateCaptureTransitioning(false);
+    setWorkspaceDraft(previous => ({
+      ...previous,
+      objects: previous.objects.map(object => (
+        object.state === "stopped" ? object : { ...object, state: "stopped" }
+      )),
+    }));
   }, [sessionConnected]);
 
   useEffect(() => {
@@ -607,7 +613,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     // session is actually connected. Once disconnected, the side-channel and
     // all native handles are already gone; sending object_stop would fail and
     // incorrectly block deletion of the local object.
-    if (obj.kind === "pd_request" && tab?.state === "connected") {
+    if (obj.kind === "pd_request" && sessionConnected) {
       await command("object_stop", { id: obj.id, kind: obj.kind });
     }
     setObjects(prev => prev.filter(item => item.id !== obj.id));
@@ -953,7 +959,21 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
   async function confirmMessage(event: TrdpEvent) {
     if (!event.md_session_id || event.can_confirm !== true || !requireRuntimeConnection()) return;
-    await command("md_confirm", { md_session_id: event.md_session_id, link: event.link ?? "a", user_status: 0 });
+    await command("md_confirm", {
+      md_session_id: event.md_session_id,
+      link: event.link ?? "a",
+      user_status: 0,
+    });
+    setSelectedPacket(current => (
+      current?.md_session_id === event.md_session_id
+        ? { ...current, can_confirm: false }
+        : current
+    ));
+    setEvents(previous => previous.map(candidate => (
+      candidate.md_session_id === event.md_session_id && candidate.msg_type === "Mq"
+        ? { ...candidate, can_confirm: false }
+        : candidate
+    )));
   }
 
   function mdLatencyUs(event: TrdpEvent) {
