@@ -105,10 +105,7 @@ function persistedSessionParams(
   delete sanitized.password;
   delete sanitized.private_key;
   delete sanitized.passphrase;
-  delete sanitized.credential_migration_pending;
-  if (typeof sanitized.credential_account !== "string" || !sanitized.credential_account.trim()) {
-    sanitized.credential_account = `ssh-session:${sessionId}`;
-  }
+  sanitized.credential_account = `ssh-session:${sessionId}`;
   return sanitized;
 }
 
@@ -987,18 +984,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
-    const existingCredentialAccount = tab?.params?.credential_account;
-    const paramsForSave = effectivePluginId === "ssh"
-      && typeof existingCredentialAccount === "string"
-      && existingCredentialAccount.trim()
-      && typeof params.credential_account !== "string"
-      ? { ...params, credential_account: existingCredentialAccount }
-      : params;
     try {
       await invoke("save_session_config", {
         request: {
         endpoint,
-        params: paramsForSave,
+        params,
         name: name || undefined,
         pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
@@ -1012,7 +1002,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const persistedParams = persistedSessionParams(effectivePluginId, sessionId, paramsForSave);
+    const persistedParams = persistedSessionParams(effectivePluginId, sessionId, params);
 
     // 3. 更新前端 tab 状态
     dispatch({
