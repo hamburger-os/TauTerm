@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-09-07
+
 ### Changed
 - **Windows release trust chain** — official Windows release builds now fail closed unless the main executable, NSIS installer, TauTerm service, and TRDP helper are Authenticode-signed with the configured publisher certificate and timestamped; release CI verifies the signer and timestamp before staging artifacts.
-- **SSH credential-reference persistence** — saved SSH sessions now persist only a stable credential reference while passwords, private keys, and passphrases stay in the native OS credential store or authenticated encrypted vault. Session loading never exposes plaintext SSH authentication material to the WebView.
+- **SSH credential-reference persistence** — saved SSH sessions now persist only a stable credential reference while passwords, private keys, and passphrases stay in the native OS credential store or authenticated encrypted vault. Development-era SSH sessions that do not match the current credential-reference model are not migrated and must be reconfigured once.
+- **Release-native quality gate** — the permanent Release workflow now runs the reusable cross-platform TRDP Native/interoperability workflow against the exact release commit in addition to the normal CI quality gate before any platform package is built.
+
+### Security
+- **SSH WebView credential boundary closure** — secret-capable generic credential CRUD commands are no longer exposed to the main WebView. If a persisted SSH session still contains plaintext password/private-key/passphrase fields from an earlier development build, TauTerm strips those fields and rewrites `sessions.json` immediately instead of migrating them into the current credential store.
 
 ### Fixed
 - **Session configuration freezes on some Windows systems** — endpoint discovery is now lazy, cached, and executed away from the command/UI path. Local Shell WSL distribution discovery has a bounded timeout, so slow or partially initialized WSL installations no longer freeze Serial/SSH/new-session configuration workflows.

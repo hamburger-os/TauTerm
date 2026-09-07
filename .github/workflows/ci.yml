@@ -109,6 +109,19 @@ jobs:
       - name: Validate documentation contract
         run: npm run docs:check
 
+      - name: Validate WebView credential boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Eq 'commands::(store_credential|get_credential|list_credentials|delete_credential)' src-tauri/src/lib.rs; then
+            echo '::error::Secret-capable credential CRUD must not be exposed through the main WebView invoke handler.'
+            exit 1
+          fi
+          if grep -Eq 'pub fn (store_credential|get_credential|list_credentials|delete_credential)\b' src-tauri/src/commands.rs; then
+            echo '::error::Legacy secret-returning credential commands must not be reintroduced.'
+            exit 1
+          fi
+
       - name: Validate third-party license contract
         run: npm run license:check
 

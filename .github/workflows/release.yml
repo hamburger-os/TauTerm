@@ -99,9 +99,16 @@ jobs:
     with:
       ref: ${{ needs.prepare.outputs.source_sha }}
 
+  trdp-native:
+    name: TRDP Native Gate
+    needs: prepare
+    uses: ./.github/workflows/trdp-native.yml
+    with:
+      ref: ${{ needs.prepare.outputs.source_sha }}
+
   build-windows:
     name: Windows x64 NSIS
-    needs: [prepare, quality]
+    needs: [prepare, quality, trdp-native]
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
@@ -178,7 +185,7 @@ jobs:
 
   build-linux:
     name: Linux x64 packages (Ubuntu 22.04 baseline)
-    needs: [prepare, quality]
+    needs: [prepare, quality, trdp-native]
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
@@ -237,7 +244,7 @@ jobs:
 
   build-macos-arm:
     name: macOS Apple Silicon packages
-    needs: [prepare, quality]
+    needs: [prepare, quality, trdp-native]
     runs-on: macos-15
     timeout-minutes: 90
     steps:
