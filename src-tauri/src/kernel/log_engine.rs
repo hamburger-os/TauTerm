@@ -123,13 +123,25 @@ pub fn system_log_config() -> (bool, String) {
     (SYSTEM_LOG_ENABLED.load(Ordering::Relaxed), level)
 }
 
-pub fn try_send_session_log(sender: &mpsc::SyncSender<LogEntry>, entry: DataLogEntry) {
-    if !SESSION_LOG_ENABLED.load(Ordering::Relaxed) {
+fn try_send_session_log_when(
+    sender: &mpsc::SyncSender<LogEntry>,
+    entry: DataLogEntry,
+    enabled: bool,
+) {
+    if !enabled {
         return;
     }
     if sender.try_send(LogEntry::SessionData(entry)).is_err() {
         DROPPED_SESSION_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+pub fn try_send_session_log(sender: &mpsc::SyncSender<LogEntry>, entry: DataLogEntry) {
+    try_send_session_log_when(
+        sender,
+        entry,
+        SESSION_LOG_ENABLED.load(Ordering::Relaxed),
+    );
 }
 
 pub fn try_send_system_event(
@@ -174,6 +186,8 @@ pub enum LogCommand {
     },
     /// 停止会话日志
     StopSession { session_id: String },
+    /// 全局关闭 Session Data Log 时结束所有活动 writer。
+    StopAllSessions,
     /// 优雅关闭消费者线程
     Shutdown,
     /// 清除日志文件后重新打开所有写入器（系统日志 + 会话日志）
@@ -370,8 +384,12 @@ impl LogEngine {
     pub fn update_config(&self, partial: LogConfigUpdate) {
         if let Ok(mut cfg) = self.config.lock() {
             if let Some(session_enabled) = partial.session_enabled {
+                let was_enabled = cfg.session_enabled;
                 cfg.session_enabled = session_enabled;
                 SESSION_LOG_ENABLED.store(session_enabled, Ordering::Relaxed);
+                if was_enabled && !session_enabled {
+                    let _ = self.entry_tx.send(LogEntry::Command(LogCommand::StopAllSessions));
+                }
             }
             if let Some(file_max_size) = partial.file_max_size {
                 cfg.file_max_size = file_max_size;
@@ -513,6 +531,15 @@ impl LogEngine {
                             }
                             if let Ok(mut map) = active_logs.lock() {
                                 map.remove(&session_id);
+                            }
+                        }
+                        LogCommand::StopAllSessions => {
+                            for (session_id, mut writer) in writers.drain() {
+                                let _ = writer.flush();
+                                log::info!("全局会话日志已关闭，停止记录: {}", session_id);
+                            }
+                            if let Ok(mut map) = active_logs.lock() {
+                                map.clear();
                             }
                         }
                         LogCommand::Shutdown => {
@@ -683,13 +710,11 @@ mod tests {
 
     #[test]
     fn disabled_session_logging_does_not_fill_queue() {
-        SESSION_LOG_ENABLED.store(false, Ordering::Relaxed);
         let (tx, rx) = mpsc::sync_channel(1);
 
-        try_send_session_log(&tx, sample_entry());
-        try_send_session_log(&tx, sample_entry());
+        try_send_session_log_when(&tx, sample_entry(), false);
+        try_send_session_log_when(&tx, sample_entry(), false);
 
         assert!(rx.try_recv().is_err());
-        SESSION_LOG_ENABLED.store(true, Ordering::Relaxed);
     }
 }
