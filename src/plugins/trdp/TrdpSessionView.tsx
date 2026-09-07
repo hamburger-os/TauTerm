@@ -1334,10 +1334,9 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
 
             <TrdpAnalysisTables
               flows={flows}
-              events={events}
               packetRows={packetRows}
               selectedPacket={selectedPacket}
-              packetTotal={captureSource === "offline" ? capturePacketCount : events.length}
+              packetTotal={captureId ? capturePacketCount : events.length}
               packetPage={packetPage}
               packetPageCount={packetPageCount}
               packetPageSize={PACKET_PAGE_SIZE}
