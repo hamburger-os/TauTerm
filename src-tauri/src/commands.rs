@@ -7,7 +7,8 @@ use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
 use crate::channel::DisconnectInfo;
 use crate::kernel::charset::transcode_utf8_to_encoding;
 use crate::kernel::log_engine::{
-    DataDirection, DataLogEntry, LogConfigResponse, LogConfigUpdate, LogEntry, LogStatus,
+    try_send_session_log, try_send_system_event, DataDirection, DataLogEntry, LogConfigResponse,
+    LogConfigUpdate, LogEntry, LogHealth, LogStatus,
 };
 use crate::kernel::plugin_adapter::{
     ChannelKind, ChannelOpenMode, ProtocolAdapter, TransferProtocolType,
@@ -528,6 +529,7 @@ fn create_on_data_callback(
     bridge_tx: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
 ) -> Box<dyn Fn(String, Vec<u8>) + Send> {
     let app_clone = app.clone();
+    let overflow_app = app.clone();
     let batcher = crate::kernel::data_batcher::DataBatcher::new(move |batched| {
         let _ = app_clone.emit(
             "session-data",
@@ -542,15 +544,29 @@ fn create_on_data_callback(
         // 日志和桥接需克隆数据；主路径（batcher）直接获取所有权，省去一次 clone
         let data_for_log = data.clone();
         let data_for_bridge = bridge_tx.as_ref().map(|_| data.clone());
-        batcher.push(session_id.clone(), data);
-        let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
-            session_id: session_id.clone(),
-            direction: DataDirection::RX,
-            data_mode: data_mode.clone(),
-            encoding: encoding.clone(),
-            payload: data_for_log,
-            timestamp: Local::now(),
-        }));
+        if let Some(total_dropped) = batcher.push(session_id.clone(), data) {
+            // 只在 1 / 2 / 4 / 8 ... 次时通知 UI，避免过载时事件本身形成新的压力。
+            if total_dropped == 1 || total_dropped.is_power_of_two() {
+                let _ = overflow_app.emit(
+                    "session-display-overflow",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "dropped_chunks": total_dropped,
+                    }),
+                );
+            }
+        }
+        try_send_session_log(
+            &log_tx,
+            DataLogEntry {
+                session_id: session_id.clone(),
+                direction: DataDirection::RX,
+                data_mode: data_mode.clone(),
+                encoding: encoding.clone(),
+                payload: data_for_log,
+                timestamp: Local::now(),
+            },
+        );
         if let (Some(tx), Some(d)) = (bridge_tx.as_ref(), data_for_bridge) {
             let _ = tx.try_send(d);
         }
@@ -1343,25 +1359,24 @@ async fn connect_session_ssh(
 #[tauri::command]
 pub async fn confirm_host_key(
     state: tauri::State<'_, AppState>,
-    fingerprint: String,
+    request_id: String,
     accepted: bool,
 ) -> Result<(), String> {
     let ok = state
         .host_key_verifier
-        .respond(&fingerprint, accepted)
-        .await;
+        .respond(&request_id, accepted)
+        .await?;
     if !ok {
-        // 指纹未找到：可能已超时、重复确认、或从未发起。
-        // 返回错误信息以便前端显示给用户。
-        return Err(format!(
-            "主机密钥验证请求未找到或已过期（指纹: {}）。可能已超时或重复确认。",
-            &fingerprint[..fingerprint.len().min(40)]
-        ));
+        return Err("主机密钥验证请求未找到或已过期".into());
     }
     log::info!(
-        "SSH 主机密钥 {}: {}",
-        if accepted { "已接受" } else { "已拒绝" },
-        &fingerprint[..fingerprint.len().min(40)]
+        "SSH 主机密钥请求 {}: {}",
+        if accepted {
+            "已接受并记住"
+        } else {
+            "已拒绝"
+        },
+        &request_id[..request_id.len().min(16)]
     );
     Ok(())
 }
@@ -1508,16 +1523,17 @@ pub fn write_data(
     // 异步发送 TX 数据日志（非阻塞，best-effort：失败不影响主流程）
     // 日志记录实际写入设备的字节（转码后），text 格式按会话编码解码回 UTF-8
     if let Ok(log_engine) = state.log_engine.lock() {
-        let _ = log_engine
-            .sender()
-            .try_send(LogEntry::SessionData(DataLogEntry {
+        try_send_session_log(
+            &log_engine.sender(),
+            DataLogEntry {
                 session_id,
                 direction: DataDirection::TX,
                 data_mode,
                 encoding,
                 payload: data_out.clone(),
                 timestamp: Local::now(),
-            }));
+            },
+        );
     }
     Ok(data_out)
 }
@@ -2230,16 +2246,17 @@ fn udp_send_impl(
     // TX 数据日志（非阻塞，best-effort：失败不影响主流程），
     // 记录实际写入设备的字节（转码后），与 send_data 命令的 TX 记账保持同一模式
     if let Ok(log_engine) = state.log_engine.lock() {
-        let _ = log_engine
-            .sender()
-            .try_send(LogEntry::SessionData(DataLogEntry {
+        try_send_session_log(
+            &log_engine.sender(),
+            DataLogEntry {
                 session_id,
                 direction: DataDirection::TX,
                 data_mode,
                 encoding,
                 payload: out.clone(),
                 timestamp: Local::now(),
-            }));
+            },
+        );
     }
     Ok(out)
 }
@@ -2599,11 +2616,7 @@ pub fn stop_session_log(state: State<'_, AppState>, session_id: String) -> Resul
 pub fn log_event(state: State<'_, AppState>, level: String, message: String) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
 
-    let _ = log_engine.sender().try_send(LogEntry::SystemEvent {
-        level,
-        message,
-        timestamp: Local::now(),
-    });
+    try_send_system_event(&log_engine.sender(), level, message, Local::now());
 
     Ok(())
 }
@@ -2615,14 +2628,28 @@ pub fn get_log_status(state: State<'_, AppState>) -> Result<Vec<LogStatus>, Stri
     Ok(log_engine.get_active_logs())
 }
 
+#[tauri::command]
+pub fn get_log_health(state: State<'_, AppState>) -> Result<LogHealth, String> {
+    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    Ok(log_engine.get_health())
+}
+
 /// 更新系统日志配置（启用/禁用 + 最低日志级别）
 #[tauri::command]
 pub fn set_system_log_config(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
     enabled: bool,
     level: String,
 ) -> Result<(), String> {
     crate::kernel::log_engine::set_system_log_config(enabled, &level);
+    state
+        .config_store
+        .set("logging.system_enabled", &enabled)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.system_level", &level)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -2686,6 +2713,29 @@ pub fn update_log_config(
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     log_engine.update_config(config);
+    let current = log_engine.get_config();
+    drop(log_engine);
+
+    state
+        .config_store
+        .set("logging.session_enabled", &current.session_enabled)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.file_max_size", &current.file_max_size)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.buffer_size", &current.buffer_size)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.flush_interval_ms", &current.flush_interval_ms)
+        .map_err(|e| e.to_string())?;
+    state
+        .config_store
+        .set("logging.retention_days", &current.retention_days)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

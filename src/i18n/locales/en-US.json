@@ -110,7 +110,8 @@
     "closeConfirm": "Close this session?",
     "deleteConfirm": "Delete this session?",
     "clearAllDisconnected": "Clear all disconnected sessions",
-    "status": "Status"
+    "status": "Status",
+    "displayOverflow": "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path. Wire data is not assumed lost, but the current view may be incomplete."
   },
   "stats": {
     "txBytes": "TX",
@@ -724,7 +725,8 @@
     "loading": "Loading...",
     "started": "Logging started",
     "stopped": "Logging stopped",
-    "writing": "Writing"
+    "writing": "Writing",
+    "lossWarning": "Logging overflow detected — session: {{session}}, system: {{system}}. The affected log stream may be incomplete."
   },
   "common": {
     "ok": "OK",
@@ -823,7 +825,9 @@
     "hostKeyTitle": "SSH Host Key Verification",
     "hostKeyFingerprint": "Fingerprint",
     "hostKeyPrompt": "Do you trust this host and want to continue connecting?",
-    "hostKeyError": "Host key confirmation failed: {{error}}"
+    "hostKeyError": "Host key confirmation failed: {{error}}",
+    "hostKeyHost": "Host",
+    "hostKeyChanged": "SSH host key changed for {{host}}:{{port}}. Connection was refused. Expected {{expected}}, received {{actual}}. Verify the device/network before explicitly replacing trust."
   },
   "telnet": {
     "host": "Host",

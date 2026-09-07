@@ -26,7 +26,6 @@ import {
 import {
   parsePersistedWorkspaceLayout,
   serializeWorkspaceLayout,
-  WORKSPACE_LAYOUT_STORAGE_KEY,
 } from "../core/workspace-layout";
 
 interface SplitLayoutContextValue {
@@ -71,55 +70,48 @@ function makeSplitId(root: LayoutNode): string {
   return candidate;
 }
 
-function loadInitialWorkspaceLayout(): SplitLayoutState | null {
-  try {
-    return parsePersistedWorkspaceLayout(localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY));
-  } catch {
-    return null;
-  }
-}
-
 export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   const { state: sessionState, switchTab } = useSession();
-  const restoredLayoutRef = useRef<SplitLayoutState | null>(null);
-  const [state, setState] = useState<SplitLayoutState>(() => {
-    const restored = loadInitialWorkspaceLayout();
-    restoredLayoutRef.current = restored;
-    return restored ?? createInitialSplitLayout();
-  });
+  const [state, setState] = useState<SplitLayoutState>(() => createInitialSplitLayout());
   const stateRef = useRef(state);
   stateRef.current = state;
-  const restoringWorkspaceRef = useRef(restoredLayoutRef.current !== null);
+  const restoringWorkspaceRef = useRef(false);
   const expectedSavedSessionIdsRef = useRef<Set<string>>(new Set());
-  const [workspaceSessionCatalogReady, setWorkspaceSessionCatalogReady] = useState(
-    restoredLayoutRef.current === null,
-  );
+  const [workspaceLayoutLoaded, setWorkspaceLayoutLoaded] = useState(false);
+  const [workspaceSessionCatalogReady, setWorkspaceSessionCatalogReady] = useState(false);
   /** Runtime child Session ID -> stable root/config Session ID. Keep old mappings until app exit. */
   const stableSessionIdsRef = useRef<Map<string, string>>(new Map());
   for (const tab of sessionState.tabs) {
     stableSessionIdsRef.current.set(tab.id, tab.parentId ?? tab.id);
   }
 
-  // SessionContext intentionally exposes live tabs rather than a startup-hydration flag. For a
-  // restored Workspace we need one deterministic barrier so an all-empty layout is not mistaken
-  // for "there are no assignments to restore" before loadSavedSessions() completes. The backend
-  // command is read-only; this second read is used only to learn the expected stable Session IDs.
+  // Workspace Layout 与 Session Library 都由 Rust 持久层读取。初始化完成前禁止
+  // 自动保存默认单 Pane，避免异步启动时覆盖昨日布局。
   useEffect(() => {
-    if (!restoringWorkspaceRef.current) return;
     let cancelled = false;
 
-    void invoke<Array<{ id: string }>>("load_sessions")
-      .then(saved => {
+    void Promise.all([
+      invoke<string | null>("get_config", { key: "workspace.layout" }),
+      invoke<Array<{ id: string }>>("load_sessions"),
+    ])
+      .then(([rawLayout, saved]) => {
         if (cancelled) return;
         expectedSavedSessionIdsRef.current = new Set((saved ?? []).map(session => session.id));
+        const restored = parsePersistedWorkspaceLayout(rawLayout);
+        if (restored) {
+          restoringWorkspaceRef.current = true;
+          stateRef.current = restored;
+          setState(restored);
+        }
         setWorkspaceSessionCatalogReady(true);
+        setWorkspaceLayoutLoaded(true);
       })
       .catch(() => {
         if (cancelled) return;
-        // Missing/unreadable session storage is already treated as an empty catalog by
-        // SessionContext. Mirror that startup fallback here rather than leaving restoration stuck.
         expectedSavedSessionIdsRef.current = new Set();
+        restoringWorkspaceRef.current = false;
         setWorkspaceSessionCatalogReady(true);
+        setWorkspaceLayoutLoaded(true);
       });
 
     return () => { cancelled = true; };
@@ -132,30 +124,31 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   }, [switchTab]);
 
   const persistWorkspaceNow = useCallback(() => {
+    if (!workspaceLayoutLoaded || restoringWorkspaceRef.current) return;
     try {
       const serialized = serializeWorkspaceLayout(stateRef.current, stableSessionIdsRef.current);
-      localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, serialized);
+      void invoke("set_config", { key: "workspace.layout", value: serialized })
+        .catch(error => {
+          console.warn("SplitLayoutContext: 保存 Workspace Layout 失败:", error);
+        });
     } catch (error) {
-      console.warn("SplitLayoutContext: 保存 Workspace 布局失败:", error);
+      console.warn("SplitLayoutContext: 序列化 Workspace Layout 失败:", error);
     }
-  }, []);
+  }, [workspaceLayoutLoaded]);
 
-  // Split Tree / assignment / ratio 变化后自动保存；拖动 divider 时用短防抖避免频繁写 localStorage。
+  // Split Tree / assignment / ratio 变化后自动保存；拖动 divider 时短防抖。
+  // Rust ConfigStore 是持久化权威源，浏览器本地存储不再承载工程 Workspace。
   useEffect(() => {
+    if (!workspaceLayoutLoaded || restoringWorkspaceRef.current) return;
     const timer = window.setTimeout(persistWorkspaceNow, 160);
     return () => window.clearTimeout(timer);
-  }, [state, sessionState.tabs, persistWorkspaceNow]);
-
-  // 若用户刚拖完 divider 就立即关闭窗口，确保最后状态仍同步落盘。
-  useEffect(() => {
-    window.addEventListener("beforeunload", persistWorkspaceNow);
-    return () => window.removeEventListener("beforeunload", persistWorkspaceNow);
-  }, [persistWorkspaceNow]);
+  }, [state, sessionState.tabs, workspaceLayoutLoaded, persistWorkspaceNow]);
 
   // 同步 SessionContext 的 activeTabId 与 Split Layout，同时优先清理已删除的 assignment。
   // 恢复 Workspace 时先等磁盘会话配置进入 SessionContext，再让持久化的 selected Pane 成为 active context；
   // 这样 loadSavedSessions() 默认选中的第一张卡片不会覆盖昨日保存的 Pane assignment。
   useEffect(() => {
+    if (!workspaceLayoutLoaded) return;
     const current = stateRef.current;
     const valid = new Set(sessionState.tabs.map(tab => tab.id));
 
@@ -218,7 +211,13 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
       stateRef.current = next;
       setState(next);
     }
-  }, [sessionState.activeTabId, sessionState.tabs, syncActiveSession, workspaceSessionCatalogReady]);
+  }, [
+    sessionState.activeTabId,
+    sessionState.tabs,
+    syncActiveSession,
+    workspaceLayoutLoaded,
+    workspaceSessionCatalogReady,
+  ]);
 
   const selectPane = useCallback((paneId: PaneId) => {
     const current = stateRef.current;

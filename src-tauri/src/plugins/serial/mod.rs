@@ -6,7 +6,7 @@ use crate::channel::error::SessionError;
 use crate::channel::serial_channel::SerialChannel;
 use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
-    EndpointInfo, PluginManifest, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
+    EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
 };
 use serde::{Deserialize, Serialize};
 
@@ -83,29 +83,6 @@ pub struct SerialAdapter;
 impl SerialAdapter {
     pub fn new() -> Self {
         Self
-    }
-
-    /// 创建串口插件清单
-    pub fn manifest() -> PluginManifest {
-        PluginManifest {
-            id: "serial".into(),
-            name: "Serial".into(),
-            version: "1.0.0".into(),
-            category: "terminal".into(),
-            description: "串口终端会话".into(),
-            icon: "serial".into(),
-            content_type: "terminal".into(),
-            capabilities: vec![
-                "connection".into(),
-                "transfer".into(),
-                "endpoint_discovery".into(),
-            ],
-            transfer_protocols: vec![
-                TransferProtocolType::ymodem(),
-                TransferProtocolType::xmodem(),
-                TransferProtocolType::zmodem(),
-            ],
-        }
     }
 
     /// 从 JSON Value 解析串口参数
@@ -193,10 +170,66 @@ impl ProtocolAdapter for SerialAdapter {
         })?;
         Ok(ports
             .into_iter()
-            .map(|p| EndpointInfo {
-                name: p.port_name.clone(),
-                description: p.port_name,
-                params: None,
+            .map(|port| {
+                let port_name = port.port_name.clone();
+                let (description, identity) = match &port.port_type {
+                    serialport::SerialPortType::UsbPort(info) => {
+                        let label = info
+                            .product
+                            .as_deref()
+                            .or(info.manufacturer.as_deref())
+                            .unwrap_or("USB Serial");
+                        let description = format!(
+                            "{} — {} [{:04X}:{:04X}]",
+                            port_name, label, info.vid, info.pid
+                        );
+                        let stable_id = info.serial_number.as_ref().map(|serial| {
+                            format!("usb:{:04x}:{:04x}:{}", info.vid, info.pid, serial)
+                        });
+                        (
+                            description,
+                            serde_json::json!({
+                                "kind": "usb",
+                                "system_port": port_name.clone(),
+                                "vid": info.vid,
+                                "pid": info.pid,
+                                "serial_number": info.serial_number.clone(),
+                                "manufacturer": info.manufacturer.clone(),
+                                "product": info.product.clone(),
+                                "stable_id": stable_id,
+                            }),
+                        )
+                    }
+                    serialport::SerialPortType::BluetoothPort => (
+                        format!("{} — Bluetooth Serial", port_name),
+                        serde_json::json!({
+                            "kind": "bluetooth",
+                            "system_port": port_name.clone(),
+                        }),
+                    ),
+                    serialport::SerialPortType::PciPort => (
+                        format!("{} — PCI Serial", port_name),
+                        serde_json::json!({
+                            "kind": "pci",
+                            "system_port": port_name.clone(),
+                        }),
+                    ),
+                    serialport::SerialPortType::Unknown => (
+                        port_name.clone(),
+                        serde_json::json!({
+                            "kind": "unknown",
+                            "system_port": port_name.clone(),
+                        }),
+                    ),
+                };
+
+                EndpointInfo {
+                    name: port_name,
+                    description,
+                    params: Some(serde_json::json!({
+                        "device_identity": identity,
+                    })),
+                }
             })
             .collect())
     }

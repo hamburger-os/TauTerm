@@ -11,6 +11,7 @@ import Icon from "../common/Icon";
 import AutoReplyRuleEditor from "./AutoReplyRuleEditor";
 import type { AutoReplyRule, AutoReplyConfig, MatchStrategy, ScriptRecord } from "./types";
 import { BUILTIN_CONFIGS } from "./builtinRules";
+import { ASSET_KEYS, clearAsset, persistAsset } from "./assetStore";
 import styles from "./AutoReplyPanel.module.css";
 
 interface AutoReplyPanelProps {
@@ -18,9 +19,6 @@ interface AutoReplyPanelProps {
   isActive: boolean;
   onRunningChange?: (running: boolean) => void;
 }
-
-const STORAGE_KEY_CONFIGS = "tauterm-auto-reply-configs";
-const STORAGE_KEY_ACTIVE = "tauterm-active-auto-reply-config";
 
 // 匹配模式 → i18n key（与 AutoReplyRuleEditor 的模式选项一致）
 const MATCH_MODE_KEY: Record<string, string> = {
@@ -106,18 +104,19 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     }
   }, [scriptLogs, isActive, isRunning, showToast]);
 
-  // 持久化
+  // 持久化：自动应答规则属于工程资产，统一写 Rust ConfigStore。
   const persist = useCallback((updated: AutoReplyConfig[]) => {
     dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs: updated });
-    localStorage.setItem(STORAGE_KEY_CONFIGS, JSON.stringify(updated));
+    persistAsset(ASSET_KEYS.autoReplyConfigs, updated);
   }, [dispatch]);
 
   const persistActive = useCallback((name: string) => {
     dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name });
-    localStorage.setItem(STORAGE_KEY_ACTIVE, name);
+    if (name) persistAsset(ASSET_KEYS.activeAutoReplyConfig, name);
+    else clearAsset(ASSET_KEYS.activeAutoReplyConfig);
   }, [dispatch]);
 
-  // 更新规则并写回当前配置（context + localStorage）
+  // 更新规则并写回当前配置（context + persistent asset store）
   const persistRules = useCallback((updated: AutoReplyRule[]) => {
     dispatch({ type: "SET_AUTO_REPLY_RULES", rules: updated });
     const updatedConfigs = configs.map(c =>
@@ -297,8 +296,8 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
         updatedAt: Date.now(),
       };
       const updatedScripts = [...scripts, newScript];
-      localStorage.setItem("tauterm-scripts", JSON.stringify(updatedScripts));
-      localStorage.setItem("tauterm-active-script-id", newScript.id);
+      persistAsset(ASSET_KEYS.scripts, updatedScripts);
+      persistAsset(ASSET_KEYS.activeScriptId, newScript.id);
       dispatch({ type: "SET_SCRIPTS", scripts: updatedScripts });
       dispatch({ type: "SET_ACTIVE_SCRIPT", id: newScript.id });
       // 加载生成的代码并切换到脚本模式

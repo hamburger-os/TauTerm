@@ -84,7 +84,9 @@ TauTerm 计划成为未来自研工程仪器的统一桌面软件。第一个明
 ```text
 Transport / Instrument
         ↓
-     Raw Event
+ EngineeringEvent
+        ↓
+ Raw payload + time/clock/source identity
         ↓
      Framing
         ↓
@@ -92,12 +94,16 @@ Transport / Instrument
         ↓
  Structured Event / Signal
    ├─ Terminal / Packet View
+   ├─ Recorder / Replay
+   ├─ Unified Timeline
    ├─ Signal Lab
    ├─ Data Lens
-   ├─ Unified Timeline
-   ├─ Recorder / Replay
    └─ Automation
 ```
+
+`EngineeringEvent` 是未来共享数据底座，而不是某个 UI 模块的私有格式。它至少应携带 stable source/session identity、wall/monotonic time、clock domain、transport/peer、TX/RX、raw payload、event type、metadata，以及可选 structured payload / explicit gap marker。
+
+Presentation Path 与 Evidence Path 必须分离：终端显示可以在极端过载时做受控降级，但丢失必须可观察；Recorder/工程证据路径不能静默制造“完整记录”的假象。
 
 这套模型最终应能够覆盖 SSH 输出、journald、Serial、TCP/UDP、TRDP、CAN 以及自研仪器。
 
@@ -278,14 +284,18 @@ Agent 能力必须遵循本地优先原则，并且不能要求工业数据必�
 
 | 阶段 | 目标结果 |
 |---|---|
-| **Foundation** | 主力工具质量：Local Shell、分屏、SSH Tunnel/Jump Host、Workspace 基础、发布与性能质量 |
+| **Product Integrity** | 收敛安全/发布契约、插件与持久化单一来源、可观察数据丢失、测试门与真实运行时架构 |
+| **Daily Driver** | Session Library、Workspace 工程上下文、Serial/SSH/Terminal 成熟度、长稳与高频操作效率 |
+| **Data Foundation** | EngineeringEvent、时间/时钟域、Raw Event、Framing/Decoder Core、明确 Evidence Path |
 | **Engineering Memory** | 结构化 Recording、Replay、Marker、搜索与 Unified Timeline |
-| **Signal Lab** | 高性能绘图、FFT/统计、FireWater/JustFloat 与实时数值工作流 |
-| **Data Intelligence** | Framing/Decoder SDK、Data Lens、可复用字段、过滤、可视化与触发器 |
-| **Industrial & Instruments** | 深入 TRDP 工作流、离线/长稳工业能力，以及未来 CAN 分析仪等自研仪器接入 |
-| **Automation & Teams** | Flow 自动化、Lua/CLI/MCP 演进、协作、治理和企业部署 |
+| **Signal & Data Intelligence** | Signal Lab、Framing/Decoder authoring、Data Lens、字段过滤/统计/可视化与触发器 |
+| **Automation** | 参数化命令、Expect/Timeout、跨 Session Action、Flow、Lua/CLI/MCP 演进 |
+| **Industrial & Instruments** | TRDP 专业诊断、离线/长稳工业能力，以及未来 CAN 分析仪等自研仪器接入 |
+| **Teams & Enterprise** | 协作、治理、受控部署、LTS 与企业支持 |
 
-这些阶段描述方向，不构成版本交付承诺。
+Data Lens 的底层 Framing/Decoder Core 必须早于 Signal Lab 的高级 UI，以避免 Serial、TCP/UDP、TRDP、CAN 分别形成不兼容 parser。
+
+这些阶段描述方向，不构成版本交付承诺。执行级门槛见 [PRODUCT_MATURITY_PLAN.md](PRODUCT_MATURITY_PLAN.md)。
 
 ## 7. 产品决策过滤器
 

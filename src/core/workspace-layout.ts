@@ -4,7 +4,6 @@ import type {
   SplitLayoutState,
 } from "./split-layout";
 
-export const WORKSPACE_LAYOUT_STORAGE_KEY = "tauterm-workspace-layout-v1";
 export const WORKSPACE_LAYOUT_VERSION = 1;
 
 const MAX_WORKSPACE_PANES = 4;

@@ -8,7 +8,7 @@
 
 后端以 Rust 核心作为 Session 生命周期的权威所有者。协议通过 Adapter/插件接入，连接后向核心提供同步或异步通道、侧通道能力，或容器型会话能力。前端插件注册表负责声明内容类型、发送栏等 UI 能力，React 只消费统一的 Session 状态和协议暴露的视图。
 
-一个配置可以对应单个 Session，也可以由协议提供“一个父配置、多子终端/连接”的工厂能力。公共核心负责子会话编号、数量限制、状态与清理，协议只负责创建自身资源。
+一个配置可以对应单个 Session，也可以由协议提供“一个父配置、多子终端/连接”的工厂能力。公共核心负责子会话编号、活动根 Session 资源预算、状态与清理，协议只负责创建自身资源。Saved Session Library 是独立的版本化磁盘配置集合，不受活动运行时数量预算约束。
 
 端点发现属于配置辅助能力，不属于 Session 生命周期。前端按当前协议进入配置页时才请求发现，并复用短时缓存；后端对可能阻塞的平台/硬件枚举放到 blocking worker，避免设备驱动或平台命令拖住应用 UI。
 
@@ -52,3 +52,9 @@ stateDiagram-v2
 修改 Session 状态机、插件注册契约、公共连接路由、通道模型、父子会话模型或配置公共职责时，必须同步更新本文。
 
 共享文件传输由 [TRANSFER.md](TRANSFER.md) 负责；数据批处理/日志由 [OBSERVABILITY_TOOLS.md](OBSERVABILITY_TOOLS.md) 负责；应用壳/i18n/Settings 由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 负责。
+
+## 单一来源约束
+
+内建插件元数据位于 `src/plugin-manifests/*.json`，TypeScript PluginRegistry 与 Rust PluginHost 都消费这组 canonical manifest。PluginHost 不再维护独立生命周期 descriptor；Session 运行时生命周期由 SessionStore 负责。
+
+分屏/Workspace Layout 的真实 owner 是前端 SplitLayoutContext + `core/split-layout.ts`；不保留未接入运行时的平行 WindowManager/TabHost/IPC 骨架。通用 Tauri invoke/event 是当前 IPC 边界。

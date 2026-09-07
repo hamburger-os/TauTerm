@@ -4,21 +4,11 @@
  * 向内核注册 SSH 协议插件的 manifest、翻译资源。
  * 连接表单在 ConnectDialog 中内联渲染（与串口表单相同的模式）。
  */
-import { registerPlugin } from "../../core/plugin-registry";
+import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import manifestJson from "../../plugin-manifests/ssh.json";
 
 registerPlugin({
-  manifest: {
-    id: "ssh",
-    name: "SSH",
-    version: "1.0.0",
-    category: "terminal",
-    description: "SSH 远程终端",
-    icon: "ssh-shell",
-    content_type: "terminal",
-    send_bar: true,
-    capabilities: ["connection", "transfer", "endpoint_discovery", "multi_session", "session_logging"],
-    transfer_protocols: ["sftp"],
-  },
+  manifest: manifestJson as PluginManifest,
   locales: {
     "zh-CN": {
       "host": "主机地址",

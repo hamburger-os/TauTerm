@@ -7,10 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Canonical plugin contract** — built-in plugin metadata now lives in one shared manifest set consumed by both Rust and TypeScript; shadow plugin lifecycle descriptors and unused kernel service skeletons were removed so runtime ownership matches the documented architecture.
+- **Versioned persistence ownership** — non-secret settings and reusable Command/Auto Reply/Lua assets now use the persistent Rust ConfigStore; Workspace Layout no longer relies on WebView-local persistence, and the Session Library has an explicit schema version with Saved Session scale separated from the active runtime budget.
+- **Serial device identity foundation** — endpoint discovery now preserves USB VID/PID, serial number, manufacturer/product metadata and a stable identity when the hardware exposes one, preparing later same-device reconnect without treating transient COM/tty names as hardware identity.
+- **Product maturity roadmap** — documents Product Integrity → Daily Driver → Data Foundation → Engineering Memory as the execution order before higher-level analysis and instrument workflows.
+
+### Security
+- **Persistent SSH host trust** — first-use host keys are explicitly confirmed and stored locally; matching known hosts reconnect without prompting, concurrent confirmations use independent request IDs, and a changed key is rejected fail-closed rather than silently replacing prior trust.
+- **SSH generic-connect fail closed** — SSH production connections can no longer fall back to automatically accepting a host key when the verifier/AppHandle path is unavailable.
+
+### Fixed
+- **Independent logging controls and overflow visibility** — System Log and Session Data Log now have separate enable semantics and persistent settings. System/session log queue drops are counted and surfaced, while presentation-path batching reports display overflow instead of silently implying that the visible terminal is complete.
+- **Workspace small-pane regression guard** — CI now covers vertical two-pane and balanced 2×2 geometry plus source-level scroll/responsive contracts for TFTP, iperf, Network Debug and TRDP.
+- **Windows release trust documentation** — repository documentation now matches the current development-stage release workflow: Tauri updater signing remains mandatory, while Windows Authenticode is intentionally not yet enabled.
+
 ## [0.6.2] — 2026-09-07
 
 ### Changed
-- **Windows release trust chain** — official Windows release builds now fail closed unless the main executable, NSIS installer, TauTerm service, and TRDP helper are Authenticode-signed with the configured publisher certificate and timestamped; release CI verifies the signer and timestamp before staging artifacts.
+- **Windows release trust policy** — Tauri updater signing remains mandatory and validated. Windows Authenticode was intentionally removed from the v0.6.2 development-stage release gate; Windows publisher reputation/signing remains a later distribution-hardening milestone.
 - **SSH credential-reference persistence** — saved SSH sessions now persist only a stable credential reference while passwords, private keys, and passphrases stay in the native OS credential store or authenticated encrypted vault. Development-era SSH sessions that do not match the current credential-reference model are not migrated and must be reconfigured once.
 - **Release-native quality gate** — the permanent Release workflow now runs the reusable cross-platform TRDP Native/interoperability workflow against the exact release commit in addition to the normal CI quality gate before any platform package is built.
 

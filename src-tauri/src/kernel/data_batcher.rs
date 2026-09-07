@@ -57,13 +57,19 @@ impl DataBatcher {
         Self { tx, dropped }
     }
 
-    pub fn push(&self, session_id: String, data: Vec<u8>) {
+    /// 入队显示数据。返回 Some(total_dropped) 表示本次因显示队列过载丢弃。
+    ///
+    /// 这是 Presentation Path 的受控降级，不代表线路/Recorder 数据可以静默丢失。
+    pub fn push(&self, session_id: String, data: Vec<u8>) -> Option<u64> {
         if self.tx.try_send(BatchCmd::Push(session_id, data)).is_err() {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
+            let total = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
             log::warn!(
-                "DataBatcher: channel full, dropped packet (total dropped: {})",
-                self.dropped.load(Ordering::Relaxed)
+                "DataBatcher: channel full, dropped display chunk (total dropped: {})",
+                total
             );
+            Some(total)
+        } else {
+            None
         }
     }
 

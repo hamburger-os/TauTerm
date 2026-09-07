@@ -4,21 +4,11 @@
  * 向内核注册 Telnet 协议插件的 manifest 和翻译资源。
  * 无文件传输（transfer_protocols 为空）→ 右侧 Transmission 面板不显示。
  */
-import { registerPlugin } from "../../core/plugin-registry";
+import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import manifestJson from "../../plugin-manifests/telnet.json";
 
 registerPlugin({
-  manifest: {
-    id: "telnet",
-    name: "Telnet",
-    version: "1.0.0",
-    category: "terminal",
-    description: "Telnet 终端",
-    icon: "globe",
-    content_type: "terminal",
-    send_bar: true,
-    capabilities: ["connection", "session_logging"],
-    transfer_protocols: [],
-  },
+  manifest: manifestJson as PluginManifest,
   toolbarItems: [],
   locales: {
     "zh-CN": {

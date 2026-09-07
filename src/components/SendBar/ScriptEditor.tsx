@@ -10,6 +10,7 @@ import Icon from "../common/Icon";
 import LuaHelpModal from "./LuaHelpModal";
 import type { ScriptRecord } from "./types";
 import { BUILTIN_SCRIPTS } from "./builtinScripts";
+import { ASSET_KEYS, clearAsset, persistAsset } from "./assetStore";
 import styles from "./ScriptEditor.module.css";
 
 interface ScriptEditorProps {
@@ -17,9 +18,6 @@ interface ScriptEditorProps {
   isActive: boolean;
   onRunningChange?: (running: boolean) => void;
 }
-
-const STORAGE_KEY_SCRIPTS = "tauterm-scripts";
-const STORAGE_KEY_ACTIVE = "tauterm-active-script-id";
 
 function makeId(): string {
   return crypto.randomUUID();
@@ -81,16 +79,16 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     }
   }, [scriptLogs]);
 
-  // 持久化
+  // 持久化：Lua Script 是可复用工程资产，统一写 Rust ConfigStore。
   const persistScripts = useCallback((updated: ScriptRecord[]) => {
     dispatch({ type: "SET_SCRIPTS", scripts: updated });
-    localStorage.setItem(STORAGE_KEY_SCRIPTS, JSON.stringify(updated));
+    persistAsset(ASSET_KEYS.scripts, updated);
   }, [dispatch]);
 
   const persistActive = useCallback((id: string | null) => {
     dispatch({ type: "SET_ACTIVE_SCRIPT", id });
-    if (id) localStorage.setItem(STORAGE_KEY_ACTIVE, id);
-    else localStorage.removeItem(STORAGE_KEY_ACTIVE);
+    if (id) persistAsset(ASSET_KEYS.activeScriptId, id);
+    else clearAsset(ASSET_KEYS.activeScriptId);
   }, [dispatch]);
 
   // ── 脚本管理 ──

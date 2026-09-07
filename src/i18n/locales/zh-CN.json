@@ -110,7 +110,8 @@
     "closeConfirm": "确定要关闭此会话吗？",
     "deleteConfirm": "确定要删除此会话吗？",
     "clearAllDisconnected": "清除所有已断开会话",
-    "status": "状态"
+    "status": "状态",
+    "displayOverflow": "{{session}} 的显示队列已过载，Presentation Path 已丢弃 {{count}} 个数据块。线路数据不因此判定丢失，但当前屏幕内容可能不完整。"
   },
   "stats": {
     "txBytes": "发送",
@@ -724,7 +725,8 @@
     "loading": "加载中...",
     "started": "已开始记录日志",
     "stopped": "日志记录已停止",
-    "writing": "正在写入"
+    "writing": "正在写入",
+    "lossWarning": "检测到日志队列溢出——会话日志 {{session}} 条、系统日志 {{system}} 条未写入；受影响日志流可能不完整。"
   },
   "common": {
     "ok": "确定",
@@ -823,7 +825,9 @@
     "hostKeyTitle": "SSH 主机密钥验证",
     "hostKeyFingerprint": "指纹",
     "hostKeyPrompt": "是否信任此主机并继续连接？",
-    "hostKeyError": "主机密钥确认失败: {{error}}"
+    "hostKeyError": "主机密钥确认失败: {{error}}",
+    "hostKeyHost": "主机",
+    "hostKeyChanged": "SSH 主机 {{host}}:{{port}} 的主机密钥已变化，连接已拒绝。预期 {{expected}}，实际 {{actual}}。请先确认设备身份和网络安全，再显式更新信任。"
   },
   "telnet": {
     "host": "主机地址",

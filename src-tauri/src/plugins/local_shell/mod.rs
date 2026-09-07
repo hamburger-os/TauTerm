@@ -7,8 +7,8 @@ use crate::channel::error::SessionError;
 use crate::channel::local_shell_channel::LocalShellChannel;
 use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
-    ChannelKind, ChannelOpenMode, EndpointInfo, PluginManifest, ProtocolAdapter,
-    ProtocolConnection, SessionChannelFactory, TransferProtocolType,
+    ChannelKind, ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection,
+    SessionChannelFactory, TransferProtocolType,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -228,25 +228,6 @@ pub struct LocalShellAdapter;
 impl LocalShellAdapter {
     pub fn new() -> Self {
         Self
-    }
-
-    pub fn manifest() -> PluginManifest {
-        PluginManifest {
-            id: "local-shell".into(),
-            name: "Local Shell".into(),
-            version: "1.0.0".into(),
-            category: "terminal".into(),
-            description: "Local PTY shell".into(),
-            icon: "ssh-shell".into(),
-            content_type: "terminal".into(),
-            capabilities: vec![
-                "connection".into(),
-                "endpoint_discovery".into(),
-                "multi_session".into(),
-                "elevated_session".into(),
-            ],
-            transfer_protocols: vec![],
-        }
     }
 
     pub fn validate_params(params: &serde_json::Value) -> Result<(), String> {

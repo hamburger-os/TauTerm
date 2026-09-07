@@ -1,7 +1,8 @@
-import { createContext, useContext, useReducer, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useReducer, type ReactNode } from "react";
 import type { SendBarMode, NewlineMode, SendMode, AutoReplyRule, AutoReplyConfig, MatchStrategy, ScriptRecord } from "./types";
 import { BUILTIN_CONFIGS } from "./builtinRules";
 import { BUILTIN_SCRIPTS } from "./builtinScripts";
+import { ASSET_KEYS, loadAsset, persistAsset } from "./assetStore";
 
 // ── State ────────────────────────────────────────────
 
@@ -47,96 +48,10 @@ const initialBasicState = (): SendBarState["basic"] => {
   };
 };
 
-/**
- * 加载自动应答配置，首次使用时自动注入内置示例配置。
- *
- * 内置配置按 name 去重：若 localStorage 中已存在同名配置则保留用户版本，
- * 仅追加重名不存在的内置配置。这样用户修改过的内置示例不会被覆盖。
- */
-const loadAutoReplyConfigs = (): AutoReplyConfig[] => {
-  try {
-    const raw = localStorage.getItem("tauterm-auto-reply-configs");
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const existing = parsed as AutoReplyConfig[];
-        // 归并内置配置（按 name 去重，保留用户版本）
-        const existingNames = new Set(existing.map(c => c.name));
-        const newBuiltins = BUILTIN_CONFIGS.filter(c => !existingNames.has(c.name));
-        if (newBuiltins.length > 0) {
-          const merged = [...existing, ...newBuiltins];
-          localStorage.setItem("tauterm-auto-reply-configs", JSON.stringify(merged));
-          return merged;
-        }
-        return existing;
-      }
-    }
-  } catch { /* ignore */ }
-  // 无配置：首次使用 → 直接返回内置配置并持久化
-  localStorage.setItem("tauterm-auto-reply-configs", JSON.stringify(BUILTIN_CONFIGS));
-  return BUILTIN_CONFIGS;
-};
-
-/**
- * 读取上次选中的自动应答配置名。
- *
- * 镜像 loadActiveScriptId：初始化时回读持久化的选择，避免刷新/重启后
- * activeConfigName 丢失（此前硬编码为 ""，导致每次都回退到 configs[0]，
- * 所选配置及其 matchStrategy 被静默丢弃）。校验名称仍存在于配置列表中，
- * 否则回退到首个配置名。
- */
-const loadActiveAutoReplyConfig = (configs: AutoReplyConfig[]): string => {
-  const stored = localStorage.getItem("tauterm-active-auto-reply-config");
-  if (stored && configs.some(c => c.name === stored)) return stored;
-  return configs[0]?.name ?? "";
-};
-
-/**
- * 加载脚本列表，首次使用时自动注入内置示例脚本。
- *
- * 内置脚本按 id 去重：若 localStorage 中已存在同 id 脚本则保留用户版本，
- * 仅追加 id 不存在的内置脚本。用户重命名或修改内置脚本不会被覆盖。
- */
-const loadScripts = (): ScriptRecord[] => {
-  try {
-    const raw = localStorage.getItem("tauterm-scripts");
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const existing = parsed as ScriptRecord[];
-        // 归并内置脚本（按 id 去重，保留用户版本）
-        const existingIds = new Set(existing.map(s => s.id));
-        const newBuiltins = BUILTIN_SCRIPTS.filter(s => !existingIds.has(s.id));
-        if (newBuiltins.length > 0) {
-          const merged = [...existing, ...newBuiltins];
-          localStorage.setItem("tauterm-scripts", JSON.stringify(merged));
-          return merged;
-        }
-        return existing;
-      }
-    }
-  } catch { /* ignore */ }
-  // 无脚本：首次使用 → 直接返回内置脚本并持久化
-  localStorage.setItem("tauterm-scripts", JSON.stringify(BUILTIN_SCRIPTS));
-  return BUILTIN_SCRIPTS;
-};
-
-const loadActiveScriptId = (): string | null => {
-  return localStorage.getItem("tauterm-active-script-id") || null;
-};
-
-/**
- * 构建初始状态（惰性求值：每次 SendBarProvider 挂载时调用，
- * 重新读取 localStorage，确保状态不是模块加载时冻结的旧值。）
- */
 function buildInitialState(): SendBarState {
-  const scripts = loadScripts();
-  const activeScriptId = loadActiveScriptId();
-  const activeCode = scripts.find(s => s.id === activeScriptId)?.code ?? "";
-
-  const autoReplyConfigs = loadAutoReplyConfigs();
-  const activeConfigName = loadActiveAutoReplyConfig(autoReplyConfigs);
-  const active = autoReplyConfigs.find(c => c.name === activeConfigName);
+  const autoReplyConfigs = [...BUILTIN_CONFIGS];
+  const activeConfigName = autoReplyConfigs[0]?.name ?? "";
+  const active = autoReplyConfigs.find(config => config.name === activeConfigName);
   return {
     mode: "basic",
     basic: initialBasicState(),
@@ -147,14 +62,14 @@ function buildInitialState(): SendBarState {
     autoReply: {
       configs: autoReplyConfigs,
       activeConfigName,
-      rules: [],
+      rules: active?.rules ?? [],
       isRunning: false,
       matchStrategy: active?.matchStrategy ?? "all",
     },
     script: {
-      scripts,
-      activeScriptId,
-      code: activeCode,
+      scripts: [...BUILTIN_SCRIPTS],
+      activeScriptId: null,
+      code: "",
       isRunning: false,
     },
     scriptLogs: [],
@@ -301,6 +216,64 @@ const SendBarContext = createContext<SendBarContextValue | null>(null);
 
 export function SendBarProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sendBarReducer, buildInitialState());
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      loadAsset<AutoReplyConfig[]>(ASSET_KEYS.autoReplyConfigs),
+      loadAsset<string>(ASSET_KEYS.activeAutoReplyConfig),
+      loadAsset<ScriptRecord[]>(ASSET_KEYS.scripts),
+      loadAsset<string>(ASSET_KEYS.activeScriptId),
+    ]).then(([storedConfigs, storedActiveConfig, storedScripts, storedActiveScript]) => {
+      if (cancelled) return;
+
+      const existingConfigs = Array.isArray(storedConfigs) ? storedConfigs : [];
+      const existingConfigNames = new Set(existingConfigs.map(config => config.name));
+      const autoReplyConfigs = [
+        ...existingConfigs,
+        ...BUILTIN_CONFIGS.filter(config => !existingConfigNames.has(config.name)),
+      ];
+      const activeConfigName = storedActiveConfig
+        && autoReplyConfigs.some(config => config.name === storedActiveConfig)
+        ? storedActiveConfig
+        : autoReplyConfigs[0]?.name ?? "";
+      const activeConfig = autoReplyConfigs.find(config => config.name === activeConfigName);
+
+      const existingScripts = Array.isArray(storedScripts) ? storedScripts : [];
+      const existingScriptIds = new Set(existingScripts.map(script => script.id));
+      const scripts = [
+        ...existingScripts,
+        ...BUILTIN_SCRIPTS.filter(script => !existingScriptIds.has(script.id)),
+      ];
+      const activeScriptId = storedActiveScript
+        && scripts.some(script => script.id === storedActiveScript)
+        ? storedActiveScript
+        : null;
+      const activeCode = scripts.find(script => script.id === activeScriptId)?.code ?? "";
+
+      dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs: autoReplyConfigs });
+      dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeConfigName });
+      dispatch({ type: "SET_AUTO_REPLY_RULES", rules: activeConfig?.rules ?? [] });
+      dispatch({ type: "SET_MATCH_STRATEGY", strategy: activeConfig?.matchStrategy ?? "all" });
+      dispatch({ type: "SET_SCRIPTS", scripts });
+      dispatch({ type: "SET_ACTIVE_SCRIPT", id: activeScriptId });
+      dispatch({ type: "SET_SCRIPT_CODE", code: activeCode });
+
+      // Built-in examples are assets too. Persist the merged canonical view once so later
+      // components can update it without browser-local fallback state.
+      persistAsset(ASSET_KEYS.autoReplyConfigs, autoReplyConfigs);
+      persistAsset(ASSET_KEYS.activeAutoReplyConfig, activeConfigName);
+      persistAsset(ASSET_KEYS.scripts, scripts);
+      if (activeScriptId) {
+        persistAsset(ASSET_KEYS.activeScriptId, activeScriptId);
+      }
+    }).catch(() => {
+      // Built-ins remain fully usable if the persistent store is temporarily unavailable.
+    });
+
+    return () => { cancelled = true; };
+  }, []);
+
   return (
     <SendBarContext.Provider value={{ state, dispatch }}>
       {children}

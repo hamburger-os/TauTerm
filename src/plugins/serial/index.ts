@@ -3,21 +3,11 @@
  *
  * 向内核注册串口协议插件的 UI 组件、工具栏项、状态栏项和翻译资源。
  */
-import { registerPlugin } from "../../core/plugin-registry";
+import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
+import manifestJson from "../../plugin-manifests/serial.json";
 
 registerPlugin({
-  manifest: {
-    id: "serial",
-    name: "Serial",
-    version: "1.0.0",
-    category: "terminal",
-    description: "串口终端",
-    icon: "connection",
-    content_type: "terminal",
-    send_bar: true,
-    capabilities: ["connection", "transfer", "endpoint_discovery", "session_logging"],
-    transfer_protocols: ["ymodem", "xmodem", "zmodem"],
-  },
+  manifest: manifestJson as PluginManifest,
   toolbarItems: [],
   locales: {
     "zh-CN": {

@@ -1,0 +1,20 @@
+{
+  "id": "ssh",
+  "name": "SSH",
+  "version": "1.0.0",
+  "category": "terminal",
+  "description": "SSH 远程终端",
+  "icon": "ssh-shell",
+  "content_type": "terminal",
+  "send_bar": true,
+  "capabilities": [
+    "connection",
+    "transfer",
+    "endpoint_discovery",
+    "multi_session",
+    "session_logging"
+  ],
+  "transfer_protocols": [
+    "sftp"
+  ]
+}

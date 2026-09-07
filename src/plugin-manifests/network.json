@@ -1,0 +1,17 @@
+{
+  "id": "network",
+  "name": "Network Debug",
+  "version": "1.0.0",
+  "category": "network_tool",
+  "description": "TCP/UDP 网络调试助手",
+  "icon": "globe",
+  "content_type": "custom",
+  "send_bar": true,
+  "capabilities": [
+    "connection",
+    "network_outbound",
+    "network_listen",
+    "session_logging"
+  ],
+  "transfer_protocols": []
+}

@@ -1645,6 +1645,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Presentation Path overflow is explicitly observable. A display drop does not
+  // imply Recorder loss, but the user must know the terminal view is incomplete.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+    void listen<{ session_id: string; dropped_chunks: number }>(
+      "session-display-overflow",
+      event => {
+        if (disposed) return;
+        const tab = tabsRef.current.find(item => item.id === event.payload.session_id);
+        const label = tab?.name ?? event.payload.session_id;
+        dispatch({
+          type: "SET_ERROR",
+          error: i18n.t("session.displayOverflow", {
+            defaultValue: "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path.",
+            session: label,
+            count: event.payload.dropped_chunks,
+          }),
+        });
+      },
+    ).then(fn => {
+      if (disposed) fn();
+      else unlisten = fn;
+    }).catch(() => {});
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   // ── Periodic log status polling ──────────────────
 
   const hasActiveLogs = loggingSessions.size > 0;

@@ -214,6 +214,8 @@ pub struct PluginManifest {
     pub icon: String,
     /// 内容类型: "terminal", "file_browser", "stats_dashboard", "custom"
     pub content_type: String,
+    /// 是否使用 TauTerm 全局 SendBar。
+    pub send_bar: bool,
     /// 能力声明列表
     pub capabilities: Vec<String>,
     /// 支持的传输协议列表
