@@ -30,7 +30,10 @@ export default function LoggingSettings() {
   const [retentionDays, setRetentionDays] = useState(7);
   const [logDir, setLogDir] = useState("");
   const [hydrated, setHydrated] = useState(false);
-  const [configError, setConfigError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [systemConfigError, setSystemConfigError] = useState<string | null>(null);
+  const [sessionConfigError, setSessionConfigError] = useState<string | null>(null);
+  const configError = loadError ?? systemConfigError ?? sessionConfigError;
   const skipSystemPersistRef = useRef(false);
   const skipSessionPersistRef = useRef(false);
   const [health, setHealth] = useState<LogHealth>({
@@ -60,12 +63,14 @@ export default function LoggingSettings() {
         setBufferSize(config.buffer_size);
         setFlushInterval(config.flush_interval_ms);
         setRetentionDays(config.retention_days);
+        setLoadError(null);
         setHydrated(true);
       })
       .catch(error => {
         if (!cancelled) {
-          setConfigError(String(error));
-          setHydrated(true);
+          setLoadError(String(error));
+          // Fail closed: do not persist default UI values over a config that could not be read.
+          setHydrated(false);
         }
       });
     return () => { cancelled = true; };
@@ -79,17 +84,21 @@ export default function LoggingSettings() {
     }
 
     void invoke("set_system_log_config", { enabled: systemEnabled, level: systemLevel })
-      .then(() => setConfigError(null))
+      .then(() => setSystemConfigError(null))
       .catch(async error => {
-        setConfigError(String(error));
+        setSystemConfigError(String(error));
         try {
           const config = await invoke<{
             system_enabled: boolean;
             system_level: string;
           }>("get_log_config");
-          skipSystemPersistRef.current = true;
-          setSystemEnabled(config.system_enabled);
-          setSystemLevel(config.system_level);
+          const needsRestore =
+            config.system_enabled !== systemEnabled || config.system_level !== systemLevel;
+          if (needsRestore) {
+            skipSystemPersistRef.current = true;
+            setSystemEnabled(config.system_enabled);
+            setSystemLevel(config.system_level);
+          }
         } catch {
           // Keep the explicit persistence error visible; do not invent a local success state.
         }
@@ -112,9 +121,9 @@ export default function LoggingSettings() {
         retention_days: retentionDays,
       },
     })
-      .then(() => setConfigError(null))
+      .then(() => setSessionConfigError(null))
       .catch(async error => {
-        setConfigError(String(error));
+        setSessionConfigError(String(error));
         try {
           const config = await invoke<{
             session_enabled: boolean;
@@ -123,12 +132,24 @@ export default function LoggingSettings() {
             flush_interval_ms: number;
             retention_days: number;
           }>("get_log_config");
-          skipSessionPersistRef.current = true;
-          setEnabled(config.session_enabled);
-          setFileMaxSize(Math.max(1, Math.round(config.file_max_size / (1024 * 1024))));
-          setBufferSize(config.buffer_size);
-          setFlushInterval(config.flush_interval_ms);
-          setRetentionDays(config.retention_days);
+          const restoredFileMaxSize = Math.max(
+            1,
+            Math.round(config.file_max_size / (1024 * 1024)),
+          );
+          const needsRestore =
+            config.session_enabled !== enabled
+            || restoredFileMaxSize !== fileMaxSize
+            || config.buffer_size !== bufferSize
+            || config.flush_interval_ms !== flushInterval
+            || config.retention_days !== retentionDays;
+          if (needsRestore) {
+            skipSessionPersistRef.current = true;
+            setEnabled(config.session_enabled);
+            setFileMaxSize(restoredFileMaxSize);
+            setBufferSize(config.buffer_size);
+            setFlushInterval(config.flush_interval_ms);
+            setRetentionDays(config.retention_days);
+          }
         } catch {
           // Keep the explicit persistence error visible; do not invent a local success state.
         }
