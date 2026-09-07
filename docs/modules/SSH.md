@@ -6,6 +6,19 @@ SSH 模块把远端终端、文件管理和远端日志放在同一个认证上�
 
 ## 当前方案
 
+### 主机身份信任
+
+SSH 使用版本化的本地 `known_hosts.json` 作为主机身份信任源：
+
+- 首次连接：展示 `host:port` 与 SHA-256 fingerprint，用户明确接受后才持久化；
+- 已知主机且 fingerprint 一致：自动通过，并更新 `last_seen`；
+- 已知主机 fingerprint 变化：默认拒绝，不允许普通“继续”确认静默覆盖旧信任；
+- 并发验证以独立 `request_id` 关联，不再用 fingerprint 作为 pending key；
+- 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走受信路径。
+
+`known_hosts.json` 只保存公开主机身份信息，不保存密码、私钥或 passphrase。
+
+
 一个保存的 SSH 配置先建立认证连接，再由父 Session 暴露可创建多个远端 PTY 的通道工厂。公共 Session 核心管理 child terminal 的生命周期和编号，SSH 插件只负责在同一认证上下文中创建远端通道。
 
 SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过独立的文件或 exec 能力工作，不把文件管理伪装成终端字节流。
