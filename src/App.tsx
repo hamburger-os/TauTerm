@@ -112,7 +112,8 @@ function AppInner() {
     const handleAssetPersistenceError = (event: Event) => {
       const detail = (event as CustomEvent<AssetPersistenceErrorDetail>).detail;
       showToast("error", t("sendBar.assetPersistFailed", {
-        defaultValue: "Engineering asset changes were not saved ({{key}}): {{error}}",
+        defaultValue: "Engineering asset storage failed ({{operation}} · {{key}}): {{error}}",
+        operation: detail.operation,
         key: detail.key,
         error: detail.error,
       }));
