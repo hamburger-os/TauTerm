@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useSession } from "../../context/SessionContext";
@@ -19,29 +20,19 @@ interface CommandPanelProps {
   onRunningChange?: (running: boolean) => void;
 }
 
-const STORAGE_KEY_CONFIGS = "tauterm-command-configs";
-const STORAGE_KEY_ACTIVE = "tauterm-active-command-config";
-
-function loadConfigs(): CommandConfig[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CONFIGS);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as CommandConfig[];
-    }
-  } catch { /* ignore */ }
-  const initial = [defaultCommands as CommandConfig];
-  try {
-    localStorage.setItem(STORAGE_KEY_CONFIGS, JSON.stringify(initial));
-    localStorage.setItem(STORAGE_KEY_ACTIVE, initial[0].name);
-  } catch { /* ignore */ }
-  return initial;
-}
+const CONFIG_STORE_KEY = "assets.command_sets";
+const ACTIVE_CONFIG_STORE_KEY = "assets.active_command_set";
 
 function saveConfigs(configs: CommandConfig[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY_CONFIGS, JSON.stringify(configs));
-  } catch { /* ignore */ }
+  void invoke("set_config", { key: CONFIG_STORE_KEY, value: configs }).catch(() => {});
+}
+
+function saveActiveConfig(name: string) {
+  if (name) {
+    void invoke("set_config", { key: ACTIVE_CONFIG_STORE_KEY, value: name }).catch(() => {});
+  } else {
+    void invoke("delete_config", { key: ACTIVE_CONFIG_STORE_KEY }).catch(() => {});
+  }
 }
 
 export default function CommandPanel({ sessionId, isActive, onRunningChange }: CommandPanelProps) {
@@ -51,17 +42,45 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   // 网络调试对端经 peerSessions 注册表判定；普通会话走 tabs
   const isConnected = isSessionConnected(sessionId);
 
-  const [configs, setConfigs] = useState<CommandConfig[]>(() => loadConfigs());
-  const [activeConfigName, setActiveConfigName] = useState(() => {
-    return localStorage.getItem(STORAGE_KEY_ACTIVE) || defaultCommands.name;
-  });
+  const [configs, setConfigs] = useState<CommandConfig[]>([
+    defaultCommands as CommandConfig,
+  ]);
+  const [activeConfigName, setActiveConfigName] = useState(defaultCommands.name);
+
+  // Command Set 是可复用工程资产，Rust ConfigStore 是持久化权威源。
+  // 研发阶段不读取旧浏览器本地存储，也不保留双写兼容层。
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      invoke<CommandConfig[] | null>("get_config", { key: CONFIG_STORE_KEY }),
+      invoke<string | null>("get_config", { key: ACTIVE_CONFIG_STORE_KEY }),
+    ]).then(([storedConfigs, storedActive]) => {
+      if (cancelled) return;
+      const nextConfigs = Array.isArray(storedConfigs) && storedConfigs.length > 0
+        ? storedConfigs
+        : [defaultCommands as CommandConfig];
+      const nextActive = storedActive && nextConfigs.some(config => config.name === storedActive)
+        ? storedActive
+        : nextConfigs[0]?.name ?? "";
+
+      setConfigs(nextConfigs);
+      setActiveConfigName(nextActive);
+      if (!Array.isArray(storedConfigs) || storedConfigs.length === 0) {
+        saveConfigs(nextConfigs);
+      }
+      saveActiveConfig(nextActive);
+    }).catch(() => {
+      // 默认命令集已经在内存中可用；持久层异常不阻止发送工作流。
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const activeConfig = useMemo(() => {
     return configs.find(c => c.name === activeConfigName) ?? configs[0];
   }, [configs, activeConfigName]);
 
   // `commands` 和 `defaultDelay` 保留为局部 state 而非常量 context：
-  // commands 涉及拖拽排序和独立 localStorage 持久化，defaultDelay 与 commands 紧耦合；
+  // commands 涉及拖拽排序和独立工程资产持久化，defaultDelay 与 commands 紧耦合；
   // 两者均不与 BasicSend 共享，迁入 context 会增加不必要的 dispatch 间接层。
   const [commands, setCommands] = useState<CommandItem[]>(activeConfig?.commands ?? []);
   const [defaultDelay, setDefaultDelay] = useState(activeConfig?.defaultDelay ?? 500);
@@ -127,7 +146,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
 
   const handleConfigChange = useCallback((name: string) => {
     setActiveConfigName(name);
-    localStorage.setItem(STORAGE_KEY_ACTIVE, name);
+    saveActiveConfig(name);
     setDeleteConfirmId(null);
     setConfigDeleteConfirm(false);
     if (runner.isRunning) runner.stop();
@@ -152,7 +171,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       return updated;
     });
     setActiveConfigName(newName);
-    localStorage.setItem(STORAGE_KEY_ACTIVE, newName);
+    saveActiveConfig(newName);
     setRenameOpen(false);
   }, [renameValue, activeConfigName]);
 
@@ -175,11 +194,11 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     const remaining = configs.filter(c => c.name !== activeConfigName);
     if (remaining.length > 0) {
       setActiveConfigName(remaining[0].name);
-      localStorage.setItem(STORAGE_KEY_ACTIVE, remaining[0].name);
+      saveActiveConfig(remaining[0].name);
     } else {
       // 删除最后一个命令集：清空活动引用与命令，避免 activeConfig 悬空
       setActiveConfigName("");
-      localStorage.removeItem(STORAGE_KEY_ACTIVE);
+      saveActiveConfig("");
       setCommands([]);
       setDefaultDelay(500);
     }
@@ -207,7 +226,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       return updated;
     });
     setActiveConfigName(newName);
-    localStorage.setItem(STORAGE_KEY_ACTIVE, newName);
+    saveActiveConfig(newName);
     setConfigDeleteConfirm(false);
     if (runner.isRunning) runner.stop();
   }, [configs, runner]);
@@ -412,7 +431,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       setConfigs(updated);
       saveConfigs(updated);
       setActiveConfigName(importName);
-      localStorage.setItem(STORAGE_KEY_ACTIVE, importName);
+      saveActiveConfig(importName);
     } catch (e) {
       console.error("导入失败:", e);
       showToast("error", t("commandPanel.importFailed"));
@@ -431,7 +450,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       const updated = [...prev, newConfig];
       saveConfigs(updated);
       setActiveConfigName(defaultCommands.name);
-      localStorage.setItem(STORAGE_KEY_ACTIVE, defaultCommands.name);
+      saveActiveConfig(defaultCommands.name);
       showToast("success", t("sendBar.examplesLoaded", { count: 1 }));
       return updated;
     });
