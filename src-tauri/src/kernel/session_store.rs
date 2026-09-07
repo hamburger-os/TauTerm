@@ -2180,15 +2180,42 @@ impl SessionStore {
         app_handle: &tauri::AppHandle,
         session: SavedSession,
     ) -> Result<(), String> {
+        Self::save_config_to_disk_transactional(app_handle, session, || Ok(()))
+    }
+
+    /// 保存 Session Library 后执行一个外部提交步骤；外部步骤失败时恢复原 Library。
+    ///
+    /// 用于 SSH 这类“非敏感配置 + 安全凭据”跨存储提交，且整个文件回滚窗口始终
+    /// 持有 Session Library mutex，避免并发保存被旧快照覆盖。
+    pub fn save_config_to_disk_transactional<F>(
+        app_handle: &tauri::AppHandle,
+        session: SavedSession,
+        post_commit: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
-        let mut existing = Self::load_from_disk_unlocked(&path)?;
-        existing.retain(|entry| entry.id != session.id);
-        existing.push(session);
-        existing.sort_by_key(|entry| entry.timestamp);
-        Self::write_library(&path, existing)
+        let existing = Self::load_from_disk_unlocked(&path)?;
+        let mut next = existing.clone();
+        next.retain(|entry| entry.id != session.id);
+        next.push(session);
+        next.sort_by_key(|entry| entry.timestamp);
+        Self::write_library(&path, next)?;
+
+        if let Err(commit_error) = post_commit() {
+            return match Self::write_library(&path, existing) {
+                Ok(()) => Err(commit_error),
+                Err(rollback_error) => Err(format!(
+                    "{}；Session Library 回滚失败: {}",
+                    commit_error, rollback_error
+                )),
+            };
+        }
+        Ok(())
     }
 
     /// 从磁盘 Session Library 删除指定配置。
@@ -2196,16 +2223,41 @@ impl SessionStore {
         app_handle: &tauri::AppHandle,
         session_id: &str,
     ) -> Result<(), String> {
+        Self::delete_config_from_disk_transactional(app_handle, session_id, |_| Ok(()))
+    }
+
+    /// 删除 Session Library 条目后执行外部清理；外部步骤失败时恢复原 Library。
+    pub fn delete_config_from_disk_transactional<F>(
+        app_handle: &tauri::AppHandle,
+        session_id: &str,
+        post_commit: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(Option<&SavedSession>) -> Result<(), String>,
+    {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
         let existing = Self::load_from_disk_unlocked(&path)?;
+        let target = existing.iter().find(|session| session.id == session_id).cloned();
         let filtered: Vec<_> = existing
-            .into_iter()
+            .iter()
             .filter(|session| session.id != session_id)
+            .cloned()
             .collect();
-        Self::write_library(&path, filtered)
+        Self::write_library(&path, filtered)?;
+
+        if let Err(commit_error) = post_commit(target.as_ref()) {
+            return match Self::write_library(&path, existing) {
+                Ok(()) => Err(commit_error),
+                Err(rollback_error) => Err(format!(
+                    "{}；Session Library 回滚失败: {}",
+                    commit_error, rollback_error
+                )),
+            };
+        }
+        Ok(())
     }
 }
 
