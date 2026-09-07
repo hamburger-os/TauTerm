@@ -2524,25 +2524,21 @@ pub fn delete_session_config(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    SessionStore::delete_config_from_disk_transactional(
-        &app,
-        &session_id,
-        |deleted_session| {
-            if deleted_session.is_some_and(|saved| saved.plugin_id == "ssh") {
-                let account = ssh_credential_account(&session_id);
-                state
-                    .credential_store
-                    .delete_credential(&account)
-                    .map_err(|error| {
-                        format!(
-                            "无法删除 SSH 安全凭据；Session 删除已回滚，请重试: {}",
-                            error
-                        )
-                    })?;
-            }
-            Ok(())
-        },
-    )
+    SessionStore::delete_config_from_disk_transactional(&app, &session_id, |deleted_session| {
+        if deleted_session.is_some_and(|saved| saved.plugin_id == "ssh") {
+            let account = ssh_credential_account(&session_id);
+            state
+                .credential_store
+                .delete_credential(&account)
+                .map_err(|error| {
+                    format!(
+                        "无法删除 SSH 安全凭据；Session 删除已回滚，请重试: {}",
+                        error
+                    )
+                })?;
+        }
+        Ok(())
+    })
 }
 
 // ── 凭据存储状态 ────────────────────────────────────
