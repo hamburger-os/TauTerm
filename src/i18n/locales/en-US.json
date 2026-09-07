@@ -727,7 +727,8 @@
     "started": "Logging started",
     "stopped": "Logging stopped",
     "writing": "Writing",
-    "lossWarning": "Logging overflow detected — session: {{session}}, system: {{system}}. The affected log stream may be incomplete."
+    "lossWarning": "Logging overflow detected — session: {{session}}, system: {{system}}. The affected log stream may be incomplete.",
+    "configSaveError": "Logging settings were not saved: {{error}}. The UI was restored to the backend state."
   },
   "common": {
     "ok": "OK",
