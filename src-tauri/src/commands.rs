@@ -211,15 +211,24 @@ fn scrub_ssh_secrets_from_saved_sessions(
     Ok(changed)
 }
 
-/// Enforce the only supported SSH persistence model:
-/// - the credential account is deterministically derived from the Session id;
-/// - plaintext authentication material is accepted only as transient input;
-/// - persisted/session params contain only the credential reference.
-fn secure_ssh_session_params(
+#[derive(Debug)]
+struct PendingSshCredential {
+    account: String,
+    credential_type: crate::security::credential_store::CredentialType,
+    value: crate::security::credential_store::CredentialValue,
+    description: String,
+}
+
+/// Prepare the only supported SSH persistence model without mutating the credential store.
+///
+/// Plaintext authentication material is accepted only as transient input. Persisted/session params
+/// contain only the deterministic credential account reference. A new credential is returned as a
+/// pending commit so the Session Library and credential store can be coordinated transactionally.
+fn prepare_ssh_session_params(
     state: &AppState,
     session_id: &str,
     params: &mut Value,
-) -> Result<(), String> {
+) -> Result<Option<PendingSshCredential>, String> {
     use crate::security::credential_store::CredentialStoreError;
 
     let auth_method = params
@@ -229,7 +238,7 @@ fn secure_ssh_session_params(
         .to_string();
     let account = ssh_credential_account(session_id);
 
-    if let Some((credential_type, credential_value)) = ssh_credential_from_params(params)? {
+    let pending = if let Some((credential_type, value)) = ssh_credential_from_params(params)? {
         let username = params
             .get("username")
             .and_then(Value::as_str)
@@ -238,11 +247,12 @@ fn secure_ssh_session_params(
             .get("host")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let description = format!("SSH {username}@{host}");
-        state
-            .credential_store
-            .store_credential(&account, credential_type, credential_value, &description)
-            .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))?;
+        Some(PendingSshCredential {
+            account: account.clone(),
+            credential_type,
+            value,
+            description: format!("SSH {username}@{host}"),
+        })
     } else {
         match state.credential_store.get_credential(&account) {
             Ok(value) if credential_matches_auth(&auth_method, &value) => {}
@@ -252,7 +262,8 @@ fn secure_ssh_session_params(
             }
             Err(error) => return Err(format!("无法读取 SSH 安全凭据: {error}")),
         }
-    }
+        None
+    };
 
     let object = params
         .as_object_mut()
@@ -262,6 +273,31 @@ fn secure_ssh_session_params(
         Value::String(account),
     );
     strip_ssh_secret_fields(params)?;
+    Ok(pending)
+}
+
+fn commit_ssh_credential(state: &AppState, pending: PendingSshCredential) -> Result<(), String> {
+    state
+        .credential_store
+        .store_credential(
+            &pending.account,
+            pending.credential_type,
+            pending.value,
+            &pending.description,
+        )
+        .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))
+}
+
+/// Runtime/direct-connect helper: prepare the same canonical params, then commit any transient
+/// credential immediately because there is no Session Library transaction in this path.
+fn secure_ssh_session_params(
+    state: &AppState,
+    session_id: &str,
+    params: &mut Value,
+) -> Result<(), String> {
+    if let Some(pending) = prepare_ssh_session_params(state, session_id, params)? {
+        commit_ssh_credential(state, pending)?;
+    }
     Ok(())
 }
 
@@ -2381,9 +2417,11 @@ pub fn save_session_config(
         uuid::Uuid::new_v4().to_string()
     };
 
-    if pid == "ssh" {
-        secure_ssh_session_params(&state, &id, &mut params)?;
-    }
+    let pending_ssh_credential = if pid == "ssh" {
+        prepare_ssh_session_params(&state, &id, &mut params)?
+    } else {
+        None
+    };
 
     // TRDP Workspace is edited and persisted by the custom session view rather
     // than the connection form. Reconfiguring a saved/disconnected TRDP
@@ -2425,7 +2463,7 @@ pub fn save_session_config(
     let saved = crate::kernel::session_store::SavedSession {
         id: id.clone(),
         name: session_name,
-        plugin_id: pid,
+        plugin_id: pid.clone(),
         endpoint,
         params: params.clone(),
         timestamp: now,
@@ -2443,7 +2481,16 @@ pub fn save_session_config(
             .unwrap_or(0),
     };
 
-    SessionStore::save_config_to_disk(&app, saved)?;
+    if pid == "ssh" {
+        SessionStore::save_config_to_disk_transactional(&app, saved, || {
+            if let Some(pending) = pending_ssh_credential {
+                commit_ssh_credential(&state, pending)?;
+            }
+            Ok(())
+        })?;
+    } else {
+        SessionStore::save_config_to_disk(&app, saved)?;
+    }
 
     Ok(id)
 }
@@ -2460,25 +2507,25 @@ pub fn delete_session_config(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let path = SessionStore::sessions_file_path(&app);
-    let is_ssh = SessionStore::load_from_disk(&path)
-        .ok()
-        .and_then(|sessions| sessions.into_iter().find(|saved| saved.id == session_id))
-        .is_some_and(|saved| saved.plugin_id == "ssh");
-
-    SessionStore::delete_config_from_disk(&app, &session_id)?;
-
-    if is_ssh {
-        let account = ssh_credential_account(&session_id);
-        if let Err(error) = state.credential_store.delete_credential(&account) {
-            log::warn!(
-                "Unable to remove SSH credential after deleting session {}: {}",
-                session_id,
-                error
-            );
-        }
-    }
-    Ok(())
+    SessionStore::delete_config_from_disk_transactional(
+        &app,
+        &session_id,
+        |deleted_session| {
+            if deleted_session.is_some_and(|saved| saved.plugin_id == "ssh") {
+                let account = ssh_credential_account(&session_id);
+                state
+                    .credential_store
+                    .delete_credential(&account)
+                    .map_err(|error| {
+                        format!(
+                            "无法删除 SSH 安全凭据；Session 删除已回滚，请重试: {}",
+                            error
+                        )
+                    })?;
+            }
+            Ok(())
+        },
+    )
 }
 
 // ── 凭据存储状态 ────────────────────────────────────
