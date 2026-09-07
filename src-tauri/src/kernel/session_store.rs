@@ -2040,9 +2040,7 @@ impl SessionStore {
     }
 
     /// 获取会话持久化文件路径
-    pub fn sessions_file_path(
-        app_handle: &tauri::AppHandle,
-    ) -> Result<std::path::PathBuf, String> {
+    pub fn sessions_file_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         use tauri::Manager;
         let path = app_handle
             .path()
