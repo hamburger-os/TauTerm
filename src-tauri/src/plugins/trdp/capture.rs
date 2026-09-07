@@ -1530,6 +1530,61 @@ mod tests {
         (vec![STANDARD_PD_PORT], vec![STANDARD_MD_PORT])
     }
 
+    fn summary_packet(timestamp_us: u64, seq_count: u32) -> TrdpPacket {
+        TrdpPacket {
+            event: "packet".into(),
+            link: "A".into(),
+            timestamp_us,
+            src_ip: "10.0.0.1".into(),
+            dest_ip: "239.1.1.1".into(),
+            msg_type: "Pd".into(),
+            com_id: 1001,
+            seq_count,
+            data_len: 4,
+            crc_valid: Some(true),
+            protocol_valid: Some(true),
+            ..TrdpPacket::default()
+        }
+    }
+
+    #[test]
+    fn live_capture_summary_tracks_full_flow_statistics() {
+        let capture_id = create_live_capture(HashMap::from([(1001u32, 100u64)]));
+        let first = summary_packet(1_000, 1);
+        let second = summary_packet(1_120, 3);
+        append_live_capture(
+            &capture_id,
+            "A".into(),
+            1_000,
+            LINKTYPE_ETHERNET,
+            vec![0],
+            vec![first],
+        )
+        .expect("first append");
+        append_live_capture(
+            &capture_id,
+            "A".into(),
+            1_120,
+            LINKTYPE_ETHERNET,
+            vec![0],
+            vec![second],
+        )
+        .expect("second append");
+
+        let summary = capture_summary(&capture_id).expect("summary");
+        assert_eq!(summary.packet_count, 2);
+        assert_eq!(summary.flows.len(), 1);
+        let flow = &summary.flows[0];
+        assert_eq!(flow.count, 2);
+        assert_eq!(flow.missed, 1);
+        assert_eq!(flow.last_seq, Some(3));
+        assert_eq!(flow.min_interval_us, Some(120));
+        assert_eq!(flow.max_interval_us, Some(120));
+        assert_eq!(flow.avg_interval_us, Some(120.0));
+        assert_eq!(flow.jitter_us, Some(20.0));
+        release_capture(&capture_id);
+    }
+
     fn finalize_udp_ipv4(frame: &mut [u8]) {
         let ip_total_length = u16::try_from(frame.len() - 14).expect("IPv4 test frame length");
         let udp_length = u16::try_from(frame.len() - 34).expect("UDP test frame length");
