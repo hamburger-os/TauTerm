@@ -1070,7 +1070,8 @@
       "clear": "Clear",
       "confirm": "Confirm",
       "liveCapture": "Live Capture",
-      "refreshInterfaces": "Refresh Interfaces"
+      "refreshInterfaces": "Refresh Interfaces",
+      "liveCaptureSettings": "Live Capture Settings"
     },
     "captureInterfaces": {
       "loading": "Loading capture interfaces…",
@@ -1187,7 +1188,8 @@
       "captureA": "Capture A",
       "captureB": "Capture B",
       "objects": "Objects",
-      "activeObjects": "running"
+      "activeObjects": "running",
+      "validationNotPerformed": "Safety validation not performed"
     },
     "inspector": {
       "notChecked": "not checked",
@@ -1205,7 +1207,8 @@
       "rawPayload": "Raw payload",
       "noMapping": "No dataset mapping or decodable payload.",
       "importXmlToDecode": "Import a TRDP XML file to enable Dataset decoding.",
-      "bytesDecoded": "bytes decoded"
+      "bytesDecoded": "bytes decoded",
+      "confirmUnavailable": "Confirm is available only for ReplyQuery transactions owned by the current Node runtime."
     },
     "advanced": {
       "source": "Source",
@@ -1267,6 +1270,13 @@
     "analysis": {
       "monitorHint": "Live capture and offline files share the same flow, packet, and Dataset inspector. System interfaces are read only after Live Capture is selected.",
       "nodeHint": "Inspect traffic produced or received by this node, or open a capture file for offline comparison."
+    },
+    "pagination": {
+      "newer": "Newer",
+      "older": "Older"
+    },
+    "errors": {
+      "connectRequired": "Connect this TRDP session before using this runtime action. Offline capture, XML, and Workspace analysis remain available."
     }
   }
 }
