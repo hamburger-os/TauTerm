@@ -1125,7 +1125,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (e) {
-      // No saved sessions or file doesn't exist — normal for first launch
+      dispatch({
+        type: "SET_ERROR",
+        error: i18n.t("session.loadPersistFailed", {
+          defaultValue: "Failed to load saved sessions: {{error}}. The on-disk library was left untouched.",
+          error: String(e),
+        }),
+      });
     }
   }, []);
 
