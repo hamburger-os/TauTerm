@@ -112,6 +112,7 @@
     "clearAllDisconnected": "清除所有已断开会话",
     "status": "状态",
     "deletePersistFailed": "删除会话配置失败：{{error}}。会话仍保留在列表中，可重试删除。",
+    "loadPersistFailed": "加载已保存会话失败：{{error}}。磁盘上的会话库未被修改。",
     "displayOverflow": "{{session}} 的显示队列已过载，Presentation Path 已丢弃 {{count}} 个数据块。线路数据不因此判定丢失，但当前屏幕内容可能不完整。"
   },
   "stats": {
