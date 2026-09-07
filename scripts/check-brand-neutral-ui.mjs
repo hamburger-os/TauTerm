@@ -14,7 +14,6 @@ const files = [
   "src/App.css",
   ".agents/skills/tauterm-theme/SKILL.md",
   ".agents/skills/tauterm-theme-review/SKILL.md",
-  "docs/README.md",
 ];
 
 const forbidden = [

@@ -1,53 +1,77 @@
 ---
 name: tauterm-docs
-description: "Maintain TauTerm's documentation system — README.md (English, user-facing), README.zh-CN.md (Chinese mirror), docs/ARCHITECTURE.md, docs/BUILDING.md, CHANGELOG.md. Use this skill whenever making ANY code change to the TauTerm project (new features, plugin/protocol changes, commands, UI, config, build or driver changes) — the change is NOT complete until the docs are synced. Also use when the user asks to update, fix, or check documentation consistency, or mentions the roadmap, protocol matrix, or CHANGELOG, even if they don't explicitly say \"docs\"."
+description: "Maintain TauTerm's documentation contract. Use for any change that can affect architecture, module responsibilities, user-visible workflows, build/platform/release behavior, security boundaries, product direction, README content, or documentation consistency. Read AGENTS.md first; this skill defines the documentation workflow rather than duplicating repository policy."
 license: MIT
 metadata:
   author: tauterm
-  version: "1.0"
+  version: "2.0"
 ---
 
-# TauTerm 文档维护
+# TauTerm documentation workflow
 
-## 为什么重要
+Read the root `AGENTS.md` first. It owns the audience layers, source-of-truth map, and module ownership map. Do not copy those tables into another document.
 
-README 是获客入口（营销文档），docs/ 是开发者文档，CHANGELOG 是发布记录。改了代码不改文档 = 卖点与现实脱节，用户第一分钟就会发现。双语文档漂移会让国际用户或国内用户看到过期内容。
+## Goal
 
-## 文档地图
+Documentation is part of the implementation contract. A code change and its affected design document should describe the same system at the same commit.
 
-先判断改动类型，再决定改哪些文件：
+The maintainer-facing documents are intentionally concise and Chinese-first. They must make architectural changes reviewable without requiring the maintainer to inspect implementation code.
 
-| 改动类型 | 需要更新的文档 |
-|---|---|
-| 新功能 / 用户可见行为变化 | README.md + README.zh-CN.md（放进正确人群分组）+ CHANGELOG.md |
-| 协议插件 / 内核 / 架构变化 | docs/ARCHITECTURE.md + README 协议支持矩阵与功能列表同步 |
-| 构建 / 环境 / 驱动 / 安装变化 | docs/BUILDING.md（影响终端用户时同步 README Quick Install 章节） |
-| Roadmap 状态变化（完成 / 新增里程碑） | 两版 README 的 Roadmap 章节同步 |
-| 新增 / 修改 UI 文案、命令名、提示语 | src/i18n/locales/en-US.json + zh-CN.json（key 一一对应，无死 key） |
-| 纯内部重构（无用户可见变化） | 不更新用户文档；必要时仅 CHANGELOG.md |
+## Workflow
 
-## 铁律
+1. **Classify the change.** Decide whether it changes a public capability, current architecture, a module design, product direction, build/platform/release procedure, security reporting policy, or only implementation detail.
+2. **Find the one owner.** Use the source-of-truth and module maps in `AGENTS.md`. If the fact already has an owner, edit that document instead of creating another copy.
+3. **Update design with code.** When architecture or behavior changes, update the affected `docs/modules/*.md` document in the same task. Cross-module changes may update multiple documents, but each fact still has one owner.
+4. **Link instead of repeat.** Supporting documents should link to the canonical owner. Do not maintain synchronized prose or duplicated tables.
+5. **Remove stale material.** If a newer canonical document replaces an older one, delete the old document and repair links in the same change. Do not keep redirect/stub files unless an external compatibility requirement exists.
+6. **Validate.** Run `npm run docs:check` and fix every error before completion.
 
-1. **双语文档镜像**：README 的任何改动必须同时应用到 README.md 与 README.zh-CN.md，章节标题一一对应。中文版按中文习惯表达语义一致的内容（不是逐字翻译），顶部保留 "Chinese mirror of the English README" 说明。
-2. **禁拉踩**：两版 README 不得出现竞品名（MobaXterm / WindTerm / VOFA+ / Tabby）或负面对比表述（如与 Electron 系应用比较资源占用、提及其他软件停更等）。只描述 TauTerm 自身的优势。这是用户的明确要求。
-3. **语言分工**：README 两版是营销文档，面向用户、保持精简（≤ ~350 行），不放架构细节；docs/ 是开发者文档（中文）；CONTRIBUTING.md 与 CHANGELOG.md 是英文。
-4. **CHANGELOG**：Keep a Changelog 格式、英文、按类别分条目（如 ### Protocols / ### Terminal Engine）；未发布的改动进入下一版本段。
-5. **链接有效**：所有相对链接必须指向存在的文件；移动章节后同步修正引用它的链接。
-6. **不编造数据**：性能表实测数据、截图（TODO 占位）不得虚构；没有实测就标注待测，不要填编出来的数字。
-7. **i18n 双文件镜像**：任何 UI 文案 / 命令名 / 提示语的增改，必须同步更新 `en-US.json` 与 `zh-CN.json`，key 集合一一对应；删除文案时同步删除两文件中的对应 key（不留死 key）。`node scripts/check-docs.js` 已含 key 对齐校验。
+## Maintainer document style
 
-## 完成标准
+Files under `docs/README.md`, `docs/modules/`, and `docs/product/` are for the maintainer and should be Chinese-first.
 
-任何文档更新后必须运行：
+A module design document should normally answer:
+
+- 这个模块解决什么问题；
+- 当前采用什么架构/方案；
+- 关键数据流或生命周期是什么；
+- 哪些边界不能被破坏；
+- 与哪些模块存在明确接口；
+- 哪些代码目录是实现锚点；
+- 什么类型的改动必须同步更新本文。
+
+Keep these documents at architecture and solution level. Prefer short diagrams, boundaries, states, and responsibilities over APIs or code excerpts. Do not mirror function names, struct fields, implementation steps, or large configuration samples unless they are themselves a stable contract.
+
+## README rules
+
+The root README is the public open-source landing page, not an architecture dump.
+
+- Keep English and Chinese versions structurally aligned.
+- Explain the project, supported workflow families, install entry, build entry, documentation navigation, contribution, security, and license.
+- Link to canonical detailed documents instead of embedding platform/build/release internals.
+- Do not place roadmap status, release history, or maintainer-only design details in the README.
+- Do not use named competitor comparisons or unsupported performance claims.
+
+## Community documents
+
+Community procedures may be English, Chinese, or bilingual. They should remain actionable, but command definitions must defer to `package.json` rather than maintaining an exhaustive second command catalog.
+
+Release notes stored as version-specific files are not allowed. `CHANGELOG.md` is the release-history source; the release workflow derives the GitHub Release body from it.
+
+## AI documents and skills
+
+`AGENTS.md` is the tool-neutral repository instruction entry. Skills contain specialized procedures or specifications and are loaded only when relevant.
+
+Do not create parallel copies for individual agent products. If a tool needs an adapter, make it a minimal pointer to the canonical rule rather than a duplicated ruleset.
+
+## Validation contract
+
+Always run:
 
 ```bash
-node scripts/check-docs.js
+npm run docs:check
 ```
 
-全绿才算完成；若脚本报错，逐条修复后重跑。
+The checker enforces required documents, forbidden legacy duplicates, Markdown link integrity, README structural parity, maintainer-document language, changelog shape, and i18n key parity.
 
-## 注意事项
-
-- 新增功能条目放进 README 正确的人群分组（For Network Engineers / For Embedded Developers / For Everyone），不要塞进错误的分组。
-- 协议矩阵中状态变化（📋 计划中 → ✅ 已实现）时，同时更新 CHANGELOG 与 Roadmap。
-- 改动范围要克制：与本次改动无关的文档内容不要顺手"优化"，避免噪音 diff。
+If a documentation rule cannot be mechanically checked, keep the rule in `AGENTS.md` or this skill rather than pretending the checker enforces it.

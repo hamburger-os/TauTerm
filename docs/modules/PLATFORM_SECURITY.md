@@ -1,0 +1,62 @@
+# 平台与安全边界设计
+
+## 目标
+
+平台层吸收 Windows/Linux/macOS 差异，并把凭据、提权、native helper、安装包和在线更新放在可审查的信任边界内。原则是：普通工程功能默认以普通用户权限运行，只有确实需要的动作进入最窄特权边界。
+
+## 当前方案
+
+### 凭据
+
+凭据存储优先使用操作系统提供的安全存储；不可用时使用应用自己的加密 vault 回退。协议模块不直接决定存储实现，只通过统一凭据接口消费。
+
+### Windows 特权操作
+
+主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；开发/便携场景可以使用明确的按需 UAC 回退。Local Shell 的管理员 child 是独立的一次性提权路径，不等于给主应用提权。
+
+### Native helper 与动态库
+
+TRDP sidecar、抓包库等 native 依赖只能从受控位置解析。生产构建不能把当前工作目录当成可信可执行文件/DLL 搜索源。
+
+### 打包与更新
+
+构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验。发布流程在公开稳定版本成为 latest updater 之前验证产物集合、签名和可下载内容。
+
+具体平台支持矩阵和发布步骤属于社区工程文档，不在本文复制。
+
+## 信任边界
+
+```mermaid
+flowchart LR
+  GUI["普通权限 TauTerm"] --> API["窄 IPC / 系统 API"]
+  API --> Service["必要时的特权服务/helper"]
+  GUI --> Store["凭据抽象"]
+  Store --> OSStore["系统安全存储"]
+  Store --> Vault["加密 vault 回退"]
+  Build["发布流水线"] --> Signed["签名产物"]
+  Signed --> Updater["客户端验证后更新"]
+```
+
+## 设计边界
+
+- 不能为了方便让主应用长期以管理员/root 权限运行。
+- 特权 IPC 只暴露最小动作集合，并验证调用者和资源范围。
+- 密码、私钥、token 等不得进入普通日志或文档示例。
+- 运行时可覆盖 native helper 的机制只能用于明确的受信开发场景，不能让导入配置变成任意代码执行入口。
+- 安装/更新状态与应用版本元数据必须由发布流程验证，不能靠 README 手工同步。
+- 安全漏洞披露流程只在根 `SECURITY.md` 维护。
+
+## 代码锚点
+
+- `src-tauri/src/security/`
+- `src-tauri/src/virtual_port/`
+- `src-tauri/src/bin/`
+- `src-tauri/tauri*.conf.json`
+- `scripts/prepare-service-bin.js`
+- `scripts/stage-release.js`
+- `scripts/assemble-release.js`
+- `.github/workflows/release.yml`
+
+## 何时更新本文
+
+修改凭据后端、权限模型、服务/helper IPC、native 加载路径、打包信任边界、更新签名/发布验证策略时，必须同步更新本文。

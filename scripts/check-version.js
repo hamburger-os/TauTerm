@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
@@ -70,17 +70,6 @@ if (releaseMode) {
     console.log(`✅ CHANGELOG.md: release ${expected} is documented`);
   }
 
-  const notesPath = resolve(root, `docs/RELEASE_NOTES_v${expected}.md`);
-  if (!existsSync(notesPath)) {
-    fail(`missing docs/RELEASE_NOTES_v${expected}.md`);
-  } else {
-    const notes = readFileSync(notesPath, "utf8").trim();
-    if (notes.length < 80 || !notes.includes(`v${expected}`)) {
-      fail(`docs/RELEASE_NOTES_v${expected}.md: release notes are empty or do not identify v${expected}`);
-    } else {
-      console.log(`✅ docs/RELEASE_NOTES_v${expected}.md`);
-    }
-  }
 }
 
 if (process.exitCode) {

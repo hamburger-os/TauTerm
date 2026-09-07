@@ -1,109 +1,83 @@
-# TauTerm 文档 / Documentation
+# TauTerm 设计总览
 
-本目录保存 TauTerm 的长期产品、工程与发布文档。
+> **维护者审查入口。** 本目录中的“当前设计”文档与代码属于同一个交付物。以后进行架构或方案变更时，AI 必须同步更新对应文档；你可以优先审查这里，而不是逐行阅读代码。
 
-This directory contains TauTerm's long-lived product, engineering and release documentation.
+## 1. 文档定位
 
-根目录 [README](../README.md) 是面向社区和用户的产品入口。`docs/` 中的文档应各自承担一个明确职责，并明确区分“已经实现的能力”和“未来方向”。
+TauTerm 的长期文档按读者分层：
 
-The root [README](../README.md) is the public product entry point. Documents under `docs/` should each have one clear responsibility and should distinguish shipped behavior from future direction.
+- **给 AI：** 根目录 `AGENTS.md` 与 `.agents/skills/`，保存工作规则和专业规范。
+- **给社区开发者：** 根 README、`CONTRIBUTING.md`、`docs/community/`，保存使用、构建、平台与发布流程。
+- **给维护者：** 本文件、`docs/modules/`、`docs/product/`，使用中文记录架构、方案和产品方向。
 
-## 产品方向 / Product Direction
+同一事实只保留一个权威来源。这里不复制构建命令、发布记录、主题 CSS 规则或版本功能清单；需要时链接到它们的权威文档。
 
-这一组文档主要用于产品决策和长期规划，**以中文为主**。其中描述的规划能力不构成版本交付承诺。
+## 2. 当前总体架构
 
-These documents primarily support product decisions and long-term planning and are **Chinese-first**. Planned capabilities described here are not release commitments.
+TauTerm 是一个本地优先的桌面工程工作台。当前实现由四层组成：
 
-| 文档 / Document | 用途 / Purpose |
+```mermaid
+flowchart TB
+  UI["工作区与交互层\nReact / TypeScript"] --> CORE["会话与插件核心\n统一生命周期、I/O、状态"]
+  CORE --> PROTOCOL["协议与工具模块\nSerial / SSH / Local Shell / Network / TRDP"]
+  CORE --> PLATFORM["平台与安全能力\n存储、权限、原生辅助进程、打包"]
+  PROTOCOL --> DEVICE["远端主机 / 串口设备 / 网络节点 / 抓包接口"]
+  PLATFORM --> OS["Windows / Linux / macOS"]
+```
+
+设计的重点不是“把协议放在同一个窗口”，而是让不同工程连接共享同一套 **Session、Workspace、记录、自动化和平台能力**。协议模块负责协议语义，核心负责公共生命周期和状态，平台层负责操作系统差异与信任边界。
+
+## 3. 必须保持的系统边界
+
+1. **本地优先。** 核心连接、调试、记录与分析能力不依赖云账号才能工作。
+2. **会话是工程上下文。** UI、协议状态、日志、传输与自动化都围绕 Session 组织，而不是互相独立的工具窗口。
+3. **协议语义不进入公共核心。** 可复用的生命周期、I/O、状态和 Workspace 能力进入核心；协议专属行为留在协议模块。
+4. **Workspace 与连接状态分离。** 工作区可以持久化布局和稳定配置引用，但不能把运行中的 socket、PTY、凭据或临时 native handle 当成可恢复状态。
+5. **最小权限。** 主应用不因单个特权功能而整体提权；平台专属权限通过最窄的受控边界实现。
+6. **设计与代码同步。** 任何改变以上边界或模块职责的代码修改，都必须在同一变更中更新对应模块文档。
+
+## 4. 模块设计索引
+
+| 模块 | 当前职责 |
 |---|---|
-| [PRODUCT_STRATEGY.md](PRODUCT_STRATEGY.md) | 产品愿景、核心用户、产品原则、战略能力、路线图模型与产品决策过滤器 / Product vision, users, principles, capability pillars and roadmap model |
-| [HARDWARE_ECOSYSTEM.md](HARDWARE_ECOSYSTEM.md) | 自研分析仪统一上位机方向、仪器数据模型、时间体系与未来 CAN 集成 / First-party instrument platform, data/timing model and future CAN integration |
-| [COMMERCIALIZATION.md](COMMERCIALIZATION.md) | 商业分层、授权原则、硬件业务、工业模块与商业验证门槛 / Commercial packaging, licensing, hardware business and validation gates |
+| [CORE.md](modules/CORE.md) | Session、插件注册、公共 I/O、状态与核心边界 |
+| [WORKSPACE.md](modules/WORKSPACE.md) | Pane/Workspace、选择上下文、布局持久化与恢复 |
+| [SERIAL.md](modules/SERIAL.md) | 串口、虚拟串口、串口传输与设备调试 |
+| [SSH.md](modules/SSH.md) | SSH、多终端、SFTP 与远端日志 |
+| [LOCAL_SHELL.md](modules/LOCAL_SHELL.md) | 本地 PTY/ConPTY、多终端与按子会话提权 |
+| [NETWORK.md](modules/NETWORK.md) | TCP/UDP、TFTP、Telnet 与 iperf |
+| [TRDP.md](modules/TRDP.md) | TRDP Node/Monitor、抓包、XML/Dataset 与 native runtime |
+| [AUTOMATION.md](modules/AUTOMATION.md) | SendBar、自动回复、脚本与统一发送能力 |
+| [PLATFORM_SECURITY.md](modules/PLATFORM_SECURITY.md) | 凭据、权限辅助、平台适配、打包与更新信任边界 |
 
-## 工程与开发 / Engineering & Development
+视觉主题的实现规范不在这里复制，唯一技术规范见 [tauterm-theme skill](../.agents/skills/tauterm-theme/SKILL.md)。
 
-这一组文档面向贡献者和工程实现，当前**以英文为主**，后续可以根据社区需要补充双语版本。
+## 5. 产品方向
 
-These documents describe the current codebase, build environment and supported platforms. They are currently **English-first** and may become bilingual where useful.
+下面的文档描述长期方向，不代表已经发布：
 
-| 文档 / Document | 用途 / Purpose |
-|---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 当前微内核、协议 Adapter、Session/I/O 与前后端架构 / Current microkernel, protocol adapters, session/I/O and frontend/backend architecture |
-| [SPLIT_VIEW_DESIGN.md](SPLIT_VIEW_DESIGN.md) | 当前分屏、Pane/Session 关系、Workspace 持久化与恢复契约 / Current Split View, Pane/Session mapping, Workspace persistence and restore contract |
-| [BUILDING.md](BUILDING.md) | 开发环境、依赖与源码构建流程 / Developer prerequisites and source-build instructions |
-| [SUPPORTED_PLATFORMS.md](SUPPORTED_PLATFORMS.md) | 支持的系统、架构、打包与签名状态 / Supported operating systems, architectures, packaging and signing status |
+- [产品战略](product/PRODUCT_STRATEGY.md)
+- [硬件生态方向](product/HARDWARE_ECOSYSTEM.md)
+- [商业化战略](product/COMMERCIALIZATION.md)
 
-当某个未来产品概念真正实现为稳定子系统后，应把技术契约补充到架构/工程文档，而不是只保留在战略文档中。
+是否已经交付某项能力，以根目录 [CHANGELOG.md](../CHANGELOG.md) 和当前发布版本为准。
 
-When a future product concept becomes a real subsystem, its technical contract should move into architecture/engineering documentation instead of remaining only in strategy documents.
+## 6. 社区工程文档
 
-## 发布文档 / Release Documentation
+源码构建、平台支持和发布流程属于社区/维护流程，不在架构文档重复：
 
-发布相关文档主要面向维护者和社区，保持英文或双语均可。
+- [源码构建](community/BUILDING.md)
+- [支持平台](community/SUPPORTED_PLATFORMS.md)
+- [发布流程](community/RELEASING.md)
 
-Release documentation is maintainer/community-facing and may remain English or bilingual.
+## 7. 以后如何审查
 
-| 文档 / Document | 用途 / Purpose |
-|---|---|
-| [RELEASING.md](RELEASING.md) | 维护者发布流程与 Release Engineering / Maintainer release process and release engineering |
-| [RELEASE_NOTES_v0.5.0.md](RELEASE_NOTES_v0.5.0.md) | v0.5.0 历史 Release Notes |
-| [RELEASE_NOTES_v0.5.1.md](RELEASE_NOTES_v0.5.1.md) | v0.5.1 历史 Release Notes |
-| [RELEASE_NOTES_v0.6.0.md](RELEASE_NOTES_v0.6.0.md) | v0.6.0 Workspace Foundation Release Notes |
+一次重要开发完成后，建议按下面顺序审查：
 
-根目录 [CHANGELOG.md](../CHANGELOG.md) 继续作为已经发布变化的权威时间线记录。
+1. 先看本文件是否出现总体架构变化；
+2. 看被修改模块对应的 `docs/modules/*.md`，确认职责、数据流和边界是否合理；
+3. 如果影响用户能力，再看 README 的公开描述；
+4. 如果准备发布，再看 CHANGELOG；
+5. 只有需要追查实现细节时再进入代码。
 
-The repository root [CHANGELOG.md](../CHANGELOG.md) remains the canonical chronological record of shipped changes.
-
-## 资源 / Assets
-
-`assets/` 保存 README 和长期文档引用的截图与其他媒体资源。描述已经实现的功能时，应优先使用真实应用输出，而不是 Mockup。
-
-`assets/` contains durable screenshots and media referenced by repository documentation. Real application output should be preferred over mockups when documenting shipped features.
-
-## 文档原则 / Documentation Principles
-
-新增或修改文档时遵循：
-
-1. **一个文档，一个职责。** 如果已有权威文档负责该主题，不重复创建新文件。
-2. **只描述 TauTerm 自己。** 直接说明问题、设计与目标工作流，不使用具名竞品比较或拉踩式表达。
-3. **严格区分现状与方向。** 用户/架构文档不得把规划能力写成已经实现。
-4. **按能力组织产品方向。** 优先描述工程结果与共享平台能力，而不是堆功能清单。
-5. **明确文档边界和交叉链接。** 产品、架构、硬件、商业化之间存在边界时应显式互链。
-6. **只保存长期知识。** 临时推广文案、一次性发布宣传和短期 Campaign Checklist 不放入长期工程文档。
-7. **新增长期文档必须更新本索引。** 保持 `docs/` 可导航。
-8. **语言服务于读者。** 给产品决策者看的内部方向文档以中文为主；面向国际社区、贡献者和开发者的文档可以使用英文或双语。
-
-When adding or revising documentation:
-
-1. **One document, one responsibility.** Do not duplicate a topic already owned by a canonical document.
-2. **Describe TauTerm on its own terms.** Explain the problem, design and intended workflow directly; avoid named product comparisons.
-3. **Separate current state from direction.** Planned capabilities must not be presented as shipped behavior.
-4. **Prefer capability-oriented structure.** Product direction should focus on engineering outcomes and shared platform capabilities.
-5. **Keep boundaries and cross-links explicit.** Product, architecture, hardware and commercialization documents should reference each other where responsibilities meet.
-6. **Keep durable knowledge here.** Temporary promotion and one-off campaign material should live elsewhere.
-7. **Update this index for new durable documents.** Keep `docs/` navigable.
-8. **Choose language for the audience.** Internal strategy is Chinese-first; international community and contributor documentation may be English or bilingual.
-
-## 权威信息顺序 / Source of Truth
-
-如果不同文档出现不一致，按以下顺序判断：
-
-1. **已经发布的行为：** 当前代码、测试、[CHANGELOG.md](../CHANGELOG.md) 与 Release 产物；
-2. **当前技术设计：** [ARCHITECTURE.md](ARCHITECTURE.md) 与其他工程文档；
-3. **未来产品方向：** [PRODUCT_STRATEGY.md](PRODUCT_STRATEGY.md) 与相关战略文档。
-
-If documents disagree, use this priority:
-
-1. **Shipped behavior:** current code, tests, [CHANGELOG.md](../CHANGELOG.md) and release artifacts;
-2. **Current technical design:** [ARCHITECTURE.md](ARCHITECTURE.md) and engineering documentation;
-3. **Future product direction:** [PRODUCT_STRATEGY.md](PRODUCT_STRATEGY.md) and related strategy documents.
-
-战略文档可以指导实现，但不能作为某项能力“已经发布”的证据。
-
-Strategy documents guide implementation, but they are not evidence that a capability has shipped.
-
-### 视觉主题规范 / Visual Theme Specification
-
-TauTerm 的视觉主题、Liquid Glass 材质、四色 Ambient、两档视觉性能语义、Structural Panel、视觉交互与渲染性能规则**不在 `docs/` 维护副本**。唯一规范源是 [`.agents/skills/tauterm-theme/SKILL.md`](../.agents/skills/tauterm-theme/SKILL.md)；[`tauterm-theme-review`](../.agents/skills/tauterm-theme-review/SKILL.md) 仅定义审查流程并引用该 SSOT。
-
-TauTerm's visual theme, Liquid Glass material, four-color ambient field, two-tier visual-performance semantics, structural-panel, interaction, and visual rendering-performance rules are **not duplicated under `docs/`**. The sole specification is [`.agents/skills/tauterm-theme/SKILL.md`](../.agents/skills/tauterm-theme/SKILL.md); [`tauterm-theme-review`](../.agents/skills/tauterm-theme-review/SKILL.md) contains only the audit workflow.
+如果代码已经改变模块设计，而对应文档没有变化，应把它视为未完成的实现。
