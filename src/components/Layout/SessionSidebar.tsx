@@ -37,7 +37,7 @@ interface SessionSidebarProps {
  */
 export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
   const { t } = useTranslation();
-  const { state, switchTab, disconnect, deleteSession, connect, startSessionLog, stopSessionLog, loggingSessions, openChannel, closeChannel, selectNetworkPeer, disconnectNetworkPeer, clearNetworkPeer } = useSession();
+  const { state, switchTab, disconnect, deleteSession, reconnectSession, startSessionLog, stopSessionLog, loggingSessions, openChannel, closeChannel, selectNetworkPeer, disconnectNetworkPeer, clearNetworkPeer } = useSession();
   const { state: splitLayout, sessionToPane, paneCount, selectPane } = useSplitLayout();
   const [search, setSearch] = useState("");
   const { menu, openMenu, openPeerMenu, closeMenu } = useContextMenu();
@@ -344,46 +344,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           await openChannel(sessionId);
           // 自动展开父节点
           setExpandedIds(prev => new Set(prev).add(sessionId));
-        } else if (tab?.state === "disconnected" && tab.params) {
-          // 已断开会话 → 重新连接
-          let params = tab.params as Record<string, unknown>;
-          // TFTP 暴露确认：旧数据可能把 exposure_confirmed 持久化成空对象等非布尔，
-          // 导致后端解析失败或暴露检查误拒。连接前若目标为可写且监听非回环、且该值
-          // 并非字面 true，则重新弹窗确认——确认后的 params 经 session-connected 回显
-          // 写回 tab，避免每次重连重复询问。
-          if (tab.pluginId === "tftp") {
-            const bindIp = String(params.listen_ip ?? "").trim().toLowerCase();
-            const loopback =
-              bindIp === "127.0.0.1" || bindIp === "::1" || bindIp === "localhost";
-            if (
-              !loopback &&
-              params.write_enabled === true &&
-              params.overwrite === true &&
-              params.exposure_confirmed !== true
-            ) {
-              const ok = window.confirm(
-                t("tftp.exposureWarning", {
-                  defaultValue:
-                    "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network.",
-                })
-              );
-              if (!ok) break; // 取消则中止重连
-              params = { ...params, exposure_confirmed: true };
-            }
-          }
-          try {
-            await connect({
-              endpoint: tab.endpoint,
-              params,
-              name: tab.name,
-              pluginId: tab.pluginId,
-              transferEnabled: tab.transferEnabled,
-              transferProtocol: tab.transferProtocol,
-              sendBarEnabled: tab.sendBarEnabled,
-              journaldEnabled: tab.journaldEnabled,
-              sessionId,
-            });
-          } catch (_e) { /* ignored */ }
+        } else if (tab?.state === "disconnected") {
+          await reconnectSession(sessionId);
         }
         break;
       }
@@ -398,17 +360,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
           // 与普通“新建终端”一致：保留右键前 Pane 作为新管理员终端落点。
           selectPane(contextMenuOriginPaneRef.current);
           await openChannel(sessionId, true);
-        } else if (tab.state === "disconnected" && tab.params) {
-          await connect({
-            endpoint: tab.endpoint,
-            params: tab.params,
-            name: tab.name,
-            pluginId: tab.pluginId,
-            transferEnabled: false,
-            sendBarEnabled: tab.sendBarEnabled,
-            sessionId,
-            initialElevated: true,
-          });
+        } else if (tab.state === "disconnected") {
+          await reconnectSession(sessionId, true);
         }
         setExpandedIds(prev => new Set(prev).add(sessionId));
         break;
