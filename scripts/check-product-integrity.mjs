@@ -148,6 +148,8 @@ assert.match(persistence, /\.commit\(\)/, "atomic persistence must commit only a
 const configStore = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "config_store.rs"), "utf8");
 assert.match(configStore, /atomic_write\(&path, json\.as_bytes\(\)\)/, "ConfigStore must use atomic persistence");
 assert.match(configStore, /pub fn set_batch/, "related settings need one ConfigStore persistence transaction");
+assert.match(configStore, /NotConfigured/, "ConfigStore must fail closed before persistence is configured");
+assert.match(configStore, /pub fn persistence_ready/, "WebView reads must be able to detect unavailable ConfigStore persistence");
 assert.match(
   configStore,
   /self\.persist_snapshot\(&next\)\?;[\s\S]*self\.data\.write/,
@@ -162,6 +164,16 @@ assert.doesNotMatch(
   sessionStore,
   /load_from_disk_unlocked\([^\n]+\)\.unwrap_or_default\(\)/,
   "Session Library read-modify-write must not overwrite state after a read error",
+);
+assert.match(
+  sessionStore,
+  /save_config_to_disk_transactional/,
+  "cross-store Session saves need an explicit rollback boundary",
+);
+assert.match(
+  sessionStore,
+  /delete_config_from_disk_transactional/,
+  "cross-store Session deletes need an explicit rollback boundary",
 );
 
 assert.doesNotMatch(
@@ -184,6 +196,11 @@ assert.match(
   /self\.persist_snapshot\(&next\)\?;[\s\S]*self[\s\S]*\.hosts[\s\S]*\.write/,
   "SSH trust must become visible in memory only after durable persistence succeeds",
 );
+
+const commands = await readFile(path.join(ROOT, "src-tauri", "src", "commands.rs"), "utf8");
+assert.match(commands, /prepare_ssh_session_params/, "SSH credentials must be prepared before persistence");
+assert.match(commands, /save_config_to_disk_transactional/, "SSH save must coordinate Session Library and credential commits");
+assert.match(commands, /hydrate_ssh_config_with_pending/, "direct SSH connect must use transient credentials before persistence");
 
 const ssh = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "ssh", "mod.rs"), "utf8");
 assert.match(ssh, /HostTrustDecision::Changed/, "SSH changed-host-key path must remain fail-closed");
