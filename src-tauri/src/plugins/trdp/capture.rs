@@ -220,6 +220,13 @@ fn flow_summaries(flows: &HashMap<String, FlowAccumulator>) -> Vec<TrdpFlowSumma
     rows
 }
 
+fn reset_flow_boundaries(flows: &mut HashMap<String, FlowAccumulator>) {
+    for flow in flows.values_mut() {
+        flow.previous_seq = None;
+        flow.previous_timestamp = None;
+    }
+}
+
 #[derive(Debug)]
 struct StoredCapture {
     frames: Vec<StoredFrame>,
@@ -1261,7 +1268,10 @@ pub fn trdp_open_capture(
     let mut frame_count = 0usize;
     visit_capture_file(&path_buf, |record| {
         match record {
-            CaptureRecord::SectionStart => decoder.reset(),
+            CaptureRecord::SectionStart => {
+                decoder.reset();
+                reset_flow_boundaries(&mut flows);
+            }
             CaptureRecord::Frame(frame) => {
                 frame_count = frame_count.saturating_add(1);
                 for packet in decoder.feed_frame(
