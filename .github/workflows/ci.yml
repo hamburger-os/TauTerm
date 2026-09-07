@@ -175,6 +175,9 @@ jobs:
       - name: TypeScript type check
         run: npx tsc --noEmit
 
+      - name: Product integrity contracts
+        run: npm run check:product-integrity
+
       - name: Brand-neutral UI and theme copy
         run: npm run check:brand-neutral-ui
 
