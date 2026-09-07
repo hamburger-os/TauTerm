@@ -1359,25 +1359,20 @@ async fn connect_session_ssh(
 #[tauri::command]
 pub async fn confirm_host_key(
     state: tauri::State<'_, AppState>,
-    fingerprint: String,
+    request_id: String,
     accepted: bool,
 ) -> Result<(), String> {
     let ok = state
         .host_key_verifier
-        .respond(&fingerprint, accepted)
-        .await;
+        .respond(&request_id, accepted)
+        .await?;
     if !ok {
-        // 指纹未找到：可能已超时、重复确认、或从未发起。
-        // 返回错误信息以便前端显示给用户。
-        return Err(format!(
-            "主机密钥验证请求未找到或已过期（指纹: {}）。可能已超时或重复确认。",
-            &fingerprint[..fingerprint.len().min(40)]
-        ));
+        return Err("主机密钥验证请求未找到或已过期".into());
     }
     log::info!(
-        "SSH 主机密钥 {}: {}",
-        if accepted { "已接受" } else { "已拒绝" },
-        &fingerprint[..fingerprint.len().min(40)]
+        "SSH 主机密钥请求 {}: {}",
+        if accepted { "已接受并记住" } else { "已拒绝" },
+        &request_id[..request_id.len().min(16)]
     );
     Ok(())
 }
