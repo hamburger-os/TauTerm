@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -33,6 +33,8 @@ static LOG_SENDER: Mutex<Option<mpsc::SyncSender<LogEntry>>> = Mutex::new(None);
 
 /// 系统日志是否启用（可由前端设置页控制）
 static SYSTEM_LOG_ENABLED: AtomicBool = AtomicBool::new(true);
+static DROPPED_SESSION_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
+static DROPPED_SYSTEM_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
 /// 系统日志最低级别过滤。
 ///
@@ -74,16 +76,21 @@ impl Log for LogBridge {
     fn log(&self, record: &Record) {
         if let Ok(guard) = LOG_SENDER.lock() {
             if let Some(ref tx) = *guard {
-                let _ = tx.try_send(LogEntry::SystemEvent {
-                    level: record.level().to_string(),
-                    message: format!(
-                        "[{}:{}] {}",
-                        record.file().unwrap_or("?"),
-                        record.line().unwrap_or(0),
-                        record.args()
-                    ),
-                    timestamp: Local::now(),
-                });
+                if tx
+                    .try_send(LogEntry::SystemEvent {
+                        level: record.level().to_string(),
+                        message: format!(
+                            "[{}:{}] {}",
+                            record.file().unwrap_or("?"),
+                            record.line().unwrap_or(0),
+                            record.args()
+                        ),
+                        timestamp: Local::now(),
+                    })
+                    .is_err()
+                {
+                    DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
     }
@@ -98,6 +105,44 @@ pub fn set_system_log_config(enabled: bool, level: &str) {
     SYSTEM_LOG_ENABLED.store(enabled, Ordering::Relaxed);
     if let Ok(mut guard) = SYSTEM_LOG_MIN_LEVEL.lock() {
         *guard = level.to_string();
+    }
+}
+
+pub fn system_log_config() -> (bool, String) {
+    let level = SYSTEM_LOG_MIN_LEVEL
+        .lock()
+        .map(|value| {
+            if value.is_empty() {
+                "info".to_string()
+            } else {
+                value.clone()
+            }
+        })
+        .unwrap_or_else(|_| "info".to_string());
+    (SYSTEM_LOG_ENABLED.load(Ordering::Relaxed), level)
+}
+
+pub fn try_send_session_log(sender: &mpsc::SyncSender<LogEntry>, entry: DataLogEntry) {
+    if sender.try_send(LogEntry::SessionData(entry)).is_err() {
+        DROPPED_SESSION_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn try_send_system_event(
+    sender: &mpsc::SyncSender<LogEntry>,
+    level: String,
+    message: String,
+    timestamp: chrono::DateTime<Local>,
+) {
+    if sender
+        .try_send(LogEntry::SystemEvent {
+            level,
+            message,
+            timestamp,
+        })
+        .is_err()
+    {
+        DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -161,7 +206,7 @@ pub enum LogEntry {
 /// 日志配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfig {
-    pub enabled: bool,
+    pub session_enabled: bool,
     pub log_dir: PathBuf,
     /// 单文件最大大小（字节），默认 10MB
     pub file_max_size: u64,
@@ -176,7 +221,7 @@ pub struct LogConfig {
 impl Default for LogConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            session_enabled: true,
             log_dir: PathBuf::from("logs"),
             file_max_size: 10 * 1024 * 1024, // 10 MB
             buffer_size: 4096,               // 4 KB
@@ -191,7 +236,7 @@ impl Default for LogConfig {
 /// 所有字段均为可选，仅更新提供的值。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogConfigUpdate {
-    pub enabled: Option<bool>,
+    pub session_enabled: Option<bool>,
     pub file_max_size: Option<u64>,
     pub buffer_size: Option<usize>,
     pub flush_interval_ms: Option<u64>,
@@ -201,7 +246,9 @@ pub struct LogConfigUpdate {
 /// 日志配置响应（供前端查询，PathBuf 转为字符串）
 #[derive(Debug, Clone, Serialize)]
 pub struct LogConfigResponse {
-    pub enabled: bool,
+    pub system_enabled: bool,
+    pub system_level: String,
+    pub session_enabled: bool,
     pub log_dir: String,
     pub file_max_size: u64,
     pub buffer_size: usize,
@@ -215,6 +262,12 @@ pub struct LogStatus {
     pub session_id: String,
     pub file_name: String,
     pub bytes_written: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogHealth {
+    pub dropped_session_entries: u64,
+    pub dropped_system_entries: u64,
 }
 
 /// 日志引擎
@@ -293,8 +346,11 @@ impl LogEngine {
     /// 获取前端友好的配置响应（PathBuf → String）
     pub fn get_config_response(&self) -> LogConfigResponse {
         let cfg = self.get_config();
+        let (system_enabled, system_level) = system_log_config();
         LogConfigResponse {
-            enabled: cfg.enabled,
+            system_enabled,
+            system_level,
+            session_enabled: cfg.session_enabled,
             log_dir: cfg.log_dir.to_string_lossy().to_string(),
             file_max_size: cfg.file_max_size,
             buffer_size: cfg.buffer_size,
@@ -308,8 +364,8 @@ impl LogEngine {
     /// 消费者线程每次循环自动读取最新配置，无需重启。
     pub fn update_config(&self, partial: LogConfigUpdate) {
         if let Ok(mut cfg) = self.config.lock() {
-            if let Some(enabled) = partial.enabled {
-                cfg.enabled = enabled;
+            if let Some(session_enabled) = partial.session_enabled {
+                cfg.session_enabled = session_enabled;
             }
             if let Some(file_max_size) = partial.file_max_size {
                 cfg.file_max_size = file_max_size;
@@ -323,6 +379,13 @@ impl LogEngine {
             if let Some(retention_days) = partial.retention_days {
                 cfg.retention_days = retention_days;
             }
+        }
+    }
+
+    pub fn get_health(&self) -> LogHealth {
+        LogHealth {
+            dropped_session_entries: DROPPED_SESSION_LOG_ENTRIES.load(Ordering::Relaxed),
+            dropped_system_entries: DROPPED_SYSTEM_LOG_ENTRIES.load(Ordering::Relaxed),
         }
     }
 
@@ -361,10 +424,9 @@ impl LogEngine {
     ) {
         let initial_config = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
 
-        // 启动时清理过期日志
-        if initial_config.enabled {
-            Self::cleanup_old_logs(&initial_config);
-        }
+        // 启动时清理过期日志。System Log 与 Session Log 启用状态彼此独立，
+        // 清理策略不应被任意一个开关短路。
+        Self::cleanup_old_logs(&initial_config);
 
         let mut writers: HashMap<String, LogWriter> = HashMap::new();
         // 系统日志独立写入（使用简单的 BufWriter<File>）
@@ -400,7 +462,7 @@ impl LogEngine {
                             port_name,
                             data_mode,
                         } => {
-                            if !cfg.enabled {
+                            if !cfg.session_enabled {
                                 continue;
                             }
                             match LogWriter::new(
@@ -469,7 +531,7 @@ impl LogEngine {
                 }
                 Ok(LogEntry::SessionData(entry)) => {
                     let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
-                    if !cfg.enabled {
+                    if !cfg.session_enabled {
                         continue;
                     }
                     if let Some(writer) = writers.get_mut(&entry.session_id) {
@@ -493,7 +555,7 @@ impl LogEngine {
                     timestamp,
                 }) => {
                     let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
-                    if !cfg.enabled {
+                    if !SYSTEM_LOG_ENABLED.load(Ordering::Relaxed) {
                         continue;
                     }
 
