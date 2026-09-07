@@ -33,6 +33,7 @@ static LOG_SENDER: Mutex<Option<mpsc::SyncSender<LogEntry>>> = Mutex::new(None);
 
 /// 系统日志是否启用（可由前端设置页控制）
 static SYSTEM_LOG_ENABLED: AtomicBool = AtomicBool::new(true);
+static SESSION_LOG_ENABLED: AtomicBool = AtomicBool::new(true);
 static DROPPED_SESSION_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static DROPPED_SYSTEM_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
@@ -123,6 +124,9 @@ pub fn system_log_config() -> (bool, String) {
 }
 
 pub fn try_send_session_log(sender: &mpsc::SyncSender<LogEntry>, entry: DataLogEntry) {
+    if !SESSION_LOG_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
     if sender.try_send(LogEntry::SessionData(entry)).is_err() {
         DROPPED_SESSION_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
     }
@@ -290,6 +294,7 @@ pub struct LogEngine {
 impl LogEngine {
     /// 创建日志引擎并启动消费者线程
     pub fn new(config: LogConfig) -> Self {
+        SESSION_LOG_ENABLED.store(config.session_enabled, Ordering::Relaxed);
         let (entry_tx, entry_rx) = mpsc::sync_channel::<LogEntry>(256);
 
         // 将 sender 注册到全局桥接器，使 log::info!/warn!/error! 自动写入系统日志
@@ -366,6 +371,7 @@ impl LogEngine {
         if let Ok(mut cfg) = self.config.lock() {
             if let Some(session_enabled) = partial.session_enabled {
                 cfg.session_enabled = session_enabled;
+                SESSION_LOG_ENABLED.store(session_enabled, Ordering::Relaxed);
             }
             if let Some(file_max_size) = partial.file_max_size {
                 cfg.file_max_size = file_max_size;
@@ -536,6 +542,7 @@ impl LogEngine {
                     }
                     if let Some(writer) = writers.get_mut(&entry.session_id) {
                         if let Err(e) = writer.write_entry(&entry) {
+                            DROPPED_SESSION_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
                             log::error!("日志写入失败 (会话 {}): {}", entry.session_id, e);
                         }
                         // 更新活跃日志状态（每 ~10 条更新一次，减少锁竞争）
@@ -580,7 +587,8 @@ impl LogEngine {
                                 system_date = Some(today);
                             }
                             Err(e) => {
-                                log::error!("无法打开系统日志文件 {:?}: {}", sys_path, e);
+                                DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+                                eprintln!("TauTerm: 无法打开系统日志文件 {:?}: {}", sys_path, e);
                                 system_date = None;
                                 continue;
                             }
@@ -592,7 +600,12 @@ impl LogEngine {
                         let sanitized_msg = sanitize_log(&message);
                         let line =
                             format!("[{}] [{}] {}\n", ts, level.to_uppercase(), sanitized_msg);
-                        let _ = w.write_all(line.as_bytes());
+                        if let Err(error) = w.write_all(line.as_bytes()) {
+                            DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+                            eprintln!("TauTerm: 系统日志写入失败: {}", error);
+                            system_writer = None;
+                            system_date = None;
+                        }
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -642,5 +655,34 @@ impl Drop for LogEngine {
         if let Some(handle) = self.consumer_handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_entry() -> DataLogEntry {
+        DataLogEntry {
+            session_id: "test-session".into(),
+            direction: DataDirection::RX,
+            data_mode: "text".into(),
+            encoding: "utf-8".into(),
+            payload: b"hello".to_vec(),
+            timestamp: Local::now(),
+        }
+    }
+
+    #[test]
+    fn disabled_session_logging_does_not_fill_queue() {
+        SESSION_LOG_ENABLED.store(false, Ordering::Relaxed);
+        let (tx, rx) = mpsc::sync_channel(1);
+
+        try_send_session_log(&tx, sample_entry());
+        try_send_session_log(&tx, sample_entry());
+
+        assert!(rx.try_recv().is_err());
+        SESSION_LOG_ENABLED.store(true, Ordering::Relaxed);
     }
 }
