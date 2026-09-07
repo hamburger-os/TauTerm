@@ -1694,6 +1694,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const statuses: Array<{ session_id: string; file_name: string; bytes_written: number }> =
           await invoke("get_log_status");
         setLogStatuses(new Map(statuses.map(s => [s.session_id, { fileName: s.file_name, bytesWritten: s.bytes_written }])));
+        setLoggingSessions(new Set(statuses.map(s => s.session_id)));
       } catch (_e) {
         // 静默忽略
       }
