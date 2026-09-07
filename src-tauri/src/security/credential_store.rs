@@ -278,11 +278,7 @@ impl CredentialStore {
 
         if next_index.insert(a.into()) {
             if let Err(error) = self.write_index(&next_index) {
-                return match self.restore_native_state(
-                    &entry,
-                    previous.as_ref(),
-                    &original_index,
-                ) {
+                return match self.restore_native_state(&entry, previous.as_ref(), &original_index) {
                     Ok(()) => Err(error),
                     Err(rollback_error) => Err(CredentialStoreError::Backend(format!(
                         "{}; native credential/index rollback failed: {}",
