@@ -288,19 +288,6 @@ fn commit_ssh_credential(state: &AppState, pending: PendingSshCredential) -> Res
         .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))
 }
 
-/// Runtime/direct-connect helper: prepare the same canonical params, then commit any transient
-/// credential immediately because there is no Session Library transaction in this path.
-fn secure_ssh_session_params(
-    state: &AppState,
-    session_id: &str,
-    params: &mut Value,
-) -> Result<(), String> {
-    if let Some(pending) = prepare_ssh_session_params(state, session_id, params)? {
-        commit_ssh_credential(state, pending)?;
-    }
-    Ok(())
-}
-
 fn apply_ssh_credential(
     config: &mut crate::plugins::ssh::SshConfig,
     credential: crate::security::credential_store::CredentialValue,
