@@ -2513,6 +2513,9 @@ pub fn lock_credential_vault(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_config(state: State<'_, AppState>, key: String) -> Result<Option<Value>, String> {
+    if !state.config_store.persistence_ready() {
+        return Err("ConfigStore persistence is unavailable".to_string());
+    }
     Ok(state.config_store.get::<Value>(&key))
 }
 
