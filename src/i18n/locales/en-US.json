@@ -110,7 +110,8 @@
     "closeConfirm": "Close this session?",
     "deleteConfirm": "Delete this session?",
     "clearAllDisconnected": "Clear all disconnected sessions",
-    "status": "Status"
+    "status": "Status",
+    "displayOverflow": "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path. Wire data is not assumed lost, but the current view may be incomplete."
   },
   "stats": {
     "txBytes": "TX",
@@ -724,7 +725,8 @@
     "loading": "Loading...",
     "started": "Logging started",
     "stopped": "Logging stopped",
-    "writing": "Writing"
+    "writing": "Writing",
+    "lossWarning": "Logging overflow detected — session: {{session}}, system: {{system}}. The affected log stream may be incomplete."
   },
   "common": {
     "ok": "OK",
