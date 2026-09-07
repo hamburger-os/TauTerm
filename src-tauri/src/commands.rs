@@ -136,7 +136,6 @@ fn non_empty_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
     params
         .get(key)
         .and_then(Value::as_str)
-        .map(str::trim)
         .filter(|value| !value.is_empty())
 }
 
