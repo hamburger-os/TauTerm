@@ -209,17 +209,22 @@ pub fn get_connection_types(state: State<'_, AppState>) -> Vec<ConnectionTypeInf
 // ── 命令：端点枚举 ──────────────────────────────────
 
 #[tauri::command]
-pub fn enumerate_endpoints(
+pub async fn enumerate_endpoints(
     state: State<'_, AppState>,
     plugin_id: Option<String>,
 ) -> Result<Vec<EndpointItem>, String> {
     let pid = plugin_id.unwrap_or_else(|| "serial".into());
     match pid.as_str() {
         "serial" => {
-            let endpoints = state
-                .serial_adapter
-                .discover_endpoints()
-                .map_err(|e| e.to_string())?;
+            // Windows SetupAPI / 第三方串口驱动枚举可能耗时数秒甚至更久。
+            // discover_endpoints 是同步 API，必须放到 blocking worker，不能占用
+            // Tauri 命令分发线程，否则打开任意会话配置页都会出现 UI 假死。
+            let endpoints = tauri::async_runtime::spawn_blocking(|| {
+                crate::plugins::serial::SerialAdapter::new().discover_endpoints()
+            })
+            .await
+            .map_err(|e| format!("serial endpoint discovery task failed: {e}"))?
+            .map_err(|e| e.to_string())?;
             Ok(endpoints
                 .into_iter()
                 .map(|ep| EndpointItem {
@@ -266,10 +271,13 @@ pub fn enumerate_endpoints(
                 .collect())
         }
         "local-shell" => {
-            let endpoints = state
-                .local_shell_adapter
-                .discover_endpoints()
-                .map_err(|e| e.to_string())?;
+            // Shell/WSL 探测会启动平台命令，同样属于不可预测的阻塞 I/O。
+            let endpoints = tauri::async_runtime::spawn_blocking(|| {
+                crate::plugins::local_shell::LocalShellAdapter::new().discover_endpoints()
+            })
+            .await
+            .map_err(|e| format!("local shell endpoint discovery task failed: {e}"))?
+            .map_err(|e| e.to_string())?;
             Ok(endpoints
                 .into_iter()
                 .map(|ep| EndpointItem {
