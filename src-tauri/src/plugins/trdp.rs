@@ -1081,7 +1081,14 @@ pub fn trdp_command(
             .lock()
             .map_err(|error| error.to_string())?
             .clone();
-        let new_capture = capture::create_live_capture();
+        let expected_cycles = command
+            .get("expected_cycles")
+            .cloned()
+            .map(serde_json::from_value::<HashMap<u32, u64>>)
+            .transpose()
+            .map_err(|error| format!("capture_start expected_cycles 无效: {error}"))?
+            .unwrap_or_default();
+        let new_capture = capture::create_live_capture(expected_cycles);
         *trdp.capture_id.lock().map_err(|error| error.to_string())? = Some(new_capture.clone());
 
         match trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT) {
@@ -1275,8 +1282,9 @@ pub fn trdp_open_capture(
     path: String,
     pd_ports: Option<Vec<u16>>,
     md_ports: Option<Vec<u16>>,
+    expected_cycles: Option<HashMap<u32, u64>>,
 ) -> Result<capture::TrdpCaptureResult, String> {
-    capture::trdp_open_capture(path, pd_ports, md_ports)
+    capture::trdp_open_capture(path, pd_ports, md_ports, expected_cycles)
 }
 
 #[tauri::command]
@@ -1286,6 +1294,13 @@ pub fn trdp_capture_packets(
     limit: usize,
 ) -> Result<Vec<capture::TrdpPacket>, String> {
     capture::capture_packets(&capture_id, offset, limit)
+}
+
+#[tauri::command]
+pub fn trdp_capture_summary(
+    capture_id: String,
+) -> Result<capture::TrdpCaptureSummary, String> {
+    capture::capture_summary(&capture_id)
 }
 
 #[tauri::command]
