@@ -27,7 +27,8 @@
     "version:check": "node scripts/check-version.js",
     "release:check": "node scripts/check-version.js --release",
     "postversion": "node scripts/sync-version.js",
-    "version:sync": "node scripts/sync-version.js"
+    "version:sync": "node scripts/sync-version.js",
+    "check:product-integrity": "node scripts/check-product-integrity.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
