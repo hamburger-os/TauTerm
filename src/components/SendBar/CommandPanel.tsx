@@ -11,6 +11,13 @@ import Icon from "../common/Icon";
 import CommandEditorModal from "./CommandEditorModal";
 import useCommandRunner from "./useCommandRunner";
 import defaultCommands from "./default-commands.json";
+import {
+  ASSET_KEYS,
+  clearAsset,
+  loadAsset,
+  persistAsset,
+  subscribeAsset,
+} from "./assetStore";
 import type { CommandItem, CommandConfig } from "./types";
 import styles from "./CommandPanel.module.css";
 
@@ -20,19 +27,16 @@ interface CommandPanelProps {
   onRunningChange?: (running: boolean) => void;
 }
 
-const CONFIG_STORE_KEY = "assets.command_sets";
-const ACTIVE_CONFIG_STORE_KEY = "assets.active_command_set";
+const CONFIG_STORE_KEY = ASSET_KEYS.commandSets;
+const ACTIVE_CONFIG_STORE_KEY = ASSET_KEYS.activeCommandSet;
 
 function saveConfigs(configs: CommandConfig[]) {
-  void invoke("set_config", { key: CONFIG_STORE_KEY, value: configs }).catch(() => {});
+  persistAsset(CONFIG_STORE_KEY, configs);
 }
 
 function saveActiveConfig(name: string) {
-  if (name) {
-    void invoke("set_config", { key: ACTIVE_CONFIG_STORE_KEY, value: name }).catch(() => {});
-  } else {
-    void invoke("delete_config", { key: ACTIVE_CONFIG_STORE_KEY }).catch(() => {});
-  }
+  if (name) persistAsset(ACTIVE_CONFIG_STORE_KEY, name);
+  else clearAsset(ACTIVE_CONFIG_STORE_KEY);
 }
 
 export default function CommandPanel({ sessionId, isActive, onRunningChange }: CommandPanelProps) {
@@ -52,8 +56,8 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      invoke<CommandConfig[] | null>("get_config", { key: CONFIG_STORE_KEY }),
-      invoke<string | null>("get_config", { key: ACTIVE_CONFIG_STORE_KEY }),
+      loadAsset<CommandConfig[]>(CONFIG_STORE_KEY),
+      loadAsset<string>(ACTIVE_CONFIG_STORE_KEY),
     ]).then(([storedConfigs, storedActive]) => {
       if (cancelled) return;
       const nextConfigs = Array.isArray(storedConfigs) && storedConfigs.length > 0
@@ -73,6 +77,29 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       // 默认命令集已经在内存中可用；持久层异常不阻止发送工作流。
     });
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribeConfigs = subscribeAsset<CommandConfig[]>(CONFIG_STORE_KEY, value => {
+      const next = Array.isArray(value) && value.length > 0
+        ? value
+        : [defaultCommands as CommandConfig];
+      setConfigs(next);
+      setActiveConfigName(current =>
+        next.some(config => config.name === current) ? current : next[0]?.name ?? "",
+      );
+    });
+    const unsubscribeActive = subscribeAsset<string>(ACTIVE_CONFIG_STORE_KEY, value => {
+      if (!value) {
+        setActiveConfigName(current => current || configs[0]?.name || "");
+        return;
+      }
+      setActiveConfigName(value);
+    });
+    return () => {
+      unsubscribeConfigs();
+      unsubscribeActive();
+    };
   }, []);
 
   const activeConfig = useMemo(() => {
