@@ -950,6 +950,16 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
     try {
       await command("capture_stop");
       updateCaptureRunning(false);
+      const currentCaptureId = captureIdRef.current;
+      if (currentCaptureId) {
+        const summary = await invoke<CaptureSummary>("trdp_capture_summary", {
+          captureId: currentCaptureId,
+        });
+        if (captureIdRef.current === currentCaptureId) {
+          setCapturePacketCount(summary.packet_count);
+          setCaptureFlows(summary.flows.map(flowRowFromSummary));
+        }
+      }
     } catch {
       // command() owns the error banner; keep the current state unchanged.
     } finally {
