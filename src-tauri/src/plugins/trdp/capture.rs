@@ -159,8 +159,14 @@ impl FlowAccumulator {
                 let interval = packet.timestamp_us - previous;
                 self.interval_count = self.interval_count.saturating_add(1);
                 self.interval_sum = self.interval_sum.saturating_add(u128::from(interval));
-                self.min_interval_us = Some(self.min_interval_us.map_or(interval, |value| value.min(interval)));
-                self.max_interval_us = Some(self.max_interval_us.map_or(interval, |value| value.max(interval)));
+                self.min_interval_us = Some(
+                    self.min_interval_us
+                        .map_or(interval, |value| value.min(interval)),
+                );
+                self.max_interval_us = Some(
+                    self.max_interval_us
+                        .map_or(interval, |value| value.max(interval)),
+                );
                 if let Some(expected) = expected_cycle_us {
                     self.jitter_sum += (interval as f64 - expected as f64).abs();
                     self.jitter_count = self.jitter_count.saturating_add(1);
@@ -188,8 +194,7 @@ impl FlowAccumulator {
             avg_interval_us: (self.interval_count > 0)
                 .then(|| self.interval_sum as f64 / self.interval_count as f64),
             max_interval_us: self.max_interval_us,
-            jitter_us: (self.jitter_count > 0)
-                .then(|| self.jitter_sum / self.jitter_count as f64),
+            jitter_us: (self.jitter_count > 0).then(|| self.jitter_sum / self.jitter_count as f64),
         }
     }
 }
@@ -215,7 +220,10 @@ fn observe_flow(
 }
 
 fn flow_summaries(flows: &HashMap<String, FlowAccumulator>) -> Vec<TrdpFlowSummary> {
-    let mut rows = flows.values().map(FlowAccumulator::summary).collect::<Vec<_>>();
+    let mut rows = flows
+        .values()
+        .map(FlowAccumulator::summary)
+        .collect::<Vec<_>>();
     rows.sort_by(|left, right| left.key.cmp(&right.key));
     rows
 }
