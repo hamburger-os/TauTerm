@@ -1,7 +1,7 @@
-//! Crash-safe persistence helpers for TauTerm-owned text/JSON state.
+//! Atomic replacement helpers for TauTerm-owned text/JSON state.
 //!
 //! Writes are staged in the destination directory and committed atomically so a process crash or
-//! interrupted write preserves the previous complete file instead of leaving truncated JSON.
+//! interrupted process write preserves a complete old/new file instead of leaving truncated JSON.
 
 use atomic_write_file::AtomicWriteFile;
 use std::io::{self, Write};
