@@ -349,7 +349,7 @@
 }
 
 
-/* Pane-relative adaptation: SplitView publishes the named inline-size container. */
+/* Pane-relative adaptation: SplitView publishes the named size container. */
 @container session-pane (max-width: 560px) {
   .container {
     flex-direction: column;
