@@ -13,6 +13,7 @@ export const ASSET_PERSISTENCE_ERROR_EVENT = "tauterm-asset-persistence-error";
 
 export interface AssetPersistenceErrorDetail {
   key: string;
+  operation: "load" | "save" | "delete";
   error: string;
 }
 
@@ -29,9 +30,14 @@ function notify(key: string, value: unknown | null) {
   listeners.get(key)?.forEach(listener => listener(value));
 }
 
-function reportPersistenceError(key: string, error: unknown) {
+function reportPersistenceError(
+  key: string,
+  operation: AssetPersistenceErrorDetail["operation"],
+  error: unknown,
+) {
   const detail: AssetPersistenceErrorDetail = {
     key,
+    operation,
     error: String(error),
   };
   console.error(`Failed to persist engineering asset ${key}:`, error);
@@ -80,6 +86,10 @@ export function loadAsset<T>(key: string): Promise<T | null> {
       cache.set(key, value);
       return value;
     })
+    .catch(error => {
+      reportPersistenceError(key, "load", error);
+      throw error;
+    })
     .finally(() => {
       loadPromises.delete(key);
     });
@@ -98,7 +108,7 @@ export function persistAsset(key: string, value: unknown): void {
       notify(key, value);
     } catch (error) {
       notify(key, previous);
-      reportPersistenceError(key, error);
+      reportPersistenceError(key, "save", error);
       throw error;
     }
   });
@@ -114,7 +124,7 @@ export function clearAsset(key: string): void {
       notify(key, null);
     } catch (error) {
       notify(key, previous);
-      reportPersistenceError(key, error);
+      reportPersistenceError(key, "delete", error);
       throw error;
     }
   });
