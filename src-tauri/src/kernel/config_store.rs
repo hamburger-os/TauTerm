@@ -7,7 +7,7 @@ use crate::kernel::persistence::atomic_write;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
 const CONFIG_STORE_VERSION: u32 = 1;
 
@@ -24,6 +24,7 @@ struct PersistedConfigStore {
 pub struct ConfigStore {
     data: RwLock<HashMap<String, HashMap<String, serde_json::Value>>>,
     persistence_path: RwLock<Option<PathBuf>>,
+    mutation_lock: Mutex<()>,
 }
 
 impl ConfigStore {
@@ -31,6 +32,7 @@ impl ConfigStore {
         Self {
             data: RwLock::new(HashMap::new()),
             persistence_path: RwLock::new(None),
+            mutation_lock: Mutex::new(()),
         }
     }
 
@@ -38,6 +40,10 @@ impl ConfigStore {
     ///
     /// 研发阶段不保留旧格式兼容：损坏或版本不匹配的文件会备份后从空配置开始。
     pub fn configure_persistence(&self, path: PathBuf) -> Result<(), ConfigStoreError> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| ConfigStoreError::LockError)?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(ConfigStoreError::Io)?;
         }
@@ -91,7 +97,10 @@ impl ConfigStore {
         let _ = std::fs::copy(path, backup);
     }
 
-    fn persist(&self) -> Result<(), ConfigStoreError> {
+    fn persist_snapshot(
+        &self,
+        namespaces: &HashMap<String, HashMap<String, serde_json::Value>>,
+    ) -> Result<(), ConfigStoreError> {
         let path = self
             .persistence_path
             .read()
@@ -102,14 +111,9 @@ impl ConfigStore {
             return Ok(());
         };
 
-        let namespaces = self
-            .data
-            .read()
-            .map_err(|_| ConfigStoreError::LockError)?
-            .clone();
         let snapshot = PersistedConfigStore {
             version: CONFIG_STORE_VERSION,
-            namespaces,
+            namespaces: namespaces.clone(),
         };
         let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| ConfigStoreError::Serialization(e.to_string()))?;
@@ -131,28 +135,47 @@ impl ConfigStore {
         let (ns, k) = Self::parse_key(key).ok_or(ConfigStoreError::InvalidKey(key.to_string()))?;
         let json_value = serde_json::to_value(value)
             .map_err(|e| ConfigStoreError::Serialization(e.to_string()))?;
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| ConfigStoreError::LockError)?;
 
-        {
-            let mut data = self.data.write().map_err(|_| ConfigStoreError::LockError)?;
-            data.entry(ns.to_string())
-                .or_default()
-                .insert(k.to_string(), json_value);
-        }
-        self.persist()
+        let mut next = self
+            .data
+            .read()
+            .map_err(|_| ConfigStoreError::LockError)?
+            .clone();
+        next.entry(ns.to_string())
+            .or_default()
+            .insert(k.to_string(), json_value);
+
+        self.persist_snapshot(&next)?;
+        *self.data.write().map_err(|_| ConfigStoreError::LockError)? = next;
+        Ok(())
     }
 
     pub fn delete(&self, key: &str) -> Result<(), ConfigStoreError> {
         let (ns, k) = Self::parse_key(key).ok_or(ConfigStoreError::InvalidKey(key.to_string()))?;
-        {
-            let mut data = self.data.write().map_err(|_| ConfigStoreError::LockError)?;
-            if let Some(namespace) = data.get_mut(ns) {
-                namespace.remove(k);
-                if namespace.is_empty() {
-                    data.remove(ns);
-                }
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| ConfigStoreError::LockError)?;
+
+        let mut next = self
+            .data
+            .read()
+            .map_err(|_| ConfigStoreError::LockError)?
+            .clone();
+        if let Some(namespace) = next.get_mut(ns) {
+            namespace.remove(k);
+            if namespace.is_empty() {
+                next.remove(ns);
             }
         }
-        self.persist()
+
+        self.persist_snapshot(&next)?;
+        *self.data.write().map_err(|_| ConfigStoreError::LockError)? = next;
+        Ok(())
     }
 
     pub fn namespace(&self, ns: &str) -> Option<HashMap<String, serde_json::Value>> {
@@ -214,6 +237,23 @@ mod tests {
         assert_eq!(reopened.get::<u64>("workspace.sample"), Some(42));
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn config_store_does_not_publish_failed_write_to_memory() {
+        let dir = temp_path("write-failure");
+        let path = dir.join("settings.json");
+
+        let store = ConfigStore::new();
+        store.configure_persistence(path).unwrap();
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::write(&dir, b"blocks-directory-recreation").unwrap();
+
+        assert!(store.set("workspace.sample", &42_u64).is_err());
+        assert_eq!(store.get::<u64>("workspace.sample"), None);
+
+        let _ = std::fs::remove_file(dir);
     }
 
     #[test]
