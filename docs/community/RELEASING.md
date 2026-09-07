@@ -59,7 +59,7 @@ After the release PR is merged:
 3. enter the full version such as `0.7.0` or `0.7.0-rc.1`;
 4. run the workflow.
 
-Do not create the tag manually. The workflow verifies that the selected commit is still current `master`, validates version/CHANGELOG metadata, runs the CI quality gate, builds all supported targets, and only then creates the release tag/draft.
+Do not create the tag manually. The workflow verifies that the selected commit is still current `master`, validates version/CHANGELOG metadata, runs both the normal CI quality gate and the reusable TRDP Native interoperability gate on the exact release commit, builds all supported targets, and only then creates the release tag/draft.
 
 ## 3. Artifact and updater gates
 
