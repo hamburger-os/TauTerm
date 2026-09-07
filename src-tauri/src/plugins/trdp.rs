@@ -11,7 +11,7 @@ pub mod xml;
 
 use crate::commands::ConnectSessionRequest;
 use crate::kernel::plugin_adapter::SideChannel;
-use crate::kernel::session_store::ContainerSessionCreateOptions;
+use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionState};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1109,6 +1109,20 @@ pub fn trdp_command(
             .map_err(|error| error.to_string())?
             .clone();
         return Ok(json!({ "objects": states }));
+    }
+
+    let runtime_connected = {
+        let store = state
+            .session_store
+            .lock()
+            .map_err(|error| error.to_string())?;
+        matches!(
+            store.session_state(&session_id),
+            Some(SessionState::Connected | SessionState::Transferring)
+        )
+    };
+    if !runtime_connected {
+        return Err("TRDP runtime operation requires a connected session".to_string());
     }
 
     if trdp
