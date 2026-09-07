@@ -85,7 +85,6 @@ impl SerialAdapter {
         Self
     }
 
-
     /// 从 JSON Value 解析串口参数
     fn parse_params(params: &serde_json::Value) -> SerialConfig {
         serde_json::from_value(params.clone()).unwrap_or_default()
