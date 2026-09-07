@@ -3,6 +3,7 @@
 //! Unknown hosts require explicit user confirmation. A stored host whose fingerprint changes is
 //! rejected fail-closed; the new key is never silently learned.
 
+use crate::kernel::persistence::atomic_write;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -175,7 +176,7 @@ impl KnownHostStore {
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("序列化 SSH known-host 失败: {e}"))?;
-        std::fs::write(path, json).map_err(|e| format!("写入 SSH known-host 失败: {e}"))
+        atomic_write(&path, json.as_bytes()).map_err(|e| format!("写入 SSH known-host 失败: {e}"))
     }
 }
 
