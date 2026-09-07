@@ -14,11 +14,11 @@ TauTerm 的连接能力已经覆盖 SSH/SFTP、Serial、Local Shell、TCP/UDP、
 
 在 Recording、Data Lens、Signal Lab、CAN/Instrument 等能力进入 Core 之前，先消除多份 source of truth、临时持久化和不可观测丢失，可以显著降低后续重构成本。
 
-## 2. 当前执行阶段：Product Integrity
+## 2. Product Integrity baseline（本轮完成）
 
 ### 2.1 Trust Contract
 
-完成标准：
+本轮已落实：
 
 - Tauri updater signing 与 Windows Authenticode 的当前状态在 workflow、CHANGELOG、平台/安全文档中一致；
 - System Log 与 Session Data Log 使用独立启用语义；
@@ -28,21 +28,22 @@ TauTerm 的连接能力已经覆盖 SSH/SFTP、Serial、Local Shell、TCP/UDP、
 
 ### 2.2 Plugin Contract
 
-完成标准：
+本轮已落实：
 
 - Plugin manifest / capabilities 只有一个 canonical 定义；
 - 前后端从同一份 manifest 消费或由 CI 证明完全一致；
-- Connect Form、默认命名、reconnect preflight 等协议语义逐步回到插件边界；
 - Core 不再维护与运行路径重复的“影子插件状态”。
+
+Connect Form、默认命名、reconnect preflight 等剩余协议语义继续按实际收益逐步回到插件边界，但不再作为 Product Integrity 的阻塞项；迁移时必须避免再制造第二份 manifest/capability。
 
 ### 2.3 Persistence Contract
 
-完成标准：
+本轮已落实：
 
 - 持久化文件必须有明确 schema version；
 - Saved Session 与 runtime Session 分离；
-- Workspace 从“布局恢复”升级为“工程资产容器”的数据模型；
-- Command Set、Script、Auto Reply、Highlight、Decoder、Recording Profile 等共享资产有明确 global/workspace ownership；
+- Workspace Layout 的持久化 owner 已从 WebView 本地状态收敛到 Rust ConfigStore，并正式定义完整 TauWorkspace 资产模型；
+- 当前已存在的 Command Set、Script、Auto Reply 有明确 global ownership；Highlight、Decoder、Recording Profile 在各自能力落地时必须直接进入同一资产模型，不再新增临时存储；
 - 安全凭据只保存 reference，永不进入 Workspace export。
 
 ### 2.4 Observability Contract
@@ -82,22 +83,22 @@ Product Integrity 完成后，下一阶段优先提升日常主力工具成熟�
 
 ### Session Library
 
-- Saved Session 与 Active Session 规模分离；
+- Saved Session 与 Active Session 规模分离（Integrity baseline 已完成）；
 - Folder / Tag / Favorite / Recent；
 - Quick Open / 搜索；
 - 批量连接、批量编辑与模板。
 
 ### Serial Maturity
 
-- USB device identity（VID/PID/serial/manufacturer/product）；
-- 热插拔与 same-device reconnect；
+- USB device identity（VID/PID/serial/manufacturer/product）元数据采集（Integrity baseline 已完成）；
+- 基于 stable identity 的热插拔与 same-device reconnect；
 - DTR / RTS / BREAK 控制；
 - CTS / DSR / RI / CD 状态；
 - 明确时间戳与 framing 入口。
 
 ### SSH Maturity
 
-- persistent known-host trust；
+- persistent known-host trust（Integrity baseline 已完成）；
 - OpenSSH config interoperability；
 - SSH Agent；
 - ProxyJump；
