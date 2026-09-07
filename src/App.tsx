@@ -200,25 +200,26 @@ function AppInner() {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     (async () => {
-      const fn = await listen<{ fingerprint: string }>(
+      const fn = await listen<{
+        request_id: string;
+        host: string;
+        port: number;
+        fingerprint: string;
+      }>(
         "ssh-host-key-verify",
         async (event) => {
           if (cancelled) return;
-          const fp = event.payload.fingerprint;
-          // 使用原生 OS 确认对话框（不可被 Web 内容伪造，安全性最高）
+          const { request_id: requestId, host, port, fingerprint } = event.payload;
+          // 首次信任必须让用户看到目标主机和指纹；接受后由 Rust known-host store 持久化。
           const ok = window.confirm(
-            `${t("ssh.hostKeyTitle")}\n\n${t("ssh.hostKeyFingerprint")}: ${fp}\n\n${t("ssh.hostKeyPrompt")}`
+            `${t("ssh.hostKeyTitle")}\n\n${t("ssh.hostKeyHost", { defaultValue: "Host" })}: ${host}:${port}\n${t("ssh.hostKeyFingerprint")}: ${fingerprint}\n\n${t("ssh.hostKeyPrompt")}`
           );
           try {
-            // 显式构造布尔参数，避免 ES6 简写语法在 Tauri IPC 序列化时
-            // 可能将 boolean 误序列化为对象的问题
             await invoke("confirm_host_key", {
-              fingerprint: fp,
+              requestId,
               accepted: ok ? true : false,
             });
           } catch (e) {
-            // 后端 oneshot 已被消费（Strict Mode 双重监听器 或 并发连接
-            // 使用相同指纹时可能发生），非真实错误，静默忽略。
             const errStr = String(e);
             if (
               errStr.includes("未找到或已过期") ||
@@ -242,6 +243,35 @@ function AppInner() {
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
+    };
+  }, [showToast, t]);
+
+  // 已知主机密钥变化永不通过普通确认覆盖；默认 fail-closed。
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{
+      host: string;
+      port: number;
+      expected_fingerprint: string;
+      actual_fingerprint: string;
+    }>("ssh-host-key-changed", event => {
+      if (cancelled) return;
+      showToast("error", t("ssh.hostKeyChanged", {
+        defaultValue: "SSH host key changed for {{host}}:{{port}}. Connection was refused. Expected {{expected}}, received {{actual}}.",
+        host: event.payload.host,
+        port: event.payload.port,
+        expected: event.payload.expected_fingerprint,
+        actual: event.payload.actual_fingerprint,
+      }));
+    }).then(fn => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    }).catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, [showToast, t]);
 
