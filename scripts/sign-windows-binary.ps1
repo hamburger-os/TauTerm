@@ -31,7 +31,7 @@ else {
 
     $signTool = $kitsRoots |
         ForEach-Object { Get-ChildItem -Path $_ -Filter "signtool.exe" -Recurse -ErrorAction SilentlyContinue } |
-        Where-Object { $_.FullName -match "\\\\x64\\\\signtool\\.exe$" } |
+        Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } |
         Sort-Object FullName -Descending |
         Select-Object -First 1 -ExpandProperty FullName
 }
