@@ -395,7 +395,7 @@
     "disconnected": "Session disconnected, send unavailable",
     "basicMode": "Basic Send",
     "modeLocked": "Mode locked during sending",
-    "assetPersistFailed": "Engineering asset changes were not saved ({{key}}): {{error}}",
+    "assetPersistFailed": "Engineering asset storage failed ({{operation}} · {{key}}): {{error}}",
     "autoReplyMode": "Auto Reply",
     "scriptMode": "Script Editor",
     "new": "New",
