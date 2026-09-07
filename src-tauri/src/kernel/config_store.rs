@@ -3,6 +3,7 @@
 //! 为非敏感的应用设置与工程资产索引提供命名空间 KV 存储。
 //! 磁盘格式带显式版本；凭据不得进入本存储。
 
+use crate::kernel::persistence::atomic_write;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -112,7 +113,7 @@ impl ConfigStore {
         };
         let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| ConfigStoreError::Serialization(e.to_string()))?;
-        std::fs::write(path, json).map_err(ConfigStoreError::Io)
+        atomic_write(&path, json.as_bytes()).map_err(ConfigStoreError::Io)
     }
 
     pub fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
