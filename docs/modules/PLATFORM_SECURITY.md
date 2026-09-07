@@ -12,6 +12,8 @@
 
 SSH 的持久化 Session 只保存由 Session ID 确定的 `credential_account` 引用，不保存密码、私钥正文或 passphrase。连接时由 Rust 后端从安全存储注入短生命周期认证材料；WebView 的 Session 状态和重新打开的配置表单不回填秘密，也不暴露可返回凭据明文的通用 Tauri command。加载持久化会话时若发现开发期遗留的 SSH 明文字段，会立即从 `sessions.json` 擦除并要求用户重新配置，不迁移旧凭据、不保留兼容分支。
 
+SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fingerprint 与 first/last seen。首次信任需要明确确认；已知 fingerprint 匹配时自动通过；已知主机密钥变化时 fail-closed。并发确认使用独立 request ID，不以 fingerprint 作为 pending key。
+
 ### Windows 特权操作
 
 主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；开发/便携场景可以使用明确的按需 UAC 回退。Local Shell 的管理员 child 是独立的一次性提权路径，不等于给主应用提权。
