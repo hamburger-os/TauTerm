@@ -380,7 +380,8 @@ pub struct SessionStore {
     sessions: HashMap<TabId, ActiveSessionHandle>,
     active_id: Option<TabId>,
     tab_order: Vec<TabId>,
-    max_sessions: usize,
+    /// 只限制运行中的根 Session；Saved Session Library 不受这个运行时资源预算约束。
+    max_active_root_sessions: usize,
     /// 持久化会话名称映射，会话从 HashMap 移除后仍保留，
     /// 用于在错误消息中显示用户友好的名称而非原始 UUID。
     /// 通过 `removed_order` 队列进行 LRU 淘汰，防止无限增长。
@@ -403,6 +404,15 @@ pub struct SavedSession {
     pub send_bar_enabled: bool,
     pub virtual_port_enabled: bool,
     pub virtual_port_count: u32,
+}
+
+const SESSION_LIBRARY_VERSION: u32 = 1;
+const DEFAULT_MAX_ACTIVE_ROOT_SESSIONS: usize = 64;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionLibraryFile {
+    version: u32,
+    sessions: Vec<SavedSession>,
 }
 
 /// 全局文件锁 — 保护 sessions.json 的 read-modify-write 操作。
@@ -455,7 +465,7 @@ impl SessionStore {
             sessions: HashMap::new(),
             active_id: None,
             tab_order: Vec::new(),
-            max_sessions: 10,
+            max_active_root_sessions: DEFAULT_MAX_ACTIVE_ROOT_SESSIONS,
             session_names: HashMap::new(),
             removed_order: VecDeque::new(),
         }
@@ -492,8 +502,11 @@ impl SessionStore {
         // 清理所有僵尸句柄，以免占用 max_sessions 名额
         self.purge_zombies();
 
-        if self.sessions.len() >= self.max_sessions {
-            return Err(format!("已达到最大会话数限制 ({})", self.max_sessions));
+        if self.sessions.len() >= self.max_active_root_sessions {
+            return Err(format!(
+                "已达到最大活动根会话数限制 ({})",
+                self.max_active_root_sessions
+            ));
         }
 
         // 验证 id_override 为合法 UUID，防止任意字符串导致 HashMap 键冲突与资源泄漏
@@ -727,8 +740,11 @@ impl SessionStore {
         // 清理所有僵尸句柄，以免占用 max_sessions 名额
         self.purge_zombies();
 
-        if self.sessions.len() >= self.max_sessions {
-            return Err(format!("已达到最大会话数限制 ({})", self.max_sessions));
+        if self.sessions.len() >= self.max_active_root_sessions {
+            return Err(format!(
+                "已达到最大活动根会话数限制 ({})",
+                self.max_active_root_sessions
+            ));
         }
 
         // 容器会话不直接接受 I/O 数据 — write_tx 为 None，
@@ -2057,17 +2073,34 @@ impl SessionStore {
         path
     }
 
-    /// 保存会话到磁盘
+    fn write_library(path: &std::path::Path, sessions: Vec<SavedSession>) -> Result<(), String> {
+        let snapshot = SessionLibraryFile {
+            version: SESSION_LIBRARY_VERSION,
+            sessions,
+        };
+        let json = serde_json::to_string_pretty(&snapshot)
+            .map_err(|e| format!("序列化会话库失败: {}", e))?;
+        std::fs::write(path, json).map_err(|e| format!("写入会话库失败: {}", e))
+    }
+
+    fn backup_invalid_library(path: &std::path::Path) {
+        let backup = path.with_extension("json.invalid.bak");
+        let _ = std::fs::copy(path, &backup);
+    }
+
+    /// 保存运行时根 Session 的最新配置到版本化 Session Library。
+    ///
+    /// Saved Session Library 与 active runtime 数量是两个概念；没有运行中的 Session
+    /// 不会清空磁盘 Library。
     pub fn save_to_disk(&self, path: &std::path::Path) -> Result<(), String> {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let current: Vec<SavedSession> = self.get_saved_sessions();
-        let existing = Self::load_from_disk(path).unwrap_or_default();
-
         if current.is_empty() {
             return Ok(());
         }
+        let existing = Self::load_from_disk_unlocked(path).unwrap_or_default();
 
         let current_ids: HashSet<String> = current.iter().map(|s| s.id.clone()).collect();
         let mut merged: Vec<SavedSession> = existing
@@ -2076,46 +2109,61 @@ impl SessionStore {
             .collect();
         merged.extend(current);
 
-        // 按 session id 去重（保留 current_ids 中的版本，它们是最新的）
         let mut dedup: HashMap<String, SavedSession> = HashMap::new();
-        for s in merged {
-            if current_ids.contains(&s.id) {
-                dedup.insert(s.id.clone(), s);
+        for session in merged {
+            if current_ids.contains(&session.id) {
+                dedup.insert(session.id.clone(), session);
             } else {
-                dedup.entry(s.id.clone()).or_insert(s);
+                dedup.entry(session.id.clone()).or_insert(session);
             }
         }
-        let merged: Vec<SavedSession> = dedup.into_values().collect();
-
-        let json =
-            serde_json::to_string_pretty(&merged).map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(path, json).map_err(|e| format!("写入文件失败: {}", e))
+        let mut sessions: Vec<SavedSession> = dedup.into_values().collect();
+        sessions.sort_by_key(|session| session.timestamp);
+        Self::write_library(path, sessions)
     }
 
-    /// 从磁盘加载会话
+    /// 从磁盘加载当前 Session Library schema。
+    ///
+    /// 研发阶段不迁移旧的裸数组格式：版本不匹配或格式损坏都会备份并从空 Library 开始。
     pub fn load_from_disk(path: &std::path::Path) -> Result<Vec<SavedSession>, String> {
+        let _guard = SESSIONS_FILE_MUTEX
+            .lock()
+            .map_err(|e| format!("获取文件锁失败: {}", e))?;
+        Self::load_from_disk_unlocked(path)
+    }
+
+    fn load_from_disk_unlocked(path: &std::path::Path) -> Result<Vec<SavedSession>, String> {
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let content = std::fs::read_to_string(path).map_err(|e| format!("读取文件失败: {}", e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| format!("读取会话库失败: {}", e))?;
         if content.trim().is_empty() {
             return Ok(Vec::new());
         }
-        match serde_json::from_str::<Vec<SavedSession>>(&content) {
-            Ok(sessions) => Ok(sessions),
-            Err(e) => {
-                let bak_path = path.with_extension("json.bak");
-                let _ = std::fs::copy(path, &bak_path);
-                log::warn!("会话文件损坏 ({}), 已备份到 {:?}", e, bak_path);
+
+        match serde_json::from_str::<SessionLibraryFile>(&content) {
+            Ok(library) if library.version == SESSION_LIBRARY_VERSION => Ok(library.sessions),
+            Ok(library) => {
+                Self::backup_invalid_library(path);
+                log::warn!(
+                    "会话库版本 {} 不受支持（expected {}），已备份并从空 Library 启动",
+                    library.version,
+                    SESSION_LIBRARY_VERSION
+                );
+                Ok(Vec::new())
+            }
+            Err(error) => {
+                Self::backup_invalid_library(path);
+                log::warn!(
+                    "会话库格式无效 ({})，已备份；开发阶段不迁移旧格式",
+                    error
+                );
                 Ok(Vec::new())
             }
         }
     }
 
-    /// 以给定快照完整覆盖 sessions.json。
-    ///
-    /// 仅用于已经在内存中完成安全清理/规范化的持久化快照；不会合并旧记录，
-    /// 因而可确保被移除的敏感字段不会继续残留在磁盘上。
+    /// 以给定安全快照完整覆盖 Session Library。
     pub fn replace_saved_sessions(
         path: &std::path::Path,
         sessions: &[SavedSession],
@@ -2123,12 +2171,10 @@ impl SessionStore {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let json =
-            serde_json::to_string_pretty(sessions).map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(path, json).map_err(|e| format!("写入文件失败: {}", e))
+        Self::write_library(path, sessions.to_vec())
     }
 
-    /// 保存单个会话配置到磁盘（合并写入，不依赖内存状态）
+    /// 保存单个 Session 配置到磁盘 Library（合并写入，不依赖运行时状态）。
     pub fn save_config_to_disk(
         app_handle: &tauri::AppHandle,
         session: SavedSession,
@@ -2137,17 +2183,14 @@ impl SessionStore {
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
-        let mut existing = Self::load_from_disk(&path).unwrap_or_default();
-        // 用新配置覆盖同 ID 的旧记录
-        existing.retain(|s| s.id != session.id);
+        let mut existing = Self::load_from_disk_unlocked(&path).unwrap_or_default();
+        existing.retain(|entry| entry.id != session.id);
         existing.push(session);
-        let json =
-            serde_json::to_string_pretty(&existing).map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))
+        existing.sort_by_key(|entry| entry.timestamp);
+        Self::write_library(&path, existing)
     }
 
-    /// 从磁盘删除指定会话配置
-    /// 从磁盘删除指定会话配置。
+    /// 从磁盘 Session Library 删除指定配置。
     pub fn delete_config_from_disk(
         app_handle: &tauri::AppHandle,
         session_id: &str,
@@ -2156,15 +2199,14 @@ impl SessionStore {
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
-        let existing = Self::load_from_disk(&path).unwrap_or_default();
+        let existing = Self::load_from_disk_unlocked(&path).unwrap_or_default();
         let filtered: Vec<_> = existing
             .into_iter()
-            .filter(|s| s.id != session_id)
+            .filter(|session| session.id != session_id)
             .collect();
-        let json =
-            serde_json::to_string_pretty(&filtered).map_err(|e| format!("序列化失败: {}", e))?;
-        std::fs::write(&path, json).map_err(|e| format!("写入文件失败: {}", e))
+        Self::write_library(&path, filtered)
     }
+
 }
 
 impl Drop for SessionStore {
