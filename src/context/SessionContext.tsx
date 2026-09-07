@@ -873,8 +873,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // 从磁盘中删除会话配置（仅当会话已断开或从未连接时）
     try {
       await invoke("delete_session_config", { sessionId });
-    } catch (_e) {
-      // 删除失败不影响前端移除
+    } catch (e) {
+      dispatch({ type: "SET_ERROR", error: `删除会话配置失败: ${e}` });
+      return;
     }
     dispatch({ type: "REMOVE_TAB", id: sessionId });
     // 释放插件会话 store 的全部资源（keepAlive 会话的 Tauri 监听器与
