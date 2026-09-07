@@ -10,17 +10,25 @@ import {
 
 type AnalysisTablesProps = {
   flows: FlowRow[];
-  events: TrdpEvent[];
   packetRows: TrdpEvent[];
   selectedPacket: TrdpEvent | null;
+  packetTotal: number;
+  packetPage: number;
+  packetPageCount: number;
+  packetPageSize: number;
+  onPacketPageChange: (page: number) => void;
   onInspectPacket: (event: TrdpEvent) => void;
 };
 
 export function TrdpAnalysisTables({
   flows,
-  events,
   packetRows,
   selectedPacket,
+  packetTotal,
+  packetPage,
+  packetPageCount,
+  packetPageSize,
+  onPacketPageChange,
   onInspectPacket,
 }: AnalysisTablesProps) {
   const { t } = useTranslation();
@@ -65,7 +73,28 @@ export function TrdpAnalysisTables({
       </div>
 
       <div className={styles.analysisPane}>
-        <h3 className={styles.subheading}>{t("trdp.section.packets")}</h3>
+        <div className={styles.analysisPaneHeader}>
+          <h3 className={styles.subheading}>{t("trdp.section.packets")}</h3>
+          {packetPageCount > 1 && (
+            <div className={styles.packetPager}>
+              <button
+                className={`${styles.compactButton} liquid-glass-button`}
+                onClick={() => onPacketPageChange(Math.max(0, packetPage - 1))}
+                disabled={packetPage === 0}
+              >
+                {t("trdp.pagination.newer")}
+              </button>
+              <span>{packetPage + 1} / {packetPageCount}</span>
+              <button
+                className={`${styles.compactButton} liquid-glass-button`}
+                onClick={() => onPacketPageChange(Math.min(packetPageCount - 1, packetPage + 1))}
+                disabled={packetPage >= packetPageCount - 1}
+              >
+                {t("trdp.pagination.older")}
+              </button>
+            </div>
+          )}
+        </div>
         <div className={styles.tableWrap}>
           <table className={`${styles.table} ${styles.monoTable} ${styles.analysisTable}`}>
             <thead>
@@ -92,7 +121,7 @@ export function TrdpAnalysisTables({
                   className={selectedPacket === event ? styles.selectedRow : ""}
                   onClick={() => onInspectPacket(event)}
                 >
-                  <td>{events.length - index}</td>
+                  <td>{Math.max(1, packetTotal - packetPage * packetPageSize - index)}</td>
                   <td>{event.link ?? "—"}</td>
                   <td>{event.msg_type ?? event.kind ?? "—"}</td>
                   <td>{event.com_id ?? "—"}</td>
@@ -114,6 +143,7 @@ type PacketInspectorProps = {
   decoded: DecodedDataset | null;
   xmlImport: XmlImport | null;
   onConfirmMessage: (event: TrdpEvent) => void;
+  canConfirmMessage: boolean;
   mdLatencyUs: (event: TrdpEvent) => number | undefined;
   observedMdReplies: (event: TrdpEvent) => number | undefined;
 };
@@ -123,6 +153,7 @@ export function TrdpPacketInspector({
   decoded,
   xmlImport,
   onConfirmMessage,
+  canConfirmMessage,
   mdLatencyUs,
   observedMdReplies,
 }: PacketInspectorProps) {
@@ -155,13 +186,16 @@ export function TrdpPacketInspector({
             <div>
               MD Session UUID: <code>{selectedPacket.md_session_id}</code> · {t("trdp.inspector.requestReplyLatency")} {mdLatencyUs(selectedPacket) ?? "—"} µs ·
               {t("trdp.inspector.replies")} {selectedPacket.num_replies ?? observedMdReplies(selectedPacket) ?? "—"}/{selectedPacket.num_expected_replies ?? "—"}
-              {selectedPacket.msg_type === "Mq" && (
+              {selectedPacket.msg_type === "Mq" && canConfirmMessage && (
                 <button
                   className={`${styles.compactButton} liquid-glass-button`}
                   onClick={() => onConfirmMessage(selectedPacket)}
                 >
                   {t("trdp.actions.confirm")} (Mc)
                 </button>
+              )}
+              {selectedPacket.msg_type === "Mq" && !canConfirmMessage && (
+                <span className={styles.mutedInline}>{t("trdp.inspector.confirmUnavailable")}</span>
               )}
             </div>
           )}
