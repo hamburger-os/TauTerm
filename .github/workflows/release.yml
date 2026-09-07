@@ -286,7 +286,7 @@ jobs:
       - name: Install minisign
         run: |
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq minisign
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq minisign unzip
       - name: Add com0com corresponding source
         shell: bash
         run: |

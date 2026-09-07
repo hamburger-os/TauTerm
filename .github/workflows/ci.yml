@@ -114,6 +114,7 @@ jobs:
 
       - name: Validate updater release scripts
         run: |
+          node --check scripts/generate-third-party-notices.js
           node --check scripts/stage-release.js
           node --check scripts/assemble-release.js
           node --check scripts/release-notes.js
@@ -136,7 +137,8 @@ jobs:
           package = json.loads(Path("package.json").read_text(encoding="utf-8"))
           assert package["scripts"]["trdp:build"] == "node scripts/prepare-service-bin.js --trdp-only"
 
-          assert Path("scripts/generate-third-party-notices.js").is_file()\n          prepare = Path("scripts/prepare-service-bin.js").read_text(encoding="utf-8")
+          assert Path("scripts/generate-third-party-notices.js").is_file()
+          prepare = Path("scripts/prepare-service-bin.js").read_text(encoding="utf-8")
           assert "TAURI_ENV_TARGET_TRIPLE" in prepare
           assert "bootstrap-trdp.ps1" in prepare
           assert "bootstrap-trdp.sh" in prepare
