@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import Icon from "../../common/Icon";
@@ -30,6 +30,9 @@ export default function LoggingSettings() {
   const [retentionDays, setRetentionDays] = useState(7);
   const [logDir, setLogDir] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const skipSystemPersistRef = useRef(false);
+  const skipSessionPersistRef = useRef(false);
   const [health, setHealth] = useState<LogHealth>({
     dropped_session_entries: 0,
     dropped_system_entries: 0,
@@ -59,20 +62,48 @@ export default function LoggingSettings() {
         setRetentionDays(config.retention_days);
         setHydrated(true);
       })
-      .catch(() => {
-        if (!cancelled) setHydrated(true);
+      .catch(error => {
+        if (!cancelled) {
+          setConfigError(String(error));
+          setHydrated(true);
+        }
       });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
-    invoke("set_system_log_config", { enabled: systemEnabled, level: systemLevel }).catch(() => {});
+    if (skipSystemPersistRef.current) {
+      skipSystemPersistRef.current = false;
+      return;
+    }
+
+    void invoke("set_system_log_config", { enabled: systemEnabled, level: systemLevel })
+      .then(() => setConfigError(null))
+      .catch(async error => {
+        setConfigError(String(error));
+        try {
+          const config = await invoke<{
+            system_enabled: boolean;
+            system_level: string;
+          }>("get_log_config");
+          skipSystemPersistRef.current = true;
+          setSystemEnabled(config.system_enabled);
+          setSystemLevel(config.system_level);
+        } catch {
+          // Keep the explicit persistence error visible; do not invent a local success state.
+        }
+      });
   }, [hydrated, systemEnabled, systemLevel]);
 
   useEffect(() => {
     if (!hydrated) return;
-    invoke("update_log_config", {
+    if (skipSessionPersistRef.current) {
+      skipSessionPersistRef.current = false;
+      return;
+    }
+
+    void invoke("update_log_config", {
       config: {
         session_enabled: enabled,
         file_max_size: fileMaxSize * 1024 * 1024,
@@ -80,7 +111,28 @@ export default function LoggingSettings() {
         flush_interval_ms: flushInterval,
         retention_days: retentionDays,
       },
-    }).catch(() => {});
+    })
+      .then(() => setConfigError(null))
+      .catch(async error => {
+        setConfigError(String(error));
+        try {
+          const config = await invoke<{
+            session_enabled: boolean;
+            file_max_size: number;
+            buffer_size: number;
+            flush_interval_ms: number;
+            retention_days: number;
+          }>("get_log_config");
+          skipSessionPersistRef.current = true;
+          setEnabled(config.session_enabled);
+          setFileMaxSize(Math.max(1, Math.round(config.file_max_size / (1024 * 1024))));
+          setBufferSize(config.buffer_size);
+          setFlushInterval(config.flush_interval_ms);
+          setRetentionDays(config.retention_days);
+        } catch {
+          // Keep the explicit persistence error visible; do not invent a local success state.
+        }
+      });
   }, [hydrated, enabled, fileMaxSize, bufferSize, flushInterval, retentionDays]);
 
   useEffect(() => {
@@ -117,6 +169,14 @@ export default function LoggingSettings() {
   return (
     <div>
       <h3 className={styles.panelTitle}>{t("settings.logging")}</h3>
+      {configError && (
+        <p className={styles.settingDesc} role="alert">
+          {t("logging.configSaveError", {
+            defaultValue: "Logging settings were not saved: {{error}}. The UI was restored to the backend state.",
+            error: configError,
+          })}
+        </p>
+      )}
 
       {/* ═══ System Log ═══ */}
       <h4 className={styles.categoryTitle}>{t("logging.systemLog") || "System Log"}</h4>
