@@ -8,12 +8,12 @@
     "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "npm run check-com0com && npm run check-reserved-region && npm run build",
     "beforeDevCommand": "node scripts/prepare-service-bin.js --trdp-only && npm run dev",
-    "beforeBundleCommand": "node scripts/prepare-service-bin.js"
+    "beforeBundleCommand": "node scripts/generate-third-party-notices.js && node scripts/prepare-service-bin.js"
   },
   "app": {
     "windows": [
       {
-        "title": "TauTerm - Terminal Emulator",
+        "title": "TauTerm",
         "width": 1440,
         "height": 900,
         "minWidth": 800,
@@ -40,7 +40,14 @@
     },
     "externalBin": [
       "binaries/tauterm-trdp-bridge"
-    ]
+    ],
+    "resources": {
+      "../LICENSE": "LICENSE-MIT",
+      "../LICENSE-APACHE": "LICENSE-APACHE",
+      "../THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md",
+      "vendor/tcnopen/LICENSE": "THIRD_PARTY_TCNOPEN_MPL-2.0.txt",
+      "generated/THIRD_PARTY_DEPENDENCY_LICENSES.txt": "THIRD_PARTY_DEPENDENCY_LICENSES.txt"
+    }
   },
   "plugins": {
     "updater": {

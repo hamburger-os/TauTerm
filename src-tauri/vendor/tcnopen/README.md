@@ -1,6 +1,6 @@
 # Vendored TCNOpen TRDP 3.0.0.0
 
-This directory contains a source snapshot of the **TCNOpen TRDP 3.0.0.0** stack used by TauTerm's TRDP Node helper.
+This directory contains the **TCNOpen TRDP 3.0.0.0** source used by TauTerm's TRDP Node/native sidecar.
 
 - Upstream project: https://sourceforge.net/projects/tcnopen/
 - Official release: https://sourceforge.net/projects/tcnopen/files/TRDP/3.0.0.0/3.0.0.0.zip/download
@@ -10,7 +10,7 @@ This directory contains a source snapshot of the **TCNOpen TRDP 3.0.0.0** stack 
 
 The mirror is only a transport for the public SVN tag. It is **not** a build-time or runtime dependency. Maintainers can verify/refresh this directory from the official SourceForge ZIP with `python scripts/vendor_tcnopen.py --check` or `--update`.
 
-TauTerm does not modify these upstream source files. Platform/build adaptation is kept outside this directory in `src-tauri/native/CMakeLists.txt` and TauTerm-owned bridge sources.
+The vendored tree is **not byte-for-byte pristine upstream source**. TauTerm keeps the upstream 3.0.0.0 source plus the ordered, narrow downstream patch series declared in [SOURCE.json](SOURCE.json). Those patches repair source-history text encoding and scope an MSVC warning around an upstream flexible-array declaration; TauTerm-owned platform/build adaptation remains outside the covered tree in `src-tauri/native/CMakeLists.txt` and TauTerm bridge sources.
 
 ## What is built
 
@@ -21,5 +21,7 @@ TauTerm's native helper builds the upstream TRDP core PD/MD stack:
 - VOS memory, socket, thread and shared-memory sources for POSIX or Windows
 
 The vendored public API headers and `trdp-config.xsd` are retained for API/schema traceability. Optional TCNOpen TAU/TTI/DNR/SOA/TSN code is not linked into the first TRDP session implementation.
+
+The full MPL-2.0 text is retained in [LICENSE](LICENSE), and the source/provenance contract is recorded in [SOURCE.json](SOURCE.json).
 
 **TRDPSpy is not included.**

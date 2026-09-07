@@ -13,6 +13,8 @@ tools/trdp-test-peer/bin/
 src-tauri/target/
 # 服务二进制构建产物（build.rs 占位 + prepare-service-bin.js 覆盖）
 src-tauri/binaries/
+# build.rs creates a placeholder; beforeBundleCommand replaces it with generated notices
+src-tauri/generated/
 
 # IDE
 .vscode/

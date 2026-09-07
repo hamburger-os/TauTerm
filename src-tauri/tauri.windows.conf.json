@@ -2,6 +2,11 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "resources": {
+      "../LICENSE": "LICENSE-MIT",
+      "../LICENSE-APACHE": "LICENSE-APACHE",
+      "../THIRD_PARTY_LICENSES.md": "THIRD_PARTY_LICENSES.md",
+      "vendor/tcnopen/LICENSE": "THIRD_PARTY_TCNOPEN_MPL-2.0.txt",
+      "generated/THIRD_PARTY_DEPENDENCY_LICENSES.txt": "THIRD_PARTY_DEPENDENCY_LICENSES.txt",
       "../resources/com0com/*": "",
       "binaries/tauterm-service.exe": ""
     }

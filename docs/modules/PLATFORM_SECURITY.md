@@ -20,7 +20,7 @@ TRDP sidecar、抓包库等 native 依赖只能从受控位置解析。生产构
 
 ### 打包与更新
 
-构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验。发布流程在公开稳定版本成为 latest updater 之前验证产物集合、签名和可下载内容。
+构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验。正式 bundle 前会从锁定的 Cargo/npm 依赖图生成第三方依赖 notice，并与 TauTerm 自有许可证、TCNOpen MPL 许可证和特殊第三方清单一起进入安装包；Windows 再包含 com0com GPL/来源材料。发布流程在公开稳定版本成为 latest updater 之前验证产物集合、签名、合规资源和可下载内容，并把 com0com 对应官方源码作为同一 Release 的 fail-closed 资产。
 
 具体平台支持矩阵和发布步骤属于社区工程文档，不在本文复制。
 
@@ -60,3 +60,5 @@ flowchart LR
 ## 何时更新本文
 
 修改凭据后端、权限模型、服务/helper IPC、native 加载路径、打包信任边界、更新签名/发布验证策略时，必须同步更新本文。
+
+Tauri/Windows 平台权威资料见 [PLATFORM_SECURITY.md](../knowledge/PLATFORM_SECURITY.md)；第三方分发和许可证依据见 [LICENSE_COMPLIANCE.md](../knowledge/LICENSE_COMPLIANCE.md)。

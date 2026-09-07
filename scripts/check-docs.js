@@ -21,11 +21,22 @@ const required = [
   "README.zh-CN.md",
   "CONTRIBUTING.md",
   "CHANGELOG.md",
+  "SECURITY.md",
+  "THIRD_PARTY_LICENSES.md",
+  "LICENSE",
+  "LICENSE-APACHE",
   ".agents/skills/tauterm-docs/SKILL.md",
   "docs/README.md",
   "docs/community/BUILDING.md",
   "docs/community/RELEASING.md",
   "docs/community/SUPPORTED_PLATFORMS.md",
+  "docs/maintainer/DEVELOPMENT.md",
+  "docs/knowledge/README.md",
+  "docs/knowledge/NETWORK_PROTOCOLS.md",
+  "docs/knowledge/TERMINAL_SERIAL_AUTOMATION.md",
+  "docs/knowledge/TRDP.md",
+  "docs/knowledge/PLATFORM_SECURITY.md",
+  "docs/knowledge/LICENSE_COMPLIANCE.md",
   "docs/product/PRODUCT_STRATEGY.md",
   "docs/product/HARDWARE_ECOSYSTEM.md",
   "docs/product/COMMERCIALIZATION.md",
@@ -38,6 +49,9 @@ const required = [
   "docs/modules/TRDP.md",
   "docs/modules/AUTOMATION.md",
   "docs/modules/PLATFORM_SECURITY.md",
+  "docs/modules/UI_FOUNDATION.md",
+  "docs/modules/TRANSFER.md",
+  "docs/modules/OBSERVABILITY_TOOLS.md",
 ];
 
 const forbiddenLegacy = [
@@ -198,10 +212,96 @@ function checkOwnerLanguage() {
     "docs/README.md",
     ...walk("docs/modules", (rel) => rel.endsWith(".md")),
     ...walk("docs/product", (rel) => rel.endsWith(".md")),
+    ...walk("docs/maintainer", (rel) => rel.endsWith(".md")),
+    ...walk("docs/knowledge", (rel) => rel.endsWith(".md")),
   ];
   const wrong = ownerDocs.filter((rel) => !/\p{Script=Han}/u.test(read(rel)));
   if (wrong.length) fail("maintainer language", "Maintainer documents must be Chinese-first: " + wrong.join(", "));
   else pass("maintainer language");
+}
+
+
+
+function codeAnchorExists(anchor) {
+  const normalized = anchor.replaceAll("\\", "/").replace(/\/$/, "");
+  if (normalized.includes("*")) {
+    const prefix = normalized.slice(0, normalized.indexOf("*"));
+    const parent = path.dirname(path.join(root, prefix));
+    if (!fs.existsSync(parent)) return false;
+    const base = path.basename(prefix);
+    return fs.readdirSync(parent).some((name) => name.startsWith(base));
+  }
+  const abs = path.join(root, normalized);
+  return fs.existsSync(abs);
+}
+
+function checkModuleCodeAnchors() {
+  const failures = [];
+  for (const rel of walk("docs/modules", (file) => file.endsWith(".md"))) {
+    const content = read(rel);
+    const anchorSection = content.split("## 代码锚点")[1]?.split(/^##\s+/m)[0] ?? "";
+    const anchors = [...anchorSection.matchAll(/\`([^\`]+)\`/g)]
+      .map((match) => match[1])
+      .filter((anchor) =>
+        /^(?:src|src-tauri|scripts|resources|tools|\.github)\//.test(anchor),
+      );
+    if (anchors.length === 0) {
+      failures.push(rel + " has no code anchors");
+      continue;
+    }
+    for (const anchor of anchors) {
+      if (!codeAnchorExists(anchor)) failures.push(rel + " -> " + anchor);
+    }
+  }
+
+  if (failures.length) {
+    fail("module code anchors", "Missing/stale module code anchors:\n  " + failures.join("\n  "));
+  } else {
+    pass("module code anchors");
+  }
+}
+
+function checkAssets() {
+  const assets = walk("docs/assets", (rel) => !rel.endsWith("/"));
+  const markdown = markdownFiles().map((rel) => read(rel)).join("\n");
+  const orphaned = assets.filter((rel) => {
+    const base = path.posix.basename(rel);
+    return !markdown.includes(rel) && !markdown.includes("assets/" + base) && !markdown.includes(base);
+  });
+
+  if (orphaned.length) {
+    fail("documentation assets", "Unreferenced docs/assets files must be removed or linked: " + orphaned.join(", "));
+  } else {
+    pass("documentation assets");
+  }
+}
+
+function checkMaintainerCommandGuide() {
+  const pkg = JSON.parse(read("package.json"));
+  const guide = read("docs/maintainer/DEVELOPMENT.md");
+  const missing = Object.keys(pkg.scripts ?? {})
+    .filter((key) => key !== "postversion")
+    .filter((key) => !guide.includes("npm run " + key));
+
+  if (missing.length) {
+    fail("maintainer command guide", "docs/maintainer/DEVELOPMENT.md is missing npm script entries: " + missing.join(", "));
+  } else {
+    pass("maintainer command guide");
+  }
+}
+
+function checkKnowledgeLayer() {
+  const knowledge = walk("docs/knowledge", (rel) => rel.endsWith(".md"));
+  const invalid = knowledge.filter((rel) => {
+    const content = read(rel);
+    const needsExternalSource = rel !== "docs/knowledge/README.md";
+    return (needsExternalSource && !/https?:\/\//.test(content)) || !/\p{Script=Han}/u.test(content);
+  });
+  if (invalid.length) {
+    fail("knowledge layer", "Knowledge documents must be Chinese-first authority indexes with external sources: " + invalid.join(", "));
+  } else {
+    pass("knowledge layer");
+  }
 }
 
 function checkChangelog() {
@@ -271,7 +371,11 @@ function main() {
   checkLegacyFiles();
   checkReadmes();
   checkLinks();
+  checkModuleCodeAnchors();
+  checkAssets();
   checkOwnerLanguage();
+  checkMaintainerCommandGuide();
+  checkKnowledgeLayer();
   checkChangelog();
   checkI18n();
   checkPackageContract();

@@ -76,6 +76,8 @@ try {
   run(commands.npm, ["ci", "--no-audit", "--no-fund"]);
   run(commands.npm, ["run", "toolchain:check"]);
   run(commands.npm, ["run", "version:check"]);
+  run(commands.npm, ["run", "docs:check"]);
+  run(commands.npm, ["run", "license:check"]);
 
   run(commands.cargo, [
     "fmt",
@@ -95,6 +97,7 @@ try {
     "-D",
     "warnings",
   ]);
+  run(commands.npm, ["run", "license:cargo"]);
   run(commands.cargo, [
     "test",
     "--locked",

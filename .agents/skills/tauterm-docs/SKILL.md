@@ -4,7 +4,7 @@ description: "Maintain TauTerm's documentation contract. Use for any change that
 license: MIT
 metadata:
   author: tauterm
-  version: "2.0"
+  version: "2.1"
 ---
 
 # TauTerm documentation workflow
@@ -19,16 +19,17 @@ The maintainer-facing documents are intentionally concise and Chinese-first. The
 
 ## Workflow
 
-1. **Classify the change.** Decide whether it changes a public capability, current architecture, a module design, product direction, build/platform/release procedure, security reporting policy, or only implementation detail.
+1. **Classify the change.** Decide whether it changes a public capability, current architecture, a module design, product direction, build/platform/release procedure, maintainer workflow, external standard/authority reference, security reporting policy, third-party licensing, or only implementation detail.
 2. **Find the one owner.** Use the source-of-truth and module maps in `AGENTS.md`. If the fact already has an owner, edit that document instead of creating another copy.
 3. **Update design with code.** When architecture or behavior changes, update the affected `docs/modules/*.md` document in the same task. Cross-module changes may update multiple documents, but each fact still has one owner.
-4. **Link instead of repeat.** Supporting documents should link to the canonical owner. Do not maintain synchronized prose or duplicated tables.
-5. **Remove stale material.** If a newer canonical document replaces an older one, delete the old document and repair links in the same change. Do not keep redirect/stub files unless an external compatibility requirement exists.
-6. **Validate.** Run `npm run docs:check` and fix every error before completion.
+4. **Verify authority when needed.** Protocol, terminal, platform, security and license changes must consult the matching `docs/knowledge/*.md` source index and, when necessary, the linked primary source.
+5. **Link instead of repeat.** Supporting documents should link to the canonical owner. Do not maintain synchronized prose or duplicated tables.
+6. **Remove stale material.** If a newer canonical document replaces an older one, delete the old document and repair links in the same change. Do not keep redirect/stub files unless an external compatibility requirement exists.
+7. **Validate.** Run `npm run docs:check` and fix every error before completion.
 
 ## Maintainer document style
 
-Files under `docs/README.md`, `docs/modules/`, and `docs/product/` are for the maintainer and should be Chinese-first.
+Files under `docs/README.md`, `docs/modules/`, `docs/maintainer/`, `docs/product/`, and `docs/knowledge/` are Chinese-first. Knowledge documents are authority indexes: summarize applicability and link primary sources rather than copying standards text.
 
 A module design document should normally answer:
 
@@ -52,6 +53,10 @@ The root README is the public open-source landing page, not an architecture dump
 - Do not place roadmap status, release history, or maintainer-only design details in the README.
 - Do not use named competitor comparisons or unsupported performance claims.
 
+## Maintainer and knowledge documents
+
+`docs/maintainer/DEVELOPMENT.md` is the maintainer's operational index. It may contain a readable command table, but `package.json` remains the executable command source of truth. `docs/knowledge/` owns curated primary-source references and must not become another description of TauTerm's current implementation.
+
 ## Community documents
 
 Community procedures may be English, Chinese, or bilingual. They should remain actionable, but command definitions must defer to `package.json` rather than maintaining an exhaustive second command catalog.
@@ -71,6 +76,8 @@ Always run:
 ```bash
 npm run docs:check
 ```
+
+For changes involving bundled/vendored third-party software or license metadata, also run `npm run license:check`; for Cargo dependency graph changes run `npm run license:cargo`.
 
 The checker enforces required documents, forbidden legacy duplicates, Markdown link integrity, README structural parity, maintainer-document language, changelog shape, and i18n key parity.
 

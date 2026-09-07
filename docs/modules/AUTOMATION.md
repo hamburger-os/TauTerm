@@ -42,3 +42,5 @@ flowchart LR
 ## 何时更新本文
 
 修改 SendBar 能力模型、发送目标、编码路径、自动回复、Lua API、脚本隔离或自动化与 Session 生命周期的关系时，必须同步更新本文。
+
+Lua 5.4 与终端控制序列的权威入口见 [TERMINAL_SERIAL_AUTOMATION.md](../knowledge/TERMINAL_SERIAL_AUTOMATION.md)。

@@ -27,7 +27,7 @@ The exact Rust version is pinned in `rust-toolchain.toml`. Executable npm comman
 
 TauTerm separates common Session/Workspace/platform mechanisms from protocol-specific behavior. The maintainer-facing architecture index is [docs/README.md](docs/README.md).
 
-If your change affects architecture, module responsibility, persistent state, security boundaries, platform behavior, or a user-visible workflow, update the matching document under [docs/modules/](docs/modules/) in the same pull request.
+If your change affects architecture, module responsibility, persistent state, security boundaries, platform behavior, or a user-visible workflow, update the matching document under [docs/modules/](docs/modules/) in the same pull request. Protocol/platform/security work should also consult the relevant authority index under [docs/knowledge/](docs/knowledge/).
 
 Documentation follows a single-source-of-truth policy. Do not create a second protocol matrix, roadmap, release-note file, theme specification, or build-command table when an existing canonical document owns that information.
 

@@ -11,16 +11,23 @@ import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-// 非 Windows 平台跳过（com0com 是 Windows 专用驱动）
-if (process.platform !== 'win32') {
-  console.log('⏭  Skipped (non-Windows platform — com0com is Windows-only)');
-  process.exit(0);
-}
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const com0comDir = join(__dirname, '..', 'resources', 'com0com');
 
 const requiredFiles = ['setupc.exe', 'setup.dll', 'com0com.sys', 'com0com.inf', 'com0com.cat', 'cncport.inf', 'comport.inf'];
+const complianceFiles = ['README.md', 'SOURCE.md', 'COPYING-GPL-2.0.txt'];
+const missingCompliance = complianceFiles.filter(f => !existsSync(join(com0comDir, f)));
+if (missingCompliance.length) {
+  console.error('\n❌ ERROR: Missing com0com license/provenance files:');
+  missingCompliance.forEach(f => console.error('   - ' + f));
+  process.exit(1);
+}
+
+if (process.platform !== 'win32') {
+  console.log('✅ com0com license/provenance files: OK');
+  console.log('⏭  Binary payload check skipped (non-Windows platform)');
+  process.exit(0);
+}
 
 function checkArch(archDir) {
   const dir = join(com0comDir, archDir);

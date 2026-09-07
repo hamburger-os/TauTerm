@@ -82,6 +82,8 @@ npm run tauri dev
 
 - **用户与社区开发者：** 本 README、[CONTRIBUTING.md](CONTRIBUTING.md) 和 [docs/community/](docs/community/)。
 - **架构/方案审查：** [docs/README.md](docs/README.md) 与 [docs/modules/](docs/modules/)，使用中文供项目维护者审查。
+- **维护者开发操作：** [docs/maintainer/DEVELOPMENT.md](docs/maintainer/DEVELOPMENT.md) 保存中文日常开发流程与命令速查。
+- **标准与权威知识：** [docs/knowledge/](docs/knowledge/) 索引实现协议/平台能力时应核对的原始标准和上游官方资料。
 - **AI 编码代理：** [AGENTS.md](AGENTS.md) 与 [`.agents/skills/`](.agents/skills/)。
 - **产品方向：** [docs/product/](docs/product/) 描述未来方向，不代表已经交付。
 - **版本历史：** [CHANGELOG.md](CHANGELOG.md) 是唯一权威来源。
