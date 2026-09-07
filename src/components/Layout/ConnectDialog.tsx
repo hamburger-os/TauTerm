@@ -64,6 +64,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [virtualPortCount, setVirtualPortCount] = useState(1);
   const [sessionName, setSessionName] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const [refreshingEndpoints, setRefreshingEndpoints] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // SSH 配置
@@ -127,6 +128,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
   const tabsRef = useRef(state.tabs);
   tabsRef.current = state.tabs;
+  const endpointRefreshRequestRef = useRef(0);
 
   // 从 PluginRegistry 获取可用协议（替换硬编码列表）
   const availableModes = pluginRegistry.getByCapability("connection").map(p => ({
@@ -139,10 +141,15 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         : (p.manifest.description || p.manifest.name),
   }));
 
-  // 每次打开对话框时重置
+  // 每次打开对话框时重置。关闭时先回到 mode，确保下次打开不会带着
+  // 上一次的 config step 触发错误协议的端点发现。
   useEffect(() => {
-    if (!isOpen) return;
-    refreshEndpoints();
+    if (!isOpen) {
+      ++endpointRefreshRequestRef.current;
+      setRefreshingEndpoints(false);
+      setStep("mode");
+      return;
+    }
     setError(null);
     setConnecting(false);
 
@@ -289,7 +296,33 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setNetMulticastInterface("0.0.0.0");
     setNetSelfReceive(true);
     setSessionName("");
-  }, [isOpen, editSessionId, refreshEndpoints]);
+  }, [isOpen, editSessionId]);
+
+  const refreshModeEndpoints = useCallback(async (modeId: string, force = false) => {
+    const requestId = ++endpointRefreshRequestRef.current;
+    setRefreshingEndpoints(true);
+    try {
+      await refreshEndpoints(modeId, force);
+    } finally {
+      if (endpointRefreshRequestRef.current === requestId) {
+        setRefreshingEndpoints(false);
+      }
+    }
+  }, [refreshEndpoints]);
+
+  // 端点发现只在真正进入对应协议配置页后按需执行。串口 SetupAPI 和
+  // Local Shell/WSL 探测均可能较慢，但缓存结果会立即用于表单，后台刷新
+  // 不再阻塞模式选择或配置页面首次渲染。
+  useEffect(() => {
+    if (!isOpen || step !== "config") return;
+    if (editSessionId) {
+      const targetTab = tabsRef.current.find(tab => tab.id === editSessionId);
+      if (!targetTab || targetTab.connection_type !== selectedMode) return;
+    }
+    const plugin = pluginRegistry.get(selectedMode);
+    if (!plugin?.manifest.capabilities.includes("endpoint_discovery")) return;
+    void refreshModeEndpoints(selectedMode);
+  }, [isOpen, step, selectedMode, editSessionId, refreshModeEndpoints]);
 
   useEffect(() => {
     if (!isOpen || step !== "config" || editSessionId) return;
@@ -615,7 +648,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                           <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
                         ))}
                       </select>
-                      <button className={`${styles.iconBtn} liquid-glass-button`} onClick={refreshEndpoints} title={t("serial.refresh")} disabled={connecting}><Icon name="refresh" size="md" /></button>
+                      <button
+                        className={`${styles.iconBtn} liquid-glass-button`}
+                        onClick={() => void refreshModeEndpoints("serial", true)}
+                        title={t("serial.refresh")}
+                        disabled={connecting || refreshingEndpoints}
+                      >
+                        <Icon name="refresh" size="md" />
+                      </button>
                     </div>
                   </div>
 
