@@ -126,12 +126,24 @@
   color: var(--text-primary);
 }
 
+.overviewWorkspaceCard {
+  min-width: 0;
+}
+
 .tableWrap {
   width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--glass-border-default);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--glass-card-fill) 72%, transparent);
+}
+
+/* The wrapper owns the table surface whenever scrolling/clipping is needed. */
+.tableWrap > .table {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .table {
@@ -313,11 +325,18 @@
 }
 
 .filterButton {
+  height: 28px;
   min-height: 28px;
+  max-height: 28px;
   padding: 4px 10px;
   border-radius: var(--radius-md);
   font-size: var(--text-xs);
   white-space: nowrap;
+}
+
+/* Filter chips are a selector strip; hover/selected states must not move siblings. */
+.root .filterBar .filterButton:hover:not(:disabled) {
+  transform: none;
 }
 
 .objectListTable {
@@ -493,7 +512,7 @@
 
 .analysisGrid {
   display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   align-items: start;
 }
@@ -506,6 +525,7 @@
 
 .analysisPaneHeader {
   min-width: 0;
+  min-height: 30px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -532,8 +552,23 @@
   font-size: var(--text-xs);
 }
 
-.analysisTable {
-  min-width: 560px;
+.flowTable {
+  min-width: 0;
+  table-layout: auto;
+}
+
+.flowTable td:nth-child(4),
+.flowTable td:nth-child(5) {
+  overflow-wrap: anywhere;
+}
+
+.packetTable {
+  min-width: 580px;
+  table-layout: auto;
+}
+
+.packetTable td:nth-child(5) {
+  overflow-wrap: anywhere;
 }
 
 .diagnosticTable {
@@ -563,7 +598,7 @@
     font-size: 11px;
   }
 
-  .analysisTable {
+  .packetTable {
     min-width: 520px;
   }
 
@@ -675,7 +710,9 @@
   }
 
   .filterButton {
+    height: 26px;
     min-height: 26px;
+    max-height: 26px;
     padding: 3px 8px;
   }
 
@@ -747,6 +784,18 @@
   }
 }
 
+/* Wide single-pane views use horizontal space instead of long full-width card strips. */
+@container session-pane (min-width: 960px) {
+  .overviewInfo {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .overviewInfo > .infoCard:first-child,
+  .overviewWorkspaceCard {
+    grid-column: 1 / -1;
+  }
+}
+
 /* In a normal 2x2 desktop Pane, use the available width to save vertical space. */
 @container session-pane (min-width: 480px) and (max-height: 460px) {
   .overviewInfo {
@@ -754,7 +803,8 @@
     gap: 6px;
   }
 
-  .overviewInfo > .infoCard:first-child {
+  .overviewInfo > .infoCard:first-child,
+  .overviewWorkspaceCard {
     grid-column: 1 / -1;
   }
 }
