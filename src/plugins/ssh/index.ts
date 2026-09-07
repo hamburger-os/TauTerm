@@ -16,7 +16,7 @@ registerPlugin({
     icon: "ssh-shell",
     content_type: "terminal",
     send_bar: true,
-    capabilities: ["connection", "transfer", "endpoint_discovery", "multi_session"],
+    capabilities: ["connection", "transfer", "endpoint_discovery", "multi_session", "session_logging"],
     transfer_protocols: ["sftp"],
   },
   locales: {
