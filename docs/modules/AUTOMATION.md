@@ -10,6 +10,8 @@ TauTerm 的发送能力既要支持人工调试，也要支持命令面板、自
 
 对支持 SendBar 的 Session，基础发送、命令面板、自动回复和脚本共享 `CommHandle`/Session 发送边界。字符集转换只作用于文本路径；HEX/raw byte 路径保持原始字节。
 
+Command Set、Auto Reply Config 与 Lua Script 是可复用工程资产，不再把浏览器本地存储作为权威来源。当前统一保存到 Rust ConfigStore 的 `assets.*` 命名空间；内置示例在首次装载时与用户资产按稳定 name/id 合并，后续修改仍只写同一个持久层。这个 global asset ownership 是完整 `TauWorkspace.assets` 之前的当前实现，未来 Named Workspace 可以在同一资产模型上增加 workspace override，而不是再引入第二套格式。
+
 Network Debug 还会把当前发送目标同步到公共发送上下文，使人工发送和脚本默认指向同一目标，同时允许脚本使用显式目标 API。
 
 ## 数据流
@@ -31,10 +33,13 @@ flowchart LR
 - 文本编码和 raw bytes 明确分流，不能对 HEX/raw 数据做字符集二次转换。
 - 自动化不能绕过协议模块的目标选择、安全确认或连接状态。
 - 脚本 VM/状态按 Session 隔离，避免不同连接之间共享不可控状态。
+- 资产定义（Command/Rule/Script）与运行时执行状态分离；`isRunning`、临时日志、当前 VM/handle 不进入持久化资产。
 
 ## 代码锚点
 
 - `src/components/SendBar/`
+- `src/components/SendBar/assetStore.ts`
+- `src-tauri/src/kernel/config_store.rs`
 - `src-tauri/src/kernel/comm_handle.rs`
 - `src-tauri/src/kernel/script_engine/`
 - `src/context/SessionContext.tsx`
