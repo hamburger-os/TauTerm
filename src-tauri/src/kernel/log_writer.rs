@@ -92,10 +92,11 @@ impl LogWriter {
             self.rotate_file()?;
         }
 
-        if let Some(ref mut f) = self.file {
-            f.write_all(line_bytes)?;
-            self.bytes_written += line_bytes.len() as u64;
-        }
+        let file = self.file.as_mut().ok_or_else(|| {
+            std::io::Error::other("session log writer is not open")
+        })?;
+        file.write_all(line_bytes)?;
+        self.bytes_written += line_bytes.len() as u64;
         Ok(())
     }
 
@@ -103,6 +104,14 @@ impl LogWriter {
     pub fn flush(&mut self) -> std::io::Result<()> {
         if let Some(ref mut f) = self.file {
             f.flush()?;
+        }
+        Ok(())
+    }
+
+    /// 刷新并关闭当前文件句柄，但保留 writer 元数据供稍后重新打开。
+    pub fn close(&mut self) -> std::io::Result<()> {
+        if let Some(mut file) = self.file.take() {
+            file.flush()?;
         }
         Ok(())
     }
