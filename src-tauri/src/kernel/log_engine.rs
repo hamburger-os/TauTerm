@@ -137,11 +137,7 @@ fn try_send_session_log_when(
 }
 
 pub fn try_send_session_log(sender: &mpsc::SyncSender<LogEntry>, entry: DataLogEntry) {
-    try_send_session_log_when(
-        sender,
-        entry,
-        SESSION_LOG_ENABLED.load(Ordering::Relaxed),
-    );
+    try_send_session_log_when(sender, entry, SESSION_LOG_ENABLED.load(Ordering::Relaxed));
 }
 
 pub fn try_send_system_event(
@@ -694,7 +690,6 @@ impl Drop for LogEngine {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
