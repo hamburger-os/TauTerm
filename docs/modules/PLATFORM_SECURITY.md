@@ -10,7 +10,7 @@
 
 凭据存储优先使用操作系统提供的安全存储；不可用时使用应用自己的加密 vault 回退。协议模块不直接决定存储实现，只通过统一凭据接口消费。
 
-SSH 的持久化 Session 只保存稳定的 `credential_account` 引用，不保存密码、私钥正文或 passphrase。连接时由 Rust 后端从安全存储注入短生命周期认证材料；WebView 的 Session 状态和重新打开的配置表单不回填秘密。旧版 `sessions.json` 中若存在 SSH 明文凭据，加载时优先迁移到安全存储，迁移暂不可用时也只向前端返回脱敏配置，并在后续连接/编辑时重试迁移。
+SSH 的持久化 Session 只保存由 Session ID 确定的 `credential_account` 引用，不保存密码、私钥正文或 passphrase。连接时由 Rust 后端从安全存储注入短生命周期认证材料；WebView 的 Session 状态和重新打开的配置表单不回填秘密。不符合当前凭据引用模型的开发期会话需要重新配置，不保留迁移或兼容分支。
 
 ### Windows 特权操作
 
