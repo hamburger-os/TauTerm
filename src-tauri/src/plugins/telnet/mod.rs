@@ -16,7 +16,7 @@ use telnet::{Action, Telnet, TelnetOption};
 use crate::channel::error::SessionError;
 use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
-    ChannelKind, EndpointInfo, PluginManifest, ProtocolAdapter, ProtocolConnection,
+    ChannelKind, EndpointInfo, ProtocolAdapter, ProtocolConnection,
     TransferProtocolType,
 };
 use channel::{TelnetChannel, READ_TIMEOUT};
@@ -68,21 +68,6 @@ impl TelnetAdapter {
         *self.app.lock().expect("TelnetAdapter app 锁") = Some(app);
     }
 
-    /// 创建 Telnet 插件清单
-    pub fn manifest() -> PluginManifest {
-        PluginManifest {
-            id: "telnet".into(),
-            name: "Telnet".into(),
-            version: "1.0.0".into(),
-            category: "terminal".into(),
-            description: "Telnet 终端".into(),
-            icon: "plug".into(),
-            content_type: "terminal".into(),
-            capabilities: vec!["connection".into()],
-            // 无文件传输：transfer_protocols 为空 → 前端 Transmission 面板不显示
-            transfer_protocols: vec![],
-        }
-    }
 
     /// 从 JSON Value 解析 Telnet 参数
     ///
