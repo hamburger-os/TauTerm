@@ -83,8 +83,17 @@ const workspace = await readFile(path.join(ROOT, "src", "context", "SplitLayoutC
 assert.doesNotMatch(workspace, /localStorage/, "Workspace must persist through the backend ConfigStore");
 assert.match(workspace, /workspace\.layout/, "Workspace backend key is missing");
 
+const sendBarAssetFiles = [
+  "CommandPanel.tsx",
+  "AutoReplyPanel.tsx",
+  "ScriptEditor.tsx",
+  "SendBarContext.tsx",
+];
+for (const file of sendBarAssetFiles) {
+  const source = await readFile(path.join(ROOT, "src", "components", "SendBar", file), "utf8");
+  assert.doesNotMatch(source, /localStorage/, `${file}: engineering assets must persist through the backend ConfigStore`);
+}
 const commandPanel = await readFile(path.join(ROOT, "src", "components", "SendBar", "CommandPanel.tsx"), "utf8");
-assert.doesNotMatch(commandPanel, /localStorage/, "Command assets must persist through the backend ConfigStore");
 assert.match(commandPanel, /assets\.command_sets/, "Command asset store key is missing");
 
 const sessionStore = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "session_store.rs"), "utf8");
