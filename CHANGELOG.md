@@ -8,11 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **Product-integrity architecture pass** — converges plugin metadata, persistence ownership, logging observability, SSH host trust, frontend quality gates, and Workspace semantics before the next feature cycle.
+- **Canonical plugin contract** — built-in plugin metadata now lives in one shared manifest set consumed by both Rust and TypeScript; shadow plugin lifecycle descriptors and unused kernel service skeletons were removed so runtime ownership matches the documented architecture.
+- **Versioned persistence ownership** — non-secret settings and reusable Command/Auto Reply/Lua assets now use the persistent Rust ConfigStore; Workspace Layout no longer relies on WebView-local persistence, and the Session Library has an explicit schema version with Saved Session scale separated from the active runtime budget.
+- **Serial device identity foundation** — endpoint discovery now preserves USB VID/PID, serial number, manufacturer/product metadata and a stable identity when the hardware exposes one, preparing later same-device reconnect without treating transient COM/tty names as hardware identity.
+- **Product maturity roadmap** — documents Product Integrity → Daily Driver → Data Foundation → Engineering Memory as the execution order before higher-level analysis and instrument workflows.
+
+### Security
+- **Persistent SSH host trust** — first-use host keys are explicitly confirmed and stored locally; matching known hosts reconnect without prompting, concurrent confirmations use independent request IDs, and a changed key is rejected fail-closed rather than silently replacing prior trust.
+- **SSH generic-connect fail closed** — SSH production connections can no longer fall back to automatically accepting a host key when the verifier/AppHandle path is unavailable.
 
 ### Fixed
+- **Independent logging controls and overflow visibility** — System Log and Session Data Log now have separate enable semantics and persistent settings. System/session log queue drops are counted and surfaced, while presentation-path batching reports display overflow instead of silently implying that the visible terminal is complete.
+- **Workspace small-pane regression guard** — CI now covers vertical two-pane and balanced 2×2 geometry plus source-level scroll/responsive contracts for TFTP, iperf, Network Debug and TRDP.
 - **Windows release trust documentation** — repository documentation now matches the current development-stage release workflow: Tauri updater signing remains mandatory, while Windows Authenticode is intentionally not yet enabled.
-
 
 ## [0.6.2] — 2026-09-07
 
