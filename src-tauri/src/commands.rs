@@ -1371,7 +1371,11 @@ pub async fn confirm_host_key(
     }
     log::info!(
         "SSH 主机密钥请求 {}: {}",
-        if accepted { "已接受并记住" } else { "已拒绝" },
+        if accepted {
+            "已接受并记住"
+        } else {
+            "已拒绝"
+        },
         &request_id[..request_id.len().min(16)]
     );
     Ok(())
