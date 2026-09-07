@@ -16,8 +16,7 @@ use telnet::{Action, Telnet, TelnetOption};
 use crate::channel::error::SessionError;
 use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
-    ChannelKind, EndpointInfo, ProtocolAdapter, ProtocolConnection,
-    TransferProtocolType,
+    ChannelKind, EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
 };
 use channel::{TelnetChannel, READ_TIMEOUT};
 
@@ -67,7 +66,6 @@ impl TelnetAdapter {
     pub fn inject_app_handle(&self, app: AppHandle) {
         *self.app.lock().expect("TelnetAdapter app 锁") = Some(app);
     }
-
 
     /// 从 JSON Value 解析 Telnet 参数
     ///
