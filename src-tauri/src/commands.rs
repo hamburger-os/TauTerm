@@ -2761,36 +2761,19 @@ pub fn update_log_config(
 #[tauri::command]
 pub fn clear_all_logs(state: State<'_, AppState>) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let config = log_engine.get_config();
+    let (response_tx, response_rx) = std::sync::mpsc::sync_channel(1);
+    log_engine
+        .sender()
+        .send(LogEntry::Command(
+            crate::kernel::log_engine::LogCommand::ClearAll {
+                response: response_tx,
+            },
+        ))
+        .map_err(|e| format!("发送日志清理命令失败: {}", e))?;
 
-    // 1. 删除磁盘上的旧日志文件
-    match std::fs::read_dir(&config.log_dir) {
-        Ok(entries) => {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_none_or(|e| e != "log") {
-                    continue;
-                }
-                let _ = std::fs::remove_file(&path);
-            }
-            log::info!("所有日志文件已清除");
-        }
-        Err(e) => {
-            // 目录不存在不算错误
-            if e.kind() != std::io::ErrorKind::NotFound {
-                return Err(format!("清除日志失败: {}", e));
-            }
-        }
-    }
-
-    // 2. 通知消费者线程关闭旧文件句柄并创建新文件
-    //    必须在删除之后发送：消费者收到此命令后会 flush 旧句柄
-    //    并通过 rotate_file() 创建带递增序号的新文件
-    let _ = log_engine.sender().send(LogEntry::Command(
-        crate::kernel::log_engine::LogCommand::ReopenAfterClear,
-    ));
-
-    Ok(())
+    response_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| format!("等待日志清理确认失败: {}", e))?
 }
 
 // ── 虚拟串口驱动管理 ────────────────────────────────
