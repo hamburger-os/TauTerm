@@ -2240,7 +2240,10 @@ impl SessionStore {
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
         let existing = Self::load_from_disk_unlocked(&path)?;
-        let target = existing.iter().find(|session| session.id == session_id).cloned();
+        let target = existing
+            .iter()
+            .find(|session| session.id == session_id)
+            .cloned();
         let filtered: Vec<_> = existing
             .iter()
             .filter(|session| session.id != session_id)
