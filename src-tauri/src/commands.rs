@@ -2356,13 +2356,6 @@ pub fn set_network_send_target(
 // ── 会话持久化命令 ─────────────────────────────────
 
 #[tauri::command]
-pub fn save_sessions(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let path = SessionStore::sessions_file_path(&app);
-    store.save_to_disk(&path)
-}
-
-#[tauri::command]
 pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app);
     let mut saved = SessionStore::load_from_disk(&path)?;
