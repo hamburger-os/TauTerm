@@ -10,17 +10,22 @@
 }
 
 .navBar {
+  flex: 0 0 auto;
   display: flex;
+  align-items: center;
   gap: 6px;
   padding: 8px;
   border-bottom: 1px solid var(--glass-border-default);
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .navButton {
   flex: 1 1 0;
   min-width: 104px;
+  height: 36px;
   min-height: 36px;
+  max-height: 36px;
   padding: 6px 12px;
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
@@ -28,6 +33,16 @@
   line-height: 1.2;
   white-space: nowrap;
   text-align: center;
+}
+
+/*
+ * Top navigation is a tab strip, not a free-floating action button. Global
+ * Liquid Glass hover motion intentionally lifts/scales buttons, but that makes
+ * the active TRDP tab look taller than its siblings while the pointer remains
+ * over the tab after a click. Keep tab geometry invariant across all pages.
+ */
+.root .navBar .navButton:hover:not(:disabled) {
+  transform: none;
 }
 
 .content {
@@ -597,7 +612,9 @@
 
   .navButton {
     min-width: 72px;
+    height: 34px;
     min-height: 34px;
+    max-height: 34px;
     padding-inline: 6px;
     font-size: var(--text-xs);
   }
@@ -621,7 +638,9 @@
   }
 
   .navButton {
+    height: 30px;
     min-height: 30px;
+    max-height: 30px;
     padding: 4px 8px;
   }
 
@@ -674,7 +693,19 @@
   }
 
   .emptyState {
-    padding: 16px 10px !important;
+    padding: 12px 10px !important;
+  }
+
+  .analysisSection .analysisGrid {
+    gap: 8px;
+  }
+
+  .analysisSection .analysisPane {
+    gap: 5px;
+  }
+
+  .analysisSection .emptyState {
+    padding: 8px 8px !important;
   }
 
   .subheading {
