@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Product-integrity architecture pass** — converges plugin metadata, persistence ownership, logging observability, SSH host trust, frontend quality gates, and Workspace semantics before the next feature cycle.
+
+### Fixed
+- **Windows release trust documentation** — repository documentation now matches the current development-stage release workflow: Tauri updater signing remains mandatory, while Windows Authenticode is intentionally not yet enabled.
+
+
 ## [0.6.2] — 2026-09-07
 
 ### Changed
-- **Windows release trust chain** — official Windows release builds now fail closed unless the main executable, NSIS installer, TauTerm service, and TRDP helper are Authenticode-signed with the configured publisher certificate and timestamped; release CI verifies the signer and timestamp before staging artifacts.
+- **Windows release trust policy** — Tauri updater signing remains mandatory and validated. Windows Authenticode was intentionally removed from the v0.6.2 development-stage release gate; Windows publisher reputation/signing remains a later distribution-hardening milestone.
 - **SSH credential-reference persistence** — saved SSH sessions now persist only a stable credential reference while passwords, private keys, and passphrases stay in the native OS credential store or authenticated encrypted vault. Development-era SSH sessions that do not match the current credential-reference model are not migrated and must be reconfigured once.
 - **Release-native quality gate** — the permanent Release workflow now runs the reusable cross-platform TRDP Native/interoperability workflow against the exact release commit in addition to the normal CI quality gate before any platform package is built.
 
