@@ -136,9 +136,7 @@ struct PendingHostKeyVerification {
 
 pub struct HostKeyVerifier {
     pending: std::sync::Arc<
-        tokio::sync::Mutex<
-            std::collections::HashMap<String, PendingHostKeyVerification>,
-        >,
+        tokio::sync::Mutex<std::collections::HashMap<String, PendingHostKeyVerification>>,
     >,
     known_hosts: KnownHostStore,
 }
@@ -146,9 +144,7 @@ pub struct HostKeyVerifier {
 impl HostKeyVerifier {
     pub fn new() -> Self {
         Self {
-            pending: std::sync::Arc::new(tokio::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
+            pending: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             known_hosts: KnownHostStore::new(),
         }
     }
@@ -199,11 +195,10 @@ impl HostKeyVerifier {
         };
 
         if accept {
-            if let Err(error) = self.known_hosts.trust(
-                &pending.host,
-                pending.port,
-                &pending.fingerprint,
-            ) {
+            if let Err(error) =
+                self.known_hosts
+                    .trust(&pending.host, pending.port, &pending.fingerprint)
+            {
                 let _ = pending.response.send(false);
                 return Err(error);
             }
