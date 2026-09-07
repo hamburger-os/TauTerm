@@ -95,6 +95,11 @@ for (const file of sendBarAssetFiles) {
 }
 const assetStore = await readFile(path.join(ROOT, "src", "components", "SendBar", "assetStore.ts"), "utf8");
 assert.match(assetStore, /writeQueues/, "engineering asset writes must be serialized per key");
+assert.match(
+  assetStore,
+  /Promise<boolean>/,
+  "engineering asset writes must acknowledge durable persistence before success feedback",
+);
 assert.match(assetStore, /subscribeAsset/, "global engineering assets must synchronize mounted SendBars");
 assert.match(assetStore, /ASSET_PERSISTENCE_ERROR_EVENT/, "engineering asset persistence failures must be observable");
 assert.doesNotMatch(
@@ -175,6 +180,26 @@ assert.match(
   /delete_config_from_disk_transactional/,
   "cross-store Session deletes need an explicit rollback boundary",
 );
+assert.match(
+  sessionStore,
+  /rename_config_on_disk_transactional/,
+  "Saved Session rename needs an explicit rollback boundary",
+);
+assert.match(
+  sessionStore,
+  /set_config_param_on_disk_transactional/,
+  "explicit Saved Session parameter edits need a rollback boundary",
+);
+assert.doesNotMatch(
+  sessionStore,
+  /pub fn save_to_disk/,
+  "Runtime SessionStore must not expose a bulk runtime-to-Library persistence API",
+);
+assert.doesNotMatch(
+  sessionStore,
+  /pub fn get_saved_sessions/,
+  "Runtime SessionStore must not reconstruct the Saved Session Library from active sessions",
+);
 
 assert.doesNotMatch(
   lib,
@@ -198,9 +223,31 @@ assert.match(
 );
 
 const commands = await readFile(path.join(ROOT, "src-tauri", "src", "commands.rs"), "utf8");
+assert.doesNotMatch(
+  commands,
+  /pub fn save_sessions/,
+  "legacy bulk save_sessions IPC must stay removed",
+);
+assert.doesNotMatch(
+  commands,
+  /let _ = store\.save_to_disk/,
+  "runtime lifecycle must not silently write the Saved Session Library",
+);
 assert.match(commands, /prepare_ssh_session_params/, "SSH credentials must be prepared before persistence");
 assert.match(commands, /save_config_to_disk_transactional/, "SSH save must coordinate Session Library and credential commits");
 assert.match(commands, /hydrate_ssh_config_with_pending/, "direct SSH connect must use transient credentials before persistence");
+
+const trdpBackend = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "trdp.rs"), "utf8");
+assert.match(
+  trdpBackend,
+  /set_config_param_on_disk_transactional/,
+  "TRDP Workspace persistence must use the explicit Saved Session transaction boundary",
+);
+assert.doesNotMatch(
+  trdpBackend,
+  /save_to_disk/,
+  "TRDP runtime lifecycle must not bulk-save active Session state",
+);
 
 const ssh = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "ssh", "mod.rs"), "utf8");
 assert.match(ssh, /HostTrustDecision::Changed/, "SSH changed-host-key path must remain fail-closed");
