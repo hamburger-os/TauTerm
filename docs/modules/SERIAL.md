@@ -10,6 +10,8 @@ Serial 作为标准终端型协议接入公共 Session/I/O 核心。显示和发
 
 物理串口列表只在进入 Serial 配置页时按需刷新，并保留最近一次发现结果供表单立即显示。Windows 端口枚举可能受 SetupAPI、蓝牙设备或第三方驱动影响而变慢，因此枚举必须在后台 blocking worker 中运行，不能阻塞配置 UI。
 
+端点发现同时保留设备身份元数据。USB 串口至少携带 VID/PID、serial number、manufacturer、product，并在 serial number 可用时生成稳定 device identity；UI 展示名和系统端口名仍是瞬时属性，不能把 COM/tty 名称当成未来 same-device reconnect 的唯一身份。蓝牙/PCI/未知串口也保留类型与 system port 元数据，但不伪造不存在的硬件唯一 ID。
+
 虚拟串口是平台能力而不是协议替代品：
 
 - Windows 由受控的 com0com 后端创建端口对，生产安装场景优先通过特权服务执行；
@@ -34,6 +36,7 @@ flowchart LR
 - 虚拟串口创建失败不能让主串口连接的状态变成错误真相。
 - 平台提权逻辑不得进入普通 Serial UI/协议语义。
 - 自动化发送、编码与日志继续复用公共能力，不建立串口专属第二套实现。
+- 当前已经采集设备 identity，但“热插拔后按 stable identity 自动匹配并重连”仍属于 Daily Driver 后续能力；不能把元数据采集宣传成已经完成自动重连。
 - 虚拟端口清理必须可处理异常退出和残留资源。
 
 ## 代码锚点
