@@ -229,14 +229,27 @@ impl CredentialStore {
     pub fn delete_credential(&self, account: &str) -> Result<(), CredentialStoreError> {
         valid_account(account)?;
         if Self::native_available() {
-            let e = Self::entry(account)?;
-            match e.delete_credential() {
+            let entry = Self::entry(account)?;
+            let previous = self.native_get(account)?;
+            let mut index = self.read_index()?;
+
+            match entry.delete_credential() {
                 Ok(()) | Err(keyring::Error::NoEntry) => {}
-                Err(e) => return Err(be(e)),
-            };
-            let mut i = self.read_index()?;
-            if i.remove(account) {
-                self.write_index(&i)?
+                Err(error) => return Err(be(error)),
+            }
+
+            if index.remove(account) {
+                if let Err(index_error) = self.write_index(&index) {
+                    if let Some(previous) = previous.as_ref() {
+                        if let Err(rollback_error) = Self::native_write_secret(&entry, previous) {
+                            return Err(CredentialStoreError::Backend(format!(
+                                "{}; credential rollback failed: {}",
+                                index_error, rollback_error
+                            )));
+                        }
+                    }
+                    return Err(index_error);
+                }
             }
             Ok(())
         } else {
@@ -253,24 +266,58 @@ impl CredentialStore {
         keyring::Entry::new(SERVICE, a).map_err(be)
     }
     fn native_store(&self, a: &str, s: &Stored) -> Result<(), CredentialStoreError> {
-        let mut b = serde_json::to_vec(s).map_err(be)?;
-        let e = Self::entry(a)?;
-        e.set_secret(&b).map_err(be)?;
-        b.zeroize();
-        let mut i = match self.read_index() {
+        let entry = Self::entry(a)?;
+        let previous = self.native_get(a)?;
+        Self::native_write_secret(&entry, s)?;
+
+        let mut index = match self.read_index() {
             Ok(index) => index,
             Err(error) => {
-                let _ = e.delete_credential();
-                return Err(error);
+                return match Self::restore_native_secret(&entry, previous.as_ref()) {
+                    Ok(()) => Err(error),
+                    Err(rollback_error) => Err(CredentialStoreError::Backend(format!(
+                        "{}; credential rollback failed: {}",
+                        error, rollback_error
+                    ))),
+                };
             }
         };
-        if i.insert(a.into()) {
-            if let Err(x) = self.write_index(&i) {
-                let _ = e.delete_credential();
-                return Err(x);
+
+        if index.insert(a.into()) {
+            if let Err(error) = self.write_index(&index) {
+                return match Self::restore_native_secret(&entry, previous.as_ref()) {
+                    Ok(()) => Err(error),
+                    Err(rollback_error) => Err(CredentialStoreError::Backend(format!(
+                        "{}; credential rollback failed: {}",
+                        error, rollback_error
+                    ))),
+                };
             }
         }
         Ok(())
+    }
+
+    fn native_write_secret(
+        entry: &keyring::Entry,
+        stored: &Stored,
+    ) -> Result<(), CredentialStoreError> {
+        let mut bytes = serde_json::to_vec(stored).map_err(be)?;
+        let result = entry.set_secret(&bytes).map_err(be);
+        bytes.zeroize();
+        result
+    }
+
+    fn restore_native_secret(
+        entry: &keyring::Entry,
+        previous: Option<&Stored>,
+    ) -> Result<(), CredentialStoreError> {
+        match previous {
+            Some(stored) => Self::native_write_secret(entry, stored),
+            None => match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(error) => Err(be(error)),
+            },
+        }
     }
     fn native_get(&self, a: &str) -> Result<Option<Stored>, CredentialStoreError> {
         match Self::entry(a)?.get_secret() {
