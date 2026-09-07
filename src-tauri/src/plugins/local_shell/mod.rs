@@ -571,7 +571,7 @@ fn validate_wsl_path_syntax(path: &str) -> Result<(), String> {
 fn detect_wsl_distributions(wsl: &Path) -> Vec<String> {
     // WSL 服务异常、首次初始化或发行版注册损坏时，`wsl --list` 可能长时间
     // 不返回。端点发现只用于配置 UI，不允许它成为打开会话配置页的无界阻塞点。
-    const DISCOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+    const DISCOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1500);
 
     let mut child = match Command::new(wsl)
         .args(["--list", "--quiet"])
