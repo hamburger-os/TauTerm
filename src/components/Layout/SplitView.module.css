@@ -11,11 +11,24 @@
   position: absolute;
   overflow: auto;
   overscroll-behavior: contain;
-  container-type: inline-size;
+  /*
+   * Pane-relative custom layouts need both width and height in 2x2 workspaces.
+   * Panes are absolutely sized, so size containment is explicit and stable.
+   */
+  container-type: size;
   container-name: session-pane;
   min-width: 0;
   min-height: 0;
   z-index: 1;
+}
+
+.customPaneSurface {
+  /*
+   * Built-in custom views (TFTP / iperf / Network / TRDP) expose their own
+   * bounded scroll regions. Keeping the Pane itself non-scrolling avoids a
+   * second scrollbar fighting the divider hit-zone in small 2x2 panes.
+   */
+  overflow: hidden;
 }
 
 .emptyPane {
