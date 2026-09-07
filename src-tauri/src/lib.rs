@@ -408,7 +408,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_connection_types,
             commands::enumerate_endpoints,
-            plugins::trdp::connect_session_trdp,
+            commands::connect_session,
             commands::disconnect_session,
             commands::write_data,
             commands::switch_active_session,
