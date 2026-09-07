@@ -529,6 +529,7 @@ fn create_on_data_callback(
     bridge_tx: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
 ) -> Box<dyn Fn(String, Vec<u8>) + Send> {
     let app_clone = app.clone();
+    let overflow_app = app.clone();
     let batcher = crate::kernel::data_batcher::DataBatcher::new(move |batched| {
         let _ = app_clone.emit(
             "session-data",
@@ -543,7 +544,18 @@ fn create_on_data_callback(
         // 日志和桥接需克隆数据；主路径（batcher）直接获取所有权，省去一次 clone
         let data_for_log = data.clone();
         let data_for_bridge = bridge_tx.as_ref().map(|_| data.clone());
-        batcher.push(session_id.clone(), data);
+        if let Some(total_dropped) = batcher.push(session_id.clone(), data) {
+            // 只在 1 / 2 / 4 / 8 ... 次时通知 UI，避免过载时事件本身形成新的压力。
+            if total_dropped == 1 || total_dropped.is_power_of_two() {
+                let _ = overflow_app.emit(
+                    "session-display-overflow",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "dropped_chunks": total_dropped,
+                    }),
+                );
+            }
+        }
         try_send_session_log(
             &log_tx,
             DataLogEntry {
