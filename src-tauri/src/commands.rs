@@ -206,7 +206,7 @@ fn secure_ssh_session_params(
     existing_params: Option<&Value>,
     require_credential: bool,
 ) -> Result<(), String> {
-    use crate::security::credential_store::{CredentialStoreError, CredentialValue};
+    use crate::security::credential_store::CredentialStoreError;
 
     let auth_method = params
         .get("auth_method")
