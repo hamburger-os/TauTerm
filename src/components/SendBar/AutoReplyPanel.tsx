@@ -107,13 +107,14 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
   // 持久化：自动应答规则属于工程资产，统一写 Rust ConfigStore。
   const persist = useCallback((updated: AutoReplyConfig[]) => {
     dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs: updated });
-    persistAsset(ASSET_KEYS.autoReplyConfigs, updated);
+    return persistAsset(ASSET_KEYS.autoReplyConfigs, updated);
   }, [dispatch]);
 
   const persistActive = useCallback((name: string) => {
     dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name });
-    if (name) persistAsset(ASSET_KEYS.activeAutoReplyConfig, name);
-    else clearAsset(ASSET_KEYS.activeAutoReplyConfig);
+    return name
+      ? persistAsset(ASSET_KEYS.activeAutoReplyConfig, name)
+      : clearAsset(ASSET_KEYS.activeAutoReplyConfig);
   }, [dispatch]);
 
   // 更新规则并写回当前配置（context + persistent asset store）
@@ -345,39 +346,44 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     input.click();
   }, [showToast, t]);
 
-  const handleImportOverwrite = useCallback(() => {
+  const handleImportOverwrite = useCallback(async () => {
     if (!importData) return;
     const updated = configs.map(c =>
       c.name === activeConfigName ? { ...importData, name: activeConfigName } : c
     );
-    persist(updated);
+    const saved = await persist(updated);
     dispatch({ type: "SET_AUTO_REPLY_RULES", rules: importData.rules });
     setImportOpen(false);
     setImportData(null);
-    showToast("success", t("sendBar.importSuccess"));
+    if (saved) showToast("success", t("sendBar.importSuccess"));
   }, [importData, activeConfigName, configs, persist, dispatch, showToast, t]);
 
-  const handleImportAppend = useCallback(() => {
+  const handleImportAppend = useCallback(async () => {
     if (!importData) return;
     const newName = `${importData.name || "Imported"} (${t("sendBar.imported")})`;
     const updated = [...configs, { ...importData, name: newName }];
-    persist(updated);
-    persistActive(newName);
+    const [savedConfigs, savedActive] = await Promise.all([
+      persist(updated),
+      persistActive(newName),
+    ]);
     setImportOpen(false);
     setImportData(null);
-    showToast("success", t("sendBar.importSuccess"));
+    if (savedConfigs && savedActive) {
+      showToast("success", t("sendBar.importSuccess"));
+    }
   }, [importData, configs, persist, persistActive, showToast, t]);
 
   // ── 加载内置示例 ──
-  const handleLoadExamples = useCallback(() => {
+  const handleLoadExamples = useCallback(async () => {
     const existingNames = new Set(configs.map(c => c.name));
     const newBuiltins = BUILTIN_CONFIGS.filter(c => !existingNames.has(c.name));
     if (newBuiltins.length === 0) {
       showToast("info", t("sendBar.noNewExamples"));
       return;
     }
-    persist([...configs, ...newBuiltins]);
-    showToast("success", t("sendBar.examplesLoaded", { count: newBuiltins.length }));
+    if (await persist([...configs, ...newBuiltins])) {
+      showToast("success", t("sendBar.examplesLoaded", { count: newBuiltins.length }));
+    }
   }, [configs, persist, showToast, t]);
 
   const enabledCount = rules.filter(r => r.enabled).length;
