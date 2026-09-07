@@ -90,6 +90,7 @@ export function loadAsset<T>(key: string): Promise<T | null> {
 
 export function persistAsset(key: string, value: unknown): void {
   enqueueWrite(key, async () => {
+    await loadPromises.get(key)?.catch(() => null);
     const previous = cache.has(key) ? cache.get(key) ?? null : null;
     try {
       await invoke("set_config", { key, value });
@@ -105,6 +106,7 @@ export function persistAsset(key: string, value: unknown): void {
 
 export function clearAsset(key: string): void {
   enqueueWrite(key, async () => {
+    await loadPromises.get(key)?.catch(() => null);
     const previous = cache.has(key) ? cache.get(key) ?? null : null;
     try {
       await invoke("delete_config", { key });
