@@ -301,25 +301,11 @@ fn secure_ssh_session_params(
     Ok(())
 }
 
-fn hydrate_ssh_config(
-    state: &AppState,
-    params: &Value,
-) -> Result<crate::plugins::ssh::SshConfig, String> {
+fn apply_ssh_credential(
+    config: &mut crate::plugins::ssh::SshConfig,
+    credential: crate::security::credential_store::CredentialValue,
+) -> Result<(), String> {
     use crate::security::credential_store::CredentialValue;
-
-    let mut config: crate::plugins::ssh::SshConfig =
-        serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
-
-    let account = params
-        .get(SSH_CREDENTIAL_ACCOUNT_KEY)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
-
-    let credential = state
-        .credential_store
-        .get_credential(account)
-        .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
 
     match (config.auth_method.as_str(), credential) {
         ("password", CredentialValue::Password(password)) => {
@@ -342,8 +328,44 @@ fn hydrate_ssh_config(
             return Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into());
         }
     }
+    Ok(())
+}
 
+fn hydrate_ssh_config(
+    state: &AppState,
+    params: &Value,
+) -> Result<crate::plugins::ssh::SshConfig, String> {
+    let mut config: crate::plugins::ssh::SshConfig =
+        serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
+
+    let account = params
+        .get(SSH_CREDENTIAL_ACCOUNT_KEY)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
+
+    let credential = state
+        .credential_store
+        .get_credential(account)
+        .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
+
+    apply_ssh_credential(&mut config, credential)?;
     Ok(config)
+}
+
+fn hydrate_ssh_config_with_pending(
+    state: &AppState,
+    params: &Value,
+    pending: Option<&PendingSshCredential>,
+) -> Result<crate::plugins::ssh::SshConfig, String> {
+    if let Some(pending) = pending {
+        let mut config: crate::plugins::ssh::SshConfig =
+            serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
+        apply_ssh_credential(&mut config, pending.value.clone())?;
+        Ok(config)
+    } else {
+        hydrate_ssh_config(state, params)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1234,8 +1256,10 @@ async fn connect_session_ssh(
     let effective_session_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    secure_ssh_session_params(&state, &effective_session_id, &mut params)?;
-    let ssh_config = hydrate_ssh_config(&state, &params)?;
+    let pending_ssh_credential =
+        prepare_ssh_session_params(&state, &effective_session_id, &mut params)?;
+    let ssh_config =
+        hydrate_ssh_config_with_pending(&state, &params, pending_ssh_credential.as_ref())?;
 
     // 将 journald_enabled 提升为 params 的通用字段（不再耦合 SshConfig）。
     // reconfigure/restore 统一从当前 Session params 读取。
@@ -1259,6 +1283,12 @@ async fn connect_session_ssh(
         .connect_with_config(ssh_config.clone(), app.clone(), &state.host_key_verifier)
         .await
         .map_err(|e| e.to_string())?;
+
+    // Only a successfully established connection is allowed to persist transient credentials.
+    // If the credential commit fails, returning here drops the not-yet-registered connection.
+    if let Some(pending) = pending_ssh_credential {
+        commit_ssh_credential(&state, pending)?;
+    }
 
     // 提取主机密钥指纹（供前端展示确认）
     let host_key_fingerprint: Option<String> = conn
