@@ -4,8 +4,11 @@
 
 TRDP 属于 IEC 61375 列车通信网络标准体系。
 
-- IEC Webstore 搜索入口: https://webstore.iec.ch/
-- 标准编号：IEC 61375-2-3（Train Communication Network / Ethernet Consist Network 相关通信配置与 TRDP 语义）。
+- IEC 61375-2-3:2015 — TCN communication profile: https://webstore.iec.ch/en/publication/22903
+- IEC 61375-2-8:2021 — TCN conformance test: https://webstore.iec.ch/en/publication/26418
+- IEC 61375-3-4:2014 — Ethernet Consist Network (ECN): https://webstore.iec.ch/en/publication/5405
+
+当前 TauTerm/TRDP 设计主要围绕 IEC 61375-2-3 的通信 profile 与 TCNOpen 3.0.0.0 实现；涉及 conformance 或 ECN 网络层边界时还应查阅对应配套标准。
 
 IEC 标准受版权保护且通常需要授权获取，TauTerm 仓库**不复制标准正文**。实现 PD、MD、拓扑、冗余或 SDT 语义时，应由有权访问标准的开发者核对对应版本。
 

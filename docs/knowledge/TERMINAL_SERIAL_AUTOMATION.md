@@ -44,6 +44,25 @@ TauTerm 的虚拟串口桥接只提供逻辑字节通道，不应宣称模拟物
 
 内部设计：[SERIAL.md](../modules/SERIAL.md)、[TRANSFER.md](../modules/TRANSFER.md)。
 
+## XMODEM / YMODEM / ZMODEM
+
+这些协议来自早期串行通信生态，并不是 IETF RFC。实现时应参考原作者/历史协议文档，而不是根据现有某个终端软件的行为反推协议。
+
+- XMODEM/YMODEM Protocol Reference — Chuck Forsberg 编辑的 1986/1988 协议参考（公开历史镜像可用于核对）：https://techheap.packetizer.com/communications/modems/xmodem-ymodem_reference.html
+- The ZMODEM Inter Application File Transfer Protocol — Chuck Forsberg / Omen Technology：https://techheap.packetizer.com/communications/modems/zmodem8.html
+
+TauTerm 实现 CRC、block size、batch metadata、retry/resume、ZMODEM header/subpacket 等行为时，应同时用互操作测试验证，因为历史实现存在扩展和兼容差异。
+
+内部设计：[TRANSFER.md](../modules/TRANSFER.md)。
+
+## AT 命令/响应
+
+- ITU-T V.250 (07/2003), Serial asynchronous automatic dialling and control: https://www.itu.int/rec/T-REC-V.250/en
+
+V.250 提供通用 ATtention 命令/响应语法基线，但实际蜂窝模组、调制解调器和设备会有大量厂商/3GPP 扩展。TauTerm 的 AT 工具只能声称解析自身明确支持的通用格式，不能把任意 `AT+...` 设备命令当成统一标准。
+
+内部设计：[OBSERVABILITY_TOOLS.md](../modules/OBSERVABILITY_TOOLS.md)。
+
 ## Lua 自动化
 
 ### 权威来源

@@ -26,7 +26,7 @@ TauTerm does not link com0com into TauTerm-owned code. The upstream project publ
 - **Full license:** `src-tauri/vendor/tcnopen/LICENSE`.
 - **Source/provenance and downstream patch list:** `src-tauri/vendor/tcnopen/SOURCE.json`.
 
-The vendored snapshot is the upstream 3.0.0.0 source plus the narrow downstream patch series declared in `SOURCE.json`. TauTerm keeps the covered source in this repository so recipients can inspect the MPL-covered source and TauTerm's modifications.
+The vendored snapshot is the upstream 3.0.0.0 source plus the narrow downstream patch series declared in `SOURCE.json`. TauTerm keeps the covered source in the TauTerm source repository. Binary recipients can obtain the corresponding MPL-covered source from https://github.com/hamburger-os/TauTerm using the release tag matching their installed version, under `src-tauri/vendor/tcnopen/`.
 
 **TRDPSpy is not included.**
 
@@ -39,7 +39,15 @@ The vendored snapshot is the upstream 3.0.0.0 source plus the narrow downstream 
 - **License files:** `src-tauri/vendor/riperf3/LICENSE-MIT.txt` and `src-tauri/vendor/riperf3/LICENSE-APACHE.txt`.
 - **TauTerm modifications:** `src-tauri/vendor/riperf3/VENDOR-NOTES.md`.
 
-The vendored copy is intentionally not described as pristine upstream source; its TauTerm-specific changes are recorded beside it.
+The vendored copy is intentionally not described as pristine upstream source; its TauTerm-specific changes are recorded beside it. For binary distribution, TauTerm elects the **MIT** option of the upstream `MIT OR Apache-2.0` grant and preserves the upstream MIT notice below:
+
+> Copyright (c) Individual contributors
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### Lua 5.4 runtime
 
