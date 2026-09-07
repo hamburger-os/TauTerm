@@ -1271,12 +1271,6 @@ async fn connect_session_ssh(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Only a successfully established connection is allowed to persist transient credentials.
-    // If the credential commit fails, returning here drops the not-yet-registered connection.
-    if let Some(pending) = pending_ssh_credential {
-        commit_ssh_credential(&state, pending)?;
-    }
-
     // 提取主机密钥指纹（供前端展示确认）
     let host_key_fingerprint: Option<String> = conn
         .side_channel
@@ -1361,6 +1355,17 @@ async fn connect_session_ssh(
             .map(|h| (h.name.clone(), h.params.clone()))
             .unwrap_or((session_name, params.clone()))
     };
+
+    // Persist transient credentials only after the SSH parent and channel 0 are both
+    // registered and readable. A credential failure rolls back the newly-created runtime Session.
+    if let Some(pending) = pending_ssh_credential {
+        if let Err(error) = commit_ssh_credential(&state, pending) {
+            if let Ok(mut store) = state.session_store.lock() {
+                let _ = store.close_session(&parent_id);
+            }
+            return Err(error);
+        }
+    }
 
     let connected_at = Some(
         std::time::SystemTime::now()
