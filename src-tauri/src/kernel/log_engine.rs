@@ -535,8 +535,20 @@ impl LogEngine {
                                     if let Ok(mut map) = active_logs.lock() {
                                         map.insert(session_id.clone(), status.clone());
                                     }
-                                    writers.insert(session_id, writer);
-                                    let _ = response.send(Ok(status));
+                                    writers.insert(session_id.clone(), writer);
+                                    if response.send(Ok(status)).is_err() {
+                                        if let Some(mut writer) = writers.remove(&session_id) {
+                                            if let Err(error) = writer.flush() {
+                                                record_session_log_loss(&format!(
+                                                    "session {} orphan-start cleanup failed: {}",
+                                                    session_id, error
+                                                ));
+                                            }
+                                        }
+                                        if let Ok(mut map) = active_logs.lock() {
+                                            map.remove(&session_id);
+                                        }
+                                    }
                                 }
                                 Err(e) => {
                                     let message = format!("无法创建日志文件: {}", e);
