@@ -18,7 +18,8 @@ Windows ARM64, macOS Intel, and other architectures are not current packaged rel
 
 TauTerm's Tauri updater artifacts are signed and verified by the release pipeline. Platform-native distribution signing/notarization is separate from updater signing.
 
-- Official Windows releases require Authenticode publisher signing and RFC 3161 timestamping for the main executable, NSIS installer, TauTerm service, and TRDP helper. Missing signing configuration fails the release; unsigned Windows builds are development/local builds only.
+- Tauri updater signing is mandatory for published updater artifacts and is verified by the release pipeline.
+- Windows Authenticode publisher signing is **not enabled in the current development-stage release process**. Current NSIS packages and TauTerm-owned Windows binaries may therefore be unsigned at the publisher/Authenticode layer and can trigger Windows reputation/SmartScreen warnings. Authenticode + RFC 3161 timestamping remains a planned release-trust milestone before TauTerm is treated as a fully production-distributed Windows desktop product.
 - macOS remains a tech preview and may require a one-time manual open when the build is not notarized.
 - Linux packages use the Ubuntu 22.04 release environment as the current build baseline.
 
