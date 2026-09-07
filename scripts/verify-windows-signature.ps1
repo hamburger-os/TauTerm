@@ -21,8 +21,8 @@ if ($null -eq $signature.TimeStamperCertificate) {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ExpectedThumbprint)) {
-    $actual = ($signature.SignerCertificate.Thumbprint -replace "\\s", "").ToUpperInvariant()
-    $expected = ($ExpectedThumbprint -replace "\\s", "").ToUpperInvariant()
+    $actual = ($signature.SignerCertificate.Thumbprint -replace "\s", "").ToUpperInvariant()
+    $expected = ($ExpectedThumbprint -replace "\s", "").ToUpperInvariant()
     if ($actual -ne $expected) {
         throw "Unexpected Authenticode signer for $FilePath."
     }
