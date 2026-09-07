@@ -57,6 +57,25 @@ assert.equal(rects.p2.width, 0.5);
 assert.equal(rects.p1.height, 0.5);
 assert.equal(rects.p3.top, 0.5);
 
+// Explicit layout quality matrix: vertical 2-pane and balanced 2x2 geometry must remain valid.
+let verticalTwo = createInitialSplitLayout("v1");
+verticalTwo = splitPaneInLayout(verticalTwo, "v1", "bottom", "v2", "vs1");
+const verticalRects = computePaneRects(verticalTwo.root);
+assert.equal(countPanes(verticalTwo.root), 2);
+assert.deepEqual(verticalRects.v1, { left: 0, top: 0, width: 1, height: 0.5 });
+assert.deepEqual(verticalRects.v2, { left: 0, top: 0.5, width: 1, height: 0.5 });
+
+let grid = createInitialSplitLayout("g1");
+grid = splitPaneInLayout(grid, "g1", "right", "g2", "gs1");
+grid = splitPaneInLayout(grid, "g1", "bottom", "g3", "gs2");
+grid = splitPaneInLayout(grid, "g2", "bottom", "g4", "gs3");
+const gridRects = computePaneRects(grid.root);
+assert.equal(countPanes(grid.root), 4);
+assert.deepEqual(gridRects.g1, { left: 0, top: 0, width: 0.5, height: 0.5 });
+assert.deepEqual(gridRects.g3, { left: 0, top: 0.5, width: 0.5, height: 0.5 });
+assert.deepEqual(gridRects.g2, { left: 0.5, top: 0, width: 0.5, height: 0.5 });
+assert.deepEqual(gridRects.g4, { left: 0.5, top: 0.5, width: 0.5, height: 0.5 });
+
 // Closing a Pane removes only the view slot and collapses its now-redundant parent split.
 const closed = closePaneInLayout(state, "p3");
 assert.ok(closed);
