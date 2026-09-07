@@ -54,12 +54,185 @@ struct StoredFrame {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct TrdpFlowSummary {
+    pub key: String,
+    pub msg: String,
+    pub com_id: u32,
+    pub src: String,
+    pub dst: String,
+    pub count: u64,
+    pub last_seq: Option<u32>,
+    pub size: Option<u32>,
+    pub link: String,
+    pub missed: u64,
+    pub errors: u64,
+    pub min_interval_us: Option<u64>,
+    pub avg_interval_us: Option<f64>,
+    pub max_interval_us: Option<u64>,
+    pub jitter_us: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TrdpCaptureSummary {
+    pub packet_count: usize,
+    pub flows: Vec<TrdpFlowSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct TrdpCaptureResult {
     pub capture_id: String,
     pub frame_count: usize,
     pub packet_count: usize,
     pub dropped_frames: u64,
     pub packets: Vec<TrdpPacket>,
+    pub flows: Vec<TrdpFlowSummary>,
+}
+
+#[derive(Debug, Clone)]
+struct FlowAccumulator {
+    key: String,
+    msg: String,
+    com_id: u32,
+    src: String,
+    dst: String,
+    count: u64,
+    last_seq: Option<u32>,
+    previous_seq: Option<u32>,
+    size: Option<u32>,
+    link: String,
+    missed: u64,
+    errors: u64,
+    previous_timestamp: Option<u64>,
+    interval_count: u64,
+    interval_sum: u128,
+    min_interval_us: Option<u64>,
+    max_interval_us: Option<u64>,
+    jitter_sum: f64,
+    jitter_count: u64,
+}
+
+impl FlowAccumulator {
+    fn new(packet: &TrdpPacket, key: String) -> Self {
+        Self {
+            key,
+            msg: packet.msg_type.clone(),
+            com_id: packet.com_id,
+            src: packet.src_ip.clone(),
+            dst: packet.dest_ip.clone(),
+            count: 0,
+            last_seq: None,
+            previous_seq: None,
+            size: None,
+            link: packet.link.clone(),
+            missed: 0,
+            errors: 0,
+            previous_timestamp: None,
+            interval_count: 0,
+            interval_sum: 0,
+            min_interval_us: None,
+            max_interval_us: None,
+            jitter_sum: 0.0,
+            jitter_count: 0,
+        }
+    }
+
+    fn observe(&mut self, packet: &TrdpPacket, expected_cycle_us: Option<u64>) {
+        self.count = self.count.saturating_add(1);
+        if packet.reply_status.is_some_and(|value| value != 0)
+            || packet.crc_valid == Some(false)
+            || packet.protocol_valid == Some(false)
+        {
+            self.errors = self.errors.saturating_add(1);
+        }
+
+        if let Some(previous) = self.previous_seq {
+            let distance = packet.seq_count.wrapping_sub(previous);
+            if distance > 1 && distance < 0x8000_0000 {
+                self.missed = self.missed.saturating_add(u64::from(distance - 1));
+            }
+        }
+        self.previous_seq = Some(packet.seq_count);
+        self.last_seq = Some(packet.seq_count);
+
+        if let Some(previous) = self.previous_timestamp {
+            if packet.timestamp_us >= previous {
+                let interval = packet.timestamp_us - previous;
+                self.interval_count = self.interval_count.saturating_add(1);
+                self.interval_sum = self.interval_sum.saturating_add(u128::from(interval));
+                self.min_interval_us = Some(
+                    self.min_interval_us
+                        .map_or(interval, |value| value.min(interval)),
+                );
+                self.max_interval_us = Some(
+                    self.max_interval_us
+                        .map_or(interval, |value| value.max(interval)),
+                );
+                if let Some(expected) = expected_cycle_us {
+                    self.jitter_sum += (interval as f64 - expected as f64).abs();
+                    self.jitter_count = self.jitter_count.saturating_add(1);
+                }
+            }
+        }
+        self.previous_timestamp = Some(packet.timestamp_us);
+        self.size = Some(packet.data_len);
+    }
+
+    fn summary(&self) -> TrdpFlowSummary {
+        TrdpFlowSummary {
+            key: self.key.clone(),
+            msg: self.msg.clone(),
+            com_id: self.com_id,
+            src: self.src.clone(),
+            dst: self.dst.clone(),
+            count: self.count,
+            last_seq: self.last_seq,
+            size: self.size,
+            link: self.link.clone(),
+            missed: self.missed,
+            errors: self.errors,
+            min_interval_us: self.min_interval_us,
+            avg_interval_us: (self.interval_count > 0)
+                .then(|| self.interval_sum as f64 / self.interval_count as f64),
+            max_interval_us: self.max_interval_us,
+            jitter_us: (self.jitter_count > 0).then(|| self.jitter_sum / self.jitter_count as f64),
+        }
+    }
+}
+
+fn flow_key(packet: &TrdpPacket) -> String {
+    format!(
+        "{}:{}:{}:{}:{}",
+        packet.link, packet.msg_type, packet.com_id, packet.src_ip, packet.dest_ip
+    )
+}
+
+fn observe_flow(
+    flows: &mut HashMap<String, FlowAccumulator>,
+    expected_cycles: &HashMap<u32, u64>,
+    packet: &TrdpPacket,
+) {
+    let key = flow_key(packet);
+    let expected = expected_cycles.get(&packet.com_id).copied();
+    flows
+        .entry(key.clone())
+        .or_insert_with(|| FlowAccumulator::new(packet, key))
+        .observe(packet, expected);
+}
+
+fn flow_summaries(flows: &HashMap<String, FlowAccumulator>) -> Vec<TrdpFlowSummary> {
+    let mut rows = flows
+        .values()
+        .map(FlowAccumulator::summary)
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| left.key.cmp(&right.key));
+    rows
+}
+
+fn reset_flow_boundaries(flows: &mut HashMap<String, FlowAccumulator>) {
+    for flow in flows.values_mut() {
+        flow.previous_seq = None;
+        flow.previous_timestamp = None;
+    }
 }
 
 #[derive(Debug)]
@@ -69,6 +242,9 @@ struct StoredCapture {
     pd_ports: Vec<u16>,
     md_ports: Vec<u16>,
     packets: Vec<TrdpPacket>,
+    flows: HashMap<String, FlowAccumulator>,
+    expected_cycles: HashMap<u32, u64>,
+    total_packet_count: usize,
     dropped_frames: u64,
     live: bool,
 }
@@ -85,7 +261,7 @@ fn capture_store() -> &'static Mutex<HashMap<String, StoredCapture>> {
     STORE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-pub fn create_live_capture() -> String {
+pub fn create_live_capture(expected_cycles: HashMap<u32, u64>) -> String {
     let id = Uuid::new_v4().to_string();
     if let Ok(mut store) = capture_store().lock() {
         store.insert(
@@ -96,6 +272,9 @@ pub fn create_live_capture() -> String {
                 pd_ports: Vec::new(),
                 md_ports: Vec::new(),
                 packets: Vec::new(),
+                flows: HashMap::new(),
+                expected_cycles,
+                total_packet_count: 0,
                 dropped_frames: 0,
                 live: true,
             },
@@ -129,6 +308,10 @@ pub fn append_live_capture(
         bytes,
         link_type,
     });
+    for packet in &packets {
+        observe_flow(&mut capture.flows, &capture.expected_cycles, packet);
+    }
+    capture.total_packet_count = capture.total_packet_count.saturating_add(packets.len());
     if capture.frames.len() > LIVE_FRAME_LIMIT {
         let overflow = capture.frames.len() - LIVE_FRAME_LIMIT;
         capture.frames.drain(..overflow);
@@ -141,7 +324,7 @@ pub fn append_live_capture(
     }
     Some((
         capture.frames.len(),
-        capture.packets.len(),
+        capture.total_packet_count,
         capture.dropped_frames,
     ))
 }
@@ -173,6 +356,17 @@ pub fn capture_packets(
     let (path, pd_ports, md_ports) =
         offline.ok_or_else(|| "TRDP capture source unavailable".to_string())?;
     capture_packets_from_file(&path, pd_ports, md_ports, offset, page_limit)
+}
+
+pub fn capture_summary(capture_id: &str) -> Result<TrdpCaptureSummary, String> {
+    let store = capture_store().lock().map_err(|error| error.to_string())?;
+    let capture = store
+        .get(capture_id)
+        .ok_or_else(|| "TRDP capture 不存在或已释放".to_string())?;
+    Ok(TrdpCaptureSummary {
+        packet_count: capture.total_packet_count,
+        flows: flow_summaries(&capture.flows),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -1064,6 +1258,7 @@ pub fn trdp_open_capture(
     path: String,
     pd_ports: Option<Vec<u16>>,
     md_ports: Option<Vec<u16>>,
+    expected_cycles: Option<HashMap<u32, u64>>,
 ) -> Result<TrdpCaptureResult, String> {
     let path_buf = PathBuf::from(&path);
     if !path_buf.is_file() {
@@ -1073,13 +1268,18 @@ pub fn trdp_open_capture(
         pd_ports.unwrap_or_else(|| vec![STANDARD_PD_PORT]),
         md_ports.unwrap_or_else(|| vec![STANDARD_MD_PORT]),
     );
+    let expected_cycles = expected_cycles.unwrap_or_default();
     let mut decoder = TrdpStreamDecoder::new(ports.pd.clone(), ports.md.clone());
     let mut packet_preview = std::collections::VecDeque::with_capacity(OPEN_PACKET_PREVIEW_LIMIT);
+    let mut flows = HashMap::new();
     let mut packet_count = 0usize;
     let mut frame_count = 0usize;
     visit_capture_file(&path_buf, |record| {
         match record {
-            CaptureRecord::SectionStart => decoder.reset(),
+            CaptureRecord::SectionStart => {
+                decoder.reset();
+                reset_flow_boundaries(&mut flows);
+            }
             CaptureRecord::Frame(frame) => {
                 frame_count = frame_count.saturating_add(1);
                 for packet in decoder.feed_frame(
@@ -1089,6 +1289,7 @@ pub fn trdp_open_capture(
                     &frame.link,
                 ) {
                     packet_count = packet_count.saturating_add(1);
+                    observe_flow(&mut flows, &expected_cycles, &packet);
                     if packet_preview.len() == OPEN_PACKET_PREVIEW_LIMIT {
                         packet_preview.pop_front();
                     }
@@ -1107,6 +1308,7 @@ pub fn trdp_open_capture(
         packet_count,
         dropped_frames: 0,
         packets: preview.clone(),
+        flows: flow_summaries(&flows),
     };
     capture_store()
         .lock()
@@ -1119,6 +1321,9 @@ pub fn trdp_open_capture(
                 pd_ports: ports.pd,
                 md_ports: ports.md,
                 packets: preview,
+                flows,
+                expected_cycles,
+                total_packet_count: packet_count,
                 dropped_frames: 0,
                 live: false,
             },
@@ -1331,6 +1536,61 @@ mod tests {
 
     fn default_ports() -> (Vec<u16>, Vec<u16>) {
         (vec![STANDARD_PD_PORT], vec![STANDARD_MD_PORT])
+    }
+
+    fn summary_packet(timestamp_us: u64, seq_count: u32) -> TrdpPacket {
+        TrdpPacket {
+            event: "packet".into(),
+            link: "A".into(),
+            timestamp_us,
+            src_ip: "10.0.0.1".into(),
+            dest_ip: "239.1.1.1".into(),
+            msg_type: "Pd".into(),
+            com_id: 1001,
+            seq_count,
+            data_len: 4,
+            crc_valid: Some(true),
+            protocol_valid: Some(true),
+            ..TrdpPacket::default()
+        }
+    }
+
+    #[test]
+    fn live_capture_summary_tracks_full_flow_statistics() {
+        let capture_id = create_live_capture(HashMap::from([(1001u32, 100u64)]));
+        let first = summary_packet(1_000, 1);
+        let second = summary_packet(1_120, 3);
+        append_live_capture(
+            &capture_id,
+            "A".into(),
+            1_000,
+            LINKTYPE_ETHERNET,
+            vec![0],
+            vec![first],
+        )
+        .expect("first append");
+        append_live_capture(
+            &capture_id,
+            "A".into(),
+            1_120,
+            LINKTYPE_ETHERNET,
+            vec![0],
+            vec![second],
+        )
+        .expect("second append");
+
+        let summary = capture_summary(&capture_id).expect("summary");
+        assert_eq!(summary.packet_count, 2);
+        assert_eq!(summary.flows.len(), 1);
+        let flow = &summary.flows[0];
+        assert_eq!(flow.count, 2);
+        assert_eq!(flow.missed, 1);
+        assert_eq!(flow.last_seq, Some(3));
+        assert_eq!(flow.min_interval_us, Some(120));
+        assert_eq!(flow.max_interval_us, Some(120));
+        assert_eq!(flow.avg_interval_us, Some(120.0));
+        assert_eq!(flow.jitter_us, Some(20.0));
+        release_capture(&capture_id);
     }
 
     fn finalize_udp_ipv4(frame: &mut [u8]) {
@@ -1606,7 +1866,7 @@ mod tests {
             },
         ];
         save_frames(Path::new(&path), frames).expect("save");
-        let reopened = trdp_open_capture(path, None, None).expect("open");
+        let reopened = trdp_open_capture(path, None, None, None).expect("open");
         assert_eq!(reopened.packet_count, 2);
         assert_eq!(reopened.packets[0].link, "A");
         assert_eq!(reopened.packets[1].link, "B");

@@ -483,8 +483,46 @@
   gap: 8px;
 }
 
+.analysisPaneHeader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.analysisPaneHeader .subheading {
+  margin: 0;
+}
+
+.packetPager {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.mutedInline {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
 .analysisTable {
   min-width: 560px;
+}
+
+.diagnosticTable {
+  min-width: 0;
+  table-layout: auto;
+}
+
+.diagnosticTable th,
+.diagnosticTable td {
+  white-space: normal;
 }
 
 .emptyInspector {
@@ -495,6 +533,23 @@
 
 .warningLine {
   margin-top: 4px;
+}
+
+@container session-pane (max-width: 700px) {
+  .diagnosticTable th,
+  .diagnosticTable td {
+    padding-inline: 6px;
+    font-size: 11px;
+  }
+
+  .analysisTable {
+    min-width: 520px;
+  }
+
+  .packetPager {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 
 @container session-pane (max-width: 900px) {

@@ -11,7 +11,7 @@ pub mod xml;
 
 use crate::commands::ConnectSessionRequest;
 use crate::kernel::plugin_adapter::SideChannel;
-use crate::kernel::session_store::ContainerSessionCreateOptions;
+use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionState};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -51,6 +51,7 @@ pub struct TrdpSideChannel {
     capture_id: Arc<Mutex<Option<String>>>,
     capture_control: Mutex<()>,
     object_states: Arc<Mutex<HashMap<String, String>>>,
+    confirmable_md_sessions: Arc<Mutex<HashSet<String>>>,
 }
 
 impl TrdpSideChannel {
@@ -73,6 +74,7 @@ impl TrdpSideChannel {
             capture_id: Arc::new(Mutex::new(None)),
             capture_control: Mutex::new(()),
             object_states: Arc::new(Mutex::new(HashMap::new())),
+            confirmable_md_sessions: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -112,6 +114,9 @@ impl TrdpSideChannel {
         self.alive.store(false, Ordering::Release);
         if let Ok(mut states) = self.object_states.lock() {
             states.clear();
+        }
+        if let Ok(mut sessions) = self.confirmable_md_sessions.lock() {
+            sessions.clear();
         }
         if let Ok(mut requests) = self.pending.lock() {
             for (_, waiter) in requests.drain() {
@@ -313,6 +318,7 @@ impl TrdpSideChannel {
         let lifecycle = Arc::clone(&self.lifecycle);
         let connected_announced = Arc::clone(&self.connected_announced);
         let object_states = Arc::clone(&self.object_states);
+        let confirmable_md_sessions = Arc::clone(&self.confirmable_md_sessions);
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             let mut decoder = capture::TrdpStreamDecoder::new(pd_ports, md_ports);
@@ -403,6 +409,45 @@ impl TrdpSideChannel {
                     continue;
                 }
 
+                if event_name.as_deref() == Some("packet")
+                    && payload.get("kind").and_then(Value::as_str) == Some("md")
+                {
+                    let session_uuid = payload
+                        .get("md_session_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    if let Some(session_uuid) = session_uuid {
+                        let terminal = payload
+                            .get("about_to_die")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        let confirmable = payload.get("msg_type").and_then(Value::as_str)
+                            == Some("Mq")
+                            && payload
+                                .get("result_code")
+                                .and_then(Value::as_i64)
+                                .unwrap_or_default()
+                                == 0
+                            && payload
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .is_some_and(|id| !id.is_empty())
+                            && !terminal;
+                        if let Ok(mut sessions) = confirmable_md_sessions.lock() {
+                            if terminal {
+                                sessions.remove(&session_uuid);
+                            } else if confirmable {
+                                sessions.insert(session_uuid.clone());
+                            }
+                        }
+                        if confirmable {
+                            if let Some(object) = payload.as_object_mut() {
+                                object.insert("can_confirm".into(), Value::Bool(true));
+                            }
+                        }
+                    }
+                }
+
                 // Native live-capture decoding is deliberately ignored. Raw
                 // capture frames are decoded above by the same Rust decoder
                 // used for offline pcap/pcapng, keeping one canonical model.
@@ -456,6 +501,9 @@ impl TrdpSideChannel {
 
             if let Ok(mut states) = object_states.lock() {
                 states.clear();
+            }
+            if let Ok(mut sessions) = confirmable_md_sessions.lock() {
+                sessions.clear();
             }
             let was_ready = ready.swap(false, Ordering::AcqRel);
             if was_ready && !shutting_down.load(Ordering::Acquire) {
@@ -545,24 +593,12 @@ impl SideChannel for TrdpSideChannel {
     }
 }
 
-/// Single connection router exposed to the frontend as `connect_session`.
-/// Non-TRDP requests delegate to the existing microkernel command; TRDP sessions
-/// use the container/side-channel runtime below. The Rust function name remains
-/// unique so Tauri's generated command symbols do not collide across modules.
-#[tauri::command(rename = "connect_session")]
-pub async fn connect_session_trdp(
+/// TRDP connection implementation called by the shared kernel connection router.
+pub async fn connect_session(
     app: AppHandle,
     state: State<'_, AppState>,
     request: ConnectSessionRequest,
 ) -> Result<String, String> {
-    let plugin_id = request
-        .plugin_id
-        .clone()
-        .unwrap_or_else(|| "serial".to_string());
-    if plugin_id != "trdp" {
-        return crate::commands::connect_session(app, state, request).await;
-    }
-
     let ConnectSessionRequest {
         endpoint,
         mut params,
@@ -1075,6 +1111,20 @@ pub fn trdp_command(
         return Ok(json!({ "objects": states }));
     }
 
+    let runtime_connected = {
+        let store = state
+            .session_store
+            .lock()
+            .map_err(|error| error.to_string())?;
+        matches!(
+            store.session_state(&session_id),
+            Some(SessionState::Connected | SessionState::Transferring)
+        )
+    };
+    if !runtime_connected {
+        return Err("TRDP runtime operation requires a connected session".to_string());
+    }
+
     if trdp
         .child
         .lock()
@@ -1093,7 +1143,14 @@ pub fn trdp_command(
             .lock()
             .map_err(|error| error.to_string())?
             .clone();
-        let new_capture = capture::create_live_capture();
+        let expected_cycles = command
+            .get("expected_cycles")
+            .cloned()
+            .map(serde_json::from_value::<HashMap<u32, u64>>)
+            .transpose()
+            .map_err(|error| format!("capture_start expected_cycles 无效: {error}"))?
+            .unwrap_or_default();
+        let new_capture = capture::create_live_capture(expected_cycles);
         *trdp.capture_id.lock().map_err(|error| error.to_string())? = Some(new_capture.clone());
 
         match trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT) {
@@ -1120,6 +1177,31 @@ pub fn trdp_command(
             .lock()
             .map_err(|error| error.to_string())?;
         return trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
+    }
+
+    if matches!(operation.as_str(), "md_confirm" | "md_abort") {
+        let md_session_id = command
+            .get("md_session_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("{operation} requires md_session_id"))?
+            .to_string();
+        if operation == "md_confirm" {
+            let owned = trdp
+                .confirmable_md_sessions
+                .lock()
+                .map_err(|error| error.to_string())?
+                .contains(&md_session_id);
+            if !owned {
+                return Err("当前 Node runtime 不拥有可确认的 MD ReplyQuery 事务".to_string());
+            }
+        }
+        let result = trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
+        if result.is_ok() {
+            if let Ok(mut sessions) = trdp.confirmable_md_sessions.lock() {
+                sessions.remove(&md_session_id);
+            }
+        }
+        return result;
     }
 
     let tracked_object = command
@@ -1287,8 +1369,9 @@ pub fn trdp_open_capture(
     path: String,
     pd_ports: Option<Vec<u16>>,
     md_ports: Option<Vec<u16>>,
+    expected_cycles: Option<HashMap<u32, u64>>,
 ) -> Result<capture::TrdpCaptureResult, String> {
-    capture::trdp_open_capture(path, pd_ports, md_ports)
+    capture::trdp_open_capture(path, pd_ports, md_ports, expected_cycles)
 }
 
 #[tauri::command]
@@ -1298,6 +1381,11 @@ pub fn trdp_capture_packets(
     limit: usize,
 ) -> Result<Vec<capture::TrdpPacket>, String> {
     capture::capture_packets(&capture_id, offset, limit)
+}
+
+#[tauri::command]
+pub fn trdp_capture_summary(capture_id: String) -> Result<capture::TrdpCaptureSummary, String> {
+    capture::capture_summary(&capture_id)
 }
 
 #[tauri::command]

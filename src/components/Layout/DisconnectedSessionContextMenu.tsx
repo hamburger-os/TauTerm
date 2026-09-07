@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useSession, type TabInfo } from "../../context/SessionContext";
+import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import type { ContextMenuState } from "../../hooks/useContextMenu";
 import ContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
@@ -23,7 +23,7 @@ export default function DisconnectedSessionContextMenu({
   onClose,
 }: DisconnectedSessionContextMenuProps) {
   const { t } = useTranslation();
-  const { connect, deleteSession } = useSession();
+  const { reconnectSession, deleteSession } = useSession();
   const [editSessionId, setEditSessionId] = useState<string | null>(null);
 
   const menuItems = useMemo<ContextMenuItem[]>(() => {
@@ -49,56 +49,16 @@ export default function DisconnectedSessionContextMenu({
     return items;
   }, [state.session, t]);
 
-  const reconnect = useCallback(async (tab: TabInfo, initialElevated = false) => {
-    if (tab.state !== "disconnected" || !tab.params) return;
-
-    let params = tab.params as Record<string, unknown>;
-    // Match Sidebar reconnect safety: a writable TFTP server exposed beyond loopback must be
-    // explicitly confirmed again if old persisted data does not contain literal true.
-    if (tab.pluginId === "tftp") {
-      const bindIp = String(params.listen_ip ?? "").trim().toLowerCase();
-      const loopback = bindIp === "127.0.0.1" || bindIp === "::1" || bindIp === "localhost";
-      if (
-        !loopback
-        && params.write_enabled === true
-        && params.overwrite === true
-        && params.exposure_confirmed !== true
-      ) {
-        const ok = window.confirm(
-          t("tftp.exposureWarning", {
-            defaultValue:
-              "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network.",
-          }),
-        );
-        if (!ok) return;
-        params = { ...params, exposure_confirmed: true };
-      }
-    }
-
-    await connect({
-      endpoint: tab.endpoint,
-      params,
-      name: tab.name,
-      pluginId: tab.pluginId,
-      transferEnabled: initialElevated ? false : tab.transferEnabled,
-      transferProtocol: tab.transferProtocol,
-      sendBarEnabled: tab.sendBarEnabled,
-      journaldEnabled: tab.journaldEnabled,
-      sessionId: tab.id,
-      initialElevated,
-    });
-  }, [connect, t]);
-
   const handleSelect = useCallback(async (itemId: string) => {
     const tab = state.session;
     if (!tab) return;
 
     switch (itemId) {
       case "connect":
-        await reconnect(tab, false);
+        await reconnectSession(tab.id);
         break;
       case "connect_elevated":
-        await reconnect(tab, true);
+        await reconnectSession(tab.id, true);
         break;
       case "configure":
         setEditSessionId(tab.id);
@@ -109,7 +69,7 @@ export default function DisconnectedSessionContextMenu({
         }
         break;
     }
-  }, [state.session, reconnect, deleteSession, t]);
+  }, [state.session, reconnectSession, deleteSession, t]);
 
   return (
     <>

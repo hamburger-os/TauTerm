@@ -15,7 +15,7 @@ registerPlugin({
     icon: "connection",
     content_type: "terminal",
     send_bar: true,
-    capabilities: ["connection", "transfer", "endpoint_discovery"],
+    capabilities: ["connection", "transfer", "endpoint_discovery", "session_logging"],
     transfer_protocols: ["ymodem", "xmodem", "zmodem"],
   },
   toolbarItems: [],

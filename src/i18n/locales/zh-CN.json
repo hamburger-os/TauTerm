@@ -1070,7 +1070,8 @@
       "clear": "清空",
       "confirm": "确认",
       "liveCapture": "实时抓包",
-      "refreshInterfaces": "刷新接口"
+      "refreshInterfaces": "刷新接口",
+      "liveCaptureSettings": "实时抓包设置"
     },
     "captureInterfaces": {
       "loading": "正在读取抓包接口…",
@@ -1187,7 +1188,8 @@
       "captureA": "抓包 A",
       "captureB": "抓包 B",
       "objects": "对象",
-      "activeObjects": "运行中"
+      "activeObjects": "运行中",
+      "validationNotPerformed": "未执行安全验证"
     },
     "inspector": {
       "notChecked": "未检查",
@@ -1205,7 +1207,8 @@
       "rawPayload": "原始 Payload",
       "noMapping": "没有对应的 Dataset 映射或可解码 Payload。",
       "importXmlToDecode": "导入 TRDP XML 文件以启用 Dataset 解码。",
-      "bytesDecoded": "字节已解码"
+      "bytesDecoded": "字节已解码",
+      "confirmUnavailable": "仅当前 Node runtime 拥有的 ReplyQuery 事务可发送 Confirm。"
     },
     "advanced": {
       "source": "源",
@@ -1267,6 +1270,13 @@
     "analysis": {
       "monitorHint": "实时抓包与离线文件共用同一套流、报文和 Dataset 检查器；只有选择实时抓包时才读取系统接口。",
       "nodeHint": "查看当前节点产生/接收的流量，也可打开抓包文件进行离线对照分析。"
+    },
+    "pagination": {
+      "newer": "较新",
+      "older": "较旧"
+    },
+    "errors": {
+      "connectRequired": "该操作需要先连接当前 TRDP 会话。离线抓包、XML 和 Workspace 分析仍可直接使用。"
     }
   }
 }

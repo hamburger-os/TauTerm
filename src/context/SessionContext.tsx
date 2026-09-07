@@ -489,6 +489,7 @@ interface SessionContextValue {
   fetchConnectionTypes: () => Promise<void>;
   refreshEndpoints: () => Promise<void>;
   connect: (opts: ConnectOptions) => Promise<string | null>;
+  reconnectSession: (sessionId: string, initialElevated?: boolean) => Promise<string | null>;
   createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
   disconnect: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
@@ -681,6 +682,51 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return null;
     }
   }, []);
+
+  /**
+   * Reconnect a saved/disconnected session through the same public connect path
+   * used by every protocol. Protocol-specific preflight belongs here instead of
+   * being duplicated by Sidebar and Pane context menus.
+   */
+  const reconnectSession = useCallback(async (
+    sessionId: string,
+    initialElevated = false,
+  ): Promise<string | null> => {
+    const tab = tabsRef.current.find(item => item.id === sessionId);
+    if (!tab || tab.state !== "disconnected" || !tab.params) return null;
+
+    let params = tab.params as Record<string, unknown>;
+    if (tab.pluginId === "tftp") {
+      const bindIp = String(params.listen_ip ?? "").trim().toLowerCase();
+      const loopback = bindIp === "127.0.0.1" || bindIp === "::1" || bindIp === "localhost";
+      if (
+        !loopback
+        && params.write_enabled === true
+        && params.overwrite === true
+        && params.exposure_confirmed !== true
+      ) {
+        const ok = window.confirm(i18n.t("tftp.exposureWarning", {
+          defaultValue:
+            "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network.",
+        }));
+        if (!ok) return null;
+        params = { ...params, exposure_confirmed: true };
+      }
+    }
+
+    return connect({
+      endpoint: tab.endpoint,
+      params,
+      name: tab.name,
+      pluginId: tab.pluginId,
+      transferEnabled: initialElevated ? false : tab.transferEnabled,
+      transferProtocol: tab.transferProtocol,
+      sendBarEnabled: tab.sendBarEnabled,
+      journaldEnabled: tab.journaldEnabled,
+      sessionId: tab.id,
+      initialElevated,
+    });
+  }, [connect]);
 
   const createOfflineSession = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => {
     dispatch({ type: "SET_ERROR", error: null });
@@ -1577,6 +1623,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       fetchConnectionTypes,
       refreshEndpoints,
       connect,
+      reconnectSession,
       createOfflineSession,
       disconnect,
       deleteSession,

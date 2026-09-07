@@ -16,7 +16,7 @@ registerPlugin({
     icon: "globe",
     content_type: "terminal",
     send_bar: true,
-    capabilities: ["connection"],
+    capabilities: ["connection", "session_logging"],
     transfer_protocols: [],
   },
   toolbarItems: [],
