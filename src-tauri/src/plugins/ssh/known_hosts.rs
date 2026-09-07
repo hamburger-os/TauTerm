@@ -185,14 +185,12 @@ impl Default for KnownHostStore {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn temp_path() -> PathBuf {
-        std::env::temp_dir()
-            .join(format!("tauterm-known-hosts-{}", uuid::Uuid::new_v4()))
+        std::env::temp_dir().join(format!("tauterm-known-hosts-{}", uuid::Uuid::new_v4()))
     }
 
     #[test]
@@ -207,9 +205,7 @@ mod tests {
             HostTrustDecision::Unknown
         );
 
-        store
-            .trust("example.test", 22, "SHA256:first")
-            .unwrap();
+        store.trust("example.test", 22, "SHA256:first").unwrap();
         assert_eq!(
             store.evaluate("example.test", 22, "SHA256:first"),
             HostTrustDecision::Trusted
