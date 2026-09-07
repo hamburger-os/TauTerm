@@ -113,6 +113,7 @@
     "status": "Status",
     "deletePersistFailed": "Failed to delete the saved session: {{error}}. The session remains in the list so you can retry.",
     "loadPersistFailed": "Failed to load saved sessions: {{error}}. The on-disk library was left untouched.",
+    "renamePersistFailed": "Failed to rename the saved session: {{error}}. The previous name was restored.",
     "displayOverflow": "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path. Wire data is not assumed lost, but the current view may be incomplete."
   },
   "stats": {
