@@ -34,7 +34,8 @@
 | `npm run check-com0com` | Windows com0com 分发文件与合规文件完整性检查 |
 | `npm run check-reserved-region` | 检查虚拟串口测试保留区与产品常量一致 |
 | `npm run check:brand-neutral-ui` | 检查产品 UI 与主题文案的品牌中性约束 |
-| `npm run check:split-layout` | Workspace/Split View 不变量回归 |
+| `npm run check:product-integrity`
+- `npm run check:split-layout` | Workspace/Split View 不变量回归 |
 | `npm run check:session-buffer` | 会话启动数据缓冲回归 |
 | `npm run check:icons -- --strict` | 图标资产严格检查 |
 | `npm run prompt:icon -- <key>` | 按图标语义规范生成提示词 |
