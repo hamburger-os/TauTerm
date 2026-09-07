@@ -41,7 +41,7 @@
  * the active TRDP tab look taller than its siblings while the pointer remains
  * over the tab after a click. Keep tab geometry invariant across all pages.
  */
-.navBar .navButton:hover:not(:disabled) {
+.root .navBar .navButton:hover:not(:disabled) {
   transform: none;
 }
 
