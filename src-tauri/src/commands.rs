@@ -1611,18 +1611,13 @@ pub fn rename_session(
     session_id: String,
     new_name: String,
 ) -> Result<(), String> {
-    SessionStore::rename_config_on_disk_transactional(
-        &app,
-        &session_id,
-        &new_name,
-        || {
-            let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-            if store.get_session(&session_id).is_some() {
-                store.rename_session(&session_id, &new_name)?;
-            }
-            Ok(())
-        },
-    )?;
+    SessionStore::rename_config_on_disk_transactional(&app, &session_id, &new_name, || {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        if store.get_session(&session_id).is_some() {
+            store.rename_session(&session_id, &new_name)?;
+        }
+        Ok(())
+    })?;
 
     let _ = app.emit(
         "session-renamed",
