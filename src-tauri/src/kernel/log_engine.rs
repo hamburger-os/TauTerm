@@ -37,6 +37,24 @@ static SESSION_LOG_ENABLED: AtomicBool = AtomicBool::new(true);
 static DROPPED_SESSION_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static DROPPED_SYSTEM_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
+fn record_log_loss(counter: &AtomicU64, stream: &str, reason: &str) {
+    let total = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    if total == 1 || total.is_power_of_two() {
+        eprintln!(
+            "TauTerm: {} log loss detected (count {}, latest: {})",
+            stream, total, reason
+        );
+    }
+}
+
+fn record_session_log_loss(reason: &str) {
+    record_log_loss(&DROPPED_SESSION_LOG_ENTRIES, "session", reason);
+}
+
+fn record_system_log_loss(reason: &str) {
+    record_log_loss(&DROPPED_SYSTEM_LOG_ENTRIES, "system", reason);
+}
+
 /// 系统日志最低级别过滤。
 ///
 /// 存储为字符串以支持运行时通过前端设置页动态切换。
@@ -90,7 +108,7 @@ impl Log for LogBridge {
                     })
                     .is_err()
                 {
-                    DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+                    record_system_log_loss("queue or file write failure");
                 }
             }
         }
@@ -132,7 +150,7 @@ fn try_send_session_log_when(
         return;
     }
     if sender.try_send(LogEntry::SessionData(entry)).is_err() {
-        DROPPED_SESSION_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+        record_session_log_loss("queue or file write failure");
     }
 }
 
@@ -154,7 +172,7 @@ pub fn try_send_system_event(
         })
         .is_err()
     {
-        DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+        record_system_log_loss("queue or file write failure");
     }
 }
 
@@ -525,7 +543,12 @@ impl LogEngine {
                             if let Some(mut writer) = writers.remove(&session_id) {
                                 let file_name = writer.file_name();
                                 let bytes = writer.bytes_written();
-                                let _ = writer.flush();
+                                if let Err(error) = writer.flush() {
+                                    record_session_log_loss(&format!(
+                                        "session {} final flush failed: {}",
+                                        session_id, error
+                                    ));
+                                }
                                 log::info!("日志记录已停止: {} (写入 {} 字节)", file_name, bytes);
                             }
                             if let Ok(mut map) = active_logs.lock() {
@@ -533,12 +556,20 @@ impl LogEngine {
                             }
                         }
                         LogCommand::StopAllSessions => {
+                            let stopped = writers.len();
                             for (session_id, mut writer) in writers.drain() {
-                                let _ = writer.flush();
-                                log::info!("全局会话日志已关闭，停止记录: {}", session_id);
+                                if let Err(error) = writer.flush() {
+                                    record_session_log_loss(&format!(
+                                        "session {} final flush failed: {}",
+                                        session_id, error
+                                    ));
+                                }
                             }
                             if let Ok(mut map) = active_logs.lock() {
                                 map.clear();
+                            }
+                            if stopped > 0 {
+                                log::info!("全局会话日志已关闭，停止 {} 个活动日志", stopped);
                             }
                         }
                         LogCommand::Shutdown => {
@@ -548,13 +579,21 @@ impl LogEngine {
                         LogCommand::ReopenAfterClear => {
                             // 关闭系统日志句柄，下次 SystemEvent 自动按日期重建
                             if let Some(mut w) = system_writer.take() {
-                                let _ = w.flush();
+                                if let Err(error) = w.flush() {
+                                    record_system_log_loss(&format!(
+                                        "system log flush before reopen failed: {}",
+                                        error
+                                    ));
+                                }
                             }
                             system_date = None;
                             // 每个会话日志 writer 分卷到新文件
                             for (sid, writer) in writers.iter_mut() {
                                 if let Err(e) = writer.reopen() {
-                                    log::error!("日志重新打开失败 (会话 {}): {}", sid, e);
+                                    record_session_log_loss(&format!(
+                                        "session {} reopen failed: {}",
+                                        sid, e
+                                    ));
                                 }
                             }
                             log::info!("日志文件已清除，所有写入器已重新打开");
@@ -568,8 +607,10 @@ impl LogEngine {
                     }
                     if let Some(writer) = writers.get_mut(&entry.session_id) {
                         if let Err(e) = writer.write_entry(&entry) {
-                            DROPPED_SESSION_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
-                            log::error!("日志写入失败 (会话 {}): {}", entry.session_id, e);
+                            record_session_log_loss(&format!(
+                                "session {} write failed: {}",
+                                entry.session_id, e
+                            ));
                         }
                         // 更新活跃日志状态（每 ~10 条更新一次，减少锁竞争）
                         status_update_counter += 1;
@@ -597,7 +638,12 @@ impl LogEngine {
                     if system_date.as_deref() != Some(&today) {
                         // 关闭旧文件
                         if let Some(mut w) = system_writer.take() {
-                            let _ = w.flush();
+                            if let Err(error) = w.flush() {
+                                record_system_log_loss(&format!(
+                                    "system log rotation flush failed: {}",
+                                    error
+                                ));
+                            }
                         }
                         // 打开新文件
                         let sys_filename = format!("TauTerm_{}.log", today);
@@ -613,8 +659,11 @@ impl LogEngine {
                                 system_date = Some(today);
                             }
                             Err(e) => {
-                                DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
-                                eprintln!("TauTerm: 无法打开系统日志文件 {:?}: {}", sys_path, e);
+                                record_system_log_loss("queue or file write failure");
+                                record_system_log_loss(&format!(
+                                    "cannot open system log file {:?}: {}",
+                                    sys_path, e
+                                ));
                                 system_date = None;
                                 continue;
                             }
@@ -627,8 +676,7 @@ impl LogEngine {
                         let line =
                             format!("[{}] [{}] {}\n", ts, level.to_uppercase(), sanitized_msg);
                         if let Err(error) = w.write_all(line.as_bytes()) {
-                            DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
-                            eprintln!("TauTerm: 系统日志写入失败: {}", error);
+                            record_system_log_loss(&format!("system log write failed: {}", error));
                             true
                         } else {
                             false
@@ -643,11 +691,21 @@ impl LogEngine {
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // 超时：flush 所有活跃 writer 的非空缓冲区
-                    for writer in writers.values_mut() {
-                        let _ = writer.flush();
+                    for (session_id, writer) in writers.iter_mut() {
+                        if let Err(error) = writer.flush() {
+                            record_session_log_loss(&format!(
+                                "session {} periodic flush failed: {}",
+                                session_id, error
+                            ));
+                        }
                     }
                     if let Some(ref mut w) = system_writer {
-                        let _ = w.flush();
+                        if let Err(error) = w.flush() {
+                            record_system_log_loss(&format!(
+                                "system log periodic flush failed: {}",
+                                error
+                            ));
+                        }
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -666,11 +724,16 @@ impl LogEngine {
     ) {
         for (session_id, writer) in writers.iter_mut() {
             if let Err(e) = writer.flush() {
-                log::error!("日志最终 flush 失败 (会话 {}): {}", session_id, e);
+                record_session_log_loss(&format!(
+                    "session {} final flush failed: {}",
+                    session_id, e
+                ));
             }
         }
         if let Some(ref mut w) = system_writer {
-            let _ = w.flush();
+            if let Err(error) = w.flush() {
+                record_system_log_loss(&format!("system log final flush failed: {}", error));
+            }
         }
         if let Ok(mut map) = active_logs.lock() {
             map.clear();
