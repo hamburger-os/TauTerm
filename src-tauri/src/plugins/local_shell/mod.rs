@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 #[cfg(windows)]
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const MAX_ARGUMENTS: usize = 64;
 const MAX_ARGUMENT_LENGTH: usize = 4096;
@@ -569,20 +569,62 @@ fn validate_wsl_path_syntax(path: &str) -> Result<(), String> {
 
 #[cfg(windows)]
 fn detect_wsl_distributions(wsl: &Path) -> Vec<String> {
-    let output = match Command::new(wsl).args(["--list", "--quiet"]).output() {
-        Ok(output) if output.status.success() => output,
-        Ok(output) => {
-            log::warn!(
-                "Linux subsystem distribution discovery failed: {}",
-                decode_windows_output(&output.stderr)
-            );
-            return vec![];
-        }
+    // WSL 服务异常、首次初始化或发行版注册损坏时，`wsl --list` 可能长时间
+    // 不返回。端点发现只用于配置 UI，不允许它成为打开会话配置页的无界阻塞点。
+    const DISCOVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+    let mut child = match Command::new(wsl)
+        .args(["--list", "--quiet"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
         Err(error) => {
             log::warn!("Unable to enumerate Linux subsystem distributions: {error}");
             return vec![];
         }
     };
+
+    let deadline = std::time::Instant::now() + DISCOVERY_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Ok(None) => {
+                log::warn!(
+                    "Linux subsystem distribution discovery exceeded {:?}; skipping presets",
+                    DISCOVERY_TIMEOUT
+                );
+                let _ = child.kill();
+                let _ = child.wait();
+                return vec![];
+            }
+            Err(error) => {
+                log::warn!("Unable to poll Linux subsystem discovery: {error}");
+                let _ = child.kill();
+                let _ = child.wait();
+                return vec![];
+            }
+        }
+    };
+
+    let output = match child.wait_with_output() {
+        Ok(output) => output,
+        Err(error) => {
+            log::warn!("Unable to collect Linux subsystem discovery output: {error}");
+            return vec![];
+        }
+    };
+    if !status.success() {
+        log::warn!(
+            "Linux subsystem distribution discovery failed: {}",
+            decode_windows_output(&output.stderr)
+        );
+        return vec![];
+    }
 
     let mut seen = HashSet::new();
     decode_windows_output(&output.stdout)
