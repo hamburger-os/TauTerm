@@ -147,6 +147,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     if (!isOpen) {
       ++endpointRefreshRequestRef.current;
       setRefreshingEndpoints(false);
+      setSshPassword("");
+      setSshPrivateKey("");
+      setSshPassphrase("");
       setStep("mode");
       return;
     }
@@ -173,13 +176,15 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           if (typeof p.dual_frame_timeout_ms === "number") setDualFrameTimeout(p.dual_frame_timeout_ms);
           // SSH 字段回填
           if (targetTab.connection_type === "ssh" || targetTab.pluginId === "ssh") {
+            // 已保存 SSH 凭据只以 credential_account 引用存在于 Session；
+            // 编辑表单从不回填密码、私钥或 passphrase，避免秘密重新进入 WebView 状态。
+            setSshPassword("");
+            setSshPrivateKey("");
+            setSshPassphrase("");
             if (typeof p.host === "string") setSshHost(p.host);
             if (typeof p.port === "number") setSshPort(p.port);
             if (typeof p.username === "string") setSshUsername(p.username);
             if (typeof p.auth_method === "string") setSshAuthMethod(p.auth_method as "password" | "key");
-            if (typeof p.password === "string") setSshPassword(p.password);
-            if (typeof p.private_key === "string") setSshPrivateKey(p.private_key);
-            if (typeof p.passphrase === "string") setSshPassphrase(p.passphrase);
             if (typeof p.file_service_enabled === "boolean") setFileServiceEnabled(p.file_service_enabled);
             if (typeof p.send_bar_enabled === "boolean") setSshSendBarEnabled(p.send_bar_enabled);
             if (typeof p.transfer_enabled === "boolean") setSshTransferEnabled(p.transfer_enabled);
