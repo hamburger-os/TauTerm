@@ -80,7 +80,7 @@ impl KnownHostStore {
         match serde_json::from_str::<KnownHostsFile>(&raw) {
             Ok(file) if file.version == KNOWN_HOSTS_VERSION => Ok(file.hosts),
             Ok(file) => {
-                Self::backup_invalid(path);
+                Self::backup_invalid(path)?;
                 log::warn!(
                     "SSH known-host 版本 {} 不受支持（expected {}）；将重新询问主机信任",
                     file.version,
@@ -89,16 +89,18 @@ impl KnownHostStore {
                 Ok(HashMap::new())
             }
             Err(error) => {
-                Self::backup_invalid(path);
+                Self::backup_invalid(path)?;
                 log::warn!("SSH known-host 文件损坏: {error}；将重新询问主机信任");
                 Ok(HashMap::new())
             }
         }
     }
 
-    fn backup_invalid(path: &Path) {
+    fn backup_invalid(path: &Path) -> Result<(), String> {
         let backup = path.with_extension("json.invalid.bak");
-        let _ = std::fs::copy(path, backup);
+        std::fs::copy(path, backup)
+            .map(|_| ())
+            .map_err(|e| format!("备份无效 SSH known-host 文件失败: {e}"))
     }
 
     fn key(host: &str, port: u16) -> String {
