@@ -31,7 +31,7 @@ use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
 use crate::virtual_port::backend::VirtualEndpoint;
 use crate::virtual_port::bridge::VirtualPortBridge;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
@@ -1685,29 +1685,6 @@ impl SessionStore {
         }
     }
 
-    /// 获取持久化会话列表
-    pub fn get_saved_sessions(&self) -> Vec<SavedSession> {
-        let mut result: Vec<SavedSession> = Vec::new();
-        for h in self.sessions.values() {
-            // 父会话
-            result.push(SavedSession {
-                id: h.id.clone(),
-                name: h.name.clone(),
-                plugin_id: h.plugin_id.clone(),
-                endpoint: h.endpoint.clone(),
-                params: h.params.clone(),
-                timestamp: chrono::Utc::now().timestamp_millis() as u64,
-                transfer_enabled: h.transfer_enabled,
-                transfer_protocol: h.transfer_protocol.clone(),
-                send_bar_enabled: h.send_bar_enabled,
-                virtual_port_enabled: h.virtual_port_enabled(),
-                virtual_port_count: h.virtual_port_count(),
-            });
-            // 子连接不持久化：通道是运行时概念，断开即清理
-        }
-        result
-    }
-
     /// 重连指定会话
     /// TODO: 暴露为 Tauri 命令并在前端 ConnectDialog 编辑模式中使用，
     /// 以保留 UUID 和 I/O 统计连续性（当前前端使用 delete+create 方式）。
@@ -2089,40 +2066,6 @@ impl SessionStore {
         std::fs::copy(path, &backup)
             .map(|_| ())
             .map_err(|e| format!("备份无效会话库失败: {}", e))
-    }
-
-    /// 保存运行时根 Session 的最新配置到版本化 Session Library。
-    ///
-    /// Saved Session Library 与 active runtime 数量是两个概念；没有运行中的 Session
-    /// 不会清空磁盘 Library。
-    pub fn save_to_disk(&self, path: &std::path::Path) -> Result<(), String> {
-        let _guard = SESSIONS_FILE_MUTEX
-            .lock()
-            .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let current: Vec<SavedSession> = self.get_saved_sessions();
-        if current.is_empty() {
-            return Ok(());
-        }
-        let existing = Self::load_from_disk_unlocked(path)?;
-
-        let current_ids: HashSet<String> = current.iter().map(|s| s.id.clone()).collect();
-        let mut merged: Vec<SavedSession> = existing
-            .into_iter()
-            .filter(|s| !current_ids.contains(&s.id))
-            .collect();
-        merged.extend(current);
-
-        let mut dedup: HashMap<String, SavedSession> = HashMap::new();
-        for session in merged {
-            if current_ids.contains(&session.id) {
-                dedup.insert(session.id.clone(), session);
-            } else {
-                dedup.entry(session.id.clone()).or_insert(session);
-            }
-        }
-        let mut sessions: Vec<SavedSession> = dedup.into_values().collect();
-        sessions.sort_by_key(|session| session.timestamp);
-        Self::write_library(path, sessions)
     }
 
     /// 从磁盘加载当前 Session Library schema。
