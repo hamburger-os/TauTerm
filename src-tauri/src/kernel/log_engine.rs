@@ -205,8 +205,10 @@ pub enum LogCommand {
     StopAllSessions,
     /// 优雅关闭消费者线程
     Shutdown,
-    /// 清除日志文件后重新打开所有写入器（系统日志 + 会话日志）
-    ReopenAfterClear,
+    /// 在消费者线程内关闭句柄、删除日志并恢复活动 Session writer。
+    ClearAll {
+        response: mpsc::SyncSender<Result<(), String>>,
+    },
 }
 
 /// 数据日志条目（会话 TX/RX 数据）
@@ -594,27 +596,87 @@ impl LogEngine {
                             Self::flush_all(&mut writers, &active_logs, &mut system_writer);
                             return;
                         }
-                        LogCommand::ReopenAfterClear => {
-                            // 关闭系统日志句柄，下次 SystemEvent 自动按日期重建
-                            if let Some(mut w) = system_writer.take() {
-                                if let Err(error) = w.flush() {
+                        LogCommand::ClearAll { response } => {
+                            let mut errors = Vec::new();
+
+                            if let Some(mut writer) = system_writer.take() {
+                                if let Err(error) = writer.flush() {
                                     record_system_log_loss(&format!(
-                                        "system log flush before reopen failed: {}",
+                                        "system log flush before clear failed: {}",
                                         error
                                     ));
+                                    errors.push(format!("system log flush failed: {}", error));
                                 }
                             }
                             system_date = None;
-                            // 每个会话日志 writer 分卷到新文件
-                            for (sid, writer) in writers.iter_mut() {
-                                if let Err(e) = writer.reopen() {
+
+                            for (session_id, writer) in writers.iter_mut() {
+                                if let Err(error) = writer.close() {
                                     record_session_log_loss(&format!(
-                                        "session {} reopen failed: {}",
-                                        sid, e
+                                        "session {} close before clear failed: {}",
+                                        session_id, error
+                                    ));
+                                    errors.push(format!(
+                                        "session {} close failed: {}",
+                                        session_id, error
                                     ));
                                 }
                             }
-                            log::info!("日志文件已清除，所有写入器已重新打开");
+
+                            match std::fs::read_dir(&cfg.log_dir) {
+                                Ok(entries) => {
+                                    for entry in entries.flatten() {
+                                        let path = entry.path();
+                                        if path.extension().is_none_or(|ext| ext != "log") {
+                                            continue;
+                                        }
+                                        if let Err(error) = std::fs::remove_file(&path) {
+                                            errors.push(format!(
+                                                "delete {:?} failed: {}",
+                                                path, error
+                                            ));
+                                        }
+                                    }
+                                }
+                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                                Err(error) => errors.push(format!(
+                                    "read log directory {:?} failed: {}",
+                                    cfg.log_dir, error
+                                )),
+                            }
+
+                            let mut failed_sessions = Vec::new();
+                            for (session_id, writer) in writers.iter_mut() {
+                                if let Err(error) = writer.reopen() {
+                                    record_session_log_loss(&format!(
+                                        "session {} reopen after clear failed: {}",
+                                        session_id, error
+                                    ));
+                                    errors.push(format!(
+                                        "session {} reopen failed: {}",
+                                        session_id, error
+                                    ));
+                                    failed_sessions.push(session_id.clone());
+                                } else if let Ok(mut map) = active_logs.lock() {
+                                    if let Some(status) = map.get_mut(session_id) {
+                                        status.file_name = writer.file_name();
+                                        status.bytes_written = writer.bytes_written();
+                                    }
+                                }
+                            }
+                            for session_id in failed_sessions {
+                                writers.remove(&session_id);
+                                if let Ok(mut map) = active_logs.lock() {
+                                    map.remove(&session_id);
+                                }
+                            }
+
+                            if errors.is_empty() {
+                                log::info!("所有日志文件已清除，活动 Session writer 已重新打开");
+                                let _ = response.send(Ok(()));
+                            } else {
+                                let _ = response.send(Err(errors.join("; ")));
+                            }
                         }
                     }
                 }
