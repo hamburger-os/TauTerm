@@ -6,16 +6,6 @@ import GlassButton from "../../common/GlassButton";
 import OptionButton from "../../common/OptionButton";
 import styles from "../SettingsPage.module.css";
 
-const STORAGE_KEYS = {
-  systemEnabled: "tauterm-log-system-enabled",
-  systemLevel: "tauterm-log-system-level",
-  enabled: "tauterm-log-enabled",
-  fileMaxSize: "tauterm-log-file-max-size",
-  bufferSize: "tauterm-log-buffer-size",
-  flushInterval: "tauterm-log-flush-interval",
-  retentionDays: "tauterm-log-retention-days",
-};
-
 const LOG_LEVELS = [
   { value: "error", labelKey: "logging.levelError" },
   { value: "warn", labelKey: "logging.levelWarn" },
@@ -23,91 +13,93 @@ const LOG_LEVELS = [
   { value: "debug", labelKey: "logging.levelDebug" },
 ];
 
-function getStored<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
+interface LogHealth {
+  dropped_session_entries: number;
+  dropped_system_entries: number;
 }
 
 export default function LoggingSettings() {
   const { t } = useTranslation();
 
-  // System log state
-  const [systemEnabled, setSystemEnabled] = useState(() => getStored(STORAGE_KEYS.systemEnabled, true));
-  const [systemLevel, setSystemLevel] = useState(() => getStored(STORAGE_KEYS.systemLevel, "info"));
-
-  // Session data log state
-  const [enabled, setEnabled] = useState(() => getStored(STORAGE_KEYS.enabled, true));
-  const [fileMaxSize, setFileMaxSize] = useState(() => getStored(STORAGE_KEYS.fileMaxSize, 10));
-  const [bufferSize, setBufferSize] = useState(() => getStored(STORAGE_KEYS.bufferSize, 4096));
-  const [flushInterval, setFlushInterval] = useState(() => getStored(STORAGE_KEYS.flushInterval, 500));
-  const [retentionDays, setRetentionDays] = useState(() => getStored(STORAGE_KEYS.retentionDays, 7));
+  const [systemEnabled, setSystemEnabled] = useState(true);
+  const [systemLevel, setSystemLevel] = useState("info");
+  const [enabled, setEnabled] = useState(true);
+  const [fileMaxSize, setFileMaxSize] = useState(10);
+  const [bufferSize, setBufferSize] = useState(4096);
+  const [flushInterval, setFlushInterval] = useState(500);
+  const [retentionDays, setRetentionDays] = useState(7);
   const [logDir, setLogDir] = useState("");
+  const [hydrated, setHydrated] = useState(false);
+  const [health, setHealth] = useState<LogHealth>({
+    dropped_session_entries: 0,
+    dropped_system_entries: 0,
+  });
 
-  // ── Mount: load config from Rust as source of truth ──
-  // localStorage 可能被清除或过期，首次加载时从 Rust 获取当前配置
-  // 仅在 localStorage 无缓存值时使用 Rust 配置（用户修改优先）
   useEffect(() => {
+    let cancelled = false;
     invoke<{
-      enabled: boolean;
+      system_enabled: boolean;
+      system_level: string;
+      session_enabled: boolean;
       log_dir: string;
       file_max_size: number;
       buffer_size: number;
       flush_interval_ms: number;
       retention_days: number;
-    }>("get_log_config").then(config => {
-      if (config.log_dir) setLogDir(config.log_dir);
-      // 仅在 localStorage 无缓存时使用 Rust 配置填充（保留用户修改）
-      if (localStorage.getItem(STORAGE_KEYS.enabled) === null) {
-        setEnabled(config.enabled);
-        persist(STORAGE_KEYS.enabled, config.enabled);
-      }
-      if (localStorage.getItem(STORAGE_KEYS.fileMaxSize) === null) {
-        const sizeMB = Math.round(config.file_max_size / (1024 * 1024));
-        setFileMaxSize(sizeMB);
-        persist(STORAGE_KEYS.fileMaxSize, sizeMB);
-      }
-      if (localStorage.getItem(STORAGE_KEYS.bufferSize) === null) {
+    }>("get_log_config")
+      .then(config => {
+        if (cancelled) return;
+        setSystemEnabled(config.system_enabled);
+        setSystemLevel(config.system_level);
+        setEnabled(config.session_enabled);
+        setLogDir(config.log_dir);
+        setFileMaxSize(Math.max(1, Math.round(config.file_max_size / (1024 * 1024))));
         setBufferSize(config.buffer_size);
-        persist(STORAGE_KEYS.bufferSize, config.buffer_size);
-      }
-      if (localStorage.getItem(STORAGE_KEYS.flushInterval) === null) {
         setFlushInterval(config.flush_interval_ms);
-        persist(STORAGE_KEYS.flushInterval, config.flush_interval_ms);
-      }
-      if (localStorage.getItem(STORAGE_KEYS.retentionDays) === null) {
         setRetentionDays(config.retention_days);
-        persist(STORAGE_KEYS.retentionDays, config.retention_days);
-      }
-    }).catch(() => {
-      // Rust 配置加载失败，回退到 get_log_dir + localStorage 默认值
-      invoke<string>("get_log_dir").then(dir => {
-        if (dir) setLogDir(dir);
-      }).catch(() => {});
-    });
+        setHydrated(true);
+      })
+      .catch(() => {
+        if (!cancelled) setHydrated(true);
+      });
+    return () => { cancelled = true; };
   }, []);
 
-  // Sync system log config to Rust immediately on change
   useEffect(() => {
+    if (!hydrated) return;
     invoke("set_system_log_config", { enabled: systemEnabled, level: systemLevel }).catch(() => {});
-  }, [systemEnabled, systemLevel]);
+  }, [hydrated, systemEnabled, systemLevel]);
 
-  // Sync session log config to Rust immediately on change
   useEffect(() => {
+    if (!hydrated) return;
     invoke("update_log_config", {
       config: {
-        enabled,
+        session_enabled: enabled,
         file_max_size: fileMaxSize * 1024 * 1024,
         buffer_size: bufferSize,
         flush_interval_ms: flushInterval,
         retention_days: retentionDays,
       },
     }).catch(() => {});
-  }, [enabled, fileMaxSize, bufferSize, flushInterval, retentionDays]);
+  }, [hydrated, enabled, fileMaxSize, bufferSize, flushInterval, retentionDays]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const next = await invoke<LogHealth>("get_log_health");
+        if (!cancelled) setHealth(next);
+      } catch {
+        // Health telemetry is diagnostic; settings remain usable if the query fails.
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const handleOpenLogDir = useCallback(() => {
     invoke("open_log_dir").catch(() => {});
@@ -122,10 +114,6 @@ export default function LoggingSettings() {
     });
   }, [t]);
 
-  const persist = useCallback((key: string, value: unknown) => {
-    localStorage.setItem(key, JSON.stringify(value));
-  }, []);
-
   return (
     <div>
       <h3 className={styles.panelTitle}>{t("settings.logging")}</h3>
@@ -139,10 +127,10 @@ export default function LoggingSettings() {
 
         <span className={styles.settingLabel}>{t("logging.systemLogStatus") || "Status"}</span>
         <div className={styles.optionList}>
-          <OptionButton selected={systemEnabled} onClick={() => { setSystemEnabled(true); persist(STORAGE_KEYS.systemEnabled, true); }}>
+          <OptionButton selected={systemEnabled} onClick={() => setSystemEnabled(true)}>
             {t("common.ok")}
           </OptionButton>
-          <OptionButton selected={!systemEnabled} onClick={() => { setSystemEnabled(false); persist(STORAGE_KEYS.systemEnabled, false); }}>
+          <OptionButton selected={!systemEnabled} onClick={() => setSystemEnabled(false)}>
             {t("common.cancel")}
           </OptionButton>
         </div>
@@ -153,7 +141,7 @@ export default function LoggingSettings() {
             <OptionButton
               key={lv.value}
               selected={systemLevel === lv.value}
-              onClick={() => { setSystemLevel(lv.value); persist(STORAGE_KEYS.systemLevel, lv.value); }}
+              onClick={() => setSystemLevel(lv.value)}
             >
               {t(lv.labelKey)}
             </OptionButton>
@@ -168,12 +156,22 @@ export default function LoggingSettings() {
           {t("logging.sessionLogDesc") || "Right-click a session → 'Start Logging' to record all TX/RX data to file."}
         </p>
 
+        {(health.dropped_session_entries > 0 || health.dropped_system_entries > 0) && (
+          <p className={styles.settingDesc} role="status">
+            {t("logging.lossWarning", {
+              defaultValue: "Logging overflow detected — session: {{session}}, system: {{system}}. The affected log stream may be incomplete.",
+              session: health.dropped_session_entries,
+              system: health.dropped_system_entries,
+            })}
+          </p>
+        )}
+
         <span className={styles.settingLabel}>{t("logging.enableLogging") || "Enable Session Logging"}</span>
         <div className={styles.optionList}>
-          <OptionButton selected={enabled} onClick={() => { setEnabled(true); persist(STORAGE_KEYS.enabled, true); }}>
+          <OptionButton selected={enabled} onClick={() => setEnabled(true)}>
             {t("common.ok")}
           </OptionButton>
-          <OptionButton selected={!enabled} onClick={() => { setEnabled(false); persist(STORAGE_KEYS.enabled, false); }}>
+          <OptionButton selected={!enabled} onClick={() => setEnabled(false)}>
             {t("common.cancel")}
           </OptionButton>
         </div>
@@ -195,7 +193,7 @@ export default function LoggingSettings() {
             max={100}
             step={1}
             value={fileMaxSize}
-            onChange={(e) => { setFileMaxSize(Number(e.target.value)); persist(STORAGE_KEYS.fileMaxSize, Number(e.target.value)); }}
+            onChange={(e) => setFileMaxSize(Number(e.target.value))}
           />
           <span className={styles.fontSliderValue}>{fileMaxSize} MB</span>
         </div>
@@ -212,7 +210,6 @@ export default function LoggingSettings() {
             onChange={(e) => {
               const kb = Number(e.target.value);
               setBufferSize(kb * 1024);
-              persist(STORAGE_KEYS.bufferSize, kb * 1024);
             }}
           />
           <span className={styles.fontSliderValue}>{Math.round(bufferSize / 1024)} KB</span>
@@ -227,7 +224,7 @@ export default function LoggingSettings() {
             max={2000}
             step={100}
             value={flushInterval}
-            onChange={(e) => { setFlushInterval(Number(e.target.value)); persist(STORAGE_KEYS.flushInterval, Number(e.target.value)); }}
+            onChange={(e) => setFlushInterval(Number(e.target.value))}
           />
           <span className={styles.fontSliderValue}>{flushInterval} ms</span>
         </div>
@@ -241,7 +238,7 @@ export default function LoggingSettings() {
             max={90}
             step={1}
             value={retentionDays}
-            onChange={(e) => { setRetentionDays(Number(e.target.value)); persist(STORAGE_KEYS.retentionDays, Number(e.target.value)); }}
+            onChange={(e) => setRetentionDays(Number(e.target.value))}
           />
           <span className={styles.fontSliderValue}>{retentionDays} {t("logging.days") || "days"}</span>
         </div>
