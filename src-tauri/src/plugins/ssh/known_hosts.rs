@@ -25,7 +25,7 @@ struct KnownHostsFile {
     hosts: HashMap<String, KnownHostRecord>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostTrustDecision {
     Trusted,
     Unknown,
@@ -182,5 +182,52 @@ impl KnownHostStore {
 impl Default for KnownHostStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_path() -> PathBuf {
+        std::env::temp_dir()
+            .join(format!("tauterm-known-hosts-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn known_host_trust_persists_and_changed_key_fails_closed() {
+        let dir = temp_path();
+        let path = dir.join("known_hosts.json");
+
+        let store = KnownHostStore::new();
+        store.configure(path.clone()).unwrap();
+        assert_eq!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Unknown
+        );
+
+        store
+            .trust("example.test", 22, "SHA256:first")
+            .unwrap();
+        assert_eq!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Trusted
+        );
+        assert_eq!(
+            store.evaluate("example.test", 22, "SHA256:changed"),
+            HostTrustDecision::Changed {
+                expected_fingerprint: "SHA256:first".to_string(),
+            }
+        );
+
+        let reopened = KnownHostStore::new();
+        reopened.configure(path).unwrap();
+        assert_eq!(
+            reopened.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Trusted
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
