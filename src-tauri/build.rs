@@ -3,8 +3,7 @@ fn main() {
     // beforeBundleCommand generates the real dependency notice file.
     {
         let generated = std::path::Path::new("generated");
-        std::fs::create_dir_all(generated)
-            .expect("failed to create generated resource directory");
+        std::fs::create_dir_all(generated).expect("failed to create generated resource directory");
         let notice = generated.join("THIRD_PARTY_DEPENDENCY_LICENSES.txt");
         if !notice.exists() {
             std::fs::write(&notice, b"TAUTERM_THIRD_PARTY_NOTICE_PLACEHOLDER\n")
