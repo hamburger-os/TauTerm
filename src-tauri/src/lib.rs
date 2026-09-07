@@ -1,6 +1,6 @@
-//! TauTerm - 跨平台全功能终端模拟器
+//! TauTerm - 面向连接系统的本地优先工程工作台
 //!
-//! 基于 Tauri v2 的微内核插件架构终端模拟器。
+//! 基于 Tauri v2 + Rust 的插件化工程工作台运行时。
 //!
 //! ## 架构
 //!
@@ -9,9 +9,8 @@
 //! - **Channel**: 统一 I/O 抽象，`SerialChannel` 包装串口端口
 //! - **Session Store**: 管理活跃会话的 I/O 线程生命周期（`kernel/session_store`）
 //! - **Transfer Manager**: 三策略传输路由（`transfer/manager`）
-//! - **Config Store**: 类型安全配置存储（`kernel/config_store`）
+//! - **Config Store**: 版本化非敏感配置/工程资产存储（`kernel/config_store`）
 //! - **Theme Engine**: CSS 变量主题切换（`kernel/theme_engine`）
-//! - **Tab Host**: 标签页 CRUD（`kernel/tab_host`）
 //! - **Content Renderers**: content_type 驱动的渲染器系统（前端 `renderers/`）
 
 mod channel;
@@ -29,6 +28,7 @@ pub fn maybe_run_elevated_shell_helper() -> bool {
 
 use kernel::config_store::ConfigStore;
 use kernel::log_engine::{LogBridge, LogConfig, LogEngine};
+use kernel::plugin_adapter::PluginManifest;
 use kernel::plugin_host::PluginHost;
 use kernel::session_store::SessionStore;
 use kernel::theme_engine::ThemeEngine;
@@ -70,6 +70,25 @@ pub struct AppState {
     pub virtual_port_manager: Mutex<Box<dyn VirtualPortBackend>>,
 }
 
+
+fn built_in_plugin_manifests() -> Vec<PluginManifest> {
+    const MANIFESTS: [&str; 8] = [
+        include_str!("../../src/plugin-manifests/serial.json"),
+        include_str!("../../src/plugin-manifests/ssh.json"),
+        include_str!("../../src/plugin-manifests/telnet.json"),
+        include_str!("../../src/plugin-manifests/local-shell.json"),
+        include_str!("../../src/plugin-manifests/tftp.json"),
+        include_str!("../../src/plugin-manifests/iperf.json"),
+        include_str!("../../src/plugin-manifests/network.json"),
+        include_str!("../../src/plugin-manifests/trdp.json"),
+    ];
+
+    MANIFESTS
+        .into_iter()
+        .map(|raw| serde_json::from_str::<PluginManifest>(raw).expect("canonical plugin manifest"))
+        .collect()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     log::set_logger(&LogBridge)
@@ -77,110 +96,12 @@ pub fn run() {
         .ok();
 
     let mut plugin_host = PluginHost::new();
-    plugin_host
-        .register_plugin(kernel::plugin_host::PluginDescriptor {
-            id: "serial".into(),
-            name: "Serial".into(),
-            version: "1.0.0".into(),
-            category: "terminal".into(),
-            content_type: "terminal".into(),
-            capabilities: vec![
-                "connection".into(),
-                "transfer".into(),
-                "endpoint_discovery".into(),
-            ],
-            state: kernel::plugin_host::PluginState::Ready,
-        })
-        .expect("注册 Serial 插件失败");
-    plugin_host
-        .register_plugin(kernel::plugin_host::PluginDescriptor {
-            id: "ssh".into(),
-            name: "SSH".into(),
-            version: "1.0.0".into(),
-            category: "terminal".into(),
-            content_type: "terminal".into(),
-            capabilities: vec![
-                "connection".into(),
-                "transfer".into(),
-                "endpoint_discovery".into(),
-            ],
-            state: kernel::plugin_host::PluginState::Ready,
-        })
-        .expect("注册 SSH 插件失败");
-    plugin_host
-        .register_plugin(kernel::plugin_host::PluginDescriptor {
-            id: "telnet".into(),
-            name: "Telnet".into(),
-            version: "1.0.0".into(),
-            category: "terminal".into(),
-            content_type: "terminal".into(),
-            capabilities: vec!["connection".into()],
-            state: kernel::plugin_host::PluginState::Ready,
-        })
-        .expect("注册 Telnet 插件失败");
-    plugin_host
-        .register_plugin(kernel::plugin_host::PluginDescriptor {
-            id: "local-shell".into(),
-            name: "Local Shell".into(),
-            version: "1.0.0".into(),
-            category: "terminal".into(),
-            content_type: "terminal".into(),
-            capabilities: vec!["connection".into(), "endpoint_discovery".into()],
-            state: kernel::plugin_host::PluginState::Ready,
-        })
-        .expect("注册 Local Shell 插件失败");
-    plugin_host
-        .register_plugin(kernel::plugin_host::PluginDescriptor {
-            id: "tftp".into(),
-            name: "TFTP".into(),
-            version: "1.0.0".into(),
-            category: "file_transfer".into(),
-            content_type: "custom".into(),
-            capabilities: vec!["connection".into(), "transfer".into()],
-            state: kernel::plugin_host::PluginState::Ready,
-        })
-        .expect("注册 TFTP 插件失败");
-    plugin_host
-        .register_plugin(kernel::plugin_host::PluginDescriptor {
-            id: "iperf".into(),
-            name: "iperf".into(),
-            version: "1.0.0".into(),
-            category: "network_tool".into(),
-            content_type: "custom".into(),
-            capabilities: vec!["connection".into()],
-            state: kernel::plugin_host::PluginState::Ready,
-        })
-        .expect("注册 iperf 插件失败");
-    plugin_host
-        .register_plugin(kernel::plugin_host::PluginDescriptor {
-            id: "network".into(),
-            name: "Network Debug".into(),
-            version: "1.0.0".into(),
-            category: "network_tool".into(),
-            content_type: "custom".into(),
-            capabilities: vec![
-                "connection".into(),
-                "network_outbound".into(),
-                "network_listen".into(),
-            ],
-            state: kernel::plugin_host::PluginState::Ready,
-        })
-        .expect("注册 network 插件失败");
-    plugin_host
-        .register_plugin(kernel::plugin_host::PluginDescriptor {
-            id: "trdp".into(),
-            name: "TRDP".into(),
-            version: "1.0.0".into(),
-            category: "network_tool".into(),
-            content_type: "custom".into(),
-            capabilities: vec![
-                "connection".into(),
-                "network_outbound".into(),
-                "network_listen".into(),
-            ],
-            state: kernel::plugin_host::PluginState::Ready,
-        })
-        .expect("注册 TRDP 插件失败");
+    for manifest in built_in_plugin_manifests() {
+        let plugin_id = manifest.id.clone();
+        plugin_host
+            .register_plugin(manifest)
+            .unwrap_or_else(|error| panic!("注册插件 {plugin_id} 失败: {error}"));
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
