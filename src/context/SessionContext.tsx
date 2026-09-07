@@ -948,11 +948,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const renameTab = useCallback(async (sessionId: string, name: string) => {
+    const previousName = tabsRef.current.find(tab => tab.id === sessionId)?.name;
     dispatch({ type: "RENAME_TAB", id: sessionId, name });
     try {
       await invoke("rename_session", { sessionId, newName: name });
-    } catch (_e) {
-      // 恢复的标签页在后端不存在，静默忽略
+    } catch (e) {
+      if (previousName !== undefined) {
+        dispatch({ type: "RENAME_TAB", id: sessionId, name: previousName });
+      }
+      dispatch({
+        type: "SET_ERROR",
+        error: i18n.t("session.renamePersistFailed", {
+          defaultValue: "Failed to rename the saved session: {{error}}. The previous name was restored.",
+          error: String(e),
+        }),
+      });
     }
   }, []);
 
