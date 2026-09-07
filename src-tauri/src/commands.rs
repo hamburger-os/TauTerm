@@ -2584,11 +2584,13 @@ pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Resu
         return Err("Session Data Log is disabled in Settings".to_string());
     }
 
+    let (response_tx, response_rx) = std::sync::mpsc::sync_channel(1);
     let cmd = LogEntry::Command(crate::kernel::log_engine::LogCommand::StartSession {
         session_id: session_id.clone(),
         session_name,
         port_name,
         data_mode,
+        response: response_tx,
     });
 
     log_engine
@@ -2596,7 +2598,11 @@ pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Resu
         .send(cmd)
         .map_err(|e| format!("发送日志启动命令失败: {}", e))?;
 
-    Ok(session_id)
+    match response_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+        Ok(Ok(_status)) => Ok(session_id),
+        Ok(Err(error)) => Err(error),
+        Err(error) => Err(format!("等待日志启动确认失败: {}", error)),
+    }
 }
 
 /// 停止会话数据日志记录
