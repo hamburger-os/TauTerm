@@ -1233,7 +1233,7 @@ export default function TrdpSessionView({ sessionId }: { sessionId: string }) {
                 <strong>{t("trdp.overview.safety")}</strong><br />
                 {t("trdp.overview.safetyText")}
               </div>
-              {workspaceName && <div className={`${styles.infoCard} liquid-glass-card`}><strong>{t("trdp.overview.workspace")}</strong><br />{workspaceName} · {t("trdp.overview.importedStopped")}</div>}
+              {workspaceName && <div className={`${styles.infoCard} ${styles.overviewWorkspaceCard} liquid-glass-card`}><strong>{t("trdp.overview.workspace")}</strong><br />{workspaceName} · {t("trdp.overview.importedStopped")}</div>}
             </div>
 
             <div className={styles.toolbar}>
