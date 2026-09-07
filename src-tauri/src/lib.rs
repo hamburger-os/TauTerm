@@ -382,7 +382,6 @@ pub fn run() {
             plugins::trdp::trdp_release_capture,
             plugins::trdp::trdp_import_xml,
             plugins::trdp::trdp_decode_dataset,
-            commands::save_sessions,
             commands::load_sessions,
             commands::save_session_config,
             commands::resolve_local_shell_session_name,
