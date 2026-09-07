@@ -13,6 +13,10 @@ import ResizeHandle from "./components/Layout/ResizeHandle";
 import TabContentDispatcher from "./components/TabContentDispatcher";
 import SendBar from "./components/SendBar/SendBar";
 import { isTargetBarVisible } from "./components/SendBar/TargetBar";
+import {
+  ASSET_PERSISTENCE_ERROR_EVENT,
+  type AssetPersistenceErrorDetail,
+} from "./components/SendBar/assetStore";
 import type { ProtocolType } from "./types/transfer";
 import { useUpdater } from "./hooks/useUpdater";
 import RightSidebar from "./components/RightSidebar/RightSidebar";
@@ -103,6 +107,21 @@ function AppInner() {
   useEffect(() => {
     if (transferState.error) showToast("error", transferState.error);
   }, [transferState.error, showToast]);
+
+  useEffect(() => {
+    const handleAssetPersistenceError = (event: Event) => {
+      const detail = (event as CustomEvent<AssetPersistenceErrorDetail>).detail;
+      showToast("error", t("sendBar.assetPersistFailed", {
+        defaultValue: "Engineering asset changes were not saved ({{key}}): {{error}}",
+        key: detail.key,
+        error: detail.error,
+      }));
+    };
+    window.addEventListener(ASSET_PERSISTENCE_ERROR_EVENT, handleAssetPersistenceError);
+    return () => {
+      window.removeEventListener(ASSET_PERSISTENCE_ERROR_EVENT, handleAssetPersistenceError);
+    };
+  }, [showToast, t]);
 
   // 从 CSS 自定义属性读取 SendBar 最小高度与目标栏高度，确保 JS 与 CSS 值一致。
   // 使用 useLayoutEffect 在首次绘制前完成解析，并修正初始 sendBarPct，
