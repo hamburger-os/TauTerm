@@ -231,9 +231,6 @@ pub fn run() {
                 if let Ok(log_engine) = state.log_engine.lock() {
                     log_engine.set_log_dir(log_dir.clone());
                 }
-                let _ = state
-                    .config_store
-                    .set("log.dir", &log_dir.to_string_lossy().to_string());
             }
             let _ = std::fs::create_dir_all(&log_dir);
             log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
