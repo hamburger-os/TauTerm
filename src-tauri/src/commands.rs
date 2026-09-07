@@ -254,12 +254,7 @@ fn secure_ssh_session_params(
         let description = format!("SSH {username}@{host}");
         state
             .credential_store
-            .store_credential(
-                &account,
-                credential_type,
-                credential_value,
-                &description,
-            )
+            .store_credential(&account, credential_type, credential_value, &description)
             .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))?;
     } else {
         match state.credential_store.get_credential(&account) {
@@ -343,7 +338,6 @@ fn hydrate_ssh_config(
 
     Ok(config)
 }
-
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1215,8 +1209,9 @@ async fn connect_session_ssh(
         ..
     } = request;
 
-    let effective_session_id =
-        session_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let effective_session_id = session_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let path = SessionStore::sessions_file_path(&app);
     let existing_saved = SessionStore::load_from_disk(&path)
         .unwrap_or_default()
@@ -2373,13 +2368,7 @@ pub fn load_sessions(
 
         let original = session.params.clone();
         let mut sanitized = original.clone();
-        match secure_ssh_session_params(
-            &state,
-            &session.id,
-            &mut sanitized,
-            None,
-            false,
-        ) {
+        match secure_ssh_session_params(&state, &session.id, &mut sanitized, None, false) {
             Ok(()) => {
                 if sanitized != original {
                     let mut migrated = session.clone();
@@ -2474,13 +2463,7 @@ pub fn save_session_config(
             .into_iter()
             .find(|saved| saved.id == id)
             .map(|saved| saved.params);
-        secure_ssh_session_params(
-            &state,
-            &id,
-            &mut params,
-            existing_params.as_ref(),
-            true,
-        )?;
+        secure_ssh_session_params(&state, &id, &mut params, existing_params.as_ref(), true)?;
     }
 
     // TRDP Workspace is edited and persisted by the custom session view rather
@@ -4672,7 +4655,6 @@ pub async fn iperf_get_status(
         last_summary: None,
     })
 }
-
 
 #[cfg(test)]
 mod command_security_tests {
