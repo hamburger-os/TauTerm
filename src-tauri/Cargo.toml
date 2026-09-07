@@ -1,6 +1,6 @@
 [package]
 name = "tauterm"
-version = "0.6.0"
+version = "0.6.1"
 description = "Local-first engineering workbench for terminal, device, and network debugging"
 authors = ["TauTerm"]
 edition = "2021"

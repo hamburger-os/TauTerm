@@ -30,7 +30,7 @@ Core engineering workflows are **local-first**: they are intended to remain usef
 
 > This README describes the current `master` branch. Packaged releases may lag behind `master`; see [CHANGELOG.md](CHANGELOG.md) for the canonical change history.
 
-![TauTerm workspace](docs/assets/hero-en.png)
+![TauTerm workspace](docs/assets/hero-en.webp)
 
 ## Why TauTerm?
 

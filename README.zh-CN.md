@@ -30,7 +30,7 @@ TauTerm 把远端系统、嵌入式设备和网络调试工作流放进同一个
 
 > 本 README 描述当前 `master` 分支。正式安装包可能滞后于 `master`；版本变化的唯一权威记录见 [CHANGELOG.md](CHANGELOG.md)。
 
-![TauTerm 工作区](docs/assets/hero-zh-CN.png)
+![TauTerm 工作区](docs/assets/hero-zh-CN.webp)
 
 ## 为什么是 TauTerm？
 
