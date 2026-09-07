@@ -138,7 +138,6 @@ impl ConfigStore {
             .unwrap_or(false)
     }
 
-
     pub fn set<T: Serialize>(&self, key: &str, value: &T) -> Result<(), ConfigStoreError> {
         let (ns, k) = Self::parse_key(key).ok_or(ConfigStoreError::InvalidKey(key.to_string()))?;
         let json_value = serde_json::to_value(value)
