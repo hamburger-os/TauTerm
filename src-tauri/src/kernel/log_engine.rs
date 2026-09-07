@@ -382,14 +382,12 @@ impl LogEngine {
     ///
     /// 消费者线程每次循环自动读取最新配置，无需重启。
     pub fn update_config(&self, partial: LogConfigUpdate) {
+        let mut stop_all_sessions = false;
         if let Ok(mut cfg) = self.config.lock() {
             if let Some(session_enabled) = partial.session_enabled {
-                let was_enabled = cfg.session_enabled;
+                stop_all_sessions = cfg.session_enabled && !session_enabled;
                 cfg.session_enabled = session_enabled;
                 SESSION_LOG_ENABLED.store(session_enabled, Ordering::Relaxed);
-                if was_enabled && !session_enabled {
-                    let _ = self.entry_tx.send(LogEntry::Command(LogCommand::StopAllSessions));
-                }
             }
             if let Some(file_max_size) = partial.file_max_size {
                 cfg.file_max_size = file_max_size;
@@ -403,6 +401,11 @@ impl LogEngine {
             if let Some(retention_days) = partial.retention_days {
                 cfg.retention_days = retention_days;
             }
+        }
+        if stop_all_sessions {
+            let _ = self
+                .entry_tx
+                .send(LogEntry::Command(LogCommand::StopAllSessions));
         }
     }
 
