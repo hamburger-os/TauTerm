@@ -4471,7 +4471,24 @@ pub async fn iperf_get_status(
 #[cfg(test)]
 mod command_security_tests {
     use super::*;
+    use crate::kernel::session_store::SavedSession;
     use crate::security::credential_store::CredentialValue;
+
+    fn saved_session(plugin_id: &str, params: Value) -> SavedSession {
+        SavedSession {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "test".into(),
+            plugin_id: plugin_id.into(),
+            endpoint: "test".into(),
+            params,
+            timestamp: 0,
+            transfer_enabled: false,
+            transfer_protocol: None,
+            send_bar_enabled: false,
+            virtual_port_enabled: false,
+            virtual_port_count: 0,
+        }
+    }
 
     #[test]
     fn ssh_secret_fields_are_removed_from_persisted_params() {
@@ -4485,12 +4502,40 @@ mod command_security_tests {
             "credential_account": "ssh-session:test"
         });
 
-        strip_ssh_secret_fields(&mut params).unwrap();
-
+        assert!(strip_ssh_secret_fields(&mut params).unwrap());
         assert!(params.get("password").is_none());
         assert!(params.get("private_key").is_none());
         assert!(params.get("passphrase").is_none());
         assert_eq!(params["credential_account"], "ssh-session:test");
+        assert!(!strip_ssh_secret_fields(&mut params).unwrap());
+    }
+
+    #[test]
+    fn saved_session_scrub_does_not_touch_other_protocol_params() {
+        let mut sessions = vec![
+            saved_session(
+                "ssh",
+                serde_json::json!({
+                    "host": "example.invalid",
+                    "auth_method": "password",
+                    "password": "secret"
+                }),
+            ),
+            saved_session(
+                "serial",
+                serde_json::json!({
+                    "password": "protocol-owned-field"
+                }),
+            ),
+        ];
+
+        assert!(scrub_ssh_secrets_from_saved_sessions(&mut sessions).unwrap());
+        assert!(sessions[0].params.get("password").is_none());
+        assert_eq!(
+            sessions[1].params.get("password").and_then(Value::as_str),
+            Some("protocol-owned-field")
+        );
+        assert!(!scrub_ssh_secrets_from_saved_sessions(&mut sessions).unwrap());
     }
 
     #[test]
@@ -4521,45 +4566,5 @@ mod command_security_tests {
             ssh_credential_account("00000000-0000-0000-0000-000000000001"),
             "ssh-session:00000000-0000-0000-0000-000000000001"
         );
-    }
-}
-
-
-#[cfg(test)]
-mod ssh_persistence_security_tests {
-    use super::*;
-
-    #[test]
-    fn strips_all_plaintext_ssh_secret_fields() {
-        let mut params = serde_json::json!({
-            "host": "example.invalid",
-            "username": "dev",
-            "auth_method": "key",
-            "password": "secret",
-            "private_key": "private-key",
-            "passphrase": "passphrase",
-            "credential_account": "ssh-session:existing"
-        });
-
-        assert!(strip_ssh_secret_fields(&mut params).unwrap());
-        assert!(params.get("password").is_none());
-        assert!(params.get("private_key").is_none());
-        assert!(params.get("passphrase").is_none());
-        assert_eq!(
-            params.get("credential_account").and_then(Value::as_str),
-            Some("ssh-session:existing")
-        );
-    }
-
-    #[test]
-    fn reference_only_ssh_params_need_no_scrub() {
-        let mut params = serde_json::json!({
-            "host": "example.invalid",
-            "username": "dev",
-            "auth_method": "password",
-            "credential_account": "ssh-session:existing"
-        });
-
-        assert!(!strip_ssh_secret_fields(&mut params).unwrap());
     }
 }
