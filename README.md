@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/assets/icons/logo.png" width="112" alt="TauTerm logo">
+  <img src="src-tauri/icons/icon.png" width="112" alt="TauTerm logo">
 </p>
 
 <h1 align="center">TauTerm</h1>
