@@ -4673,3 +4673,62 @@ pub async fn iperf_get_status(
         last_summary: None,
     })
 }
+
+
+#[cfg(test)]
+mod command_security_tests {
+    use super::*;
+    use crate::security::credential_store::CredentialValue;
+
+    #[test]
+    fn ssh_secret_fields_are_removed_from_persisted_params() {
+        let mut params = serde_json::json!({
+            "host": "example.invalid",
+            "username": "tester",
+            "auth_method": "key",
+            "password": "should-not-persist",
+            "private_key": "private-key-material",
+            "passphrase": "secret",
+            "credential_migration_pending": true,
+            "credential_account": "ssh-session:test"
+        });
+
+        strip_ssh_secret_fields(&mut params).unwrap();
+
+        assert!(params.get("password").is_none());
+        assert!(params.get("private_key").is_none());
+        assert!(params.get("passphrase").is_none());
+        assert!(params.get("credential_migration_pending").is_none());
+        assert_eq!(params["credential_account"], "ssh-session:test");
+    }
+
+    #[test]
+    fn ssh_credential_type_must_match_auth_method() {
+        assert!(credential_matches_auth(
+            "password",
+            &CredentialValue::Password("secret".into())
+        ));
+        assert!(credential_matches_auth(
+            "key",
+            &CredentialValue::SshKey {
+                private_key: "key".into(),
+                passphrase: None,
+            }
+        ));
+        assert!(!credential_matches_auth(
+            "password",
+            &CredentialValue::SshKey {
+                private_key: "key".into(),
+                passphrase: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn ssh_session_credential_account_is_stable() {
+        assert_eq!(
+            ssh_credential_account("00000000-0000-0000-0000-000000000001"),
+            "ssh-session:00000000-0000-0000-0000-000000000001"
+        );
+    }
+}
