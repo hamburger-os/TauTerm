@@ -874,7 +874,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       await invoke("delete_session_config", { sessionId });
     } catch (e) {
-      dispatch({ type: "SET_ERROR", error: `删除会话配置失败: ${e}` });
+      dispatch({
+        type: "SET_ERROR",
+        error: i18n.t("session.deletePersistFailed", {
+          defaultValue: "Failed to delete the saved session: {{error}}. The session remains in the list so you can retry.",
+          error: String(e),
+        }),
+      });
       return;
     }
     dispatch({ type: "REMOVE_TAB", id: sessionId });
