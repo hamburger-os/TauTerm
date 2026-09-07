@@ -23,6 +23,7 @@ use crate::channel::Channel;
 use crate::kernel::comm_handle::{CommHandle, DataCallback};
 use crate::kernel::data_batcher::DataBatcher;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
+use crate::kernel::persistence::atomic_write;
 use crate::kernel::plugin_adapter::{
     ChannelKind, ProtocolConnection, SessionChannelFactory, SideChannel,
 };
@@ -2080,7 +2081,7 @@ impl SessionStore {
         };
         let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| format!("序列化会话库失败: {}", e))?;
-        std::fs::write(path, json).map_err(|e| format!("写入会话库失败: {}", e))
+        atomic_write(path, json.as_bytes()).map_err(|e| format!("写入会话库失败: {}", e))
     }
 
     fn backup_invalid_library(path: &std::path::Path) {
@@ -2100,7 +2101,7 @@ impl SessionStore {
         if current.is_empty() {
             return Ok(());
         }
-        let existing = Self::load_from_disk_unlocked(path).unwrap_or_default();
+        let existing = Self::load_from_disk_unlocked(path)?;
 
         let current_ids: HashSet<String> = current.iter().map(|s| s.id.clone()).collect();
         let mut merged: Vec<SavedSession> = existing
@@ -2181,7 +2182,7 @@ impl SessionStore {
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
-        let mut existing = Self::load_from_disk_unlocked(&path).unwrap_or_default();
+        let mut existing = Self::load_from_disk_unlocked(&path)?;
         existing.retain(|entry| entry.id != session.id);
         existing.push(session);
         existing.sort_by_key(|entry| entry.timestamp);
@@ -2197,7 +2198,7 @@ impl SessionStore {
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
         let path = Self::sessions_file_path(app_handle);
-        let existing = Self::load_from_disk_unlocked(&path).unwrap_or_default();
+        let existing = Self::load_from_disk_unlocked(&path)?;
         let filtered: Vec<_> = existing
             .into_iter()
             .filter(|session| session.id != session_id)
