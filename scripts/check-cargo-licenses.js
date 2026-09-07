@@ -20,6 +20,19 @@ if (result.status !== 0) {
 const metadata = JSON.parse(result.stdout);
 const failures = [];
 const copyleft = [];
+const reviewedMpl = new Map([
+  ["cssparser@0.36.0", "MPL-2.0"],
+  ["cssparser-macros@0.6.1", "MPL-2.0"],
+  ["dtoa-short@0.3.5", "MPL-2.0"],
+  ["option-ext@0.2.0", "MPL-2.0"],
+  ["selectors@0.36.1", "MPL-2.0"],
+  ["serialport@4.10.0", "MPL-2.0"],
+]);
+
+function hasPermissiveOrChoice(expression) {
+  if (!/\sOR\s/i.test(expression)) return false;
+  return /\b(?:MIT|Apache-2\.0|BSD-2-Clause|BSD-3-Clause|ISC|Zlib|BSL-1\.0|CC0-1\.0|Unicode-3\.0)\b/i.test(expression);
+}
 
 for (const pkg of metadata.packages) {
   // Workspace package license is checked by scripts/check-third-party.js.
@@ -36,7 +49,14 @@ for (const pkg of metadata.packages) {
   }
 
   const expression = license;
-  if (/\b(?:AGPL|GPL|LGPL|SSPL|MPL|EPL|CDDL)(?:-|\b)/i.test(expression)) {
+  const packageKey = pkg.name + "@" + pkg.version;
+  if (reviewedMpl.has(packageKey)) {
+    if (expression !== reviewedMpl.get(packageKey)) {
+      failures.push(packageKey + " license changed from reviewed value " + reviewedMpl.get(packageKey) + " to " + expression);
+    }
+    continue;
+  }
+  if (/\b(?:AGPL|GPL|LGPL|SSPL|MPL|EPL|CDDL)(?:-|\b)/i.test(expression) && !hasPermissiveOrChoice(expression)) {
     copyleft.push(pkg.name + " " + pkg.version + " = " + expression);
   }
 }
@@ -59,5 +79,5 @@ const expressions = [...new Set(metadata.packages
   .map((pkg) => pkg.license ?? (pkg.license_file ? "license-file" : "unknown")))]
   .sort();
 
-console.log("Cargo dependency license metadata present for " + (metadata.packages.length - 1) + " packages.");
+console.log("Cargo dependency license metadata present for " + (metadata.packages.length - 1) + " packages; " + reviewedMpl.size + " MPL packages match the reviewed allowlist.");
 console.log("License expressions: " + expressions.join(", "));

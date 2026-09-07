@@ -287,6 +287,16 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq minisign
+      - name: Add com0com corresponding source
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_URL='https://sourceforge.net/projects/com0com/files/com0com/3.0.0.0/com0com-3.0.0.0.zip/download'
+          SOURCE_OUT='release-assets/com0com-3.0.0.0-source.zip'
+          curl --fail --location --retry 3 --retry-all-errors "$SOURCE_URL" --output "$SOURCE_OUT"
+          unzip -t "$SOURCE_OUT" >/dev/null
+          test -s "$SOURCE_OUT"
+
       - name: Verify updater signatures and assemble manifest
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}

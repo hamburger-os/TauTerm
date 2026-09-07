@@ -15,7 +15,7 @@ This file is the repository-level inventory for third-party components that TauT
 - **Full license text shipped with the payload:** `resources/com0com/COPYING-GPL-2.0.txt`.
 - **Exact binary and corresponding-source provenance:** `resources/com0com/SOURCE.md`.
 
-TauTerm does not link com0com into TauTerm-owned code. The upstream project publishes the corresponding 3.0.0.0 source archive next to the signed binary package. The release maintainer must still ensure that the chosen binary-distribution method satisfies the applicable GPL source-delivery requirements; documenting an upstream URL is provenance, not a substitute for legal review of a concrete distribution channel.
+TauTerm does not link com0com into TauTerm-owned code. The upstream project publishes the corresponding 3.0.0.0 source archive next to the signed binary package. TauTerm's release workflow also downloads that exact official source archive, validates it as a ZIP, and publishes it as `com0com-3.0.0.0-source.zip` beside every TauTerm GitHub Release artifact. Changing the Windows distribution channel or com0com version still requires a fresh GPL source-delivery review.
 
 ### TCNOpen TRDP 3.0.0.0
 

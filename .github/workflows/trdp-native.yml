@@ -14,6 +14,7 @@ on:
       - 'src-tauri/tauri.conf.json'
       - 'src-tauri/tauri.windows.conf.json'
       - 'scripts/prepare-service-bin.js'
+      - 'scripts/generate-third-party-notices.js'
       - 'scripts/bootstrap-trdp.sh'
       - 'scripts/bootstrap-trdp.ps1'
       - 'scripts/vendor_tcnopen.py'
@@ -354,6 +355,10 @@ jobs:
           test -n "$DEB"
           dpkg-deb -c "$DEB" | tee /tmp/tauterm-deb-files.txt
           grep -F 'tauterm-trdp-bridge' /tmp/tauterm-deb-files.txt
+          grep -Fi 'THIRD_PARTY_DEPENDENCY_LICENSES.txt' /tmp/tauterm-deb-files.txt
+          grep -Fi 'THIRD_PARTY_TCNOPEN_MPL-2.0.txt' /tmp/tauterm-deb-files.txt
+          grep -Fi 'LICENSE-MIT' /tmp/tauterm-deb-files.txt
+          grep -Fi 'LICENSE-APACHE' /tmp/tauterm-deb-files.txt
 
   windows:
     name: Native TRDP (windows-2025)

@@ -72,7 +72,7 @@ function smokeTestWindowsInstaller(files) {
   if (result.status !== 0) fail(`7z failed to inspect ${basename(installer)}.`);
 
   const listing = result.stdout.toLowerCase();
-  for (const required of ["tauterm-service.exe", "setupc.exe", "com0com.sys", "tauterm-trdp-bridge", "third_party_licenses.md", "copying-gpl-2.0.txt"]) {
+  for (const required of ["tauterm-service.exe", "setupc.exe", "com0com.sys", "tauterm-trdp-bridge", "copying-gpl-2.0.txt", "license-mit", "license-apache", "third_party_licenses.md", "third_party_tcnopen_mpl-2.0.txt", "third_party_dependency_licenses.txt"]) {
     if (!listing.includes(required)) {
       fail(`NSIS installer is missing required bundled file: ${required}`);
     }
@@ -88,7 +88,7 @@ function smokeTestMacUpdater(files) {
   if (result.error) throw result.error;
   if (result.status !== 0) fail(`tar failed to inspect ${basename(updater)}.`);
   const listing = result.stdout.toLowerCase();
-  for (const required of ["tauterm-trdp-bridge", "third_party_licenses.md"]) {
+  for (const required of ["tauterm-trdp-bridge", "license-mit", "license-apache", "third_party_licenses.md", "third_party_tcnopen_mpl-2.0.txt", "third_party_dependency_licenses.txt"]) {
     if (!listing.includes(required)) {
       fail(`macOS app updater archive is missing required bundled file: ${required}`);
     }
@@ -103,8 +103,11 @@ function smokeTestLinuxDeb(files) {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) fail(`dpkg-deb failed to inspect ${basename(deb)}.`);
-  if (!result.stdout.toLowerCase().includes("third_party_licenses.md")) {
-    fail("Linux .deb is missing required bundled file: THIRD_PARTY_LICENSES.md");
+  const listing = result.stdout.toLowerCase();
+  for (const required of ["license-mit", "license-apache", "third_party_licenses.md", "third_party_tcnopen_mpl-2.0.txt", "third_party_dependency_licenses.txt"]) {
+    if (!listing.includes(required)) {
+      fail("Linux .deb is missing required bundled file: " + required);
+    }
   }
 }
 

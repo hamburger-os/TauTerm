@@ -18,7 +18,7 @@ TauTerm 自有代码使用 **MIT OR Apache-2.0**。
 - 3.0.0.0 官方文件目录: https://sourceforge.net/projects/com0com/files/com0com/3.0.0.0/
 - GPL version 2 官方文本: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 
-TauTerm Windows 安装包再分发 com0com 的独立 driver/setup 二进制，因此必须保留许可证、上游来源和对应源代码获取信息。GPL version 2 对 object/executable distribution 的源码提供方式有具体要求；不能把“README 有一个上游链接”自动等同于所有分发场景都已满足义务。
+TauTerm Windows 安装包再分发 com0com 的独立 driver/setup 二进制，因此必须保留许可证、上游来源和对应源代码获取信息。GPL version 2 对 object/executable distribution 的源码提供方式有具体要求；不能把“README 有一个上游链接”自动等同于所有分发场景都已满足义务。当前 Release workflow 会从官方 3.0.0.0 目录下载 source ZIP、执行 ZIP 完整性检查，并作为 `com0com-3.0.0.0-source.zip` 与 TauTerm 发布资产一同公开；若下载/验证失败，发布会 fail closed。
 
 仓库分发材料：
 

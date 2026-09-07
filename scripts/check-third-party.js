@@ -121,6 +121,16 @@ for (const [label, config] of [["base", baseConfig], ["windows", windowsConfig]]
 if (!Object.prototype.hasOwnProperty.call(windowsConfig.bundle?.resources ?? {}, "../resources/com0com/*")) {
   fail("Windows bundle must include the reviewed com0com distribution payload");
 }
+const releaseWorkflow = read(".github/workflows/release.yml");
+for (const marker of [
+  "com0com-3.0.0.0.zip/download",
+  "com0com-3.0.0.0-source.zip",
+  "unzip -t",
+]) {
+  if (!releaseWorkflow.includes(marker)) {
+    fail("release workflow is missing com0com corresponding-source contract marker: " + marker);
+  }
+}
 
 if (failures.length) {
   console.error("Third-party license contract failed:");

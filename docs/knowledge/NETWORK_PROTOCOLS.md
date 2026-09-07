@@ -57,8 +57,9 @@ TauTerm 的 option negotiation、local echo 和窗口尺寸更新需要同时满
 - TFTP Option Extension — RFC 2347: https://www.rfc-editor.org/rfc/rfc2347
 - Blocksize Option — RFC 2348: https://www.rfc-editor.org/rfc/rfc2348
 - Timeout Interval / Transfer Size — RFC 2349: https://www.rfc-editor.org/rfc/rfc2349
+- Windowsize Option — RFC 7440: https://www.rfc-editor.org/rfc/rfc7440
 
-安全暴露策略（监听非 loopback、远端写入、覆盖）是 TauTerm 产品安全边界，不是 TFTP RFC 本身提供的权限系统。
+当前 `tftpd 1.0` 上游声明覆盖 RFC 1350、2347、2348、2349 和 7440；TauTerm 的具体 UI/配置只应声称自身实际暴露和验证过的子集。安全暴露策略（监听非 loopback、远端写入、覆盖）是 TauTerm 产品安全边界，不是 TFTP RFC 本身提供的权限系统。
 
 ## iperf
 
