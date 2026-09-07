@@ -395,7 +395,7 @@
     "disconnected": "会话已断开，发送功能不可用",
     "basicMode": "基础发送",
     "modeLocked": "发送中，模式已锁定",
-    "assetPersistFailed": "工程资产修改未保存（{{key}}）：{{error}}",
+    "assetPersistFailed": "工程资产存储失败（{{operation}} · {{key}}）：{{error}}",
     "autoReplyMode": "自动应答",
     "scriptMode": "脚本编辑器",
     "new": "新建",
