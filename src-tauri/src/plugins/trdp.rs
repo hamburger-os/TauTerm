@@ -421,9 +421,17 @@ impl TrdpSideChannel {
                             .get("about_to_die")
                             .and_then(Value::as_bool)
                             .unwrap_or(false);
-                        let confirmable = payload.get("msg_type").and_then(Value::as_str) == Some("Mq")
-                            && payload.get("result_code").and_then(Value::as_i64).unwrap_or_default() == 0
-                            && payload.get("id").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
+                        let confirmable = payload.get("msg_type").and_then(Value::as_str)
+                            == Some("Mq")
+                            && payload
+                                .get("result_code")
+                                .and_then(Value::as_i64)
+                                .unwrap_or_default()
+                                == 0
+                            && payload
+                                .get("id")
+                                .and_then(Value::as_str)
+                                .is_some_and(|id| !id.is_empty())
                             && !terminal;
                         if let Ok(mut sessions) = confirmable_md_sessions.lock() {
                             if terminal {
@@ -1362,9 +1370,7 @@ pub fn trdp_capture_packets(
 }
 
 #[tauri::command]
-pub fn trdp_capture_summary(
-    capture_id: String,
-) -> Result<capture::TrdpCaptureSummary, String> {
+pub fn trdp_capture_summary(capture_id: String) -> Result<capture::TrdpCaptureSummary, String> {
     capture::capture_summary(&capture_id)
 }
 
