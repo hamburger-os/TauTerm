@@ -386,7 +386,7 @@ export default function SplitView({
         return (
           <div
             key={`surface-${paneId}`}
-            className={`${styles.paneSurface} ${paneMaterial}`}
+            className={`${styles.paneSurface} ${contentType === "custom" ? styles.customPaneSurface : ""} ${paneMaterial}`}
             style={rectStyle(contentRect)}
             onMouseDown={(e) => {
               if (e.button === 0) onSelectPane(paneId);
