@@ -24,6 +24,7 @@ pub mod log_engine;
 pub mod log_writer;
 pub mod plugin_adapter;
 pub mod plugin_host;
+pub mod persistence;
 pub mod script_engine;
 pub mod session_store;
 pub mod theme_engine;
