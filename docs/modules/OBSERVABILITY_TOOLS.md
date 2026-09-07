@@ -15,9 +15,15 @@
 
 高频接收数据先在 Rust 侧按短时间窗口和大小阈值合并，再以 Base64 事件发送前端，降低大量小包造成的 IPC/JSON/渲染开销。关闭时必须 flush 已缓存数据。
 
+DataBatcher 属于 **Presentation Path**：极端过载时允许丢弃显示数据块以保护 UI，但每次丢弃都会累计计数，并按 1/2/4/8… 次节流发送 `session-display-overflow`，让当前屏幕“不完整”成为显式状态。这个降级语义不能复制到未来 Recorder/Evidence Path。
+
 ### 日志
 
-LogEngine 使用有界生产者/消费者队列和独立写线程处理系统日志与 Session 数据日志。日志写入、滚动、格式化和敏感信息清理由后端统一完成；设置页只控制公开配置，不直接管理文件句柄。
+LogEngine 使用有界生产者/消费者队列和独立写线程处理系统日志与 Session 数据日志。两者拥有独立启用语义：`system_enabled/system_level` 只控制应用诊断日志，`session_enabled` 只控制 Session 数据日志；任一开关不能短路另一类日志的生命周期。
+
+日志队列溢出分别累计 `dropped_system_entries` 与 `dropped_session_entries`，通过 `get_log_health` 暴露给设置 UI。出现非零计数时必须提示相关日志可能不完整，不能把 best-effort Session Log 描述为工程证据记录。
+
+日志设置由 Rust ConfigStore 持久化；设置页只消费公开配置，不直接拥有文件句柄或浏览器本地持久化。
 
 ### 统计与工程工具
 
@@ -27,10 +33,13 @@ Stats renderer/状态区消费 Session 统计信息。右侧工程工具中的 C
 
 ```mermaid
 flowchart TB
-  IO["Session I/O"] --> Batch["DataBatcher"]
+  IO["Session I/O"] --> Batch["Presentation: DataBatcher"]
   Batch --> UI["Terminal / Renderer / Stats"]
-  IO --> Log["LogEngine"]
+  Batch --> Loss["显式 overflow"]
+  IO --> Log["Best-effort LogEngine"]
   Log --> Files["系统/会话日志"]
+  Log --> LogLoss["显式 drop counters"]
+  IO -. future .-> Evidence["Recorder / Evidence Path"]
   Tools["工程工具"] --> Local["本地纯计算/轻量解析"]
 ```
 
