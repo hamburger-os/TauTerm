@@ -191,12 +191,12 @@ impl ProtocolAdapter for SerialAdapter {
                             description,
                             serde_json::json!({
                                 "kind": "usb",
-                                "system_port": port_name,
+                                "system_port": port_name.clone(),
                                 "vid": info.vid,
                                 "pid": info.pid,
-                                "serial_number": info.serial_number,
-                                "manufacturer": info.manufacturer,
-                                "product": info.product,
+                                "serial_number": info.serial_number.clone(),
+                                "manufacturer": info.manufacturer.clone(),
+                                "product": info.product.clone(),
                                 "stable_id": stable_id,
                             }),
                         )
@@ -205,21 +205,21 @@ impl ProtocolAdapter for SerialAdapter {
                         format!("{} — Bluetooth Serial", port_name),
                         serde_json::json!({
                             "kind": "bluetooth",
-                            "system_port": port_name,
+                            "system_port": port_name.clone(),
                         }),
                     ),
                     serialport::SerialPortType::PciPort => (
                         format!("{} — PCI Serial", port_name),
                         serde_json::json!({
                             "kind": "pci",
-                            "system_port": port_name,
+                            "system_port": port_name.clone(),
                         }),
                     ),
                     serialport::SerialPortType::Unknown => (
                         port_name.clone(),
                         serde_json::json!({
                             "kind": "unknown",
-                            "system_port": port_name,
+                            "system_port": port_name.clone(),
                         }),
                     ),
                 };
