@@ -111,6 +111,7 @@
     "deleteConfirm": "Delete this session?",
     "clearAllDisconnected": "Clear all disconnected sessions",
     "status": "Status",
+    "deletePersistFailed": "Failed to delete the saved session: {{error}}. The session remains in the list so you can retry.",
     "displayOverflow": "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path. Wire data is not assumed lost, but the current view may be incomplete."
   },
   "stats": {
