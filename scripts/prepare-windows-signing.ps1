@@ -20,18 +20,18 @@ $pfxPath = Join-Path $env:RUNNER_TEMP "tauterm-code-signing.pfx"
 $configPath = Join-Path $env:RUNNER_TEMP "tauterm-windows-signing.json"
 
 try {
-    $normalized = ($PfxBase64 -replace "\\s", "")
+    $normalized = ($PfxBase64 -replace "\s", "")
     $bytes = [Convert]::FromBase64String($normalized)
     [IO.File]::WriteAllBytes($pfxPath, $bytes)
 
     $securePassword = ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force
-    $imported = @(Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation "Cert:\\CurrentUser\\My" -Password $securePassword)
+    $imported = @(Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation "Cert:\CurrentUser\My" -Password $securePassword)
     $certificate = $imported | Where-Object { $_.HasPrivateKey } | Select-Object -First 1
     if ($null -eq $certificate) {
         throw "The imported Windows code-signing certificate does not contain a private key."
     }
 
-    $thumbprint = ($certificate.Thumbprint -replace "\\s", "").ToUpperInvariant()
+    $thumbprint = ($certificate.Thumbprint -replace "\s", "").ToUpperInvariant()
     $signingConfig = @{
         bundle = @{
             windows = @{
