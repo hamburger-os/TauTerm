@@ -219,10 +219,13 @@ export default function TerminalView({
   }, [state.activeTabId, dockedPlacements]);
 
   useEffect(() => {
+    registerAction(ACTION_IDS.TERMINAL_COPY, () => {
+      activeTermRef.current?.copySelection?.();
+    });
+    registerAction(ACTION_IDS.TERMINAL_PASTE, () => {
+      void activeTermRef.current?.requestPaste?.();
+    });
     registerAction(ACTION_IDS.TERMINAL_SEARCH, () => setSearchVisible(v => !v));
-  }, [registerAction]);
-
-  useEffect(() => {
     registerAction(ACTION_IDS.TERMINAL_SELECT_ALL, () => {
       activeTermRef.current?.terminal?.selectAll();
     });
