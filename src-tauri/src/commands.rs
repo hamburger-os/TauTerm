@@ -2709,7 +2709,7 @@ pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Resu
 
     // 再锁定 log_engine 发送启动命令
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    if !log_engine.get_config().session_enabled {
+    if !log_engine.get_config()?.session_enabled {
         return Err("Session Data Log is disabled in Settings".to_string());
     }
 
@@ -2780,6 +2780,8 @@ pub fn set_system_log_config(
     level: String,
 ) -> Result<(), String> {
     let _log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    let (previous_enabled, previous_level) =
+        crate::kernel::log_engine::system_log_config_checked()?;
     state
         .config_store
         .set_batch(&[
@@ -2787,7 +2789,20 @@ pub fn set_system_log_config(
             ("logging.system_level", serde_json::json!(level.clone())),
         ])
         .map_err(|e| e.to_string())?;
-    crate::kernel::log_engine::set_system_log_config(enabled, &level);
+
+    if let Err(apply_error) = crate::kernel::log_engine::set_system_log_config(enabled, &level) {
+        let rollback = state.config_store.set_batch(&[
+            ("logging.system_enabled", serde_json::json!(previous_enabled)),
+            ("logging.system_level", serde_json::json!(previous_level)),
+        ]);
+        return match rollback {
+            Ok(()) => Err(apply_error),
+            Err(rollback_error) => Err(format!(
+                "{}; ConfigStore rollback failed: {}",
+                apply_error, rollback_error
+            )),
+        };
+    }
     Ok(())
 }
 
@@ -2795,7 +2810,7 @@ pub fn set_system_log_config(
 #[tauri::command]
 pub fn get_log_dir(state: State<'_, AppState>) -> Result<String, String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let config = log_engine.get_config();
+    let config = log_engine.get_config()?;
     Ok(config.log_dir.to_string_lossy().to_string())
 }
 
@@ -2806,7 +2821,7 @@ pub fn get_log_dir(state: State<'_, AppState>) -> Result<String, String> {
 #[tauri::command]
 pub fn get_log_config(state: State<'_, AppState>) -> Result<LogConfigResponse, String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    Ok(log_engine.get_config_response())
+    log_engine.get_config_response()
 }
 
 /// 在系统文件管理器中打开日志目录
@@ -2850,7 +2865,7 @@ pub fn update_log_config(
     config: LogConfigUpdate,
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let current = log_engine.get_config();
+    let current = log_engine.get_config()?;
     let next_session_enabled = config.session_enabled.unwrap_or(current.session_enabled);
     let next_file_max_size = config.file_max_size.unwrap_or(current.file_max_size);
     let next_buffer_size = config.buffer_size.unwrap_or(current.buffer_size);
@@ -2882,7 +2897,34 @@ pub fn update_log_config(
         ])
         .map_err(|e| e.to_string())?;
 
-    log_engine.update_config(config);
+    if let Err(apply_error) = log_engine.update_config(config) {
+        let rollback = state.config_store.set_batch(&[
+            (
+                "logging.session_enabled",
+                serde_json::json!(current.session_enabled),
+            ),
+            (
+                "logging.file_max_size",
+                serde_json::json!(current.file_max_size),
+            ),
+            ("logging.buffer_size", serde_json::json!(current.buffer_size)),
+            (
+                "logging.flush_interval_ms",
+                serde_json::json!(current.flush_interval_ms),
+            ),
+            (
+                "logging.retention_days",
+                serde_json::json!(current.retention_days),
+            ),
+        ]);
+        return match rollback {
+            Ok(()) => Err(apply_error),
+            Err(rollback_error) => Err(format!(
+                "{}; ConfigStore rollback failed: {}",
+                apply_error, rollback_error
+            )),
+        };
+    }
     Ok(())
 }
 
