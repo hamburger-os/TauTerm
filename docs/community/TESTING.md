@@ -41,7 +41,7 @@ The permanent smoke contract covers:
 
 Stable data-testid attributes are test contracts only; they do not carry product state.
 
-Windows and Linux are the automated real-WebView targets for this external-driver path. macOS remains covered by build/Rust checks and manual release validation until a no-production-backdoor native automation path is adopted.
+Windows and Linux are the automated real-WebView targets for this direct external-driver path. macOS remains covered by build/Rust checks and manual release validation until a no-production-backdoor native automation path is adopted.
 
 ## Protocol fixtures
 
