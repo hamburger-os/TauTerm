@@ -595,6 +595,8 @@
     "shortcutsAction_closeSession": "关闭当前会话",
     "shortcutsAction_nextTab": "下一个标签页",
     "shortcutsAction_prevTab": "上一个标签页",
+    "shortcutsAction_terminalCopy": "复制",
+    "shortcutsAction_terminalPaste": "粘贴",
     "shortcutsAction_terminalSearch": "终端搜索",
     "shortcutsAction_terminalSelectAll": "全选",
     "shortcutsAction_openPalette": "打开命令面板",
@@ -694,7 +696,13 @@
     "paste": "粘贴",
     "selectAll": "全选",
     "search": "搜索...",
-    "clear": "清屏"
+    "clear": "清屏",
+    "pasteWarningTitle": "确认多行粘贴",
+    "pasteWarningMessage": "剪贴板包含 {{lines}} 行实际内容。多行粘贴在 Shell、REPL 或设备控制台中可能连续执行多条输入，请确认内容后继续。",
+    "pasteWarningMeta": "{{lines}} 行内容 · {{characters}} 个字符",
+    "pasteWarningPreview": "粘贴内容预览",
+    "pasteWarningCancel": "取消",
+    "pasteWarningConfirm": "仍然粘贴"
   },
   "logging": {
     "systemLog": "软件自身日志",
