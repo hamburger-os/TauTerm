@@ -90,9 +90,9 @@ Security reports are stored as workflow artifacts for review.
 
 ## Diagnostics during testing
 
-Settings → About → Diagnostics can export a sanitized JSON support bundle. It contains build/runtime health, plugin metadata, aggregated Session state, log loss counters and recent sanitized System Log lines.
+Settings → About → Diagnostics can export a sanitized JSON support bundle. It contains build/runtime health, plugin metadata, aggregated Session state and log loss counters.
 
-It excludes credentials, endpoint values, Session names, raw Session payloads and Session Data Log contents. Diagnostics are support evidence, not an Engineering Recording.
+It excludes credentials, endpoint values, Session names, raw Session payloads, System Log contents and Session Data Log contents. The native save dialog is opened by Rust so the WebView does not receive the destination path. Diagnostics are support evidence, not an Engineering Recording.
 
 ## Manual validation that still matters
 
