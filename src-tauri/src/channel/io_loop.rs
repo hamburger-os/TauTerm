@@ -258,3 +258,169 @@ impl Channel for StubChannel {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channel::error::ChannelError;
+    use crate::channel::DisconnectKind;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    struct MockChannel {
+        reads: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        writes: Arc<Mutex<Vec<u8>>>,
+        shutdown: Arc<AtomicBool>,
+        fail_write: bool,
+    }
+
+    impl Read for MockChannel {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if let Some(data) = self.reads.lock().unwrap().pop_front() {
+                let n = data.len().min(buf.len());
+                buf[..n].copy_from_slice(&data[..n]);
+                Ok(n)
+            } else {
+                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "idle"))
+            }
+        }
+    }
+
+    impl Write for MockChannel {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.fail_write {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "injected write failure",
+                ));
+            }
+            self.writes.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Channel for MockChannel {
+        fn is_connected(&self) -> bool {
+            true
+        }
+
+        fn set_timeout(&mut self, _dur: Duration) -> Result<(), ChannelError> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> Result<(), ChannelError> {
+            self.shutdown.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn context(
+        session_id: &str,
+    ) -> (
+        IoLoopContext,
+        mpsc::SyncSender<IoLoopCmd>,
+        tokio::sync::oneshot::Sender<()>,
+        Arc<AtomicU64>,
+        Arc<AtomicU64>,
+    ) {
+        let (write_tx, write_rx) = mpsc::sync_channel(16);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        let tx_bytes = Arc::new(AtomicU64::new(0));
+        let rx_bytes = Arc::new(AtomicU64::new(0));
+        (
+            IoLoopContext {
+                session_id: session_id.to_string(),
+                write_rx,
+                cancel_rx,
+                tx_bytes: tx_bytes.clone(),
+                rx_bytes: rx_bytes.clone(),
+            },
+            write_tx,
+            cancel_tx,
+            tx_bytes,
+            rx_bytes,
+        )
+    }
+
+    #[test]
+    fn sync_io_loop_writes_counts_and_shutdowns() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let (context, write_tx, _cancel_tx, tx_bytes, _rx_bytes) = context("sync-write");
+        let handle = spawn_sync_io_loop(
+            Box::new(MockChannel {
+                reads: Arc::new(Mutex::new(VecDeque::new())),
+                writes: writes.clone(),
+                shutdown: shutdown.clone(),
+                fail_write: false,
+            }),
+            |_id, _data| {},
+            |_id, _info| {},
+            context,
+        );
+
+        write_tx.send(IoLoopCmd::Write(b"hello".to_vec())).unwrap();
+        write_tx.send(IoLoopCmd::Shutdown).unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(&*writes.lock().unwrap(), b"hello");
+        assert_eq!(tx_bytes.load(Ordering::Relaxed), 5);
+        assert!(shutdown.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn sync_io_loop_delivers_reads_and_honors_cancel() {
+        let reads = Arc::new(Mutex::new(VecDeque::from([b"device-data".to_vec()])));
+        let (data_tx, data_rx) = mpsc::sync_channel(1);
+        let (context, _write_tx, cancel_tx, _tx_bytes, rx_bytes) = context("sync-read");
+        let handle = spawn_sync_io_loop(
+            Box::new(MockChannel {
+                reads,
+                writes: Arc::new(Mutex::new(Vec::new())),
+                shutdown: Arc::new(AtomicBool::new(false)),
+                fail_write: false,
+            }),
+            move |id, data| {
+                let _ = data_tx.send((id, data));
+            },
+            |_id, _info| {},
+            context,
+        );
+
+        let (id, data) = data_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(id, "sync-read");
+        assert_eq!(data, b"device-data");
+        assert_eq!(rx_bytes.load(Ordering::Relaxed), data.len() as u64);
+        let _ = cancel_tx.send(());
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn sync_io_loop_reports_injected_write_failure() {
+        let (disconnect_tx, disconnect_rx) = mpsc::sync_channel(1);
+        let (context, write_tx, _cancel_tx, tx_bytes, _rx_bytes) = context("sync-fail");
+        let handle = spawn_sync_io_loop(
+            Box::new(MockChannel {
+                reads: Arc::new(Mutex::new(VecDeque::new())),
+                writes: Arc::new(Mutex::new(Vec::new())),
+                shutdown: Arc::new(AtomicBool::new(false)),
+                fail_write: true,
+            }),
+            |_id, _data| {},
+            move |_id, info| {
+                let _ = disconnect_tx.send(info);
+            },
+            context,
+        );
+
+        write_tx.send(IoLoopCmd::Write(b"boom".to_vec())).unwrap();
+        let info = disconnect_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        handle.join().unwrap();
+        assert!(matches!(info.kind, DisconnectKind::IoError));
+        assert_eq!(tx_bytes.load(Ordering::Relaxed), 0);
+    }
+}

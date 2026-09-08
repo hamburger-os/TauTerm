@@ -106,6 +106,7 @@ export default function CommandPalette({ isOpen, onClose, onExecute }: CommandPa
     <AnimatePresence>
       {isOpen && (
         <motion.div
+          data-testid="command-palette-overlay"
           className={`${styles.overlay} glass-overlay`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -123,6 +124,7 @@ export default function CommandPalette({ isOpen, onClose, onExecute }: CommandPa
             <div className={`${styles.palette} liquid-glass`}>
           <input
             ref={inputRef}
+            data-testid="command-palette-input"
             className={styles.input}
             type="text"
             placeholder={t("palette.placeholder") || "Type a command..."}

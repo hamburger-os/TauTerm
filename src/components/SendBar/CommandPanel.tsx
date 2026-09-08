@@ -1,8 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { save, open } from "@tauri-apps/plugin-dialog";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 import { useSession } from "../../context/SessionContext";
 import { useToast } from "../../context/ToastContext";
 import { useSendBar } from "./SendBarContext";
@@ -435,16 +434,9 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
 
   const handleImport = useCallback(async () => {
     try {
-      const selected = await open({
-        filters: [{ name: "JSON", extensions: ["json"] }],
-        multiple: false,
-      });
-      if (!selected) return;
-      const content = await readTextFile(selected as string);
+      const content = await invoke<string | null>("import_command_set_file");
+      if (!content) return;
       const imported = JSON.parse(content) as CommandConfig;
-      if (!imported.version || !Array.isArray(imported.commands)) {
-        throw new Error("无效的配置文件格式");
-      }
       // 重名则追加后缀，直接在闭包中用 configs 计算
       let importName = imported.name;
       if (configs.some(c => c.name === importName)) {
@@ -489,18 +481,16 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
 
   const handleExport = useCallback(async () => {
     try {
-      const selected = await save({
-        filters: [{ name: "JSON", extensions: ["json"] }],
-        defaultPath: `${activeConfig?.name ?? "commands"}.json`,
-      });
-      if (!selected) return;
       const config: CommandConfig = {
         version: 1,
         name: activeConfig?.name ?? "commands",
         defaultDelay,
         commands,
       };
-      await writeTextFile(selected, JSON.stringify(config, null, 2));
+      await invoke<boolean>("export_command_set_file", {
+        suggestedName: `${config.name}.json`,
+        content: JSON.stringify(config, null, 2),
+      });
     } catch (e) {
       console.error("导出失败:", e);
       showToast("error", t("commandPanel.exportFailed"));

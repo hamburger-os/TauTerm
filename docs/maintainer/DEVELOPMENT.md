@@ -34,6 +34,8 @@
 | `npm run check-com0com` | Windows com0com 分发文件与合规文件完整性检查 |
 | `npm run check-reserved-region` | 检查虚拟串口测试保留区与产品常量一致 |
 | `npm run check:brand-neutral-ui` | 检查产品 UI 与主题文案的品牌中性约束 |
+| `npm run check:tauri-blocking` | 检查潜在阻塞的 Tauri command 是否错误地留在同步分发路径 |
+| `npm run check:runtime-errors` | 检查全局前端异常是否进入统一日志且公共错误文案已国际化 |
 | `npm run check:product-integrity` | 检查插件单一来源、工程资产持久化、日志可观测性、SSH 主机信任与 Pane UI 结构合同 |
 | `npm run check:split-layout` | Workspace/Split View 几何、持久化与 1/2/2×2 Pane 不变量回归 |
 | `npm run check:session-buffer` | 会话启动数据缓冲回归 |
@@ -45,7 +47,7 @@
 | `cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings` | Rust 严格静态检查 |
 | `cargo test --locked --manifest-path src-tauri/Cargo.toml` | Rust 测试 |
 
-新增、删除或重命名 npm script 时，应同步调整本速查表，但不要在这里复制 script 的实际命令字符串。
+新增、删除或重命名 npm script 时，应同步调整本速查表，但不要在这里复制 script 的实际命令字符串。真实桌面 E2E、性能合同、长稳 soak 与依赖安全工作流见 [测试与可靠性文档](../community/TESTING.md)。
 
 ## 3. 我应该看哪些文档
 

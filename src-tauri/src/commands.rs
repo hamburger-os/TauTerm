@@ -3,6 +3,10 @@
 //! 所有面向前端的 Tauri 命令。
 //! 通过 SerialAdapter + SessionStore + Channel 架构管理会话。
 
+pub(crate) mod config;
+pub(crate) mod files;
+pub(crate) mod platform;
+
 use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
 use crate::channel::DisconnectInfo;
 use crate::kernel::charset::transcode_utf8_to_encoding;
@@ -1630,7 +1634,7 @@ pub fn switch_active_session(
 
 /// 重命名会话
 #[tauri::command]
-pub fn rename_session(
+pub async fn rename_session(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
@@ -2229,7 +2233,10 @@ pub fn list_network_peers(
 ///
 /// 与 `close_channel` 不同：关闭对端不级联断开父会话（监听器保持监听）。
 #[tauri::command]
-pub fn close_network_peer(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub async fn close_network_peer(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
     // 两段式：锁内信号 + 移除，锁外 join（同 close_channel）
     let cleanup = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -2239,7 +2246,9 @@ pub fn close_network_peer(state: State<'_, AppState>, session_id: String) -> Res
         let (_is_last, cleanup) = store.close_sub_connection(&pid, &session_id)?;
         cleanup
     };
-    cleanup.join();
+    tauri::async_runtime::spawn_blocking(move || cleanup.join())
+        .await
+        .map_err(|error| format!("等待网络对端资源清理失败: {error}"))?;
     Ok(())
 }
 
@@ -2456,7 +2465,7 @@ pub fn set_network_send_target(
 // ── 会话持久化命令 ─────────────────────────────────
 
 #[tauri::command]
-pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
+pub async fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app)?;
     let mut saved = SessionStore::load_from_disk(&path)?;
 
@@ -2491,7 +2500,7 @@ pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
 // ── 会话配置命令 ─────────────────────────────────────
 
 #[tauri::command]
-pub fn save_session_config(
+pub async fn save_session_config(
     app: AppHandle,
     state: State<'_, AppState>,
     request: SaveSessionConfigRequest,
@@ -2604,7 +2613,7 @@ pub fn resolve_local_shell_session_name(params: Value) -> Result<String, String>
 
 /// 删除会话配置（从 sessions.json 中移除指定会话）
 #[tauri::command]
-pub fn delete_session_config(
+pub async fn delete_session_config(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
@@ -2629,14 +2638,14 @@ pub fn delete_session_config(
 // ── 凭据存储状态 ────────────────────────────────────
 
 #[tauri::command]
-pub fn credential_storage_status(
+pub async fn credential_storage_status(
     state: State<'_, AppState>,
 ) -> Result<crate::security::credential_store::CredentialStorageStatus, String> {
     Ok(state.credential_store.status())
 }
 
 #[tauri::command]
-pub fn unlock_credential_vault(
+pub async fn unlock_credential_vault(
     state: State<'_, AppState>,
     master_password: String,
 ) -> Result<(), String> {
@@ -2648,52 +2657,9 @@ pub fn unlock_credential_vault(
 }
 
 #[tauri::command]
-pub fn lock_credential_vault(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn lock_credential_vault(state: State<'_, AppState>) -> Result<(), String> {
     state.credential_store.lock_fallback();
     Ok(())
-}
-
-// ── ConfigStore 命令 ────────────────────────────────
-
-#[tauri::command]
-pub fn get_config(state: State<'_, AppState>, key: String) -> Result<Option<Value>, String> {
-    if !state.config_store.persistence_ready() {
-        return Err("ConfigStore persistence is unavailable".to_string());
-    }
-    Ok(state.config_store.get::<Value>(&key))
-}
-
-#[tauri::command]
-pub fn set_config(state: State<'_, AppState>, key: String, value: Value) -> Result<(), String> {
-    state
-        .config_store
-        .set(&key, &value)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn delete_config(state: State<'_, AppState>, key: String) -> Result<(), String> {
-    state.config_store.delete(&key).map_err(|e| e.to_string())
-}
-
-// ── ThemeEngine 命令 ────────────────────────────────
-
-#[tauri::command]
-pub fn get_theme_list(state: State<'_, AppState>) -> Vec<String> {
-    state.theme_engine.theme_names()
-}
-
-#[tauri::command]
-pub fn get_active_theme(state: State<'_, AppState>) -> String {
-    state.theme_engine.active_name()
-}
-
-#[tauri::command]
-pub fn set_theme(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    state
-        .theme_engine
-        .apply_theme(&name)
-        .map_err(|e| e.to_string())
 }
 
 // ── 日志引擎命令 ────────────────────────────────────
@@ -2804,7 +2770,7 @@ pub fn get_log_health(state: State<'_, AppState>) -> Result<LogHealth, String> {
 
 /// 更新系统日志配置（启用/禁用 + 最低日志级别）
 #[tauri::command]
-pub fn set_system_log_config(
+pub async fn set_system_log_config(
     state: State<'_, AppState>,
     enabled: bool,
     level: String,
@@ -2862,42 +2828,47 @@ pub fn get_log_config(state: State<'_, AppState>) -> Result<LogConfigResponse, S
 
 /// 在系统文件管理器中打开日志目录
 #[tauri::command]
-pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
-    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let config = log_engine.get_config()?;
-    let path = config.log_dir.clone();
-    std::fs::create_dir_all(&path)
-        .map_err(|error| format!("创建日志目录失败 {:?}: {}", path, error))?;
+pub async fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
+    let path = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        log_engine.get_config()?.log_dir
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::create_dir_all(&path)
+            .map_err(|error| format!("创建日志目录失败 {:?}: {}", path, error))?;
 
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
-    }
-    Ok(())
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("打开目录失败: {}", e))?;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("打开目录失败: {}", e))?;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("打开目录失败: {}", e))?;
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|error| format!("打开日志目录任务失败: {error}"))?
 }
 
 /// 更新日志引擎运行时配置（由前端设置页调用）
 ///
 /// 消费者线程下次循环自动读取新配置，无需重启。
 #[tauri::command]
-pub fn update_log_config(
+pub async fn update_log_config(
     state: State<'_, AppState>,
     config: LogConfigUpdate,
 ) -> Result<(), String> {
@@ -2991,138 +2962,6 @@ pub async fn clear_all_logs(state: State<'_, AppState>) -> Result<(), String> {
     })
     .await
     .map_err(|error| format!("日志清理确认任务失败: {}", error))?
-}
-
-// ── 虚拟串口驱动管理 ────────────────────────────────
-
-/// 查询 com0com 驱动状态（前端主动拉取，解决事件在组件挂载前发射的竞态）
-#[tauri::command]
-pub fn check_virtual_port_driver(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let vpm = state
-        .virtual_port_manager
-        .lock()
-        .map_err(|e| e.to_string())?;
-    Ok(serde_json::json!({
-        "files_present": vpm.are_files_present(),
-        "driver_installed": vpm.detect_driver(),
-        "orphan_count": vpm.pending_orphan_count(),
-    }))
-}
-
-/// 尝试安装 com0com 虚拟串口驱动
-///
-/// 优先直接安装（当前进程已提权时成功）；普通权限下则在 Windows 上
-/// 通过 PowerShell Start-Process -Verb RunAs 触发 UAC 提权安装。
-#[tauri::command]
-pub fn install_virtual_port_driver(
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    let mut vpm = state
-        .virtual_port_manager
-        .lock()
-        .map_err(|e| e.to_string())?;
-
-    // 先检测是否已安装
-    if vpm.detect_driver() {
-        log::info!("com0com 驱动已安装，无需重复操作");
-        return Ok("already_installed".into());
-    }
-
-    // 检查驱动文件是否存在
-    if !vpm.are_files_present() {
-        return Err("com0com driver files missing — please reinstall TauTerm".into());
-    }
-
-    // 第 1 层: 尝试直接安装（当前进程已提权时成功）
-    log::info!("尝试直接安装 com0com 驱动...");
-    match vpm.install_driver() {
-        Ok(()) => {
-            let _ = app.emit("virtual-port-driver-ready", serde_json::json!({}));
-            return Ok("installed".into());
-        }
-        Err(direct_err) => {
-            log::info!("直接安装失败: {}；尝试提权安装...", direct_err);
-        }
-    }
-
-    // 第 2 层: 通过提权安装（UAC / sudo），逻辑下沉到 VirtualPortManager
-    //      避免 commands 层直接依赖 com0com 的 setupc_path/resource_dir
-    match vpm.install_driver_elevated() {
-        Ok(()) => {
-            log::info!("com0com 驱动提权安装成功");
-            // 重新检测确认安装成功
-            if vpm.detect_driver() {
-                let _ = app.emit("virtual-port-driver-ready", serde_json::json!({}));
-                return Ok("installed".into());
-            }
-            Err("Driver installed but detection failed — please restart TauTerm".into())
-        }
-        Err(elevated_err) => Err(format!(
-            "Driver installation failed.\n\n{}\n\n\
-                 Action: Run TauTerm as administrator once to install the driver.",
-            elevated_err
-        )),
-    }
-}
-
-/// 手动触发虚拟端口残留清理（通过 UAC 提权，单次弹窗）。
-///
-/// 收集所有已知的残留 bus 号（active_endpoints + com0com_state.json + 驱动真实状态），
-/// 通过单个提权的 PowerShell 脚本批量清理。
-///
-/// 返回 `{ cleaned: N, message: "..." }`。
-#[tauri::command]
-pub fn cleanup_virtual_ports(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let mut vpm = state
-        .virtual_port_manager
-        .lock()
-        .map_err(|e| e.to_string())?;
-
-    // 先尝试直接清理孤儿端口（无需管理员权限的场景）
-    let direct_cleaned = vpm.cleanup_orphans();
-
-    // 检查是否还有残留需要 UAC 提权（pending_orphan_count > 0）
-    let has_more_work = vpm.pending_orphan_count() > 0;
-
-    if !has_more_work && direct_cleaned > 0 {
-        return Ok(serde_json::json!({
-            "cleaned": direct_cleaned,
-            "message": format!("已清理 {} 个遗留端口对", direct_cleaned),
-        }));
-    }
-
-    if !has_more_work && direct_cleaned == 0 {
-        return Ok(serde_json::json!({
-            "cleaned": 0,
-            "message": "没有需要清理的端口对",
-        }));
-    }
-
-    // 有残留且需要 UAC 提权
-    log::info!(
-        "cleanup_virtual_ports: 直接清理完成 {} 个，剩余端口对需要 UAC 提权",
-        direct_cleaned
-    );
-    match vpm.cleanup_endpoints_elevated() {
-        Ok(uac_cleaned) => {
-            let total = direct_cleaned + uac_cleaned;
-            Ok(serde_json::json!({
-                "cleaned": total,
-                "message": format!("已清理 {} 个端口对（含 UAC 提权清理 {} 个）", total, uac_cleaned),
-            }))
-        }
-        Err(e) => {
-            if e.contains("取消") || e.contains("cancel") {
-                Err(format!(
-                    "用户取消了 UAC 提权弹窗（已直接清理 {} 个，余下将保留至下次操作）",
-                    direct_cleaned
-                ))
-            } else {
-                Err(format!("UAC 提权清理失败: {}", e))
-            }
-        }
-    }
 }
 
 // ── 脚本引擎命令 ────────────────────────────────────

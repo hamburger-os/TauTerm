@@ -1,0 +1,68 @@
+name: Performance Contract
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 3"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Runtime performance baseline
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - name: Install Tauri system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libssl-dev \
+            libudev-dev
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            src-tauri/target
+          key: performance-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'src-tauri/Cargo.lock') }}
+
+      - name: Run release-mode performance contract
+        shell: bash
+        env:
+          TAUTERM_PERF_OUTPUT: ${{ github.workspace }}/performance-contract.json
+        run: |
+          set -euo pipefail
+          cargo test --locked --release --manifest-path src-tauri/Cargo.toml \
+            performance_contract_runtime_io_and_atomic_persistence -- --ignored --nocapture \
+            | tee performance-contract.log
+          test -s performance-contract.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: performance-contract-${{ github.sha }}
+          path: |
+            performance-contract.json
+            performance-contract.log
+          retention-days: 30

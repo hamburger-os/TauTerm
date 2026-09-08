@@ -14,6 +14,12 @@ SSH 的持久化 Session 只保存由 Session ID 确定的 `credential_account` 
 
 SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fingerprint 与 first/last seen。首次信任需要明确确认；已知 fingerprint 匹配时自动通过；已知主机密钥变化时 fail-closed。known-host 文件损坏、schema 版本不支持或存储未初始化时同样 fail-closed：可以备份原文件用于诊断，但不能把已有信任状态解释成空库重新 TOFU。并发确认使用独立 request ID，不以 fingerprint 作为 pending key。
 
+### WebView 文件访问边界
+
+主 WebView 不拥有通用文件系统读写 capability，也不注册 `tauri-plugin-fs` 作为前端直接文件通道。文件/目录选择使用系统 dialog 获取用户明确选择的路径，实际 SFTP、Serial transfer、Command Set 导入导出、配置、日志和诊断文件读写继续由 Rust 后端的受控命令/服务完成。这样文件选择能力与任意路径读写能力保持分离。
+
+需要新增前端文件访问能力时，必须先证明 Rust 边界无法合理承载，并为实际目录设置最小 scope；禁止恢复全盘通配形式的 WebView 文件权限。
+
 ### Windows 特权操作
 
 主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；开发/便携场景可以使用明确的按需 UAC 回退。Local Shell 的管理员 child 是独立的一次性提权路径，不等于给主应用提权。
@@ -25,6 +31,8 @@ TRDP sidecar、抓包库等 native 依赖只能从受控位置解析。生产构
 ### 打包与更新
 
 构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验，发布流程对此保持 fail-closed。Windows Authenticode 发布者签名当前尚未启用：开发阶段的 NSIS、主程序、service/TRDP helper 可能没有 publisher signature。这个限制必须在平台支持文档中明确披露；进入广泛生产分发前，需要恢复 Authenticode + RFC 3161 时间戳并在 CI 中验证 signer/timestamp。
+
+依赖风险由 Dependabot 与定时 Dependency Security workflow 持续检查；npm 生产依赖高危 advisory 和 RustSec advisory 会形成明确失败/报告。许可证合规与漏洞风险是两个独立合同，不能用其中一个替代另一个。
 
 正式 bundle 前会从锁定的 Cargo/npm 依赖图生成第三方依赖 notice，并与 TauTerm 自有许可证、TCNOpen MPL 许可证和特殊第三方清单一起进入安装包；Windows 再包含 com0com GPL/来源材料。发布流程在公开稳定版本成为 latest updater 之前验证产物集合、签名、合规资源和可下载内容，并把 com0com 对应官方源码作为同一 Release 的 fail-closed 资产。
 
@@ -48,6 +56,7 @@ flowchart LR
 - 不能为了方便让主应用长期以管理员/root 权限运行。
 - 特权 IPC 只暴露最小动作集合，并验证调用者和资源范围。
 - 密码、私钥、token 等不得进入普通日志或文档示例。
+- WebView 不获得没有当前功能需求支撑的通用文件系统 capability；用户通过 dialog 选择路径不等于授权前端任意文件 I/O。
 - 运行时可覆盖 native helper 的机制只能用于明确的受信开发场景，不能让导入配置变成任意代码执行入口。
 - 安装/更新状态与应用版本元数据必须由发布流程验证，不能靠 README 手工同步。
 - 安全漏洞披露流程只在根 `SECURITY.md` 维护。

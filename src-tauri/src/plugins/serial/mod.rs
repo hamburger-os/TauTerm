@@ -262,3 +262,56 @@ impl ProtocolAdapter for SerialAdapter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serial_config_defaults_are_stable() {
+        let config = SerialAdapter::parse_params(&serde_json::json!({}));
+        assert_eq!(config.baud_rate, 115200);
+        assert_eq!(config.data_bits, 8);
+        assert_eq!(config.parity, "none");
+        assert_eq!(config.stop_bits, "1");
+        assert_eq!(config.flow_control, "none");
+        assert_eq!(config.data_mode, "text");
+        assert!(!config.virtual_port_enabled);
+        assert_eq!(config.virtual_port_count, 0);
+    }
+
+    #[test]
+    fn serial_config_parses_explicit_transport_settings() {
+        let config = SerialAdapter::parse_params(&serde_json::json!({
+            "baud_rate": 921600,
+            "data_bits": 7,
+            "parity": "even",
+            "stop_bits": "2",
+            "flow_control": "rts_cts",
+            "data_mode": "hex",
+            "virtual_port_enabled": true,
+            "virtual_port_count": 2
+        }));
+        assert_eq!(config.baud_rate, 921600);
+        assert_eq!(config.data_bits, 7);
+        assert_eq!(config.parity, "even");
+        assert_eq!(config.stop_bits, "2");
+        assert_eq!(config.flow_control, "rts_cts");
+        assert_eq!(config.data_mode, "hex");
+        assert!(config.virtual_port_enabled);
+        assert_eq!(config.virtual_port_count, 2);
+    }
+
+    #[test]
+    fn serial_adapter_contract_exposes_expected_shared_capabilities() {
+        let adapter = SerialAdapter::new();
+        assert_eq!(adapter.io_strategy(), IoStrategy::Sync);
+        let protocols = adapter
+            .transfer_protocols()
+            .into_iter()
+            .map(|protocol| protocol.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(protocols, vec!["ymodem", "xmodem", "zmodem"]);
+        assert_eq!(adapter.content_type(), ContentType::Terminal);
+    }
+}

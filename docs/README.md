@@ -103,6 +103,7 @@ flowchart TB
 
 - [源码构建](community/BUILDING.md)
 - [支持平台](community/SUPPORTED_PLATFORMS.md)
+- [测试与可靠性](community/TESTING.md)
 - [发布流程](community/RELEASING.md)
 - [参与贡献](../CONTRIBUTING.md)
 

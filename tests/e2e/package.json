@@ -1,0 +1,14 @@
+{
+  "name": "tauterm-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "wdio run ./wdio.conf.js"
+  },
+  "devDependencies": {
+    "@wdio/cli": "9.31.2",
+    "@wdio/local-runner": "9.31.2",
+    "@wdio/mocha-framework": "9.31.2",
+    "@wdio/spec-reporter": "9.31.2"
+  }
+}

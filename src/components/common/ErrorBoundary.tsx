@@ -1,6 +1,8 @@
 import { Component, ErrorInfo, ReactNode } from "react";
 import GlassPanel from "./GlassPanel";
 import Icon from "./Icon";
+import i18n from "../../i18n";
+import { reportFrontendError } from "../../utils/runtimeDiagnostics";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -31,7 +33,7 @@ export default class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("TauTerm ErrorBoundary caught:", error, errorInfo);
+    reportFrontendError("react.error-boundary", error, errorInfo.componentStack || undefined);
   }
 
   handleRetry = () => {
@@ -66,7 +68,7 @@ export default class ErrorBoundary extends Component<
                   fontSize: "var(--text-md)",
                 }}
               >
-                应用发生错误
+                {i18n.t("runtimeErrors.title")}
               </h3>
               <p
                 style={{
@@ -75,7 +77,7 @@ export default class ErrorBoundary extends Component<
                   marginBottom: "16px",
                 }}
               >
-                {this.state.error?.message || "未知错误"}
+                {this.state.error?.message || i18n.t("runtimeErrors.unknown")}
               </p>
               <button
                 onClick={this.handleRetry}
@@ -86,7 +88,7 @@ export default class ErrorBoundary extends Component<
                   fontSize: "var(--text-sm)",
                 }}
               >
-                重试
+                {i18n.t("runtimeErrors.retry")}
               </button>
             </div>
           </GlassPanel>

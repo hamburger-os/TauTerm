@@ -15,7 +15,10 @@
 
 mod channel;
 mod commands;
+mod diagnostics;
 mod kernel;
+#[cfg(test)]
+mod performance_contract;
 mod plugins;
 mod security;
 mod transfer;
@@ -104,7 +107,6 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
@@ -454,15 +456,17 @@ pub fn run() {
             commands::file_transfer_send,
             commands::file_transfer_receive,
             commands::file_transfer_cancel,
+            commands::files::import_command_set_file,
+            commands::files::export_command_set_file,
             commands::credential_storage_status,
             commands::unlock_credential_vault,
             commands::lock_credential_vault,
-            commands::get_config,
-            commands::set_config,
-            commands::delete_config,
-            commands::get_theme_list,
-            commands::get_active_theme,
-            commands::set_theme,
+            commands::config::get_config,
+            commands::config::set_config,
+            commands::config::delete_config,
+            commands::config::get_theme_list,
+            commands::config::get_active_theme,
+            commands::config::set_theme,
             commands::start_session_log,
             commands::stop_session_log,
             commands::log_event,
@@ -474,9 +478,9 @@ pub fn run() {
             commands::open_log_dir,
             commands::update_log_config,
             commands::clear_all_logs,
-            commands::install_virtual_port_driver,
-            commands::check_virtual_port_driver,
-            commands::cleanup_virtual_ports,
+            commands::platform::install_virtual_port_driver,
+            commands::platform::check_virtual_port_driver,
+            commands::platform::cleanup_virtual_ports,
             commands::start_script_engine,
             commands::stop_script_engine,
             commands::rules_to_script,
@@ -511,6 +515,7 @@ pub fn run() {
             commands::iperf_client_stop,
             commands::iperf_update_params,
             commands::iperf_get_status,
+            diagnostics::export_diagnostics,
         ])
         .build(tauri::generate_context!())
         .expect("启动 TauTerm 时发生错误")
