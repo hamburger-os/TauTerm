@@ -55,6 +55,26 @@ jobs:
           npm run build
           cargo build --locked --manifest-path src-tauri/Cargo.toml
 
+      - name: Install pinned tauri-driver
+        run: cargo install tauri-driver --locked --version 2.0.6
+
+      - name: Verify Linux WebDriver
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v WebKitWebDriver
+          command -v tauri-driver
+
+      - name: Add Windows Edge WebDriver to PATH
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not $env:EDGEWEBDRIVER) { throw "EDGEWEBDRIVER is not defined by the runner image" }
+          $driver = Join-Path $env:EDGEWEBDRIVER "msedgedriver.exe"
+          if (-not (Test-Path $driver)) { throw "Microsoft Edge WebDriver not found at $driver" }
+          $env:EDGEWEBDRIVER | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Install pinned E2E tooling
         working-directory: tests/e2e
         run: npm install --no-audit --no-fund --no-package-lock
