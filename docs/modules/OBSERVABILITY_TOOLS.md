@@ -27,7 +27,7 @@ LogEngine 使用有界生产者/消费者队列和独立写线程处理系统日
 
 ### 诊断与性能合同
 
-前端未捕获异常通过受限诊断桥进入 System Log。Settings/About 可以导出版本化、脱敏的诊断 JSON，包含构建/平台信息、ConfigStore/凭据后端健康、日志丢失计数、插件元数据、按插件聚合的 Session 状态与最近脱敏 System Log；凭据、端点、Session 名称、raw payload 与 Session Data Log 不进入诊断包。
+前端未捕获异常通过受限诊断桥进入 System Log。Settings/About 可以导出版本化、脱敏的诊断 JSON，包含构建/平台信息、ConfigStore/凭据后端健康、日志丢失计数、插件元数据与按插件聚合的 Session 状态；凭据、端点、Session 名称、raw payload、System Log 内容与 Session Data Log 不进入诊断包。保存路径由 Rust 发起的 native dialog 决定，WebView 不接收任意目标路径。
 
 性能与长稳验证是独立工程合同：release-mode performance workflow 记录固定 32 MiB I/O dispatch 与原子持久化的趋势数据；reliability workflow 反复创建/发送/Shutdown I/O 生命周期并输出 JSON。Hosted Runner 的性能数值在形成稳定历史前只作为趋势证据，不凭单次波动设置拍脑袋阈值。
 
