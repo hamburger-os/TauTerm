@@ -120,6 +120,11 @@ impl KnownHostStore {
     }
 
     pub fn evaluate(&self, host: &str, port: u16, fingerprint: &str) -> HostTrustDecision {
+        if !self.available.load(Ordering::Acquire) {
+            return HostTrustDecision::Unavailable {
+                reason: "SSH known-host 存储不可用或配置未完成".to_string(),
+            };
+        }
         let configured = match self.path.read() {
             Ok(path) => path.is_some(),
             Err(error) => {
@@ -271,6 +276,31 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(dir);
+    }
+
+    #[test]
+    fn failed_reconfigure_disables_previous_trust() {
+        let dir = temp_path();
+        std::fs::create_dir_all(&dir).unwrap();
+        let good_path = dir.join("known_hosts.json");
+        let bad_path = dir.join("broken.json");
+
+        let store = KnownHostStore::new();
+        store.configure(good_path).unwrap();
+        store.trust("example.test", 22, "SHA256:first").unwrap();
+        assert_eq!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Trusted
+        );
+
+        std::fs::write(&bad_path, b"{not-json").unwrap();
+        assert!(store.configure(bad_path).is_err());
+        assert!(matches!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Unavailable { .. }
+        ));
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
