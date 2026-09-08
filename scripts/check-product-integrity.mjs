@@ -206,6 +206,11 @@ assert.doesNotMatch(
   /config_store[\s\S]{0,120}\.set\("log\.dir"/,
   "runtime log directory must stay owned by LogEngine rather than duplicated in ConfigStore",
 );
+assert.doesNotMatch(
+  lib,
+  /PathBuf::from\("\."\)/,
+  "runtime setup must not use cwd as a persistence/resource fallback",
+);
 
 const logEngine = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "log_engine.rs"), "utf8");
 assert.match(logEngine, /session_enabled/, "System and Session logging must have separate enable semantics");
@@ -215,6 +220,11 @@ assert.match(
   logEngine,
   /log config lock poisoned/,
   "LogEngine configuration lock failures must be explicit",
+);
+assert.doesNotMatch(
+  logEngine,
+  /config_arc\.lock\(\)[\s\S]{0,120}unwrap_or_default\(\)/,
+  "LogEngine consumer must not recover poisoned config with defaults",
 );
 
 assert.match(logEngine, /dropped_session_entries/, "Session log loss telemetry is missing");
@@ -231,6 +241,11 @@ assert.match(
   knownHosts,
   /HostTrustDecision::Unavailable/,
   "corrupted or unavailable SSH host trust must remain fail-closed",
+);
+assert.match(
+  knownHosts,
+  /available\.load\(Ordering::Acquire\)/,
+  "failed SSH host-trust reconfiguration must disable stale trust",
 );
 assert.doesNotMatch(
   knownHosts,
