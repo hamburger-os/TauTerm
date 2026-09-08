@@ -30,7 +30,7 @@
     "homeDirectory": "User home directory",
     "wslWorkingDirectory": "Linux starting directory",
     "wslHomeDirectory": "Linux user home (~)",
-    "wslDefault": "Linux subsystem (default distribution)",
+    "wslDefault": "WSL (default distribution)",
     "chooseDirectory": "Choose directory",
     "arguments": "Arguments",
     "additionalArguments": "Additional arguments",
