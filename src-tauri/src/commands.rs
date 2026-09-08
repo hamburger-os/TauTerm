@@ -1163,7 +1163,7 @@ fn connect_simple_terminal_session(
     let send_bar_enabled = send_bar_enabled.unwrap_or(default_send_bar_enabled);
     let session_id = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let sid = store.create_session(
+        store.create_session(
             SessionCreateOptions {
                 name: session_name.clone(),
                 plugin_id: plugin_id.into(),
@@ -1178,8 +1178,7 @@ fn connect_simple_terminal_session(
             on_data,
             on_disconnect,
             app.clone(),
-        )?;
-        sid
+        )?
     };
 
     let (actual_name, actual_params, connected_at) = {
@@ -3710,7 +3709,7 @@ async fn connect_session_tftp(
     // 使用容器会话模式（无 I/O loop — TFTP 无终端数据流）
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let sid = store.create_container_session(
+        store.create_container_session(
             ContainerSessionCreateOptions {
                 name: session_name.clone(),
                 plugin_id: "tftp".into(),
@@ -3724,8 +3723,7 @@ async fn connect_session_tftp(
             Some(side_channel.clone()),
             None,
             None,
-        )?;
-        sid
+        )?
     };
 
     log::info!("TFTP 会话已创建（容器模式）: {}", sid);
@@ -4157,7 +4155,7 @@ async fn connect_session_iperf(
     // 使用容器会话模式（无 I/O loop — iperf 无终端数据流）
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let sid = store.create_container_session(
+        store.create_container_session(
             ContainerSessionCreateOptions {
                 name: session_name.clone(),
                 plugin_id: "iperf".into(),
@@ -4171,8 +4169,7 @@ async fn connect_session_iperf(
             Some(side_channel.clone()),
             None,
             None,
-        )?;
-        sid
+        )?
     };
 
     log::info!("iperf 会话已创建（容器模式）: {}", sid);
