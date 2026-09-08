@@ -7,6 +7,7 @@ use crate::kernel::persistence::atomic_write;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
 
 const KNOWN_HOSTS_VERSION: u32 = 1;
@@ -38,6 +39,7 @@ pub struct KnownHostStore {
     path: RwLock<Option<PathBuf>>,
     hosts: RwLock<HashMap<String, KnownHostRecord>>,
     mutation_lock: Mutex<()>,
+    available: AtomicBool,
 }
 
 impl KnownHostStore {
@@ -46,6 +48,7 @@ impl KnownHostStore {
             path: RwLock::new(None),
             hosts: RwLock::new(HashMap::new()),
             mutation_lock: Mutex::new(()),
+            available: AtomicBool::new(false),
         }
     }
 
@@ -54,6 +57,7 @@ impl KnownHostStore {
             .mutation_lock
             .lock()
             .map_err(|_| "SSH known-host mutation 锁错误".to_string())?;
+        self.available.store(false, Ordering::Release);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("无法创建 SSH 信任目录: {e}"))?;
         }
@@ -66,6 +70,7 @@ impl KnownHostStore {
             .path
             .write()
             .map_err(|_| "SSH known-host 路径锁错误".to_string())? = Some(path);
+        self.available.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -148,6 +153,10 @@ impl KnownHostStore {
     }
 
     pub fn touch(&self, host: &str, port: u16) {
+        if !self.available.load(Ordering::Acquire) {
+            log::warn!("SSH known-host 存储不可用，拒绝更新 last_seen");
+            return;
+        }
         let Ok(_mutation) = self.mutation_lock.lock() else {
             log::warn!("SSH known-host mutation 锁错误");
             return;
@@ -173,6 +182,9 @@ impl KnownHostStore {
     }
 
     pub fn trust(&self, host: &str, port: u16, fingerprint: &str) -> Result<(), String> {
+        if !self.available.load(Ordering::Acquire) {
+            return Err("SSH known-host 存储不可用，不能建立新的主机信任".to_string());
+        }
         let _mutation = self
             .mutation_lock
             .lock()
@@ -208,6 +220,9 @@ impl KnownHostStore {
     }
 
     fn persist_snapshot(&self, hosts: &HashMap<String, KnownHostRecord>) -> Result<(), String> {
+        if !self.available.load(Ordering::Acquire) {
+            return Err("SSH known-host 存储不可用".to_string());
+        }
         let path = self
             .path
             .read()
@@ -252,7 +267,7 @@ mod tests {
         assert!(store.trust("example.test", 22, "SHA256:first").is_err());
         assert_eq!(
             store.evaluate("example.test", 22, "SHA256:first"),
-            HostTrustDecision::Unknown
+            HostTrustDecision::Unavailable
         );
 
         let _ = std::fs::remove_file(dir);
