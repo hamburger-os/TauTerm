@@ -61,7 +61,7 @@ export default function PasteSafetyDialog({
           }}
         >
           <motion.div
-            className={`${styles.dialog} liquid-glass-float`}
+            className={`${styles.dialog} liquid-glass`}
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="terminal-paste-warning-title"
@@ -95,7 +95,7 @@ export default function PasteSafetyDialog({
             </div>
 
             <div className={styles.previewLabel}>{t("terminal.pasteWarningPreview")}</div>
-            <pre className={`${styles.preview} liquid-glass-content`}>
+            <pre className={`${styles.preview} liquid-control-surface`}>
               {preview.preview}
               {preview.truncated ? "\n…" : ""}
             </pre>
