@@ -1076,7 +1076,12 @@ async fn connect_session_local_shell(
     .inspect_err(|error| {
         log::error!("Local Shell 首个子会话创建失败: {error}");
         if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.close_session(&parent_id);
+            if let Err(cleanup_error) = store.close_session(&parent_id) {
+                log::warn!(
+                    "Local Shell 首个子会话失败后的父会话清理也失败: {}",
+                    cleanup_error
+                );
+            }
         }
     })?;
 
@@ -1335,7 +1340,13 @@ async fn connect_session_ssh(
                 // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
                 log::error!("SSH 通道 0 创建失败，回滚父容器会话 {}: {}", parent_id, e);
                 if let Ok(mut store) = state.session_store.lock() {
-                    let _ = store.close_session(&parent_id);
+                    if let Err(cleanup_error) = store.close_session(&parent_id) {
+                        log::warn!(
+                            "SSH 通道 0 失败后的父会话清理也失败 {}: {}",
+                            parent_id,
+                            cleanup_error
+                        );
+                    }
                 }
             })?;
 
@@ -1353,7 +1364,13 @@ async fn connect_session_ssh(
     if let Some(pending) = pending_ssh_credential {
         if let Err(error) = commit_ssh_credential(&state, pending) {
             if let Ok(mut store) = state.session_store.lock() {
-                let _ = store.close_session(&parent_id);
+                if let Err(cleanup_error) = store.close_session(&parent_id) {
+                    log::warn!(
+                        "SSH 凭据提交失败后的父会话清理也失败 {}: {}",
+                        parent_id,
+                        cleanup_error
+                    );
+                }
             }
             return Err(error);
         }
