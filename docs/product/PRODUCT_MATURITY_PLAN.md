@@ -91,6 +91,8 @@ I/O → batching → terminal UI         I/O → recorder/event store
 
 0.6.x 的目标是让当前产品更可信、更稳定、更容易诊断，而不是提前消耗下一阶段的功能预算。
 
+0.6.4 将这一收敛目标固化为长期工程门：移除无需求的 WebView 通用文件系统权限、审计阻塞 command、让前端异常进入 System Log、提供脱敏 Diagnostic Bundle，并建立 I/O fault/lifecycle tests、协议 fixture self-test、真实桌面 runtime smoke、性能合同、可配置 soak 与依赖 advisory 工作流。这些工作属于当前能力的质量底座，不代表提前启动 0.7.0。
+
 ## 4. Daily Driver Gate
 
 Product Integrity 完成且 0.6.x 收敛达到预期后，下一阶段优先提升日常主力工具成熟度：
