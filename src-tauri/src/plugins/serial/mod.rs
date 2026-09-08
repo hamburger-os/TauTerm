@@ -315,4 +315,3 @@ mod tests {
         assert_eq!(adapter.content_type(), ContentType::Terminal);
     }
 }
-
