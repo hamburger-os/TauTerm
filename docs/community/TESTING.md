@@ -22,6 +22,7 @@ The normal CI workflow remains the fast correctness gate. In addition to build/t
 
 - Tauri commands that perform potentially blocking filesystem/process/credential/driver work are not synchronous command handlers;
 - frontend ErrorBoundary/unhandled errors use the shared diagnostic path and localized public copy;
+- terminal clipboard contracts verify configurable copy/paste shortcuts, compatibility aliases, capture-phase paste routing, xterm `paste()` ownership and the multi-line confirmation threshold;
 - reusable protocol fixture scripts remain executable and the Telnet fixture passes an actual loopback login/command exchange;
 - existing split-layout, product-integrity, security and persistence contracts.
 
