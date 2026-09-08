@@ -588,6 +588,7 @@
     "shortcutsReset": "重置为默认值",
     "shortcutsRecording": "等待输入...",
     "shortcutsConflict": "已被「{{name}}」占用",
+    "shortcutsReservedTerminal": "终端保留键，不可重新绑定",
     "shortcutsCategory_session": "会话",
     "shortcutsCategory_terminal": "终端",
     "shortcutsCategory_application": "应用",
