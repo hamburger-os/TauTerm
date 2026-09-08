@@ -390,7 +390,7 @@ function AppInner() {
   const activeShowTargetBar = activeShowSendBar && isTargetBarVisible(activeTabForBar?.params);
 
   return (
-    <div className={`app-root ${isResizingSidebar || isResizingRightSidebar || isResizingSendBar ? "ui-resizing" : ""}`}>
+    <div data-testid="app-root" className={`app-root ${isResizingSidebar || isResizingRightSidebar || isResizingSendBar ? "ui-resizing" : ""}`}>
       {/* Shared four-color ambient background (z-index: 0) */}
       <SpectrumAmbientBackground />
 
