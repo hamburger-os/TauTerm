@@ -38,6 +38,7 @@ const terminalSource = await readFile(
 );
 assert.match(terminalSource, /onPasteCapture=\{handlePaste\}/);
 assert.match(terminalSource, /term\.paste\(text\)/);
+assert.match(terminalSource, /bracketedPasteMode/);
 assert.match(terminalSource, /Ctrl\+Insert/);
 assert.match(terminalSource, /Shift\+Insert/);
 assert.match(terminalSource, /Meta\+C/);
