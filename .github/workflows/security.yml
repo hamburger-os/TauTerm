@@ -1,0 +1,68 @@
+name: Dependency Security
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  advisory:
+    name: Dependency advisories
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - name: Install application dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Production npm advisory gate
+        shell: bash
+        run: |
+          set +e
+          npm audit --omit=dev --audit-level=high --json > npm-audit-production.json
+          STATUS=$?
+          set -e
+          cat npm-audit-production.json
+          exit "$STATUS"
+
+      - name: Full npm advisory report
+        if: always()
+        shell: bash
+        run: npm audit --json > npm-audit-full.json || true
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: RustSec advisory gate
+        shell: bash
+        run: cargo audit --file src-tauri/Cargo.lock --json > cargo-audit.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: dependency-security-${{ github.sha }}
+          path: |
+            npm-audit-production.json
+            npm-audit-full.json
+            cargo-audit.json
+          if-no-files-found: warn
+          retention-days: 30
