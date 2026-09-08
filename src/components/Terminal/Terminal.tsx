@@ -209,11 +209,16 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   }, [restoreTerminalFocus]);
 
   const requestPasteText = useCallback((text: string) => {
-    if (!text || !isConnectedRef.current) {
+    const term = xtermRef.current;
+    if (!text || !term || !isConnectedRef.current) {
       restoreTerminalFocus();
       return;
     }
-    if (analyzeTerminalPaste(text).requiresConfirmation) {
+    const pasteAnalysis = analyzeTerminalPaste(text);
+    // Bracketed Paste Mode (DECSET 2004) lets a cooperating shell/editor treat the
+    // payload as one paste operation instead of immediately submitting each line.
+    // Only warn when that protection is absent and multiple content lines are present.
+    if (pasteAnalysis.requiresConfirmation && !term.modes.bracketedPasteMode) {
       setPendingPaste(text);
       return;
     }
