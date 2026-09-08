@@ -29,6 +29,22 @@ export interface ShortcutAction {
   category: string;
 }
 
+const TERMINAL_RESERVED_KEYS = new Set([
+  "Ctrl+C",
+  "Ctrl+V",
+  "Ctrl+Insert",
+  "Shift+Insert",
+]);
+
+/**
+ * These chords have fixed terminal semantics and must not be rebound through
+ * the generic shortcut editor. Meta+C / Meta+V normalize to Ctrl+C / Ctrl+V
+ * in buildKeyString and are therefore covered by the same guard.
+ */
+export function isTerminalReservedShortcut(keys: string): boolean {
+  return TERMINAL_RESERVED_KEYS.has(keys);
+}
+
 /**
  * 默认快捷键配置（不可变，用于"重置为默认值"）。
  *
