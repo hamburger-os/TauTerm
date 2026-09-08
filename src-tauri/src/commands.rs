@@ -1350,14 +1350,20 @@ async fn connect_session_ssh(
                 }
             })?;
 
-    // 3. 读取父会话信息 + emit 父容器 session-connected（前端不创建额外的根 tab）
+    // 3. 在凭据提交前完成全部可失败的运行态校验与事件快照。
+    // 这样凭据提交就是连接流程最后一个可失败步骤，不会在“运行态已消失”后留下新凭据。
     let (actual_name, actual_params) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store
+        let handle = store
             .get_session(&parent_id)
-            .map(|h| (h.name.clone(), h.params.clone()))
-            .unwrap_or((session_name, params.clone()))
+            .ok_or_else(|| format!("SSH 父会话 {} 已在连接完成前关闭", parent_id))?;
+        if handle.state != SessionState::Connected {
+            return Err("SSH 父会话已在连接完成前断开".to_string());
+        }
+        (handle.name.clone(), handle.params.clone())
     };
+    let channel0_connected =
+        terminal_sub_channel_connected_payload(&state, &parent_id, &channel0_id)?;
 
     // Persist transient credentials only after the SSH parent and channel 0 are both
     // registered and readable. A credential failure rolls back the newly-created runtime Session.
@@ -1382,9 +1388,6 @@ async fn connect_session_ssh(
             .unwrap_or_default()
             .as_millis() as u64,
     );
-
-    let channel0_connected =
-        terminal_sub_channel_connected_payload(&state, &parent_id, &channel0_id)?;
 
     log::info!(
         "SSH 会话已连接: {} @ {} (parent: {}, channel_0: {})",
