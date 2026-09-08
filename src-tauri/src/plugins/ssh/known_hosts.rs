@@ -277,6 +277,24 @@ mod tests {
     }
 
     #[test]
+    fn invalid_known_hosts_file_fails_closed() {
+        let dir = temp_path();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("known_hosts.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+
+        let store = KnownHostStore::new();
+        assert!(store.configure(path.clone()).is_err());
+        assert_eq!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Unknown
+        );
+        assert!(path.with_extension("json.invalid.bak").exists());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn known_host_trust_persists_and_changed_key_fails_closed() {
         let dir = temp_path();
         let path = dir.join("known_hosts.json");
