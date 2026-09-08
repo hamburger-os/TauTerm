@@ -1,0 +1,63 @@
+name: Reliability Soak
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Soak duration in seconds (5-28800)
+        required: false
+        default: "3600"
+        type: string
+  schedule:
+    - cron: "41 2 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    name: Repeated I/O lifecycle soak
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - name: Resolve soak duration
+        id: duration
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.duration_seconds }}
+        run: |
+          set -euo pipefail
+          SECONDS="${REQUESTED:-1800}"
+          [[ "$SECONDS" =~ ^[0-9]+$ ]] || { echo "::error::duration must be numeric"; exit 1; }
+          (( SECONDS >= 5 && SECONDS <= 28800 )) || { echo "::error::duration must be 5-28800"; exit 1; }
+          echo "seconds=$SECONDS" >> "$GITHUB_OUTPUT"
+
+      - name: Run release-mode lifecycle soak
+        shell: bash
+        env:
+          TAUTERM_SOAK_SECONDS: ${{ steps.duration.outputs.seconds }}
+          TAUTERM_SOAK_OUTPUT: ${{ github.workspace }}/soak-contract.json
+        run: |
+          set -euo pipefail
+          cargo test --locked --release --manifest-path src-tauri/Cargo.toml             reliability_soak_repeated_io_lifecycle -- --ignored --nocapture             | tee soak-contract.log
+          test -s soak-contract.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reliability-soak-${{ github.sha }}
+          path: |
+            soak-contract.json
+            soak-contract.log
+          retention-days: 30
