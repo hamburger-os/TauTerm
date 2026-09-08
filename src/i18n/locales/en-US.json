@@ -588,6 +588,7 @@
     "shortcutsReset": "Reset to Defaults",
     "shortcutsRecording": "Press keys...",
     "shortcutsConflict": "Already used by \"{{name}}\"",
+    "shortcutsReservedTerminal": "Reserved by terminal input semantics",
     "shortcutsCategory_session": "Session",
     "shortcutsCategory_terminal": "Terminal",
     "shortcutsCategory_application": "Application",
