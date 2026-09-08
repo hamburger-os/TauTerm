@@ -220,25 +220,43 @@ pub fn run() {
             }
 
             let log_dir = {
-                let exe_dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("logs");
-                let _ = std::fs::create_dir_all(&exe_dir);
-                let test_file = exe_dir.join(".write_test");
-                if std::fs::write(&test_file, b"tau").is_ok() {
+                let writable = |dir: std::path::PathBuf| -> Option<std::path::PathBuf> {
+                    std::fs::create_dir_all(&dir).ok()?;
+                    let test_file = dir.join(".write_test");
+                    std::fs::write(&test_file, b"tau").ok()?;
                     let _ = std::fs::remove_file(&test_file);
-                    exe_dir
+                    Some(dir)
+                };
+
+                let exe_candidate = std::env::current_exe()
+                    .ok()
+                    .and_then(|path| path.parent().map(|dir| dir.join("logs")));
+                if let Some(dir) = exe_candidate.and_then(&writable) {
+                    dir
                 } else {
-                    let app_data = app
-                        .path()
-                        .app_data_dir()
-                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                    let fallback = app_data.join("logs");
-                    let _ = std::fs::create_dir_all(&fallback);
-                    log::warn!("exe 同级日志目录不可写，回退到: {:?}", fallback);
-                    fallback
+                    let app_candidate = app.path().app_data_dir().ok().map(|dir| dir.join("logs"));
+                    if let Some(dir) = app_candidate.and_then(&writable) {
+                        log::warn!("exe 同级日志目录不可写，回退到应用数据目录: {:?}", dir);
+                        dir
+                    } else {
+                        let temp = std::env::temp_dir().join("TauTerm").join("logs");
+                        match writable(temp.clone()) {
+                            Some(dir) => {
+                                eprintln!(
+                                    "TauTerm: durable log directories unavailable; using temporary directory {:?}",
+                                    dir
+                                );
+                                dir
+                            }
+                            None => {
+                                eprintln!(
+                                    "TauTerm: no writable log directory is available; using unresolved temporary path {:?}",
+                                    temp
+                                );
+                                temp
+                            }
+                        }
+                    }
                 }
             };
             if let Some(state) = app.try_state::<AppState>() {
