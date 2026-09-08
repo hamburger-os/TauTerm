@@ -462,17 +462,11 @@ fn detect_windows_shell_presets() -> Vec<ShellPreset> {
     push_resolved_native(&mut presets, "cmd", "cmd.exe", "Command Prompt");
 
     if let Some(wsl) = resolve_executable("wsl.exe") {
-        presets.push(ShellPreset::wsl(
-            "wsl-default".into(),
-            wsl.clone(),
-            "WSL · Default".into(),
-            String::new(),
-        ));
         for distro in detect_wsl_distributions(&wsl) {
             presets.push(ShellPreset::wsl(
                 format!("wsl-distro:{distro}"),
                 wsl.clone(),
-                wsl_distribution_display_label(&distro),
+                distro.clone(),
                 distro,
             ));
         }
@@ -490,11 +484,6 @@ fn detect_windows_shell_presets() -> Vec<ShellPreset> {
     push_resolved_native(&mut presets, "nushell", "nu.exe", "Nushell");
 
     presets
-}
-
-#[cfg(any(windows, test))]
-fn wsl_distribution_display_label(distro: &str) -> String {
-    format!("WSL · {distro}")
 }
 
 #[cfg(windows)]
@@ -818,18 +807,6 @@ mod tests {
     }
 
     #[test]
-    fn preserves_wsl_distribution_name_in_display_label() {
-        assert_eq!(
-            wsl_distribution_display_label("Ubuntu-22.04"),
-            "WSL · Ubuntu-22.04"
-        );
-        assert_eq!(
-            wsl_distribution_display_label("Engineering Dev"),
-            "WSL · Engineering Dev"
-        );
-    }
-
-    #[test]
     fn rejects_unknown_mode_and_missing_custom_executable() {
         let mut config = LocalShellConfig {
             shell_mode: "unknown".into(),
@@ -874,20 +851,19 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn wsl_default_precedes_distributions_when_available() {
-        if resolve_executable("wsl.exe").is_none() {
+    fn wsl_presets_use_registered_distribution_names() {
+        let Some(wsl) = resolve_executable("wsl.exe") else {
             return;
+        };
+        let distros = detect_wsl_distributions(&wsl);
+        let presets = detect_windows_shell_presets();
+        for distro in distros {
+            let preset = presets
+                .iter()
+                .find(|preset| preset.id == format!("wsl-distro:{distro}"))
+                .expect("registered WSL distribution preset");
+            assert_eq!(preset.label, distro);
         }
-        let presets = detect_shell_presets();
-        let default_index = presets
-            .iter()
-            .position(|preset| preset.id == "wsl-default")
-            .expect("default subsystem preset");
-        assert!(presets
-            .iter()
-            .skip(default_index + 1)
-            .filter(|preset| preset.id.starts_with("wsl-distro:"))
-            .all(|preset| preset.kind == "wsl"));
     }
 
     #[cfg(windows)]
