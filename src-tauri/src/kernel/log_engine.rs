@@ -120,25 +120,34 @@ impl Log for LogBridge {
 }
 
 /// 更新系统日志配置（由前端设置页调用）
-pub fn set_system_log_config(enabled: bool, level: &str) {
+pub fn set_system_log_config(enabled: bool, level: &str) -> Result<(), String> {
+    let mut guard = SYSTEM_LOG_MIN_LEVEL
+        .lock()
+        .map_err(|error| format!("system log level lock poisoned: {error}"))?;
+    *guard = level.to_string();
     SYSTEM_LOG_ENABLED.store(enabled, Ordering::Relaxed);
-    if let Ok(mut guard) = SYSTEM_LOG_MIN_LEVEL.lock() {
-        *guard = level.to_string();
-    }
+    Ok(())
+}
+
+pub fn system_log_config_checked() -> Result<(bool, String), String> {
+    let level = SYSTEM_LOG_MIN_LEVEL
+        .lock()
+        .map_err(|error| format!("system log level lock poisoned: {error}"))?;
+    let level = if level.is_empty() {
+        "info".to_string()
+    } else {
+        level.clone()
+    };
+    Ok((SYSTEM_LOG_ENABLED.load(Ordering::Relaxed), level))
 }
 
 pub fn system_log_config() -> (bool, String) {
-    let level = SYSTEM_LOG_MIN_LEVEL
-        .lock()
-        .map(|value| {
-            if value.is_empty() {
-                "info".to_string()
-            } else {
-                value.clone()
-            }
-        })
-        .unwrap_or_else(|_| "info".to_string());
-    (SYSTEM_LOG_ENABLED.load(Ordering::Relaxed), level)
+    system_log_config_checked().unwrap_or_else(|_| {
+        (
+            SYSTEM_LOG_ENABLED.load(Ordering::Relaxed),
+            "info".to_string(),
+        )
+    })
 }
 
 fn try_send_session_log_when(
@@ -368,22 +377,28 @@ impl LogEngine {
     }
 
     /// 更新日志目录（应用启动时由 setup 回调调用）
-    pub fn set_log_dir(&self, dir: PathBuf) {
-        if let Ok(mut cfg) = self.config.lock() {
-            cfg.log_dir = dir;
-        }
+    pub fn set_log_dir(&self, dir: PathBuf) -> Result<(), String> {
+        let mut cfg = self
+            .config
+            .lock()
+            .map_err(|error| format!("log config lock poisoned: {error}"))?;
+        cfg.log_dir = dir;
+        Ok(())
     }
 
     /// 获取配置快照
-    pub fn get_config(&self) -> LogConfig {
-        self.config.lock().map(|c| c.clone()).unwrap_or_default()
+    pub fn get_config(&self) -> Result<LogConfig, String> {
+        self.config
+            .lock()
+            .map(|config| config.clone())
+            .map_err(|error| format!("log config lock poisoned: {error}"))
     }
 
     /// 获取前端友好的配置响应（PathBuf → String）
-    pub fn get_config_response(&self) -> LogConfigResponse {
-        let cfg = self.get_config();
-        let (system_enabled, system_level) = system_log_config();
-        LogConfigResponse {
+    pub fn get_config_response(&self) -> Result<LogConfigResponse, String> {
+        let cfg = self.get_config()?;
+        let (system_enabled, system_level) = system_log_config_checked()?;
+        Ok(LogConfigResponse {
             system_enabled,
             system_level,
             session_enabled: cfg.session_enabled,
@@ -392,15 +407,20 @@ impl LogEngine {
             buffer_size: cfg.buffer_size,
             flush_interval_ms: cfg.flush_interval_ms,
             retention_days: cfg.retention_days,
-        }
+        })
     }
 
     /// 更新运行时配置（由前端设置页调用）
     ///
     /// 消费者线程每次循环自动读取最新配置，无需重启。
-    pub fn update_config(&self, partial: LogConfigUpdate) {
-        let mut stop_all_sessions = false;
-        if let Ok(mut cfg) = self.config.lock() {
+    pub fn update_config(&self, partial: LogConfigUpdate) -> Result<(), String> {
+        let (previous, stop_all_sessions) = {
+            let mut cfg = self
+                .config
+                .lock()
+                .map_err(|error| format!("log config lock poisoned: {error}"))?;
+            let previous = cfg.clone();
+            let mut stop_all_sessions = false;
             if let Some(session_enabled) = partial.session_enabled {
                 stop_all_sessions = cfg.session_enabled && !session_enabled;
                 cfg.session_enabled = session_enabled;
@@ -418,12 +438,22 @@ impl LogEngine {
             if let Some(retention_days) = partial.retention_days {
                 cfg.retention_days = retention_days;
             }
-        }
-        if stop_all_sessions {
-            let _ = self
+            (previous, stop_all_sessions)
+        };
+
+        if stop_all_sessions
+            && self
                 .entry_tx
-                .send(LogEntry::Command(LogCommand::StopAllSessions));
+                .send(LogEntry::Command(LogCommand::StopAllSessions))
+                .is_err()
+        {
+            if let Ok(mut cfg) = self.config.lock() {
+                *cfg = previous.clone();
+            }
+            SESSION_LOG_ENABLED.store(previous.session_enabled, Ordering::Relaxed);
+            return Err("log consumer is unavailable while disabling Session Data Log".to_string());
         }
+        Ok(())
     }
 
     pub fn get_health(&self) -> LogHealth {
