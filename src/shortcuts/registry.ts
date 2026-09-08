@@ -32,8 +32,9 @@ export interface ShortcutAction {
 /**
  * 默认快捷键配置（不可变，用于"重置为默认值"）。
  *
- * 注意：Ctrl+Shift+C（复制）和 Ctrl+Shift+V（粘贴）由 xterm.js 原生处理，
- * 不经过 shortcut registry 匹配，因此不出现在此列表中。
+ * 终端复制/粘贴由 TauTerm 宿主明确拥有：默认 Ctrl+Shift+C / Ctrl+Shift+V
+ * 进入 Shortcut Registry；Ctrl+Insert / Shift+Insert 与 macOS Meta+C / Meta+V
+ * 作为终端兼容别名在 Terminal renderer 内处理，不占用可配置 action。
  */
 export const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   // Session
@@ -42,6 +43,8 @@ export const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   { id: ACTION_IDS.SESSION_NEXT, keys: "Ctrl+Tab", descriptionKey: "settings.shortcutsAction_nextTab", description: "下一个标签页", category: "Session" },
   { id: ACTION_IDS.SESSION_PREV, keys: "Ctrl+Shift+Tab", descriptionKey: "settings.shortcutsAction_prevTab", description: "上一个标签页", category: "Session" },
   // Terminal
+  { id: ACTION_IDS.TERMINAL_COPY, keys: "Ctrl+Shift+C", descriptionKey: "settings.shortcutsAction_terminalCopy", description: "复制", category: "Terminal" },
+  { id: ACTION_IDS.TERMINAL_PASTE, keys: "Ctrl+Shift+V", descriptionKey: "settings.shortcutsAction_terminalPaste", description: "粘贴", category: "Terminal" },
   { id: ACTION_IDS.TERMINAL_SEARCH, keys: "Ctrl+F", descriptionKey: "settings.shortcutsAction_terminalSearch", description: "终端搜索", category: "Terminal" },
   { id: ACTION_IDS.TERMINAL_SELECT_ALL, keys: "Ctrl+Shift+A", descriptionKey: "settings.shortcutsAction_terminalSelectAll", description: "全选", category: "Terminal" },
   // Application
