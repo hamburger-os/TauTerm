@@ -1070,6 +1070,7 @@ async fn connect_session_local_shell(
         &parent_id,
         first_channel,
         initial_mode == ChannelOpenMode::Elevated,
+        true,
     )
     .await
     .inspect_err(|error| {
@@ -1327,8 +1328,9 @@ async fn connect_session_ssh(
     };
 
     // 2. 通过共享逻辑创建通道 0（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
-    let channel0_id = create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false)
-        .await
+    let channel0_id =
+        create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false, false)
+            .await
         .inspect_err(|e| {
             // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
             log::error!("SSH 通道 0 创建失败，回滚父容器会话 {}: {}", parent_id, e);
@@ -1392,6 +1394,7 @@ async fn connect_session_ssh(
             "is_container": true,
         }),
     );
+    announce_terminal_sub_channel_connected(&app, &state, &parent_id, &channel0_id)?;
 
     Ok(parent_id)
 }
@@ -1713,6 +1716,7 @@ async fn create_terminal_sub_channel(
     parent_id: &str,
     channel: ChannelKind,
     elevated: bool,
+    announce_connected: bool,
 ) -> Result<String, String> {
     // ── 阶段 1: 获取锁 → 检查父存活 + 预留 channel_index + 读取配置 → 释放锁 ──
     let (
@@ -1953,7 +1957,98 @@ async fn create_terminal_sub_channel(
         (actual_idx, actual_name)
     };
 
-    // 8. Emit session-connected — 所有字段均从父会话继承
+    if announce_connected {
+        let _ = app.emit(
+            "session-connected",
+            serde_json::json!({
+                "session_id": channel_id,
+                "endpoint": endpoint,
+                "connection_type": plugin_id,
+                "plugin_id": plugin_id,
+                "name": channel_name,
+                "params": params,
+                "connected_at": connected_at,
+                "transfer_enabled": false,
+                "send_bar_enabled": send_bar_enabled_val,
+                "parent_id": parent_id,
+                "channel_index": actual_index,
+                "elevated": elevated,
+                "file_service_enabled": file_service_enabled,
+                "file_service_protocol": file_service_protocol,
+                "journald_enabled": journald_enabled,
+            }),
+        );
+    }
+
+    log::info!(
+        "终端子会话已创建: {} (parent: {}, channel_index: {}, elevated: {})",
+        channel_id,
+        parent_id,
+        actual_index,
+        elevated
+    );
+    Ok(channel_id)
+}
+
+fn announce_terminal_sub_channel_connected(
+    app: &tauri::AppHandle,
+    app_state: &AppState,
+    parent_id: &str,
+    channel_id: &str,
+) -> Result<(), String> {
+    let (
+        endpoint,
+        plugin_id,
+        params,
+        send_bar_enabled,
+        file_service_enabled,
+        file_service_protocol,
+        journald_enabled,
+        channel_name,
+        connected_at,
+        channel_index,
+        elevated,
+    ) = {
+        let store = app_state.session_store.lock().map_err(|e| e.to_string())?;
+        let parent = store
+            .get_session(parent_id)
+            .ok_or_else(|| format!("父会话 {} 已在连接完成前关闭", parent_id))?;
+        if parent.state != SessionState::Connected {
+            return Err("父会话已在连接完成前断开".to_string());
+        }
+        let child = parent
+            .sub_connections
+            .iter()
+            .find(|child| child.id == channel_id && child.state == SessionState::Connected)
+            .ok_or_else(|| format!("终端子会话 {} 已在连接完成前关闭", channel_id))?;
+        (
+            parent.endpoint.clone(),
+            parent.plugin_id.clone(),
+            parent.params.clone(),
+            parent.send_bar_enabled,
+            parent
+                .params
+                .get("file_service_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            parent
+                .params
+                .get("file_service_protocol")
+                .and_then(Value::as_str)
+                .unwrap_or("sftp")
+                .to_string(),
+            parent
+                .params
+                .get("journald_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            child.name.clone(),
+            child.connected_at,
+            child.channel_index,
+            child.elevated,
+        )
+    };
+
     let _ = app.emit(
         "session-connected",
         serde_json::json!({
@@ -1965,24 +2060,16 @@ async fn create_terminal_sub_channel(
             "params": params,
             "connected_at": connected_at,
             "transfer_enabled": false,
-            "send_bar_enabled": send_bar_enabled_val,
+            "send_bar_enabled": send_bar_enabled,
             "parent_id": parent_id,
-            "channel_index": actual_index,
+            "channel_index": channel_index,
             "elevated": elevated,
             "file_service_enabled": file_service_enabled,
             "file_service_protocol": file_service_protocol,
             "journald_enabled": journald_enabled,
         }),
     );
-
-    log::info!(
-        "终端子会话已创建: {} (parent: {}, channel_index: {}, elevated: {})",
-        channel_id,
-        parent_id,
-        actual_index,
-        elevated
-    );
-    Ok(channel_id)
+    Ok(())
 }
 
 // ── SSH 多连接命令 ─────────────────────────────────
@@ -2029,6 +2116,7 @@ pub async fn open_channel(
         &session_id,
         channel,
         mode == ChannelOpenMode::Elevated,
+        true,
     )
     .await?;
 
