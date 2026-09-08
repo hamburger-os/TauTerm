@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import Icon from "../../common/Icon";
 import OptionButton from "../../common/OptionButton";
 import type { UpdateInfo, CheckFrequency } from "../../../types/updater";
@@ -31,11 +33,28 @@ export default function AboutSettings({
 }: AboutSettingsProps) {
   const { t } = useTranslation();
   const [appVersion, setAppVersion] = useState("");
+  const [diagnosticsMessage, setDiagnosticsMessage] = useState("");
 
   // 从 Tauri 动态读取版本号
   useEffect(() => {
     getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion(""));
   }, []);
+
+  const exportDiagnostics = async () => {
+    setDiagnosticsMessage("");
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const destination = await save({
+        defaultPath: "TauTerm-diagnostics-" + stamp + ".json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!destination) return;
+      await invoke("export_diagnostics", { path: destination });
+      setDiagnosticsMessage(t("diagnostics.exportSuccess"));
+    } catch (error) {
+      setDiagnosticsMessage(t("diagnostics.exportFailed", { error: String(error) }));
+    }
+  };
 
   const downloadPct =
     updateInfo.phase === "downloading" &&
@@ -180,6 +199,15 @@ export default function AboutSettings({
             </OptionButton>
           ))}
         </div>
+
+      <h4 className={styles.categoryTitle}>{t("diagnostics.title")}</h4>
+      <div className={styles.updateSection}>
+        <p className={styles.updateResultMsg}>{t("diagnostics.description")}</p>
+        <button className={`${styles.actionBtn} liquid-glass-button`} onClick={exportDiagnostics}>
+          {t("diagnostics.export")}
+        </button>
+        {diagnosticsMessage && <p className={styles.updateResultMsg}>{diagnosticsMessage}</p>}
+      </div>
 
       <h4 className={styles.categoryTitle}>{t("settings.buildInfo")}</h4>
       <div className={styles.aboutRow}>
