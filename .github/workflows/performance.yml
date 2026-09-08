@@ -26,6 +26,19 @@ jobs:
           TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
           rustup toolchain install "$TOOLCHAIN" --profile minimal
 
+      - name: Install Tauri system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libssl-dev \
+            libudev-dev
+
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -41,7 +54,9 @@ jobs:
           TAUTERM_PERF_OUTPUT: ${{ github.workspace }}/performance-contract.json
         run: |
           set -euo pipefail
-          cargo test --locked --release --manifest-path src-tauri/Cargo.toml             performance_contract_runtime_io_and_atomic_persistence -- --ignored --nocapture             | tee performance-contract.log
+          cargo test --locked --release --manifest-path src-tauri/Cargo.toml \
+            performance_contract_runtime_io_and_atomic_persistence -- --ignored --nocapture \
+            | tee performance-contract.log
           test -s performance-contract.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
