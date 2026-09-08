@@ -413,6 +413,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       <div className={styles.header}>
         <span className={styles.title}>{t("session.sessions")}</span>
         <button
+          data-testid="new-session-button"
           className={`${styles.addBtn} liquid-glass-button`}
           onClick={() => onNewSession?.()}
           title={t("session.newSession") + " (Ctrl+Shift+N)"}
