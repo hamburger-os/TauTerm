@@ -4,7 +4,7 @@
 
 ## 1. 为什么先做完整性收敛
 
-TauTerm 的连接能力已经覆盖 SSH/SFTP、Serial、Local Shell、TCP/UDP、TFTP、Telnet、iperf 与 TRDP。下一阶段竞争力不应继续主要来自协议数量，而应来自：
+TauTerm 的连接能力已经覆盖 SSH/SFTP、Serial、Local Shell、TCP/UDP、TFTP、Telnet、iperf 与 TRDP。后续仍可以根据真实工程需求、用户价值和行业深度少量新增协议，但协议数量不作为阶段完成度或竞争力的主要指标。下一阶段更需要强化：
 
 - 全天候主力工具的稳定性和操作效率；
 - 可复用、可导出、可复现的工程 Workspace；
@@ -77,9 +77,23 @@ I/O → batching → terminal UI         I/O → recorder/event store
 
 不保留“未来可能使用”的平行 TabHost/WindowManager/IPC 等骨架，避免架构文档和实际运行路径发生漂移。
 
-## 3. Daily Driver Gate
+## 3. 当前 0.6.x 收敛边界
 
-Product Integrity 完成后，下一阶段优先提升日常主力工具成熟度：
+在启动下一轮大功能开发前，0.6.x 继续承担已有能力的成熟度收敛。当前阶段允许：
+
+- 修复正确性、安全、资源生命周期和持久化问题；
+- 补齐已有功能的错误处理、状态反馈和交互一致性；
+- 提升长时间运行、断线/重连、异常退出和高负载场景的稳定性；
+- 建立可重复的性能基线、诊断能力和 CI 防回归门；
+- 打磨现有 SSH、Serial、Network、Transfer、TRDP、Automation、Workspace Layout 等已交付能力；
+- 在有明确工程价值时少量新增协议，但不得以“凑协议数量”替代当前成熟度工作，也不得为新增协议复制第二套 Session、持久化、发送或插件模型；
+- 当 0.6.x 正在修改 Transport / Session 的底层 I/O、source identity、时间戳或 overflow 语义时，可以顺手把边界设计成未来 EngineeringEvent 可承接的形态，但不在 0.6.x 提前建设 Recording、Data Lens、Signal Lab、Named Workspace 等下一阶段大功能。
+
+0.6.x 的目标是让当前产品更可信、更稳定、更容易诊断，而不是提前消耗下一阶段的功能预算。
+
+## 4. Daily Driver Gate
+
+Product Integrity 完成且 0.6.x 收敛达到预期后，下一阶段优先提升日常主力工具成熟度：
 
 ### Session Library
 
@@ -110,9 +124,9 @@ Product Integrity 完成后，下一阶段优先提升日常主力工具成熟�
 - persistent highlight profiles；
 - Workspace/Session 级规则覆盖。
 
-## 4. Data Foundation
+## 5. Data Foundation
 
-在 Daily Driver 与完整性门槛稳定后，先建设共享数据底层，再建设高级 UI。
+Data Foundation 不要求等待所有 Daily Driver 项目全部结束后才开始。面向用户的大功能仍按阶段控制，但只要某个 Transport / Session 正在进行底层重构，就应优先建立与 EngineeringEvent 兼容的 source identity、时间、方向、raw payload 和 gap/overflow 边界，减少未来 Recorder/Data Lens 的二次重构。共享数据底层成熟后，再建设高级 UI。
 
 ```text
 Transport / Instrument
@@ -141,14 +155,16 @@ EngineeringEvent 至少应覆盖：
 - optional structured payload；
 - explicit gap/overflow markers。
 
-## 5. 后续能力顺序
+## 6. 后续能力顺序
 
 ```text
 Product Integrity
       ↓
-Daily Driver
+0.6.x Maturity Closure
       ↓
-Data Foundation
+Daily Driver ──────┐
+      ↓             │ 可在底层渐进铺设
+Data Foundation ◀──┘
       ↓
 Engineering Memory
 Recording / Replay / Marker
@@ -164,14 +180,14 @@ Industrial Depth / Instrument Platform
 
 Data Lens 的底层 Framing/Decoder 应早于 Signal Lab 高级 UI，避免 Serial/TRDP/TCP/CAN 各自复制 parser。
 
-## 6. 版本边界原则
+## 7. 版本边界原则
 
 - 不为了版本号强行塞入无关功能；
 - 0.x 开发阶段允许清理旧开发数据格式，不维护无价值迁移分支；
-- 每次 minor 版本应有一个清晰的用户结果，而不是协议数量 KPI；
+- 每次 minor 版本应有一个清晰的用户结果，而不是协议数量 KPI；协议扩展保持开放，可根据真实需求少量新增；
 - v1.0 前优先消除影响长期数据模型、安全边界和可复现性的技术债。
 
-## 7. Done 定义
+## 8. Done 定义
 
 一次“完成”至少同时满足：
 

@@ -55,7 +55,9 @@ Community/Core 仓库可以继续采用 MIT OR Apache-2.0；可选商业模块�
 - 提供真正有深度的工业工作流；
 - 将物理工程仪器纳入同一个工作环境。
 
-如果某个协议不能明显强化这些目标，应优先通过插件/扩展实现，而不是无限扩大 Core。
+协议扩展保持开放。TauTerm 可以根据真实工程需求、用户价值、行业深度或生态互操作价值，持续少量新增 Core 协议；判断标准不是“是否还能再加一个协议”，而是新增能力是否值得进入一等维护范围、能否复用现有 Session / Workspace / Automation，以及是否具有进入共享数据管线的清晰路径。
+
+协议数量本身不作为产品阶段或版本完成度指标。暂时还不能完整参与 Recording、Timeline、Data Lens 或 Signal Lab 的协议也不因此被禁止，但新增实现应避免形成与共享模型冲突的长期孤岛。更长尾、低复用或高度场景化的协议仍优先通过插件/扩展实现。
 
 ### 3.4 优先建设 TauTerm 原生工作流
 
@@ -295,6 +297,10 @@ Agent 能力必须遵循本地优先原则，并且不能要求工业数据必�
 
 Data Lens 的底层 Framing/Decoder Core 必须早于 Signal Lab 的高级 UI，以避免 Serial、TCP/UDP、TRDP、CAN 分别形成不兼容 parser。
 
+这些阶段不是必须完全串行。Daily Driver 期间如果正在重构某个 Transport / Session 的 I/O、时间戳、source identity 或 overflow 语义，应优先把边界设计成可进入未来 EngineeringEvent 的形态，避免等到 Recording 阶段再做一次大规模拆改；但这不意味着提前启动尚未进入当前交付范围的高级 UI。
+
+协议新增与工作流深化可以并行进行，但协议数量不作为阶段完成指标。
+
 这些阶段描述方向，不构成版本交付承诺。执行级门槛见 [PRODUCT_MATURITY_PLAN.md](PRODUCT_MATURITY_PLAN.md)。
 
 ## 7. 产品决策过滤器
@@ -306,7 +312,7 @@ Data Lens 的底层 Framing/Decoder Core 必须早于 Signal Lab 的高级 UI，
 3. 它是否提升观察、理解、复现或自动化能力？
 4. 它是否具有广泛复用价值，还是更适合做成插件/模块？
 5. 它是否保持本地优先？
-6. 如果它引入新协议或新仪器，是否能在适用时参与 Recording、Timeline、Data Lens、Signal Lab 或 Automation？
+6. 如果它引入新协议或新仪器，是否能复用现有平台边界，并在适用时具有进入 Recording、Timeline、Data Lens、Signal Lab 或 Automation 的清晰演进路径？
 
 ## 8. 明确的非目标
 
