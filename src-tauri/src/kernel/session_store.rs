@@ -2290,3 +2290,78 @@ impl Drop for SessionStore {
         }
     }
 }
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::*;
+
+    fn sample_saved_session(id: &str, timestamp: u64) -> SavedSession {
+        SavedSession {
+            id: id.to_string(),
+            name: format!("session-{id}"),
+            plugin_id: "serial".into(),
+            endpoint: "loopback".into(),
+            params: serde_json::json!({"baud_rate": 115200}),
+            timestamp,
+            transfer_enabled: true,
+            transfer_protocol: Some("ymodem".into()),
+            send_bar_enabled: true,
+            virtual_port_enabled: false,
+            virtual_port_count: 0,
+        }
+    }
+
+    #[test]
+    fn saved_session_library_round_trips_versioned_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions.json");
+        let expected = vec![
+            sample_saved_session("a", 10),
+            sample_saved_session("b", 20),
+        ];
+
+        SessionStore::replace_saved_sessions(&path, &expected).unwrap();
+        let loaded = SessionStore::load_from_disk(&path).unwrap();
+
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "a");
+        assert_eq!(loaded[1].id, "b");
+        assert_eq!(loaded[0].params["baud_rate"], 115200);
+        let raw = std::fs::read_to_string(path).unwrap();
+        assert!(raw.contains("\"version\": 1"));
+        assert!(raw.contains("\"sessions\""));
+    }
+
+    #[test]
+    fn malformed_library_is_backed_up_before_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions.json");
+        std::fs::write(&path, "{ definitely not json").unwrap();
+
+        let loaded = SessionStore::load_from_disk(&path).unwrap();
+
+        assert!(loaded.is_empty());
+        assert!(path.with_extension("json.invalid.bak").exists());
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("json.invalid.bak")).unwrap(),
+            "{ definitely not json"
+        );
+    }
+
+    #[test]
+    fn unsupported_library_version_is_backed_up_and_not_migrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sessions.json");
+        std::fs::write(
+            &path,
+            r#"{"version":99,"sessions":[]}"#,
+        )
+        .unwrap();
+
+        let loaded = SessionStore::load_from_disk(&path).unwrap();
+
+        assert!(loaded.is_empty());
+        assert!(path.with_extension("json.invalid.bak").exists());
+    }
+}
+
