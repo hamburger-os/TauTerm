@@ -25,6 +25,12 @@ LogEngine 使用有界生产者/消费者队列和独立写线程处理系统日
 
 日志设置由 Rust ConfigStore 持久化；设置页只消费公开配置，不直接拥有文件句柄或浏览器本地持久化。相关设置以一个 ConfigStore snapshot 先持久化、后应用运行态；若 LogEngine 运行态应用失败，必须恢复旧 ConfigStore snapshot 并把失败显式返回给 UI。ConfigStore 未成功绑定磁盘时读写必须显式失败，不能退化成“仅本进程成功”。“清除所有日志”也由唯一持有 writer 的消费者线程执行 close/flush → delete → reopen → ACK，避免 Windows 打开句柄删除失败或 Linux unlink 后继续向不可见 inode 写入。 启动 Session Log 与清除日志的 ACK 等待必须运行在 blocking worker，而不是占用同步 Tauri 命令分发路径；日志控制命令使用有界队列的 fail-fast 入队语义，队列过载时向 UI 明确返回错误，不能为了等待控制队列而冻结界面。
 
+### 诊断与性能合同
+
+前端未捕获异常通过受限诊断桥进入 System Log。Settings/About 可以导出版本化、脱敏的诊断 JSON，包含构建/平台信息、ConfigStore/凭据后端健康、日志丢失计数、插件元数据、按插件聚合的 Session 状态与最近脱敏 System Log；凭据、端点、Session 名称、raw payload 与 Session Data Log 不进入诊断包。
+
+性能与长稳验证是独立工程合同：release-mode performance workflow 记录固定 32 MiB I/O dispatch 与原子持久化的趋势数据；reliability workflow 反复创建/发送/Shutdown I/O 生命周期并输出 JSON。Hosted Runner 的性能数值在形成稳定历史前只作为趋势证据，不凭单次波动设置拍脑袋阈值。
+
 ### 统计与工程工具
 
 Stats renderer/状态区消费 Session 统计信息。右侧工程工具中的 CRC/Checksum、Base64/HEX/浮点/大小端、位运算、计算器以及 Modbus/AT 解析器是无连接辅助工具；它们不得被宣传成完整协议实现或协议合规验证器。
@@ -50,7 +56,8 @@ flowchart TB
 - 日志路径必须通过统一 sanitizer 处理敏感字段。
 - 工程工具默认是本地纯函数式能力，不应暗中建立网络连接。
 - Modbus/AT 等 parser 只解析它明确支持的范围；协议标准依据记录在 `docs/knowledge/`，不能把工具 UI 当成标准。
-- 性能参数只有在成为长期合同后才写入本文；具体实现常量仍留在代码。
+- 性能参数只有在成为长期合同后才写入本文；具体实现常量仍留在代码。Benchmark 输出是回归趋势证据，不是产品宣传跑分。
+- Diagnostic Bundle 只能包含经过明确白名单选择和脱敏的信息，不能变成绕过日志/凭据边界的数据导出通道。
 
 ## 代码锚点
 
