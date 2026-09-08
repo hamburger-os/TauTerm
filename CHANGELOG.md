@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-09-08
+
+### Changed
+- **Runtime hardening boundary** — potentially blocking Tauri commands that touch durable storage, credential backends, platform drivers, subprocesses or thread joins no longer run as synchronous command handlers. A permanent CI contract now rejects reintroducing those blocking patterns, and configuration/theme plus platform command groups were split out of the monolithic command module without changing public invoke names.
+- **Automated verification stack** — adds injected sync/async I/O lifecycle tests, Serial adapter contract tests, protocol-fixture self-tests and a real TauTerm WebDriver smoke workflow on Windows/Linux covering application launch, root overflow, command palette and new-session interaction paths.
+- **Performance and reliability contracts** — adds release-mode JSON performance artifacts for fixed Session I/O dispatch and atomic persistence workloads plus a configurable repeated I/O lifecycle soak workflow. Hosted-runner measurements start as trend evidence rather than arbitrary per-PR score thresholds.
+- **Support diagnostics** — Settings → About can export a versioned sanitized diagnostic JSON with build/platform health, plugin metadata, aggregated Session state, log-loss counters and recent sanitized System Log context. Credentials, endpoints, Session names, raw payloads and Session Data Logs are deliberately excluded.
+- **Testing documentation** — adds a canonical testing/reliability guide that separates fast PR gates, real runtime E2E, protocol fixtures, scheduled benchmark/soak/security jobs and the remaining role of real-hardware validation.
+
+### Security
+- **Least-privilege WebView filesystem boundary** — removes the unused direct `@tauri-apps/plugin-fs` frontend package, TauTerm's direct Rust fs-plugin registration and the broad WebView `fs:scope = "**"` read/write capability. Existing file pickers, SFTP and Serial transfer workflows continue through native dialogs plus Rust-controlled file I/O.
+- **Dependency advisory monitoring** — adds weekly Dependabot coverage for npm, Cargo and GitHub Actions together with a dedicated npm/RustSec advisory workflow and retained machine-readable reports.
+- **Diagnostic data minimization** — frontend runtime errors are rate-limited into the existing System Log path, while exported support diagnostics use an explicit data whitelist plus log/path/IP sanitization instead of copying arbitrary application state.
+
+### Fixed
+- **Frontend runtime error visibility and localization** — React ErrorBoundary, `window.error` and `unhandledrejection` now converge on the System Log diagnostic path; the global crash fallback no longer contains hard-coded Chinese text when the English UI is active.
+- **I/O failure regression coverage** — synchronous and asynchronous channel loops now have automated regression coverage for reads, byte accounting, partial writes, graceful shutdown, cancellation and injected write failures, reducing the chance of lifecycle regressions reaching manual testing.
+
 ## [0.6.3] — 2026-09-08
 
 ### Changed
