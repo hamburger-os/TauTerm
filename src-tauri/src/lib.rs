@@ -15,6 +15,7 @@
 
 mod channel;
 mod commands;
+mod diagnostics;
 mod kernel;
 mod plugins;
 mod security;
@@ -104,7 +105,6 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
@@ -511,6 +511,7 @@ pub fn run() {
             commands::iperf_client_stop,
             commands::iperf_update_params,
             commands::iperf_get_status,
+            diagnostics::export_diagnostics,
         ])
         .build(tauri::generate_context!())
         .expect("启动 TauTerm 时发生错误")
