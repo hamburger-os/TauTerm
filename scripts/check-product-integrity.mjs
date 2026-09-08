@@ -264,6 +264,21 @@ assert.match(
   /pub fn get_log_config[\s\S]{0,260}persistence_ready/,
   "logging settings load must fail when ConfigStore persistence is unavailable",
 );
+assert.match(
+  commands,
+  /pub async fn start_session_log[\s\S]{0,2600}spawn_blocking/,
+  "logging start ACK must stay off the synchronous Tauri path",
+);
+assert.match(
+  commands,
+  /pub async fn clear_all_logs[\s\S]{0,1800}spawn_blocking/,
+  "log clear ACK must stay off the synchronous Tauri path",
+);
+assert.match(
+  commands,
+  /日志控制队列繁忙[\s\S]{0,1200}try_send|try_send[\s\S]{0,1200}日志控制队列繁忙/,
+  "logging control queue must fail fast rather than block the UI path",
+);
 
 assert.doesNotMatch(
   commands,
