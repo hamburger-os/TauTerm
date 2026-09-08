@@ -2315,10 +2315,7 @@ mod persistence_tests {
     fn saved_session_library_round_trips_versioned_snapshot() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sessions.json");
-        let expected = vec![
-            sample_saved_session("a", 10),
-            sample_saved_session("b", 20),
-        ];
+        let expected = vec![sample_saved_session("a", 10), sample_saved_session("b", 20)];
 
         SessionStore::replace_saved_sessions(&path, &expected).unwrap();
         let loaded = SessionStore::load_from_disk(&path).unwrap();
@@ -2352,11 +2349,7 @@ mod persistence_tests {
     fn unsupported_library_version_is_backed_up_and_not_migrated() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("sessions.json");
-        std::fs::write(
-            &path,
-            r#"{"version":99,"sessions":[]}"#,
-        )
-        .unwrap();
+        std::fs::write(&path, r#"{"version":99,"sessions":[]}"#).unwrap();
 
         let loaded = SessionStore::load_from_disk(&path).unwrap();
 
@@ -2364,4 +2357,3 @@ mod persistence_tests {
         assert!(path.with_extension("json.invalid.bak").exists());
     }
 }
-
