@@ -29,7 +29,7 @@ Runtime E2E is a separate PR workflow because it builds and starts the real desk
 
 ## Runtime E2E
 
-tests/e2e uses WebdriverIO with the Tauri service and the external tauri-driver provider. No WebDriver/automation plugin is shipped in TauTerm itself.
+tests/e2e uses bare WebdriverIO against a pinned external tauri-driver process. No WebDriver/automation plugin is compiled into or shipped with TauTerm itself.
 
 The permanent smoke contract covers:
 
