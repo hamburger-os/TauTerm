@@ -41,6 +41,8 @@ assert.match(terminalSource, /term\.paste\(text\)/);
 assert.match(terminalSource, /bracketedPasteMode/);
 assert.match(terminalSource, /copyToClipboard\(selection\)\.finally\(restoreTerminalFocus\)/);
 assert.match(terminalSource, /requestAnimationFrame\(\(\) => \{[\s\S]*xtermRef\.current\?\.focus\(\)/);
+assert.doesNotMatch(terminalSource, /clipboardHasText/);
+assert.match(terminalSource, /剪贴板访问必须由明确的 Paste 动作触发/);
 assert.match(terminalSource, /Ctrl\+Insert/);
 assert.match(terminalSource, /Shift\+Insert/);
 assert.match(terminalSource, /Meta\+C/);
