@@ -421,6 +421,15 @@ async fn build_connection_with_config(
                         );
                         false
                     }
+                    HostTrustDecision::Unavailable { reason } => {
+                        log::error!(
+                            "SSH known-host trust unavailable for {}:{}: {}",
+                            config.host,
+                            config.port,
+                            reason
+                        );
+                        false
+                    }
                 };
                 let _ = verification.response.send(accepted);
                 if !accepted {
