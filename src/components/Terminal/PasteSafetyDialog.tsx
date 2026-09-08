@@ -19,6 +19,7 @@ export default function PasteSafetyDialog({
 }: PasteSafetyDialogProps) {
   const { t } = useTranslation();
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
   const isOpen = text !== null;
 
   const analysis = useMemo(
@@ -38,6 +39,17 @@ export default function PasteSafetyDialog({
         event.preventDefault();
         event.stopPropagation();
         onCancel();
+        return;
+      }
+      if (event.key === "Tab") {
+        const active = document.activeElement;
+        if (event.shiftKey && active === cancelButtonRef.current) {
+          event.preventDefault();
+          confirmButtonRef.current?.focus();
+        } else if (!event.shiftKey && active === confirmButtonRef.current) {
+          event.preventDefault();
+          cancelButtonRef.current?.focus();
+        }
       }
     };
     document.addEventListener("keydown", handleKeyDown, true);
@@ -110,6 +122,7 @@ export default function PasteSafetyDialog({
                 {t("terminal.pasteWarningCancel")}
               </button>
               <button
+                ref={confirmButtonRef}
                 type="button"
                 className={`${styles.button} liquid-glass-button`}
                 onClick={onConfirm}
