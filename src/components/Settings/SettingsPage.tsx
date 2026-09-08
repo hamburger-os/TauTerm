@@ -109,6 +109,7 @@ export default function SettingsPage({
     <AnimatePresence>
       {isOpen && (
         <motion.div
+          data-testid="settings-overlay"
           className={`${styles.overlay} glass-overlay`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -126,7 +127,7 @@ export default function SettingsPage({
             {/* 标题栏 */}
             <div className={styles.header}>
               <span className={styles.headerTitle}>{t("settings.title")}</span>
-              <button className={`${styles.closeBtn} liquid-glass-ghost-button`} onClick={onClose}><Icon name="close" size="md" /></button>
+              <button data-testid="settings-close" className={`${styles.closeBtn} liquid-glass-ghost-button`} onClick={onClose}><Icon name="close" size="md" /></button>
             </div>
 
             <div className={styles.body}>
