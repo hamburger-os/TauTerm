@@ -95,7 +95,7 @@ export default function PasteSafetyDialog({
             </div>
 
             <div className={styles.previewLabel}>{t("terminal.pasteWarningPreview")}</div>
-            <pre className={styles.preview}>
+            <pre className={`${styles.preview} liquid-glass-content`}>
               {preview.preview}
               {preview.truncated ? "\n…" : ""}
             </pre>
