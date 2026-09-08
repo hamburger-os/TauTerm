@@ -141,15 +141,6 @@ pub fn system_log_config_checked() -> Result<(bool, String), String> {
     Ok((SYSTEM_LOG_ENABLED.load(Ordering::Relaxed), level))
 }
 
-pub fn system_log_config() -> (bool, String) {
-    system_log_config_checked().unwrap_or_else(|_| {
-        (
-            SYSTEM_LOG_ENABLED.load(Ordering::Relaxed),
-            "info".to_string(),
-        )
-    })
-}
-
 fn try_send_session_log_when(
     sender: &mpsc::SyncSender<LogEntry>,
     entry: DataLogEntry,
