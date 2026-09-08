@@ -66,7 +66,10 @@ struct DiagnosticBundle {
 }
 
 #[tauri::command]
-pub async fn export_diagnostics(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+pub async fn export_diagnostics(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
     let plugins = {
         let host = state
             .plugin_host
@@ -119,10 +122,7 @@ pub async fn export_diagnostics(app: AppHandle, state: State<'_, AppState>) -> R
     };
 
     let logging = {
-        let log_engine = state
-            .log_engine
-            .lock()
-            .map_err(|error| error.to_string())?;
+        let log_engine = state.log_engine.lock().map_err(|error| error.to_string())?;
         let health = log_engine.get_health();
         LogDiagnostic {
             dropped_system_entries: health.dropped_system_entries,
