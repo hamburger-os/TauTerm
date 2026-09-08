@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
 import Icon from "../../common/Icon";
 import OptionButton from "../../common/OptionButton";
 import type { UpdateInfo, CheckFrequency } from "../../../types/updater";
@@ -43,14 +42,10 @@ export default function AboutSettings({
   const exportDiagnostics = async () => {
     setDiagnosticsMessage("");
     try {
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const destination = await save({
-        defaultPath: "TauTerm-diagnostics-" + stamp + ".json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!destination) return;
-      await invoke("export_diagnostics", { path: destination });
-      setDiagnosticsMessage(t("diagnostics.exportSuccess"));
+      const saved = await invoke<boolean>("export_diagnostics");
+      if (saved) {
+        setDiagnosticsMessage(t("diagnostics.exportSuccess"));
+      }
     } catch (error) {
       setDiagnosticsMessage(t("diagnostics.exportFailed", { error: String(error) }));
     }
