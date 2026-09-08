@@ -16,7 +16,7 @@ SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fin
 
 ### WebView 文件访问边界
 
-主 WebView 不拥有通用文件系统读写 capability，也不注册 `tauri-plugin-fs` 作为前端直接文件通道。文件/目录选择使用系统 dialog 获取用户明确选择的路径，实际 SFTP、Serial transfer、配置、日志和诊断文件读写继续由 Rust 后端的受控命令/服务完成。这样文件选择能力与任意路径读写能力保持分离。
+主 WebView 不拥有通用文件系统读写 capability，也不注册 `tauri-plugin-fs` 作为前端直接文件通道。文件/目录选择使用系统 dialog 获取用户明确选择的路径，实际 SFTP、Serial transfer、Command Set 导入导出、配置、日志和诊断文件读写继续由 Rust 后端的受控命令/服务完成。这样文件选择能力与任意路径读写能力保持分离。
 
 需要新增前端文件访问能力时，必须先证明 Rust 边界无法合理承载，并为实际目录设置最小 scope；禁止恢复全盘通配形式的 WebView 文件权限。
 
