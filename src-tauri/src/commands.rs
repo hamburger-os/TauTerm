@@ -2826,9 +2826,10 @@ pub fn get_log_config(state: State<'_, AppState>) -> Result<LogConfigResponse, S
 /// 在系统文件管理器中打开日志目录
 #[tauri::command]
 pub async fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
-    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let config = log_engine.get_config()?;
-    let path = config.log_dir.clone();
+    let path = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        log_engine.get_config()?.log_dir
+    };
     tauri::async_runtime::spawn_blocking(move || {
         std::fs::create_dir_all(&path)
             .map_err(|error| format!("创建日志目录失败 {:?}: {}", path, error))?;
