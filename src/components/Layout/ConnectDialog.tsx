@@ -573,6 +573,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     <AnimatePresence>
       {isOpen && (
         <motion.div
+          data-testid="connect-dialog-overlay"
           className={`${styles.overlay} glass-overlay`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
