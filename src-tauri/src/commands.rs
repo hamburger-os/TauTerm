@@ -2699,7 +2699,10 @@ pub fn set_theme(state: State<'_, AppState>, name: String) -> Result<(), String>
 ///
 /// 锁顺序：session_store → log_engine（与 write_data 保持一致，避免死锁）
 #[tauri::command]
-pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Result<String, String> {
+pub async fn start_session_log(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<String, String> {
     // 先锁定 session_store 读取会话信息（锁在块结束时释放）
     let (session_name, port_name, data_mode) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -2722,11 +2725,14 @@ pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Resu
         )
     };
 
-    // 再锁定 log_engine 发送启动命令
-    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    if !log_engine.get_config()?.session_enabled {
-        return Err("Session Data Log is disabled in Settings".to_string());
-    }
+    // 只在短临界区读取配置并克隆 sender；ACK 等待不得持有 LogEngine 锁。
+    let log_sender = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        if !log_engine.get_config()?.session_enabled {
+            return Err("Session Data Log is disabled in Settings".to_string());
+        }
+        log_engine.sender()
+    };
 
     let (response_tx, response_rx) = std::sync::mpsc::sync_channel(1);
     let cmd = LogEntry::Command(crate::kernel::log_engine::LogCommand::StartSession {
@@ -2737,15 +2743,21 @@ pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Resu
         response: response_tx,
     });
 
-    log_engine
-        .sender()
-        .send(cmd)
-        .map_err(|e| format!("发送日志启动命令失败: {}", e))?;
+    log_sender
+        .try_send(cmd)
+        .map_err(|e| format!("日志控制队列繁忙，启动请求未入队: {}", e))?;
 
-    match response_rx.recv_timeout(std::time::Duration::from_secs(3)) {
-        Ok(Ok(_status)) => Ok(session_id),
-        Ok(Err(error)) => Err(error),
-        Err(error) => Err(format!("等待日志启动确认失败: {}", error)),
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        response_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|error| format!("等待日志启动确认失败: {}", error))
+    })
+    .await
+    .map_err(|error| format!("日志启动确认任务失败: {}", error))??;
+
+    match result {
+        Ok(_status) => Ok(session_id),
+        Err(error) => Err(error),
     }
 }
 
@@ -2758,8 +2770,8 @@ pub fn stop_session_log(state: State<'_, AppState>, session_id: String) -> Resul
 
     log_engine
         .sender()
-        .send(cmd)
-        .map_err(|e| format!("发送日志停止命令失败: {}", e))?;
+        .try_send(cmd)
+        .map_err(|e| format!("日志控制队列繁忙，停止请求未入队: {}", e))?;
 
     Ok(())
 }
@@ -2955,21 +2967,27 @@ pub fn update_log_config(
 
 /// 清除所有日志文件
 #[tauri::command]
-pub fn clear_all_logs(state: State<'_, AppState>) -> Result<(), String> {
-    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+pub async fn clear_all_logs(state: State<'_, AppState>) -> Result<(), String> {
+    let log_sender = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        log_engine.sender()
+    };
     let (response_tx, response_rx) = std::sync::mpsc::sync_channel(1);
-    log_engine
-        .sender()
-        .send(LogEntry::Command(
+    log_sender
+        .try_send(LogEntry::Command(
             crate::kernel::log_engine::LogCommand::ClearAll {
                 response: response_tx,
             },
         ))
-        .map_err(|e| format!("发送日志清理命令失败: {}", e))?;
+        .map_err(|e| format!("日志控制队列繁忙，清理请求未入队: {}", e))?;
 
-    response_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| format!("等待日志清理确认失败: {}", e))?
+    tauri::async_runtime::spawn_blocking(move || {
+        response_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| format!("等待日志清理确认失败: {}", error))?
+    })
+    .await
+    .map_err(|error| format!("日志清理确认任务失败: {}", error))?
 }
 
 // ── 虚拟串口驱动管理 ────────────────────────────────
