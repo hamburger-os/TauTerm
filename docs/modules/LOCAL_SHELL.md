@@ -6,7 +6,7 @@ Local Shell 让本机命令行与远端/设备 Session 使用同一套终端工�
 
 ## 当前方案
 
-Shell 预设发现属于配置辅助能力，只在进入 Local Shell 配置页时按需执行。发现结果必须优先使用可验证的真实组件名称：已知可执行文件使用其正式 Shell 名称，WSL 发行版直接显示 `wsl --list --quiet` 返回的注册名称；未知自定义 Shell 才回退到可执行文件名，不使用编号或抽象别名掩盖本机实际环境。Windows 上的 WSL 发行版探测运行在后台 blocking worker，并设置有限等待时间；平台命令异常或 WSL 服务不可用时只跳过对应预设，不能阻塞配置页面或 Session 核心。
+Shell 预设发现属于配置辅助能力，只在进入 Local Shell 配置页时按需执行。自动发现结果直接显示实际探测到的 Shell 或 WSL 注册发行版名称，不再生成编号或泛化别名。Windows 上的 WSL 发行版探测运行在后台 blocking worker，并设置有限等待时间；平台命令异常或 WSL 服务不可用时只跳过对应预设，不能阻塞配置页面或 Session 核心。
 
 Local Shell 通过平台原生 PTY 创建终端：
 
@@ -35,7 +35,7 @@ flowchart TB
 - 管理员属性属于单个运行时 child，不写回父配置。
 - 每个 child 是独立进程/PTY，不共享 shell 进程状态。
 - Local Shell 使用终端搜索、尺寸与日志能力，但不启用远端传输或全局 SendBar。
-- shell 发现只提供可解释、可追溯的候选；自动发现标签用于识别本机真实环境，可以使用已检测到的外部 Shell/发行版正式名称，但不能把这些名称当作 TauTerm 自身品牌文案。自定义 executable、参数和工作目录必须保持独立字段，避免命令字符串拼接。
+- shell 发现只提供可解释的候选；自定义 executable、参数和工作目录必须保持独立字段，避免命令字符串拼接。
 
 ## 代码锚点
 
