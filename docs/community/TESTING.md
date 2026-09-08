@@ -41,7 +41,7 @@ The permanent smoke contract covers:
 
 Stable data-testid attributes are test contracts only; they do not carry product state.
 
-Windows and Linux are the automated real-WebView targets for this direct external-driver path. macOS remains covered by build/Rust checks and manual release validation until a no-production-backdoor native automation path is adopted.
+Windows and Linux are the automated real-WebView targets for this direct external-driver path. Linux remains a hard real-WebView gate. On GitHub-hosted Windows runners, WebView2 Runtime 150+ currently blocks the remote-debugging port when the host is elevated; the workflow tolerates only the exact `DevToolsActivePort file doesn't exist` signature on Runtime 150+ and uploads the log as evidence. Any other Windows E2E failure remains fatal. Remove this exception when the upstream WebView2/WRY limitation is resolved. macOS remains covered by build/Rust checks and manual release validation until a no-production-backdoor native automation path is adopted.
 
 ## Protocol fixtures
 
