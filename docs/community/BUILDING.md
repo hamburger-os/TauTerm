@@ -77,13 +77,15 @@ npm run trdp:build
 
 ## Validation
 
-The repository CI baseline includes documentation checks, TypeScript checking/building, Rust formatting, strict Clippy, and Rust tests.
+The repository CI baseline includes documentation checks, TypeScript checking/building, Rust formatting, strict Clippy, Rust tests, protocol-fixture self-tests, blocking-command/runtime-error contracts, and a separate real TauTerm WebDriver smoke workflow.
 
 Useful local checks:
 
 ```bash
 npm run docs:check
 npm run license:check
+npm run check:tauri-blocking
+npm run check:runtime-errors
 npm run license:cargo
 npx tsc --noEmit
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
@@ -91,7 +93,7 @@ cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.to
 cargo test --locked --manifest-path src-tauri/Cargo.toml
 ```
 
-Additional focused checks are defined in `package.json`. The maintainer-oriented command table and daily workflow are kept in [docs/maintainer/DEVELOPMENT.md](../maintainer/DEVELOPMENT.md).
+Additional focused checks are defined in `package.json`. Runtime E2E, scheduled performance contracts, soak tests and dependency advisory checks are documented in [TESTING.md](TESTING.md). The maintainer-oriented command table and daily workflow are kept in [docs/maintainer/DEVELOPMENT.md](../maintainer/DEVELOPMENT.md).
 
 ## Production packages
 
