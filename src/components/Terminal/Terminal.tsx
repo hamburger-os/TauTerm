@@ -8,10 +8,12 @@ import "@xterm/xterm/css/xterm.css";
 import { useTheme } from "../../context/ThemeContext";
 import { shortcutRegistry } from "../../shortcuts/registry";
 import { copyToClipboard, readFromClipboard } from "../../utils/clipboard";
+import { analyzeTerminalPaste } from "../../utils/terminalClipboard";
 import ContextMenu from "../common/ContextMenu";
 import type { ContextMenuItem } from "../common/ContextMenu";
 import type { ContextMenuState } from "../../hooks/useContextMenu";
 import ScrollToBottomButton from "./ScrollToBottomButton";
+import PasteSafetyDialog from "./PasteSafetyDialog";
 import styles from "./Terminal.module.css";
 
 /** 视口底部容差行数：视口底边与缓冲区底部的间距小于此值即视为"在底部" */
@@ -188,6 +190,59 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   // 用 ref 保持最新输入回调，并在首批输出回放前完成 onData 订阅，避免响应丢失后 shell 阻塞。
   const onDataRef = useRef(onData);
   onDataRef.current = onData;
+  const isConnectedRef = useRef(isConnected);
+  isConnectedRef.current = isConnected;
+  const [pendingPaste, setPendingPaste] = useState<string | null>(null);
+
+  const restoreTerminalFocus = useCallback(() => {
+    requestAnimationFrame(() => {
+      xtermRef.current?.focus();
+    });
+  }, []);
+
+  const commitPaste = useCallback((text: string) => {
+    const term = xtermRef.current;
+    if (term && text && isConnectedRef.current) {
+      term.paste(text);
+    }
+    restoreTerminalFocus();
+  }, [restoreTerminalFocus]);
+
+  const requestPasteText = useCallback((text: string) => {
+    if (!text || !isConnectedRef.current) {
+      restoreTerminalFocus();
+      return;
+    }
+    if (analyzeTerminalPaste(text).requiresConfirmation) {
+      setPendingPaste(text);
+      return;
+    }
+    commitPaste(text);
+  }, [commitPaste, restoreTerminalFocus]);
+
+  const requestClipboardPaste = useCallback(async () => {
+    const text = await readFromClipboard();
+    if (!text) {
+      restoreTerminalFocus();
+      return;
+    }
+    requestPasteText(text);
+  }, [requestPasteText, restoreTerminalFocus]);
+
+  const copySelection = useCallback(() => {
+    const term = xtermRef.current;
+    const selection = term?.getSelection() ?? "";
+    if (!selection) {
+      restoreTerminalFocus();
+      return;
+    }
+    void copyToClipboard(selection).finally(restoreTerminalFocus);
+  }, [restoreTerminalFocus]);
+
+  const copySelectionRef = useRef(copySelection);
+  copySelectionRef.current = copySelection;
+  const requestClipboardPasteRef = useRef(requestClipboardPaste);
+  requestClipboardPasteRef.current = requestClipboardPaste;
 
   const { t } = useTranslation();
   const { theme } = useTheme();
@@ -218,6 +273,9 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     fit: () => {
       fitAddonRef.current?.fit();
     },
+    copySelection: () => copySelectionRef.current(),
+    requestPaste: () => requestClipboardPasteRef.current(),
+    focus: () => xtermRef.current?.focus(),
     get terminal() {
       return xtermRef.current;
     },
@@ -262,9 +320,33 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     term.loadAddon(fitAddon);
     term.loadAddon(webLinksAddon);
 
-    // 拦截终端内键盘事件：已注册的全局快捷键穿透到浏览器，其余由 xterm 正常处理
-    // 这使 Ctrl+F / Ctrl+Tab / Ctrl+Shift+P 等快捷键在终端聚焦时也能正常工作
+    // 拦截终端内键盘事件：可配置 action 穿透到全局 Shortcut Registry；
+    // 兼容剪贴板别名由终端宿主直接处理，其余按键（特别是 Ctrl+C / Ctrl+V）
+    // 保持原始终端语义并继续送往 PTY。
     term.attachCustomKeyEventHandler((e) => {
+      const isKeyDown = e.type === "keydown";
+      const lowerKey = e.key.toLowerCase();
+
+      // Ctrl+Insert / Shift+Insert：传统终端兼容别名。
+      const compatibilityCopy = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === "Insert";
+      const compatibilityPaste = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Insert";
+      // Meta+C / Meta+V：macOS 平台习惯；不改变 Ctrl+C / Ctrl+V 的 PTY 语义。
+      const macCopy = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "c";
+      const macPaste = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "v";
+
+      if (compatibilityCopy || macCopy) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isKeyDown) copySelectionRef.current();
+        return false;
+      }
+      if (compatibilityPaste || macPaste) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (isKeyDown) void requestClipboardPasteRef.current();
+        return false;
+      }
+
       const matched = shortcutRegistry.match(e);
       if (matched) return false; // 穿透 → document keydown → useKeyboard hook
       return true;               // xterm 正常处理（→ onData → PTY）
@@ -371,12 +453,14 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     };
   }, [isActive]);
 
-  // 处理粘贴
-  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
-    if (!onData || !isConnected) return;
+  // 接管系统 paste 事件的 capture 阶段，确保不会先被 xterm 默认处理后再重复发送。
+  // 所有入口（系统 paste / 快捷键 / 右键菜单）最终统一进入 requestPasteText → term.paste。
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
     const text = e.clipboardData.getData("text");
-    if (text) onData(text);
-  }, [onData, isConnected]);
+    if (text) requestPasteText(text);
+  }, [requestPasteText]);
 
   // 右键上下文菜单
   // 始终显示自定义菜单（与 isConnected 无关），避免浏览器默认菜单弹出
@@ -459,39 +543,41 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     if (!term) return;
 
     switch (itemId) {
-      case "copy": {
-        const selection = term.getSelection();
-        if (selection) copyToClipboard(selection);
+      case "copy":
+        copySelectionRef.current();
         break;
-      }
       case "paste":
-        readFromClipboard().then(text => {
-          if (text) {
-            term.paste(text);
-          }
-        }).catch(() => {});
+        void requestClipboardPasteRef.current();
         break;
       case "selectAll":
         term.selectAll();
+        restoreTerminalFocus();
         break;
       case "search":
         onShowSearchRef.current?.();
         break;
       case "clear":
         term.clear();
+        restoreTerminalFocus();
         break;
       case "disconnect":
         onDisconnectSessionRef.current?.();
         break;
     }
-  }, []);
+  }, [restoreTerminalFocus]);
+
+  useEffect(() => {
+    if (!isConnected && pendingPaste !== null) {
+      setPendingPaste(null);
+    }
+  }, [isConnected, pendingPaste]);
 
   return (
     <div className={styles.terminalInstanceWrapper}>
       <div
         ref={containerRef}
         className={styles.terminal}
-        onPaste={handlePaste}
+        onPasteCapture={handlePaste}
         onContextMenu={handleContextMenu}
       />
       <ScrollToBottomButton
@@ -506,6 +592,18 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
         items={contextMenuItems}
         onSelect={handleContextMenuSelect}
         onClose={closeContextMenu}
+      />
+      <PasteSafetyDialog
+        text={pendingPaste}
+        onConfirm={() => {
+          const text = pendingPaste;
+          setPendingPaste(null);
+          if (text) commitPaste(text);
+        }}
+        onCancel={() => {
+          setPendingPaste(null);
+          restoreTerminalFocus();
+        }}
       />
     </div>
   );
