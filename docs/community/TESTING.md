@@ -74,7 +74,7 @@ The workflow stores performance-contract.json and logs as artifacts. Hosted-runn
 
 ## Reliability soak
 
-The dedicated reliability workflow runs repeated Session I/O lifecycle iterations for 5 seconds to 8 hours. Scheduled runs use a practical default; maintainers can request longer runs before a release.
+The hosted reliability workflow runs repeated Session I/O lifecycle iterations for 5 seconds to 4 hours, within the GitHub-hosted job timeout. The underlying ignored Rust test accepts up to 8 hours for local or self-hosted runs. Scheduled runs use a practical default; maintainers can request longer hosted runs before a release.
 
 The soak produces a JSON artifact containing duration, completed iterations and payload volume. Any hang, panic or incorrect byte accounting fails the run.
 
