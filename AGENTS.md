@@ -88,7 +88,7 @@ If a change spans modules, update each affected owner document, but keep each fa
 - Preserve local-first operation and least-privilege boundaries.
 - TauTerm is pre-stable and under active development. Do not preserve backward or forward compatibility for internal schemas, APIs, configuration formats, or obsolete designs unless the user explicitly asks for it; prefer one clean current model and require reset/reconfiguration when necessary.
 - Do not invent performance claims, compatibility claims, test results, screenshots, or release status.
-- User-facing brand/copy must remain neutral and must not borrow other companies' product identities.
+- User-facing brand/copy must remain neutral and must not borrow other companies' product identities. Factual identifiers for user-installed or platform-provided tools discovered at runtime may use their official names when that is necessary to identify what TauTerm actually found; do not replace such identifiers with invented generic aliases.
 - UI text changes must keep `src/i18n/locales/en-US.json` and `zh-CN.json` keys aligned.
 - Theme changes must follow `.agents/skills/tauterm-theme/SKILL.md`; do not restate the theme spec elsewhere.
 
