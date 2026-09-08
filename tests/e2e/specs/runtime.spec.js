@@ -1,7 +1,13 @@
 describe("TauTerm runtime smoke", () => {
   before(async () => {
-    const root = await $('[data-testid="app-root"]');
-    await root.waitForDisplayed({ timeout: 20_000 });
+    await browser.waitUntil(
+      async () => browser.execute(() => document.readyState === "complete"),
+      {
+        timeout: 20_000,
+        timeoutMsg: "TauTerm document did not finish loading",
+      },
+    );
+
     await browser.execute(() => {
       window.__tautermE2eErrors = [];
       window.addEventListener("error", event => {
@@ -11,6 +17,28 @@ describe("TauTerm runtime smoke", () => {
         window.__tautermE2eErrors.push(String(event.reason));
       });
     });
+
+    try {
+      await browser.waitUntil(
+        async () => browser.execute(
+          () => document.querySelector('[data-testid="app-root"]') !== null,
+        ),
+        {
+          timeout: 20_000,
+          timeoutMsg: "TauTerm app root was not rendered",
+        },
+      );
+    } catch (error) {
+      const diagnostics = await browser.execute(() => ({
+        title: document.title,
+        url: location.href,
+        readyState: document.readyState,
+        bodyText: document.body?.innerText?.slice(0, 2000) ?? "",
+        bodyHtml: document.body?.innerHTML?.slice(0, 4000) ?? "",
+      }));
+      console.error("TauTerm startup diagnostics:", JSON.stringify(diagnostics, null, 2));
+      throw error;
+    }
   });
 
   it("renders the primary application shell without document overflow", async () => {
