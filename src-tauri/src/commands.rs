@@ -1630,7 +1630,7 @@ pub fn switch_active_session(
 
 /// 重命名会话
 #[tauri::command]
-pub fn rename_session(
+pub async fn rename_session(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
@@ -2229,7 +2229,7 @@ pub fn list_network_peers(
 ///
 /// 与 `close_channel` 不同：关闭对端不级联断开父会话（监听器保持监听）。
 #[tauri::command]
-pub fn close_network_peer(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub async fn close_network_peer(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     // 两段式：锁内信号 + 移除，锁外 join（同 close_channel）
     let cleanup = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -2239,7 +2239,9 @@ pub fn close_network_peer(state: State<'_, AppState>, session_id: String) -> Res
         let (_is_last, cleanup) = store.close_sub_connection(&pid, &session_id)?;
         cleanup
     };
-    cleanup.join();
+    tauri::async_runtime::spawn_blocking(move || cleanup.join())
+        .await
+        .map_err(|error| format!("等待网络对端资源清理失败: {error}"))?;
     Ok(())
 }
 
@@ -2456,7 +2458,7 @@ pub fn set_network_send_target(
 // ── 会话持久化命令 ─────────────────────────────────
 
 #[tauri::command]
-pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
+pub async fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app)?;
     let mut saved = SessionStore::load_from_disk(&path)?;
 
@@ -2491,7 +2493,7 @@ pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
 // ── 会话配置命令 ─────────────────────────────────────
 
 #[tauri::command]
-pub fn save_session_config(
+pub async fn save_session_config(
     app: AppHandle,
     state: State<'_, AppState>,
     request: SaveSessionConfigRequest,
@@ -2604,7 +2606,7 @@ pub fn resolve_local_shell_session_name(params: Value) -> Result<String, String>
 
 /// 删除会话配置（从 sessions.json 中移除指定会话）
 #[tauri::command]
-pub fn delete_session_config(
+pub async fn delete_session_config(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
@@ -2629,14 +2631,14 @@ pub fn delete_session_config(
 // ── 凭据存储状态 ────────────────────────────────────
 
 #[tauri::command]
-pub fn credential_storage_status(
+pub async fn credential_storage_status(
     state: State<'_, AppState>,
 ) -> Result<crate::security::credential_store::CredentialStorageStatus, String> {
     Ok(state.credential_store.status())
 }
 
 #[tauri::command]
-pub fn unlock_credential_vault(
+pub async fn unlock_credential_vault(
     state: State<'_, AppState>,
     master_password: String,
 ) -> Result<(), String> {
@@ -2648,7 +2650,7 @@ pub fn unlock_credential_vault(
 }
 
 #[tauri::command]
-pub fn lock_credential_vault(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn lock_credential_vault(state: State<'_, AppState>) -> Result<(), String> {
     state.credential_store.lock_fallback();
     Ok(())
 }
@@ -2664,7 +2666,7 @@ pub fn get_config(state: State<'_, AppState>, key: String) -> Result<Option<Valu
 }
 
 #[tauri::command]
-pub fn set_config(state: State<'_, AppState>, key: String, value: Value) -> Result<(), String> {
+pub async fn set_config(state: State<'_, AppState>, key: String, value: Value) -> Result<(), String> {
     state
         .config_store
         .set(&key, &value)
@@ -2672,7 +2674,7 @@ pub fn set_config(state: State<'_, AppState>, key: String, value: Value) -> Resu
 }
 
 #[tauri::command]
-pub fn delete_config(state: State<'_, AppState>, key: String) -> Result<(), String> {
+pub async fn delete_config(state: State<'_, AppState>, key: String) -> Result<(), String> {
     state.config_store.delete(&key).map_err(|e| e.to_string())
 }
 
@@ -2804,7 +2806,7 @@ pub fn get_log_health(state: State<'_, AppState>) -> Result<LogHealth, String> {
 
 /// 更新系统日志配置（启用/禁用 + 最低日志级别）
 #[tauri::command]
-pub fn set_system_log_config(
+pub async fn set_system_log_config(
     state: State<'_, AppState>,
     enabled: bool,
     level: String,
@@ -2862,42 +2864,46 @@ pub fn get_log_config(state: State<'_, AppState>) -> Result<LogConfigResponse, S
 
 /// 在系统文件管理器中打开日志目录
 #[tauri::command]
-pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     let config = log_engine.get_config()?;
     let path = config.log_dir.clone();
-    std::fs::create_dir_all(&path)
-        .map_err(|error| format!("创建日志目录失败 {:?}: {}", path, error))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::create_dir_all(&path)
+            .map_err(|error| format!("创建日志目录失败 {:?}: {}", path, error))?;
 
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("打开目录失败: {}", e))?;
-    }
-    Ok(())
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("explorer")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("打开目录失败: {}", e))?;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("打开目录失败: {}", e))?;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(&path)
+                .spawn()
+                .map_err(|e| format!("打开目录失败: {}", e))?;
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|error| format!("打开日志目录任务失败: {error}"))?
 }
 
 /// 更新日志引擎运行时配置（由前端设置页调用）
 ///
 /// 消费者线程下次循环自动读取新配置，无需重启。
 #[tauri::command]
-pub fn update_log_config(
+pub async fn update_log_config(
     state: State<'_, AppState>,
     config: LogConfigUpdate,
 ) -> Result<(), String> {
@@ -2997,7 +3003,7 @@ pub async fn clear_all_logs(state: State<'_, AppState>) -> Result<(), String> {
 
 /// 查询 com0com 驱动状态（前端主动拉取，解决事件在组件挂载前发射的竞态）
 #[tauri::command]
-pub fn check_virtual_port_driver(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn check_virtual_port_driver(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let vpm = state
         .virtual_port_manager
         .lock()
@@ -3014,7 +3020,7 @@ pub fn check_virtual_port_driver(state: State<'_, AppState>) -> Result<serde_jso
 /// 优先直接安装（当前进程已提权时成功）；普通权限下则在 Windows 上
 /// 通过 PowerShell Start-Process -Verb RunAs 触发 UAC 提权安装。
 #[tauri::command]
-pub fn install_virtual_port_driver(
+pub async fn install_virtual_port_driver(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
@@ -3073,7 +3079,7 @@ pub fn install_virtual_port_driver(
 ///
 /// 返回 `{ cleaned: N, message: "..." }`。
 #[tauri::command]
-pub fn cleanup_virtual_ports(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn cleanup_virtual_ports(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let mut vpm = state
         .virtual_port_manager
         .lock()
