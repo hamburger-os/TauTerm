@@ -67,7 +67,13 @@ export default defineConfig(async () => ({
         // in one chunk. This avoids circular manual chunks and stays below Vite's 500KB limit.
         manualChunks(id) {
           const normalized = id.replace(/\\/g, "/");
-          if (normalized.includes("/src/context/") || /\/src\/components\/(Common|Settings|Layout|Terminal|RightSidebar|JournaldViewer|Tools|FileManager|SendBar)\//.test(normalized)) {
+          // Settings is a low-frequency, one-way UI surface: it consumes shared context/common
+          // components, while the core layout does not import Settings back. Keep it separate so
+          // daily-driver UI stays under Vite's 500KB warning budget without hiding the warning.
+          if (/\/src\/components\/Settings\//.test(normalized)) {
+            return "ui-settings";
+          }
+          if (normalized.includes("/src/context/") || /\/src\/components\/(Common|Layout|Terminal|RightSidebar|JournaldViewer|Tools|FileManager|SendBar)\//.test(normalized)) {
             return "ui-core";
           }
           if (!normalized.includes("node_modules")) return undefined;
