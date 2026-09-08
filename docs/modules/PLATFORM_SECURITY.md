@@ -12,7 +12,7 @@
 
 SSH 的持久化 Session 只保存由 Session ID 确定的 `credential_account` 引用，不保存密码、私钥正文或 passphrase。连接时由 Rust 后端从安全存储注入短生命周期认证材料；WebView 的 Session 状态和重新打开的配置表单不回填秘密，也不暴露可返回凭据明文的通用 Tauri command。Session Library 与凭据存储的跨存储变更使用显式提交/回滚：保存配置时先提交非敏感 Session 快照、再提交安全凭据，第二步失败则恢复 Session 快照；删除时凭据清理失败同样恢复 Session 条目。原生 keyring 自身在 credential/index 更新发生部分失败时也尝试恢复旧 secret/index 状态。加载持久化会话时若发现开发期遗留的 SSH 明文字段，会立即从 `sessions.json` 擦除并要求用户重新配置，不迁移旧凭据、不保留兼容分支。
 
-SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fingerprint 与 first/last seen。首次信任需要明确确认；已知 fingerprint 匹配时自动通过；已知主机密钥变化时 fail-closed。并发确认使用独立 request ID，不以 fingerprint 作为 pending key。
+SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fingerprint 与 first/last seen。首次信任需要明确确认；已知 fingerprint 匹配时自动通过；已知主机密钥变化时 fail-closed。known-host 文件损坏、schema 版本不支持或存储未初始化时同样 fail-closed：可以备份原文件用于诊断，但不能把已有信任状态解释成空库重新 TOFU。并发确认使用独立 request ID，不以 fingerprint 作为 pending key。
 
 ### Windows 特权操作
 
