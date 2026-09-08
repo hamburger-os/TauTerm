@@ -39,6 +39,8 @@ const terminalSource = await readFile(
 assert.match(terminalSource, /onPasteCapture=\{handlePaste\}/);
 assert.match(terminalSource, /term\.paste\(text\)/);
 assert.match(terminalSource, /bracketedPasteMode/);
+assert.match(terminalSource, /copyToClipboard\(selection\)\.finally\(restoreTerminalFocus\)/);
+assert.match(terminalSource, /requestAnimationFrame\(\(\) => \{[\s\S]*xtermRef\.current\?\.focus\(\)/);
 assert.match(terminalSource, /Ctrl\+Insert/);
 assert.match(terminalSource, /Shift\+Insert/);
 assert.match(terminalSource, /Meta\+C/);
@@ -55,5 +57,7 @@ const registrySource = await readFile(
 );
 assert.match(registrySource, /TERMINAL_COPY[\s\S]*Ctrl\+Shift\+C/);
 assert.match(registrySource, /TERMINAL_PASTE[\s\S]*Ctrl\+Shift\+V/);
+assert.doesNotMatch(registrySource, /TERMINAL_COPY, keys: "Ctrl\+C"/);
+assert.doesNotMatch(registrySource, /TERMINAL_PASTE, keys: "Ctrl\+V"/);
 
 console.log("terminal-clipboard: shortcuts, paste routing, focus contract and safety analysis verified");
