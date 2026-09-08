@@ -18,6 +18,8 @@ mod commands;
 mod diagnostics;
 mod kernel;
 mod plugins;
+#[cfg(test)]
+mod performance_contract;
 mod security;
 mod transfer;
 pub mod virtual_port;
