@@ -434,7 +434,7 @@ impl LogEngine {
         if stop_all_sessions
             && self
                 .entry_tx
-                .send(LogEntry::Command(LogCommand::StopAllSessions))
+                .try_send(LogEntry::Command(LogCommand::StopAllSessions))
                 .is_err()
         {
             if let Ok(mut cfg) = self.config.lock() {
