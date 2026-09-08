@@ -119,7 +119,7 @@ export default function LocalShellConnectForm({
           <option value="">{t("localShell.auto")}</option>
           {endpoints.map(endpoint => (
             <option key={endpoint.name} value={endpoint.name}>
-              {endpoint.name === "wsl-default" ? t("localShell.wslDefault") : endpoint.description}
+              {endpoint.description}
             </option>
           ))}
           <option value={CUSTOM}>{t("localShell.custom")}</option>
