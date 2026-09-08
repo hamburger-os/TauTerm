@@ -184,6 +184,9 @@ jobs:
       - name: Frontend runtime error contract
         run: npm run check:runtime-errors
 
+      - name: Terminal clipboard and paste safety contract
+        run: npm run check:terminal-clipboard
+
       - name: Protocol fixture self-test
         run: |
           python3 -m py_compile scripts/test-serial-session.py scripts/test-telnet-server.py
