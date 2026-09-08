@@ -176,3 +176,149 @@ async fn handle_cmd_async(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channel::error::ChannelError;
+    use crate::channel::DisconnectKind;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    struct MockAsyncChannel {
+        reads: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        writes: Arc<Mutex<Vec<u8>>>,
+        fail_write: bool,
+        max_write: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl AsyncChannel for MockAsyncChannel {
+        async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if let Some(data) = self.reads.lock().unwrap().pop_front() {
+                let n = data.len().min(buf.len());
+                buf[..n].copy_from_slice(&data[..n]);
+                Ok(n)
+            } else {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "idle"))
+            }
+        }
+
+        async fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.fail_write {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "injected async write failure",
+                ));
+            }
+            let n = buf.len().min(self.max_write.max(1));
+            self.writes.lock().unwrap().extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+
+        async fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn is_connected(&self) -> bool {
+            true
+        }
+
+        fn set_timeout(&mut self, _dur: Duration) -> Result<(), ChannelError> {
+            Ok(())
+        }
+    }
+
+    fn context(
+        session_id: &str,
+    ) -> (
+        IoLoopContext,
+        std::sync::mpsc::SyncSender<IoLoopCmd>,
+        tokio::sync::oneshot::Sender<()>,
+        Arc<AtomicU64>,
+        Arc<AtomicU64>,
+    ) {
+        let (write_tx, write_rx) = std::sync::mpsc::sync_channel(16);
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        let tx_bytes = Arc::new(AtomicU64::new(0));
+        let rx_bytes = Arc::new(AtomicU64::new(0));
+        (
+            IoLoopContext {
+                session_id: session_id.into(),
+                write_rx,
+                cancel_rx,
+                tx_bytes: tx_bytes.clone(),
+                rx_bytes: rx_bytes.clone(),
+            },
+            write_tx,
+            cancel_tx,
+            tx_bytes,
+            rx_bytes,
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn async_io_loop_handles_partial_writes_and_counts_bytes() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let (context, write_tx, _cancel_tx, tx_bytes, _rx_bytes) = context("async-write");
+        let handle = spawn_async_io_loop(
+            Box::new(MockAsyncChannel {
+                reads: Arc::new(Mutex::new(VecDeque::new())),
+                writes: writes.clone(),
+                fail_write: false,
+                max_write: 2,
+            }),
+            |_id, _data| {},
+            |_id, _info| {},
+            context,
+        );
+
+        write_tx.send(IoLoopCmd::Write(b"abcdef".to_vec())).unwrap();
+        write_tx.send(IoLoopCmd::Shutdown).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(&*writes.lock().unwrap(), b"abcdef");
+        assert_eq!(tx_bytes.load(Ordering::Relaxed), 6);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn async_io_loop_reports_injected_write_failure() {
+        let (disconnect_tx, disconnect_rx) = tokio::sync::oneshot::channel();
+        let disconnect_tx = Arc::new(Mutex::new(Some(disconnect_tx)));
+        let (context, write_tx, _cancel_tx, tx_bytes, _rx_bytes) = context("async-fail");
+        let tx_for_callback = disconnect_tx.clone();
+        let handle = spawn_async_io_loop(
+            Box::new(MockAsyncChannel {
+                reads: Arc::new(Mutex::new(VecDeque::new())),
+                writes: Arc::new(Mutex::new(Vec::new())),
+                fail_write: true,
+                max_write: usize::MAX,
+            }),
+            |_id, _data| {},
+            move |_id, info| {
+                if let Some(tx) = tx_for_callback.lock().unwrap().take() {
+                    let _ = tx.send(info);
+                }
+            },
+            context,
+        );
+
+        write_tx.send(IoLoopCmd::Write(b"boom".to_vec())).unwrap();
+        let info = tokio::time::timeout(Duration::from_secs(2), disconnect_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(matches!(info.kind, DisconnectKind::IoError));
+        assert_eq!(tx_bytes.load(Ordering::Relaxed), 0);
+    }
+}
