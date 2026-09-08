@@ -472,7 +472,7 @@ fn detect_windows_shell_presets() -> Vec<ShellPreset> {
             presets.push(ShellPreset::wsl(
                 format!("wsl-distro:{distro}"),
                 wsl.clone(),
-                format!("WSL · {distro}"),
+                wsl_distribution_display_label(&distro),
                 distro,
             ));
         }
@@ -490,6 +490,10 @@ fn detect_windows_shell_presets() -> Vec<ShellPreset> {
     push_resolved_native(&mut presets, "nushell", "nu.exe", "Nushell");
 
     presets
+}
+
+fn wsl_distribution_display_label(distro: &str) -> String {
+    format!("WSL · {distro}")
 }
 
 #[cfg(windows)]
@@ -809,6 +813,18 @@ mod tests {
         assert_eq!(
             shell_display_label(Path::new("custom-shell.exe")),
             "custom-shell"
+        );
+    }
+
+    #[test]
+    fn preserves_wsl_distribution_name_in_display_label() {
+        assert_eq!(
+            wsl_distribution_display_label("Ubuntu-22.04"),
+            "WSL · Ubuntu-22.04"
+        );
+        assert_eq!(
+            wsl_distribution_display_label("Engineering Dev"),
+            "WSL · Engineering Dev"
         );
     }
 
