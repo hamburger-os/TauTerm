@@ -405,6 +405,14 @@ async fn build_connection_with_config(
                             }
                         }
                     }
+                    HostTrustDecision::Unavailable => {
+                        log::error!(
+                            "SSH known-host 存储不可用，拒绝连接 {}:{}",
+                            config.host,
+                            config.port
+                        );
+                        false
+                    }
                     HostTrustDecision::Changed {
                         expected_fingerprint,
                     } => {
