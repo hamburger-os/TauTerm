@@ -575,6 +575,17 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     }
   }, [isConnected, pendingPaste]);
 
+  const handlePasteConfirm = useCallback(() => {
+    const text = pendingPaste;
+    setPendingPaste(null);
+    if (text) commitPaste(text);
+  }, [commitPaste, pendingPaste]);
+
+  const handlePasteCancel = useCallback(() => {
+    setPendingPaste(null);
+    restoreTerminalFocus();
+  }, [restoreTerminalFocus]);
+
   return (
     <div className={styles.terminalInstanceWrapper}>
       <div
@@ -598,15 +609,8 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       />
       <PasteSafetyDialog
         text={pendingPaste}
-        onConfirm={() => {
-          const text = pendingPaste;
-          setPendingPaste(null);
-          if (text) commitPaste(text);
-        }}
-        onCancel={() => {
-          setPendingPaste(null);
-          restoreTerminalFocus();
-        }}
+        onConfirm={handlePasteConfirm}
+        onCancel={handlePasteCancel}
       />
     </div>
   );
