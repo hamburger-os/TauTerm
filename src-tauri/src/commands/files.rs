@@ -15,8 +15,8 @@ fn validate_command_set_json(content: &str) -> Result<(), String> {
         return Err("Command Set file exceeds the 4 MiB limit".to_string());
     }
 
-    let value: Value =
-        serde_json::from_str(content).map_err(|error| format!("invalid Command Set JSON: {error}"))?;
+    let value: Value = serde_json::from_str(content)
+        .map_err(|error| format!("invalid Command Set JSON: {error}"))?;
     let object = value
         .as_object()
         .ok_or_else(|| "Command Set root must be a JSON object".to_string())?;
@@ -79,8 +79,8 @@ pub async fn import_command_set_file(app: AppHandle) -> Result<Option<String>, S
         let path = selected
             .into_path()
             .map_err(|error| format!("selected file is not a local path: {error}"))?;
-        let metadata =
-            std::fs::metadata(&path).map_err(|error| format!("read Command Set metadata failed: {error}"))?;
+        let metadata = std::fs::metadata(&path)
+            .map_err(|error| format!("read Command Set metadata failed: {error}"))?;
         if metadata.len() > MAX_COMMAND_SET_BYTES as u64 {
             return Err("Command Set file exceeds the 4 MiB limit".to_string());
         }
