@@ -16,7 +16,9 @@ React 应用由全局上下文和通用组件组成：
 - Settings 集中管理外观、语言、日志、安全、快捷键和版本信息；
 - i18next 维护 `en-US` / `zh-CN` 两套对齐 key；
 - Shortcut Registry 和 Command Palette 共享稳定 action id；
-- 通用组件与图标系统供协议模块复用。
+- 通用组件与图标系统供协议模块复用；
+- ErrorBoundary、`window.error` 与 `unhandledrejection` 通过统一诊断桥进入 Rust System Log，并进行重复错误节流；公共错误页只消费 i18n key；
+- Windows/Linux 的真实 TauTerm WebView 使用稳定 `data-testid` 合同执行最小运行时 smoke，测试自动化不进入生产运行时插件边界。
 
 主题的材质、颜色和动画规范不在本文复制，唯一实现规范仍是 `.agents/skills/tauterm-theme/SKILL.md`。
 
@@ -37,7 +39,7 @@ flowchart TB
 
 - 协议模块声明内容与能力，不直接拥有整个应用导航。
 - 用户语言、快捷键和设置项必须通过公共 registry/context 管理。
-- 中英文翻译 key 必须保持结构一致，不能让某个插件只在一个语言文件中增加公共 key。
+- 中英文翻译 key 必须保持结构一致，不能让某个插件只在一个语言文件中增加公共 key；全局错误兜底不得退回硬编码单语文案。
 - renderer 只负责表现稳定的内容类型，不应吞并协议生命周期。
 - 主题视觉合同只在 theme skill 维护；模块文档只描述结构所有权。
 - About 页面不复制 README 的产品 Description，避免第二份品牌定位来源。
