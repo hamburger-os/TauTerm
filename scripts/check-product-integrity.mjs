@@ -211,6 +211,12 @@ const logEngine = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "
 assert.match(logEngine, /session_enabled/, "System and Session logging must have separate enable semantics");
 assert.match(logEngine, /SESSION_LOG_ENABLED/, "disabled Session Log producers must stop before the shared queue");
 assert.match(logEngine, /StopAllSessions/, "disabling Session Data Log must close active writers");
+assert.match(
+  logEngine,
+  /log config lock poisoned/,
+  "LogEngine configuration lock failures must be explicit",
+);
+
 assert.match(logEngine, /dropped_session_entries/, "Session log loss telemetry is missing");
 assert.match(logEngine, /dropped_system_entries/, "System log loss telemetry is missing");
 
@@ -221,8 +227,23 @@ assert.match(
   /self\.persist_snapshot\(&next\)\?;[\s\S]*self[\s\S]*\.hosts[\s\S]*\.write/,
   "SSH trust must become visible in memory only after durable persistence succeeds",
 );
+assert.match(
+  knownHosts,
+  /HostTrustDecision::Unavailable/,
+  "corrupted or unavailable SSH host trust must remain fail-closed",
+);
+assert.doesNotMatch(
+  knownHosts,
+  /文件损坏[\s\S]{0,180}Ok\(HashMap::new\(\)\)/,
+  "corrupted known-host state must not downgrade to a fresh TOFU store",
+);
 
 const commands = await readFile(path.join(ROOT, "src-tauri", "src", "commands.rs"), "utf8");
+assert.match(
+  commands,
+  /ConfigStore rollback failed/,
+  "logging settings must roll back persisted state when runtime apply fails",
+);
 assert.doesNotMatch(
   commands,
   /pub fn save_sessions/,
