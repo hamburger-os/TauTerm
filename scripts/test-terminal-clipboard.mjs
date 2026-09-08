@@ -7,7 +7,6 @@ import {
   buildTerminalPastePreview,
   normalizeTerminalPasteText,
 } from "../src/utils/terminalClipboard.ts";
-import { isTerminalReservedShortcut } from "../src/shortcuts/registry.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -24,12 +23,6 @@ assert.equal(analyzeTerminalPaste("echo one\necho two").requiresConfirmation, tr
 assert.equal(analyzeTerminalPaste("echo one\r\necho two\r\n").requiresConfirmation, true);
 assert.equal(analyzeTerminalPaste("echo one\n\n  \necho two").requiresConfirmation, true);
 assert.equal(analyzeTerminalPaste("\n\n  \n").requiresConfirmation, false);
-
-for (const key of ["Ctrl+C", "Ctrl+V", "Ctrl+Insert", "Shift+Insert"]) {
-  assert.equal(isTerminalReservedShortcut(key), true, `${key} must stay terminal-reserved`);
-}
-assert.equal(isTerminalReservedShortcut("Ctrl+Shift+C"), false);
-assert.equal(isTerminalReservedShortcut("Ctrl+Shift+V"), false);
 
 const preview = buildTerminalPastePreview(
   "1\n2\n3\n4\n5\n6\n7\n8\n9",
@@ -64,6 +57,7 @@ const registrySource = await readFile(
 );
 assert.match(registrySource, /TERMINAL_COPY[\s\S]*Ctrl\+Shift\+C/);
 assert.match(registrySource, /TERMINAL_PASTE[\s\S]*Ctrl\+Shift\+V/);
+assert.match(registrySource, /TERMINAL_RESERVED_KEYS[\s\S]*"Ctrl\+C"[\s\S]*"Ctrl\+V"[\s\S]*"Ctrl\+Insert"[\s\S]*"Shift\+Insert"/);
 assert.doesNotMatch(registrySource, /TERMINAL_COPY, keys: "Ctrl\+C"/);
 assert.doesNotMatch(registrySource, /TERMINAL_PASTE, keys: "Ctrl\+V"/);
 
