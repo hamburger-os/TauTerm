@@ -226,6 +226,10 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   }, [commitPaste, restoreTerminalFocus]);
 
   const requestClipboardPaste = useCallback(async () => {
+    if (!isConnectedRef.current) {
+      restoreTerminalFocus();
+      return;
+    }
     const text = await readFromClipboard();
     if (!text) {
       restoreTerminalFocus();
@@ -262,8 +266,6 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   // 右键上下文菜单状态
   // 直接用 useState 管理，而非 useContextMenu hook——后者面向 Tab 标签右键菜单，强依赖 session 参数，此处不适用
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ x: 0, y: 0, visible: false, session: null });
-  // 剪贴板是否为空（异步检测）
-  const [clipboardHasText, setClipboardHasText] = useState(false);
   // 回调 refs：避免 context menu handler 持有过期闭包
   const onShowSearchRef = useRef(onShowSearch);
   onShowSearchRef.current = onShowSearch;
@@ -469,21 +471,17 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
 
   // 右键上下文菜单
   // 始终显示自定义菜单（与 isConnected 无关），避免浏览器默认菜单弹出
-  const handleContextMenu = useCallback(async (e: React.MouseEvent) => {
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     const { clientX, clientY } = e;
 
-    // 先立刻显示菜单（确保 useMemo 读取最新的 hasSelection() 状态）
+    // 只打开菜单，不预读系统剪贴板。剪贴板访问必须由明确的 Paste 动作触发。
     setContextMenu({
       x: clientX,
       y: clientY,
       visible: true,
       session: null,
     });
-
-    // 异步检测剪贴板内容，用于控制「粘贴」菜单项的 disabled 状态
-    const text = await readFromClipboard();
-    setClipboardHasText(text.length > 0);
   }, []);
 
   // 关闭右键菜单
@@ -507,7 +505,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
         id: "paste",
         label: t("terminal.paste", "Paste"),
         icon: "paste",
-        disabled: !isConnected || !clipboardHasText,
+        disabled: !isConnected,
       },
       { id: "sep1", label: "", type: "separator" },
       {
@@ -540,7 +538,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     }
 
     return items;
-  }, [t, isConnected, clipboardHasText, contextMenu]);
+  }, [t, isConnected, contextMenu]);
 
   // 菜单项点击处理
   const handleContextMenuSelect = useCallback((itemId: string) => {
