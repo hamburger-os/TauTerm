@@ -465,7 +465,7 @@ fn detect_windows_shell_presets() -> Vec<ShellPreset> {
         presets.push(ShellPreset::wsl(
             "wsl-default".into(),
             wsl.clone(),
-            "WSL (default distribution)".into(),
+            "WSL · Default".into(),
             String::new(),
         ));
         for distro in detect_wsl_distributions(&wsl) {
