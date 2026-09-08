@@ -266,7 +266,12 @@ pub fn run() {
                     }
                 }
             }
-            let _ = std::fs::create_dir_all(&log_dir);
+            if let Err(error) = std::fs::create_dir_all(&log_dir) {
+                eprintln!(
+                    "TauTerm: failed to create resolved log directory {:?}: {}",
+                    log_dir, error
+                );
+            }
             log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
             log::info!("日志目录: {:?}", log_dir);
 
@@ -275,10 +280,20 @@ pub fn run() {
                 if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                     #[cfg(target_os = "windows")]
                     {
-                        let resource_dir = app
-                            .path()
-                            .resource_dir()
-                            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                        let resource_dir = match app.path().resource_dir() {
+                            Ok(path) => path,
+                            Err(error) => {
+                                let fallback = std::env::temp_dir()
+                                    .join("TauTerm")
+                                    .join("missing-resources");
+                                log::warn!(
+                                    "应用资源目录不可用，虚拟串口驱动资源保持不可用状态: {} ({:?})",
+                                    error,
+                                    fallback
+                                );
+                                fallback
+                            }
+                        };
                         let vpm_dir = if resource_dir.join("setupc.exe").exists() {
                             resource_dir
                         } else {
@@ -296,11 +311,27 @@ pub fn run() {
                                 resource_dir
                             }
                         };
-                        let state_dir = app
-                            .path()
-                            .app_data_dir()
-                            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                        let _ = std::fs::create_dir_all(&state_dir);
+                        let state_dir = match app.path().app_data_dir() {
+                            Ok(path) => path,
+                            Err(error) => {
+                                let fallback = std::env::temp_dir()
+                                    .join("TauTerm")
+                                    .join("virtual-port-state");
+                                log::warn!(
+                                    "应用数据目录不可用，虚拟串口状态使用临时隔离目录: {} ({:?})",
+                                    error,
+                                    fallback
+                                );
+                                fallback
+                            }
+                        };
+                        if let Err(error) = std::fs::create_dir_all(&state_dir) {
+                            log::warn!(
+                                "无法创建虚拟串口状态目录 {:?}: {}",
+                                state_dir,
+                                error
+                            );
+                        }
                         let service_backend = virtual_port::service_backend::ServiceBackend::new();
                         if service_backend.connect().is_ok() {
                             log::info!("虚拟串口特权服务已连接");
@@ -383,8 +414,8 @@ pub fn run() {
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
             #[cfg(target_os = "windows")]
             virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(
-                std::path::PathBuf::from("."),
-                std::path::PathBuf::from("."),
+                std::env::temp_dir().join("TauTerm").join("missing-resources"),
+                std::env::temp_dir().join("TauTerm").join("virtual-port-state"),
             ))),
             #[cfg(not(target_os = "windows"))]
             virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
