@@ -1331,13 +1331,13 @@ async fn connect_session_ssh(
     let channel0_id =
         create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false, false)
             .await
-        .inspect_err(|e| {
-            // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
-            log::error!("SSH 通道 0 创建失败，回滚父容器会话 {}: {}", parent_id, e);
-            if let Ok(mut store) = state.session_store.lock() {
-                let _ = store.close_session(&parent_id);
-            }
-        })?;
+            .inspect_err(|e| {
+                // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
+                log::error!("SSH 通道 0 创建失败，回滚父容器会话 {}: {}", parent_id, e);
+                if let Ok(mut store) = state.session_store.lock() {
+                    let _ = store.close_session(&parent_id);
+                }
+            })?;
 
     // 3. 读取父会话信息 + emit 父容器 session-connected（前端不创建额外的根 tab）
     let (actual_name, actual_params) = {
@@ -2790,7 +2790,10 @@ pub fn set_system_log_config(
 
     if let Err(apply_error) = crate::kernel::log_engine::set_system_log_config(enabled, &level) {
         let rollback = state.config_store.set_batch(&[
-            ("logging.system_enabled", serde_json::json!(previous_enabled)),
+            (
+                "logging.system_enabled",
+                serde_json::json!(previous_enabled),
+            ),
             ("logging.system_level", serde_json::json!(previous_level)),
         ]);
         return match rollback {
@@ -2826,7 +2829,7 @@ pub fn get_log_config(state: State<'_, AppState>) -> Result<LogConfigResponse, S
 #[tauri::command]
 pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let config = log_engine.get_config();
+    let config = log_engine.get_config()?;
     let path = config.log_dir.clone();
     let _ = std::fs::create_dir_all(&path);
 
@@ -2905,7 +2908,10 @@ pub fn update_log_config(
                 "logging.file_max_size",
                 serde_json::json!(current.file_max_size),
             ),
-            ("logging.buffer_size", serde_json::json!(current.buffer_size)),
+            (
+                "logging.buffer_size",
+                serde_json::json!(current.buffer_size),
+            ),
             (
                 "logging.flush_interval_ms",
                 serde_json::json!(current.flush_interval_ms),
