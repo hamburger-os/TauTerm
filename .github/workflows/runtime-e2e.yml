@@ -50,10 +50,8 @@ jobs:
       - name: Install application dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Build renderer and debug application
-        run: |
-          npm run build
-          cargo build --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build debug application through Tauri CLI
+        run: npm run tauri build -- --debug --no-bundle
 
       - name: Install pinned tauri-driver
         run: cargo install tauri-driver --locked --version 2.0.6
@@ -66,14 +64,16 @@ jobs:
           command -v WebKitWebDriver
           command -v tauri-driver
 
-      - name: Add Windows Edge WebDriver to PATH
+      - name: Install matching Windows Edge WebDriver
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (-not $env:EDGEWEBDRIVER) { throw "EDGEWEBDRIVER is not defined by the runner image" }
-          $driver = Join-Path $env:EDGEWEBDRIVER "msedgedriver.exe"
-          if (-not (Test-Path $driver)) { throw "Microsoft Edge WebDriver not found at $driver" }
-          $env:EDGEWEBDRIVER | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          cargo install --git https://github.com/chippers/msedgedriver-tool --rev 8c4b34f51b45f5cf08013366d703de464ab871d1 --locked
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          $PWD.Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          if (-not (Test-Path (Join-Path $PWD "msedgedriver.exe"))) {
+            throw "matching Microsoft Edge WebDriver was not downloaded"
+          }
 
       - name: Install pinned E2E tooling
         working-directory: tests/e2e
