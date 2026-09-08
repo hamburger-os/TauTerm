@@ -2233,7 +2233,10 @@ pub fn list_network_peers(
 ///
 /// 与 `close_channel` 不同：关闭对端不级联断开父会话（监听器保持监听）。
 #[tauri::command]
-pub async fn close_network_peer(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub async fn close_network_peer(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
     // 两段式：锁内信号 + 移除，锁外 join（同 close_channel）
     let cleanup = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
