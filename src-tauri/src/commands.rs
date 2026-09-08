@@ -2851,7 +2851,8 @@ pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     let config = log_engine.get_config()?;
     let path = config.log_dir.clone();
-    let _ = std::fs::create_dir_all(&path);
+    std::fs::create_dir_all(&path)
+        .map_err(|error| format!("创建日志目录失败 {:?}: {}", path, error))?;
 
     #[cfg(target_os = "windows")]
     {
