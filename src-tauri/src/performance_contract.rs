@@ -127,7 +127,10 @@ fn performance_contract_runtime_io_and_atomic_persistence() {
     let json = serde_json::to_vec_pretty(&result).unwrap();
     let output = output_path("tauterm-performance-contract.json");
     atomic_write(&output, &json).unwrap();
-    println!("TAUTERM_PERFORMANCE_RESULT={}", String::from_utf8_lossy(&json));
+    println!(
+        "TAUTERM_PERFORMANCE_RESULT={}",
+        String::from_utf8_lossy(&json)
+    );
 }
 
 #[derive(Serialize)]
