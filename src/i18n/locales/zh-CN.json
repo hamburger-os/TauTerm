@@ -30,7 +30,6 @@
     "homeDirectory": "用户主目录",
     "wslWorkingDirectory": "Linux 初始工作目录",
     "wslHomeDirectory": "Linux 用户主目录（~）",
-    "wslDefault": "WSL（默认发行版）",
     "chooseDirectory": "选择目录",
     "arguments": "启动参数",
     "additionalArguments": "附加参数",
