@@ -178,6 +178,9 @@ jobs:
       - name: Product integrity contracts
         run: npm run check:product-integrity
 
+      - name: Tauri blocking-command contract
+        run: npm run check:tauri-blocking
+
       - name: Brand-neutral UI and theme copy
         run: npm run check:brand-neutral-ui
 
