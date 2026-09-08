@@ -873,8 +873,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // 从磁盘中删除会话配置（仅当会话已断开或从未连接时）
     try {
       await invoke("delete_session_config", { sessionId });
-    } catch (_e) {
-      // 删除失败不影响前端移除
+    } catch (e) {
+      dispatch({
+        type: "SET_ERROR",
+        error: i18n.t("session.deletePersistFailed", {
+          defaultValue: "Failed to delete the saved session: {{error}}. The session remains in the list so you can retry.",
+          error: String(e),
+        }),
+      });
+      return;
     }
     dispatch({ type: "REMOVE_TAB", id: sessionId });
     // 释放插件会话 store 的全部资源（keepAlive 会话的 Tauri 监听器与
@@ -941,11 +948,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const renameTab = useCallback(async (sessionId: string, name: string) => {
+    const previousName = tabsRef.current.find(tab => tab.id === sessionId)?.name;
     dispatch({ type: "RENAME_TAB", id: sessionId, name });
     try {
       await invoke("rename_session", { sessionId, newName: name });
-    } catch (_e) {
-      // 恢复的标签页在后端不存在，静默忽略
+    } catch (e) {
+      if (previousName !== undefined) {
+        dispatch({ type: "RENAME_TAB", id: sessionId, name: previousName });
+      }
+      dispatch({
+        type: "SET_ERROR",
+        error: i18n.t("session.renamePersistFailed", {
+          defaultValue: "Failed to rename the saved session: {{error}}. The previous name was restored.",
+          error: String(e),
+        }),
+      });
     }
   }, []);
 
@@ -1118,7 +1135,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (e) {
-      // No saved sessions or file doesn't exist — normal for first launch
+      dispatch({
+        type: "SET_ERROR",
+        error: i18n.t("session.loadPersistFailed", {
+          defaultValue: "Failed to load saved sessions: {{error}}. The on-disk library was left untouched.",
+          error: String(e),
+        }),
+      });
     }
   }, []);
 
@@ -1687,6 +1710,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const statuses: Array<{ session_id: string; file_name: string; bytes_written: number }> =
           await invoke("get_log_status");
         setLogStatuses(new Map(statuses.map(s => [s.session_id, { fileName: s.file_name, bytesWritten: s.bytes_written }])));
+        setLoggingSessions(new Set(statuses.map(s => s.session_id)));
       } catch (_e) {
         // 静默忽略
       }

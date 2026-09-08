@@ -8,7 +8,7 @@
 
 后端以 Rust 核心作为 Session 生命周期的权威所有者。协议通过 Adapter/插件接入，连接后向核心提供同步或异步通道、侧通道能力，或容器型会话能力。前端插件注册表负责声明内容类型、发送栏等 UI 能力，React 只消费统一的 Session 状态和协议暴露的视图。
 
-一个配置可以对应单个 Session，也可以由协议提供“一个父配置、多子终端/连接”的工厂能力。公共核心负责子会话编号、活动根 Session 资源预算、状态与清理，协议只负责创建自身资源。Saved Session Library 是独立的版本化磁盘配置集合，不受活动运行时数量预算约束。
+一个配置可以对应单个 Session，也可以由协议提供“一个父配置、多子终端/连接”的工厂能力。公共核心负责子会话编号、活动根 Session 资源预算、状态与清理，协议只负责创建自身资源。Saved Session Library 是独立的版本化磁盘配置集合，不受活动运行时数量预算约束。Runtime Session 只消费这份配置，不再在 connect/disconnect/channel 生命周期中把当前运行态反向 bulk-save 到 Library；Library 只允许通过显式的单 Session 保存、删除、重命名与参数事务入口修改。Session Library、ConfigStore 与 SSH known-host 等 TauTerm 自有 JSON 状态通过共享原子写入边界提交：新快照完整写入后才替换旧文件；read-modify-write 遇到读取 I/O 错误必须失败而不是把现有状态当成空集合继续覆盖。
 
 端点发现属于配置辅助能力，不属于 Session 生命周期。前端按当前协议进入配置页时才请求发现，并复用短时缓存；后端对可能阻塞的平台/硬件枚举放到 blocking worker，避免设备驱动或平台命令拖住应用 UI。
 
@@ -42,6 +42,7 @@ stateDiagram-v2
 - `src-tauri/src/kernel/plugin_adapter.rs`
 - `src-tauri/src/kernel/plugin_host.rs`
 - `src-tauri/src/kernel/config_store.rs`
+- `src-tauri/src/kernel/persistence.rs`
 - `src-tauri/src/channel/`
 - `src-tauri/src/commands.rs`
 - `src/core/plugin-registry.ts`

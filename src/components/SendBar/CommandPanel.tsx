@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useSession } from "../../context/SessionContext";
@@ -11,6 +10,13 @@ import Icon from "../common/Icon";
 import CommandEditorModal from "./CommandEditorModal";
 import useCommandRunner from "./useCommandRunner";
 import defaultCommands from "./default-commands.json";
+import {
+  ASSET_KEYS,
+  clearAsset,
+  loadAsset,
+  persistAsset,
+  subscribeAsset,
+} from "./assetStore";
 import type { CommandItem, CommandConfig } from "./types";
 import styles from "./CommandPanel.module.css";
 
@@ -20,19 +26,17 @@ interface CommandPanelProps {
   onRunningChange?: (running: boolean) => void;
 }
 
-const CONFIG_STORE_KEY = "assets.command_sets";
-const ACTIVE_CONFIG_STORE_KEY = "assets.active_command_set";
+const CONFIG_STORE_KEY = ASSET_KEYS.commandSets;
+const ACTIVE_CONFIG_STORE_KEY = ASSET_KEYS.activeCommandSet;
 
 function saveConfigs(configs: CommandConfig[]) {
-  void invoke("set_config", { key: CONFIG_STORE_KEY, value: configs }).catch(() => {});
+  return persistAsset(CONFIG_STORE_KEY, configs);
 }
 
 function saveActiveConfig(name: string) {
-  if (name) {
-    void invoke("set_config", { key: ACTIVE_CONFIG_STORE_KEY, value: name }).catch(() => {});
-  } else {
-    void invoke("delete_config", { key: ACTIVE_CONFIG_STORE_KEY }).catch(() => {});
-  }
+  return name
+    ? persistAsset(ACTIVE_CONFIG_STORE_KEY, name)
+    : clearAsset(ACTIVE_CONFIG_STORE_KEY);
 }
 
 export default function CommandPanel({ sessionId, isActive, onRunningChange }: CommandPanelProps) {
@@ -46,14 +50,16 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     defaultCommands as CommandConfig,
   ]);
   const [activeConfigName, setActiveConfigName] = useState(defaultCommands.name);
+  const configsRef = useRef(configs);
+  configsRef.current = configs;
 
   // Command Set 是可复用工程资产，Rust ConfigStore 是持久化权威源。
   // 研发阶段不读取旧浏览器本地存储，也不保留双写兼容层。
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      invoke<CommandConfig[] | null>("get_config", { key: CONFIG_STORE_KEY }),
-      invoke<string | null>("get_config", { key: ACTIVE_CONFIG_STORE_KEY }),
+      loadAsset<CommandConfig[]>(CONFIG_STORE_KEY),
+      loadAsset<string>(ACTIVE_CONFIG_STORE_KEY),
     ]).then(([storedConfigs, storedActive]) => {
       if (cancelled) return;
       const nextConfigs = Array.isArray(storedConfigs) && storedConfigs.length > 0
@@ -73,6 +79,29 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       // 默认命令集已经在内存中可用；持久层异常不阻止发送工作流。
     });
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribeConfigs = subscribeAsset<CommandConfig[]>(CONFIG_STORE_KEY, value => {
+      const next = Array.isArray(value) && value.length > 0
+        ? value
+        : [defaultCommands as CommandConfig];
+      setConfigs(next);
+      setActiveConfigName(current =>
+        next.some(config => config.name === current) ? current : next[0]?.name ?? "",
+      );
+    });
+    const unsubscribeActive = subscribeAsset<string>(ACTIVE_CONFIG_STORE_KEY, value => {
+      if (!value) {
+        setActiveConfigName(current => current || configsRef.current[0]?.name || "");
+        return;
+      }
+      setActiveConfigName(value);
+    });
+    return () => {
+      unsubscribeConfigs();
+      unsubscribeActive();
+    };
   }, []);
 
   const activeConfig = useMemo(() => {
@@ -439,22 +468,24 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   }, [configs, showToast, t]);
 
   // ── 加载内置示例 ──
-  const handleLoadExamples = useCallback(() => {
-    setConfigs(prev => {
-      const existingNames = new Set(prev.map(c => c.name));
-      if (existingNames.has(defaultCommands.name)) {
-        showToast("info", t("sendBar.noNewExamples"));
-        return prev;
-      }
-      const newConfig = { ...defaultCommands, name: defaultCommands.name } as CommandConfig;
-      const updated = [...prev, newConfig];
-      saveConfigs(updated);
-      setActiveConfigName(defaultCommands.name);
-      saveActiveConfig(defaultCommands.name);
+  const handleLoadExamples = useCallback(async () => {
+    const existingNames = new Set(configs.map(c => c.name));
+    if (existingNames.has(defaultCommands.name)) {
+      showToast("info", t("sendBar.noNewExamples"));
+      return;
+    }
+    const newConfig = { ...defaultCommands, name: defaultCommands.name } as CommandConfig;
+    const updated = [...configs, newConfig];
+    setConfigs(updated);
+    setActiveConfigName(defaultCommands.name);
+    const [savedConfigs, savedActive] = await Promise.all([
+      saveConfigs(updated),
+      saveActiveConfig(defaultCommands.name),
+    ]);
+    if (savedConfigs && savedActive) {
       showToast("success", t("sendBar.examplesLoaded", { count: 1 }));
-      return updated;
-    });
-  }, [showToast, t]);
+    }
+  }, [configs, showToast, t]);
 
   const handleExport = useCallback(async () => {
     try {

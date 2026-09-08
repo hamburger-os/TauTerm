@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useReducer, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useReducer, useRef, type ReactNode } from "react";
 import type { SendBarMode, NewlineMode, SendMode, AutoReplyRule, AutoReplyConfig, MatchStrategy, ScriptRecord } from "./types";
 import { BUILTIN_CONFIGS } from "./builtinRules";
 import { BUILTIN_SCRIPTS } from "./builtinScripts";
-import { ASSET_KEYS, loadAsset, persistAsset } from "./assetStore";
+import { ASSET_KEYS, loadAsset, persistAsset, subscribeAsset } from "./assetStore";
 
 // ── State ────────────────────────────────────────────
 
@@ -216,6 +216,8 @@ const SendBarContext = createContext<SendBarContextValue | null>(null);
 
 export function SendBarProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sendBarReducer, buildInitialState());
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   useEffect(() => {
     let cancelled = false;
@@ -272,6 +274,76 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
     });
 
     return () => { cancelled = true; };
+  }, []);
+
+  // Engineering asset definitions are global within the current WebView even though each Session
+  // keeps its own SendBar runtime/UI state. Subscribe every per-session provider to the shared
+  // asset cache so an edit in one Session cannot leave another mounted SendBar with a stale copy
+  // that later overwrites the durable global asset.
+  useEffect(() => {
+    const unsubscribeConfigs = subscribeAsset<AutoReplyConfig[]>(
+      ASSET_KEYS.autoReplyConfigs,
+      value => {
+        const configs = Array.isArray(value) && value.length > 0 ? value : [...BUILTIN_CONFIGS];
+        const currentActive = stateRef.current.autoReply.activeConfigName;
+        const activeName = configs.some(config => config.name === currentActive)
+          ? currentActive
+          : configs[0]?.name ?? "";
+        const active = configs.find(config => config.name === activeName);
+        dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs });
+        dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeName });
+        dispatch({ type: "SET_AUTO_REPLY_RULES", rules: active?.rules ?? [] });
+        dispatch({ type: "SET_MATCH_STRATEGY", strategy: active?.matchStrategy ?? "all" });
+      },
+    );
+    const unsubscribeActiveConfig = subscribeAsset<string>(
+      ASSET_KEYS.activeAutoReplyConfig,
+      value => {
+        const configs = stateRef.current.autoReply.configs;
+        const activeName = value && configs.some(config => config.name === value)
+          ? value
+          : configs[0]?.name ?? "";
+        const active = configs.find(config => config.name === activeName);
+        dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeName });
+        dispatch({ type: "SET_AUTO_REPLY_RULES", rules: active?.rules ?? [] });
+        dispatch({ type: "SET_MATCH_STRATEGY", strategy: active?.matchStrategy ?? "all" });
+      },
+    );
+    const unsubscribeScripts = subscribeAsset<ScriptRecord[]>(
+      ASSET_KEYS.scripts,
+      value => {
+        const scripts = Array.isArray(value) && value.length > 0 ? value : [...BUILTIN_SCRIPTS];
+        const currentActive = stateRef.current.script.activeScriptId;
+        const activeId = currentActive && scripts.some(script => script.id === currentActive)
+          ? currentActive
+          : null;
+        dispatch({ type: "SET_SCRIPTS", scripts });
+        dispatch({ type: "SET_ACTIVE_SCRIPT", id: activeId });
+        dispatch({
+          type: "SET_SCRIPT_CODE",
+          code: scripts.find(script => script.id === activeId)?.code ?? "",
+        });
+      },
+    );
+    const unsubscribeActiveScript = subscribeAsset<string>(
+      ASSET_KEYS.activeScriptId,
+      value => {
+        const scripts = stateRef.current.script.scripts;
+        const activeId = value && scripts.some(script => script.id === value) ? value : null;
+        dispatch({ type: "SET_ACTIVE_SCRIPT", id: activeId });
+        dispatch({
+          type: "SET_SCRIPT_CODE",
+          code: scripts.find(script => script.id === activeId)?.code ?? "",
+        });
+      },
+    );
+
+    return () => {
+      unsubscribeConfigs();
+      unsubscribeActiveConfig();
+      unsubscribeScripts();
+      unsubscribeActiveScript();
+    };
   }, []);
 
   return (

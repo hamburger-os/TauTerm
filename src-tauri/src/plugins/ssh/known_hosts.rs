@@ -3,10 +3,12 @@
 //! Unknown hosts require explicit user confirmation. A stored host whose fingerprint changes is
 //! rejected fail-closed; the new key is never silently learned.
 
+use crate::kernel::persistence::atomic_write;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, RwLock};
 
 const KNOWN_HOSTS_VERSION: u32 = 1;
 
@@ -30,11 +32,14 @@ pub enum HostTrustDecision {
     Trusted,
     Unknown,
     Changed { expected_fingerprint: String },
+    Unavailable { reason: String },
 }
 
 pub struct KnownHostStore {
     path: RwLock<Option<PathBuf>>,
     hosts: RwLock<HashMap<String, KnownHostRecord>>,
+    mutation_lock: Mutex<()>,
+    available: AtomicBool,
 }
 
 impl KnownHostStore {
@@ -42,10 +47,17 @@ impl KnownHostStore {
         Self {
             path: RwLock::new(None),
             hosts: RwLock::new(HashMap::new()),
+            mutation_lock: Mutex::new(()),
+            available: AtomicBool::new(false),
         }
     }
 
     pub fn configure(&self, path: PathBuf) -> Result<(), String> {
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "SSH known-host mutation 锁错误".to_string())?;
+        self.available.store(false, Ordering::Release);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("无法创建 SSH 信任目录: {e}"))?;
         }
@@ -58,6 +70,7 @@ impl KnownHostStore {
             .path
             .write()
             .map_err(|_| "SSH known-host 路径锁错误".to_string())? = Some(path);
+        self.available.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -73,25 +86,26 @@ impl KnownHostStore {
         match serde_json::from_str::<KnownHostsFile>(&raw) {
             Ok(file) if file.version == KNOWN_HOSTS_VERSION => Ok(file.hosts),
             Ok(file) => {
-                Self::backup_invalid(path);
-                log::warn!(
-                    "SSH known-host 版本 {} 不受支持（expected {}）；将重新询问主机信任",
-                    file.version,
-                    KNOWN_HOSTS_VERSION
-                );
-                Ok(HashMap::new())
+                Self::backup_invalid(path)?;
+                Err(format!(
+                    "SSH known-host 版本 {} 不受支持（expected {}）；原文件已备份，信任存储保持 fail-closed",
+                    file.version, KNOWN_HOSTS_VERSION
+                ))
             }
             Err(error) => {
-                Self::backup_invalid(path);
-                log::warn!("SSH known-host 文件损坏: {error}；将重新询问主机信任");
-                Ok(HashMap::new())
+                Self::backup_invalid(path)?;
+                Err(format!(
+                    "SSH known-host 文件损坏: {error}；原文件已备份，信任存储保持 fail-closed"
+                ))
             }
         }
     }
 
-    fn backup_invalid(path: &Path) {
+    fn backup_invalid(path: &Path) -> Result<(), String> {
         let backup = path.with_extension("json.invalid.bak");
-        let _ = std::fs::copy(path, backup);
+        std::fs::copy(path, backup)
+            .map(|_| ())
+            .map_err(|e| format!("备份无效 SSH known-host 文件失败: {e}"))
     }
 
     fn key(host: &str, port: u16) -> String {
@@ -106,9 +120,33 @@ impl KnownHostStore {
     }
 
     pub fn evaluate(&self, host: &str, port: u16, fingerprint: &str) -> HostTrustDecision {
+        if !self.available.load(Ordering::Acquire) {
+            return HostTrustDecision::Unavailable {
+                reason: "SSH known-host 存储不可用或配置未完成".to_string(),
+            };
+        }
+        let configured = match self.path.read() {
+            Ok(path) => path.is_some(),
+            Err(error) => {
+                return HostTrustDecision::Unavailable {
+                    reason: format!("SSH known-host 路径锁错误: {error}"),
+                };
+            }
+        };
+        if !configured {
+            return HostTrustDecision::Unavailable {
+                reason: "SSH known-host 存储尚未初始化".to_string(),
+            };
+        }
+
         let key = Self::key(host, port);
-        let Ok(hosts) = self.hosts.read() else {
-            return HostTrustDecision::Unknown;
+        let hosts = match self.hosts.read() {
+            Ok(hosts) => hosts,
+            Err(error) => {
+                return HostTrustDecision::Unavailable {
+                    reason: format!("SSH known-host 锁错误: {error}"),
+                };
+            }
         };
         match hosts.get(&key) {
             None => HostTrustDecision::Unknown,
@@ -120,62 +158,89 @@ impl KnownHostStore {
     }
 
     pub fn touch(&self, host: &str, port: u16) {
-        let key = Self::key(host, port);
-        if let Ok(mut hosts) = self.hosts.write() {
-            if let Some(record) = hosts.get_mut(&key) {
-                record.last_seen_ms = Self::now_ms();
-            }
+        if !self.available.load(Ordering::Acquire) {
+            log::warn!("SSH known-host 存储不可用，拒绝更新 last_seen");
+            return;
         }
-        if let Err(error) = self.persist() {
-            log::warn!("更新 SSH known-host last_seen 失败: {error}");
+        let Ok(_mutation) = self.mutation_lock.lock() else {
+            log::warn!("SSH known-host mutation 锁错误");
+            return;
+        };
+        let key = Self::key(host, port);
+        let Ok(mut next) = self.hosts.read().map(|hosts| hosts.clone()) else {
+            log::warn!("SSH known-host 锁错误");
+            return;
+        };
+        let Some(record) = next.get_mut(&key) else {
+            return;
+        };
+        record.last_seen_ms = Self::now_ms();
+
+        match self.persist_snapshot(&next) {
+            Ok(()) => {
+                if let Ok(mut hosts) = self.hosts.write() {
+                    *hosts = next;
+                }
+            }
+            Err(error) => log::warn!("更新 SSH known-host last_seen 失败: {error}"),
         }
     }
 
     pub fn trust(&self, host: &str, port: u16, fingerprint: &str) -> Result<(), String> {
+        if !self.available.load(Ordering::Acquire) {
+            return Err("SSH known-host 存储不可用，不能建立新的主机信任".to_string());
+        }
+        let _mutation = self
+            .mutation_lock
+            .lock()
+            .map_err(|_| "SSH known-host mutation 锁错误".to_string())?;
         let key = Self::key(host, port);
         let now = Self::now_ms();
-        {
-            let mut hosts = self
-                .hosts
-                .write()
-                .map_err(|_| "SSH known-host 锁错误".to_string())?;
-            let first_seen = hosts
-                .get(&key)
-                .map(|record| record.first_seen_ms)
-                .unwrap_or(now);
-            hosts.insert(
-                key,
-                KnownHostRecord {
-                    host: host.to_string(),
-                    port,
-                    fingerprint: fingerprint.to_string(),
-                    first_seen_ms: first_seen,
-                    last_seen_ms: now,
-                },
-            );
-        }
-        self.persist()
+        let mut next = self
+            .hosts
+            .read()
+            .map_err(|_| "SSH known-host 锁错误".to_string())?
+            .clone();
+        let first_seen = next
+            .get(&key)
+            .map(|record| record.first_seen_ms)
+            .unwrap_or(now);
+        next.insert(
+            key,
+            KnownHostRecord {
+                host: host.to_string(),
+                port,
+                fingerprint: fingerprint.to_string(),
+                first_seen_ms: first_seen,
+                last_seen_ms: now,
+            },
+        );
+
+        self.persist_snapshot(&next)?;
+        *self
+            .hosts
+            .write()
+            .map_err(|_| "SSH known-host 锁错误".to_string())? = next;
+        Ok(())
     }
 
-    fn persist(&self) -> Result<(), String> {
+    fn persist_snapshot(&self, hosts: &HashMap<String, KnownHostRecord>) -> Result<(), String> {
+        if !self.available.load(Ordering::Acquire) {
+            return Err("SSH known-host 存储不可用".to_string());
+        }
         let path = self
             .path
             .read()
             .map_err(|_| "SSH known-host 路径锁错误".to_string())?
             .clone()
             .ok_or_else(|| "SSH known-host 存储尚未初始化".to_string())?;
-        let hosts = self
-            .hosts
-            .read()
-            .map_err(|_| "SSH known-host 锁错误".to_string())?
-            .clone();
         let file = KnownHostsFile {
             version: KNOWN_HOSTS_VERSION,
-            hosts,
+            hosts: hosts.clone(),
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("序列化 SSH known-host 失败: {e}"))?;
-        std::fs::write(path, json).map_err(|e| format!("写入 SSH known-host 失败: {e}"))
+        atomic_write(&path, json.as_bytes()).map_err(|e| format!("写入 SSH known-host 失败: {e}"))
     }
 }
 
@@ -191,6 +256,69 @@ mod tests {
 
     fn temp_path() -> PathBuf {
         std::env::temp_dir().join(format!("tauterm-known-hosts-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn failed_trust_write_does_not_create_in_memory_trust() {
+        let dir = temp_path();
+        let path = dir.join("known_hosts.json");
+
+        let store = KnownHostStore::new();
+        store.configure(path).unwrap();
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::write(&dir, b"blocks-directory-recreation").unwrap();
+
+        assert!(store.trust("example.test", 22, "SHA256:first").is_err());
+        assert_eq!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Unknown
+        );
+
+        let _ = std::fs::remove_file(dir);
+    }
+
+    #[test]
+    fn failed_reconfigure_disables_previous_trust() {
+        let dir = temp_path();
+        std::fs::create_dir_all(&dir).unwrap();
+        let good_path = dir.join("known_hosts.json");
+        let bad_path = dir.join("broken.json");
+
+        let store = KnownHostStore::new();
+        store.configure(good_path).unwrap();
+        store.trust("example.test", 22, "SHA256:first").unwrap();
+        assert_eq!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Trusted
+        );
+
+        std::fs::write(&bad_path, b"{not-json").unwrap();
+        assert!(store.configure(bad_path).is_err());
+        assert!(matches!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Unavailable { .. }
+        ));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn invalid_known_hosts_never_downgrades_to_tofu() {
+        let dir = temp_path();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("known_hosts.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+
+        let store = KnownHostStore::new();
+        assert!(store.configure(path.clone()).is_err());
+        assert!(path.with_extension("json.invalid.bak").exists());
+        assert!(matches!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Unavailable { .. }
+        ));
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

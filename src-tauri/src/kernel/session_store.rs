@@ -23,6 +23,7 @@ use crate::channel::Channel;
 use crate::kernel::comm_handle::{CommHandle, DataCallback};
 use crate::kernel::data_batcher::DataBatcher;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
+use crate::kernel::persistence::atomic_write;
 use crate::kernel::plugin_adapter::{
     ChannelKind, ProtocolConnection, SessionChannelFactory, SideChannel,
 };
@@ -30,7 +31,7 @@ use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
 use crate::virtual_port::backend::VirtualEndpoint;
 use crate::virtual_port::bridge::VirtualPortBridge;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
@@ -1684,29 +1685,6 @@ impl SessionStore {
         }
     }
 
-    /// 获取持久化会话列表
-    pub fn get_saved_sessions(&self) -> Vec<SavedSession> {
-        let mut result: Vec<SavedSession> = Vec::new();
-        for h in self.sessions.values() {
-            // 父会话
-            result.push(SavedSession {
-                id: h.id.clone(),
-                name: h.name.clone(),
-                plugin_id: h.plugin_id.clone(),
-                endpoint: h.endpoint.clone(),
-                params: h.params.clone(),
-                timestamp: chrono::Utc::now().timestamp_millis() as u64,
-                transfer_enabled: h.transfer_enabled,
-                transfer_protocol: h.transfer_protocol.clone(),
-                send_bar_enabled: h.send_bar_enabled,
-                virtual_port_enabled: h.virtual_port_enabled(),
-                virtual_port_count: h.virtual_port_count(),
-            });
-            // 子连接不持久化：通道是运行时概念，断开即清理
-        }
-        result
-    }
-
     /// 重连指定会话
     /// TODO: 暴露为 Tauri 命令并在前端 ConnectDialog 编辑模式中使用，
     /// 以保留 UUID 和 I/O 统计连续性（当前前端使用 delete+create 方式）。
@@ -2062,15 +2040,15 @@ impl SessionStore {
     }
 
     /// 获取会话持久化文件路径
-    pub fn sessions_file_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
+    pub fn sessions_file_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
         use tauri::Manager;
-        let mut path = app_handle
+        let path = app_handle
             .path()
             .app_data_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        std::fs::create_dir_all(&path).ok();
-        path.push("sessions.json");
-        path
+            .map_err(|error| format!("无法解析应用数据目录: {}", error))?;
+        std::fs::create_dir_all(&path)
+            .map_err(|error| format!("无法创建应用数据目录 {:?}: {}", path, error))?;
+        Ok(path.join("sessions.json"))
     }
 
     fn write_library(path: &std::path::Path, sessions: Vec<SavedSession>) -> Result<(), String> {
@@ -2080,46 +2058,14 @@ impl SessionStore {
         };
         let json = serde_json::to_string_pretty(&snapshot)
             .map_err(|e| format!("序列化会话库失败: {}", e))?;
-        std::fs::write(path, json).map_err(|e| format!("写入会话库失败: {}", e))
+        atomic_write(path, json.as_bytes()).map_err(|e| format!("写入会话库失败: {}", e))
     }
 
-    fn backup_invalid_library(path: &std::path::Path) {
+    fn backup_invalid_library(path: &std::path::Path) -> Result<(), String> {
         let backup = path.with_extension("json.invalid.bak");
-        let _ = std::fs::copy(path, &backup);
-    }
-
-    /// 保存运行时根 Session 的最新配置到版本化 Session Library。
-    ///
-    /// Saved Session Library 与 active runtime 数量是两个概念；没有运行中的 Session
-    /// 不会清空磁盘 Library。
-    pub fn save_to_disk(&self, path: &std::path::Path) -> Result<(), String> {
-        let _guard = SESSIONS_FILE_MUTEX
-            .lock()
-            .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let current: Vec<SavedSession> = self.get_saved_sessions();
-        if current.is_empty() {
-            return Ok(());
-        }
-        let existing = Self::load_from_disk_unlocked(path).unwrap_or_default();
-
-        let current_ids: HashSet<String> = current.iter().map(|s| s.id.clone()).collect();
-        let mut merged: Vec<SavedSession> = existing
-            .into_iter()
-            .filter(|s| !current_ids.contains(&s.id))
-            .collect();
-        merged.extend(current);
-
-        let mut dedup: HashMap<String, SavedSession> = HashMap::new();
-        for session in merged {
-            if current_ids.contains(&session.id) {
-                dedup.insert(session.id.clone(), session);
-            } else {
-                dedup.entry(session.id.clone()).or_insert(session);
-            }
-        }
-        let mut sessions: Vec<SavedSession> = dedup.into_values().collect();
-        sessions.sort_by_key(|session| session.timestamp);
-        Self::write_library(path, sessions)
+        std::fs::copy(path, &backup)
+            .map(|_| ())
+            .map_err(|e| format!("备份无效会话库失败: {}", e))
     }
 
     /// 从磁盘加载当前 Session Library schema。
@@ -2145,7 +2091,7 @@ impl SessionStore {
         match serde_json::from_str::<SessionLibraryFile>(&content) {
             Ok(library) if library.version == SESSION_LIBRARY_VERSION => Ok(library.sessions),
             Ok(library) => {
-                Self::backup_invalid_library(path);
+                Self::backup_invalid_library(path)?;
                 log::warn!(
                     "会话库版本 {} 不受支持（expected {}），已备份并从空 Library 启动",
                     library.version,
@@ -2154,7 +2100,7 @@ impl SessionStore {
                 Ok(Vec::new())
             }
             Err(error) => {
-                Self::backup_invalid_library(path);
+                Self::backup_invalid_library(path)?;
                 log::warn!("会话库格式无效 ({})，已备份；开发阶段不迁移旧格式", error);
                 Ok(Vec::new())
             }
@@ -2177,15 +2123,117 @@ impl SessionStore {
         app_handle: &tauri::AppHandle,
         session: SavedSession,
     ) -> Result<(), String> {
+        Self::save_config_to_disk_transactional(app_handle, session, || Ok(()))
+    }
+
+    /// 保存 Session Library 后执行一个外部提交步骤；外部步骤失败时恢复原 Library。
+    ///
+    /// 用于 SSH 这类“非敏感配置 + 安全凭据”跨存储提交，且整个文件回滚窗口始终
+    /// 持有 Session Library mutex，避免并发保存被旧快照覆盖。
+    pub fn save_config_to_disk_transactional<F>(
+        app_handle: &tauri::AppHandle,
+        session: SavedSession,
+        post_commit: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let path = Self::sessions_file_path(app_handle);
-        let mut existing = Self::load_from_disk_unlocked(&path).unwrap_or_default();
-        existing.retain(|entry| entry.id != session.id);
-        existing.push(session);
-        existing.sort_by_key(|entry| entry.timestamp);
-        Self::write_library(&path, existing)
+        let path = Self::sessions_file_path(app_handle)?;
+        let existing = Self::load_from_disk_unlocked(&path)?;
+        let mut next = existing.clone();
+        next.retain(|entry| entry.id != session.id);
+        next.push(session);
+        next.sort_by_key(|entry| entry.timestamp);
+        Self::write_library(&path, next)?;
+
+        if let Err(commit_error) = post_commit() {
+            return match Self::write_library(&path, existing) {
+                Ok(()) => Err(commit_error),
+                Err(rollback_error) => Err(format!(
+                    "{}；Session Library 回滚失败: {}",
+                    commit_error, rollback_error
+                )),
+            };
+        }
+        Ok(())
+    }
+
+    /// 重命名一个 Saved Session，并在外部运行态更新失败时恢复原 Library。
+    pub fn rename_config_on_disk_transactional<F>(
+        app_handle: &tauri::AppHandle,
+        session_id: &str,
+        new_name: &str,
+        post_commit: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let _guard = SESSIONS_FILE_MUTEX
+            .lock()
+            .map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let path = Self::sessions_file_path(app_handle)?;
+        let existing = Self::load_from_disk_unlocked(&path)?;
+        let mut next = existing.clone();
+        let target = next
+            .iter_mut()
+            .find(|session| session.id == session_id)
+            .ok_or_else(|| format!("Saved Session 不存在: {}", session_id))?;
+        target.name = new_name.to_string();
+        Self::write_library(&path, next)?;
+
+        if let Err(commit_error) = post_commit() {
+            return match Self::write_library(&path, existing) {
+                Ok(()) => Err(commit_error),
+                Err(rollback_error) => Err(format!(
+                    "{}；Session Library 回滚失败: {}",
+                    commit_error, rollback_error
+                )),
+            };
+        }
+        Ok(())
+    }
+
+    /// 更新 Saved Session 的单个非敏感参数，并在运行态发布失败时恢复旧 Library。
+    pub fn set_config_param_on_disk_transactional<F>(
+        app_handle: &tauri::AppHandle,
+        session_id: &str,
+        key: &str,
+        value: serde_json::Value,
+        post_commit: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce() -> Result<(), String>,
+    {
+        let _guard = SESSIONS_FILE_MUTEX
+            .lock()
+            .map_err(|e| format!("获取文件锁失败: {}", e))?;
+        let path = Self::sessions_file_path(app_handle)?;
+        let existing = Self::load_from_disk_unlocked(&path)?;
+        let mut next = existing.clone();
+        let target = next
+            .iter_mut()
+            .find(|session| session.id == session_id)
+            .ok_or_else(|| format!("Saved Session 不存在: {}", session_id))?;
+        let params = target
+            .params
+            .as_object_mut()
+            .ok_or_else(|| format!("Saved Session {} 参数不是 JSON object", session_id))?;
+        params.insert(key.to_string(), value);
+        Self::write_library(&path, next)?;
+
+        if let Err(commit_error) = post_commit() {
+            return match Self::write_library(&path, existing) {
+                Ok(()) => Err(commit_error),
+                Err(rollback_error) => Err(format!(
+                    "{}；Session Library 回滚失败: {}",
+                    commit_error, rollback_error
+                )),
+            };
+        }
+        Ok(())
     }
 
     /// 从磁盘 Session Library 删除指定配置。
@@ -2193,16 +2241,44 @@ impl SessionStore {
         app_handle: &tauri::AppHandle,
         session_id: &str,
     ) -> Result<(), String> {
+        Self::delete_config_from_disk_transactional(app_handle, session_id, |_| Ok(()))
+    }
+
+    /// 删除 Session Library 条目后执行外部清理；外部步骤失败时恢复原 Library。
+    pub fn delete_config_from_disk_transactional<F>(
+        app_handle: &tauri::AppHandle,
+        session_id: &str,
+        post_commit: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(Option<&SavedSession>) -> Result<(), String>,
+    {
         let _guard = SESSIONS_FILE_MUTEX
             .lock()
             .map_err(|e| format!("获取文件锁失败: {}", e))?;
-        let path = Self::sessions_file_path(app_handle);
-        let existing = Self::load_from_disk_unlocked(&path).unwrap_or_default();
+        let path = Self::sessions_file_path(app_handle)?;
+        let existing = Self::load_from_disk_unlocked(&path)?;
+        let target = existing
+            .iter()
+            .find(|session| session.id == session_id)
+            .cloned();
         let filtered: Vec<_> = existing
-            .into_iter()
+            .iter()
             .filter(|session| session.id != session_id)
+            .cloned()
             .collect();
-        Self::write_library(&path, filtered)
+        Self::write_library(&path, filtered)?;
+
+        if let Err(commit_error) = post_commit(target.as_ref()) {
+            return match Self::write_library(&path, existing) {
+                Ok(()) => Err(commit_error),
+                Err(rollback_error) => Err(format!(
+                    "{}；Session Library 回滚失败: {}",
+                    commit_error, rollback_error
+                )),
+            };
+        }
+        Ok(())
     }
 }
 

@@ -33,8 +33,27 @@ static LOG_SENDER: Mutex<Option<mpsc::SyncSender<LogEntry>>> = Mutex::new(None);
 
 /// 系统日志是否启用（可由前端设置页控制）
 static SYSTEM_LOG_ENABLED: AtomicBool = AtomicBool::new(true);
+static SESSION_LOG_ENABLED: AtomicBool = AtomicBool::new(true);
 static DROPPED_SESSION_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static DROPPED_SYSTEM_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
+
+fn record_log_loss(counter: &AtomicU64, stream: &str, reason: &str) {
+    let total = counter.fetch_add(1, Ordering::Relaxed) + 1;
+    if total == 1 || total.is_power_of_two() {
+        eprintln!(
+            "TauTerm: {} log loss detected (count {}, latest: {})",
+            stream, total, reason
+        );
+    }
+}
+
+fn record_session_log_loss(reason: &str) {
+    record_log_loss(&DROPPED_SESSION_LOG_ENTRIES, "session", reason);
+}
+
+fn record_system_log_loss(reason: &str) {
+    record_log_loss(&DROPPED_SYSTEM_LOG_ENTRIES, "system", reason);
+}
 
 /// 系统日志最低级别过滤。
 ///
@@ -57,11 +76,10 @@ impl Log for LogBridge {
         if !SYSTEM_LOG_ENABLED.load(Ordering::Relaxed) {
             return false;
         }
-        // 检查级别过滤
-        let min_level = SYSTEM_LOG_MIN_LEVEL
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_default();
+        // 检查级别过滤。锁损坏时 fail-closed，避免伪造默认级别继续写日志。
+        let Ok(min_level) = SYSTEM_LOG_MIN_LEVEL.lock().map(|s| s.clone()) else {
+            return false;
+        };
         let min = match min_level.as_str() {
             "error" => log::Level::Error,
             "warn" => log::Level::Warn,
@@ -89,7 +107,7 @@ impl Log for LogBridge {
                     })
                     .is_err()
                 {
-                    DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+                    record_system_log_loss("queue or file write failure");
                 }
             }
         }
@@ -101,31 +119,42 @@ impl Log for LogBridge {
 }
 
 /// 更新系统日志配置（由前端设置页调用）
-pub fn set_system_log_config(enabled: bool, level: &str) {
+pub fn set_system_log_config(enabled: bool, level: &str) -> Result<(), String> {
+    let mut guard = SYSTEM_LOG_MIN_LEVEL
+        .lock()
+        .map_err(|error| format!("system log level lock poisoned: {error}"))?;
+    *guard = level.to_string();
     SYSTEM_LOG_ENABLED.store(enabled, Ordering::Relaxed);
-    if let Ok(mut guard) = SYSTEM_LOG_MIN_LEVEL.lock() {
-        *guard = level.to_string();
-    }
+    Ok(())
 }
 
-pub fn system_log_config() -> (bool, String) {
+pub fn system_log_config_checked() -> Result<(bool, String), String> {
     let level = SYSTEM_LOG_MIN_LEVEL
         .lock()
-        .map(|value| {
-            if value.is_empty() {
-                "info".to_string()
-            } else {
-                value.clone()
-            }
-        })
-        .unwrap_or_else(|_| "info".to_string());
-    (SYSTEM_LOG_ENABLED.load(Ordering::Relaxed), level)
+        .map_err(|error| format!("system log level lock poisoned: {error}"))?;
+    let level = if level.is_empty() {
+        "info".to_string()
+    } else {
+        level.clone()
+    };
+    Ok((SYSTEM_LOG_ENABLED.load(Ordering::Relaxed), level))
+}
+
+fn try_send_session_log_when(
+    sender: &mpsc::SyncSender<LogEntry>,
+    entry: DataLogEntry,
+    enabled: bool,
+) {
+    if !enabled {
+        return;
+    }
+    if sender.try_send(LogEntry::SessionData(entry)).is_err() {
+        record_session_log_loss("queue or file write failure");
+    }
 }
 
 pub fn try_send_session_log(sender: &mpsc::SyncSender<LogEntry>, entry: DataLogEntry) {
-    if sender.try_send(LogEntry::SessionData(entry)).is_err() {
-        DROPPED_SESSION_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
-    }
+    try_send_session_log_when(sender, entry, SESSION_LOG_ENABLED.load(Ordering::Relaxed));
 }
 
 pub fn try_send_system_event(
@@ -142,7 +171,7 @@ pub fn try_send_system_event(
         })
         .is_err()
     {
-        DROPPED_SYSTEM_LOG_ENTRIES.fetch_add(1, Ordering::Relaxed);
+        record_system_log_loss("queue or file write failure");
     }
 }
 
@@ -167,13 +196,18 @@ pub enum LogCommand {
         session_name: String,
         port_name: String,
         data_mode: String,
+        response: mpsc::SyncSender<Result<LogStatus, String>>,
     },
     /// 停止会话日志
     StopSession { session_id: String },
+    /// 全局关闭 Session Data Log 时结束所有活动 writer。
+    StopAllSessions,
     /// 优雅关闭消费者线程
     Shutdown,
-    /// 清除日志文件后重新打开所有写入器（系统日志 + 会话日志）
-    ReopenAfterClear,
+    /// 在消费者线程内关闭句柄、删除日志并恢复活动 Session writer。
+    ClearAll {
+        response: mpsc::SyncSender<Result<(), String>>,
+    },
 }
 
 /// 数据日志条目（会话 TX/RX 数据）
@@ -290,6 +324,7 @@ pub struct LogEngine {
 impl LogEngine {
     /// 创建日志引擎并启动消费者线程
     pub fn new(config: LogConfig) -> Self {
+        SESSION_LOG_ENABLED.store(config.session_enabled, Ordering::Relaxed);
         let (entry_tx, entry_rx) = mpsc::sync_channel::<LogEntry>(256);
 
         // 将 sender 注册到全局桥接器，使 log::info!/warn!/error! 自动写入系统日志
@@ -332,22 +367,28 @@ impl LogEngine {
     }
 
     /// 更新日志目录（应用启动时由 setup 回调调用）
-    pub fn set_log_dir(&self, dir: PathBuf) {
-        if let Ok(mut cfg) = self.config.lock() {
-            cfg.log_dir = dir;
-        }
+    pub fn set_log_dir(&self, dir: PathBuf) -> Result<(), String> {
+        let mut cfg = self
+            .config
+            .lock()
+            .map_err(|error| format!("log config lock poisoned: {error}"))?;
+        cfg.log_dir = dir;
+        Ok(())
     }
 
     /// 获取配置快照
-    pub fn get_config(&self) -> LogConfig {
-        self.config.lock().map(|c| c.clone()).unwrap_or_default()
+    pub fn get_config(&self) -> Result<LogConfig, String> {
+        self.config
+            .lock()
+            .map(|config| config.clone())
+            .map_err(|error| format!("log config lock poisoned: {error}"))
     }
 
     /// 获取前端友好的配置响应（PathBuf → String）
-    pub fn get_config_response(&self) -> LogConfigResponse {
-        let cfg = self.get_config();
-        let (system_enabled, system_level) = system_log_config();
-        LogConfigResponse {
+    pub fn get_config_response(&self) -> Result<LogConfigResponse, String> {
+        let cfg = self.get_config()?;
+        let (system_enabled, system_level) = system_log_config_checked()?;
+        Ok(LogConfigResponse {
             system_enabled,
             system_level,
             session_enabled: cfg.session_enabled,
@@ -356,16 +397,24 @@ impl LogEngine {
             buffer_size: cfg.buffer_size,
             flush_interval_ms: cfg.flush_interval_ms,
             retention_days: cfg.retention_days,
-        }
+        })
     }
 
     /// 更新运行时配置（由前端设置页调用）
     ///
     /// 消费者线程每次循环自动读取最新配置，无需重启。
-    pub fn update_config(&self, partial: LogConfigUpdate) {
-        if let Ok(mut cfg) = self.config.lock() {
+    pub fn update_config(&self, partial: LogConfigUpdate) -> Result<(), String> {
+        let (previous, stop_all_sessions) = {
+            let mut cfg = self
+                .config
+                .lock()
+                .map_err(|error| format!("log config lock poisoned: {error}"))?;
+            let previous = cfg.clone();
+            let mut stop_all_sessions = false;
             if let Some(session_enabled) = partial.session_enabled {
+                stop_all_sessions = cfg.session_enabled && !session_enabled;
                 cfg.session_enabled = session_enabled;
+                SESSION_LOG_ENABLED.store(session_enabled, Ordering::Relaxed);
             }
             if let Some(file_max_size) = partial.file_max_size {
                 cfg.file_max_size = file_max_size;
@@ -379,7 +428,22 @@ impl LogEngine {
             if let Some(retention_days) = partial.retention_days {
                 cfg.retention_days = retention_days;
             }
+            (previous, stop_all_sessions)
+        };
+
+        if stop_all_sessions
+            && self
+                .entry_tx
+                .try_send(LogEntry::Command(LogCommand::StopAllSessions))
+                .is_err()
+        {
+            if let Ok(mut cfg) = self.config.lock() {
+                *cfg = previous.clone();
+            }
+            SESSION_LOG_ENABLED.store(previous.session_enabled, Ordering::Relaxed);
+            return Err("log consumer is unavailable while disabling Session Data Log".to_string());
         }
+        Ok(())
     }
 
     pub fn get_health(&self) -> LogHealth {
@@ -389,28 +453,65 @@ impl LogEngine {
         }
     }
 
-    /// 清理过期日志文件
+    /// 清理过期日志文件。
+    ///
+    /// 该函数在 consumer loop 正式接收消息前运行，因此不能通过 LogBridge 逐文件记录
+    /// 清理结果，否则大量历史文件会把消息重新塞回尚未消费的同一有界队列。
     pub fn cleanup_old_logs(config: &LogConfig) {
         let retention_secs = config.retention_days * 86400;
         let cutoff = std::time::SystemTime::now().checked_sub(Duration::from_secs(retention_secs));
+        let Some(cutoff) = cutoff else {
+            return;
+        };
 
-        if let Some(cutoff) = cutoff {
-            if let Ok(entries) = std::fs::read_dir(&config.log_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().is_none_or(|e| e != "log") {
-                        continue;
-                    }
-                    if let Ok(meta) = entry.metadata() {
-                        if let Ok(modified) = meta.modified() {
-                            if modified < cutoff {
-                                let _ = std::fs::remove_file(&path);
-                                log::info!("已删除过期日志: {:?}", path);
-                            }
-                        }
+        let entries = match std::fs::read_dir(&config.log_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                eprintln!(
+                    "TauTerm: unable to inspect log retention directory {:?}: {}",
+                    config.log_dir, error
+                );
+                return;
+            }
+        };
+
+        let mut removed = 0_u64;
+        let mut failed = 0_u64;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "log") {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
+            if modified >= cutoff {
+                continue;
+            }
+
+            match std::fs::remove_file(&path) {
+                Ok(()) => removed += 1,
+                Err(error) => {
+                    failed += 1;
+                    if failed == 1 || failed.is_power_of_two() {
+                        eprintln!(
+                            "TauTerm: log retention delete failures={} latest={:?}: {}",
+                            failed, path, error
+                        );
                     }
                 }
             }
+        }
+
+        if removed > 0 || failed > 0 {
+            eprintln!(
+                "TauTerm: log retention cleanup complete (removed={}, failed={})",
+                removed, failed
+            );
         }
     }
 
@@ -422,7 +523,19 @@ impl LogEngine {
         config_arc: Arc<Mutex<LogConfig>>,
         active_logs: Arc<Mutex<HashMap<String, LogStatus>>>,
     ) {
-        let initial_config = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
+        let read_config = || {
+            config_arc
+                .lock()
+                .map(|config| config.clone())
+                .map_err(|error| format!("log config lock poisoned: {error}"))
+        };
+        let initial_config = match read_config() {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("TauTerm: LogEngine consumer cannot start: {error}");
+                return;
+            }
+        };
 
         // 启动时清理过期日志。System Log 与 Session Log 启用状态彼此独立，
         // 清理策略不应被任意一个开关短路。
@@ -437,8 +550,6 @@ impl LogEngine {
 
         // 从配置获取超时
         let get_timeout = |cfg: &LogConfig| Duration::from_millis(cfg.flush_interval_ms);
-        let timeout = get_timeout(&initial_config);
-
         loop {
             // 检查取消信号
             if cancel_flag.load(Ordering::SeqCst) {
@@ -446,23 +557,39 @@ impl LogEngine {
                 break;
             }
 
-            // 动态读取配置获取最新超时
-            let current_timeout = config_arc
-                .lock()
-                .map(|c| get_timeout(&c))
-                .unwrap_or(timeout);
+            // 动态读取配置获取最新超时。配置锁损坏时停止 consumer，
+            // 不能退化成默认配置继续写入未知目录。
+            let current_timeout = match read_config() {
+                Ok(config) => get_timeout(&config),
+                Err(error) => {
+                    eprintln!("TauTerm: LogEngine consumer stopped: {error}");
+                    Self::flush_all(&mut writers, &active_logs, &mut system_writer);
+                    break;
+                }
+            };
 
             match rx.recv_timeout(current_timeout) {
                 Ok(LogEntry::Command(cmd)) => {
-                    let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
+                    let cfg = match read_config() {
+                        Ok(config) => config,
+                        Err(error) => {
+                            eprintln!("TauTerm: LogEngine consumer stopped: {error}");
+                            Self::flush_all(&mut writers, &active_logs, &mut system_writer);
+                            break;
+                        }
+                    };
                     match cmd {
                         LogCommand::StartSession {
                             session_id,
                             session_name,
                             port_name,
                             data_mode,
+                            response,
                         } => {
                             if !cfg.session_enabled {
+                                let _ = response.send(Err(
+                                    "Session Data Log is disabled in Settings".to_string(),
+                                ));
                                 continue;
                             }
                             match LogWriter::new(
@@ -481,20 +608,33 @@ impl LogEngine {
                                         session_name,
                                         port_name
                                     );
+                                    let status = LogStatus {
+                                        session_id: session_id.clone(),
+                                        file_name,
+                                        bytes_written: 0,
+                                    };
                                     if let Ok(mut map) = active_logs.lock() {
-                                        map.insert(
-                                            session_id.clone(),
-                                            LogStatus {
-                                                session_id: session_id.clone(),
-                                                file_name,
-                                                bytes_written: 0,
-                                            },
-                                        );
+                                        map.insert(session_id.clone(), status.clone());
                                     }
-                                    writers.insert(session_id, writer);
+                                    writers.insert(session_id.clone(), writer);
+                                    if response.send(Ok(status)).is_err() {
+                                        if let Some(mut writer) = writers.remove(&session_id) {
+                                            if let Err(error) = writer.flush() {
+                                                record_session_log_loss(&format!(
+                                                    "session {} orphan-start cleanup failed: {}",
+                                                    session_id, error
+                                                ));
+                                            }
+                                        }
+                                        if let Ok(mut map) = active_logs.lock() {
+                                            map.remove(&session_id);
+                                        }
+                                    }
                                 }
                                 Err(e) => {
-                                    log::error!("无法创建日志文件: {}", e);
+                                    let message = format!("无法创建日志文件: {}", e);
+                                    let _ = response.send(Err(message.clone()));
+                                    log::error!("{}", message);
                                 }
                             }
                         }
@@ -502,41 +642,141 @@ impl LogEngine {
                             if let Some(mut writer) = writers.remove(&session_id) {
                                 let file_name = writer.file_name();
                                 let bytes = writer.bytes_written();
-                                let _ = writer.flush();
+                                if let Err(error) = writer.flush() {
+                                    record_session_log_loss(&format!(
+                                        "session {} final flush failed: {}",
+                                        session_id, error
+                                    ));
+                                }
                                 log::info!("日志记录已停止: {} (写入 {} 字节)", file_name, bytes);
                             }
                             if let Ok(mut map) = active_logs.lock() {
                                 map.remove(&session_id);
                             }
                         }
+                        LogCommand::StopAllSessions => {
+                            let stopped = writers.len();
+                            for (session_id, mut writer) in writers.drain() {
+                                if let Err(error) = writer.flush() {
+                                    record_session_log_loss(&format!(
+                                        "session {} final flush failed: {}",
+                                        session_id, error
+                                    ));
+                                }
+                            }
+                            if let Ok(mut map) = active_logs.lock() {
+                                map.clear();
+                            }
+                            if stopped > 0 {
+                                log::info!("全局会话日志已关闭，停止 {} 个活动日志", stopped);
+                            }
+                        }
                         LogCommand::Shutdown => {
                             Self::flush_all(&mut writers, &active_logs, &mut system_writer);
                             return;
                         }
-                        LogCommand::ReopenAfterClear => {
-                            // 关闭系统日志句柄，下次 SystemEvent 自动按日期重建
-                            if let Some(mut w) = system_writer.take() {
-                                let _ = w.flush();
-                            }
-                            system_date = None;
-                            // 每个会话日志 writer 分卷到新文件
-                            for (sid, writer) in writers.iter_mut() {
-                                if let Err(e) = writer.reopen() {
-                                    log::error!("日志重新打开失败 (会话 {}): {}", sid, e);
+                        LogCommand::ClearAll { response } => {
+                            let mut errors = Vec::new();
+
+                            if let Some(mut writer) = system_writer.take() {
+                                if let Err(error) = writer.flush() {
+                                    record_system_log_loss(&format!(
+                                        "system log flush before clear failed: {}",
+                                        error
+                                    ));
+                                    errors.push(format!("system log flush failed: {}", error));
                                 }
                             }
-                            log::info!("日志文件已清除，所有写入器已重新打开");
+                            system_date = None;
+
+                            for (session_id, writer) in writers.iter_mut() {
+                                if let Err(error) = writer.close() {
+                                    record_session_log_loss(&format!(
+                                        "session {} close before clear failed: {}",
+                                        session_id, error
+                                    ));
+                                    errors.push(format!(
+                                        "session {} close failed: {}",
+                                        session_id, error
+                                    ));
+                                }
+                            }
+
+                            match std::fs::read_dir(&cfg.log_dir) {
+                                Ok(entries) => {
+                                    for entry in entries.flatten() {
+                                        let path = entry.path();
+                                        if path.extension().is_none_or(|ext| ext != "log") {
+                                            continue;
+                                        }
+                                        if let Err(error) = std::fs::remove_file(&path) {
+                                            errors.push(format!(
+                                                "delete {:?} failed: {}",
+                                                path, error
+                                            ));
+                                        }
+                                    }
+                                }
+                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                                Err(error) => errors.push(format!(
+                                    "read log directory {:?} failed: {}",
+                                    cfg.log_dir, error
+                                )),
+                            }
+
+                            let mut failed_sessions = Vec::new();
+                            for (session_id, writer) in writers.iter_mut() {
+                                if let Err(error) = writer.reopen() {
+                                    record_session_log_loss(&format!(
+                                        "session {} reopen after clear failed: {}",
+                                        session_id, error
+                                    ));
+                                    errors.push(format!(
+                                        "session {} reopen failed: {}",
+                                        session_id, error
+                                    ));
+                                    failed_sessions.push(session_id.clone());
+                                } else if let Ok(mut map) = active_logs.lock() {
+                                    if let Some(status) = map.get_mut(session_id) {
+                                        status.file_name = writer.file_name();
+                                        status.bytes_written = writer.bytes_written();
+                                    }
+                                }
+                            }
+                            for session_id in failed_sessions {
+                                writers.remove(&session_id);
+                                if let Ok(mut map) = active_logs.lock() {
+                                    map.remove(&session_id);
+                                }
+                            }
+
+                            if errors.is_empty() {
+                                log::info!("所有日志文件已清除，活动 Session writer 已重新打开");
+                                let _ = response.send(Ok(()));
+                            } else {
+                                let _ = response.send(Err(errors.join("; ")));
+                            }
                         }
                     }
                 }
                 Ok(LogEntry::SessionData(entry)) => {
-                    let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
+                    let cfg = match read_config() {
+                        Ok(config) => config,
+                        Err(error) => {
+                            eprintln!("TauTerm: LogEngine consumer stopped: {error}");
+                            Self::flush_all(&mut writers, &active_logs, &mut system_writer);
+                            break;
+                        }
+                    };
                     if !cfg.session_enabled {
                         continue;
                     }
                     if let Some(writer) = writers.get_mut(&entry.session_id) {
                         if let Err(e) = writer.write_entry(&entry) {
-                            log::error!("日志写入失败 (会话 {}): {}", entry.session_id, e);
+                            record_session_log_loss(&format!(
+                                "session {} write failed: {}",
+                                entry.session_id, e
+                            ));
                         }
                         // 更新活跃日志状态（每 ~10 条更新一次，减少锁竞争）
                         status_update_counter += 1;
@@ -554,7 +794,14 @@ impl LogEngine {
                     message,
                     timestamp,
                 }) => {
-                    let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
+                    let cfg = match read_config() {
+                        Ok(config) => config,
+                        Err(error) => {
+                            eprintln!("TauTerm: LogEngine consumer stopped: {error}");
+                            Self::flush_all(&mut writers, &active_logs, &mut system_writer);
+                            break;
+                        }
+                    };
                     if !SYSTEM_LOG_ENABLED.load(Ordering::Relaxed) {
                         continue;
                     }
@@ -564,12 +811,24 @@ impl LogEngine {
                     if system_date.as_deref() != Some(&today) {
                         // 关闭旧文件
                         if let Some(mut w) = system_writer.take() {
-                            let _ = w.flush();
+                            if let Err(error) = w.flush() {
+                                record_system_log_loss(&format!(
+                                    "system log rotation flush failed: {}",
+                                    error
+                                ));
+                            }
                         }
                         // 打开新文件
                         let sys_filename = format!("TauTerm_{}.log", today);
                         let sys_path = cfg.log_dir.join(&sys_filename);
-                        let _ = std::fs::create_dir_all(&cfg.log_dir);
+                        if let Err(error) = std::fs::create_dir_all(&cfg.log_dir) {
+                            record_system_log_loss(&format!(
+                                "cannot create system log directory {:?}: {}",
+                                cfg.log_dir, error
+                            ));
+                            system_date = None;
+                            continue;
+                        }
                         match std::fs::OpenOptions::new()
                             .create(true)
                             .append(true)
@@ -580,28 +839,52 @@ impl LogEngine {
                                 system_date = Some(today);
                             }
                             Err(e) => {
-                                log::error!("无法打开系统日志文件 {:?}: {}", sys_path, e);
+                                record_system_log_loss(&format!(
+                                    "cannot open system log file {:?}: {}",
+                                    sys_path, e
+                                ));
                                 system_date = None;
                                 continue;
                             }
                         }
                     }
 
-                    if let Some(ref mut w) = system_writer {
+                    let write_failed = if let Some(ref mut w) = system_writer {
                         let ts = timestamp.format("%Y-%m-%d %H:%M:%S%.3f");
                         let sanitized_msg = sanitize_log(&message);
                         let line =
                             format!("[{}] [{}] {}\n", ts, level.to_uppercase(), sanitized_msg);
-                        let _ = w.write_all(line.as_bytes());
+                        if let Err(error) = w.write_all(line.as_bytes()) {
+                            record_system_log_loss(&format!("system log write failed: {}", error));
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if write_failed {
+                        system_writer = None;
+                        system_date = None;
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // 超时：flush 所有活跃 writer 的非空缓冲区
-                    for writer in writers.values_mut() {
-                        let _ = writer.flush();
+                    for (session_id, writer) in writers.iter_mut() {
+                        if let Err(error) = writer.flush() {
+                            record_session_log_loss(&format!(
+                                "session {} periodic flush failed: {}",
+                                session_id, error
+                            ));
+                        }
                     }
                     if let Some(ref mut w) = system_writer {
-                        let _ = w.flush();
+                        if let Err(error) = w.flush() {
+                            record_system_log_loss(&format!(
+                                "system log periodic flush failed: {}",
+                                error
+                            ));
+                        }
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -620,11 +903,16 @@ impl LogEngine {
     ) {
         for (session_id, writer) in writers.iter_mut() {
             if let Err(e) = writer.flush() {
-                log::error!("日志最终 flush 失败 (会话 {}): {}", session_id, e);
+                record_session_log_loss(&format!(
+                    "session {} final flush failed: {}",
+                    session_id, e
+                ));
             }
         }
         if let Some(ref mut w) = system_writer {
-            let _ = w.flush();
+            if let Err(error) = w.flush() {
+                record_system_log_loss(&format!("system log final flush failed: {}", error));
+            }
         }
         if let Ok(mut map) = active_logs.lock() {
             map.clear();
@@ -642,5 +930,31 @@ impl Drop for LogEngine {
         if let Some(handle) = self.consumer_handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_entry() -> DataLogEntry {
+        DataLogEntry {
+            session_id: "test-session".into(),
+            direction: DataDirection::RX,
+            data_mode: "text".into(),
+            encoding: "utf-8".into(),
+            payload: b"hello".to_vec(),
+            timestamp: Local::now(),
+        }
+    }
+
+    #[test]
+    fn disabled_session_logging_does_not_fill_queue() {
+        let (tx, rx) = mpsc::sync_channel(1);
+
+        try_send_session_log_when(&tx, sample_entry(), false);
+        try_send_session_log_when(&tx, sample_entry(), false);
+
+        assert!(rx.try_recv().is_err());
     }
 }

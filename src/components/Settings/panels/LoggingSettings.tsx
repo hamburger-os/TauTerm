@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import Icon from "../../common/Icon";
@@ -30,6 +30,16 @@ export default function LoggingSettings() {
   const [retentionDays, setRetentionDays] = useState(7);
   const [logDir, setLogDir] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [systemConfigError, setSystemConfigError] = useState<string | null>(null);
+  const [sessionConfigError, setSessionConfigError] = useState<string | null>(null);
+  const configError = loadError ?? systemConfigError ?? sessionConfigError;
+  const skipSystemPersistRef = useRef(false);
+  const skipSessionPersistRef = useRef(false);
+  const systemPersistQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const sessionPersistQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const systemRevisionRef = useRef(0);
+  const sessionRevisionRef = useRef(0);
   const [health, setHealth] = useState<LogHealth>({
     dropped_session_entries: 0,
     dropped_system_entries: 0,
@@ -57,30 +67,125 @@ export default function LoggingSettings() {
         setBufferSize(config.buffer_size);
         setFlushInterval(config.flush_interval_ms);
         setRetentionDays(config.retention_days);
+        setLoadError(null);
         setHydrated(true);
       })
-      .catch(() => {
-        if (!cancelled) setHydrated(true);
+      .catch(error => {
+        if (!cancelled) {
+          setLoadError(String(error));
+          // Fail closed: do not persist default UI values over a config that could not be read.
+          setHydrated(false);
+        }
       });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
-    invoke("set_system_log_config", { enabled: systemEnabled, level: systemLevel }).catch(() => {});
+    if (skipSystemPersistRef.current) {
+      skipSystemPersistRef.current = false;
+      return;
+    }
+
+    const revision = ++systemRevisionRef.current;
+    const desiredEnabled = systemEnabled;
+    const desiredLevel = systemLevel;
+    const persist = async () => {
+      try {
+        await invoke("set_system_log_config", {
+          enabled: desiredEnabled,
+          level: desiredLevel,
+        });
+        if (revision === systemRevisionRef.current) {
+          setSystemConfigError(null);
+        }
+      } catch (error) {
+        if (revision !== systemRevisionRef.current) return;
+        setSystemConfigError(String(error));
+        try {
+          const config = await invoke<{
+            system_enabled: boolean;
+            system_level: string;
+          }>("get_log_config");
+          if (revision !== systemRevisionRef.current) return;
+          const needsRestore =
+            config.system_enabled !== desiredEnabled || config.system_level !== desiredLevel;
+          if (needsRestore) {
+            skipSystemPersistRef.current = true;
+            setSystemEnabled(config.system_enabled);
+            setSystemLevel(config.system_level);
+          }
+        } catch {
+          // Keep the explicit persistence error visible; do not invent a local success state.
+        }
+      }
+    };
+
+    systemPersistQueueRef.current = systemPersistQueueRef.current
+      .catch(() => undefined)
+      .then(persist);
   }, [hydrated, systemEnabled, systemLevel]);
 
   useEffect(() => {
     if (!hydrated) return;
-    invoke("update_log_config", {
-      config: {
-        session_enabled: enabled,
-        file_max_size: fileMaxSize * 1024 * 1024,
-        buffer_size: bufferSize,
-        flush_interval_ms: flushInterval,
-        retention_days: retentionDays,
-      },
-    }).catch(() => {});
+    if (skipSessionPersistRef.current) {
+      skipSessionPersistRef.current = false;
+      return;
+    }
+
+    const revision = ++sessionRevisionRef.current;
+    const desired = {
+      session_enabled: enabled,
+      file_max_size: fileMaxSize * 1024 * 1024,
+      buffer_size: bufferSize,
+      flush_interval_ms: flushInterval,
+      retention_days: retentionDays,
+    };
+    const persist = async () => {
+      try {
+        await invoke("update_log_config", { config: desired });
+        if (revision === sessionRevisionRef.current) {
+          setSessionConfigError(null);
+        }
+      } catch (error) {
+        if (revision !== sessionRevisionRef.current) return;
+        setSessionConfigError(String(error));
+        try {
+          const config = await invoke<{
+            session_enabled: boolean;
+            file_max_size: number;
+            buffer_size: number;
+            flush_interval_ms: number;
+            retention_days: number;
+          }>("get_log_config");
+          if (revision !== sessionRevisionRef.current) return;
+          const restoredFileMaxSize = Math.max(
+            1,
+            Math.round(config.file_max_size / (1024 * 1024)),
+          );
+          const needsRestore =
+            config.session_enabled !== desired.session_enabled
+            || restoredFileMaxSize !== fileMaxSize
+            || config.buffer_size !== desired.buffer_size
+            || config.flush_interval_ms !== desired.flush_interval_ms
+            || config.retention_days !== desired.retention_days;
+          if (needsRestore) {
+            skipSessionPersistRef.current = true;
+            setEnabled(config.session_enabled);
+            setFileMaxSize(restoredFileMaxSize);
+            setBufferSize(config.buffer_size);
+            setFlushInterval(config.flush_interval_ms);
+            setRetentionDays(config.retention_days);
+          }
+        } catch {
+          // Keep the explicit persistence error visible; do not invent a local success state.
+        }
+      }
+    };
+
+    sessionPersistQueueRef.current = sessionPersistQueueRef.current
+      .catch(() => undefined)
+      .then(persist);
   }, [hydrated, enabled, fileMaxSize, bufferSize, flushInterval, retentionDays]);
 
   useEffect(() => {
@@ -117,6 +222,14 @@ export default function LoggingSettings() {
   return (
     <div>
       <h3 className={styles.panelTitle}>{t("settings.logging")}</h3>
+      {configError && (
+        <p className={styles.settingDesc} role="alert">
+          {t("logging.configSaveError", {
+            defaultValue: "Logging settings were not saved: {{error}}. The UI was restored to the backend state.",
+            error: configError,
+          })}
+        </p>
+      )}
 
       {/* ═══ System Log ═══ */}
       <h4 className={styles.categoryTitle}>{t("logging.systemLog") || "System Log"}</h4>

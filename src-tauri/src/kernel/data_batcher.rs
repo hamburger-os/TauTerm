@@ -23,6 +23,10 @@ use std::time::{Duration, Instant};
 const BATCH_WINDOW_MS: u64 = 16;
 const BATCH_FLUSH_THRESHOLD: usize = 32 * 1024;
 
+fn should_report_drop(total: u64) -> bool {
+    total == 1 || total.is_power_of_two()
+}
+
 #[derive(Debug)]
 pub struct BatchedData {
     pub session_id: String,
@@ -63,10 +67,12 @@ impl DataBatcher {
     pub fn push(&self, session_id: String, data: Vec<u8>) -> Option<u64> {
         if self.tx.try_send(BatchCmd::Push(session_id, data)).is_err() {
             let total = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
-            log::warn!(
-                "DataBatcher: channel full, dropped display chunk (total dropped: {})",
-                total
-            );
+            if should_report_drop(total) {
+                log::warn!(
+                    "DataBatcher: channel full, dropped display chunk (total dropped: {})",
+                    total
+                );
+            }
             Some(total)
         } else {
             None
@@ -257,6 +263,18 @@ mod tests {
     #[test]
     fn test_base64_encode_known_vectors() {
         assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn test_drop_reporting_is_exponentially_throttled() {
+        assert!(should_report_drop(1));
+        assert!(should_report_drop(2));
+        assert!(should_report_drop(4));
+        assert!(should_report_drop(8));
+        assert!(!should_report_drop(3));
+        assert!(!should_report_drop(5));
+        assert!(!should_report_drop(6));
+        assert!(!should_report_drop(7));
     }
 
     #[test]

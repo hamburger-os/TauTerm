@@ -510,9 +510,6 @@ impl TrdpSideChannel {
                 let state: State<'_, AppState> = event_app.state();
                 if let Ok(mut store) = state.session_store.lock() {
                     store.mark_disconnected(&event_session_id);
-                    let path =
-                        crate::kernel::session_store::SessionStore::sessions_file_path(&event_app);
-                    let _ = store.save_to_disk(&path);
                 }
                 if connected_announced.load(Ordering::Acquire) {
                     let _ = event_app.emit(
@@ -694,14 +691,9 @@ pub async fn connect_session(
             .session_store
             .lock()
             .map_err(|error| error.to_string())?;
-        let connected_at = store
+        store
             .get_session(&session_id)
-            .and_then(|handle| handle.connected_at);
-        let path = crate::kernel::session_store::SessionStore::sessions_file_path(&app);
-        if let Err(error) = store.save_to_disk(&path) {
-            log::warn!("TRDP 会话状态持久化失败: {error}");
-        }
-        connected_at
+            .and_then(|handle| handle.connected_at)
     };
     side_channel
         .connected_announced
@@ -1036,22 +1028,28 @@ pub fn trdp_command(
                 .cloned()
                 .ok_or("workspace_store requires workspace")?;
             validate_workspace_value(&workspace)?;
-            {
-                let mut store = state
-                    .session_store
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                let handle = store
-                    .get_session_mut(&session_id)
-                    .ok_or("TRDP 会话不存在")?;
-                let params = handle
-                    .params
-                    .as_object_mut()
-                    .ok_or("TRDP 会话参数不是 JSON object")?;
-                params.insert("trdp_workspace".to_string(), workspace);
-                let path = crate::kernel::session_store::SessionStore::sessions_file_path(&app);
-                store.save_to_disk(&path)?;
-            }
+            let runtime_workspace = workspace.clone();
+            crate::kernel::session_store::SessionStore::set_config_param_on_disk_transactional(
+                &app,
+                &session_id,
+                "trdp_workspace",
+                workspace,
+                || {
+                    let mut store = state
+                        .session_store
+                        .lock()
+                        .map_err(|error| error.to_string())?;
+                    let handle = store
+                        .get_session_mut(&session_id)
+                        .ok_or("TRDP 会话不存在")?;
+                    let params = handle
+                        .params
+                        .as_object_mut()
+                        .ok_or("TRDP 会话参数不是 JSON object")?;
+                    params.insert("trdp_workspace".to_string(), runtime_workspace);
+                    Ok(())
+                },
+            )?;
             return Ok(json!({ "stored": true }));
         }
         Some("dataset_decode") => {

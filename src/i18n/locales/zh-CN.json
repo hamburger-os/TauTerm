@@ -111,6 +111,9 @@
     "deleteConfirm": "确定要删除此会话吗？",
     "clearAllDisconnected": "清除所有已断开会话",
     "status": "状态",
+    "deletePersistFailed": "删除会话配置失败：{{error}}。会话仍保留在列表中，可重试删除。",
+    "loadPersistFailed": "加载已保存会话失败：{{error}}。磁盘上的会话库未被修改。",
+    "renamePersistFailed": "重命名已保存会话失败：{{error}}。已恢复原名称。",
     "displayOverflow": "{{session}} 的显示队列已过载，Presentation Path 已丢弃 {{count}} 个数据块。线路数据不因此判定丢失，但当前屏幕内容可能不完整。"
   },
   "stats": {
@@ -394,6 +397,7 @@
     "disconnected": "会话已断开，发送功能不可用",
     "basicMode": "基础发送",
     "modeLocked": "发送中，模式已锁定",
+    "assetPersistFailed": "工程资产存储失败（{{operation}} · {{key}}）：{{error}}",
     "autoReplyMode": "自动应答",
     "scriptMode": "脚本编辑器",
     "new": "新建",
@@ -726,7 +730,8 @@
     "started": "已开始记录日志",
     "stopped": "日志记录已停止",
     "writing": "正在写入",
-    "lossWarning": "检测到日志队列溢出——会话日志 {{session}} 条、系统日志 {{system}} 条未写入；受影响日志流可能不完整。"
+    "lossWarning": "检测到日志队列溢出——会话日志 {{session}} 条、系统日志 {{system}} 条未写入；受影响日志流可能不完整。",
+    "configSaveError": "日志设置未保存：{{error}}。界面已恢复为后端实际状态。"
   },
   "common": {
     "ok": "确定",

@@ -93,8 +93,29 @@ for (const file of sendBarAssetFiles) {
   const source = await readFile(path.join(ROOT, "src", "components", "SendBar", file), "utf8");
   assert.doesNotMatch(source, /localStorage/, `${file}: engineering assets must persist through the backend ConfigStore`);
 }
+const assetStore = await readFile(path.join(ROOT, "src", "components", "SendBar", "assetStore.ts"), "utf8");
+assert.match(assetStore, /writeQueues/, "engineering asset writes must be serialized per key");
+assert.match(
+  assetStore,
+  /Promise<boolean>/,
+  "engineering asset writes must acknowledge durable persistence before success feedback",
+);
+assert.match(assetStore, /subscribeAsset/, "global engineering assets must synchronize mounted SendBars");
+assert.match(assetStore, /ASSET_PERSISTENCE_ERROR_EVENT/, "engineering asset persistence failures must be observable");
+assert.doesNotMatch(
+  assetStore,
+  /invoke\([^\n]+\)\.catch\(\(\) => \{\}\)/,
+  "engineering asset persistence errors must not be silently swallowed",
+);
+
 const commandPanel = await readFile(path.join(ROOT, "src", "components", "SendBar", "CommandPanel.tsx"), "utf8");
-assert.match(commandPanel, /assets\.command_sets/, "Command asset store key is missing");
+assert.match(commandPanel, /ASSET_KEYS\.commandSets/, "Command asset store key is missing");
+assert.match(commandPanel, /subscribeAsset/, "Command assets must synchronize across mounted SendBars");
+assert.doesNotMatch(
+  commandPanel,
+  /invoke\("set_config"/,
+  "CommandPanel must use the shared engineering asset coordinator",
+);
 
 
 /* Pane UI source contract: source-level guard for the 1/2/2x2 responsive workspace.
@@ -125,14 +146,165 @@ const networkCss = await readFile(path.join(ROOT, "src", "components", "Network"
 assert.match(networkCss, /\.dataArea\s*\{[\s\S]*min-height:\s*0;/, "Network Debug must stay pane-bounded");
 assert.match(networkCss, /\.singleList\s*\{[\s\S]*overflow-y:\s*auto;[\s\S]*overflow-x:\s*hidden;/, "Network Debug stream must own its scroll boundary");
 
+const persistence = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "persistence.rs"), "utf8");
+assert.match(persistence, /AtomicWriteFile/, "TauTerm-owned state must keep the shared atomic persistence boundary");
+assert.match(persistence, /\.commit\(\)/, "atomic persistence must commit only after the staged write succeeds");
+
+const configStore = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "config_store.rs"), "utf8");
+assert.match(configStore, /atomic_write\(&path, json\.as_bytes\(\)\)/, "ConfigStore must use atomic persistence");
+assert.match(configStore, /pub fn set_batch/, "related settings need one ConfigStore persistence transaction");
+assert.match(configStore, /NotConfigured/, "ConfigStore must fail closed before persistence is configured");
+assert.match(configStore, /pub fn persistence_ready/, "WebView reads must be able to detect unavailable ConfigStore persistence");
+assert.match(
+  configStore,
+  /self\.persist_snapshot\(&next\)\?;[\s\S]*self\.data\.write/,
+  "ConfigStore must persist the next snapshot before publishing it in memory",
+);
+
 const sessionStore = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "session_store.rs"), "utf8");
 assert.match(sessionStore, /SESSION_LIBRARY_VERSION:\s*u32\s*=\s*1/, "Session Library must be versioned");
 assert.match(sessionStore, /DEFAULT_MAX_ACTIVE_ROOT_SESSIONS:\s*usize\s*=\s*64/, "active root Session budget contract changed");
+assert.match(sessionStore, /atomic_write\(path, json\.as_bytes\(\)\)/, "Session Library must use atomic persistence");
+assert.doesNotMatch(
+  sessionStore,
+  /load_from_disk_unlocked\([^\n]+\)\.unwrap_or_default\(\)/,
+  "Session Library read-modify-write must not overwrite state after a read error",
+);
+assert.match(
+  sessionStore,
+  /save_config_to_disk_transactional/,
+  "cross-store Session saves need an explicit rollback boundary",
+);
+assert.match(
+  sessionStore,
+  /delete_config_from_disk_transactional/,
+  "cross-store Session deletes need an explicit rollback boundary",
+);
+assert.match(
+  sessionStore,
+  /rename_config_on_disk_transactional/,
+  "Saved Session rename needs an explicit rollback boundary",
+);
+assert.match(
+  sessionStore,
+  /set_config_param_on_disk_transactional/,
+  "explicit Saved Session parameter edits need a rollback boundary",
+);
+assert.doesNotMatch(
+  sessionStore,
+  /pub fn save_to_disk/,
+  "Runtime SessionStore must not expose a bulk runtime-to-Library persistence API",
+);
+assert.doesNotMatch(
+  sessionStore,
+  /pub fn get_saved_sessions/,
+  "Runtime SessionStore must not reconstruct the Saved Session Library from active sessions",
+);
+
+assert.doesNotMatch(
+  lib,
+  /config_store[\s\S]{0,120}\.set\("log\.dir"/,
+  "runtime log directory must stay owned by LogEngine rather than duplicated in ConfigStore",
+);
+assert.doesNotMatch(
+  lib,
+  /PathBuf::from\("\."\)/,
+  "runtime setup must not use cwd as a persistence/resource fallback",
+);
 
 const logEngine = await readFile(path.join(ROOT, "src-tauri", "src", "kernel", "log_engine.rs"), "utf8");
 assert.match(logEngine, /session_enabled/, "System and Session logging must have separate enable semantics");
+assert.match(logEngine, /SESSION_LOG_ENABLED/, "disabled Session Log producers must stop before the shared queue");
+assert.match(logEngine, /StopAllSessions/, "disabling Session Data Log must close active writers");
+assert.match(
+  logEngine,
+  /log config lock poisoned/,
+  "LogEngine configuration lock failures must be explicit",
+);
+assert.doesNotMatch(
+  logEngine,
+  /config_arc\.lock\(\)[\s\S]{0,120}unwrap_or_default\(\)/,
+  "LogEngine consumer must not recover poisoned config with defaults",
+);
+
 assert.match(logEngine, /dropped_session_entries/, "Session log loss telemetry is missing");
 assert.match(logEngine, /dropped_system_entries/, "System log loss telemetry is missing");
+
+const knownHosts = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "ssh", "known_hosts.rs"), "utf8");
+assert.match(knownHosts, /atomic_write\(&path, json\.as_bytes\(\)\)/, "SSH known-host trust must use atomic persistence");
+assert.match(
+  knownHosts,
+  /self\.persist_snapshot\(&next\)\?;[\s\S]*self[\s\S]*\.hosts[\s\S]*\.write/,
+  "SSH trust must become visible in memory only after durable persistence succeeds",
+);
+assert.match(
+  knownHosts,
+  /HostTrustDecision::Unavailable/,
+  "corrupted or unavailable SSH host trust must remain fail-closed",
+);
+assert.match(
+  knownHosts,
+  /available\.load\(Ordering::Acquire\)/,
+  "failed SSH host-trust reconfiguration must disable stale trust",
+);
+assert.doesNotMatch(
+  knownHosts,
+  /文件损坏[\s\S]{0,180}Ok\(HashMap::new\(\)\)/,
+  "corrupted known-host state must not downgrade to a fresh TOFU store",
+);
+
+const commands = await readFile(path.join(ROOT, "src-tauri", "src", "commands.rs"), "utf8");
+assert.match(
+  commands,
+  /ConfigStore rollback failed/,
+  "logging settings must roll back persisted state when runtime apply fails",
+);
+assert.match(
+  commands,
+  /pub fn get_log_config[\s\S]{0,260}persistence_ready/,
+  "logging settings load must fail when ConfigStore persistence is unavailable",
+);
+assert.match(
+  commands,
+  /pub async fn start_session_log[\s\S]{0,2600}spawn_blocking/,
+  "logging start ACK must stay off the synchronous Tauri path",
+);
+assert.match(
+  commands,
+  /pub async fn clear_all_logs[\s\S]{0,1800}spawn_blocking/,
+  "log clear ACK must stay off the synchronous Tauri path",
+);
+assert.match(
+  commands,
+  /日志控制队列繁忙[\s\S]{0,1200}try_send|try_send[\s\S]{0,1200}日志控制队列繁忙/,
+  "logging control queue must fail fast rather than block the UI path",
+);
+
+assert.doesNotMatch(
+  commands,
+  /pub fn save_sessions/,
+  "legacy bulk save_sessions IPC must stay removed",
+);
+assert.doesNotMatch(
+  commands,
+  /let _ = store\.save_to_disk/,
+  "runtime lifecycle must not silently write the Saved Session Library",
+);
+assert.match(commands, /prepare_ssh_session_params/, "SSH credentials must be prepared before persistence");
+assert.match(commands, /save_config_to_disk_transactional/, "SSH save must coordinate Session Library and credential commits");
+assert.match(commands, /hydrate_ssh_config_with_pending/, "direct SSH connect must use transient credentials before persistence");
+
+const trdpBackend = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "trdp.rs"), "utf8");
+assert.match(
+  trdpBackend,
+  /set_config_param_on_disk_transactional/,
+  "TRDP Workspace persistence must use the explicit Saved Session transaction boundary",
+);
+assert.doesNotMatch(
+  trdpBackend,
+  /save_to_disk/,
+  "TRDP runtime lifecycle must not bulk-save active Session state",
+);
 
 const ssh = await readFile(path.join(ROOT, "src-tauri", "src", "plugins", "ssh", "mod.rs"), "utf8");
 assert.match(ssh, /HostTrustDecision::Changed/, "SSH changed-host-key path must remain fail-closed");

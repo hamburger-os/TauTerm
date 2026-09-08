@@ -158,84 +158,120 @@ pub fn run() {
             let _ = window.center();
 
             if let Some(state) = app.try_state::<AppState>() {
-                let config_dir = app
-                    .path()
-                    .app_config_dir()
-                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                let settings_path = config_dir.join("settings.json");
-                if let Err(error) = state.config_store.configure_persistence(settings_path) {
-                    log::warn!("配置存储初始化失败: {}", error);
-                } else {
-                    let system_enabled = state
-                        .config_store
-                        .get::<bool>("logging.system_enabled")
-                        .unwrap_or(true);
-                    let system_level = state
-                        .config_store
-                        .get::<String>("logging.system_level")
-                        .unwrap_or_else(|| "info".to_string());
-                    kernel::log_engine::set_system_log_config(system_enabled, &system_level);
+                match app.path().app_config_dir() {
+                    Ok(config_dir) => {
+                        let settings_path = config_dir.join("settings.json");
+                        if let Err(error) = state.config_store.configure_persistence(settings_path) {
+                            log::warn!("配置存储初始化失败: {}", error);
+                        } else {
+                            let system_enabled = state
+                                .config_store
+                                .get::<bool>("logging.system_enabled")
+                                .unwrap_or(true);
+                            let system_level = state
+                                .config_store
+                                .get::<String>("logging.system_level")
+                                .unwrap_or_else(|| "info".to_string());
+                            if let Err(error) =
+                                kernel::log_engine::set_system_log_config(system_enabled, &system_level)
+                            {
+                                log::warn!("系统日志运行态配置初始化失败: {}", error);
+                            }
 
-                    if let Ok(log_engine) = state.log_engine.lock() {
-                        log_engine.update_config(kernel::log_engine::LogConfigUpdate {
-                            session_enabled: state
-                                .config_store
-                                .get::<bool>("logging.session_enabled"),
-                            file_max_size: state
-                                .config_store
-                                .get::<u64>("logging.file_max_size"),
-                            buffer_size: state
-                                .config_store
-                                .get::<usize>("logging.buffer_size"),
-                            flush_interval_ms: state
-                                .config_store
-                                .get::<u64>("logging.flush_interval_ms"),
-                            retention_days: state
-                                .config_store
-                                .get::<u64>("logging.retention_days"),
-                        });
+                            if let Ok(log_engine) = state.log_engine.lock() {
+                                if let Err(error) =
+                                    log_engine.update_config(kernel::log_engine::LogConfigUpdate {
+                                        session_enabled: state
+                                            .config_store
+                                            .get::<bool>("logging.session_enabled"),
+                                        file_max_size: state
+                                            .config_store
+                                            .get::<u64>("logging.file_max_size"),
+                                        buffer_size: state
+                                            .config_store
+                                            .get::<usize>("logging.buffer_size"),
+                                        flush_interval_ms: state
+                                            .config_store
+                                            .get::<u64>("logging.flush_interval_ms"),
+                                        retention_days: state
+                                            .config_store
+                                            .get::<u64>("logging.retention_days"),
+                                    })
+                                {
+                                    log::warn!("Session 日志运行态配置初始化失败: {}", error);
+                                }
+                            }
+                        }
+
+                        if let Err(error) = state
+                            .host_key_verifier
+                            .configure_known_hosts(config_dir.join("known_hosts.json"))
+                        {
+                            log::warn!("SSH known-host 存储初始化失败: {}", error);
+                        }
                     }
-                }
-
-                if let Err(error) = state
-                    .host_key_verifier
-                    .configure_known_hosts(config_dir.join("known_hosts.json"))
-                {
-                    log::warn!("SSH known-host 存储初始化失败: {}", error);
+                    Err(error) => {
+                        log::warn!(
+                            "应用配置目录不可用；ConfigStore 与 SSH known-host 保持 fail-closed: {}",
+                            error
+                        );
+                    }
                 }
             }
 
             let log_dir = {
-                let exe_dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join("logs");
-                let _ = std::fs::create_dir_all(&exe_dir);
-                let test_file = exe_dir.join(".write_test");
-                if std::fs::write(&test_file, b"tau").is_ok() {
+                let writable = |dir: std::path::PathBuf| -> Option<std::path::PathBuf> {
+                    std::fs::create_dir_all(&dir).ok()?;
+                    let test_file = dir.join(".write_test");
+                    std::fs::write(&test_file, b"tau").ok()?;
                     let _ = std::fs::remove_file(&test_file);
-                    exe_dir
+                    Some(dir)
+                };
+
+                let exe_candidate = std::env::current_exe()
+                    .ok()
+                    .and_then(|path| path.parent().map(|dir| dir.join("logs")));
+                if let Some(dir) = exe_candidate.and_then(&writable) {
+                    dir
                 } else {
-                    let app_data = app
-                        .path()
-                        .app_data_dir()
-                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                    let fallback = app_data.join("logs");
-                    let _ = std::fs::create_dir_all(&fallback);
-                    log::warn!("exe 同级日志目录不可写，回退到: {:?}", fallback);
-                    fallback
+                    let app_candidate = app.path().app_data_dir().ok().map(|dir| dir.join("logs"));
+                    if let Some(dir) = app_candidate.and_then(&writable) {
+                        log::warn!("exe 同级日志目录不可写，回退到应用数据目录: {:?}", dir);
+                        dir
+                    } else {
+                        let temp = std::env::temp_dir().join("TauTerm").join("logs");
+                        match writable(temp.clone()) {
+                            Some(dir) => {
+                                eprintln!(
+                                    "TauTerm: durable log directories unavailable; using temporary directory {:?}",
+                                    dir
+                                );
+                                dir
+                            }
+                            None => {
+                                eprintln!(
+                                    "TauTerm: no writable log directory is available; using unresolved temporary path {:?}",
+                                    temp
+                                );
+                                temp
+                            }
+                        }
+                    }
                 }
             };
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(log_engine) = state.log_engine.lock() {
-                    log_engine.set_log_dir(log_dir.clone());
+                    if let Err(error) = log_engine.set_log_dir(log_dir.clone()) {
+                        log::warn!("日志目录运行态配置失败: {}", error);
+                    }
                 }
-                let _ = state
-                    .config_store
-                    .set("log.dir", &log_dir.to_string_lossy().to_string());
             }
-            let _ = std::fs::create_dir_all(&log_dir);
+            if let Err(error) = std::fs::create_dir_all(&log_dir) {
+                eprintln!(
+                    "TauTerm: failed to create resolved log directory {:?}: {}",
+                    log_dir, error
+                );
+            }
             log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
             log::info!("日志目录: {:?}", log_dir);
 
@@ -244,10 +280,20 @@ pub fn run() {
                 if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                     #[cfg(target_os = "windows")]
                     {
-                        let resource_dir = app
-                            .path()
-                            .resource_dir()
-                            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                        let resource_dir = match app.path().resource_dir() {
+                            Ok(path) => path,
+                            Err(error) => {
+                                let fallback = std::env::temp_dir()
+                                    .join("TauTerm")
+                                    .join("missing-resources");
+                                log::warn!(
+                                    "应用资源目录不可用，虚拟串口驱动资源保持不可用状态: {} ({:?})",
+                                    error,
+                                    fallback
+                                );
+                                fallback
+                            }
+                        };
                         let vpm_dir = if resource_dir.join("setupc.exe").exists() {
                             resource_dir
                         } else {
@@ -265,11 +311,27 @@ pub fn run() {
                                 resource_dir
                             }
                         };
-                        let state_dir = app
-                            .path()
-                            .app_data_dir()
-                            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                        let _ = std::fs::create_dir_all(&state_dir);
+                        let state_dir = match app.path().app_data_dir() {
+                            Ok(path) => path,
+                            Err(error) => {
+                                let fallback = std::env::temp_dir()
+                                    .join("TauTerm")
+                                    .join("virtual-port-state");
+                                log::warn!(
+                                    "应用数据目录不可用，虚拟串口状态使用临时隔离目录: {} ({:?})",
+                                    error,
+                                    fallback
+                                );
+                                fallback
+                            }
+                        };
+                        if let Err(error) = std::fs::create_dir_all(&state_dir) {
+                            log::warn!(
+                                "无法创建虚拟串口状态目录 {:?}: {}",
+                                state_dir,
+                                error
+                            );
+                        }
                         let service_backend = virtual_port::service_backend::ServiceBackend::new();
                         if service_backend.connect().is_ok() {
                             log::info!("虚拟串口特权服务已连接");
@@ -352,8 +414,8 @@ pub fn run() {
             log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
             #[cfg(target_os = "windows")]
             virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(
-                std::path::PathBuf::from("."),
-                std::path::PathBuf::from("."),
+                std::env::temp_dir().join("TauTerm").join("missing-resources"),
+                std::env::temp_dir().join("TauTerm").join("virtual-port-state"),
             ))),
             #[cfg(not(target_os = "windows"))]
             virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
@@ -385,7 +447,6 @@ pub fn run() {
             plugins::trdp::trdp_release_capture,
             plugins::trdp::trdp_import_xml,
             plugins::trdp::trdp_decode_dataset,
-            commands::save_sessions,
             commands::load_sessions,
             commands::save_session_config,
             commands::resolve_local_shell_session_name,
@@ -463,10 +524,8 @@ pub fn run() {
                                 log::warn!("退出时关闭会话 {} 失败: {}", id, e);
                             }
                         }
-                        let path = SessionStore::sessions_file_path(app_handle);
-                        if let Err(e) = store.save_to_disk(&path) {
-                            log::warn!("保存会话到磁盘失败: {}", e);
-                        }
+                        // Saved Session Library is configuration state, not an exit snapshot.
+                        // Closing runtime resources must never overwrite it.
                     }
                     if let Ok(mut vpm) = state.virtual_port_manager.lock() {
                         vpm.cleanup_all();

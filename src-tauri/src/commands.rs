@@ -211,15 +211,24 @@ fn scrub_ssh_secrets_from_saved_sessions(
     Ok(changed)
 }
 
-/// Enforce the only supported SSH persistence model:
-/// - the credential account is deterministically derived from the Session id;
-/// - plaintext authentication material is accepted only as transient input;
-/// - persisted/session params contain only the credential reference.
-fn secure_ssh_session_params(
+#[derive(Debug)]
+struct PendingSshCredential {
+    account: String,
+    credential_type: crate::security::credential_store::CredentialType,
+    value: crate::security::credential_store::CredentialValue,
+    description: String,
+}
+
+/// Prepare the only supported SSH persistence model without mutating the credential store.
+///
+/// Plaintext authentication material is accepted only as transient input. Persisted/session params
+/// contain only the deterministic credential account reference. A new credential is returned as a
+/// pending commit so the Session Library and credential store can be coordinated transactionally.
+fn prepare_ssh_session_params(
     state: &AppState,
     session_id: &str,
     params: &mut Value,
-) -> Result<(), String> {
+) -> Result<Option<PendingSshCredential>, String> {
     use crate::security::credential_store::CredentialStoreError;
 
     let auth_method = params
@@ -229,7 +238,7 @@ fn secure_ssh_session_params(
         .to_string();
     let account = ssh_credential_account(session_id);
 
-    if let Some((credential_type, credential_value)) = ssh_credential_from_params(params)? {
+    let pending = if let Some((credential_type, value)) = ssh_credential_from_params(params)? {
         let username = params
             .get("username")
             .and_then(Value::as_str)
@@ -238,11 +247,12 @@ fn secure_ssh_session_params(
             .get("host")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let description = format!("SSH {username}@{host}");
-        state
-            .credential_store
-            .store_credential(&account, credential_type, credential_value, &description)
-            .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))?;
+        Some(PendingSshCredential {
+            account: account.clone(),
+            credential_type,
+            value,
+            description: format!("SSH {username}@{host}"),
+        })
     } else {
         match state.credential_store.get_credential(&account) {
             Ok(value) if credential_matches_auth(&auth_method, &value) => {}
@@ -252,7 +262,8 @@ fn secure_ssh_session_params(
             }
             Err(error) => return Err(format!("无法读取 SSH 安全凭据: {error}")),
         }
-    }
+        None
+    };
 
     let object = params
         .as_object_mut()
@@ -262,28 +273,26 @@ fn secure_ssh_session_params(
         Value::String(account),
     );
     strip_ssh_secret_fields(params)?;
-    Ok(())
+    Ok(pending)
 }
 
-fn hydrate_ssh_config(
-    state: &AppState,
-    params: &Value,
-) -> Result<crate::plugins::ssh::SshConfig, String> {
-    use crate::security::credential_store::CredentialValue;
-
-    let mut config: crate::plugins::ssh::SshConfig =
-        serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
-
-    let account = params
-        .get(SSH_CREDENTIAL_ACCOUNT_KEY)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
-
-    let credential = state
+fn commit_ssh_credential(state: &AppState, pending: PendingSshCredential) -> Result<(), String> {
+    state
         .credential_store
-        .get_credential(account)
-        .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
+        .store_credential(
+            &pending.account,
+            pending.credential_type,
+            pending.value,
+            &pending.description,
+        )
+        .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))
+}
+
+fn apply_ssh_credential(
+    config: &mut crate::plugins::ssh::SshConfig,
+    credential: crate::security::credential_store::CredentialValue,
+) -> Result<(), String> {
+    use crate::security::credential_store::CredentialValue;
 
     match (config.auth_method.as_str(), credential) {
         ("password", CredentialValue::Password(password)) => {
@@ -306,8 +315,44 @@ fn hydrate_ssh_config(
             return Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into());
         }
     }
+    Ok(())
+}
 
+fn hydrate_ssh_config(
+    state: &AppState,
+    params: &Value,
+) -> Result<crate::plugins::ssh::SshConfig, String> {
+    let mut config: crate::plugins::ssh::SshConfig =
+        serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
+
+    let account = params
+        .get(SSH_CREDENTIAL_ACCOUNT_KEY)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
+
+    let credential = state
+        .credential_store
+        .get_credential(account)
+        .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
+
+    apply_ssh_credential(&mut config, credential)?;
     Ok(config)
+}
+
+fn hydrate_ssh_config_with_pending(
+    state: &AppState,
+    params: &Value,
+    pending: Option<&PendingSshCredential>,
+) -> Result<crate::plugins::ssh::SshConfig, String> {
+    if let Some(pending) = pending {
+        let mut config: crate::plugins::ssh::SshConfig =
+            serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
+        apply_ssh_credential(&mut config, pending.value.clone())?;
+        Ok(config)
+    } else {
+        hydrate_ssh_config(state, params)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -679,12 +724,9 @@ async fn connect_session_serial(
                     .unwrap_or_default()
             };
 
-            // 2. 标记断开 — 内部关闭桥接，PlugInMode 使 B 端自动隐藏
-            //    同步保存到磁盘，防止后续崩溃导致配置丢失
+            // 2. 标记运行态断开 — Saved Session Library 由显式配置命令独立持久化
             if let Ok(mut store) = app_state.session_store.lock() {
                 store.mark_disconnected(&session_id);
-                let path = SessionStore::sessions_file_path(&app_disconnect);
-                let _ = store.save_to_disk(&path);
             }
 
             // 3. 从内核驱动删除端口对 → 外部工具感知 COM 端口消失
@@ -749,9 +791,7 @@ async fn connect_session_serial(
             app.clone(),
         )?;
 
-        // 自动保存
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
+        // Runtime Session 只消费 Saved Session 配置；连接生命周期不反向覆盖 Library。
         session_id
     };
 
@@ -1030,12 +1070,18 @@ async fn connect_session_local_shell(
         &parent_id,
         first_channel,
         initial_mode == ChannelOpenMode::Elevated,
+        true,
     )
     .await
     .inspect_err(|error| {
         log::error!("Local Shell 首个子会话创建失败: {error}");
         if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.close_session(&parent_id);
+            if let Err(cleanup_error) = store.close_session(&parent_id) {
+                log::warn!(
+                    "Local Shell 首个子会话失败后的父会话清理也失败: {}",
+                    cleanup_error
+                );
+            }
         }
     })?;
 
@@ -1071,7 +1117,7 @@ async fn connect_session_local_shell(
 /// 简单根终端会话的共享连接流程。
 ///
 /// Serial 的虚拟端口、SSH 与 Local Shell 的多终端容器需要专属 orchestration；
-/// 当前由 Telnet 复用这里的日志、SessionStore、持久化和事件语义。
+/// 当前由 Telnet 复用这里的日志、SessionStore 和事件语义。
 fn connect_simple_terminal_session(
     app: AppHandle,
     state: &State<'_, AppState>,
@@ -1109,8 +1155,6 @@ fn connect_simple_terminal_session(
             let app_state: State<'_, AppState> = app_disconnect.state();
             if let Ok(mut store) = app_state.session_store.lock() {
                 store.mark_disconnected(&session_id);
-                let path = SessionStore::sessions_file_path(&app_disconnect);
-                let _ = store.save_to_disk(&path);
             }
             let _ = app_disconnect.emit(
                 "session-disconnected",
@@ -1125,7 +1169,7 @@ fn connect_simple_terminal_session(
     let send_bar_enabled = send_bar_enabled.unwrap_or(default_send_bar_enabled);
     let session_id = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let sid = store.create_session(
+        store.create_session(
             SessionCreateOptions {
                 name: session_name.clone(),
                 plugin_id: plugin_id.into(),
@@ -1140,10 +1184,7 @@ fn connect_simple_terminal_session(
             on_data,
             on_disconnect,
             app.clone(),
-        )?;
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
-        sid
+        )?
     };
 
     let (actual_name, actual_params, connected_at) = {
@@ -1198,8 +1239,10 @@ async fn connect_session_ssh(
     let effective_session_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    secure_ssh_session_params(&state, &effective_session_id, &mut params)?;
-    let ssh_config = hydrate_ssh_config(&state, &params)?;
+    let pending_ssh_credential =
+        prepare_ssh_session_params(&state, &effective_session_id, &mut params)?;
+    let ssh_config =
+        hydrate_ssh_config_with_pending(&state, &params, pending_ssh_credential.as_ref())?;
 
     // 将 journald_enabled 提升为 params 的通用字段（不再耦合 SshConfig）。
     // reconfigure/restore 统一从当前 Session params 读取。
@@ -1290,24 +1333,54 @@ async fn connect_session_ssh(
     };
 
     // 2. 通过共享逻辑创建通道 0（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
-    let channel0_id = create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false)
-        .await
-        .inspect_err(|e| {
-            // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
-            log::error!("SSH 通道 0 创建失败，回滚父容器会话 {}: {}", parent_id, e);
-            if let Ok(mut store) = state.session_store.lock() {
-                let _ = store.close_session(&parent_id);
-            }
-        })?;
+    let channel0_id =
+        create_terminal_sub_channel(&app, &state, &parent_id, channel_for_ch0, false, false)
+            .await
+            .inspect_err(|e| {
+                // 子通道创建失败 → 回滚清理父容器会话，避免资源泄漏
+                log::error!("SSH 通道 0 创建失败，回滚父容器会话 {}: {}", parent_id, e);
+                if let Ok(mut store) = state.session_store.lock() {
+                    if let Err(cleanup_error) = store.close_session(&parent_id) {
+                        log::warn!(
+                            "SSH 通道 0 失败后的父会话清理也失败 {}: {}",
+                            parent_id,
+                            cleanup_error
+                        );
+                    }
+                }
+            })?;
 
-    // 3. 读取父会话信息 + emit 父容器 session-connected（前端不创建额外的根 tab）
+    // 3. 在凭据提交前完成全部可失败的运行态校验与事件快照。
+    // 这样凭据提交就是连接流程最后一个可失败步骤，不会在“运行态已消失”后留下新凭据。
     let (actual_name, actual_params) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store
+        let handle = store
             .get_session(&parent_id)
-            .map(|h| (h.name.clone(), h.params.clone()))
-            .unwrap_or((session_name, params.clone()))
+            .ok_or_else(|| format!("SSH 父会话 {} 已在连接完成前关闭", parent_id))?;
+        if handle.state != SessionState::Connected {
+            return Err("SSH 父会话已在连接完成前断开".to_string());
+        }
+        (handle.name.clone(), handle.params.clone())
     };
+    let channel0_connected =
+        terminal_sub_channel_connected_payload(&state, &parent_id, &channel0_id)?;
+
+    // Persist transient credentials only after the SSH parent and channel 0 are both
+    // registered and readable. A credential failure rolls back the newly-created runtime Session.
+    if let Some(pending) = pending_ssh_credential {
+        if let Err(error) = commit_ssh_credential(&state, pending) {
+            if let Ok(mut store) = state.session_store.lock() {
+                if let Err(cleanup_error) = store.close_session(&parent_id) {
+                    log::warn!(
+                        "SSH 凭据提交失败后的父会话清理也失败 {}: {}",
+                        parent_id,
+                        cleanup_error
+                    );
+                }
+            }
+            return Err(error);
+        }
+    }
 
     let connected_at = Some(
         std::time::SystemTime::now()
@@ -1344,6 +1417,7 @@ async fn connect_session_ssh(
             "is_container": true,
         }),
     );
+    let _ = app.emit("session-connected", channel0_connected);
 
     Ok(parent_id)
 }
@@ -1389,7 +1463,7 @@ pub async fn disconnect_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 单次锁获取：读取 → 保存 → 关闭（close_session 内部调用 shutdown() 清理侧通道）
+    // 单次锁获取：读取 → 关闭（close_session 内部调用 shutdown() 清理侧通道）
     let (pairs_to_destroy, session_name, is_tftp, is_iperf) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
 
@@ -1402,9 +1476,7 @@ pub async fn disconnect_session(
         let is_iperf = handle.plugin_id == "iperf";
         store.close_session(&session_id)?;
         store.reset_child_counter(&session_id);
-        // 持久化：会话状态已变为 Disconnected，写入磁盘
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
+        // Disconnected 属于运行态，不写回 Saved Session Library。
         (pairs, name, is_tftp, is_iperf)
     };
     // 锁已释放 — close_session 内部已关闭桥接
@@ -1564,11 +1636,13 @@ pub fn rename_session(
     session_id: String,
     new_name: String,
 ) -> Result<(), String> {
-    let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-    store.rename_session(&session_id, &new_name)?;
-
-    let path = SessionStore::sessions_file_path(&app);
-    let _ = store.save_to_disk(&path);
+    SessionStore::rename_config_on_disk_transactional(&app, &session_id, &new_name, || {
+        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+        if store.get_session(&session_id).is_some() {
+            store.rename_session(&session_id, &new_name)?;
+        }
+        Ok(())
+    })?;
 
     let _ = app.emit(
         "session-renamed",
@@ -1665,6 +1739,7 @@ async fn create_terminal_sub_channel(
     parent_id: &str,
     channel: ChannelKind,
     elevated: bool,
+    announce_connected: bool,
 ) -> Result<String, String> {
     // ── 阶段 1: 获取锁 → 检查父存活 + 预留 channel_index + 读取配置 → 释放锁 ──
     let (
@@ -1779,8 +1854,6 @@ async fn create_terminal_sub_channel(
                         if !retain {
                             store.reset_child_counter(&pid);
                         }
-                        let path = SessionStore::sessions_file_path(&app_disconnect);
-                        let _ = store.save_to_disk(&path);
                     }
                     (no_live_children, retain)
                 } else {
@@ -1904,33 +1977,31 @@ async fn create_terminal_sub_channel(
         sub.connected_at = connected_at;
         sub.stats_cancel_flag = Some(stats_cancel_flag);
         handle.sub_connections.push(sub);
-
-        let path = crate::kernel::session_store::SessionStore::sessions_file_path(app);
-        let _ = store.save_to_disk(&path);
         (actual_idx, actual_name)
     };
 
-    // 8. Emit session-connected — 所有字段均从父会话继承
-    let _ = app.emit(
-        "session-connected",
-        serde_json::json!({
-            "session_id": channel_id,
-            "endpoint": endpoint,
-            "connection_type": plugin_id,
-            "plugin_id": plugin_id,
-            "name": channel_name,
-            "params": params,
-            "connected_at": connected_at,
-            "transfer_enabled": false,
-            "send_bar_enabled": send_bar_enabled_val,
-            "parent_id": parent_id,
-            "channel_index": actual_index,
-            "elevated": elevated,
-            "file_service_enabled": file_service_enabled,
-            "file_service_protocol": file_service_protocol,
-            "journald_enabled": journald_enabled,
-        }),
-    );
+    if announce_connected {
+        let _ = app.emit(
+            "session-connected",
+            serde_json::json!({
+                "session_id": channel_id,
+                "endpoint": endpoint,
+                "connection_type": plugin_id,
+                "plugin_id": plugin_id,
+                "name": channel_name,
+                "params": params,
+                "connected_at": connected_at,
+                "transfer_enabled": false,
+                "send_bar_enabled": send_bar_enabled_val,
+                "parent_id": parent_id,
+                "channel_index": actual_index,
+                "elevated": elevated,
+                "file_service_enabled": file_service_enabled,
+                "file_service_protocol": file_service_protocol,
+                "journald_enabled": journald_enabled,
+            }),
+        );
+    }
 
     log::info!(
         "终端子会话已创建: {} (parent: {}, channel_index: {}, elevated: {})",
@@ -1940,6 +2011,83 @@ async fn create_terminal_sub_channel(
         elevated
     );
     Ok(channel_id)
+}
+
+fn terminal_sub_channel_connected_payload(
+    app_state: &AppState,
+    parent_id: &str,
+    channel_id: &str,
+) -> Result<serde_json::Value, String> {
+    let (
+        endpoint,
+        plugin_id,
+        params,
+        send_bar_enabled,
+        file_service_enabled,
+        file_service_protocol,
+        journald_enabled,
+        channel_name,
+        connected_at,
+        channel_index,
+        elevated,
+    ) = {
+        let store = app_state.session_store.lock().map_err(|e| e.to_string())?;
+        let parent = store
+            .get_session(parent_id)
+            .ok_or_else(|| format!("父会话 {} 已在连接完成前关闭", parent_id))?;
+        if parent.state != SessionState::Connected {
+            return Err("父会话已在连接完成前断开".to_string());
+        }
+        let child = parent
+            .sub_connections
+            .iter()
+            .find(|child| child.id == channel_id && child.state == SessionState::Connected)
+            .ok_or_else(|| format!("终端子会话 {} 已在连接完成前关闭", channel_id))?;
+        (
+            parent.endpoint.clone(),
+            parent.plugin_id.clone(),
+            parent.params.clone(),
+            parent.send_bar_enabled,
+            parent
+                .params
+                .get("file_service_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            parent
+                .params
+                .get("file_service_protocol")
+                .and_then(Value::as_str)
+                .unwrap_or("sftp")
+                .to_string(),
+            parent
+                .params
+                .get("journald_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            child.name.clone(),
+            child.connected_at,
+            child.channel_index,
+            child.elevated,
+        )
+    };
+
+    Ok(serde_json::json!({
+        "session_id": channel_id,
+        "endpoint": endpoint,
+        "connection_type": plugin_id,
+        "plugin_id": plugin_id,
+        "name": channel_name,
+        "params": params,
+        "connected_at": connected_at,
+        "transfer_enabled": false,
+        "send_bar_enabled": send_bar_enabled,
+        "parent_id": parent_id,
+        "channel_index": channel_index,
+        "elevated": elevated,
+        "file_service_enabled": file_service_enabled,
+        "file_service_protocol": file_service_protocol,
+        "journald_enabled": journald_enabled,
+    }))
 }
 
 // ── SSH 多连接命令 ─────────────────────────────────
@@ -1986,6 +2134,7 @@ pub async fn open_channel(
         &session_id,
         channel,
         mode == ChannelOpenMode::Elevated,
+        true,
     )
     .await?;
 
@@ -2016,8 +2165,6 @@ pub async fn close_channel(
             Err(_) => {
                 if reset_counter.unwrap_or(false) {
                     store.reset_child_counter(&pid);
-                    let path = SessionStore::sessions_file_path(&app);
-                    let _ = store.save_to_disk(&path);
                 }
                 // 异常终端现场只驻留在前端内存中；父连接关闭后后端已释放
                 // 对应 I/O 资源，此时关闭卡片是幂等的 UI 清理。
@@ -2038,9 +2185,7 @@ pub async fn close_channel(
             if reset_counter.unwrap_or(false) {
                 store.reset_child_counter(&pid);
             }
-            // 持久化：父会话已断开
-            let path = SessionStore::sessions_file_path(&app);
-            let _ = store.save_to_disk(&path);
+            // 父会话断开只改变运行态，不写回 Saved Session Library。
         }
         (pid, last, retain_history, cleanup)
     };
@@ -2311,15 +2456,8 @@ pub fn set_network_send_target(
 // ── 会话持久化命令 ─────────────────────────────────
 
 #[tauri::command]
-pub fn save_sessions(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let path = SessionStore::sessions_file_path(&app);
-    store.save_to_disk(&path)
-}
-
-#[tauri::command]
 pub fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
-    let path = SessionStore::sessions_file_path(&app);
+    let path = SessionStore::sessions_file_path(&app)?;
     let mut saved = SessionStore::load_from_disk(&path)?;
 
     // SSH has one current persistence model only. Any plaintext authentication
@@ -2381,9 +2519,11 @@ pub fn save_session_config(
         uuid::Uuid::new_v4().to_string()
     };
 
-    if pid == "ssh" {
-        secure_ssh_session_params(&state, &id, &mut params)?;
-    }
+    let pending_ssh_credential = if pid == "ssh" {
+        prepare_ssh_session_params(&state, &id, &mut params)?
+    } else {
+        None
+    };
 
     // TRDP Workspace is edited and persisted by the custom session view rather
     // than the connection form. Reconfiguring a saved/disconnected TRDP
@@ -2396,16 +2536,15 @@ pub fn save_session_config(
                 .and_then(|handle| handle.params.get("trdp_workspace"))
                 .cloned()
         });
-        let persisted_workspace = active_workspace.or_else(|| {
-            let path = SessionStore::sessions_file_path(&app);
-            SessionStore::load_from_disk(&path)
-                .ok()?
+        let persisted_workspace = if active_workspace.is_some() {
+            active_workspace
+        } else {
+            let path = SessionStore::sessions_file_path(&app)?;
+            SessionStore::load_from_disk(&path)?
                 .into_iter()
-                .find(|saved| saved.id == id)?
-                .params
-                .get("trdp_workspace")
-                .cloned()
-        });
+                .find(|saved| saved.id == id)
+                .and_then(|saved| saved.params.get("trdp_workspace").cloned())
+        };
         if let Some(workspace) = persisted_workspace {
             params
                 .as_object_mut()
@@ -2426,7 +2565,7 @@ pub fn save_session_config(
     let saved = crate::kernel::session_store::SavedSession {
         id: id.clone(),
         name: session_name,
-        plugin_id: pid,
+        plugin_id: pid.clone(),
         endpoint,
         params: params.clone(),
         timestamp: now,
@@ -2444,7 +2583,16 @@ pub fn save_session_config(
             .unwrap_or(0),
     };
 
-    SessionStore::save_config_to_disk(&app, saved)?;
+    if pid == "ssh" {
+        SessionStore::save_config_to_disk_transactional(&app, saved, || {
+            if let Some(pending) = pending_ssh_credential {
+                commit_ssh_credential(&state, pending)?;
+            }
+            Ok(())
+        })?;
+    } else {
+        SessionStore::save_config_to_disk(&app, saved)?;
+    }
 
     Ok(id)
 }
@@ -2461,25 +2609,21 @@ pub fn delete_session_config(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let path = SessionStore::sessions_file_path(&app);
-    let is_ssh = SessionStore::load_from_disk(&path)
-        .ok()
-        .and_then(|sessions| sessions.into_iter().find(|saved| saved.id == session_id))
-        .is_some_and(|saved| saved.plugin_id == "ssh");
-
-    SessionStore::delete_config_from_disk(&app, &session_id)?;
-
-    if is_ssh {
-        let account = ssh_credential_account(&session_id);
-        if let Err(error) = state.credential_store.delete_credential(&account) {
-            log::warn!(
-                "Unable to remove SSH credential after deleting session {}: {}",
-                session_id,
-                error
-            );
+    SessionStore::delete_config_from_disk_transactional(&app, &session_id, |deleted_session| {
+        if deleted_session.is_some_and(|saved| saved.plugin_id == "ssh") {
+            let account = ssh_credential_account(&session_id);
+            state
+                .credential_store
+                .delete_credential(&account)
+                .map_err(|error| {
+                    format!(
+                        "无法删除 SSH 安全凭据；Session 删除已回滚，请重试: {}",
+                        error
+                    )
+                })?;
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 // ── 凭据存储状态 ────────────────────────────────────
@@ -2513,6 +2657,9 @@ pub fn lock_credential_vault(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_config(state: State<'_, AppState>, key: String) -> Result<Option<Value>, String> {
+    if !state.config_store.persistence_ready() {
+        return Err("ConfigStore persistence is unavailable".to_string());
+    }
     Ok(state.config_store.get::<Value>(&key))
 }
 
@@ -2555,7 +2702,10 @@ pub fn set_theme(state: State<'_, AppState>, name: String) -> Result<(), String>
 ///
 /// 锁顺序：session_store → log_engine（与 write_data 保持一致，避免死锁）
 #[tauri::command]
-pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Result<String, String> {
+pub async fn start_session_log(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<String, String> {
     // 先锁定 session_store 读取会话信息（锁在块结束时释放）
     let (session_name, port_name, data_mode) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -2578,22 +2728,40 @@ pub fn start_session_log(state: State<'_, AppState>, session_id: String) -> Resu
         )
     };
 
-    // 再锁定 log_engine 发送启动命令
-    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    // 只在短临界区读取配置并克隆 sender；ACK 等待不得持有 LogEngine 锁。
+    let log_sender = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        if !log_engine.get_config()?.session_enabled {
+            return Err("Session Data Log is disabled in Settings".to_string());
+        }
+        log_engine.sender()
+    };
 
+    let (response_tx, response_rx) = std::sync::mpsc::sync_channel(1);
     let cmd = LogEntry::Command(crate::kernel::log_engine::LogCommand::StartSession {
         session_id: session_id.clone(),
         session_name,
         port_name,
         data_mode,
+        response: response_tx,
     });
 
-    log_engine
-        .sender()
-        .send(cmd)
-        .map_err(|e| format!("发送日志启动命令失败: {}", e))?;
+    log_sender
+        .try_send(cmd)
+        .map_err(|e| format!("日志控制队列繁忙，启动请求未入队: {}", e))?;
 
-    Ok(session_id)
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        response_rx
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|error| format!("等待日志启动确认失败: {}", error))
+    })
+    .await
+    .map_err(|error| format!("日志启动确认任务失败: {}", error))??;
+
+    match result {
+        Ok(_status) => Ok(session_id),
+        Err(error) => Err(error),
+    }
 }
 
 /// 停止会话数据日志记录
@@ -2605,8 +2773,8 @@ pub fn stop_session_log(state: State<'_, AppState>, session_id: String) -> Resul
 
     log_engine
         .sender()
-        .send(cmd)
-        .map_err(|e| format!("发送日志停止命令失败: {}", e))?;
+        .try_send(cmd)
+        .map_err(|e| format!("日志控制队列繁忙，停止请求未入队: {}", e))?;
 
     Ok(())
 }
@@ -2641,15 +2809,33 @@ pub fn set_system_log_config(
     enabled: bool,
     level: String,
 ) -> Result<(), String> {
-    crate::kernel::log_engine::set_system_log_config(enabled, &level);
+    let _log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+    let (previous_enabled, previous_level) =
+        crate::kernel::log_engine::system_log_config_checked()?;
     state
         .config_store
-        .set("logging.system_enabled", &enabled)
+        .set_batch(&[
+            ("logging.system_enabled", serde_json::json!(enabled)),
+            ("logging.system_level", serde_json::json!(level.clone())),
+        ])
         .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.system_level", &level)
-        .map_err(|e| e.to_string())?;
+
+    if let Err(apply_error) = crate::kernel::log_engine::set_system_log_config(enabled, &level) {
+        let rollback = state.config_store.set_batch(&[
+            (
+                "logging.system_enabled",
+                serde_json::json!(previous_enabled),
+            ),
+            ("logging.system_level", serde_json::json!(previous_level)),
+        ]);
+        return match rollback {
+            Ok(()) => Err(apply_error),
+            Err(rollback_error) => Err(format!(
+                "{}; ConfigStore rollback failed: {}",
+                apply_error, rollback_error
+            )),
+        };
+    }
     Ok(())
 }
 
@@ -2657,7 +2843,7 @@ pub fn set_system_log_config(
 #[tauri::command]
 pub fn get_log_dir(state: State<'_, AppState>) -> Result<String, String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let config = log_engine.get_config();
+    let config = log_engine.get_config()?;
     Ok(config.log_dir.to_string_lossy().to_string())
 }
 
@@ -2667,17 +2853,21 @@ pub fn get_log_dir(state: State<'_, AppState>) -> Result<String, String> {
 /// 前端调用此命令获取 Rust 端的当前配置，确保 UI 显示与后端一致。
 #[tauri::command]
 pub fn get_log_config(state: State<'_, AppState>) -> Result<LogConfigResponse, String> {
+    if !state.config_store.persistence_ready() {
+        return Err("ConfigStore persistence is unavailable".to_string());
+    }
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    Ok(log_engine.get_config_response())
+    log_engine.get_config_response()
 }
 
 /// 在系统文件管理器中打开日志目录
 #[tauri::command]
 pub fn open_log_dir(state: State<'_, AppState>) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let config = log_engine.get_config();
+    let config = log_engine.get_config()?;
     let path = config.log_dir.clone();
-    let _ = std::fs::create_dir_all(&path);
+    std::fs::create_dir_all(&path)
+        .map_err(|error| format!("创建日志目录失败 {:?}: {}", path, error))?;
 
     #[cfg(target_os = "windows")]
     {
@@ -2712,67 +2902,95 @@ pub fn update_log_config(
     config: LogConfigUpdate,
 ) -> Result<(), String> {
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    log_engine.update_config(config);
-    let current = log_engine.get_config();
-    drop(log_engine);
+    let current = log_engine.get_config()?;
+    let next_session_enabled = config.session_enabled.unwrap_or(current.session_enabled);
+    let next_file_max_size = config.file_max_size.unwrap_or(current.file_max_size);
+    let next_buffer_size = config.buffer_size.unwrap_or(current.buffer_size);
+    let next_flush_interval_ms = config
+        .flush_interval_ms
+        .unwrap_or(current.flush_interval_ms);
+    let next_retention_days = config.retention_days.unwrap_or(current.retention_days);
 
     state
         .config_store
-        .set("logging.session_enabled", &current.session_enabled)
+        .set_batch(&[
+            (
+                "logging.session_enabled",
+                serde_json::json!(next_session_enabled),
+            ),
+            (
+                "logging.file_max_size",
+                serde_json::json!(next_file_max_size),
+            ),
+            ("logging.buffer_size", serde_json::json!(next_buffer_size)),
+            (
+                "logging.flush_interval_ms",
+                serde_json::json!(next_flush_interval_ms),
+            ),
+            (
+                "logging.retention_days",
+                serde_json::json!(next_retention_days),
+            ),
+        ])
         .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.file_max_size", &current.file_max_size)
-        .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.buffer_size", &current.buffer_size)
-        .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.flush_interval_ms", &current.flush_interval_ms)
-        .map_err(|e| e.to_string())?;
-    state
-        .config_store
-        .set("logging.retention_days", &current.retention_days)
-        .map_err(|e| e.to_string())?;
+
+    if let Err(apply_error) = log_engine.update_config(config) {
+        let rollback = state.config_store.set_batch(&[
+            (
+                "logging.session_enabled",
+                serde_json::json!(current.session_enabled),
+            ),
+            (
+                "logging.file_max_size",
+                serde_json::json!(current.file_max_size),
+            ),
+            (
+                "logging.buffer_size",
+                serde_json::json!(current.buffer_size),
+            ),
+            (
+                "logging.flush_interval_ms",
+                serde_json::json!(current.flush_interval_ms),
+            ),
+            (
+                "logging.retention_days",
+                serde_json::json!(current.retention_days),
+            ),
+        ]);
+        return match rollback {
+            Ok(()) => Err(apply_error),
+            Err(rollback_error) => Err(format!(
+                "{}; ConfigStore rollback failed: {}",
+                apply_error, rollback_error
+            )),
+        };
+    }
     Ok(())
 }
 
 /// 清除所有日志文件
 #[tauri::command]
-pub fn clear_all_logs(state: State<'_, AppState>) -> Result<(), String> {
-    let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-    let config = log_engine.get_config();
+pub async fn clear_all_logs(state: State<'_, AppState>) -> Result<(), String> {
+    let log_sender = {
+        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
+        log_engine.sender()
+    };
+    let (response_tx, response_rx) = std::sync::mpsc::sync_channel(1);
+    log_sender
+        .try_send(LogEntry::Command(
+            crate::kernel::log_engine::LogCommand::ClearAll {
+                response: response_tx,
+            },
+        ))
+        .map_err(|e| format!("日志控制队列繁忙，清理请求未入队: {}", e))?;
 
-    // 1. 删除磁盘上的旧日志文件
-    match std::fs::read_dir(&config.log_dir) {
-        Ok(entries) => {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().is_none_or(|e| e != "log") {
-                    continue;
-                }
-                let _ = std::fs::remove_file(&path);
-            }
-            log::info!("所有日志文件已清除");
-        }
-        Err(e) => {
-            // 目录不存在不算错误
-            if e.kind() != std::io::ErrorKind::NotFound {
-                return Err(format!("清除日志失败: {}", e));
-            }
-        }
-    }
-
-    // 2. 通知消费者线程关闭旧文件句柄并创建新文件
-    //    必须在删除之后发送：消费者收到此命令后会 flush 旧句柄
-    //    并通过 rotate_file() 创建带递增序号的新文件
-    let _ = log_engine.sender().send(LogEntry::Command(
-        crate::kernel::log_engine::LogCommand::ReopenAfterClear,
-    ));
-
-    Ok(())
+    tauri::async_runtime::spawn_blocking(move || {
+        response_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|error| format!("等待日志清理确认失败: {}", error))?
+    })
+    .await
+    .map_err(|error| format!("日志清理确认任务失败: {}", error))?
 }
 
 // ── 虚拟串口驱动管理 ────────────────────────────────
@@ -3667,7 +3885,7 @@ async fn connect_session_tftp(
     // 使用容器会话模式（无 I/O loop — TFTP 无终端数据流）
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let sid = store.create_container_session(
+        store.create_container_session(
             ContainerSessionCreateOptions {
                 name: session_name.clone(),
                 plugin_id: "tftp".into(),
@@ -3681,10 +3899,7 @@ async fn connect_session_tftp(
             Some(side_channel.clone()),
             None,
             None,
-        )?;
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
-        sid
+        )?
     };
 
     log::info!("TFTP 会话已创建（容器模式）: {}", sid);
@@ -4116,7 +4331,7 @@ async fn connect_session_iperf(
     // 使用容器会话模式（无 I/O loop — iperf 无终端数据流）
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let sid = store.create_container_session(
+        store.create_container_session(
             ContainerSessionCreateOptions {
                 name: session_name.clone(),
                 plugin_id: "iperf".into(),
@@ -4130,10 +4345,7 @@ async fn connect_session_iperf(
             Some(side_channel.clone()),
             None,
             None,
-        )?;
-        let path = SessionStore::sessions_file_path(&app);
-        let _ = store.save_to_disk(&path);
-        sid
+        )?
     };
 
     log::info!("iperf 会话已创建（容器模式）: {}", sid);

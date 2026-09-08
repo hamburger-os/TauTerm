@@ -111,6 +111,9 @@
     "deleteConfirm": "Delete this session?",
     "clearAllDisconnected": "Clear all disconnected sessions",
     "status": "Status",
+    "deletePersistFailed": "Failed to delete the saved session: {{error}}. The session remains in the list so you can retry.",
+    "loadPersistFailed": "Failed to load saved sessions: {{error}}. The on-disk library was left untouched.",
+    "renamePersistFailed": "Failed to rename the saved session: {{error}}. The previous name was restored.",
     "displayOverflow": "Display overflow in {{session}} — {{count}} chunks were dropped from the presentation path. Wire data is not assumed lost, but the current view may be incomplete."
   },
   "stats": {
@@ -394,6 +397,7 @@
     "disconnected": "Session disconnected, send unavailable",
     "basicMode": "Basic Send",
     "modeLocked": "Mode locked during sending",
+    "assetPersistFailed": "Engineering asset storage failed ({{operation}} · {{key}}): {{error}}",
     "autoReplyMode": "Auto Reply",
     "scriptMode": "Script Editor",
     "new": "New",
@@ -726,7 +730,8 @@
     "started": "Logging started",
     "stopped": "Logging stopped",
     "writing": "Writing",
-    "lossWarning": "Logging overflow detected — session: {{session}}, system: {{system}}. The affected log stream may be incomplete."
+    "lossWarning": "Logging overflow detected — session: {{session}}, system: {{system}}. The affected log stream may be incomplete.",
+    "configSaveError": "Logging settings were not saved: {{error}}. The UI was restored to the backend state."
   },
   "common": {
     "ok": "OK",

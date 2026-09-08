@@ -22,6 +22,7 @@ pub mod data_batcher;
 pub mod file_transfer;
 pub mod log_engine;
 pub mod log_writer;
+pub mod persistence;
 pub mod plugin_adapter;
 pub mod plugin_host;
 pub mod script_engine;
