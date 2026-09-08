@@ -550,8 +550,6 @@ impl LogEngine {
 
         // 从配置获取超时
         let get_timeout = |cfg: &LogConfig| Duration::from_millis(cfg.flush_interval_ms);
-        let timeout = get_timeout(&initial_config);
-
         loop {
             // 检查取消信号
             if cancel_flag.load(Ordering::SeqCst) {
