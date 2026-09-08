@@ -19,11 +19,15 @@ function formatCommand(command, args) {
 
 function run(command, args, { capture = false } = {}) {
   console.log(`\n> ${formatCommand(command, args)}`);
-  const result = spawnSync(command, args, {
+  // On Windows, Node >= 22 throws EINVAL when spawning a .cmd/.bat file via
+  // spawnSync without a shell. Batch files must go through the shell.
+  const isBatch = isWindows && /\.(cmd|bat)$/i.test(command);
+  const result = spawnSync(isBatch ? formatCommand(command, args) : command, isBatch ? [] : args, {
     cwd: root,
     env: process.env,
     encoding: "utf8",
     stdio: capture ? ["inherit", "pipe", "inherit"] : "inherit",
+    shell: isBatch,
   });
 
   if (result.error) {
