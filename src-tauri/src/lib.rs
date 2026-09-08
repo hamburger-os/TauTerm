@@ -172,26 +172,34 @@ pub fn run() {
                                 .config_store
                                 .get::<String>("logging.system_level")
                                 .unwrap_or_else(|| "info".to_string());
-                            kernel::log_engine::set_system_log_config(system_enabled, &system_level);
+                            if let Err(error) =
+                                kernel::log_engine::set_system_log_config(system_enabled, &system_level)
+                            {
+                                log::warn!("系统日志运行态配置初始化失败: {}", error);
+                            }
 
                             if let Ok(log_engine) = state.log_engine.lock() {
-                                log_engine.update_config(kernel::log_engine::LogConfigUpdate {
-                                    session_enabled: state
-                                        .config_store
-                                        .get::<bool>("logging.session_enabled"),
-                                    file_max_size: state
-                                        .config_store
-                                        .get::<u64>("logging.file_max_size"),
-                                    buffer_size: state
-                                        .config_store
-                                        .get::<usize>("logging.buffer_size"),
-                                    flush_interval_ms: state
-                                        .config_store
-                                        .get::<u64>("logging.flush_interval_ms"),
-                                    retention_days: state
-                                        .config_store
-                                        .get::<u64>("logging.retention_days"),
-                                });
+                                if let Err(error) =
+                                    log_engine.update_config(kernel::log_engine::LogConfigUpdate {
+                                        session_enabled: state
+                                            .config_store
+                                            .get::<bool>("logging.session_enabled"),
+                                        file_max_size: state
+                                            .config_store
+                                            .get::<u64>("logging.file_max_size"),
+                                        buffer_size: state
+                                            .config_store
+                                            .get::<usize>("logging.buffer_size"),
+                                        flush_interval_ms: state
+                                            .config_store
+                                            .get::<u64>("logging.flush_interval_ms"),
+                                        retention_days: state
+                                            .config_store
+                                            .get::<u64>("logging.retention_days"),
+                                    })
+                                {
+                                    log::warn!("Session 日志运行态配置初始化失败: {}", error);
+                                }
                             }
                         }
 
@@ -235,7 +243,9 @@ pub fn run() {
             };
             if let Some(state) = app.try_state::<AppState>() {
                 if let Ok(log_engine) = state.log_engine.lock() {
-                    log_engine.set_log_dir(log_dir.clone());
+                    if let Err(error) = log_engine.set_log_dir(log_dir.clone()) {
+                        log::warn!("日志目录运行态配置失败: {}", error);
+                    }
                 }
             }
             let _ = std::fs::create_dir_all(&log_dir);
