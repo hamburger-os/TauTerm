@@ -83,7 +83,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
   }, []);
 
   return (
-    <div className={`${styles.toolbar} liquid-glass`} onMouseDown={handleToolbarMouseDown}>
+    <div data-testid="toolbar" className={`${styles.toolbar} liquid-glass`} onMouseDown={handleToolbarMouseDown}>
       {/* 左侧：Logo（可拖动）+ 侧栏图标按钮 + 插件左区 */}
       <div className={styles.leftZone}>
         <span className={styles.logo}><Icon name="logo" size="lg" /> TauTerm</span>
@@ -122,6 +122,7 @@ export default function Toolbar({ onAction, isMaximized }: ToolbarProps) {
           role="button"
           tabIndex={0}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleClick("commands"); }}
+          data-testid="command-palette-trigger"
           aria-label={t("toolbar.commands")}
           title={t("toolbar.commands") + " (Ctrl+Shift+P)"}
         >
