@@ -13,6 +13,7 @@ SSH 使用版本化的本地 `known_hosts.json` 作为主机身份信任源：
 - 首次连接：展示 `host:port` 与 SHA-256 fingerprint，用户明确接受后才持久化；
 - 已知主机且 fingerprint 一致：自动通过，并更新 `last_seen`；
 - 已知主机 fingerprint 变化：默认拒绝，不允许普通“继续”确认静默覆盖旧信任；
+- known-host 文件损坏、版本不支持或存储未初始化：备份原文件后保持 fail-closed，不把已有信任状态降级成新的 TOFU；
 - 并发验证以独立 `request_id` 关联，不再用 fingerprint 作为 pending key；
 - 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走受信路径。
 
