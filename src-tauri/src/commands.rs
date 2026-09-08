@@ -1112,7 +1112,7 @@ async fn connect_session_local_shell(
 /// 简单根终端会话的共享连接流程。
 ///
 /// Serial 的虚拟端口、SSH 与 Local Shell 的多终端容器需要专属 orchestration；
-/// 当前由 Telnet 复用这里的日志、SessionStore、持久化和事件语义。
+/// 当前由 Telnet 复用这里的日志、SessionStore 和事件语义。
 fn connect_simple_terminal_session(
     app: AppHandle,
     state: &State<'_, AppState>,
@@ -1366,6 +1366,9 @@ async fn connect_session_ssh(
             .as_millis() as u64,
     );
 
+    let channel0_connected =
+        terminal_sub_channel_connected_payload(&state, &parent_id, &channel0_id)?;
+
     log::info!(
         "SSH 会话已连接: {} @ {} (parent: {}, channel_0: {})",
         actual_name,
@@ -1394,7 +1397,7 @@ async fn connect_session_ssh(
             "is_container": true,
         }),
     );
-    announce_terminal_sub_channel_connected(&app, &state, &parent_id, &channel0_id)?;
+    let _ = app.emit("session-connected", channel0_connected);
 
     Ok(parent_id)
 }
@@ -1440,7 +1443,7 @@ pub async fn disconnect_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 单次锁获取：读取 → 保存 → 关闭（close_session 内部调用 shutdown() 清理侧通道）
+    // 单次锁获取：读取 → 关闭（close_session 内部调用 shutdown() 清理侧通道）
     let (pairs_to_destroy, session_name, is_tftp, is_iperf) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
 
@@ -1990,12 +1993,11 @@ async fn create_terminal_sub_channel(
     Ok(channel_id)
 }
 
-fn announce_terminal_sub_channel_connected(
-    app: &tauri::AppHandle,
+fn terminal_sub_channel_connected_payload(
     app_state: &AppState,
     parent_id: &str,
     channel_id: &str,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     let (
         endpoint,
         plugin_id,
@@ -2049,27 +2051,23 @@ fn announce_terminal_sub_channel_connected(
         )
     };
 
-    let _ = app.emit(
-        "session-connected",
-        serde_json::json!({
-            "session_id": channel_id,
-            "endpoint": endpoint,
-            "connection_type": plugin_id,
-            "plugin_id": plugin_id,
-            "name": channel_name,
-            "params": params,
-            "connected_at": connected_at,
-            "transfer_enabled": false,
-            "send_bar_enabled": send_bar_enabled,
-            "parent_id": parent_id,
-            "channel_index": channel_index,
-            "elevated": elevated,
-            "file_service_enabled": file_service_enabled,
-            "file_service_protocol": file_service_protocol,
-            "journald_enabled": journald_enabled,
-        }),
-    );
-    Ok(())
+    Ok(serde_json::json!({
+        "session_id": channel_id,
+        "endpoint": endpoint,
+        "connection_type": plugin_id,
+        "plugin_id": plugin_id,
+        "name": channel_name,
+        "params": params,
+        "connected_at": connected_at,
+        "transfer_enabled": false,
+        "send_bar_enabled": send_bar_enabled,
+        "parent_id": parent_id,
+        "channel_index": channel_index,
+        "elevated": elevated,
+        "file_service_enabled": file_service_enabled,
+        "file_service_protocol": file_service_protocol,
+        "journald_enabled": journald_enabled,
+    }))
 }
 
 // ── SSH 多连接命令 ─────────────────────────────────
