@@ -11,7 +11,10 @@ import "./plugins/tftp";
 import "./plugins/iperf";
 import "./plugins/network";
 import "./plugins/trdp";
+import { installFrontendRuntimeDiagnostics } from "./utils/runtimeDiagnostics";
 import "./styles/global.css";
+
+installFrontendRuntimeDiagnostics();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
