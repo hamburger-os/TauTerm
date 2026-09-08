@@ -3,10 +3,9 @@
 //! 所有面向前端的 Tauri 命令。
 //! 通过 SerialAdapter + SessionStore + Channel 架构管理会话。
 
-mod config;
-mod platform;
-pub use config::{delete_config, get_active_theme, get_config, get_theme_list, set_config, set_theme};
-pub use platform::{check_virtual_port_driver, cleanup_virtual_ports, install_virtual_port_driver};
+pub(crate) mod config;
+pub(crate) mod files;
+pub(crate) mod platform;
 
 use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
 use crate::channel::DisconnectInfo;
