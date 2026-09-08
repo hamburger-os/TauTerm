@@ -337,7 +337,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       // Ctrl+Insert / Shift+Insert：传统终端兼容别名。
       const compatibilityCopy = e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey && e.key === "Insert";
       const compatibilityPaste = e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && e.key === "Insert";
-      // Meta+C / Meta+V：macOS 平台习惯；不改变 Ctrl+C / Ctrl+V 的 PTY 语义。
+      // Meta+C / Meta+V：使用 Meta 修饰键的平台习惯；不改变 Ctrl+C / Ctrl+V 的 PTY 语义。
       const macCopy = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "c";
       const macPaste = e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey && lowerKey === "v";
 
@@ -489,7 +489,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     setContextMenu(prev => ({ ...prev, visible: false }));
   }, []);
 
-  // 构建菜单项：根据 isConnected / selection / clipboard 动态控制 disabled
+  // 构建菜单项：根据 isConnected / selection 动态控制 disabled
   const contextMenuItems = useMemo((): ContextMenuItem[] => {
     const term = xtermRef.current;
     const hasSel = term ? term.hasSelection() : false;
