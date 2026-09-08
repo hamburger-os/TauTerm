@@ -2838,6 +2838,9 @@ pub fn get_log_dir(state: State<'_, AppState>) -> Result<String, String> {
 /// 前端调用此命令获取 Rust 端的当前配置，确保 UI 显示与后端一致。
 #[tauri::command]
 pub fn get_log_config(state: State<'_, AppState>) -> Result<LogConfigResponse, String> {
+    if !state.config_store.persistence_ready() {
+        return Err("ConfigStore persistence is unavailable".to_string());
+    }
     let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
     log_engine.get_config_response()
 }
