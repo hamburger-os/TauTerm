@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.6.4] — 2026-09-08
 
 ### Changed
+- **Terminal clipboard contract** — terminal copy/paste is now explicitly owned by TauTerm instead of relying on implicit WebView/xterm behavior. The defaults are `Ctrl+Shift+C` / `Ctrl+Shift+V`, with `Ctrl+Insert` / `Shift+Insert` compatibility aliases and macOS `Cmd+C` / `Cmd+V`; ordinary `Ctrl+C` / `Ctrl+V` remain available to terminal applications. All paste paths converge on xterm `paste()`, and pastes containing multiple non-empty lines require a preview confirmation before submission.
 - **Runtime hardening boundary** — potentially blocking Tauri commands that touch durable storage, credential backends, platform drivers, subprocesses or thread joins no longer run as synchronous command handlers. A permanent CI contract now rejects reintroducing those blocking patterns, and configuration/theme plus platform command groups were split out of the monolithic command module without changing public invoke names.
 - **Automated verification stack** — adds injected sync/async I/O lifecycle tests, Serial adapter contract tests, protocol-fixture self-tests and a real TauTerm WebDriver smoke workflow on Windows/Linux covering application launch, root overflow, command palette and new-session interaction paths.
 - **Performance and reliability contracts** — adds release-mode JSON performance artifacts for fixed Session I/O dispatch and atomic persistence workloads plus a configurable repeated I/O lifecycle soak workflow. Hosted-runner measurements start as trend evidence rather than arbitrary per-PR score thresholds.
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Diagnostic data minimization** — frontend runtime errors are rate-limited into the existing System Log path, while exported support diagnostics use an explicit metadata whitelist and exclude log contents instead of copying arbitrary application state.
 
 ### Fixed
+- **Terminal context-menu focus** — copy, paste, select-all and clear actions restore keyboard focus to the terminal after the custom context menu closes, so a pasted command can be executed immediately without an extra mouse click.
 - **Frontend runtime error visibility and localization** — React ErrorBoundary, `window.error` and `unhandledrejection` now converge on the System Log diagnostic path; the global crash fallback no longer contains hard-coded Chinese text when the English UI is active.
 - **I/O failure regression coverage** — synchronous and asynchronous channel loops now have automated regression coverage for reads, byte accounting, partial writes, graceful shutdown, cancellation and injected write failures, reducing the chance of lifecycle regressions reaching manual testing.
 
