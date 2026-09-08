@@ -42,7 +42,7 @@ flowchart TB
 - 协议模块声明内容与能力，不直接拥有整个应用导航。
 - 用户语言、快捷键和设置项必须通过公共 registry/context 管理。
 - Terminal 的控制键语义与应用快捷键必须显式分层：普通 `Ctrl+C / Ctrl+V` 不应被通用 WebView 剪贴板逻辑隐式劫持；应用级复制/粘贴必须由 TauTerm 宿主明确路由。设置页不得把 `Ctrl+C`、`Ctrl+V`、`Ctrl+Insert`、`Shift+Insert` 重新绑定给其它动作。
-- 终端粘贴不能绕过 xterm 直接调用 Session `onData`；安全确认只针对“至少两行非空内容且 Bracketed Paste Mode 未开启”的情况，避免普通单行粘贴或已由终端程序保护的多行粘贴产生不必要摩擦。
+- 终端粘贴不能绕过 xterm 直接调用 Session `onData`；安全确认只针对“至少两行非空内容且 Bracketed Paste Mode 未开启”的情况，避免普通单行粘贴或已由终端程序保护的多行粘贴产生不必要摩擦。打开右键菜单不得预读系统剪贴板，只有用户明确执行 Paste 动作后才允许读取。
 - 中英文翻译 key 必须保持结构一致，不能让某个插件只在一个语言文件中增加公共 key；全局错误兜底不得退回硬编码单语文案。
 - renderer 只负责表现稳定的内容类型，不应吞并协议生命周期。
 - 主题视觉合同只在 theme skill 维护；模块文档只描述结构所有权。
