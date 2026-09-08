@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-09-08
+
 ### Changed
 - **Canonical plugin contract** — built-in plugin metadata now lives in one shared manifest set consumed by both Rust and TypeScript; shadow plugin lifecycle descriptors and unused kernel service skeletons were removed so runtime ownership matches the documented architecture.
 - **Versioned persistence ownership** — non-secret settings and reusable Command/Auto Reply/Lua assets now use the persistent Rust ConfigStore; Workspace Layout no longer relies on WebView-local persistence, and the Session Library has an explicit schema version with Saved Session scale separated from the active runtime budget.
@@ -18,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SSH generic-connect fail closed** — SSH production connections can no longer fall back to automatically accepting a host key when the verifier/AppHandle path is unavailable.
 
 ### Fixed
+- **Truthful Local Shell discovery labels** — detected local shells now use their actual component names instead of generic aliases; Windows WSL entries retain the necessary `WSL · <distribution>` classification while preserving the registered distribution name.
+- **Windows release build helper on Node.js 22+** — release tooling now routes `.cmd`/`.bat` executables through the Windows shell so `npm run build:release` no longer fails with `EINVAL` when invoking npm batch wrappers.
+- **Bundled com0com resource fidelity** — vendored Windows text/INF resources preserve their required CRLF line endings, preventing release preparation or checkout normalization from rewriting packaged driver metadata.
 - **Atomic local state persistence** — ConfigStore, SSH known-host trust and the Session Library now commit through atomic file replacement. Runtime Session lifecycle no longer bulk-saves active state back into the Saved Session Library; the legacy `save_sessions` IPC and runtime-to-Library APIs were removed so saved configuration changes only pass through explicit transactional entry points. ConfigStore refuses writes when its persistence path was not initialized, invalid state is only reset after a backup succeeds, Session Library read-modify-write paths fail closed on read errors, and durable load/delete failures remain visible instead of being interpreted as an empty library.
 - **SSH cross-store transaction hardening** — SSH Session config and secure credentials now use explicit commit/rollback boundaries. Failed Session Library writes no longer leave new credentials behind or replace credentials for an unchanged config; failed credential commits/deletes restore the Session Library snapshot, direct-connect credentials are persisted only after connection succeeds, and native keyring secret/index mutations restore their previous state when later index updates fail.
 - **Overload-safe logging path** — disabling Session Data Log now stops producers before the shared queue, presentation overflow warnings use the same exponential throttling as UI notices, and system-log file failures cannot recursively feed the LogBridge; write failures are counted as explicit log loss. Clearing logs is acknowledged by the writer-owning consumer after handles are closed, files removed and active Session writers reopened.
