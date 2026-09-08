@@ -1286,5 +1286,17 @@
     "errors": {
       "connectRequired": "Connect this TRDP session before using this runtime action. Offline capture, XML, and Workspace analysis remain available."
     }
+  },
+  "runtimeErrors": {
+    "title": "Application error",
+    "unknown": "Unknown error",
+    "retry": "Retry"
+  },
+  "diagnostics": {
+    "title": "Diagnostics",
+    "description": "Export a sanitized support bundle containing build, runtime health, plugin and aggregated session metadata. Credentials, endpoints, session names and raw session payloads are excluded.",
+    "export": "Export diagnostics",
+    "exportSuccess": "Diagnostic bundle exported.",
+    "exportFailed": "Diagnostic export failed: {{error}}"
   }
 }
