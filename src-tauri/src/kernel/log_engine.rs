@@ -76,11 +76,10 @@ impl Log for LogBridge {
         if !SYSTEM_LOG_ENABLED.load(Ordering::Relaxed) {
             return false;
         }
-        // 检查级别过滤
-        let min_level = SYSTEM_LOG_MIN_LEVEL
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_default();
+        // 检查级别过滤。锁损坏时 fail-closed，避免伪造默认级别继续写日志。
+        let Ok(min_level) = SYSTEM_LOG_MIN_LEVEL.lock().map(|s| s.clone()) else {
+            return false;
+        };
         let min = match min_level.as_str() {
             "error" => log::Level::Error,
             "warn" => log::Level::Warn,
@@ -524,7 +523,19 @@ impl LogEngine {
         config_arc: Arc<Mutex<LogConfig>>,
         active_logs: Arc<Mutex<HashMap<String, LogStatus>>>,
     ) {
-        let initial_config = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
+        let read_config = || {
+            config_arc
+                .lock()
+                .map(|config| config.clone())
+                .map_err(|error| format!("log config lock poisoned: {error}"))
+        };
+        let initial_config = match read_config() {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("TauTerm: LogEngine consumer cannot start: {error}");
+                return;
+            }
+        };
 
         // 启动时清理过期日志。System Log 与 Session Log 启用状态彼此独立，
         // 清理策略不应被任意一个开关短路。
@@ -548,15 +559,27 @@ impl LogEngine {
                 break;
             }
 
-            // 动态读取配置获取最新超时
-            let current_timeout = config_arc
-                .lock()
-                .map(|c| get_timeout(&c))
-                .unwrap_or(timeout);
+            // 动态读取配置获取最新超时。配置锁损坏时停止 consumer，
+            // 不能退化成默认配置继续写入未知目录。
+            let current_timeout = match read_config() {
+                Ok(config) => get_timeout(&config),
+                Err(error) => {
+                    eprintln!("TauTerm: LogEngine consumer stopped: {error}");
+                    Self::flush_all(&mut writers, &active_logs, &mut system_writer);
+                    break;
+                }
+            };
 
             match rx.recv_timeout(current_timeout) {
                 Ok(LogEntry::Command(cmd)) => {
-                    let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
+                    let cfg = match read_config() {
+                        Ok(config) => config,
+                        Err(error) => {
+                            eprintln!("TauTerm: LogEngine consumer stopped: {error}");
+                            Self::flush_all(&mut writers, &active_logs, &mut system_writer);
+                            break;
+                        }
+                    };
                     match cmd {
                         LogCommand::StartSession {
                             session_id,
@@ -739,7 +762,14 @@ impl LogEngine {
                     }
                 }
                 Ok(LogEntry::SessionData(entry)) => {
-                    let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
+                    let cfg = match read_config() {
+                        Ok(config) => config,
+                        Err(error) => {
+                            eprintln!("TauTerm: LogEngine consumer stopped: {error}");
+                            Self::flush_all(&mut writers, &active_logs, &mut system_writer);
+                            break;
+                        }
+                    };
                     if !cfg.session_enabled {
                         continue;
                     }
@@ -766,7 +796,14 @@ impl LogEngine {
                     message,
                     timestamp,
                 }) => {
-                    let cfg = config_arc.lock().map(|c| c.clone()).unwrap_or_default();
+                    let cfg = match read_config() {
+                        Ok(config) => config,
+                        Err(error) => {
+                            eprintln!("TauTerm: LogEngine consumer stopped: {error}");
+                            Self::flush_all(&mut writers, &active_logs, &mut system_writer);
+                            break;
+                        }
+                    };
                     if !SYSTEM_LOG_ENABLED.load(Ordering::Relaxed) {
                         continue;
                     }
@@ -786,7 +823,14 @@ impl LogEngine {
                         // 打开新文件
                         let sys_filename = format!("TauTerm_{}.log", today);
                         let sys_path = cfg.log_dir.join(&sys_filename);
-                        let _ = std::fs::create_dir_all(&cfg.log_dir);
+                        if let Err(error) = std::fs::create_dir_all(&cfg.log_dir) {
+                            record_system_log_loss(&format!(
+                                "cannot create system log directory {:?}: {}",
+                                cfg.log_dir, error
+                            ));
+                            system_date = None;
+                            continue;
+                        }
                         match std::fs::OpenOptions::new()
                             .create(true)
                             .append(true)
