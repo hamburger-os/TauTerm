@@ -8,9 +8,9 @@ export const localShellProfile: ProfileResolver = (tab: TabInfo): SessionProfile
     ? params.executable
     : "localShell.auto";
   const shellKind = params.shell_kind === "wsl" ? "wsl" : "native";
-  const shellLabel = params.preset_id === "wsl-default"
-    ? "localShell.wslDefault"
-    : (typeof params.shell_label === "string" && params.shell_label ? params.shell_label : executable);
+  const shellLabel = typeof params.shell_label === "string" && params.shell_label
+    ? params.shell_label
+    : executable;
   const cwd = typeof params.cwd === "string" && params.cwd
     ? params.cwd
     : (shellKind === "wsl" ? "localShell.wslHomeDirectory" : "localShell.homeDirectory");

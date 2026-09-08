@@ -214,11 +214,11 @@ fn shell_display_label(executable: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or("Shell");
     match stem.to_ascii_lowercase().as_str() {
-        "pwsh" => "Script Shell".into(),
-        "powershell" => "Script Shell (classic)".into(),
-        "cmd" => "Command Shell".into(),
-        "wsl" => "Linux Subsystem".into(),
-        "nu" => "Structured Shell".into(),
+        "pwsh" => "PowerShell".into(),
+        "powershell" => "Windows PowerShell".into(),
+        "cmd" => "Command Prompt".into(),
+        "wsl" => "WSL".into(),
+        "nu" => "Nushell".into(),
         _ => stem.to_string(),
     }
 }
@@ -452,42 +452,36 @@ fn detect_shell_presets() -> Vec<ShellPreset> {
 fn detect_windows_shell_presets() -> Vec<ShellPreset> {
     let mut presets = Vec::new();
 
-    push_resolved_native(&mut presets, "powershell-core", "pwsh.exe", "Script Shell");
+    push_resolved_native(&mut presets, "powershell-core", "pwsh.exe", "PowerShell");
     push_resolved_native(
         &mut presets,
         "windows-powershell",
         "powershell.exe",
-        "Script Shell (classic)",
+        "Windows PowerShell",
     );
-    push_resolved_native(&mut presets, "cmd", "cmd.exe", "Command Shell");
+    push_resolved_native(&mut presets, "cmd", "cmd.exe", "Command Prompt");
 
     if let Some(wsl) = resolve_executable("wsl.exe") {
-        presets.push(ShellPreset::wsl(
-            "wsl-default".into(),
-            wsl.clone(),
-            "Linux subsystem (default distribution)".into(),
-            String::new(),
-        ));
-        for (index, distro) in detect_wsl_distributions(&wsl).into_iter().enumerate() {
+        for distro in detect_wsl_distributions(&wsl) {
             presets.push(ShellPreset::wsl(
                 format!("wsl-distro:{distro}"),
                 wsl.clone(),
-                format!("Linux subsystem · distribution {}", index + 1),
+                format!("WSL · {distro}"),
                 distro,
             ));
         }
     }
 
     if let Some(path) = first_existing_path(&git_bash_candidates()) {
-        presets.push(ShellPreset::native("git-bash", path, "POSIX Shell A"));
+        presets.push(ShellPreset::native("git-bash", path, "Git Bash"));
     }
     if let Some(path) = first_existing_path(&msys2_bash_candidates()) {
-        presets.push(ShellPreset::native("msys2-bash", path, "POSIX Shell B"));
+        presets.push(ShellPreset::native("msys2-bash", path, "MSYS2 Bash"));
     }
     if let Some(path) = first_existing_path(&cygwin_bash_candidates()) {
-        presets.push(ShellPreset::native("cygwin-bash", path, "POSIX Shell C"));
+        presets.push(ShellPreset::native("cygwin-bash", path, "Cygwin Bash"));
     }
-    push_resolved_native(&mut presets, "nushell", "nu.exe", "Structured Shell");
+    push_resolved_native(&mut presets, "nushell", "nu.exe", "Nushell");
 
     presets
 }
@@ -800,12 +794,12 @@ mod tests {
 
     #[test]
     fn derives_stable_shell_labels_from_executable_names() {
-        assert_eq!(shell_display_label(Path::new("pwsh.exe")), "Script Shell");
+        assert_eq!(shell_display_label(Path::new("pwsh.exe")), "PowerShell");
         assert_eq!(
             shell_display_label(Path::new("powershell.exe")),
-            "Script Shell (classic)"
+            "Windows PowerShell"
         );
-        assert_eq!(shell_display_label(Path::new("cmd.exe")), "Command Shell");
+        assert_eq!(shell_display_label(Path::new("cmd.exe")), "Command Prompt");
         assert_eq!(
             shell_display_label(Path::new("custom-shell.exe")),
             "custom-shell"
@@ -857,20 +851,19 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn wsl_default_precedes_distributions_when_available() {
-        if resolve_executable("wsl.exe").is_none() {
+    fn wsl_presets_use_registered_distribution_names() {
+        let Some(wsl) = resolve_executable("wsl.exe") else {
             return;
+        };
+        let distros = detect_wsl_distributions(&wsl);
+        let presets = detect_windows_shell_presets();
+        for distro in distros {
+            let preset = presets
+                .iter()
+                .find(|preset| preset.id == format!("wsl-distro:{distro}"))
+                .expect("registered WSL distribution preset");
+            assert_eq!(preset.label, format!("WSL · {distro}"));
         }
-        let presets = detect_shell_presets();
-        let default_index = presets
-            .iter()
-            .position(|preset| preset.id == "wsl-default")
-            .expect("default subsystem preset");
-        assert!(presets
-            .iter()
-            .skip(default_index + 1)
-            .filter(|preset| preset.id.starts_with("wsl-distro:"))
-            .all(|preset| preset.kind == "wsl"));
     }
 
     #[cfg(windows)]
