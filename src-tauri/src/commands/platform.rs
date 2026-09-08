@@ -7,7 +7,9 @@ use tauri::{AppHandle, Emitter, State};
 
 /// 查询 com0com 驱动状态（前端主动拉取，解决事件在组件挂载前发射的竞态）
 #[tauri::command]
-pub async fn check_virtual_port_driver(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn check_virtual_port_driver(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
     let vpm = state
         .virtual_port_manager
         .lock()
@@ -83,7 +85,9 @@ pub async fn install_virtual_port_driver(
 ///
 /// 返回 `{ cleaned: N, message: "..." }`。
 #[tauri::command]
-pub async fn cleanup_virtual_ports(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn cleanup_virtual_ports(
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
     let mut vpm = state
         .virtual_port_manager
         .lock()
