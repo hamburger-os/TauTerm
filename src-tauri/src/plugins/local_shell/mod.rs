@@ -492,6 +492,7 @@ fn detect_windows_shell_presets() -> Vec<ShellPreset> {
     presets
 }
 
+#[cfg(any(windows, test))]
 fn wsl_distribution_display_label(distro: &str) -> String {
     format!("WSL · {distro}")
 }
