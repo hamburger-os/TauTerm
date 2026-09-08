@@ -93,7 +93,7 @@ jobs:
           TAUTERM_E2E_BINARY: ${{ github.workspace }}\src-tauri\target\debug\tauterm.exe
         run: |
           $driverVersion = (& msedgedriver.exe --version) -join ""
-          if ($driverVersion -notmatch "(\\d+)\\.") {
+          if ($driverVersion -notmatch '(\d+)\.') {
             throw "Unable to determine Microsoft Edge WebDriver major version: $driverVersion"
           }
           $runtimeMajor = [int]$Matches[1]
