@@ -466,7 +466,7 @@ fn detect_windows_shell_presets() -> Vec<ShellPreset> {
             presets.push(ShellPreset::wsl(
                 format!("wsl-distro:{distro}"),
                 wsl.clone(),
-                distro.clone(),
+                format!("WSL · {distro}"),
                 distro,
             ));
         }
@@ -862,7 +862,7 @@ mod tests {
                 .iter()
                 .find(|preset| preset.id == format!("wsl-distro:{distro}"))
                 .expect("registered WSL distribution preset");
-            assert_eq!(preset.label, distro);
+            assert_eq!(preset.label, format!("WSL · {distro}"));
         }
     }
 
