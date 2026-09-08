@@ -31,6 +31,7 @@ pub enum HostTrustDecision {
     Trusted,
     Unknown,
     Changed { expected_fingerprint: String },
+    Unavailable { reason: String },
 }
 
 pub struct KnownHostStore {
@@ -81,17 +82,16 @@ impl KnownHostStore {
             Ok(file) if file.version == KNOWN_HOSTS_VERSION => Ok(file.hosts),
             Ok(file) => {
                 Self::backup_invalid(path)?;
-                log::warn!(
-                    "SSH known-host 版本 {} 不受支持（expected {}）；将重新询问主机信任",
-                    file.version,
-                    KNOWN_HOSTS_VERSION
-                );
-                Ok(HashMap::new())
+                Err(format!(
+                    "SSH known-host 版本 {} 不受支持（expected {}）；原文件已备份，信任存储保持 fail-closed",
+                    file.version, KNOWN_HOSTS_VERSION
+                ))
             }
             Err(error) => {
                 Self::backup_invalid(path)?;
-                log::warn!("SSH known-host 文件损坏: {error}；将重新询问主机信任");
-                Ok(HashMap::new())
+                Err(format!(
+                    "SSH known-host 文件损坏: {error}；原文件已备份，信任存储保持 fail-closed"
+                ))
             }
         }
     }
@@ -115,9 +115,28 @@ impl KnownHostStore {
     }
 
     pub fn evaluate(&self, host: &str, port: u16, fingerprint: &str) -> HostTrustDecision {
+        let configured = match self.path.read() {
+            Ok(path) => path.is_some(),
+            Err(error) => {
+                return HostTrustDecision::Unavailable {
+                    reason: format!("SSH known-host 路径锁错误: {error}"),
+                };
+            }
+        };
+        if !configured {
+            return HostTrustDecision::Unavailable {
+                reason: "SSH known-host 存储尚未初始化".to_string(),
+            };
+        }
+
         let key = Self::key(host, port);
-        let Ok(hosts) = self.hosts.read() else {
-            return HostTrustDecision::Unknown;
+        let hosts = match self.hosts.read() {
+            Ok(hosts) => hosts,
+            Err(error) => {
+                return HostTrustDecision::Unavailable {
+                    reason: format!("SSH known-host 锁错误: {error}"),
+                };
+            }
         };
         match hosts.get(&key) {
             None => HostTrustDecision::Unknown,
@@ -237,6 +256,24 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(dir);
+    }
+
+    #[test]
+    fn invalid_known_hosts_never_downgrades_to_tofu() {
+        let dir = temp_path();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("known_hosts.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+
+        let store = KnownHostStore::new();
+        assert!(store.configure(path.clone()).is_err());
+        assert!(path.with_extension("json.invalid.bak").exists());
+        assert!(matches!(
+            store.evaluate("example.test", 22, "SHA256:first"),
+            HostTrustDecision::Unavailable { .. }
+        ));
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
