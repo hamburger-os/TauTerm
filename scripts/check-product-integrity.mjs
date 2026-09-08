@@ -244,6 +244,12 @@ assert.match(
   /ConfigStore rollback failed/,
   "logging settings must roll back persisted state when runtime apply fails",
 );
+assert.match(
+  commands,
+  /pub fn get_log_config[\s\S]{0,260}persistence_ready/,
+  "logging settings load must fail when ConfigStore persistence is unavailable",
+);
+
 assert.doesNotMatch(
   commands,
   /pub fn save_sessions/,
