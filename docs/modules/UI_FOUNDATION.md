@@ -18,7 +18,7 @@ React 应用由全局上下文和通用组件组成：
 - Shortcut Registry 和 Command Palette 共享稳定 action id；
 - 通用组件与图标系统供协议模块复用；
 - ErrorBoundary、`window.error` 与 `unhandledrejection` 通过统一诊断桥进入 Rust System Log，并进行重复错误节流；公共错误页只消费 i18n key；
-- Windows/Linux 的真实 TauTerm WebView 使用稳定 `data-testid` 合同执行最小运行时 smoke，测试自动化不进入生产运行时插件边界。
+- Windows/Linux 的真实 TauTerm WebView 使用稳定 `data-testid` 合同通过外部 `tauri-driver` 执行最小运行时 smoke，测试自动化不进入生产运行时插件边界。
 
 主题的材质、颜色和动画规范不在本文复制，唯一实现规范仍是 `.agents/skills/tauterm-theme/SKILL.md`。
 
