@@ -15,7 +15,11 @@ pub fn get_config(state: State<'_, AppState>, key: String) -> Result<Option<Valu
 }
 
 #[tauri::command]
-pub async fn set_config(state: State<'_, AppState>, key: String, value: Value) -> Result<(), String> {
+pub async fn set_config(
+    state: State<'_, AppState>,
+    key: String,
+    value: Value,
+) -> Result<(), String> {
     state
         .config_store
         .set(&key, &value)
