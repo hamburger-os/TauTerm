@@ -196,7 +196,11 @@ mod tests {
     #[async_trait::async_trait]
     impl AsyncChannel for MockAsyncChannel {
         async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if let Some(data) = self.reads.lock().unwrap().pop_front() {
+            let data = {
+                let mut reads = self.reads.lock().unwrap();
+                reads.pop_front()
+            };
+            if let Some(data) = data {
                 let n = data.len().min(buf.len());
                 buf[..n].copy_from_slice(&data[..n]);
                 Ok(n)
