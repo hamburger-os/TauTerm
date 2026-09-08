@@ -28,12 +28,12 @@
     "release:check": "node scripts/check-version.js --release",
     "postversion": "node scripts/sync-version.js",
     "version:sync": "node scripts/sync-version.js",
-    "check:product-integrity": "node scripts/check-product-integrity.mjs"
+    "check:product-integrity": "node scripts/check-product-integrity.mjs",
+    "check:tauri-blocking": "node scripts/check-tauri-blocking-contract.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
-    "@tauri-apps/plugin-fs": "^2.0.0",
     "@tauri-apps/plugin-updater": "^2.0.0",
     "@tauri-apps/plugin-process": "^2.0.0",
     "@xterm/addon-fit": "^0.10.0",
