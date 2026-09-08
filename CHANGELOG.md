@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Product maturity roadmap** — documents Product Integrity → Daily Driver → Data Foundation → Engineering Memory as the execution order before higher-level analysis and instrument workflows.
 
 ### Security
-- **Persistent SSH host trust** — first-use host keys are explicitly confirmed and stored locally; matching known hosts reconnect without prompting, concurrent confirmations use independent request IDs, and a changed key is rejected fail-closed rather than silently replacing prior trust.
+- **Persistent SSH host trust** — first-use host keys are explicitly confirmed and stored locally; matching known hosts reconnect without prompting, concurrent confirmations use independent request IDs, and a changed key is rejected fail-closed rather than silently replacing prior trust. Corrupted, unsupported-version or uninitialized known-host state also remains fail-closed instead of resetting to a fresh TOFU store.
 - **SSH generic-connect fail closed** — SSH production connections can no longer fall back to automatically accepting a host key when the verifier/AppHandle path is unavailable.
 
 ### Fixed
