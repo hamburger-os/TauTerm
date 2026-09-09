@@ -161,3 +161,91 @@
   color: var(--text-tertiary);
   line-height: 1.4;
 }
+
+
+.widthRow,
+.rangeRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.numericGrid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 6px;
+  align-items: baseline;
+  font-size: var(--text-xs);
+}
+
+.numericGrid span {
+  color: var(--text-secondary);
+}
+
+.numericGrid code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+
+.bitCell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 32px;
+  padding: 2px;
+  border: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--glass-fill);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.bitCell span {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-tertiary);
+}
+
+.bitCell strong {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.bitCellActive {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--glass-border-default));
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--glass-fill));
+}
+
+.bitCellActive strong {
+  color: var(--color-accent);
+}
+
+.rangeInput {
+  width: 44px;
+  padding: 2px 4px;
+  text-align: center;
+}
+
+.structOptions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.structOptions label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.structOptions select {
+  width: 100%;
+}
