@@ -18,7 +18,7 @@
  * - TX：TCP 走 `subscribeDataSent`（群发扇出由 SessionContext.sendData 统一处理），
  *   UDP 走 `subscribeNetworkManualSent`。
  */
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
