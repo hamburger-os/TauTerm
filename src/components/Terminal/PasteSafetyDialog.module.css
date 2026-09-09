@@ -62,7 +62,7 @@
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   user-select: text;
