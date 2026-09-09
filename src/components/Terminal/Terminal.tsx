@@ -215,10 +215,11 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       return;
     }
     const pasteAnalysis = analyzeTerminalPaste(text);
-    // Bracketed Paste Mode (DECSET 2004) lets a cooperating shell/editor treat the
-    // payload as one paste operation instead of immediately submitting each line.
-    // Only warn when that protection is absent and multiple content lines are present.
-    if (pasteAnalysis.requiresConfirmation && !term.modes.bracketedPasteMode) {
+    // A line break can submit input immediately when Bracketed Paste Mode (DECSET 2004)
+    // is absent. Very large pastes remain confirmable regardless of bracketed mode to
+    // avoid accidentally flooding a remote/serial target or making the UI unresponsive.
+    const shouldWarnForLineBreak = pasteAnalysis.hasLineBreak && !term.modes.bracketedPasteMode;
+    if (shouldWarnForLineBreak || pasteAnalysis.isLargePaste) {
       setPendingPaste(text);
       return;
     }
