@@ -71,7 +71,9 @@ export default function TransferProgressBar({
       case "cancelling":
         return t("fileManager.transferCancelling");
       case "completed":
-        return t("fileManager.transferCompleted");
+        return speed && speed > 0
+          ? `${t("fileManager.transferCompleted")} · ${formatSpeed(speed)}`
+          : t("fileManager.transferCompleted");
       case "failed":
         return t("fileManager.transferFailed");
       case "cancelled":

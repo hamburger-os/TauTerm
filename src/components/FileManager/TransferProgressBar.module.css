@@ -149,7 +149,8 @@
   }
 }
 
-/* 更窄时优先牺牲实时速度，而不是牺牲文件名、百分比或取消/关闭操作。 */
+/* 更窄时仍保留速度；两行布局已经为 detail 预留空间。
+   真正极窄（<=220px）才隐藏进度与速度，关键操作始终优先。 */
 @container filemanager (max-width: 280px) {
   .bar {
     height: 56px;
@@ -159,11 +160,7 @@
       "progress detail action";
   }
 
-  .liveSpeed {
-    display: none;
-  }
-
-  .detailText:not(.liveSpeed) {
+  .detailText {
     max-width: 88px;
   }
 }

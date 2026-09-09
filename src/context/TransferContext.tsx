@@ -168,6 +168,7 @@ type TransferAction =
       previousPhase: ManagedTransferPhase;
       error: string;
     }
+  | { type: "TASK_DISCARD"; sessionId: string; transferId: string }
   | { type: "TASK_DISCARD_SESSION"; sessionId: string };
 
 const initialState: TransferState = {
@@ -401,6 +402,14 @@ function transferReducer(
 
       const preserveFailedProgress =
         payload.is_file_complete && payload.file_success === false && !knownTotal;
+      const measuredSpeed =
+        typeof payload.bytes_per_second === "number"
+        && Number.isFinite(payload.bytes_per_second)
+        && payload.bytes_per_second > 0
+          ? payload.bytes_per_second
+          : null;
+      const nextSpeed = measuredSpeed
+        ?? (payload.is_file_start ? null : current.speed);
       const nextTask: ManagedTransferTask = {
         ...current,
         direction: payload.direction,
@@ -420,13 +429,10 @@ function transferReducer(
           payload.is_batch_complete || preserveFailedProgress
             ? current.percent
             : percent,
-        speed:
-          phase === "transferring"
-          && typeof payload.bytes_per_second === "number"
-          && Number.isFinite(payload.bytes_per_second)
-          && payload.bytes_per_second > 0
-            ? payload.bytes_per_second
-            : null,
+        // Keep the last reliable I/O sample through finalizing so the short-lived
+        // completed card can show a useful throughput summary instead of dropping
+        // directly from live speed to no speed at 100%.
+        speed: nextSpeed,
         error: payload.file_success === false
           ? (payload.file_error || current.error)
           : current.error,
@@ -468,7 +474,7 @@ function transferReducer(
             ...current,
             phase,
             percent: payload.success ? 100 : current.percent,
-            speed: null,
+            speed: payload.success ? current.speed : null,
             error: payload.success ? null : (payload.error || current.error),
           },
         },
@@ -510,6 +516,13 @@ function transferReducer(
         },
       };
     }
+    case "TASK_DISCARD": {
+      const current = state.tasksBySession[action.sessionId];
+      if (!current || current.transferId !== action.transferId) return state;
+      const tasksBySession = { ...state.tasksBySession };
+      delete tasksBySession[action.sessionId];
+      return { ...state, tasksBySession };
+    }
     case "TASK_DISCARD_SESSION": {
       if (!state.tasksBySession[action.sessionId]) return state;
       const tasksBySession = { ...state.tasksBySession };
@@ -539,6 +552,7 @@ interface TransferContextValue {
   receiveFiles: (sessionId: string, downloadDir: string) => Promise<void>;
   cancelTransfer: (sessionId: string) => Promise<void>;
   cancelTask: (sessionId: string, transferId: string) => Promise<void>;
+  dismissTask: (sessionId: string, transferId: string) => void;
   clearError: () => void;
   clearHistory: () => void;
 }
@@ -746,6 +760,10 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     }
   }, [state.tasksBySession]);
 
+  const dismissTask = useCallback((sessionId: string, transferId: string) => {
+    dispatch({ type: "TASK_DISCARD", sessionId, transferId });
+  }, []);
+
   const cancelTransfer = useCallback(async (sessionId: string) => {
     const transferId = activeTransferIdRef.current;
     if (!transferId) return;
@@ -924,6 +942,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         receiveFiles,
         cancelTransfer,
         cancelTask,
+        dismissTask,
         clearError,
         clearHistory,
       }}

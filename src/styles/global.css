@@ -514,17 +514,26 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
 .liquid-glass-select {
   appearance: none;
   -webkit-appearance: none;
+  /* Expanded native option popups are partly OS/WebView chrome rather than normal
+     DOM painting. Advertise the active scheme so dark themes do not open a white
+     menu with dark-theme option text. */
+  color-scheme: dark;
   background-image: var(--select-arrow);
   background-repeat: no-repeat;
   background-position: right 8px center;
-  padding-right: 26px;
   cursor: pointer;
   height: var(--select-height);
   padding: var(--select-padding);
+  /* Must come after the shorthand above or the arrow-safe inset is reset. */
+  padding-right: 26px;
 }
 .liquid-glass-select option {
   background: var(--select-option-bg);
   color: var(--text-primary);
+}
+
+[data-theme="frosted"] .liquid-glass-select {
+  color-scheme: light;
 }
 
 /* 统一 Textarea 工具输入框基类 — 与 .liquid-glass-input 搭配使用 */

@@ -140,10 +140,8 @@
 
 .encodingSelect {
   min-width: 118px;
-  height: 30px;
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  padding: 0 8px;
+  /* Visual geometry, arrow inset and theme colors are owned by
+     .liquid-glass-input + .liquid-glass-select. */
 }
 
 .notice {

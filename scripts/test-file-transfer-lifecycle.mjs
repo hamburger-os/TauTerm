@@ -11,7 +11,13 @@ const hook = await source("src/components/FileManager/hooks/useSftpProgress.ts")
 assert.match(hook, /useTransfer/);
 assert.match(hook, /state\.tasksBySession\[sessionId\]/);
 assert.match(hook, /cancelTask\(sessionId, sftpTask\.transferId\)/);
+assert.match(hook, /dismissTask\(sessionId, transferId\)/);
 assert.match(hook, /SUCCESS_AUTO_HIDE_MS = 5000/);
+assert.match(
+  hook,
+  /window\.setTimeout[\s\S]{0,360}dismissTask\(sessionId, transferId\)/,
+  "successful SFTP cards must remove their exact task snapshot when the five-second auto-hide fires",
+);
 assert.match(hook, /hoveredRef\.current/);
 assert.doesNotMatch(
   hook,
@@ -30,6 +36,11 @@ const bar = await source("src/components/FileManager/TransferProgressBar.tsx");
 assert.match(bar, /phase === "transferring"/);
 assert.match(bar, /transferFinalizing/);
 assert.match(bar, /transferCompleted/);
+assert.match(
+  bar,
+  /case "completed":[\s\S]{0,220}formatSpeed\(speed\)/,
+  "completed SFTP cards should retain and display the last reliable throughput sample",
+);
 assert.match(bar, /return "—"/);
 assert.doesNotMatch(bar, /0 KB\/s/);
 
@@ -38,6 +49,15 @@ assert.match(barCss, /grid-template-areas:\s*"name progress percent detail actio
 assert.match(barCss, /\.closeBtn\s*\{[\s\S]*grid-area:\s*action/);
 assert.match(barCss, /@container filemanager \(max-width: 360px\)/);
 assert.match(barCss, /@container filemanager \(max-width: 220px\)/);
+const narrow280 = barCss.slice(
+  barCss.indexOf("@container filemanager (max-width: 280px)"),
+  barCss.indexOf("@container filemanager (max-width: 220px)"),
+);
+assert.doesNotMatch(
+  narrow280,
+  /\.liveSpeed\s*\{[\s\S]*display:\s*none/,
+  "live speed must remain visible in normal narrow sidebars; only the extreme <=220px tier may hide it",
+);
 assert.doesNotMatch(barCss, /overflow-x\s*:\s*(auto|scroll)/);
 
 // ── Unified task identity and options ──────────────────────────────────────
@@ -281,6 +301,8 @@ assert.match(sharedContext, /tasksBySession:\s*Record<string, ManagedTransferTas
 assert.match(sharedContext, /TASK_STARTED/);
 assert.match(sharedContext, /TASK_PROGRESS/);
 assert.match(sharedContext, /TASK_FINISHED/);
+assert.match(sharedContext, /TASK_DISCARD/);
+assert.match(sharedContext, /const dismissTask = useCallback/);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_STARTED", payload \}\)/);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_PROGRESS", payload: p \}\)/);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_FINISHED", payload \}\)/);
@@ -289,6 +311,12 @@ assert.match(sharedContext, /activeTransferIdRef\.current = ack\.transfer_id/);
 assert.match(sharedContext, /p\.transfer_id !== activeTransferIdRef\.current/);
 assert.match(sharedContext, /batch_complete 只是协议层批次收尾[\s\S]*if \(p\.is_batch_complete\)/);
 assert.match(sharedContext, /const cancelTask = useCallback/);
+assert.match(sharedContext, /const measuredSpeed =/);
+assert.match(
+  sharedContext,
+  /speed:\s*payload\.success \? current\.speed : null/,
+  "successful completion must preserve the last reliable SFTP throughput sample for the auto-dismiss card",
+);
 assert.match(sharedContext, /TASK_CANCEL_REJECTED/);
 assert.match(
   sharedContext,
@@ -320,9 +348,16 @@ assert.match(deleteDialog, /event\.key === "Tab"/);
 assert.match(deleteDialog, /deleteConfirmAction/);
 
 const conflictDialog = await source("src/components/FileManager/ConflictResolutionModal.tsx");
-assert.match(conflictDialog, /keepBothRef\.current\?\.focus\(\)/);
+assert.match(conflictDialog, /role="alertdialog"/);
+assert.match(conflictDialog, /data-policy="keep-both"/);
+assert.match(conflictDialog, /querySelector<HTMLButtonElement>\('\[data-policy="keep-both"\]'\)/);
 assert.match(conflictDialog, /event\.key === "Tab"/);
 assert.match(conflictDialog, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(conflictDialog, /styles\.policyList/);
+assert.match(conflictDialog, /styles\.footer/);
+assert.match(conflictDialog, /variant="danger"/);
+assert.match(conflictDialog, /variant="primary"/);
+assert.match(conflictDialog, /variant="ghost"/);
 
 const propertiesModal = await source("src/components/FileManager/FilePropertiesModal.tsx");
 assert.match(propertiesModal, /const canChmod = entryType === "file" \|\| entryType === "directory"/);
@@ -376,3 +411,29 @@ assert.match(preview, /function formatHex/);
 assert.match(preview, /HEX_RENDER_LIMIT/);
 assert.match(preview, /new TextDecoder\(encoding/);
 assert.match(preview, /aria-pressed=\{mode === "text"\}/);
+assert.match(
+  preview,
+  /encodingSelect\} liquid-glass-input liquid-glass-select/,
+  "preview encoding must use the canonical themed select rather than applying a surface class directly to native select",
+);
+
+const globalCss = await source("src/styles/global.css");
+assert.match(
+  globalCss,
+  /\.liquid-glass-select[\s\S]{0,260}color-scheme:\s*dark/,
+  "dark-theme native select popups must advertise a dark color scheme to WebView/OS chrome",
+);
+assert.match(
+  globalCss,
+  /\[data-theme="frosted"\] \.liquid-glass-select[\s\S]{0,100}color-scheme:\s*light/,
+  "Frosted native select popups must advertise the light color scheme",
+);
+const themedSelectBlock = globalCss.slice(
+  globalCss.indexOf(".liquid-glass-select {"),
+  globalCss.indexOf(".liquid-glass-select option"),
+);
+assert.ok(
+  themedSelectBlock.indexOf("padding: var(--select-padding)") <
+    themedSelectBlock.indexOf("padding-right: 26px"),
+  "select arrow-safe right padding must be declared after the shorthand so it is not reset",
+);

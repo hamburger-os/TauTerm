@@ -185,7 +185,7 @@ export default function FilePreviewModal({
               <label className={styles.encodingControl}>
                 <span>{t("fileManager.previewEncoding")}</span>
                 <select
-                  className={`${styles.encodingSelect} liquid-control-surface`}
+                  className={`${styles.encodingSelect} liquid-glass-input liquid-glass-select`}
                   value={encoding}
                   onChange={(event) => setEncoding(event.target.value as PreviewEncoding)}
                 >
