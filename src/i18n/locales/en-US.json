@@ -1080,7 +1080,13 @@
     "catImage": "Image",
     "catMedia": "Media",
     "catBinary": "Binary",
-    "catGeneric": "File"
+    "catGeneric": "File",
+    "transferPreparing": "Preparing…",
+    "transferFinalizing": "Finalizing…",
+    "transferCancelling": "Cancelling…",
+    "transferCompleted": "Completed",
+    "transferFailed": "Transfer failed",
+    "transferCancelled": "Cancelled"
   },
   "ssh": {
     "host": "Host",
