@@ -31,7 +31,7 @@ export function BitOpsToolInner() {
     const b = parseIntegerInput(opB);
     if (a === null) return null;
     if (bitOp !== "NOT" && b === null) return null;
-    if ((bitOp === "LSHIFT" || bitOp === "RSHIFT") && (b === null || b < 0 || b > 31)) return null;
+    if ((bitOp === "LSHIFT" || bitOp === "RSHIFT" || bitOp === "URSHIFT") && (b === null || b < 0 || b > 31)) return null;
     return bitwiseOp(a, b ?? 0, bitOp);
   }, [opA, opB, bitOp]);
 
@@ -41,7 +41,7 @@ export function BitOpsToolInner() {
     if (opA.trim() && parseIntegerInput(opA) === null) return "tools.invalidNumber";
     if (bitOp !== "NOT" && opB.trim() && parseIntegerInput(opB) === null) return "tools.invalidNumber";
     if (
-      (bitOp === "LSHIFT" || bitOp === "RSHIFT")
+      (bitOp === "LSHIFT" || bitOp === "RSHIFT" || bitOp === "URSHIFT")
       && opB.trim()
       && ((parseIntegerInput(opB) ?? -1) < 0 || (parseIntegerInput(opB) ?? 32) > 31)
     ) {
@@ -152,6 +152,9 @@ export function BitOpsToolInner() {
       {/* ── C sizeof 模式 ── */}
       {mode === "sizeof" && (
         <div className={styles.sizeofSection}>
+          <div className={styles.toolHint}>
+            {t("tools.structAbiHint")}
+          </div>
           <textarea
             className={`${styles.structInput} liquid-glass-input liquid-glass-textarea`}
             value={structCode}
