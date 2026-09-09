@@ -73,6 +73,16 @@ assert.match(service, /Instant::now\(\)/);
 assert.match(service, /fn should_emit_final/);
 assert.match(service, /if throttle\.should_emit_final\(total, local_size\)/);
 assert.match(service, /if throttle\.should_emit_final\(total, remote_size\)/);
+assert.match(
+  service,
+  /local_file[\s\S]{0,180}\.flush\(\)[\s\S]{0,260}if is_cancelled\(cancel\)[\s\S]{0,180}remove_file\(local_path\)/,
+  "download cancellation must remain effective during finalization",
+);
+assert.match(
+  service,
+  /同步本地文件修改时间到远程[\s\S]{0,1200}if is_cancelled\(cancel\)[\s\S]{0,320}remove_file\(remote_path\)/,
+  "upload cancellation must remain effective through flush/metadata finalization",
+);
 assert.doesNotMatch(
   service,
   /\/\/ 最终进度事件（确保 UI 显示 100%）[\s\S]{0,120}cb\(total,/,
@@ -106,5 +116,19 @@ const fileManager = await source("src/components/FileManager/hooks/useFileManage
 assert.match(fileManager, /async function runSftpTransferAndWait/);
 assert.match(fileManager, /payload\.transfer_id !== activeTransferId/);
 assert.match(fileManager, /await runSftpTransferAndWait\(sessionId/);
+assert.match(
+  fileManager,
+  /SFTP 传输结束后刷新当前目录[\s\S]{0,500}event\.payload\.session_id === sessionId[\s\S]{0,220}event\.payload\.protocol === 'sftp'/,
+);
+assert.doesNotMatch(
+  fileManager,
+  /SFTP 传输结束后刷新当前目录[\s\S]{0,650}event\.payload\.success/,
+  "remote listing refresh must also cover partial failure/cancellation",
+);
+
+const sharedContext = await source("src/context/TransferContext.tsx");
+assert.match(sharedContext, /activeProtocolRef\.current = protocol;[\s\S]{0,120}activeSessionIdRef\.current = sessionId/);
+assert.match(sharedContext, /p\.transfer_id !== activeTransferIdRef\.current/);
+assert.match(sharedContext, /p\.bytes_per_second && p\.bytes_per_second > 0/);
 
 console.log("file-transfer-lifecycle: responsive actions, state machine, identity, ordering, speed, and batch semantics verified");
