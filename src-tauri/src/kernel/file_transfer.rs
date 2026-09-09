@@ -35,6 +35,9 @@ pub struct UnifiedProgress {
     /// 所属会话 ID（由 spawn_progress_broadcaster 填充，用于前端跨会话过滤）
     #[serde(default)]
     pub session_id: String,
+    /// 单次传输唯一 ID（由 orchestrator/broadcaster 注入，防止迟到事件污染下一次传输）
+    #[serde(default)]
+    pub transfer_id: String,
     /// 协议标识（如 "ymodem", "sftp"）
     pub protocol: String,
     /// 当前传输的文件名
@@ -43,6 +46,8 @@ pub struct UnifiedProgress {
     pub bytes_done: u64,
     /// 当前文件总字节（0 表示未知大小）
     pub bytes_total: u64,
+    /// 后端 I/O 层测得的传输速率（字节/秒）；None 表示当前没有可靠样本
+    pub bytes_per_second: Option<f64>,
     /// 当前文件在批次中的索引（0-based）
     pub file_index: usize,
     /// 批次中文件总数
@@ -90,10 +95,12 @@ impl UnifiedProgress {
         } = position;
         Self {
             session_id: String::new(),
+            transfer_id: String::new(),
             protocol: protocol.to_string(),
             file_name: file_name.to_string(),
             bytes_done: 0,
             bytes_total: file_size,
+            bytes_per_second: None,
             file_index,
             total_files,
             aggregate_bytes,
@@ -124,10 +131,12 @@ impl UnifiedProgress {
         } = position;
         Self {
             session_id: String::new(),
+            transfer_id: String::new(),
             protocol: protocol.to_string(),
             file_name: file_name.to_string(),
             bytes_done,
             bytes_total,
+            bytes_per_second: None,
             file_index,
             total_files,
             aggregate_bytes,
@@ -139,6 +148,31 @@ impl UnifiedProgress {
             file_error: None,
             is_batch_complete: false,
         }
+    }
+
+    /// 构造带后端测速样本的逐块进度事件。
+    ///
+    /// 串口等协议仍可使用 `chunk()`；SFTP 在真实 async I/O 层测量速率后使用本构造器，
+    /// 避免以 WebView/IPC 事件到达时间反推网络吞吐。
+    pub fn chunk_with_speed(
+        protocol: &str,
+        file_name: &str,
+        bytes_done: u64,
+        bytes_total: u64,
+        position: ProgressPosition,
+        direction: TransferDirection,
+        bytes_per_second: Option<f64>,
+    ) -> Self {
+        let mut progress = Self::chunk(
+            protocol,
+            file_name,
+            bytes_done,
+            bytes_total,
+            position,
+            direction,
+        );
+        progress.bytes_per_second = bytes_per_second.filter(|value| value.is_finite() && *value > 0.0);
+        progress
     }
 
     /// 构造文件完成事件
@@ -159,10 +193,12 @@ impl UnifiedProgress {
         } = position;
         Self {
             session_id: String::new(),
+            transfer_id: String::new(),
             protocol: protocol.to_string(),
             file_name: file_name.to_string(),
             bytes_done: bytes_transferred,
             bytes_total: bytes_transferred,
+            bytes_per_second: None,
             file_index,
             total_files,
             aggregate_bytes,
@@ -190,10 +226,12 @@ impl UnifiedProgress {
         let has_issues = files_failed > 0 || files_skipped > 0;
         Self {
             session_id: String::new(),
+            transfer_id: String::new(),
             protocol: protocol.to_string(),
             file_name: "__batch_complete__".to_string(),
             bytes_done: 0,
             bytes_total: 0,
+            bytes_per_second: None,
             file_index: 0,
             total_files: files_completed + files_failed + files_skipped,
             aggregate_bytes: 0,
