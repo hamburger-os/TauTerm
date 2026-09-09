@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import {
   CRC_PRESETS,
@@ -399,6 +400,30 @@ const diff = ok(diffBytes("AA BB CC", "AA BC CC DD"));
 assert.deepEqual(
   diff.differences.map((entry) => entry.offset),
   [1, 3],
+);
+
+const calculatorToolSource = await readFile(
+  new URL("../src/components/Tools/CalculatorTool.tsx", import.meta.url),
+  "utf8",
+);
+const calculatorToolStyles = await readFile(
+  new URL("../src/components/Tools/CalculatorTool.module.css", import.meta.url),
+  "utf8",
+);
+assert.match(
+  calculatorToolSource,
+  /<select[\s\S]{0,220}liquid-glass-input liquid-glass-select/,
+  "quick-tool top-level navigation must use the themed select control",
+);
+assert.doesNotMatch(
+  calculatorToolSource,
+  /liquid-selector-strip/,
+  "quick-tool top-level categories must not regress to a horizontal selector strip",
+);
+assert.doesNotMatch(
+  calculatorToolStyles,
+  /overflow-x\s*:\s*auto|scrollbar-width\s*:/,
+  "quick-tool navigation must not create a horizontal scrollbar",
 );
 
 console.log(

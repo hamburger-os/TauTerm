@@ -4,20 +4,16 @@
   gap: 6px;
 }
 
-.tabScroller {
+.select {
   width: 100%;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-.tabRow {
-  width: max-content;
-  min-width: 100%;
-}
-
-.tabBtn {
-  flex: 0 0 auto;
-  min-width: 68px;
+  padding: var(--select-padding);
+  font-size: var(--text-xs);
+  height: var(--select-height);
+  transition:
+    background-color var(--transition-input),
+    border-color var(--transition-input),
+    box-shadow var(--transition-input),
+    color var(--transition-input);
 }
 
 .tabBody {

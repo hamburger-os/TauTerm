@@ -30,21 +30,18 @@ export default function CalculatorTool() {
   return (
     <RightSidebarPanel title={t("tools.calculator")}>
       <div className={styles.container}>
-        <div className={styles.tabScroller}>
-          <div className={styles.tabRow + " liquid-selector-strip"}>
-            {TABS.map((tab) => (
-              <button
-                key={tab}
-                className={styles.tabBtn + " liquid-glass-button liquid-selector-button " + (activeTab === tab ? "active liquid-theme-selected" : "")}
-                onClick={() => setActiveTab(tab)}
-                type="button"
-                aria-pressed={activeTab === tab}
-              >
-                {t("tools.toolTabs." + tab)}
-              </button>
-            ))}
-          </div>
-        </div>
+        <select
+          className={styles.select + " liquid-glass-input liquid-glass-select"}
+          value={activeTab}
+          onChange={(event) => setActiveTab(event.target.value as CalcTab)}
+          aria-label={t("tools.calculator")}
+        >
+          {TABS.map((tab) => (
+            <option key={tab} value={tab}>
+              {t("tools.toolTabs." + tab)}
+            </option>
+          ))}
+        </select>
 
         <div className={styles.tabBody}>
           <div className={activeTab === "checksum" ? styles.tabPanel : styles.tabPanelHidden}>
