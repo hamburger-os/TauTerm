@@ -177,6 +177,11 @@ assert.match(
 );
 assert.match(
   sharedContext,
+  /catch \(e\)[\s\S]{0,1200}activeProtocolRef\.current = null;[\s\S]{0,120}activeSessionIdRef\.current = null;/,
+  "pre-start failures must release shared transfer ownership",
+);
+assert.match(
+  sharedContext,
   /batch_complete 只是协议层批次收尾[\s\S]{0,180}if \(p\.is_batch_complete\) \{[\s\S]{0,80}return;/,
   "shared TransferContext must wait for finished instead of treating batch_complete as terminal",
 );
