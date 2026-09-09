@@ -16,17 +16,16 @@ export function useToolInputHistory(
   const [entries, setEntries] = useState<ToolHistoryEntry[]>([]);
 
   useEffect(() => {
-    const normalized = value.trim();
-    if (!enabled || !normalized) return;
+    if (!enabled || !value.trim()) return;
     const timer = window.setTimeout(() => {
       setEntries((previous) => {
-        const existing = previous.find((entry) => entry.value === normalized);
+        const existing = previous.find((entry) => entry.value === value);
         const nextEntry: ToolHistoryEntry = {
-          value: normalized,
+          value,
           pinned: existing?.pinned ?? false,
           lastUsedAt: Date.now(),
         };
-        const without = previous.filter((entry) => entry.value !== normalized);
+        const without = previous.filter((entry) => entry.value !== value);
         const pinned = without.filter((entry) => entry.pinned);
         const recent = without
           .filter((entry) => !entry.pinned)
