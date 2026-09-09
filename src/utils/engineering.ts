@@ -1,5 +1,5 @@
-import { parseByteInput } from "./byteInput";
-import { toolErr, toolOk, type ToolResult } from "./toolResult";
+import { parseByteInput } from "./byteInput.ts";
+import { toolErr, toolOk, type ToolResult } from "./toolResult.ts";
 
 export interface SerialTimingResult {
   bitsPerFrame: number;
