@@ -939,3 +939,34 @@ pub async fn cleanup_remote_partial(
         log::info!("SFTP 已清理远端残缺文件: {}", remote_path);
     }
 }
+
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn completed_chunk_is_not_emitted_twice() {
+        let mut throttle = ProgressThrottle::new();
+        assert!(throttle.should_emit(1024, 1024));
+        assert!(!throttle.should_emit_final(1024, 1024));
+    }
+
+    #[test]
+    fn missing_tail_sample_is_emitted_exactly_once() {
+        let mut throttle = ProgressThrottle::new();
+        assert!(throttle.should_emit(512, 1024));
+        assert!(throttle.should_emit_final(1024, 1024));
+        assert!(!throttle.should_emit_final(1024, 1024));
+    }
+
+    #[test]
+    fn rate_estimator_never_invents_zero_speed_for_no_progress() {
+        let mut rate = TransferRateEstimator::new();
+        assert_eq!(rate.sample(0), None);
+        let sample = rate.sample(1024).expect("first non-zero byte sample should have a rate");
+        assert!(sample.is_finite());
+        assert!(sample > 0.0);
+        assert_eq!(rate.sample(1024), Some(sample));
+    }
+}
