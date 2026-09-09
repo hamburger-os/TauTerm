@@ -68,3 +68,24 @@
   text-align: center;
   padding: 8px 0;
 }
+
+
+.optionRow {
+  display: flex;
+  align-items: center;
+  min-height: 22px;
+}
+
+.checkboxLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.hint {
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  color: var(--text-tertiary);
+}
