@@ -235,21 +235,21 @@ export function parseStructDefinition(
       return null;
     }
 
-    const arrayMatch = declaration.match(/^(.+?)\s+(\w+)\s*\[(\d+)\]\s*$/);
-    const simpleMatch = declaration.match(/^(.+?)\s+(\w+)\s*$/);
+    const arrayMatch = declaration.match(/^(.+?)\s+(\*+\s*)?(\w+)\s*\[(\d+)\]\s*$/);
+    const simpleMatch = declaration.match(/^(.+?)\s+(\*+\s*)?(\w+)\s*$/);
 
     let rawType: string;
     let memberName: string;
     let count = 1;
 
     if (arrayMatch) {
-      rawType = arrayMatch[1].trim();
-      memberName = arrayMatch[2];
-      count = Number.parseInt(arrayMatch[3], 10);
+      rawType = arrayMatch[1].trim() + (arrayMatch[2] ? " *" : "");
+      memberName = arrayMatch[3];
+      count = Number.parseInt(arrayMatch[4], 10);
       if (!Number.isSafeInteger(count) || count <= 0) return null;
     } else if (simpleMatch) {
-      rawType = simpleMatch[1].trim();
-      memberName = simpleMatch[2];
+      rawType = simpleMatch[1].trim() + (simpleMatch[2] ? " *" : "");
+      memberName = simpleMatch[3];
     } else {
       return null;
     }
