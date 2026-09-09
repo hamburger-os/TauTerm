@@ -158,7 +158,7 @@ export default function ConflictResolutionModal({
               <GlassButton
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="md"
                 onClick={() => onResolve(null)}
               >
                 {t("common.cancel")}

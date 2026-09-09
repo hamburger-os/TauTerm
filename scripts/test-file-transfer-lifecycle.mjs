@@ -374,6 +374,11 @@ assert.match(conflictDialog, /styles\.footer/);
 assert.match(conflictDialog, /variant="danger"/);
 assert.match(conflictDialog, /variant="primary"/);
 assert.match(conflictDialog, /variant="ghost"/);
+assert.match(
+  conflictDialog,
+  /variant="ghost"[\s\S]{0,80}size="md"/,
+  "dialog footer cancel action must use the standard md GlassButton geometry",
+);
 
 const conflictDialogCss = await source("src/components/FileManager/ConflictResolutionModal.module.css");
 assert.match(conflictDialogCss, /border-radius:\s*var\(--radius-xl\)/);
