@@ -381,6 +381,11 @@ assert.equal(
 const timing = ok(serialTiming(115200, 8, "none", 1, 100));
 assert.equal(timing.bitsPerFrame, 10);
 assert.ok(Math.abs(timing.millisecondsTotal - 8.6805555556) < 0.0001);
+assert.equal(
+  serialTiming(115200, 8, "none", 1, 1.5).ok,
+  false,
+  "serial byte count must be an integer",
+);
 
 const subnet = ok(subnetInfo("192.168.1.100", 24));
 assert.equal(subnet.network, "192.168.1.0");
