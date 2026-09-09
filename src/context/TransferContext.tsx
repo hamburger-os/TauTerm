@@ -161,6 +161,13 @@ type TransferAction =
   | { type: "TASK_PROGRESS"; payload: UnifiedProgressEvent }
   | { type: "TASK_FINISHED"; payload: TransferFinishedEvent }
   | { type: "TASK_CANCELLING"; sessionId: string; transferId: string }
+  | {
+      type: "TASK_CANCEL_REJECTED";
+      sessionId: string;
+      transferId: string;
+      previousPhase: ManagedTransferPhase;
+      error: string;
+    }
   | { type: "TASK_DISCARD_SESSION"; sessionId: string };
 
 const initialState: TransferState = {
@@ -482,6 +489,27 @@ function transferReducer(
         },
       };
     }
+    case "TASK_CANCEL_REJECTED": {
+      const current = state.tasksBySession[action.sessionId];
+      if (
+        !current
+        || current.transferId !== action.transferId
+        || current.phase !== "cancelling"
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        tasksBySession: {
+          ...state.tasksBySession,
+          [action.sessionId]: {
+            ...current,
+            phase: action.previousPhase,
+            error: action.error,
+          },
+        },
+      };
+    }
     case "TASK_DISCARD_SESSION": {
       if (!state.tasksBySession[action.sessionId]) return state;
       const tasksBySession = { ...state.tasksBySession };
@@ -688,9 +716,35 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   );
 
   const cancelTask = useCallback(async (sessionId: string, transferId: string) => {
-    await invoke("file_transfer_cancel", { sessionId, transferId });
+    const current = state.tasksBySession[sessionId];
+    if (!current || current.transferId !== transferId) {
+      throw new Error("Transfer task is no longer active");
+    }
+    if (
+      current.phase === "completed"
+      || current.phase === "failed"
+      || current.phase === "cancelled"
+    ) {
+      return;
+    }
+
+    const previousPhase = current.phase;
+    // 先进入 cancelling，再发送命令。这样即使 finished 比 invoke resolve 更早到达，
+    // 后续也不会再有“成功返回后把终态倒退为 cancelling”的窗口。
     dispatch({ type: "TASK_CANCELLING", sessionId, transferId });
-  }, []);
+    try {
+      await invoke("file_transfer_cancel", { sessionId, transferId });
+    } catch (error) {
+      dispatch({
+        type: "TASK_CANCEL_REJECTED",
+        sessionId,
+        transferId,
+        previousPhase,
+        error: String(error),
+      });
+      throw error;
+    }
+  }, [state.tasksBySession]);
 
   const cancelTransfer = useCallback(async (sessionId: string) => {
     const transferId = activeTransferIdRef.current;
@@ -723,12 +777,14 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       const u1 = await listen<{ session_id: string }>(
         "session-disconnected",
         (event) => {
+          // 统一任务存储按 Session 管理，任何断开都必须丢弃该 Session 的任务快照；
+          // legacy Transmission 面板的 owner 状态则只在命中 activeSession 时重置。
+          dispatch({ type: "TASK_DISCARD_SESSION", sessionId: event.payload.session_id });
           if (event.payload.session_id !== activeSessionIdRef.current) return;
           activeTransferIdRef.current = null;
           activeDirectionRef.current = null;
           lastAggregateBytesRef.current = 0;
           backendStartedRef.current = false;
-          dispatch({ type: "TASK_DISCARD_SESSION", sessionId: event.payload.session_id });
           dispatch({ type: "RESET_BATCH" });
           dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId: null });
           dispatch({ type: "SET_STATUS", status: "idle" });
