@@ -588,53 +588,77 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
 
         let rd = ctx.remote_dir.clone();
         let files = ctx.files.clone();
+        let protocol = ft.protocol().to_string();
+        let transfer_id = uuid::Uuid::new_v4().to_string();
 
-        // 3. 广播进度 — client_id，前端按此过滤事件
-        spawn_progress_broadcaster(app_for_spawn.clone(), ctx.progress_rx, client_id.clone());
+        // 3. 广播进度 — client_id + transfer_id。finished 必须等待 broadcaster drain。
+        let broadcaster = spawn_progress_broadcaster(
+            app_for_spawn.clone(),
+            ctx.progress_rx,
+            client_id.clone(),
+            transfer_id.clone(),
+        );
 
-        // 4. 发射启动事件 — client_id
+        // 4. 发射启动事件 — client_id + transfer_id
         let _ = app_for_spawn.emit(
             "file-transfer:started",
             serde_json::json!({
                 "session_id": &client_id,
-                "protocol": ft.protocol(),
+                "transfer_id": &transfer_id,
+                "protocol": &protocol,
                 "direction": "send",
             }),
         );
 
         log::info!(
             "侧通道发送: protocol={}, {} 个文件 → {:?}",
-            ft.protocol(),
+            protocol,
             files.len(),
             rd
         );
 
         // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
-        let progress_tx_clone = ctx.progress_tx.clone();
+        let progress_tx = ctx.progress_tx;
         let internal_for_guard = internal_id.clone();
         let handle = tokio::spawn(async move {
-            let mut guard = PanicGuard::new(app_for_spawn.clone(), internal_for_guard);
+            let mut guard = PanicGuard::new(
+                app_for_spawn.clone(),
+                internal_for_guard,
+                client_id.clone(),
+                protocol.clone(),
+                transfer_id.clone(),
+            );
 
             let result = ft
                 .send(
                     &files,
                     rd.as_deref(),
-                    progress_tx_clone,
+                    progress_tx.clone(),
                     cancel_flag.clone(),
                 )
                 .await;
 
-            // 完成事件 — client_id
+            // 关闭最后一个 sender 并等待所有 chunk/file_complete/batch_complete 真正 emit。
+            drop(progress_tx);
+            let _ = broadcaster.await;
+
+            let cancelled = matches!(&result, Err(FileTransferError::Cancelled));
+            let success = result.is_ok();
+            let error = result.as_ref().err().map(|e| e.to_string());
+
+            // 先释放 SessionStore 传输占用，再通知前端完成，消除立即连续上传竞态。
+            guard.complete();
             let _ = app_for_spawn.emit(
                 "file-transfer:finished",
                 serde_json::json!({
                     "session_id": &client_id,
-                    "protocol": ft.protocol(),
-                    "success": result.is_ok(),
-                    "error": result.as_ref().err().map(|e| e.to_string()),
+                    "transfer_id": &transfer_id,
+                    "protocol": &protocol,
+                    "success": success,
+                    "cancelled": cancelled,
+                    "error": error,
                 }),
             );
-            guard.defuse();
         });
 
         // 6. 注册 task handle — internal_id
@@ -680,53 +704,75 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
 
         let download_dir = ctx.download_dir.clone();
         let remote_paths = ctx.remote_paths.clone();
+        let protocol = ft.protocol().to_string();
+        let transfer_id = uuid::Uuid::new_v4().to_string();
 
-        // 3. 广播进度 — client_id，前端按此过滤事件
-        spawn_progress_broadcaster(app_for_spawn.clone(), ctx.progress_rx, client_id.clone());
+        // 3. 广播进度 — client_id + transfer_id。finished 必须等待 broadcaster drain。
+        let broadcaster = spawn_progress_broadcaster(
+            app_for_spawn.clone(),
+            ctx.progress_rx,
+            client_id.clone(),
+            transfer_id.clone(),
+        );
 
-        // 4. 发射启动事件 — client_id
+        // 4. 发射启动事件 — client_id + transfer_id
         let _ = app_for_spawn.emit(
             "file-transfer:started",
             serde_json::json!({
                 "session_id": &client_id,
-                "protocol": ft.protocol(),
+                "transfer_id": &transfer_id,
+                "protocol": &protocol,
                 "direction": "receive",
             }),
         );
 
         log::info!(
             "侧通道接收: protocol={}, {} 个文件 → {}",
-            ft.protocol(),
+            protocol,
             remote_paths.len(),
             download_dir
         );
 
         // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
-        let progress_tx_clone = ctx.progress_tx.clone();
+        let progress_tx = ctx.progress_tx;
         let internal_for_guard = internal_id.clone();
         let handle = tokio::spawn(async move {
-            let mut guard = PanicGuard::new(app_for_spawn.clone(), internal_for_guard);
+            let mut guard = PanicGuard::new(
+                app_for_spawn.clone(),
+                internal_for_guard,
+                client_id.clone(),
+                protocol.clone(),
+                transfer_id.clone(),
+            );
 
             let result = ft
                 .receive(
                     &download_dir,
                     &remote_paths,
-                    progress_tx_clone,
+                    progress_tx.clone(),
                     cancel_flag.clone(),
                 )
                 .await;
 
-            // 完成事件 — client_id
+            drop(progress_tx);
+            let _ = broadcaster.await;
+
+            let cancelled = matches!(&result, Err(FileTransferError::Cancelled));
+            let success = result.is_ok();
+            let error = result.as_ref().err().map(|e| e.to_string());
+
+            guard.complete();
             let _ = app_for_spawn.emit(
                 "file-transfer:finished",
                 serde_json::json!({
                     "session_id": &client_id,
-                    "protocol": ft.protocol(),
-                    "success": result.is_ok(),
-                    "error": result.as_ref().err().map(|e| e.to_string()),
+                    "transfer_id": &transfer_id,
+                    "protocol": &protocol,
+                    "success": success,
+                    "cancelled": cancelled,
+                    "error": error,
                 }),
             );
-            guard.defuse();
         });
 
         // 注册 task handle — internal_id
