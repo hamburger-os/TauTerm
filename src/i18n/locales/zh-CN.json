@@ -959,7 +959,9 @@
     "pasteWarningMeta": "{{lines}} 行内容 · {{characters}} 个字符",
     "pasteWarningPreview": "粘贴内容预览",
     "pasteWarningCancel": "取消",
-    "pasteWarningConfirm": "仍然粘贴"
+    "pasteWarningConfirm": "仍然粘贴",
+    "inspectProtocol": "在协议检查器中查看所选内容",
+    "inspectProtocolFrame": "在协议检查器中查看此帧"
   },
   "logging": {
     "systemLog": "软件自身日志",
