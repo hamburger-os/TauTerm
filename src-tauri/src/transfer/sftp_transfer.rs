@@ -334,7 +334,8 @@ async fn scan_local_directory(root: &Path) -> Result<LocalDirectoryScan, FileTra
     }
 
     // 父目录必须先于子目录创建。按路径深度排序即可保持确定性。
-    scan.directories.sort_by_key(|path| path.matches('/').count());
+    scan.directories
+        .sort_by_key(|path| path.matches('/').count());
     Ok(scan)
 }
 
@@ -365,7 +366,9 @@ impl FileTransfer for SftpFileTransfer {
             mtime: u64,
         }
 
-        let rd = remote_dir.map(|dir| dir.trim_end_matches('/')).unwrap_or("/");
+        let rd = remote_dir
+            .map(|dir| dir.trim_end_matches('/'))
+            .unwrap_or("/");
         let mut plans: Vec<UploadPlan> = Vec::new();
         let mut results: Vec<BatchFileResult> = Vec::new();
 
@@ -608,9 +611,18 @@ impl FileTransfer for SftpFileTransfer {
             }
         }
 
-        let completed = results.iter().filter(|result| result.status == "completed").count();
-        let failed = results.iter().filter(|result| result.status == "failed").count();
-        let skipped = results.iter().filter(|result| result.status == "skipped").count();
+        let completed = results
+            .iter()
+            .filter(|result| result.status == "completed")
+            .count();
+        let failed = results
+            .iter()
+            .filter(|result| result.status == "failed")
+            .count();
+        let skipped = results
+            .iter()
+            .filter(|result| result.status == "skipped")
+            .count();
 
         let _ = progress.send(UnifiedProgress::batch_complete(
             "sftp",
@@ -1015,11 +1027,8 @@ mod tests {
             .expect("file");
 
         #[cfg(unix)]
-        std::os::unix::fs::symlink(
-            root.join("nested").join("data.txt"),
-            root.join("link.txt"),
-        )
-        .expect("symlink");
+        std::os::unix::fs::symlink(root.join("nested").join("data.txt"), root.join("link.txt"))
+            .expect("symlink");
 
         let scan = scan_local_directory(&root).await.expect("scan");
         assert!(scan.directories.iter().any(|path| path == "empty"));
@@ -1036,4 +1045,3 @@ mod tests {
             .any(|item| item.file_name == "link.txt" && item.status == "skipped"));
     }
 }
-

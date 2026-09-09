@@ -1134,7 +1134,10 @@ async fn try_create_remote_directory(
             if now_exists {
                 Ok(false)
             } else {
-                Err(format!("创建远程目录 '{}' 失败: {}", candidate, create_error))
+                Err(format!(
+                    "创建远程目录 '{}' 失败: {}",
+                    candidate, create_error
+                ))
             }
         }
     }
@@ -1215,7 +1218,8 @@ pub async fn sftp_ensure_directory(
             .symlink_metadata(remote_path)
             .await
             .map_err(|e| format!("获取远程目录 '{}' 信息失败: {}", remote_path, e))?;
-        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
+        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory
+        {
             return Ok(());
         }
         return Err(format!("远程路径 '{}' 已存在且不是目录", remote_path));
@@ -1228,7 +1232,8 @@ pub async fn sftp_ensure_directory(
             .symlink_metadata(remote_path)
             .await
             .map_err(|e| format!("获取远程目录 '{}' 信息失败: {}", remote_path, e))?;
-        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
+        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory
+        {
             Ok(())
         } else {
             Err(format!("远程路径 '{}' 被非目录对象占用", remote_path))
@@ -1586,8 +1591,12 @@ mod progress_tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let final_path = dir.path().join("report.txt");
         let temp_path = dir.path().join(".report.part");
-        tokio::fs::write(&final_path, b"old").await.expect("write old");
-        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
+        tokio::fs::write(&final_path, b"old")
+            .await
+            .expect("write old");
+        tokio::fs::write(&temp_path, b"new")
+            .await
+            .expect("write temp");
 
         let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::KeepBoth)
             .await
@@ -1595,7 +1604,10 @@ mod progress_tests {
             .expect("committed path");
 
         assert_ne!(committed, final_path);
-        assert_eq!(tokio::fs::read(&final_path).await.expect("read old"), b"old");
+        assert_eq!(
+            tokio::fs::read(&final_path).await.expect("read old"),
+            b"old"
+        );
         assert_eq!(tokio::fs::read(&committed).await.expect("read new"), b"new");
         assert!(tokio::fs::symlink_metadata(&temp_path).await.is_err());
     }
@@ -1605,8 +1617,12 @@ mod progress_tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let final_path = dir.path().join("report.txt");
         let temp_path = dir.path().join(".report.part");
-        tokio::fs::write(&final_path, b"old").await.expect("write old");
-        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
+        tokio::fs::write(&final_path, b"old")
+            .await
+            .expect("write old");
+        tokio::fs::write(&temp_path, b"new")
+            .await
+            .expect("write temp");
 
         let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::Replace)
             .await
@@ -1614,7 +1630,10 @@ mod progress_tests {
             .expect("committed path");
 
         assert_eq!(committed, final_path);
-        assert_eq!(tokio::fs::read(&final_path).await.expect("read final"), b"new");
+        assert_eq!(
+            tokio::fs::read(&final_path).await.expect("read final"),
+            b"new"
+        );
         let mut entries = tokio::fs::read_dir(dir.path()).await.expect("read dir");
         while let Some(entry) = entries.next_entry().await.expect("entry") {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -1627,13 +1646,20 @@ mod progress_tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let final_path = dir.path().join("report.txt");
         let temp_path = dir.path().join(".report.part");
-        tokio::fs::write(&final_path, b"old").await.expect("write old");
-        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
+        tokio::fs::write(&final_path, b"old")
+            .await
+            .expect("write old");
+        tokio::fs::write(&temp_path, b"new")
+            .await
+            .expect("write temp");
 
         let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::Skip)
             .await
             .expect("commit");
         assert!(committed.is_none());
-        assert_eq!(tokio::fs::read(&final_path).await.expect("read final"), b"old");
+        assert_eq!(
+            tokio::fs::read(&final_path).await.expect("read final"),
+            b"old"
+        );
     }
 }
