@@ -351,7 +351,7 @@ const conflictDialog = await source("src/components/FileManager/ConflictResoluti
 assert.match(conflictDialog, /role="alertdialog"/);
 assert.match(conflictDialog, /data-policy="keep-both"/);
 assert.match(conflictDialog, /querySelector<HTMLButtonElement>\('\[data-policy="keep-both"\]'\)/);
-assert.match(conflictDialog, /event\.key === "Tab"/);
+assert.match(conflictDialog, /event\.key !== "Tab"/);
 assert.match(conflictDialog, /dialogRef\.current\?\.querySelectorAll/);
 assert.match(conflictDialog, /styles\.policyList/);
 assert.match(conflictDialog, /styles\.footer/);
