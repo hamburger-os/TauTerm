@@ -1,71 +1,85 @@
-// ── 编码与数值转换工具函数 ──────────────────────────────────────
+import { bytesToHex, parseByteInput } from "./byteInput";
+import { toolErr, toolOk, type ToolResult } from "./toolResult";
 
-// ══════════════════════════════════════════════════════════════════
-// Base64 编解码
-// ══════════════════════════════════════════════════════════════════
+export interface EncodingOptions {
+  base64IgnoreWhitespace?: boolean;
+}
 
-export function base64Encode(input: string): string {
-  if (!input) return "";
+function strictUtf8Decode(bytes: Uint8Array): ToolResult<string> {
+  try {
+    return toolOk(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    return toolErr("invalidUtf8");
+  }
+}
+
+export function base64Encode(input: string): ToolResult<string> {
   try {
     const bytes = new TextEncoder().encode(input);
-    const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
-    return btoa(binary);
+    const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+    return toolOk(btoa(binary));
   } catch {
-    try {
-      return btoa(input);
-    } catch {
-      return `[Error: Base64 encode failed - input contains unsupported characters]`;
-    }
+    return toolErr("base64EncodeFailed");
   }
 }
 
-export function base64Decode(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) return "";
+export function base64Decode(input: string, ignoreWhitespace = false): ToolResult<string> {
+  let source = input.trim();
+  if (!source) return toolErr("emptyInput");
+  if (ignoreWhitespace) source = source.replace(/\s+/g, "");
+  else if (/\s/.test(source)) return toolErr("base64Whitespace");
 
-  // 格式校验：合法 base64 仅包含 A-Za-z0-9+/=
-  if (!/^[A-Za-z0-9+/=]+$/.test(trimmed)) {
-    return `[Error: Invalid base64 input - contains illegal characters]`;
-  }
+  const canonical =
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+  if (!canonical.test(source)) return toolErr("invalidBase64");
 
   try {
-    const bytes = Uint8Array.from(atob(trimmed), (c) => c.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
+    const bytes = Uint8Array.from(atob(source), (char) => char.charCodeAt(0));
+    return strictUtf8Decode(bytes);
   } catch {
-    try {
-      return atob(trimmed);
-    } catch {
-      return `[Error: Base64 decode failed]`;
-    }
+    return toolErr("invalidBase64");
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// URL 编解码
-// ══════════════════════════════════════════════════════════════════
-
-export function urlEncode(input: string): string {
-  return encodeURIComponent(input);
+export function urlEncode(input: string): ToolResult<string> {
+  return toolOk(encodeURIComponent(input));
 }
 
-export function urlDecode(input: string): string {
+export function urlDecode(input: string): ToolResult<string> {
   try {
-    return decodeURIComponent(input);
+    return toolOk(decodeURIComponent(input));
   } catch {
-    return `[Error: Invalid URL-encoded input]`;
+    return toolErr("invalidUrlEncoding");
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// HEX ↔ 字符串
-// ══════════════════════════════════════════════════════════════════
+export function stringToHex(input: string): ToolResult<string> {
+  return toolOk(bytesToHex(new TextEncoder().encode(input)));
+}
 
-/** 字符串 → HEX（每字节两位大写HEX） */
-export function stringToHex(str: string): string {
-  const bytes = new TextEncoder().encode(str);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).toUpperCase().padStart(2, "0"))
-    .join(" ");
+export function hexToString(input: string): ToolResult<string> {
+  const parsed = parseByteInput(input);
+  if (!parsed.ok) return parsed;
+  return strictUtf8Decode(parsed.value.bytes);
+}
+
+export function hexToAscii(input: string): ToolResult<string> {
+  const parsed = parseByteInput(input);
+  if (!parsed.ok) return parsed;
+  const names: Record<number, string> = {
+    0x00: "\\0",
+    0x08: "\\b",
+    0x09: "\\t",
+    0x0A: "\\n",
+    0x0D: "\\r",
+    0x1B: "\\e",
+    0x7F: "\\x7F",
+  };
+  const output = Array.from(parsed.value.bytes, (byte) => {
+    if (byte >= 0x20 && byte <= 0x7E) return String.fromCharCode(byte);
+    return names[byte] ?? "\\x" + byte.toString(16).toUpperCase().padStart(2, "0");
+  }).join("");
+  return toolOk(output);
 }
 
 function normalizePrefixedDigits(
@@ -73,10 +87,9 @@ function normalizePrefixedDigits(
   prefix: "0x" | "0b",
   digitPattern: RegExp,
 ): string | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  const tokens = trimmed.split(/[\s,]+/).filter(Boolean);
+  const source = input.trim();
+  if (!source) return null;
+  const tokens = source.split(/[\s,]+/).filter(Boolean);
   let cleaned = "";
   for (const token of tokens) {
     const normalizedPrefix = token.slice(0, 2).toLowerCase();
@@ -87,37 +100,6 @@ function normalizePrefixedDigits(
   return cleaned || null;
 }
 
-/** HEX → 字符串（支持空格/逗号/0x分隔） */
-export function hexToString(hex: string): string {
-  const cleaned = normalizeHexDigits(hex);
-  if (!cleaned) return "[Error: Invalid HEX input — contains non-HEX characters]";
-  if (cleaned.length % 2 !== 0) return "[Error: Invalid HEX input — odd number of nibbles]";
-  const bytes: number[] = [];
-  for (let i = 0; i < cleaned.length; i += 2) {
-    bytes.push(Number.parseInt(cleaned.substring(i, i + 2), 16));
-  }
-  return new TextDecoder().decode(new Uint8Array(bytes));
-}
-
-// ══════════════════════════════════════════════════════════════════
-// 进制转换
-// ══════════════════════════════════════════════════════════════════
-
-function normalizeHexDigits(input: string): string | null {
-  return normalizePrefixedDigits(input, "0x", /^[0-9a-fA-F]+$/);
-}
-
-
-function parseDecimalBigInt(input: string): bigint | null {
-  const cleaned = input.trim().replace(/_/g, "");
-  if (!/^[+-]?\d+$/.test(cleaned)) return null;
-  try {
-    return BigInt(cleaned);
-  } catch {
-    return null;
-  }
-}
-
 function parseSignedRadix(
   input: string,
   prefix: "0x" | "0b",
@@ -125,139 +107,165 @@ function parseSignedRadix(
 ): { value: bigint; digits: string } | null {
   let source = input.trim();
   if (!source) return null;
-
   let sign = 1n;
   if (source.startsWith("+") || source.startsWith("-")) {
     sign = source[0] === "-" ? -1n : 1n;
     source = source.slice(1).trim();
   }
-
-  const normalizedSource = prefix === "0b" ? source.replace(/_/g, "") : source;
-  const digits = normalizePrefixedDigits(normalizedSource, prefix, digitPattern);
+  source = source.replace(/_/g, "");
+  const digits = normalizePrefixedDigits(source, prefix, digitPattern);
   if (!digits) return null;
-
   try {
-    const magnitude = BigInt(`${prefix}${digits}`);
-    return { value: sign * magnitude, digits };
+    return { value: sign * BigInt(prefix + digits), digits };
   } catch {
     return null;
   }
 }
 
-export function hexToDec(hex: string): string {
-  const parsed = parseSignedRadix(hex, "0x", /^[0-9a-fA-F]+$/);
-  if (!parsed) return "[Error: Invalid HEX input]";
-  return parsed.value.toString(10);
+function parseDecimalBigInt(input: string): bigint | null {
+  const source = input.trim().replace(/_/g, "");
+  if (!/^[+-]?\d+$/.test(source)) return null;
+  try {
+    return BigInt(source);
+  } catch {
+    return null;
+  }
 }
 
-export function decToHex(dec: string, width?: number): string {
-  const value = parseDecimalBigInt(dec);
-  if (value === null) return "[Error: Invalid decimal input]";
+export function hexToDec(input: string): ToolResult<string> {
+  const parsed = parseSignedRadix(input, "0x", /^[0-9a-fA-F]+$/);
+  return parsed ? toolOk(parsed.value.toString(10)) : toolErr("invalidHexInteger");
+}
+
+export function decToHex(input: string, width?: number): ToolResult<string> {
+  const value = parseDecimalBigInt(input);
+  if (value === null) return toolErr("invalidDecimal");
   const negative = value < 0n;
   const magnitude = negative ? -value : value;
-  let hex = magnitude.toString(16).toUpperCase();
-  if (width) hex = hex.padStart(Math.ceil(width / 4), "0");
-  return `${negative ? "-" : ""}${hex}`;
+  let output = magnitude.toString(16).toUpperCase();
+  if (width) output = output.padStart(Math.ceil(width / 4), "0");
+  return toolOk((negative ? "-" : "") + output);
 }
 
-export function binToDec(bin: string): string {
-  const parsed = parseSignedRadix(bin, "0b", /^[01]+$/);
-  if (!parsed) return "[Error: Invalid binary input]";
-  return parsed.value.toString(10);
+export function binToDec(input: string): ToolResult<string> {
+  const parsed = parseSignedRadix(input, "0b", /^[01]+$/);
+  return parsed ? toolOk(parsed.value.toString(10)) : toolErr("invalidBinary");
 }
 
-export function decToBin(dec: string, width?: number): string {
-  const value = parseDecimalBigInt(dec);
-  if (value === null) return "[Error: Invalid decimal input]";
+export function decToBin(input: string, width?: number): ToolResult<string> {
+  const value = parseDecimalBigInt(input);
+  if (value === null) return toolErr("invalidDecimal");
   const negative = value < 0n;
   const magnitude = negative ? -value : value;
-  let bin = magnitude.toString(2);
-  if (width) bin = bin.padStart(width, "0");
-  return `${negative ? "-" : ""}${bin}`;
+  let output = magnitude.toString(2);
+  if (width) output = output.padStart(width, "0");
+  return toolOk((negative ? "-" : "") + output);
 }
 
-export function hexToBin(hex: string): string {
-  const parsed = parseSignedRadix(hex, "0x", /^[0-9a-fA-F]+$/);
-  if (!parsed) return "[Error: Invalid HEX input]";
+export function hexToBin(input: string): ToolResult<string> {
+  const parsed = parseSignedRadix(input, "0x", /^[0-9a-fA-F]+$/);
+  if (!parsed) return toolErr("invalidHexInteger");
   const negative = parsed.value < 0n;
   const magnitude = negative ? -parsed.value : parsed.value;
-  const binary = magnitude.toString(2).padStart(parsed.digits.length * 4, "0");
-  return `${negative ? "-" : ""}${binary}`;
+  const output = magnitude.toString(2).padStart(parsed.digits.length * 4, "0");
+  return toolOk((negative ? "-" : "") + output);
 }
 
-export function binToHex(bin: string): string {
-  const parsed = parseSignedRadix(bin, "0b", /^[01]+$/);
-  if (!parsed) return "[Error: Invalid binary input]";
+export function binToHex(input: string): ToolResult<string> {
+  const parsed = parseSignedRadix(input, "0b", /^[01]+$/);
+  if (!parsed) return toolErr("invalidBinary");
   const negative = parsed.value < 0n;
   const magnitude = negative ? -parsed.value : parsed.value;
-  const hex = magnitude
+  const output = magnitude
     .toString(16)
     .toUpperCase()
     .padStart(Math.ceil(parsed.digits.length / 4), "0");
-  return `${negative ? "-" : ""}${hex}`;
+  return toolOk((negative ? "-" : "") + output);
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 大小端切换
-// ══════════════════════════════════════════════════════════════════
-
-/**
- * 根据字节宽度反转字节序。
- * @param hex 输入的 HEX 字符串（如 "01020304"）
- * @param byteSize 每组的字节宽度（1/2/4/8）
- */
-export function swapEndian(hex: string, byteSize: 1 | 2 | 4 | 8): string {
-  const cleaned = normalizeHexDigits(hex);
-  if (!cleaned) return "[Error: Invalid HEX input]";
-  if (cleaned.length % 2 !== 0) return "[Error: Invalid HEX input — odd number of nibbles]";
-
-  const groupHexLen = byteSize * 2;
-  if (cleaned.length % groupHexLen !== 0) {
-    return `[Error: HEX input length must be a multiple of ${byteSize} byte(s)]`;
+export function swapEndian(
+  input: string,
+  byteSize: 1 | 2 | 4 | 8,
+): ToolResult<string> {
+  const parsed = parseByteInput(input);
+  if (!parsed.ok) return parsed;
+  const bytes = parsed.value.bytes;
+  if (bytes.length % byteSize !== 0) {
+    return toolErr("incompleteEndianGroup", String(byteSize));
   }
-
-  const groups: string[] = [];
-  for (let i = 0; i < cleaned.length; i += groupHexLen) {
-    const group = cleaned.substring(i, i + groupHexLen);
-    const reversed =
-      group.length === 2 ? group
-        : group.match(/.{2}/g)?.reverse().join("") ?? group;
-    groups.push(reversed);
+  const output = new Uint8Array(bytes.length);
+  for (let offset = 0; offset < bytes.length; offset += byteSize) {
+    for (let index = 0; index < byteSize; index += 1) {
+      output[offset + index] = bytes[offset + byteSize - 1 - index];
+    }
   }
-  return groups.join(" ");
+  return toolOk(bytesToHex(output));
 }
 
-// ══════════════════════════════════════════════════════════════════
-// IEEE754 单精度浮点 ↔ HEX
-// ══════════════════════════════════════════════════════════════════
-
-/** 32位单精度浮点数 → HEX（大端序） */
-export function floatToHex(value: number): string {
-  const buf = new ArrayBuffer(4);
-  new DataView(buf).setFloat32(0, value, false); // big-endian
-  const bytes = new Uint8Array(buf);
-  return Array.from(bytes)
-    .map((b) => b.toString(16).toUpperCase().padStart(2, "0"))
-    .join(" ");
+function parseFloatInput(input: string): number | null {
+  const source = input.trim();
+  if (!source) return null;
+  if (source === "NaN") return Number.NaN;
+  if (source === "Infinity" || source === "+Infinity") return Number.POSITIVE_INFINITY;
+  if (source === "-Infinity") return Number.NEGATIVE_INFINITY;
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(source)) return null;
+  return Number(source);
 }
 
-/** HEX → 32位单精度浮点数（大端序） */
-export function hexToFloat(hex: string): number | null {
-  const cleaned = normalizeHexDigits(hex);
-  if (!cleaned || cleaned.length !== 8) return null;
-  const bytes = new Uint8Array(4);
-  for (let i = 0; i < 4; i++) {
-    bytes[i] = Number.parseInt(cleaned.substring(i * 2, i * 2 + 2), 16);
+function floatToHex(input: string, width: 32 | 64): ToolResult<string> {
+  const value = parseFloatInput(input);
+  if (value === null) return toolErr("invalidFloat");
+  const buffer = new ArrayBuffer(width / 8);
+  const view = new DataView(buffer);
+  if (width === 32) view.setFloat32(0, value, false);
+  else view.setFloat64(0, value, false);
+  return toolOk(bytesToHex(new Uint8Array(buffer)));
+}
+
+function hexToFloat(input: string, width: 32 | 64): ToolResult<string> {
+  const parsed = parseByteInput(input);
+  if (!parsed.ok) return parsed;
+  if (parsed.value.bytes.length !== width / 8) {
+    return toolErr("invalidFloatWidth", String(width));
   }
-  return new DataView(bytes.buffer).getFloat32(0, false);
+  const bytes = parsed.value.bytes;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const value = width === 32 ? view.getFloat32(0, false) : view.getFloat64(0, false);
+  if (Number.isNaN(value)) return toolOk("NaN");
+  if (value === Number.POSITIVE_INFINITY) return toolOk("Infinity");
+  if (value === Number.NEGATIVE_INFINITY) return toolOk("-Infinity");
+  if (Object.is(value, -0)) return toolOk("-0");
+  return toolOk(String(value));
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 转换操作枚举
-// ══════════════════════════════════════════════════════════════════
+export function packedBcdToDecimal(input: string): ToolResult<string> {
+  const parsed = parseByteInput(input);
+  if (!parsed.ok) return parsed;
+  let output = "";
+  for (const byte of parsed.value.bytes) {
+    const high = byte >>> 4;
+    const low = byte & 0x0F;
+    if (high > 9 || low > 9) return toolErr("invalidBcd");
+    output += String(high) + String(low);
+  }
+  return toolOk(output.replace(/^0+(?=\d)/, ""));
+}
+
+export function decimalToPackedBcd(input: string): ToolResult<string> {
+  let source = input.trim();
+  if (!/^\d+$/.test(source)) return toolErr("invalidBcdDecimal");
+  if (source.length % 2 !== 0) source = "0" + source;
+  const bytes = new Uint8Array(source.length / 2);
+  for (let index = 0; index < source.length; index += 2) {
+    bytes[index / 2] =
+      (Number(source[index]) << 4) | Number(source[index + 1]);
+  }
+  return toolOk(bytesToHex(bytes));
+}
 
 export type EncodingOp =
   | "hex-to-string"
+  | "hex-to-ascii"
   | "string-to-hex"
   | "hex-to-dec"
   | "dec-to-hex"
@@ -269,13 +277,19 @@ export type EncodingOp =
   | "base64-decode"
   | "url-encode"
   | "url-decode"
-  | "float-to-hex"
-  | "hex-to-float"
+  | "float32-to-hex"
+  | "hex-to-float32"
+  | "float64-to-hex"
+  | "hex-to-float64"
   | "swap-endian-16"
-  | "swap-endian-32";
+  | "swap-endian-32"
+  | "swap-endian-64"
+  | "packed-bcd-to-dec"
+  | "dec-to-packed-bcd";
 
 export const ENCODING_OP_KEYS: EncodingOp[] = [
   "hex-to-string",
+  "hex-to-ascii",
   "string-to-hex",
   "hex-to-dec",
   "dec-to-hex",
@@ -287,16 +301,25 @@ export const ENCODING_OP_KEYS: EncodingOp[] = [
   "base64-decode",
   "url-encode",
   "url-decode",
-  "float-to-hex",
-  "hex-to-float",
+  "float32-to-hex",
+  "hex-to-float32",
+  "float64-to-hex",
+  "hex-to-float64",
   "swap-endian-16",
   "swap-endian-32",
+  "swap-endian-64",
+  "packed-bcd-to-dec",
+  "dec-to-packed-bcd",
 ];
 
-/** 执行编码转换 */
-export function executeEncodingOp(input: string, op: EncodingOp): string {
+export function executeEncodingOp(
+  input: string,
+  op: EncodingOp,
+  options: EncodingOptions = {},
+): ToolResult<string> {
   switch (op) {
     case "hex-to-string": return hexToString(input);
+    case "hex-to-ascii": return hexToAscii(input);
     case "string-to-hex": return stringToHex(input);
     case "hex-to-dec": return hexToDec(input);
     case "dec-to-hex": return decToHex(input);
@@ -305,22 +328,18 @@ export function executeEncodingOp(input: string, op: EncodingOp): string {
     case "dec-to-bin": return decToBin(input);
     case "bin-to-dec": return binToDec(input);
     case "base64-encode": return base64Encode(input);
-    case "base64-decode": return base64Decode(input);
+    case "base64-decode": return base64Decode(input, options.base64IgnoreWhitespace);
     case "url-encode": return urlEncode(input);
     case "url-decode": return urlDecode(input);
-    case "float-to-hex": {
-      const text = input.trim();
-      if (!text) return `[Error: Invalid float value]`;
-      const f = Number(text);
-      if (Number.isNaN(f)) return `[Error: Invalid float value]`;
-      return floatToHex(f);
-    }
-    case "hex-to-float": {
-      const f = hexToFloat(input);
-      return f !== null ? f.toString() : "[Error: Invalid HEX float input]";
-    }
+    case "float32-to-hex": return floatToHex(input, 32);
+    case "hex-to-float32": return hexToFloat(input, 32);
+    case "float64-to-hex": return floatToHex(input, 64);
+    case "hex-to-float64": return hexToFloat(input, 64);
     case "swap-endian-16": return swapEndian(input, 2);
     case "swap-endian-32": return swapEndian(input, 4);
-    default: return `[Error: Unknown encoding operation]`;
+    case "swap-endian-64": return swapEndian(input, 8);
+    case "packed-bcd-to-dec": return packedBcdToDecimal(input);
+    case "dec-to-packed-bcd": return decimalToPackedBcd(input);
+    default: return toolErr("unsupportedOperation");
   }
 }
