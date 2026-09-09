@@ -63,7 +63,7 @@ impl PanicGuard {
         }
         if let Some(app_state) = self.app.try_state::<AppState>() {
             if let Ok(mut store) = app_state.session_store.lock() {
-                store.transfer_done(&self.sid);
+                store.transfer_done(&self.sid, Some(&self.transfer_id));
             }
         }
         self.cleaned = true;

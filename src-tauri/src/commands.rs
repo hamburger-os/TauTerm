@@ -3649,17 +3649,11 @@ pub fn file_transfer_cancel(
         .ok_or_else(|| store.session_not_found(&session_id))?;
 
     log::info!("请求取消传输: session={}", resolved_id);
-    // 尝试两种取消路径：内联传输和侧通道传输
-    let inline_result = store.cancel_transfer(&resolved_id, transfer_id.as_deref());
-    let sc_result = store.cancel_transfer_op(&resolved_id, transfer_id.as_deref());
-    // 只要其中一个成功即可
-    if inline_result.is_ok() || sc_result.is_ok() {
-        log::info!("传输取消已置位: session={}", resolved_id);
-        Ok(())
-    } else {
-        log::warn!("取消失败：未找到进行中的传输: session={}", resolved_id);
-        Err("取消失败：未找到进行中的传输".into())
-    }
+    store
+        .cancel_scheduled_transfer(&resolved_id, transfer_id.as_deref())
+        .map(|_| {
+            log::info!("传输取消已接受: session={}", resolved_id);
+        })
 }
 
 /// 请求 SSH PTY 窗口大小调整

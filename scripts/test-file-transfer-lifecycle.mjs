@@ -66,11 +66,24 @@ assert.match(
   /oneshot::channel::<\(\)>\(\)[\s\S]*register_transfer_task[\s\S]*file-transfer:started[\s\S]*start_tx\.send\(\(\)\)/,
   "SideChannel tasks must be registered before started/progress can run",
 );
+assert.match(orchestrator, /reserve_inline_transfer/);
+assert.match(orchestrator, /cancel_scheduled_transfer/);
+assert.doesNotMatch(orchestrator, /cancel_transfer_tx|active_transfer_id|transfer_cancel/);
 
 const sessionStore = await source("src-tauri/src/kernel/session_store.rs");
-assert.match(sessionStore, /pub active_transfer_id:\s*Option<String>/);
-assert.match(sessionStore, /active_transfer_id\.as_deref\(\) != Some\(expected\)/);
-assert.match(sessionStore, /没有正在进行的侧通道传输/);
+assert.match(sessionStore, /pub transfer_scheduler:\s*TransferScheduler/);
+assert.match(sessionStore, /reserve_inline_transfer/);
+assert.match(sessionStore, /reserve_side_channel/);
+assert.match(sessionStore, /cancel_scheduled_transfer/);
+assert.doesNotMatch(sessionStore, /pub active_transfer_id:|pub transfer_cancel:|pub cancel_transfer_tx:/);
+
+const scheduler = await source("src-tauri/src/transfer/scheduler.rs");
+assert.match(scheduler, /DEFAULT_MAX_ACTIVE_PER_SESSION:\s*usize = 1/);
+assert.match(scheduler, /enum TransferCancelSignal[\s\S]*Inline[\s\S]*SideChannel/);
+assert.match(scheduler, /pub fn reserve_inline/);
+assert.match(scheduler, /pub fn reserve_side_channel/);
+assert.match(scheduler, /pub fn cancel\(/);
+assert.match(scheduler, /pub fn finish\(/);
 
 // ── Transactional SFTP writes ──────────────────────────────────────────────
 const service = await source("src-tauri/src/transfer/ssh_file_service.rs");

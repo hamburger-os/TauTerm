@@ -28,6 +28,7 @@ use crate::kernel::plugin_adapter::{
     ChannelKind, ProtocolConnection, SessionChannelFactory, SideChannel,
 };
 use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
+use crate::transfer::scheduler::TransferScheduler;
 use crate::virtual_port::backend::VirtualEndpoint;
 use crate::virtual_port::bridge::VirtualPortBridge;
 use serde::{Deserialize, Serialize};
@@ -203,7 +204,6 @@ pub struct ActiveSessionHandle {
     /// 写入通道（None = 容器会话，不可直接写入；I/O 必须通过子连接）
     pub write_tx: Option<mpsc::SyncSender<IoLoopCmd>>,
     pub io_cancel_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    pub cancel_transfer_tx: Option<tokio::sync::oneshot::Sender<()>>,
     pub io_thread: Option<IoTaskHandle>,
     pub state: SessionState,
     pub plugin_id: String,
@@ -241,11 +241,8 @@ pub struct ActiveSessionHandle {
     pub side_channel: Option<Arc<dyn SideChannel>>,
     /// 从该父配置创建子终端的协议无关工厂。
     pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
-    /// 侧通道传输取消标志（传输进行中置位，传输循环每块检查）。
-    /// None 表示当前无传输进行。由传输命令在传输前设置，传输结束后置 None。
-    pub transfer_cancel: Option<Arc<AtomicBool>>,
-    /// 当前传输的精确任务 ID（Inline / SideChannel 共用；任一时刻每 Session 仅一个）。
-    pub active_transfer_id: Option<String>,
+    /// Session 级传输调度器：统一拥有 Inline/SideChannel 的准入、任务 ID 与取消信号。
+    pub transfer_scheduler: TransferScheduler,
     /// 侧通道异步传输任务的 JoinHandle 集合。
     /// 关闭会话时 join 所有 handle，确保传输 task 的 Drop 清理逻辑执行完毕，
     /// 避免残留半成品文件（上传残留远端，下载残留本地）。
@@ -340,9 +337,7 @@ impl Drop for ActiveSessionHandle {
         if let Some(tx) = self.io_cancel_tx.take() {
             let _ = tx.send(());
         }
-        if let Some(tx) = self.cancel_transfer_tx.take() {
-            let _ = tx.send(());
-        }
+        self.transfer_scheduler.cancel_for_shutdown();
         if let Some(ref flag) = self.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
         }
@@ -621,7 +616,6 @@ impl SessionStore {
             name: tab_name,
             write_tx: Some(write_tx),
             io_cancel_tx: Some(cancel_tx),
-            cancel_transfer_tx: None,
             io_thread: Some(io_handle),
             state: SessionState::Connected,
             plugin_id,
@@ -644,8 +638,7 @@ impl SessionStore {
             script_shutdown: None,
             side_channel: conn.side_channel,
             channel_factory: conn.channel_factory,
-            transfer_cancel: None,
-            active_transfer_id: None,
+            transfer_scheduler: TransferScheduler::default(),
             transfer_tasks: Vec::new(),
             teardown_delay: conn.teardown_delay,
             sub_connections: Vec::new(),
@@ -774,7 +767,6 @@ impl SessionStore {
             name: session_name.clone(),
             write_tx: None,
             io_cancel_tx: None,
-            cancel_transfer_tx: None,
             io_thread: None,
             state: SessionState::Connected,
             plugin_id,
@@ -797,8 +789,7 @@ impl SessionStore {
             script_shutdown: None,
             side_channel,
             channel_factory,
-            transfer_cancel: None,
-            active_transfer_id: None,
+            transfer_scheduler: TransferScheduler::default(),
             transfer_tasks: Vec::new(),
             teardown_delay: Duration::ZERO,
             sub_connections: Vec::new(),
@@ -856,13 +847,11 @@ impl SessionStore {
             }
         }
 
-        // ── 侧通道传输取消 ──
-        // 若会话有进行中的文件传输，置位取消标志。传输线程在下次块检查时退出，
-        // 其 RAII guard 的 drop 会调用 transfer_done
-        // (对已移除的 session 是 no-op)。side_channel 通过 Arc clone 保持 SSH
-        // Session 存活，直到传输线程退出，避免 use-after-free。
-        if let Some(flag) = handle.transfer_cancel.take() {
-            flag.store(true, Ordering::SeqCst);
+        // ── 文件传输取消 ──
+        // 调度器知道当前任务使用 Inline oneshot 还是 SideChannel AtomicBool，
+        // 关闭会话只需要一个协议无关取消入口。
+        if handle.transfer_scheduler.is_busy() {
+            handle.transfer_scheduler.cancel_for_shutdown();
             log::info!("已请求取消会话 {} 的进行中传输", session_id);
         }
 
@@ -894,9 +883,7 @@ impl SessionStore {
         }
 
         // 取消正在进行的传输
-        if let Some(tx) = handle.cancel_transfer_tx.take() {
-            let _ = tx.send(());
-        }
+        handle.transfer_scheduler.cancel_for_shutdown();
         // 取消 StatsCollector（通过 AtomicBool 标志）
         if let Some(ref flag) = handle.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
@@ -1795,34 +1782,21 @@ impl SessionStore {
         Ok(params)
     }
 
-    /// 取消当前 Inline 传输。若提供 transfer_id，则必须精确匹配当前任务。
-    pub fn cancel_transfer(
+    /// 为 Inline 传输预留当前 Session 的唯一活动槽。
+    pub fn reserve_inline_transfer(
         &mut self,
         session_id: &str,
-        transfer_id: Option<&str>,
+        transfer_id: &str,
+        cancel_tx: tokio::sync::oneshot::Sender<()>,
     ) -> Result<(), String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        if let Some(expected) = transfer_id {
-            if handle.active_transfer_id.as_deref() != Some(expected) {
-                return Err("传输任务已变化，拒绝取消非当前任务".to_string());
-            }
-        }
-        let tx = handle
-            .cancel_transfer_tx
-            .take()
-            .ok_or_else(|| "没有正在进行的 Inline 传输".to_string())?;
-        let _ = tx.send(());
-        Ok(())
+        handle
+            .transfer_scheduler
+            .reserve_inline(transfer_id, cancel_tx)
     }
 
-    /// 为 SFTP/SCP 传输准备取消标志。
-    ///
-    /// 在传输开始前调用：在会话句柄上设置一个新的 `AtomicBool`（初值 false），
-    /// 返回其 `Arc` 克隆供传输循环轮询。传输结束后应调用 `transfer_done` 清理。
-    ///
-    /// 设计决策：同一会话同一时刻只允许一个传输进行中。
-    /// 若已有传输进行中（flag 已存在），返回错误以防止并发传输互相覆盖取消标志。
+    /// 为 SideChannel 传输预留活动槽，并返回协议循环使用的取消标志。
     pub fn transfer_start(
         &mut self,
         session_id: &str,
@@ -1830,41 +1804,26 @@ impl SessionStore {
     ) -> Result<Arc<AtomicBool>, String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        if handle.transfer_cancel.is_some() || handle.active_transfer_id.is_some() {
-            return Err("该会话已有传输进行中，请等待完成或取消后再试".to_string());
-        }
-        let flag = Arc::new(AtomicBool::new(false));
-        handle.transfer_cancel = Some(flag.clone());
-        handle.active_transfer_id = Some(transfer_id.to_string());
-        Ok(flag)
+        handle
+            .transfer_scheduler
+            .reserve_side_channel(transfer_id)
     }
 
-    /// 取消当前侧通道传输。若提供 transfer_id，则必须精确匹配当前任务。
-    pub fn cancel_transfer_op(
+    /// 精确取消当前 Session 的活动传输，调度器内部区分 Inline / SideChannel。
+    pub fn cancel_scheduled_transfer(
         &mut self,
         session_id: &str,
         transfer_id: Option<&str>,
     ) -> Result<(), String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        let flag = handle
-            .transfer_cancel
-            .as_ref()
-            .ok_or_else(|| "没有正在进行的侧通道传输".to_string())?;
-        if let Some(expected) = transfer_id {
-            if handle.active_transfer_id.as_deref() != Some(expected) {
-                return Err("传输任务已变化，拒绝取消非当前任务".to_string());
-            }
-        }
-        flag.store(true, Ordering::SeqCst);
-        Ok(())
+        handle.transfer_scheduler.cancel(transfer_id)
     }
 
-    /// 清理 SFTP/SCP 传输状态（传输结束后调用，无论成功/失败/取消）。
-    pub fn transfer_done(&mut self, session_id: &str) {
+    /// 清理当前传输占用。SideChannel PanicGuard 与 Inline 归还端口共用此入口。
+    pub fn transfer_done(&mut self, session_id: &str, transfer_id: Option<&str>) {
         if let Some(handle) = self.sessions.get_mut(session_id) {
-            handle.transfer_cancel = None;
-            handle.active_transfer_id = None;
+            let _ = handle.transfer_scheduler.finish(transfer_id);
         }
     }
 
@@ -1913,13 +1872,12 @@ impl SessionStore {
                 // I/O thread 会在父 session close_session 时 join
             }
 
-            // ── 侧通道传输取消 ──
-            // 连接已断开，SFTP 传输不可能完成。置位取消标志使传输循环退出。
-            if let Some(flag) = handle.transfer_cancel.take() {
-                flag.store(true, Ordering::SeqCst);
-                log::info!("已取消会话 {} 的进行中 SFTP 传输（连接已断开）", session_id);
+            // ── 文件传输取消 ──
+            // 调度器统一发出 Inline/SideChannel 取消信号；活动槽由任务真实结束时释放。
+            if handle.transfer_scheduler.is_busy() {
+                handle.transfer_scheduler.cancel_for_shutdown();
+                log::info!("已取消会话 {} 的进行中文件传输（连接已断开）", session_id);
             }
-            handle.active_transfer_id = None;
             // 在独立 task 中 join SFTP handles，不阻塞 on_disconnect 回调
             // mark_disconnected 在 I/O task 回调中调用，通常有 tokio runtime，
             // 但仍做防护性检查以防边缘情况。
@@ -1961,10 +1919,8 @@ impl SessionStore {
                 comm.clear_receivers();
             }
 
-            // ── 取消传输（X/Y/ZModem）──
-            if let Some(tx) = handle.cancel_transfer_tx.take() {
-                let _ = tx.send(());
-            }
+            // ── 取消文件传输 ──
+            handle.transfer_scheduler.cancel_for_shutdown();
 
             // ── 统计采集器 ──
             if let Some(ref flag) = handle.stats_cancel_flag {

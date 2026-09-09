@@ -152,9 +152,8 @@ fn restore_session_state(app: &AppHandle, session_id: &str) {
         if let Ok(mut store) = state.session_store.lock() {
             if let Some(h) = store.get_session_mut(session_id) {
                 h.state = SessionState::Connected;
-                h.cancel_transfer_tx = None;
-                h.active_transfer_id = None;
                 h.channel_return_tx = None;
+                let _ = h.transfer_scheduler.finish(None);
             }
         }
     }
@@ -214,6 +213,7 @@ impl InlineTransferOrchestrator {
         &self,
         app: &AppHandle,
         session_id: &str,
+        transfer_id: &str,
     ) -> Result<
         (
             Box<dyn serialport::SerialPort>,
@@ -229,21 +229,25 @@ impl InlineTransferOrchestrator {
             let app_state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
             let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(session_id);
+            let write_tx = {
+                let handle = store.get_session_mut(session_id).ok_or(not_found)?;
+                if handle.state != SessionState::Connected {
+                    return Err("会话未连接".into());
+                }
+                handle
+                    .write_tx
+                    .as_ref()
+                    .cloned()
+                    .ok_or("容器会话不支持端口移交（HandoffPort）")?
+            };
+
+            // 所有可能失败的静态前置检查完成后再占用 Scheduler 槽，避免启动失败留下 busy。
+            store.reserve_inline_transfer(session_id, transfer_id, cancel_tx)?;
+            let not_found = store.session_not_found(session_id);
             let handle = store.get_session_mut(session_id).ok_or(not_found)?;
-            if handle.state != SessionState::Connected {
-                return Err("会话未连接".into());
-            }
-            if handle.transfer_cancel.is_some() {
-                return Err("该会话已有传输进行中，请等待完成或取消后再试".into());
-            }
             handle.state = SessionState::Transferring;
             handle.channel_return_tx = Some(return_tx);
-            handle.cancel_transfer_tx = Some(cancel_tx);
-            let tx = handle
-                .write_tx
-                .as_ref()
-                .ok_or("容器会话不支持端口移交（HandoffPort）")?;
-            let _ = tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx });
+            let _ = write_tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx });
         }
 
         let mut channel = give_rx.recv().map_err(|e| {
@@ -274,13 +278,13 @@ impl InlineTransferOrchestrator {
         &self,
         app: &AppHandle,
         session_id: &str,
+        transfer_id: &str,
         port: Box<dyn serialport::SerialPort>,
     ) {
         if let Some(app_state) = app.try_state::<AppState>() {
             if let Ok(mut store) = app_state.session_store.lock() {
                 if let Some(h) = store.get_session_mut(session_id) {
-                    h.cancel_transfer_tx = None;
-                    h.active_transfer_id = None;
+                    let _ = h.transfer_scheduler.finish(Some(transfer_id));
                     h.state = SessionState::Connected;
                     if let Some(tx) = h.channel_return_tx.take() {
                         let new_channel = crate::channel::serial_channel::SerialChannel::new(port);
@@ -311,8 +315,10 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: SendContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
-        // 1. Handoff 端口（return_tx 和 cancel_tx 已存入 session handle）
-        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id)?;
+        // 1. 先分配任务身份，再由 Scheduler 预留 Inline 活动槽并 Handoff 端口。
+        let transfer_id = uuid::Uuid::new_v4().to_string();
+        let (port, cancel_rx) =
+            self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
 
         // 2. 创建协议处理器 + SerialFileTransfer
         //    若协议处理器创建失败，必须归还端口，否则 I/O 线程永久阻塞
@@ -320,7 +326,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             match self.create_protocol_handler(ctx.block_size, ctx.checksum_mode, ctx.streaming) {
                 Ok(h) => h,
                 Err(e) => {
-                    self.return_port(&app, &ctx.session_id, port);
+                    self.return_port(&app, &ctx.session_id, &transfer_id, port);
                     emit_transfer_failed(&app, &ctx.session_id, self.pt.as_str());
                     return Err(e);
                 }
@@ -329,14 +335,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
 
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
-        let transfer_id = uuid::Uuid::new_v4().to_string();
-        if let Some(state) = app.try_state::<AppState>() {
-            if let Ok(mut store) = state.session_store.lock() {
-                if let Some(handle) = store.get_session_mut(&sid) {
-                    handle.active_transfer_id = Some(transfer_id.clone());
-                }
-            }
-        }
 
         // 3. 广播进度 — client_id + transfer_id。完成事件必须等待队列 drain。
         let broadcaster = spawn_progress_broadcaster(
@@ -376,15 +374,14 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 7. 归还端口。此步骤完成后下一次串口传输才可安全启动。
         match transfer.take_port() {
             Ok(port) => {
-                self.return_port(&app, &sid, port);
+                self.return_port(&app, &sid, &transfer_id, port);
             }
             Err(e) => {
                 log::error!("无法归还端口: {}", e);
                 if let Some(app_state) = app.try_state::<AppState>() {
                     if let Ok(mut store) = app_state.session_store.lock() {
                         if let Some(h) = store.get_session_mut(&sid) {
-                            h.cancel_transfer_tx = None;
-                            h.active_transfer_id = None;
+                            let _ = h.transfer_scheduler.finish(Some(&transfer_id));
                             h.state = SessionState::Connected;
                             h.channel_return_tx = None;
                         }
@@ -435,8 +432,10 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: ReceiveContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
-        // 1. Handoff 端口（return_tx 和 cancel_tx 已存入 session handle）
-        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id)?;
+        // 1. 先分配任务身份，再由 Scheduler 预留 Inline 活动槽并 Handoff 端口。
+        let transfer_id = uuid::Uuid::new_v4().to_string();
+        let (port, cancel_rx) =
+            self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
 
         // 2. 创建协议处理器 + SerialFileTransfer
         //    若协议处理器创建失败，必须归还端口，否则 I/O 线程永久阻塞
@@ -444,7 +443,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             match self.create_protocol_handler(ctx.block_size, ctx.checksum_mode, ctx.streaming) {
                 Ok(h) => h,
                 Err(e) => {
-                    self.return_port(&app, &ctx.session_id, port);
+                    self.return_port(&app, &ctx.session_id, &transfer_id, port);
                     emit_transfer_failed(&app, &ctx.session_id, self.pt.as_str());
                     return Err(e);
                 }
@@ -453,14 +452,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
 
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
-        let transfer_id = uuid::Uuid::new_v4().to_string();
-        if let Some(state) = app.try_state::<AppState>() {
-            if let Ok(mut store) = state.session_store.lock() {
-                if let Some(handle) = store.get_session_mut(&sid) {
-                    handle.active_transfer_id = Some(transfer_id.clone());
-                }
-            }
-        }
 
         // 3. 广播进度 — client_id + transfer_id。完成事件必须等待队列 drain。
         let broadcaster = spawn_progress_broadcaster(
@@ -506,15 +497,14 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 7. 归还端口
         match transfer.take_port() {
             Ok(port) => {
-                self.return_port(&app, &sid, port);
+                self.return_port(&app, &sid, &transfer_id, port);
             }
             Err(e) => {
                 log::error!("无法归还端口: {}", e);
                 if let Some(app_state) = app.try_state::<AppState>() {
                     if let Ok(mut store) = app_state.session_store.lock() {
                         if let Some(h) = store.get_session_mut(&sid) {
-                            h.cancel_transfer_tx = None;
-                            h.active_transfer_id = None;
+                            let _ = h.transfer_scheduler.finish(Some(&transfer_id));
                             h.state = SessionState::Connected;
                             h.channel_return_tx = None;
                         }
@@ -562,15 +552,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let not_found = store.session_not_found(session_id);
-        let handle = store.get_session_mut(session_id).ok_or(not_found)?;
-
-        if let Some(tx) = handle.cancel_transfer_tx.take() {
-            let _ = tx.send(());
-            Ok(())
-        } else {
-            Err("没有正在进行的传输".into())
-        }
+        store.cancel_scheduled_transfer(session_id, None)
     }
 }
 
@@ -614,9 +596,6 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             let handle = store.get_session_mut(&internal_id).ok_or(not_found)?;
             if handle.state != SessionState::Connected {
                 return Err("会话未连接".into());
-            }
-            if handle.transfer_cancel.is_some() {
-                return Err("该会话已有传输进行中，请等待完成或取消后再试".into());
             }
             let ft = handle
                 .side_channel
@@ -747,9 +726,6 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             if handle.state != SessionState::Connected {
                 return Err("会话未连接".into());
             }
-            if handle.transfer_cancel.is_some() {
-                return Err("该会话已有传输进行中，请等待完成或取消后再试".into());
-            }
             let ft = handle
                 .side_channel
                 .as_ref()
@@ -855,6 +831,6 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.cancel_transfer_op(session_id, None)
+        store.cancel_scheduled_transfer(session_id, None)
     }
 }

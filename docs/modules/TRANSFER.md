@@ -12,7 +12,7 @@
 - **SideChannel**：复用 Session 的独立侧通道，例如 SSH/SFTP；
 - **SeparateConnection**：模型已保留，但当前通用编排器尚未实现该策略。
 
-编排器负责 setup → execute → cleanup，并统一取消、进度广播、panic/error 清理和 Session 状态恢复。
+编排器负责 setup → execute → cleanup，并统一取消、进度广播、panic/error 清理和 Session 状态恢复。每个 Session 的活动任务准入、精确任务 ID 和取消信号由 `TransferScheduler` 单一拥有；默认 `max_active=1`，因此当前行为仍是串行，但并发策略不再散落在 Inline/SFTP 各自的 Option 字段中。
 
 每个已启动传输分配唯一 `transfer_id`。启动命令本身返回 `TransferStartAck { transfer_id }`，事件仍保留 `started` 作为观察型广播。统一事件顺序是：
 
@@ -40,6 +40,7 @@ flowchart LR
 ## 设计边界
 
 - 主 I/O 同一时间只能有一个明确 owner；Inline 传输必须通过 handoff/归还机制协调。
+- Session 级传输准入必须经过 `TransferScheduler`；Inline oneshot 与 SideChannel AtomicBool 取消信号由调度器封装。当前默认并发上限为 1，未来若增加队列/多 SFTP channel，应演进 Scheduler，而不是重新向 SessionHandle 增加平行状态字段。
 - SideChannel 不应阻塞普通终端 I/O。
 - 进度、取消和完成事件使用统一模型，协议实现不再各自创造第二套后端事件协议。
 - **100% 是 payload 字节进度，不等价于完整生命周期结束。** 最后一个字节写入后仍可能存在 flush、metadata/协议收尾和批次提交；前端在真正 `finished` 前必须显示 Finalizing/“正在完成”，不能把 100% 当作完成。
@@ -66,7 +67,7 @@ flowchart LR
 ## 代码锚点
 
 - `src-tauri/src/kernel/file_transfer.rs`
-- `src-tauri/src/transfer/`
+- `src-tauri/src/transfer/`（含 `scheduler.rs`）
 - `src/context/TransferContext.tsx`
 - `src/components/FileTransfer/`
 - `src/components/Transmission/`
