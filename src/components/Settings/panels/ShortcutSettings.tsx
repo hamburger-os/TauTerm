@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { shortcutRegistry, buildKeyString } from "../../../shortcuts/registry";
+import { shortcutRegistry, buildKeyString, isTerminalReservedShortcut } from "../../../shortcuts/registry";
 import type { ShortcutActionId } from "../../../shortcuts/actionIds";
 import { isInputFocused } from "../../../utils/dom";
 import styles from "./ShortcutSettings.module.css";
@@ -67,6 +67,18 @@ export default function ShortcutSettings() {
 
       e.preventDefault();
       e.stopPropagation();
+
+      if (isTerminalReservedShortcut(newKeys)) {
+        if (conflictTimerRef.current) clearTimeout(conflictTimerRef.current);
+        setConflictId(recordingId);
+        setConflictMsg(t("settings.shortcutsReservedTerminal"));
+        setRecordingId(null);
+        conflictTimerRef.current = setTimeout(() => {
+          setConflictId(null);
+          setConflictMsg("");
+        }, 1800);
+        return;
+      }
 
       // 执行更新（含冲突检测）
       const conflict = shortcutRegistry.update(recordingId, newKeys);

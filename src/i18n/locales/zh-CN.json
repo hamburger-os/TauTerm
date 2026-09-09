@@ -588,6 +588,7 @@
     "shortcutsReset": "重置为默认值",
     "shortcutsRecording": "等待输入...",
     "shortcutsConflict": "已被「{{name}}」占用",
+    "shortcutsReservedTerminal": "终端保留键，不可重新绑定",
     "shortcutsCategory_session": "会话",
     "shortcutsCategory_terminal": "终端",
     "shortcutsCategory_application": "应用",
@@ -595,6 +596,8 @@
     "shortcutsAction_closeSession": "关闭当前会话",
     "shortcutsAction_nextTab": "下一个标签页",
     "shortcutsAction_prevTab": "上一个标签页",
+    "shortcutsAction_terminalCopy": "复制",
+    "shortcutsAction_terminalPaste": "粘贴",
     "shortcutsAction_terminalSearch": "终端搜索",
     "shortcutsAction_terminalSelectAll": "全选",
     "shortcutsAction_openPalette": "打开命令面板",
@@ -694,7 +697,13 @@
     "paste": "粘贴",
     "selectAll": "全选",
     "search": "搜索...",
-    "clear": "清屏"
+    "clear": "清屏",
+    "pasteWarningTitle": "确认终端粘贴",
+    "pasteWarningMessage": "此内容包含换行或较大数据量，粘贴后可能立即提交输入，或一次向远端/设备发送大量数据。请确认内容后继续。",
+    "pasteWarningMeta": "{{lines}} 行内容 · {{characters}} 个字符",
+    "pasteWarningPreview": "粘贴内容预览",
+    "pasteWarningCancel": "取消",
+    "pasteWarningConfirm": "仍然粘贴"
   },
   "logging": {
     "systemLog": "软件自身日志",

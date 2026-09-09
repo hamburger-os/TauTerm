@@ -29,11 +29,28 @@ export interface ShortcutAction {
   category: string;
 }
 
+const TERMINAL_RESERVED_KEYS = new Set([
+  "Ctrl+C",
+  "Ctrl+V",
+  "Ctrl+Insert",
+  "Shift+Insert",
+]);
+
+/**
+ * These chords have fixed terminal semantics and must not be rebound through
+ * the generic shortcut editor. Meta+C / Meta+V normalize to Ctrl+C / Ctrl+V
+ * in buildKeyString and are therefore covered by the same guard.
+ */
+export function isTerminalReservedShortcut(keys: string): boolean {
+  return TERMINAL_RESERVED_KEYS.has(keys);
+}
+
 /**
  * 默认快捷键配置（不可变，用于"重置为默认值"）。
  *
- * 注意：Ctrl+Shift+C（复制）和 Ctrl+Shift+V（粘贴）由 xterm.js 原生处理，
- * 不经过 shortcut registry 匹配，因此不出现在此列表中。
+ * 终端复制/粘贴由 TauTerm 宿主明确拥有：默认 Ctrl+Shift+C / Ctrl+Shift+V
+ * 进入 Shortcut Registry；Ctrl+Insert / Shift+Insert 与 macOS Meta+C / Meta+V
+ * 作为终端兼容别名在 Terminal renderer 内处理，不占用可配置 action。
  */
 export const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   // Session
@@ -42,6 +59,8 @@ export const DEFAULT_SHORTCUTS: ShortcutAction[] = [
   { id: ACTION_IDS.SESSION_NEXT, keys: "Ctrl+Tab", descriptionKey: "settings.shortcutsAction_nextTab", description: "下一个标签页", category: "Session" },
   { id: ACTION_IDS.SESSION_PREV, keys: "Ctrl+Shift+Tab", descriptionKey: "settings.shortcutsAction_prevTab", description: "上一个标签页", category: "Session" },
   // Terminal
+  { id: ACTION_IDS.TERMINAL_COPY, keys: "Ctrl+Shift+C", descriptionKey: "settings.shortcutsAction_terminalCopy", description: "复制", category: "Terminal" },
+  { id: ACTION_IDS.TERMINAL_PASTE, keys: "Ctrl+Shift+V", descriptionKey: "settings.shortcutsAction_terminalPaste", description: "粘贴", category: "Terminal" },
   { id: ACTION_IDS.TERMINAL_SEARCH, keys: "Ctrl+F", descriptionKey: "settings.shortcutsAction_terminalSearch", description: "终端搜索", category: "Terminal" },
   { id: ACTION_IDS.TERMINAL_SELECT_ALL, keys: "Ctrl+Shift+A", descriptionKey: "settings.shortcutsAction_terminalSelectAll", description: "全选", category: "Terminal" },
   // Application
@@ -73,6 +92,11 @@ class ShortcutRegistry {
     const target = this.shortcuts.get(id);
     if (!target) return null;
 
+    // 终端保留键属于输入语义不变量；即使绕过设置页直接调用 registry 也必须 fail closed。
+    if (isTerminalReservedShortcut(newKeys)) {
+      return target.description;
+    }
+
     // 冲突检测：检查 newKeys 是否已被其他动作占用
     for (const [existingId, existing] of this.shortcuts) {
       if (existingId !== id && existing.keys === newKeys) {
@@ -92,6 +116,8 @@ class ShortcutRegistry {
   match(event: KeyboardEvent): ShortcutAction | null {
     const pressed = buildKeyString(event);
     if (!pressed) return null;
+    // 无论持久化状态如何，Ctrl+C / Ctrl+V 等终端保留键绝不能被全局动作截获。
+    if (isTerminalReservedShortcut(pressed)) return null;
 
     for (const shortcut of this.shortcuts.values()) {
       if (this.keysMatch(pressed, shortcut.keys)) {
@@ -144,7 +170,7 @@ class ShortcutRegistry {
         const data: ShortcutAction[] = JSON.parse(raw);
         let hasInvalid = false;
         for (const s of data) {
-          if (validIds.has(s.id)) {
+          if (validIds.has(s.id) && !isTerminalReservedShortcut(s.keys)) {
             this.shortcuts.set(s.id, s);
           } else {
             hasInvalid = true;

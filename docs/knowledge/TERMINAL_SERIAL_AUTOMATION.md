@@ -11,6 +11,18 @@
 
 TauTerm 使用 xterm.js 作为终端呈现层。实现终端输入/输出、清屏、光标、颜色或控制序列行为时，不应凭“常见终端习惯”猜测；先确认 ECMA-48 与 xterm.js 实际支持范围。
 
+## 终端剪贴板与快捷键
+
+### 权威来源
+
+- xterm.js Terminal API（`paste()`、`attachCustomKeyEventHandler()`）: https://xtermjs.org/docs/api/terminal/classes/terminal/
+- GNOME Terminal 复制/粘贴快捷键说明: https://help.gnome.org/users/gnome-terminal/stable/txt-copy-paste.html.en
+- Windows Terminal actions / copy / paste: https://learn.microsoft.com/windows/terminal/customize-settings/actions
+
+复制/粘贴不是 ECMA-48 控制序列本身，而是终端宿主与桌面平台的交互合同。实现时必须区分应用快捷键与发送到 PTY 的控制键；尤其不能把 `Ctrl+C` 简单当作普通复制键，因为它在终端会话中承担中断输入语义。TauTerm 的粘贴路径应使用 xterm.js 提供的 `paste()`，宿主负责快捷键、剪贴板权限、风险确认和焦点恢复。xterm.js 的 `modes.bracketedPasteMode` 反映 DECSET 2004 状态；当该模式开启时，支持它的 shell/editor 可以把多行内容作为一次粘贴处理，因此宿主风险提示可以避免对这类受保护粘贴重复打断。
+
+内部设计：[UI_FOUNDATION.md](../modules/UI_FOUNDATION.md)。
+
 ## POSIX PTY
 
 ### 权威来源
