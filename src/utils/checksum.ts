@@ -1,4 +1,4 @@
-import { parseByteInput, bytesToHex } from "./byteInput.ts";
+import { bytesToHex } from "./byteInput.ts";
 
 export type Crc8Preset =
   | "CRC-8"
@@ -199,12 +199,6 @@ export function xorChecksum(data: Uint8Array): number {
 
 export function stringToBytes(value: string): Uint8Array {
   return new TextEncoder().encode(value);
-}
-
-/** Compatibility facade for older callers. New code should consume parseByteInput directly. */
-export function parseHexString(input: string): Uint8Array {
-  const parsed = parseByteInput(input);
-  return parsed.ok ? parsed.value.bytes : new Uint8Array(0);
 }
 
 export { bytesToHex };
