@@ -568,18 +568,32 @@ function parsePdu(
 }
 
 function semanticChecks(issues: ProtocolIssue[]): ProtocolCheck[] {
-  const hasError = issues.some((issue) => issue.severity === "error");
-  const hasWarning = issues.some((issue) => issue.severity === "warning");
+  const structuralCodes = new Set([
+    "modbusLengthMismatch",
+    "modbusMissingByteCount",
+    "modbusByteCountMismatch",
+    "modbusRegisterByteCountOdd",
+    "modbusMissingFunction",
+    "modbusExceptionLength",
+    "modbusTcpProtocolId",
+    "modbusTcpLengthMismatch",
+  ]);
+  const relevant = issues.filter((issue) => issue.code !== "checksumMismatch");
+  const structuralError = relevant.some(
+    (issue) => issue.severity === "error" && structuralCodes.has(issue.code),
+  );
+  const semanticError = relevant.some((issue) => issue.severity === "error");
+  const semanticWarning = relevant.some((issue) => issue.severity === "warning");
   return [
     {
       id: "structure",
       label: "tools.checkFrameStructure",
-      status: hasError ? "fail" : "pass",
+      status: structuralError ? "fail" : "pass",
     },
     {
       id: "semantics",
       label: "tools.checkProtocolSemantics",
-      status: hasError ? "fail" : hasWarning ? "warning" : "pass",
+      status: semanticError ? "fail" : semanticWarning ? "warning" : "pass",
     },
   ];
 }
