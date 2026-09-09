@@ -98,6 +98,16 @@ assert.equal(
   "strict Base64 must reject whitespace",
 );
 assert.equal(
+  executeEncodingOp(" SGVsbG8=", "base64-decode").ok,
+  false,
+  "strict Base64 must reject leading whitespace",
+);
+assert.equal(
+  executeEncodingOp("SGVsbG8= ", "base64-decode").ok,
+  false,
+  "strict Base64 must reject trailing whitespace",
+);
+assert.equal(
   ok(executeEncodingOp("SGVs\nbG8=", "base64-decode", { base64IgnoreWhitespace: true })),
   "Hello",
 );
