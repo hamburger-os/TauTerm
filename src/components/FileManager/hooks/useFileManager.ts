@@ -379,11 +379,16 @@ export function useFileManager(
   currentPathRef.current = currentPath;
 
   useEffect(() => {
-    const p = listen<{ session_id: string; success: boolean }>(
+    const p = listen<TransferFinishedPayload>(
       'file-transfer:finished',
       (event) => {
         const path = currentPathRef.current;
-        if (path !== null && event.payload.session_id === sessionId && event.payload.success) {
+        if (
+          path !== null
+          && event.payload.session_id === sessionId
+          && (!event.payload.protocol || event.payload.protocol === 'sftp')
+          && event.payload.success
+        ) {
           // 静默刷新目录（不触发 loading 闪烁），仅更新条目列表
           invoke<SftpEntry[]>('sftp_list_dir_cmd', {
             sessionId,
