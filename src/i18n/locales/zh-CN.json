@@ -1080,7 +1080,13 @@
     "catImage": "图片",
     "catMedia": "音视频",
     "catBinary": "二进制",
-    "catGeneric": "文件"
+    "catGeneric": "文件",
+    "transferPreparing": "正在准备…",
+    "transferFinalizing": "正在完成…",
+    "transferCancelling": "正在取消…",
+    "transferCompleted": "已完成",
+    "transferFailed": "传输失败",
+    "transferCancelled": "已取消"
   },
   "ssh": {
     "host": "主机地址",
