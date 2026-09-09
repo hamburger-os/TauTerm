@@ -4,7 +4,7 @@
 // 类型定义
 // ══════════════════════════════════════════════════════════════════
 
-export type BitOp = "AND" | "OR" | "XOR" | "NOT" | "LSHIFT" | "RSHIFT";
+export type BitOp = "AND" | "OR" | "XOR" | "NOT" | "LSHIFT" | "RSHIFT" | "URSHIFT";
 
 export interface BitOpResult {
   result: number;
@@ -46,7 +46,7 @@ export function formatHex(value: number, width: number): string {
   return (value >>> 0).toString(16).toUpperCase().padStart(hexLen, "0");
 }
 
-export const OP_KEYS: BitOp[] = ["AND", "OR", "XOR", "NOT", "LSHIFT", "RSHIFT"];
+export const OP_KEYS: BitOp[] = ["AND", "OR", "XOR", "NOT", "LSHIFT", "RSHIFT", "URSHIFT"];
 
 /**
  * 严格解析 32 位位运算输入。
@@ -80,6 +80,7 @@ export function bitwiseOp(a: number, b: number, op: BitOp): BitOpResult {
     case "NOT": result = ~a; break;
     case "LSHIFT": result = a << b; break;
     case "RSHIFT": result = a >> b; break;
+    case "URSHIFT": result = a >>> b; break;
     default: result = 0;
   }
   return {
