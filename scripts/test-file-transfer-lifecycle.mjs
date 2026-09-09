@@ -62,6 +62,11 @@ assert.match(orchestrator, /store\.transfer_start\(&internal_id, &transfer_id\)/
 assert.match(orchestrator, /progress\.transfer_id = transfer_id\.clone\(\)/);
 assert.match(orchestrator, /drop\(progress_tx\);[\s\S]{0,120}broadcaster\.await/);
 assert.match(orchestrator, /guard\.complete\(\);[\s\S]{0,220}file-transfer:finished/);
+assert.match(
+  orchestrator,
+  /oneshot::channel::<\(\)>\(\)[\s\S]*register_transfer_task[\s\S]*file-transfer:started[\s\S]*start_tx\.send\(\(\)\)/,
+  "SideChannel tasks must be registered before started/progress can run",
+);
 
 const sessionStore = await source("src-tauri/src/kernel/session_store.rs");
 assert.match(sessionStore, /pub active_transfer_id:\s*Option<String>/);
@@ -204,6 +209,12 @@ assert.match(
 );
 assert.match(panel, /requestConflictPolicy/);
 assert.match(panel, /conflictCount/);
+assert.match(
+  panel,
+  /let overwritePolicy: OverwritePolicy = "keep-both"/,
+  "an unseen/stale upload conflict must default to no-clobber",
+);
+assert.match(panel, /fileManager\.deleteFailed/);
 assert.match(panel, /name === "\." \|\| name === "\.\."/);
 assert.match(panel, /name\.includes\("\/"\)/);
 
@@ -246,6 +257,11 @@ assert.match(deleteDialog, /requestAnimationFrame\(\(\) => cancelRef\.current\?\
 assert.match(deleteDialog, /event\.key === "Escape"/);
 assert.match(deleteDialog, /event\.key === "Tab"/);
 assert.match(deleteDialog, /deleteConfirmAction/);
+
+const conflictDialog = await source("src/components/FileManager/ConflictResolutionModal.tsx");
+assert.match(conflictDialog, /keepBothRef\.current\?\.focus\(\)/);
+assert.match(conflictDialog, /event\.key === "Tab"/);
+assert.match(conflictDialog, /dialogRef\.current\?\.querySelectorAll/);
 
 const propertiesModal = await source("src/components/FileManager/FilePropertiesModal.tsx");
 assert.match(propertiesModal, /const canChmod = entryType === "file" \|\| entryType === "directory"/);

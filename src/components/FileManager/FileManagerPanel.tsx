@@ -241,7 +241,8 @@ export default function FileManagerPanel({
         .filter((name) => existingNames.has(name))
         .length;
 
-      let overwritePolicy: OverwritePolicy = "replace";
+      // 当前目录列表只用于提前提示；若列表过期而后端才发现冲突，默认必须 no-clobber。
+      let overwritePolicy: OverwritePolicy = "keep-both";
       if (conflictCount > 0) {
         const policy = await requestConflictPolicy(conflictCount);
         if (!policy) return;
@@ -374,12 +375,21 @@ export default function FileManagerPanel({
     setPendingDeleteTargets([]);
     if (targets.length === 0) return;
     try {
-      await fm.deleteEntries(targets);
+      const failed = await fm.deleteEntries(targets);
+      if (failed.length > 0) {
+        alert(
+          t("fileManager.deleteFailed", {
+            count: failed.length,
+            names: failed.join(", "),
+          }),
+        );
+        return;
+      }
       ms.clearSelection();
     } catch (error) {
       alert(String(error));
     }
-  }, [fm, ms, pendingDeleteTargets]);
+  }, [fm, ms, pendingDeleteTargets, t]);
 
   const handleRefresh = useCallback(async () => {
     if (!isConnected) return;

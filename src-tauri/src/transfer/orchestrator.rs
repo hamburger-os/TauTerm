@@ -643,17 +643,6 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             transfer_id.clone(),
         );
 
-        // 4. 发射启动事件 — client_id + transfer_id
-        let _ = app_for_spawn.emit(
-            "file-transfer:started",
-            serde_json::json!({
-                "session_id": &client_id,
-                "transfer_id": &transfer_id,
-                "protocol": &protocol,
-                "direction": "send",
-            }),
-        );
-
         log::info!(
             "侧通道发送: protocol={}, {} 个文件 → {:?}",
             protocol,
@@ -661,16 +650,26 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             rd
         );
 
-        // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
+        // 4. 先创建一个带 start gate 的后台 task。task 在成功注册到 SessionStore 且
+        // started 事件发出之前绝不访问传输资源，消除 close_session 与 task 注册竞态。
         let progress_tx = ctx.progress_tx;
         let internal_for_guard = internal_id.clone();
+        let task_app = app_for_spawn.clone();
+        let task_client_id = client_id.clone();
+        let task_protocol = protocol.clone();
+        let task_transfer_id = transfer_id.clone();
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
         let handle = tokio::spawn(async move {
+            if start_rx.await.is_err() {
+                return;
+            }
+
             let mut guard = PanicGuard::new(
-                app_for_spawn.clone(),
+                task_app.clone(),
                 internal_for_guard,
-                client_id.clone(),
-                protocol.clone(),
-                transfer_id.clone(),
+                task_client_id.clone(),
+                task_protocol.clone(),
+                task_transfer_id.clone(),
             );
 
             let result = ft
@@ -693,12 +692,12 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
 
             // 先释放 SessionStore 传输占用，再通知前端完成，消除立即连续上传竞态。
             guard.complete();
-            let _ = app_for_spawn.emit(
+            let _ = task_app.emit(
                 "file-transfer:finished",
                 serde_json::json!({
-                    "session_id": &client_id,
-                    "transfer_id": &transfer_id,
-                    "protocol": &protocol,
+                    "session_id": &task_client_id,
+                    "transfer_id": &task_transfer_id,
+                    "protocol": &task_protocol,
                     "success": success,
                     "cancelled": cancelled,
                     "error": error,
@@ -706,10 +705,22 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             );
         });
 
-        // 6. 注册 task handle — internal_id
-        if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.register_transfer_task(&internal_id, handle);
+        // 5. 注册 task handle。持锁期间 session 不能被 close/remove；注册成功后才
+        // 发布 started，随后打开 gate，保证 started → progress* → finished 顺序。
+        {
+            let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+            store.register_transfer_task(&internal_id, handle)?;
         }
+        let _ = app_for_spawn.emit(
+            "file-transfer:started",
+            serde_json::json!({
+                "session_id": &client_id,
+                "transfer_id": &transfer_id,
+                "protocol": &protocol,
+                "direction": "send",
+            }),
+        );
+        let _ = start_tx.send(());
 
         Ok(ack)
     }
@@ -764,17 +775,6 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             transfer_id.clone(),
         );
 
-        // 4. 发射启动事件 — client_id + transfer_id
-        let _ = app_for_spawn.emit(
-            "file-transfer:started",
-            serde_json::json!({
-                "session_id": &client_id,
-                "transfer_id": &transfer_id,
-                "protocol": &protocol,
-                "direction": "receive",
-            }),
-        );
-
         log::info!(
             "侧通道接收: protocol={}, {} 个文件 → {}",
             protocol,
@@ -782,16 +782,25 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             download_dir
         );
 
-        // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
+        // 4. 与发送路径相同：task 先注册、事件后发布、最后打开 start gate。
         let progress_tx = ctx.progress_tx;
         let internal_for_guard = internal_id.clone();
+        let task_app = app_for_spawn.clone();
+        let task_client_id = client_id.clone();
+        let task_protocol = protocol.clone();
+        let task_transfer_id = transfer_id.clone();
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
         let handle = tokio::spawn(async move {
+            if start_rx.await.is_err() {
+                return;
+            }
+
             let mut guard = PanicGuard::new(
-                app_for_spawn.clone(),
+                task_app.clone(),
                 internal_for_guard,
-                client_id.clone(),
-                protocol.clone(),
-                transfer_id.clone(),
+                task_client_id.clone(),
+                task_protocol.clone(),
+                task_transfer_id.clone(),
             );
 
             let result = ft
@@ -812,12 +821,12 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             let error = result.as_ref().err().map(|e| e.to_string());
 
             guard.complete();
-            let _ = app_for_spawn.emit(
+            let _ = task_app.emit(
                 "file-transfer:finished",
                 serde_json::json!({
-                    "session_id": &client_id,
-                    "transfer_id": &transfer_id,
-                    "protocol": &protocol,
+                    "session_id": &task_client_id,
+                    "transfer_id": &task_transfer_id,
+                    "protocol": &task_protocol,
                     "success": success,
                     "cancelled": cancelled,
                     "error": error,
@@ -825,10 +834,20 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             );
         });
 
-        // 注册 task handle — internal_id
-        if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.register_transfer_task(&internal_id, handle);
+        {
+            let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+            store.register_transfer_task(&internal_id, handle)?;
         }
+        let _ = app_for_spawn.emit(
+            "file-transfer:started",
+            serde_json::json!({
+                "session_id": &client_id,
+                "transfer_id": &transfer_id,
+                "protocol": &protocol,
+                "direction": "receive",
+            }),
+        );
+        let _ = start_tx.send(());
 
         Ok(ack)
     }

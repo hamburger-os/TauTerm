@@ -16,7 +16,7 @@ export default function ConflictResolutionModal({
   onResolve,
 }: ConflictResolutionModalProps) {
   const { t } = useTranslation();
-  const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const keepBothRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -27,6 +27,22 @@ export default function ConflictResolutionModal({
         event.preventDefault();
         event.stopPropagation();
         onResolve(null);
+        return;
+      }
+      if (event.key === "Tab") {
+        const buttons = Array.from(
+          dialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+        );
+        if (buttons.length === 0) return;
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     };
     document.addEventListener("keydown", onKeyDown, true);
@@ -47,6 +63,7 @@ export default function ConflictResolutionModal({
       }}
     >
       <div
+        ref={dialogRef}
         className={`${styles.container} liquid-glass`}
         role="dialog"
         aria-modal="true"
@@ -79,7 +96,6 @@ export default function ConflictResolutionModal({
             {t("fileManager.conflictSkip")}
           </button>
           <button
-            ref={cancelRef}
             className={`${styles.action} liquid-glass-ghost-button`}
             onClick={() => onResolve(null)}
           >

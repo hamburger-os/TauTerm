@@ -1096,7 +1096,8 @@
     "typeSymlink": "Symbolic Link",
     "typeOther": "Special File",
     "deleteConfirmTitle": "Confirm deletion",
-    "deleteConfirmAction": "Delete"
+    "deleteConfirmAction": "Delete",
+    "deleteFailed": "Failed to delete {{count}} item(s): {{names}}"
   },
   "ssh": {
     "host": "Host",
