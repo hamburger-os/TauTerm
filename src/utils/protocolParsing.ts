@@ -164,8 +164,8 @@ function parseModbusRTU(bytes: Uint8Array): ParseResult {
 }
 
 function normalizeModbusASCIIInput(input: string): string {
-  const trimmed = input.trim();
-  return trimmed.endsWith("\r\n") ? trimmed.slice(0, -2) : trimmed;
+  // 工具输入允许用户粘贴带或不带线路终止符的单帧。
+  return input.trim();
 }
 
 function parseModbusASCII(input: string): ParseResult | null {
