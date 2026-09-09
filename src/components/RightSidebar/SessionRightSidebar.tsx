@@ -81,7 +81,7 @@ export default function SessionRightSidebar({
         </RightSidebarPanel>
       )}
       {/* 面板2: 协议帧解析 */}
-      <ProtocolTool />
+      <ProtocolTool sessionId={sessionId} />
       {/* 面板3: 快捷工具 (校验和 + 编码 + 位操作) */}
       <CalculatorTool />
     </>
