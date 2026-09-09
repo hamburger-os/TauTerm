@@ -153,10 +153,10 @@
 @container filemanager (max-width: 280px) {
   .bar {
     height: 56px;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) minmax(58px, auto) auto;
     grid-template-areas:
       "name percent action"
-      "progress progress action";
+      "progress detail action";
   }
 
   .liveSpeed {
@@ -164,9 +164,7 @@
   }
 
   .detailText:not(.liveSpeed) {
-    grid-area: progress;
-    max-width: none;
-    text-align: left;
+    max-width: 88px;
   }
 }
 
