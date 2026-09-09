@@ -340,6 +340,7 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 - Dialog 必须复用 `.liquid-glass` 外壳和公共 GlassButton/全局按钮材质；禁止组件私建另一套弹窗背景/按钮玻璃。
 - 标准 Dialog 使用 `--radius-xl`；常规 padding 使用 `--spacing-xl`，窄窗口可降为 `--spacing-lg`。标题统一 `--text-md` + 700，正文统一 `--text-sm`，辅助/元信息统一 `--text-xs`；标准动作按钮使用 `GlassButton size="md"`，不得在单个弹窗里另写近似字号/按钮体系。
 - 两按钮确认框的默认焦点必须落在 Cancel/安全动作；危险动作不得默认获焦。Tab 在弹窗动作内循环，Esc 取消。
+- 所有 modal dialog（包括信息型 Properties/Preview）打开后必须把焦点移入弹窗，并把 Tab/Shift+Tab 限制在弹窗可交互元素之间；关闭动作必须有可访问名称。
 - 禁止使用原生浏览器 `alert()/confirm()/prompt()` 作为产品 UI。非阻塞错误/提示使用全局 themed Toast；需要用户决策或授权的流程使用主题 Dialog/InlinePrompt。
 - option group 在窄窗口改为纵向；不得为了保持多列把文案挤成难读的等宽小按钮。
 

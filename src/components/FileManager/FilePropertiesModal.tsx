@@ -4,7 +4,7 @@
  * 显示远程文件/目录的详细元数据。
  * 主题样式参照 SettingsPage (glass-overlay + liquid-glass)。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
@@ -48,6 +48,7 @@ export default function FilePropertiesModal({
   onChmodComplete,
 }: FilePropertiesModalProps) {
   const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // ── Chmod state ──
   const [chmodValue, setChmodValue] = useState("");
@@ -116,14 +117,47 @@ export default function FilePropertiesModal({
     }
   }, [statInfo]);
 
-  // ── Escape 关闭 ──
+  // ── Modal keyboard boundary ──
   useEffect(() => {
     if (!visible) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current
+        ?.querySelector<HTMLButtonElement>('[data-action="close"]')
+        ?.focus();
+    });
+
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
+
+    document.addEventListener("keydown", handler, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handler, true);
+    };
   }, [visible, onClose]);
 
   if (!visible || !entry) return null;
@@ -148,13 +182,25 @@ export default function FilePropertiesModal({
       className={`${styles.overlay} glass-overlay`}
       onClick={handleOverlayClick}
     >
-      <div className={`${styles.container} liquid-glass`}>
+      <div
+        ref={dialogRef}
+        className={`${styles.container} liquid-glass`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="file-properties-title"
+      >
         {/* 标题栏 */}
         <div className={styles.header}>
-          <span className={styles.headerTitle}>
+          <span id="file-properties-title" className={styles.headerTitle}>
             {typeEmoji} {name}
           </span>
-          <button className={`${styles.closeBtn} liquid-glass-ghost-button`} onClick={onClose}>
+          <button
+            type="button"
+            data-action="close"
+            className={`${styles.closeBtn} liquid-glass-ghost-button`}
+            onClick={onClose}
+            aria-label={t("common.close")}
+          >
             <Icon name="close" size="md" />
           </button>
         </div>
@@ -175,6 +221,7 @@ export default function FilePropertiesModal({
                   <div className={styles.fieldValueRow}>
                     <code className={styles.fieldValuePath}>{statInfo.path}</code>
                     <button
+                      type="button"
                       className={`${styles.copyBtn} liquid-glass-ghost-button`}
                       onClick={handleCopyPath}
                       title={t("fileManager.copyPath")}
@@ -244,10 +291,11 @@ export default function FilePropertiesModal({
                             }}
                             autoFocus
                           />
-                          <button className={`${styles.chmodBtn} liquid-glass-button`} onClick={handleChmodApply}>
+                          <button type="button" className={`${styles.chmodBtn} liquid-glass-button`} onClick={handleChmodApply}>
                             {t("fileManager.apply")}
                           </button>
                           <button
+                            type="button"
                             className={`${styles.chmodBtn} liquid-glass-button`}
                             onClick={() => {
                               setChmodEditing(false);
@@ -264,6 +312,7 @@ export default function FilePropertiesModal({
                         <>
                           <code className={styles.fieldValueMono}>{chmodValue}</code>
                           <button
+                            type="button"
                             className={`${styles.chmodBtn} liquid-glass-button`}
                             onClick={() => setChmodEditing(true)}
                           >

@@ -422,6 +422,12 @@ assert.match(conflictDialogCss, /font-weight:\s*700/);
 assert.match(conflictDialogCss, /font-size:\s*var\(--text-sm\)/);
 
 const propertiesModal = await source("src/components/FileManager/FilePropertiesModal.tsx");
+assert.match(propertiesModal, /role="dialog"/);
+assert.match(propertiesModal, /aria-modal="true"/);
+assert.match(propertiesModal, /aria-labelledby="file-properties-title"/);
+assert.match(propertiesModal, /data-action="close"/);
+assert.match(propertiesModal, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(propertiesModal, /event\.key !== "Tab"/);
 assert.match(propertiesModal, /const canChmod = entryType === "file" \|\| entryType === "directory"/);
 assert.match(propertiesModal, /\{canChmod && \(/);
 
@@ -466,6 +472,11 @@ assert.match(fileGrid, /case "ArrowDown"/);
 assert.match(fileGrid, /tabIndex=\{activeItem === itemIndex \? 0 : -1\}/);
 
 const preview = await source("src/components/FileManager/FilePreviewModal.tsx");
+assert.match(preview, /role="dialog"/);
+assert.match(preview, /aria-modal="true"/);
+assert.match(preview, /data-action="close"/);
+assert.match(preview, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(preview, /event\.key !== "Tab"/);
 assert.match(preview, /type PreviewEncoding/);
 assert.match(preview, /"gb18030"/);
 assert.match(preview, /"shift_jis"/);

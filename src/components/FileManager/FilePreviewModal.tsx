@@ -4,7 +4,7 @@
  * 数据源始终是后端限制大小的原始字节。文本视图支持常见工程编码手动切换，
  * HEX 视图保留真实字节，不把解码替换字符误当成文件内容。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
@@ -109,6 +109,7 @@ export default function FilePreviewModal({
   onClose,
 }: FilePreviewModalProps) {
   const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const bytes = useMemo(() => new Uint8Array(data ?? []), [data]);
   const [mode, setMode] = useState<PreviewMode>("text");
   const [encoding, setEncoding] = useState<PreviewEncoding>("utf-8");
@@ -133,11 +134,44 @@ export default function FilePreviewModal({
 
   useEffect(() => {
     if (!visible) return;
+
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current
+        ?.querySelector<HTMLButtonElement>('[data-action="close"]')
+        ?.focus();
+    });
+
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), select:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
+
+    document.addEventListener("keydown", handler, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handler, true);
+    };
   }, [visible, onClose]);
 
   if (!visible) return null;
@@ -145,6 +179,7 @@ export default function FilePreviewModal({
   return createPortal(
     <div className={`${styles.overlay} glass-overlay`} onClick={handleOverlayClick}>
       <div
+        ref={dialogRef}
         className={`${styles.container} liquid-glass`}
         role="dialog"
         aria-modal="true"
@@ -153,6 +188,8 @@ export default function FilePreviewModal({
         <div className={styles.header}>
           <span id="file-preview-title" className={styles.headerTitle}>{fileName}</span>
           <button
+            type="button"
+            data-action="close"
             className={`${styles.closeBtn} liquid-glass-ghost-button`}
             onClick={onClose}
             aria-label={t("common.close")}
