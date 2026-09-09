@@ -264,9 +264,11 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
         </div>
 
         <button
-          className={`${styles.modeBtn} liquid-glass-button ${sendMode === "hex" ? "liquid-theme-selected" : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${sendMode === "hex" ? "liquid-theme-selected" : ""}`}
           onClick={() => dispatch({ type: "SET_SEND_MODE", mode: sendMode === "text" ? "hex" : "text" })}
           title={t("sendBar.sendMode")}
+          type="button"
+          aria-pressed={sendMode === "hex"}
           disabled={!isConnected}
         >
           {sendMode === "text" ? t("sendBar.sendModeText") : t("sendBar.sendModeHex")}
