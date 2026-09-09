@@ -561,6 +561,7 @@ export default function TerminalView({
     return isDual ? (
       <DualPane
         key={tab.id}
+        sessionId={tab.id}
         lines={dualLines.get(tab.id) ?? []}
         fontSize={fontSize}
         bufferLines={bufferLines}
