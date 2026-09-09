@@ -107,9 +107,6 @@ function normalizeHexDigits(input: string): string | null {
   return normalizePrefixedDigits(input, "0x", /^[0-9a-fA-F]+$/);
 }
 
-function normalizeBinaryDigits(input: string): string | null {
-  return normalizePrefixedDigits(input.replace(/_/g, ""), "0b", /^[01]+$/);
-}
 
 function parseDecimalBigInt(input: string): bigint | null {
   const cleaned = input.trim().replace(/_/g, "");
