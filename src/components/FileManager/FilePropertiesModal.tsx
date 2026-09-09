@@ -218,7 +218,6 @@ export default function FilePropertiesModal({
 
                 {/* Chmod 编辑器：SFTP v3 无可靠的 no-follow chmod，符号链接/特殊文件不开放 */}
                 {canChmod && (
-                  {/* Chmod 编辑器 */}
                   <div className={styles.fieldRow}>
                     <span className={styles.fieldLabel}>{t("fileManager.chmod")}</span>
                     <div className={styles.chmodRow}>
