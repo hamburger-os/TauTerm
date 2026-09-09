@@ -278,6 +278,22 @@ assert.match(sharedContext, /activeTransferIdRef\.current = ack\.transfer_id/);
 assert.match(sharedContext, /p\.transfer_id !== activeTransferIdRef\.current/);
 assert.match(sharedContext, /batch_complete 只是协议层批次收尾[\s\S]*if \(p\.is_batch_complete\)/);
 assert.match(sharedContext, /const cancelTask = useCallback/);
+assert.match(sharedContext, /TASK_CANCEL_REJECTED/);
+assert.match(
+  sharedContext,
+  /dispatch\(\{ type: "TASK_CANCELLING", sessionId, transferId \}\)[\s\S]{0,320}await invoke\("file_transfer_cancel"/,
+  "cancelling must be recorded before the cancel IPC to prevent terminal-state regression",
+);
+assert.match(
+  sharedContext,
+  /current\.phase === "cancelling"[\s\S]{0,220}phase = "cancelling"/,
+  "late progress must not regress an accepted cancellation back to transferring",
+);
+assert.match(
+  sharedContext,
+  /TASK_DISCARD_SESSION"[\s\S]{0,220}event\.payload\.session_id !== activeSessionIdRef\.current/,
+  "disconnect must discard per-session task snapshots even for FileManager-owned SFTP tasks",
+);
 assert.match(sharedContext, /file_transfer_cancel[\s\S]{0,180}transferId/);
 assert.doesNotMatch(
   sharedContext,
