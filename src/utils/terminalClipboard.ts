@@ -1,5 +1,9 @@
+export const LARGE_TERMINAL_PASTE_CHARACTERS = 5 * 1024;
+
 export interface TerminalPasteAnalysis {
   requiresConfirmation: boolean;
+  hasLineBreak: boolean;
+  isLargePaste: boolean;
   contentLineCount: number;
   characterCount: number;
 }
@@ -22,9 +26,15 @@ export function analyzeTerminalPaste(text: string): TerminalPasteAnalysis {
     .split("\n")
     .filter(line => line.trim().length > 0)
     .length;
+  const hasLineBreak = normalized.includes("\n");
+  const isLargePaste = text.length > LARGE_TERMINAL_PASTE_CHARACTERS;
 
   return {
-    requiresConfirmation: contentLineCount >= 2,
+    // Runtime decides whether bracketed paste mode suppresses the line-break risk.
+    // Large pastes remain confirmable even with bracketed paste enabled.
+    requiresConfirmation: hasLineBreak || isLargePaste,
+    hasLineBreak,
+    isLargePaste,
     contentLineCount,
     characterCount: text.length,
   };
