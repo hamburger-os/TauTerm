@@ -1,4 +1,4 @@
-import { parseByteInput, bytesToHex } from "./byteInput";
+import { parseByteInput, bytesToHex } from "./byteInput.ts";
 
 export type Crc8Preset =
   | "CRC-8"
