@@ -8,6 +8,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { OverwritePolicy, SftpEntry } from "./types";
 import { useFileManager } from "./hooks/useFileManager";
@@ -72,6 +74,8 @@ export default function FileManagerPanel({
   const [conflictAllowReplace, setConflictAllowReplace] = useState(true);
   const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<string | null>(null);
   const [pendingDeleteTargets, setPendingDeleteTargets] = useState<SftpEntry[]>([]);
+  const [dropActive, setDropActive] = useState(false);
+  const dropInsideRef = useRef(false);
 
   const requestConflictPolicy = useCallback((count: number, allowReplace = true) => {
     return new Promise<OverwritePolicy | null>((resolve) => {
@@ -286,6 +290,94 @@ export default function FileManagerPanel({
       alert(t("fileManager.uploadFailed", { error: String(error) }));
     }
   }, [fm, isConnected, requestConflictPolicy, t]);
+
+  const handleDroppedPaths = useCallback(async (paths: string[]) => {
+    if (!isConnected || paths.length === 0) return;
+
+    const remoteDir = fm.currentPath
+      ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`)
+      : "/";
+    const existingNames = new Set(fm.entries.map((entry) => entry.name));
+    const conflictCount = paths
+      .map((path) => path.replace(/\\/g, "/").split("/").filter(Boolean).pop() || path)
+      .filter((name) => existingNames.has(name))
+      .length;
+
+    // 原生拖放只给路径，不在 WebView 中猜测每个路径是文件还是目录。
+    // 冲突时禁用目录不安全的 Replace；KeepBoth/Skip 对混合文件+目录都安全。
+    let overwritePolicy: OverwritePolicy = "keep-both";
+    if (conflictCount > 0) {
+      const policy = await requestConflictPolicy(conflictCount, false);
+      if (!policy) return;
+      overwritePolicy = policy;
+    }
+
+    try {
+      await fm.uploadFiles(paths, remoteDir, overwritePolicy);
+    } catch (error) {
+      console.error("拖放上传失败:", error);
+      alert(t("fileManager.uploadFailed", { error: String(error) }));
+    }
+  }, [fm, isConnected, requestConflictPolicy, t]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let scaleFactor = 1;
+
+    getCurrentWindow()
+      .scaleFactor()
+      .then((factor) => {
+        if (!disposed && Number.isFinite(factor) && factor > 0) scaleFactor = factor;
+      })
+      .catch(() => {});
+
+    const isInsidePanel = (position: { x: number; y: number } | undefined) => {
+      const panel = panelRef.current;
+      if (!panel || !position) return dropInsideRef.current;
+      const rect = panel.getBoundingClientRect();
+      const x = position.x / scaleFactor;
+      const y = position.y / scaleFactor;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (disposed) return;
+        const payload = event.payload;
+
+        if (payload.type === "over") {
+          const inside = isInsidePanel(payload.position);
+          dropInsideRef.current = inside && isConnected;
+          setDropActive(dropInsideRef.current);
+          return;
+        }
+
+        if (payload.type === "drop") {
+          const inside = isInsidePanel(payload.position);
+          dropInsideRef.current = false;
+          setDropActive(false);
+          if (inside && isConnected && payload.paths.length > 0) {
+            void handleDroppedPaths(payload.paths);
+          }
+          return;
+        }
+
+        dropInsideRef.current = false;
+        setDropActive(false);
+      })
+      .then((dispose) => {
+        if (disposed) dispose();
+        else unlisten = dispose;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      dropInsideRef.current = false;
+      unlisten?.();
+    };
+  }, [handleDroppedPaths, isConnected]);
 
   const handleNewFile = useCallback(() => {
     fm.setPromptMode("newFile");
@@ -700,6 +792,12 @@ export default function FileManagerPanel({
       className={styles.panel}
       tabIndex={-1}
     >
+      {dropActive && (
+        <div className={styles.dropOverlay} aria-hidden="true">
+          <Icon name="upload" size="lg" />
+          <span>{t("fileManager.dropToUpload")}</span>
+        </div>
+      )}
       {/* 面包屑导航 */}
       <BreadcrumbNav
         segments={fm.breadcrumbSegments}

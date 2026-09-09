@@ -1104,7 +1104,8 @@
     "previewText": "Text",
     "previewEncoding": "Encoding",
     "previewHexLimited": "For responsiveness, HEX view shows only the first {{size}}.",
-    "previewBytes": "{{count}} bytes loaded"
+    "previewBytes": "{{count}} bytes loaded",
+    "dropToUpload": "Drop here to upload"
   },
   "ssh": {
     "host": "Host",

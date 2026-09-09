@@ -47,3 +47,23 @@
   gap: 4px;
   padding: 0 8px;
 }
+
+.dropOverlay {
+  position: absolute;
+  inset: 6px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  border: 1px dashed var(--accent-primary);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-primary-muted) 72%, var(--glass-bg));
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+}
+

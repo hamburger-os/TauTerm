@@ -234,6 +234,12 @@ assert.match(
 assert.match(panel, /requestConflictPolicy/);
 assert.match(panel, /conflictCount/);
 assert.match(panel, /handleUploadFolder/);
+assert.match(panel, /getCurrentWebview/);
+assert.match(panel, /onDragDropEvent/);
+assert.match(panel, /getCurrentWindow\(\)[\s\S]*scaleFactor/);
+assert.match(panel, /position\.x \/ scaleFactor/);
+assert.match(panel, /handleDroppedPaths/);
+assert.match(panel, /requestConflictPolicy\(conflictCount, false\)/);
 assert.match(panel, /fileManager\.uploadFolder/);
 assert.match(
   panel,

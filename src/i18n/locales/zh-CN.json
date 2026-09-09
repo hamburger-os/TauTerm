@@ -1104,7 +1104,8 @@
     "previewText": "文本",
     "previewEncoding": "编码",
     "previewHexLimited": "HEX 视图为保证流畅度仅显示前 {{size}}。",
-    "previewBytes": "已读取 {{count}} 字节"
+    "previewBytes": "已读取 {{count}} 字节",
+    "dropToUpload": "拖放到此处上传"
   },
   "ssh": {
     "host": "主机地址",
