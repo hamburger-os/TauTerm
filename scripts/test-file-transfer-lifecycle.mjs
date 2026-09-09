@@ -38,6 +38,15 @@ assert.match(
   /cancelTransfer[\s\S]*previousPhase[\s\S]*phase: previousPhase/,
   "a cancel-command failure must not falsely terminate a still-running transfer",
 );
+assert.match(
+  hook,
+  /const preserveFailedProgress =[\s\S]{0,220}payload\.file_success === false[\s\S]{0,120}!hasKnownTotal/,
+);
+assert.match(
+  hook,
+  /isBatchComplete \|\| preserveFailedProgress \? prev\.percent : percent/,
+  "failed file completion without reliable totals must preserve the last valid progress sample",
+);
 
 const bar = await source("src/components/FileManager/TransferProgressBar.tsx");
 assert.match(bar, /phase === "transferring"/);
