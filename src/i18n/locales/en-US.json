@@ -212,7 +212,8 @@
       "XOR": "^ (XOR)",
       "NOT": "~ (NOT)",
       "LSHIFT": "<< (Left Shift)",
-      "RSHIFT": ">> (Right Shift)"
+      "RSHIFT": ">> (Right Shift)",
+      "URSHIFT": ">>> (Logical Right Shift)"
     },
     "crcValid": "CRC Valid",
     "crcMismatch": "CRC Mismatch (expected: {{expected}})",
@@ -241,7 +242,34 @@
     "funcWriteSingleCoil": "Write Single Coil",
     "funcWriteSingleReg": "Write Single Register",
     "funcWriteMultiCoils": "Write Multiple Coils",
-    "funcWriteMultiRegs": "Write Multiple Registers"
+    "funcWriteMultiRegs": "Write Multiple Registers",
+    "protocolTemplate": "Protocol template",
+    "protocolInput": "Input",
+    "textInput": "TEXT",
+    "protocolPlaceholderModbusRTU": "Enter RTU HEX frame, e.g.: 01 03 00 00 00 01 84 0A",
+    "protocolPlaceholderModbusASCII": "Enter ASCII frame, e.g.: :010300000001FB (trailing CRLF optional)",
+    "protocolPlaceholderAT": "Enter AT response text, e.g.: +CSQ: 20,99",
+    "protocolPlaceholderCustom": "Enter HEX data, e.g.: AA BB CC DD",
+    "protocolHintHex": "Select a protocol template and enter HEX data",
+    "protocolHintText": "Select a protocol template and enter a text frame",
+    "protocolParseErrorHex": "Cannot parse HEX data; check the input format",
+    "protocolParseErrorASCII": "Cannot parse the Modbus ASCII frame; check the delimiter, HEX characters, and LRC field",
+    "protocolFrameTooShort": "Modbus RTU frame is too short; address, function code, and 2-byte CRC are required",
+    "shiftCountRange": "Shift count must be between 0 and 31",
+    "fieldExceptionCode": "Exception Code",
+    "modbusExceptions": {
+      "illegalFunction": "Illegal Function",
+      "illegalDataAddress": "Illegal Data Address",
+      "illegalDataValue": "Illegal Data Value",
+      "serverDeviceFailure": "Server Device Failure",
+      "acknowledge": "Acknowledge",
+      "serverDeviceBusy": "Server Device Busy",
+      "memoryParityError": "Memory Parity Error",
+      "gatewayPathUnavailable": "Gateway Path Unavailable",
+      "gatewayTargetNoResponse": "Gateway Target Device Failed to Respond"
+    },
+    "structAbiHint": "Estimated with a 32-bit ILP32 / embedded ABI model; unknown or partially parsed members fail closed.",
+    "invalidHexInput": "Enter valid HEX byte data"
   },
   "titleBar": {
     "minimize": "Minimize",

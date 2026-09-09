@@ -4,7 +4,7 @@
 // 类型定义
 // ══════════════════════════════════════════════════════════════════
 
-export type BitOp = "AND" | "OR" | "XOR" | "NOT" | "LSHIFT" | "RSHIFT";
+export type BitOp = "AND" | "OR" | "XOR" | "NOT" | "LSHIFT" | "RSHIFT" | "URSHIFT";
 
 export interface BitOpResult {
   result: number;
@@ -46,7 +46,29 @@ export function formatHex(value: number, width: number): string {
   return (value >>> 0).toString(16).toUpperCase().padStart(hexLen, "0");
 }
 
-export const OP_KEYS: BitOp[] = ["AND", "OR", "XOR", "NOT", "LSHIFT", "RSHIFT"];
+export const OP_KEYS: BitOp[] = ["AND", "OR", "XOR", "NOT", "LSHIFT", "RSHIFT", "URSHIFT"];
+
+/**
+ * 严格解析 32 位位运算输入。
+ * 支持十进制、0x HEX、0b 二进制；不接受带非法尾缀的部分数字。
+ */
+export function parseIntegerInput(input: string): number | null {
+  const text = input.trim().replace(/_/g, "");
+  if (!text) return null;
+
+  const match = text.match(/^([+-]?)(?:(0[xX])([0-9a-fA-F]+)|(0[bB])([01]+)|(\d+))$/);
+  if (!match) return null;
+
+  const negative = match[1] === "-";
+  const digits = match[3] ?? match[5] ?? match[6];
+  const radix = match[2] ? 16 : match[4] ? 2 : 10;
+
+  let value = BigInt(radix === 10 ? digits : `${radix === 16 ? "0x" : "0b"}${digits}`);
+  if (negative) value = -value;
+
+  if (value < -0x80000000n || value > 0xFFFFFFFFn) return null;
+  return Number(value);
+}
 
 /** 执行位运算 */
 export function bitwiseOp(a: number, b: number, op: BitOp): BitOpResult {
@@ -58,6 +80,7 @@ export function bitwiseOp(a: number, b: number, op: BitOp): BitOpResult {
     case "NOT": result = ~a; break;
     case "LSHIFT": result = a << b; break;
     case "RSHIFT": result = a >> b; break;
+    case "URSHIFT": result = a >>> b; break;
     default: result = 0;
   }
   return {
@@ -161,11 +184,11 @@ export function parseStructDefinition(code: string): StructInfo | null {
       typeName = simpleMatch[1].trim();
       memberName = simpleMatch[2];
     } else {
-      continue; // 无法解析的行，跳过
+      return null; // 声明无法完整解析时失败，避免静默忽略成员后给出错误 sizeof
     }
 
     const typeInfo = TYPE_SIZES[typeName];
-    if (!typeInfo) continue; // 未知类型，跳过
+    if (!typeInfo) return null; // 未知类型同样显式失败
 
     const memberSize = typeInfo.size * arrayCount;
     const align = typeInfo.align;

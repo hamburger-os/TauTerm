@@ -5,16 +5,14 @@
 }
 
 .tabRow {
-  display: flex;
-  gap: 4px;
+  width: 100%;
 }
 
 .tabBtn {
-  flex: 1;
-  padding: 3px 8px;
-  font-size: var(--text-xs);
-  cursor: pointer;
-  white-space: nowrap;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tabBody {

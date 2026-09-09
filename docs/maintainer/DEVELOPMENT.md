@@ -37,6 +37,7 @@
 | `npm run check:tauri-blocking` | 检查潜在阻塞的 Tauri command 是否错误地留在同步分发路径 |
 | `npm run check:runtime-errors` | 检查全局前端异常是否进入统一日志且公共错误文案已国际化 |
 | `npm run check:terminal-clipboard` | 检查终端复制/粘贴快捷键、统一 paste 路径、焦点恢复和多行粘贴安全规则 |
+| `npm run check:engineering-tools` | 检查 CRC 标准向量、严格数值/位运算转换以及 Modbus/AT 协议解析合同 |
 | `npm run check:product-integrity` | 检查插件单一来源、工程资产持久化、日志可观测性、SSH 主机信任与 Pane UI 结构合同 |
 | `npm run check:split-layout` | Workspace/Split View 几何、持久化与 1/2/2×2 Pane 不变量回归 |
 | `npm run check:session-buffer` | 会话启动数据缓冲回归 |

@@ -46,10 +46,25 @@
 }
 
 .body {
-  overflow: hidden;
-  transition: max-height 0.25s ease, opacity 0.2s ease;
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 0.25s ease,
+    opacity 0.2s ease,
+    visibility 0s linear 0.25s;
 }
 
-.body > div {
+.bodyExpanded {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.bodyInner {
+  min-height: 0;
+  overflow: hidden;
   padding: var(--spacing-sm);
 }

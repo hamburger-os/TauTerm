@@ -44,6 +44,12 @@ export function ChecksumToolInner() {
       : parseHexString(inputText);
   }, [inputText, inputMode]);
 
+  const invalidHexInput =
+    inputMode === "hex"
+    && inputText.trim().length > 0
+    && bytes !== null
+    && bytes.length === 0;
+
   const parsedHex = useMemo(() => {
     if (!bytes || bytes.length === 0) return null;
     return bytesToHex(bytes);
@@ -53,9 +59,18 @@ export function ChecksumToolInner() {
   const result = useMemo(() => {
     if (!bytes || bytes.length === 0) return null;
     switch (algorithm) {
-      case "SUM8": return { label: "SUM8", hex: numberToHex(checksum8(bytes), 8), dec: String(checksum8(bytes)) };
-      case "SUM16": return { label: "SUM16", hex: numberToHex(checksum16(bytes), 16), dec: String(checksum16(bytes)) };
-      case "XOR": return { label: "XOR", hex: numberToHex(xorChecksum(bytes), 8), dec: String(xorChecksum(bytes)) };
+      case "SUM8": {
+        const v = checksum8(bytes);
+        return { label: "SUM8", hex: numberToHex(v, 8), dec: String(v) };
+      }
+      case "SUM16": {
+        const v = checksum16(bytes);
+        return { label: "SUM16", hex: numberToHex(v, 16), dec: String(v) };
+      }
+      case "XOR": {
+        const v = xorChecksum(bytes);
+        return { label: "XOR", hex: numberToHex(v, 8), dec: String(v) };
+      }
       case "CRC8": {
         const v = crc8(bytes, crc8Preset);
         return { label: `CRC8 (${crc8Preset})`, hex: numberToHex(v, 8), dec: String(v) };
@@ -82,16 +97,20 @@ export function ChecksumToolInner() {
   return (
     <div className={styles.container}>
       {/* 输入模式 */}
-      <div className={styles.modeRow}>
+      <div className={`${styles.modeRow} liquid-selector-strip`}>
         <button
-          className={`${styles.modeBtn} liquid-glass-button ${inputMode === "string" ? "active" : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${inputMode === "string" ? "active" : ""}`}
           onClick={() => setInputMode("string")}
+          type="button"
+          aria-pressed={inputMode === "string"}
         >
           {t("tools.stringMode") ?? "Text"}
         </button>
         <button
-          className={`${styles.modeBtn} liquid-glass-button ${inputMode === "hex" ? "active" : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${inputMode === "hex" ? "active" : ""}`}
           onClick={() => setInputMode("hex")}
+          type="button"
+          aria-pressed={inputMode === "hex"}
         >
           {t("tools.hexMode") ?? "HEX"}
         </button>
@@ -120,13 +139,21 @@ export function ChecksumToolInner() {
         </div>
       )}
 
+      {invalidHexInput && (
+        <div className={styles.parseError}>
+          {t("tools.invalidHexInput")}
+        </div>
+      )}
+
       {/* 算法选择 */}
-      <div className={styles.algRow}>
+      <div className={`${styles.algRow} liquid-selector-strip`}>
         {(["SUM8", "SUM16", "XOR", "CRC8", "CRC16", "CRC32"] as Algorithm[]).map((alg) => (
           <button
             key={alg}
-            className={`${styles.algBtn} liquid-glass-button ${algorithm === alg ? "active" : ""}`}
+            className={`${styles.algBtn} liquid-glass-button liquid-selector-button ${algorithm === alg ? "active" : ""}`}
             onClick={() => setAlgorithm(alg)}
+            type="button"
+            aria-pressed={algorithm === alg}
           >
             {alg === "SUM8" ? "SUM8" : alg === "SUM16" ? "SUM16" : alg}
           </button>
@@ -183,7 +210,7 @@ export function ChecksumToolInner() {
           <div className={styles.resultLabel}>{result.label}:</div>
           <code className={styles.resultHex}>0x{result.hex}</code>
           <span className={styles.resultDec}>({result.dec})</span>
-          <button className={`${styles.copyBtn} liquid-glass-ghost-button`} onClick={handleCopy} title={t("common.copy") ?? "Copy"}>
+          <button className={`${styles.copyBtn} liquid-glass-ghost-button`} onClick={handleCopy} type="button" title={t("common.copy") ?? "Copy"}>
             {copied ? t("tools.copied") : t("common.copy")}
           </button>
         </div>
