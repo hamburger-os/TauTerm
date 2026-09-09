@@ -1,7 +1,9 @@
-import { useRef, useCallback, useEffect, useState } from "react";
+import { useRef, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import styles from "./DualPane.module.css";
 import ScrollToBottomButton from "./ScrollToBottomButton";
+import ContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
+import type { ContextMenuState } from "../../hooks/useContextMenu";
 
 // ── 数据类型 ──
 
@@ -20,6 +22,7 @@ export interface DualLine {
 
 interface DualPaneProps {
   lines: DualLine[];
+  sessionId: string;
   /** 字体大小 px */
   fontSize?: number;
   /** 行缓冲上限（行数），超限裁剪由父组件 TerminalView 的 flushDualLines 处理 */
@@ -41,7 +44,7 @@ const MAX_PANEL_PCT = 80;  // 最大 80%
  * - 绝对定位分隔条可拖拽调整列宽
  * - 自动跟踪底部新数据，用户手动上滚后暂停跟踪
  */
-export default function DualPane({ lines, fontSize = 13 }: DualPaneProps) {
+export default function DualPane({ lines, sessionId, fontSize = 13 }: DualPaneProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -51,6 +54,47 @@ export default function DualPane({ lines, fontSize = 13 }: DualPaneProps) {
   const [dragging, setDragging] = useState(false);
   const autoScrollRef = useRef(true);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    x: 0,
+    y: 0,
+    visible: false,
+    session: null,
+  });
+  const [contextLine, setContextLine] = useState<DualLine | null>(null);
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => [
+    {
+      id: "inspectProtocol",
+      label: t("terminal.inspectProtocolFrame"),
+      icon: "search",
+      disabled: !contextLine,
+    },
+  ], [contextLine, t]);
+
+  const handleRowContextMenu = useCallback((event: React.MouseEvent, line: DualLine) => {
+    event.preventDefault();
+    setContextLine(line);
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      visible: true,
+      session: null,
+    });
+  }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu((previous) => ({ ...previous, visible: false }));
+  }, []);
+
+  const handleContextMenuSelect = useCallback((itemId: string) => {
+    if (itemId !== "inspectProtocol" || !contextLine) return;
+    window.dispatchEvent(
+      new CustomEvent("tauterm:protocol-inspect", {
+        detail: { sessionId, input: contextLine.hex },
+      }),
+    );
+  }, [contextLine, sessionId]);
+
 
   // ── 滚动事件：检测用户是否手动滚离底部 ──
 
@@ -153,6 +197,7 @@ export default function DualPane({ lines, fontSize = 13 }: DualPaneProps) {
           <div
             key={line.id}
             className={`${styles.row} ${line.direction === "TX" ? styles.txRow : styles.rxRow}`}
+            onContextMenu={(event) => handleRowContextMenu(event, line)}
           >
             {/* 左单元格：ASCII 文本 */}
             <div className={styles.asciiCell} style={{ width: `${splitPct}%` }}>
@@ -189,6 +234,12 @@ export default function DualPane({ lines, fontSize = 13 }: DualPaneProps) {
       <ScrollToBottomButton
         visible={!isAtBottom}
         onClick={scrollToBottom}
+      />
+      <ContextMenu
+        state={contextMenu}
+        items={contextMenuItems}
+        onSelect={handleContextMenuSelect}
+        onClose={closeContextMenu}
       />
     </div>
   );
