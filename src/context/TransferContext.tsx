@@ -153,9 +153,11 @@ function transferReducer(
         currentFileIndex: p.file_index ?? 0,
         totalFiles: p.total_files ?? 1,
         transferStartTime: startTime,
-        // 计算传输速度 (bytes/ms * 1000 = bytes/s)
+        // SFTP 等协议可直接提供真实 I/O 层测速；其它协议保留聚合平均速率回退。
         speed:
-          (aggregateBytes / Math.max(1, Date.now() - startTime)) * 1000,
+          p.bytes_per_second && p.bytes_per_second > 0
+            ? p.bytes_per_second
+            : (aggregateBytes / Math.max(1, Date.now() - startTime)) * 1000,
       };
       if (state.batchFiles[key]) {
         updated.batchFiles = {
@@ -296,6 +298,8 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   // 使用 ref 追踪 activeSessionId，避免事件监听器闭包过期（同 activeProtocolRef 模式）
   const activeSessionIdRef = useRef(state.activeSessionId);
   activeSessionIdRef.current = state.activeSessionId;
+  // 每个已启动传输都有独立 transfer_id；用于拒绝同 Session 的迟到 progress。
+  const activeTransferIdRef = useRef<string | null>(null);
 
   const addHistory = useCallback(
     (item: Omit<TransferHistoryItem, "id">) => {
@@ -334,6 +338,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      activeTransferIdRef.current = null;
       dispatch({ type: "SET_ACTIVE_PROTOCOL", protocol });
       dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId });
       dispatch({ type: "SET_ERROR", error: null });
@@ -455,6 +460,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         "session-disconnected",
         (event) => {
           if (event.payload.session_id !== activeSessionIdRef.current) return;
+          activeTransferIdRef.current = null;
           dispatch({ type: "RESET_BATCH" });
           dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId: null });
           dispatch({ type: "SET_STATUS", status: "idle" });
@@ -466,13 +472,36 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       }
       unlisteners.push(u1);
 
+      // started 是 transfer_id 的身份源；progress 只接受当前这一轮传输。
+      interface TransferStartedPayload {
+        session_id: string;
+        transfer_id: string;
+        protocol: string;
+      }
+      const uStarted = await listen<TransferStartedPayload>(
+        "file-transfer:started",
+        (event) => {
+          const payload = event.payload;
+          if (payload.session_id !== activeSessionIdRef.current) return;
+          if (payload.protocol !== activeProtocolRef.current) return;
+          activeTransferIdRef.current = payload.transfer_id;
+        },
+      );
+      if (cancelled) {
+        uStarted();
+        return;
+      }
+      unlisteners.push(uStarted);
+
       // ── 统一进度事件（替代 transfer-progress + sftp-progress 双轨制）──
       interface UnifiedProgressPayload {
         session_id: string;
+        transfer_id: string;
         protocol: string;
         file_name: string;
         bytes_done: number;
         bytes_total: number;
+        bytes_per_second: number | null;
         file_index: number;
         total_files: number;
         aggregate_bytes: number;
@@ -488,8 +517,10 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         "file-transfer:progress",
         (event) => {
           const p = event.payload;
-          // 过滤跨会话进度事件：仅处理当前活跃会话的传输进度
+          // 同时按 Session / protocol / transfer_id 过滤，迟到事件不能污染下一轮传输。
           if (p.session_id !== activeSessionIdRef.current) return;
+          if (p.protocol !== activeProtocolRef.current) return;
+          if (!activeTransferIdRef.current || p.transfer_id !== activeTransferIdRef.current) return;
           // 映射到现有 TransferProgress 格式
           // batch_complete 事件只更新状态，不 dispatch SET_PROGRESS
           // 避免空 file_name 创建幽灵条目（Bug #1）
@@ -520,6 +551,10 @@ export function TransferProvider({ children }: { children: ReactNode }) {
             total_files: p.total_files,
             aggregate_bytes_transferred: p.aggregate_bytes,
             aggregate_total_bytes: p.aggregate_total,
+            bytes_per_second:
+              typeof p.bytes_per_second === "number" && p.bytes_per_second > 0
+                ? p.bytes_per_second
+                : undefined,
             direction: p.direction,
           };
           dispatch({ type: "SET_PROGRESS", progress });
