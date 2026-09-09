@@ -73,7 +73,18 @@ export default defineConfig(async () => ({
           if (/\/src\/components\/Settings\//.test(normalized)) {
             return "ui-settings";
           }
-          if (normalized.includes("/src/context/") || /\/src\/components\/(Common|Layout|Terminal|RightSidebar|JournaldViewer|Tools|FileManager|SendBar)\//.test(normalized)) {
+          // Protocol/data engineering tools are lazy-loaded from SessionRightSidebar and are
+          // intentionally isolated from the daily-driver UI chunk. Keep their pure parsers and
+          // tool-specific hook with the same chunk so opening the sidebar pays one coherent load.
+          if (
+            /\/src\/components\/Tools\//.test(normalized)
+            || /\/src\/protocols\//.test(normalized)
+            || /\/src\/hooks\/useToolInputHistory\.ts$/.test(normalized)
+            || /\/src\/utils\/(bitops|byteInput|checksum|dataInspector|encoding|engineering|protocolParsing|toolResult)\.ts$/.test(normalized)
+          ) {
+            return "ui-engineering";
+          }
+          if (normalized.includes("/src/context/") || /\/src\/components\/(Common|Layout|Terminal|RightSidebar|JournaldViewer|FileManager|SendBar)\//.test(normalized)) {
             return "ui-core";
           }
           if (!normalized.includes("node_modules")) return undefined;
