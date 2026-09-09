@@ -217,14 +217,11 @@ export function useSftpProgress(sessionId: string) {
       const payload = event.payload;
       if (payload.session_id !== sessionId) return;
       if (payload.protocol && payload.protocol !== 'sftp') return;
-      if (payload.transfer_id) {
-        if (
-          !activeTransferIdRef.current
-          || payload.transfer_id !== activeTransferIdRef.current
-        ) {
-          return;
-        }
-      } else if (!activeTransferIdRef.current) {
+      if (
+        !payload.transfer_id
+        || !activeTransferIdRef.current
+        || payload.transfer_id !== activeTransferIdRef.current
+      ) {
         return;
       }
 
