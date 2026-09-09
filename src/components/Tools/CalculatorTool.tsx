@@ -21,12 +21,14 @@ export default function CalculatorTool() {
     <RightSidebarPanel title={t("tools.calculator") ?? "Quick Tools"}>
       <div className={styles.container}>
         {/* 标签栏 */}
-        <div className={styles.tabRow}>
+        <div className={`${styles.tabRow} liquid-selector-strip`}>
           {TABS.map((tab) => (
             <button
               key={tab}
-              className={`${styles.tabBtn} liquid-glass-button ${activeTab === tab ? "active" : ""}`}
+              className={`${styles.tabBtn} liquid-glass-button liquid-selector-button ${activeTab === tab ? "liquid-theme-selected" : ""}`}
               onClick={() => setActiveTab(tab)}
+              type="button"
+              aria-pressed={activeTab === tab}
             >
               {t(`tools.${tab}`)}
             </button>
