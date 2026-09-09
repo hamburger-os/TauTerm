@@ -78,7 +78,9 @@ Stats renderer/状态区消费 Session 统计信息。右侧工程能力分成�
 
 C 结构布局不是编译器 ABI 认证器；位域、嵌套 struct/union 和未知类型失败关闭。文本转 bytes 的默认工程语义是 UTF-8；HEX → UTF-8 默认 strict/fatal，非法序列不能静默变成 replacement character。
 
-Quick Tools 的各 tab 保持 mounted，因此在同一个 Session 的右侧栏中切换 tab 不会丢失当前输入。工具状态仍是运行态辅助状态，不进入 Session Library/Workspace 持久化资产模型。
+Quick Tools 的各 tab 保持 mounted，因此在同一个 Session 的右侧栏中切换 tab 不会丢失当前输入。协议检查器、Data Inspector、Encoding 和 Checksum 记录最近 10 条有效输入并允许运行态固定；历史只存在于当前前端组件生命周期，不写入磁盘，也不进入 Session Library/Workspace 持久化资产模型。
+
+Session 与 Inspector 之间只允许**用户显式数据桥**：xterm 选区可通过右键“在协议检查器中查看所选内容”发送，Dual/HEX 视图可对单行完整 HEX 帧执行同类动作。事件携带 `sessionId` 并只由对应 Session 的 Inspector 消费，同时显式展开右侧栏。Inspector 不自动监听后台 RX/TX、不复制所有 Session 流量，也不因此承担 Recorder/Evidence Path 职责。
 
 CRC canonical `123456789` check vector、严格 byte parsing、64-bit conversion/bitops、ABI layout、Modbus RTU/ASCII/TCP、AT、NMEA、Custom Schema、Data Inspector 与工程换算由 `npm run check:engineering-tools` 的合同测试覆盖，并作为 CI gate。
 
