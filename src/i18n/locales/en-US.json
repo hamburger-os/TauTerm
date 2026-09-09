@@ -959,7 +959,9 @@
     "pasteWarningMeta": "{{lines}} content lines · {{characters}} characters",
     "pasteWarningPreview": "Paste preview",
     "pasteWarningCancel": "Cancel",
-    "pasteWarningConfirm": "Paste Anyway"
+    "pasteWarningConfirm": "Paste Anyway",
+    "inspectProtocol": "Inspect selection in Protocol Inspector",
+    "inspectProtocolFrame": "Inspect frame in Protocol Inspector"
   },
   "logging": {
     "systemLog": "System Log",
