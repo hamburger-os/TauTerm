@@ -263,7 +263,12 @@ pub enum OverwritePolicy {
 
 impl OverwritePolicy {
     pub fn parse(value: Option<&str>) -> Result<Self, String> {
-        match value.unwrap_or("replace").trim().to_ascii_lowercase().as_str() {
+        match value
+            .unwrap_or("replace")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "replace" => Ok(Self::Replace),
             "skip" => Ok(Self::Skip),
             "keep-both" | "keep_both" | "keepboth" => Ok(Self::KeepBoth),

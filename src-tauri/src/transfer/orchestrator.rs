@@ -492,7 +492,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 6. 执行传输（内联串口接收：remote_paths 为空，由协议层自行协商文件列表）
         let progress_tx_clone = ctx.progress_tx.clone();
         let result = transfer
-            .receive(&ctx.download_dir, &[], &ctx.options, progress_tx_clone, cancel)
+            .receive(
+                &ctx.download_dir,
+                &[],
+                &ctx.options,
+                progress_tx_clone,
+                cancel,
+            )
             .await;
         drop(ctx.progress_tx);
         let _ = broadcaster.await;

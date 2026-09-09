@@ -13,7 +13,7 @@ use crate::kernel::file_transfer::{
     FileTransfer, FileTransferError, FileTransferOptions, ProgressPosition, TransferDirection,
     UnifiedProgress,
 };
-use crate::transfer::ssh_file_service::{SftpEntryType, SftpWriteOutcome};
+use crate::transfer::ssh_file_service::{SftpEntryType, SftpUploadOptions, SftpWriteOutcome};
 use crate::transfer::types::{BatchFileResult, FileInfo};
 
 /// SFTP 文件传输处理器
@@ -163,8 +163,10 @@ impl FileTransfer for SftpFileTransfer {
                 &self.sftp_cache,
                 &file.path,
                 &remote_path,
-                Some(file.mtime).filter(|&t| t > 0),
-                options.overwrite_policy,
+                SftpUploadOptions {
+                    mtime: Some(file.mtime).filter(|&t| t > 0),
+                    overwrite_policy: options.overwrite_policy,
+                },
                 Some(&on_progress),
                 Some(&cancel),
             )
@@ -344,12 +346,12 @@ impl FileTransfer for SftpFileTransfer {
                             .to_string_lossy()
                             .to_string()
                     });
-                    tokio::fs::create_dir_all(&local_root)
-                        .await
-                        .map_err(|e| FileTransferError::Other(format!(
+                    tokio::fs::create_dir_all(&local_root).await.map_err(|e| {
+                        FileTransferError::Other(format!(
                             "创建本地目录 '{}' 失败: {}",
                             local_root, e
-                        )))?;
+                        ))
+                    })?;
 
                     let tree = crate::transfer::ssh_file_service::sftp_list_tree_recursive(
                         &self.session,
@@ -367,12 +369,12 @@ impl FileTransfer for SftpFileTransfer {
                             .to_string();
                         match item.entry_type {
                             SftpEntryType::Directory => {
-                                tokio::fs::create_dir_all(&local_path)
-                                    .await
-                                    .map_err(|e| FileTransferError::Other(format!(
+                                tokio::fs::create_dir_all(&local_path).await.map_err(|e| {
+                                    FileTransferError::Other(format!(
                                         "创建本地目录 '{}' 失败: {}",
                                         local_path, e
-                                    )))?;
+                                    ))
+                                })?;
                             }
                             SftpEntryType::File => plans.push(ReceiveFilePlan {
                                 remote_path: item.path,
@@ -595,4 +597,3 @@ impl FileTransfer for SftpFileTransfer {
         Ok(results)
     }
 }
-
