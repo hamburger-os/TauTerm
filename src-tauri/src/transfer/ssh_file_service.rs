@@ -428,9 +428,11 @@ pub async fn sftp_download(
         }
     }
 
-    // 最终进度事件（确保 UI 显示 100%）
+    // 仅在最后一个节流样本没有覆盖实际尾部字节时补发，避免重复 100%。
     if let Some(cb) = on_progress {
-        cb(total, remote_size);
+        if throttle.should_emit_final(total, remote_size) {
+            cb(total, remote_size, rate.sample(total));
+        }
     }
     local_file
         .flush()
@@ -460,7 +462,7 @@ pub async fn sftp_upload(
     local_path: &str,
     remote_path: &str,
     mtime: Option<u64>,
-    on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+    on_progress: Option<&(dyn Fn(u64, u64, Option<f64>) + Send + Sync)>,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<u64, String> {
     get_or_create_sftp(session, sftp_cache).await?;
@@ -483,6 +485,7 @@ pub async fn sftp_upload(
     let mut buf = [0u8; TRANSFER_BUF_SIZE];
     let mut total: u64 = 0;
     let mut throttle = ProgressThrottle::new();
+    let mut rate = TransferRateEstimator::new();
 
     loop {
         if is_cancelled(cancel) {
@@ -525,9 +528,11 @@ pub async fn sftp_upload(
         }
     }
 
-    // 最终进度事件（确保 UI 显示 100%）
+    // 仅在最后一个节流样本没有覆盖实际尾部字节时补发，避免重复 100%。
     if let Some(cb) = on_progress {
-        cb(total, local_size);
+        if throttle.should_emit_final(total, local_size) {
+            cb(total, local_size, rate.sample(total));
+        }
     }
     remote_file
         .flush()
