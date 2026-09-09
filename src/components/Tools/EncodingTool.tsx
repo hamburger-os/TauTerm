@@ -7,6 +7,8 @@ import {
   type EncodingOp,
 } from "../../utils/encoding";
 import { copyToClipboard } from "../../utils/clipboard";
+import ToolInputHistory from "./ToolInputHistory";
+import { useToolInputHistory } from "../../hooks/useToolInputHistory";
 import styles from "./EncodingTool.module.css";
 
 function encodingHint(operation: EncodingOp): string | null {
@@ -37,6 +39,7 @@ export function EncodingToolInner() {
     window.setTimeout(() => setCopied(false), 1500);
   }, [outcome]);
 
+  const history = useToolInputHistory(inputText, Boolean(outcome?.ok));
   const hint = encodingHint(operation);
 
   return (
@@ -76,6 +79,13 @@ export function EncodingToolInner() {
         placeholder={t("tools.encodingInputPlaceholder")}
         rows={3}
         spellCheck={false}
+      />
+
+      <ToolInputHistory
+        entries={history.entries}
+        onSelect={setInputText}
+        onTogglePinned={history.togglePinned}
+        onClearRecent={history.clearRecent}
       />
 
       {outcome?.ok && (
