@@ -333,7 +333,7 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
         ) : (
           <div className={styles.dataArea}>
             {displayMode === "dual" ? (
-              <DualPane lines={snap.frames[selectedPeer.peerId] ?? []} />
+              <DualPane sessionId={sessionId} lines={snap.frames[selectedPeer.peerId] ?? []} />
             ) : displayMode === "text" ? (
               <TcpTextList lines={snap.frames[selectedPeer.peerId] ?? []} />
             ) : (
