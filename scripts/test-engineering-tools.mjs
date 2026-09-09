@@ -76,6 +76,21 @@ for (const sample of [
 }
 assert.equal(parseByteInput("AA 0xGG").ok, false);
 assert.equal(parseByteInput("0xAA0xBB").ok, false);
+assert.equal(
+  parseByteInput("A B").ok,
+  false,
+  "separated HEX tokens must not borrow nibbles from adjacent tokens",
+);
+assert.equal(
+  parseByteInput("0xA,0xB").ok,
+  false,
+  "prefixed HEX tokens must represent complete bytes",
+);
+assert.deepEqual(
+  Array.from(ok(parseByteInput("AABB CCDD")).bytes),
+  [0xAA, 0xBB, 0xCC, 0xDD],
+  "even-width grouped HEX tokens remain supported",
+);
 
 assert.equal(
   ok(executeEncodingOp("FFFFFFFFFFFFFFFF", "hex-to-dec")),
