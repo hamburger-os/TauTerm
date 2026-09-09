@@ -571,10 +571,13 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
   }, [restoreTerminalFocus]);
 
   useEffect(() => {
-    if (!isConnected && pendingPaste !== null) {
+    // A pending confirmation belongs to exactly one active terminal. If the
+    // session disconnects or the user switches Pane/Session, cancel it instead
+    // of allowing a later confirmation to target a hidden/inactive terminal.
+    if ((!isConnected || !isActive) && pendingPaste !== null) {
       setPendingPaste(null);
     }
-  }, [isConnected, pendingPaste]);
+  }, [isActive, isConnected, pendingPaste]);
 
   const handlePasteConfirm = useCallback(() => {
     const text = pendingPaste;
