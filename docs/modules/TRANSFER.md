@@ -22,7 +22,7 @@ SideChannel 命令只负责接受并注册后台任务，不能等待整个 SFTP
 
 `session_id` 只标识所属 Session，`transfer_id` 才标识一次具体传输。前端必须同时匹配二者，不能让旧传输的迟到事件污染随后启动的新传输。
 
-前端 `TransferContext` 维护通用传输状态；Transmission/FileTransfer 组件负责协议选择、文件选择、聚合进度和逐文件结果，不拥有后端通道生命周期。SSH 文件管理器的紧凑状态条使用同一公共事件模型，但以 `preparing / transferring / finalizing / cancelling / completed / failed / cancelled` 状态机表达生命周期。
+前端 `TransferContext` 是 started/progress/finished 的唯一监听者，并按 Session 保存 `ManagedTransferTask` 快照；Transmission/FileTransfer 与 SSH 文件管理器只消费这个统一任务存储，不再各自维护第二套 transfer_id/终态状态机。文件管理器紧凑状态条以 `preparing / transferring / finalizing / cancelling / completed / failed / cancelled` 投影任务生命周期。
 
 ## 数据流
 
@@ -55,10 +55,11 @@ flowchart LR
 - **SFTP 覆盖必须事务式提交。** 上传/下载先写目标同目录的 TauTerm 临时文件，完成 write/flush/metadata 后才提交到正式路径；Replace 时先把已有目标改名为临时 backup，提交失败必须回滚 backup。取消/失败只能清理本次临时产物，绝不能删除或截断用户原有正式文件。
 - SFTP 冲突策略统一为 `replace / skip / keep-both`；单文件 Save As 使用精确 destination path，不能只传父目录后重新采用远端原文件名。KeepBoth/Skip 的“不覆盖”约束必须落实到**提交时刻**而不是只做事前 exists 检查：本地文件使用同文件系统 hard-link 排他占位，远端使用 SFTP v3 no-overwrite rename 语义并在失败后重新确认目标。
 - 新建远程文件与上传临时文件使用 `CREATE | EXCLUDE`，同名对象存在时必须失败，不能调用会 truncate 的便利 `create()`。
-- SFTP 递归目录复制必须保留空目录。目录 KeepBoth 会先用排他 `create_dir` 原子保留独立根目录，不能把第二份内容静默 merge 进已有目录；目录 Replace 在已有目标时明确拒绝，避免把“替换”偷换成高风险递归覆盖。符号链接和非常规文件类型是显式条目类型；默认不跟随符号链接，避免递归穿出用户选择的目录树。
+- SFTP 递归目录上传/下载都必须保留空目录。目录 KeepBoth 会先用排他 `create_dir` 原子保留独立根目录，不能把第二份内容静默 merge 进已有目录；目录 Replace 在已有目标时明确拒绝，避免把“替换”偷换成高风险递归覆盖。上传扫描使用 async filesystem API，顶层或嵌套本地符号链接默认不跟随；远端符号链接和非常规文件类型同样是显式条目类型并默认跳过。
 - SFTP chmod 只允许普通文件与目录，并保留 POSIX mode 中的文件类型位；符号链接/特殊文件不提供 chmod，因为 v3 不存在可普遍依赖的 no-follow chmod 操作。
 - **远端名称不能直接作为本地 Path 片段。** 目录树/批量下载中所有远端派生组件必须在后端逐段验证，拒绝 `.`、`..`、`/`、反斜杠、NUL、Windows 保留字符/设备名等跨平台危险名称；只有单文件 Save As 的显式用户选择路径可以作为精确 destination。WebView 不负责拼接远端目录名到本地根路径。
-- 文件管理器成功状态可短暂保留后自动收起；鼠标悬停必须暂停自动收起。失败/取消状态必须保留到用户明确关闭。
+- 文件管理器成功状态可短暂保留后自动收起；鼠标悬停必须暂停自动收起。失败/取消状态必须保留到用户明确关闭。取消请求被接受后任务保持 `cancelling`，迟到 progress 不得把它改回 transferring。
+- 文件管理器列表/网格在大目录使用内建可视区 windowing，避免为万级条目创建同数量 DOM 节点；键盘焦点使用 roving tabindex，方向键、Home/End 与 PageUp/PageDown 在 grid 内移动焦点。
 - 窄文件管理器状态条用 `filemanager` CSS container 自适应：取消/关闭按钮永远可达；宽度不足时先隐藏实时速度，再重排进度信息，不允许用横向滚动解决布局。
 - Serial 与 SSH 模块文档描述“为什么使用传输”，本文描述“传输本身如何被公共系统管理”。
 

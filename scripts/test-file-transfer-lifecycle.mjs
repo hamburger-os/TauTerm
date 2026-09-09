@@ -6,25 +6,24 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = (relativePath) => readFile(path.join(ROOT, relativePath), "utf8");
 
-// ── Compact SFTP status lifecycle ──────────────────────────────────────────
+// ── Compact SFTP status projection ──────────────────────────────────────────
 const hook = await source("src/components/FileManager/hooks/useSftpProgress.ts");
-assert.match(hook, /'preparing'[\s\S]*'transferring'[\s\S]*'finalizing'[\s\S]*'cancelling'[\s\S]*'completed'[\s\S]*'failed'[\s\S]*'cancelled'/);
-assert.match(hook, /payload\.transfer_id !== activeTransferIdRef\.current/);
-assert.match(hook, /payload\.bytes_per_second/);
-assert.doesNotMatch(hook, /Date\.now\(\)|performance\.now\(\)/);
+assert.match(hook, /useTransfer/);
+assert.match(hook, /state\.tasksBySession\[sessionId\]/);
+assert.match(hook, /cancelTask\(sessionId, sftpTask\.transferId\)/);
 assert.match(hook, /SUCCESS_AUTO_HIDE_MS = 5000/);
 assert.match(hook, /hoveredRef\.current/);
-assert.match(hook, /payloadComplete && isLastFile \? 'finalizing' : 'transferring'/);
-assert.match(
+assert.doesNotMatch(
   hook,
-  /file_transfer_cancel[\s\S]{0,180}transferId:\s*activeTransferIdRef\.current/,
-  "SFTP cancellation must target the exact transfer id",
+  /listen<|file-transfer:started|file-transfer:progress|file-transfer:finished/,
+  "FileManager compact progress must project the unified TransferContext store, not own backend listeners",
 );
-assert.match(
+assert.doesNotMatch(
   hook,
-  /previousPhase[\s\S]*phase: previousPhase/,
-  "cancel-command failure must restore the running phase",
+  /invoke\(/,
+  "FileManager compact progress must not own a second transfer command path",
 );
+assert.doesNotMatch(hook, /Date\.now\(\)|performance\.now\(\)/);
 
 // ── Narrow responsive status UI ────────────────────────────────────────────
 const bar = await source("src/components/FileManager/TransferProgressBar.tsx");
@@ -133,6 +132,13 @@ assert.doesNotMatch(
 assert.match(service, /symlink_metadata\(remote_path\)/);
 assert.match(service, /pub enum SftpEntryType[\s\S]*Symlink/);
 assert.match(service, /pub async fn sftp_list_tree_recursive/);
+assert.match(service, /pub async fn sftp_prepare_upload_directory/);
+assert.match(service, /pub async fn sftp_ensure_directory/);
+assert.match(
+  service,
+  /OverwritePolicy::KeepBoth[\s\S]*try_create_remote_directory/,
+  "remote directory KeepBoth must reserve a distinct root without merging",
+);
 assert.match(service, /SftpEntryType::Directory[\s\S]*result\.push\(child\)/);
 assert.match(
   service,
@@ -143,6 +149,11 @@ assert.match(
 // ── SFTP adapter: explicit plans, empty directories and no-follow links ─────
 const sftp = await source("src-tauri/src/transfer/sftp_transfer.rs");
 assert.match(sftp, /struct ReceiveFilePlan/);
+assert.match(sftp, /struct LocalDirectoryScan/);
+assert.match(sftp, /async fn scan_local_directory/);
+assert.match(sftp, /meta\.file_type\(\)\.is_symlink\(\)[\s\S]*本地符号链接默认不跟随/);
+assert.match(sftp, /sftp_prepare_upload_directory/);
+assert.match(sftp, /sftp_ensure_directory/);
 assert.match(sftp, /options\s*\.destination_paths/);
 assert.match(sftp, /prepare_local_directory_destination/);
 assert.match(
@@ -209,6 +220,13 @@ assert.match(
 );
 assert.match(panel, /requestConflictPolicy/);
 assert.match(panel, /conflictCount/);
+assert.match(panel, /handleUploadFolder/);
+assert.match(panel, /fileManager\.uploadFolder/);
+assert.match(
+  panel,
+  /requestConflictPolicy\(1, false\)/,
+  "directory conflicts must not offer unsafe recursive Replace semantics",
+);
 assert.match(
   panel,
   /let overwritePolicy: OverwritePolicy = "keep-both"/,
@@ -233,23 +251,26 @@ assert.ok(
   "file Properties must be the last action",
 );
 
-// ── Shared transfer state obeys finished as the only terminal source ───────
+// ── Unified transfer event store / terminal ownership ───────────────────────
 const sharedContext = await source("src/context/TransferContext.tsx");
+assert.match(sharedContext, /tasksBySession:\s*Record<string, ManagedTransferTask>/);
+assert.match(sharedContext, /TASK_STARTED/);
+assert.match(sharedContext, /TASK_PROGRESS/);
+assert.match(sharedContext, /TASK_FINISHED/);
+assert.match(sharedContext, /dispatch\(\{ type: "TASK_STARTED", payload \}\)/);
+assert.match(sharedContext, /dispatch\(\{ type: "TASK_PROGRESS", payload: p \}\)/);
+assert.match(sharedContext, /dispatch\(\{ type: "TASK_FINISHED", payload \}\)/);
 assert.match(sharedContext, /const ack = await invoke<TransferStartAck>/);
 assert.match(sharedContext, /activeTransferIdRef\.current = ack\.transfer_id/);
 assert.match(sharedContext, /p\.transfer_id !== activeTransferIdRef\.current/);
 assert.match(sharedContext, /batch_complete 只是协议层批次收尾[\s\S]*if \(p\.is_batch_complete\)/);
-assert.match(
-  sharedContext,
-  /file_transfer_cancel[\s\S]{0,180}transferId:\s*activeTransferIdRef\.current/,
-);
+assert.match(sharedContext, /const cancelTask = useCallback/);
+assert.match(sharedContext, /file_transfer_cancel[\s\S]{0,180}transferId/);
 assert.doesNotMatch(
   sharedContext,
-  /file_transfer_cancel[\s\S]{0,220}SET_STATUS"[\s\S]{0,80}"cancelled"/,
+  /file_transfer_cancel[\s\S]{0,260}SET_STATUS"[\s\S]{0,80}"cancelled"/,
   "cancel request acceptance must not be treated as terminal cancellation",
 );
-
-console.log("file-transfer-lifecycle: transactional writes, exact identity, no-follow traversal, query ordering, responsive UI, and interaction contracts verified");
 
 const deleteDialog = await source("src/components/FileManager/DeleteConfirmationDialog.tsx");
 assert.match(deleteDialog, /role="alertdialog"/);
@@ -277,3 +298,40 @@ assert.match(
   /仅支持修改普通文件或目录权限/,
   "chmod must reject symlink/special-file targets",
 );
+
+
+const transferTypes = await source("src-tauri/src/transfer/types.rs");
+assert.match(transferTypes, /pub is_dir:\s*bool/);
+assert.match(transferTypes, /symlink_metadata\(path\)/);
+assert.match(transferTypes, /file_type\(\)\.is_symlink\(\)/);
+
+const virtualWindow = await source("src/components/FileManager/hooks/useVirtualWindow.ts");
+assert.match(virtualWindow, /threshold = 300/);
+assert.match(virtualWindow, /ResizeObserver/);
+assert.match(virtualWindow, /overscan/);
+
+const fileList = await source("src/components/FileManager/FileList.tsx");
+assert.match(fileList, /useVirtualWindow/);
+assert.match(fileList, /tabIndex=\{activeIndex === index \? 0 : -1\}/);
+assert.match(fileList, /case "ArrowDown"/);
+assert.match(fileList, /case "Home"/);
+assert.match(fileList, /case "End"/);
+assert.match(fileList, /virtualCanvas/);
+
+const fileGrid = await source("src/components/FileManager/FileGrid.tsx");
+assert.match(fileGrid, /VIRTUAL_THRESHOLD = 300/);
+assert.match(fileGrid, /ResizeObserver/);
+assert.match(fileGrid, /case "ArrowLeft"/);
+assert.match(fileGrid, /case "ArrowRight"/);
+assert.match(fileGrid, /case "ArrowUp"/);
+assert.match(fileGrid, /case "ArrowDown"/);
+assert.match(fileGrid, /tabIndex=\{activeItem === itemIndex \? 0 : -1\}/);
+
+const preview = await source("src/components/FileManager/FilePreviewModal.tsx");
+assert.match(preview, /type PreviewEncoding/);
+assert.match(preview, /"gb18030"/);
+assert.match(preview, /"shift_jis"/);
+assert.match(preview, /function formatHex/);
+assert.match(preview, /HEX_RENDER_LIMIT/);
+assert.match(preview, /new TextDecoder\(encoding/);
+assert.match(preview, /aria-pressed=\{mode === "text"\}/);

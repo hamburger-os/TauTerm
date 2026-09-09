@@ -4,7 +4,7 @@
 //! 通过 `SshSideChannel::create_file_transfer()` 创建，消除 commands.rs 中的
 //! `downcast_ref::<SshSideChannel>()` 类型不安全转换。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc::UnboundedSender, Mutex};
@@ -13,7 +13,10 @@ use crate::kernel::file_transfer::{
     FileTransfer, FileTransferError, FileTransferOptions, OverwritePolicy, ProgressPosition,
     TransferDirection, UnifiedProgress,
 };
-use crate::transfer::ssh_file_service::{SftpEntryType, SftpUploadOptions, SftpWriteOutcome};
+use crate::transfer::ssh_file_service::{
+    sftp_ensure_directory, sftp_prepare_upload_directory, SftpEntryType, SftpUploadOptions,
+    SftpWriteOutcome,
+};
 use crate::transfer::types::{BatchFileResult, FileInfo};
 
 /// SFTP 文件传输处理器
@@ -219,6 +222,122 @@ async fn prepare_local_directory_destination(
     }
 }
 
+#[derive(Debug, Clone)]
+struct LocalUploadFilePlan {
+    local_path: String,
+    relative_path: String,
+    size: u64,
+    mtime: u64,
+}
+
+#[derive(Debug, Default)]
+struct LocalDirectoryScan {
+    directories: Vec<String>,
+    files: Vec<LocalUploadFilePlan>,
+    skipped: Vec<BatchFileResult>,
+}
+
+fn join_remote_path(base: &str, relative: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let relative = relative.trim_start_matches('/');
+    if base.is_empty() || base == "/" {
+        format!("/{}", relative)
+    } else if relative.is_empty() {
+        base.to_string()
+    } else {
+        format!("{}/{}", base, relative)
+    }
+}
+
+fn utf8_local_name(path: &Path) -> Result<String, FileTransferError> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty() && *name != "." && *name != "..")
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            FileTransferError::Other(format!(
+                "本地路径 '{}' 的文件名不是有效 UTF-8，无法安全映射到 SFTP",
+                path.display()
+            ))
+        })
+}
+
+async fn scan_local_directory(root: &Path) -> Result<LocalDirectoryScan, FileTransferError> {
+    let mut scan = LocalDirectoryScan::default();
+    let mut stack: Vec<(PathBuf, String)> = vec![(root.to_path_buf(), String::new())];
+
+    while let Some((dir, relative_dir)) = stack.pop() {
+        let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| {
+            FileTransferError::Other(format!("读取本地目录 '{}' 失败: {}", dir.display(), e))
+        })?;
+
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            FileTransferError::Other(format!("枚举本地目录 '{}' 失败: {}", dir.display(), e))
+        })? {
+            let path = entry.path();
+            let name = utf8_local_name(&path)?;
+            let relative = if relative_dir.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", relative_dir, name)
+            };
+            let meta = tokio::fs::symlink_metadata(&path).await.map_err(|e| {
+                FileTransferError::Other(format!(
+                    "读取本地路径 '{}' 元数据失败: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+
+            if meta.file_type().is_symlink() {
+                scan.skipped.push(BatchFileResult {
+                    file_name: relative,
+                    status: "skipped".into(),
+                    size: 0,
+                    error: Some("本地符号链接默认不跟随，已跳过".into()),
+                });
+                continue;
+            }
+
+            if meta.is_dir() {
+                scan.directories.push(relative.clone());
+                stack.push((path, relative));
+                continue;
+            }
+
+            if meta.is_file() {
+                let mtime = meta
+                    .modified()
+                    .map(|value| {
+                        value
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                    })
+                    .unwrap_or(0);
+                scan.files.push(LocalUploadFilePlan {
+                    local_path: path.to_string_lossy().to_string(),
+                    relative_path: relative,
+                    size: meta.len(),
+                    mtime,
+                });
+                continue;
+            }
+
+            scan.skipped.push(BatchFileResult {
+                file_name: relative,
+                status: "skipped".into(),
+                size: 0,
+                error: Some("非常规本地文件类型未上传".into()),
+            });
+        }
+    }
+
+    // 父目录必须先于子目录创建。按路径深度排序即可保持确定性。
+    scan.directories.sort_by_key(|path| path.matches('/').count());
+    Ok(scan)
+}
+
 #[async_trait::async_trait]
 impl FileTransfer for SftpFileTransfer {
     fn protocol(&self) -> &str {
@@ -237,25 +356,110 @@ impl FileTransfer for SftpFileTransfer {
         progress: UnboundedSender<UnifiedProgress>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<BatchFileResult>, FileTransferError> {
-        let mut results = Vec::new();
-        let total = files.len();
-        let total_aggregate = files.iter().map(|f| f.size).sum::<u64>();
+        #[derive(Debug, Clone)]
+        struct UploadPlan {
+            local_path: String,
+            remote_path: String,
+            display_name: String,
+            size: u64,
+            mtime: u64,
+        }
+
+        let rd = remote_dir.map(|dir| dir.trim_end_matches('/')).unwrap_or("/");
+        let mut plans: Vec<UploadPlan> = Vec::new();
+        let mut results: Vec<BatchFileResult> = Vec::new();
+
+        // 先建立完整的上传计划。目录根通过排他 create_dir 解析冲突；子目录随后按
+        // 父→子顺序创建。扫描使用 tokio::fs，不阻塞 Tauri/runtime 主线程。
+        for file in files {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(FileTransferError::Cancelled);
+            }
+
+            let requested_remote = if rd == "/" || rd.is_empty() {
+                format!("/{}", file.name)
+            } else {
+                format!("{}/{}", rd, file.name)
+            };
+
+            if !file.is_dir {
+                plans.push(UploadPlan {
+                    local_path: file.path.clone(),
+                    remote_path: requested_remote,
+                    display_name: file.name.clone(),
+                    size: file.size,
+                    mtime: file.mtime,
+                });
+                continue;
+            }
+
+            let scan = scan_local_directory(Path::new(&file.path)).await?;
+            results.extend(scan.skipped);
+
+            let Some(remote_root) = sftp_prepare_upload_directory(
+                &self.session,
+                &self.sftp_cache,
+                &requested_remote,
+                options.overwrite_policy,
+            )
+            .await
+            .map_err(FileTransferError::Other)?
+            else {
+                results.push(BatchFileResult {
+                    file_name: file.name.clone(),
+                    status: "skipped".into(),
+                    size: 0,
+                    error: None,
+                });
+                continue;
+            };
+
+            for relative_dir in &scan.directories {
+                sftp_ensure_directory(
+                    &self.session,
+                    &self.sftp_cache,
+                    &join_remote_path(&remote_root, relative_dir),
+                )
+                .await
+                .map_err(FileTransferError::Other)?;
+            }
+
+            // 即使目录为空，也保留一个成功结果，确保用户选中的根目录有可解释终态。
+            results.push(BatchFileResult {
+                file_name: file.name.clone(),
+                status: "completed".into(),
+                size: 0,
+                error: None,
+            });
+
+            for nested in scan.files {
+                plans.push(UploadPlan {
+                    local_path: nested.local_path,
+                    remote_path: join_remote_path(&remote_root, &nested.relative_path),
+                    display_name: format!("{}/{}", file.name, nested.relative_path),
+                    size: nested.size,
+                    mtime: nested.mtime,
+                });
+            }
+        }
+
+        let total = plans.len();
+        let total_aggregate = plans.iter().map(|file| file.size).sum::<u64>();
         let mut completed_bytes: u64 = 0;
-        let rd = remote_dir.map(|d| d.trim_end_matches('/')).unwrap_or("/");
 
         log::info!(
-            "SFTP 批量上传开始: {} 个文件 → {} (合计 {} bytes, overwrite={:?})",
+            "SFTP 上传计划就绪: {} 个文件 → {} (合计 {} bytes, overwrite={:?})",
             total,
             rd,
             total_aggregate,
             options.overwrite_policy
         );
 
-        for (i, file) in files.iter().enumerate() {
+        for (i, file) in plans.iter().enumerate() {
             if cancel.load(Ordering::SeqCst) {
-                for remaining in files.iter().skip(i) {
+                for remaining in plans.iter().skip(i) {
                     results.push(BatchFileResult {
-                        file_name: remaining.name.clone(),
+                        file_name: remaining.display_name.clone(),
                         status: "skipped".into(),
                         size: 0,
                         error: Some("传输已取消".into()),
@@ -264,12 +468,7 @@ impl FileTransfer for SftpFileTransfer {
                 break;
             }
 
-            let remote_path = if rd == "/" || rd.is_empty() {
-                format!("/{}", file.name)
-            } else {
-                format!("{}/{}", rd, file.name)
-            };
-            let display_name = file.name.clone();
+            let display_name = file.display_name.clone();
             let pt = progress.clone();
             let fname = display_name.clone();
             let base_completed = completed_bytes;
@@ -306,10 +505,10 @@ impl FileTransfer for SftpFileTransfer {
             let result = crate::transfer::ssh_file_service::sftp_upload(
                 &self.session,
                 &self.sftp_cache,
-                &file.path,
-                &remote_path,
+                &file.local_path,
+                &file.remote_path,
                 SftpUploadOptions {
-                    mtime: Some(file.mtime).filter(|&t| t > 0),
+                    mtime: Some(file.mtime).filter(|&value| value > 0),
                     overwrite_policy: options.overwrite_policy,
                 },
                 Some(&on_progress),
@@ -372,7 +571,7 @@ impl FileTransfer for SftpFileTransfer {
                         error: None,
                     });
                 }
-                Err(e) => {
+                Err(error) => {
                     let is_cancelled = cancel.load(Ordering::SeqCst);
                     let _ = progress.send(UnifiedProgress::file_complete(
                         "sftp",
@@ -386,18 +585,18 @@ impl FileTransfer for SftpFileTransfer {
                         },
                         TransferDirection::Send,
                         false,
-                        Some(e.clone()),
+                        Some(error.clone()),
                     ));
                     results.push(BatchFileResult {
                         file_name: display_name,
                         status: if is_cancelled { "skipped" } else { "failed" }.into(),
                         size: 0,
-                        error: Some(e),
+                        error: Some(error),
                     });
                     if is_cancelled {
-                        for remaining in files.iter().skip(i + 1) {
+                        for remaining in plans.iter().skip(i + 1) {
                             results.push(BatchFileResult {
-                                file_name: remaining.name.clone(),
+                                file_name: remaining.display_name.clone(),
                                 status: "skipped".into(),
                                 size: 0,
                                 error: Some("传输已取消".into()),
@@ -409,9 +608,9 @@ impl FileTransfer for SftpFileTransfer {
             }
         }
 
-        let completed = results.iter().filter(|r| r.status == "completed").count();
-        let failed = results.iter().filter(|r| r.status == "failed").count();
-        let skipped = results.iter().filter(|r| r.status == "skipped").count();
+        let completed = results.iter().filter(|result| result.status == "completed").count();
+        let failed = results.iter().filter(|result| result.status == "failed").count();
+        let skipped = results.iter().filter(|result| result.status == "skipped").count();
 
         let _ = progress.send(UnifiedProgress::batch_complete(
             "sftp",
@@ -425,17 +624,18 @@ impl FileTransfer for SftpFileTransfer {
             return Err(FileTransferError::Cancelled);
         }
         if failed > 0 {
-            let first_err = results
+            let first_error = results
                 .iter()
-                .filter(|r| r.status == "failed")
-                .filter_map(|r| r.error.as_deref())
+                .filter(|result| result.status == "failed")
+                .filter_map(|result| result.error.as_deref())
                 .next()
                 .unwrap_or("部分文件上传失败");
             return Err(FileTransferError::Other(format!(
                 "{} 个文件上传失败：{}",
-                failed, first_err
+                failed, first_error
             )));
         }
+
         Ok(results)
     }
 
@@ -757,3 +957,83 @@ impl FileTransfer for SftpFileTransfer {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_safe_component_rejects_traversal_and_platform_reserved_names() {
+        for invalid in [
+            "",
+            ".",
+            "..",
+            "a/b",
+            "a\\b",
+            "a\0b",
+            "bad:name",
+            "trailing.",
+            "trailing ",
+            "CON",
+            "con.txt",
+            "COM1",
+            "lpt9.log",
+        ] {
+            assert!(
+                local_safe_component(invalid).is_err(),
+                "expected invalid local component: {invalid:?}"
+            );
+        }
+        assert_eq!(
+            local_safe_component("normal-file.txt").expect("valid name"),
+            "normal-file.txt"
+        );
+    }
+
+    #[test]
+    fn safe_local_relative_validates_every_remote_component() {
+        assert_eq!(
+            safe_local_relative("/root", "/root/a/b.txt").expect("safe path"),
+            PathBuf::from("a").join("b.txt")
+        );
+        assert!(safe_local_relative("/root", "/root/../escape.txt").is_err());
+        assert!(safe_local_relative("/root", "/root/CON/file.txt").is_err());
+    }
+
+    #[tokio::test]
+    async fn local_directory_scan_preserves_empty_dirs_and_skips_symlinks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().join("root");
+        tokio::fs::create_dir_all(root.join("empty"))
+            .await
+            .expect("empty dir");
+        tokio::fs::create_dir_all(root.join("nested"))
+            .await
+            .expect("nested dir");
+        tokio::fs::write(root.join("nested").join("data.txt"), b"payload")
+            .await
+            .expect("file");
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            root.join("nested").join("data.txt"),
+            root.join("link.txt"),
+        )
+        .expect("symlink");
+
+        let scan = scan_local_directory(&root).await.expect("scan");
+        assert!(scan.directories.iter().any(|path| path == "empty"));
+        assert!(scan.directories.iter().any(|path| path == "nested"));
+        assert!(scan
+            .files
+            .iter()
+            .any(|file| file.relative_path == "nested/data.txt" && file.size == 7));
+
+        #[cfg(unix)]
+        assert!(scan
+            .skipped
+            .iter()
+            .any(|item| item.file_name == "link.txt" && item.status == "skipped"));
+    }
+}
+

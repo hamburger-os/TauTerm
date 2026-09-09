@@ -1097,7 +1097,14 @@
     "typeOther": "Special File",
     "deleteConfirmTitle": "Confirm deletion",
     "deleteConfirmAction": "Delete",
-    "deleteFailed": "Failed to delete {{count}} item(s): {{names}}"
+    "deleteFailed": "Failed to delete {{count}} item(s): {{names}}",
+    "uploadFolder": "Upload Folder",
+    "uploadFailed": "Upload failed: {{error}}",
+    "previewMode": "Preview mode",
+    "previewText": "Text",
+    "previewEncoding": "Encoding",
+    "previewHexLimited": "For responsiveness, HEX view shows only the first {{size}}.",
+    "previewBytes": "{{count}} bytes loaded"
   },
   "ssh": {
     "host": "Host",

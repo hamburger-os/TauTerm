@@ -1097,7 +1097,14 @@
     "typeOther": "特殊文件",
     "deleteConfirmTitle": "确认删除",
     "deleteConfirmAction": "删除",
-    "deleteFailed": "有 {{count}} 项删除失败：{{names}}"
+    "deleteFailed": "有 {{count}} 项删除失败：{{names}}",
+    "uploadFolder": "上传文件夹",
+    "uploadFailed": "上传失败：{{error}}",
+    "previewMode": "预览模式",
+    "previewText": "文本",
+    "previewEncoding": "编码",
+    "previewHexLimited": "HEX 视图为保证流畅度仅显示前 {{size}}。",
+    "previewBytes": "已读取 {{count}} 字节"
   },
   "ssh": {
     "host": "主机地址",

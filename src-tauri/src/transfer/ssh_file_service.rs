@@ -1112,6 +1112,130 @@ pub async fn sftp_mkdir(
     Ok(())
 }
 
+async fn try_create_remote_directory(
+    sftp: &russh_sftp::client::SftpSession,
+    candidate: &str,
+) -> Result<bool, String> {
+    if sftp
+        .try_exists(candidate)
+        .await
+        .map_err(|e| format!("检查远程目录 '{}' 失败: {}", candidate, e))?
+    {
+        return Ok(false);
+    }
+
+    match sftp.create_dir(candidate).await {
+        Ok(()) => Ok(true),
+        Err(create_error) => {
+            let now_exists = sftp
+                .try_exists(candidate)
+                .await
+                .map_err(|e| format!("重新检查远程目录 '{}' 失败: {}", candidate, e))?;
+            if now_exists {
+                Ok(false)
+            } else {
+                Err(format!("创建远程目录 '{}' 失败: {}", candidate, create_error))
+            }
+        }
+    }
+}
+
+/// 为目录上传原子保留远端根目录。
+///
+/// 目录 Replace 不做隐式递归覆盖：若目标已经存在则明确失败；KeepBoth 使用
+/// create_dir 的排他创建语义挑选一个不冲突名字；Skip 在冲突时跳过整棵目录。
+pub async fn sftp_prepare_upload_directory(
+    session: &Arc<russh::client::Handle<SshHandler>>,
+    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    requested: &str,
+    policy: OverwritePolicy,
+) -> Result<Option<String>, String> {
+    get_or_create_sftp(session, sftp_cache).await?;
+    let cache = sftp_cache.lock().await;
+    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+
+    match policy {
+        OverwritePolicy::Skip => {
+            if try_create_remote_directory(sftp, requested).await? {
+                Ok(Some(requested.to_string()))
+            } else {
+                Ok(None)
+            }
+        }
+        OverwritePolicy::KeepBoth => {
+            for index in 0..=9999 {
+                let candidate = if index == 0 {
+                    requested.to_string()
+                } else {
+                    let (dir, name) = remote_parts(requested);
+                    remote_join(dir, &format!("{} ({})", name, index))
+                };
+                if try_create_remote_directory(sftp, &candidate).await? {
+                    return Ok(Some(candidate));
+                }
+            }
+            Err(format!("无法为远程目录 '{}' 生成不冲突名称", requested))
+        }
+        OverwritePolicy::Replace => {
+            if sftp
+                .try_exists(requested)
+                .await
+                .map_err(|e| format!("检查远程目录 '{}' 失败: {}", requested, e))?
+            {
+                return Err(format!(
+                    "远程目录 '{}' 已存在；目录替换不会自动合并或递归覆盖，请选择保留两份或跳过",
+                    requested
+                ));
+            }
+            if try_create_remote_directory(sftp, requested).await? {
+                Ok(Some(requested.to_string()))
+            } else {
+                Err(format!("远程目录 '{}' 在提交时被其他操作占用", requested))
+            }
+        }
+    }
+}
+
+/// 确保远端子目录存在。已有对象必须确实是目录；不会跟随符号链接。
+pub async fn sftp_ensure_directory(
+    session: &Arc<russh::client::Handle<SshHandler>>,
+    sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
+    remote_path: &str,
+) -> Result<(), String> {
+    get_or_create_sftp(session, sftp_cache).await?;
+    let cache = sftp_cache.lock().await;
+    let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+
+    if sftp
+        .try_exists(remote_path)
+        .await
+        .map_err(|e| format!("检查远程目录 '{}' 失败: {}", remote_path, e))?
+    {
+        let meta = sftp
+            .symlink_metadata(remote_path)
+            .await
+            .map_err(|e| format!("获取远程目录 '{}' 信息失败: {}", remote_path, e))?;
+        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
+            return Ok(());
+        }
+        return Err(format!("远程路径 '{}' 已存在且不是目录", remote_path));
+    }
+
+    if try_create_remote_directory(sftp, remote_path).await? {
+        Ok(())
+    } else {
+        let meta = sftp
+            .symlink_metadata(remote_path)
+            .await
+            .map_err(|e| format!("获取远程目录 '{}' 信息失败: {}", remote_path, e))?;
+        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
+            Ok(())
+        } else {
+            Err(format!("远程路径 '{}' 被非目录对象占用", remote_path))
+        }
+    }
+}
+
 /// 创建空文件（touch）
 pub async fn sftp_new_file(
     session: &Arc<russh::client::Handle<SshHandler>>,
@@ -1455,5 +1579,61 @@ mod progress_tests {
         assert!(sample.is_finite());
         assert!(sample > 0.0);
         assert_eq!(rate.sample(1024), Some(sample));
+    }
+
+    #[tokio::test]
+    async fn local_keep_both_never_overwrites_existing_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let final_path = dir.path().join("report.txt");
+        let temp_path = dir.path().join(".report.part");
+        tokio::fs::write(&final_path, b"old").await.expect("write old");
+        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
+
+        let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::KeepBoth)
+            .await
+            .expect("commit")
+            .expect("committed path");
+
+        assert_ne!(committed, final_path);
+        assert_eq!(tokio::fs::read(&final_path).await.expect("read old"), b"old");
+        assert_eq!(tokio::fs::read(&committed).await.expect("read new"), b"new");
+        assert!(tokio::fs::symlink_metadata(&temp_path).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn local_replace_commits_new_bytes_without_leaving_backup() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let final_path = dir.path().join("report.txt");
+        let temp_path = dir.path().join(".report.part");
+        tokio::fs::write(&final_path, b"old").await.expect("write old");
+        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
+
+        let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::Replace)
+            .await
+            .expect("commit")
+            .expect("committed path");
+
+        assert_eq!(committed, final_path);
+        assert_eq!(tokio::fs::read(&final_path).await.expect("read final"), b"new");
+        let mut entries = tokio::fs::read_dir(dir.path()).await.expect("read dir");
+        while let Some(entry) = entries.next_entry().await.expect("entry") {
+            let name = entry.file_name().to_string_lossy().to_string();
+            assert!(!name.contains("tauterm-backup"), "backup leaked: {name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn local_skip_preserves_existing_destination() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let final_path = dir.path().join("report.txt");
+        let temp_path = dir.path().join(".report.part");
+        tokio::fs::write(&final_path, b"old").await.expect("write old");
+        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
+
+        let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::Skip)
+            .await
+            .expect("commit");
+        assert!(committed.is_none());
+        assert_eq!(tokio::fs::read(&final_path).await.expect("read final"), b"old");
     }
 }

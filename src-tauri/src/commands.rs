@@ -3518,19 +3518,20 @@ pub async fn file_transfer_send(
         .parse()
         .map_err(|_| format!("无效的传输协议: {}", protocol))?;
 
-    // 构建 FileInfo 列表
+    // 构建 FileInfo 列表。任一输入无效就拒绝整个批次，避免用户选择的目录/
+    // 文件被静默丢弃后仍启动“部分上传”。
     let files: Vec<crate::transfer::types::FileInfo> = file_paths
         .iter()
-        .filter_map(|p| match crate::transfer::types::FileInfo::from_path(p) {
-            Ok(info) => Some(info),
-            Err(e) => {
-                log::warn!("无法获取文件信息 {}: {}", p, e);
-                None
-            }
+        .map(|path| {
+            crate::transfer::types::FileInfo::from_path(path)
+                .map_err(|e| format!("无法读取传输源 '{}': {}", path, e))
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     if files.is_empty() {
         return Err("没有可传输的有效文件".into());
+    }
+    if pt.is_serial_inline() && files.iter().any(|file| file.is_dir) {
+        return Err("X/Y/ZModem 只支持普通文件；目录上传仅适用于 SFTP".into());
     }
 
     // 创建进度通道

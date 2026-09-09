@@ -1,12 +1,10 @@
 /**
  * 文件列表组件
  *
- * 带列标题的文件列表，支持排序、多选、加载态、空态和错误横幅。
- * 右键菜单：
- *   - 列标题 / body 空白区域 / 状态文字 → 空白区域菜单
- *   - 文件行 → 文件专用菜单（stopPropagation 阻止冒泡）
+ * 带列标题的文件列表，支持排序、多选、加载态、空态、错误横幅。
+ * 大目录启用内建 windowing，仅渲染可视区附近行；键盘焦点采用 roving tabindex。
  */
-import { useRef } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
 import type { IconName } from "../common/Icon";
@@ -14,16 +12,16 @@ import type { SortField, SortDirection } from "./types";
 import type { FileViewProps } from "./FileViewProps";
 import FileRow from "./FileRow";
 import { getFolderIcon } from "./entryIcon";
+import { useVirtualWindow } from "./hooks/useVirtualWindow";
 import styles from "./FileList.module.css";
 
-// ── Helpers ────────────────────────────────────────────
+const ROW_HEIGHT = 28;
+const PAGE_STEP = 10;
 
 function sortIcon(field: SortField, active: SortField | null, dir: SortDirection): IconName | null {
   if (field !== active) return null;
   return dir === "asc" ? "arrow-up" : "arrow-down";
 }
-
-// ── Component ──────────────────────────────────────────
 
 interface FileListProps extends FileViewProps {
   sortField: SortField;
@@ -50,9 +48,71 @@ export default function FileList({
   showProgress = false,
 }: FileListProps) {
   const { t } = useTranslation();
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const parentVisible = showParentDir && !loading;
+  const [activeIndex, setActiveIndex] = useState<number>(parentVisible ? -1 : 0);
+  const virtual = useVirtualWindow({
+    count: entries.length,
+    itemSize: ROW_HEIGHT,
+    leadingSize: parentVisible ? ROW_HEIGHT : 0,
+  });
 
-  // ── 列标题渲染 ──────────────────────────
+  useEffect(() => {
+    if (loading) return;
+    if (entries.length === 0) {
+      setActiveIndex(parentVisible ? -1 : 0);
+      return;
+    }
+    setActiveIndex((current) => {
+      if (current === -1 && parentVisible) return -1;
+      return Math.min(Math.max(current, 0), entries.length - 1);
+    });
+  }, [entries.length, loading, parentVisible]);
+
+  const focusIndex = useCallback((index: number) => {
+    if (index >= 0) virtual.scrollIndexIntoView(index);
+    setActiveIndex(index);
+    requestAnimationFrame(() => {
+      const selector = index === -1
+        ? '[data-file-index="parent"]'
+        : `[data-file-index="${index}"]`;
+      const target = virtual.containerRef.current?.querySelector<HTMLElement>(selector);
+      target?.focus();
+    });
+  }, [virtual.containerRef, virtual.scrollIndexIntoView]);
+
+  const handleNavigationKey = useCallback((current: number, e: React.KeyboardEvent) => {
+    if (entries.length === 0 && !parentVisible) return;
+
+    let next = current;
+    switch (e.key) {
+      case "ArrowDown":
+        next = current < 0 ? 0 : Math.min(entries.length - 1, current + 1);
+        break;
+      case "ArrowUp":
+        next = current <= 0 && parentVisible
+          ? -1
+          : Math.max(0, current - 1);
+        break;
+      case "Home":
+        next = parentVisible ? -1 : 0;
+        break;
+      case "End":
+        next = Math.max(0, entries.length - 1);
+        break;
+      case "PageDown":
+        next = Math.min(entries.length - 1, Math.max(0, current) + PAGE_STEP);
+        break;
+      case "PageUp":
+        next = Math.max(parentVisible ? -1 : 0, current - PAGE_STEP);
+        break;
+      default:
+        return;
+    }
+
+    e.preventDefault();
+    focusIndex(next);
+  }, [entries.length, focusIndex, parentVisible]);
+
   const renderHeader = (field: SortField, label: string, extraClass?: string) => (
     <div
       className={`${styles.headerCell} ${extraClass || ""}`}
@@ -60,7 +120,10 @@ export default function FileList({
       role="columnheader"
       tabIndex={0}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") onSortChange(field);
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSortChange(field);
+        }
       }}
     >
       {label}
@@ -72,17 +135,39 @@ export default function FileList({
     </div>
   );
 
-  // ── 空白区域右键 ──
-  // FileRow 已通过 stopPropagation 阻止冒泡，所以到达这里的都是真正的空白区域点击
   const handleBlankContext = (e: React.MouseEvent) => {
     e.preventDefault();
-    e.stopPropagation(); // 阻止事件冒泡到父级 container/RightSidebarPanel，避免重复触发右键菜单
+    e.stopPropagation();
     onContextMenu(e, null, undefined);
   };
 
+  const renderRow = (entry: FileViewProps["entries"][number], index: number, virtualized: boolean) => (
+    <FileRow
+      key={entry.path}
+      entry={entry}
+      isSelected={selectedPaths.has(entry.path)}
+      tabIndex={activeIndex === index ? 0 : -1}
+      dataIndex={index}
+      style={virtualized
+        ? { position: "absolute", top: index * ROW_HEIGHT, left: 0, right: 0 }
+        : undefined}
+      onFocus={() => setActiveIndex(index)}
+      onKeyDown={(e) => handleNavigationKey(index, e)}
+      onClick={(e) => onEntryClick(entry, index, e.ctrlKey, e.shiftKey)}
+      onDoubleClick={() => onEntryDoubleClick(entry)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onContextMenu(e, entry, index);
+      }}
+    />
+  );
+
   return (
-    <div className={`${styles.container} ${showProgress ? styles.containerWithProgress : ""}`} onContextMenu={handleBlankContext}>
-      {/* 列标题 — 右键也触发空白区域菜单 */}
+    <div
+      className={`${styles.container} ${showProgress ? styles.containerWithProgress : ""}`}
+      onContextMenu={handleBlankContext}
+    >
       <div className={styles.header} onContextMenu={handleBlankContext}>
         {renderHeader("name", t("fileManager.name"), styles.colName)}
         {renderHeader("size", t("fileManager.size"), styles.colSize)}
@@ -92,26 +177,29 @@ export default function FileList({
         </div>
       </div>
 
-      {/* 错误横幅 */}
       {error && (
         <div className={styles.errorBanner}>
           <span>{error}</span>
-          <button className={styles.errorClose} onClick={onClearError}>
+          <button
+            className={styles.errorClose}
+            onClick={onClearError}
+            aria-label={t("common.close")}
+          >
             <Icon name="close" size="xs" />
           </button>
         </div>
       )}
 
-      {/* 文件列表体 */}
       <div
-        ref={bodyRef}
+        ref={virtual.containerRef}
         className={styles.body}
         role="grid"
         aria-multiselectable="true"
+        aria-rowcount={entries.length + (parentVisible ? 1 : 0)}
         onContextMenu={handleBlankContext}
+        onScroll={virtual.onScroll}
       >
-        {/* Parent directory entry */}
-        {showParentDir && !loading && (
+        {parentVisible && (
           <div
             className={`${styles.parentDirRow} ${parentSelected ? styles.parentDirSelected : ""}`}
             onClick={onParentClick}
@@ -123,8 +211,12 @@ export default function FileList({
             }}
             role="row"
             aria-selected={parentSelected}
-            tabIndex={0}
+            tabIndex={activeIndex === -1 ? 0 : -1}
+            data-file-index="parent"
+            onFocus={() => setActiveIndex(-1)}
             onKeyDown={(e) => {
+              handleNavigationKey(-1, e);
+              if (e.defaultPrevented) return;
               if (e.key === "Enter") {
                 e.preventDefault();
                 onGoUp();
@@ -138,29 +230,27 @@ export default function FileList({
             <span className={styles.parentDirName} role="gridcell">..</span>
           </div>
         )}
-        {loading && (
-          <div className={styles.status}>{t("fileManager.loading")}</div>
-        )}
+
+        {loading && <div className={styles.status}>{t("fileManager.loading")}</div>}
         {!loading && entries.length === 0 && !error && (
           <div className={styles.status}>{t("fileManager.empty")}</div>
         )}
-        {!loading &&
-          entries.map((entry, index) => (
-            <FileRow
-              key={entry.path}
-              entry={entry}
-              isSelected={selectedPaths.has(entry.path)}
-              onClick={(e) =>
-                onEntryClick(entry, index, e.ctrlKey, e.shiftKey)
-              }
-              onDoubleClick={() => onEntryDoubleClick(entry)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onContextMenu(e, entry, index);
-              }}
-            />
-          ))}
+
+        {!loading && entries.length > 0 && (
+          virtual.enabled ? (
+            <div
+              className={styles.virtualCanvas}
+              style={{ height: virtual.totalSize }}
+              role="presentation"
+            >
+              {entries
+                .slice(virtual.start, virtual.end)
+                .map((entry, offset) => renderRow(entry, virtual.start + offset, true))}
+            </div>
+          ) : (
+            entries.map((entry, index) => renderRow(entry, index, false))
+          )
+        )}
       </div>
     </div>
   );

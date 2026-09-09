@@ -59,7 +59,70 @@ const COMMAND_MAP: Record<
 
 // ── State ─────────────────────────────────────────────────
 
-interface TransferState {
+export type ManagedTransferPhase =
+  | "preparing"
+  | "transferring"
+  | "finalizing"
+  | "cancelling"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface ManagedTransferTask {
+  transferId: string;
+  sessionId: string;
+  protocol: string;
+  direction: "send" | "receive";
+  phase: ManagedTransferPhase;
+  fileName: string;
+  bytesDone: number;
+  bytesTotal: number;
+  percent: number;
+  speed: number | null;
+  error: string | null;
+  fileIndex: number;
+  totalFiles: number;
+  aggregateBytes: number;
+  aggregateTotal: number;
+}
+
+interface TransferStartedEvent {
+  session_id: string;
+  transfer_id: string;
+  protocol: string;
+  direction: "send" | "receive";
+}
+
+interface UnifiedProgressEvent {
+  session_id: string;
+  transfer_id: string;
+  protocol: string;
+  file_name: string;
+  bytes_done: number;
+  bytes_total: number;
+  bytes_per_second: number | null;
+  file_index: number;
+  total_files: number;
+  aggregate_bytes: number;
+  aggregate_total: number;
+  direction: "send" | "receive";
+  is_file_start: boolean;
+  is_file_complete: boolean;
+  file_success: boolean | null;
+  file_error: string | null;
+  is_batch_complete: boolean;
+}
+
+interface TransferFinishedEvent {
+  session_id: string;
+  transfer_id?: string;
+  protocol?: string;
+  success: boolean;
+  cancelled?: boolean;
+  error?: string | null;
+}
+
+export interface TransferState {
   status: TransferStatus;
   progress: TransferProgress | null;
   history: TransferHistoryItem[];
@@ -71,6 +134,8 @@ interface TransferState {
   aggregateTotalBytes: number;
   currentFileIndex: number;
   totalFiles: number;
+  /** 所有 Session 的最新传输任务快照。后端事件只在本 Context 中监听一次。 */
+  tasksBySession: Record<string, ManagedTransferTask>;
   /** 当前活跃传输使用的协议 */
   activeProtocol: ProtocolType | null;
   /** 当前活跃传输所属会话 ID（用于过滤跨会话进度事件） */
@@ -91,7 +156,12 @@ type TransferAction =
   | { type: "SYNC_BATCH_RESULTS"; results: BatchFileResult[] }
   | { type: "RESET_BATCH" }
   | { type: "SET_ACTIVE_PROTOCOL"; protocol: ProtocolType | null }
-  | { type: "SET_ACTIVE_SESSION_ID"; sessionId: string | null };
+  | { type: "SET_ACTIVE_SESSION_ID"; sessionId: string | null }
+  | { type: "TASK_STARTED"; payload: TransferStartedEvent }
+  | { type: "TASK_PROGRESS"; payload: UnifiedProgressEvent }
+  | { type: "TASK_FINISHED"; payload: TransferFinishedEvent }
+  | { type: "TASK_CANCELLING"; sessionId: string; transferId: string }
+  | { type: "TASK_DISCARD_SESSION"; sessionId: string };
 
 const initialState: TransferState = {
   status: "idle",
@@ -103,6 +173,7 @@ const initialState: TransferState = {
   aggregateTotalBytes: 0,
   currentFileIndex: 0,
   totalFiles: 0,
+  tasksBySession: {},
   activeProtocol: null,
   activeSessionId: null,
   speed: 0,
@@ -262,6 +333,161 @@ function transferReducer(
         speed: 0,
         transferStartTime: 0,
       };
+    case "TASK_STARTED": {
+      const payload = action.payload;
+      return {
+        ...state,
+        tasksBySession: {
+          ...state.tasksBySession,
+          [payload.session_id]: {
+            transferId: payload.transfer_id,
+            sessionId: payload.session_id,
+            protocol: payload.protocol,
+            direction: payload.direction,
+            phase: "preparing",
+            fileName: "",
+            bytesDone: 0,
+            bytesTotal: 0,
+            percent: 0,
+            speed: null,
+            error: null,
+            fileIndex: 0,
+            totalFiles: 1,
+            aggregateBytes: 0,
+            aggregateTotal: 0,
+          },
+        },
+      };
+    }
+    case "TASK_PROGRESS": {
+      const payload = action.payload;
+      const current = state.tasksBySession[payload.session_id];
+      if (!current || current.transferId !== payload.transfer_id) return state;
+
+      const knownTotal = payload.bytes_total > 0;
+      const isLastFile =
+        payload.total_files <= 1 || payload.file_index + 1 >= payload.total_files;
+      const percent = knownTotal
+        ? payload.bytes_done >= payload.bytes_total
+          ? 100
+          : Math.min(
+              99,
+              Math.max(0, Math.floor((payload.bytes_done / payload.bytes_total) * 100)),
+            )
+        : current.percent;
+      let phase: ManagedTransferPhase = current.phase;
+      // 取消请求一旦被后端接受，就保持 cancelling，直到精确 transfer_id 的 finished。
+      // 迟到 progress 不能把 UI 又退回 transferring/finalizing。
+      if (current.phase === "cancelling") {
+        phase = "cancelling";
+      } else if (payload.is_batch_complete) {
+        phase = "finalizing";
+      } else if (payload.is_file_start) {
+        phase = "transferring";
+      } else if (payload.is_file_complete) {
+        phase = isLastFile ? "finalizing" : "transferring";
+      } else {
+        phase = knownTotal && payload.bytes_done >= payload.bytes_total && isLastFile
+          ? "finalizing"
+          : "transferring";
+      }
+
+      const preserveFailedProgress =
+        payload.is_file_complete && payload.file_success === false && !knownTotal;
+      const nextTask: ManagedTransferTask = {
+        ...current,
+        direction: payload.direction,
+        phase,
+        fileName: payload.is_batch_complete
+          ? current.fileName
+          : (payload.file_name === "__batch_complete__" ? current.fileName : payload.file_name),
+        bytesDone:
+          payload.is_batch_complete || preserveFailedProgress
+            ? current.bytesDone
+            : payload.bytes_done,
+        bytesTotal:
+          payload.is_batch_complete || preserveFailedProgress
+            ? current.bytesTotal
+            : payload.bytes_total,
+        percent:
+          payload.is_batch_complete || preserveFailedProgress
+            ? current.percent
+            : percent,
+        speed:
+          phase === "transferring"
+          && typeof payload.bytes_per_second === "number"
+          && Number.isFinite(payload.bytes_per_second)
+          && payload.bytes_per_second > 0
+            ? payload.bytes_per_second
+            : null,
+        error: payload.file_success === false
+          ? (payload.file_error || current.error)
+          : current.error,
+        fileIndex: payload.is_batch_complete ? current.fileIndex : payload.file_index,
+        totalFiles: payload.is_batch_complete
+          ? current.totalFiles
+          : (payload.total_files || current.totalFiles),
+        aggregateBytes: payload.is_batch_complete
+          ? current.aggregateBytes
+          : payload.aggregate_bytes,
+        aggregateTotal: payload.is_batch_complete
+          ? current.aggregateTotal
+          : (payload.aggregate_total || current.aggregateTotal),
+      };
+      return {
+        ...state,
+        tasksBySession: {
+          ...state.tasksBySession,
+          [payload.session_id]: nextTask,
+        },
+      };
+    }
+    case "TASK_FINISHED": {
+      const payload = action.payload;
+      if (!payload.transfer_id) return state;
+      const current = state.tasksBySession[payload.session_id];
+      if (!current || current.transferId !== payload.transfer_id) return state;
+      if (payload.protocol && current.protocol !== payload.protocol) return state;
+      const phase: ManagedTransferPhase = payload.success
+        ? "completed"
+        : payload.cancelled
+          ? "cancelled"
+          : "failed";
+      return {
+        ...state,
+        tasksBySession: {
+          ...state.tasksBySession,
+          [payload.session_id]: {
+            ...current,
+            phase,
+            percent: payload.success ? 100 : current.percent,
+            speed: null,
+            error: payload.success ? null : (payload.error || current.error),
+          },
+        },
+      };
+    }
+    case "TASK_CANCELLING": {
+      const current = state.tasksBySession[action.sessionId];
+      if (!current || current.transferId !== action.transferId) return state;
+      return {
+        ...state,
+        tasksBySession: {
+          ...state.tasksBySession,
+          [action.sessionId]: {
+            ...current,
+            phase: "cancelling",
+            speed: null,
+          },
+        },
+      };
+    }
+    case "TASK_DISCARD_SESSION": {
+      if (!state.tasksBySession[action.sessionId]) return state;
+      const tasksBySession = { ...state.tasksBySession };
+      delete tasksBySession[action.sessionId];
+      return { ...state, tasksBySession };
+    }
     default:
       return state;
   }
@@ -284,6 +510,7 @@ interface TransferContextValue {
   /** 便捷包装：YMODEM 接收 */
   receiveFiles: (sessionId: string, downloadDir: string) => Promise<void>;
   cancelTransfer: (sessionId: string) => Promise<void>;
+  cancelTask: (sessionId: string, transferId: string) => Promise<void>;
   clearError: () => void;
   clearHistory: () => void;
 }
@@ -460,18 +687,22 @@ export function TransferProvider({ children }: { children: ReactNode }) {
     [startTransfer],
   );
 
+  const cancelTask = useCallback(async (sessionId: string, transferId: string) => {
+    await invoke("file_transfer_cancel", { sessionId, transferId });
+    dispatch({ type: "TASK_CANCELLING", sessionId, transferId });
+  }, []);
+
   const cancelTransfer = useCallback(async (sessionId: string) => {
+    const transferId = activeTransferIdRef.current;
+    if (!transferId) return;
     try {
-      await invoke("file_transfer_cancel", {
-        sessionId,
-        transferId: activeTransferIdRef.current,
-      });
+      await cancelTask(sessionId, transferId);
       // 取消命令仅代表请求被接受；真正 cancelled 终态仍只由精确 transfer_id 的
       // file-transfer:finished 事件决定。
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `Cancel failed: ${e}` });
     }
-  }, []);
+  }, [cancelTask]);
 
   const clearError = useCallback(
     () => dispatch({ type: "SET_ERROR", error: null }),
@@ -497,6 +728,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           activeDirectionRef.current = null;
           lastAggregateBytesRef.current = 0;
           backendStartedRef.current = false;
+          dispatch({ type: "TASK_DISCARD_SESSION", sessionId: event.payload.session_id });
           dispatch({ type: "RESET_BATCH" });
           dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId: null });
           dispatch({ type: "SET_STATUS", status: "idle" });
@@ -508,16 +740,12 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       }
       unlisteners.push(u1);
 
-      // started 是 transfer_id 的身份源；progress 只接受当前这一轮传输。
-      interface TransferStartedPayload {
-        session_id: string;
-        transfer_id: string;
-        protocol: string;
-      }
-      const uStarted = await listen<TransferStartedPayload>(
+      // started 是统一任务存储的身份源；legacy 传输面板随后按当前 owner 过滤。
+      const uStarted = await listen<TransferStartedEvent>(
         "file-transfer:started",
         (event) => {
           const payload = event.payload;
+          dispatch({ type: "TASK_STARTED", payload });
           if (payload.session_id !== activeSessionIdRef.current) return;
           if (payload.protocol !== activeProtocolRef.current) return;
           backendStartedRef.current = true;
@@ -530,31 +758,13 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       }
       unlisteners.push(uStarted);
 
-      // ── 统一进度事件（替代 transfer-progress + sftp-progress 双轨制）──
-      interface UnifiedProgressPayload {
-        session_id: string;
-        transfer_id: string;
-        protocol: string;
-        file_name: string;
-        bytes_done: number;
-        bytes_total: number;
-        bytes_per_second: number | null;
-        file_index: number;
-        total_files: number;
-        aggregate_bytes: number;
-        aggregate_total: number;
-        direction: "send" | "receive";
-        is_file_start: boolean;
-        is_file_complete: boolean;
-        file_success: boolean | null;
-        file_error: string | null;
-        is_batch_complete: boolean;
-      }
-      const u2 = await listen<UnifiedProgressPayload>(
+      // ── 统一进度事件 ──
+      const u2 = await listen<UnifiedProgressEvent>(
         "file-transfer:progress",
         (event) => {
           const p = event.payload;
-          // 同时按 Session / protocol / transfer_id 过滤，迟到事件不能污染下一轮传输。
+          dispatch({ type: "TASK_PROGRESS", payload: p });
+          // legacy 传输面板同时按 Session / protocol / transfer_id 过滤。
           if (p.session_id !== activeSessionIdRef.current) return;
           if (p.protocol !== activeProtocolRef.current) return;
           if (!activeTransferIdRef.current || p.transfer_id !== activeTransferIdRef.current) return;
@@ -590,18 +800,11 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       }
       unlisteners.push(u2);
 
-      interface TransferFinishedPayload {
-        session_id: string;
-        transfer_id?: string;
-        protocol?: string;
-        success: boolean;
-        cancelled?: boolean;
-        error?: string | null;
-      }
-      const uFinished = await listen<TransferFinishedPayload>(
+      const uFinished = await listen<TransferFinishedEvent>(
         "file-transfer:finished",
         (event) => {
           const payload = event.payload;
+          dispatch({ type: "TASK_FINISHED", payload });
           if (payload.session_id !== activeSessionIdRef.current) return;
           if (payload.protocol && payload.protocol !== activeProtocolRef.current) return;
           if (
@@ -664,6 +867,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         sendFiles,
         receiveFiles,
         cancelTransfer,
+        cancelTask,
         clearError,
         clearHistory,
       }}

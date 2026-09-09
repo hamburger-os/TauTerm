@@ -69,14 +69,16 @@ export default function FileManagerPanel({
   const conflictResolverRef = useRef<((policy: OverwritePolicy | null) => void) | null>(null);
   const [conflictCount, setConflictCount] = useState(0);
   const [conflictVisible, setConflictVisible] = useState(false);
+  const [conflictAllowReplace, setConflictAllowReplace] = useState(true);
   const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<string | null>(null);
   const [pendingDeleteTargets, setPendingDeleteTargets] = useState<SftpEntry[]>([]);
 
-  const requestConflictPolicy = useCallback((count: number) => {
+  const requestConflictPolicy = useCallback((count: number, allowReplace = true) => {
     return new Promise<OverwritePolicy | null>((resolve) => {
       conflictResolverRef.current?.(null);
       conflictResolverRef.current = resolve;
       setConflictCount(count);
+      setConflictAllowReplace(allowReplace);
       setConflictVisible(true);
     });
   }, []);
@@ -187,7 +189,7 @@ export default function FileManagerPanel({
   // ── Preview modal state ───────────────────────────────
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewFileName, setPreviewFileName] = useState("");
-  const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<number[] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewFileSize, setPreviewFileSize] = useState(0);
@@ -253,6 +255,35 @@ export default function FileManagerPanel({
     } catch (e) {
       console.error("上传失败:", e);
       alert(`上传失败: ${e}`);
+    }
+  }, [fm, isConnected, requestConflictPolicy, t]);
+
+  const handleUploadFolder = useCallback(async () => {
+    if (!isConnected) {
+      alert(t("fileManager.sessionDisconnected") || "会话已断开，无法上传");
+      return;
+    }
+
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (!selected) return;
+      const localPath = typeof selected === "string" ? selected : selected;
+      const folderName = localPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || localPath;
+      const remoteDir = fm.currentPath
+        ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`)
+        : "/";
+
+      let overwritePolicy: OverwritePolicy = "keep-both";
+      if (fm.entries.some((entry) => entry.name === folderName)) {
+        const policy = await requestConflictPolicy(1, false);
+        if (!policy) return;
+        overwritePolicy = policy;
+      }
+
+      await fm.uploadFiles([localPath], remoteDir, overwritePolicy);
+    } catch (error) {
+      console.error("目录上传失败:", error);
+      alert(t("fileManager.uploadFailed", { error: String(error) }));
     }
   }, [fm, isConnected, requestConflictPolicy, t]);
 
@@ -453,7 +484,7 @@ export default function FileManagerPanel({
     const MAX_PREVIEW = 1_048_576; // 1 MB
 
     setPreviewFileName(target.name);
-    setPreviewContent(null);
+    setPreviewData(null);
     setPreviewError(null);
     setPreviewLoading(true);
     setPreviewVisible(true);
@@ -469,22 +500,8 @@ export default function FileManagerPanel({
         },
       );
 
-      const bytes = new Uint8Array(result.data);
-      const decoder = new TextDecoder("utf-8", { fatal: false });
-      const text = decoder.decode(bytes);
-
-      if (result.total_size > MAX_PREVIEW) {
-        const totalStr =
-          result.total_size < 1024 * 1024
-            ? `${(result.total_size / 1024).toFixed(1)} KB`
-            : `${(result.total_size / (1024 * 1024)).toFixed(1)} MB`;
-        const shownStr = `${(MAX_PREVIEW / (1024 * 1024)).toFixed(0)} MB`;
-        setPreviewContent(
-          `--- ${t("fileManager.previewTruncated", { shown: shownStr, total: totalStr })} ---\n\n${text}`,
-        );
-      } else {
-        setPreviewContent(text);
-      }
+      setPreviewData(result.data);
+      setPreviewFileSize(result.total_size);
     } catch (e) {
       setPreviewError(String(e));
     }
@@ -594,6 +611,7 @@ export default function FileManagerPanel({
     if (ctxTarget === null) {
       return [
         { id: "upload", label: t("fileManager.upload") },
+        { id: "uploadFolder", label: t("fileManager.uploadFolder") },
         { id: "newFile", label: t("fileManager.newFile") },
         { id: "newFolder", label: t("fileManager.newFolder") },
         { id: "sep1", label: "", type: "separator" },
@@ -655,6 +673,7 @@ export default function FileManagerPanel({
       closeContextMenu(); // 立即关闭菜单（防御性：CommonContextMenu 也会调 onClose，但原生对话框可能阻塞渲染）
       switch (id) {
         case "upload": handleUpload(); break;
+        case "uploadFolder": handleUploadFolder(); break;
         case "newFile": handleNewFile(); break;
         case "newFolder": handleNewFolder(); break;
         case "refresh": handleRefresh(); break;
@@ -669,7 +688,7 @@ export default function FileManagerPanel({
     },
     [
       closeContextMenu,
-      handleUpload, handleNewFile, handleNewFolder, handleRefresh,
+      handleUpload, handleUploadFolder, handleNewFile, handleNewFolder, handleRefresh,
       handleOpenDir, handleDownload, handlePreview, handleRename,
       handleCopyPath, handleProperties, handleDelete,
     ],
@@ -853,6 +872,7 @@ export default function FileManagerPanel({
       <ConflictResolutionModal
         visible={conflictVisible}
         conflictCount={conflictCount}
+        allowReplace={conflictAllowReplace}
         onResolve={resolveConflictPolicy}
       />
 
@@ -882,7 +902,7 @@ export default function FileManagerPanel({
       <FilePreviewModal
         visible={previewVisible}
         fileName={previewFileName}
-        content={previewContent}
+        data={previewData}
         loading={previewLoading}
         error={previewError}
         fileSize={previewFileSize}

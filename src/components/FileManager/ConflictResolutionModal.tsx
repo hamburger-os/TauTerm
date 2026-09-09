@@ -7,12 +7,14 @@ import styles from "./ConflictResolutionModal.module.css";
 interface ConflictResolutionModalProps {
   visible: boolean;
   conflictCount: number;
+  allowReplace?: boolean;
   onResolve: (policy: OverwritePolicy | null) => void;
 }
 
 export default function ConflictResolutionModal({
   visible,
   conflictCount,
+  allowReplace = true,
   onResolve,
 }: ConflictResolutionModalProps) {
   const { t } = useTranslation();
@@ -76,12 +78,14 @@ export default function ConflictResolutionModal({
           {t("fileManager.conflictMessage", { count: conflictCount })}
         </p>
         <div className={styles.actions}>
-          <button
-            className={`${styles.action} liquid-glass-button`}
-            onClick={() => onResolve("replace")}
-          >
-            {t("fileManager.conflictReplace")}
-          </button>
+          {allowReplace && (
+            <button
+              className={`${styles.action} liquid-glass-button`}
+              onClick={() => onResolve("replace")}
+            >
+              {t("fileManager.conflictReplace")}
+            </button>
+          )}
           <button
             ref={keepBothRef}
             className={`${styles.action} liquid-glass-button`}

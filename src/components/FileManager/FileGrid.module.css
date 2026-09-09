@@ -72,6 +72,24 @@
   align-content: start;
 }
 
+.virtualBody {
+  display: block;
+  padding: var(--spacing-xs);
+}
+
+.virtualCanvas {
+  position: relative;
+  width: 100%;
+}
+
+.virtualSlice {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: var(--spacing-xs);
+}
+
 .status {
   grid-column: 1 / -1;
   text-align: center;
