@@ -91,6 +91,8 @@ I/O → batching → terminal UI         I/O → recorder/event store
 
 0.6.x 的目标是让当前产品更可信、更稳定、更容易诊断，而不是提前消耗下一阶段的功能预算。
 
+协议检查器与无连接工程工具也在 0.6.x 内按 Data Foundation 的前置约束完成收敛：共享 strict byte input、typed result、统一 field/check/issue 模型和可复用 Modbus decoder，避免未来 Modbus Session、Data Lens 或其它在线协议工作流再次复制 parser。这里仍是显式输入的离线工具，不提前建设 Recorder/自动抓取/自动订阅 Session 数据，也不把“支持更多协议名称”当作成熟度指标。
+
 0.6.4 将这一收敛目标固化为长期工程门：移除无需求的 WebView 通用文件系统权限、审计阻塞 command、让前端异常进入 System Log、提供脱敏 Diagnostic Bundle，并建立 I/O fault/lifecycle tests、协议 fixture self-test、真实桌面 runtime smoke、性能合同、可配置 soak 与依赖 advisory 工作流。这些工作属于当前能力的质量底座，不代表提前启动 0.7.0。
 
 ## 4. Daily Driver Gate
