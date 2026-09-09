@@ -255,7 +255,7 @@ impl FileTransfer for SftpFileTransfer {
             skipped,
         ));
 
-        if skipped > 0 || cancel.load(Ordering::SeqCst) {
+        if skipped > 0 {
             return Err(FileTransferError::Cancelled);
         }
         if failed > 0 {
@@ -556,7 +556,7 @@ impl FileTransfer for SftpFileTransfer {
             skipped,
         ));
 
-        if skipped > 0 || cancel.load(Ordering::SeqCst) {
+        if skipped > 0 {
             return Err(FileTransferError::Cancelled);
         }
         if failed > 0 {
