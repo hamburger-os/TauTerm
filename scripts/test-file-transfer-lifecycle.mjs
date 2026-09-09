@@ -11,7 +11,13 @@ const hook = await source("src/components/FileManager/hooks/useSftpProgress.ts")
 assert.match(hook, /useTransfer/);
 assert.match(hook, /state\.tasksBySession\[sessionId\]/);
 assert.match(hook, /cancelTask\(sessionId, sftpTask\.transferId\)/);
+assert.match(hook, /dismissTask\(sessionId, transferId\)/);
 assert.match(hook, /SUCCESS_AUTO_HIDE_MS = 5000/);
+assert.match(
+  hook,
+  /window\.setTimeout[\s\S]{0,360}dismissTask\(sessionId, transferId\)/,
+  "successful SFTP cards must remove their exact task snapshot when the five-second auto-hide fires",
+);
 assert.match(hook, /hoveredRef\.current/);
 assert.doesNotMatch(
   hook,
@@ -23,13 +29,29 @@ assert.doesNotMatch(
   /invoke\(/,
   "FileManager compact progress must not own a second transfer command path",
 );
-assert.doesNotMatch(hook, /Date\.now\(\)|performance\.now\(\)/);
+assert.match(hook, /speed:\s*task\.speed/);
+assert.match(hook, /completedAt:\s*task\.completedAt/);
+assert.match(
+  hook,
+  /Date\.now\(\) - sftpTask\.completedAt >= SUCCESS_AUTO_HIDE_MS/,
+  "remounting a FileManager must immediately discard an already-expired completed task instead of resurrecting its card",
+);
+assert.doesNotMatch(
+  hook,
+  /performance\.now\(\)/,
+  "FileManager projection must not compute transfer throughput from WebView event timing",
+);
 
 // ── Narrow responsive status UI ────────────────────────────────────────────
 const bar = await source("src/components/FileManager/TransferProgressBar.tsx");
 assert.match(bar, /phase === "transferring"/);
 assert.match(bar, /transferFinalizing/);
 assert.match(bar, /transferCompleted/);
+assert.match(
+  bar,
+  /case "completed":[\s\S]{0,220}formatSpeed\(speed\)/,
+  "completed SFTP cards should retain and display the last reliable throughput sample",
+);
 assert.match(bar, /return "—"/);
 assert.doesNotMatch(bar, /0 KB\/s/);
 
@@ -38,6 +60,15 @@ assert.match(barCss, /grid-template-areas:\s*"name progress percent detail actio
 assert.match(barCss, /\.closeBtn\s*\{[\s\S]*grid-area:\s*action/);
 assert.match(barCss, /@container filemanager \(max-width: 360px\)/);
 assert.match(barCss, /@container filemanager \(max-width: 220px\)/);
+const narrow280 = barCss.slice(
+  barCss.indexOf("@container filemanager (max-width: 280px)"),
+  barCss.indexOf("@container filemanager (max-width: 220px)"),
+);
+assert.doesNotMatch(
+  narrow280,
+  /\.liveSpeed\s*\{[\s\S]*display:\s*none/,
+  "live speed must remain visible in normal narrow sidebars; only the extreme <=220px tier may hide it",
+);
 assert.doesNotMatch(barCss, /overflow-x\s*:\s*(auto|scroll)/);
 
 // ── Unified task identity and options ──────────────────────────────────────
@@ -225,6 +256,29 @@ assert.match(
 
 // ── Standard file-manager interaction rules ────────────────────────────────
 const panel = await source("src/components/FileManager/FileManagerPanel.tsx");
+assert.match(panel, /useToast/);
+assert.doesNotMatch(
+  panel,
+  /\balert\s*\(/,
+  "FileManager must use the themed Toast path instead of native alert() UI",
+);
+
+const panelCss = await source("src/components/FileManager/FileManager.module.css");
+assert.doesNotMatch(
+  panelCss,
+  /backdrop-filter\s*:/,
+  "FileManager component CSS must not create private backdrop filters outside the global theme layer",
+);
+assert.doesNotMatch(
+  panelCss,
+  /var\(--glass-bg\)/,
+  "FileManager must not reference the undefined --glass-bg theme token",
+);
+assert.match(
+  panelCss,
+  /\.dropOverlay[\s\S]{0,420}background:\s*var\(--control-surface\)/,
+  "drag/drop overlay must reuse the shared themed control surface",
+);
 assert.doesNotMatch(panel, /window\.confirm\(/, "file deletion must use the themed confirmation dialog");
 assert.match(panel, /DeleteConfirmationDialog/);
 assert.match(panel, /deleteConfirmMessage/);
@@ -281,6 +335,13 @@ assert.match(sharedContext, /tasksBySession:\s*Record<string, ManagedTransferTas
 assert.match(sharedContext, /TASK_STARTED/);
 assert.match(sharedContext, /TASK_PROGRESS/);
 assert.match(sharedContext, /TASK_FINISHED/);
+assert.match(sharedContext, /TASK_DISCARD/);
+assert.match(sharedContext, /const dismissTask = useCallback/);
+assert.match(
+  sharedContext,
+  /completedAt:\s*payload\.success \? Date\.now\(\) : null/,
+  "successful unified tasks must record completion time for remount-safe five-second retention",
+);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_STARTED", payload \}\)/);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_PROGRESS", payload: p \}\)/);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_FINISHED", payload \}\)/);
@@ -289,6 +350,12 @@ assert.match(sharedContext, /activeTransferIdRef\.current = ack\.transfer_id/);
 assert.match(sharedContext, /p\.transfer_id !== activeTransferIdRef\.current/);
 assert.match(sharedContext, /batch_complete 只是协议层批次收尾[\s\S]*if \(p\.is_batch_complete\)/);
 assert.match(sharedContext, /const cancelTask = useCallback/);
+assert.match(sharedContext, /const measuredSpeed =/);
+assert.match(
+  sharedContext,
+  /speed:\s*payload\.success \? current\.speed : null/,
+  "successful completion must preserve the last reliable SFTP throughput sample for the auto-dismiss card",
+);
 assert.match(sharedContext, /TASK_CANCEL_REJECTED/);
 assert.match(
   sharedContext,
@@ -314,17 +381,53 @@ assert.doesNotMatch(
 
 const deleteDialog = await source("src/components/FileManager/DeleteConfirmationDialog.tsx");
 assert.match(deleteDialog, /role="alertdialog"/);
-assert.match(deleteDialog, /requestAnimationFrame\(\(\) => cancelRef\.current\?\.focus\(\)\)/);
+assert.match(deleteDialog, /data-action="cancel"/);
+assert.match(deleteDialog, /querySelector<HTMLButtonElement>\('\[data-action="cancel"\]'\)/);
 assert.match(deleteDialog, /event\.key === "Escape"/);
-assert.match(deleteDialog, /event\.key === "Tab"/);
+assert.match(deleteDialog, /event\.key !== "Tab"/);
+assert.match(deleteDialog, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(deleteDialog, /GlassButton/);
+assert.match(deleteDialog, /variant="ghost"/);
+assert.match(deleteDialog, /variant="danger"/);
+assert.match(deleteDialog, /size="md"/);
 assert.match(deleteDialog, /deleteConfirmAction/);
 
+const deleteDialogCss = await source("src/components/FileManager/DeleteConfirmationDialog.module.css");
+assert.match(deleteDialogCss, /border-radius:\s*var\(--radius-xl\)/);
+assert.match(deleteDialogCss, /font-size:\s*var\(--text-md\)/);
+assert.match(deleteDialogCss, /font-weight:\s*700/);
+assert.match(deleteDialogCss, /font-size:\s*var\(--text-sm\)/);
+
 const conflictDialog = await source("src/components/FileManager/ConflictResolutionModal.tsx");
-assert.match(conflictDialog, /keepBothRef\.current\?\.focus\(\)/);
-assert.match(conflictDialog, /event\.key === "Tab"/);
+assert.match(conflictDialog, /role="alertdialog"/);
+assert.match(conflictDialog, /data-policy="keep-both"/);
+assert.match(conflictDialog, /querySelector<HTMLButtonElement>\('\[data-policy="keep-both"\]'\)/);
+assert.match(conflictDialog, /event\.key !== "Tab"/);
 assert.match(conflictDialog, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(conflictDialog, /styles\.policyList/);
+assert.match(conflictDialog, /styles\.footer/);
+assert.match(conflictDialog, /variant="danger"/);
+assert.match(conflictDialog, /variant="primary"/);
+assert.match(conflictDialog, /variant="ghost"/);
+assert.match(
+  conflictDialog,
+  /variant="ghost"[\s\S]{0,80}size="md"/,
+  "dialog footer cancel action must use the standard md GlassButton geometry",
+);
+
+const conflictDialogCss = await source("src/components/FileManager/ConflictResolutionModal.module.css");
+assert.match(conflictDialogCss, /border-radius:\s*var\(--radius-xl\)/);
+assert.match(conflictDialogCss, /font-size:\s*var\(--text-md\)/);
+assert.match(conflictDialogCss, /font-weight:\s*700/);
+assert.match(conflictDialogCss, /font-size:\s*var\(--text-sm\)/);
 
 const propertiesModal = await source("src/components/FileManager/FilePropertiesModal.tsx");
+assert.match(propertiesModal, /role="dialog"/);
+assert.match(propertiesModal, /aria-modal="true"/);
+assert.match(propertiesModal, /aria-labelledby="file-properties-title"/);
+assert.match(propertiesModal, /data-action="close"/);
+assert.match(propertiesModal, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(propertiesModal, /event\.key !== "Tab"/);
 assert.match(propertiesModal, /const canChmod = entryType === "file" \|\| entryType === "directory"/);
 assert.match(propertiesModal, /\{canChmod && \(/);
 
@@ -369,6 +472,11 @@ assert.match(fileGrid, /case "ArrowDown"/);
 assert.match(fileGrid, /tabIndex=\{activeItem === itemIndex \? 0 : -1\}/);
 
 const preview = await source("src/components/FileManager/FilePreviewModal.tsx");
+assert.match(preview, /role="dialog"/);
+assert.match(preview, /aria-modal="true"/);
+assert.match(preview, /data-action="close"/);
+assert.match(preview, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(preview, /event\.key !== "Tab"/);
 assert.match(preview, /type PreviewEncoding/);
 assert.match(preview, /"gb18030"/);
 assert.match(preview, /"shift_jis"/);
@@ -376,3 +484,29 @@ assert.match(preview, /function formatHex/);
 assert.match(preview, /HEX_RENDER_LIMIT/);
 assert.match(preview, /new TextDecoder\(encoding/);
 assert.match(preview, /aria-pressed=\{mode === "text"\}/);
+assert.match(
+  preview,
+  /encodingSelect\} liquid-glass-input liquid-glass-select/,
+  "preview encoding must use the canonical themed select rather than applying a surface class directly to native select",
+);
+
+const globalCss = await source("src/styles/global.css");
+const canonicalSelectBlock = globalCss.slice(
+  globalCss.indexOf(".liquid-glass-select {"),
+  globalCss.indexOf(".liquid-glass-select option"),
+);
+assert.match(
+  canonicalSelectBlock,
+  /color-scheme:\s*dark/,
+  "dark-theme native select popups must advertise a dark color scheme",
+);
+assert.match(
+  globalCss,
+  /\[data-theme="frosted"\] \.liquid-glass-select[\s\S]{0,100}color-scheme:\s*light/,
+  "Frosted native select popups must advertise the light color scheme",
+);
+assert.ok(
+  canonicalSelectBlock.indexOf("padding: var(--select-padding)") <
+    canonicalSelectBlock.indexOf("padding-right: 26px"),
+  "select arrow-safe right padding must be declared after the shorthand so it is not reset",
+);

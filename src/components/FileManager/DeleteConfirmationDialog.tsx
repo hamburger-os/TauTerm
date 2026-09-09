@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
+import GlassButton from "../common/GlassButton";
 import styles from "./DeleteConfirmationDialog.module.css";
 
 interface DeleteConfirmationDialogProps {
@@ -17,13 +18,17 @@ export default function DeleteConfirmationDialog({
   onCancel,
 }: DeleteConfirmationDialogProps) {
   const { t } = useTranslation();
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const deleteRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const isOpen = message !== null;
 
   useEffect(() => {
     if (!isOpen) return;
-    const frame = requestAnimationFrame(() => cancelRef.current?.focus());
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current
+        ?.querySelector<HTMLButtonElement>('[data-action="cancel"]')
+        ?.focus();
+    });
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -31,17 +36,23 @@ export default function DeleteConfirmationDialog({
         onCancel();
         return;
       }
-      if (event.key === "Tab") {
-        const active = document.activeElement;
-        if (event.shiftKey && active === cancelRef.current) {
-          event.preventDefault();
-          deleteRef.current?.focus();
-        } else if (!event.shiftKey && active === deleteRef.current) {
-          event.preventDefault();
-          cancelRef.current?.focus();
-        }
+      if (event.key !== "Tab") return;
+
+      const buttons = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+      );
+      if (buttons.length === 0) return;
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
+
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
       cancelAnimationFrame(frame);
@@ -63,6 +74,7 @@ export default function DeleteConfirmationDialog({
           }}
         >
           <motion.div
+            ref={dialogRef}
             className={`${styles.dialog} liquid-glass`}
             role="alertdialog"
             aria-modal="true"
@@ -77,7 +89,7 @@ export default function DeleteConfirmationDialog({
               <span className={styles.warningIcon} aria-hidden="true">
                 <Icon name="warning" size="md" />
               </span>
-              <div>
+              <div className={styles.headerText}>
                 <h3 id="file-delete-title" className={styles.title}>
                   {t("fileManager.deleteConfirmTitle")}
                 </h3>
@@ -86,23 +98,28 @@ export default function DeleteConfirmationDialog({
                 </p>
               </div>
             </div>
-            <div className={styles.actions}>
-              <button
-                ref={cancelRef}
+
+            <div className={styles.footer}>
+              <GlassButton
                 type="button"
-                className={`${styles.button} liquid-glass-ghost-button`}
+                variant="ghost"
+                size="md"
+                className={styles.actionButton}
+                data-action="cancel"
                 onClick={onCancel}
               >
                 {t("common.cancel")}
-              </button>
-              <button
-                ref={deleteRef}
+              </GlassButton>
+              <GlassButton
                 type="button"
-                className={`${styles.button} ${styles.dangerButton} liquid-glass-button`}
+                variant="danger"
+                size="md"
+                className={styles.actionButton}
+                data-action="delete"
                 onClick={onConfirm}
               >
                 {t("fileManager.deleteConfirmAction")}
-              </button>
+              </GlassButton>
             </div>
           </motion.div>
         </motion.div>

@@ -1105,7 +1105,11 @@
     "previewEncoding": "Encoding",
     "previewHexLimited": "For responsiveness, HEX view shows only the first {{size}}.",
     "previewBytes": "{{count}} bytes loaded",
-    "dropToUpload": "Drop here to upload"
+    "dropToUpload": "Drop here to upload",
+    "conflictChoicesLabel": "Conflict resolution",
+    "conflictReplaceHint": "Replace the existing files with this upload.",
+    "conflictKeepBothHint": "Keep the existing files and create distinct names for this upload.",
+    "conflictSkipHint": "Keep the existing files and do not upload the conflicting items."
   },
   "ssh": {
     "host": "Host",

@@ -1105,7 +1105,11 @@
     "previewEncoding": "编码",
     "previewHexLimited": "HEX 视图为保证流畅度仅显示前 {{size}}。",
     "previewBytes": "已读取 {{count}} 字节",
-    "dropToUpload": "拖放到此处上传"
+    "dropToUpload": "拖放到此处上传",
+    "conflictChoicesLabel": "冲突处理方式",
+    "conflictReplaceHint": "用本次上传内容替换已有同名文件。",
+    "conflictKeepBothHint": "保留已有文件，并为本次上传自动生成不冲突名称。",
+    "conflictSkipHint": "保留已有文件，不上传这些同名文件。"
   },
   "ssh": {
     "host": "主机地址",

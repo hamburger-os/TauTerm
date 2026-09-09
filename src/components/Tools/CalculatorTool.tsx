@@ -25,7 +25,7 @@ const TABS: CalcTab[] = [
 
 export default function CalculatorTool() {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<CalcTab>("dataInspector");
+  const [activeTab, setActiveTab] = useState<CalcTab>(() => TABS[0]);
 
   return (
     <RightSidebarPanel title={t("tools.calculator")}>

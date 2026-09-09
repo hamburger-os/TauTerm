@@ -415,6 +415,16 @@ assert.match(
   /<select[\s\S]{0,220}liquid-glass-input liquid-glass-select/,
   "quick-tool top-level navigation must use the themed select control",
 );
+assert.match(
+  calculatorToolSource,
+  /useState<CalcTab>\(\(\) => TABS\[0\]\)/,
+  "quick tools must default to the first canonical category instead of a hidden hard-coded preference",
+);
+assert.doesNotMatch(
+  calculatorToolSource,
+  /useState<CalcTab>\("dataInspector"\)/,
+  "quick tools must not silently default to Data while Checksum is first in TABS",
+);
 assert.doesNotMatch(
   calculatorToolSource,
   /liquid-selector-strip/,

@@ -17,6 +17,7 @@ export interface TransferProgressState {
   percent: number;
   phase: TransferPhase;
   speed: number | null;
+  completedAt: number | null;
   error: string | null;
   fileIndex: number;
   totalFiles: number;
@@ -41,6 +42,7 @@ function initialProgressState(): TransferProgressState {
     percent: 0,
     phase: "completed",
     speed: null,
+    completedAt: null,
     error: null,
     fileIndex: 0,
     totalFiles: 1,
@@ -67,6 +69,7 @@ function toProgress(task: ManagedTransferTask, error: string | null): TransferPr
     percent: task.percent,
     phase: task.phase,
     speed: task.speed,
+    completedAt: task.completedAt,
     error: error ?? task.error,
     fileIndex: task.fileIndex,
     totalFiles: task.totalFiles,
@@ -82,7 +85,7 @@ function toProgress(task: ManagedTransferTask, error: string | null): TransferPr
  * 第二套 transfer_id/终态状态机，只负责可见性、成功自动收起和悬停暂停。
  */
 export function useSftpProgress(sessionId: string) {
-  const { state, cancelTask } = useTransfer();
+  const { state, cancelTask, dismissTask } = useTransfer();
   const task = state.tasksBySession[sessionId];
   const sftpTask = task?.protocol === "sftp" ? task : undefined;
   const [visible, setVisible] = useState(false);
@@ -98,13 +101,20 @@ export function useSftpProgress(sessionId: string) {
     }
   }, []);
 
-  const scheduleAutoHide = useCallback(() => {
+  const scheduleAutoHide = useCallback((
+    transferId: string,
+    delayMs = SUCCESS_AUTO_HIDE_MS,
+  ) => {
     clearAutoHideTimer();
     autoHideTimerRef.current = window.setTimeout(() => {
       autoHideTimerRef.current = null;
+      setDismissedTransferId(transferId);
       setVisible(false);
-    }, SUCCESS_AUTO_HIDE_MS);
-  }, [clearAutoHideTimer]);
+      // Successful cards are not only hidden locally: remove the exact finished
+      // snapshot so reopening/remounting the right sidebar cannot resurrect it.
+      dismissTask(sessionId, transferId);
+    }, delayMs);
+  }, [clearAutoHideTimer, dismissTask, sessionId]);
 
   useEffect(() => {
     if (!sftpTask) {
@@ -112,6 +122,18 @@ export function useSftpProgress(sessionId: string) {
       setVisible(false);
       return;
     }
+
+    if (
+      sftpTask.phase === "completed"
+      && sftpTask.completedAt !== null
+      && Date.now() - sftpTask.completedAt >= SUCCESS_AUTO_HIDE_MS
+    ) {
+      setDismissedTransferId(sftpTask.transferId);
+      setVisible(false);
+      dismissTask(sessionId, sftpTask.transferId);
+      return;
+    }
+
     setDismissedTransferId((current) =>
       current === sftpTask.transferId ? current : null,
     );
@@ -119,15 +141,36 @@ export function useSftpProgress(sessionId: string) {
     setVisible((current) =>
       dismissedTransferId === sftpTask.transferId ? current : true,
     );
-  }, [clearAutoHideTimer, dismissedTransferId, sftpTask?.transferId]);
+  }, [
+    clearAutoHideTimer,
+    dismissTask,
+    dismissedTransferId,
+    sessionId,
+    sftpTask?.completedAt,
+    sftpTask?.phase,
+    sftpTask?.transferId,
+  ]);
 
   useEffect(() => {
     if (!sftpTask || !visible) return;
     clearAutoHideTimer();
     if (sftpTask.phase === "completed" && !hoveredRef.current) {
-      scheduleAutoHide();
+      const elapsed = sftpTask.completedAt === null
+        ? 0
+        : Math.max(0, Date.now() - sftpTask.completedAt);
+      scheduleAutoHide(
+        sftpTask.transferId,
+        Math.max(0, SUCCESS_AUTO_HIDE_MS - elapsed),
+      );
     }
-  }, [clearAutoHideTimer, scheduleAutoHide, sftpTask?.phase, sftpTask?.transferId, visible]);
+  }, [
+    clearAutoHideTimer,
+    scheduleAutoHide,
+    sftpTask?.completedAt,
+    sftpTask?.phase,
+    sftpTask?.transferId,
+    visible,
+  ]);
 
   useEffect(() => () => clearAutoHideTimer(), [clearAutoHideTimer]);
 
@@ -144,9 +187,12 @@ export function useSftpProgress(sessionId: string) {
 
   const hideProgress = useCallback(() => {
     clearAutoHideTimer();
-    if (sftpTask) setDismissedTransferId(sftpTask.transferId);
+    if (sftpTask) {
+      setDismissedTransferId(sftpTask.transferId);
+      dismissTask(sessionId, sftpTask.transferId);
+    }
     setVisible(false);
-  }, [clearAutoHideTimer, sftpTask]);
+  }, [clearAutoHideTimer, dismissTask, sessionId, sftpTask]);
 
   const cancelTransfer = useCallback(async () => {
     if (!sftpTask || isTransferTerminalPhase(sftpTask.phase) || sftpTask.phase === "cancelling") {
@@ -168,8 +214,10 @@ export function useSftpProgress(sessionId: string) {
 
   const resumeAutoHide = useCallback(() => {
     hoveredRef.current = false;
-    if (sftpTask?.phase === "completed" && visible) scheduleAutoHide();
-  }, [scheduleAutoHide, sftpTask?.phase, visible]);
+    if (sftpTask?.phase === "completed" && visible) {
+      scheduleAutoHide(sftpTask.transferId);
+    }
+  }, [scheduleAutoHide, sftpTask, visible]);
 
   return {
     progress,
