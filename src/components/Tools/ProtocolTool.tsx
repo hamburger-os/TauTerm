@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "../RightSidebar/RightSidebarPanel";
+import ToolInputHistory from "./ToolInputHistory";
+import { useToolInputHistory } from "../../hooks/useToolInputHistory";
 import {
   DEFAULT_CUSTOM_SCHEMA,
   parseProtocolInput,
@@ -87,6 +89,8 @@ export default function ProtocolTool({ sessionId }: ProtocolToolProps) {
     [outcome.result],
   );
   const activeInspector = outcome.detectedTemplate ?? outcome.result?.inspectorId;
+  const history = useToolInputHistory(input, Boolean(outcome.result));
+
   const showDirection =
     template.startsWith("modbus-")
     || activeInspector?.startsWith("modbus-");
@@ -157,6 +161,13 @@ export default function ProtocolTool({ sessionId }: ProtocolToolProps) {
           placeholder={t(PLACEHOLDER_KEYS[template])}
           rows={4}
           spellCheck={false}
+        />
+
+        <ToolInputHistory
+          entries={history.entries}
+          onSelect={setInput}
+          onTogglePinned={history.togglePinned}
+          onClearRecent={history.clearRecent}
         />
 
         {outcome.result && (
