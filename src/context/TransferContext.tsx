@@ -302,6 +302,8 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   const activeTransferIdRef = useRef<string | null>(null);
   const activeDirectionRef = useRef<TransferDirection | null>(null);
   const lastAggregateBytesRef = useRef(0);
+  // Inline 传输的 invoke 会在真实传输结束后才返回；用于避免 finished + invoke catch 双重终态。
+  const backendStartedRef = useRef(false);
 
   const addHistory = useCallback(
     (item: Omit<TransferHistoryItem, "id">) => {
@@ -346,6 +348,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       activeTransferIdRef.current = null;
       activeDirectionRef.current = direction;
       lastAggregateBytesRef.current = 0;
+      backendStartedRef.current = false;
       dispatch({ type: "SET_ACTIVE_PROTOCOL", protocol });
       dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId });
       dispatch({ type: "SET_ERROR", error: null });
@@ -388,6 +391,11 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         await invoke(commandName, { request: args });
       } catch (e) {
         console.error(`[TransferContext] ${commandName} failed:`, e);
+        // 已收到 started 的传输，其终态由精确 transfer_id 的 finished 唯一负责。
+        // Inline 路径会在 emit finished 后让 invoke reject，不能在这里重复记失败。
+        if (backendStartedRef.current) {
+          return;
+        }
         dispatch({ type: "SET_STATUS", status: "failed" });
         dispatch({
           type: "SET_ERROR",
@@ -470,6 +478,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           activeTransferIdRef.current = null;
           activeDirectionRef.current = null;
           lastAggregateBytesRef.current = 0;
+          backendStartedRef.current = false;
           dispatch({ type: "RESET_BATCH" });
           dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId: null });
           dispatch({ type: "SET_STATUS", status: "idle" });
@@ -493,6 +502,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           const payload = event.payload;
           if (payload.session_id !== activeSessionIdRef.current) return;
           if (payload.protocol !== activeProtocolRef.current) return;
+          backendStartedRef.current = true;
           activeTransferIdRef.current = payload.transfer_id;
         },
       );
