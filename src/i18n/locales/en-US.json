@@ -386,7 +386,10 @@
       "customFieldDefinitionInvalid": "Custom field definition is invalid: {{detail}}",
       "customFieldOutOfBounds": "Custom field extends beyond the input frame: {{detail}}",
       "customChecksumPresetInvalid": "Custom checksum preset is invalid: {{detail}}",
-      "customChecksumRangeInvalid": "Custom checksum range or checksum field offset is invalid"
+      "customChecksumRangeInvalid": "Custom checksum range or checksum field offset is invalid",
+      "customLengthSourceInvalid": "Dynamic length reference is invalid or is not a previously decoded non-negative integer: {{detail}}",
+      "customBitDefinitionInvalid": "Bit-field definition is invalid or exceeds the field width: {{detail}}",
+      "customExpectedMismatch": "Field value does not satisfy its expected constraint: {{detail}}"
     },
     "encodingOperation": "Conversion",
     "base64IgnoreWhitespace": "Compatibility mode: ignore Base64 whitespace",
