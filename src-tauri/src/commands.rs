@@ -3649,7 +3649,7 @@ pub fn file_transfer_cancel(
 
     log::info!("请求取消传输: session={}", resolved_id);
     // 尝试两种取消路径：内联传输和侧通道传输
-    let inline_result = store.cancel_transfer(&resolved_id);
+    let inline_result = store.cancel_transfer(&resolved_id, transfer_id.as_deref());
     let sc_result = store.cancel_transfer_op(&resolved_id, transfer_id.as_deref());
     // 只要其中一个成功即可
     if inline_result.is_ok() || sc_result.is_ok() {

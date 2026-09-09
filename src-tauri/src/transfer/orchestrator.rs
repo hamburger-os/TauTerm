@@ -153,6 +153,7 @@ fn restore_session_state(app: &AppHandle, session_id: &str) {
             if let Some(h) = store.get_session_mut(session_id) {
                 h.state = SessionState::Connected;
                 h.cancel_transfer_tx = None;
+                h.active_transfer_id = None;
                 h.channel_return_tx = None;
             }
         }
@@ -279,6 +280,7 @@ impl InlineTransferOrchestrator {
             if let Ok(mut store) = app_state.session_store.lock() {
                 if let Some(h) = store.get_session_mut(session_id) {
                     h.cancel_transfer_tx = None;
+                    h.active_transfer_id = None;
                     h.state = SessionState::Connected;
                     if let Some(tx) = h.channel_return_tx.take() {
                         let new_channel = crate::channel::serial_channel::SerialChannel::new(port);
@@ -328,6 +330,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
         let transfer_id = uuid::Uuid::new_v4().to_string();
+        if let Some(state) = app.try_state::<AppState>() {
+            if let Ok(mut store) = state.session_store.lock() {
+                if let Some(handle) = store.get_session_mut(&sid) {
+                    handle.active_transfer_id = Some(transfer_id.clone());
+                }
+            }
+        }
 
         // 3. 广播进度 — client_id + transfer_id。完成事件必须等待队列 drain。
         let broadcaster = spawn_progress_broadcaster(
@@ -375,6 +384,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                     if let Ok(mut store) = app_state.session_store.lock() {
                         if let Some(h) = store.get_session_mut(&sid) {
                             h.cancel_transfer_tx = None;
+                            h.active_transfer_id = None;
                             h.state = SessionState::Connected;
                             h.channel_return_tx = None;
                         }
@@ -444,6 +454,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
         let transfer_id = uuid::Uuid::new_v4().to_string();
+        if let Some(state) = app.try_state::<AppState>() {
+            if let Ok(mut store) = state.session_store.lock() {
+                if let Some(handle) = store.get_session_mut(&sid) {
+                    handle.active_transfer_id = Some(transfer_id.clone());
+                }
+            }
+        }
 
         // 3. 广播进度 — client_id + transfer_id。完成事件必须等待队列 drain。
         let broadcaster = spawn_progress_broadcaster(
@@ -491,6 +508,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                     if let Ok(mut store) = app_state.session_store.lock() {
                         if let Some(h) = store.get_session_mut(&sid) {
                             h.cancel_transfer_tx = None;
+                            h.active_transfer_id = None;
                             h.state = SessionState::Connected;
                             h.channel_return_tx = None;
                         }

@@ -244,7 +244,7 @@ pub struct ActiveSessionHandle {
     /// 侧通道传输取消标志（传输进行中置位，传输循环每块检查）。
     /// None 表示当前无传输进行。由传输命令在传输前设置，传输结束后置 None。
     pub transfer_cancel: Option<Arc<AtomicBool>>,
-    /// 当前侧通道传输的精确任务 ID；与 transfer_cancel 同生命周期。
+    /// 当前传输的精确任务 ID（Inline / SideChannel 共用；任一时刻每 Session 仅一个）。
     pub active_transfer_id: Option<String>,
     /// 侧通道异步传输任务的 JoinHandle 集合。
     /// 关闭会话时 join 所有 handle，确保传输 task 的 Drop 清理逻辑执行完毕，
@@ -1795,13 +1795,24 @@ impl SessionStore {
         Ok(params)
     }
 
-    /// 取消传输
-    pub fn cancel_transfer(&mut self, session_id: &str) -> Result<(), String> {
+    /// 取消当前 Inline 传输。若提供 transfer_id，则必须精确匹配当前任务。
+    pub fn cancel_transfer(
+        &mut self,
+        session_id: &str,
+        transfer_id: Option<&str>,
+    ) -> Result<(), String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        if let Some(tx) = handle.cancel_transfer_tx.take() {
-            let _ = tx.send(());
+        if let Some(expected) = transfer_id {
+            if handle.active_transfer_id.as_deref() != Some(expected) {
+                return Err("传输任务已变化，拒绝取消非当前任务".to_string());
+            }
         }
+        let tx = handle
+            .cancel_transfer_tx
+            .take()
+            .ok_or_else(|| "没有正在进行的 Inline 传输".to_string())?;
+        let _ = tx.send(());
         Ok(())
     }
 
