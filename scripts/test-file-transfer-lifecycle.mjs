@@ -149,6 +149,12 @@ assert.match(sharedContext, /activeProtocolRef\.current = protocol;[\s\S]{0,120}
 assert.match(sharedContext, /p\.transfer_id !== activeTransferIdRef\.current/);
 assert.match(sharedContext, /p\.bytes_per_second && p\.bytes_per_second > 0/);
 assert.match(sharedContext, /"file-transfer:finished"[\s\S]{0,900}payload\.transfer_id !== activeTransferIdRef\.current/);
+assert.match(sharedContext, /backendStartedRef\.current = true[\s\S]{0,180}activeTransferIdRef\.current = payload\.transfer_id/);
+assert.match(
+  sharedContext,
+  /catch \(e\)[\s\S]{0,260}if \(backendStartedRef\.current\) \{[\s\S]{0,80}return;/,
+  "started inline transfers must not be terminalized twice by finished and invoke catch",
+);
 assert.match(
   sharedContext,
   /batch_complete 只是协议层批次收尾[\s\S]{0,180}if \(p\.is_batch_complete\) \{[\s\S]{0,80}return;/,
