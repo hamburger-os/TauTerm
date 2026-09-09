@@ -1,7 +1,6 @@
 import { bytesToHex, parseByteInput } from "../utils/byteInput.ts";
 import { crc16, numberToHex } from "../utils/checksum.ts";
 import type {
-  ParseResult,
   ParsedField,
   ProtocolCheck,
   ProtocolDirection,
