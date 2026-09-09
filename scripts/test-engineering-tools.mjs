@@ -9,6 +9,7 @@ import {
   swapEndian,
 } from "../src/utils/encoding.ts";
 import {
+  bitwiseOp,
   parseIntegerInput,
   parseStructDefinition,
 } from "../src/utils/bitops.ts";
@@ -48,6 +49,7 @@ assert.equal(parseIntegerInput("0b1010"), 10);
 assert.equal(parseIntegerInput("170"), 170);
 assert.equal(parseIntegerInput("10oops"), null);
 assert.equal(parseIntegerInput("0x100000000"), null);
+assert.equal(bitwiseOp(0x80000000, 1, "URSHIFT").hex, "40000000");
 assert.equal(
   parseStructDefinition("struct { uint8_t a; mystery_t hidden; uint16_t b; }"),
   null,
