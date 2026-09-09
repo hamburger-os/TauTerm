@@ -5,7 +5,7 @@
  * 支持目录浏览、上传、下载、删除、重命名、新建文件/文件夹、
  * 多选批量操作、右键菜单、快捷键、传输进度条。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -22,14 +22,15 @@ import InlinePrompt from "./InlinePrompt";
 import CommonContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
 import Icon from "../common/Icon";
 import TransferProgressBar from "./TransferProgressBar";
-import FilePropertiesModal from "./FilePropertiesModal";
 import type { FileStatInfo } from "./FilePropertiesModal";
-import FilePreviewModal from "./FilePreviewModal";
-import ConflictResolutionModal from "./ConflictResolutionModal";
-import DeleteConfirmationDialog from "./DeleteConfirmationDialog";
 import { copyToClipboard } from "../../utils/clipboard";
 import { getEntryIcon } from "./entryIcon";
 import styles from "./FileManager.module.css";
+
+const DeleteConfirmationDialog = lazy(() => import("./DeleteConfirmationDialog"));
+const ConflictResolutionModal = lazy(() => import("./ConflictResolutionModal"));
+const FilePropertiesModal = lazy(() => import("./FilePropertiesModal"));
+const FilePreviewModal = lazy(() => import("./FilePreviewModal"));
 
 // ── 文本文件扩展名判定 ─────────────────────────────────
 
@@ -961,51 +962,61 @@ export default function FileManagerPanel({
         }
       />
 
-      <DeleteConfirmationDialog
-        message={deleteConfirmMessage}
-        onConfirm={() => void confirmDelete()}
-        onCancel={cancelDelete}
-      />
+      <Suspense fallback={null}>
+        {deleteConfirmMessage !== null && (
+          <DeleteConfirmationDialog
+            message={deleteConfirmMessage}
+            onConfirm={() => void confirmDelete()}
+            onCancel={cancelDelete}
+          />
+        )}
 
-      <ConflictResolutionModal
-        visible={conflictVisible}
-        conflictCount={conflictCount}
-        allowReplace={conflictAllowReplace}
-        onResolve={resolveConflictPolicy}
-      />
+        {conflictVisible && (
+          <ConflictResolutionModal
+            visible
+            conflictCount={conflictCount}
+            allowReplace={conflictAllowReplace}
+            onResolve={resolveConflictPolicy}
+          />
+        )}
 
-      {/* 文件属性弹窗 */}
-      <FilePropertiesModal
-        visible={propsVisible}
-        entry={propsTarget}
-        statInfo={propsInfo}
-        loading={propsLoading}
-        onClose={closeProperties}
-        sessionId={sessionId}
-        onChmodComplete={() => {
-          if (propsTarget) {
-            setPropsLoading(true);
-            invoke<FileStatInfo>("sftp_stat_cmd", {
-              sessionId,
-              remotePath: propsTarget.path,
-            })
-              .then(setPropsInfo)
-              .catch(() => {})
-              .finally(() => setPropsLoading(false));
-          }
-        }}
-      />
+        {/* 文件属性弹窗 */}
+        {propsVisible && (
+          <FilePropertiesModal
+            visible
+            entry={propsTarget}
+            statInfo={propsInfo}
+            loading={propsLoading}
+            onClose={closeProperties}
+            sessionId={sessionId}
+            onChmodComplete={() => {
+              if (propsTarget) {
+                setPropsLoading(true);
+                invoke<FileStatInfo>("sftp_stat_cmd", {
+                  sessionId,
+                  remotePath: propsTarget.path,
+                })
+                  .then(setPropsInfo)
+                  .catch(() => {})
+                  .finally(() => setPropsLoading(false));
+              }
+            }}
+          />
+        )}
 
-      {/* 文本预览弹窗 */}
-      <FilePreviewModal
-        visible={previewVisible}
-        fileName={previewFileName}
-        data={previewData}
-        loading={previewLoading}
-        error={previewError}
-        fileSize={previewFileSize}
-        onClose={closePreview}
-      />
+        {/* 文本预览弹窗 */}
+        {previewVisible && (
+          <FilePreviewModal
+            visible
+            fileName={previewFileName}
+            data={previewData}
+            loading={previewLoading}
+            error={previewError}
+            fileSize={previewFileSize}
+            onClose={closePreview}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }
