@@ -30,44 +30,67 @@ use crate::AppState;
 pub(crate) struct PanicGuard {
     app: AppHandle,
     sid: String,
+    client_id: String,
+    protocol: String,
+    transfer_id: String,
     /// 标记传输已正常完成。若 Drop 时仍为 false，说明异常退出。
     defused: bool,
+    cleaned: bool,
 }
 
 impl PanicGuard {
-    pub(crate) fn new(app: AppHandle, sid: String) -> Self {
+    pub(crate) fn new(
+        app: AppHandle,
+        sid: String,
+        client_id: String,
+        protocol: String,
+        transfer_id: String,
+    ) -> Self {
         Self {
             app,
             sid,
+            client_id,
+            protocol,
+            transfer_id,
             defused: false,
+            cleaned: false,
         }
     }
 
-    /// 标记守卫为"已解除"。成功路径上调用此方法后，
-    /// Drop 时不会自动 emit 失败事件。
-    pub(crate) fn defuse(&mut self) {
+    fn cleanup(&mut self) {
+        if self.cleaned {
+            return;
+        }
+        if let Some(app_state) = self.app.try_state::<AppState>() {
+            if let Ok(mut store) = app_state.session_store.lock() {
+                store.transfer_done(&self.sid);
+            }
+        }
+        self.cleaned = true;
+    }
+
+    /// 正常完成路径：先释放 SessionStore 的传输占用，再标记守卫为已解除。
+    /// 调用方随后才 emit finished，保证用户收到完成事件时下一次传输已经可启动。
+    pub(crate) fn complete(&mut self) {
+        self.cleanup();
         self.defused = true;
     }
 }
 
 impl Drop for PanicGuard {
     fn drop(&mut self) {
-        // 总是调用 transfer_done 清理会话传输状态
-        if let Some(app_state) = self.app.try_state::<AppState>() {
-            if let Ok(mut store) = app_state.session_store.lock() {
-                store.transfer_done(&self.sid);
-            }
-        }
-        // 若未被显式 defuse（panic / tokio::spawn abort / 传输失败），
-        // 发出失败事件避免前端进度条永久卡住。
-        // 成功路径上 orchestrator 已显式 emit 成功事件后调用 defuse()，
-        // 此处跳过以防止重复 emit。
+        self.cleanup();
+        // 若未被显式 complete（panic / tokio::spawn abort），发出带完整身份的失败事件，
+        // 使前端只结束当前 transfer_id，不会误伤下一次传输。
         if !self.defused {
             let _ = self.app.emit(
                 "file-transfer:finished",
                 serde_json::json!({
-                    "session_id": &self.sid,
+                    "session_id": &self.client_id,
+                    "transfer_id": &self.transfer_id,
+                    "protocol": &self.protocol,
                     "success": false,
+                    "cancelled": false,
                     "error": "传输任务异常终止",
                 }),
             );
