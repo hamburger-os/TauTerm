@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { inspectByteData } from "../../utils/dataInspector";
 import { copyToClipboard } from "../../utils/clipboard";
+import ToolInputHistory from "./ToolInputHistory";
+import { useToolInputHistory } from "../../hooks/useToolInputHistory";
 import styles from "./DataInspectorTool.module.css";
 
 export default function DataInspectorTool() {
@@ -13,6 +15,8 @@ export default function DataInspectorTool() {
     () => input.trim() ? inspectByteData(input) : null,
     [input],
   );
+  const history = useToolInputHistory(input, Boolean(outcome?.ok));
+
 
   const copyValue = async (id: string, value: string) => {
     await copyToClipboard(value);
@@ -30,6 +34,13 @@ export default function DataInspectorTool() {
         placeholder={t("tools.dataInspectorPlaceholder")}
         rows={3}
         spellCheck={false}
+      />
+
+      <ToolInputHistory
+        entries={history.entries}
+        onSelect={setInput}
+        onTogglePinned={history.togglePinned}
+        onClearRecent={history.clearRecent}
       />
 
       {outcome?.ok && (
