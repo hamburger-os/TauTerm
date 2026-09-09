@@ -146,3 +146,147 @@
   text-align: center;
   padding: 4px 0;
 }
+
+
+.directionRow,
+.inspectorHeader,
+.rawHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.schemaDetails {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.schemaDetails summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.schemaInput {
+  width: 100%;
+  min-height: 132px;
+  margin-top: 4px;
+  padding: 5px 6px;
+  font-family: var(--font-mono);
+}
+
+.detectBadge,
+.directionBadge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 5px;
+  border: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  background: var(--glass-fill-secondary);
+}
+
+.rawBlock {
+  padding: 5px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--glass-fill-secondary);
+}
+
+.rawHeader {
+  margin-bottom: 3px;
+}
+
+.rawBytes,
+.rawText {
+  display: block;
+  max-height: 96px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.rawHighlight {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  border-radius: 2px;
+}
+
+.checkGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 4px;
+}
+
+.checkItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 3px 5px;
+  border: 1px solid var(--glass-border-default);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+.check_pass {
+  color: var(--color-success);
+}
+
+.check_fail {
+  color: var(--color-error);
+}
+
+.check_warning {
+  color: var(--color-warning);
+}
+
+.check_not-applicable {
+  color: var(--text-tertiary);
+}
+
+.fieldName {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.treeMark {
+  color: var(--text-tertiary);
+}
+
+.issueList {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.issue {
+  display: flex;
+  gap: 5px;
+  align-items: flex-start;
+  padding: 3px 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+
+.issue_error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 7%, transparent);
+}
+
+.issue_warning {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 7%, transparent);
+}
+
+.issue_info {
+  color: var(--text-secondary);
+  background: var(--glass-fill-secondary);
+}
