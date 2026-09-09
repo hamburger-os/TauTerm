@@ -98,8 +98,8 @@ impl FileTransfer for SftpFileTransfer {
             let display_name = file.name.clone();
             let pt = progress.clone();
             let fname = display_name.clone();
-            let on_progress = move |done: u64, total_bytes: u64| {
-                let _ = pt.send(UnifiedProgress::chunk(
+            let on_progress = move |done: u64, total_bytes: u64, speed: Option<f64>| {
+                let _ = pt.send(UnifiedProgress::chunk_with_speed(
                     "sftp",
                     &fname,
                     done,
@@ -111,6 +111,7 @@ impl FileTransfer for SftpFileTransfer {
                         aggregate_total: total_aggregate,
                     },
                     TransferDirection::Send,
+                    speed,
                 ));
             };
 
@@ -210,6 +211,14 @@ impl FileTransfer for SftpFileTransfer {
                         error: Some(e),
                     });
                     if is_cancelled {
+                        for remaining in files.iter().skip(i + 1) {
+                            results.push(BatchFileResult {
+                                file_name: remaining.name.clone(),
+                                status: "skipped".into(),
+                                size: 0,
+                                error: Some("传输已取消".into()),
+                            });
+                        }
                         break;
                     }
                     // 非取消失败：清理远端半成品文件，避免残留不完整数据
@@ -246,14 +255,19 @@ impl FileTransfer for SftpFileTransfer {
             skipped,
         ));
 
-        // 如果有失败且没有成功（排除纯取消场景），向上传播错误
-        if failed > 0 && completed == 0 {
+        if skipped > 0 {
+            return Err(FileTransferError::Cancelled);
+        }
+        if failed > 0 {
             let first_err = results
                 .iter()
                 .filter_map(|r| r.error.as_deref())
                 .next()
-                .unwrap_or("所有文件传输失败");
-            return Err(FileTransferError::Other(first_err.to_string()));
+                .unwrap_or("部分文件上传失败");
+            return Err(FileTransferError::Other(format!(
+                "{} 个文件上传失败：{}",
+                failed, first_err
+            )));
         }
 
         Ok(results)
@@ -409,8 +423,8 @@ impl FileTransfer for SftpFileTransfer {
             let fname = file_name.clone();
             let cb = completed_bytes;
             let ta = total_aggregate;
-            let on_progress = move |done: u64, total_bytes: u64| {
-                let _ = pt.send(UnifiedProgress::chunk(
+            let on_progress = move |done: u64, total_bytes: u64, speed: Option<f64>| {
+                let _ = pt.send(UnifiedProgress::chunk_with_speed(
                     "sftp",
                     &fname,
                     done,
@@ -422,6 +436,7 @@ impl FileTransfer for SftpFileTransfer {
                         aggregate_total: ta,
                     },
                     TransferDirection::Receive,
+                    speed,
                 ));
             };
 
@@ -541,14 +556,19 @@ impl FileTransfer for SftpFileTransfer {
             skipped,
         ));
 
-        // 如果有失败且没有成功（排除纯取消场景），向上传播错误
-        if failed > 0 && completed == 0 {
+        if skipped > 0 {
+            return Err(FileTransferError::Cancelled);
+        }
+        if failed > 0 {
             let first_err = results
                 .iter()
                 .filter_map(|r| r.error.as_deref())
                 .next()
-                .unwrap_or("所有文件下载失败");
-            return Err(FileTransferError::Other(first_err.to_string()));
+                .unwrap_or("部分文件下载失败");
+            return Err(FileTransferError::Other(format!(
+                "{} 个文件下载失败：{}",
+                failed, first_err
+            )));
         }
 
         Ok(results)

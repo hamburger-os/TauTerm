@@ -1,18 +1,33 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import type { UnifiedProgressPayload, TransferFinishedPayload } from '../types';
+import type {
+  TransferFinishedPayload,
+  TransferStartedPayload,
+  UnifiedProgressPayload,
+} from '../types';
+
+export type TransferPhase =
+  | 'preparing'
+  | 'transferring'
+  | 'finalizing'
+  | 'cancelling'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 export interface TransferProgressState {
   visible: boolean;
+  transferId: string | null;
   fileName: string;
   direction: 'upload' | 'download';
   bytesDone: number;
   bytesTotal: number;
   percent: number;
-  startTime: number;
-  finished: boolean;
-  speed: number;
+  phase: TransferPhase;
+  /** 后端真实 SFTP I/O 层测得的速率；null 表示当前没有可靠样本。 */
+  speed: number | null;
+  error: string | null;
   /** 批次进度 — 当前文件索引 (0-based) */
   fileIndex: number;
   /** 批次进度 — 文件总数 */
@@ -23,153 +38,281 @@ export interface TransferProgressState {
   aggregateTotal: number;
 }
 
-/**
- * 统一文件传输进度 Hook（无自动隐藏）
- *
- * 监听 `file-transfer:progress` / `file-transfer:started` / `file-transfer:finished`
- * 事件，管理进度条显示状态。进度条在完成后保持显示，由用户手动点×关闭。
- *
- * `TransferProgressBar` 为纯视觉组件，不包含任何自动隐藏逻辑。
- */
-export function useSftpProgress(sessionId: string) {
-  const [progress, setProgress] = useState<TransferProgressState>({
+const SUCCESS_AUTO_HIDE_MS = 5000;
+
+export function isTransferTerminalPhase(phase: TransferPhase): boolean {
+  return phase === 'completed' || phase === 'failed' || phase === 'cancelled';
+}
+
+function initialProgressState(): TransferProgressState {
+  return {
     visible: false,
+    transferId: null,
     fileName: '',
     direction: 'download',
     bytesDone: 0,
     bytesTotal: 0,
     percent: 0,
-    startTime: 0,
-    finished: true,
-    speed: 0,
+    phase: 'completed',
+    speed: null,
+    error: null,
     fileIndex: 0,
     totalFiles: 1,
     aggregateBytes: 0,
     aggregateTotal: 0,
-  });
-  const lastSampleRef = useRef<{ bytesDone: number; time: number } | null>(null);
-  const speedRef = useRef(0);
+  };
+}
 
-  const resetProgressState = useCallback(() => {
-    setProgress({
-      visible: false, fileName: '', direction: 'download',
-      bytesDone: 0, bytesTotal: 0, percent: 0, startTime: 0,
-      finished: true, speed: 0,
-      fileIndex: 0, totalFiles: 1, aggregateBytes: 0, aggregateTotal: 0,
-    });
-    lastSampleRef.current = null;
-    speedRef.current = 0;
+function displayFileName(rawName: string): string {
+  if (!rawName || rawName === '__batch_complete__') return '';
+  if (rawName.includes('/')) return rawName.split('/').pop() || rawName;
+  if (rawName.includes('\\')) return rawName.split('\\').pop() || rawName;
+  return rawName;
+}
+
+/**
+ * SFTP 传输状态机。
+ *
+ * 事件顺序由后端保证：started → progress* → broadcaster drain → finished。
+ * 每个事件携带 transfer_id，迟到的旧传输事件不会污染下一次传输。
+ * 成功状态 5 秒后自动收起；悬停会暂停计时；失败/取消保持到用户关闭。
+ */
+export function useSftpProgress(sessionId: string) {
+  const [progress, setProgress] = useState<TransferProgressState>(initialProgressState);
+  const activeTransferIdRef = useRef<string | null>(null);
+  const autoHideTimerRef = useRef<number | null>(null);
+  const phaseRef = useRef<TransferPhase>('completed');
+  const hoveredRef = useRef(false);
+
+  const clearAutoHideTimer = useCallback(() => {
+    if (autoHideTimerRef.current !== null) {
+      window.clearTimeout(autoHideTimerRef.current);
+      autoHideTimerRef.current = null;
+    }
   }, []);
 
+  const resetProgressState = useCallback(() => {
+    clearAutoHideTimer();
+    activeTransferIdRef.current = null;
+    phaseRef.current = 'completed';
+    setProgress(initialProgressState());
+  }, [clearAutoHideTimer]);
+
+  const scheduleAutoHide = useCallback(() => {
+    clearAutoHideTimer();
+    autoHideTimerRef.current = window.setTimeout(() => {
+      autoHideTimerRef.current = null;
+      activeTransferIdRef.current = null;
+      phaseRef.current = 'completed';
+      setProgress(initialProgressState());
+    }, SUCCESS_AUTO_HIDE_MS);
+  }, [clearAutoHideTimer]);
+
+  const pauseAutoHide = useCallback(() => {
+    hoveredRef.current = true;
+    if (phaseRef.current === 'completed') clearAutoHideTimer();
+  }, [clearAutoHideTimer]);
+
+  const resumeAutoHide = useCallback(() => {
+    hoveredRef.current = false;
+    if (phaseRef.current === 'completed') scheduleAutoHide();
+  }, [scheduleAutoHide]);
+
   useEffect(() => {
+    let disposed = false;
     let unlistenProgress: UnlistenFn | undefined;
     let unlistenStarted: UnlistenFn | undefined;
     let unlistenFinished: UnlistenFn | undefined;
 
-    // 监听传输启动事件，立即显示进度条（消除点击到首次进度事件之间的静默期）
-    listen<{ session_id: string; protocol: string; direction: string }>(
-      'file-transfer:started',
-      (event) => {
-        if (event.payload.protocol !== 'sftp') return;
-        if (event.payload.session_id !== sessionId) return;
-        const now = Date.now();
-        setProgress(prev => ({
-          ...prev,
-          visible: true,
-          fileName: 'Preparing...',
-          direction: event.payload.direction === 'send' ? 'upload' : 'download',
-          percent: 0,
-          finished: false,
-          startTime: now,
-        }));
-      },
-    ).then(fn => { unlistenStarted = fn; });
+    listen<TransferStartedPayload>('file-transfer:started', (event) => {
+      const payload = event.payload;
+      if (payload.protocol !== 'sftp' || payload.session_id !== sessionId) return;
+
+      clearAutoHideTimer();
+      activeTransferIdRef.current = payload.transfer_id;
+      phaseRef.current = 'preparing';
+      setProgress({
+        ...initialProgressState(),
+        visible: true,
+        transferId: payload.transfer_id,
+        direction: payload.direction === 'send' ? 'upload' : 'download',
+        phase: 'preparing',
+      });
+    }).then(fn => {
+      if (disposed) fn();
+      else unlistenStarted = fn;
+    });
 
     listen<UnifiedProgressPayload>('file-transfer:progress', (event) => {
-      if (event.payload.protocol !== 'sftp') return; // 仅处理 SFTP
-      if (event.payload.session_id !== sessionId) return; // 仅处理当前会话
-      const now = Date.now();
-      const percent = event.payload.bytes_total > 0
-        ? Math.round((event.payload.bytes_done / event.payload.bytes_total) * 100)
+      const payload = event.payload;
+      if (payload.protocol !== 'sftp' || payload.session_id !== sessionId) return;
+      if (!payload.transfer_id || payload.transfer_id !== activeTransferIdRef.current) return;
+
+      const name = displayFileName(payload.file_name);
+      const isBatchComplete = payload.is_batch_complete;
+      const hasKnownTotal = payload.bytes_total > 0;
+      const isLastFile =
+        payload.total_files <= 1 || payload.file_index + 1 >= payload.total_files;
+      const percent = hasKnownTotal
+        ? payload.bytes_done >= payload.bytes_total
+          ? 100
+          : Math.min(99, Math.max(0, Math.floor((payload.bytes_done / payload.bytes_total) * 100)))
         : 0;
+      const backendSpeed =
+        typeof payload.bytes_per_second === 'number'
+        && Number.isFinite(payload.bytes_per_second)
+        && payload.bytes_per_second > 0
+          ? payload.bytes_per_second
+          : null;
 
-      // 跨文件边界不重置 lastSampleRef：
-      // bytes_done 回退→db<0→进入 else 分支保留上一速度，平稳过渡不归零
-
-      let speed = speedRef.current;
-      const prevSample = lastSampleRef.current;
-      if (prevSample) {
-        const dt = (now - prevSample.time) / 1000;
-        const db = event.payload.bytes_done - prevSample.bytesDone;
-        if (dt > 0 && db >= 0) {
-          const instant = db / dt;
-          // 时间加权 EMA（τ=0.5s，约 1.15s 达到 90% 真实值，自适应采样频率）
-          const alpha = 1 - Math.exp(-dt / 0.5);
-          speed = speedRef.current > 0
-            ? instant * alpha + speedRef.current * (1 - alpha)
-            : instant * 0.5; // 首个有效样本使用 50% 权重
-        } else {
-          speed = speedRef.current;
+      setProgress(prev => {
+        if (prev.transferId !== payload.transfer_id || isTransferTerminalPhase(prev.phase)) {
+          return prev;
         }
-      }
-      lastSampleRef.current = { bytesDone: event.payload.bytes_done, time: now };
-      speedRef.current = speed;
 
-      // 防御性提取纯文件名（避免完整路径被显示）
-      // 仅当 file_name 非空时更新（batch_complete 事件 file_name 为空，保留当前显示）
-      const rawName = event.payload.file_name;
-      const displayName = rawName
-        ? (rawName.includes('/')
-            ? (rawName.split('/').pop() || rawName)
-            : (rawName.includes('\\') ? (rawName.split('\\').pop() || rawName) : rawName))
-        : undefined;
+        let phase: TransferPhase = prev.phase;
+        let error = prev.error;
+        let speed = prev.speed;
 
-      // 批次完成时保留当前单文件进度字段，避免 batch_complete 的零值覆盖
-      const isBatchComplete = event.payload.is_batch_complete;
+        if (payload.is_file_start) {
+          phase = 'transferring';
+          speed = null;
+          error = null;
+        } else if (isBatchComplete) {
+          phase = 'finalizing';
+          speed = null;
+          if (payload.file_success === false && !error) {
+            error = payload.file_error || null;
+          }
+        } else if (payload.is_file_complete) {
+          phase = isLastFile ? 'finalizing' : 'transferring';
+          speed = null;
+          if (payload.file_success === false) {
+            error = payload.file_error || error;
+          }
+        } else {
+          const payloadComplete = hasKnownTotal && payload.bytes_done >= payload.bytes_total;
+          phase = payloadComplete && isLastFile ? 'finalizing' : 'transferring';
+          speed = phase === 'transferring' ? (backendSpeed ?? prev.speed) : null;
+        }
 
-      setProgress(prev => ({
-        visible: true,
-        fileName: isBatchComplete ? prev.fileName : (displayName ?? prev.fileName),
-        direction: event.payload.direction === 'send' ? 'upload' : 'download',
-        bytesDone: isBatchComplete ? prev.bytesDone : event.payload.bytes_done,
-        bytesTotal: isBatchComplete ? prev.bytesTotal : event.payload.bytes_total,
-        percent: isBatchComplete ? prev.percent : percent,
-        startTime: prev.startTime || now,
-        finished: prev.finished,
-        speed: speed || prev.speed,
-        fileIndex: isBatchComplete ? prev.fileIndex : (event.payload.file_index ?? prev.fileIndex),
-        totalFiles: isBatchComplete ? prev.totalFiles : (event.payload.total_files || prev.totalFiles),
-        aggregateBytes: isBatchComplete ? prev.aggregateBytes : (event.payload.aggregate_bytes ?? prev.aggregateBytes),
-        aggregateTotal: isBatchComplete ? prev.aggregateTotal : (event.payload.aggregate_total || prev.aggregateTotal),
-      }));
-    }).then(fn => { unlistenProgress = fn; });
+        const preserveFailedProgress =
+          payload.is_file_complete
+          && payload.file_success === false
+          && !hasKnownTotal;
+
+        phaseRef.current = phase;
+        return {
+          ...prev,
+          visible: true,
+          fileName: isBatchComplete ? prev.fileName : (name || prev.fileName),
+          direction: payload.direction === 'send' ? 'upload' : 'download',
+          bytesDone:
+            isBatchComplete || preserveFailedProgress ? prev.bytesDone : payload.bytes_done,
+          bytesTotal:
+            isBatchComplete || preserveFailedProgress ? prev.bytesTotal : payload.bytes_total,
+          percent:
+            isBatchComplete || preserveFailedProgress ? prev.percent : percent,
+          phase,
+          speed,
+          error,
+          fileIndex: isBatchComplete ? prev.fileIndex : payload.file_index,
+          totalFiles: isBatchComplete ? prev.totalFiles : (payload.total_files || prev.totalFiles),
+          aggregateBytes: isBatchComplete ? prev.aggregateBytes : payload.aggregate_bytes,
+          aggregateTotal: isBatchComplete
+            ? prev.aggregateTotal
+            : (payload.aggregate_total || prev.aggregateTotal),
+        };
+      });
+    }).then(fn => {
+      if (disposed) fn();
+      else unlistenProgress = fn;
+    });
 
     listen<TransferFinishedPayload>('file-transfer:finished', (event) => {
-      if (event.payload.protocol !== 'sftp') return;
-      if (event.payload.session_id !== sessionId) return;
-      const ok = event.payload.success;
-      setProgress(prev => ({ ...prev, finished: true, percent: ok ? 100 : prev.percent }));
-    }).then(fn => { unlistenFinished = fn; });
+      const payload = event.payload;
+      if (payload.session_id !== sessionId) return;
+      if (payload.protocol && payload.protocol !== 'sftp') return;
+      if (
+        !payload.transfer_id
+        || !activeTransferIdRef.current
+        || payload.transfer_id !== activeTransferIdRef.current
+      ) {
+        return;
+      }
+
+      clearAutoHideTimer();
+      const phase: TransferPhase = payload.success
+        ? 'completed'
+        : payload.cancelled
+          ? 'cancelled'
+          : 'failed';
+      phaseRef.current = phase;
+
+      setProgress(prev => {
+        if (
+          payload.transfer_id
+          && prev.transferId
+          && payload.transfer_id !== prev.transferId
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          visible: true,
+          transferId: payload.transfer_id ?? prev.transferId,
+          phase,
+          percent: payload.success ? 100 : prev.percent,
+          speed: null,
+          error: payload.success ? null : (payload.error || prev.error),
+        };
+      });
+
+      if (payload.success && !hoveredRef.current) scheduleAutoHide();
+    }).then(fn => {
+      if (disposed) fn();
+      else unlistenFinished = fn;
+    });
 
     return () => {
+      disposed = true;
+      clearAutoHideTimer();
       if (unlistenProgress) unlistenProgress();
       if (unlistenStarted) unlistenStarted();
       if (unlistenFinished) unlistenFinished();
     };
-  }, [sessionId, resetProgressState]);
+  }, [clearAutoHideTimer, scheduleAutoHide, sessionId]);
 
   const hideProgress = useCallback(() => {
     resetProgressState();
   }, [resetProgressState]);
 
   const cancelTransfer = useCallback(async () => {
+    if (!activeTransferIdRef.current || isTransferTerminalPhase(phaseRef.current)) return;
+
+    clearAutoHideTimer();
+    const previousPhase = phaseRef.current;
+    phaseRef.current = 'cancelling';
+    setProgress(prev => ({ ...prev, phase: 'cancelling', speed: null }));
+
     try {
       await invoke('file_transfer_cancel', { sessionId });
-    } catch (e) {
-      console.error('取消传输失败:', e);
+    } catch (error) {
+      // 取消命令失败不等于传输失败；恢复原运行状态，最终结果仍由 finished 决定。
+      phaseRef.current = previousPhase;
+      setProgress(prev => ({
+        ...prev,
+        phase: previousPhase,
+        error: String(error),
+      }));
     }
-    setProgress(prev => ({ ...prev, finished: true }));
-  }, [sessionId, resetProgressState]);
+  }, [clearAutoHideTimer, sessionId]);
 
-  return { progress, hideProgress, cancelTransfer };
+  return {
+    progress,
+    hideProgress,
+    cancelTransfer,
+    pauseAutoHide,
+    resumeAutoHide,
+  };
 }

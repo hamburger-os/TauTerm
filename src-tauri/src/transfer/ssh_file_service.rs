@@ -35,6 +35,7 @@ const PROGRESS_THROTTLE_PERCENT: u64 = 1;
 struct ProgressThrottle {
     last_emit: Instant,
     last_percent: u64,
+    last_done: u64,
 }
 
 impl ProgressThrottle {
@@ -42,10 +43,14 @@ impl ProgressThrottle {
         Self {
             last_emit: Instant::now(),
             last_percent: 0,
+            last_done: 0,
         }
     }
 
-    /// 返回 true 表示应该 emit 进度事件
+    /// 返回 true 表示应该 emit 进度事件。
+    ///
+    /// 每次真正 emit 时同步记录 `last_done`，用于尾部补样本去重；
+    /// 最后一块若已经触发 100%，循环结束后不会再重复发送同一个 100% 样本。
     fn should_emit(&mut self, done: u64, total: u64) -> bool {
         if total == 0 {
             return false;
@@ -53,23 +58,88 @@ impl ProgressThrottle {
         let percent = (done * 100) / total;
         let elapsed = self.last_emit.elapsed().as_millis() as u64;
 
-        // 完成时强制 emit
-        if done >= total {
-            return true;
-        }
-        // 时间节流：距上次 emit 超过阈值
-        if elapsed >= PROGRESS_THROTTLE_MS {
+        let should_emit = done >= total
+            || elapsed >= PROGRESS_THROTTLE_MS
+            || percent.saturating_sub(self.last_percent) >= PROGRESS_THROTTLE_PERCENT;
+
+        if should_emit {
             self.last_emit = Instant::now();
             self.last_percent = percent;
-            return true;
+            self.last_done = done;
         }
-        // 百分比节流：进度跳变超过阈值
-        if percent.saturating_sub(self.last_percent) >= PROGRESS_THROTTLE_PERCENT {
-            self.last_emit = Instant::now();
-            self.last_percent = percent;
-            return true;
+        should_emit
+    }
+
+    /// 仅当最后已传输字节数尚未发送时补一个尾部样本。
+    fn should_emit_final(&mut self, done: u64, total: u64) -> bool {
+        if self.last_done == done {
+            return false;
         }
-        false
+        self.last_emit = Instant::now();
+        self.last_percent = done.saturating_mul(100).checked_div(total).unwrap_or(0);
+        self.last_done = done;
+        true
+    }
+}
+
+struct TransferRateEstimator {
+    started_at: Instant,
+    last_sample_at: Instant,
+    last_bytes: u64,
+    ema_bytes_per_second: Option<f64>,
+}
+
+impl TransferRateEstimator {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            started_at: now,
+            last_sample_at: now,
+            last_bytes: 0,
+            ema_bytes_per_second: None,
+        }
+    }
+
+    /// 在真实 SFTP I/O 层按高精度 Instant 计算速率。
+    ///
+    /// 首个样本使用从传输开始到当前的平均速率，使单块/小文件也能得到有效值；
+    /// 后续样本使用 τ=0.5s 的时间加权 EMA。无字节增量时不制造 0 B/s 样本。
+    fn sample(&mut self, bytes_done: u64) -> Option<f64> {
+        if bytes_done <= self.last_bytes {
+            return self.ema_bytes_per_second;
+        }
+
+        let now = Instant::now();
+        let delta_bytes = bytes_done - self.last_bytes;
+        let delta_seconds = now.duration_since(self.last_sample_at).as_secs_f64();
+        let total_seconds = now.duration_since(self.started_at).as_secs_f64();
+
+        let instant = if self.last_bytes == 0 {
+            if total_seconds > 0.0 {
+                bytes_done as f64 / total_seconds
+            } else {
+                0.0
+            }
+        } else if delta_seconds > 0.0 {
+            delta_bytes as f64 / delta_seconds
+        } else {
+            0.0
+        };
+
+        if instant.is_finite() && instant > 0.0 {
+            let next = match self.ema_bytes_per_second {
+                Some(previous) if delta_seconds > 0.0 => {
+                    let alpha = 1.0 - (-delta_seconds / 0.5).exp();
+                    instant * alpha + previous * (1.0 - alpha)
+                }
+                _ => instant,
+            };
+            self.ema_bytes_per_second = Some(next);
+        }
+
+        self.last_sample_at = now;
+        self.last_bytes = bytes_done;
+        self.ema_bytes_per_second
     }
 }
 
@@ -291,7 +361,7 @@ pub async fn sftp_download(
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
     remote_path: &str,
     local_path: &str,
-    on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+    on_progress: Option<&(dyn Fn(u64, u64, Option<f64>) + Send + Sync)>,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<u64, String> {
     get_or_create_sftp(session, sftp_cache).await?;
@@ -327,10 +397,12 @@ pub async fn sftp_download(
     let mut buf = [0u8; TRANSFER_BUF_SIZE];
     let mut total: u64 = 0;
     let mut throttle = ProgressThrottle::new();
+    let mut rate = TransferRateEstimator::new();
 
     loop {
         if is_cancelled(cancel) {
-            // 清理本地半成品文件
+            // Windows 不能可靠删除仍由当前进程打开的文件；先关闭句柄再清理半成品。
+            drop(local_file);
             let _ = tokio::fs::remove_file(local_path).await;
             return Err(transfer_cancelled_error());
         }
@@ -348,19 +420,27 @@ pub async fn sftp_download(
         total += n as u64;
         if let Some(cb) = on_progress {
             if throttle.should_emit(total, remote_size) {
-                cb(total, remote_size);
+                cb(total, remote_size, rate.sample(total));
             }
         }
     }
 
-    // 最终进度事件（确保 UI 显示 100%）
+    // 仅在最后一个节流样本没有覆盖实际尾部字节时补发，避免重复 100%。
     if let Some(cb) = on_progress {
-        cb(total, remote_size);
+        if throttle.should_emit_final(total, remote_size) {
+            cb(total, remote_size, rate.sample(total));
+        }
     }
     local_file
         .flush()
         .await
         .map_err(|e| format!("刷新本地文件失败: {}", e))?;
+    // 100% 后仍处于 Finalizing；若此时用户取消，删除已写完但尚未正式提交的本地文件。
+    if is_cancelled(cancel) {
+        drop(local_file);
+        let _ = tokio::fs::remove_file(local_path).await;
+        return Err(transfer_cancelled_error());
+    }
     log::info!(
         "SFTP 下载完成: {} -> {} ({} bytes, remote_size={})",
         remote_path,
@@ -385,7 +465,7 @@ pub async fn sftp_upload(
     local_path: &str,
     remote_path: &str,
     mtime: Option<u64>,
-    on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+    on_progress: Option<&(dyn Fn(u64, u64, Option<f64>) + Send + Sync)>,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<u64, String> {
     get_or_create_sftp(session, sftp_cache).await?;
@@ -408,6 +488,7 @@ pub async fn sftp_upload(
     let mut buf = [0u8; TRANSFER_BUF_SIZE];
     let mut total: u64 = 0;
     let mut throttle = ProgressThrottle::new();
+    let mut rate = TransferRateEstimator::new();
 
     loop {
         if is_cancelled(cancel) {
@@ -445,14 +526,16 @@ pub async fn sftp_upload(
         total += n as u64;
         if let Some(cb) = on_progress {
             if throttle.should_emit(total, local_size) {
-                cb(total, local_size);
+                cb(total, local_size, rate.sample(total));
             }
         }
     }
 
-    // 最终进度事件（确保 UI 显示 100%）
+    // 仅在最后一个节流样本没有覆盖实际尾部字节时补发，避免重复 100%。
     if let Some(cb) = on_progress {
-        cb(total, local_size);
+        if throttle.should_emit_final(total, local_size) {
+            cb(total, local_size, rate.sample(total));
+        }
     }
     remote_file
         .flush()
@@ -470,6 +553,23 @@ pub async fn sftp_upload(
                 let _ = sftp.set_metadata(remote_path, stat).await;
             }
         }
+    }
+
+    // Finalizing 阶段仍接受取消：flush/metadata 收尾完成后删除远端文件，
+    // 并丢弃 SFTP cache，确保下一次操作重新协商干净通道。
+    if is_cancelled(cancel) {
+        drop(remote_file);
+        {
+            let cache = sftp_cache.lock().await;
+            if let Some(sftp) = cache.as_ref() {
+                let _ = sftp.remove_file(remote_path).await;
+            }
+        }
+        {
+            let mut cache = sftp_cache.lock().await;
+            *cache = None;
+        }
+        return Err(transfer_cancelled_error());
     }
 
     log::info!(
@@ -857,5 +957,37 @@ pub async fn cleanup_remote_partial(
     if let Some(sftp) = cache.as_ref() {
         let _ = sftp.remove_file(remote_path).await;
         log::info!("SFTP 已清理远端残缺文件: {}", remote_path);
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn completed_chunk_is_not_emitted_twice() {
+        let mut throttle = ProgressThrottle::new();
+        assert!(throttle.should_emit(1024, 1024));
+        assert!(!throttle.should_emit_final(1024, 1024));
+    }
+
+    #[test]
+    fn missing_tail_sample_is_emitted_exactly_once() {
+        let mut throttle = ProgressThrottle::new();
+        assert!(throttle.should_emit(512, 1024));
+        assert!(throttle.should_emit_final(1024, 1024));
+        assert!(!throttle.should_emit_final(1024, 1024));
+    }
+
+    #[test]
+    fn rate_estimator_never_invents_zero_speed_for_no_progress() {
+        let mut rate = TransferRateEstimator::new();
+        assert_eq!(rate.sample(0), None);
+        let sample = rate
+            .sample(1024)
+            .expect("first non-zero byte sample should have a rate");
+        assert!(sample.is_finite());
+        assert!(sample > 0.0);
+        assert_eq!(rate.sample(1024), Some(sample));
     }
 }

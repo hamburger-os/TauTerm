@@ -1,36 +1,39 @@
-/* 传输进度条 — 固定底部，使用 .liquid-glass-float 全局类 */
+/* 文件管理器传输状态条：container-query 响应式 Grid，关键操作列永远可达。 */
 .bar {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  height: 36px;
-  display: flex;
+  min-width: 0;
+  height: 42px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(28px, 1fr) auto minmax(58px, auto) auto;
+  grid-template-areas: "name progress percent detail action";
   align-items: center;
+  gap: var(--spacing-xs);
   padding: 0 var(--spacing-sm);
-  gap: var(--spacing-sm);
   border-top: 1px solid var(--glass-border-default);
   border-radius: var(--radius-md);
   z-index: 10;
+  overflow: hidden;
 }
 
-/* ── 左侧 ──────────────────────────────── */
-
 .left {
+  grid-area: name;
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
-  flex-shrink: 0;
   min-width: 0;
 }
 
 .dirIcon {
-  flex-shrink: 0;
+  flex: 0 0 auto;
   font-size: var(--text-md);
 }
 
 .fileName {
-  max-width: 200px;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -44,21 +47,16 @@
   white-space: nowrap;
 }
 
-/* ── 进度条区域（支持双进度条堆叠）────── */
-
 .progressArea {
-  flex: 1;
+  grid-area: progress;
+  min-width: 28px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 0;
 }
-
-/* ── 进度条 ────────────────────────────── */
 
 .progressTrack {
   width: 100%;
-  flex-shrink: 0;
   height: 4px;
   background: var(--glass-hover);
   border-radius: 2px;
@@ -74,7 +72,6 @@
 
 .aggregateTrack {
   height: 3px;
-  background: var(--glass-hover);
   opacity: 0.8;
 }
 
@@ -83,33 +80,104 @@
   opacity: 0.6;
 }
 
-/* ── 右侧 ──────────────────────────────── */
-
-.right {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  flex-shrink: 0;
+.percentText {
+  grid-area: percent;
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
+  color: var(--accent-primary);
+  min-width: 34px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.detailText {
+  grid-area: detail;
+  min-width: 0;
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-align: right;
+}
+
+.bar[data-phase="completed"] .detailText {
+  color: var(--color-success);
+}
+
+.bar[data-phase="failed"] .detailText {
+  color: var(--color-error);
+}
+
+.bar[data-phase="cancelled"] .detailText {
   color: var(--text-secondary);
 }
 
-.percentText {
-  font-family: var(--font-mono);
-  color: var(--accent-primary);
-  min-width: 36px;
-  text-align: right;
-}
-
-.speedText {
-  font-family: var(--font-mono);
-  color: var(--text-tertiary);
-  min-width: 64px;
-  text-align: right;
-}
-
 .closeBtn {
+  grid-area: action;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  font-size: var(--text-xs);
-  padding: 0 4px;
+  flex: 0 0 auto;
+}
+
+.closeBtn:disabled {
+  cursor: default;
+}
+
+/* 窄 Sidebar：两行布局，× 固定占据右侧操作列，永远不会被推出可视区域。 */
+@container filemanager (max-width: 360px) {
+  .bar {
+    height: 52px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "name percent action"
+      "progress detail action";
+    column-gap: var(--spacing-xs);
+    row-gap: 3px;
+    padding-block: 5px;
+  }
+
+  .detailText {
+    max-width: 96px;
+  }
+}
+
+/* 更窄时优先牺牲实时速度，而不是牺牲文件名、百分比或取消/关闭操作。 */
+@container filemanager (max-width: 280px) {
+  .bar {
+    height: 56px;
+    grid-template-columns: minmax(0, 1fr) minmax(58px, auto) auto;
+    grid-template-areas:
+      "name percent action"
+      "progress detail action";
+  }
+
+  .liveSpeed {
+    display: none;
+  }
+
+  .detailText:not(.liveSpeed) {
+    max-width: 88px;
+  }
+}
+
+/* 极窄宽度仍保留关键操作能力；进度条退化为紧凑单行信息。 */
+@container filemanager (max-width: 220px) {
+  .bar {
+    height: 44px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "name percent action";
+  }
+
+  .progressArea,
+  .detailText {
+    display: none;
+  }
 }

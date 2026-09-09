@@ -10,7 +10,25 @@
 }
 
 .containerWithProgress {
-  padding-bottom: 36px;
+  padding-bottom: 42px;
+}
+
+@container filemanager (max-width: 360px) {
+  .containerWithProgress {
+    padding-bottom: 52px;
+  }
+}
+
+@container filemanager (max-width: 280px) {
+  .containerWithProgress {
+    padding-bottom: 56px;
+  }
+}
+
+@container filemanager (max-width: 220px) {
+  .containerWithProgress {
+    padding-bottom: 44px;
+  }
 }
 
 /* ── 错误横幅 ─────────────────────────── */

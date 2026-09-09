@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, four-color amb
 license: MIT
 metadata:
   author: tauterm
-  version: "9.7"
+  version: "9.8"
 ---
 
-# TauTerm Liquid Glass v9.7 — 唯一主题规范源
+# TauTerm Liquid Glass v9.8 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、四色环境色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -323,6 +323,7 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 - **导航 Tab / 模式切换条 / 互斥筛选条例外**：同一 selector strip 内所有按钮的外部几何必须恒定；selected/hover 只能改变颜色、边缘和阴影，禁止 translate / scale 让当前项看起来更高或更宽。
 - 紧凑 selector 统一使用全局 `.liquid-selector-strip` + `.liquid-selector-button`：高度与 Select 共用 `--select-height`，padding / font / line-height 由主题层拥有；组件 CSS 只能声明 flex/grid 占位、换行和最小宽度，不得再定义另一套按钮几何。
 - **窄 Sidebar 的一级工具/类别导航不得通过横向滚动 Tab 条解决溢出。** 当一级类别不能稳定在一行内完整展示时，必须优先使用统一 `.liquid-glass-input.liquid-glass-select`；横向滚动只属于内容浏览，不属于一级导航交互。二级、少量且需要高频切换的互斥选项仍可使用 selector strip。
+- **窄 Sidebar 的浮动状态/任务条必须保证关键操作始终可达。** 优先级固定为“取消/关闭操作 > 文件/任务身份 > 核心状态/百分比 > 进度可视化 > 辅助速率”。当宽度不足时使用现有 CSS size container + `@container` 重排/隐藏低优先级信息，不得把操作按钮推出裁剪区，也不得为此引入横向滚动、ResizeObserver 或 JS 宽度轮询。
 - Active：普通动作按钮可轻微压下；selector strip 不改变外部尺寸。
 - Disabled：使用统一 disabled surface，不保留动态 Prism。
 
@@ -444,6 +445,7 @@ npm run build
 - **内部 Divider 比 Workspace 外框更弱，hover 才进入 accent；滚动条两端没有原生箭头按钮，横纵滚动条交汇处没有白色 corner 方块**
 - **右键未选中 Pane Header 或已连接 Terminal 时都不会先切换 active Session；Close Pane 菜单只从 Header 出现**
 - **窄 Sidebar 的一级工具导航不出现横向滚动条；类别较多时使用主题 Select，滚动条只用于内容区域**
+- **文件管理器传输状态条在极窄 Sidebar 中仍能直接点击取消/关闭；文件名可省略、速度可隐藏，但关键操作不得被裁掉**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
 - **效果优先正常观察 3–5 秒能看出两层 Ambient 明显位移与交叠；四色 Prism 按钮也能感知低频连续流动；色团更大但 raster layer 不扩大**
 - **系统 reduced-motion 生效时，设置页必须明确显示“系统动态效果已关闭/减少动态效果”，并解释效果优先因此静止**
