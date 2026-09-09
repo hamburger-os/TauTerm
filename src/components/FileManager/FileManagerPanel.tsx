@@ -83,7 +83,13 @@ export default function FileManagerPanel({
   const ms = useMultiSelect(fm.entries);
 
   // ── Progress events ─────────────────────────────────
-  const { progress, hideProgress, cancelTransfer } = useSftpProgress(sessionId);
+  const {
+    progress,
+    hideProgress,
+    cancelTransfer,
+    pauseAutoHide,
+    resumeAutoHide,
+  } = useSftpProgress(sessionId);
 
   // ── 监听父级空白区域右键事件 ──
   // 文件管理器面板内按钮/列表之外的大面积空白区域可能落在
@@ -705,8 +711,9 @@ export default function FileManagerPanel({
         fileName={progress.fileName}
         direction={progress.direction}
         percent={progress.percent}
-        finished={progress.finished}
+        phase={progress.phase}
         speed={progress.speed}
+        error={progress.error}
         fileIndex={progress.fileIndex}
         totalFiles={progress.totalFiles}
         aggregatePercent={
@@ -715,13 +722,18 @@ export default function FileManagerPanel({
             : undefined
         }
         onClose={() => {
-          // 传输进行中：中断后端传输；已完成：仅隐藏进度条
-          if (!progress.finished) {
-            cancelTransfer();
-          } else {
+          if (
+            progress.phase === "completed"
+            || progress.phase === "failed"
+            || progress.phase === "cancelled"
+          ) {
             hideProgress();
+          } else if (progress.phase !== "cancelling") {
+            void cancelTransfer();
           }
         }}
+        onMouseEnter={pauseAutoHide}
+        onMouseLeave={resumeAutoHide}
       />
 
       {/* 右键菜单 */}
