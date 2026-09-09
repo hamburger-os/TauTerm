@@ -4,17 +4,30 @@
   gap: 6px;
 }
 
-.tabRow {
+.tabScroller {
   width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.tabRow {
+  width: max-content;
+  min-width: 100%;
 }
 
 .tabBtn {
-  flex: 1 1 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 auto;
+  min-width: 68px;
 }
 
 .tabBody {
-  /* 内容由各 Inner 组件自行渲染，此处仅作容器 */
+  min-width: 0;
+}
+
+.tabPanel {
+  display: block;
+}
+
+.tabPanelHidden {
+  display: none;
 }
