@@ -35,6 +35,8 @@ LogEngine 使用有界生产者/消费者队列和独立写线程处理系统日
 
 Stats renderer/状态区消费 Session 统计信息。右侧工程工具中的 CRC/Checksum、Base64/HEX/浮点/大小端、位运算、计算器以及 Modbus/AT 解析器是无连接辅助工具；它们不得被宣传成完整协议实现或协议合规验证器。
 
+工程工具按输入语义显式区分文本与 HEX：Modbus RTU / 自定义帧使用 HEX 字节输入，Modbus ASCII / AT 响应使用文本输入。Modbus RTU 负责 CRC16/MODBUS 校验并识别异常响应码；Modbus ASCII 按冒号、ASCII HEX 字段和 LRC 解析，交互输入允许省略结尾 CRLF 以便粘贴，但这只是工具容错，不改变串行线上必须使用 CRLF 的协议要求。数值转换与位运算采用严格完整输入校验，不允许依赖 `parseInt` / `parseFloat` 的部分匹配产生看似成功的结果；大小端转换遇到不完整分组必须显式失败，不能静默丢字节。已知 CRC check vector、协议帧、严格数值解析和失败关闭语义由独立工程工具合同测试覆盖。
+
 ## 数据流
 
 ```mermaid
