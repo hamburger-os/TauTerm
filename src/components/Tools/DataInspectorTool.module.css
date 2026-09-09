@@ -1,0 +1,80 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hint,
+.placeholder {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.35;
+}
+
+.placeholder {
+  text-align: center;
+  padding: 8px 0;
+}
+
+.input {
+  width: 100%;
+  padding: 4px 6px;
+}
+
+.normalized {
+  display: block;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--glass-fill-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  overflow-wrap: anywhere;
+}
+
+.tableWrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.table th,
+.table td {
+  padding: 3px 4px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--glass-border-default);
+}
+
+.table th {
+  width: 84px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.table td:nth-child(2) {
+  width: 100%;
+}
+
+.table code {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.table button {
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.error {
+  font-size: var(--text-xs);
+  color: var(--color-error);
+}
