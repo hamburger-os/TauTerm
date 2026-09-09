@@ -1,4 +1,4 @@
-import { toolErr, toolOk, type ToolResult } from "./toolResult";
+import { toolErr, toolOk, type ToolResult } from "./toolResult.ts";
 
 export type ByteInputFormat =
   | "continuous-hex"
