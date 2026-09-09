@@ -584,6 +584,7 @@ export default function TerminalView({
             void disconnect(tab.id);
           }
         }}
+        allowProtocolInspect={tab.pluginId !== "local-shell"}
         ref={(node) => {
           if (node) terminalRefs.current.set(tab.id, node);
           else terminalRefs.current.delete(tab.id);
