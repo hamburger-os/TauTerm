@@ -51,7 +51,11 @@ function isWithin(index: number, range: ProtocolRange | null): boolean {
   );
 }
 
-export interface ProtocolToolProps {\n  sessionId: string;\n}\n\nexport default function ProtocolTool({ sessionId }: ProtocolToolProps) {
+export interface ProtocolToolProps {
+  sessionId: string;
+}
+
+export default function ProtocolTool({ sessionId }: ProtocolToolProps) {
   const { t } = useTranslation();
   const [template, setTemplate] = useState<ProtocolTemplate>("auto");
   const [input, setInput] = useState("");
