@@ -438,6 +438,12 @@ pub async fn sftp_download(
         .flush()
         .await
         .map_err(|e| format!("刷新本地文件失败: {}", e))?;
+    // 100% 后仍处于 Finalizing；若此时用户取消，删除已写完但尚未正式提交的本地文件。
+    if is_cancelled(cancel) {
+        drop(local_file);
+        let _ = tokio::fs::remove_file(local_path).await;
+        return Err(transfer_cancelled_error());
+    }
     log::info!(
         "SFTP 下载完成: {} -> {} ({} bytes, remote_size={})",
         remote_path,
@@ -550,6 +556,23 @@ pub async fn sftp_upload(
                 let _ = sftp.set_metadata(remote_path, stat).await;
             }
         }
+    }
+
+    // Finalizing 阶段仍接受取消：flush/metadata 收尾完成后删除远端文件，
+    // 并丢弃 SFTP cache，确保下一次操作重新协商干净通道。
+    if is_cancelled(cancel) {
+        drop(remote_file);
+        {
+            let cache = sftp_cache.lock().await;
+            if let Some(sftp) = cache.as_ref() {
+                let _ = sftp.remove_file(remote_path).await;
+            }
+        }
+        {
+            let mut cache = sftp_cache.lock().await;
+            *cache = None;
+        }
+        return Err(transfer_cancelled_error());
     }
 
     log::info!(
