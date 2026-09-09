@@ -96,7 +96,7 @@ const appSource = await readFile(
 );
 assert.match(
   appSource,
-  /tauterm:protocol-inspect[\s\S]{0,300}setRightSidebarVisible\(true\)/,
+  /setRightSidebarVisible\(true\)[\s\S]{0,300}tauterm:protocol-inspect/,
   "explicit protocol handoff must reveal the engineering sidebar",
 );
 
