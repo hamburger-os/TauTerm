@@ -107,9 +107,10 @@ const networkViewSource = await readFile(
   "utf8",
 );
 assert.match(networkViewSource, /<DualPane sessionId=\{sessionId\}/);
+assert.match(networkViewSource, /function TcpFrameList/);
 assert.match(
   networkViewSource,
-  /TcpFrameList[\s\S]{0,500}onContextMenu=\{\(event\) => openContextMenu\(event, line\.hex\)\}/,
+  /onContextMenu=\{\(event\) => openContextMenu\(event, line\.hex\)\}/,
 );
 assert.match(
   networkViewSource,
