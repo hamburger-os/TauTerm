@@ -148,5 +148,16 @@ const sharedContext = await source("src/context/TransferContext.tsx");
 assert.match(sharedContext, /activeProtocolRef\.current = protocol;[\s\S]{0,120}activeSessionIdRef\.current = sessionId/);
 assert.match(sharedContext, /p\.transfer_id !== activeTransferIdRef\.current/);
 assert.match(sharedContext, /p\.bytes_per_second && p\.bytes_per_second > 0/);
+assert.match(sharedContext, /"file-transfer:finished"[\s\S]{0,900}payload\.transfer_id !== activeTransferIdRef\.current/);
+assert.match(
+  sharedContext,
+  /batch_complete 只是协议层批次收尾[\s\S]{0,180}if \(p\.is_batch_complete\) \{[\s\S]{0,80}return;/,
+  "shared TransferContext must wait for finished instead of treating batch_complete as terminal",
+);
+assert.doesNotMatch(
+  sharedContext,
+  /if \(p\.is_batch_complete\) \{[\s\S]{0,300}SET_STATUS/,
+  "batch_complete must not establish completed/failed before resource cleanup",
+);
 
 console.log("file-transfer-lifecycle: responsive actions, state machine, identity, ordering, speed, and batch semantics verified");
