@@ -718,7 +718,12 @@ export default function FileManagerPanel({
         totalFiles={progress.totalFiles}
         aggregatePercent={
           progress.aggregateTotal > 0
-            ? Math.round((progress.aggregateBytes / progress.aggregateTotal) * 100)
+            ? progress.aggregateBytes >= progress.aggregateTotal
+              ? 100
+              : Math.min(
+                  99,
+                  Math.floor((progress.aggregateBytes / progress.aggregateTotal) * 100),
+                )
             : undefined
         }
         onClose={() => {
