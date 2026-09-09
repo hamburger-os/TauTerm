@@ -44,6 +44,12 @@ export function ChecksumToolInner() {
       : parseHexString(inputText);
   }, [inputText, inputMode]);
 
+  const invalidHexInput =
+    inputMode === "hex"
+    && inputText.trim().length > 0
+    && bytes !== null
+    && bytes.length === 0;
+
   const parsedHex = useMemo(() => {
     if (!bytes || bytes.length === 0) return null;
     return bytesToHex(bytes);
@@ -130,6 +136,12 @@ export function ChecksumToolInner() {
           <span className={styles.label}>{t("tools.parsedBytes") ?? "Bytes"}:</span>
           <code className={styles.code}>{parsedHex}</code>
           <span className={styles.len}>{bytes?.length ?? 0} B</span>
+        </div>
+      )}
+
+      {invalidHexInput && (
+        <div className={styles.parseError}>
+          {t("tools.invalidHexInput")}
         </div>
       )}
 
