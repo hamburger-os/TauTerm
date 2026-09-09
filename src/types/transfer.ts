@@ -142,6 +142,8 @@ export interface TransferProgress {
   aggregate_bytes_transferred?: number;
   /** 聚合总字节 */
   aggregate_total_bytes?: number;
+  /** 后端协议层可选的真实 I/O 测速（bytes/s）；未提供时通用 UI 可自行回退估算 */
+  bytes_per_second?: number;
 }
 
 /** 批次中单个文件的结果 */
