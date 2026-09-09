@@ -387,7 +387,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 Ok(())
             }
             Err(e) => {
-                let cancelled = matches!(e, FileTransferError::Cancelled);
+                let cancelled = matches!(&e, FileTransferError::Cancelled);
                 let error = e.to_string();
                 let _ = app.emit(
                     "file-transfer:finished",
