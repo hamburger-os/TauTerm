@@ -16,9 +16,9 @@ export function normalizeTerminalPasteText(text: string): string {
 /**
  * Multi-line paste safety rule.
  *
- * A confirmation is required only when the clipboard contains at least two
- * non-empty logical lines. A normal single line, including one trailing
- * newline, stays frictionless.
+ * The analyzer flags any line break because a trailing newline can submit a
+ * command immediately when bracketed paste is unavailable. It also flags
+ * payloads larger than 5 KiB so accidental bulk pastes can be confirmed.
  */
 export function analyzeTerminalPaste(text: string): TerminalPasteAnalysis {
   const normalized = normalizeTerminalPasteText(text);
