@@ -338,6 +338,9 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // started 事件可能早于下一次 React render；先同步 refs，再 dispatch UI state。
+      activeProtocolRef.current = protocol;
+      activeSessionIdRef.current = sessionId;
       activeTransferIdRef.current = null;
       dispatch({ type: "SET_ACTIVE_PROTOCOL", protocol });
       dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId });
