@@ -101,6 +101,34 @@ assert.match(
   "explicit protocol handoff must reveal the engineering sidebar",
 );
 
+
+const networkViewSource = await readFile(
+  path.join(ROOT, "src", "components", "Network", "NetworkDebugSessionView.tsx"),
+  "utf8",
+);
+assert.match(networkViewSource, /<DualPane sessionId=\{sessionId\}/);
+assert.match(
+  networkViewSource,
+  /TcpFrameList[\s\S]{0,500}onContextMenu=\{\(event\) => openContextMenu\(event, line\.hex\)\}/,
+);
+assert.match(
+  networkViewSource,
+  /tauterm:protocol-inspect[\s\S]{0,180}detail: \{ sessionId, input: contextHex \}/,
+);
+
+const udpGridSource = await readFile(
+  path.join(ROOT, "src", "components", "Network", "UdpPacketGrid.tsx"),
+  "utf8",
+);
+assert.match(
+  udpGridSource,
+  /onContextMenu=\{\(event\) => openContextMenu\(event, row\.hex\)\}/,
+);
+assert.match(
+  udpGridSource,
+  /tauterm:protocol-inspect[\s\S]{0,180}detail: \{ sessionId, input: contextHex \}/,
+);
+
 const registrySource = await readFile(
   path.join(ROOT, "src", "shortcuts", "registry.ts"),
   "utf8",
