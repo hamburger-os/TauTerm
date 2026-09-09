@@ -386,7 +386,10 @@
       "customFieldDefinitionInvalid": "自定义字段定义无效：{{detail}}",
       "customFieldOutOfBounds": "自定义字段超出输入帧范围：{{detail}}",
       "customChecksumPresetInvalid": "自定义校验算法无效：{{detail}}",
-      "customChecksumRangeInvalid": "自定义校验范围或校验字段位置无效"
+      "customChecksumRangeInvalid": "自定义校验范围或校验字段位置无效",
+      "customLengthSourceInvalid": "动态长度字段引用无效或不是此前已解析的非负整数：{{detail}}",
+      "customBitDefinitionInvalid": "位域定义无效或超出字段位宽：{{detail}}",
+      "customExpectedMismatch": "字段值不符合 expected 约束：{{detail}}"
     },
     "encodingOperation": "转换方式",
     "base64IgnoreWhitespace": "兼容模式：忽略 Base64 空白字符",
