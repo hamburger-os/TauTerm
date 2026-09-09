@@ -68,6 +68,11 @@ assert.match(
 );
 assert.match(orchestrator, /reserve_inline_transfer/);
 assert.match(orchestrator, /cancel_scheduled_transfer/);
+assert.match(
+  orchestrator,
+  /write_tx\.send\(IoLoopCmd::HandoffPort[\s\S]{0,260}transfer_scheduler\.finish\(Some\(transfer_id\)\)[\s\S]{0,180}SessionState::Connected/,
+  "failed Inline handoff dispatch must release Scheduler occupancy instead of waiting forever",
+);
 assert.doesNotMatch(orchestrator, /cancel_transfer_tx|active_transfer_id|transfer_cancel/);
 
 const sessionStore = await source("src-tauri/src/kernel/session_store.rs");

@@ -247,7 +247,12 @@ impl InlineTransferOrchestrator {
             let handle = store.get_session_mut(session_id).ok_or(not_found)?;
             handle.state = SessionState::Transferring;
             handle.channel_return_tx = Some(return_tx);
-            let _ = write_tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx });
+            if let Err(error) = write_tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx }) {
+                let _ = handle.transfer_scheduler.finish(Some(transfer_id));
+                handle.state = SessionState::Connected;
+                handle.channel_return_tx = None;
+                return Err(format!("无法请求 I/O 线程移交 Channel: {error}"));
+            }
         }
 
         let mut channel = give_rx.recv().map_err(|e| {
