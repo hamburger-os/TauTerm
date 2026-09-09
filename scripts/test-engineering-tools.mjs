@@ -244,6 +244,70 @@ const custom = protocol(
 assert.equal(custom.checks.find((item) => item.id === "schema")?.status, "pass");
 assert.equal(custom.fields[0].parsedValue, "43605 (Magic)");
 
+const customDynamicSchema = JSON.stringify({
+  fields: [
+    { name: "Length", offset: 0, type: "u8" },
+    { name: "Flags", offset: 1, type: "bitfield", length: 1, bits: [
+      { name: "Enabled", high: 0, enum: { "0": "Off", "1": "On" } },
+      { name: "Mode", high: 3, low: 1 },
+    ] },
+    { name: "Reserved", offset: 2, type: "reserved", length: 1, expected: "00" },
+    { name: "Payload", offset: 3, type: "bytes", lengthFrom: "Length" },
+  ],
+});
+const customDynamic = protocol(
+  "custom-schema",
+  "03 05 00 AA BB CC",
+  { customSchema: customDynamicSchema },
+);
+assert.equal(
+  customDynamic.checks.find((item) => item.id === "schema")?.status,
+  "pass",
+);
+assert.equal(
+  customDynamic.checks.find((item) => item.id === "constraints")?.status,
+  "pass",
+);
+assert.equal(
+  customDynamic.fields.find((field) => field.name === "Payload")?.rawValue,
+  "AA BB CC",
+);
+const flags = customDynamic.fields.find((field) => field.name === "Flags");
+assert.equal(flags?.children?.[0]?.parsedValue, "1 (On)");
+assert.equal(flags?.children?.[1]?.parsedValue, "2");
+
+const customExpectedBad = protocol(
+  "custom-schema",
+  "03 05 FF AA BB CC",
+  { customSchema: customDynamicSchema },
+);
+assert.equal(
+  customExpectedBad.checks.find((item) => item.id === "constraints")?.status,
+  "fail",
+);
+assert.ok(
+  customExpectedBad.issues.some((issue) => issue.code === "customExpectedMismatch"),
+);
+
+const customLengthBad = protocol(
+  "custom-schema",
+  "AA BB",
+  {
+    customSchema: JSON.stringify({
+      fields: [
+        { name: "Payload", offset: 0, type: "bytes", lengthFrom: "MissingLength" },
+      ],
+    }),
+  },
+);
+assert.equal(
+  customLengthBad.checks.find((item) => item.id === "schema")?.status,
+  "fail",
+);
+assert.ok(
+  customLengthBad.issues.some((issue) => issue.code === "customLengthSourceInvalid"),
+);
+
 const detectedRtu = parseProtocolInput(
   "auto",
   "01 03 00 00 00 01 84 0A",
