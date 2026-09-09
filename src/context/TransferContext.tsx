@@ -414,6 +414,12 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           error: String(e),
           protocol,
         });
+        activeProtocolRef.current = null;
+        activeSessionIdRef.current = null;
+        activeDirectionRef.current = null;
+        lastAggregateBytesRef.current = 0;
+        dispatch({ type: "SET_ACTIVE_PROTOCOL", protocol: null });
+        dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId: null });
       }
     },
     [addHistory, extractFileNames],
