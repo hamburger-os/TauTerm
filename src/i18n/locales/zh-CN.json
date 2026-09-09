@@ -497,7 +497,11 @@
       "customSchemaInvalid": "自定义 Schema 必须是有效 JSON 且包含 fields 数组",
       "nmeaParseError": "无法解析 NMEA 0183 语句",
       "unsupportedProtocolInspector": "不支持的协议检查器"
-    }
+    },
+    "historyTitle": "最近输入（{{count}}）",
+    "pinInput": "固定输入",
+    "unpinInput": "取消固定",
+    "clearRecentInputs": "清除最近输入"
   },
   "titleBar": {
     "minimize": "最小化",
