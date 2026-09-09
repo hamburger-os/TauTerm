@@ -85,43 +85,71 @@ export function hexToString(hex: string): string {
 // 进制转换
 // ══════════════════════════════════════════════════════════════════
 
+function normalizeHexDigits(input: string): string | null {
+  const cleaned = input.replace(/\s+/g, "").replace(/,/g, "").replace(/0x/gi, "");
+  return cleaned.length > 0 && /^[0-9a-fA-F]+$/.test(cleaned) ? cleaned : null;
+}
+
+function normalizeBinaryDigits(input: string): string | null {
+  const cleaned = input.replace(/[\s_]+/g, "").replace(/0b/gi, "");
+  return cleaned.length > 0 && /^[01]+$/.test(cleaned) ? cleaned : null;
+}
+
+function parseDecimalBigInt(input: string): bigint | null {
+  const cleaned = input.trim().replace(/_/g, "");
+  if (!/^[+-]?\d+$/.test(cleaned)) return null;
+  try {
+    return BigInt(cleaned);
+  } catch {
+    return null;
+  }
+}
+
 export function hexToDec(hex: string): string {
-  const v = parseInt(hex.replace(/\s|0x/gi, ""), 16);
-  if (isNaN(v)) return "[Error: Invalid HEX input]";
-  return v.toString(10);
+  const cleaned = normalizeHexDigits(hex);
+  if (!cleaned) return "[Error: Invalid HEX input]";
+  return BigInt(`0x${cleaned}`).toString(10);
 }
 
 export function decToHex(dec: string, width?: number): string {
-  const v = parseInt(dec, 10);
-  if (isNaN(v)) return "[Error: Invalid decimal input]";
-  const hex = v.toString(16).toUpperCase();
-  if (width) return hex.padStart(Math.ceil(width / 4), "0");
-  return hex;
+  const value = parseDecimalBigInt(dec);
+  if (value === null) return "[Error: Invalid decimal input]";
+  const negative = value < 0n;
+  const magnitude = negative ? -value : value;
+  let hex = magnitude.toString(16).toUpperCase();
+  if (width) hex = hex.padStart(Math.ceil(width / 4), "0");
+  return `${negative ? "-" : ""}${hex}`;
 }
 
 export function binToDec(bin: string): string {
-  const v = parseInt(bin.replace(/\s/g, ""), 2);
-  if (isNaN(v)) return "[Error: Invalid binary input]";
-  return v.toString(10);
+  const cleaned = normalizeBinaryDigits(bin);
+  if (!cleaned) return "[Error: Invalid binary input]";
+  return BigInt(`0b${cleaned}`).toString(10);
 }
 
 export function decToBin(dec: string, width?: number): string {
-  const v = parseInt(dec, 10);
-  if (isNaN(v)) return "[Error: Invalid decimal input]";
-  const bin = v.toString(2);
-  return width ? bin.padStart(width, "0") : bin;
+  const value = parseDecimalBigInt(dec);
+  if (value === null) return "[Error: Invalid decimal input]";
+  const negative = value < 0n;
+  const magnitude = negative ? -value : value;
+  let bin = magnitude.toString(2);
+  if (width) bin = bin.padStart(width, "0");
+  return `${negative ? "-" : ""}${bin}`;
 }
 
 export function hexToBin(hex: string): string {
-  const v = parseInt(hex.replace(/\s|0x/gi, ""), 16);
-  if (isNaN(v)) return "[Error: Invalid HEX input]";
-  return v.toString(2);
+  const cleaned = normalizeHexDigits(hex);
+  if (!cleaned) return "[Error: Invalid HEX input]";
+  return BigInt(`0x${cleaned}`).toString(2).padStart(cleaned.length * 4, "0");
 }
 
 export function binToHex(bin: string): string {
-  const v = parseInt(bin.replace(/\s/g, ""), 2);
-  if (isNaN(v)) return "[Error: Invalid binary input]";
-  return v.toString(16).toUpperCase();
+  const cleaned = normalizeBinaryDigits(bin);
+  if (!cleaned) return "[Error: Invalid binary input]";
+  return BigInt(`0b${cleaned}`)
+    .toString(16)
+    .toUpperCase()
+    .padStart(Math.ceil(cleaned.length / 4), "0");
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -134,16 +162,18 @@ export function binToHex(bin: string): string {
  * @param byteSize 每组的字节宽度（1/2/4/8）
  */
 export function swapEndian(hex: string, byteSize: 1 | 2 | 4 | 8): string {
-  const cleaned = hex.replace(/\s+/g, "").replace(/0x/gi, "").replace(/,/g, "");
+  const cleaned = normalizeHexDigits(hex);
+  if (!cleaned) return "[Error: Invalid HEX input]";
   if (cleaned.length % 2 !== 0) return "[Error: Invalid HEX input — odd number of nibbles]";
 
-  // 按 byteSize 分组
-  const groups: string[] = [];
   const groupHexLen = byteSize * 2;
+  if (cleaned.length % groupHexLen !== 0) {
+    return `[Error: HEX input length must be a multiple of ${byteSize} byte(s)]`;
+  }
+
+  const groups: string[] = [];
   for (let i = 0; i < cleaned.length; i += groupHexLen) {
     const group = cleaned.substring(i, i + groupHexLen);
-    if (group.length < groupHexLen) break; // 不完整分组忽略
-    // 反转该组内的字节序
     const reversed =
       group.length === 2 ? group
         : group.match(/.{2}/g)?.reverse().join("") ?? group;
@@ -236,8 +266,10 @@ export function executeEncodingOp(input: string, op: EncodingOp): string {
     case "url-encode": return urlEncode(input);
     case "url-decode": return urlDecode(input);
     case "float-to-hex": {
-      const f = parseFloat(input);
-      if (isNaN(f)) return `[Error: Invalid float value]`;
+      const text = input.trim();
+      if (!text) return `[Error: Invalid float value]`;
+      const f = Number(text);
+      if (Number.isNaN(f)) return `[Error: Invalid float value]`;
       return floatToHex(f);
     }
     case "hex-to-float": {
