@@ -2,7 +2,7 @@ import {
   crc16,
   numberToHex,
   parseHexString,
-} from "./checksum";
+} from "./checksum.ts";
 
 export type ProtocolTemplate =
   | "at-response"
