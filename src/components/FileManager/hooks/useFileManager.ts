@@ -2,7 +2,14 @@ import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { save, open } from '@tauri-apps/plugin-dialog';
-import { SftpEntry, PromptMode, SortField, SortDirection } from '../types';
+import {
+  SftpEntry,
+  PromptMode,
+  SortField,
+  SortDirection,
+  type TransferFinishedPayload,
+  type TransferStartedPayload,
+} from '../types';
 
 export interface UseFileManagerReturn {
   currentPath: string | null;
@@ -69,6 +76,64 @@ function sortEntries(
   dirs.sort(cmp);
   files.sort(cmp);
   return [...dirs, ...files];
+}
+
+
+const TRANSFER_TIMEOUT_MS = 5 * 60 * 1000;
+
+async function runSftpTransferAndWait(
+  sessionId: string,
+  startTransfer: () => Promise<void>,
+): Promise<void> {
+  let activeTransferId: string | null = null;
+  let unlistenStarted: (() => void) | undefined;
+  let unlistenFinished: (() => void) | undefined;
+  let timeoutId: number | undefined;
+
+  let resolveFinished!: () => void;
+  let rejectFinished!: (error: Error) => void;
+  const finishedPromise = new Promise<void>((resolve, reject) => {
+    resolveFinished = resolve;
+    rejectFinished = reject;
+  });
+
+  try {
+    unlistenStarted = await listen<TransferStartedPayload>(
+      'file-transfer:started',
+      (event) => {
+        const payload = event.payload;
+        if (payload.session_id !== sessionId || payload.protocol !== 'sftp') return;
+        activeTransferId = payload.transfer_id;
+      },
+    );
+
+    unlistenFinished = await listen<TransferFinishedPayload>(
+      'file-transfer:finished',
+      (event) => {
+        const payload = event.payload;
+        if (payload.session_id !== sessionId) return;
+        if (payload.protocol && payload.protocol !== 'sftp') return;
+        if (!activeTransferId || payload.transfer_id !== activeTransferId) return;
+
+        if (payload.success) {
+          resolveFinished();
+        } else {
+          rejectFinished(new Error(payload.error || 'SFTP transfer failed'));
+        }
+      },
+    );
+
+    timeoutId = window.setTimeout(() => {
+      rejectFinished(new Error('SFTP transfer timed out after 5 minutes'));
+    }, TRANSFER_TIMEOUT_MS);
+
+    await startTransfer();
+    await finishedPromise;
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    unlistenStarted?.();
+    unlistenFinished?.();
+  }
 }
 
 export function useFileManager(
@@ -236,41 +301,16 @@ export function useFileManager(
       }
 
       try {
-        // 注册监听器在 invoke 之前，避免竞态（后端 SideChannel 路径立即返回）
-        const TRANSFER_TIMEOUT_MS = 5 * 60 * 1000;
-        let unlistenFn: (() => void) | undefined;
-        const finishedPromise = new Promise<void>((resolve, reject) => {
-          const timeoutId = setTimeout(() => {
-            unlistenFn?.();
-            reject(new Error('Download timed out after 5 minutes'));
-          }, TRANSFER_TIMEOUT_MS);
-
-          listen<{ session_id: string; success: boolean; error?: string }>(
-            'file-transfer:finished',
-            (event) => {
-              if (event.payload.session_id === sessionId) {
-                clearTimeout(timeoutId);
-                unlistenFn?.();
-                if (event.payload.error) {
-                  reject(new Error(event.payload.error));
-                } else {
-                  resolve();
-                }
-              }
-            }
-          ).then(fn => { unlistenFn = fn; }).catch(reject);
-        });
-
-        await invoke<void>('file_transfer_receive', {
-        request: {
-          sessionId,
-          protocol: 'sftp',
-          downloadDir,
-          remotePaths,
-
-        },});
-
-        await finishedPromise;
+        await runSftpTransferAndWait(sessionId, () =>
+          invoke<void>('file_transfer_receive', {
+            request: {
+              sessionId,
+              protocol: 'sftp',
+              downloadDir,
+              remotePaths,
+            },
+          }),
+        );
       } catch (e) {
         setError(`Download failed: ${e}`);
       }
@@ -283,14 +323,16 @@ export function useFileManager(
   const downloadDirectory = useCallback(
     async (remoteDir: string, localDir: string): Promise<void> => {
       const dirName = remoteDir.split('/').pop() || 'download';
-      await invoke<void>('file_transfer_receive', {
-        request: {
-        sessionId,
-        protocol: 'sftp',
-        downloadDir: `${localDir}/${dirName}`,
-        remotePaths: [remoteDir],
-
-        },});
+      await runSftpTransferAndWait(sessionId, () =>
+        invoke<void>('file_transfer_receive', {
+          request: {
+            sessionId,
+            protocol: 'sftp',
+            downloadDir: `${localDir}/${dirName}`,
+            remotePaths: [remoteDir],
+          },
+        }),
+      );
     },
     [sessionId]
   );
@@ -308,51 +350,17 @@ export function useFileManager(
 
         const dirName = entry.path.split('/').pop() || 'download';
 
-        // 注册一次性完成监听器（invoke 前设置，避免竞态）
-        const TRANSFER_TIMEOUT_MS = 5 * 60 * 1000;
-        let unlistenFn: (() => void) | undefined;
-        const finishedPromise = new Promise<'ok' | { error: string }>(
-          (resolve, reject) => {
-            let done = false;
-            const timeoutId = setTimeout(() => {
-              unlistenFn?.();
-              reject(new Error('Download timed out after 5 minutes'));
-            }, TRANSFER_TIMEOUT_MS);
-
-            listen<{
-              session_id: string;
-              success: boolean;
-              error?: string;
-            }>('file-transfer:finished', (event) => {
-              if (event.payload.session_id !== sessionId || done) return;
-              done = true;
-              clearTimeout(timeoutId);
-              unlistenFn?.();
-              resolve(
-                event.payload.success
-                  ? ('ok' as const)
-                  : { error: event.payload.error || '传输失败' },
-              );
-            }).then(fn => { unlistenFn = fn; }).catch(reject);
-          },
-        );
-
         try {
-          await invoke<void>('file_transfer_receive', {
-        request: {
-            sessionId,
-            protocol: 'sftp',
-            downloadDir: `${localRootDir}/${dirName}`,
-            remotePaths: [entry.path],
-
-        },});
-
-          const result = await finishedPromise;
-          if (result !== 'ok') {
-            if (import.meta.env.DEV)
-              console.error(`Download directory "${entry.name}" failed:`, result.error);
-            failed.push(entry.name);
-          }
+          await runSftpTransferAndWait(sessionId, () =>
+            invoke<void>('file_transfer_receive', {
+              request: {
+                sessionId,
+                protocol: 'sftp',
+                downloadDir: `${localRootDir}/${dirName}`,
+                remotePaths: [entry.path],
+              },
+            }),
+          );
         } catch (e) {
           if (import.meta.env.DEV)
             console.error(`Download directory "${entry.name}" failed:`, e);
