@@ -11,7 +11,7 @@ async function source(relativePath) {
 
 const hook = await source("src/components/FileManager/hooks/useSftpProgress.ts");
 assert.match(hook, /'preparing'[\s\S]*'transferring'[\s\S]*'finalizing'[\s\S]*'cancelling'[\s\S]*'completed'[\s\S]*'failed'[\s\S]*'cancelled'/);
-assert.match(hook, /payload\.transfer_id !== activeTransferIdRef\.current/);
+assert.match(hook, /!payload\.transfer_id[\s\S]{0,180}payload\.transfer_id !== activeTransferIdRef\.current/);
 assert.match(hook, /payload\.bytes_per_second/);
 assert.doesNotMatch(
   hook,
