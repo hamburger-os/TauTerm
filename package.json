@@ -31,7 +31,8 @@
     "check:product-integrity": "node scripts/check-product-integrity.mjs",
     "check:tauri-blocking": "node scripts/check-tauri-blocking-contract.mjs",
     "check:runtime-errors": "node scripts/check-runtime-error-contract.mjs",
-    "check:terminal-clipboard": "node --experimental-strip-types scripts/test-terminal-clipboard.mjs"
+    "check:terminal-clipboard": "node --experimental-strip-types scripts/test-terminal-clipboard.mjs",
+    "check:engineering-tools": "node --experimental-strip-types scripts/test-engineering-tools.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
