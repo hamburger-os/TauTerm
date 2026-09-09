@@ -101,9 +101,7 @@ impl TransferScheduler {
 
         match &mut transfer.cancel {
             TransferCancelSignal::Inline(tx) => {
-                let tx = tx
-                    .take()
-                    .ok_or_else(|| "取消请求已经发送".to_string())?;
+                let tx = tx.take().ok_or_else(|| "取消请求已经发送".to_string())?;
                 let _ = tx.send(());
             }
             TransferCancelSignal::SideChannel(flag) => {
@@ -164,7 +162,9 @@ mod tests {
             .expect("reserve inline");
         assert_eq!(scheduler.active_id(), Some("transfer-a"));
         assert!(scheduler.cancel(Some("transfer-b")).is_err());
-        scheduler.cancel(Some("transfer-a")).expect("cancel exact id");
+        scheduler
+            .cancel(Some("transfer-a"))
+            .expect("cancel exact id");
         rx.await.expect("cancel signal");
         assert!(scheduler.finish(Some("transfer-a")));
         assert!(!scheduler.is_busy());

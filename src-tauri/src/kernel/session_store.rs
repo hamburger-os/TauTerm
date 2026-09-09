@@ -1804,9 +1804,7 @@ impl SessionStore {
     ) -> Result<Arc<AtomicBool>, String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        handle
-            .transfer_scheduler
-            .reserve_side_channel(transfer_id)
+        handle.transfer_scheduler.reserve_side_channel(transfer_id)
     }
 
     /// 精确取消当前 Session 的活动传输，调度器内部区分 Inline / SideChannel。

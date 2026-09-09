@@ -317,8 +317,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
     ) -> Result<TransferStartAck, String> {
         // 1. 先分配任务身份，再由 Scheduler 预留 Inline 活动槽并 Handoff 端口。
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (port, cancel_rx) =
-            self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
+        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
 
         // 2. 创建协议处理器 + SerialFileTransfer
         //    若协议处理器创建失败，必须归还端口，否则 I/O 线程永久阻塞
@@ -434,8 +433,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
     ) -> Result<TransferStartAck, String> {
         // 1. 先分配任务身份，再由 Scheduler 预留 Inline 活动槽并 Handoff 端口。
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (port, cancel_rx) =
-            self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
+        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
 
         // 2. 创建协议处理器 + SerialFileTransfer
         //    若协议处理器创建失败，必须归还端口，否则 I/O 线程永久阻塞
