@@ -29,7 +29,18 @@ assert.doesNotMatch(
   /invoke\(/,
   "FileManager compact progress must not own a second transfer command path",
 );
-assert.doesNotMatch(hook, /Date\.now\(\)|performance\.now\(\)/);
+assert.match(hook, /speed:\s*task\.speed/);
+assert.match(hook, /completedAt:\s*task\.completedAt/);
+assert.match(
+  hook,
+  /Date\.now\(\) - sftpTask\.completedAt >= SUCCESS_AUTO_HIDE_MS/,
+  "remounting a FileManager must immediately discard an already-expired completed task instead of resurrecting its card",
+);
+assert.doesNotMatch(
+  hook,
+  /performance\.now\(\)/,
+  "FileManager projection must not compute transfer throughput from WebView event timing",
+);
 
 // ── Narrow responsive status UI ────────────────────────────────────────────
 const bar = await source("src/components/FileManager/TransferProgressBar.tsx");
@@ -303,6 +314,11 @@ assert.match(sharedContext, /TASK_PROGRESS/);
 assert.match(sharedContext, /TASK_FINISHED/);
 assert.match(sharedContext, /TASK_DISCARD/);
 assert.match(sharedContext, /const dismissTask = useCallback/);
+assert.match(
+  sharedContext,
+  /completedAt:\s*payload\.success \? Date\.now\(\) : null/,
+  "successful unified tasks must record completion time for remount-safe five-second retention",
+);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_STARTED", payload \}\)/);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_PROGRESS", payload: p \}\)/);
 assert.match(sharedContext, /dispatch\(\{ type: "TASK_FINISHED", payload \}\)/);

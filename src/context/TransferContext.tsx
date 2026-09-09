@@ -79,6 +79,8 @@ export interface ManagedTransferTask {
   bytesTotal: number;
   percent: number;
   speed: number | null;
+  /** Successful-task completion timestamp used only for UI retention/cleanup. */
+  completedAt: number | null;
   error: string | null;
   fileIndex: number;
   totalFiles: number;
@@ -358,6 +360,7 @@ function transferReducer(
             bytesTotal: 0,
             percent: 0,
             speed: null,
+            completedAt: null,
             error: null,
             fileIndex: 0,
             totalFiles: 1,
@@ -475,6 +478,7 @@ function transferReducer(
             phase,
             percent: payload.success ? 100 : current.percent,
             speed: payload.success ? current.speed : null,
+            completedAt: payload.success ? Date.now() : null,
             error: payload.success ? null : (payload.error || current.error),
           },
         },

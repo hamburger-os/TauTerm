@@ -17,6 +17,7 @@ export interface TransferProgressState {
   percent: number;
   phase: TransferPhase;
   speed: number | null;
+  completedAt: number | null;
   error: string | null;
   fileIndex: number;
   totalFiles: number;
@@ -41,6 +42,7 @@ function initialProgressState(): TransferProgressState {
     percent: 0,
     phase: "completed",
     speed: null,
+    completedAt: null,
     error: null,
     fileIndex: 0,
     totalFiles: 1,
@@ -67,6 +69,7 @@ function toProgress(task: ManagedTransferTask, error: string | null): TransferPr
     percent: task.percent,
     phase: task.phase,
     speed: task.speed,
+    completedAt: task.completedAt,
     error: error ?? task.error,
     fileIndex: task.fileIndex,
     totalFiles: task.totalFiles,
@@ -98,7 +101,10 @@ export function useSftpProgress(sessionId: string) {
     }
   }, []);
 
-  const scheduleAutoHide = useCallback((transferId: string) => {
+  const scheduleAutoHide = useCallback((
+    transferId: string,
+    delayMs = SUCCESS_AUTO_HIDE_MS,
+  ) => {
     clearAutoHideTimer();
     autoHideTimerRef.current = window.setTimeout(() => {
       autoHideTimerRef.current = null;
@@ -107,7 +113,7 @@ export function useSftpProgress(sessionId: string) {
       // Successful cards are not only hidden locally: remove the exact finished
       // snapshot so reopening/remounting the right sidebar cannot resurrect it.
       dismissTask(sessionId, transferId);
-    }, SUCCESS_AUTO_HIDE_MS);
+    }, delayMs);
   }, [clearAutoHideTimer, dismissTask, sessionId]);
 
   useEffect(() => {
@@ -116,6 +122,18 @@ export function useSftpProgress(sessionId: string) {
       setVisible(false);
       return;
     }
+
+    if (
+      sftpTask.phase === "completed"
+      && sftpTask.completedAt !== null
+      && Date.now() - sftpTask.completedAt >= SUCCESS_AUTO_HIDE_MS
+    ) {
+      setDismissedTransferId(sftpTask.transferId);
+      setVisible(false);
+      dismissTask(sessionId, sftpTask.transferId);
+      return;
+    }
+
     setDismissedTransferId((current) =>
       current === sftpTask.transferId ? current : null,
     );
@@ -123,15 +141,36 @@ export function useSftpProgress(sessionId: string) {
     setVisible((current) =>
       dismissedTransferId === sftpTask.transferId ? current : true,
     );
-  }, [clearAutoHideTimer, dismissedTransferId, sftpTask?.transferId]);
+  }, [
+    clearAutoHideTimer,
+    dismissTask,
+    dismissedTransferId,
+    sessionId,
+    sftpTask?.completedAt,
+    sftpTask?.phase,
+    sftpTask?.transferId,
+  ]);
 
   useEffect(() => {
     if (!sftpTask || !visible) return;
     clearAutoHideTimer();
     if (sftpTask.phase === "completed" && !hoveredRef.current) {
-      scheduleAutoHide(sftpTask.transferId);
+      const elapsed = sftpTask.completedAt === null
+        ? 0
+        : Math.max(0, Date.now() - sftpTask.completedAt);
+      scheduleAutoHide(
+        sftpTask.transferId,
+        Math.max(0, SUCCESS_AUTO_HIDE_MS - elapsed),
+      );
     }
-  }, [clearAutoHideTimer, scheduleAutoHide, sftpTask?.phase, sftpTask?.transferId, visible]);
+  }, [
+    clearAutoHideTimer,
+    scheduleAutoHide,
+    sftpTask?.completedAt,
+    sftpTask?.phase,
+    sftpTask?.transferId,
+    visible,
+  ]);
 
   useEffect(() => () => clearAutoHideTimer(), [clearAutoHideTimer]);
 
