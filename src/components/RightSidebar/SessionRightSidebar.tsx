@@ -1,12 +1,12 @@
 import type { ProtocolType } from "../../types/transfer";
-import { useCallback } from "react";
+import { lazy, Suspense, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "./RightSidebarPanel";
 import TransmissionPanel from "../Transmission/TransmissionPanel";
 import FileManagerPanel from "../FileManager/FileManagerPanel";
 import JournaldViewerPanel from "../JournaldViewer/JournaldViewerPanel";
-import ProtocolTool from "../Tools/ProtocolTool";
-import CalculatorTool from "../Tools/CalculatorTool";
+const ProtocolTool = lazy(() => import("../Tools/ProtocolTool"));
+const CalculatorTool = lazy(() => import("../Tools/CalculatorTool"));
 
 export interface SessionRightSidebarProps {
   sessionId: string;
@@ -80,10 +80,11 @@ export default function SessionRightSidebar({
           />
         </RightSidebarPanel>
       )}
-      {/* 面板2: 协议帧解析 */}
-      <ProtocolTool sessionId={sessionId} />
-      {/* 面板3: 快捷工具 (校验和 + 编码 + 位操作) */}
-      <CalculatorTool />
+      {/* 低频工程工具按需加载，避免把协议/数据分析代码压进 daily-driver ui-core。 */}
+      <Suspense fallback={null}>
+        <ProtocolTool sessionId={sessionId} />
+        <CalculatorTool />
+      </Suspense>
     </>
   );
 }
