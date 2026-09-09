@@ -190,6 +190,9 @@ jobs:
       - name: Engineering tool correctness contract
         run: npm run check:engineering-tools
 
+      - name: File-transfer lifecycle and responsive UI contract
+        run: npm run check:file-transfer
+
       - name: Protocol fixture self-test
         run: |
           python3 -m py_compile scripts/test-serial-session.py scripts/test-telnet-server.py
