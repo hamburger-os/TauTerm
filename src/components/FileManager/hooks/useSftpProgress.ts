@@ -148,7 +148,9 @@ export function useSftpProgress(sessionId: string) {
       const isBatchComplete = payload.is_batch_complete;
       const hasKnownTotal = payload.bytes_total > 0;
       const percent = hasKnownTotal
-        ? Math.min(100, Math.max(0, Math.round((payload.bytes_done / payload.bytes_total) * 100)))
+        ? payload.bytes_done >= payload.bytes_total
+          ? 100
+          : Math.min(99, Math.max(0, Math.floor((payload.bytes_done / payload.bytes_total) * 100)))
         : 0;
       const backendSpeed =
         typeof payload.bytes_per_second === 'number'
