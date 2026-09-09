@@ -7,6 +7,7 @@ import {
 } from "../utils/checksum.ts";
 import type {
   ParsedField,
+  ProtocolCheck,
   ProtocolIssue,
   ProtocolParseOutcome,
 } from "./types.ts";
@@ -246,7 +247,7 @@ export function inspectCustomSchema(
     });
   }
 
-  const checks = [
+  const checks: ProtocolCheck[] = [
     {
       id: "schema",
       label: "tools.checkSchema",
