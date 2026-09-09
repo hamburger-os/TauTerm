@@ -241,7 +241,32 @@
     "funcWriteSingleCoil": "写单线圈",
     "funcWriteSingleReg": "写单寄存器",
     "funcWriteMultiCoils": "写多线圈",
-    "funcWriteMultiRegs": "写多寄存器"
+    "funcWriteMultiRegs": "写多寄存器",
+    "protocolTemplate": "协议模板",
+    "protocolInput": "输入",
+    "textInput": "文本",
+    "protocolPlaceholderModbusRTU": "输入 RTU HEX 帧，如: 01 03 00 00 00 01 84 0A",
+    "protocolPlaceholderModbusASCII": "输入 ASCII 帧，如: :010300000001FB（行尾 CRLF 可省略）",
+    "protocolPlaceholderAT": "输入 AT 响应文本，如: +CSQ: 20,99",
+    "protocolPlaceholderCustom": "输入 HEX 数据，如: AA BB CC DD",
+    "protocolHintHex": "选择协议模板并输入 HEX 数据",
+    "protocolHintText": "选择协议模板并输入文本帧",
+    "protocolParseErrorHex": "无法解析 HEX 数据，请检查格式",
+    "protocolParseErrorASCII": "无法解析 Modbus ASCII 帧，请检查起始符、HEX 字符和 LRC 字段",
+    "protocolFrameTooShort": "Modbus RTU 帧过短，至少需要地址、功能码和 2 字节 CRC",
+    "shiftCountRange": "移位位数必须在 0–31 之间",
+    "fieldExceptionCode": "异常码",
+    "modbusExceptions": {
+      "illegalFunction": "非法功能",
+      "illegalDataAddress": "非法数据地址",
+      "illegalDataValue": "非法数据值",
+      "serverDeviceFailure": "服务器设备故障",
+      "acknowledge": "确认",
+      "serverDeviceBusy": "服务器设备忙",
+      "memoryParityError": "存储奇偶校验错误",
+      "gatewayPathUnavailable": "网关路径不可用",
+      "gatewayTargetNoResponse": "网关目标设备无响应"
+    }
   },
   "titleBar": {
     "minimize": "最小化",
