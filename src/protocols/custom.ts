@@ -4,6 +4,7 @@ import {
   crcPreset,
   numberToHex,
   type CrcPreset,
+  type CrcPresetDefinition,
 } from "../utils/checksum.ts";
 import type {
   ParsedField,
@@ -25,7 +26,16 @@ type CustomFieldType =
   | "float64"
   | "bytes"
   | "ascii"
-  | "utf8";
+  | "utf8"
+  | "reserved"
+  | "bitfield";
+
+interface CustomBitSchema {
+  name: string;
+  high: number;
+  low?: number;
+  enum?: Record<string, string>;
+}
 
 interface CustomFieldSchema {
   name: string;
@@ -33,7 +43,10 @@ interface CustomFieldSchema {
   type: CustomFieldType;
   endian?: "be" | "le";
   length?: number | "remaining";
+  lengthFrom?: string;
   enum?: Record<string, string>;
+  expected?: string | number;
+  bits?: CustomBitSchema[];
 }
 
 interface CustomChecksumSchema {
@@ -50,6 +63,21 @@ interface CustomSchema {
   checksum?: CustomChecksumSchema;
 }
 
+interface DecodedField {
+  value: string;
+  numeric?: bigint;
+  children?: ParsedField[];
+  issue?: ProtocolIssue;
+}
+
+const SCHEMA_DEFINITION_ISSUES = new Set([
+  "customFieldDefinitionInvalid",
+  "customLengthSourceInvalid",
+  "customBitDefinitionInvalid",
+  "customChecksumPresetInvalid",
+  "customChecksumRangeInvalid",
+]);
+
 function parseSchema(source: string): CustomSchema | null {
   try {
     const parsed = JSON.parse(source) as Partial<CustomSchema>;
@@ -58,6 +86,7 @@ function parseSchema(source: string): CustomSchema | null {
       if (!entry || typeof entry !== "object") return false;
       const field = entry as Partial<CustomFieldSchema>;
       return typeof field.name === "string"
+        && field.name.trim().length > 0
         && Number.isInteger(field.offset)
         && Number(field.offset) >= 0
         && typeof field.type === "string";
@@ -68,8 +97,8 @@ function parseSchema(source: string): CustomSchema | null {
   }
 }
 
-function fieldWidth(field: CustomFieldSchema, totalLength: number): number | null {
-  switch (field.type) {
+function fixedScalarWidth(type: CustomFieldType): number | null {
+  switch (type) {
     case "u8":
     case "i8": return 1;
     case "u16":
@@ -80,56 +109,192 @@ function fieldWidth(field: CustomFieldSchema, totalLength: number): number | nul
     case "u64":
     case "i64":
     case "float64": return 8;
-    case "bytes":
-    case "ascii":
-    case "utf8":
-      if (field.length === "remaining") return Math.max(0, totalLength - field.offset);
-      return Number.isInteger(field.length) && Number(field.length) >= 0
-        ? Number(field.length)
-        : null;
-    default:
-      return null;
+    default: return null;
   }
 }
 
-function enumValue(field: CustomFieldSchema, numeric: string): string | undefined {
-  if (!field.enum) return undefined;
-  if (field.enum[numeric] !== undefined) return field.enum[numeric];
-  try {
-    const hex = "0x" + BigInt(numeric).toString(16).toUpperCase();
-    return field.enum[hex] ?? field.enum[hex.toLowerCase()];
-  } catch {
-    return undefined;
+function variableFieldWidth(
+  field: CustomFieldSchema,
+  totalLength: number,
+  numericFields: Map<string, bigint>,
+): { width: number | null; issueCode?: string } {
+  const fixed = fixedScalarWidth(field.type);
+  if (fixed !== null) return { width: fixed };
+
+  if (field.type === "bitfield") {
+    const width = field.length ?? 1;
+    if (
+      typeof width !== "number"
+      || !Number.isInteger(width)
+      || ![1, 2, 4, 8].includes(width)
+    ) {
+      return { width: null, issueCode: "customFieldDefinitionInvalid" };
+    }
+    return { width };
   }
+
+  if (!["bytes", "ascii", "utf8", "reserved"].includes(field.type)) {
+    return { width: null, issueCode: "customFieldDefinitionInvalid" };
+  }
+
+  if (field.lengthFrom) {
+    const referenced = numericFields.get(field.lengthFrom);
+    if (referenced === undefined || referenced < 0n || referenced > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return { width: null, issueCode: "customLengthSourceInvalid" };
+    }
+    return { width: Number(referenced) };
+  }
+
+  if (field.length === "remaining") {
+    return { width: Math.max(0, totalLength - field.offset) };
+  }
+
+  return Number.isInteger(field.length) && Number(field.length) >= 0
+    ? { width: Number(field.length) }
+    : { width: null, issueCode: "customFieldDefinitionInvalid" };
+}
+
+function enumLookup(
+  mapping: Record<string, string> | undefined,
+  numeric: bigint,
+): string | undefined {
+  if (!mapping) return undefined;
+  const decimal = numeric.toString(10);
+  if (mapping[decimal] !== undefined) return mapping[decimal];
+  const hex = "0x" + numeric.toString(16).toUpperCase();
+  return mapping[hex] ?? mapping[hex.toLowerCase()];
+}
+
+function readUnsignedBigInt(
+  bytes: Uint8Array,
+  little: boolean,
+): bigint {
+  let value = 0n;
+  if (little) {
+    for (let index = bytes.length - 1; index >= 0; index -= 1) {
+      value = (value << 8n) | BigInt(bytes[index]);
+    }
+  } else {
+    for (const byte of bytes) value = (value << 8n) | BigInt(byte);
+  }
+  return value;
+}
+
+function validateBitDefinitions(
+  field: CustomFieldSchema,
+  widthBytes: number,
+): boolean {
+  if (!field.bits || field.bits.length === 0) return false;
+  const maxBit = widthBytes * 8 - 1;
+  return field.bits.every((bit) => {
+    const low = bit.low ?? bit.high;
+    return typeof bit.name === "string"
+      && bit.name.length > 0
+      && Number.isInteger(bit.high)
+      && Number.isInteger(low)
+      && low >= 0
+      && bit.high >= low
+      && bit.high <= maxBit;
+  });
+}
+
+function decodeBitfield(
+  bytes: Uint8Array,
+  field: CustomFieldSchema,
+  width: number,
+): DecodedField {
+  if (!validateBitDefinitions(field, width)) {
+    return {
+      value: bytesToHex(bytes.slice(field.offset, field.offset + width)),
+      issue: {
+        code: "customBitDefinitionInvalid",
+        severity: "error",
+        detail: field.name,
+        range: { start: field.offset, length: width, unit: "byte" },
+      },
+    };
+  }
+
+  const slice = bytes.slice(field.offset, field.offset + width);
+  const numeric = readUnsignedBigInt(slice, field.endian === "le");
+  const children: ParsedField[] = field.bits!.map((bit, index) => {
+    const low = bit.low ?? bit.high;
+    const count = bit.high - low + 1;
+    const mask = (1n << BigInt(count)) - 1n;
+    const extracted = (numeric >> BigInt(low)) & mask;
+    const mapped = enumLookup(bit.enum, extracted);
+    return {
+      id: "bit-" + index,
+      name: bit.name,
+      range: { start: field.offset, length: width, unit: "byte" },
+      rawValue: bit.high === low ? "bit " + bit.high : "bits " + bit.high + ":" + low,
+      parsedValue: mapped
+        ? extracted.toString(10) + " (" + mapped + ")"
+        : extracted.toString(10),
+    };
+  });
+
+  return {
+    value: "0x" + numeric.toString(16).toUpperCase().padStart(width * 2, "0"),
+    numeric,
+    children,
+  };
 }
 
 function decodeField(
   bytes: Uint8Array,
   field: CustomFieldSchema,
   width: number,
-): { value: string; issue?: ProtocolIssue } {
+): DecodedField {
+  if (field.type === "bitfield") return decodeBitfield(bytes, field, width);
+
   const slice = bytes.slice(field.offset, field.offset + width);
   const view = new DataView(slice.buffer, slice.byteOffset, slice.byteLength);
   const little = field.endian === "le";
   let value: string;
+  let numeric: bigint | undefined;
 
   switch (field.type) {
-    case "u8": value = String(view.getUint8(0)); break;
-    case "i8": value = String(view.getInt8(0)); break;
-    case "u16": value = String(view.getUint16(0, little)); break;
-    case "i16": value = String(view.getInt16(0, little)); break;
-    case "u32": value = String(view.getUint32(0, little)); break;
-    case "i32": value = String(view.getInt32(0, little)); break;
-    case "u64": value = view.getBigUint64(0, little).toString(10); break;
-    case "i64": value = view.getBigInt64(0, little).toString(10); break;
+    case "u8":
+      numeric = BigInt(view.getUint8(0));
+      value = numeric.toString(10);
+      break;
+    case "i8":
+      numeric = BigInt(view.getInt8(0));
+      value = numeric.toString(10);
+      break;
+    case "u16":
+      numeric = BigInt(view.getUint16(0, little));
+      value = numeric.toString(10);
+      break;
+    case "i16":
+      numeric = BigInt(view.getInt16(0, little));
+      value = numeric.toString(10);
+      break;
+    case "u32":
+      numeric = BigInt(view.getUint32(0, little));
+      value = numeric.toString(10);
+      break;
+    case "i32":
+      numeric = BigInt(view.getInt32(0, little));
+      value = numeric.toString(10);
+      break;
+    case "u64":
+      numeric = view.getBigUint64(0, little);
+      value = numeric.toString(10);
+      break;
+    case "i64":
+      numeric = view.getBigInt64(0, little);
+      value = numeric.toString(10);
+      break;
     case "float32": {
       const number = view.getFloat32(0, little);
-      value = Number.isNaN(number) ? "NaN" : String(number);
+      value = Number.isNaN(number) ? "NaN" : Object.is(number, -0) ? "-0" : String(number);
       break;
     }
     case "float64": {
       const number = view.getFloat64(0, little);
-      value = Number.isNaN(number) ? "NaN" : String(number);
+      value = Number.isNaN(number) ? "NaN" : Object.is(number, -0) ? "-0" : String(number);
       break;
     }
     case "ascii":
@@ -152,14 +317,50 @@ function decodeField(
         };
       }
       break;
+    case "reserved":
+      value = bytesToHex(slice) + " (reserved)";
+      break;
     case "bytes":
     default:
       value = bytesToHex(slice);
       break;
   }
 
-  const mapped = enumValue(field, value);
-  return { value: mapped ? value + " (" + mapped + ")" : value };
+  if (numeric !== undefined) {
+    const mapped = enumLookup(field.enum, numeric);
+    if (mapped) value += " (" + mapped + ")";
+  }
+
+  return { value, ...(numeric !== undefined ? { numeric } : {}) };
+}
+
+function expectedMatches(
+  field: CustomFieldSchema,
+  decoded: DecodedField,
+  raw: Uint8Array,
+): boolean {
+  if (field.expected === undefined) return true;
+
+  if (decoded.numeric !== undefined) {
+    try {
+      const expected = typeof field.expected === "number"
+        ? BigInt(field.expected)
+        : BigInt(field.expected);
+      return decoded.numeric === expected;
+    } catch {
+      return false;
+    }
+  }
+
+  if (field.type === "bytes" || field.type === "reserved") {
+    if (typeof field.expected !== "string") return false;
+    const parsed = parseByteInput(field.expected);
+    return parsed.ok
+      && parsed.value.bytes.length === raw.length
+      && parsed.value.bytes.every((byte, index) => byte === raw[index]);
+  }
+
+  return String(field.expected) === decoded.value;
 }
 
 function readChecksumValue(
@@ -182,14 +383,18 @@ function readChecksumValue(
   return value >>> 0;
 }
 
+function lookupCrcPreset(name: string): CrcPresetDefinition | undefined {
+  return (CRC_PRESETS as Partial<Record<string, CrcPresetDefinition>>)[name];
+}
+
 export const DEFAULT_CUSTOM_SCHEMA = JSON.stringify(
   {
     name: "Device Frame",
     fields: [
-      { name: "Header", offset: 0, type: "u16", endian: "be", enum: { "0xAA55": "Magic" } },
+      { name: "Header", offset: 0, type: "u16", endian: "be", expected: "0xAA55" },
       { name: "Command", offset: 2, type: "u8", enum: { "1": "Read", "2": "Write" } },
       { name: "Length", offset: 3, type: "u16", endian: "le" },
-      { name: "Payload", offset: 5, type: "bytes", length: "remaining" },
+      { name: "Payload", offset: 5, type: "bytes", lengthFrom: "Length" },
     ],
   },
   null,
@@ -210,18 +415,24 @@ export function inspectCustomSchema(
   const bytes = parsedInput.value.bytes;
   const fields: ParsedField[] = [];
   const issues: ProtocolIssue[] = [];
+  const numericFields = new Map<string, bigint>();
+  const checks: ProtocolCheck[] = [];
 
   for (let index = 0; index < schema.fields.length; index += 1) {
     const definition = schema.fields[index];
-    const width = fieldWidth(definition, bytes.length);
-    if (width === null) {
+    const resolvedWidth = variableFieldWidth(definition, bytes.length, numericFields);
+    if (resolvedWidth.width === null) {
       issues.push({
-        code: "customFieldDefinitionInvalid",
+        code: resolvedWidth.issueCode ?? "customFieldDefinitionInvalid",
         severity: "error",
-        detail: definition.name,
+        detail: definition.lengthFrom
+          ? definition.name + " <- " + definition.lengthFrom
+          : definition.name,
       });
       continue;
     }
+    const width = resolvedWidth.width;
+
     if (definition.offset + width > bytes.length) {
       issues.push({
         code: "customFieldOutOfBounds",
@@ -238,26 +449,33 @@ export function inspectCustomSchema(
 
     const decoded = decodeField(bytes, definition, width);
     if (decoded.issue) issues.push(decoded.issue);
+    if (decoded.numeric !== undefined) {
+      numericFields.set(definition.name, decoded.numeric);
+    }
+
+    const raw = bytes.slice(definition.offset, definition.offset + width);
+    if (!expectedMatches(definition, decoded, raw)) {
+      issues.push({
+        code: "customExpectedMismatch",
+        severity: "error",
+        detail: definition.name + " expected " + String(definition.expected),
+        range: { start: definition.offset, length: width, unit: "byte" },
+      });
+    }
+
     fields.push({
       id: "custom-" + index,
       name: definition.name,
       range: { start: definition.offset, length: width, unit: "byte" },
-      rawValue: bytesToHex(bytes.slice(definition.offset, definition.offset + width)),
+      rawValue: bytesToHex(raw),
       parsedValue: decoded.value,
+      ...(decoded.children ? { children: decoded.children } : {}),
     });
   }
 
-  const checks: ProtocolCheck[] = [
-    {
-      id: "schema",
-      label: "tools.checkSchema",
-      status: issues.some((issue) => issue.severity === "error") ? "fail" as const : "pass" as const,
-    },
-  ];
-
   if (schema.checksum) {
     const checksum = schema.checksum;
-    const preset = CRC_PRESETS[checksum.preset];
+    const preset = lookupCrcPreset(String(checksum.preset));
     if (!preset) {
       issues.push({
         code: "customChecksumPresetInvalid",
@@ -270,7 +488,10 @@ export function inspectCustomSchema(
       const start = checksum.start ?? 0;
       const end = checksum.end ?? checksum.fieldOffset;
       if (
-        start < 0
+        !Number.isInteger(start)
+        || !Number.isInteger(end)
+        || !Number.isInteger(checksum.fieldOffset)
+        || start < 0
         || end < start
         || end > bytes.length
         || checksum.fieldOffset < 0
@@ -292,7 +513,7 @@ export function inspectCustomSchema(
         checks.push({
           id: "checksum",
           label: "tools.checkChecksum",
-          status: valid ? "pass" as const : "fail" as const,
+          status: valid ? "pass" : "fail",
           detail:
             "received 0x" + numberToHex(actual, width)
             + ", calculated 0x" + numberToHex(calculated, width),
@@ -325,6 +546,32 @@ export function inspectCustomSchema(
       }
     }
   }
+
+  const schemaDefinitionFailed = issues.some(
+    (issue) => SCHEMA_DEFINITION_ISSUES.has(issue.code),
+  );
+  const constraintFailed = issues.some(
+    (issue) =>
+      issue.severity === "error"
+      && !SCHEMA_DEFINITION_ISSUES.has(issue.code)
+      && issue.code !== "checksumMismatch",
+  );
+  const constraintWarning = issues.some(
+    (issue) => issue.severity === "warning",
+  );
+
+  checks.unshift(
+    {
+      id: "schema",
+      label: "tools.checkSchema",
+      status: schemaDefinitionFailed ? "fail" : "pass",
+    },
+    {
+      id: "constraints",
+      label: "tools.checkProtocolSemantics",
+      status: constraintFailed ? "fail" : constraintWarning ? "warning" : "pass",
+    },
+  );
 
   return {
     result: {
