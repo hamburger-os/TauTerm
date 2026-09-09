@@ -78,6 +78,16 @@ function AppInner() {
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [rightSidebarVisible, setRightSidebarVisible] = useState(true);
+  useEffect(() => {
+    const handleProtocolInspect = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
+      if (!detail?.sessionId || detail.sessionId !== sessionState.activeTabId) return;
+      setRightSidebarVisible(true);
+    };
+    window.addEventListener("tauterm:protocol-inspect", handleProtocolInspect);
+    return () => window.removeEventListener("tauterm:protocol-inspect", handleProtocolInspect);
+  }, [sessionState.activeTabId]);
+
   const [editSessionId, setEditSessionId] = useState<string | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
 
