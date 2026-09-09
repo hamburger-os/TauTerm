@@ -25,6 +25,7 @@ import TransferProgressBar from "./TransferProgressBar";
 import type { FileStatInfo } from "./FilePropertiesModal";
 import { copyToClipboard } from "../../utils/clipboard";
 import { getEntryIcon } from "./entryIcon";
+import { useToast } from "../../context/ToastContext";
 import styles from "./FileManager.module.css";
 
 const DeleteConfirmationDialog = lazy(() => import("./DeleteConfirmationDialog"));
@@ -68,6 +69,7 @@ export default function FileManagerPanel({
   isConnected,
 }: FileManagerPanelProps) {
   const { t } = useTranslation();
+  const { showToast } = useToast();
   const panelRef = useRef<HTMLDivElement>(null);
   const conflictResolverRef = useRef<((policy: OverwritePolicy | null) => void) | null>(null);
   const [conflictCount, setConflictCount] = useState(0);
@@ -232,7 +234,7 @@ export default function FileManagerPanel({
   // ── Context menu actions ────────────────────────────
   const handleUpload = useCallback(async () => {
     if (!isConnected) {
-      alert(t("fileManager.sessionDisconnected") || "会话已断开，无法上传");
+      showToast("warning", t("fileManager.sessionDisconnected"));
       return;
     }
     try {
@@ -259,13 +261,13 @@ export default function FileManagerPanel({
       await fm.uploadFiles(paths, remoteDir, overwritePolicy);
     } catch (e) {
       console.error("上传失败:", e);
-      alert(`上传失败: ${e}`);
+      showToast("error", t("fileManager.uploadFailed", { error: String(e) }));
     }
-  }, [fm, isConnected, requestConflictPolicy, t]);
+  }, [fm, isConnected, requestConflictPolicy, showToast, t]);
 
   const handleUploadFolder = useCallback(async () => {
     if (!isConnected) {
-      alert(t("fileManager.sessionDisconnected") || "会话已断开，无法上传");
+      showToast("warning", t("fileManager.sessionDisconnected"));
       return;
     }
 
@@ -288,9 +290,9 @@ export default function FileManagerPanel({
       await fm.uploadFiles([localPath], remoteDir, overwritePolicy);
     } catch (error) {
       console.error("目录上传失败:", error);
-      alert(t("fileManager.uploadFailed", { error: String(error) }));
+      showToast("error", t("fileManager.uploadFailed", { error: String(error) }));
     }
-  }, [fm, isConnected, requestConflictPolicy, t]);
+  }, [fm, isConnected, requestConflictPolicy, showToast, t]);
 
   const handleDroppedPaths = useCallback(async (paths: string[]) => {
     if (!isConnected || paths.length === 0) return;
@@ -317,9 +319,9 @@ export default function FileManagerPanel({
       await fm.uploadFiles(paths, remoteDir, overwritePolicy);
     } catch (error) {
       console.error("拖放上传失败:", error);
-      alert(t("fileManager.uploadFailed", { error: String(error) }));
+      showToast("error", t("fileManager.uploadFailed", { error: String(error) }));
     }
-  }, [fm, isConnected, requestConflictPolicy, t]);
+  }, [fm, isConnected, requestConflictPolicy, showToast, t]);
 
   useEffect(() => {
     let disposed = false;
@@ -392,7 +394,7 @@ export default function FileManagerPanel({
 
   const handleDownload = useCallback(async () => {
     if (!isConnected) {
-      alert(t("fileManager.sessionDisconnected") || "会话已断开，无法下载");
+      showToast("warning", t("fileManager.sessionDisconnected"));
       return;
     }
     const targets =
@@ -436,7 +438,8 @@ export default function FileManagerPanel({
 
     // Report directory failures
     if (dirsFailed.length > 0) {
-      alert(
+      showToast(
+        "error",
         t("fileManager.downloadDirFailed", {
           count: dirsFailed.length,
           names: dirsFailed.join(", "),
@@ -445,7 +448,7 @@ export default function FileManagerPanel({
     }
 
     ms.clearSelection();
-  }, [fm, ms, ctxTarget, isConnected, t]);
+  }, [fm, ms, ctxTarget, isConnected, showToast, t]);
 
   const handleRename = useCallback(() => {
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
@@ -501,7 +504,8 @@ export default function FileManagerPanel({
     try {
       const failed = await fm.deleteEntries(targets);
       if (failed.length > 0) {
-        alert(
+        showToast(
+          "error",
           t("fileManager.deleteFailed", {
             count: failed.length,
             names: failed.join(", "),
@@ -511,9 +515,9 @@ export default function FileManagerPanel({
       }
       ms.clearSelection();
     } catch (error) {
-      alert(String(error));
+      showToast("error", String(error));
     }
-  }, [fm, ms, pendingDeleteTargets, t]);
+  }, [fm, ms, pendingDeleteTargets, showToast, t]);
 
   const handleRefresh = useCallback(async () => {
     if (!isConnected) return;
@@ -610,7 +614,7 @@ export default function FileManagerPanel({
     async (value: string) => {
       const name = value.trim();
       if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\0")) {
-        alert(t("fileManager.invalidName"));
+        showToast("error", t("fileManager.invalidName"));
         return;
       }
 
@@ -623,14 +627,14 @@ export default function FileManagerPanel({
           await fm.renameEntry(fm.promptTarget, name);
         }
       } catch (error) {
-        alert(String(error));
+        showToast("error", String(error));
         return;
       }
 
       fm.setPromptMode(null);
       fm.setPromptTarget(null);
     },
-    [fm, t],
+    [fm, showToast, t],
   );
 
   const handlePromptCancel = useCallback(() => {

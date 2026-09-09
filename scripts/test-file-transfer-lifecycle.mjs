@@ -256,6 +256,29 @@ assert.match(
 
 // ── Standard file-manager interaction rules ────────────────────────────────
 const panel = await source("src/components/FileManager/FileManagerPanel.tsx");
+assert.match(panel, /useToast/);
+assert.doesNotMatch(
+  panel,
+  /\balert\s*\(/,
+  "FileManager must use the themed Toast path instead of native alert() UI",
+);
+
+const panelCss = await source("src/components/FileManager/FileManager.module.css");
+assert.doesNotMatch(
+  panelCss,
+  /backdrop-filter\s*:/,
+  "FileManager component CSS must not create private backdrop filters outside the global theme layer",
+);
+assert.doesNotMatch(
+  panelCss,
+  /var\(--glass-bg\)/,
+  "FileManager must not reference the undefined --glass-bg theme token",
+);
+assert.match(
+  panelCss,
+  /\.dropOverlay[\s\S]{0,420}background:\s*var\(--control-surface\)/,
+  "drag/drop overlay must reuse the shared themed control surface",
+);
 assert.doesNotMatch(panel, /window\.confirm\(/, "file deletion must use the themed confirmation dialog");
 assert.match(panel, /DeleteConfirmationDialog/);
 assert.match(panel, /deleteConfirmMessage/);

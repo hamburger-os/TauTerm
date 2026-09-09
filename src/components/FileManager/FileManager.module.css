@@ -59,11 +59,10 @@
   gap: var(--spacing-sm);
   border: 1px dashed var(--accent-primary);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent-primary-muted) 72%, var(--glass-bg));
+  background: var(--control-surface);
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-weight: 600;
   pointer-events: none;
-  backdrop-filter: blur(10px);
 }
 

@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, four-color amb
 license: MIT
 metadata:
   author: tauterm
-  version: "9.10"
+  version: "9.11"
 ---
 
-# TauTerm Liquid Glass v9.10 — 唯一主题规范源
+# TauTerm Liquid Glass v9.11 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、四色环境色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -338,6 +338,9 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 - 三个及以上互斥业务决策（例如文件冲突 Replace / Keep Both / Skip Existing）：业务决策组成独立 option group；Cancel 单独位于 footer，视觉与语义都不是第四个平级选项。
 - 有破坏性的决策使用 danger 语义；推荐的无损决策可使用 primary；其它决策使用 secondary。默认焦点优先落在最安全的无损决策，危险操作不得默认获焦。
 - Dialog 必须复用 `.liquid-glass` 外壳和公共 GlassButton/全局按钮材质；禁止组件私建另一套弹窗背景/按钮玻璃。
+- 标准 Dialog 使用 `--radius-xl`；常规 padding 使用 `--spacing-xl`，窄窗口可降为 `--spacing-lg`。标题统一 `--text-md` + 700，正文统一 `--text-sm`，辅助/元信息统一 `--text-xs`；标准动作按钮使用 `GlassButton size="md"`，不得在单个弹窗里另写近似字号/按钮体系。
+- 两按钮确认框的默认焦点必须落在 Cancel/安全动作；危险动作不得默认获焦。Tab 在弹窗动作内循环，Esc 取消。
+- 禁止使用原生浏览器 `alert()/confirm()/prompt()` 作为产品 UI。非阻塞错误/提示使用全局 themed Toast；需要用户决策或授权的流程使用主题 Dialog/InlinePrompt。
 - option group 在窄窗口改为纵向；不得为了保持多列把文案挤成难读的等宽小按钮。
 
 ## 12. Control Contrast
