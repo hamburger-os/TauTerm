@@ -211,6 +211,14 @@ impl FileTransfer for SftpFileTransfer {
                         error: Some(e),
                     });
                     if is_cancelled {
+                        for remaining in files.iter().skip(i + 1) {
+                            results.push(BatchFileResult {
+                                file_name: remaining.name.clone(),
+                                status: "skipped".into(),
+                                size: 0,
+                                error: Some("传输已取消".into()),
+                            });
+                        }
                         break;
                     }
                     // 非取消失败：清理远端半成品文件，避免残留不完整数据
