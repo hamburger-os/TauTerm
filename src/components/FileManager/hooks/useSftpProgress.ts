@@ -82,6 +82,7 @@ export function useSftpProgress(sessionId: string) {
   const activeTransferIdRef = useRef<string | null>(null);
   const autoHideTimerRef = useRef<number | null>(null);
   const phaseRef = useRef<TransferPhase>('completed');
+  const hoveredRef = useRef(false);
 
   const clearAutoHideTimer = useCallback(() => {
     if (autoHideTimerRef.current !== null) {
@@ -108,10 +109,12 @@ export function useSftpProgress(sessionId: string) {
   }, [clearAutoHideTimer]);
 
   const pauseAutoHide = useCallback(() => {
+    hoveredRef.current = true;
     if (phaseRef.current === 'completed') clearAutoHideTimer();
   }, [clearAutoHideTimer]);
 
   const resumeAutoHide = useCallback(() => {
+    hoveredRef.current = false;
     if (phaseRef.current === 'completed') scheduleAutoHide();
   }, [scheduleAutoHide]);
 
@@ -250,7 +253,7 @@ export function useSftpProgress(sessionId: string) {
         };
       });
 
-      if (payload.success) scheduleAutoHide();
+      if (payload.success && !hoveredRef.current) scheduleAutoHide();
     }).then(fn => { unlistenFinished = fn; });
 
     return () => {
@@ -269,17 +272,18 @@ export function useSftpProgress(sessionId: string) {
     if (!activeTransferIdRef.current || isTransferTerminalPhase(phaseRef.current)) return;
 
     clearAutoHideTimer();
+    const previousPhase = phaseRef.current;
     phaseRef.current = 'cancelling';
     setProgress(prev => ({ ...prev, phase: 'cancelling', speed: null }));
 
     try {
       await invoke('file_transfer_cancel', { sessionId });
     } catch (error) {
-      phaseRef.current = 'failed';
+      // 取消命令失败不等于传输失败；恢复原运行状态，最终结果仍由 finished 决定。
+      phaseRef.current = previousPhase;
       setProgress(prev => ({
         ...prev,
-        phase: 'failed',
-        speed: null,
+        phase: previousPhase,
         error: String(error),
       }));
     }
