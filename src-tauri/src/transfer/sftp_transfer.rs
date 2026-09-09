@@ -65,13 +65,67 @@ fn remote_basename(path: &str) -> String {
         .to_string()
 }
 
-fn remote_relative(base: &str, path: &str) -> String {
+fn local_safe_component(name: &str) -> Result<String, FileTransferError> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+        || name.chars().any(|ch| matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        || name.ends_with(' ')
+        || name.ends_with('.')
+    {
+        return Err(FileTransferError::Other(format!(
+            "远端文件名 '{}' 无法安全映射到本地路径",
+            name
+        )));
+    }
+
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.as_bytes()[3].is_ascii_digit()
+            && stem.as_bytes()[3] != b'0');
+    if reserved {
+        return Err(FileTransferError::Other(format!(
+            "远端文件名 '{}' 是本地平台保留名称",
+            name
+        )));
+    }
+
+    Ok(name.to_string())
+}
+
+fn safe_local_basename(remote_path: &str) -> Result<String, FileTransferError> {
+    local_safe_component(&remote_basename(remote_path))
+}
+
+fn safe_local_relative(base: &str, path: &str) -> Result<std::path::PathBuf, FileTransferError> {
     let base = base.trim_end_matches('/');
-    path.strip_prefix(&format!("{}/", base))
+    let relative = path
+        .strip_prefix(&format!("{}/", base))
         .or_else(|| path.strip_prefix(base))
         .unwrap_or(path)
-        .trim_start_matches('/')
-        .to_string()
+        .trim_start_matches('/');
+
+    let mut local = std::path::PathBuf::new();
+    for component in relative.split('/') {
+        local.push(local_safe_component(component)?);
+    }
+    if local.as_os_str().is_empty() {
+        return Err(FileTransferError::Other(format!(
+            "远端路径 '{}' 无法映射到本地相对路径",
+            path
+        )));
+    }
+    Ok(local)
 }
 
 fn local_directory_keep_both_candidate(path: &Path, index: u32) -> std::path::PathBuf {
@@ -416,12 +470,13 @@ impl FileTransfer for SftpFileTransfer {
 
             match stat.entry_type {
                 SftpEntryType::File => {
-                    let local_path = explicit_destination.unwrap_or_else(|| {
-                        Path::new(download_dir)
-                            .join(remote_basename(remote_path))
+                    let local_path = match explicit_destination {
+                        Some(path) => path,
+                        None => Path::new(download_dir)
+                            .join(safe_local_basename(remote_path)?)
                             .to_string_lossy()
-                            .to_string()
-                    });
+                            .to_string(),
+                    };
                     plans.push(ReceiveFilePlan {
                         remote_path: remote_path.clone(),
                         local_path,
@@ -429,11 +484,10 @@ impl FileTransfer for SftpFileTransfer {
                     });
                 }
                 SftpEntryType::Directory => {
-                    let requested_root = explicit_destination
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| {
-                            Path::new(download_dir).join(remote_basename(remote_path))
-                        });
+                    let requested_root = match explicit_destination {
+                        Some(path) => std::path::PathBuf::from(path),
+                        None => Path::new(download_dir).join(safe_local_basename(remote_path)?),
+                    };
                     let Some(local_root) = prepare_local_directory_destination(
                         &requested_root,
                         options.overwrite_policy,
@@ -458,7 +512,18 @@ impl FileTransfer for SftpFileTransfer {
                     .map_err(FileTransferError::Other)?;
 
                     for item in tree {
-                        let relative = remote_relative(remote_path, &item.path);
+                        let relative = match safe_local_relative(remote_path, &item.path) {
+                            Ok(relative) => relative,
+                            Err(error) => {
+                                results.push(BatchFileResult {
+                                    file_name: item.path,
+                                    status: "failed".into(),
+                                    size: 0,
+                                    error: Some(error.to_string()),
+                                });
+                                continue;
+                            }
+                        };
                         let local_path = local_root
                             .join(&relative)
                             .to_string_lossy()

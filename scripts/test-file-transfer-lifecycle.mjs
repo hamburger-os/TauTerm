@@ -149,6 +149,15 @@ assert.match(sftp, /sftp_list_tree_recursive/);
 assert.match(sftp, /SftpEntryType::Symlink[\s\S]*符号链接默认不跟随/);
 assert.match(sftp, /options\s*\.overwrite_policy/);
 assert.match(sftp, /目录替换不会自动合并或递归覆盖/);
+assert.match(sftp, /fn local_safe_component/);
+assert.match(sftp, /name\.contains\('\\\\'\)/);
+assert.match(sftp, /name == "\.\."|name == '\.\.'/);
+assert.match(sftp, /safe_local_relative/);
+assert.match(
+  sftp,
+  /safe_local_relative[\s\S]*relative\.split\('\/'\)[\s\S]*local_safe_component/,
+  "remote tree paths must be validated component-by-component before local join",
+);
 assert.match(sftp, /if failed > 0[\s\S]{0,500}FileTransferError::Other/);
 assert.doesNotMatch(
   sftp,
@@ -164,6 +173,15 @@ assert.match(fileManager, /const ack = await startTransfer\(\)[\s\S]*activeTrans
 assert.match(fileManager, /bufferedFinished = new Map<string, TransferFinishedPayload>/);
 assert.doesNotMatch(fileManager, /TRANSFER_TIMEOUT_MS|timed out after 5 minutes/);
 assert.match(fileManager, /destinationPaths = \[localPath as string\]/);
+const directoryDownloadSection = fileManager.slice(
+  fileManager.indexOf("// ── Download directory"),
+  fileManager.indexOf("// ── SFTP 传输结束后刷新当前目录"),
+);
+assert.doesNotMatch(
+  directoryDownloadSection,
+  /destinationPaths:/,
+  "directory roots must be derived and validated by the backend, not concatenated from remote names in WebView",
+);
 assert.match(fileManager, /directoryGenerationRef\.current/);
 assert.match(
   fileManager,

@@ -341,7 +341,6 @@ export function useFileManager(
   // 后端 SftpFileTransfer::receive() 检测到目录路径后自动递归列举子文件
   const downloadDirectory = useCallback(
     async (remoteDir: string, localDir: string): Promise<void> => {
-      const dirName = remoteDir.split('/').pop() || 'download';
       try {
         await runSftpTransferAndWait(sessionId, () =>
           invoke<TransferStartAck>('file_transfer_receive', {
@@ -350,7 +349,6 @@ export function useFileManager(
               protocol: 'sftp',
               downloadDir: localDir,
               remotePaths: [remoteDir],
-              destinationPaths: [`${localDir}/${dirName}`],
               overwritePolicy: 'keep-both',
             },
           }),
@@ -374,8 +372,6 @@ export function useFileManager(
       for (const entry of dirEntries) {
         if (!entry.is_dir) continue;
 
-        const dirName = entry.path.split('/').pop() || 'download';
-
         try {
           await runSftpTransferAndWait(sessionId, () =>
             invoke<TransferStartAck>('file_transfer_receive', {
@@ -384,7 +380,6 @@ export function useFileManager(
                 protocol: 'sftp',
                 downloadDir: localRootDir,
                 remotePaths: [entry.path],
-                destinationPaths: [`${localRootDir}/${dirName}`],
                 overwritePolicy: 'keep-both',
               },
             }),
