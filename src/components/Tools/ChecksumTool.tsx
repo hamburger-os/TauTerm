@@ -53,9 +53,18 @@ export function ChecksumToolInner() {
   const result = useMemo(() => {
     if (!bytes || bytes.length === 0) return null;
     switch (algorithm) {
-      case "SUM8": return { label: "SUM8", hex: numberToHex(checksum8(bytes), 8), dec: String(checksum8(bytes)) };
-      case "SUM16": return { label: "SUM16", hex: numberToHex(checksum16(bytes), 16), dec: String(checksum16(bytes)) };
-      case "XOR": return { label: "XOR", hex: numberToHex(xorChecksum(bytes), 8), dec: String(xorChecksum(bytes)) };
+      case "SUM8": {
+        const v = checksum8(bytes);
+        return { label: "SUM8", hex: numberToHex(v, 8), dec: String(v) };
+      }
+      case "SUM16": {
+        const v = checksum16(bytes);
+        return { label: "SUM16", hex: numberToHex(v, 16), dec: String(v) };
+      }
+      case "XOR": {
+        const v = xorChecksum(bytes);
+        return { label: "XOR", hex: numberToHex(v, 8), dec: String(v) };
+      }
       case "CRC8": {
         const v = crc8(bytes, crc8Preset);
         return { label: `CRC8 (${crc8Preset})`, hex: numberToHex(v, 8), dec: String(v) };
