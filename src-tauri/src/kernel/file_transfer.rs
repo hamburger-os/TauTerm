@@ -171,7 +171,8 @@ impl UnifiedProgress {
             position,
             direction,
         );
-        progress.bytes_per_second = bytes_per_second.filter(|value| value.is_finite() && *value > 0.0);
+        progress.bytes_per_second =
+            bytes_per_second.filter(|value| value.is_finite() && *value > 0.0);
         progress
     }
 
