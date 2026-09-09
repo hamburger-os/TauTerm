@@ -1,211 +1,303 @@
-import { useState, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "../RightSidebar/RightSidebarPanel";
 import {
+  OP_KEYS,
   bitwiseOp,
+  extractBitRange,
   parseIntegerInput,
   parseStructDefinition,
-  OP_KEYS,
+  toggleBit,
   type BitOp,
+  type BitWidth,
+  type StructAbi,
+  type StructPack,
 } from "../../utils/bitops";
 import styles from "./BitOpsTool.module.css";
 
 type ToolMode = "bitwise" | "sizeof";
 
+const WIDTHS: BitWidth[] = [8, 16, 32, 64];
+const ABIS: StructAbi[] = ["ILP32", "LP64", "LLP64"];
+const PACKS: StructPack[] = [0, 1, 2, 4, 8];
+
 export function BitOpsToolInner() {
   const { t } = useTranslation();
-
   const [mode, setMode] = useState<ToolMode>("bitwise");
-
-  // ── 位运算状态 ──
+  const [width, setWidth] = useState<BitWidth>(32);
   const [opA, setOpA] = useState("");
   const [opB, setOpB] = useState("");
   const [bitOp, setBitOp] = useState<BitOp>("AND");
-
-  // ── C sizeof 状态 ──
+  const [rangeHigh, setRangeHigh] = useState("7");
+  const [rangeLow, setRangeLow] = useState("0");
   const [structCode, setStructCode] = useState("");
+  const [abi, setAbi] = useState<StructAbi>("ILP32");
+  const [pack, setPack] = useState<StructPack>(0);
 
-  // ── 位运算结果 ──
-  const bitResult = useMemo(() => {
-    const a = parseIntegerInput(opA);
-    const b = parseIntegerInput(opB);
-    if (a === null) return null;
-    if (bitOp !== "NOT" && b === null) return null;
-    if ((bitOp === "LSHIFT" || bitOp === "RSHIFT" || bitOp === "URSHIFT") && (b === null || b < 0 || b > 31)) return null;
-    return bitwiseOp(a, b ?? 0, bitOp);
-  }, [opA, opB, bitOp]);
+  const parsedA = useMemo(() => parseIntegerInput(opA, width), [opA, width]);
+  const parsedB = useMemo(() => parseIntegerInput(opB, width), [opB, width]);
 
-  // 无效输入检测
   const bitwiseInputError = useMemo(() => {
     if (!opA.trim() && !opB.trim()) return null;
-    if (opA.trim() && parseIntegerInput(opA) === null) return "tools.invalidNumber";
-    if (bitOp !== "NOT" && opB.trim() && parseIntegerInput(opB) === null) return "tools.invalidNumber";
+    if (opA.trim() && parsedA === null) return "tools.invalidNumber";
+    if (bitOp !== "NOT" && opB.trim() && parsedB === null) return "tools.invalidNumber";
     if (
       (bitOp === "LSHIFT" || bitOp === "RSHIFT" || bitOp === "URSHIFT")
-      && opB.trim()
-      && ((parseIntegerInput(opB) ?? -1) < 0 || (parseIntegerInput(opB) ?? 32) > 31)
-    ) {
-      return "tools.shiftCountRange";
-    }
+      && parsedB !== null
+      && (parsedB < 0n || parsedB >= BigInt(width))
+    ) return "tools.shiftCountRangeWidth";
     return null;
-  }, [opA, opB, bitOp]);
+  }, [bitOp, opA, opB, parsedA, parsedB, width]);
 
-  // ── C sizeof 结果 ──
+  const bitResult = useMemo(() => {
+    if (parsedA === null) return null;
+    if (bitOp !== "NOT" && parsedB === null) return null;
+    if (
+      (bitOp === "LSHIFT" || bitOp === "RSHIFT" || bitOp === "URSHIFT")
+      && (parsedB === null || parsedB < 0n || parsedB >= BigInt(width))
+    ) return null;
+    return bitwiseOp(parsedA, parsedB ?? 0n, bitOp, width);
+  }, [bitOp, parsedA, parsedB, width]);
+
+  const rangeResult = useMemo(() => {
+    if (parsedA === null) return null;
+    const high = Number(rangeHigh);
+    const low = Number(rangeLow);
+    if (!Number.isInteger(high) || !Number.isInteger(low)) return null;
+    return extractBitRange(parsedA, high, low, width);
+  }, [parsedA, rangeHigh, rangeLow, width]);
+
   const structResult = useMemo(() => {
     if (!structCode.trim()) return null;
-    return parseStructDefinition(structCode);
-  }, [structCode]);
+    return parseStructDefinition(structCode, abi, pack);
+  }, [abi, pack, structCode]);
+
+  const handleToggleBit = useCallback((bit: number) => {
+    const currentValue = parseIntegerInput(opA || "0", width) ?? 0n;
+    const next = toggleBit(currentValue, bit, width);
+    setOpA("0x" + next.toString(16).toUpperCase().padStart(width / 4, "0"));
+  }, [opA, width]);
 
   return (
     <div className={styles.container}>
-      {/* 模式切换 */}
-      <div className={`${styles.modeRow} liquid-selector-strip`}>
+      <div className={styles.modeRow + " liquid-selector-strip"}>
         <button
-          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${mode === "bitwise" ? "active" : ""}`}
+          className={styles.modeBtn + " liquid-glass-button liquid-selector-button " + (mode === "bitwise" ? "active" : "")}
           onClick={() => setMode("bitwise")}
           type="button"
           aria-pressed={mode === "bitwise"}
         >
-          {t("tools.bitwiseMode") ?? "Bitwise"}
+          {t("tools.bitwiseMode")}
         </button>
         <button
-          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${mode === "sizeof" ? "active" : ""}`}
+          className={styles.modeBtn + " liquid-glass-button liquid-selector-button " + (mode === "sizeof" ? "active" : "")}
           onClick={() => setMode("sizeof")}
           type="button"
           aria-pressed={mode === "sizeof"}
         >
-          {t("tools.sizeofMode") ?? "C sizeof"}
+          {t("tools.structLayoutMode")}
         </button>
       </div>
 
-      {/* ── 位运算模式 ── */}
       {mode === "bitwise" && (
         <div className={styles.bitwiseSection}>
-          {/* 操作数 A */}
+          <div className={styles.widthRow}>
+            <span className={styles.label}>{t("tools.bitWidth")}:</span>
+            <div className="liquid-selector-strip">
+              {WIDTHS.map((item) => (
+                <button
+                  key={item}
+                  className={"liquid-glass-button liquid-selector-button " + (width === item ? "active" : "")}
+                  onClick={() => setWidth(item)}
+                  type="button"
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className={styles.opRow}>
             <label className={styles.label}>A:</label>
             <input
-              className={`${styles.opInput} liquid-glass-input`}
+              className={styles.opInput + " liquid-glass-input"}
               value={opA}
-              onChange={(e) => setOpA(e.target.value)}
-              placeholder={t("tools.bitwiseOperandPlaceholder") ?? "e.g. 170 (0xAA)"}
+              onChange={(event) => setOpA(event.target.value)}
+              placeholder={t("tools.bitwiseOperandPlaceholder")}
               spellCheck={false}
             />
           </div>
 
-          {/* 运算符 */}
           <div className={styles.opRow}>
-            <label className={styles.label}>{t("tools.operator") ?? "Operator"}:</label>
+            <label className={styles.label}>{t("tools.operator")}:</label>
             <select
-              className={`${styles.select} liquid-glass-input liquid-glass-select`}
+              className={styles.select + " liquid-glass-input liquid-glass-select"}
               value={bitOp}
-              onChange={(e) => setBitOp(e.target.value as BitOp)}
+              onChange={(event) => setBitOp(event.target.value as BitOp)}
             >
-              {(OP_KEYS as BitOp[]).map((k) => (
-                <option key={k} value={k}>{t(`tools.bitOps.${k}`)}</option>
+              {OP_KEYS.map((key) => (
+                <option key={key} value={key}>{t("tools.bitOps." + key)}</option>
               ))}
             </select>
           </div>
 
-          {/* 操作数 B (NOT 不需要) */}
           {bitOp !== "NOT" && (
             <div className={styles.opRow}>
               <label className={styles.label}>B:</label>
               <input
-                className={`${styles.opInput} liquid-glass-input`}
+                className={styles.opInput + " liquid-glass-input"}
                 value={opB}
-                onChange={(e) => setOpB(e.target.value)}
-                placeholder={t("tools.bitwiseOperandPlaceholder") ?? "e.g. 15 (0x0F)"}
+                onChange={(event) => setOpB(event.target.value)}
+                placeholder={t("tools.bitwiseOperandPlaceholder")}
                 spellCheck={false}
               />
             </div>
           )}
 
-          {/* 无效输入错误提示 */}
           {bitwiseInputError && (
             <div className={styles.parseError}>
-              {t(bitwiseInputError) ?? "Please enter a valid number"}
+              {t(bitwiseInputError, { width })}
             </div>
           )}
 
-          {/* 位可视化结果 */}
           {bitResult && (
             <div className={styles.bitResult}>
               <div className={styles.resultHeader}>
-                <span>{t("tools.result") ?? "Result"}:</span>
-                <code className={styles.resultVal}>
-                  0x{bitResult.hex} ({bitResult.result})
-                </code>
+                <span>{t("tools.result")}:</span>
+                <code className={styles.resultVal}>0x{bitResult.hex}</code>
               </div>
-              <div className={styles.bitsDisplay}>
-                {bitResult.bits.split(" ").map((nibble, i) => (
-                  <span key={i} className={styles.nibble}>
-                    {nibble}
-                  </span>
-                ))}
+              <div className={styles.numericGrid}>
+                <span>{t("tools.unsignedValue")}</span>
+                <code>{bitResult.unsigned}</code>
+                <span>{t("tools.signedValue")}</span>
+                <code>{bitResult.signed}</code>
               </div>
+              <div className={styles.bitsDisplay} aria-label={t("tools.bitEditor")}>
+                {Array.from({ length: width }, (_, index) => width - 1 - index).map((bit) => {
+                  const active = ((BigInt("0x" + bitResult.hex) >> BigInt(bit)) & 1n) === 1n;
+                  return (
+                    <button
+                      key={bit}
+                      type="button"
+                      className={styles.bitCell + " " + (active ? styles.bitCellActive : "")}
+                      onClick={() => handleToggleBit(bit)}
+                      title={"bit " + bit}
+                    >
+                      <span>{bit}</span>
+                      <strong>{active ? "1" : "0"}</strong>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className={styles.rangeRow}>
+                <span>{t("tools.extractBits")}</span>
+                <input
+                  className={styles.rangeInput + " liquid-glass-input"}
+                  inputMode="numeric"
+                  value={rangeHigh}
+                  onChange={(event) => setRangeHigh(event.target.value)}
+                  aria-label={t("tools.highBit")}
+                />
+                <span>:</span>
+                <input
+                  className={styles.rangeInput + " liquid-glass-input"}
+                  inputMode="numeric"
+                  value={rangeLow}
+                  onChange={(event) => setRangeLow(event.target.value)}
+                  aria-label={t("tools.lowBit")}
+                />
+              </div>
+              {rangeResult && (
+                <div className={styles.numericGrid}>
+                  <span>{t("tools.mask")}</span>
+                  <code>0x{rangeResult.maskHex}</code>
+                  <span>{t("tools.extractedValue")}</span>
+                  <code>0x{rangeResult.valueHex} ({rangeResult.unsigned})</code>
+                </div>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* ── C sizeof 模式 ── */}
       {mode === "sizeof" && (
         <div className={styles.sizeofSection}>
-          <div className={styles.toolHint}>
-            {t("tools.structAbiHint")}
+          <div className={styles.toolHint}>{t("tools.structAbiHint")}</div>
+          <div className={styles.structOptions}>
+            <label>
+              ABI
+              <select
+                className="liquid-glass-input liquid-glass-select"
+                value={abi}
+                onChange={(event) => setAbi(event.target.value as StructAbi)}
+              >
+                {ABIS.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              Packing
+              <select
+                className="liquid-glass-input liquid-glass-select"
+                value={pack}
+                onChange={(event) => setPack(Number(event.target.value) as StructPack)}
+              >
+                {PACKS.map((item) => (
+                  <option key={item} value={item}>
+                    {item === 0 ? t("tools.defaultPacking") : item}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           <textarea
-            className={`${styles.structInput} liquid-glass-input liquid-glass-textarea`}
+            className={styles.structInput + " liquid-glass-input liquid-glass-textarea"}
             value={structCode}
-            onChange={(e) => setStructCode(e.target.value)}
-            placeholder={
-              "struct {\n  char a;\n  int b;\n  char c;\n}"
-            }
+            onChange={(event) => setStructCode(event.target.value)}
+            placeholder={"struct {\n  char a;\n  int b;\n  char c;\n}"}
             rows={6}
             spellCheck={false}
           />
 
-          {/* 解析结果表格 */}
           {structResult && (
             <div className={styles.structResult}>
               <table className={styles.table}>
                 <thead>
                   <tr>
-                    <th>{t("tools.structMember") ?? "Member"}</th>
-                    <th>{t("tools.structType") ?? "Type"}</th>
-                    <th>{t("tools.structOffset") ?? "Offset"}</th>
-                    <th>{t("tools.structSize") ?? "Size"}</th>
-                    <th>{t("tools.structPad") ?? "Padding"}</th>
+                    <th>{t("tools.structMember")}</th>
+                    <th>{t("tools.structType")}</th>
+                    <th>{t("tools.structOffset")}</th>
+                    <th>{t("tools.structSize")}</th>
+                    <th>{t("tools.structPadBefore")}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {structResult.members.map((m, i) => (
-                    <tr key={i}>
-                      <td><code>{m.name}</code></td>
-                      <td><code>{m.type}</code></td>
-                      <td>{m.offset}</td>
-                      <td>{m.size}</td>
-                      <td className={m.padding > 0 ? styles.padHighlight : ""}>
-                        {m.padding > 0 ? m.padding : "-"}
+                  {structResult.members.map((member) => (
+                    <tr key={member.name}>
+                      <td><code>{member.name}</code></td>
+                      <td><code>{member.type}</code></td>
+                      <td>{member.offset}</td>
+                      <td>{member.size}</td>
+                      <td className={member.paddingBefore > 0 ? styles.padHighlight : ""}>
+                        {member.paddingBefore > 0 ? member.paddingBefore : "-"}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               <div className={styles.totalRow}>
-                {t("tools.structTotal") ?? "sizeof"} = {structResult.totalSize}
+                sizeof = {structResult.totalSize}
                 <span className={styles.alignNote}>
-                  (align: {structResult.alignment})
+                  align {structResult.alignment}
+                  {" · "}
+                  {t("tools.tailPadding")} {structResult.tailPadding}
                 </span>
               </div>
             </div>
           )}
 
           {!structResult && structCode.trim() && (
-            <div className={styles.parseError}>
-              {t("tools.structParseError") ?? "Cannot parse struct definition"}
-            </div>
+            <div className={styles.parseError}>{t("tools.structParseError")}</div>
           )}
         </div>
       )}
@@ -216,7 +308,7 @@ export function BitOpsToolInner() {
 export default function BitOpsTool() {
   const { t } = useTranslation();
   return (
-    <RightSidebarPanel title={t("tools.bitops") ?? "Bit Operations"}>
+    <RightSidebarPanel title={t("tools.bitops")}>
       <BitOpsToolInner />
     </RightSidebarPanel>
   );

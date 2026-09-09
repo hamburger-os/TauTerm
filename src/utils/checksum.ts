@@ -1,13 +1,25 @@
-// ── 校验和工具函数 ──────────────────────────────────────────────
-// 纯 TypeScript 实现，无外部依赖。用于 ChecksumTool 计算。
+import { bytesToHex } from "./byteInput.ts";
 
-// ══════════════════════════════════════════════════════════════════
-// 类型定义
-// ══════════════════════════════════════════════════════════════════
+export type Crc8Preset =
+  | "CRC-8"
+  | "CRC-8/MAXIM-DOW"
+  | "CRC-8/I-432-1"
+  | "CRC-8/ROHC";
 
-export type Crc8Preset = "CRC8-Basic" | "CRC8-MAXIM" | "CRC8-ITU" | "CRC8-ROHC";
-export type Crc16Preset = "CRC16-Modbus" | "CRC16-CCITT" | "CRC16-XMODEM" | "CRC16-USB";
-export type Crc32Preset = "CRC32" | "CRC32-MPEG2" | "CRC32-BZIP2" | "CRC32-CKSUM";
+export type Crc16Preset =
+  | "CRC-16/MODBUS"
+  | "CRC-16/XMODEM"
+  | "CRC-16/IBM-3740"
+  | "CRC-16/USB";
+
+export type Crc32Preset =
+  | "CRC-32/ISO-HDLC"
+  | "CRC-32/MPEG-2"
+  | "CRC-32/BZIP2"
+  | "CRC-32/CKSUM";
+
+export type CrcPreset = Crc8Preset | Crc16Preset | Crc32Preset;
+export type CrcWidth = 8 | 16 | 32;
 
 export interface CrcParams {
   poly: number;
@@ -15,239 +27,194 @@ export interface CrcParams {
   refIn: boolean;
   refOut: boolean;
   xorOut: number;
-  width: number; // 8 | 16 | 32
+  width: CrcWidth;
 }
 
-// ══════════════════════════════════════════════════════════════════
-// CRC 预设参数表
-// ══════════════════════════════════════════════════════════════════
+export interface CrcPresetDefinition {
+  params: CrcParams;
+  check: number;
+}
 
-export const CRC8_PRESETS: Record<Crc8Preset, CrcParams> = {
-  "CRC8-Basic": { poly: 0x07, init: 0x00, refIn: false, refOut: false, xorOut: 0x00, width: 8 },
-  "CRC8-MAXIM": { poly: 0x31, init: 0x00, refIn: true,  refOut: true,  xorOut: 0x00, width: 8 },
-  "CRC8-ITU":   { poly: 0x07, init: 0x00, refIn: false, refOut: false, xorOut: 0x55, width: 8 },
-  "CRC8-ROHC":  { poly: 0x07, init: 0xFF, refIn: true,  refOut: true,  xorOut: 0x00, width: 8 },
+export const CRC_PRESETS: Record<CrcPreset, CrcPresetDefinition> = {
+  "CRC-8": {
+    params: { poly: 0x07, init: 0x00, refIn: false, refOut: false, xorOut: 0x00, width: 8 },
+    check: 0xF4,
+  },
+  "CRC-8/MAXIM-DOW": {
+    params: { poly: 0x31, init: 0x00, refIn: true, refOut: true, xorOut: 0x00, width: 8 },
+    check: 0xA1,
+  },
+  "CRC-8/I-432-1": {
+    params: { poly: 0x07, init: 0x00, refIn: false, refOut: false, xorOut: 0x55, width: 8 },
+    check: 0xA1,
+  },
+  "CRC-8/ROHC": {
+    params: { poly: 0x07, init: 0xFF, refIn: true, refOut: true, xorOut: 0x00, width: 8 },
+    check: 0xD0,
+  },
+  "CRC-16/MODBUS": {
+    params: { poly: 0x8005, init: 0xFFFF, refIn: true, refOut: true, xorOut: 0x0000, width: 16 },
+    check: 0x4B37,
+  },
+  "CRC-16/XMODEM": {
+    params: { poly: 0x1021, init: 0x0000, refIn: false, refOut: false, xorOut: 0x0000, width: 16 },
+    check: 0x31C3,
+  },
+  "CRC-16/IBM-3740": {
+    params: { poly: 0x1021, init: 0xFFFF, refIn: false, refOut: false, xorOut: 0x0000, width: 16 },
+    check: 0x29B1,
+  },
+  "CRC-16/USB": {
+    params: { poly: 0x8005, init: 0xFFFF, refIn: true, refOut: true, xorOut: 0xFFFF, width: 16 },
+    check: 0xB4C8,
+  },
+  "CRC-32/ISO-HDLC": {
+    params: { poly: 0x04C11DB7, init: 0xFFFFFFFF, refIn: true, refOut: true, xorOut: 0xFFFFFFFF, width: 32 },
+    check: 0xCBF43926,
+  },
+  "CRC-32/MPEG-2": {
+    params: { poly: 0x04C11DB7, init: 0xFFFFFFFF, refIn: false, refOut: false, xorOut: 0x00000000, width: 32 },
+    check: 0x0376E6E7,
+  },
+  "CRC-32/BZIP2": {
+    params: { poly: 0x04C11DB7, init: 0xFFFFFFFF, refIn: false, refOut: false, xorOut: 0xFFFFFFFF, width: 32 },
+    check: 0xFC891918,
+  },
+  "CRC-32/CKSUM": {
+    params: { poly: 0x04C11DB7, init: 0x00000000, refIn: false, refOut: false, xorOut: 0xFFFFFFFF, width: 32 },
+    check: 0x765E7680,
+  },
 };
 
-export const CRC16_PRESETS: Record<Crc16Preset, CrcParams> = {
-  "CRC16-Modbus":  { poly: 0x8005, init: 0xFFFF, refIn: true,  refOut: true,  xorOut: 0x0000, width: 16 },
-  "CRC16-CCITT":   { poly: 0x1021, init: 0x0000, refIn: false, refOut: false, xorOut: 0x0000, width: 16 },
-  "CRC16-XMODEM":  { poly: 0x1021, init: 0x0000, refIn: false, refOut: false, xorOut: 0x0000, width: 16 },
-  "CRC16-USB":     { poly: 0x8005, init: 0xFFFF, refIn: true,  refOut: true,  xorOut: 0xFFFF, width: 16 },
-};
+export const CRC8_PRESETS = Object.fromEntries(
+  (Object.entries(CRC_PRESETS) as [CrcPreset, CrcPresetDefinition][])
+    .filter(([, definition]) => definition.params.width === 8)
+    .map(([name, definition]) => [name, definition.params]),
+) as Record<Crc8Preset, CrcParams>;
 
-export const CRC32_PRESETS: Record<Crc32Preset, CrcParams> = {
-  "CRC32":        { poly: 0x04C11DB7, init: 0xFFFFFFFF, refIn: true,  refOut: true,  xorOut: 0xFFFFFFFF, width: 32 },
-  "CRC32-MPEG2":  { poly: 0x04C11DB7, init: 0xFFFFFFFF, refIn: false, refOut: false, xorOut: 0x00000000, width: 32 },
-  "CRC32-BZIP2":  { poly: 0x04C11DB7, init: 0xFFFFFFFF, refIn: false, refOut: false, xorOut: 0xFFFFFFFF, width: 32 },
-  "CRC32-CKSUM":  { poly: 0x04C11DB7, init: 0x00000000, refIn: false, refOut: false, xorOut: 0xFFFFFFFF, width: 32 },
-};
+export const CRC16_PRESETS = Object.fromEntries(
+  (Object.entries(CRC_PRESETS) as [CrcPreset, CrcPresetDefinition][])
+    .filter(([, definition]) => definition.params.width === 16)
+    .map(([name, definition]) => [name, definition.params]),
+) as Record<Crc16Preset, CrcParams>;
 
-// ══════════════════════════════════════════════════════════════════
-// CRC 通用计算
-// ══════════════════════════════════════════════════════════════════
+export const CRC32_PRESETS = Object.fromEntries(
+  (Object.entries(CRC_PRESETS) as [CrcPreset, CrcPresetDefinition][])
+    .filter(([, definition]) => definition.params.width === 32)
+    .map(([name, definition]) => [name, definition.params]),
+) as Record<Crc32Preset, CrcParams>;
 
-/** 单字节位反转 */
-function reflect8(val: number): number {
-  let r = 0;
-  for (let i = 0; i < 8; i++) {
-    r = (r << 1) | (val & 1);
-    val >>= 1;
+function reflect(value: number, width: CrcWidth): number {
+  let source = value >>> 0;
+  let result = 0;
+  for (let i = 0; i < width; i += 1) {
+    result = (result << 1) | (source & 1);
+    source >>>= 1;
   }
-  return r & 0xFF;
+  return width === 32 ? result >>> 0 : result & ((1 << width) - 1);
 }
 
-function reflect16(val: number): number {
-  let r = 0;
-  for (let i = 0; i < 16; i++) {
-    r = (r << 1) | (val & 1);
-    val >>= 1;
-  }
-  return r & 0xFFFF;
-}
-
-function reflect32(val: number): number {
-  // JavaScript 位运算限制为 32 位有符号整数；用无符号右移保持正值
-  let r = 0;
-  for (let i = 0; i < 32; i++) {
-    r = (r << 1) | (val & 1);
-    val >>>= 1;
-  }
-  return r >>> 0;
-}
-
-/** 通用 CRC 计算（按字节处理） */
-function crcCompute(data: Uint8Array, params: CrcParams): number {
+export function crcWithParams(data: Uint8Array, params: CrcParams): number {
   const { poly, init, refIn, refOut, xorOut, width } = params;
   const mask = width === 8 ? 0xFF : width === 16 ? 0xFFFF : 0xFFFFFFFF;
+  const topBit = width === 8 ? 0x80 : width === 16 ? 0x8000 : 0x80000000;
 
-  let crc = init & mask;
-  const polyMasked = poly & mask;
+  let crc = width === 32 ? init >>> 0 : init & mask;
+  const polynomial = width === 32 ? poly >>> 0 : poly & mask;
 
   for (let byte of data) {
-    if (refIn) {
-      byte = reflect8(byte);
-    }
+    if (refIn) byte = reflect(byte, 8);
+    if (width === 8) crc ^= byte;
+    else if (width === 16) crc ^= byte << 8;
+    else crc = (crc ^ (byte << 24)) >>> 0;
 
-    if (width <= 8) {
-      // CRC8: XOR-in then bit-by-bit
-      crc ^= byte;
-      for (let i = 0; i < 8; i++) {
-        if (crc & 0x80) {
-          crc = ((crc << 1) ^ polyMasked) & 0xFF;
-        } else {
-          crc = (crc << 1) & 0xFF;
-        }
-      }
-    } else if (width <= 16) {
-      // CRC16: XOR byte as top bits
-      crc ^= (byte << 8);
-      for (let i = 0; i < 8; i++) {
-        if (crc & 0x8000) {
-          crc = ((crc << 1) ^ polyMasked) & 0xFFFF;
-        } else {
-          crc = (crc << 1) & 0xFFFF;
-        }
-      }
-    } else {
-      // CRC32: XOR byte as top bits
-      crc ^= (byte << 24);
-      for (let i = 0; i < 8; i++) {
-        if (crc & 0x80000000) {
-          crc = ((crc << 1) ^ polyMasked) >>> 0;
-        } else {
-          crc = (crc << 1) >>> 0;
-        }
+    for (let bit = 0; bit < 8; bit += 1) {
+      const hasTopBit = (crc & topBit) !== 0;
+      if (width === 32) {
+        crc = ((crc << 1) >>> 0);
+        if (hasTopBit) crc = (crc ^ polynomial) >>> 0;
+      } else {
+        crc = (crc << 1) & mask;
+        if (hasTopBit) crc = (crc ^ polynomial) & mask;
       }
     }
   }
 
-  if (refOut) {
-    if (width === 8) crc = reflect8(crc);
-    else if (width === 16) crc = reflect16(crc);
-    else crc = reflect32(crc);
-  }
-
+  if (refOut) crc = reflect(crc, width);
   const finalValue = crc ^ xorOut;
-  return width === 32 ? (finalValue >>> 0) : (finalValue & mask);
+  return width === 32 ? finalValue >>> 0 : finalValue & mask;
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 公共 CRC API
-// ══════════════════════════════════════════════════════════════════
-
-/** CRC8 计算（可使用预设或自定义参数） */
-export function crc8(data: Uint8Array, preset?: Crc8Preset, custom?: Partial<CrcParams>): number {
-  const base = preset ? CRC8_PRESETS[preset] : CRC8_PRESETS["CRC8-Basic"];
-  const params: CrcParams = { ...base, ...custom, width: 8 };
-  return crcCompute(data, params);
+export function crcPreset(data: Uint8Array, preset: CrcPreset): number {
+  return crcWithParams(data, CRC_PRESETS[preset].params);
 }
 
-/** CRC16 计算 */
-export function crc16(data: Uint8Array, preset?: Crc16Preset, custom?: Partial<CrcParams>): number {
-  const base = preset ? CRC16_PRESETS[preset] : CRC16_PRESETS["CRC16-Modbus"];
-  const params: CrcParams = { ...base, ...custom, width: 16 };
-  return crcCompute(data, params);
+export function crc8(
+  data: Uint8Array,
+  preset: Crc8Preset = "CRC-8",
+  custom?: Partial<CrcParams>,
+): number {
+  return crcWithParams(data, { ...CRC8_PRESETS[preset], ...custom, width: 8 });
 }
 
-/** CRC32 计算 */
-export function crc32(data: Uint8Array, preset?: Crc32Preset, custom?: Partial<CrcParams>): number {
-  const base = preset ? CRC32_PRESETS[preset] : CRC32_PRESETS["CRC32"];
-  const params: CrcParams = { ...base, ...custom, width: 32 };
-  return crcCompute(data, params);
+export function crc16(
+  data: Uint8Array,
+  preset: Crc16Preset = "CRC-16/MODBUS",
+  custom?: Partial<CrcParams>,
+): number {
+  return crcWithParams(data, { ...CRC16_PRESETS[preset], ...custom, width: 16 });
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 累加和 (CheckSum)
-// ══════════════════════════════════════════════════════════════════
+export function crc32(
+  data: Uint8Array,
+  preset: Crc32Preset = "CRC-32/ISO-HDLC",
+  custom?: Partial<CrcParams>,
+): number {
+  return crcWithParams(data, { ...CRC32_PRESETS[preset], ...custom, width: 32 });
+}
 
-/** 8 位累加和（低8位） */
 export function checksum8(data: Uint8Array): number {
   let sum = 0;
-  for (const b of data) sum += b;
+  for (const byte of data) sum += byte;
   return sum & 0xFF;
 }
 
-/** 16 位累加和 */
 export function checksum16(data: Uint8Array): number {
   let sum = 0;
-  for (const b of data) sum += b;
+  for (const byte of data) sum += byte;
   return sum & 0xFFFF;
 }
 
-/** 32 位累加和 */
 export function checksum32(data: Uint8Array): number {
   let sum = 0;
-  for (const b of data) sum += b;
+  for (const byte of data) sum = (sum + byte) >>> 0;
   return sum >>> 0;
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 异或校验
-// ══════════════════════════════════════════════════════════════════
-
-/** 异或校验（所有字节异或） */
 export function xorChecksum(data: Uint8Array): number {
   let result = 0;
-  for (const b of data) result ^= b;
-  return result;
+  for (const byte of data) result ^= byte;
+  return result & 0xFF;
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 辅助：输入解析
-// ══════════════════════════════════════════════════════════════════
-
-/** 将字符串转为字节数组（使用 TextEncoder） */
-export function stringToBytes(str: string): Uint8Array {
-  return new TextEncoder().encode(str);
+export function stringToBytes(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
 }
 
-/**
- * 解析 HEX 字符串为字节数组。
- * 支持多种格式：
- *   - "AA BB CC" (空格分隔)
- *   - "0xAA,0xBB,0xCC" (逗号 + 0x 前缀)
- *   - "AABBCC" (无分隔，偶数长度)
- *   - "AA, BB, CC" (逗号 + 空格)
- */
-export function parseHexString(hex: string): Uint8Array {
-  const trimmed = hex.trim();
-  if (!trimmed) return new Uint8Array(0);
+export { bytesToHex };
 
-  // 支持连续 HEX、空白/逗号分隔，以及每个 token 可选 0x 前缀。
-  // 必须完整匹配每个 token，避免 "0xAA0xBB"、"12GG" 等被部分解析。
-  const tokens = trimmed.split(/[\s,]+/).filter(Boolean);
-  let cleaned = "";
-  for (const token of tokens) {
-    const match = token.match(/^(?:0[xX])?([0-9a-fA-F]+)$/);
-    if (!match) return new Uint8Array(0);
-    cleaned += match[1];
+export function numberToHex(value: number, width: CrcWidth): string {
+  const digits = width / 4;
+  const normalized = width === 32 ? value >>> 0 : value & (2 ** width - 1);
+  return normalized.toString(16).toUpperCase().padStart(digits, "0");
+}
+
+export function crcValueBytes(value: number, width: CrcWidth, byteOrder: "be" | "le"): Uint8Array {
+  const byteCount = width / 8;
+  const bytes = new Uint8Array(byteCount);
+  for (let index = 0; index < byteCount; index += 1) {
+    const shift = (byteOrder === "be" ? byteCount - 1 - index : index) * 8;
+    bytes[index] = (value >>> shift) & 0xFF;
   }
-
-  if (!cleaned || cleaned.length % 2 !== 0) {
-    return new Uint8Array(0);
-  }
-
-  const bytes: number[] = [];
-  for (let i = 0; i < cleaned.length; i += 2) {
-    bytes.push(Number.parseInt(cleaned.substring(i, i + 2), 16));
-  }
-  return new Uint8Array(bytes);
-}
-
-/** 将字节数组格式化为 HEX 字符串（大写，空格分隔） */
-export function bytesToHex(bytes: Uint8Array, separator = " "): string {
-  return Array.from(bytes)
-    .map((b) => b.toString(16).toUpperCase().padStart(2, "0"))
-    .join(separator);
-}
-
-/** 将数字格式化为指定位宽的 HEX 字符串 */
-export function numberToHex(value: number, width: number): string {
-  const hexLen = Math.ceil(width / 4);
-  const modulus = Math.pow(2, width);
-  const normalized = width === 32
-    ? (value >>> 0)
-    : ((value % modulus) + modulus) % modulus;
-  return normalized.toString(16).toUpperCase().padStart(hexLen, "0");
+  return bytes;
 }

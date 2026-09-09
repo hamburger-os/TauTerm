@@ -60,6 +60,76 @@ assert.doesNotMatch(
   "context-menu paste must not bypass xterm paste semantics",
 );
 
+assert.match(terminalSource, /id: "inspectProtocol"/);
+assert.match(
+  terminalSource,
+  /case "inspectProtocol":[\s\S]{0,520}new CustomEvent\("tauterm:protocol-inspect"[\s\S]{0,220}detail: \{ sessionId, input: selection \}/,
+  "terminal selection handoff must be explicit and session-scoped",
+);
+
+const dualPaneSource = await readFile(
+  path.join(ROOT, "src", "components", "Terminal", "DualPane.tsx"),
+  "utf8",
+);
+assert.match(
+  dualPaneSource,
+  /onContextMenu=\{\(event\) => handleRowContextMenu\(event, line\)\}/,
+);
+assert.match(
+  dualPaneSource,
+  /tauterm:protocol-inspect[\s\S]{0,220}sessionId[\s\S]{0,120}contextLine\.hex/,
+  "Dual/HEX handoff must use the complete row frame and session identity",
+);
+
+const protocolToolSource = await readFile(
+  path.join(ROOT, "src", "components", "Tools", "ProtocolTool.tsx"),
+  "utf8",
+);
+assert.match(
+  protocolToolSource,
+  /detail\?\.sessionId !== sessionId/,
+  "Protocol Inspector must ignore handoff events from other sessions",
+);
+
+const appSource = await readFile(
+  path.join(ROOT, "src", "App.tsx"),
+  "utf8",
+);
+assert.match(
+  appSource,
+  /setRightSidebarVisible\(true\)[\s\S]{0,300}tauterm:protocol-inspect/,
+  "explicit protocol handoff must reveal the engineering sidebar",
+);
+
+
+const networkViewSource = await readFile(
+  path.join(ROOT, "src", "components", "Network", "NetworkDebugSessionView.tsx"),
+  "utf8",
+);
+assert.match(networkViewSource, /<DualPane sessionId=\{sessionId\}/);
+assert.match(networkViewSource, /function TcpFrameList/);
+assert.match(
+  networkViewSource,
+  /onContextMenu=\{\(event\) => openContextMenu\(event, line\.hex\)\}/,
+);
+assert.match(
+  networkViewSource,
+  /tauterm:protocol-inspect[\s\S]{0,180}detail: \{ sessionId, input: contextHex \}/,
+);
+
+const udpGridSource = await readFile(
+  path.join(ROOT, "src", "components", "Network", "UdpPacketGrid.tsx"),
+  "utf8",
+);
+assert.match(
+  udpGridSource,
+  /onContextMenu=\{\(event\) => openContextMenu\(event, row\.hex\)\}/,
+);
+assert.match(
+  udpGridSource,
+  /tauterm:protocol-inspect[\s\S]{0,180}detail: \{ sessionId, input: contextHex \}/,
+);
+
 const registrySource = await readFile(
   path.join(ROOT, "src", "shortcuts", "registry.ts"),
   "utf8",
@@ -78,4 +148,4 @@ const shortcutSettingsSource = await readFile(
 );
 assert.match(shortcutSettingsSource, /isTerminalReservedShortcut\(newKeys\)/);
 
-console.log("terminal-clipboard: shortcuts, paste routing, focus contract and safety analysis verified");
+console.log("terminal-clipboard: shortcuts, paste routing, focus, safety, and explicit protocol-inspection handoff verified");

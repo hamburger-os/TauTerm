@@ -54,6 +54,7 @@ Core engineering workflows are **local-first**: they are intended to remain usef
 | TRDP Node + passive live/offline Monitor | ✅ |
 | Lua scripting and auto-reply for supported sessions | ✅ |
 | Persistent 1–4-pane Workspace | ✅ |
+| Protocol Inspector + data/CRC/bit engineering tools | ✅ |
 
 TRDP includes active PD/MD Node workflows and passive Monitor/capture analysis. It does **not** claim SDTv2/SDTv4 safety validation or certification.
 
