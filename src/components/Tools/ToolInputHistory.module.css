@@ -1,0 +1,48 @@
+.history {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.history summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.valueButton {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+}
+
+.valueButton code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.pinButton {
+  flex: 0 0 auto;
+  width: 28px;
+  padding-inline: 4px;
+}
+
+.clearButton {
+  align-self: flex-start;
+}
