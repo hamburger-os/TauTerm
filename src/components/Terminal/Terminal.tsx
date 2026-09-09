@@ -163,6 +163,8 @@ interface TerminalInstanceProps {
   onShowSearch?: () => void;
   /** 触发断开当前会话 */
   onDisconnectSession?: () => void;
+  /** 当前 Session 是否提供 Protocol Inspector 右侧栏 */
+  allowProtocolInspect?: boolean;
 }
 
 /**
@@ -172,7 +174,7 @@ interface TerminalInstanceProps {
  * 接受 sessionId 以区分数据路由。
  */
 const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function TerminalInstance(
-  { sessionId, onData, isConnected = false, isActive = true, onTermReady, onCleanup, fontSize, bufferLines, onShowSearch, onDisconnectSession },
+  { sessionId, onData, isConnected = false, isActive = true, onTermReady, onCleanup, fontSize, bufferLines, onShowSearch, onDisconnectSession, allowProtocolInspect = true },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -502,12 +504,14 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
         icon: "clipboard",
         disabled: !hasSel,
       },
-      {
-        id: "inspectProtocol",
-        label: t("terminal.inspectProtocol", "Inspect selection"),
-        icon: "search",
-        disabled: !hasSel,
-      },
+      ...(allowProtocolInspect
+        ? [{
+            id: "inspectProtocol",
+            label: t("terminal.inspectProtocol", "Inspect selection"),
+            icon: "search" as const,
+            disabled: !hasSel,
+          }]
+        : []),
       {
         id: "paste",
         label: t("terminal.paste", "Paste"),
@@ -545,7 +549,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
     }
 
     return items;
-  }, [t, isConnected, contextMenu]);
+  }, [allowProtocolInspect, t, isConnected, contextMenu]);
 
   // 菜单项点击处理
   const handleContextMenuSelect = useCallback((itemId: string) => {
