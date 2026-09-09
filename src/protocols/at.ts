@@ -1,5 +1,6 @@
 import type {
   ParsedField,
+  ProtocolIssue,
   ProtocolParseOutcome,
   ProtocolRange,
 } from "./types.ts";
@@ -63,7 +64,7 @@ export function inspectAtResponse(input: string): ProtocolParseOutcome {
   if (!normalized) return { result: null, errorCode: "emptyInput" };
 
   const fields: ParsedField[] = [];
-  const issues = [];
+  const issues: ProtocolIssue[] = [];
   let cursor = 0;
 
   for (const rawLine of normalized.split("\n")) {
