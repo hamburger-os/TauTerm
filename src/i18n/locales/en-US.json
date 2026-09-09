@@ -497,7 +497,11 @@
       "customSchemaInvalid": "Custom schema must be valid JSON with a fields array",
       "nmeaParseError": "Cannot parse the NMEA 0183 sentence",
       "unsupportedProtocolInspector": "Unsupported protocol inspector"
-    }
+    },
+    "historyTitle": "Recent inputs ({{count}})",
+    "pinInput": "Pin input",
+    "unpinInput": "Unpin input",
+    "clearRecentInputs": "Clear recent inputs"
   },
   "titleBar": {
     "minimize": "Minimize",
