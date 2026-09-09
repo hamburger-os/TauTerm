@@ -16,7 +16,7 @@ export interface RightSidebarPanelProps {
  * 可折叠面板通用组件
  *
  * 用于右侧栏中各工具框体。标题栏始终可见，点击可折叠/展开内容区。
- * 折叠动画通过 CSS max-height 过渡实现。
+ * 折叠动画由 CSS grid track 过渡完成，不需要持续测量内容高度。
  */
 export default function RightSidebarPanel({
   title,
