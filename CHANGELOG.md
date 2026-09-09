@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.4] — 2026-09-08
+## [0.6.4] — 2026-09-09
 
 ### Changed
 - **Terminal clipboard contract** — terminal copy/paste is now explicitly owned by TauTerm instead of relying on implicit WebView/xterm behavior. The defaults are `Ctrl+Shift+C` / `Ctrl+Shift+V`, with `Ctrl+Insert` / `Shift+Insert` compatibility aliases and macOS `Cmd+C` / `Cmd+V`; ordinary `Ctrl+C` / `Ctrl+V` remain available to terminal applications. All paste paths converge on xterm `paste()`; content containing a line break requires preview confirmation when Bracketed Paste Mode (DECSET 2004) is not active, and payloads over 5 KiB are always confirmed before being sent.
