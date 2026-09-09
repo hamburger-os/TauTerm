@@ -375,6 +375,12 @@ assert.match(conflictDialog, /variant="danger"/);
 assert.match(conflictDialog, /variant="primary"/);
 assert.match(conflictDialog, /variant="ghost"/);
 
+const conflictDialogCss = await source("src/components/FileManager/ConflictResolutionModal.module.css");
+assert.match(conflictDialogCss, /border-radius:\s*var\(--radius-xl\)/);
+assert.match(conflictDialogCss, /font-size:\s*var\(--text-md\)/);
+assert.match(conflictDialogCss, /font-weight:\s*700/);
+assert.match(conflictDialogCss, /font-size:\s*var\(--text-sm\)/);
+
 const propertiesModal = await source("src/components/FileManager/FilePropertiesModal.tsx");
 assert.match(propertiesModal, /const canChmod = entryType === "file" \|\| entryType === "directory"/);
 assert.match(propertiesModal, /\{canChmod && \(/);

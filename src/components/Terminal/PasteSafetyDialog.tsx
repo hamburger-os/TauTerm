@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { analyzeTerminalPaste, buildTerminalPastePreview } from "../../utils/terminalClipboard";
 import Icon from "../common/Icon";
+import GlassButton from "../common/GlassButton";
 import styles from "./PasteSafetyDialog.module.css";
 
 interface PasteSafetyDialogProps {
@@ -18,8 +19,7 @@ export default function PasteSafetyDialog({
   onCancel,
 }: PasteSafetyDialogProps) {
   const { t } = useTranslation();
-  const cancelButtonRef = useRef<HTMLButtonElement>(null);
-  const confirmButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const isOpen = text !== null;
 
   const analysis = useMemo(
@@ -33,7 +33,12 @@ export default function PasteSafetyDialog({
 
   useEffect(() => {
     if (!isOpen) return;
-    const frame = requestAnimationFrame(() => cancelButtonRef.current?.focus());
+    const frame = requestAnimationFrame(() => {
+      dialogRef.current
+        ?.querySelector<HTMLButtonElement>('[data-action="cancel"]')
+        ?.focus();
+    });
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -41,17 +46,23 @@ export default function PasteSafetyDialog({
         onCancel();
         return;
       }
-      if (event.key === "Tab") {
-        const active = document.activeElement;
-        if (event.shiftKey && active === cancelButtonRef.current) {
-          event.preventDefault();
-          confirmButtonRef.current?.focus();
-        } else if (!event.shiftKey && active === confirmButtonRef.current) {
-          event.preventDefault();
-          cancelButtonRef.current?.focus();
-        }
+      if (event.key !== "Tab") return;
+
+      const buttons = Array.from(
+        dialogRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+      );
+      if (buttons.length === 0) return;
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
+
     document.addEventListener("keydown", handleKeyDown, true);
     return () => {
       cancelAnimationFrame(frame);
@@ -73,6 +84,7 @@ export default function PasteSafetyDialog({
           }}
         >
           <motion.div
+            ref={dialogRef}
             className={`${styles.dialog} liquid-glass`}
             role="alertdialog"
             aria-modal="true"
@@ -87,7 +99,7 @@ export default function PasteSafetyDialog({
               <span className={styles.warningIcon} aria-hidden="true">
                 <Icon name="warning" size="md" />
               </span>
-              <div>
+              <div className={styles.headerText}>
                 <h3 id="terminal-paste-warning-title" className={styles.title}>
                   {t("terminal.pasteWarningTitle")}
                 </h3>
@@ -112,23 +124,27 @@ export default function PasteSafetyDialog({
               {preview.truncated ? "\n…" : ""}
             </pre>
 
-            <div className={styles.actions}>
-              <button
-                ref={cancelButtonRef}
+            <div className={styles.footer}>
+              <GlassButton
                 type="button"
-                className={`${styles.button} liquid-glass-ghost-button`}
+                variant="ghost"
+                size="md"
+                className={styles.actionButton}
+                data-action="cancel"
                 onClick={onCancel}
               >
                 {t("terminal.pasteWarningCancel")}
-              </button>
-              <button
-                ref={confirmButtonRef}
+              </GlassButton>
+              <GlassButton
                 type="button"
-                className={`${styles.button} liquid-glass-button`}
+                variant="primary"
+                size="md"
+                className={styles.actionButton}
+                data-action="confirm"
                 onClick={onConfirm}
               >
                 {t("terminal.pasteWarningConfirm")}
-              </button>
+              </GlassButton>
             </div>
           </motion.div>
         </motion.div>

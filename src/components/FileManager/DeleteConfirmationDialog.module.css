@@ -5,22 +5,22 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: var(--spacing-xl);
 }
 
 .dialog {
   width: min(460px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 20px;
-  border-radius: 16px;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-xl);
+  border-radius: var(--radius-xl);
 }
 
 .header {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--spacing-md);
 }
 
 .warningIcon {
@@ -30,41 +30,36 @@
   justify-content: center;
   width: 34px;
   height: 34px;
-  color: var(--color-error);
+}
+
+.headerText {
+  min-width: 0;
 }
 
 .title {
   margin: 0;
   color: var(--text-primary);
   font-size: var(--text-md);
+  font-weight: 700;
   line-height: 1.35;
 }
 
 .message {
-  margin: 6px 0 0;
+  margin: var(--spacing-xs) 0 0;
   color: var(--text-secondary);
   font-size: var(--text-sm);
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
-.actions {
+.footer {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--spacing-sm);
 }
 
-.button {
+.actionButton {
   min-width: 84px;
-  height: 34px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: 9px;
-  cursor: pointer;
-}
-
-.dangerButton {
-  color: var(--color-error);
 }
 
 @media (max-width: 420px) {
@@ -74,14 +69,14 @@
 
   .dialog {
     width: calc(100vw - 28px);
-    padding: 16px;
+    padding: var(--spacing-lg);
   }
 
-  .actions {
+  .footer {
     flex-direction: column-reverse;
   }
 
-  .button {
+  .actionButton {
     width: 100%;
   }
 }

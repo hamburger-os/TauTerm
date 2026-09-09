@@ -36,6 +36,28 @@ const preview = buildTerminalPastePreview(
 assert.equal(preview.preview, "1\n2\n3\n4\n5\n6\n7\n8");
 assert.equal(preview.truncated, true);
 
+const pasteDialogSource = await readFile(
+  path.join(ROOT, "src", "components", "Terminal", "PasteSafetyDialog.tsx"),
+  "utf8",
+);
+assert.match(pasteDialogSource, /role="alertdialog"/);
+assert.match(pasteDialogSource, /GlassButton/);
+assert.match(pasteDialogSource, /data-action="cancel"/);
+assert.match(pasteDialogSource, /variant="ghost"/);
+assert.match(pasteDialogSource, /variant="primary"/);
+assert.match(pasteDialogSource, /size="md"/);
+assert.match(pasteDialogSource, /dialogRef\.current\?\.querySelectorAll/);
+
+const pasteDialogCss = await readFile(
+  path.join(ROOT, "src", "components", "Terminal", "PasteSafetyDialog.module.css"),
+  "utf8",
+);
+assert.match(pasteDialogCss, /border-radius:\s*var\(--radius-xl\)/);
+assert.match(pasteDialogCss, /font-size:\s*var\(--text-md\)/);
+assert.match(pasteDialogCss, /font-weight:\s*700/);
+assert.match(pasteDialogCss, /font-size:\s*var\(--text-sm\)/);
+assert.match(pasteDialogCss, /font-size:\s*var\(--text-xs\)/);
+
 const terminalSource = await readFile(
   path.join(ROOT, "src", "components", "Terminal", "Terminal.tsx"),
   "utf8",
