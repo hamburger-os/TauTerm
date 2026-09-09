@@ -122,10 +122,12 @@ pub fn spawn_progress_broadcaster(
     app: AppHandle,
     mut rx: UnboundedReceiver<UnifiedProgress>,
     session_id: String,
+    transfer_id: String,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(mut progress) = rx.recv().await {
             progress.session_id = session_id.clone();
+            progress.transfer_id = transfer_id.clone();
             let _ = app.emit("file-transfer:progress", &progress);
         }
     })
