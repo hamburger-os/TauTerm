@@ -43,6 +43,8 @@ assert.match(
   /^\[Error:/,
   "HEX conversion must reject repeated embedded prefixes",
 );
+assert.equal(executeEncodingOp("-0xFF", "hex-to-dec"), "-255");
+assert.equal(executeEncodingOp("-11111111", "bin-to-hex"), "-FF");
 assert.match(
   executeEncodingOp("41GG", "hex-to-string"),
   /^\[Error:/,
