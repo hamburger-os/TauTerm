@@ -8,8 +8,8 @@
 //! ```ignore
 //! let mut guard = PanicGuard::new(app.clone(), session_id.clone());
 //! // ... 执行传输 ...
-//! // 传输成功后调用 defuse() 并显式 emit 成功事件
-//! // Drop 时：若未 defused 则自动 emit 失败事件
+//! // 正常结束后先调用 complete() 释放 SessionStore 传输占用，再显式 emit finished
+//! // Drop 时：若未 complete 则自动 cleanup 并 emit 失败事件
 //! ```
 
 use tauri::AppHandle;
