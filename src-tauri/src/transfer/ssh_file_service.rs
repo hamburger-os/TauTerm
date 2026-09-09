@@ -76,10 +76,7 @@ impl ProgressThrottle {
             return false;
         }
         self.last_emit = Instant::now();
-        self.last_percent = done
-            .saturating_mul(100)
-            .checked_div(total)
-            .unwrap_or(0);
+        self.last_percent = done.saturating_mul(100).checked_div(total).unwrap_or(0);
         self.last_done = done;
         true
     }
