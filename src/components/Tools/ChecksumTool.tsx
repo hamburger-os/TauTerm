@@ -32,6 +32,21 @@ type Algorithm =
   | "CRC32";
 type CrcAction = "calculate" | "verify";
 
+interface ChecksumValueResult {
+  label: string;
+  hex: string;
+  dec: string;
+  width?: CrcWidth;
+  valid?: boolean;
+  receivedHex?: string;
+}
+
+interface ChecksumErrorResult {
+  error: string;
+}
+
+type ChecksumComputedResult = ChecksumValueResult | ChecksumErrorResult;
+
 const ALGORITHMS: Algorithm[] = [
   "SUM8",
   "SUM16",
@@ -144,7 +159,7 @@ export function ChecksumToolInner() {
     customXorOut,
   ]);
 
-  const result = useMemo(() => {
+  const result = useMemo<ChecksumComputedResult | null>(() => {
     if (!inputOutcome?.ok || inputOutcome.value.bytes.length === 0) return null;
     const bytes = inputOutcome.value.bytes;
 
