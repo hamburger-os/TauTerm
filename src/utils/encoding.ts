@@ -68,15 +68,33 @@ export function stringToHex(str: string): string {
     .join(" ");
 }
 
+function normalizePrefixedDigits(
+  input: string,
+  prefix: "0x" | "0b",
+  digitPattern: RegExp,
+): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const tokens = trimmed.split(/[\s,]+/).filter(Boolean);
+  let cleaned = "";
+  for (const token of tokens) {
+    const normalizedPrefix = token.slice(0, 2).toLowerCase();
+    const digits = normalizedPrefix === prefix ? token.slice(2) : token;
+    if (!digits || !digitPattern.test(digits)) return null;
+    cleaned += digits;
+  }
+  return cleaned || null;
+}
+
 /** HEX → 字符串（支持空格/逗号/0x分隔） */
 export function hexToString(hex: string): string {
-  const cleaned = hex.replace(/\s+/g, "").replace(/0x/gi, "").replace(/,/g, "");
+  const cleaned = normalizeHexDigits(hex);
+  if (!cleaned) return "[Error: Invalid HEX input — contains non-HEX characters]";
   if (cleaned.length % 2 !== 0) return "[Error: Invalid HEX input — odd number of nibbles]";
   const bytes: number[] = [];
   for (let i = 0; i < cleaned.length; i += 2) {
-    const b = parseInt(cleaned.substring(i, i + 2), 16);
-    if (isNaN(b)) return "[Error: Invalid HEX input — contains non-HEX characters]";
-    bytes.push(b);
+    bytes.push(Number.parseInt(cleaned.substring(i, i + 2), 16));
   }
   return new TextDecoder().decode(new Uint8Array(bytes));
 }
@@ -86,13 +104,11 @@ export function hexToString(hex: string): string {
 // ══════════════════════════════════════════════════════════════════
 
 function normalizeHexDigits(input: string): string | null {
-  const cleaned = input.replace(/\s+/g, "").replace(/,/g, "").replace(/0x/gi, "");
-  return cleaned.length > 0 && /^[0-9a-fA-F]+$/.test(cleaned) ? cleaned : null;
+  return normalizePrefixedDigits(input, "0x", /^[0-9a-fA-F]+$/);
 }
 
 function normalizeBinaryDigits(input: string): string | null {
-  const cleaned = input.replace(/[\s_]+/g, "").replace(/0b/gi, "");
-  return cleaned.length > 0 && /^[01]+$/.test(cleaned) ? cleaned : null;
+  return normalizePrefixedDigits(input.replace(/_/g, ""), "0b", /^[01]+$/);
 }
 
 function parseDecimalBigInt(input: string): bigint | null {
@@ -198,13 +214,11 @@ export function floatToHex(value: number): string {
 
 /** HEX → 32位单精度浮点数（大端序） */
 export function hexToFloat(hex: string): number | null {
-  const cleaned = hex.replace(/\s+/g, "").replace(/0x/gi, "").replace(/,/g, "");
-  if (cleaned.length !== 8) return null;
+  const cleaned = normalizeHexDigits(hex);
+  if (!cleaned || cleaned.length !== 8) return null;
   const bytes = new Uint8Array(4);
   for (let i = 0; i < 4; i++) {
-    const b = parseInt(cleaned.substring(i * 2, i * 2 + 2), 16);
-    if (isNaN(b)) return null;
-    bytes[i] = b;
+    bytes[i] = Number.parseInt(cleaned.substring(i * 2, i * 2 + 2), 16);
   }
   return new DataView(bytes.buffer).getFloat32(0, false);
 }
