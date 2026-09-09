@@ -373,7 +373,7 @@ export function useFileManager(
     [sessionId],
   );
 
-  // ── 传输完成后刷新当前目录（监听统一 `file-transfer:finished` 事件）──
+  // ── SFTP 传输结束后刷新当前目录（成功/部分失败/取消都可能改变远端目录）──
   // 使用 ref 保持最新 currentPath，避免监听器因目录导航反复注册/注销
   const currentPathRef = useRef(currentPath);
   currentPathRef.current = currentPath;
@@ -387,7 +387,6 @@ export function useFileManager(
           path !== null
           && event.payload.session_id === sessionId
           && (!event.payload.protocol || event.payload.protocol === 'sftp')
-          && event.payload.success
         ) {
           // 静默刷新目录（不触发 loading 闪烁），仅更新条目列表
           invoke<SftpEntry[]>('sftp_list_dir_cmd', {
