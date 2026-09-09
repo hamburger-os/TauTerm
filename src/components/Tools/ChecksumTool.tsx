@@ -82,16 +82,20 @@ export function ChecksumToolInner() {
   return (
     <div className={styles.container}>
       {/* 输入模式 */}
-      <div className={styles.modeRow}>
+      <div className={`${styles.modeRow} liquid-selector-strip`}>
         <button
-          className={`${styles.modeBtn} liquid-glass-button ${inputMode === "string" ? "active" : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${inputMode === "string" ? "active" : ""}`}
           onClick={() => setInputMode("string")}
+          type="button"
+          aria-pressed={inputMode === "string"}
         >
           {t("tools.stringMode") ?? "Text"}
         </button>
         <button
-          className={`${styles.modeBtn} liquid-glass-button ${inputMode === "hex" ? "active" : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${inputMode === "hex" ? "active" : ""}`}
           onClick={() => setInputMode("hex")}
+          type="button"
+          aria-pressed={inputMode === "hex"}
         >
           {t("tools.hexMode") ?? "HEX"}
         </button>
@@ -121,12 +125,14 @@ export function ChecksumToolInner() {
       )}
 
       {/* 算法选择 */}
-      <div className={styles.algRow}>
+      <div className={`${styles.algRow} liquid-selector-strip`}>
         {(["SUM8", "SUM16", "XOR", "CRC8", "CRC16", "CRC32"] as Algorithm[]).map((alg) => (
           <button
             key={alg}
-            className={`${styles.algBtn} liquid-glass-button ${algorithm === alg ? "active" : ""}`}
+            className={`${styles.algBtn} liquid-glass-button liquid-selector-button ${algorithm === alg ? "active" : ""}`}
             onClick={() => setAlgorithm(alg)}
+            type="button"
+            aria-pressed={algorithm === alg}
           >
             {alg === "SUM8" ? "SUM8" : alg === "SUM16" ? "SUM16" : alg}
           </button>
@@ -183,7 +189,7 @@ export function ChecksumToolInner() {
           <div className={styles.resultLabel}>{result.label}:</div>
           <code className={styles.resultHex}>0x{result.hex}</code>
           <span className={styles.resultDec}>({result.dec})</span>
-          <button className={`${styles.copyBtn} liquid-glass-ghost-button`} onClick={handleCopy} title={t("common.copy") ?? "Copy"}>
+          <button className={`${styles.copyBtn} liquid-glass-ghost-button`} onClick={handleCopy} type="button" title={t("common.copy") ?? "Copy"}>
             {copied ? t("tools.copied") : t("common.copy")}
           </button>
         </div>
