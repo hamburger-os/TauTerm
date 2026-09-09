@@ -4,13 +4,16 @@
 //! 通过 `SshSideChannel::create_file_transfer()` 创建，消除 commands.rs 中的
 //! `downcast_ref::<SshSideChannel>()` 类型不安全转换。
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
 use crate::kernel::file_transfer::{
-    FileTransfer, FileTransferError, ProgressPosition, TransferDirection, UnifiedProgress,
+    FileTransfer, FileTransferError, FileTransferOptions, ProgressPosition, TransferDirection,
+    UnifiedProgress,
 };
+use crate::transfer::ssh_file_service::{SftpEntryType, SftpWriteOutcome};
 use crate::transfer::types::{BatchFileResult, FileInfo};
 
 /// SFTP 文件传输处理器
@@ -46,6 +49,31 @@ impl SftpFileTransfer {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ReceiveFilePlan {
+    remote_path: String,
+    local_path: String,
+    size: u64,
+}
+
+fn remote_basename(path: &str) -> String {
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or("download")
+        .to_string()
+}
+
+fn remote_relative(base: &str, path: &str) -> String {
+    let base = base.trim_end_matches('/');
+    path.strip_prefix(&format!("{}/", base))
+        .or_else(|| path.strip_prefix(base))
+        .unwrap_or(path)
+        .trim_start_matches('/')
+        .to_string()
+}
+
 #[async_trait::async_trait]
 impl FileTransfer for SftpFileTransfer {
     fn protocol(&self) -> &str {
@@ -60,6 +88,7 @@ impl FileTransfer for SftpFileTransfer {
         &self,
         files: &[FileInfo],
         remote_dir: Option<&str>,
+        options: &FileTransferOptions,
         progress: UnboundedSender<UnifiedProgress>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<BatchFileResult>, FileTransferError> {
@@ -70,34 +99,35 @@ impl FileTransfer for SftpFileTransfer {
         let rd = remote_dir.map(|d| d.trim_end_matches('/')).unwrap_or("/");
 
         log::info!(
-            "SFTP 批量上传开始: {} 个文件 → {} (合计 {} bytes)",
+            "SFTP 批量上传开始: {} 个文件 → {} (合计 {} bytes, overwrite={:?})",
             total,
             rd,
-            total_aggregate
+            total_aggregate,
+            options.overwrite_policy
         );
 
         for (i, file) in files.iter().enumerate() {
             if cancel.load(Ordering::SeqCst) {
-                log::info!("SFTP 上传已取消 (文件 {}/{})", i + 1, total);
-                results.push(BatchFileResult {
-                    file_name: file.name.clone(),
-                    status: "skipped".into(),
-                    size: 0,
-                    error: Some("传输已取消".into()),
-                });
-                continue;
+                for remaining in files.iter().skip(i) {
+                    results.push(BatchFileResult {
+                        file_name: remaining.name.clone(),
+                        status: "skipped".into(),
+                        size: 0,
+                        error: Some("传输已取消".into()),
+                    });
+                }
+                break;
             }
 
-            // 构建远程路径：remote_dir / filename（不污染 FileInfo.name）
             let remote_path = if rd == "/" || rd.is_empty() {
                 format!("/{}", file.name)
             } else {
                 format!("{}/{}", rd, file.name)
             };
-
             let display_name = file.name.clone();
             let pt = progress.clone();
             let fname = display_name.clone();
+            let base_completed = completed_bytes;
             let on_progress = move |done: u64, total_bytes: u64, speed: Option<f64>| {
                 let _ = pt.send(UnifiedProgress::chunk_with_speed(
                     "sftp",
@@ -107,22 +137,13 @@ impl FileTransfer for SftpFileTransfer {
                     ProgressPosition {
                         file_index: i,
                         total_files: total,
-                        aggregate_bytes: completed_bytes + done,
+                        aggregate_bytes: base_completed + done,
                         aggregate_total: total_aggregate,
                     },
                     TransferDirection::Send,
                     speed,
                 ));
             };
-
-            log::debug!(
-                "SFTP 上传文件 {}/{}: {} → {} ({} bytes)",
-                i + 1,
-                total,
-                file.path,
-                remote_path,
-                file.size
-            );
 
             let _ = progress.send(UnifiedProgress::file_start(
                 "sftp",
@@ -143,22 +164,22 @@ impl FileTransfer for SftpFileTransfer {
                 &file.path,
                 &remote_path,
                 Some(file.mtime).filter(|&t| t > 0),
+                options.overwrite_policy,
                 Some(&on_progress),
                 Some(&cancel),
             )
             .await;
 
             match result {
-                Ok(bytes) => {
+                Ok(SftpWriteOutcome::Completed { bytes, final_path }) => {
                     completed_bytes += bytes;
                     log::info!(
-                        "SFTP 上传完成 {}/{}: {} ({} bytes, 聚合 {}/{})",
+                        "SFTP 上传完成 {}/{}: {} -> {} ({} bytes)",
                         i + 1,
                         total,
                         display_name,
-                        bytes,
-                        completed_bytes,
-                        total_aggregate
+                        final_path,
+                        bytes
                     );
                     let _ = progress.send(UnifiedProgress::file_complete(
                         "sftp",
@@ -175,21 +196,37 @@ impl FileTransfer for SftpFileTransfer {
                         None,
                     ));
                     results.push(BatchFileResult {
-                        file_name: display_name.clone(),
+                        file_name: display_name,
                         status: "completed".into(),
                         size: bytes,
                         error: None,
                     });
                 }
+                Ok(SftpWriteOutcome::Skipped { final_path }) => {
+                    log::info!("SFTP 上传按覆盖策略跳过: {}", final_path);
+                    let _ = progress.send(UnifiedProgress::file_complete(
+                        "sftp",
+                        &display_name,
+                        0,
+                        ProgressPosition {
+                            file_index: i,
+                            total_files: total,
+                            aggregate_bytes: completed_bytes,
+                            aggregate_total: total_aggregate,
+                        },
+                        TransferDirection::Send,
+                        true,
+                        None,
+                    ));
+                    results.push(BatchFileResult {
+                        file_name: display_name,
+                        status: "skipped".into(),
+                        size: 0,
+                        error: None,
+                    });
+                }
                 Err(e) => {
                     let is_cancelled = cancel.load(Ordering::SeqCst);
-                    log::error!(
-                        "SFTP 上传失败 {}/{}: {} — {}",
-                        i + 1,
-                        total,
-                        display_name,
-                        e
-                    );
                     let _ = progress.send(UnifiedProgress::file_complete(
                         "sftp",
                         &display_name,
@@ -205,7 +242,7 @@ impl FileTransfer for SftpFileTransfer {
                         Some(e.clone()),
                     ));
                     results.push(BatchFileResult {
-                        file_name: display_name.clone(),
+                        file_name: display_name,
                         status: if is_cancelled { "skipped" } else { "failed" }.into(),
                         size: 0,
                         error: Some(e),
@@ -221,15 +258,6 @@ impl FileTransfer for SftpFileTransfer {
                         }
                         break;
                     }
-                    // 非取消失败：清理远端半成品文件，避免残留不完整数据
-                    // 注：cleanup_remote_partial 返回 ()，错误已在内部记录日志
-                    log::info!("SFTP 上传失败，清理远端残缺文件: {}", remote_path);
-                    crate::transfer::ssh_file_service::cleanup_remote_partial(
-                        &self.session,
-                        &self.sftp_cache,
-                        &remote_path,
-                    )
-                    .await;
                 }
             }
         }
@@ -237,15 +265,6 @@ impl FileTransfer for SftpFileTransfer {
         let completed = results.iter().filter(|r| r.status == "completed").count();
         let failed = results.iter().filter(|r| r.status == "failed").count();
         let skipped = results.iter().filter(|r| r.status == "skipped").count();
-
-        log::info!(
-            "SFTP 批量上传完成: {} 成功, {} 失败, {} 跳过 (共 {} 个, 合计 {} bytes)",
-            completed,
-            failed,
-            skipped,
-            total,
-            completed_bytes
-        );
 
         let _ = progress.send(UnifiedProgress::batch_complete(
             "sftp",
@@ -255,12 +274,13 @@ impl FileTransfer for SftpFileTransfer {
             skipped,
         ));
 
-        if skipped > 0 {
+        if cancel.load(Ordering::SeqCst) {
             return Err(FileTransferError::Cancelled);
         }
         if failed > 0 {
             let first_err = results
                 .iter()
+                .filter(|r| r.status == "failed")
                 .filter_map(|r| r.error.as_deref())
                 .next()
                 .unwrap_or("部分文件上传失败");
@@ -269,7 +289,6 @@ impl FileTransfer for SftpFileTransfer {
                 failed, first_err
             )));
         }
-
         Ok(results)
     }
 
@@ -277,101 +296,128 @@ impl FileTransfer for SftpFileTransfer {
         &self,
         download_dir: &str,
         remote_paths: &[String],
+        options: &FileTransferOptions,
         progress: UnboundedSender<UnifiedProgress>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<BatchFileResult>, FileTransferError> {
-        use std::sync::atomic::Ordering;
+        let mut plans: Vec<ReceiveFilePlan> = Vec::new();
+        let mut results: Vec<BatchFileResult> = Vec::new();
 
-        // Phase 1: 解析远程路径 → (base_dir, full_path, cached_file_size) 三元组
-        // base_dir 非空表示该文件来自目录递归展开，用于计算相对路径保留目录结构。
-        // cached_file_size 为 Option<u64>：非目录文件在 Phase 1 已获取 metadata(size)，
-        // 目录展开的子文件需 Phase 2 单独获取大小。
-        let mut resolved_pairs: Vec<(String, String, Option<u64>)> = Vec::new();
-        for path in remote_paths {
-            let metadata = {
-                let cache = self.sftp_cache.lock().await;
-                match cache.as_ref() {
-                    Some(sftp) => sftp.metadata(path).await.ok(),
-                    None => None,
-                }
-            };
-            let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            let file_size = metadata.and_then(|m| m.size); // None for directories
-            if is_dir {
-                log::info!("SFTP 检测到目录，递归列举: {}", path);
-                let files = crate::transfer::ssh_file_service::sftp_list_dir_recursive(
-                    &self.session,
-                    &self.sftp_cache,
-                    path,
-                )
-                .await
-                .map_err(FileTransferError::Other)?;
-                log::info!("SFTP 目录 '{}' 包含 {} 个文件", path, files.len());
-                for f in files {
-                    // 目录子文件大小未知 (None)，Phase 2 单独获取
-                    resolved_pairs.push((path.clone(), f, None));
-                }
-            } else {
-                resolved_pairs.push((String::new(), path.clone(), file_size));
-            }
-        }
-
-        if resolved_pairs.is_empty() {
-            return Err(FileTransferError::Other(
-                "没有可下载的文件（目录为空或路径不存在）".into(),
-            ));
-        }
-
-        let mut results = Vec::new();
-        let total = resolved_pairs.len();
-
-        log::info!("SFTP 批量下载开始: {} 个文件 → {}", total, download_dir);
-
-        // Phase 2: 对目录子文件（cached_file_size=None）逐文件获取大小。
-        // 非目录文件已在 Phase 1 缓存了大小，跳过网络 I/O。
-        // 每文件独立获取锁 + 释放，避免持锁跨多个 .await 阻塞其他 SFTP 操作。
-        let mut file_sizes: Vec<u64> = Vec::with_capacity(total);
-        let mut total_aggregate: u64 = 0;
-        for (_base, remote_path, cached_size) in resolved_pairs.iter() {
-            if let Some(sz) = cached_size {
-                file_sizes.push(*sz);
-                total_aggregate += *sz;
-            } else {
-                let sz = {
-                    let cache = self.sftp_cache.lock().await;
-                    match cache.as_ref() {
-                        Some(sftp) => sftp
-                            .metadata(remote_path)
-                            .await
-                            .map(|m| m.size.unwrap_or(0))
-                            .unwrap_or(0),
-                        None => 0,
-                    }
-                };
-                file_sizes.push(sz);
-                total_aggregate += sz;
-            }
-        }
-        log::info!(
-            "SFTP 下载聚合总量: {} bytes ({} 个文件)",
-            total_aggregate,
-            total
-        );
-
-        let mut completed_bytes: u64 = 0;
-
-        for (i, (base_dir, remote_path, _cached_size)) in resolved_pairs.iter().enumerate() {
+        // 先建立明确的源→目标计划。目录节点本身会创建到本地，因此空目录可完整保留；
+        // 符号链接默认不跟随，避免递归穿出用户选中的目录树。
+        for (root_index, remote_path) in remote_paths.iter().enumerate() {
             if cancel.load(Ordering::SeqCst) {
-                log::info!("SFTP 下载已取消 (文件 {}/{})", i + 1, total);
-                results.push(BatchFileResult {
+                return Err(FileTransferError::Cancelled);
+            }
+            let stat = crate::transfer::ssh_file_service::sftp_stat(
+                &self.session,
+                &self.sftp_cache,
+                remote_path,
+            )
+            .await
+            .map_err(FileTransferError::Other)?;
+
+            let explicit_destination = options
+                .destination_paths
+                .get(root_index)
+                .filter(|path| !path.trim().is_empty())
+                .cloned();
+
+            match stat.entry_type {
+                SftpEntryType::File => {
+                    let local_path = explicit_destination.unwrap_or_else(|| {
+                        Path::new(download_dir)
+                            .join(remote_basename(remote_path))
+                            .to_string_lossy()
+                            .to_string()
+                    });
+                    plans.push(ReceiveFilePlan {
+                        remote_path: remote_path.clone(),
+                        local_path,
+                        size: stat.size,
+                    });
+                }
+                SftpEntryType::Directory => {
+                    let local_root = explicit_destination.unwrap_or_else(|| {
+                        Path::new(download_dir)
+                            .join(remote_basename(remote_path))
+                            .to_string_lossy()
+                            .to_string()
+                    });
+                    tokio::fs::create_dir_all(&local_root)
+                        .await
+                        .map_err(|e| FileTransferError::Other(format!(
+                            "创建本地目录 '{}' 失败: {}",
+                            local_root, e
+                        )))?;
+
+                    let tree = crate::transfer::ssh_file_service::sftp_list_tree_recursive(
+                        &self.session,
+                        &self.sftp_cache,
+                        remote_path,
+                    )
+                    .await
+                    .map_err(FileTransferError::Other)?;
+
+                    for item in tree {
+                        let relative = remote_relative(remote_path, &item.path);
+                        let local_path = Path::new(&local_root)
+                            .join(&relative)
+                            .to_string_lossy()
+                            .to_string();
+                        match item.entry_type {
+                            SftpEntryType::Directory => {
+                                tokio::fs::create_dir_all(&local_path)
+                                    .await
+                                    .map_err(|e| FileTransferError::Other(format!(
+                                        "创建本地目录 '{}' 失败: {}",
+                                        local_path, e
+                                    )))?;
+                            }
+                            SftpEntryType::File => plans.push(ReceiveFilePlan {
+                                remote_path: item.path,
+                                local_path,
+                                size: item.size,
+                            }),
+                            SftpEntryType::Symlink => results.push(BatchFileResult {
+                                file_name: item.path,
+                                status: "skipped".into(),
+                                size: 0,
+                                error: Some("符号链接默认不跟随，已跳过".into()),
+                            }),
+                            _ => results.push(BatchFileResult {
+                                file_name: item.path,
+                                status: "skipped".into(),
+                                size: 0,
+                                error: Some("非常规文件类型未复制".into()),
+                            }),
+                        }
+                    }
+                }
+                SftpEntryType::Symlink => results.push(BatchFileResult {
                     file_name: remote_path.clone(),
                     status: "skipped".into(),
                     size: 0,
-                    error: Some("传输已取消".into()),
-                });
-                for (_b, remaining, _cached) in resolved_pairs.iter().skip(i + 1) {
+                    error: Some("符号链接默认不跟随，已跳过".into()),
+                }),
+                _ => results.push(BatchFileResult {
+                    file_name: remote_path.clone(),
+                    status: "skipped".into(),
+                    size: 0,
+                    error: Some("非常规文件类型未复制".into()),
+                }),
+            }
+        }
+
+        let total = plans.len();
+        let total_aggregate = plans.iter().map(|plan| plan.size).sum::<u64>();
+        let mut completed_bytes = 0u64;
+
+        for (i, plan) in plans.iter().enumerate() {
+            if cancel.load(Ordering::SeqCst) {
+                for remaining in plans.iter().skip(i) {
                     results.push(BatchFileResult {
-                        file_name: remaining.clone(),
+                        file_name: remote_basename(&remaining.remote_path),
                         status: "skipped".into(),
                         size: 0,
                         error: Some("传输已取消".into()),
@@ -380,48 +426,10 @@ impl FileTransfer for SftpFileTransfer {
                 break;
             }
 
-            // 计算本地相对路径：保留目录结构
-            let relative = if base_dir.is_empty() {
-                // 单个文件：仅用文件名
-                std::path::Path::new(remote_path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| remote_path.clone())
-            } else {
-                // 目录下载：去掉 base_dir 前缀得到相对路径
-                let base = base_dir.trim_end_matches('/');
-                remote_path
-                    .strip_prefix(&format!("{}/", base))
-                    .or_else(|| remote_path.strip_prefix(base))
-                    .unwrap_or(remote_path)
-                    .trim_start_matches('/')
-                    .to_string()
-            };
-            let local_file_path = std::path::Path::new(download_dir)
-                .join(&relative)
-                .to_string_lossy()
-                .to_string();
-
-            let file_name = std::path::Path::new(remote_path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| remote_path.clone());
-            let file_size = file_sizes.get(i).copied().unwrap_or(0);
-
-            log::debug!(
-                "SFTP 下载文件 {}/{}: {} → {} ({} bytes, 聚合 {}/{})",
-                i + 1,
-                total,
-                remote_path,
-                local_file_path,
-                file_size,
-                completed_bytes,
-                total_aggregate
-            );
-
+            let file_name = remote_basename(&plan.remote_path);
             let pt = progress.clone();
             let fname = file_name.clone();
-            let cb = completed_bytes;
+            let base_completed = completed_bytes;
             let ta = total_aggregate;
             let on_progress = move |done: u64, total_bytes: u64, speed: Option<f64>| {
                 let _ = pt.send(UnifiedProgress::chunk_with_speed(
@@ -432,7 +440,7 @@ impl FileTransfer for SftpFileTransfer {
                     ProgressPosition {
                         file_index: i,
                         total_files: total,
-                        aggregate_bytes: cb + done,
+                        aggregate_bytes: base_completed + done,
                         aggregate_total: ta,
                     },
                     TransferDirection::Receive,
@@ -443,7 +451,7 @@ impl FileTransfer for SftpFileTransfer {
             let _ = progress.send(UnifiedProgress::file_start(
                 "sftp",
                 &file_name,
-                file_size,
+                plan.size,
                 ProgressPosition {
                     file_index: i,
                     total_files: total,
@@ -456,24 +464,24 @@ impl FileTransfer for SftpFileTransfer {
             let result = crate::transfer::ssh_file_service::sftp_download(
                 &self.session,
                 &self.sftp_cache,
-                remote_path,
-                &local_file_path,
+                &plan.remote_path,
+                &plan.local_path,
+                options.overwrite_policy,
                 Some(&on_progress),
                 Some(&cancel),
             )
             .await;
 
             match result {
-                Ok(bytes) => {
+                Ok(SftpWriteOutcome::Completed { bytes, final_path }) => {
                     completed_bytes += bytes;
                     log::info!(
-                        "SFTP 下载完成 {}/{}: {} ({} bytes, 聚合 {}/{})",
+                        "SFTP 下载完成 {}/{}: {} -> {} ({} bytes)",
                         i + 1,
                         total,
                         file_name,
-                        bytes,
-                        completed_bytes,
-                        total_aggregate
+                        final_path,
+                        bytes
                     );
                     let _ = progress.send(UnifiedProgress::file_complete(
                         "sftp",
@@ -490,15 +498,37 @@ impl FileTransfer for SftpFileTransfer {
                         None,
                     ));
                     results.push(BatchFileResult {
-                        file_name: file_name.clone(),
+                        file_name,
                         status: "completed".into(),
                         size: bytes,
                         error: None,
                     });
                 }
+                Ok(SftpWriteOutcome::Skipped { final_path }) => {
+                    log::info!("SFTP 下载按覆盖策略跳过: {}", final_path);
+                    let _ = progress.send(UnifiedProgress::file_complete(
+                        "sftp",
+                        &file_name,
+                        0,
+                        ProgressPosition {
+                            file_index: i,
+                            total_files: total,
+                            aggregate_bytes: completed_bytes,
+                            aggregate_total: total_aggregate,
+                        },
+                        TransferDirection::Receive,
+                        true,
+                        None,
+                    ));
+                    results.push(BatchFileResult {
+                        file_name,
+                        status: "skipped".into(),
+                        size: 0,
+                        error: None,
+                    });
+                }
                 Err(e) => {
                     let is_cancelled = cancel.load(Ordering::SeqCst);
-                    log::error!("SFTP 下载失败 {}/{}: {} — {}", i + 1, total, file_name, e);
                     let _ = progress.send(UnifiedProgress::file_complete(
                         "sftp",
                         &file_name,
@@ -514,17 +544,15 @@ impl FileTransfer for SftpFileTransfer {
                         Some(e.clone()),
                     ));
                     results.push(BatchFileResult {
-                        file_name: file_name.clone(),
+                        file_name,
                         status: if is_cancelled { "skipped" } else { "failed" }.into(),
                         size: 0,
                         error: Some(e),
                     });
                     if is_cancelled {
-                        // 跳过剩余文件（使用 resolved_pairs 而非 remote_paths，
-                        // 因为目录展开后条目数可能不同，索引 i 来自 resolved_pairs）
-                        for (_b, remaining, _cached) in resolved_pairs.iter().skip(i + 1) {
+                        for remaining in plans.iter().skip(i + 1) {
                             results.push(BatchFileResult {
-                                file_name: remaining.clone(),
+                                file_name: remote_basename(&remaining.remote_path),
                                 status: "skipped".into(),
                                 size: 0,
                                 error: Some("传输已取消".into()),
@@ -540,14 +568,6 @@ impl FileTransfer for SftpFileTransfer {
         let failed = results.iter().filter(|r| r.status == "failed").count();
         let skipped = results.iter().filter(|r| r.status == "skipped").count();
 
-        log::info!(
-            "SFTP 批量下载完成: {} 成功, {} 失败, {} 跳过 (共 {} 个)",
-            completed,
-            failed,
-            skipped,
-            total
-        );
-
         let _ = progress.send(UnifiedProgress::batch_complete(
             "sftp",
             TransferDirection::Receive,
@@ -556,12 +576,13 @@ impl FileTransfer for SftpFileTransfer {
             skipped,
         ));
 
-        if skipped > 0 {
+        if cancel.load(Ordering::SeqCst) {
             return Err(FileTransferError::Cancelled);
         }
         if failed > 0 {
             let first_err = results
                 .iter()
+                .filter(|r| r.status == "failed")
                 .filter_map(|r| r.error.as_deref())
                 .next()
                 .unwrap_or("部分文件下载失败");
@@ -574,3 +595,4 @@ impl FileTransfer for SftpFileTransfer {
         Ok(results)
     }
 }
+

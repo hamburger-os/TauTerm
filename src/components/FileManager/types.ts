@@ -12,6 +12,7 @@ export type PromptMode = 'newFile' | 'newFolder' | 'rename';
 
 export type SortField = 'name' | 'size' | 'modified';
 export type SortDirection = 'asc' | 'desc';
+export type { OverwritePolicy, TransferStartAck } from '../../types/transfer';
 
 /** 统一文件传输进度事件载荷（对应后端 `file-transfer:progress` emit） */
 export interface UnifiedProgressPayload {

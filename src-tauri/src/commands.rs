@@ -393,6 +393,7 @@ pub struct FileTransferSendRequest {
     pub protocol: String,
     pub file_paths: Vec<String>,
     pub remote_dir: Option<String>,
+    pub overwrite_policy: Option<String>,
     pub block_size: Option<usize>,
     pub checksum_mode: Option<String>,
     pub streaming: Option<bool>,
@@ -405,6 +406,8 @@ pub struct FileTransferReceiveRequest {
     pub protocol: String,
     pub download_dir: String,
     pub remote_paths: Vec<String>,
+    pub destination_paths: Option<Vec<String>>,
+    pub overwrite_policy: Option<String>,
     pub block_size: Option<usize>,
     pub checksum_mode: Option<String>,
     pub streaming: Option<bool>,
@@ -3253,6 +3256,8 @@ pub async fn sftp_read_head_cmd(
     max_bytes: u64,
 ) -> Result<ReadHeadResult, String> {
     let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    // 后端再次收紧上限，不能依赖 WebView 调用方自律。
+    let max_bytes = max_bytes.min(1_048_576);
     let (data, total_size) =
         sftp_read_head(&ssh_sc.session, &ssh_sc.sftp, &remote_path, max_bytes).await?;
     Ok(ReadHeadResult { data, total_size })
@@ -3490,12 +3495,13 @@ pub async fn file_transfer_send(
     app: AppHandle,
     state: State<'_, AppState>,
     request: FileTransferSendRequest,
-) -> Result<(), String> {
+) -> Result<crate::transfer::orchestrator::TransferStartAck, String> {
     let FileTransferSendRequest {
         session_id,
         protocol,
         file_paths,
         remote_dir,
+        overwrite_policy,
         block_size,
         checksum_mode,
         streaming,
@@ -3538,6 +3544,8 @@ pub async fn file_transfer_send(
         files.len()
     );
 
+    let overwrite_policy =
+        crate::kernel::file_transfer::OverwritePolicy::parse(overwrite_policy.as_deref())?;
     let orch = crate::transfer::orchestrator::create_orchestrator(&pt)?;
     orch.execute_send(
         app,
@@ -3545,6 +3553,10 @@ pub async fn file_transfer_send(
             session_id: internal_id,
             files,
             remote_dir,
+            options: crate::kernel::file_transfer::FileTransferOptions {
+                overwrite_policy,
+                destination_paths: Vec::new(),
+            },
             progress_tx,
             progress_rx,
             block_size,
@@ -3565,12 +3577,14 @@ pub async fn file_transfer_receive(
     app: AppHandle,
     state: State<'_, AppState>,
     request: FileTransferReceiveRequest,
-) -> Result<(), String> {
+) -> Result<crate::transfer::orchestrator::TransferStartAck, String> {
     let FileTransferReceiveRequest {
         session_id,
         protocol,
         download_dir,
         remote_paths,
+        destination_paths,
+        overwrite_policy,
         block_size,
         checksum_mode,
         streaming,
@@ -3596,6 +3610,8 @@ pub async fn file_transfer_receive(
         remote_paths.len()
     );
 
+    let overwrite_policy =
+        crate::kernel::file_transfer::OverwritePolicy::parse(overwrite_policy.as_deref())?;
     let orch = crate::transfer::orchestrator::create_orchestrator(&pt)?;
     orch.execute_receive(
         app,
@@ -3603,6 +3619,10 @@ pub async fn file_transfer_receive(
             session_id: internal_id,
             download_dir,
             remote_paths,
+            options: crate::kernel::file_transfer::FileTransferOptions {
+                overwrite_policy,
+                destination_paths: destination_paths.unwrap_or_default(),
+            },
             progress_tx,
             progress_rx,
             block_size,
@@ -3616,7 +3636,11 @@ pub async fn file_transfer_receive(
 
 /// 统一文件传输取消命令（协议无关）
 #[tauri::command]
-pub fn file_transfer_cancel(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub fn file_transfer_cancel(
+    state: State<'_, AppState>,
+    session_id: String,
+    transfer_id: Option<String>,
+) -> Result<(), String> {
     let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
     // 解析子通道 ID → 父会话 ID（SSH 多连接支持）
     let resolved_id = store
@@ -3626,7 +3650,7 @@ pub fn file_transfer_cancel(state: State<'_, AppState>, session_id: String) -> R
     log::info!("请求取消传输: session={}", resolved_id);
     // 尝试两种取消路径：内联传输和侧通道传输
     let inline_result = store.cancel_transfer(&resolved_id);
-    let sc_result = store.cancel_transfer_op(&resolved_id);
+    let sc_result = store.cancel_transfer_op(&resolved_id, transfer_id.as_deref());
     // 只要其中一个成功即可
     if inline_result.is_ok() || sc_result.is_ok() {
         log::info!("传输取消已置位: session={}", resolved_id);

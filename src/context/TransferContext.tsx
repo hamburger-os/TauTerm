@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   TransferDirection,
+  TransferStartAck,
   TransferStatus,
   TransferProgress,
   TransferHistoryItem,
@@ -388,7 +389,14 @@ export function TransferProvider({ children }: { children: ReactNode }) {
             JSON.stringify(args, null, 2),
           );
         }
-        await invoke(commandName, { request: args });
+        const ack = await invoke<TransferStartAck>(commandName, { request: args });
+        if (
+          activeSessionIdRef.current === sessionId
+          && activeProtocolRef.current === protocol
+          && ack?.transfer_id
+        ) {
+          activeTransferIdRef.current = ack.transfer_id;
+        }
       } catch (e) {
         console.error(`[TransferContext] ${commandName} failed:`, e);
         // 已收到 started 的传输，其终态由精确 transfer_id 的 finished 唯一负责。
@@ -454,8 +462,12 @@ export function TransferProvider({ children }: { children: ReactNode }) {
 
   const cancelTransfer = useCallback(async (sessionId: string) => {
     try {
-      await invoke("file_transfer_cancel", { sessionId });
-      dispatch({ type: "SET_STATUS", status: "cancelled" });
+      await invoke("file_transfer_cancel", {
+        sessionId,
+        transferId: activeTransferIdRef.current,
+      });
+      // 取消命令仅代表请求被接受；真正 cancelled 终态仍只由精确 transfer_id 的
+      // file-transfer:finished 事件决定。
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `Cancel failed: ${e}` });
     }

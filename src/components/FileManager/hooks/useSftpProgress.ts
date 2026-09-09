@@ -296,7 +296,10 @@ export function useSftpProgress(sessionId: string) {
     setProgress(prev => ({ ...prev, phase: 'cancelling', speed: null }));
 
     try {
-      await invoke('file_transfer_cancel', { sessionId });
+      await invoke('file_transfer_cancel', {
+        sessionId,
+        transferId: activeTransferIdRef.current,
+      });
     } catch (error) {
       // 取消命令失败不等于传输失败；恢复原运行状态，最终结果仍由 finished 决定。
       phaseRef.current = previousPhase;

@@ -244,6 +244,8 @@ pub struct ActiveSessionHandle {
     /// 侧通道传输取消标志（传输进行中置位，传输循环每块检查）。
     /// None 表示当前无传输进行。由传输命令在传输前设置，传输结束后置 None。
     pub transfer_cancel: Option<Arc<AtomicBool>>,
+    /// 当前侧通道传输的精确任务 ID；与 transfer_cancel 同生命周期。
+    pub active_transfer_id: Option<String>,
     /// 侧通道异步传输任务的 JoinHandle 集合。
     /// 关闭会话时 join 所有 handle，确保传输 task 的 Drop 清理逻辑执行完毕，
     /// 避免残留半成品文件（上传残留远端，下载残留本地）。
@@ -643,6 +645,7 @@ impl SessionStore {
             side_channel: conn.side_channel,
             channel_factory: conn.channel_factory,
             transfer_cancel: None,
+            active_transfer_id: None,
             transfer_tasks: Vec::new(),
             teardown_delay: conn.teardown_delay,
             sub_connections: Vec::new(),
@@ -795,6 +798,7 @@ impl SessionStore {
             side_channel,
             channel_factory,
             transfer_cancel: None,
+            active_transfer_id: None,
             transfer_tasks: Vec::new(),
             teardown_delay: Duration::ZERO,
             sub_connections: Vec::new(),
@@ -1808,24 +1812,40 @@ impl SessionStore {
     ///
     /// 设计决策：同一会话同一时刻只允许一个传输进行中。
     /// 若已有传输进行中（flag 已存在），返回错误以防止并发传输互相覆盖取消标志。
-    pub fn transfer_start(&mut self, session_id: &str) -> Result<Arc<AtomicBool>, String> {
+    pub fn transfer_start(
+        &mut self,
+        session_id: &str,
+        transfer_id: &str,
+    ) -> Result<Arc<AtomicBool>, String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        if handle.transfer_cancel.is_some() {
+        if handle.transfer_cancel.is_some() || handle.active_transfer_id.is_some() {
             return Err("该会话已有传输进行中，请等待完成或取消后再试".to_string());
         }
         let flag = Arc::new(AtomicBool::new(false));
         handle.transfer_cancel = Some(flag.clone());
+        handle.active_transfer_id = Some(transfer_id.to_string());
         Ok(flag)
     }
 
-    /// 取消当前侧通道传输（置位取消标志，传输循环在下次块检查时退出）。
-    pub fn cancel_transfer_op(&mut self, session_id: &str) -> Result<(), String> {
+    /// 取消当前侧通道传输。若提供 transfer_id，则必须精确匹配当前任务。
+    pub fn cancel_transfer_op(
+        &mut self,
+        session_id: &str,
+        transfer_id: Option<&str>,
+    ) -> Result<(), String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        if let Some(flag) = &handle.transfer_cancel {
-            flag.store(true, Ordering::SeqCst);
+        let flag = handle
+            .transfer_cancel
+            .as_ref()
+            .ok_or_else(|| "没有正在进行的侧通道传输".to_string())?;
+        if let Some(expected) = transfer_id {
+            if handle.active_transfer_id.as_deref() != Some(expected) {
+                return Err("传输任务已变化，拒绝取消非当前任务".to_string());
+            }
         }
+        flag.store(true, Ordering::SeqCst);
         Ok(())
     }
 
@@ -1833,6 +1853,7 @@ impl SessionStore {
     pub fn transfer_done(&mut self, session_id: &str) {
         if let Some(handle) = self.sessions.get_mut(session_id) {
             handle.transfer_cancel = None;
+            handle.active_transfer_id = None;
         }
     }
 
@@ -1887,6 +1908,7 @@ impl SessionStore {
                 flag.store(true, Ordering::SeqCst);
                 log::info!("已取消会话 {} 的进行中 SFTP 传输（连接已断开）", session_id);
             }
+            handle.active_transfer_id = None;
             // 在独立 task 中 join SFTP handles，不阻塞 on_disconnect 回调
             // mark_disconnected 在 I/O task 回调中调用，通常有 tokio runtime，
             // 但仍做防护性检查以防边缘情况。

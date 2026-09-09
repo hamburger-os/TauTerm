@@ -19,6 +19,7 @@ export interface FileStatInfo {
   name: string;
   path: string;
   isDir: boolean;
+  entryType?: SftpEntry["entry_type"];
   size: number;
   accessed: number | null;
   modified: number | null;
@@ -128,8 +129,17 @@ export default function FilePropertiesModal({
   if (!visible || !entry) return null;
 
   const isDir = statInfo?.isDir ?? entry.is_dir;
-  const typeLabel = isDir ? t("fileManager.typeDir") : t("fileManager.typeFile");
-  const typeEmoji = isDir ? "\u{1F4C1}" : "\u{1F4C4}";
+  const entryType = statInfo?.entryType ?? entry.entry_type ?? (isDir ? "directory" : "file");
+  const typeLabel =
+    entryType === "directory"
+      ? t("fileManager.typeDir")
+      : entryType === "symlink"
+        ? t("fileManager.typeSymlink")
+        : entryType === "file"
+          ? t("fileManager.typeFile")
+          : t("fileManager.typeOther");
+  const typeEmoji =
+    entryType === "directory" ? "\u{1F4C1}" : entryType === "symlink" ? "\u{1F517}" : "\u{1F4C4}";
   const name = statInfo?.name ?? entry.name;
 
   return createPortal(

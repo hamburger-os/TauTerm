@@ -8,6 +8,8 @@ import type { SftpEntry } from "./types";
 
 export type EntryCategory =
   | "folder"
+  | "symlink"
+  | "special"
   | "code"
   | "text"
   | "archive"
@@ -43,6 +45,8 @@ const EXT_CATEGORY: Record<string, EntryCategory> = {
 
 const CATEGORY_EMOJI: Record<EntryCategory, string> = {
   folder: "\u{1F4C1}",      // 📁
+  symlink: "\u{1F517}",     // 🔗
+  special: "\u2699\uFE0F", // ⚙️
   code: "\u{1F4DC}",        // 📜
   text: "\u{1F4C4}",        // 📄
   archive: "\u{1F4E6}",     // 📦
@@ -55,6 +59,8 @@ const CATEGORY_EMOJI: Record<EntryCategory, string> = {
 /** 分类对应的 i18n 文案 key */
 export const CATEGORY_LABEL_KEYS: Record<EntryCategory, string> = {
   folder: "fileManager.catFolder",
+  symlink: "fileManager.typeSymlink",
+  special: "fileManager.typeOther",
   code: "fileManager.catCode",
   text: "fileManager.catText",
   archive: "fileManager.catArchive",
@@ -65,6 +71,14 @@ export const CATEGORY_LABEL_KEYS: Record<EntryCategory, string> = {
 };
 
 export function getEntryCategory(entry: SftpEntry): EntryCategory {
+  if (entry.entry_type === "symlink") return "symlink";
+  if (
+    entry.entry_type
+    && entry.entry_type !== "file"
+    && entry.entry_type !== "directory"
+  ) {
+    return "special";
+  }
   if (entry.is_dir) return "folder";
   const dot = entry.name.lastIndexOf(".");
   if (dot === -1) return "generic";

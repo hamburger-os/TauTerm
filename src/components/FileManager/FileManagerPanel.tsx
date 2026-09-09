@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { SftpEntry } from "./types";
+import type { OverwritePolicy, SftpEntry } from "./types";
 import { useFileManager } from "./hooks/useFileManager";
 import { useMultiSelect } from "./hooks/useMultiSelect";
 import { useSftpProgress } from "./hooks/useSftpProgress";
@@ -23,6 +23,8 @@ import TransferProgressBar from "./TransferProgressBar";
 import FilePropertiesModal from "./FilePropertiesModal";
 import type { FileStatInfo } from "./FilePropertiesModal";
 import FilePreviewModal from "./FilePreviewModal";
+import ConflictResolutionModal from "./ConflictResolutionModal";
+import DeleteConfirmationDialog from "./DeleteConfirmationDialog";
 import { copyToClipboard } from "../../utils/clipboard";
 import { getEntryIcon } from "./entryIcon";
 import styles from "./FileManager.module.css";
@@ -64,6 +66,34 @@ export default function FileManagerPanel({
 }: FileManagerPanelProps) {
   const { t } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
+  const conflictResolverRef = useRef<((policy: OverwritePolicy | null) => void) | null>(null);
+  const [conflictCount, setConflictCount] = useState(0);
+  const [conflictVisible, setConflictVisible] = useState(false);
+  const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<string | null>(null);
+  const [pendingDeleteTargets, setPendingDeleteTargets] = useState<SftpEntry[]>([]);
+
+  const requestConflictPolicy = useCallback((count: number) => {
+    return new Promise<OverwritePolicy | null>((resolve) => {
+      conflictResolverRef.current?.(null);
+      conflictResolverRef.current = resolve;
+      setConflictCount(count);
+      setConflictVisible(true);
+    });
+  }, []);
+
+  const resolveConflictPolicy = useCallback((policy: OverwritePolicy | null) => {
+    setConflictVisible(false);
+    const resolve = conflictResolverRef.current;
+    conflictResolverRef.current = null;
+    resolve?.(policy);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      conflictResolverRef.current?.(null);
+      conflictResolverRef.current = null;
+    };
+  }, []);
 
   // ── View mode (list / grid) ─────────────────────────
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
@@ -204,12 +234,26 @@ export default function FileManagerPanel({
       const paths = Array.isArray(selected) ? selected : [selected as string];
       if (paths.length === 0) return;
       const remoteDir = fm.currentPath ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`) : "/";
-      await fm.uploadFiles(paths, remoteDir);
+
+      const existingNames = new Set(fm.entries.map((entry) => entry.name));
+      const conflictCount = paths
+        .map((path) => path.replace(/\\/g, "/").split("/").pop() || path)
+        .filter((name) => existingNames.has(name))
+        .length;
+
+      let overwritePolicy: OverwritePolicy = "replace";
+      if (conflictCount > 0) {
+        const policy = await requestConflictPolicy(conflictCount);
+        if (!policy) return;
+        overwritePolicy = policy;
+      }
+
+      await fm.uploadFiles(paths, remoteDir, overwritePolicy);
     } catch (e) {
       console.error("上传失败:", e);
       alert(`上传失败: ${e}`);
     }
-  }, [fm, isConnected, t]);
+  }, [fm, isConnected, requestConflictPolicy, t]);
 
   const handleNewFile = useCallback(() => {
     fm.setPromptMode("newFile");
@@ -298,29 +342,44 @@ export default function FileManagerPanel({
     }
   }, [ms, ctxTarget]);
 
-  const handleDelete = useCallback(async () => {
+  const handleDelete = useCallback(() => {
     const targets =
       ms.selectedEntries.length > 0 ? ms.selectedEntries : ctxTarget ? [ctxTarget] : [];
     if (targets.length === 0) return;
 
-    const hasDirs = targets.some(e => e.is_dir);
-    let msg: string;
-    if (targets.length === 1) {
-      if (targets[0].is_dir) {
-        msg = t("fileManager.deleteDirConfirm", { name: targets[0].name });
-      } else {
-        msg = t("fileManager.deleteConfirm", { name: targets[0].name });
-      }
-    } else {
-      msg = hasDirs
-        ? t("fileManager.confirmBatchDeleteWithDirs", { count: targets.length })
-        : t("fileManager.confirmBatchDelete", { count: targets.length });
-    }
+    const hasDirs = targets.some((entry) => entry.is_dir);
+    const message =
+      targets.length === 1
+        ? targets[0].is_dir
+          ? t("fileManager.deleteDirConfirm", { name: targets[0].name })
+          : t("fileManager.deleteConfirm", { name: targets[0].name })
+        : hasDirs
+          ? t("fileManager.confirmBatchDeleteWithDirs", { count: targets.length })
+          : t("fileManager.confirmBatchDelete", { count: targets.length });
 
-    if (!window.confirm(msg)) return;
-    await fm.deleteEntries(targets);
-    ms.clearSelection();
-  }, [fm, ms, ctxTarget, t]);
+    // Snapshot targets now: later selection/context-menu changes must not change what
+    // the confirmation dialog is authorizing.
+    setPendingDeleteTargets([...targets]);
+    setDeleteConfirmMessage(message);
+  }, [ms, ctxTarget, t]);
+
+  const cancelDelete = useCallback(() => {
+    setDeleteConfirmMessage(null);
+    setPendingDeleteTargets([]);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    const targets = pendingDeleteTargets;
+    setDeleteConfirmMessage(null);
+    setPendingDeleteTargets([]);
+    if (targets.length === 0) return;
+    try {
+      await fm.deleteEntries(targets);
+      ms.clearSelection();
+    } catch (error) {
+      alert(String(error));
+    }
+  }, [fm, ms, pendingDeleteTargets]);
 
   const handleRefresh = useCallback(async () => {
     if (!isConnected) return;
@@ -364,6 +423,7 @@ export default function FileManagerPanel({
         accessed: target.accessed,
         modified: target.modified,
         permissions: target.permissions,
+        entryType: target.entry_type,
       });
     }
     setPropsLoading(false);
@@ -428,17 +488,29 @@ export default function FileManagerPanel({
   // ── Inline prompt actions ───────────────────────────
   const handlePromptConfirm = useCallback(
     async (value: string) => {
-      if (fm.promptMode === "newFile") {
-        await fm.createFile(value);
-      } else if (fm.promptMode === "newFolder") {
-        await fm.createFolder(value);
-      } else if (fm.promptMode === "rename" && fm.promptTarget) {
-        await fm.renameEntry(fm.promptTarget, value);
+      const name = value.trim();
+      if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\0")) {
+        alert(t("fileManager.invalidName"));
+        return;
       }
+
+      try {
+        if (fm.promptMode === "newFile") {
+          await fm.createFile(name);
+        } else if (fm.promptMode === "newFolder") {
+          await fm.createFolder(name);
+        } else if (fm.promptMode === "rename" && fm.promptTarget) {
+          await fm.renameEntry(fm.promptTarget, name);
+        }
+      } catch (error) {
+        alert(String(error));
+        return;
+      }
+
       fm.setPromptMode(null);
       fm.setPromptTarget(null);
     },
-    [fm],
+    [fm, t],
   );
 
   const handlePromptCancel = useCallback(() => {
@@ -529,9 +601,9 @@ export default function FileManagerPanel({
           { id: "rename", label: t("fileManager.rename") },
           { id: "copyPath", label: t("fileManager.copyPath") },
           { id: "sep3", label: "", type: "separator" },
-          { id: "properties", label: t("fileManager.properties") },
-          { id: "sep4", label: "", type: "separator" },
           { id: "delete", label: t("fileManager.delete"), danger: true },
+          { id: "sep4", label: "", type: "separator" },
+          { id: "properties", label: t("fileManager.properties") },
         ];
       }
       // File
@@ -546,9 +618,9 @@ export default function FileManagerPanel({
         { id: "rename", label: t("fileManager.rename") },
         { id: "copyPath", label: t("fileManager.copyPath") },
         { id: "sep6", label: "", type: "separator" },
-        { id: "properties", label: t("fileManager.properties") },
-        { id: "sep7", label: "", type: "separator" },
         { id: "delete", label: t("fileManager.delete"), danger: true },
+        { id: "sep7", label: "", type: "separator" },
+        { id: "properties", label: t("fileManager.properties") },
       );
       return items;
     }
@@ -760,6 +832,18 @@ export default function FileManagerPanel({
                   label: t("fileManager.selectedCount", { count: contextMenuSelectedCount }),
                 }
         }
+      />
+
+      <DeleteConfirmationDialog
+        message={deleteConfirmMessage}
+        onConfirm={() => void confirmDelete()}
+        onCancel={cancelDelete}
+      />
+
+      <ConflictResolutionModal
+        visible={conflictVisible}
+        conflictCount={conflictCount}
+        onResolve={resolveConflictPolicy}
       />
 
       {/* 文件属性弹窗 */}

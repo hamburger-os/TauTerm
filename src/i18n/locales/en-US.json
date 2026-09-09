@@ -1086,7 +1086,17 @@
     "transferCancelling": "Cancelling…",
     "transferCompleted": "Completed",
     "transferFailed": "Transfer failed",
-    "transferCancelled": "Cancelled"
+    "transferCancelled": "Cancelled",
+    "invalidName": "The file name cannot be empty, '.', '..', or contain '/'.",
+    "conflictTitle": "Destination files already exist",
+    "conflictMessage": "{{count}} file(s) with the same name already exist in this directory. Choose how to handle conflicts for this upload.",
+    "conflictReplace": "Replace",
+    "conflictKeepBoth": "Keep Both",
+    "conflictSkip": "Skip Existing",
+    "typeSymlink": "Symbolic Link",
+    "typeOther": "Special File",
+    "deleteConfirmTitle": "Confirm deletion",
+    "deleteConfirmAction": "Delete"
   },
   "ssh": {
     "host": "Host",

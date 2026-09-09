@@ -31,8 +31,9 @@ SFTP 没有最终发布为 IETF RFC。TauTerm 当前依赖 `russh-sftp`，其实
 
 - `russh-sftp` 官方 crate 文档: https://docs.rs/russh-sftp/
 - Historical SFTP v3 draft: https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02
+- OpenSSH protocol extensions: https://github.com/openssh/openssh-portable/blob/master/PROTOCOL
 
-因此文档中不要把“SFTP v3”写成“RFC 标准”。需要实现扩展时，应优先确认 `russh-sftp` 实际支持范围。
+因此文档中不要把“SFTP v3”写成“RFC 标准”。需要实现扩展时，应优先确认 `russh-sftp` 实际支持范围。文件管理实现还必须区分 `stat` 与 no-follow/`lstat` 语义；递归树默认不跟随 symbolic link。覆盖文件不能依赖“直接 create 后失败再删除”的模式，因为 create/truncate 会先破坏旧内容；TauTerm 使用同目录临时产物和 rename 提交边界保护正式目标。
 
 内部设计：[SSH.md](../modules/SSH.md)、[TRANSFER.md](../modules/TRANSFER.md)。
 

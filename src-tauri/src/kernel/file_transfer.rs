@@ -247,6 +247,42 @@ impl UnifiedProgress {
     }
 }
 
+/// 目标冲突处理策略。
+///
+/// 具体协议负责将策略落实为安全提交语义；公共层只携带用户已经解析好的意图。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OverwritePolicy {
+    /// 使用安全的临时文件 + 提交替换现有目标。
+    #[default]
+    Replace,
+    /// 若目标已存在则跳过，不视为传输失败。
+    Skip,
+    /// 若目标已存在则选择一个不冲突的新名称。
+    KeepBoth,
+}
+
+impl OverwritePolicy {
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.unwrap_or("replace").trim().to_ascii_lowercase().as_str() {
+            "replace" => Ok(Self::Replace),
+            "skip" => Ok(Self::Skip),
+            "keep-both" | "keep_both" | "keepboth" => Ok(Self::KeepBoth),
+            other => Err(format!("无效的覆盖策略: {other}")),
+        }
+    }
+}
+
+/// 一次传输的协议无关选项。
+///
+/// destination_paths 与调用方的源路径按索引对应；为空表示由具体协议按
+/// remote_dir / download_dir 和源文件名推导目标。SFTP 用它实现单文件
+/// Save As 与目录根目标的精确映射，串口协议忽略该字段。
+#[derive(Debug, Clone, Default)]
+pub struct FileTransferOptions {
+    pub overwrite_policy: OverwritePolicy,
+    pub destination_paths: Vec<String>,
+}
+
 /// 文件传输错误
 #[derive(Debug, thiserror::Error)]
 pub enum FileTransferError {
@@ -298,6 +334,7 @@ pub trait FileTransfer: Send + Sync {
         &self,
         files: &[crate::transfer::types::FileInfo],
         remote_dir: Option<&str>,
+        options: &FileTransferOptions,
         progress: UnboundedSender<UnifiedProgress>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<crate::transfer::types::BatchFileResult>, FileTransferError>;
@@ -313,6 +350,7 @@ pub trait FileTransfer: Send + Sync {
         &self,
         download_dir: &str,
         remote_paths: &[String],
+        options: &FileTransferOptions,
         progress: UnboundedSender<UnifiedProgress>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<crate::transfer::types::BatchFileResult>, FileTransferError>;
