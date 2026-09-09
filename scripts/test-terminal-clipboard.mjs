@@ -14,15 +14,19 @@ assert.equal(normalizeTerminalPasteText("a\r\nb\rc"), "a\nb\nc");
 
 assert.deepEqual(analyzeTerminalPaste("echo hello"), {
   requiresConfirmation: false,
+  hasLineBreak: false,
+  isLargePaste: false,
   contentLineCount: 1,
   characterCount: 10,
 });
-assert.equal(analyzeTerminalPaste("echo hello\n").requiresConfirmation, false);
-assert.equal(analyzeTerminalPaste("echo hello\r\n").requiresConfirmation, false);
+assert.equal(analyzeTerminalPaste("echo hello\n").requiresConfirmation, true);
+assert.equal(analyzeTerminalPaste("echo hello\r\n").hasLineBreak, true);
 assert.equal(analyzeTerminalPaste("echo one\necho two").requiresConfirmation, true);
 assert.equal(analyzeTerminalPaste("echo one\r\necho two\r\n").requiresConfirmation, true);
 assert.equal(analyzeTerminalPaste("echo one\n\n  \necho two").requiresConfirmation, true);
-assert.equal(analyzeTerminalPaste("\n\n  \n").requiresConfirmation, false);
+assert.equal(analyzeTerminalPaste("\n\n  \n").requiresConfirmation, true);
+assert.equal(analyzeTerminalPaste("x".repeat(5 * 1024)).isLargePaste, false);
+assert.equal(analyzeTerminalPaste("x".repeat(5 * 1024 + 1)).isLargePaste, true);
 
 const preview = buildTerminalPastePreview(
   "1\n2\n3\n4\n5\n6\n7\n8\n9",
@@ -39,6 +43,8 @@ const terminalSource = await readFile(
 assert.match(terminalSource, /onPasteCapture=\{handlePaste\}/);
 assert.match(terminalSource, /term\.paste\(text\)/);
 assert.match(terminalSource, /bracketedPasteMode/);
+assert.match(terminalSource, /shouldWarnForLineBreak/);
+assert.match(terminalSource, /pasteAnalysis\.isLargePaste/);
 assert.match(terminalSource, /copyToClipboard\(selection\)\.finally\(restoreTerminalFocus\)/);
 assert.match(terminalSource, /requestAnimationFrame\(\(\) => \{[\s\S]*xtermRef\.current\?\.focus\(\)/);
 assert.doesNotMatch(terminalSource, /clipboardHasText/);
@@ -60,6 +66,8 @@ const registrySource = await readFile(
 assert.match(registrySource, /TERMINAL_COPY[\s\S]*Ctrl\+Shift\+C/);
 assert.match(registrySource, /TERMINAL_PASTE[\s\S]*Ctrl\+Shift\+V/);
 assert.match(registrySource, /TERMINAL_RESERVED_KEYS[\s\S]*"Ctrl\+C"[\s\S]*"Ctrl\+V"[\s\S]*"Ctrl\+Insert"[\s\S]*"Shift\+Insert"/);
+assert.match(registrySource, /if \(isTerminalReservedShortcut\(pressed\)\) return null/);
+assert.match(registrySource, /validIds\.has\(s\.id\) && !isTerminalReservedShortcut\(s\.keys\)/);
 assert.doesNotMatch(registrySource, /TERMINAL_COPY, keys: "Ctrl\+C"/);
 assert.doesNotMatch(registrySource, /TERMINAL_PASTE, keys: "Ctrl\+V"/);
 
