@@ -323,16 +323,21 @@ export function useFileManager(
   const downloadDirectory = useCallback(
     async (remoteDir: string, localDir: string): Promise<void> => {
       const dirName = remoteDir.split('/').pop() || 'download';
-      await runSftpTransferAndWait(sessionId, () =>
-        invoke<void>('file_transfer_receive', {
-          request: {
-            sessionId,
-            protocol: 'sftp',
-            downloadDir: `${localDir}/${dirName}`,
-            remotePaths: [remoteDir],
-          },
-        }),
-      );
+      try {
+        await runSftpTransferAndWait(sessionId, () =>
+          invoke<void>('file_transfer_receive', {
+            request: {
+              sessionId,
+              protocol: 'sftp',
+              downloadDir: `${localDir}/${dirName}`,
+              remotePaths: [remoteDir],
+            },
+          }),
+        );
+      } catch (error) {
+        setError(`Download failed: ${error}`);
+        throw error;
+      }
     },
     [sessionId]
   );
