@@ -5941,7 +5941,7 @@ dependencies = [
  "telnet",
  "tempfile",
  "tftpd",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "tokio",
  "uuid",
  "windows-sys 0.59.0",
