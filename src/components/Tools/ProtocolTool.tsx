@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "../RightSidebar/RightSidebarPanel";
 import {
@@ -51,13 +51,27 @@ function isWithin(index: number, range: ProtocolRange | null): boolean {
   );
 }
 
-export default function ProtocolTool() {
+export interface ProtocolToolProps {\n  sessionId: string;\n}\n\nexport default function ProtocolTool({ sessionId }: ProtocolToolProps) {
   const { t } = useTranslation();
   const [template, setTemplate] = useState<ProtocolTemplate>("auto");
   const [input, setInput] = useState("");
   const [direction, setDirection] = useState<ProtocolDirection>("auto");
   const [customSchema, setCustomSchema] = useState(DEFAULT_CUSTOM_SCHEMA);
   const [highlightedRange, setHighlightedRange] = useState<ProtocolRange | null>(null);
+
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; input?: string }>).detail;
+      if (detail?.sessionId !== sessionId || typeof detail.input !== "string") return;
+      setTemplate("auto");
+      setDirection("auto");
+      setInput(detail.input);
+      setHighlightedRange(null);
+    };
+    window.addEventListener("tauterm:protocol-inspect", handler);
+    return () => window.removeEventListener("tauterm:protocol-inspect", handler);
+  }, [sessionId]);
 
   const outcome = useMemo(
     () => parseProtocolInput(template, input, { direction, customSchema }),
