@@ -109,3 +109,10 @@
   text-align: center;
   padding: 8px 0;
 }
+
+.parseError {
+  font-size: var(--text-xs);
+  color: var(--color-error);
+  text-align: center;
+  padding: 4px 0;
+}
