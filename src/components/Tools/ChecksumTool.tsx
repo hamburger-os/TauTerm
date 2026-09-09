@@ -19,6 +19,8 @@ import {
 } from "../../utils/checksum";
 import { parseByteInput } from "../../utils/byteInput";
 import { copyToClipboard } from "../../utils/clipboard";
+import ToolInputHistory from "./ToolInputHistory";
+import { useToolInputHistory } from "../../hooks/useToolInputHistory";
 import styles from "./ChecksumTool.module.css";
 
 type InputMode = "string" | "hex";
@@ -221,6 +223,8 @@ export function ChecksumToolInner() {
     inputOutcome,
   ]);
 
+  const history = useToolInputHistory(inputText, Boolean(inputOutcome?.ok));
+
   const handleCopy = useCallback(async () => {
     if (!result || "error" in result || !("hex" in result)) return;
     await copyToClipboard(result.hex);
@@ -302,6 +306,13 @@ export function ChecksumToolInner() {
           <span className={styles.len}>{inputOutcome.value.bytes.length} B</span>
         </div>
       )}
+
+      <ToolInputHistory
+        entries={history.entries}
+        onSelect={setInputText}
+        onTogglePinned={history.togglePinned}
+        onClearRecent={history.clearRecent}
+      />
 
       {inputOutcome && !inputOutcome.ok && (
         <div className={styles.parseError}>
