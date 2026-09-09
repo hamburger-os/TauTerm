@@ -121,10 +121,36 @@ function parseDecimalBigInt(input: string): bigint | null {
   }
 }
 
+function parseSignedRadix(
+  input: string,
+  prefix: "0x" | "0b",
+  digitPattern: RegExp,
+): { value: bigint; digits: string } | null {
+  let source = input.trim();
+  if (!source) return null;
+
+  let sign = 1n;
+  if (source.startsWith("+") || source.startsWith("-")) {
+    sign = source[0] === "-" ? -1n : 1n;
+    source = source.slice(1).trim();
+  }
+
+  const normalizedSource = prefix === "0b" ? source.replace(/_/g, "") : source;
+  const digits = normalizePrefixedDigits(normalizedSource, prefix, digitPattern);
+  if (!digits) return null;
+
+  try {
+    const magnitude = BigInt(`${prefix}${digits}`);
+    return { value: sign * magnitude, digits };
+  } catch {
+    return null;
+  }
+}
+
 export function hexToDec(hex: string): string {
-  const cleaned = normalizeHexDigits(hex);
-  if (!cleaned) return "[Error: Invalid HEX input]";
-  return BigInt(`0x${cleaned}`).toString(10);
+  const parsed = parseSignedRadix(hex, "0x", /^[0-9a-fA-F]+$/);
+  if (!parsed) return "[Error: Invalid HEX input]";
+  return parsed.value.toString(10);
 }
 
 export function decToHex(dec: string, width?: number): string {
@@ -138,9 +164,9 @@ export function decToHex(dec: string, width?: number): string {
 }
 
 export function binToDec(bin: string): string {
-  const cleaned = normalizeBinaryDigits(bin);
-  if (!cleaned) return "[Error: Invalid binary input]";
-  return BigInt(`0b${cleaned}`).toString(10);
+  const parsed = parseSignedRadix(bin, "0b", /^[01]+$/);
+  if (!parsed) return "[Error: Invalid binary input]";
+  return parsed.value.toString(10);
 }
 
 export function decToBin(dec: string, width?: number): string {
@@ -154,18 +180,24 @@ export function decToBin(dec: string, width?: number): string {
 }
 
 export function hexToBin(hex: string): string {
-  const cleaned = normalizeHexDigits(hex);
-  if (!cleaned) return "[Error: Invalid HEX input]";
-  return BigInt(`0x${cleaned}`).toString(2).padStart(cleaned.length * 4, "0");
+  const parsed = parseSignedRadix(hex, "0x", /^[0-9a-fA-F]+$/);
+  if (!parsed) return "[Error: Invalid HEX input]";
+  const negative = parsed.value < 0n;
+  const magnitude = negative ? -parsed.value : parsed.value;
+  const binary = magnitude.toString(2).padStart(parsed.digits.length * 4, "0");
+  return `${negative ? "-" : ""}${binary}`;
 }
 
 export function binToHex(bin: string): string {
-  const cleaned = normalizeBinaryDigits(bin);
-  if (!cleaned) return "[Error: Invalid binary input]";
-  return BigInt(`0b${cleaned}`)
+  const parsed = parseSignedRadix(bin, "0b", /^[01]+$/);
+  if (!parsed) return "[Error: Invalid binary input]";
+  const negative = parsed.value < 0n;
+  const magnitude = negative ? -parsed.value : parsed.value;
+  const hex = magnitude
     .toString(16)
     .toUpperCase()
-    .padStart(Math.ceil(cleaned.length / 4), "0");
+    .padStart(Math.ceil(parsed.digits.length / 4), "0");
+  return `${negative ? "-" : ""}${hex}`;
 }
 
 // ══════════════════════════════════════════════════════════════════
