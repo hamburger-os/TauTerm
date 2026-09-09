@@ -119,6 +119,7 @@ export function useSftpProgress(sessionId: string) {
   }, [scheduleAutoHide]);
 
   useEffect(() => {
+    let disposed = false;
     let unlistenProgress: UnlistenFn | undefined;
     let unlistenStarted: UnlistenFn | undefined;
     let unlistenFinished: UnlistenFn | undefined;
@@ -137,7 +138,10 @@ export function useSftpProgress(sessionId: string) {
         direction: payload.direction === 'send' ? 'upload' : 'download',
         phase: 'preparing',
       });
-    }).then(fn => { unlistenStarted = fn; });
+    }).then(fn => {
+      if (disposed) fn();
+      else unlistenStarted = fn;
+    });
 
     listen<UnifiedProgressPayload>('file-transfer:progress', (event) => {
       const payload = event.payload;
@@ -212,7 +216,10 @@ export function useSftpProgress(sessionId: string) {
             : (payload.aggregate_total || prev.aggregateTotal),
         };
       });
-    }).then(fn => { unlistenProgress = fn; });
+    }).then(fn => {
+      if (disposed) fn();
+      else unlistenProgress = fn;
+    });
 
     listen<TransferFinishedPayload>('file-transfer:finished', (event) => {
       const payload = event.payload;
@@ -254,9 +261,13 @@ export function useSftpProgress(sessionId: string) {
       });
 
       if (payload.success && !hoveredRef.current) scheduleAutoHide();
-    }).then(fn => { unlistenFinished = fn; });
+    }).then(fn => {
+      if (disposed) fn();
+      else unlistenFinished = fn;
+    });
 
     return () => {
+      disposed = true;
       clearAutoHideTimer();
       if (unlistenProgress) unlistenProgress();
       if (unlistenStarted) unlistenStarted();
