@@ -24,8 +24,8 @@ export function base64Encode(input: string): ToolResult<string> {
 }
 
 export function base64Decode(input: string, ignoreWhitespace = false): ToolResult<string> {
-  let source = input.trim();
-  if (!source) return toolErr("emptyInput");
+  if (!input.trim()) return toolErr("emptyInput");
+  let source = input;
   if (ignoreWhitespace) source = source.replace(/\s+/g, "");
   else if (/\s/.test(source)) return toolErr("base64Whitespace");
 
