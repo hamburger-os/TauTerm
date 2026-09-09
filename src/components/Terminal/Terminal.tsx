@@ -206,7 +206,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       term.paste(text);
     }
     restoreTerminalFocus();
-  }, [restoreTerminalFocus]);
+  }, [restoreTerminalFocus, sessionId]);
 
   const requestPasteText = useCallback((text: string) => {
     const term = xtermRef.current;
@@ -503,6 +503,12 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
         disabled: !hasSel,
       },
       {
+        id: "inspectProtocol",
+        label: t("terminal.inspectProtocol", "Inspect selection"),
+        icon: "search",
+        disabled: !hasSel,
+      },
+      {
         id: "paste",
         label: t("terminal.paste", "Paste"),
         icon: "paste",
@@ -550,6 +556,18 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       case "copy":
         copySelectionRef.current();
         break;
+      case "inspectProtocol": {
+        const selection = term.getSelection();
+        if (selection) {
+          window.dispatchEvent(
+            new CustomEvent("tauterm:protocol-inspect", {
+              detail: { sessionId, input: selection },
+            }),
+          );
+        }
+        restoreTerminalFocus();
+        break;
+      }
       case "paste":
         void requestClipboardPasteRef.current();
         break;
