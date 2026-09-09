@@ -2,6 +2,7 @@ export interface SftpEntry {
   name: string;
   path: string;
   is_dir: boolean;
+  entry_type?: 'file' | 'directory' | 'symlink' | 'fifo' | 'socket' | 'block_device' | 'char_device' | 'other';
   size: number;
   accessed: number | null;
   modified: number | null;
