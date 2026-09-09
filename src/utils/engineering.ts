@@ -15,7 +15,7 @@ export function serialTiming(
   byteCount: number,
 ): ToolResult<SerialTimingResult> {
   if (!Number.isFinite(baudRate) || baudRate <= 0) return toolErr("invalidBaudRate");
-  if (!Number.isFinite(byteCount) || byteCount < 0) return toolErr("invalidByteCount");
+  if (!Number.isInteger(byteCount) || byteCount < 0) return toolErr("invalidByteCount");
   const parityBits = parity === "none" ? 0 : 1;
   const bitsPerFrame = 1 + dataBits + parityBits + stopBits;
   const secondsPerByte = bitsPerFrame / baudRate;
