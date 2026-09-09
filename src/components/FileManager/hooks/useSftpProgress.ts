@@ -147,6 +147,8 @@ export function useSftpProgress(sessionId: string) {
       const name = displayFileName(payload.file_name);
       const isBatchComplete = payload.is_batch_complete;
       const hasKnownTotal = payload.bytes_total > 0;
+      const isLastFile =
+        payload.total_files <= 1 || payload.file_index + 1 >= payload.total_files;
       const percent = hasKnownTotal
         ? payload.bytes_done >= payload.bytes_total
           ? 100
@@ -179,15 +181,14 @@ export function useSftpProgress(sessionId: string) {
             error = payload.file_error || null;
           }
         } else if (payload.is_file_complete) {
-          phase = 'finalizing';
+          phase = isLastFile ? 'finalizing' : 'transferring';
           speed = null;
           if (payload.file_success === false) {
             error = payload.file_error || error;
           }
         } else {
-          phase = hasKnownTotal && payload.bytes_done >= payload.bytes_total
-            ? 'finalizing'
-            : 'transferring';
+          const payloadComplete = hasKnownTotal && payload.bytes_done >= payload.bytes_total;
+          phase = payloadComplete && isLastFile ? 'finalizing' : 'transferring';
           speed = phase === 'transferring' ? (backendSpeed ?? prev.speed) : null;
         }
 
