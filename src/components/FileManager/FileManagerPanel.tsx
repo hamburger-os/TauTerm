@@ -346,7 +346,7 @@ export default function FileManagerPanel({
         if (disposed) return;
         const payload = event.payload;
 
-        if (payload.type === "over") {
+        if (payload.type === "enter" || payload.type === "over") {
           const inside = isInsidePanel(payload.position);
           dropInsideRef.current = inside && isConnected;
           setDropActive(dropInsideRef.current);
