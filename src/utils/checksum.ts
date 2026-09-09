@@ -128,7 +128,8 @@ function crcCompute(data: Uint8Array, params: CrcParams): number {
     else crc = reflect32(crc);
   }
 
-  return (crc ^ xorOut) & mask;
+  const finalValue = crc ^ xorOut;
+  return width === 32 ? (finalValue >>> 0) : (finalValue & mask);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -237,7 +238,9 @@ export function bytesToHex(bytes: Uint8Array, separator = " "): string {
 /** 将数字格式化为指定位宽的 HEX 字符串 */
 export function numberToHex(value: number, width: number): string {
   const hexLen = Math.ceil(width / 4);
-  // 使用 Math.pow 避免 JS 位运算限制：width=32 时 (1<<32) 溢出为 1，导致掩码为 0
-  const v = value & (Math.pow(2, width) - 1);
-  return v.toString(16).toUpperCase().padStart(hexLen, "0");
+  const modulus = Math.pow(2, width);
+  const normalized = width === 32
+    ? (value >>> 0)
+    : ((value % modulus) + modulus) % modulus;
+  return normalized.toString(16).toUpperCase().padStart(hexLen, "0");
 }
