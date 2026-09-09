@@ -16,6 +16,20 @@
     color var(--transition-input);
 }
 
+.inputHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 16px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.inputKind {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+
 .input {
   width: 100%;
   padding: 4px 6px;
@@ -27,18 +41,26 @@
   gap: 4px;
 }
 
+.tableWrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
 .table {
   width: 100%;
+  min-width: 0;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: var(--text-xs);
 }
 
 .table th,
 .table td {
-  padding: 2px 4px;
+  padding: 3px 4px;
   text-align: left;
   border-bottom: 1px solid var(--glass-border-default);
   vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 .table th {
@@ -47,8 +69,21 @@
   white-space: nowrap;
 }
 
+.table th:nth-child(1) {
+  width: 31%;
+}
+
+.table th:nth-child(2) {
+  width: 48px;
+}
+
 .table td {
   color: var(--text-primary);
+}
+
+.table td:nth-child(2) {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
 }
 
 .table code {
@@ -57,9 +92,12 @@
 }
 
 .fieldValue {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  min-width: 0;
+}
+
+.hexCode,
+.parsedVal {
+  display: block;
 }
 
 .hexCode {
@@ -68,7 +106,9 @@
 }
 
 .parsedVal {
+  margin-top: 2px;
   color: var(--text-secondary);
+  word-break: break-word;
 }
 
 .checksumResult {
