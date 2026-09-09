@@ -20,6 +20,7 @@ assert.doesNotMatch(
 );
 assert.match(hook, /SUCCESS_AUTO_HIDE_MS = 5000/);
 assert.match(hook, /hoveredRef\.current/);
+assert.match(hook, /payload\.bytes_done >= payload\.bytes_total[\s\S]{0,120}\? 100[\s\S]{0,180}Math\.floor/);
 assert.match(hook, /phase = hasKnownTotal && payload\.bytes_done >= payload\.bytes_total[\s\S]*'finalizing'/);
 assert.match(
   hook,
@@ -75,6 +76,11 @@ assert.match(service, /if throttle\.should_emit_final\(total, local_size\)/);
 assert.match(service, /if throttle\.should_emit_final\(total, remote_size\)/);
 assert.match(
   service,
+  /if is_cancelled\(cancel\)[\s\S]{0,160}drop\(local_file\);[\s\S]{0,140}remove_file\(local_path\)/,
+  "cancelled downloads must close the local handle before deleting the partial file",
+);
+assert.match(
+  service,
   /local_file[\s\S]{0,180}\.flush\(\)[\s\S]{0,260}if is_cancelled\(cancel\)[\s\S]{0,180}remove_file\(local_path\)/,
   "download cancellation must remain effective during finalization",
 );
@@ -91,7 +97,12 @@ assert.doesNotMatch(
 
 const sftp = await source("src-tauri/src/transfer/sftp_transfer.rs");
 assert.match(sftp, /UnifiedProgress::chunk_with_speed/);
-assert.match(sftp, /if skipped > 0 \|\| cancel\.load\(Ordering::SeqCst\)/);
+assert.match(sftp, /if skipped > 0 \{/);
+assert.doesNotMatch(
+  sftp,
+  /if skipped > 0 \|\| cancel\.load\(Ordering::SeqCst\)/,
+  "a cancel signal arriving after every file committed must not overwrite a successful batch",
+);
 assert.match(
   sftp,
   /if failed > 0[\s\S]{0,500}return Err\(FileTransferError::Other/,
@@ -110,6 +121,13 @@ assert.match(
   orchestrator,
   /guard\.complete\(\);[\s\S]{0,220}file-transfer:finished/,
   "SFTP session transfer occupancy must be released before finished is emitted",
+);
+
+const fileManagerPanel = await source("src/components/FileManager/FileManagerPanel.tsx");
+assert.match(
+  fileManagerPanel,
+  /aggregateBytes >= progress\.aggregateTotal[\s\S]{0,120}\? 100[\s\S]{0,220}Math\.floor/,
+  "aggregate progress must not round up to 100 before aggregate bytes are complete",
 );
 
 const fileManager = await source("src/components/FileManager/hooks/useFileManager.ts");
