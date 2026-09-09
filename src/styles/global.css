@@ -343,6 +343,37 @@ html[data-motion="reduced"] .ambient-field { animation: none; }
   transform: translateY(-1px) scale(1.025);
 }
 
+/* 互斥模式 / Tab / 筛选器的紧凑选择器。
+   外部几何由主题统一管理；组件只负责 flex/grid 占位与换行。
+   selector 的 hover/active/selected 不允许位移或缩放，避免切换时布局抖动。 */
+.liquid-selector-strip {
+  display: flex;
+  align-items: stretch;
+  gap: var(--spacing-xs);
+}
+
+.liquid-selector-button {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--select-height);
+  min-height: var(--select-height);
+  padding: 0 var(--spacing-sm);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.liquid-selector-button:hover:not(:disabled),
+.liquid-selector-button:active:not(:disabled),
+.liquid-selector-button.active,
+.liquid-selector-button.liquid-theme-selected,
+.liquid-selector-button.liquid-theme-selected:hover:not(:disabled) {
+  transform: none;
+}
+
 /* ==========================================
    5.1 幽灵按钮 — 无背景无边框，hover 显示底色
    适用于：弹窗关闭按钮、工具栏图标按钮等透明控件
