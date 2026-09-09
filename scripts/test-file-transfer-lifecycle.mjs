@@ -71,6 +71,7 @@ assert.match(sessionStore, /没有正在进行的侧通道传输/);
 // ── Transactional SFTP writes ──────────────────────────────────────────────
 const service = await source("src-tauri/src/transfer/ssh_file_service.rs");
 assert.match(service, /enum SftpWriteOutcome/);
+assert.match(service, /struct SftpUploadOptions[\s\S]*overwrite_policy:\s*OverwritePolicy/);
 assert.match(service, /sibling_local_artifact\(&final_path, "part"\)/);
 assert.match(service, /remote_sibling_artifact\(&final_path, "part"\)/);
 assert.match(service, /sibling_local_artifact\(final_path, "backup"\)/);
@@ -116,11 +117,11 @@ assert.match(
 // ── SFTP adapter: explicit plans, empty directories and no-follow links ─────
 const sftp = await source("src-tauri/src/transfer/sftp_transfer.rs");
 assert.match(sftp, /struct ReceiveFilePlan/);
-assert.match(sftp, /options\.destination_paths/);
+assert.match(sftp, /options\s*\.destination_paths/);
 assert.match(sftp, /tokio::fs::create_dir_all\(&local_root\)/);
 assert.match(sftp, /sftp_list_tree_recursive/);
 assert.match(sftp, /SftpEntryType::Symlink[\s\S]*符号链接默认不跟随/);
-assert.match(sftp, /options\.overwrite_policy/);
+assert.match(sftp, /options\s*\.overwrite_policy/);
 assert.match(sftp, /if failed > 0[\s\S]{0,500}FileTransferError::Other/);
 assert.doesNotMatch(
   sftp,
