@@ -203,6 +203,21 @@ assert.equal(
   "checksum failure must stay separate from frame structure",
 );
 
+const structuralBad = protocol(
+  "modbus-rtu",
+  modbusRtu([0x01, 0x03, 0x00, 0x00, 0x00]),
+  { direction: "request" },
+);
+assert.equal(
+  structuralBad.checks.find((item) => item.id === "structure")?.status,
+  "fail",
+);
+assert.equal(
+  structuralBad.checks.find((item) => item.id === "semantics")?.status,
+  "not-applicable",
+  "structural failure must not be reported again as a semantic failure",
+);
+
 const ascii = protocol("modbus-ascii", ":010300000001FB\r\n");
 assert.equal(ascii.checks.find((item) => item.id === "lrc")?.status, "pass");
 assert.equal(ascii.fields[1].range.unit, "char");
@@ -313,6 +328,15 @@ const detectedRtu = parseProtocolInput(
   "01 03 00 00 00 01 84 0A",
 );
 assert.equal(detectedRtu.detectedTemplate, "modbus-rtu");
+const detectedTcpCrcCollision = parseProtocolInput(
+  "auto",
+  "00 F1 00 00 00 06 01 03 00 00 00 6F",
+);
+assert.equal(
+  detectedTcpCrcCollision.detectedTemplate,
+  "modbus-tcp",
+  "valid MBAP framing must outrank a coincidental trailing RTU CRC",
+);
 const detectedNmea = parseProtocolInput(
   "auto",
   "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47",
