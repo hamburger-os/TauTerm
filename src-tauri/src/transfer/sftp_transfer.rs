@@ -72,7 +72,9 @@ fn local_safe_component(name: &str) -> Result<String, FileTransferError> {
         || name.contains('/')
         || name.contains('\\')
         || name.contains('\0')
-        || name.chars().any(|ch| matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        || name
+            .chars()
+            .any(|ch| matches!(ch, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
         || name.ends_with(' ')
         || name.ends_with('.')
     {
@@ -524,10 +526,7 @@ impl FileTransfer for SftpFileTransfer {
                                 continue;
                             }
                         };
-                        let local_path = local_root
-                            .join(&relative)
-                            .to_string_lossy()
-                            .to_string();
+                        let local_path = local_root.join(&relative).to_string_lossy().to_string();
                         match item.entry_type {
                             SftpEntryType::Directory => {
                                 tokio::fs::create_dir_all(&local_path).await.map_err(|e| {
