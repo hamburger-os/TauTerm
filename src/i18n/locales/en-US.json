@@ -268,7 +268,8 @@
       "gatewayPathUnavailable": "Gateway Path Unavailable",
       "gatewayTargetNoResponse": "Gateway Target Device Failed to Respond"
     },
-    "structAbiHint": "Estimated with a 32-bit ILP32 / embedded ABI model; unknown or partially parsed members fail closed."
+    "structAbiHint": "Estimated with a 32-bit ILP32 / embedded ABI model; unknown or partially parsed members fail closed.",
+    "invalidHexInput": "Enter valid HEX byte data"
   },
   "titleBar": {
     "minimize": "Minimize",
