@@ -100,11 +100,11 @@ function autoInspect(
   const byteInput = parseByteInput(input);
   if (byteInput.ok) {
     const bytes = byteInput.value.bytes;
-    if (isValidModbusRtu(bytes)) {
-      return withDetection(inspectModbusRtu(input, options), "modbus-rtu", "high");
-    }
     if (isLikelyModbusTcp(bytes)) {
       return withDetection(inspectModbusTcp(input, options), "modbus-tcp", "high");
+    }
+    if (isValidModbusRtu(bytes)) {
+      return withDetection(inspectModbusRtu(input, options), "modbus-rtu", "high");
     }
     return withDetection(inspectRaw(input), "raw", "low");
   }
