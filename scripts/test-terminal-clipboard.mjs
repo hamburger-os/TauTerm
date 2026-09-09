@@ -48,6 +48,7 @@ assert.match(terminalSource, /pasteAnalysis\.isLargePaste/);
 assert.match(terminalSource, /copyToClipboard\(selection\)\.finally\(restoreTerminalFocus\)/);
 assert.match(terminalSource, /requestAnimationFrame\(\(\) => \{[\s\S]*xtermRef\.current\?\.focus\(\)/);
 assert.doesNotMatch(terminalSource, /clipboardHasText/);
+assert.match(terminalSource, /\(!isConnected \|\| !isActive\) && pendingPaste !== null/);
 assert.match(terminalSource, /剪贴板访问必须由明确的 Paste 动作触发/);
 assert.match(terminalSource, /Ctrl\+Insert/);
 assert.match(terminalSource, /Shift\+Insert/);
