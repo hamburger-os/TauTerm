@@ -358,10 +358,22 @@ assert.doesNotMatch(
 
 const deleteDialog = await source("src/components/FileManager/DeleteConfirmationDialog.tsx");
 assert.match(deleteDialog, /role="alertdialog"/);
-assert.match(deleteDialog, /requestAnimationFrame\(\(\) => cancelRef\.current\?\.focus\(\)\)/);
+assert.match(deleteDialog, /data-action="cancel"/);
+assert.match(deleteDialog, /querySelector<HTMLButtonElement>\('\[data-action="cancel"\]'\)/);
 assert.match(deleteDialog, /event\.key === "Escape"/);
-assert.match(deleteDialog, /event\.key === "Tab"/);
+assert.match(deleteDialog, /event\.key !== "Tab"/);
+assert.match(deleteDialog, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(deleteDialog, /GlassButton/);
+assert.match(deleteDialog, /variant="ghost"/);
+assert.match(deleteDialog, /variant="danger"/);
+assert.match(deleteDialog, /size="md"/);
 assert.match(deleteDialog, /deleteConfirmAction/);
+
+const deleteDialogCss = await source("src/components/FileManager/DeleteConfirmationDialog.module.css");
+assert.match(deleteDialogCss, /border-radius:\s*var\(--radius-xl\)/);
+assert.match(deleteDialogCss, /font-size:\s*var\(--text-md\)/);
+assert.match(deleteDialogCss, /font-weight:\s*700/);
+assert.match(deleteDialogCss, /font-size:\s*var\(--text-sm\)/);
 
 const conflictDialog = await source("src/components/FileManager/ConflictResolutionModal.tsx");
 assert.match(conflictDialog, /role="alertdialog"/);
