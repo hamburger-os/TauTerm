@@ -54,6 +54,7 @@ TauTerm 把远端系统、嵌入式设备和网络调试工作流放进同一个
 | TRDP Node + 被动实时/离线 Monitor | ✅ |
 | 适用 Session 的 Lua 脚本与自动回复 | ✅ |
 | 可持久化的 1–4 分屏 Workspace | ✅ |
+| 协议检查器 + 数据/CRC/位工程工具 | ✅ |
 
 TRDP 包含主动 PD/MD Node 与被动 Monitor/抓包分析，但**不声明** SDTv2/SDTv4 安全验证或安全认证能力。
 
