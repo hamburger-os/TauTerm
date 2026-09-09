@@ -434,22 +434,22 @@ assert.match(
 );
 
 const globalCss = await source("src/styles/global.css");
+const canonicalSelectBlock = globalCss.slice(
+  globalCss.indexOf(".liquid-glass-select {"),
+  globalCss.indexOf(".liquid-glass-select option"),
+);
 assert.match(
-  globalCss,
-  /\.liquid-glass-select[\s\S]{0,260}color-scheme:\s*dark/,
-  "dark-theme native select popups must advertise a dark color scheme to WebView/OS chrome",
+  canonicalSelectBlock,
+  /color-scheme:\s*dark/,
+  "dark-theme native select popups must advertise a dark color scheme",
 );
 assert.match(
   globalCss,
   /\[data-theme="frosted"\] \.liquid-glass-select[\s\S]{0,100}color-scheme:\s*light/,
   "Frosted native select popups must advertise the light color scheme",
 );
-const themedSelectBlock = globalCss.slice(
-  globalCss.indexOf(".liquid-glass-select {"),
-  globalCss.indexOf(".liquid-glass-select option"),
-);
 assert.ok(
-  themedSelectBlock.indexOf("padding: var(--select-padding)") <
-    themedSelectBlock.indexOf("padding-right: 26px"),
+  canonicalSelectBlock.indexOf("padding: var(--select-padding)") <
+    canonicalSelectBlock.indexOf("padding-right: 26px"),
   "select arrow-safe right padding must be declared after the shorthand so it is not reset",
 );
