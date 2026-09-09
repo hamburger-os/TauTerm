@@ -58,7 +58,7 @@ Stats renderer/状态区消费 Session 统计信息。右侧工程能力分成�
 - AT 文本：命令回显、信息响应/URC、prompt、最终结果与通用参数拆分；
 - NMEA 0183：语句/talker/type/字段与 XOR checksum，常用 GGA/RMC 字段提供通用解释；
 - Raw Frame：只展示规范化字节，不暗示存在协议语义；
-- Custom Schema：用本地 JSON schema 描述固定 offset 的整数、浮点、bytes、ASCII/UTF-8、enum 与可选 CRC 字段。
+- Custom Schema：用本地 JSON schema 描述固定 offset 的整数、浮点、bytes、ASCII/UTF-8、reserved、bitfield、enum/expected 约束、固定/remaining/`lengthFrom` 长度与可选 CRC 字段。动态长度只能引用此前已经解析出的非负整数字段，非法引用或越界必须失败关闭。
 
 自动识别只在高置信模式下识别有明显 framing/checksum 特征的协议；无法可靠判断的 HEX 退化为 Raw Frame，普通文本退化为低置信 AT/Text 分析，不能伪造确定协议结论。
 
