@@ -44,6 +44,7 @@ flowchart LR
 - SFTP 速率由真实 async I/O 层使用高精度 `Instant` 采样并随进度事件发送；WebView 不得再以 IPC/React 事件到达时间反推吞吐。没有可靠样本时显示“—”，传输完成后不显示虚假的 `0 KB/s`。
 - 进度节流不得重复发送同一个最终 100% 样本；只有最后字节尚未被节流器发送时才补尾部样本。
 - 正常完成路径必须先排空进度广播队列，再释放传输资源/Session 占用，最后 emit `finished`。这样 `file_complete` / `batch_complete` 不会落在 `finished` 之后，用户收到完成事件时也可以立即安全启动下一次传输。
+- `batch_complete` 只是协议批次收尾进度，不是 UI 终态；通用 `TransferContext` 与文件管理器都必须以精确匹配 `transfer_id` 的 `file-transfer:finished` 作为 completed / failed / cancelled 的唯一终态来源。
 - 批量传输只有**全部文件成功**才允许最终 `success=true`；任一 failed 必须使最终传输失败，任一 skipped/用户取消必须进入 cancelled 语义。
 - 失败、取消和 panic 都必须保证资源清理并恢复 Session 到可解释状态。
 - 文件路径、覆盖策略、远端路径语义由对应传输实现负责，统一层不猜测协议规则。
