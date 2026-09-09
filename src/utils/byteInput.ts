@@ -81,6 +81,7 @@ export function parseByteInput(input: string): ToolResult<ParsedByteInput> {
   for (const token of tokens) {
     const match = token.match(/^(?:0[xX])?([0-9a-fA-F]+)$/);
     if (!match) return toolErr("invalidHexToken", token);
+    if (match[1].length % 2 !== 0) return toolErr("oddHexLength", token);
     cleaned += match[1];
   }
 
