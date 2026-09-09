@@ -391,7 +391,7 @@ export const DEFAULT_CUSTOM_SCHEMA = JSON.stringify(
   {
     name: "Device Frame",
     fields: [
-      { name: "Header", offset: 0, type: "u16", endian: "be", expected: "0xAA55" },
+      { name: "Header", offset: 0, type: "u16", endian: "be", expected: "0xAA55", enum: { "0xAA55": "Magic" } },
       { name: "Command", offset: 2, type: "u8", enum: { "1": "Read", "2": "Write" } },
       { name: "Length", offset: 3, type: "u16", endian: "le" },
       { name: "Payload", offset: 5, type: "bytes", lengthFrom: "Length" },
