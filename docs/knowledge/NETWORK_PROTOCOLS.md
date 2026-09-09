@@ -79,6 +79,17 @@ TauTerm 的 iperf3 行为还必须参考 `src-tauri/vendor/riperf3/VENDOR-NOTES.
 - Modbus Application Protocol V1.1b3 由上述官方页面发布。
 - Modbus Serial Line Protocol and Implementation Guide V1.02 由上述官方页面发布。
 
-TauTerm 当前右侧工程工具提供的是有限帧解析/校验能力，不应宣传为完整 Modbus stack、设备模拟器或一致性认证工具。
+TauTerm 当前 Protocol Inspector 覆盖 Modbus RTU、ASCII 与 TCP 的离线 ADU/PDU 检查，并对常用 01/02/03/04/05/06/0F/10 功能做字段和语义验证。RTU/ASCII 的串行 framing/checksum 与 TCP 的 MBAP 必须保持各自标准语义。该能力不是在线 Modbus stack、设备模拟器或一致性认证工具；未来 Modbus Session 应复用同一协议核心，而不是复制 parser/function table。
+
+内部设计：[OBSERVABILITY_TOOLS.md](../modules/OBSERVABILITY_TOOLS.md)。
+
+
+## NMEA 0183
+
+### 权威来源
+
+- NMEA 0183 官方标准入口: https://www.nmea.org/nmea-0183.html
+
+NMEA 0183 标准正文受 NMEA 发布和许可约束；仓库只保存权威入口与 TauTerm 的适用边界，不复制标准正文。当前 Protocol Inspector 只提供常见 ASCII sentence framing、talker/type/字段拆分、XOR checksum，以及少量常用 GGA/RMC 字段的通用解释，不声明覆盖所有 sentence、厂商扩展或 NMEA 合规认证。
 
 内部设计：[OBSERVABILITY_TOOLS.md](../modules/OBSERVABILITY_TOOLS.md)。
