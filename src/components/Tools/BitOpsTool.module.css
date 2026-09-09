@@ -5,14 +5,11 @@
 }
 
 .modeRow {
-  display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
 }
 
 .modeBtn {
-  padding: 2px 8px;
-  font-size: var(--text-xs);
-  cursor: pointer;
+  flex: 0 0 auto;
 }
 
 /* ── 位运算 ── */
