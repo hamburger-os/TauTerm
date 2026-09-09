@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "../RightSidebar/RightSidebarPanel";
 import {
   bitwiseOp,
+  parseIntegerInput,
   parseStructDefinition,
   OP_KEYS,
   type BitOp,
@@ -26,18 +27,26 @@ export function BitOpsToolInner() {
 
   // ── 位运算结果 ──
   const bitResult = useMemo(() => {
-    const a = parseInt(opA, 10);
-    const b = parseInt(opB, 10);
-    if (isNaN(a)) return null;
-    if (bitOp !== "NOT" && isNaN(b)) return null;
-    return bitwiseOp(a, isNaN(b) ? 0 : b, bitOp);
+    const a = parseIntegerInput(opA);
+    const b = parseIntegerInput(opB);
+    if (a === null) return null;
+    if (bitOp !== "NOT" && b === null) return null;
+    if ((bitOp === "LSHIFT" || bitOp === "RSHIFT") && (b === null || b < 0 || b > 31)) return null;
+    return bitwiseOp(a, b ?? 0, bitOp);
   }, [opA, opB, bitOp]);
 
   // 无效输入检测
   const bitwiseInputError = useMemo(() => {
     if (!opA.trim() && !opB.trim()) return null;
-    if (opA.trim() && isNaN(parseInt(opA, 10))) return "tools.invalidNumber";
-    if (bitOp !== "NOT" && opB.trim() && isNaN(parseInt(opB, 10))) return "tools.invalidNumber";
+    if (opA.trim() && parseIntegerInput(opA) === null) return "tools.invalidNumber";
+    if (bitOp !== "NOT" && opB.trim() && parseIntegerInput(opB) === null) return "tools.invalidNumber";
+    if (
+      (bitOp === "LSHIFT" || bitOp === "RSHIFT")
+      && opB.trim()
+      && ((parseIntegerInput(opB) ?? -1) < 0 || (parseIntegerInput(opB) ?? 32) > 31)
+    ) {
+      return "tools.shiftCountRange";
+    }
     return null;
   }, [opA, opB, bitOp]);
 
@@ -50,16 +59,20 @@ export function BitOpsToolInner() {
   return (
     <div className={styles.container}>
       {/* 模式切换 */}
-      <div className={styles.modeRow}>
+      <div className={`${styles.modeRow} liquid-selector-strip`}>
         <button
-          className={`${styles.modeBtn} liquid-glass-button ${mode === "bitwise" ? "active" : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${mode === "bitwise" ? "active" : ""}`}
           onClick={() => setMode("bitwise")}
+          type="button"
+          aria-pressed={mode === "bitwise"}
         >
           {t("tools.bitwiseMode") ?? "Bitwise"}
         </button>
         <button
-          className={`${styles.modeBtn} liquid-glass-button ${mode === "sizeof" ? "active" : ""}`}
+          className={`${styles.modeBtn} liquid-glass-button liquid-selector-button ${mode === "sizeof" ? "active" : ""}`}
           onClick={() => setMode("sizeof")}
+          type="button"
+          aria-pressed={mode === "sizeof"}
         >
           {t("tools.sizeofMode") ?? "C sizeof"}
         </button>
