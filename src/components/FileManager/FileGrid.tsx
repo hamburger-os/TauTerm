@@ -16,7 +16,7 @@ type FileGridProps = FileViewProps;
 
 const GRID_MIN_COLUMN = 160;
 const GRID_GAP = 4;
-const GRID_ROW_HEIGHT = 52;
+const GRID_ROW_HEIGHT = 48; // 44px tile + 4px (--spacing-xs) row gap
 const VIRTUAL_THRESHOLD = 300;
 const OVERSCAN_ROWS = 4;
 

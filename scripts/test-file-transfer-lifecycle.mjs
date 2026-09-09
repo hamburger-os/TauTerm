@@ -355,6 +355,7 @@ assert.match(fileList, /virtualCanvas/);
 
 const fileGrid = await source("src/components/FileManager/FileGrid.tsx");
 assert.match(fileGrid, /VIRTUAL_THRESHOLD = 300/);
+assert.match(fileGrid, /GRID_ROW_HEIGHT = 48/);
 assert.match(fileGrid, /ResizeObserver/);
 assert.match(fileGrid, /case "ArrowLeft"/);
 assert.match(fileGrid, /case "ArrowRight"/);
