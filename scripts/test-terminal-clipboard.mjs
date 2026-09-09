@@ -60,9 +60,10 @@ assert.doesNotMatch(
   "context-menu paste must not bypass xterm paste semantics",
 );
 
+assert.match(terminalSource, /id: "inspectProtocol"/);
 assert.match(
   terminalSource,
-  /id: "inspectProtocol"[\s\S]{0,360}tauterm:protocol-inspect[\s\S]{0,220}sessionId/,
+  /case "inspectProtocol":[\s\S]{0,520}new CustomEvent\("tauterm:protocol-inspect"[\s\S]{0,220}detail: \{ sessionId, input: selection \}/,
   "terminal selection handoff must be explicit and session-scoped",
 );
 
