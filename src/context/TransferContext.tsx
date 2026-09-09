@@ -298,8 +298,10 @@ export function TransferProvider({ children }: { children: ReactNode }) {
   // 使用 ref 追踪 activeSessionId，避免事件监听器闭包过期（同 activeProtocolRef 模式）
   const activeSessionIdRef = useRef(state.activeSessionId);
   activeSessionIdRef.current = state.activeSessionId;
-  // 每个已启动传输都有独立 transfer_id；用于拒绝同 Session 的迟到 progress。
+  // 每个已启动传输都有独立 transfer_id；用于拒绝同 Session 的迟到事件。
   const activeTransferIdRef = useRef<string | null>(null);
+  const activeDirectionRef = useRef<TransferDirection | null>(null);
+  const lastAggregateBytesRef = useRef(0);
 
   const addHistory = useCallback(
     (item: Omit<TransferHistoryItem, "id">) => {
@@ -342,6 +344,8 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       activeProtocolRef.current = protocol;
       activeSessionIdRef.current = sessionId;
       activeTransferIdRef.current = null;
+      activeDirectionRef.current = direction;
+      lastAggregateBytesRef.current = 0;
       dispatch({ type: "SET_ACTIVE_PROTOCOL", protocol });
       dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId });
       dispatch({ type: "SET_ERROR", error: null });
@@ -464,6 +468,8 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         (event) => {
           if (event.payload.session_id !== activeSessionIdRef.current) return;
           activeTransferIdRef.current = null;
+          activeDirectionRef.current = null;
+          lastAggregateBytesRef.current = 0;
           dispatch({ type: "RESET_BATCH" });
           dispatch({ type: "SET_ACTIVE_SESSION_ID", sessionId: null });
           dispatch({ type: "SET_STATUS", status: "idle" });
@@ -524,28 +530,13 @@ export function TransferProvider({ children }: { children: ReactNode }) {
           if (p.session_id !== activeSessionIdRef.current) return;
           if (p.protocol !== activeProtocolRef.current) return;
           if (!activeTransferIdRef.current || p.transfer_id !== activeTransferIdRef.current) return;
-          // 映射到现有 TransferProgress 格式
-          // batch_complete 事件只更新状态，不 dispatch SET_PROGRESS
-          // 避免空 file_name 创建幽灵条目（Bug #1）
+          // batch_complete 只是协议层批次收尾；真正终态由 finished 统一决定。
+          // 不在这里提前 completed/failed，避免跳过资源释放阶段，也避免把取消误判为失败。
           if (p.is_batch_complete) {
-            // file_success 在 batch_complete 中基于 files_failed/files_skipped 设置
-            const ok = p.file_success !== false;
-            dispatch({
-              type: "SET_STATUS",
-              status: ok ? "completed" : "failed",
-            });
-            addHistory({
-              file_name: p.file_name !== "__batch_complete__" ? p.file_name : "batch",
-              direction: p.direction,
-              size: p.aggregate_bytes,
-              status: ok ? "completed" : "failed",
-              timestamp: Date.now(),
-              error: p.file_error ?? undefined,
-              protocol: activeProtocolRef.current ?? "unknown",
-            });
             return;
           }
 
+          lastAggregateBytesRef.current = p.aggregate_bytes;
           const progress: TransferProgress = {
             file_name: p.file_name,
             bytes_transferred: p.bytes_done,
@@ -570,6 +561,59 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         return;
       }
       unlisteners.push(u2);
+
+      interface TransferFinishedPayload {
+        session_id: string;
+        transfer_id?: string;
+        protocol?: string;
+        success: boolean;
+        cancelled?: boolean;
+        error?: string | null;
+      }
+      const uFinished = await listen<TransferFinishedPayload>(
+        "file-transfer:finished",
+        (event) => {
+          const payload = event.payload;
+          if (payload.session_id !== activeSessionIdRef.current) return;
+          if (payload.protocol && payload.protocol !== activeProtocolRef.current) return;
+          if (
+            !payload.transfer_id
+            || !activeTransferIdRef.current
+            || payload.transfer_id !== activeTransferIdRef.current
+          ) {
+            return;
+          }
+
+          const status: TransferStatus = payload.success
+            ? "completed"
+            : payload.cancelled
+              ? "cancelled"
+              : "failed";
+          dispatch({ type: "SET_STATUS", status });
+          dispatch({
+            type: "SET_ERROR",
+            error: payload.success ? null : (payload.error ?? "Transfer failed"),
+          });
+          addHistory({
+            file_name: "batch",
+            direction: activeDirectionRef.current ?? "send",
+            size: lastAggregateBytesRef.current,
+            status,
+            timestamp: Date.now(),
+            error: payload.success ? undefined : (payload.error ?? undefined),
+            protocol: activeProtocolRef.current ?? "unknown",
+          });
+
+          activeTransferIdRef.current = null;
+          activeDirectionRef.current = null;
+          lastAggregateBytesRef.current = 0;
+        },
+      );
+      if (cancelled) {
+        uFinished();
+        return;
+      }
+      unlisteners.push(uFinished);
     })().catch((e) => {
       console.error("TransferContext: Failed to register event listeners:", e);
     });
