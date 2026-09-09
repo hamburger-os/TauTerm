@@ -404,7 +404,8 @@ pub async fn sftp_download(
 
     loop {
         if is_cancelled(cancel) {
-            // 清理本地半成品文件
+            // Windows 不能可靠删除仍由当前进程打开的文件；先关闭句柄再清理半成品。
+            drop(local_file);
             let _ = tokio::fs::remove_file(local_path).await;
             return Err(transfer_cancelled_error());
         }
