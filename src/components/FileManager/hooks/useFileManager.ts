@@ -8,7 +8,8 @@ import {
   SortField,
   SortDirection,
   type TransferFinishedPayload,
-  type TransferStartedPayload,
+  type TransferStartAck,
+  type OverwritePolicy,
 } from '../types';
 
 export interface UseFileManagerReturn {
@@ -27,8 +28,12 @@ export interface UseFileManagerReturn {
   navigateTo: (path: string) => void;
   goUp: () => void;
   refresh: () => Promise<void>;
-  uploadFile: (localPath: string, remotePath: string) => Promise<void>;
-  uploadFiles: (localPaths: string[], remoteDir: string) => Promise<void>;
+  uploadFile: (localPath: string, remotePath: string) => Promise<TransferStartAck>;
+  uploadFiles: (
+    localPaths: string[],
+    remoteDir: string,
+    overwritePolicy?: OverwritePolicy,
+  ) => Promise<TransferStartAck>;
   downloadFiles: (entries: SftpEntry[]) => Promise<void>;
   downloadDirectory: (remoteDir: string, localDir: string) => Promise<void>;
   downloadDirectories: (dirEntries: SftpEntry[], localRootDir: string) => Promise<string[]>;
@@ -79,59 +84,55 @@ function sortEntries(
 }
 
 
-const TRANSFER_TIMEOUT_MS = 5 * 60 * 1000;
-
 async function runSftpTransferAndWait(
   sessionId: string,
-  startTransfer: () => Promise<void>,
+  startTransfer: () => Promise<TransferStartAck>,
 ): Promise<void> {
   let activeTransferId: string | null = null;
-  let unlistenStarted: (() => void) | undefined;
+  const bufferedFinished = new Map<string, TransferFinishedPayload>();
   let unlistenFinished: (() => void) | undefined;
-  let timeoutId: number | undefined;
 
   let resolveFinished!: () => void;
   let rejectFinished!: (error: Error) => void;
+  let settled = false;
   const finishedPromise = new Promise<void>((resolve, reject) => {
     resolveFinished = resolve;
     rejectFinished = reject;
   });
+  const settle = (payload: TransferFinishedPayload) => {
+    if (settled) return;
+    settled = true;
+    if (payload.success) resolveFinished();
+    else rejectFinished(new Error(payload.error || 'SFTP transfer failed'));
+  };
 
   try {
-    unlistenStarted = await listen<TransferStartedPayload>(
-      'file-transfer:started',
-      (event) => {
-        const payload = event.payload;
-        if (payload.session_id !== sessionId || payload.protocol !== 'sftp') return;
-        activeTransferId = payload.transfer_id;
-      },
-    );
-
+    // 先注册 finished，避免极小文件在 invoke 返回 ack 前已经完成。
     unlistenFinished = await listen<TransferFinishedPayload>(
       'file-transfer:finished',
       (event) => {
         const payload = event.payload;
         if (payload.session_id !== sessionId) return;
         if (payload.protocol && payload.protocol !== 'sftp') return;
-        if (!activeTransferId || payload.transfer_id !== activeTransferId) return;
-
-        if (payload.success) {
-          resolveFinished();
-        } else {
-          rejectFinished(new Error(payload.error || 'SFTP transfer failed'));
+        if (!activeTransferId) {
+          if (payload.transfer_id) {
+            bufferedFinished.set(payload.transfer_id, payload);
+          }
+          return;
         }
+        if (payload.transfer_id !== activeTransferId) return;
+        settle(payload);
       },
     );
 
-    timeoutId = window.setTimeout(() => {
-      rejectFinished(new Error('SFTP transfer timed out after 5 minutes'));
-    }, TRANSFER_TIMEOUT_MS);
-
-    await startTransfer();
+    const ack = await startTransfer();
+    activeTransferId = ack.transfer_id;
+    const earlyFinished = bufferedFinished.get(activeTransferId);
+    if (earlyFinished) {
+      settle(earlyFinished);
+    }
     await finishedPromise;
   } finally {
-    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
-    unlistenStarted?.();
     unlistenFinished?.();
   }
 }
@@ -149,6 +150,7 @@ export function useFileManager(
   const [promptMode, setPromptMode] = useState<PromptMode | null>(null);
   const [promptValue, setPromptValue] = useState('');
   const [promptTarget, setPromptTarget] = useState<SftpEntry | null>(null);
+  const directoryGenerationRef = useRef(0);
 
   // ── Resolve remote home dir on connection ──
   const connectedRef = useRef(isConnected);
@@ -193,6 +195,7 @@ export function useFileManager(
   const loadDirectory = useCallback(
     async (path: string) => {
       if (!isConnected) return;
+      const generation = ++directoryGenerationRef.current;
       setLoading(true);
       setError(null);
       try {
@@ -200,12 +203,17 @@ export function useFileManager(
           sessionId,
           remotePath: path,
         });
+        if (generation !== directoryGenerationRef.current) return;
         setRawEntries(list);
       } catch (e) {
+        if (generation !== directoryGenerationRef.current) return;
         setError(String(e));
         setRawEntries([]);
+      } finally {
+        if (generation === directoryGenerationRef.current) {
+          setLoading(false);
+        }
       }
-      setLoading(false);
     },
     [sessionId, isConnected]
   );
@@ -213,6 +221,7 @@ export function useFileManager(
   // ── Effect: reload when path changes, clear on disconnect ──
   useEffect(() => {
     if (!isConnected) {
+      directoryGenerationRef.current += 1;
       setCurrentPath(null);
       setRawEntries([]);
       setLoading(false);
@@ -250,23 +259,28 @@ export function useFileManager(
   // 使用统一传输命令（非阻塞，后端 spawn 后立即返回）。
   // 进度由 `file-transfer:progress` 事件统一处理（见 useSftpProgress）。
   const uploadFiles = useCallback(
-    async (localPaths: string[], remoteDir: string): Promise<void> => {
-      await invoke<void>('file_transfer_send', {
+    async (
+      localPaths: string[],
+      remoteDir: string,
+      overwritePolicy: OverwritePolicy = 'keep-both',
+    ): Promise<TransferStartAck> => {
+      return invoke<TransferStartAck>('file_transfer_send', {
         request: {
-        sessionId,
-        protocol: 'sftp',
-        filePaths: localPaths,
-        remoteDir,
-
-        },});
+          sessionId,
+          protocol: 'sftp',
+          filePaths: localPaths,
+          remoteDir,
+          overwritePolicy,
+        },
+      });
     },
     [sessionId]
   );
 
   const uploadFile = useCallback(
-    async (localPath: string, remotePath: string): Promise<void> => {
+    async (localPath: string, remotePath: string): Promise<TransferStartAck> => {
       const remoteDir = remotePath.substring(0, remotePath.lastIndexOf('/') + 1 || 0) || '/';
-      await uploadFiles([localPath], remoteDir);
+      return uploadFiles([localPath], remoteDir);
     },
     [uploadFiles]
   );
@@ -281,6 +295,7 @@ export function useFileManager(
       // 确定下载目标目录和远程路径列表
       let downloadDir: string;
       let remotePaths: string[];
+      let destinationPaths: string[] | undefined;
 
       if (files.length === 1) {
         // 单文件：save 对话框（可重命名），提取父目录
@@ -292,22 +307,26 @@ export function useFileManager(
         );
         downloadDir = lastSep >= 0 ? (localPath as string).substring(0, lastSep) : '.';
         remotePaths = [files[0].path];
+        destinationPaths = [localPath as string];
       } else {
         // 多文件：一次目录选择器，全部文件批量下载
         const dir = await open({ directory: true, multiple: false });
         if (!dir) return;
         downloadDir = typeof dir === 'string' ? dir : (dir as string);
         remotePaths = files.map(f => f.path);
+        destinationPaths = undefined;
       }
 
       try {
         await runSftpTransferAndWait(sessionId, () =>
-          invoke<void>('file_transfer_receive', {
+          invoke<TransferStartAck>('file_transfer_receive', {
             request: {
               sessionId,
               protocol: 'sftp',
               downloadDir,
               remotePaths,
+              destinationPaths,
+              overwritePolicy: files.length === 1 ? 'replace' : 'keep-both',
             },
           }),
         );
@@ -322,15 +341,15 @@ export function useFileManager(
   // 后端 SftpFileTransfer::receive() 检测到目录路径后自动递归列举子文件
   const downloadDirectory = useCallback(
     async (remoteDir: string, localDir: string): Promise<void> => {
-      const dirName = remoteDir.split('/').pop() || 'download';
       try {
         await runSftpTransferAndWait(sessionId, () =>
-          invoke<void>('file_transfer_receive', {
+          invoke<TransferStartAck>('file_transfer_receive', {
             request: {
               sessionId,
               protocol: 'sftp',
-              downloadDir: `${localDir}/${dirName}`,
+              downloadDir: localDir,
               remotePaths: [remoteDir],
+              overwritePolicy: 'keep-both',
             },
           }),
         );
@@ -353,16 +372,15 @@ export function useFileManager(
       for (const entry of dirEntries) {
         if (!entry.is_dir) continue;
 
-        const dirName = entry.path.split('/').pop() || 'download';
-
         try {
           await runSftpTransferAndWait(sessionId, () =>
-            invoke<void>('file_transfer_receive', {
+            invoke<TransferStartAck>('file_transfer_receive', {
               request: {
                 sessionId,
                 protocol: 'sftp',
-                downloadDir: `${localRootDir}/${dirName}`,
+                downloadDir: localRootDir,
                 remotePaths: [entry.path],
+                overwritePolicy: 'keep-both',
               },
             }),
           );
@@ -394,11 +412,25 @@ export function useFileManager(
           && (!event.payload.protocol || event.payload.protocol === 'sftp')
         ) {
           // 静默刷新目录（不触发 loading 闪烁），仅更新条目列表
+          const generation = ++directoryGenerationRef.current;
           invoke<SftpEntry[]>('sftp_list_dir_cmd', {
             sessionId,
             remotePath: path,
-          }).then(list => setRawEntries(list))
-            .catch(e => setError(String(e)));
+          }).then(list => {
+            if (
+              generation === directoryGenerationRef.current
+              && currentPathRef.current === path
+            ) {
+              setRawEntries(list);
+            }
+          }).catch(e => {
+            if (
+              generation === directoryGenerationRef.current
+              && currentPathRef.current === path
+            ) {
+              setError(String(e));
+            }
+          });
         }
       }
     );
@@ -570,6 +602,7 @@ export function useFileManager(
       uploadFiles,
       downloadFiles,
       downloadDirectory,
+      downloadDirectories,
       deleteEntries,
       renameEntry,
       createFile,

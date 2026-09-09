@@ -5,7 +5,7 @@
  * 支持单选高亮、右键菜单。
  * 使用 React.memo 避免选择变化时全部行重渲染。
  */
-import { memo } from "react";
+import { memo, type CSSProperties, type KeyboardEventHandler } from "react";
 import type { SftpEntry } from "./types";
 import { formatBytes, formatTime } from "../../utils/format";
 import { getEntryIcon } from "./entryIcon";
@@ -19,6 +19,11 @@ interface FileRowProps {
   onClick: (e: React.MouseEvent) => void;
   onDoubleClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  tabIndex?: number;
+  dataIndex?: number;
+  style?: CSSProperties;
+  onFocus?: () => void;
+  onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
 }
 
 const FileRow = memo(function FileRow({
@@ -27,6 +32,11 @@ const FileRow = memo(function FileRow({
   onClick,
   onDoubleClick,
   onContextMenu,
+  tabIndex = 0,
+  dataIndex,
+  style,
+  onFocus,
+  onKeyDown,
 }: FileRowProps) {
   const rowClass = [
     styles.row,
@@ -43,8 +53,13 @@ const FileRow = memo(function FileRow({
       onContextMenu={onContextMenu}
       role="row"
       aria-selected={isSelected}
-      tabIndex={0}
+      tabIndex={tabIndex}
+      data-file-index={dataIndex}
+      style={style}
+      onFocus={onFocus}
       onKeyDown={(e) => {
+        onKeyDown?.(e);
+        if (e.defaultPrevented) return;
         if (e.key === "Enter") {
           e.preventDefault();
           onDoubleClick();

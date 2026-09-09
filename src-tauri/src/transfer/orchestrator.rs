@@ -8,12 +8,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use crate::channel::io_loop::IoLoopCmd;
 use crate::channel::Channel;
-use crate::kernel::file_transfer::{FileTransfer, FileTransferError, UnifiedProgress};
+use crate::kernel::file_transfer::{
+    FileTransfer, FileTransferError, FileTransferOptions, UnifiedProgress,
+};
 use crate::kernel::plugin_adapter::TransferProtocolType;
 use crate::kernel::session_store::SessionState;
 use crate::transfer::panic_guard::PanicGuard;
@@ -30,6 +33,7 @@ pub struct SendContext {
     pub session_id: String,
     pub files: Vec<FileInfo>,
     pub remote_dir: Option<String>,
+    pub options: FileTransferOptions,
     pub progress_tx: UnboundedSender<UnifiedProgress>,
     pub progress_rx: UnboundedReceiver<UnifiedProgress>,
     pub block_size: Option<usize>,
@@ -43,11 +47,19 @@ pub struct ReceiveContext {
     pub session_id: String,
     pub download_dir: String,
     pub remote_paths: Vec<String>,
+    pub options: FileTransferOptions,
     pub progress_tx: UnboundedSender<UnifiedProgress>,
     pub progress_rx: UnboundedReceiver<UnifiedProgress>,
     pub block_size: Option<usize>,
     pub checksum_mode: Option<String>,
     pub streaming: Option<bool>,
+}
+
+/// 启动命令的确认结果。SideChannel 传输在后台任务注册完成后立即返回该 ID；
+/// Inline 传输仍保持现有阻塞调用语义，但也返回同一身份模型。
+#[derive(Debug, Clone, Serialize)]
+pub struct TransferStartAck {
+    pub transfer_id: String,
 }
 
 // ── Trait ──────────────────────────────────────────────────────────────────
@@ -73,7 +85,7 @@ pub trait TransferOrchestrator: Send + Sync {
         app: AppHandle,
         ctx: SendContext,
         client_session_id: String,
-    ) -> Result<(), String>;
+    ) -> Result<TransferStartAck, String>;
 
     /// 执行接收（download）传输
     /// `client_session_id` — 前端传入的原始 sessionId，用于事件回传
@@ -82,7 +94,7 @@ pub trait TransferOrchestrator: Send + Sync {
         app: AppHandle,
         ctx: ReceiveContext,
         client_session_id: String,
-    ) -> Result<(), String>;
+    ) -> Result<TransferStartAck, String>;
 
     /// 取消正在进行的传输
     #[allow(dead_code)]
@@ -140,8 +152,8 @@ fn restore_session_state(app: &AppHandle, session_id: &str) {
         if let Ok(mut store) = state.session_store.lock() {
             if let Some(h) = store.get_session_mut(session_id) {
                 h.state = SessionState::Connected;
-                h.cancel_transfer_tx = None;
                 h.channel_return_tx = None;
+                let _ = h.transfer_scheduler.finish(None);
             }
         }
     }
@@ -201,6 +213,7 @@ impl InlineTransferOrchestrator {
         &self,
         app: &AppHandle,
         session_id: &str,
+        transfer_id: &str,
     ) -> Result<
         (
             Box<dyn serialport::SerialPort>,
@@ -216,21 +229,30 @@ impl InlineTransferOrchestrator {
             let app_state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
             let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(session_id);
+            let write_tx = {
+                let handle = store.get_session_mut(session_id).ok_or(not_found)?;
+                if handle.state != SessionState::Connected {
+                    return Err("会话未连接".into());
+                }
+                handle
+                    .write_tx
+                    .as_ref()
+                    .cloned()
+                    .ok_or("容器会话不支持端口移交（HandoffPort）")?
+            };
+
+            // 所有可能失败的静态前置检查完成后再占用 Scheduler 槽，避免启动失败留下 busy。
+            store.reserve_inline_transfer(session_id, transfer_id, cancel_tx)?;
+            let not_found = store.session_not_found(session_id);
             let handle = store.get_session_mut(session_id).ok_or(not_found)?;
-            if handle.state != SessionState::Connected {
-                return Err("会话未连接".into());
-            }
-            if handle.transfer_cancel.is_some() {
-                return Err("该会话已有传输进行中，请等待完成或取消后再试".into());
-            }
             handle.state = SessionState::Transferring;
             handle.channel_return_tx = Some(return_tx);
-            handle.cancel_transfer_tx = Some(cancel_tx);
-            let tx = handle
-                .write_tx
-                .as_ref()
-                .ok_or("容器会话不支持端口移交（HandoffPort）")?;
-            let _ = tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx });
+            if let Err(error) = write_tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx }) {
+                let _ = handle.transfer_scheduler.finish(Some(transfer_id));
+                handle.state = SessionState::Connected;
+                handle.channel_return_tx = None;
+                return Err(format!("无法请求 I/O 线程移交 Channel: {error}"));
+            }
         }
 
         let mut channel = give_rx.recv().map_err(|e| {
@@ -261,12 +283,13 @@ impl InlineTransferOrchestrator {
         &self,
         app: &AppHandle,
         session_id: &str,
+        transfer_id: &str,
         port: Box<dyn serialport::SerialPort>,
     ) {
         if let Some(app_state) = app.try_state::<AppState>() {
             if let Ok(mut store) = app_state.session_store.lock() {
                 if let Some(h) = store.get_session_mut(session_id) {
-                    h.cancel_transfer_tx = None;
+                    let _ = h.transfer_scheduler.finish(Some(transfer_id));
                     h.state = SessionState::Connected;
                     if let Some(tx) = h.channel_return_tx.take() {
                         let new_channel = crate::channel::serial_channel::SerialChannel::new(port);
@@ -296,9 +319,10 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         app: AppHandle,
         ctx: SendContext,
         client_id: String,
-    ) -> Result<(), String> {
-        // 1. Handoff 端口（return_tx 和 cancel_tx 已存入 session handle）
-        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id)?;
+    ) -> Result<TransferStartAck, String> {
+        // 1. 先分配任务身份，再由 Scheduler 预留 Inline 活动槽并 Handoff 端口。
+        let transfer_id = uuid::Uuid::new_v4().to_string();
+        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
 
         // 2. 创建协议处理器 + SerialFileTransfer
         //    若协议处理器创建失败，必须归还端口，否则 I/O 线程永久阻塞
@@ -306,7 +330,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             match self.create_protocol_handler(ctx.block_size, ctx.checksum_mode, ctx.streaming) {
                 Ok(h) => h,
                 Err(e) => {
-                    self.return_port(&app, &ctx.session_id, port);
+                    self.return_port(&app, &ctx.session_id, &transfer_id, port);
                     emit_transfer_failed(&app, &ctx.session_id, self.pt.as_str());
                     return Err(e);
                 }
@@ -315,7 +339,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
 
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
-        let transfer_id = uuid::Uuid::new_v4().to_string();
 
         // 3. 广播进度 — client_id + transfer_id。完成事件必须等待队列 drain。
         let broadcaster = spawn_progress_broadcaster(
@@ -347,7 +370,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 6. 执行传输
         let progress_tx_clone = ctx.progress_tx.clone();
         let result = transfer
-            .send(&ctx.files, None, progress_tx_clone, cancel)
+            .send(&ctx.files, None, &ctx.options, progress_tx_clone, cancel)
             .await;
         drop(ctx.progress_tx);
         let _ = broadcaster.await;
@@ -355,14 +378,14 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 7. 归还端口。此步骤完成后下一次串口传输才可安全启动。
         match transfer.take_port() {
             Ok(port) => {
-                self.return_port(&app, &sid, port);
+                self.return_port(&app, &sid, &transfer_id, port);
             }
             Err(e) => {
                 log::error!("无法归还端口: {}", e);
                 if let Some(app_state) = app.try_state::<AppState>() {
                     if let Ok(mut store) = app_state.session_store.lock() {
                         if let Some(h) = store.get_session_mut(&sid) {
-                            h.cancel_transfer_tx = None;
+                            let _ = h.transfer_scheduler.finish(Some(&transfer_id));
                             h.state = SessionState::Connected;
                             h.channel_return_tx = None;
                         }
@@ -384,7 +407,9 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                         "cancelled": false,
                     }),
                 );
-                Ok(())
+                Ok(TransferStartAck {
+                    transfer_id: transfer_id.clone(),
+                })
             }
             Err(e) => {
                 let cancelled = matches!(&e, FileTransferError::Cancelled);
@@ -410,9 +435,10 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         app: AppHandle,
         ctx: ReceiveContext,
         client_id: String,
-    ) -> Result<(), String> {
-        // 1. Handoff 端口（return_tx 和 cancel_tx 已存入 session handle）
-        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id)?;
+    ) -> Result<TransferStartAck, String> {
+        // 1. 先分配任务身份，再由 Scheduler 预留 Inline 活动槽并 Handoff 端口。
+        let transfer_id = uuid::Uuid::new_v4().to_string();
+        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
 
         // 2. 创建协议处理器 + SerialFileTransfer
         //    若协议处理器创建失败，必须归还端口，否则 I/O 线程永久阻塞
@@ -420,7 +446,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             match self.create_protocol_handler(ctx.block_size, ctx.checksum_mode, ctx.streaming) {
                 Ok(h) => h,
                 Err(e) => {
-                    self.return_port(&app, &ctx.session_id, port);
+                    self.return_port(&app, &ctx.session_id, &transfer_id, port);
                     emit_transfer_failed(&app, &ctx.session_id, self.pt.as_str());
                     return Err(e);
                 }
@@ -429,7 +455,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
 
         let sid = ctx.session_id.clone();
         let proto_str = self.pt.to_string();
-        let transfer_id = uuid::Uuid::new_v4().to_string();
 
         // 3. 广播进度 — client_id + transfer_id。完成事件必须等待队列 drain。
         let broadcaster = spawn_progress_broadcaster(
@@ -461,7 +486,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 6. 执行传输（内联串口接收：remote_paths 为空，由协议层自行协商文件列表）
         let progress_tx_clone = ctx.progress_tx.clone();
         let result = transfer
-            .receive(&ctx.download_dir, &[], progress_tx_clone, cancel)
+            .receive(
+                &ctx.download_dir,
+                &[],
+                &ctx.options,
+                progress_tx_clone,
+                cancel,
+            )
             .await;
         drop(ctx.progress_tx);
         let _ = broadcaster.await;
@@ -469,14 +500,14 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         // 7. 归还端口
         match transfer.take_port() {
             Ok(port) => {
-                self.return_port(&app, &sid, port);
+                self.return_port(&app, &sid, &transfer_id, port);
             }
             Err(e) => {
                 log::error!("无法归还端口: {}", e);
                 if let Some(app_state) = app.try_state::<AppState>() {
                     if let Ok(mut store) = app_state.session_store.lock() {
                         if let Some(h) = store.get_session_mut(&sid) {
-                            h.cancel_transfer_tx = None;
+                            let _ = h.transfer_scheduler.finish(Some(&transfer_id));
                             h.state = SessionState::Connected;
                             h.channel_return_tx = None;
                         }
@@ -498,7 +529,9 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                         "cancelled": false,
                     }),
                 );
-                Ok(())
+                Ok(TransferStartAck {
+                    transfer_id: transfer_id.clone(),
+                })
             }
             Err(e) => {
                 let cancelled = matches!(&e, FileTransferError::Cancelled);
@@ -522,15 +555,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let not_found = store.session_not_found(session_id);
-        let handle = store.get_session_mut(session_id).ok_or(not_found)?;
-
-        if let Some(tx) = handle.cancel_transfer_tx.take() {
-            let _ = tx.send(());
-            Ok(())
-        } else {
-            Err("没有正在进行的传输".into())
-        }
+        store.cancel_scheduled_transfer(session_id, None)
     }
 }
 
@@ -558,12 +583,13 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
         app: AppHandle,
         ctx: SendContext,
         client_id: String,
-    ) -> Result<(), String> {
+    ) -> Result<TransferStartAck, String> {
         let app_for_spawn = app.clone();
 
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
 
         let internal_id = ctx.session_id.clone();
+        let transfer_id = uuid::Uuid::new_v4().to_string();
 
         // 1. 从 SideChannel 获取 FileTransfer 并设置取消标志
         //    合并为一次锁获取，消除 TOCTOU 窗口
@@ -574,22 +600,22 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             if handle.state != SessionState::Connected {
                 return Err("会话未连接".into());
             }
-            if handle.transfer_cancel.is_some() {
-                return Err("该会话已有传输进行中，请等待完成或取消后再试".into());
-            }
             let ft = handle
                 .side_channel
                 .as_ref()
                 .and_then(|sc| sc.create_file_transfer())
                 .ok_or_else(|| "此会话不支持侧通道文件传输".to_string())?;
-            let cancel_flag = store.transfer_start(&internal_id)?;
+            let cancel_flag = store.transfer_start(&internal_id, &transfer_id)?;
             (ft, cancel_flag)
         };
 
         let rd = ctx.remote_dir.clone();
         let files = ctx.files.clone();
+        let options = ctx.options.clone();
         let protocol = ft.protocol().to_string();
-        let transfer_id = uuid::Uuid::new_v4().to_string();
+        let ack = TransferStartAck {
+            transfer_id: transfer_id.clone(),
+        };
 
         // 3. 广播进度 — client_id + transfer_id。finished 必须等待 broadcaster drain。
         let broadcaster = spawn_progress_broadcaster(
@@ -599,17 +625,6 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             transfer_id.clone(),
         );
 
-        // 4. 发射启动事件 — client_id + transfer_id
-        let _ = app_for_spawn.emit(
-            "file-transfer:started",
-            serde_json::json!({
-                "session_id": &client_id,
-                "transfer_id": &transfer_id,
-                "protocol": &protocol,
-                "direction": "send",
-            }),
-        );
-
         log::info!(
             "侧通道发送: protocol={}, {} 个文件 → {:?}",
             protocol,
@@ -617,22 +632,33 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             rd
         );
 
-        // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
+        // 4. 先创建一个带 start gate 的后台 task。task 在成功注册到 SessionStore 且
+        // started 事件发出之前绝不访问传输资源，消除 close_session 与 task 注册竞态。
         let progress_tx = ctx.progress_tx;
         let internal_for_guard = internal_id.clone();
+        let task_app = app_for_spawn.clone();
+        let task_client_id = client_id.clone();
+        let task_protocol = protocol.clone();
+        let task_transfer_id = transfer_id.clone();
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
         let handle = tokio::spawn(async move {
+            if start_rx.await.is_err() {
+                return;
+            }
+
             let mut guard = PanicGuard::new(
-                app_for_spawn.clone(),
+                task_app.clone(),
                 internal_for_guard,
-                client_id.clone(),
-                protocol.clone(),
-                transfer_id.clone(),
+                task_client_id.clone(),
+                task_protocol.clone(),
+                task_transfer_id.clone(),
             );
 
             let result = ft
                 .send(
                     &files,
                     rd.as_deref(),
+                    &options,
                     progress_tx.clone(),
                     cancel_flag.clone(),
                 )
@@ -648,12 +674,12 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
 
             // 先释放 SessionStore 传输占用，再通知前端完成，消除立即连续上传竞态。
             guard.complete();
-            let _ = app_for_spawn.emit(
+            let _ = task_app.emit(
                 "file-transfer:finished",
                 serde_json::json!({
-                    "session_id": &client_id,
-                    "transfer_id": &transfer_id,
-                    "protocol": &protocol,
+                    "session_id": &task_client_id,
+                    "transfer_id": &task_transfer_id,
+                    "protocol": &task_protocol,
                     "success": success,
                     "cancelled": cancelled,
                     "error": error,
@@ -661,12 +687,24 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             );
         });
 
-        // 6. 注册 task handle — internal_id
-        if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.register_transfer_task(&internal_id, handle);
+        // 5. 注册 task handle。持锁期间 session 不能被 close/remove；注册成功后才
+        // 发布 started，随后打开 gate，保证 started → progress* → finished 顺序。
+        {
+            let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+            store.register_transfer_task(&internal_id, handle)?;
         }
+        let _ = app_for_spawn.emit(
+            "file-transfer:started",
+            serde_json::json!({
+                "session_id": &client_id,
+                "transfer_id": &transfer_id,
+                "protocol": &protocol,
+                "direction": "send",
+            }),
+        );
+        let _ = start_tx.send(());
 
-        Ok(())
+        Ok(ack)
     }
 
     async fn execute_receive(
@@ -674,12 +712,13 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
         app: AppHandle,
         ctx: ReceiveContext,
         client_id: String,
-    ) -> Result<(), String> {
+    ) -> Result<TransferStartAck, String> {
         let app_for_spawn = app.clone();
 
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
 
         let internal_id = ctx.session_id.clone();
+        let transfer_id = uuid::Uuid::new_v4().to_string();
 
         // 1. 从 SideChannel 获取 FileTransfer 并设置取消标志
         //    合并为一次锁获取，消除 TOCTOU 窗口
@@ -690,22 +729,22 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             if handle.state != SessionState::Connected {
                 return Err("会话未连接".into());
             }
-            if handle.transfer_cancel.is_some() {
-                return Err("该会话已有传输进行中，请等待完成或取消后再试".into());
-            }
             let ft = handle
                 .side_channel
                 .as_ref()
                 .and_then(|sc| sc.create_file_transfer())
                 .ok_or_else(|| "此会话不支持侧通道文件传输".to_string())?;
-            let cancel_flag = store.transfer_start(&internal_id)?;
+            let cancel_flag = store.transfer_start(&internal_id, &transfer_id)?;
             (ft, cancel_flag)
         };
 
         let download_dir = ctx.download_dir.clone();
         let remote_paths = ctx.remote_paths.clone();
+        let options = ctx.options.clone();
         let protocol = ft.protocol().to_string();
-        let transfer_id = uuid::Uuid::new_v4().to_string();
+        let ack = TransferStartAck {
+            transfer_id: transfer_id.clone(),
+        };
 
         // 3. 广播进度 — client_id + transfer_id。finished 必须等待 broadcaster drain。
         let broadcaster = spawn_progress_broadcaster(
@@ -715,17 +754,6 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             transfer_id.clone(),
         );
 
-        // 4. 发射启动事件 — client_id + transfer_id
-        let _ = app_for_spawn.emit(
-            "file-transfer:started",
-            serde_json::json!({
-                "session_id": &client_id,
-                "transfer_id": &transfer_id,
-                "protocol": &protocol,
-                "direction": "receive",
-            }),
-        );
-
         log::info!(
             "侧通道接收: protocol={}, {} 个文件 → {}",
             protocol,
@@ -733,22 +761,32 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             download_dir
         );
 
-        // 5. 后台执行传输（RAII 守卫确保 panic/abort 安全）
+        // 4. 与发送路径相同：task 先注册、事件后发布、最后打开 start gate。
         let progress_tx = ctx.progress_tx;
         let internal_for_guard = internal_id.clone();
+        let task_app = app_for_spawn.clone();
+        let task_client_id = client_id.clone();
+        let task_protocol = protocol.clone();
+        let task_transfer_id = transfer_id.clone();
+        let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
         let handle = tokio::spawn(async move {
+            if start_rx.await.is_err() {
+                return;
+            }
+
             let mut guard = PanicGuard::new(
-                app_for_spawn.clone(),
+                task_app.clone(),
                 internal_for_guard,
-                client_id.clone(),
-                protocol.clone(),
-                transfer_id.clone(),
+                task_client_id.clone(),
+                task_protocol.clone(),
+                task_transfer_id.clone(),
             );
 
             let result = ft
                 .receive(
                     &download_dir,
                     &remote_paths,
+                    &options,
                     progress_tx.clone(),
                     cancel_flag.clone(),
                 )
@@ -762,12 +800,12 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             let error = result.as_ref().err().map(|e| e.to_string());
 
             guard.complete();
-            let _ = app_for_spawn.emit(
+            let _ = task_app.emit(
                 "file-transfer:finished",
                 serde_json::json!({
-                    "session_id": &client_id,
-                    "transfer_id": &transfer_id,
-                    "protocol": &protocol,
+                    "session_id": &task_client_id,
+                    "transfer_id": &task_transfer_id,
+                    "protocol": &task_protocol,
                     "success": success,
                     "cancelled": cancelled,
                     "error": error,
@@ -775,17 +813,27 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
             );
         });
 
-        // 注册 task handle — internal_id
-        if let Ok(mut store) = state.session_store.lock() {
-            let _ = store.register_transfer_task(&internal_id, handle);
+        {
+            let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
+            store.register_transfer_task(&internal_id, handle)?;
         }
+        let _ = app_for_spawn.emit(
+            "file-transfer:started",
+            serde_json::json!({
+                "session_id": &client_id,
+                "transfer_id": &transfer_id,
+                "protocol": &protocol,
+                "direction": "receive",
+            }),
+        );
+        let _ = start_tx.send(());
 
-        Ok(())
+        Ok(ack)
     }
 
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.cancel_transfer_op(session_id)
+        store.cancel_scheduled_transfer(session_id, None)
     }
 }

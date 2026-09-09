@@ -76,6 +76,14 @@ export default defineConfig(async () => ({
           // Protocol/data engineering tools are lazy-loaded from SessionRightSidebar and are
           // intentionally isolated from the daily-driver UI chunk. Keep their pure parsers and
           // tool-specific hook with the same chunk so opening the sidebar pays one coherent load.
+          // File-manager dialogs are mounted only on demand via React.lazy. Do not force
+          // them back into ui-core, otherwise manualChunks defeats the dynamic import and
+          // the daily-driver chunk crosses the repository's 500KB warning budget.
+          if (
+            /\/src\/components\/FileManager\/(FilePropertiesModal|FilePreviewModal|ConflictResolutionModal|DeleteConfirmationDialog)\.tsx$/.test(normalized)
+          ) {
+            return undefined;
+          }
           if (
             /\/src\/components\/Tools\//.test(normalized)
             || /\/src\/protocols\//.test(normalized)

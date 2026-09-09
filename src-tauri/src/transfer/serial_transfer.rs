@@ -8,7 +8,8 @@ use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::kernel::file_transfer::{
-    FileTransfer, FileTransferError, ProgressPosition, TransferDirection, UnifiedProgress,
+    FileTransfer, FileTransferError, FileTransferOptions, ProgressPosition, TransferDirection,
+    UnifiedProgress,
 };
 use crate::kernel::plugin_adapter::TransferProtocolType;
 use crate::transfer::protocol::TransferProtocol;
@@ -59,6 +60,7 @@ impl FileTransfer for SerialFileTransfer {
         &self,
         files: &[FileInfo],
         _remote_dir: Option<&str>,
+        _options: &FileTransferOptions,
         progress: UnboundedSender<UnifiedProgress>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<BatchFileResult>, FileTransferError> {
@@ -232,6 +234,7 @@ impl FileTransfer for SerialFileTransfer {
         &self,
         download_dir: &str,
         _remote_paths: &[String],
+        _options: &FileTransferOptions,
         progress: UnboundedSender<UnifiedProgress>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<BatchFileResult>, FileTransferError> {

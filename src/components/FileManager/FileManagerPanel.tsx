@@ -5,11 +5,13 @@
  * 支持目录浏览、上传、下载、删除、重命名、新建文件/文件夹、
  * 多选批量操作、右键菜单、快捷键、传输进度条。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { SftpEntry } from "./types";
+import type { OverwritePolicy, SftpEntry } from "./types";
 import { useFileManager } from "./hooks/useFileManager";
 import { useMultiSelect } from "./hooks/useMultiSelect";
 import { useSftpProgress } from "./hooks/useSftpProgress";
@@ -20,12 +22,15 @@ import InlinePrompt from "./InlinePrompt";
 import CommonContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
 import Icon from "../common/Icon";
 import TransferProgressBar from "./TransferProgressBar";
-import FilePropertiesModal from "./FilePropertiesModal";
 import type { FileStatInfo } from "./FilePropertiesModal";
-import FilePreviewModal from "./FilePreviewModal";
 import { copyToClipboard } from "../../utils/clipboard";
 import { getEntryIcon } from "./entryIcon";
 import styles from "./FileManager.module.css";
+
+const DeleteConfirmationDialog = lazy(() => import("./DeleteConfirmationDialog"));
+const ConflictResolutionModal = lazy(() => import("./ConflictResolutionModal"));
+const FilePropertiesModal = lazy(() => import("./FilePropertiesModal"));
+const FilePreviewModal = lazy(() => import("./FilePreviewModal"));
 
 // ── 文本文件扩展名判定 ─────────────────────────────────
 
@@ -64,6 +69,38 @@ export default function FileManagerPanel({
 }: FileManagerPanelProps) {
   const { t } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
+  const conflictResolverRef = useRef<((policy: OverwritePolicy | null) => void) | null>(null);
+  const [conflictCount, setConflictCount] = useState(0);
+  const [conflictVisible, setConflictVisible] = useState(false);
+  const [conflictAllowReplace, setConflictAllowReplace] = useState(true);
+  const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<string | null>(null);
+  const [pendingDeleteTargets, setPendingDeleteTargets] = useState<SftpEntry[]>([]);
+  const [dropActive, setDropActive] = useState(false);
+  const dropInsideRef = useRef(false);
+
+  const requestConflictPolicy = useCallback((count: number, allowReplace = true) => {
+    return new Promise<OverwritePolicy | null>((resolve) => {
+      conflictResolverRef.current?.(null);
+      conflictResolverRef.current = resolve;
+      setConflictCount(count);
+      setConflictAllowReplace(allowReplace);
+      setConflictVisible(true);
+    });
+  }, []);
+
+  const resolveConflictPolicy = useCallback((policy: OverwritePolicy | null) => {
+    setConflictVisible(false);
+    const resolve = conflictResolverRef.current;
+    conflictResolverRef.current = null;
+    resolve?.(policy);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      conflictResolverRef.current?.(null);
+      conflictResolverRef.current = null;
+    };
+  }, []);
 
   // ── View mode (list / grid) ─────────────────────────
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
@@ -157,7 +194,7 @@ export default function FileManagerPanel({
   // ── Preview modal state ───────────────────────────────
   const [previewVisible, setPreviewVisible] = useState(false);
   const [previewFileName, setPreviewFileName] = useState("");
-  const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [previewData, setPreviewData] = useState<number[] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewFileSize, setPreviewFileSize] = useState(0);
@@ -204,12 +241,144 @@ export default function FileManagerPanel({
       const paths = Array.isArray(selected) ? selected : [selected as string];
       if (paths.length === 0) return;
       const remoteDir = fm.currentPath ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`) : "/";
-      await fm.uploadFiles(paths, remoteDir);
+
+      const existingNames = new Set(fm.entries.map((entry) => entry.name));
+      const conflictCount = paths
+        .map((path) => path.replace(/\\/g, "/").split("/").pop() || path)
+        .filter((name) => existingNames.has(name))
+        .length;
+
+      // 当前目录列表只用于提前提示；若列表过期而后端才发现冲突，默认必须 no-clobber。
+      let overwritePolicy: OverwritePolicy = "keep-both";
+      if (conflictCount > 0) {
+        const policy = await requestConflictPolicy(conflictCount);
+        if (!policy) return;
+        overwritePolicy = policy;
+      }
+
+      await fm.uploadFiles(paths, remoteDir, overwritePolicy);
     } catch (e) {
       console.error("上传失败:", e);
       alert(`上传失败: ${e}`);
     }
-  }, [fm, isConnected, t]);
+  }, [fm, isConnected, requestConflictPolicy, t]);
+
+  const handleUploadFolder = useCallback(async () => {
+    if (!isConnected) {
+      alert(t("fileManager.sessionDisconnected") || "会话已断开，无法上传");
+      return;
+    }
+
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (!selected) return;
+      const localPath = typeof selected === "string" ? selected : selected;
+      const folderName = localPath.replace(/\\/g, "/").split("/").filter(Boolean).pop() || localPath;
+      const remoteDir = fm.currentPath
+        ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`)
+        : "/";
+
+      let overwritePolicy: OverwritePolicy = "keep-both";
+      if (fm.entries.some((entry) => entry.name === folderName)) {
+        const policy = await requestConflictPolicy(1, false);
+        if (!policy) return;
+        overwritePolicy = policy;
+      }
+
+      await fm.uploadFiles([localPath], remoteDir, overwritePolicy);
+    } catch (error) {
+      console.error("目录上传失败:", error);
+      alert(t("fileManager.uploadFailed", { error: String(error) }));
+    }
+  }, [fm, isConnected, requestConflictPolicy, t]);
+
+  const handleDroppedPaths = useCallback(async (paths: string[]) => {
+    if (!isConnected || paths.length === 0) return;
+
+    const remoteDir = fm.currentPath
+      ? (fm.currentPath === "/" ? "/" : `${fm.currentPath}/`)
+      : "/";
+    const existingNames = new Set(fm.entries.map((entry) => entry.name));
+    const conflictCount = paths
+      .map((path) => path.replace(/\\/g, "/").split("/").filter(Boolean).pop() || path)
+      .filter((name) => existingNames.has(name))
+      .length;
+
+    // 原生拖放只给路径，不在 WebView 中猜测每个路径是文件还是目录。
+    // 冲突时禁用目录不安全的 Replace；KeepBoth/Skip 对混合文件+目录都安全。
+    let overwritePolicy: OverwritePolicy = "keep-both";
+    if (conflictCount > 0) {
+      const policy = await requestConflictPolicy(conflictCount, false);
+      if (!policy) return;
+      overwritePolicy = policy;
+    }
+
+    try {
+      await fm.uploadFiles(paths, remoteDir, overwritePolicy);
+    } catch (error) {
+      console.error("拖放上传失败:", error);
+      alert(t("fileManager.uploadFailed", { error: String(error) }));
+    }
+  }, [fm, isConnected, requestConflictPolicy, t]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    let scaleFactor = 1;
+
+    getCurrentWindow()
+      .scaleFactor()
+      .then((factor) => {
+        if (!disposed && Number.isFinite(factor) && factor > 0) scaleFactor = factor;
+      })
+      .catch(() => {});
+
+    const isInsidePanel = (position: { x: number; y: number } | undefined) => {
+      const panel = panelRef.current;
+      if (!panel || !position) return dropInsideRef.current;
+      const rect = panel.getBoundingClientRect();
+      const x = position.x / scaleFactor;
+      const y = position.y / scaleFactor;
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (disposed) return;
+        const payload = event.payload;
+
+        if (payload.type === "enter" || payload.type === "over") {
+          const inside = isInsidePanel(payload.position);
+          dropInsideRef.current = inside && isConnected;
+          setDropActive(dropInsideRef.current);
+          return;
+        }
+
+        if (payload.type === "drop") {
+          const inside = isInsidePanel(payload.position);
+          dropInsideRef.current = false;
+          setDropActive(false);
+          if (inside && isConnected && payload.paths.length > 0) {
+            void handleDroppedPaths(payload.paths);
+          }
+          return;
+        }
+
+        dropInsideRef.current = false;
+        setDropActive(false);
+      })
+      .then((dispose) => {
+        if (disposed) dispose();
+        else unlisten = dispose;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      dropInsideRef.current = false;
+      unlisten?.();
+    };
+  }, [handleDroppedPaths, isConnected]);
 
   const handleNewFile = useCallback(() => {
     fm.setPromptMode("newFile");
@@ -298,29 +467,53 @@ export default function FileManagerPanel({
     }
   }, [ms, ctxTarget]);
 
-  const handleDelete = useCallback(async () => {
+  const handleDelete = useCallback(() => {
     const targets =
       ms.selectedEntries.length > 0 ? ms.selectedEntries : ctxTarget ? [ctxTarget] : [];
     if (targets.length === 0) return;
 
-    const hasDirs = targets.some(e => e.is_dir);
-    let msg: string;
-    if (targets.length === 1) {
-      if (targets[0].is_dir) {
-        msg = t("fileManager.deleteDirConfirm", { name: targets[0].name });
-      } else {
-        msg = t("fileManager.deleteConfirm", { name: targets[0].name });
-      }
-    } else {
-      msg = hasDirs
-        ? t("fileManager.confirmBatchDeleteWithDirs", { count: targets.length })
-        : t("fileManager.confirmBatchDelete", { count: targets.length });
-    }
+    const hasDirs = targets.some((entry) => entry.is_dir);
+    const message =
+      targets.length === 1
+        ? targets[0].is_dir
+          ? t("fileManager.deleteDirConfirm", { name: targets[0].name })
+          : t("fileManager.deleteConfirm", { name: targets[0].name })
+        : hasDirs
+          ? t("fileManager.confirmBatchDeleteWithDirs", { count: targets.length })
+          : t("fileManager.confirmBatchDelete", { count: targets.length });
 
-    if (!window.confirm(msg)) return;
-    await fm.deleteEntries(targets);
-    ms.clearSelection();
-  }, [fm, ms, ctxTarget, t]);
+    // Snapshot targets now: later selection/context-menu changes must not change what
+    // the confirmation dialog is authorizing.
+    setPendingDeleteTargets([...targets]);
+    setDeleteConfirmMessage(message);
+  }, [ms, ctxTarget, t]);
+
+  const cancelDelete = useCallback(() => {
+    setDeleteConfirmMessage(null);
+    setPendingDeleteTargets([]);
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    const targets = pendingDeleteTargets;
+    setDeleteConfirmMessage(null);
+    setPendingDeleteTargets([]);
+    if (targets.length === 0) return;
+    try {
+      const failed = await fm.deleteEntries(targets);
+      if (failed.length > 0) {
+        alert(
+          t("fileManager.deleteFailed", {
+            count: failed.length,
+            names: failed.join(", "),
+          }),
+        );
+        return;
+      }
+      ms.clearSelection();
+    } catch (error) {
+      alert(String(error));
+    }
+  }, [fm, ms, pendingDeleteTargets, t]);
 
   const handleRefresh = useCallback(async () => {
     if (!isConnected) return;
@@ -364,6 +557,7 @@ export default function FileManagerPanel({
         accessed: target.accessed,
         modified: target.modified,
         permissions: target.permissions,
+        entryType: target.entry_type,
       });
     }
     setPropsLoading(false);
@@ -383,7 +577,7 @@ export default function FileManagerPanel({
     const MAX_PREVIEW = 1_048_576; // 1 MB
 
     setPreviewFileName(target.name);
-    setPreviewContent(null);
+    setPreviewData(null);
     setPreviewError(null);
     setPreviewLoading(true);
     setPreviewVisible(true);
@@ -399,22 +593,8 @@ export default function FileManagerPanel({
         },
       );
 
-      const bytes = new Uint8Array(result.data);
-      const decoder = new TextDecoder("utf-8", { fatal: false });
-      const text = decoder.decode(bytes);
-
-      if (result.total_size > MAX_PREVIEW) {
-        const totalStr =
-          result.total_size < 1024 * 1024
-            ? `${(result.total_size / 1024).toFixed(1)} KB`
-            : `${(result.total_size / (1024 * 1024)).toFixed(1)} MB`;
-        const shownStr = `${(MAX_PREVIEW / (1024 * 1024)).toFixed(0)} MB`;
-        setPreviewContent(
-          `--- ${t("fileManager.previewTruncated", { shown: shownStr, total: totalStr })} ---\n\n${text}`,
-        );
-      } else {
-        setPreviewContent(text);
-      }
+      setPreviewData(result.data);
+      setPreviewFileSize(result.total_size);
     } catch (e) {
       setPreviewError(String(e));
     }
@@ -428,17 +608,29 @@ export default function FileManagerPanel({
   // ── Inline prompt actions ───────────────────────────
   const handlePromptConfirm = useCallback(
     async (value: string) => {
-      if (fm.promptMode === "newFile") {
-        await fm.createFile(value);
-      } else if (fm.promptMode === "newFolder") {
-        await fm.createFolder(value);
-      } else if (fm.promptMode === "rename" && fm.promptTarget) {
-        await fm.renameEntry(fm.promptTarget, value);
+      const name = value.trim();
+      if (!name || name === "." || name === ".." || name.includes("/") || name.includes("\0")) {
+        alert(t("fileManager.invalidName"));
+        return;
       }
+
+      try {
+        if (fm.promptMode === "newFile") {
+          await fm.createFile(name);
+        } else if (fm.promptMode === "newFolder") {
+          await fm.createFolder(name);
+        } else if (fm.promptMode === "rename" && fm.promptTarget) {
+          await fm.renameEntry(fm.promptTarget, name);
+        }
+      } catch (error) {
+        alert(String(error));
+        return;
+      }
+
       fm.setPromptMode(null);
       fm.setPromptTarget(null);
     },
-    [fm],
+    [fm, t],
   );
 
   const handlePromptCancel = useCallback(() => {
@@ -512,6 +704,7 @@ export default function FileManagerPanel({
     if (ctxTarget === null) {
       return [
         { id: "upload", label: t("fileManager.upload") },
+        { id: "uploadFolder", label: t("fileManager.uploadFolder") },
         { id: "newFile", label: t("fileManager.newFile") },
         { id: "newFolder", label: t("fileManager.newFolder") },
         { id: "sep1", label: "", type: "separator" },
@@ -529,9 +722,9 @@ export default function FileManagerPanel({
           { id: "rename", label: t("fileManager.rename") },
           { id: "copyPath", label: t("fileManager.copyPath") },
           { id: "sep3", label: "", type: "separator" },
-          { id: "properties", label: t("fileManager.properties") },
-          { id: "sep4", label: "", type: "separator" },
           { id: "delete", label: t("fileManager.delete"), danger: true },
+          { id: "sep4", label: "", type: "separator" },
+          { id: "properties", label: t("fileManager.properties") },
         ];
       }
       // File
@@ -546,9 +739,9 @@ export default function FileManagerPanel({
         { id: "rename", label: t("fileManager.rename") },
         { id: "copyPath", label: t("fileManager.copyPath") },
         { id: "sep6", label: "", type: "separator" },
-        { id: "properties", label: t("fileManager.properties") },
-        { id: "sep7", label: "", type: "separator" },
         { id: "delete", label: t("fileManager.delete"), danger: true },
+        { id: "sep7", label: "", type: "separator" },
+        { id: "properties", label: t("fileManager.properties") },
       );
       return items;
     }
@@ -573,6 +766,7 @@ export default function FileManagerPanel({
       closeContextMenu(); // 立即关闭菜单（防御性：CommonContextMenu 也会调 onClose，但原生对话框可能阻塞渲染）
       switch (id) {
         case "upload": handleUpload(); break;
+        case "uploadFolder": handleUploadFolder(); break;
         case "newFile": handleNewFile(); break;
         case "newFolder": handleNewFolder(); break;
         case "refresh": handleRefresh(); break;
@@ -587,7 +781,7 @@ export default function FileManagerPanel({
     },
     [
       closeContextMenu,
-      handleUpload, handleNewFile, handleNewFolder, handleRefresh,
+      handleUpload, handleUploadFolder, handleNewFile, handleNewFolder, handleRefresh,
       handleOpenDir, handleDownload, handlePreview, handleRename,
       handleCopyPath, handleProperties, handleDelete,
     ],
@@ -599,6 +793,12 @@ export default function FileManagerPanel({
       className={styles.panel}
       tabIndex={-1}
     >
+      {dropActive && (
+        <div className={styles.dropOverlay} aria-hidden="true">
+          <Icon name="upload" size="lg" />
+          <span>{t("fileManager.dropToUpload")}</span>
+        </div>
+      )}
       {/* 面包屑导航 */}
       <BreadcrumbNav
         segments={fm.breadcrumbSegments}
@@ -762,38 +962,61 @@ export default function FileManagerPanel({
         }
       />
 
-      {/* 文件属性弹窗 */}
-      <FilePropertiesModal
-        visible={propsVisible}
-        entry={propsTarget}
-        statInfo={propsInfo}
-        loading={propsLoading}
-        onClose={closeProperties}
-        sessionId={sessionId}
-        onChmodComplete={() => {
-          if (propsTarget) {
-            setPropsLoading(true);
-            invoke<FileStatInfo>("sftp_stat_cmd", {
-              sessionId,
-              remotePath: propsTarget.path,
-            })
-              .then(setPropsInfo)
-              .catch(() => {})
-              .finally(() => setPropsLoading(false));
-          }
-        }}
-      />
+      <Suspense fallback={null}>
+        {deleteConfirmMessage !== null && (
+          <DeleteConfirmationDialog
+            message={deleteConfirmMessage}
+            onConfirm={() => void confirmDelete()}
+            onCancel={cancelDelete}
+          />
+        )}
 
-      {/* 文本预览弹窗 */}
-      <FilePreviewModal
-        visible={previewVisible}
-        fileName={previewFileName}
-        content={previewContent}
-        loading={previewLoading}
-        error={previewError}
-        fileSize={previewFileSize}
-        onClose={closePreview}
-      />
+        {conflictVisible && (
+          <ConflictResolutionModal
+            visible
+            conflictCount={conflictCount}
+            allowReplace={conflictAllowReplace}
+            onResolve={resolveConflictPolicy}
+          />
+        )}
+
+        {/* 文件属性弹窗 */}
+        {propsVisible && (
+          <FilePropertiesModal
+            visible
+            entry={propsTarget}
+            statInfo={propsInfo}
+            loading={propsLoading}
+            onClose={closeProperties}
+            sessionId={sessionId}
+            onChmodComplete={() => {
+              if (propsTarget) {
+                setPropsLoading(true);
+                invoke<FileStatInfo>("sftp_stat_cmd", {
+                  sessionId,
+                  remotePath: propsTarget.path,
+                })
+                  .then(setPropsInfo)
+                  .catch(() => {})
+                  .finally(() => setPropsLoading(false));
+              }
+            }}
+          />
+        )}
+
+        {/* 文本预览弹窗 */}
+        {previewVisible && (
+          <FilePreviewModal
+            visible
+            fileName={previewFileName}
+            data={previewData}
+            loading={previewLoading}
+            error={previewError}
+            fileSize={previewFileSize}
+            onClose={closePreview}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

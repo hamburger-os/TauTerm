@@ -1,0 +1,87 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.dialog {
+  width: min(460px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px;
+  border-radius: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.warningIcon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  color: var(--color-error);
+}
+
+.title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  line-height: 1.35;
+}
+
+.message {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.button {
+  min-width: 84px;
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.dangerButton {
+  color: var(--color-error);
+}
+
+@media (max-width: 420px) {
+  .overlay {
+    padding: 14px;
+  }
+
+  .dialog {
+    width: calc(100vw - 28px);
+    padding: 16px;
+  }
+
+  .actions {
+    flex-direction: column-reverse;
+  }
+
+  .button {
+    width: 100%;
+  }
+}

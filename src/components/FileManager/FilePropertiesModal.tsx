@@ -19,6 +19,7 @@ export interface FileStatInfo {
   name: string;
   path: string;
   isDir: boolean;
+  entryType?: SftpEntry["entry_type"];
   size: number;
   accessed: number | null;
   modified: number | null;
@@ -128,8 +129,18 @@ export default function FilePropertiesModal({
   if (!visible || !entry) return null;
 
   const isDir = statInfo?.isDir ?? entry.is_dir;
-  const typeLabel = isDir ? t("fileManager.typeDir") : t("fileManager.typeFile");
-  const typeEmoji = isDir ? "\u{1F4C1}" : "\u{1F4C4}";
+  const entryType = statInfo?.entryType ?? entry.entry_type ?? (isDir ? "directory" : "file");
+  const typeLabel =
+    entryType === "directory"
+      ? t("fileManager.typeDir")
+      : entryType === "symlink"
+        ? t("fileManager.typeSymlink")
+        : entryType === "file"
+          ? t("fileManager.typeFile")
+          : t("fileManager.typeOther");
+  const typeEmoji =
+    entryType === "directory" ? "\u{1F4C1}" : entryType === "symlink" ? "\u{1F517}" : "\u{1F4C4}";
+  const canChmod = entryType === "file" || entryType === "directory";
   const name = statInfo?.name ?? entry.name;
 
   return createPortal(
@@ -205,63 +216,65 @@ export default function FilePropertiesModal({
                   <code className={styles.fieldValueMono}>{statInfo.permissions || "-"}</code>
                 </div>
 
-                {/* Chmod 编辑器 */}
-                <div className={styles.fieldRow}>
-                  <span className={styles.fieldLabel}>{t("fileManager.chmod")}</span>
-                  <div className={styles.chmodRow}>
-                    {chmodEditing ? (
-                      <>
-                        <input
-                          className={`${styles.chmodInput} liquid-glass-input`}
-                          type="text"
-                          value={chmodValue}
-                          maxLength={3}
-                          onChange={(e) => {
-                            setChmodValue(e.target.value.replace(/[^0-7]/g, ""));
-                            setChmodError(null);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handleChmodApply();
-                            if (e.key === "Escape") {
+                {/* Chmod 编辑器：SFTP v3 无可靠的 no-follow chmod，符号链接/特殊文件不开放 */}
+                {canChmod && (
+                  <div className={styles.fieldRow}>
+                    <span className={styles.fieldLabel}>{t("fileManager.chmod")}</span>
+                    <div className={styles.chmodRow}>
+                      {chmodEditing ? (
+                        <>
+                          <input
+                            className={`${styles.chmodInput} liquid-glass-input`}
+                            type="text"
+                            value={chmodValue}
+                            maxLength={3}
+                            onChange={(e) => {
+                              setChmodValue(e.target.value.replace(/[^0-7]/g, ""));
+                              setChmodError(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleChmodApply();
+                              if (e.key === "Escape") {
+                                setChmodEditing(false);
+                                setChmodError(null);
+                                if (statInfo?.permissions) {
+                                  setChmodValue(getOctalFromPerms(statInfo.permissions));
+                                }
+                              }
+                            }}
+                            autoFocus
+                          />
+                          <button className={`${styles.chmodBtn} liquid-glass-button`} onClick={handleChmodApply}>
+                            {t("fileManager.apply")}
+                          </button>
+                          <button
+                            className={`${styles.chmodBtn} liquid-glass-button`}
+                            onClick={() => {
                               setChmodEditing(false);
                               setChmodError(null);
                               if (statInfo?.permissions) {
                                 setChmodValue(getOctalFromPerms(statInfo.permissions));
                               }
-                            }
-                          }}
-                          autoFocus
-                        />
-                        <button className={`${styles.chmodBtn} liquid-glass-button`} onClick={handleChmodApply}>
-                          {t("fileManager.apply")}
-                        </button>
-                        <button
-                          className={`${styles.chmodBtn} liquid-glass-button`}
-                          onClick={() => {
-                            setChmodEditing(false);
-                            setChmodError(null);
-                            if (statInfo?.permissions) {
-                              setChmodValue(getOctalFromPerms(statInfo.permissions));
-                            }
-                          }}
-                        >
-                          {t("fileManager.cancel")}
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <code className={styles.fieldValueMono}>{chmodValue}</code>
-                        <button
-                          className={`${styles.chmodBtn} liquid-glass-button`}
-                          onClick={() => setChmodEditing(true)}
-                        >
-                          {t("fileManager.edit")}
-                        </button>
-                      </>
-                    )}
+                            }}
+                          >
+                            {t("fileManager.cancel")}
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <code className={styles.fieldValueMono}>{chmodValue}</code>
+                          <button
+                            className={`${styles.chmodBtn} liquid-glass-button`}
+                            onClick={() => setChmodEditing(true)}
+                          >
+                            {t("fileManager.edit")}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {chmodError && <span className={styles.chmodError}>{chmodError}</span>}
                   </div>
-                  {chmodError && <span className={styles.chmodError}>{chmodError}</span>}
-                </div>
+                )}
               </div>
             </>
           ) : null}

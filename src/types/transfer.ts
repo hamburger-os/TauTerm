@@ -8,6 +8,14 @@ export const PROTOCOL_TYPES: ProtocolType[] = ["ymodem", "xmodem", "zmodem"];
 /** 传输方向 */
 export type TransferDirection = "send" | "receive";
 
+/** 目标冲突策略。由 UI 解析用户意图，后端负责安全提交。 */
+export type OverwritePolicy = "replace" | "skip" | "keep-both";
+
+/** 传输启动确认。transfer_id 是取消、进度和终态匹配的唯一任务身份。 */
+export interface TransferStartAck {
+  transfer_id: string;
+}
+
 /** 传输状态 */
 export type TransferStatus =
   | "idle"

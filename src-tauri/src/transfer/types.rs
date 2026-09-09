@@ -65,8 +65,10 @@ pub struct FileInfo {
     pub path: String,
     /// 文件名（不含路径）
     pub name: String,
-    /// 文件大小（字节）
+    /// 文件大小（字节）；目录为 0。
     pub size: u64,
+    /// 是否为目录。SFTP 可递归上传目录；串口协议只接受普通文件。
+    pub is_dir: bool,
     /// 修改时间（Unix 时间戳）
     pub mtime: u64,
 }
@@ -74,7 +76,10 @@ pub struct FileInfo {
 impl FileInfo {
     /// 从文件路径构造 FileInfo，自动读取元数据
     pub fn from_path(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let meta = std::fs::metadata(path)?;
+        let meta = std::fs::symlink_metadata(path)?;
+        if meta.file_type().is_symlink() {
+            return Err("不跟随本地符号链接，请选择实际文件或目录".into());
+        }
         let name = std::path::Path::new(path)
             .file_name()
             .and_then(|n| n.to_str())
@@ -91,7 +96,8 @@ impl FileInfo {
         Ok(FileInfo {
             path: path.to_string(),
             name,
-            size: meta.len(),
+            size: if meta.is_dir() { 0 } else { meta.len() },
+            is_dir: meta.is_dir(),
             mtime,
         })
     }

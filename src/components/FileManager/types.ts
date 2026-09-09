@@ -2,6 +2,7 @@ export interface SftpEntry {
   name: string;
   path: string;
   is_dir: boolean;
+  entry_type?: 'file' | 'directory' | 'symlink' | 'fifo' | 'socket' | 'block_device' | 'char_device' | 'other';
   size: number;
   accessed: number | null;
   modified: number | null;
@@ -12,6 +13,7 @@ export type PromptMode = 'newFile' | 'newFolder' | 'rename';
 
 export type SortField = 'name' | 'size' | 'modified';
 export type SortDirection = 'asc' | 'desc';
+export type { OverwritePolicy, TransferStartAck } from '../../types/transfer';
 
 /** 统一文件传输进度事件载荷（对应后端 `file-transfer:progress` emit） */
 export interface UnifiedProgressPayload {

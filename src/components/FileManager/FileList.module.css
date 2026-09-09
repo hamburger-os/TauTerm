@@ -157,6 +157,11 @@
   overflow-y: auto;
 }
 
+.virtualCanvas {
+  position: relative;
+  width: 100%;
+}
+
 .status {
   text-align: center;
   color: var(--text-tertiary);

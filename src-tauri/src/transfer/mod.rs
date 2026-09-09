@@ -16,6 +16,7 @@
 //! - `orchestrator` — TransferOrchestrator trait + 策略处理器（Inline / SideChannel）
 //! - `panic_guard` — RAII 守卫确保 SideChannel 传输 panic 时清理会话状态
 //! - `manager` — TransferManager 传输策略选择
+//! - `scheduler` — Session 级传输准入、任务身份与取消信号的单一所有者
 
 pub mod crc;
 pub mod io;
@@ -23,6 +24,7 @@ pub mod manager;
 pub mod orchestrator;
 pub mod panic_guard;
 pub mod protocol;
+pub mod scheduler;
 pub mod serial_transfer;
 pub mod sftp_transfer;
 pub mod ssh_file_service;
