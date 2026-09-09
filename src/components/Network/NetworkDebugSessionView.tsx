@@ -27,6 +27,8 @@ import { usePluginSessionStore, type SessionStoreApi } from "../../hooks/usePlug
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import DualPane, { type DualLine } from "../Terminal/DualPane";
 import ScrollToBottomButton from "../Terminal/ScrollToBottomButton";
+import ContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
+import type { ContextMenuState } from "../../hooks/useContextMenu";
 import Icon from "../common/Icon";
 import { dataToDualLine, normalizeDecodedText, StreamFramer } from "../../utils/streamDisplay";
 import UdpPacketGrid from "./UdpPacketGrid";
@@ -307,7 +309,7 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
           </div>
         ) : (
           <div className={styles.dataArea}>
-            <UdpPacketGrid rows={snap.packets} />
+            <UdpPacketGrid sessionId={sessionId} rows={snap.packets} />
           </div>
         )
       )}
@@ -335,9 +337,9 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
             {displayMode === "dual" ? (
               <DualPane sessionId={sessionId} lines={snap.frames[selectedPeer.peerId] ?? []} />
             ) : displayMode === "text" ? (
-              <TcpTextList lines={snap.frames[selectedPeer.peerId] ?? []} />
+              <TcpFrameList sessionId={sessionId} lines={snap.frames[selectedPeer.peerId] ?? []} mode="text" />
             ) : (
-              <TcpHexList lines={snap.frames[selectedPeer.peerId] ?? []} />
+              <TcpFrameList sessionId={sessionId} lines={snap.frames[selectedPeer.peerId] ?? []} mode="hex" />
             )}
           </div>
         )
@@ -348,36 +350,83 @@ export default function NetworkDebugSessionView({ sessionId }: Props) {
 
 // ── TCP Text / Hex 单栏视图（从 DualLine 数据渲染） ──
 
-function TcpTextList({ lines }: { lines: DualLine[] }) {
+function TcpFrameList({
+  lines,
+  sessionId,
+  mode,
+}: {
+  lines: DualLine[];
+  sessionId: string;
+  mode: "text" | "hex";
+}) {
+  const { t } = useTranslation();
   const { scrollRef, isAtBottom, handleScroll, scrollToBottom } = useAutoScroll<HTMLDivElement>(lines);
-  return (
-    <>
-      <div className={styles.singleList} ref={scrollRef} onScroll={handleScroll}>
-        {lines.map(l => (
-          <div key={l.id} className={l.direction === "TX" ? styles.txLine : styles.rxLine}>
-            <span className={styles.singleMeta}>[{l.direction}][{l.timestamp}]</span>
-            <span className={styles.singleText}>{l.text}</span>
-          </div>
-        ))}
-      </div>
-      <ScrollToBottomButton visible={!isAtBottom} onClick={scrollToBottom} />
-    </>
-  );
-}
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    x: 0,
+    y: 0,
+    visible: false,
+    session: null,
+  });
+  const [contextHex, setContextHex] = useState("");
 
-function TcpHexList({ lines }: { lines: DualLine[] }) {
-  const { scrollRef, isAtBottom, handleScroll, scrollToBottom } = useAutoScroll<HTMLDivElement>(lines);
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => [
+    {
+      id: "inspectProtocol",
+      label: t("terminal.inspectProtocolFrame"),
+      icon: "search",
+      disabled: !contextHex,
+    },
+  ], [contextHex, t]);
+
+  const openContextMenu = useCallback((event: React.MouseEvent, hex: string) => {
+    event.preventDefault();
+    setContextHex(hex);
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      visible: true,
+      session: null,
+    });
+  }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu((previous) => ({ ...previous, visible: false }));
+  }, []);
+
+  const handleContextMenuSelect = useCallback((itemId: string) => {
+    if (itemId !== "inspectProtocol" || !contextHex) return;
+    window.dispatchEvent(
+      new CustomEvent("tauterm:protocol-inspect", {
+        detail: { sessionId, input: contextHex },
+      }),
+    );
+  }, [contextHex, sessionId]);
+
   return (
     <>
       <div className={styles.singleList} ref={scrollRef} onScroll={handleScroll}>
-        {lines.map(l => (
-          <div key={l.id} className={l.direction === "TX" ? styles.txLine : styles.rxLine}>
-            <span className={styles.singleMeta}>[{l.direction}][{l.timestamp}]</span>
-            <span className={styles.singleHex}>{l.hex}</span>
+        {lines.map((line) => (
+          <div
+            key={line.id}
+            className={line.direction === "TX" ? styles.txLine : styles.rxLine}
+            onContextMenu={(event) => openContextMenu(event, line.hex)}
+          >
+            <span className={styles.singleMeta}>[{line.direction}][{line.timestamp}]</span>
+            {mode === "text" ? (
+              <span className={styles.singleText}>{line.text}</span>
+            ) : (
+              <span className={styles.singleHex}>{line.hex}</span>
+            )}
           </div>
         ))}
       </div>
       <ScrollToBottomButton visible={!isAtBottom} onClick={scrollToBottom} />
+      <ContextMenu
+        state={contextMenu}
+        items={contextMenuItems}
+        onSelect={handleContextMenuSelect}
+        onClose={closeContextMenu}
+      />
     </>
   );
 }
