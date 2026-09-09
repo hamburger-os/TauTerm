@@ -323,7 +323,7 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 - **导航 Tab / 模式切换条 / 互斥筛选条例外**：同一 selector strip 内所有按钮的外部几何必须恒定；selected/hover 只能改变颜色、边缘和阴影，禁止 translate / scale 让当前项看起来更高或更宽。
 - 紧凑 selector 统一使用全局 `.liquid-selector-strip` + `.liquid-selector-button`：高度与 Select 共用 `--select-height`，padding / font / line-height 由主题层拥有；组件 CSS 只能声明 flex/grid 占位、换行和最小宽度，不得再定义另一套按钮几何。
 - **窄 Sidebar 的一级工具/类别导航不得通过横向滚动 Tab 条解决溢出。** 当一级类别不能稳定在一行内完整展示时，必须优先使用统一 `.liquid-glass-input.liquid-glass-select`；横向滚动只属于内容浏览，不属于一级导航交互。二级、少量且需要高频切换的互斥选项仍可使用 selector strip。
-- **Native Select 主题合同**：所有原生 `<select>` 必须同时使用 `.liquid-glass-input + .liquid-glass-select`，组件不得把 `.liquid-control-surface` 直接当作 select 皮肤。展开后的 option popup 在 WebView2/WebKit 上部分由系统绘制，因此 `.liquid-glass-select` 必须声明与当前主题一致的 `color-scheme`：Spectrum Flow / Obsidian = dark，Frosted = light；同时保留 `--select-option-bg` 作为可 CSS 绘制路径的回退。Select 的 `padding-right` 必须在 padding shorthand 之后声明，确保主题箭头不会压住文字。
+- **Native Select 主题合同**：所有原生 `<select>` 必须同时使用 `.liquid-glass-input + .liquid-glass-select`，组件不得把 `.liquid-control-surface` 直接当作 select 皮肤。展开后的 option popup 在桌面 WebView/系统原生层中可能由系统绘制，因此 `.liquid-glass-select` 必须声明与当前主题一致的 `color-scheme`：Spectrum Flow / Obsidian = dark，Frosted = light；同时保留 `--select-option-bg` 作为可 CSS 绘制路径的回退。Select 的 `padding-right` 必须在 padding shorthand 之后声明，确保主题箭头不会压住文字。
 - **窄 Sidebar 的浮动状态/任务条必须保证关键操作始终可达。** 优先级固定为“取消/关闭操作 > 文件/任务身份 > 核心状态/百分比 > 进度可视化 > 辅助速率”。当宽度不足时使用现有 CSS size container + `@container` 重排/隐藏低优先级信息，不得把操作按钮推出裁剪区，也不得为此引入横向滚动、ResizeObserver 或 JS 宽度轮询。
 - Active：普通动作按钮可轻微压下；selector strip 不改变外部尺寸。
 - Disabled：使用统一 disabled surface，不保留动态 Prism。
