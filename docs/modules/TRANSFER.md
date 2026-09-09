@@ -52,8 +52,10 @@ flowchart LR
 - `cancel` 优先使用精确 `transfer_id`；Session 只是资源归属，不是任务身份。不存在活动 SideChannel 任务时不能伪造“取消成功”。
 - 文件路径、覆盖策略、远端路径语义由对应传输实现负责，统一层只携带协议无关的 `FileTransferOptions`。
 - **SFTP 覆盖必须事务式提交。** 上传/下载先写目标同目录的 TauTerm 临时文件，完成 write/flush/metadata 后才提交到正式路径；Replace 时先把已有目标改名为临时 backup，提交失败必须回滚 backup。取消/失败只能清理本次临时产物，绝不能删除或截断用户原有正式文件。
-- SFTP 冲突策略统一为 `replace / skip / keep-both`；单文件 Save As 使用精确 destination path，不能只传父目录后重新采用远端原文件名。
-- SFTP 递归目录复制必须保留空目录。符号链接和非常规文件类型是显式条目类型；默认不跟随符号链接，避免递归穿出用户选择的目录树。
+- SFTP 冲突策略统一为 `replace / skip / keep-both`；单文件 Save As 使用精确 destination path，不能只传父目录后重新采用远端原文件名。KeepBoth/Skip 的“不覆盖”约束必须落实到**提交时刻**而不是只做事前 exists 检查：本地文件使用同文件系统 hard-link 排他占位，远端使用 SFTP v3 no-overwrite rename 语义并在失败后重新确认目标。
+- 新建远程文件与上传临时文件使用 `CREATE | EXCLUDE`，同名对象存在时必须失败，不能调用会 truncate 的便利 `create()`。
+- SFTP 递归目录复制必须保留空目录。目录 KeepBoth 会先用排他 `create_dir` 原子保留独立根目录，不能把第二份内容静默 merge 进已有目录；目录 Replace 在已有目标时明确拒绝，避免把“替换”偷换成高风险递归覆盖。符号链接和非常规文件类型是显式条目类型；默认不跟随符号链接，避免递归穿出用户选择的目录树。
+- SFTP chmod 只允许普通文件与目录，并保留 POSIX mode 中的文件类型位；符号链接/特殊文件不提供 chmod，因为 v3 不存在可普遍依赖的 no-follow chmod 操作。
 - 文件管理器成功状态可短暂保留后自动收起；鼠标悬停必须暂停自动收起。失败/取消状态必须保留到用户明确关闭。
 - 窄文件管理器状态条用 `filemanager` CSS container 自适应：取消/关闭按钮永远可达；宽度不足时先隐藏实时速度，再重排进度信息，不允许用横向滚动解决布局。
 - Serial 与 SSH 模块文档描述“为什么使用传输”，本文描述“传输本身如何被公共系统管理”。

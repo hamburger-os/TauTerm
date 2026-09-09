@@ -72,6 +72,22 @@ assert.match(sessionStore, /没有正在进行的侧通道传输/);
 const service = await source("src-tauri/src/transfer/ssh_file_service.rs");
 assert.match(service, /enum SftpWriteOutcome/);
 assert.match(service, /struct SftpUploadOptions[\s\S]*overwrite_policy:\s*OverwritePolicy/);
+assert.match(
+  service,
+  /OpenFlags::WRITE\s*\|\s*OpenFlags::CREATE\s*\|\s*OpenFlags::EXCLUDE/,
+  "new remote objects and transfer temp files must use exclusive creation",
+);
+assert.match(
+  service,
+  /try_commit_local_noreplace[\s\S]*hard_link\(temp, candidate\)/,
+  "local KeepBoth/Skip commit must reserve the final name without overwrite",
+);
+assert.match(service, /try_commit_remote_noreplace/);
+assert.match(
+  service,
+  /读取本地文件失败[\s\S]{0,480}remove_file\(&temp_path\)/,
+  "upload local-read failures must clean the already-created remote temp file",
+);
 assert.match(service, /sibling_local_artifact\(&final_path, "part"\)/);
 assert.match(service, /remote_sibling_artifact\(&final_path, "part"\)/);
 assert.match(service, /sibling_local_artifact\(final_path, "backup"\)/);
@@ -97,12 +113,17 @@ assert.doesNotMatch(
 );
 assert.match(
   service,
-  /sftp_upload[\s\S]*remote_sibling_artifact\(&final_path, "part"\)[\s\S]*\.create\(&temp_path\)/,
+  /sftp_upload[\s\S]*remote_sibling_artifact\(&final_path, "part"\)[\s\S]*open_with_flags[\s\S]*OpenFlags::EXCLUDE/,
 );
 assert.doesNotMatch(
   service,
   /sftp\.create\(remote_path\)/,
   "uploads must never truncate the final remote destination before commit",
+);
+assert.doesNotMatch(
+  service,
+  /\.create\(remote_path\)/,
+  "New File must never use the truncating create helper on an existing path",
 );
 assert.match(service, /symlink_metadata\(remote_path\)/);
 assert.match(service, /pub enum SftpEntryType[\s\S]*Symlink/);
@@ -118,10 +139,16 @@ assert.match(
 const sftp = await source("src-tauri/src/transfer/sftp_transfer.rs");
 assert.match(sftp, /struct ReceiveFilePlan/);
 assert.match(sftp, /options\s*\.destination_paths/);
-assert.match(sftp, /tokio::fs::create_dir_all\(&local_root\)/);
+assert.match(sftp, /prepare_local_directory_destination/);
+assert.match(
+  sftp,
+  /OverwritePolicy::KeepBoth[\s\S]*try_create_local_directory/,
+  "directory KeepBoth must reserve a distinct root instead of merging into an existing folder",
+);
 assert.match(sftp, /sftp_list_tree_recursive/);
 assert.match(sftp, /SftpEntryType::Symlink[\s\S]*符号链接默认不跟随/);
 assert.match(sftp, /options\s*\.overwrite_policy/);
+assert.match(sftp, /目录替换不会自动合并或递归覆盖/);
 assert.match(sftp, /if failed > 0[\s\S]{0,500}FileTransferError::Other/);
 assert.doesNotMatch(
   sftp,
@@ -201,3 +228,18 @@ assert.match(deleteDialog, /requestAnimationFrame\(\(\) => cancelRef\.current\?\
 assert.match(deleteDialog, /event\.key === "Escape"/);
 assert.match(deleteDialog, /event\.key === "Tab"/);
 assert.match(deleteDialog, /deleteConfirmAction/);
+
+const propertiesModal = await source("src/components/FileManager/FilePropertiesModal.tsx");
+assert.match(propertiesModal, /const canChmod = entryType === "file" \|\| entryType === "directory"/);
+assert.match(propertiesModal, /\{canChmod && \(/);
+
+assert.match(
+  service,
+  /file_type_bits = stat\.permissions\.unwrap_or\(0\) & 0o170000[\s\S]*mode & 0o7777/,
+  "chmod must preserve POSIX file-type bits",
+);
+assert.match(
+  service,
+  /仅支持修改普通文件或目录权限/,
+  "chmod must reject symlink/special-file targets",
+);

@@ -18,6 +18,8 @@ use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
+use russh_sftp::protocol::OpenFlags;
+
 use crate::kernel::file_transfer::OverwritePolicy;
 use crate::plugins::ssh::handler::SshHandler;
 
@@ -433,24 +435,15 @@ async fn resolve_local_destination(
     policy: OverwritePolicy,
 ) -> Result<Option<PathBuf>, String> {
     match tokio::fs::symlink_metadata(requested).await {
-        Ok(meta) => {
-            if meta.is_dir() {
-                return Err(format!("下载目标已存在且是目录: {}", requested.display()));
+        Ok(meta) => match policy {
+            OverwritePolicy::Replace if meta.is_dir() => {
+                Err(format!("下载目标已存在且是目录: {}", requested.display()))
             }
-            match policy {
-                OverwritePolicy::Replace => Ok(Some(requested.to_path_buf())),
-                OverwritePolicy::Skip => Ok(None),
-                OverwritePolicy::KeepBoth => {
-                    for index in 1..=9999 {
-                        let candidate = local_keep_both_candidate(requested, index);
-                        if tokio::fs::symlink_metadata(&candidate).await.is_err() {
-                            return Ok(Some(candidate));
-                        }
-                    }
-                    Err(format!("无法为 '{}' 生成不冲突文件名", requested.display()))
-                }
+            OverwritePolicy::Replace | OverwritePolicy::KeepBoth => {
+                Ok(Some(requested.to_path_buf()))
             }
-        }
+            OverwritePolicy::Skip => Ok(None),
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Some(requested.to_path_buf())),
         Err(e) => Err(format!(
             "检查下载目标 '{}' 失败: {}",
@@ -460,37 +453,102 @@ async fn resolve_local_destination(
     }
 }
 
+/// 同目录临时文件通过 hard-link 原子抢占最终名字，避免 Unix rename 的覆盖语义
+/// 破坏 KeepBoth/Skip。返回 false 表示目标名已被其他对象占用。
+async fn try_commit_local_noreplace(temp: &Path, candidate: &Path) -> Result<bool, String> {
+    match tokio::fs::hard_link(temp, candidate).await {
+        Ok(()) => {
+            if let Err(e) = tokio::fs::remove_file(temp).await {
+                log::warn!(
+                    "本地无覆盖提交成功，但清理临时路径 '{}' 失败: {}",
+                    temp.display(),
+                    e
+                );
+            }
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(format!(
+            "无覆盖提交下载文件 '{}' 失败: {}",
+            candidate.display(),
+            e
+        )),
+    }
+}
+
 async fn commit_local_temp(
     temp: &Path,
     final_path: &Path,
     policy: OverwritePolicy,
-) -> Result<(), String> {
-    let exists = tokio::fs::symlink_metadata(final_path).await.is_ok();
-    if exists && policy == OverwritePolicy::Replace {
-        let backup = sibling_local_artifact(final_path, "backup");
-        tokio::fs::rename(final_path, &backup)
-            .await
-            .map_err(|e| format!("备份原文件 '{}' 失败: {}", final_path.display(), e))?;
-        match tokio::fs::rename(temp, final_path).await {
-            Ok(()) => {
-                if let Err(e) = tokio::fs::remove_file(&backup).await {
-                    log::warn!("删除本地提交备份 '{}' 失败: {}", backup.display(), e);
-                }
-                Ok(())
-            }
-            Err(e) => {
-                let _ = tokio::fs::rename(&backup, final_path).await;
-                Err(format!(
-                    "提交下载文件 '{}' 失败: {}",
-                    final_path.display(),
-                    e
-                ))
+) -> Result<Option<PathBuf>, String> {
+    match policy {
+        OverwritePolicy::Skip => {
+            if try_commit_local_noreplace(temp, final_path).await? {
+                Ok(Some(final_path.to_path_buf()))
+            } else {
+                Ok(None)
             }
         }
-    } else {
-        tokio::fs::rename(temp, final_path)
-            .await
-            .map_err(|e| format!("提交下载文件 '{}' 失败: {}", final_path.display(), e))
+        OverwritePolicy::KeepBoth => {
+            for index in 0..=9999 {
+                let candidate = if index == 0 {
+                    final_path.to_path_buf()
+                } else {
+                    local_keep_both_candidate(final_path, index)
+                };
+                if try_commit_local_noreplace(temp, &candidate).await? {
+                    return Ok(Some(candidate));
+                }
+            }
+            Err(format!(
+                "无法为 '{}' 生成不冲突文件名",
+                final_path.display()
+            ))
+        }
+        OverwritePolicy::Replace => match tokio::fs::symlink_metadata(final_path).await {
+            Ok(meta) if meta.is_dir() => {
+                Err(format!("下载目标已存在且是目录: {}", final_path.display()))
+            }
+            Ok(_) => {
+                let backup = sibling_local_artifact(final_path, "backup");
+                tokio::fs::rename(final_path, &backup)
+                    .await
+                    .map_err(|e| format!("备份原文件 '{}' 失败: {}", final_path.display(), e))?;
+                match tokio::fs::rename(temp, final_path).await {
+                    Ok(()) => {
+                        if let Err(e) = tokio::fs::remove_file(&backup).await {
+                            log::warn!("删除本地提交备份 '{}' 失败: {}", backup.display(), e);
+                        }
+                        Ok(Some(final_path.to_path_buf()))
+                    }
+                    Err(commit_error) => match tokio::fs::rename(&backup, final_path).await {
+                        Ok(()) => Err(format!(
+                            "提交下载文件 '{}' 失败: {}",
+                            final_path.display(),
+                            commit_error
+                        )),
+                        Err(rollback_error) => Err(format!(
+                            "提交下载文件 '{}' 失败: {}；回滚也失败，原文件仍保留在 '{}': {}",
+                            final_path.display(),
+                            commit_error,
+                            backup.display(),
+                            rollback_error
+                        )),
+                    },
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tokio::fs::rename(temp, final_path)
+                    .await
+                    .map(|_| Some(final_path.to_path_buf()))
+                    .map_err(|e| format!("提交下载文件 '{}' 失败: {}", final_path.display(), e))
+            }
+            Err(e) => Err(format!(
+                "检查下载目标 '{}' 失败: {}",
+                final_path.display(),
+                e
+            )),
+        },
     }
 }
 
@@ -542,29 +600,55 @@ async fn resolve_remote_destination(
         return Ok(Some(requested.to_string()));
     }
 
-    let meta = sftp
-        .symlink_metadata(requested)
+    match policy {
+        OverwritePolicy::Skip => Ok(None),
+        OverwritePolicy::KeepBoth => Ok(Some(requested.to_string())),
+        OverwritePolicy::Replace => {
+            let meta = sftp
+                .symlink_metadata(requested)
+                .await
+                .map_err(|e| format!("获取远程目标 '{}' 信息失败: {}", requested, e))?;
+            if entry_type_from_permissions(meta.permissions, meta.is_dir())
+                == SftpEntryType::Directory
+            {
+                Err(format!("远程目标已存在且是目录: {}", requested))
+            } else {
+                Ok(Some(requested.to_string()))
+            }
+        }
+    }
+}
+
+/// SFTP v3 的普通 RENAME 在目标已存在时应失败；这里在失败后重新检查目标，
+/// 将并发抢占识别为“名字已被占用”，供 KeepBoth 继续尝试下一个候选名。
+async fn try_commit_remote_noreplace(
+    sftp: &russh_sftp::client::SftpSession,
+    temp: &str,
+    candidate: &str,
+) -> Result<bool, String> {
+    if sftp
+        .try_exists(candidate)
         .await
-        .map_err(|e| format!("获取远程目标 '{}' 信息失败: {}", requested, e))?;
-    if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
-        return Err(format!("远程目标已存在且是目录: {}", requested));
+        .map_err(|e| format!("检查远程目标 '{}' 失败: {}", candidate, e))?
+    {
+        return Ok(false);
     }
 
-    match policy {
-        OverwritePolicy::Replace => Ok(Some(requested.to_string())),
-        OverwritePolicy::Skip => Ok(None),
-        OverwritePolicy::KeepBoth => {
-            for index in 1..=9999 {
-                let candidate = remote_keep_both_candidate(requested, index);
-                let exists = sftp
-                    .try_exists(&candidate)
-                    .await
-                    .map_err(|e| format!("检查远程目标 '{}' 失败: {}", candidate, e))?;
-                if !exists {
-                    return Ok(Some(candidate));
-                }
+    match sftp.rename(temp, candidate).await {
+        Ok(()) => Ok(true),
+        Err(rename_error) => {
+            let now_exists = sftp
+                .try_exists(candidate)
+                .await
+                .map_err(|e| format!("重新检查远程目标 '{}' 失败: {}", candidate, e))?;
+            if now_exists {
+                Ok(false)
+            } else {
+                Err(format!(
+                    "无覆盖提交远程文件 '{}' 失败: {}",
+                    candidate, rename_error
+                ))
             }
-            Err(format!("无法为 '{}' 生成不冲突文件名", requested))
         }
     }
 }
@@ -574,32 +658,74 @@ async fn commit_remote_temp(
     temp: &str,
     final_path: &str,
     policy: OverwritePolicy,
-) -> Result<(), String> {
-    let exists = sftp
-        .try_exists(final_path)
-        .await
-        .map_err(|e| format!("检查远程目标 '{}' 失败: {}", final_path, e))?;
-    if exists && policy == OverwritePolicy::Replace {
-        let backup = remote_sibling_artifact(final_path, "backup");
-        sftp.rename(final_path, &backup)
-            .await
-            .map_err(|e| format!("备份远程原文件 '{}' 失败: {}", final_path, e))?;
-        match sftp.rename(temp, final_path).await {
-            Ok(()) => {
-                if let Err(e) = sftp.remove_file(&backup).await {
-                    log::warn!("删除远程提交备份 '{}' 失败: {}", backup, e);
-                }
-                Ok(())
-            }
-            Err(e) => {
-                let _ = sftp.rename(&backup, final_path).await;
-                Err(format!("提交远程文件 '{}' 失败: {}", final_path, e))
+) -> Result<Option<String>, String> {
+    match policy {
+        OverwritePolicy::Skip => {
+            if try_commit_remote_noreplace(sftp, temp, final_path).await? {
+                Ok(Some(final_path.to_string()))
+            } else {
+                Ok(None)
             }
         }
-    } else {
-        sftp.rename(temp, final_path)
-            .await
-            .map_err(|e| format!("提交远程文件 '{}' 失败: {}", final_path, e))
+        OverwritePolicy::KeepBoth => {
+            for index in 0..=9999 {
+                let candidate = if index == 0 {
+                    final_path.to_string()
+                } else {
+                    remote_keep_both_candidate(final_path, index)
+                };
+                if try_commit_remote_noreplace(sftp, temp, &candidate).await? {
+                    return Ok(Some(candidate));
+                }
+            }
+            Err(format!("无法为 '{}' 生成不冲突文件名", final_path))
+        }
+        OverwritePolicy::Replace => {
+            let exists = sftp
+                .try_exists(final_path)
+                .await
+                .map_err(|e| format!("检查远程目标 '{}' 失败: {}", final_path, e))?;
+            if !exists {
+                return sftp
+                    .rename(temp, final_path)
+                    .await
+                    .map(|_| Some(final_path.to_string()))
+                    .map_err(|e| format!("提交远程文件 '{}' 失败: {}", final_path, e));
+            }
+
+            let meta = sftp
+                .symlink_metadata(final_path)
+                .await
+                .map_err(|e| format!("获取远程目标 '{}' 信息失败: {}", final_path, e))?;
+            if entry_type_from_permissions(meta.permissions, meta.is_dir())
+                == SftpEntryType::Directory
+            {
+                return Err(format!("远程目标已存在且是目录: {}", final_path));
+            }
+
+            let backup = remote_sibling_artifact(final_path, "backup");
+            sftp.rename(final_path, &backup)
+                .await
+                .map_err(|e| format!("备份远程原文件 '{}' 失败: {}", final_path, e))?;
+            match sftp.rename(temp, final_path).await {
+                Ok(()) => {
+                    if let Err(e) = sftp.remove_file(&backup).await {
+                        log::warn!("删除远程提交备份 '{}' 失败: {}", backup, e);
+                    }
+                    Ok(Some(final_path.to_string()))
+                }
+                Err(commit_error) => match sftp.rename(&backup, final_path).await {
+                    Ok(()) => Err(format!(
+                        "提交远程文件 '{}' 失败: {}",
+                        final_path, commit_error
+                    )),
+                    Err(rollback_error) => Err(format!(
+                        "提交远程文件 '{}' 失败: {}；回滚也失败，原文件仍保留在 '{}': {}",
+                        final_path, commit_error, backup, rollback_error
+                    )),
+                },
+            }
+        }
     }
 }
 
@@ -708,21 +834,30 @@ pub async fn sftp_download(
         return Err(transfer_cancelled_error());
     }
 
-    if let Err(e) = commit_local_temp(&temp_path, &final_path, overwrite_policy).await {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-        return Err(e);
-    }
+    let committed_path = match commit_local_temp(&temp_path, &final_path, overwrite_policy).await {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Ok(SftpWriteOutcome::Skipped {
+                final_path: final_path.to_string_lossy().to_string(),
+            });
+        }
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(e);
+        }
+    };
 
     log::info!(
         "SFTP 下载完成: {} -> {} ({} bytes, remote_size={})",
         remote_path,
-        final_path.display(),
+        committed_path.display(),
         total,
         remote_size
     );
     Ok(SftpWriteOutcome::Completed {
         bytes: total,
-        final_path: final_path.to_string_lossy().to_string(),
+        final_path: committed_path.to_string_lossy().to_string(),
     })
 }
 
@@ -768,7 +903,10 @@ pub async fn sftp_upload(
         };
         let temp_path = remote_sibling_artifact(&final_path, "part");
         let file = sftp
-            .create(&temp_path)
+            .open_with_flags(
+                &temp_path,
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+            )
             .await
             .map_err(|e| format!("创建远程临时文件 '{}' 失败: {}", temp_path, e))?;
         (final_path, temp_path, file)
@@ -789,10 +927,17 @@ pub async fn sftp_upload(
             }
             return Err(transfer_cancelled_error());
         }
-        let n = local_file
-            .read(&mut buf)
-            .await
-            .map_err(|e| format!("读取本地文件失败: {}", e))?;
+        let n = match local_file.read(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                drop(remote_file);
+                let cache = sftp_cache.lock().await;
+                if let Some(sftp) = cache.as_ref() {
+                    let _ = sftp.remove_file(&temp_path).await;
+                }
+                return Err(format!("读取本地文件失败: {}", e));
+            }
+        };
         if n == 0 {
             break;
         }
@@ -827,15 +972,23 @@ pub async fn sftp_upload(
     }
     drop(remote_file);
 
-    // 时间戳写到临时文件；只有全部收尾成功后正式目标才会改变。
+    // 时间戳同步是 best-effort：写在临时文件上，因此即使服务器不支持也不会
+    // 破坏正式目标；失败会记录日志但不把完整数据传输降级为失败。
     if let Some(mtime_secs) = mtime {
         let cache = sftp_cache.lock().await;
         if let Some(sftp) = cache.as_ref() {
-            if let Ok(mut stat) = sftp.metadata(&temp_path).await {
-                let ts = mtime_secs.min(u32::MAX as u64) as u32;
-                stat.mtime = Some(ts);
-                stat.atime = Some(ts);
-                let _ = sftp.set_metadata(&temp_path, stat).await;
+            match sftp.metadata(&temp_path).await {
+                Ok(mut stat) => {
+                    let ts = mtime_secs.min(u32::MAX as u64) as u32;
+                    stat.mtime = Some(ts);
+                    stat.atime = Some(ts);
+                    if let Err(e) = sftp.set_metadata(&temp_path, stat).await {
+                        log::warn!("同步远程临时文件时间戳 '{}' 失败: {}", temp_path, e);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("读取远程临时文件元数据 '{}' 失败: {}", temp_path, e);
+                }
             }
         }
     }
@@ -853,24 +1006,34 @@ pub async fn sftp_upload(
         let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
         commit_remote_temp(sftp, &temp_path, &final_path, overwrite_policy).await
     };
-    if let Err(e) = commit_result {
-        let cache = sftp_cache.lock().await;
-        if let Some(sftp) = cache.as_ref() {
-            let _ = sftp.remove_file(&temp_path).await;
+    let committed_path = match commit_result {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            let cache = sftp_cache.lock().await;
+            if let Some(sftp) = cache.as_ref() {
+                let _ = sftp.remove_file(&temp_path).await;
+            }
+            return Ok(SftpWriteOutcome::Skipped { final_path });
         }
-        return Err(e);
-    }
+        Err(e) => {
+            let cache = sftp_cache.lock().await;
+            if let Some(sftp) = cache.as_ref() {
+                let _ = sftp.remove_file(&temp_path).await;
+            }
+            return Err(e);
+        }
+    };
 
     log::info!(
         "SFTP 上传完成: {} -> {} ({} bytes, local_size={})",
         local_path,
-        final_path,
+        committed_path,
         total,
         local_size
     );
     Ok(SftpWriteOutcome::Completed {
         bytes: total,
-        final_path,
+        final_path: committed_path,
     })
 }
 
@@ -960,9 +1123,12 @@ pub async fn sftp_new_file(
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
     let mut file = sftp
-        .create(remote_path)
+        .open_with_flags(
+            remote_path,
+            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+        )
         .await
-        .map_err(|e| format!("创建文件 '{}' 失败: {}", remote_path, e))?;
+        .map_err(|e| format!("创建文件 '{}' 失败（目标可能已存在）: {}", remote_path, e))?;
     file.flush()
         .await
         .map_err(|e| format!("刷新文件 '{}' 失败: {}", remote_path, e))?;
@@ -986,7 +1152,17 @@ pub async fn sftp_chmod(
         .symlink_metadata(remote_path)
         .await
         .map_err(|e| format!("获取文件信息 '{}' 失败: {}", remote_path, e))?;
-    stat.permissions = Some(mode);
+    let entry_type = entry_type_from_permissions(stat.permissions, stat.is_dir());
+    if !matches!(entry_type, SftpEntryType::File | SftpEntryType::Directory) {
+        return Err(format!(
+            "仅支持修改普通文件或目录权限，'{}' 类型为 {:?}",
+            remote_path, entry_type
+        ));
+    }
+
+    // SFTP permissions 字段包含 POSIX mode；保留文件类型位，只替换权限位。
+    let file_type_bits = stat.permissions.unwrap_or(0) & 0o170000;
+    stat.permissions = Some(file_type_bits | (mode & 0o7777));
     sftp.set_metadata(remote_path, stat)
         .await
         .map_err(|e| format!("修改权限 '{}' 失败: {}", remote_path, e))?;

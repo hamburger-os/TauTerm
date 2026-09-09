@@ -10,8 +10,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc::UnboundedSender, Mutex};
 
 use crate::kernel::file_transfer::{
-    FileTransfer, FileTransferError, FileTransferOptions, ProgressPosition, TransferDirection,
-    UnifiedProgress,
+    FileTransfer, FileTransferError, FileTransferOptions, OverwritePolicy, ProgressPosition,
+    TransferDirection, UnifiedProgress,
 };
 use crate::transfer::ssh_file_service::{SftpEntryType, SftpUploadOptions, SftpWriteOutcome};
 use crate::transfer::types::{BatchFileResult, FileInfo};
@@ -72,6 +72,95 @@ fn remote_relative(base: &str, path: &str) -> String {
         .unwrap_or(path)
         .trim_start_matches('/')
         .to_string()
+}
+
+fn local_directory_keep_both_candidate(path: &Path, index: u32) -> std::path::PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".to_string());
+    parent.join(format!("{} ({})", name, index))
+}
+
+async fn try_create_local_directory(candidate: &Path) -> Result<bool, FileTransferError> {
+    match tokio::fs::create_dir(candidate).await {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(FileTransferError::Other(format!(
+            "创建本地目录 '{}' 失败: {}",
+            candidate.display(),
+            e
+        ))),
+    }
+}
+
+/// 为目录下载原子保留一个目标根目录。
+///
+/// - Skip：已有同名对象时整棵目录跳过。
+/// - KeepBoth：使用 create_dir 的排他创建语义原子选择 "name (N)"。
+/// - Replace：仅允许目标不存在。目录级 Replace 需要递归删除/回滚，风险远高于
+///   文件替换，因此当前明确拒绝已有对象，要求用户选择 KeepBoth 或 Skip。
+async fn prepare_local_directory_destination(
+    requested: &Path,
+    policy: OverwritePolicy,
+) -> Result<Option<std::path::PathBuf>, FileTransferError> {
+    if let Some(parent) = requested.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            FileTransferError::Other(format!(
+                "创建下载目标父目录 '{}' 失败: {}",
+                parent.display(),
+                e
+            ))
+        })?;
+    }
+
+    match policy {
+        OverwritePolicy::Skip => {
+            if try_create_local_directory(requested).await? {
+                Ok(Some(requested.to_path_buf()))
+            } else {
+                Ok(None)
+            }
+        }
+        OverwritePolicy::KeepBoth => {
+            for index in 0..=9999 {
+                let candidate = if index == 0 {
+                    requested.to_path_buf()
+                } else {
+                    local_directory_keep_both_candidate(requested, index)
+                };
+                if try_create_local_directory(&candidate).await? {
+                    return Ok(Some(candidate));
+                }
+            }
+            Err(FileTransferError::Other(format!(
+                "无法为目录 '{}' 生成不冲突名称",
+                requested.display()
+            )))
+        }
+        OverwritePolicy::Replace => match tokio::fs::symlink_metadata(requested).await {
+            Ok(_) => Err(FileTransferError::Other(format!(
+                "目录目标 '{}' 已存在；目录替换不会自动合并或递归覆盖，请选择保留两份或跳过",
+                requested.display()
+            ))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tokio::fs::create_dir(requested).await.map_err(|e| {
+                    FileTransferError::Other(format!(
+                        "创建本地目录 '{}' 失败: {}",
+                        requested.display(),
+                        e
+                    ))
+                })?;
+                Ok(Some(requested.to_path_buf()))
+            }
+            Err(e) => Err(FileTransferError::Other(format!(
+                "检查本地目录目标 '{}' 失败: {}",
+                requested.display(),
+                e
+            ))),
+        },
+    }
 }
 
 #[async_trait::async_trait]
@@ -340,18 +429,25 @@ impl FileTransfer for SftpFileTransfer {
                     });
                 }
                 SftpEntryType::Directory => {
-                    let local_root = explicit_destination.unwrap_or_else(|| {
-                        Path::new(download_dir)
-                            .join(remote_basename(remote_path))
-                            .to_string_lossy()
-                            .to_string()
-                    });
-                    tokio::fs::create_dir_all(&local_root).await.map_err(|e| {
-                        FileTransferError::Other(format!(
-                            "创建本地目录 '{}' 失败: {}",
-                            local_root, e
-                        ))
-                    })?;
+                    let requested_root = explicit_destination
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| {
+                            Path::new(download_dir).join(remote_basename(remote_path))
+                        });
+                    let Some(local_root) = prepare_local_directory_destination(
+                        &requested_root,
+                        options.overwrite_policy,
+                    )
+                    .await?
+                    else {
+                        results.push(BatchFileResult {
+                            file_name: remote_basename(remote_path),
+                            status: "skipped".into(),
+                            size: 0,
+                            error: None,
+                        });
+                        continue;
+                    };
 
                     let tree = crate::transfer::ssh_file_service::sftp_list_tree_recursive(
                         &self.session,
@@ -363,7 +459,7 @@ impl FileTransfer for SftpFileTransfer {
 
                     for item in tree {
                         let relative = remote_relative(remote_path, &item.path);
-                        let local_path = Path::new(&local_root)
+                        let local_path = local_root
                             .join(&relative)
                             .to_string_lossy()
                             .to_string();
