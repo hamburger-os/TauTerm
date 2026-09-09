@@ -1,5 +1,5 @@
-import { bytesToHex, parseByteInput } from "./byteInput";
-import { toolErr, toolOk, type ToolResult } from "./toolResult";
+import { bytesToHex, parseByteInput } from "./byteInput.ts";
+import { toolErr, toolOk, type ToolResult } from "./toolResult.ts";
 
 export interface EncodingOptions {
   base64IgnoreWhitespace?: boolean;
