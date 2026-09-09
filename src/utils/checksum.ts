@@ -211,19 +211,26 @@ export function stringToBytes(str: string): Uint8Array {
  *   - "AA, BB, CC" (逗号 + 空格)
  */
 export function parseHexString(hex: string): Uint8Array {
-  // 统一清理：去空白、去 0x 前缀
-  let cleaned = hex.replace(/\s+/g, "").replace(/0x/gi, "").replace(/,/g, "");
+  const trimmed = hex.trim();
+  if (!trimmed) return new Uint8Array(0);
 
-  // 如果长度为奇数，视为非法或在前补0
-  if (cleaned.length % 2 !== 0) {
+  // 支持连续 HEX、空白/逗号分隔，以及每个 token 可选 0x 前缀。
+  // 必须完整匹配每个 token，避免 "0xAA0xBB"、"12GG" 等被部分解析。
+  const tokens = trimmed.split(/[\s,]+/).filter(Boolean);
+  let cleaned = "";
+  for (const token of tokens) {
+    const match = token.match(/^(?:0[xX])?([0-9a-fA-F]+)$/);
+    if (!match) return new Uint8Array(0);
+    cleaned += match[1];
+  }
+
+  if (!cleaned || cleaned.length % 2 !== 0) {
     return new Uint8Array(0);
   }
 
   const bytes: number[] = [];
   for (let i = 0; i < cleaned.length; i += 2) {
-    const byte = parseInt(cleaned.substring(i, i + 2), 16);
-    if (isNaN(byte)) return new Uint8Array(0);
-    bytes.push(byte);
+    bytes.push(Number.parseInt(cleaned.substring(i, i + 2), 16));
   }
   return new Uint8Array(bytes);
 }
