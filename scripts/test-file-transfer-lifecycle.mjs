@@ -180,6 +180,11 @@ assert.match(
   /batch_complete 只是协议层批次收尾[\s\S]{0,180}if \(p\.is_batch_complete\) \{[\s\S]{0,80}return;/,
   "shared TransferContext must wait for finished instead of treating batch_complete as terminal",
 );
+assert.match(
+  sharedContext,
+  /activeProtocolRef\.current = null;[\s\S]{0,120}activeSessionIdRef\.current = null;[\s\S]{0,220}SET_ACTIVE_SESSION_ID/,
+  "finished must release shared transfer ownership so FileManager transfers are not adopted later",
+);
 assert.doesNotMatch(
   sharedContext,
   /if \(p\.is_batch_complete\) \{[\s\S]{0,300}SET_STATUS/,
