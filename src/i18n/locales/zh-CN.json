@@ -212,7 +212,8 @@
       "XOR": "^ (异或)",
       "NOT": "~ (非)",
       "LSHIFT": "<< (左移)",
-      "RSHIFT": ">> (右移)"
+      "RSHIFT": ">> (右移)",
+      "URSHIFT": ">>> (逻辑右移)"
     },
     "crcValid": "CRC 正确",
     "crcMismatch": "CRC 不匹配 (期望: {{expected}})",
@@ -266,7 +267,8 @@
       "memoryParityError": "存储奇偶校验错误",
       "gatewayPathUnavailable": "网关路径不可用",
       "gatewayTargetNoResponse": "网关目标设备无响应"
-    }
+    },
+    "structAbiHint": "按 32 位 ILP32 / 嵌入式常用 ABI 估算；未知类型或无法完整解析的成员会直接报错。"
   },
   "titleBar": {
     "minimize": "最小化",
