@@ -21,7 +21,12 @@ assert.doesNotMatch(
 assert.match(hook, /SUCCESS_AUTO_HIDE_MS = 5000/);
 assert.match(hook, /hoveredRef\.current/);
 assert.match(hook, /payload\.bytes_done >= payload\.bytes_total[\s\S]{0,120}\? 100[\s\S]{0,180}Math\.floor/);
-assert.match(hook, /phase = hasKnownTotal && payload\.bytes_done >= payload\.bytes_total[\s\S]*'finalizing'/);
+assert.match(hook, /const isLastFile =[\s\S]{0,180}payload\.file_index \+ 1 >= payload\.total_files/);
+assert.match(
+  hook,
+  /payloadComplete && isLastFile \? 'finalizing' : 'transferring'/,
+  "per-file 100% must not enter Finalizing until the last file in the batch",
+);
 assert.match(
   hook,
   /cancelTransfer[\s\S]*previousPhase[\s\S]*phase: previousPhase/,
