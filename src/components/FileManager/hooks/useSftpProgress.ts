@@ -196,15 +196,23 @@ export function useSftpProgress(sessionId: string) {
           speed = phase === 'transferring' ? (backendSpeed ?? prev.speed) : null;
         }
 
+        const preserveFailedProgress =
+          payload.is_file_complete
+          && payload.file_success === false
+          && !hasKnownTotal;
+
         phaseRef.current = phase;
         return {
           ...prev,
           visible: true,
           fileName: isBatchComplete ? prev.fileName : (name || prev.fileName),
           direction: payload.direction === 'send' ? 'upload' : 'download',
-          bytesDone: isBatchComplete ? prev.bytesDone : payload.bytes_done,
-          bytesTotal: isBatchComplete ? prev.bytesTotal : payload.bytes_total,
-          percent: isBatchComplete ? prev.percent : percent,
+          bytesDone:
+            isBatchComplete || preserveFailedProgress ? prev.bytesDone : payload.bytes_done,
+          bytesTotal:
+            isBatchComplete || preserveFailedProgress ? prev.bytesTotal : payload.bytes_total,
+          percent:
+            isBatchComplete || preserveFailedProgress ? prev.percent : percent,
           phase,
           speed,
           error,
