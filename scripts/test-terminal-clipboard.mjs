@@ -60,6 +60,46 @@ assert.doesNotMatch(
   "context-menu paste must not bypass xterm paste semantics",
 );
 
+assert.match(
+  terminalSource,
+  /id: "inspectProtocol"[\s\S]{0,360}tauterm:protocol-inspect[\s\S]{0,220}sessionId/,
+  "terminal selection handoff must be explicit and session-scoped",
+);
+
+const dualPaneSource = await readFile(
+  path.join(ROOT, "src", "components", "Terminal", "DualPane.tsx"),
+  "utf8",
+);
+assert.match(
+  dualPaneSource,
+  /onContextMenu=\{\(event\) => handleRowContextMenu\(event, line\)\}/,
+);
+assert.match(
+  dualPaneSource,
+  /tauterm:protocol-inspect[\s\S]{0,220}sessionId[\s\S]{0,120}contextLine\.hex/,
+  "Dual/HEX handoff must use the complete row frame and session identity",
+);
+
+const protocolToolSource = await readFile(
+  path.join(ROOT, "src", "components", "Tools", "ProtocolTool.tsx"),
+  "utf8",
+);
+assert.match(
+  protocolToolSource,
+  /detail\?\.sessionId !== sessionId/,
+  "Protocol Inspector must ignore handoff events from other sessions",
+);
+
+const appSource = await readFile(
+  path.join(ROOT, "src", "App.tsx"),
+  "utf8",
+);
+assert.match(
+  appSource,
+  /tauterm:protocol-inspect[\s\S]{0,300}setRightSidebarVisible\(true\)/,
+  "explicit protocol handoff must reveal the engineering sidebar",
+);
+
 const registrySource = await readFile(
   path.join(ROOT, "src", "shortcuts", "registry.ts"),
   "utf8",
@@ -78,4 +118,4 @@ const shortcutSettingsSource = await readFile(
 );
 assert.match(shortcutSettingsSource, /isTerminalReservedShortcut\(newKeys\)/);
 
-console.log("terminal-clipboard: shortcuts, paste routing, focus contract and safety analysis verified");
+console.log("terminal-clipboard: shortcuts, paste routing, focus, safety, and explicit protocol-inspection handoff verified");
