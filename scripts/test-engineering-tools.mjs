@@ -3,6 +3,7 @@ import {
   crc16,
   crc32,
   numberToHex,
+  parseHexString,
 } from "../src/utils/checksum.ts";
 import {
   executeEncodingOp,
@@ -37,6 +38,25 @@ assert.match(
   /^\[Error:/,
   "binary conversion must reject invalid trailing digits instead of partially parsing",
 );
+assert.match(
+  executeEncodingOp("0xAA0xBB", "hex-to-dec"),
+  /^\[Error:/,
+  "HEX conversion must reject repeated embedded prefixes",
+);
+assert.match(
+  executeEncodingOp("41GG", "hex-to-string"),
+  /^\[Error:/,
+  "HEX-to-text conversion must reject malformed bytes instead of partially parsing",
+);
+assert.deepEqual(
+  Array.from(parseHexString("0x01, 0x03, 00 00")),
+  [0x01, 0x03, 0x00, 0x00],
+);
+assert.equal(
+  parseHexString("01 03 0x00GG").length,
+  0,
+  "protocol/checksum HEX parsing must fail closed on malformed tokens",
+);
 assert.equal(swapEndian("01 02 03 04", 2), "0201 0403");
 assert.match(
   swapEndian("01 02 03", 2),
@@ -61,6 +81,10 @@ assert.ok(rtu.result);
 assert.equal(rtu.errorKey, undefined);
 assert.equal(rtu.result.checksumValid, true);
 assert.equal(rtu.result.fields[0].offset, 0);
+
+const malformedRtu = parseProtocolInput("modbus-rtu", "01 03 00GG 00");
+assert.equal(malformedRtu.result, null);
+assert.equal(malformedRtu.errorKey, "tools.protocolParseErrorHex");
 
 const ascii = parseProtocolInput("modbus-ascii", ":010300000001FB\r\n");
 assert.ok(ascii.result);
