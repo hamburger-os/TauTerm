@@ -1,39 +1,27 @@
 version: 2
 updates:
+  # Application dependency upgrades are handled deliberately so coordinated
+  # stacks (Tauri JS/Rust, terminal, i18n, build tooling, crypto/protocol
+  # crates) are reviewed and tested together. Security updates remain active.
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
-    groups:
-      npm-routine:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - minor
-          - patch
-        exclude-patterns:
-          - "@xterm/*"
+    open-pull-requests-limit: 0
 
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
       interval: weekly
-    open-pull-requests-limit: 3
-    groups:
-      cargo-patches:
-        applies-to: version-updates
-        patterns:
-          - "*"
-        update-types:
-          - patch
+    open-pull-requests-limit: 0
 
+  # GitHub Actions updates are isolated from the application dependency graph
+  # and are safe to review as one low-volume routine maintenance PR.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     groups:
       github-actions-routine:
         applies-to: version-updates
@@ -42,3 +30,7 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
