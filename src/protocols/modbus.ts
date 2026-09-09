@@ -581,8 +581,9 @@ function semanticChecks(issues: ProtocolIssue[]): ProtocolCheck[] {
   const structuralError = relevant.some(
     (issue) => issue.severity === "error" && structuralCodes.has(issue.code),
   );
-  const semanticError = relevant.some((issue) => issue.severity === "error");
-  const semanticWarning = relevant.some((issue) => issue.severity === "warning");
+  const semanticIssues = relevant.filter((issue) => !structuralCodes.has(issue.code));
+  const semanticError = semanticIssues.some((issue) => issue.severity === "error");
+  const semanticWarning = semanticIssues.some((issue) => issue.severity === "warning");
   return [
     {
       id: "structure",
@@ -592,7 +593,13 @@ function semanticChecks(issues: ProtocolIssue[]): ProtocolCheck[] {
     {
       id: "semantics",
       label: "tools.checkProtocolSemantics",
-      status: semanticError ? "fail" : semanticWarning ? "warning" : "pass",
+      status: semanticError
+        ? "fail"
+        : structuralError
+          ? "not-applicable"
+          : semanticWarning
+            ? "warning"
+            : "pass",
     },
   ];
 }
