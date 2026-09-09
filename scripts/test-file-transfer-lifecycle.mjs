@@ -20,6 +20,12 @@ assert.doesNotMatch(
 );
 assert.match(hook, /SUCCESS_AUTO_HIDE_MS = 5000/);
 assert.match(hook, /hoveredRef\.current/);
+assert.match(hook, /let disposed = false/);
+assert.match(
+  hook,
+  /if \(disposed\) fn\(\);[\s\S]{0,120}else unlistenStarted = fn/,
+  "late event-listener registrations must self-clean after hook disposal",
+);
 assert.match(hook, /payload\.bytes_done >= payload\.bytes_total[\s\S]{0,120}\? 100[\s\S]{0,180}Math\.floor/);
 assert.match(hook, /const isLastFile =[\s\S]{0,180}payload\.file_index \+ 1 >= payload\.total_files/);
 assert.match(
