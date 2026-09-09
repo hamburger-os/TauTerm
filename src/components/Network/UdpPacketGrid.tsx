@@ -4,19 +4,64 @@
  * 每数据报一行：序号、时间戳、方向、来源/目标地址、长度、HEX、ASCII。
  * 数据来自后端逐报 flush 的 session-data 事件（报文边界保真）。
  */
+import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { PacketRow } from "./NetworkDebugSessionView";
 import ScrollToBottomButton from "../Terminal/ScrollToBottomButton";
+import ContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
+import type { ContextMenuState } from "../../hooks/useContextMenu";
 import { useAutoScroll } from "../../hooks/useAutoScroll";
 import styles from "./NetworkDebugSessionView.module.css";
 
 interface Props {
   rows: PacketRow[];
+  sessionId: string;
 }
 
-export default function UdpPacketGrid({ rows }: Props) {
+export default function UdpPacketGrid({ rows, sessionId }: Props) {
   const { t } = useTranslation();
   const { scrollRef, isAtBottom, handleScroll, scrollToBottom } = useAutoScroll<HTMLDivElement>(rows);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({
+    x: 0,
+    y: 0,
+    visible: false,
+    session: null,
+  });
+  const [contextHex, setContextHex] = useState("");
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => [
+    {
+      id: "inspectProtocol",
+      label: t("terminal.inspectProtocolFrame"),
+      icon: "search",
+      disabled: !contextHex,
+    },
+  ], [contextHex, t]);
+
+  const openContextMenu = useCallback((event: React.MouseEvent, hex: string) => {
+    event.preventDefault();
+    setContextHex(hex);
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      visible: true,
+      session: null,
+    });
+  }, []);
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu((previous) => ({ ...previous, visible: false }));
+  }, []);
+
+  const handleContextMenuSelect = useCallback((itemId: string) => {
+    if (itemId !== "inspectProtocol" || !contextHex) return;
+    window.dispatchEvent(
+      new CustomEvent("tauterm:protocol-inspect", {
+        detail: { sessionId, input: contextHex },
+      }),
+    );
+  }, [contextHex, sessionId]);
+
 
   return (
     <div className={styles.gridContainer}>
@@ -34,7 +79,11 @@ export default function UdpPacketGrid({ rows }: Props) {
           <div className={styles.gridEmpty}>{t("network.noData")}</div>
         )}
         {rows.map(row => (
-          <div key={row.id} className={`${styles.gridRow} ${row.direction === "TX" ? styles.txRow : styles.rxRow}`}>
+          <div
+            key={row.id}
+            className={`${styles.gridRow} ${row.direction === "TX" ? styles.txRow : styles.rxRow}`}
+            onContextMenu={(event) => openContextMenu(event, row.hex)}
+          >
             <span className={styles.colSeq}>{row.id}</span>
             <span className={styles.colTime}>{row.time}</span>
             <span className={styles.colDir}>{row.direction}</span>
@@ -46,6 +95,12 @@ export default function UdpPacketGrid({ rows }: Props) {
         ))}
       </div>
       <ScrollToBottomButton visible={!isAtBottom} onClick={scrollToBottom} />
+      <ContextMenu
+        state={contextMenu}
+        items={contextMenuItems}
+        onSelect={handleContextMenuSelect}
+        onClose={closeContextMenu}
+      />
     </div>
   );
 }
