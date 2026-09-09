@@ -206,7 +206,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       term.paste(text);
     }
     restoreTerminalFocus();
-  }, [restoreTerminalFocus, sessionId]);
+  }, [restoreTerminalFocus]);
 
   const requestPasteText = useCallback((text: string) => {
     const term = xtermRef.current;
@@ -586,7 +586,7 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
         onDisconnectSessionRef.current?.();
         break;
     }
-  }, [restoreTerminalFocus]);
+  }, [restoreTerminalFocus, sessionId]);
 
   useEffect(() => {
     // A pending confirmation belongs to exactly one active terminal. If the
