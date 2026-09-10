@@ -174,7 +174,11 @@ export default function FilePropertiesModal({
         : entryType === "file"
           ? t("fileManager.typeFile")
           : t("fileManager.typeOther");
-  const entryIcon = getEntryIcon(entry);
+  const entryIcon = getEntryIcon({
+    ...entry,
+    is_dir: isDir,
+    entry_type: entryType,
+  });
   const canChmod = entryType === "file" || entryType === "directory";
   const name = statInfo?.name ?? entry.name;
 
