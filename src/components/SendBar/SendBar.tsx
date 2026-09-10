@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { SendBarProvider, useSendBar } from "./SendBarContext";
@@ -18,12 +18,10 @@ interface SendBarProps {
   containerId: string;
 }
 
-type ExecutionMode = SendBarMode | null;
-
 /**
  * 发送栏容器组件。
  *
- * 每个会话保留自己的 SendBarProvider，从而保留草稿与选择状态；四个模式不再全部常驻 DOM，
+ * 每个会话保留自己的 SendBarProvider，从而保留草稿、选择与执行所有权；四个模式不再全部常驻 DOM，
  * 仅挂载当前模式。工程资产仍通过 AssetStore 跨会话共享。
  */
 export default function SendBar({ containerId }: SendBarProps) {
@@ -37,8 +35,7 @@ export default function SendBar({ containerId }: SendBarProps) {
 function SendBarInner({ containerId }: SendBarProps) {
   const { t } = useTranslation();
   const { state, dispatch } = useSendBar();
-  const { mode } = state;
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>(null);
+  const { mode, executionMode } = state;
 
   useNetworkSendTargetSync(containerId);
 
@@ -48,11 +45,8 @@ function SendBarInner({ containerId }: SendBarProps) {
   }, [executionMode, dispatch]);
 
   const handleExecutionChange = useCallback((owner: SendBarMode, running: boolean) => {
-    setExecutionMode(current => {
-      if (running) return owner;
-      return current === owner ? null : current;
-    });
-  }, []);
+    dispatch({ type: "SET_EXECUTION_MODE", owner, running });
+  }, [dispatch]);
 
   // ── 共享脚本日志：始终监听 script-log，不依赖面板焦点 ──
   useEffect(() => {
