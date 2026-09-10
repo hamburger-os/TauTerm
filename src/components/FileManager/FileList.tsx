@@ -118,6 +118,13 @@ export default function FileList({
       className={`${styles.headerCell} ${extraClass || ""}`}
       onClick={() => onSortChange(field)}
       role="columnheader"
+      aria-sort={
+        field === sortField
+          ? sortDirection === "asc"
+            ? "ascending"
+            : "descending"
+          : "none"
+      }
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -172,13 +179,13 @@ export default function FileList({
         {renderHeader("name", t("fileManager.name"), styles.colName)}
         {renderHeader("size", t("fileManager.size"), styles.colSize)}
         {renderHeader("modified", t("fileManager.modified"), styles.colTime)}
-        <div className={`${styles.headerCell} ${styles.colPerms}`}>
+        <div className={`${styles.headerCell} ${styles.colPerms}`} role="columnheader">
           {t("fileManager.permissions")}
         </div>
       </div>
 
       {error && (
-        <div className={styles.errorBanner}>
+        <div className={styles.errorBanner} role="alert">
           <span>{error}</span>
           <button
             type="button"
