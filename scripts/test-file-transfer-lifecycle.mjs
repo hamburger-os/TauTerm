@@ -19,6 +19,18 @@ assert.match(
   "successful SFTP cards must remove their exact task snapshot when the five-second auto-hide fires",
 );
 assert.match(hook, /hoveredRef\.current/);
+assert.match(hook, /autoHideDeadlineRef/);
+assert.match(hook, /autoHideRemainingRef/);
+assert.match(
+  hook,
+  /autoHideRemainingRef\.current = Math\.max\([\s\S]{0,180}autoHideDeadlineRef\.current - Date\.now\(\)/,
+  "hovering a completed SFTP card must preserve the remaining auto-hide duration",
+);
+assert.match(
+  hook,
+  /scheduleAutoHide\(sftpTask\.transferId, autoHideRemainingRef\.current\)/,
+  "leaving a completed SFTP card must resume the paused auto-hide duration",
+);
 assert.doesNotMatch(
   hook,
   /listen<|file-transfer:started|file-transfer:progress|file-transfer:finished/,
@@ -407,7 +419,16 @@ assert.match(conflictDialog, /dialogRef\.current\?\.querySelectorAll/);
 assert.match(conflictDialog, /styles\.policyList/);
 assert.match(conflictDialog, /styles\.footer/);
 assert.match(conflictDialog, /variant="danger"/);
-assert.match(conflictDialog, /variant="primary"/);
+assert.doesNotMatch(
+  conflictDialog,
+  /variant="primary"/,
+  "multi-choice conflict decisions must not promote a recommendation to a full Prism Primary button",
+);
+assert.match(
+  conflictDialog,
+  /variant="secondary"[\s\S]{0,120}data-policy="keep-both"/,
+  "Keep Both must stay on the neutral secondary surface while retaining safe default focus",
+);
 assert.match(conflictDialog, /variant="ghost"/);
 assert.match(
   conflictDialog,
@@ -471,6 +492,13 @@ assert.match(fileGrid, /case "ArrowUp"/);
 assert.match(fileGrid, /case "ArrowDown"/);
 assert.match(fileGrid, /tabIndex=\{activeItem === itemIndex \? 0 : -1\}/);
 
+const multiSelect = await source("src/components/FileManager/hooks/useMultiSelect.ts");
+assert.match(
+  multiSelect,
+  /if \(shiftKey && lastClickedIndex !== null\)[\s\S]{0,180}if \(!ctrlKey\) next\.clear\(\)/,
+  "plain Shift must replace selection with the anchor range while Ctrl+Shift extends it",
+);
+
 const preview = await source("src/components/FileManager/FilePreviewModal.tsx");
 assert.match(preview, /role="dialog"/);
 assert.match(preview, /aria-modal="true"/);
@@ -484,6 +512,9 @@ assert.match(preview, /function formatHex/);
 assert.match(preview, /HEX_RENDER_LIMIT/);
 assert.match(preview, /new TextDecoder\(encoding/);
 assert.match(preview, /aria-pressed=\{mode === "text"\}/);
+assert.match(preview, /liquid-selector-strip/);
+assert.match(preview, /liquid-selector-button/);
+assert.doesNotMatch(preview, /modeButtonActive/);
 assert.match(
   preview,
   /encodingSelect\} liquid-glass-input liquid-glass-select/,
