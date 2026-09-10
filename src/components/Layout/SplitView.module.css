@@ -106,7 +106,7 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 4px 0 8px;
   border-bottom: 1px solid var(--content-border);
   background:
     var(--liquid-specular-content-fill),
@@ -163,6 +163,39 @@
 
 .paneHeaderStateText {
   opacity: 0.78;
+}
+
+.paneHeaderMenuButton {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 20px;
+  margin-left: 4px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.58;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+.paneHeaderMenuButton:hover,
+.paneHeaderMenuButton:focus-visible {
+  opacity: 1;
+  color: var(--text-primary);
+  background: var(--glass-bg-hover);
+}
+
+.paneHeaderMenuButton:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--accent-primary) 58%, transparent);
+  outline-offset: -1px;
 }
 
 .emptyPaneTitle {
