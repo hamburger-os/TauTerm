@@ -1055,7 +1055,9 @@ export default function FileManagerPanel({
               if (!propsTarget) return;
               const target = propsTarget;
               const generation = ++propsRequestGenerationRef.current;
-              setPropsLoading(true);
+              // Keep the existing metadata visible while refreshing after chmod.
+              // Replacing the whole body with a loading state would unmount the
+              // focused controls and create an unnecessary visual/focus flash.
               invoke<FileStatInfo>("sftp_stat_cmd", {
                 sessionId,
                 remotePath: target.path,
@@ -1068,11 +1070,6 @@ export default function FileManagerPanel({
                 .catch((error) => {
                   if (generation === propsRequestGenerationRef.current) {
                     showToast("error", String(error));
-                  }
-                })
-                .finally(() => {
-                  if (generation === propsRequestGenerationRef.current) {
-                    setPropsLoading(false);
                   }
                 });
             }}
