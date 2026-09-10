@@ -19,8 +19,17 @@ export interface UseMultiSelectReturn {
 
 export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
-  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  // Keep the range-selection anchor by stable entry identity instead of by row
+  // number. Sorting or refreshing the directory may reorder entries between
+  // clicks; an index anchor would then select a range from the wrong file.
+  const [lastClickedPath, setLastClickedPath] = useState<string | null>(null);
   const [parentSelected, setParentSelected] = useState(false);
+
+  const lastClickedIndex = useMemo(() => {
+    if (lastClickedPath === null) return null;
+    const index = entries.findIndex((entry) => entry.path === lastClickedPath);
+    return index >= 0 ? index : null;
+  }, [entries, lastClickedPath]);
 
   const handleClick = useCallback(
     (entry: SftpEntry, index: number, additiveKey: boolean, shiftKey: boolean) => {
@@ -50,14 +59,14 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
           } else {
             next.add(entry.path);
           }
-          setLastClickedIndex(index);
+          setLastClickedPath(entry.path);
           return next;
         }
 
         // Single select: clear and select only this entry
         next.clear();
         next.add(entry.path);
-        setLastClickedIndex(index);
+        setLastClickedPath(entry.path);
         return next;
       });
     },
@@ -67,19 +76,19 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
   const selectAll = useCallback((allEntries: SftpEntry[]) => {
     setParentSelected(false);
     setSelectedPaths(new Set(allEntries.map(e => e.path)));
-    setLastClickedIndex(null);
+    setLastClickedPath(null);
   }, []);
 
   const selectParent = useCallback(() => {
     setParentSelected(true);
     setSelectedPaths(new Set());
-    setLastClickedIndex(null);
+    setLastClickedPath(null);
   }, []);
 
   const clearSelection = useCallback(() => {
     setParentSelected(false);
     setSelectedPaths(new Set());
-    setLastClickedIndex(null);
+    setLastClickedPath(null);
   }, []);
 
   // ── Right-click: auto-select only if not already in selection ──
@@ -96,7 +105,7 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
           next.clear();
           next.add(entry.path);
         }
-        setLastClickedIndex(null);
+        setLastClickedPath(null);
         return next;
       });
     },
@@ -125,5 +134,16 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
     clearSelection,
     isSelected,
     selectionCount: selectedPaths.size,
-  }), [selectedPaths, lastClickedIndex, selectedEntries, parentSelected, handleClick, isSelected]);
+  }), [
+    selectedPaths,
+    lastClickedIndex,
+    selectedEntries,
+    parentSelected,
+    handleClick,
+    handleRightClick,
+    selectAll,
+    selectParent,
+    clearSelection,
+    isSelected,
+  ]);
 }
