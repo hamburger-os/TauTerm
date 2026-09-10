@@ -388,10 +388,7 @@ export default function SplitView({
     <div
       ref={viewRef}
       className={`${styles.view} liquid-glass-content`}
-      onMouseDown={() => {
-        setPaneMenu(null);
-        closeDisconnectedSessionMenu();
-      }}
+      onMouseDown={closeDisconnectedSessionMenu}
     >
       {/* 非终端内容层与空 Pane。终端由下面唯一的 TerminalView 实例池覆盖投放。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
