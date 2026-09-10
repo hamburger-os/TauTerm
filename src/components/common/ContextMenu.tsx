@@ -31,6 +31,7 @@ interface ContextMenuProps {
  */
 export default function ContextMenu({ state, items, onSelect, onClose, header }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const headerId = useId();
   const reducedMotion = useReducedMotion();
 
@@ -70,22 +71,19 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
     };
   }, [state.visible, onClose]);
 
-  // Open menus take keyboard focus and restore the previously focused control
-  // after dismissal. This keeps right-click actions usable without a mouse.
+  // Preserve the control that owned focus before the menu opened. Position
+  // changes while a menu is already visible (right-clicking another target) must
+  // not overwrite this restore target with a menu item that will soon unmount.
   useEffect(() => {
     if (!state.visible) return;
 
-    const previousFocus = document.activeElement instanceof HTMLElement
+    previousFocusRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
-    const frame = requestAnimationFrame(() => {
-      const firstEnabled = menuRef.current
-        ?.querySelector<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)');
-      (firstEnabled ?? menuRef.current)?.focus();
-    });
 
     return () => {
-      cancelAnimationFrame(frame);
+      const previousFocus = previousFocusRef.current;
+      previousFocusRef.current = null;
       if (
         previousFocus
         && previousFocus !== document.body
@@ -95,6 +93,18 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
       }
     };
   }, [state.visible]);
+
+  // Focus the first enabled action whenever a fresh context-click repositions an
+  // already-open menu, not only on the initial visible=false -> true transition.
+  useEffect(() => {
+    if (!state.visible) return;
+    const frame = requestAnimationFrame(() => {
+      const firstEnabled = menuRef.current
+        ?.querySelector<HTMLButtonElement>('button[role="menuitem"]:not(:disabled)');
+      (firstEnabled ?? menuRef.current)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [state.visible, state.x, state.y]);
 
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const menu = menuRef.current;
