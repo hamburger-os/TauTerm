@@ -377,14 +377,22 @@ export default function FileManagerPanel({
   }, [handleDroppedPaths, isConnected]);
 
   const handleNewFile = useCallback(() => {
+    if (!isConnected) {
+      showToast("warning", t("fileManager.sessionDisconnected"));
+      return;
+    }
     fm.setPromptMode("newFile");
     fm.setPromptValue("");
-  }, [fm]);
+  }, [fm, isConnected, showToast, t]);
 
   const handleNewFolder = useCallback(() => {
+    if (!isConnected) {
+      showToast("warning", t("fileManager.sessionDisconnected"));
+      return;
+    }
     fm.setPromptMode("newFolder");
     fm.setPromptValue("");
-  }, [fm]);
+  }, [fm, isConnected, showToast, t]);
 
   const handleDownload = useCallback(async () => {
     if (!isConnected) {
@@ -720,12 +728,12 @@ export default function FileManagerPanel({
   const contextMenuItems = useMemo((): ContextMenuItem[] => {
     if (ctxTarget === null) {
       return [
-        { id: "upload", label: t("fileManager.upload") },
-        { id: "uploadFolder", label: t("fileManager.uploadFolder") },
-        { id: "newFile", label: t("fileManager.newFile") },
-        { id: "newFolder", label: t("fileManager.newFolder") },
+        { id: "upload", label: t("fileManager.upload"), disabled: !isConnected },
+        { id: "uploadFolder", label: t("fileManager.uploadFolder"), disabled: !isConnected },
+        { id: "newFile", label: t("fileManager.newFile"), disabled: !isConnected },
+        { id: "newFolder", label: t("fileManager.newFolder"), disabled: !isConnected },
         { id: "sep1", label: "", type: "separator" },
-        { id: "refresh", label: t("fileManager.refresh") },
+        { id: "refresh", label: t("fileManager.refresh"), disabled: !isConnected },
       ];
     }
 
@@ -776,7 +784,7 @@ export default function FileManagerPanel({
         danger: true,
       },
     ];
-  }, [ctxTarget, contextMenuSelectedCount, t]);
+  }, [ctxTarget, contextMenuSelectedCount, isConnected, t]);
 
   const handleContextMenuSelect = useCallback(
     (id: string) => {
@@ -829,32 +837,40 @@ export default function FileManagerPanel({
       <div className={styles.toolbar}>
         <div className={styles.toolbarActions}>
           <button
+            type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleRefresh}
+            disabled={!isConnected}
             title={t("fileManager.refresh")}
             aria-label={t("fileManager.refresh")}
           >
             <Icon name="refresh" size="sm" />
           </button>
           <button
+            type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleNewFile}
+            disabled={!isConnected}
             title={t("fileManager.newFile")}
             aria-label={t("fileManager.newFile")}
           >
             <Icon name="file" size="sm" />
           </button>
           <button
+            type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleNewFolder}
+            disabled={!isConnected}
             title={t("fileManager.newFolder")}
             aria-label={t("fileManager.newFolder")}
           >
             <Icon name="folder" size="sm" />
           </button>
           <button
+            type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleUpload}
+            disabled={!isConnected}
             title={t("fileManager.upload")}
             aria-label={t("fileManager.upload")}
           >
@@ -862,6 +878,7 @@ export default function FileManagerPanel({
           </button>
         </div>
         <button
+          type="button"
           className={`${styles.toolbarBtn} ${styles.viewToggleBtn} liquid-glass-ghost-button`}
           onClick={() => changeViewMode(viewMode === "list" ? "grid" : "list")}
           title={viewMode === "list" ? t("fileManager.switchToGrid") : t("fileManager.switchToList")}
@@ -1014,7 +1031,7 @@ export default function FileManagerPanel({
                   remotePath: propsTarget.path,
                 })
                   .then(setPropsInfo)
-                  .catch(() => {})
+                  .catch((error) => showToast("error", String(error)))
                   .finally(() => setPropsLoading(false));
               }
             }}
