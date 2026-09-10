@@ -1064,7 +1064,7 @@
     "selectedCount": "{{count}} items selected",
     "previewTruncated": "Preview showing first {{shown}} of {{total}}",
     "chmod": "Change Permissions",
-    "chmodInvalid": "Invalid permission (needs 3 octal digits, e.g. 755)",
+    "chmodInvalid": "Invalid permission (needs 3 or 4 octal digits, e.g. 755 or 4755)",
     "edit": "Edit",
     "apply": "Apply",
     "cancel": "Cancel",
