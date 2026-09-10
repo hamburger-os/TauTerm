@@ -14,6 +14,7 @@ import { formatTime } from "../../utils/format";
 import type { SftpEntry } from "./types";
 import { formatBytes } from "../../utils/format";
 import { copyToClipboard } from "../../utils/clipboard";
+import { getEntryIcon } from "./entryIcon";
 import styles from "./FilePropertiesModal.module.css";
 
 export interface FileStatInfo {
@@ -72,14 +73,14 @@ export default function FilePropertiesModal({
     return octal.toString(8).padStart(3, "0");
   }, []);
 
-  // Reset chmod when statInfo changes
+  // Reset chmod whenever the inspected target changes, including targets whose
+  // server does not report POSIX permission bits. This prevents stale values from
+  // a previously opened file from leaking into the next Properties dialog.
   useEffect(() => {
-    if (statInfo?.permissions) {
-      setChmodValue(getOctalFromPerms(statInfo.permissions));
-      setChmodEditing(false);
-      setChmodError(null);
-    }
-  }, [statInfo, getOctalFromPerms]);
+    setChmodValue(getOctalFromPerms(statInfo?.permissions ?? null));
+    setChmodEditing(false);
+    setChmodError(null);
+  }, [statInfo?.path, statInfo?.permissions, getOctalFromPerms]);
 
   const handleChmodApply = useCallback(async () => {
     if (!/^[0-7]{3}$/.test(chmodValue)) {
@@ -173,8 +174,7 @@ export default function FilePropertiesModal({
         : entryType === "file"
           ? t("fileManager.typeFile")
           : t("fileManager.typeOther");
-  const typeEmoji =
-    entryType === "directory" ? "\u{1F4C1}" : entryType === "symlink" ? "\u{1F517}" : "\u{1F4C4}";
+  const entryIcon = getEntryIcon(entry);
   const canChmod = entryType === "file" || entryType === "directory";
   const name = statInfo?.name ?? entry.name;
 
@@ -193,7 +193,8 @@ export default function FilePropertiesModal({
         {/* 标题栏 */}
         <div className={styles.header}>
           <span id="file-properties-title" className={styles.headerTitle}>
-            {typeEmoji} {name}
+            <span className={styles.headerIcon} aria-hidden="true">{entryIcon}</span>
+            <span className={styles.headerName}>{name}</span>
           </span>
           <button
             type="button"
@@ -212,9 +213,6 @@ export default function FilePropertiesModal({
             <div className={styles.loading}>{t("fileManager.loading")}</div>
           ) : statInfo ? (
             <>
-              {/* 类型标签 */}
-              <div className={`${styles.typeTag} liquid-glass-mini-card`}>{typeLabel}</div>
-
               <div className={styles.fieldList}>
                 {/* 完整路径 */}
                 <div className={styles.fieldRow}>
@@ -330,7 +328,7 @@ export default function FilePropertiesModal({
                         </>
                       )}
                     </div>
-                    {chmodError && <span className={styles.chmodError}>{chmodError}</span>}
+                    {chmodError && <span className={styles.chmodError} role="alert">{chmodError}</span>}
                   </div>
                 )}
               </div>
