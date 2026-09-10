@@ -3,7 +3,7 @@ import {
   type LayoutNode,
   type PaneId,
   type SplitLayoutState,
-} from "./split-layout";
+} from "./split-layout.ts";
 
 export const WORKSPACE_LAYOUT_VERSION = 1;
 
