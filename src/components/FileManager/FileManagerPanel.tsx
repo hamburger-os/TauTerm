@@ -603,6 +603,25 @@ export default function FileManagerPanel({
     setPreviewVisible(false);
   }, []);
 
+  // Connection loss invalidates transient file-service interactions. In
+  // particular, resolve an outstanding conflict prompt so its awaiting upload
+  // flow cannot remain suspended after the SSH/SFTP channel disappears.
+  useEffect(() => {
+    if (isConnected) return;
+    closeContextMenu();
+    cancelDelete();
+    resolveConflictPolicy(null);
+    closeProperties();
+    closePreview();
+  }, [
+    isConnected,
+    closeContextMenu,
+    cancelDelete,
+    resolveConflictPolicy,
+    closeProperties,
+    closePreview,
+  ]);
+
   // ── Inline prompt actions ───────────────────────────
   const handlePromptConfirm = useCallback(
     async (value: string) => {
