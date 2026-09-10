@@ -38,7 +38,8 @@ function sleep(ms: number): { promise: Promise<void>; cancel: () => void } {
 
 /**
  * 串行命令执行器。内部立即用 ref 抢占运行权，避免快速双击在 React state 刷新前
- * 启动两条并发执行链；组件卸载只取消工作，不再对已卸载组件写 state。
+ * 启动两条并发执行链。停止时先取消后续工作；若当前底层 send 尚未返回，则保持
+ * running 状态直到该调用真正结束，避免用户立即重启形成两条发送链。
  */
 export default function useCommandRunner({ onSend }: UseCommandRunnerOptions): UseCommandRunner {
   const [isRunning, setIsRunning] = useState(false);
@@ -54,7 +55,6 @@ export default function useCommandRunner({ onSend }: UseCommandRunnerOptions): U
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      runningRef.current = false;
       stopFlagRef.current = true;
       cancelSleepRef.current?.();
       cancelSleepRef.current = null;
@@ -62,15 +62,11 @@ export default function useCommandRunner({ onSend }: UseCommandRunnerOptions): U
   }, []);
 
   const stop = useCallback(() => {
-    runningRef.current = false;
     stopFlagRef.current = true;
     cancelSleepRef.current?.();
     cancelSleepRef.current = null;
-    if (mountedRef.current) {
-      setIsRunning(false);
-      setCurrentIndex(null);
-      setLoopProgress(null);
-    }
+    // Do not clear runningRef/isRunning here. A send already in flight cannot be cancelled by this
+    // hook, so the execution remains locked until the async chain reaches finally.
   }, []);
 
   const start = useCallback(async (commands: CommandItem[], loopCount: number) => {
