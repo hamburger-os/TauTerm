@@ -28,19 +28,10 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
       setSelectedPaths(prev => {
         const next = new Set(prev);
 
-        if (ctrlKey) {
-          // Toggle the clicked entry
-          if (next.has(entry.path)) {
-            next.delete(entry.path);
-          } else {
-            next.add(entry.path);
-          }
-          setLastClickedIndex(index);
-          return next;
-        }
-
         if (shiftKey && lastClickedIndex !== null) {
-          // Range select from lastClickedIndex to current index
+          // Desktop file-manager semantics:
+          // Shift replaces selection with the anchor range; Ctrl+Shift extends it.
+          if (!ctrlKey) next.clear();
           const start = Math.min(lastClickedIndex, index);
           const end = Math.max(lastClickedIndex, index);
           for (let i = start; i <= end; i++) {
@@ -48,7 +39,18 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
               next.add(entries[i].path);
             }
           }
-          // Keep lastClickedIndex unchanged for extending the range
+          // Keep the anchor unchanged for extending the range.
+          return next;
+        }
+
+        if (ctrlKey) {
+          // Toggle the clicked entry.
+          if (next.has(entry.path)) {
+            next.delete(entry.path);
+          } else {
+            next.add(entry.path);
+          }
+          setLastClickedIndex(index);
           return next;
         }
 
