@@ -156,3 +156,27 @@
   margin-top: 4px;
   display: block;
 }
+
+@media (max-width: 420px) {
+  .container {
+    max-width: calc(100vw - 28px);
+  }
+
+  .body {
+    padding: var(--spacing-lg);
+  }
+
+  .fieldRow {
+    flex-direction: column;
+    gap: var(--spacing-xs);
+  }
+
+  .fieldLabel {
+    min-width: 0;
+    padding-top: 0;
+  }
+
+  .chmodRow {
+    flex-wrap: wrap;
+  }
+}
