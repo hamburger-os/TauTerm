@@ -643,6 +643,11 @@ assert.match(
   /entries\.findIndex\(\(entry\) => entry\.path === lastClickedPath\)/,
   "range selection anchor must follow entry identity across sort/reload order changes",
 );
+assert.match(
+  multiSelect,
+  /const validPaths = new Set\(entries\.map\(\(entry\) => entry\.path\)\)[\s\S]{0,360}validPaths\.has\(path\)/,
+  "refreshes must prune selected paths that no longer exist in the current directory",
+);
 assert.doesNotMatch(
   multiSelect,
   /handleRightClick[\s\S]{0,320}ctrlKey/,
