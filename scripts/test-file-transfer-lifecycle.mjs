@@ -33,8 +33,18 @@ assert.match(
 );
 assert.match(
   context,
-  /resultProjection\(payload\)[\s\S]{0,500}payload\.results/,
-  "finished results must be able to replace provisional per-file progress with exact terminal results",
+  /function resultProjection\(payload: TransferFinishedPayload\)[\s\S]{0,300}payload\.results\.map/,
+  "finished payload results must be projected into exact per-file terminal entries",
+);
+assert.match(
+  context,
+  /const exactResults = resultProjection\(payload\);/,
+  "TASK_FINISHED must consume exact backend results",
+);
+assert.match(
+  context,
+  /const files = exactResults \?\? current\.files\.map/,
+  "TASK_FINISHED must prefer exact backend results over provisional progress state",
 );
 assert.doesNotMatch(context, /tasksBySession/);
 assert.doesNotMatch(context, /activeProtocolRef|activeSessionIdRef|activeTransferIdRef/);
