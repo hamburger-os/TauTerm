@@ -1064,7 +1064,7 @@
     "selectedCount": "已选中 {{count}} 个项目",
     "previewTruncated": "预览仅显示前 {{shown}}（文件共 {{total}}）",
     "chmod": "修改权限",
-    "chmodInvalid": "无效的权限值（需要 3 位八进制数字，如 755）",
+    "chmodInvalid": "无效的权限值（需要 3 或 4 位八进制数字，如 755、4755）",
     "edit": "编辑",
     "apply": "应用",
     "cancel": "取消",
