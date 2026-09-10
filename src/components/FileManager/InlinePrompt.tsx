@@ -69,6 +69,7 @@ export default function InlinePrompt({
         type="text"
         value={value}
         placeholder={placeholder}
+        aria-label={placeholder ?? t("fileManager.name")}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
       />
