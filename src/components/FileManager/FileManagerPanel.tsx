@@ -186,6 +186,7 @@ export default function FileManagerPanel({
   const [propsTarget, setPropsTarget] = useState<SftpEntry | null>(null);
   const [propsInfo, setPropsInfo] = useState<FileStatInfo | null>(null);
   const [propsLoading, setPropsLoading] = useState(false);
+  const propsRequestGenerationRef = useRef(0);
 
   // ── Preview modal state ───────────────────────────────
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -194,6 +195,7 @@ export default function FileManagerPanel({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewFileSize, setPreviewFileSize] = useState(0);
+  const previewRequestGenerationRef = useRef(0);
 
   // ── Entry click / double-click ──────────────────────
   const handleEntryClick = useCallback(
@@ -543,17 +545,22 @@ export default function FileManagerPanel({
   const handleProperties = useCallback(async () => {
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
     if (!target) return;
+
+    const generation = ++propsRequestGenerationRef.current;
     setPropsTarget(target);
     setPropsInfo(null);
     setPropsLoading(true);
     setPropsVisible(true);
+
     try {
       const info = await invoke<FileStatInfo>("sftp_stat_cmd", {
         sessionId,
         remotePath: target.path,
       });
+      if (generation !== propsRequestGenerationRef.current) return;
       setPropsInfo(info);
-    } catch (e) {
+    } catch {
+      if (generation !== propsRequestGenerationRef.current) return;
       // 如果 stat 失败，使用 entry 本身的字段作为回退
       setPropsInfo({
         name: target.name,
@@ -565,12 +572,17 @@ export default function FileManagerPanel({
         permissions: target.permissions,
         entryType: target.entry_type,
       });
+    } finally {
+      if (generation === propsRequestGenerationRef.current) {
+        setPropsLoading(false);
+      }
     }
-    setPropsLoading(false);
   }, [sessionId, ms, ctxTarget]);
 
   const closeProperties = useCallback(() => {
+    propsRequestGenerationRef.current += 1;
     setPropsVisible(false);
+    setPropsLoading(false);
     setPropsTarget(null);
     setPropsInfo(null);
   }, []);
@@ -581,6 +593,7 @@ export default function FileManagerPanel({
     if (!target || !canPreviewEntry(target)) return;
 
     const MAX_PREVIEW = 1_048_576; // 1 MB
+    const generation = ++previewRequestGenerationRef.current;
 
     setPreviewFileName(target.name);
     setPreviewData(null);
@@ -599,16 +612,25 @@ export default function FileManagerPanel({
         },
       );
 
+      if (generation !== previewRequestGenerationRef.current) return;
       setPreviewData(result.data);
       setPreviewFileSize(result.total_size);
-    } catch (e) {
-      setPreviewError(String(e));
+    } catch (error) {
+      if (generation !== previewRequestGenerationRef.current) return;
+      setPreviewError(String(error));
+    } finally {
+      if (generation === previewRequestGenerationRef.current) {
+        setPreviewLoading(false);
+      }
     }
-    setPreviewLoading(false);
-  }, [sessionId, ms, ctxTarget, t]);
+  }, [sessionId, ms, ctxTarget]);
 
   const closePreview = useCallback(() => {
+    previewRequestGenerationRef.current += 1;
     setPreviewVisible(false);
+    setPreviewLoading(false);
+    setPreviewData(null);
+    setPreviewError(null);
   }, []);
 
   // Connection loss invalidates transient file-service interactions. In
@@ -1024,16 +1046,29 @@ export default function FileManagerPanel({
             onClose={closeProperties}
             sessionId={sessionId}
             onChmodComplete={() => {
-              if (propsTarget) {
-                setPropsLoading(true);
-                invoke<FileStatInfo>("sftp_stat_cmd", {
-                  sessionId,
-                  remotePath: propsTarget.path,
+              if (!propsTarget) return;
+              const target = propsTarget;
+              const generation = ++propsRequestGenerationRef.current;
+              setPropsLoading(true);
+              invoke<FileStatInfo>("sftp_stat_cmd", {
+                sessionId,
+                remotePath: target.path,
+              })
+                .then((info) => {
+                  if (generation === propsRequestGenerationRef.current) {
+                    setPropsInfo(info);
+                  }
                 })
-                  .then(setPropsInfo)
-                  .catch((error) => showToast("error", String(error)))
-                  .finally(() => setPropsLoading(false));
-              }
+                .catch((error) => {
+                  if (generation === propsRequestGenerationRef.current) {
+                    showToast("error", String(error));
+                  }
+                })
+                .finally(() => {
+                  if (generation === propsRequestGenerationRef.current) {
+                    setPropsLoading(false);
+                  }
+                });
             }}
           />
         )}
