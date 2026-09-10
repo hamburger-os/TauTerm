@@ -107,6 +107,8 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
     }
 
     if (event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
       onClose();
       return;
     }
@@ -140,7 +142,7 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
 
     event.preventDefault();
     event.stopPropagation();
-    enabledItems[nextIndex].focus();
+    if (nextIndex !== null) enabledItems[nextIndex].focus();
   };
 
   return createPortal(
