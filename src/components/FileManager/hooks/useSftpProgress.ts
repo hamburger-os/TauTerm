@@ -130,6 +130,7 @@ export function useSftpProgress(sessionId: string) {
       autoHideDeadlineRef.current = null;
       autoHideRemainingRef.current = SUCCESS_AUTO_HIDE_MS;
       autoHideTransferIdRef.current = null;
+      hoveredRef.current = false;
       setVisible(false);
       return;
     }
@@ -139,6 +140,10 @@ export function useSftpProgress(sessionId: string) {
       autoHideTransferIdRef.current = sftpTask.transferId;
       autoHideDeadlineRef.current = null;
       autoHideRemainingRef.current = SUCCESS_AUTO_HIDE_MS;
+      // A previous card can disappear while hovered (for example by pressing its
+      // close button), in which case the browser need not dispatch mouseleave.
+      // Do not let that stale hover state suppress auto-hide for the next task.
+      hoveredRef.current = false;
     }
 
     if (
@@ -205,6 +210,9 @@ export function useSftpProgress(sessionId: string) {
 
   const hideProgress = useCallback(() => {
     clearAutoHideTimer();
+    hoveredRef.current = false;
+    autoHideDeadlineRef.current = null;
+    autoHideRemainingRef.current = SUCCESS_AUTO_HIDE_MS;
     if (sftpTask) {
       setDismissedTransferId(sftpTask.transferId);
       dismissTask(sessionId, sftpTask.transferId);
