@@ -48,10 +48,14 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   const isConnected = isSessionConnected(sessionId);
   const { state: sendBarState, dispatch } = useSendBar();
   const { activeConfigName, selectedIds, loopCount } = sendBarState.command;
+  const commandExecutionLocked = sendBarState.executionMode === "command";
 
   const [configs, setConfigs] = useState<CommandConfig[]>([defaultCommands as CommandConfig]);
   const activeConfigNameRef = useRef(activeConfigName);
   activeConfigNameRef.current = activeConfigName;
+  const executionLockedRef = useRef(commandExecutionLocked);
+  executionLockedRef.current = commandExecutionLocked;
+  const pendingConfigsRef = useRef<CommandConfig[] | null>(null);
 
   const setActiveConfigName = useCallback((name: string) => {
     dispatch({ type: "SET_ACTIVE_COMMAND_CONFIG", name });
@@ -64,6 +68,27 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   const [renameValue, setRenameValue] = useState("");
   const [configDeleteConfirm, setConfigDeleteConfirm] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+
+  const runner = useCommandRunner({
+    onSend: useCallback(async (command: CommandItem) => {
+      if (!isConnected) throw new Error(t("sendBar.disconnected"));
+      try {
+        await sendToTarget(sessionId, command.command + "\r\n");
+      } catch (error) {
+        showToast("error", String(error));
+        throw error;
+      }
+    }, [sessionId, sendToTarget, isConnected, showToast, t]),
+  });
+
+  const applySharedConfigs = useCallback((next: CommandConfig[]) => {
+    setConfigs(next);
+    const current = activeConfigNameRef.current;
+    if (!next.some(config => config.name === current)) {
+      setActiveConfigName(next[0]?.name ?? "");
+      dispatch({ type: "CLEAR_COMMAND_SELECTION" });
+    }
+  }, [dispatch, setActiveConfigName]);
 
   // Command Set 是全局工程资产；当前命令集选择由 SendBarContext 按会话保留。
   // 内置命令只在存储尚未初始化时播种一次；空数组代表用户明确删除了全部命令集。
@@ -92,18 +117,26 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     return () => { cancelled = true; };
   }, [setActiveConfigName]);
 
+  // 执行中的命令队列是启动时快照。其他 Session 可以继续保存全局 Command Set，
+  // 但当前面板延迟应用这些广播，直到命令执行结束，避免 UI 高亮/内容与实际发送快照不一致。
   useEffect(() => {
     return subscribeAsset<CommandConfig[]>(CONFIG_STORE_KEY, value => {
       const next = Array.isArray(value) ? value : [];
-      setConfigs(next);
-
-      const current = activeConfigNameRef.current;
-      if (!next.some(config => config.name === current)) {
-        setActiveConfigName(next[0]?.name ?? "");
-        dispatch({ type: "CLEAR_COMMAND_SELECTION" });
+      if (executionLockedRef.current) {
+        pendingConfigsRef.current = next;
+        return;
       }
+      applySharedConfigs(next);
     });
-  }, [dispatch, setActiveConfigName]);
+  }, [applySharedConfigs]);
+
+  useEffect(() => {
+    if (commandExecutionLocked) return;
+    const pending = pendingConfigsRef.current;
+    if (!pending) return;
+    pendingConfigsRef.current = null;
+    applySharedConfigs(pending);
+  }, [commandExecutionLocked, applySharedConfigs]);
 
   const activeConfig = useMemo(
     () => configs.find(config => config.name === activeConfigName) ?? configs[0],
@@ -115,18 +148,6 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     () => commands.find(command => command.id === deleteConfirmId) ?? null,
     [commands, deleteConfirmId],
   );
-
-  const runner = useCommandRunner({
-    onSend: useCallback(async (command: CommandItem) => {
-      if (!isConnected) throw new Error(t("sendBar.disconnected"));
-      try {
-        await sendToTarget(sessionId, command.command + "\r\n");
-      } catch (error) {
-        showToast("error", String(error));
-        throw error;
-      }
-    }, [sessionId, sendToTarget, isConnected, showToast, t]),
-  });
 
   const onRunningChangeRef = useRef(onRunningChange);
   onRunningChangeRef.current = onRunningChange;
@@ -589,7 +610,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       )}
 
       <ConfirmDialog
-        open={configDeleteConfirm}
+        open={configDeleteConfirm && !runner.isRunning}
         title={t("commandPanel.deleteConfigConfirm")}
         message={activeConfig?.name}
         intent="danger"
@@ -598,7 +619,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
         onCancel={() => setConfigDeleteConfirm(false)}
       />
       <ConfirmDialog
-        open={deleteConfirmId !== null}
+        open={deleteConfirmId !== null && !runner.isRunning}
         title={t("commandPanel.confirmDelete")}
         message={deletingCommand?.command}
         intent="danger"
