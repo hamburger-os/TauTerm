@@ -166,7 +166,7 @@ export default function FileManagerPanel({
       if (import.meta.env.DEV) console.debug("[FileManager] showContextMenu direct → entry=", entry?.name ?? "<blank>", "sessionId=", sessionId);
       ctxOpenedRef.current = true; // 阻止 CustomEvent 重复触发（同步执行，先于 dispatchEvent 回调）
       if (entry !== null) {
-        ms.handleRightClick(entry, e.ctrlKey);
+        ms.handleRightClick(entry);
       }
       setCtxX(e.clientX);
       setCtxY(e.clientY);
@@ -197,8 +197,8 @@ export default function FileManagerPanel({
 
   // ── Entry click / double-click ──────────────────────
   const handleEntryClick = useCallback(
-    (entry: SftpEntry, index: number, ctrlKey: boolean, shiftKey: boolean) => {
-      ms.handleClick(entry, index, ctrlKey, shiftKey);
+    (entry: SftpEntry, index: number, additiveKey: boolean, shiftKey: boolean) => {
+      ms.handleClick(entry, index, additiveKey, shiftKey);
     },
     [ms],
   );
