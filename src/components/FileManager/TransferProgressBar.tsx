@@ -150,7 +150,9 @@ export default function TransferProgressBar({
         aria-label={
           terminal
             ? t("common.close")
-            : t("fileManager.cancelTransfer")
+            : cancelling
+              ? t("fileManager.transferCancelling")
+              : t("fileManager.cancelTransfer")
         }
         type="button"
       >
