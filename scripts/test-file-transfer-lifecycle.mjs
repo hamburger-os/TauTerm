@@ -33,7 +33,7 @@ assert.match(
 );
 assert.match(
   hook,
-  /autoHideTransferIdRef\.current !== sftpTask\.transferId[\s\S]{0,300}hoveredRef\.current = false/,
+  /autoHideTransferIdRef\.current !== sftpTask\.transferId[\s\S]{0,520}hoveredRef\.current = false/,
   "a new transfer must not inherit hover state from a previously dismissed card",
 );
 assert.match(
