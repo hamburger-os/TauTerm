@@ -17,6 +17,7 @@ import {
   ASSET_PERSISTENCE_ERROR_EVENT,
   type AssetPersistenceErrorDetail,
 } from "./components/SendBar/assetStore";
+import ConfirmDialog from "./components/common/ConfirmDialog";
 import type { ProtocolType } from "./types/transfer";
 import { useUpdater } from "./hooks/useUpdater";
 import RightSidebar from "./components/RightSidebar/RightSidebar";
@@ -42,6 +43,13 @@ const SENDBAR_MIN_PCT = 5;
 const SENDBAR_MAX_PCT = 80;
 const SENDBAR_DEFAULT_PCT = SENDBAR_MIN_PCT;
 const RESIZE_DEBOUNCE_MS = 150;
+
+interface PendingHostKeyVerification {
+  requestId: string;
+  host: string;
+  port: number;
+  fingerprint: string;
+}
 
 /** 将 CSS 长度自定义属性（支持 calc()）解析为像素数值；失败返回 null */
 function resolveCssLengthPx(varName: string): number | null {
@@ -78,6 +86,8 @@ function AppInner() {
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [rightSidebarVisible, setRightSidebarVisible] = useState(true);
+  const [pendingHostKey, setPendingHostKey] = useState<PendingHostKeyVerification | null>(null);
+  const queuedHostKeysRef = useRef<PendingHostKeyVerification[]>([]);
   useEffect(() => {
     const handleProtocolInspect = (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
@@ -225,7 +235,37 @@ function AppInner() {
     };
   }, [isResizingSidebar, isResizingRightSidebar, isResizingSendBar]);
 
-  // SSH 主机密钥验证 — 监听后端事件，弹出确认对话框
+  const enqueueHostKey = useCallback((request: PendingHostKeyVerification) => {
+    setPendingHostKey(current => {
+      if (!current) return request;
+      queuedHostKeysRef.current.push(request);
+      return current;
+    });
+  }, []);
+
+  const settleHostKey = useCallback(async (accepted: boolean) => {
+    const current = pendingHostKey;
+    if (!current) return;
+    setPendingHostKey(queuedHostKeysRef.current.shift() ?? null);
+    try {
+      await invoke("confirm_host_key", {
+        requestId: current.requestId,
+        accepted,
+      });
+    } catch (error) {
+      const errStr = String(error);
+      if (
+        errStr.includes("未找到或已过期") ||
+        errStr.includes("not found") ||
+        errStr.includes("expired")
+      ) {
+        return;
+      }
+      showToast("error", t("ssh.hostKeyError", { error: errStr }));
+    }
+  }, [pendingHostKey, showToast, t]);
+
+  // SSH 主机密钥验证 — 监听后端事件，统一进入主题确认框。
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -237,29 +277,10 @@ function AppInner() {
         fingerprint: string;
       }>(
         "ssh-host-key-verify",
-        async (event) => {
+        (event) => {
           if (cancelled) return;
           const { request_id: requestId, host, port, fingerprint } = event.payload;
-          // 首次信任必须让用户看到目标主机和指纹；接受后由 Rust known-host store 持久化。
-          const ok = window.confirm(
-            `${t("ssh.hostKeyTitle")}\n\n${t("ssh.hostKeyHost", { defaultValue: "Host" })}: ${host}:${port}\n${t("ssh.hostKeyFingerprint")}: ${fingerprint}\n\n${t("ssh.hostKeyPrompt")}`
-          );
-          try {
-            await invoke("confirm_host_key", {
-              requestId,
-              accepted: ok ? true : false,
-            });
-          } catch (e) {
-            const errStr = String(e);
-            if (
-              errStr.includes("未找到或已过期") ||
-              errStr.includes("not found") ||
-              errStr.includes("expired")
-            ) {
-              return;
-            }
-            showToast("error", t("ssh.hostKeyError", { error: errStr }));
-          }
+          enqueueHostKey({ requestId, host, port, fingerprint });
         }
       );
       // await listen 返回时 cleanup 可能已执行 — 此时 cancelled=true，
@@ -274,7 +295,7 @@ function AppInner() {
       cancelled = true;
       if (unlisten) unlisten();
     };
-  }, [showToast, t]);
+  }, [enqueueHostKey]);
 
   // 已知主机密钥变化永不通过普通确认覆盖；默认 fail-closed。
   useEffect(() => {
@@ -559,6 +580,16 @@ function AppInner() {
         isOpen={connectDialogOpen}
         onClose={() => { setConnectDialogOpen(false); setEditSessionId(null); }}
         editSessionId={editSessionId}
+      />
+
+      <ConfirmDialog
+        open={pendingHostKey !== null}
+        title={t("ssh.hostKeyTitle")}
+        message={pendingHostKey
+          ? `${t("ssh.hostKeyHost", { defaultValue: "Host" })}: ${pendingHostKey.host}:${pendingHostKey.port}\n${t("ssh.hostKeyFingerprint")}: ${pendingHostKey.fingerprint}\n\n${t("ssh.hostKeyPrompt")}`
+          : undefined}
+        onConfirm={() => void settleHostKey(true)}
+        onCancel={() => void settleHostKey(false)}
       />
 
       {/* 拖拽调整大小时的全屏透明遮罩层

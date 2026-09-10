@@ -482,30 +482,43 @@ assert.doesNotMatch(
   "cancel request acceptance must not be treated as terminal cancellation",
 );
 
+// FileManager delete confirmation delegates all shell/focus/button behavior to the shared dialog.
 const deleteDialog = await source("src/components/FileManager/DeleteConfirmationDialog.tsx");
-assert.match(deleteDialog, /role="alertdialog"/);
-assert.match(deleteDialog, /data-action="cancel"/);
-assert.match(deleteDialog, /querySelector<HTMLButtonElement>\('\[data-action="cancel"\]'\)/);
-assert.match(deleteDialog, /event\.key === "Escape"/);
-assert.match(deleteDialog, /event\.key !== "Tab"/);
-assert.match(deleteDialog, /dialogRef\.current\?\.querySelectorAll/);
-assert.match(deleteDialog, /GlassButton/);
-assert.match(deleteDialog, /variant="ghost"/);
-assert.match(deleteDialog, /variant="danger"/);
-assert.match(deleteDialog, /size="md"/);
-assert.match(deleteDialog, /deleteConfirmAction/);
-assert.match(deleteDialog, /useReducedMotion/);
+assert.match(deleteDialog, /ConfirmDialog/);
+assert.match(deleteDialog, /open=\{message !== null\}/);
+assert.match(deleteDialog, /intent="danger"/);
+assert.match(deleteDialog, /size="compact"/);
+assert.match(deleteDialog, /onConfirm=\{onConfirm\}/);
+assert.match(deleteDialog, /onCancel=\{onCancel\}/);
+assert.doesNotMatch(deleteDialog, /deleteConfirmAction/);
+
+const confirmDialog = await source("src/components/common/ConfirmDialog.tsx");
+assert.match(confirmDialog, /role="alertdialog"/);
+assert.match(confirmDialog, /aria-modal="true"/);
+assert.match(confirmDialog, /data-action="cancel"/);
+assert.match(confirmDialog, /data-action="confirm"/);
+assert.match(confirmDialog, /querySelector<HTMLButtonElement>\('\[data-action="cancel"\]:not\(:disabled\)'\)/);
+assert.match(confirmDialog, /event\.key === "Escape"/);
+assert.match(confirmDialog, /event\.key !== "Tab"/);
+assert.match(confirmDialog, /querySelectorAll<HTMLElement>/);
+assert.match(confirmDialog, /GlassButton/);
+assert.match(confirmDialog, /variant="ghost"/);
+assert.match(confirmDialog, /variant=\{intent\}/);
+assert.match(confirmDialog, /size="md"/);
+assert.match(confirmDialog, /t\("common\.cancel"\)/);
+assert.match(confirmDialog, /t\("common\.confirm"\)/);
+assert.match(confirmDialog, /useReducedMotion/);
 assert.match(
-  deleteDialog,
+  confirmDialog,
   /transition=\{\{ duration: reducedMotion \? 0 : 0\.12 \}\}/,
-  "destructive confirmation motion must respect the system reduced-motion preference",
+  "shared confirmation motion must respect the system reduced-motion preference",
 );
 
-const deleteDialogCss = await source("src/components/FileManager/DeleteConfirmationDialog.module.css");
-assert.match(deleteDialogCss, /border-radius:\s*var\(--radius-xl\)/);
-assert.match(deleteDialogCss, /font-size:\s*var\(--text-md\)/);
-assert.match(deleteDialogCss, /font-weight:\s*700/);
-assert.match(deleteDialogCss, /font-size:\s*var\(--text-sm\)/);
+const confirmDialogCss = await source("src/components/common/ConfirmDialog.module.css");
+assert.match(confirmDialogCss, /border-radius:\s*var\(--radius-xl\)/);
+assert.match(confirmDialogCss, /font-size:\s*var\(--text-md\)/);
+assert.match(confirmDialogCss, /font-weight:\s*700/);
+assert.match(confirmDialogCss, /font-size:\s*var\(--text-sm\)/);
 
 const conflictDialog = await source("src/components/FileManager/ConflictResolutionModal.tsx");
 assert.match(conflictDialog, /role="alertdialog"/);
@@ -598,7 +611,6 @@ assert.match(
   /仅支持修改普通文件或目录权限/,
   "chmod must reject symlink/special-file targets",
 );
-
 
 const transferTypes = await source("src-tauri/src/transfer/types.rs");
 assert.match(transferTypes, /pub is_dir:\s*bool/);

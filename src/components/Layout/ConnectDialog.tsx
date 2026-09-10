@@ -6,6 +6,7 @@ import { homeDir } from "@tauri-apps/api/path";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import { CHARSETS, DEFAULT_ENCODING } from "../../utils/charsets";
+import ConfirmDialog from "../common/ConfirmDialog";
 import Icon from "../common/Icon";
 import styles from "./ConnectDialog.module.css";
 
@@ -89,6 +90,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [tftpWriteEnabled, setTftpWriteEnabled] = useState(true);
   const [tftpOverwrite, setTftpOverwrite] = useState(true);
   const [tftpSinglePort, setTftpSinglePort] = useState(false);
+  const [tftpExposureConfirmOpen, setTftpExposureConfirmOpen] = useState(false);
   // Telnet 配置
   const [telnetHost, setTelnetHost] = useState("");
   const [telnetPort, setTelnetPort] = useState(23);
@@ -150,6 +152,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setSshPassword("");
       setSshPrivateKey("");
       setSshPassphrase("");
+      setTftpExposureConfirmOpen(false);
       setStep("mode");
       return;
     }
@@ -361,8 +364,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setError(null);
   }, []);
 
-
-  const handleCreate = useCallback(async () => {
+  const handleCreate = useCallback(async (tftpExposureConfirmed = false) => {
     if (!port && isSerial) return;
     if (!sshHost && isSsh) return;
     if (!tftpFileRoot && isTftp) return;
@@ -383,13 +385,13 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(selectedMode, requestedSendBarEnabled);
     const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isLocalShell || isTftp || isTelnet || isIperf || isNetwork ? false : transferEnabled);
 
-    let tftpExposureConfirmed = false;
-    if (isTftp && tftpWriteEnabled && tftpOverwrite) {
+    if (isTftp && tftpWriteEnabled && tftpOverwrite && !tftpExposureConfirmed) {
       const bind = tftpListenIp.trim().toLowerCase();
       const loopback = bind === "127.0.0.1" || bind === "::1" || bind === "localhost";
       if (!loopback) {
-        tftpExposureConfirmed = window.confirm(t("tftp.exposureWarning", { defaultValue: "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network." }));
-        if (!tftpExposureConfirmed) { setConnecting(false); return; }
+        setConnecting(false);
+        setTftpExposureConfirmOpen(true);
+        return;
       }
     }
 
@@ -561,901 +563,914 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   }, [onClose]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || tftpExposureConfirmOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, tftpExposureConfirmOpen]);
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <motion.div
-          data-testid="connect-dialog-overlay"
-          className={`${styles.overlay} glass-overlay`}
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-          onClick={handleOverlayClick}
-        >
+    <>
+      <AnimatePresence>
+        {isOpen && (
           <motion.div
-            initial={{ y: 20, scale: 0.95, opacity: 0 }}
-            animate={{ y: 0, scale: 1, opacity: 1 }}
-            exit={{ y: 20, scale: 0.95, opacity: 0 }}
-            transition={{ duration: 0.15, delay: 0.05, ease: [0.4, 0, 0.2, 1] }}
+            data-testid="connect-dialog-overlay"
+            className={`${styles.overlay} glass-overlay`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+            onClick={handleOverlayClick}
           >
-            <div className={`${styles.dialog} liquid-glass`}>
-          {/* ── 步骤 1: 模式选择（从 PluginRegistry 动态生成） ── */}
-          {step === "mode" && (
-            <>
-              <h2 className={styles.title}>
-                {editSessionId ? (t("contextMenu.reconnect") || "Reconnect") : t("session.newSession")}
-              </h2>
-              <p className={styles.subtitle}>{t("connectionType.label")}</p>
-              <div className={styles.modeGrid}>
-                {availableModes.map(mode => (
-                  <motion.button
-                    key={mode.id}
-                    className={`${styles.modeCard} liquid-glass-card`}
-                    whileHover={{ scale: 1.03, borderColor: "var(--accent-primary)" }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => handleModeSelect(mode.id)}
-                  >
-                    <Icon name={mode.icon} size="lg" className={styles.modeIcon} />
-                    <span className={styles.modeLabel}>{mode.description}</span>
-                  </motion.button>
-                ))}
-              </div>
-              <div className={styles.actions}>
-                <button className={`${styles.cancelBtn} liquid-glass-button`} onClick={onClose}>
-                  {t("common.cancel")}
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* ── 步骤 2: 配置 ── */}
-          {step === "config" && (
-            <>
-              <div className={styles.configHeader}>
-                <button className={`${styles.backBtn} liquid-glass-button`} onClick={handleBack} disabled={connecting}>
-                  <Icon name="arrow-left" size="sm" /> {t("common.back")}
-                </button>
-                <h2 className={styles.title}>
-                  {(() => { const m = availableModes.find(m => m.id === selectedMode); return m ? <><Icon name={m.icon} size="md" />{" "}{m.description}</> : selectedMode; })()}
-                </h2>
-              </div>
-
-              {/* 会话名称 */}
-              <div className={styles.field}>
-                <label className={styles.label}>{t("session.renameSession")} ({t("session.newSession")})</label>
-                <input
-                  className={`${styles.input} liquid-glass-input`}
-                  type="text"
-                  placeholder={isSerial ? port || "COM3" : (isLocalShell ? "Shell" : "My Session")}
-                  value={sessionName}
-                  onChange={e => setSessionName(e.target.value)}
-                  disabled={connecting}
-                />
-              </div>
-
-              {/* ── 串口配置 ── */}
-              {isSerial && (
-                <>
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("serial.port")}</label>
-                    <div className={styles.row}>
-                      <select className={`${styles.select} liquid-glass-input liquid-glass-select`} style={{ flex: 1 }} value={port} onChange={e => setPort(e.target.value)} disabled={connecting}>
-                        {serialEndpoints.length === 0 && <option value="">{t("serial.noPorts")}</option>}
-                        {serialEndpoints.map(ep => (
-                          <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
-                        ))}
-                      </select>
-                      <button
-                        className={`${styles.iconBtn} liquid-glass-button`}
-                        onClick={() => void refreshModeEndpoints("serial", true)}
-                        title={t("serial.refresh")}
-                        disabled={connecting || refreshingEndpoints}
-                      >
-                        <Icon name="refresh" size="md" />
+            <motion.div
+              initial={{ y: 20, scale: 0.95, opacity: 0 }}
+              animate={{ y: 0, scale: 1, opacity: 1 }}
+              exit={{ y: 20, scale: 0.95, opacity: 0 }}
+              transition={{ duration: 0.15, delay: 0.05, ease: [0.4, 0, 0.2, 1] }}
+            >
+              <div className={`${styles.dialog} liquid-glass`}>
+                {/* ── 步骤 1: 模式选择（从 PluginRegistry 动态生成） ── */}
+                {step === "mode" && (
+                  <>
+                    <h2 className={styles.title}>
+                      {editSessionId ? (t("contextMenu.reconnect") || "Reconnect") : t("session.newSession")}
+                    </h2>
+                    <p className={styles.subtitle}>{t("connectionType.label")}</p>
+                    <div className={styles.modeGrid}>
+                      {availableModes.map(mode => (
+                        <motion.button
+                          key={mode.id}
+                          className={`${styles.modeCard} liquid-glass-card`}
+                          whileHover={{ scale: 1.03, borderColor: "var(--accent-primary)" }}
+                          whileTap={{ scale: 0.97 }}
+                          onClick={() => handleModeSelect(mode.id)}
+                        >
+                          <Icon name={mode.icon} size="lg" className={styles.modeIcon} />
+                          <span className={styles.modeLabel}>{mode.description}</span>
+                        </motion.button>
+                      ))}
+                    </div>
+                    <div className={styles.actions}>
+                      <button className={`${styles.cancelBtn} liquid-glass-button`} onClick={onClose}>
+                        {t("common.cancel")}
                       </button>
                     </div>
-                  </div>
+                  </>
+                )}
 
-                  <div className={styles.row2}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("serial.baudRate")}</label>
-                      <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={baudRate} onChange={e => setBaudRate(e.target.value)} disabled={connecting}>
-                        {BAUD_RATES.map(b => <option key={b} value={b}>{b}</option>)}
-                      </select>
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("serial.dataBits")}</label>
-                      <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataBits} onChange={e => setDataBits(e.target.value)} disabled={connecting}>
-                        {DATA_BITS.map(d => <option key={d} value={d}>{d}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className={styles.row2}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("serial.parity")}</label>
-                      <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={parity} onChange={e => setParity(e.target.value)} disabled={connecting}>
-                        {PARITY.map(p => <option key={p.v} value={p.v}>{p.l}</option>)}
-                      </select>
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("serial.stopBits")}</label>
-                      <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={stopBits} onChange={e => setStopBits(e.target.value)} disabled={connecting}>
-                        {STOP_BITS.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("serial.flowControl")}</label>
-                    <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={flowControl} onChange={e => setFlowControl(e.target.value)} disabled={connecting}>
-                      {FLOW_CONTROL.map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
-                    </select>
-                  </div>
-
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("serial.dataMode")}</label>
-                    <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
-                      <option value="text">{t("serial.dataModeText")}</option>
-                      <option value="hex">{t("serial.dataModeHex")}</option>
-                      <option value="dual">{t("serial.dataModeDual")}</option>
-                    </select>
-                  </div>
-
-                  {/* 数据字符编码（连接后不可变，改需重连） */}
-                  {encodingField}
-
-                  {/* Dual 模式分帧超时（仅 Dual 模式可见） */}
-                  {dataMode === "dual" && (
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("serial.dualFrameTimeout")}</label>
-                      <input
-                        type="number"
-                        className={`${styles.numberInput} liquid-glass-input`}
-                        value={dualFrameTimeout}
-                        min={5}
-                        max={500}
-                        step={5}
-                        onChange={e => setDualFrameTimeout(Number(e.target.value))}
-                        disabled={connecting}
-                      />
-                    </div>
-                  )}
-
-                  {/* 文件传输开关 */}
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={transferEnabled}
-                        onChange={e => setTransferEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("serial.enableTransfer")}</span>
-                    </label>
-                  </div>
-
-                  {/* 传输协议选择（仅启用传输时可见） */}
-                  {transferEnabled && (
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("serial.transferProtocol")}</label>
-                      <select
-                        className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                        value={transferProtocol}
-                        onChange={e => setTransferProtocol(e.target.value as "ymodem" | "xmodem" | "zmodem")}
-                        disabled={connecting}
-                      >
-                        <option value="ymodem">YModem</option>
-                        <option value="xmodem">XModem</option>
-                        <option value="zmodem">ZModem</option>
-                      </select>
-                    </div>
-                  )}
-
-                  {/* 发送栏开关 */}
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={sendBarEnabled}
-                        onChange={e => setSendBarEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("serial.enableSendBar") || "启用发送栏"}</span>
-                    </label>
-                  </div>
-
-                  {/* 虚拟串口开关 */}
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={virtualPortEnabled}
-                        onChange={e => setVirtualPortEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("serial.enableVirtualPort") || "启用虚拟串口"}</span>
-                    </label>
-                  </div>
-
-                  {/* 设备数量（仅启用虚拟串口时可见） */}
-                  {virtualPortEnabled && (
-                    <div className={styles.field}>
-                      <label className={styles.label}>
-                        {t("serial.virtualPortCount") || "设备数量"}
-                      </label>
-                      <select
-                        className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                        value={virtualPortCount}
-                        onChange={e => setVirtualPortCount(Number(e.target.value))}
-                        disabled={connecting}
-                      >
-                        <option value={1}>1</option>
-                        <option value={2}>2</option>
-                        <option value={3}>3</option>
-                        <option value={4}>4</option>
-                      </select>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* ── SSH 配置 ── */}
-              {isSsh && (
-                <>
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("ssh.host")}</label>
-                    <input
-                      className={`${styles.input} liquid-glass-input`}
-                      type="text"
-                      placeholder={t("ssh.hostPlaceholder")}
-                      value={sshHost}
-                      onChange={e => setSshHost(e.target.value)}
-                      disabled={connecting}
-                    />
-                  </div>
-
-                  <div className={styles.row2}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("ssh.port")}</label>
-                      <input
-                        className={`${styles.numberInput} liquid-glass-input`}
-                        type="number"
-                        value={sshPort}
-                        min={1}
-                        max={65535}
-                        onChange={e => {
-                          const raw = e.target.value;
-                          // 允许用户清空字段（中间编辑状态），重置为默认端口
-                          if (raw === "") {
-                            setSshPort(22);
-                            return;
-                          }
-                          const n = Number(raw);
-                          if (!isNaN(n) && n >= 1 && n <= 65535) {
-                            setSshPort(n);
-                          }
-                          // 非法值忽略，保持当前状态（浏览器 type="number" 会阻止大部分非法输入）
-                        }}
-                        disabled={connecting}
-                      />
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("ssh.username")}</label>
-                      <input
-                        className={`${styles.input} liquid-glass-input`}
-                        type="text"
-                        placeholder={t("ssh.usernamePlaceholder")}
-                        value={sshUsername}
-                        onChange={e => setSshUsername(e.target.value)}
-                        disabled={connecting}
-                      />
-                    </div>
-                  </div>
-
-                  {/* 数据字符编码（连接后不可变，改需重连） */}
-                  {encodingField}
-
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("ssh.authMethod")}</label>
-                    <select
-                      className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                      value={sshAuthMethod}
-                      onChange={e => setSshAuthMethod(e.target.value as "password" | "key")}
-                      disabled={connecting}
-                    >
-                      <option value="password">{t("ssh.authPassword")}</option>
-                      <option value="key">{t("ssh.authKey")}</option>
-                    </select>
-                  </div>
-
-                  {sshAuthMethod === "password" && (
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("ssh.password")}</label>
-                      <input
-                        className={`${styles.input} liquid-glass-input`}
-                        type="password"
-                        placeholder={t("ssh.passwordPlaceholder")}
-                        value={sshPassword}
-                        onChange={e => setSshPassword(e.target.value)}
-                        disabled={connecting}
-                      />
-                    </div>
-                  )}
-
-                  {sshAuthMethod === "key" && (
-                    <>
-                      <div className={styles.field}>
-                        <label className={styles.label}>{t("ssh.sshKey")}</label>
-                        <textarea
-                          className={`${styles.input} liquid-glass-input`}
-                          rows={5}
-                          placeholder={t("ssh.keyPlaceholder")}
-                          value={sshPrivateKey}
-                          onChange={e => setSshPrivateKey(e.target.value)}
-                          disabled={connecting}
-                          style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }}
-                        />
-                      </div>
-                      <div className={styles.field}>
-                        <label className={styles.label}>{t("ssh.passphrase")}</label>
-                        <input
-                          className={`${styles.input} liquid-glass-input`}
-                          type="password"
-                          placeholder={t("ssh.passphrasePlaceholder")}
-                          value={sshPassphrase}
-                          onChange={e => setSshPassphrase(e.target.value)}
-                          disabled={connecting}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {/* 文件服务协议固定为 SFTP（SCP 已移除） */}
-
-
-                  {/* 启用发送栏开关 */}
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={sshSendBarEnabled}
-                        onChange={e => setSshSendBarEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("ssh.enableSendBar")}</span>
-                    </label>
-                  </div>
-
-                  {/* 启用文件传输开关 */}
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={sshTransferEnabled}
-                        onChange={e => setSshTransferEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("ssh.enableTransfer")}</span>
-                    </label>
-                  </div>
-
-                  {/* 启用文件管理器开关 */}
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={fileServiceEnabled}
-                        onChange={e => setFileServiceEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("ssh.enableFileService")}</span>
-                    </label>
-                  </div>
-
-                  {/* 启用 journald 日志查看器开关 */}
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={journaldEnabled}
-                        onChange={e => setJournaldEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("journald.enableJournald")}</span>
-                    </label>
-                  </div>
-
-                </>
-              )}
-
-              {/* ── TFTP 配置表单 ── */}
-              {isTftp && (
-                <>
-                  <div className={styles.row2}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("tftp.listenIp")}</label>
-                      <input
-                        className={`${styles.input} liquid-glass-input`}
-                        type="text"
-                        value={tftpListenIp}
-                        onChange={e => setTftpListenIp(e.target.value)}
-                        disabled={connecting}
-                        placeholder="0.0.0.0"
-                      />
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("tftp.listenPort")}</label>
-                      <input
-                        className={`${styles.input} liquid-glass-input`}
-                        type="number"
-                        min={1}
-                        max={65535}
-                        value={tftpListenPort}
-                        onChange={e => setTftpListenPort(Number(e.target.value))}
-                        disabled={connecting}
-                        placeholder="69"
-                      />
-                    </div>
-                  </div>
-
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("tftp.fileRoot")}</label>
-                    <div className={styles.row}>
-                      <input
-                        className={`${styles.input} liquid-glass-input`}
-                        style={{ flex: 1 }}
-                        type="text"
-                        value={tftpFileRoot}
-                        onChange={e => setTftpFileRoot(e.target.value)}
-                        disabled={connecting}
-                        placeholder="C:\tftp-root\"
-                      />
-                      <button
-                        className={`${styles.iconBtn} liquid-glass-button`}
-                        onClick={async () => {
-                          const dir = await open({ directory: true, multiple: false });
-                          if (dir && typeof dir === "string") setTftpFileRoot(dir);
-                        }}
-                        title={t("tftp.selectDir")}
-                        disabled={connecting}
-                      >
-                        <Icon name="folder" size="md" />
+                {/* ── 步骤 2: 配置 ── */}
+                {step === "config" && (
+                  <>
+                    <div className={styles.configHeader}>
+                      <button className={`${styles.backBtn} liquid-glass-button`} onClick={handleBack} disabled={connecting}>
+                        <Icon name="arrow-left" size="sm" /> {t("common.back")}
                       </button>
+                      <h2 className={styles.title}>
+                        {(() => { const m = availableModes.find(m => m.id === selectedMode); return m ? <><Icon name={m.icon} size="md" />{" "}{m.description}</> : selectedMode; })()}
+                      </h2>
                     </div>
-                  </div>
 
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={tftpWriteEnabled}
-                        onChange={e => setTftpWriteEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("tftp.writeEnabled")}</span>
-                    </label>
-                  </div>
-
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={tftpOverwrite}
-                        onChange={e => setTftpOverwrite(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("tftp.overwrite")}</span>
-                    </label>
-                  </div>
-
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={tftpSinglePort}
-                        onChange={e => setTftpSinglePort(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("tftp.singlePort")}</span>
-                    </label>
-                  </div>
-                </>
-              )}
-
-              {/* ── iperf 配置 ── */}
-              {isIperf && (
-                <>
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("iperf.version")}</label>
-                    <select
-                      className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                      value={iperfVersion}
-                      onChange={e => {
-                        const v = e.target.value as "iperf2" | "iperf3";
-                        setIperfVersion(v);
-                        // 端口联动（对齐版本切换规则：iperf2 默认 5001，iperf3 默认
-                        // 5201）。仅当端口仍为默认值（用户未自定义）时切换默认；
-                        // 自定义端口（如 9000）在来回切换版本后保留，不被静默覆盖
-                        setIperfListenPort(prev =>
-                          prev === 5001 || prev === 5201
-                            ? (v === "iperf2" ? 5001 : 5201)
-                            : prev
-                        );
-                      }}
-                      disabled={connecting}
-                    >
-                      <option value="iperf2">iperf2</option>
-                      <option value="iperf3">iperf3</option>
-                    </select>
-                  </div>
-                  <div className={styles.row2}>
+                    {/* 会话名称 */}
                     <div className={styles.field}>
-                      <label className={styles.label}>{t("iperf.listenIp")}</label>
+                      <label className={styles.label}>{t("session.renameSession")} ({t("session.newSession")})</label>
                       <input
                         className={`${styles.input} liquid-glass-input`}
                         type="text"
-                        value={iperfListenIp}
-                        onChange={e => setIperfListenIp(e.target.value)}
-                        disabled={connecting}
-                        placeholder="0.0.0.0"
-                      />
-                    </div>
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("iperf.listenPort")}</label>
-                      <input
-                        className={`${styles.input} liquid-glass-input`}
-                        type="number"
-                        min={1}
-                        max={65535}
-                        value={iperfListenPort}
-                        onChange={e => {
-                          // 空输入忽略（Number("") === 0 会污染保存的配置）
-                          if (e.target.value === "") return;
-                          const n = Number(e.target.value);
-                          if (!Number.isInteger(n) || n < 1 || n > 65535) return;
-                          setIperfListenPort(n);
-                        }}
-                        disabled={connecting}
-                        placeholder="5001"
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* ── Telnet 配置 ── */}
-              {isTelnet && (
-                <>
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("telnet.host")}</label>
-                    <input
-                      className={`${styles.input} liquid-glass-input`}
-                      type="text"
-                      placeholder={t("telnet.hostPlaceholder")}
-                      value={telnetHost}
-                      onChange={e => setTelnetHost(e.target.value)}
-                      disabled={connecting}
-                    />
-                  </div>
-
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("telnet.port")}</label>
-                    <input
-                      className={`${styles.numberInput} liquid-glass-input`}
-                      type="number"
-                      value={telnetPort}
-                      min={1}
-                      max={65535}
-                      onChange={e => {
-                        const raw = e.target.value;
-                        // 允许用户清空字段（中间编辑状态），重置为默认端口
-                        if (raw === "") {
-                          setTelnetPort(23);
-                          return;
-                        }
-                        const n = Number(raw);
-                        if (!isNaN(n) && n >= 1 && n <= 65535) {
-                          setTelnetPort(n);
-                        }
-                        // 非法值忽略，保持当前状态
-                      }}
-                      disabled={connecting}
-                    />
-                  </div>
-
-                  {/* 数据字符编码（连接后不可变，改需重连） */}
-                  {encodingField}
-
-                  {/* 发送栏开关（默认开启） */}
-                  <div className={styles.field}>
-                    <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                      <input
-                        type="checkbox"
-                        checked={telnetSendBarEnabled}
-                        onChange={e => setTelnetSendBarEnabled(e.target.checked)}
-                        disabled={connecting}
-                      />
-                      <div />
-                      <span>{t("telnet.enableSendBar") || "启用发送栏"}</span>
-                    </label>
-                  </div>
-                </>
-              )}
-
-              {/* ── 网络调试配置（TCP/UDP 调试助手） ── */}
-              {isNetwork && (
-                <>
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("network.transport")}</label>
-                    <select
-                      className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                      value={netTransport}
-                      onChange={e => setNetTransport(e.target.value as "tcp" | "udp")}
-                      disabled={connecting}
-                    >
-                      <option value="tcp">{t("network.transportTcp")}</option>
-                      <option value="udp">{t("network.transportUdp")}</option>
-                    </select>
-                  </div>
-
-                  {/* TCP/UDP 均有 Client/Server 角色（UDP client = 固定远端单对端，UDP server = 绑本地多对端） */}
-                  <div className={styles.field}>
-                    <label className={styles.label}>{t("network.role")}</label>
-                    <select
-                      className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                      value={netRole}
-                      onChange={e => setNetRole(e.target.value as "client" | "server")}
-                      disabled={connecting}
-                    >
-                      <option value="client">{t("network.roleClient")}</option>
-                      <option value="server">{t("network.roleServer")}</option>
-                    </select>
-                  </div>
-
-                  {netRole === "client" && (
-                    <>
-                      <div className={styles.field}>
-                        <label className={styles.label}>{t("network.remoteHost")}</label>
-                        <input
-                          className={`${styles.input} liquid-glass-input`}
-                          type="text"
-                          placeholder={t("network.remoteHostPlaceholder")}
-                          value={netRemoteHost}
-                          onChange={e => setNetRemoteHost(e.target.value)}
-                          disabled={connecting}
-                        />
-                      </div>
-                      <div className={styles.field}>
-                        <label className={styles.label}>{t("network.remotePort")}</label>
-                        <input
-                          className={`${styles.numberInput} liquid-glass-input`}
-                          type="number"
-                          value={netRemotePort}
-                          min={1}
-                          max={65535}
-                          onChange={e => {
-                            const n = Number(e.target.value);
-                            if (!isNaN(n)) setNetRemotePort(n);
-                          }}
-                          disabled={connecting}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {netRole === "server" && (
-                    <>
-                      <div className={styles.field}>
-                        <label className={styles.label}>{t("network.localHost")}</label>
-                        <input
-                          className={`${styles.input} liquid-glass-input`}
-                          type="text"
-                          value={netLocalHost}
-                          onChange={e => setNetLocalHost(e.target.value)}
-                          disabled={connecting}
-                        />
-                      </div>
-                      <div className={styles.field}>
-                        <label className={styles.label}>{t("network.localPort")}</label>
-                        <input
-                          className={`${styles.numberInput} liquid-glass-input`}
-                          type="number"
-                          value={netLocalPort}
-                          min={1}
-                          max={65535}
-                          onChange={e => {
-                            const n = Number(e.target.value);
-                            if (!isNaN(n)) setNetLocalPort(n);
-                          }}
-                          disabled={connecting}
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  {netTransport === "tcp" && netRole === "server" && (
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("network.maxClients")}</label>
-                      <input
-                        className={`${styles.numberInput} liquid-glass-input`}
-                        type="number"
-                        value={netMaxClients}
-                        min={1}
-                        max={1024}
-                        onChange={e => {
-                          const n = Number(e.target.value);
-                          if (!isNaN(n)) setNetMaxClients(n);
-                        }}
+                        placeholder={isSerial ? port || "COM3" : (isLocalShell ? "Shell" : "My Session")}
+                        value={sessionName}
+                        onChange={e => setSessionName(e.target.value)}
                         disabled={connecting}
                       />
                     </div>
-                  )}
 
-                  {netTransport === "tcp" && netRole === "client" && (
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("network.connectTimeoutMs")}</label>
-                      <input
-                        className={`${styles.numberInput} liquid-glass-input`}
-                        type="number"
-                        value={netConnectTimeoutMs}
-                        min={100}
-                        onChange={e => {
-                          const n = Number(e.target.value);
-                          if (!isNaN(n)) setNetConnectTimeoutMs(n);
-                        }}
-                        disabled={connecting}
-                      />
-                    </div>
-                  )}
+                    {/* ── 串口配置 ── */}
+                    {isSerial && (
+                      <>
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("serial.port")}</label>
+                          <div className={styles.row}>
+                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} style={{ flex: 1 }} value={port} onChange={e => setPort(e.target.value)} disabled={connecting}>
+                              {serialEndpoints.length === 0 && <option value="">{t("serial.noPorts")}</option>}
+                              {serialEndpoints.map(ep => (
+                                <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
+                              ))}
+                            </select>
+                            <button
+                              className={`${styles.iconBtn} liquid-glass-button`}
+                              onClick={() => void refreshModeEndpoints("serial", true)}
+                              title={t("serial.refresh")}
+                              disabled={connecting || refreshingEndpoints}
+                            >
+                              <Icon name="refresh" size="md" />
+                            </button>
+                          </div>
+                        </div>
 
-                  {netTransport === "udp" && netRole === "server" && (
-                    <>
-                      <div className={styles.field}>
-                        <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                        <div className={styles.row2}>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("serial.baudRate")}</label>
+                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={baudRate} onChange={e => setBaudRate(e.target.value)} disabled={connecting}>
+                              {BAUD_RATES.map(b => <option key={b} value={b}>{b}</option>)}
+                            </select>
+                          </div>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("serial.dataBits")}</label>
+                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataBits} onChange={e => setDataBits(e.target.value)} disabled={connecting}>
+                              {DATA_BITS.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className={styles.row2}>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("serial.parity")}</label>
+                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={parity} onChange={e => setParity(e.target.value)} disabled={connecting}>
+                              {PARITY.map(p => <option key={p.v} value={p.v}>{p.l}</option>)}
+                            </select>
+                          </div>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("serial.stopBits")}</label>
+                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={stopBits} onChange={e => setStopBits(e.target.value)} disabled={connecting}>
+                              {STOP_BITS.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("serial.flowControl")}</label>
+                          <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={flowControl} onChange={e => setFlowControl(e.target.value)} disabled={connecting}>
+                            {FLOW_CONTROL.map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
+                          </select>
+                        </div>
+
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("serial.dataMode")}</label>
+                          <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
+                            <option value="text">{t("serial.dataModeText")}</option>
+                            <option value="hex">{t("serial.dataModeHex")}</option>
+                            <option value="dual">{t("serial.dataModeDual")}</option>
+                          </select>
+                        </div>
+
+                        {/* 数据字符编码（连接后不可变，改需重连） */}
+                        {encodingField}
+
+                        {/* Dual 模式分帧超时（仅 Dual 模式可见） */}
+                        {dataMode === "dual" && (
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("serial.dualFrameTimeout")}</label>
+                            <input
+                              type="number"
+                              className={`${styles.numberInput} liquid-glass-input`}
+                              value={dualFrameTimeout}
+                              min={5}
+                              max={500}
+                              step={5}
+                              onChange={e => setDualFrameTimeout(Number(e.target.value))}
+                              disabled={connecting}
+                            />
+                          </div>
+                        )}
+
+                        {/* 文件传输开关 */}
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={transferEnabled}
+                              onChange={e => setTransferEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("serial.enableTransfer")}</span>
+                          </label>
+                        </div>
+
+                        {/* 传输协议选择（仅启用传输时可见） */}
+                        {transferEnabled && (
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("serial.transferProtocol")}</label>
+                            <select
+                              className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                              value={transferProtocol}
+                              onChange={e => setTransferProtocol(e.target.value as "ymodem" | "xmodem" | "zmodem")}
+                              disabled={connecting}
+                            >
+                              <option value="ymodem">YModem</option>
+                              <option value="xmodem">XModem</option>
+                              <option value="zmodem">ZModem</option>
+                            </select>
+                          </div>
+                        )}
+
+                        {/* 发送栏开关 */}
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={sendBarEnabled}
+                              onChange={e => setSendBarEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("serial.enableSendBar") || "启用发送栏"}</span>
+                          </label>
+                        </div>
+
+                        {/* 虚拟串口开关 */}
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={virtualPortEnabled}
+                              onChange={e => setVirtualPortEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("serial.enableVirtualPort") || "启用虚拟串口"}</span>
+                          </label>
+                        </div>
+
+                        {/* 设备数量（仅启用虚拟串口时可见） */}
+                        {virtualPortEnabled && (
+                          <div className={styles.field}>
+                            <label className={styles.label}>
+                              {t("serial.virtualPortCount") || "设备数量"}
+                            </label>
+                            <select
+                              className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                              value={virtualPortCount}
+                              onChange={e => setVirtualPortCount(Number(e.target.value))}
+                              disabled={connecting}
+                            >
+                              <option value={1}>1</option>
+                              <option value={2}>2</option>
+                              <option value={3}>3</option>
+                              <option value={4}>4</option>
+                            </select>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* ── SSH 配置 ── */}
+                    {isSsh && (
+                      <>
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("ssh.host")}</label>
                           <input
-                            type="checkbox"
-                            checked={netBroadcast}
-                            onChange={e => setNetBroadcast(e.target.checked)}
+                            className={`${styles.input} liquid-glass-input`}
+                            type="text"
+                            placeholder={t("ssh.hostPlaceholder")}
+                            value={sshHost}
+                            onChange={e => setSshHost(e.target.value)}
                             disabled={connecting}
                           />
-                          <div />
-                          <span>{t("network.broadcast")}</span>
-                        </label>
-                      </div>
-                      <div className={styles.field}>
-                        <label className={styles.label}>{t("network.multicastGroup")}</label>
-                        <input
-                          className={`${styles.input} liquid-glass-input`}
-                          type="text"
-                          placeholder={t("network.multicastGroupPlaceholder")}
-                          value={netMulticastGroup}
-                          onChange={e => setNetMulticastGroup(e.target.value)}
-                          disabled={connecting}
-                        />
-                        {/* IP_ADD_MEMBERSHIP 仅支持 IPv4 组播组（kernel IPv4-only），提前提示 */}
-                        {netMulticastGroup && !/^2(2[4-9]|3\d)(\.\d{1,3}){3}$/.test(netMulticastGroup.trim()) && (
-                          <div className={styles.hint}>{t("network.multicastIpv4Only")}</div>
-                        )}
-                      </div>
-                      {netMulticastGroup && (
-                        <>
+                        </div>
+
+                        <div className={styles.row2}>
                           <div className={styles.field}>
-                            <label className={styles.label}>{t("network.ttl")}</label>
+                            <label className={styles.label}>{t("ssh.port")}</label>
                             <input
                               className={`${styles.numberInput} liquid-glass-input`}
                               type="number"
-                              value={netTtl}
+                              value={sshPort}
                               min={1}
-                              max={255}
+                              max={65535}
                               onChange={e => {
-                                const n = Number(e.target.value);
-                                if (!isNaN(n)) setNetTtl(n);
+                                const raw = e.target.value;
+                                // 允许用户清空字段（中间编辑状态），重置为默认端口
+                                if (raw === "") {
+                                  setSshPort(22);
+                                  return;
+                                }
+                                const n = Number(raw);
+                                if (!isNaN(n) && n >= 1 && n <= 65535) {
+                                  setSshPort(n);
+                                }
+                                // 非法值忽略，保持当前状态（浏览器 type="number" 会阻止大部分非法输入）
                               }}
                               disabled={connecting}
                             />
                           </div>
                           <div className={styles.field}>
-                            <label className={styles.label}>{t("network.multicastInterface")}</label>
+                            <label className={styles.label}>{t("ssh.username")}</label>
                             <input
                               className={`${styles.input} liquid-glass-input`}
                               type="text"
-                              value={netMulticastInterface}
-                              onChange={e => setNetMulticastInterface(e.target.value)}
+                              placeholder={t("ssh.usernamePlaceholder")}
+                              value={sshUsername}
+                              onChange={e => setSshUsername(e.target.value)}
                               disabled={connecting}
                             />
                           </div>
+                        </div>
+
+                        {/* 数据字符编码（连接后不可变，改需重连） */}
+                        {encodingField}
+
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("ssh.authMethod")}</label>
+                          <select
+                            className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                            value={sshAuthMethod}
+                            onChange={e => setSshAuthMethod(e.target.value as "password" | "key")}
+                            disabled={connecting}
+                          >
+                            <option value="password">{t("ssh.authPassword")}</option>
+                            <option value="key">{t("ssh.authKey")}</option>
+                          </select>
+                        </div>
+
+                        {sshAuthMethod === "password" && (
                           <div className={styles.field}>
-                            <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <label className={styles.label}>{t("ssh.password")}</label>
+                            <input
+                              className={`${styles.input} liquid-glass-input`}
+                              type="password"
+                              placeholder={t("ssh.passwordPlaceholder")}
+                              value={sshPassword}
+                              onChange={e => setSshPassword(e.target.value)}
+                              disabled={connecting}
+                            />
+                          </div>
+                        )}
+
+                        {sshAuthMethod === "key" && (
+                          <>
+                            <div className={styles.field}>
+                              <label className={styles.label}>{t("ssh.sshKey")}</label>
+                              <textarea
+                                className={`${styles.input} liquid-glass-input`}
+                                rows={5}
+                                placeholder={t("ssh.keyPlaceholder")}
+                                value={sshPrivateKey}
+                                onChange={e => setSshPrivateKey(e.target.value)}
+                                disabled={connecting}
+                                style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" }}
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label className={styles.label}>{t("ssh.passphrase")}</label>
                               <input
-                                type="checkbox"
-                                checked={netSelfReceive}
-                                onChange={e => setNetSelfReceive(e.target.checked)}
+                                className={`${styles.input} liquid-glass-input`}
+                                type="password"
+                                placeholder={t("ssh.passphrasePlaceholder")}
+                                value={sshPassphrase}
+                                onChange={e => setSshPassphrase(e.target.value)}
                                 disabled={connecting}
                               />
-                              <div />
-                              <span>{t("network.selfReceive")}</span>
-                            </label>
+                            </div>
+                          </>
+                        )}
+
+                        {/* 文件服务协议固定为 SFTP（SCP 已移除） */}
+
+
+                        {/* 启用发送栏开关 */}
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={sshSendBarEnabled}
+                              onChange={e => setSshSendBarEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("ssh.enableSendBar")}</span>
+                          </label>
+                        </div>
+
+                        {/* 启用文件传输开关 */}
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={sshTransferEnabled}
+                              onChange={e => setSshTransferEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("ssh.enableTransfer")}</span>
+                          </label>
+                        </div>
+
+                        {/* 启用文件管理器开关 */}
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={fileServiceEnabled}
+                              onChange={e => setFileServiceEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("ssh.enableFileService")}</span>
+                          </label>
+                        </div>
+
+                        {/* 启用 journald 日志查看器开关 */}
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={journaldEnabled}
+                              onChange={e => setJournaldEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("journald.enableJournald")}</span>
+                          </label>
+                        </div>
+
+                      </>
+                    )}
+
+                    {/* ── TFTP 配置表单 ── */}
+                    {isTftp && (
+                      <>
+                        <div className={styles.row2}>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("tftp.listenIp")}</label>
+                            <input
+                              className={`${styles.input} liquid-glass-input`}
+                              type="text"
+                              value={tftpListenIp}
+                              onChange={e => setTftpListenIp(e.target.value)}
+                              disabled={connecting}
+                              placeholder="0.0.0.0"
+                            />
                           </div>
-                        </>
-                      )}
-                    </>
-                  )}
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("tftp.listenPort")}</label>
+                            <input
+                              className={`${styles.input} liquid-glass-input`}
+                              type="number"
+                              min={1}
+                              max={65535}
+                              value={tftpListenPort}
+                              onChange={e => setTftpListenPort(Number(e.target.value))}
+                              disabled={connecting}
+                              placeholder="69"
+                            />
+                          </div>
+                        </div>
 
-                  {/* 数据模式（连接后不可变，改需重连）：仅 TCP 流视图的 Dual/Text/Hex 渲染，UDP 恒为报文网格双栏 */}
-                  {netTransport !== "udp" && (
-                    <div className={styles.field}>
-                      <label className={styles.label}>{t("serial.dataMode")}</label>
-                      <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
-                        <option value="text">{t("serial.dataModeText")}</option>
-                        <option value="hex">{t("serial.dataModeHex")}</option>
-                        <option value="dual">{t("serial.dataModeDual")}</option>
-                      </select>
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("tftp.fileRoot")}</label>
+                          <div className={styles.row}>
+                            <input
+                              className={`${styles.input} liquid-glass-input`}
+                              style={{ flex: 1 }}
+                              type="text"
+                              value={tftpFileRoot}
+                              onChange={e => setTftpFileRoot(e.target.value)}
+                              disabled={connecting}
+                              placeholder="C:\tftp-root\"
+                            />
+                            <button
+                              className={`${styles.iconBtn} liquid-glass-button`}
+                              onClick={async () => {
+                                const dir = await open({ directory: true, multiple: false });
+                                if (dir && typeof dir === "string") setTftpFileRoot(dir);
+                              }}
+                              title={t("tftp.selectDir")}
+                              disabled={connecting}
+                            >
+                              <Icon name="folder" size="md" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={tftpWriteEnabled}
+                              onChange={e => setTftpWriteEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("tftp.writeEnabled")}</span>
+                          </label>
+                        </div>
+
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={tftpOverwrite}
+                              onChange={e => setTftpOverwrite(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("tftp.overwrite")}</span>
+                          </label>
+                        </div>
+
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={tftpSinglePort}
+                              onChange={e => setTftpSinglePort(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("tftp.singlePort")}</span>
+                          </label>
+                        </div>
+                      </>
+                    )}
+
+                    {/* ── iperf 配置 ── */}
+                    {isIperf && (
+                      <>
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("iperf.version")}</label>
+                          <select
+                            className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                            value={iperfVersion}
+                            onChange={e => {
+                              const v = e.target.value as "iperf2" | "iperf3";
+                              setIperfVersion(v);
+                              // 端口联动（对齐版本切换规则：iperf2 默认 5001，iperf3 默认
+                              // 5201）。仅当端口仍为默认值（用户未自定义）时切换默认；
+                              // 自定义端口（如 9000）在来回切换版本后保留，不被静默覆盖
+                              setIperfListenPort(prev =>
+                                prev === 5001 || prev === 5201
+                                  ? (v === "iperf2" ? 5001 : 5201)
+                                  : prev
+                              );
+                            }}
+                            disabled={connecting}
+                          >
+                            <option value="iperf2">iperf2</option>
+                            <option value="iperf3">iperf3</option>
+                          </select>
+                        </div>
+                        <div className={styles.row2}>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("iperf.listenIp")}</label>
+                            <input
+                              className={`${styles.input} liquid-glass-input`}
+                              type="text"
+                              value={iperfListenIp}
+                              onChange={e => setIperfListenIp(e.target.value)}
+                              disabled={connecting}
+                              placeholder="0.0.0.0"
+                            />
+                          </div>
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("iperf.listenPort")}</label>
+                            <input
+                              className={`${styles.input} liquid-glass-input`}
+                              type="number"
+                              min={1}
+                              max={65535}
+                              value={iperfListenPort}
+                              onChange={e => {
+                                // 空输入忽略（Number("") === 0 会污染保存的配置）
+                                if (e.target.value === "") return;
+                                const n = Number(e.target.value);
+                                if (!Number.isInteger(n) || n < 1 || n > 65535) return;
+                                setIperfListenPort(n);
+                              }}
+                              disabled={connecting}
+                              placeholder="5001"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* ── Telnet 配置 ── */}
+                    {isTelnet && (
+                      <>
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("telnet.host")}</label>
+                          <input
+                            className={`${styles.input} liquid-glass-input`}
+                            type="text"
+                            placeholder={t("telnet.hostPlaceholder")}
+                            value={telnetHost}
+                            onChange={e => setTelnetHost(e.target.value)}
+                            disabled={connecting}
+                          />
+                        </div>
+
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("telnet.port")}</label>
+                          <input
+                            className={`${styles.numberInput} liquid-glass-input`}
+                            type="number"
+                            value={telnetPort}
+                            min={1}
+                            max={65535}
+                            onChange={e => {
+                              const raw = e.target.value;
+                              // 允许用户清空字段（中间编辑状态），重置为默认端口
+                              if (raw === "") {
+                                setTelnetPort(23);
+                                return;
+                              }
+                              const n = Number(raw);
+                              if (!isNaN(n) && n >= 1 && n <= 65535) {
+                                setTelnetPort(n);
+                              }
+                              // 非法值忽略，保持当前状态
+                            }}
+                            disabled={connecting}
+                          />
+                        </div>
+
+                        {/* 数据字符编码（连接后不可变，改需重连） */}
+                        {encodingField}
+
+                        {/* 发送栏开关（默认开启） */}
+                        <div className={styles.field}>
+                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                            <input
+                              type="checkbox"
+                              checked={telnetSendBarEnabled}
+                              onChange={e => setTelnetSendBarEnabled(e.target.checked)}
+                              disabled={connecting}
+                            />
+                            <div />
+                            <span>{t("telnet.enableSendBar") || "启用发送栏"}</span>
+                          </label>
+                        </div>
+                      </>
+                    )}
+
+                    {/* ── 网络调试配置（TCP/UDP 调试助手） ── */}
+                    {isNetwork && (
+                      <>
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("network.transport")}</label>
+                          <select
+                            className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                            value={netTransport}
+                            onChange={e => setNetTransport(e.target.value as "tcp" | "udp")}
+                            disabled={connecting}
+                          >
+                            <option value="tcp">{t("network.transportTcp")}</option>
+                            <option value="udp">{t("network.transportUdp")}</option>
+                          </select>
+                        </div>
+
+                        {/* TCP/UDP 均有 Client/Server 角色（UDP client = 固定远端单对端，UDP server = 绑本地多对端） */}
+                        <div className={styles.field}>
+                          <label className={styles.label}>{t("network.role")}</label>
+                          <select
+                            className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                            value={netRole}
+                            onChange={e => setNetRole(e.target.value as "client" | "server")}
+                            disabled={connecting}
+                          >
+                            <option value="client">{t("network.roleClient")}</option>
+                            <option value="server">{t("network.roleServer")}</option>
+                          </select>
+                        </div>
+
+                        {netRole === "client" && (
+                          <>
+                            <div className={styles.field}>
+                              <label className={styles.label}>{t("network.remoteHost")}</label>
+                              <input
+                                className={`${styles.input} liquid-glass-input`}
+                                type="text"
+                                placeholder={t("network.remoteHostPlaceholder")}
+                                value={netRemoteHost}
+                                onChange={e => setNetRemoteHost(e.target.value)}
+                                disabled={connecting}
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label className={styles.label}>{t("network.remotePort")}</label>
+                              <input
+                                className={`${styles.numberInput} liquid-glass-input`}
+                                type="number"
+                                value={netRemotePort}
+                                min={1}
+                                max={65535}
+                                onChange={e => {
+                                  const n = Number(e.target.value);
+                                  if (!isNaN(n)) setNetRemotePort(n);
+                                }}
+                                disabled={connecting}
+                              />
+                            </div>
+                          </>
+                        )}
+
+                        {netRole === "server" && (
+                          <>
+                            <div className={styles.field}>
+                              <label className={styles.label}>{t("network.localHost")}</label>
+                              <input
+                                className={`${styles.input} liquid-glass-input`}
+                                type="text"
+                                value={netLocalHost}
+                                onChange={e => setNetLocalHost(e.target.value)}
+                                disabled={connecting}
+                              />
+                            </div>
+                            <div className={styles.field}>
+                              <label className={styles.label}>{t("network.localPort")}</label>
+                              <input
+                                className={`${styles.numberInput} liquid-glass-input`}
+                                type="number"
+                                value={netLocalPort}
+                                min={1}
+                                max={65535}
+                                onChange={e => {
+                                  const n = Number(e.target.value);
+                                  if (!isNaN(n)) setNetLocalPort(n);
+                                }}
+                                disabled={connecting}
+                              />
+                            </div>
+                          </>
+                        )}
+
+                        {netTransport === "tcp" && netRole === "server" && (
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("network.maxClients")}</label>
+                            <input
+                              className={`${styles.numberInput} liquid-glass-input`}
+                              type="number"
+                              value={netMaxClients}
+                              min={1}
+                              max={1024}
+                              onChange={e => {
+                                const n = Number(e.target.value);
+                                if (!isNaN(n)) setNetMaxClients(n);
+                              }}
+                              disabled={connecting}
+                            />
+                          </div>
+                        )}
+
+                        {netTransport === "tcp" && netRole === "client" && (
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("network.connectTimeoutMs")}</label>
+                            <input
+                              className={`${styles.numberInput} liquid-glass-input`}
+                              type="number"
+                              value={netConnectTimeoutMs}
+                              min={100}
+                              onChange={e => {
+                                const n = Number(e.target.value);
+                                if (!isNaN(n)) setNetConnectTimeoutMs(n);
+                              }}
+                              disabled={connecting}
+                            />
+                          </div>
+                        )}
+
+                        {netTransport === "udp" && netRole === "server" && (
+                          <>
+                            <div className={styles.field}>
+                              <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={netBroadcast}
+                                  onChange={e => setNetBroadcast(e.target.checked)}
+                                  disabled={connecting}
+                                />
+                                <div />
+                                <span>{t("network.broadcast")}</span>
+                              </label>
+                            </div>
+                            <div className={styles.field}>
+                              <label className={styles.label}>{t("network.multicastGroup")}</label>
+                              <input
+                                className={`${styles.input} liquid-glass-input`}
+                                type="text"
+                                placeholder={t("network.multicastGroupPlaceholder")}
+                                value={netMulticastGroup}
+                                onChange={e => setNetMulticastGroup(e.target.value)}
+                                disabled={connecting}
+                              />
+                              {/* IP_ADD_MEMBERSHIP 仅支持 IPv4 组播组（kernel IPv4-only），提前提示 */}
+                              {netMulticastGroup && !/^2(2[4-9]|3\d)(\.\d{1,3}){3}$/.test(netMulticastGroup.trim()) && (
+                                <div className={styles.hint}>{t("network.multicastIpv4Only")}</div>
+                              )}
+                            </div>
+                            {netMulticastGroup && (
+                              <>
+                                <div className={styles.field}>
+                                  <label className={styles.label}>{t("network.ttl")}</label>
+                                  <input
+                                    className={`${styles.numberInput} liquid-glass-input`}
+                                    type="number"
+                                    value={netTtl}
+                                    min={1}
+                                    max={255}
+                                    onChange={e => {
+                                      const n = Number(e.target.value);
+                                      if (!isNaN(n)) setNetTtl(n);
+                                    }}
+                                    disabled={connecting}
+                                  />
+                                </div>
+                                <div className={styles.field}>
+                                  <label className={styles.label}>{t("network.multicastInterface")}</label>
+                                  <input
+                                    className={`${styles.input} liquid-glass-input`}
+                                    type="text"
+                                    value={netMulticastInterface}
+                                    onChange={e => setNetMulticastInterface(e.target.value)}
+                                    disabled={connecting}
+                                  />
+                                </div>
+                                <div className={styles.field}>
+                                  <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
+                                    <input
+                                      type="checkbox"
+                                      checked={netSelfReceive}
+                                      onChange={e => setNetSelfReceive(e.target.checked)}
+                                      disabled={connecting}
+                                    />
+                                    <div />
+                                    <span>{t("network.selfReceive")}</span>
+                                  </label>
+                                </div>
+                              </>
+                            )}
+                          </>
+                        )}
+
+                        {/* 数据模式（连接后不可变，改需重连）：仅 TCP 流视图的 Dual/Text/Hex 渲染，UDP 恒为报文网格双栏 */}
+                        {netTransport !== "udp" && (
+                          <div className={styles.field}>
+                            <label className={styles.label}>{t("serial.dataMode")}</label>
+                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
+                              <option value="text">{t("serial.dataModeText")}</option>
+                              <option value="hex">{t("serial.dataModeHex")}</option>
+                              <option value="dual">{t("serial.dataModeDual")}</option>
+                            </select>
+                          </div>
+                        )}
+
+                        {/* 数据字符编码（连接后不可变，改需重连） */}
+                        {encodingField}
+                      </>
+                    )}
+
+                    {/* ── 未实现插件的占位提示 ── */}
+                    {PluginConnectForm && (
+                      <PluginConnectForm
+                        params={pluginParams}
+                        onChange={setPluginParams}
+                        endpoints={state.endpoints.filter(endpoint => endpoint.connection_type === selectedMode)}
+                      />
+                    )}
+
+                    {!isSerial && !isSsh && !isTftp && !isTelnet && !isIperf && !isNetwork && !PluginConnectForm && (
+                      <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
+                        <Icon name="construction" size="lg" />{" "}
+                        {t("connectionType.formNotImplemented", { pluginName: selectedMode })}
+                      </div>
+                    )}
+
+                    {error && <div className={styles.error}>{error}</div>}
+
+                    <div className={styles.actions}>
+                      <button className={`${styles.cancelBtn} liquid-glass-button`} onClick={onClose} disabled={connecting}>
+                        {t("common.cancel")}
+                      </button>
+                      <button
+                        className={`${styles.connectBtn} liquid-primary-button`}
+                        onClick={() => void handleCreate(false)}
+                        disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || (isNetwork && netRole === "client" && !netRemoteHost) || connecting}
+                      >
+                        {connecting
+                          ? t("serial.confirming")
+                          : t("serial.confirm")}
+                      </button>
                     </div>
-                  )}
-
-                  {/* 数据字符编码（连接后不可变，改需重连） */}
-                  {encodingField}
-                </>
-              )}
-
-              {/* ── 未实现插件的占位提示 ── */}
-              {PluginConnectForm && (
-                <PluginConnectForm
-                  params={pluginParams}
-                  onChange={setPluginParams}
-                  endpoints={state.endpoints.filter(endpoint => endpoint.connection_type === selectedMode)}
-                />
-              )}
-
-              {!isSerial && !isSsh && !isTftp && !isTelnet && !isIperf && !isNetwork && !PluginConnectForm && (
-                <div className={styles.comingSoonBanner} style={{ marginTop: 16 }}>
-                  <Icon name="construction" size="lg" />{" "}
-                  {t("connectionType.formNotImplemented", { pluginName: selectedMode })}
-                </div>
-              )}
-
-              {error && <div className={styles.error}>{error}</div>}
-
-              <div className={styles.actions}>
-                <button className={`${styles.cancelBtn} liquid-glass-button`} onClick={onClose} disabled={connecting}>
-                  {t("common.cancel")}
-                </button>
-                <button
-                  className={`${styles.connectBtn} liquid-primary-button`}
-                  onClick={handleCreate}
-                  disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || (isNetwork && netRole === "client" && !netRemoteHost) || connecting}
-                >
-                  {connecting
-                    ? t("serial.confirming")
-                    : t("serial.confirm")}
-                </button>
+                  </>
+                )}
               </div>
-            </>
-          )}
-        </div>
-      </motion.div>
-      </motion.div>
-      )}
-    </AnimatePresence>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <ConfirmDialog
+        open={isOpen && tftpExposureConfirmOpen}
+        title={t("common.confirm")}
+        message={t("tftp.exposureWarning", { defaultValue: "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network." })}
+        onConfirm={() => {
+          setTftpExposureConfirmOpen(false);
+          void handleCreate(true);
+        }}
+        onCancel={() => setTftpExposureConfirmOpen(false)}
+      />
+    </>
   );
 }

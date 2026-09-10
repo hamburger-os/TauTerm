@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, four-color amb
 license: MIT
 metadata:
   author: tauterm
-  version: "9.12"
+  version: "9.13"
 ---
 
-# TauTerm Liquid Glass v9.12 — 唯一主题规范源
+# TauTerm Liquid Glass v9.13 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、四色环境色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -332,16 +332,16 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 
 ## 11. Dialog Action Hierarchy
 
-弹窗必须区分“业务决策选项”和“退出弹窗”两种语义，不能为了排版方便把所有按钮做成同权网格：
+弹窗必须区分“二元确认”和“多项业务决策”两种语义，不能为了排版方便把所有按钮做成同权网格：
 
-- 两按钮确认框：Cancel 是次要动作，Confirm/Save/Delete 是主动作；沿用右对齐 footer。
-- 三个及以上互斥业务决策（例如文件冲突 Replace / Keep Both / Skip Existing）：业务决策组成独立 option group；Cancel 单独位于 footer，视觉与语义都不是第四个平级选项。
-- 有破坏性的决策使用 danger 语义。对于三个及以上、点击即生效的互斥业务决策，非破坏选项统一使用 neutral secondary surface；推荐项通过安全的默认焦点、顺序或克制的辅助文案表达，**不得仅因“推荐”就把整颗按钮升级为四色 Prism Primary**。Prism Primary 在 Dialog 中保留给 Confirm / Save / Continue 等“提交整个弹窗”的单一主动作。危险操作不得默认获焦。
-- Dialog 必须复用 `.liquid-glass` 外壳和公共 GlassButton/全局按钮材质；禁止组件私建另一套弹窗背景/按钮玻璃。
+- **所有两按钮确认框必须复用 `src/components/common/ConfirmDialog.tsx`。按钮文案固定为 Cancel / Confirm（中文固定为“取消 / 确认”），调用方不得使用 Delete / Save / Continue / Paste Anyway 等业务动作词改写确认按钮。** 具体业务后果由标题和正文说明；破坏性只通过 `danger` intent 表达。Cancel 是次要动作，Confirm 是主动作，沿用右对齐 footer。
+- 三个及以上互斥业务决策（例如文件冲突 Replace / Keep Both / Skip Existing）：业务决策组成独立 option group；Cancel 单独位于 footer，视觉与语义都不是第四个平级选项。此类多项决策不是二元确认，不受固定“取消 / 确认”文案约束。
+- 有破坏性的决策使用 danger 语义。对于三个及以上、点击即生效的互斥业务决策，非破坏选项统一使用 neutral secondary surface；推荐项通过安全的默认焦点、顺序或克制的辅助文案表达，**不得仅因“推荐”就把整颗按钮升级为四色 Prism Primary**。Prism Primary 在 Dialog 中保留给单一提交主动作；危险操作不得默认获焦。
+- Dialog 必须复用 `.liquid-glass` 外壳和公共 GlassButton/全局按钮材质；禁止组件私建另一套弹窗背景/按钮玻璃。二元确认框的 Portal、overlay、动画、圆角、padding、标题/正文字号、按钮几何、焦点管理全部由 `ConfirmDialog` 所有，业务组件只提供 title / message / children / intent。
 - 标准 Dialog 使用 `--radius-xl`；常规 padding 使用 `--spacing-xl`，窄窗口可降为 `--spacing-lg`。标题统一 `--text-md` + 700，正文统一 `--text-sm`，辅助/元信息统一 `--text-xs`；标准动作按钮使用 `GlassButton size="md"`，不得在单个弹窗里另写近似字号/按钮体系。
-- 两按钮确认框的默认焦点必须落在 Cancel/安全动作；危险动作不得默认获焦。Tab 在弹窗动作内循环，Esc 取消。
+- 两按钮确认框的默认焦点必须落在 Cancel/安全动作；危险动作不得默认获焦。Tab/Shift+Tab 必须在弹窗可交互元素内循环，Esc 取消；关闭后恢复此前焦点。
 - 所有 modal dialog（包括信息型 Properties/Preview）打开后必须把焦点移入弹窗，并把 Tab/Shift+Tab 限制在弹窗可交互元素之间；关闭动作必须有可访问名称。
-- 禁止使用原生浏览器 `alert()/confirm()/prompt()` 作为产品 UI。非阻塞错误/提示使用全局 themed Toast；需要用户决策或授权的流程使用主题 Dialog/InlinePrompt。
+- 禁止使用原生浏览器 `alert()/confirm()/prompt()` 作为产品 UI。非阻塞错误/提示使用全局 themed Toast；需要二元确认的流程使用公共 `ConfirmDialog`；多个互斥业务决策使用主题 Dialog/option group；输入授权流程使用主题 Dialog/InlinePrompt。
 - option group 在窄窗口改为纵向；不得为了保持多列把文案挤成难读的等宽小按钮。
 
 ## 12. Control Contrast
@@ -423,6 +423,7 @@ rg 'selectedHeader|content-divider|scrollbar-(button|corner)|requestAnimationFra
 rg '@container\s+session-pane|@media\s*\(max-width' src/components src/plugins --glob '*.module.css'
 rg 'modeHeader|modeTitle|flex-direction:\s*row' src/components/SendBar
 rg '#FE3734|#F4BA00|#02BE66|#0B8AFF|#4285F4|#EA4335|#FBBC05|#34A853' src --glob '*.css' --glob '*.tsx' --glob '*.ts'
+rg 'window\.(alert|confirm|prompt)|(^|[^.[:alnum:]_])(alert|confirm|prompt)\s*\(' src --glob '*.ts' --glob '*.tsx'
 npm run build
 ```
 
@@ -462,6 +463,7 @@ npm run build
 - **窄 Sidebar 的一级工具导航不出现横向滚动条；类别较多时使用主题 Select，滚动条只用于内容区域**
 - **文件管理器传输状态条在常规窄 Sidebar 中仍显示真实传输速度并能直接点击取消/关闭；只有 <=220px 的极窄档才可隐藏速度/进度，关键操作不得被裁掉**
 - **展开任意主题 Select 时，原生 option popup 的明暗必须与当前主题一致，不得出现深色主题白底白字/浅字菜单**
+- **所有二元确认框都复用公共 ConfirmDialog，并固定显示“取消 / 确认”；文件删除、会话删除、清空日志、终端安全粘贴、SSH 首次主机密钥确认、TFTP 暴露风险确认不得各自维护另一套按钮文案或弹窗壳，也不得出现浏览器原生确认框**
 - **文件冲突弹窗的 Replace / Keep Both / Skip Existing 是业务决策组，Cancel 独立位于 footer；Replace 使用 danger，Keep Both / Skip Existing 使用同级 neutral secondary，安全默认焦点落在 Keep Both，互斥选项不出现整颗四色 Prism，也不出现四个等权按钮的 2×2 网格**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
 - **效果优先正常观察 3–5 秒能看出两层 Ambient 明显位移与交叠；四色 Prism 按钮也能感知低频连续流动；色团更大但 raster layer 不扩大**
@@ -475,6 +477,8 @@ npm run build
 - `src/styles/global.css`
 - `src/context/ThemeContext.tsx`
 - `src/App.tsx`
+- `src/components/common/ConfirmDialog.tsx`
+- `src/components/common/ConfirmDialog.module.css`
 - `src/components/Layout/SpectrumAmbientBackground.tsx`
 - `src/components/Settings/panels/AppearanceSettings.tsx`
 - `src/i18n/locales/zh-CN.json`

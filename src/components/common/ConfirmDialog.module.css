@@ -9,12 +9,19 @@
 }
 
 .dialog {
-  width: min(460px, calc(100vw - 48px));
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(680px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-md);
   padding: var(--spacing-xl);
   border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.compact {
+  width: min(460px, calc(100vw - 48px));
+  gap: var(--spacing-lg);
 }
 
 .header {
@@ -45,11 +52,16 @@
 }
 
 .message {
-  margin: var(--spacing-xs) 0 0;
+  margin-top: var(--spacing-xs);
   color: var(--text-secondary);
   font-size: var(--text-sm);
   line-height: 1.55;
   overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.body {
+  min-height: 0;
 }
 
 .footer {
@@ -62,13 +74,15 @@
   min-width: 84px;
 }
 
-@media (max-width: 420px) {
+@media (max-width: 520px) {
   .overlay {
     padding: 14px;
   }
 
-  .dialog {
+  .dialog,
+  .compact {
     width: calc(100vw - 28px);
+    max-height: calc(100vh - 28px);
     padding: var(--spacing-lg);
   }
 

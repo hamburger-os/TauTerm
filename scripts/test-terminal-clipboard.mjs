@@ -40,23 +40,48 @@ const pasteDialogSource = await readFile(
   path.join(ROOT, "src", "components", "Terminal", "PasteSafetyDialog.tsx"),
   "utf8",
 );
-assert.match(pasteDialogSource, /role="alertdialog"/);
-assert.match(pasteDialogSource, /GlassButton/);
-assert.match(pasteDialogSource, /data-action="cancel"/);
-assert.match(pasteDialogSource, /variant="ghost"/);
-assert.match(pasteDialogSource, /variant="primary"/);
-assert.match(pasteDialogSource, /size="md"/);
-assert.match(pasteDialogSource, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(pasteDialogSource, /ConfirmDialog/);
+assert.match(pasteDialogSource, /open=\{text !== null\}/);
+assert.match(pasteDialogSource, /onConfirm=\{onConfirm\}/);
+assert.match(pasteDialogSource, /onCancel=\{onCancel\}/);
+assert.match(pasteDialogSource, /terminal\.pasteWarningTitle/);
+assert.match(pasteDialogSource, /terminal\.pasteWarningPreview/);
+
+const confirmDialogSource = await readFile(
+  path.join(ROOT, "src", "components", "common", "ConfirmDialog.tsx"),
+  "utf8",
+);
+assert.match(confirmDialogSource, /role="alertdialog"/);
+assert.match(confirmDialogSource, /GlassButton/);
+assert.match(confirmDialogSource, /data-action="cancel"/);
+assert.match(confirmDialogSource, /data-action="confirm"/);
+assert.match(confirmDialogSource, /variant="ghost"/);
+assert.match(confirmDialogSource, /variant=\{intent\}/);
+assert.match(confirmDialogSource, /size="md"/);
+assert.match(confirmDialogSource, /querySelectorAll<HTMLElement>/);
+assert.match(confirmDialogSource, /dialog\?\.contains\(active\)/);
+assert.match(confirmDialogSource, /onCancelRef\.current\(\)/);
+assert.match(confirmDialogSource, /busyRef\.current/);
+assert.match(confirmDialogSource, /document\.activeElement === confirmAction/);
+assert.match(confirmDialogSource, /\[busy, message, open, title\]/);
+assert.match(confirmDialogSource, /t\("common\.cancel"\)/);
+assert.match(confirmDialogSource, /t\("common\.confirm"\)/);
+
+const confirmDialogCss = await readFile(
+  path.join(ROOT, "src", "components", "common", "ConfirmDialog.module.css"),
+  "utf8",
+);
+assert.match(confirmDialogCss, /border-radius:\s*var\(--radius-xl\)/);
+assert.match(confirmDialogCss, /font-size:\s*var\(--text-md\)/);
+assert.match(confirmDialogCss, /font-weight:\s*700/);
+assert.match(confirmDialogCss, /font-size:\s*var\(--text-sm\)/);
 
 const pasteDialogCss = await readFile(
   path.join(ROOT, "src", "components", "Terminal", "PasteSafetyDialog.module.css"),
   "utf8",
 );
-assert.match(pasteDialogCss, /border-radius:\s*var\(--radius-xl\)/);
-assert.match(pasteDialogCss, /font-size:\s*var\(--text-md\)/);
-assert.match(pasteDialogCss, /font-weight:\s*700/);
-assert.match(pasteDialogCss, /font-size:\s*var\(--text-sm\)/);
 assert.match(pasteDialogCss, /font-size:\s*var\(--text-xs\)/);
+assert.match(pasteDialogCss, /overflow:\s*auto/);
 
 const terminalSource = await readFile(
   path.join(ROOT, "src", "components", "Terminal", "Terminal.tsx"),
@@ -123,7 +148,6 @@ assert.match(
   "explicit protocol handoff must reveal the engineering sidebar",
 );
 
-
 const networkViewSource = await readFile(
   path.join(ROOT, "src", "components", "Network", "NetworkDebugSessionView.tsx"),
   "utf8",
@@ -170,4 +194,4 @@ const shortcutSettingsSource = await readFile(
 );
 assert.match(shortcutSettingsSource, /isTerminalReservedShortcut\(newKeys\)/);
 
-console.log("terminal-clipboard: shortcuts, paste routing, focus, safety, and explicit protocol-inspection handoff verified");
+console.log("terminal-clipboard: shortcuts, paste routing, shared confirmation, focus, safety, and explicit protocol-inspection handoff verified");

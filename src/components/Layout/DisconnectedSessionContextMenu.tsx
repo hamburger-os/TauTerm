@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import type { ContextMenuState } from "../../hooks/useContextMenu";
+import ConfirmDialog from "../common/ConfirmDialog";
 import ContextMenu, { type ContextMenuItem } from "../common/ContextMenu";
 import ConnectDialog from "./ConnectDialog";
 
@@ -25,6 +26,7 @@ export default function DisconnectedSessionContextMenu({
   const { t } = useTranslation();
   const { reconnectSession, deleteSession } = useSession();
   const [editSessionId, setEditSessionId] = useState<string | null>(null);
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
 
   const menuItems = useMemo<ContextMenuItem[]>(() => {
     const tab = state.session;
@@ -64,12 +66,16 @@ export default function DisconnectedSessionContextMenu({
         setEditSessionId(tab.id);
         break;
       case "delete":
-        if (window.confirm(t("session.deleteConfirm") || "Delete this session?")) {
-          await deleteSession(tab.id);
-        }
+        setPendingDeleteSessionId(tab.id);
         break;
     }
-  }, [state.session, reconnectSession, deleteSession, t]);
+  }, [state.session, reconnectSession]);
+
+  const confirmDelete = useCallback(() => {
+    const sessionId = pendingDeleteSessionId;
+    setPendingDeleteSessionId(null);
+    if (sessionId) void deleteSession(sessionId);
+  }, [deleteSession, pendingDeleteSessionId]);
 
   return (
     <>
@@ -83,6 +89,15 @@ export default function DisconnectedSessionContextMenu({
         isOpen={editSessionId !== null}
         onClose={() => setEditSessionId(null)}
         editSessionId={editSessionId}
+      />
+      <ConfirmDialog
+        open={pendingDeleteSessionId !== null}
+        title={t("fileManager.deleteConfirmTitle")}
+        message={t("session.deleteConfirm")}
+        intent="danger"
+        size="compact"
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDeleteSessionId(null)}
       />
     </>
   );
