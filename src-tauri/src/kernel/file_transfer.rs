@@ -5,12 +5,12 @@
 //! 自然 async。进度通过 `UnboundedSender<UnifiedProgress>` 统一广播，
 //! 取消通过 `Arc<AtomicBool>` 统一信号。
 //!
-//! ## 与旧 `TransferProtocol` trait 的区别
+//! ## 与串口 `TransferProtocol` trait 的区别
 //!
-//! - 旧 trait 绑定 `Box<dyn SerialPort>`，仅支持串口协议
-//! - 新 trait 协议无关 — 由具体实现持有各自的 I/O 资源
-//! - 旧 trait 使用闭包回调传递进度，新 trait 使用 channel 广播
-//! - 旧 trait 同步，新 trait async（统一 tokio 运行时调度）
+//! - 串口 trait 绑定 `Box<dyn SerialPort>`，仅服务 X/Y/ZModem 协议算法
+//! - 本 trait 协议无关 — 由具体实现持有各自的 I/O 资源
+//! - 串口 trait 使用闭包回调传递进度，本 trait 使用 channel 广播
+//! - 串口 trait 同步，本 trait async（统一 tokio 运行时调度）
 
 use serde::Serialize;
 use std::any::Any;
@@ -26,47 +26,32 @@ pub enum TransferDirection {
     Receive,
 }
 
-/// 统一进度事件
-///
-/// 替代旧的 `TransferProgress`（串口）和 `SftpProgressPayload`（SFTP）双轨制。
-/// 前端只需监听一个 `file-transfer:progress` 事件，通过 `protocol` 字段区分协议。
+/// 统一进度事件。
 #[derive(Debug, Clone, Serialize)]
 pub struct UnifiedProgress {
-    /// 所属会话 ID（由 spawn_progress_broadcaster 填充，用于前端跨会话过滤）
+    /// 所属会话 ID（由 broadcaster 填充，用于前端跨会话过滤）
     #[serde(default)]
     pub session_id: String,
-    /// 单次传输唯一 ID（由 orchestrator/broadcaster 注入，防止迟到事件污染下一次传输）
+    /// 单次传输唯一 ID（由 orchestrator/broadcaster 注入）
     #[serde(default)]
     pub transfer_id: String,
-    /// 协议标识（如 "ymodem", "sftp"）
     pub protocol: String,
-    /// 当前传输的文件名
     pub file_name: String,
-    /// 当前文件已传输字节
     pub bytes_done: u64,
-    /// 当前文件总字节（0 表示未知大小）
+    /// 0 表示未知大小。
     pub bytes_total: u64,
-    /// 后端 I/O 层测得的传输速率（字节/秒）；None 表示当前没有可靠样本
+    /// 后端 I/O 层测得的可靠速率（字节/秒）；None 表示没有样本。
     pub bytes_per_second: Option<f64>,
-    /// 当前文件在批次中的索引（0-based）
     pub file_index: usize,
-    /// 批次中文件总数
     pub total_files: usize,
-    /// 聚合已传输字节（已完成文件 + 当前文件进度）
     pub aggregate_bytes: u64,
-    /// 聚合总字节
     pub aggregate_total: u64,
-    /// 传输方向
     pub direction: TransferDirection,
-    /// 是否为文件开始事件（新文件开始传输）
     pub is_file_start: bool,
-    /// 是否为文件完成事件
     pub is_file_complete: bool,
-    /// 文件完成时：是否成功
     pub file_success: Option<bool>,
-    /// 文件完成时：错误信息
     pub file_error: Option<String>,
-    /// 传输已完成（整个批次结束）
+    /// 协议层文件循环已经结束；它不是任务终态，最终仍以 finished 事件为准。
     pub is_batch_complete: bool,
 }
 
@@ -79,7 +64,6 @@ pub struct ProgressPosition {
 }
 
 impl UnifiedProgress {
-    /// 构造文件开始事件
     pub fn file_start(
         protocol: &str,
         file_name: &str,
@@ -114,7 +98,6 @@ impl UnifiedProgress {
         }
     }
 
-    /// 构造逐块进度事件
     pub fn chunk(
         protocol: &str,
         file_name: &str,
@@ -150,10 +133,7 @@ impl UnifiedProgress {
         }
     }
 
-    /// 构造带后端测速样本的逐块进度事件。
-    ///
-    /// 串口等协议仍可使用 `chunk()`；SFTP 在真实 async I/O 层测量速率后使用本构造器，
-    /// 避免以 WebView/IPC 事件到达时间反推网络吞吐。
+    /// 带后端真实 I/O 测速样本的逐块进度。
     pub fn chunk_with_speed(
         protocol: &str,
         file_name: &str,
@@ -176,7 +156,6 @@ impl UnifiedProgress {
         progress
     }
 
-    /// 构造文件完成事件
     pub fn file_complete(
         protocol: &str,
         file_name: &str,
@@ -213,10 +192,11 @@ impl UnifiedProgress {
         }
     }
 
-    /// 构造批次完成事件
+    /// 构造协议层批次完成事件。
     ///
-    /// 当 `files_failed > 0` 或 `files_skipped > 0` 时设置 `file_success: Some(false)`,
-    /// 前端据此判断批次是否成功 (此前 `file_error` 始终为 `None` 导致前端误判为"completed")。
+    /// Skip 是用户明确选择的冲突策略结果，不属于执行失败；只有真正 failed 文件
+    /// 才把 file_success 置 false。任务的最终 completed/failed/cancelled 仍由
+    /// `file-transfer:finished` 唯一决定。
     pub fn batch_complete(
         protocol: &str,
         direction: TransferDirection,
@@ -224,7 +204,6 @@ impl UnifiedProgress {
         files_failed: usize,
         files_skipped: usize,
     ) -> Self {
-        let has_issues = files_failed > 0 || files_skipped > 0;
         Self {
             session_id: String::new(),
             transfer_id: String::new(),
@@ -240,7 +219,7 @@ impl UnifiedProgress {
             direction,
             is_file_start: false,
             is_file_complete: false,
-            file_success: Some(!has_issues),
+            file_success: Some(files_failed == 0),
             file_error: None,
             is_batch_complete: true,
         }
@@ -248,11 +227,9 @@ impl UnifiedProgress {
 }
 
 /// 目标冲突处理策略。
-///
-/// 具体协议负责将策略落实为安全提交语义；公共层只携带用户已经解析好的意图。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OverwritePolicy {
-    /// 使用安全的临时文件 + 提交替换现有目标。
+    /// 使用临时文件 + 安全提交替换现有目标。
     #[default]
     Replace,
     /// 若目标已存在则跳过，不视为传输失败。
@@ -278,17 +255,13 @@ impl OverwritePolicy {
 }
 
 /// 一次传输的协议无关选项。
-///
-/// destination_paths 与调用方的源路径按索引对应；为空表示由具体协议按
-/// remote_dir / download_dir 和源文件名推导目标。SFTP 用它实现单文件
-/// Save As 与目录根目标的精确映射，串口协议忽略该字段。
 #[derive(Debug, Clone, Default)]
 pub struct FileTransferOptions {
     pub overwrite_policy: OverwritePolicy,
+    /// 与源路径按索引对应；为空时由协议根据目标目录与源文件名推导。
     pub destination_paths: Vec<String>,
 }
 
-/// 文件传输错误
 #[derive(Debug, thiserror::Error)]
 pub enum FileTransferError {
     #[error("传输被取消")]
@@ -307,34 +280,13 @@ pub enum FileTransferError {
     Other(String),
 }
 
-/// 统一文件传输 trait
-///
-/// 所有传输协议（串口 X/Y/ZModem、SSH SFTP、未来 FTP/WebDAV 等）
-/// 必须实现此 trait。使用 `async_trait` 统一异步签名：
-/// - 同步协议（串口）内部使用 `tokio::task::spawn_blocking`
-/// - 异步协议（SSH）直接 await
-///
-/// # 生命周期
-///
-/// 1. `send()` / `receive()` 被调用
-/// 2. 实现者通过 `progress` channel 发送 `UnifiedProgress` 事件
-/// 3. 定期检查 `cancel` 标志，若为 true 则返回 `FileTransferError::Cancelled`
-/// 4. 完成后返回 `Vec<BatchFileResult>`
+/// 真正协议无关的文件传输扩展点。
 #[async_trait::async_trait]
 pub trait FileTransfer: Send + Sync {
-    /// 返回协议标识字符串（如 "ymodem", "sftp"）
     fn protocol(&self) -> &str;
 
-    /// 返回 `&dyn Any` 以供向下转型到具体实现类型
     fn as_any(&self) -> &dyn Any;
 
-    /// 发送文件
-    ///
-    /// # 参数
-    /// - `files`: 待发送文件列表（`path` 是本地路径，`name` 是文件名）
-    /// - `remote_dir`: 远程目标目录（串口协议传 `None`；SFTP 等侧通道协议用于构建远程路径）
-    /// - `progress`: 进度事件发送通道
-    /// - `cancel`: 取消标志，实现者应定期检查
     async fn send(
         &self,
         files: &[crate::transfer::types::FileInfo],
@@ -344,13 +296,6 @@ pub trait FileTransfer: Send + Sync {
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<crate::transfer::types::BatchFileResult>, FileTransferError>;
 
-    /// 接收文件
-    ///
-    /// # 参数
-    /// - `download_dir`: 下载目标目录
-    /// - `remote_paths`: 待下载的远程文件路径列表（串口协议传空 vec，由协议自行协商）
-    /// - `progress`: 进度事件发送通道
-    /// - `cancel`: 取消标志，实现者应定期检查
     async fn receive(
         &self,
         download_dir: &str,

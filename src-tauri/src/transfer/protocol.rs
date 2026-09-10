@@ -1,28 +1,14 @@
-//! 传输协议抽象层
+//! 串口文件传输协议算法抽象层
 //!
-//! 定义 `TransferProtocol` trait 统一 X/Y/ZModem 收发接口。
-//! 协议工厂通过 `From<TransferProtocolType>` 创建具体协议处理器。
+//! `SerialTransferProtocol` 只负责 X/Y/ZModem 在已接管串口上的协议算法；
+//! 真正跨传输方式的扩展点是 `kernel::file_transfer::FileTransfer`。
+//! 这个命名刻意避免未来新增 SFTP/FTP/WebDAV 时误把串口专用 trait 当成公共接口。
 
 use crate::kernel::plugin_adapter::TransferProtocolType;
 use crate::transfer::types::{BatchFileResult, FileInfo, FileTransferEvent, TransferProgress};
 
-/// 文件传输协议 trait
-///
-/// 统一 XModem、YModem、ZModem 三种协议的收发接口。
-/// 所有协议实现者通过此 trait 提供一致的 API。
-pub trait TransferProtocol: Send + Sync {
-    /// 通过串口发送文件
-    ///
-    /// # 参数
-    /// - `port`: 串口端口（`Box<dyn SerialPort>`）
-    /// - `files`: 待发送文件列表（含路径、名称、大小、修改时间）
-    /// - `on_progress`: 逐块进度回调
-    /// - `on_file_event`: 文件级别事件回调（FileStart / FileComplete）
-    /// - `cancel`: 取消检测闭包（返回 `true` 表示用户已取消）
-    ///
-    /// # 返回
-    /// - `Ok(batch_results)`: 包含每个文件的传输结果
-    ///   部分文件失败时仍返回 Ok — 调用方通过 `BatchFileResult.status` 判断。
+/// XModem / YModem / ZModem 的串口协议算法接口。
+pub trait SerialTransferProtocol: Send + Sync {
     fn send_files(
         &self,
         port: &mut Box<dyn serialport::SerialPort>,
@@ -32,17 +18,6 @@ pub trait TransferProtocol: Send + Sync {
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>>;
 
-    /// 通过串口接收文件
-    ///
-    /// # 参数
-    /// - `port`: 串口端口
-    /// - `download_dir`: 下载目录路径
-    /// - `on_progress`: 逐块进度回调
-    /// - `on_file_event`: 文件级别事件回调（FileStart / FileComplete）
-    /// - `cancel`: 取消检测闭包
-    ///
-    /// # 返回
-    /// - `Ok(batch_results)`: 包含每个接收文件的结果
     fn receive_files(
         &self,
         port: &mut Box<dyn serialport::SerialPort>,
@@ -53,15 +28,18 @@ pub trait TransferProtocol: Send + Sync {
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>>;
 }
 
-/// 根据协议类型创建对应的协议处理器
-///
-/// 工厂函数，返回 `Box<dyn TransferProtocol>` 供命令层使用。
-/// 仅串口内联协议（XModem/YModem/ZModem）通过此工厂创建。
-pub fn create_protocol(protocol_type: &TransferProtocolType) -> Option<Box<dyn TransferProtocol>> {
+/// 旧协议实现文件仍通过此内部别名实现 trait；新代码只应使用
+/// `SerialTransferProtocol`。该别名可在协议文件逐步整理时无行为风险地移除。
+pub use SerialTransferProtocol as TransferProtocol;
+
+/// 创建串口内联协议算法处理器。
+pub fn create_protocol(
+    protocol_type: &TransferProtocolType,
+) -> Option<Box<dyn SerialTransferProtocol>> {
     match protocol_type.as_str() {
         "ymodem" => Some(Box::new(crate::transfer::ymodem::YModem::default())),
         "xmodem" => Some(Box::new(crate::transfer::xmodem::XModem)),
         "zmodem" => Some(Box::new(crate::transfer::zmodem::ZModem::default())),
-        _ => None, // SFTP/FTP/其他协议不通过此工厂创建
+        _ => None,
     }
 }
