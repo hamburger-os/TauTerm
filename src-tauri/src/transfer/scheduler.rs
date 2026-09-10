@@ -1,8 +1,8 @@
 //! Session 级传输调度器。
 //!
 //! 默认每个 Session 只允许 1 个活动传输，但内部存储采用有界任务 Map，
-//! 从数据模型上不再把“单任务”写死。以后 SideChannel 需要提高并发上限时，
-//! 只需调整策略/上限，不需要改任务身份、取消或文件管理器契约。
+//! 从数据模型上不再把“单任务”写死。SideChannel 可按策略提升有界并发；
+//! Inline 会接管 Session 主 I/O 资源，因此无论并发上限如何始终保持独占。
 
 use std::collections::HashMap;
 use std::sync::{
@@ -65,9 +65,22 @@ impl TransferScheduler {
         self.active.keys().next().map(String::as_str)
     }
 
-    fn ensure_capacity(&self, transfer_id: &str) -> Result<(), String> {
+    fn ensure_new_id(&self, transfer_id: &str) -> Result<(), String> {
         if self.active.contains_key(transfer_id) {
             return Err("传输任务 ID 已存在".to_string());
+        }
+        Ok(())
+    }
+
+    fn has_inline_transfer(&self) -> bool {
+        self.active.values().any(|transfer| {
+            matches!(&transfer.cancel, TransferCancelSignal::Inline(_))
+        })
+    }
+
+    fn ensure_side_channel_capacity(&self) -> Result<(), String> {
+        if self.has_inline_transfer() {
+            return Err("该会话正在执行独占式串口传输，暂不能启动侧通道传输".to_string());
         }
         if self.max_active == 0 || self.active.len() >= self.max_active {
             return Err(format!(
@@ -83,7 +96,13 @@ impl TransferScheduler {
         transfer_id: &str,
         cancel_tx: oneshot::Sender<()>,
     ) -> Result<(), String> {
-        self.ensure_capacity(transfer_id)?;
+        self.ensure_new_id(transfer_id)?;
+        if self.max_active == 0 {
+            return Err("该会话已禁用文件传输任务".to_string());
+        }
+        if !self.active.is_empty() {
+            return Err("串口传输需要独占会话 I/O，请等待其他传输完成或取消后再试".to_string());
+        }
         self.active.insert(
             transfer_id.to_string(),
             ScheduledTransfer {
@@ -94,7 +113,8 @@ impl TransferScheduler {
     }
 
     pub fn reserve_side_channel(&mut self, transfer_id: &str) -> Result<Arc<AtomicBool>, String> {
-        self.ensure_capacity(transfer_id)?;
+        self.ensure_new_id(transfer_id)?;
+        self.ensure_side_channel_capacity()?;
         let flag = Arc::new(AtomicBool::new(false));
         self.active.insert(
             transfer_id.to_string(),
@@ -214,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn bounded_map_model_supports_future_multi_task_policy() {
+    fn bounded_map_model_supports_future_side_channel_concurrency() {
         let mut scheduler = TransferScheduler::with_max_active(2);
         let a = scheduler
             .reserve_side_channel("transfer-a")
@@ -224,6 +244,7 @@ mod tests {
             .expect("reserve b");
         assert_eq!(scheduler.active_count(), 2);
         assert_eq!(scheduler.active_id(), None);
+        assert!(scheduler.reserve_side_channel("transfer-c").is_err());
         assert!(scheduler.cancel(None).is_err());
         scheduler.cancel(Some("transfer-b")).expect("cancel b");
         assert!(!a.load(Ordering::SeqCst));
@@ -231,5 +252,31 @@ mod tests {
         assert!(scheduler.finish(Some("transfer-a")));
         assert!(scheduler.finish(Some("transfer-b")));
         assert!(!scheduler.is_busy());
+    }
+
+    #[test]
+    fn inline_is_exclusive_even_when_side_channel_limit_is_higher() {
+        let mut scheduler = TransferScheduler::with_max_active(2);
+        scheduler
+            .reserve_side_channel("side-a")
+            .expect("reserve side channel");
+        let (inline_tx, _inline_rx) = oneshot::channel();
+        assert!(scheduler.reserve_inline("inline-a", inline_tx).is_err());
+        assert_eq!(scheduler.active_count(), 1);
+    }
+
+    #[test]
+    fn side_channel_cannot_start_while_inline_owns_session_io() {
+        let mut scheduler = TransferScheduler::with_max_active(2);
+        let (inline_tx, _inline_rx) = oneshot::channel();
+        scheduler
+            .reserve_inline("inline-a", inline_tx)
+            .expect("reserve inline");
+        assert!(scheduler.reserve_side_channel("side-a").is_err());
+        let (second_inline_tx, _second_inline_rx) = oneshot::channel();
+        assert!(scheduler
+            .reserve_inline("inline-b", second_inline_tx)
+            .is_err());
+        assert_eq!(scheduler.active_count(), 1);
     }
 }
