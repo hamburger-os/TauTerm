@@ -16,7 +16,7 @@ import styles from "./FileRow.module.css";
 interface FileRowProps {
   entry: SftpEntry;
   isSelected: boolean;
-  onClick: (e: React.MouseEvent) => void;
+  onClick: (additiveKey: boolean, shiftKey: boolean) => void;
   onDoubleClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
   tabIndex?: number;
@@ -48,7 +48,7 @@ const FileRow = memo(function FileRow({
   return (
     <div
       className={rowClass}
-      onClick={onClick}
+      onClick={(e) => onClick(e.ctrlKey || e.metaKey, e.shiftKey)}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       role="row"
@@ -65,7 +65,7 @@ const FileRow = memo(function FileRow({
           onDoubleClick();
         } else if (e.key === " ") {
           e.preventDefault();
-          onClick({ ctrlKey: false, shiftKey: false } as React.MouseEvent);
+          onClick(e.ctrlKey || e.metaKey, e.shiftKey);
         }
       }}
     >
