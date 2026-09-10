@@ -3,6 +3,7 @@
  *
  * 可点击的路径段，用于文件管理器目录导航。
  */
+import { useTranslation } from "react-i18next";
 import styles from "./BreadcrumbNav.module.css";
 
 interface BreadcrumbSegments {
@@ -16,8 +17,10 @@ interface BreadcrumbNavProps {
 }
 
 export default function BreadcrumbNav({ segments, onNavigate }: BreadcrumbNavProps) {
+  const { t } = useTranslation();
+
   return (
-    <div className={styles.breadcrumb}>
+    <nav className={styles.breadcrumb} aria-label={t("fileManager.path")}>
       {segments.map((seg, i) => {
         const current = i === segments.length - 1;
         return (
@@ -39,6 +42,6 @@ export default function BreadcrumbNav({ segments, onNavigate }: BreadcrumbNavPro
           </span>
         );
       })}
-    </div>
+    </nav>
   );
 }
