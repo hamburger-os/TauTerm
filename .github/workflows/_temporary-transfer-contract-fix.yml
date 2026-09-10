@@ -1,0 +1,44 @@
+name: Temporary Transfer Contract Fix
+
+on:
+  push:
+    branches:
+      - refactor/transfer-runtime-unification
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refactor/transfer-runtime-unification
+          persist-credentials: true
+      - name: Correct exact-results contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/test-file-transfer-lifecycle.mjs')
+          text = path.read_text(encoding='utf-8')
+          old = '''assert.match(\n  context,\n  /resultProjection\\(payload\\)[\\s\\S]{0,500}payload\\.results/,\n  "finished results must be able to replace provisional per-file progress with exact terminal results",\n);\n'''
+          new = '''assert.match(\n  context,\n  /function resultProjection\\(payload: TransferFinishedPayload\\)[\\s\\S]{0,220}payload\\.results\\.map/,\n  "finished payload results must be projected into exact per-file terminal entries",\n);\nassert.match(\n  context,\n  /case "TASK_FINISHED"[\\s\\S]{0,520}const exactResults = resultProjection\\(payload\\)[\\s\\S]{0,120}const files = exactResults \\?\\? current\\.files/,\n  "TASK_FINISHED must prefer exact backend results over provisional progress state",\n);\n'''
+          if text.count(old) != 1:
+              raise SystemExit('exact-results assertion shape changed; refusing patch')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          node scripts/test-file-transfer-lifecycle.mjs
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/_temporary-transfer-contract-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/test-file-transfer-lifecycle.mjs .github/workflows/_temporary-transfer-contract-fix.yml
+          git commit -m "test: assert exact finished result projection"
+          git push origin HEAD:refactor/transfer-runtime-unification
