@@ -331,6 +331,11 @@ assert.match(
 );
 assert.doesNotMatch(panel, /TEXT_EXTENSIONS|function isTextFile/);
 assert.match(panel, /ms\.handleRightClick\(entry\);/);
+assert.match(
+  panel,
+  /if \(isConnected\) return;[\s\S]{0,220}resolveConflictPolicy\(null\)[\s\S]{0,180}closePreview\(\)/,
+  "disconnect must close transient FileManager UI and resolve any pending conflict decision",
+);
 assert.match(panel, /name === "\." \|\| name === "\.\."/);
 assert.match(panel, /name\.includes\("\/"\)/);
 
@@ -563,6 +568,7 @@ assert.match(contextMenu, /case "ArrowUp"/);
 assert.match(contextMenu, /case "Home"/);
 assert.match(contextMenu, /case "End"/);
 assert.match(contextMenu, /useReducedMotion/);
+assert.match(contextMenu, /if \(adjustedY < 0\) adjustedY = 8/);
 assert.match(
   contextMenu,
   /querySelector<HTMLButtonElement>\('button\[role="menuitem"\]:not\(:disabled\)'\)/,
