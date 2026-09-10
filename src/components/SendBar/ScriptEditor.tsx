@@ -53,22 +53,32 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
   const [importOpen, setImportOpen] = useState(false);
   const [importData, setImportData] = useState<ScriptImport | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
+  const transitionAttemptRef = useRef(0);
+  const runtimeLocked = isRunning || isTransitioning;
 
   const activeScript = scripts.find(script => script.id === activeScriptId);
   const isDirty = activeScript != null && code !== activeScript.code;
 
-  // 会话断开时自动停止脚本引擎
+  useEffect(() => {
+    return () => {
+      transitionAttemptRef.current += 1;
+    };
+  }, []);
+
+  // 会话断开时使任何启动尝试失效，并释放当前运行态。
   useEffect(() => {
     const unlisten = listen<{ session_id: string }>("session-disconnected", event => {
-      if (event.payload.session_id === sessionId && isRunning) {
-        dispatch({ type: "SET_SCRIPT_RUNNING", running: false });
-        onRunningChange?.(false);
-      }
+      if (event.payload.session_id !== sessionId) return;
+      transitionAttemptRef.current += 1;
+      if (isTransitioning) setIsTransitioning(false);
+      if (isRunning) dispatch({ type: "SET_SCRIPT_RUNNING", running: false });
+      if (isTransitioning || isRunning) onRunningChange?.(false);
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [sessionId, isRunning, dispatch, onRunningChange]);
+  }, [sessionId, isRunning, isTransitioning, dispatch, onRunningChange]);
 
   useEffect(() => {
     if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight;
@@ -79,8 +89,7 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     return persistAsset(ASSET_KEYS.scripts, updated);
   }, [dispatch]);
 
-  // Active selection is a local session concern. The persisted key is only a default for newly
-  // mounted SendBars; other mounted sessions no longer subscribe to it.
+  // Active selection is session-local; this key is only the default for a newly mounted session.
   const persistActive = useCallback((id: string | null) => {
     dispatch({ type: "SET_ACTIVE_SCRIPT", id });
     return id
@@ -90,14 +99,14 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
 
   // ── 脚本管理 ──
   const handleSelectScript = useCallback((id: string) => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     void persistActive(id);
     const script = scripts.find(item => item.id === id);
     if (script) dispatch({ type: "SET_SCRIPT_CODE", code: script.code });
-  }, [isRunning, scripts, dispatch, persistActive]);
+  }, [runtimeLocked, scripts, dispatch, persistActive]);
 
   const handleNewScript = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const names = new Set(scripts.map(script => script.name));
     let index = scripts.length + 1;
     let name = t("sendBar.newScriptName", { n: index });
@@ -110,16 +119,16 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     void persistScripts([...scripts, script]);
     void persistActive(script.id);
     dispatch({ type: "SET_SCRIPT_CODE", code: script.code });
-  }, [isRunning, scripts, persistScripts, persistActive, dispatch, t]);
+  }, [runtimeLocked, scripts, persistScripts, persistActive, dispatch, t]);
 
   const handleRenameScript = useCallback(() => {
-    if (isRunning || !activeScriptId) return;
+    if (runtimeLocked || !activeScriptId) return;
     setRenameValue(activeScript?.name || "");
     setRenameOpen(true);
-  }, [isRunning, activeScriptId, activeScript]);
+  }, [runtimeLocked, activeScriptId, activeScript]);
 
   const handleConfirmRename = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const newName = renameValue.trim();
     if (!newName || newName === activeScript?.name) {
       setRenameOpen(false);
@@ -135,19 +144,19 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     );
     void persistScripts(updated);
     setRenameOpen(false);
-  }, [isRunning, renameValue, activeScript, activeScriptId, scripts, persistScripts, showToast, t]);
+  }, [runtimeLocked, renameValue, activeScript, activeScriptId, scripts, persistScripts, showToast, t]);
 
   const handleCancelRename = useCallback(() => setRenameOpen(false), []);
 
   const handleDeleteScript = useCallback(() => {
-    if (isRunning || !activeScriptId) return;
+    if (runtimeLocked || !activeScriptId) return;
     const updated = scripts.filter(script => script.id !== activeScriptId);
     void persistScripts(updated);
     const next = updated[0];
     void persistActive(next?.id || null);
     dispatch({ type: "SET_SCRIPT_CODE", code: next?.code || "" });
     setScriptDeleteConfirm(false);
-  }, [isRunning, activeScriptId, scripts, persistScripts, persistActive, dispatch]);
+  }, [runtimeLocked, activeScriptId, scripts, persistScripts, persistActive, dispatch]);
 
   useEffect(() => {
     setScriptDeleteConfirm(false);
@@ -155,20 +164,19 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
 
   // ── 代码编辑 ──
   const handleCodeChange = useCallback((newCode: string) => {
-    if (!isRunning) dispatch({ type: "SET_SCRIPT_CODE", code: newCode });
-  }, [isRunning, dispatch]);
+    if (!runtimeLocked) dispatch({ type: "SET_SCRIPT_CODE", code: newCode });
+  }, [runtimeLocked, dispatch]);
 
   const handleSave = useCallback(async () => {
-    if (isRunning || !activeScriptId) return false;
+    if (runtimeLocked || !activeScriptId) return false;
     const updated = scripts.map(script =>
       script.id === activeScriptId ? { ...script, code, updatedAt: Date.now() } : script,
     );
     return persistScripts(updated);
-  }, [isRunning, activeScriptId, code, scripts, persistScripts]);
+  }, [runtimeLocked, activeScriptId, code, scripts, persistScripts]);
 
-  // Ctrl+S — 仅在脚本面板活跃且未运行时生效
   useEffect(() => {
-    if (!isActive || isRunning) return;
+    if (!isActive || runtimeLocked) return;
     const handler = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -177,38 +185,70 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [handleSave, isActive, isRunning]);
+  }, [handleSave, isActive, runtimeLocked]);
 
   // ── 执行控制 ──
   const handleStart = useCallback(async () => {
-    if (isRunning || !isConnected || !code.trim()) return;
-    await handleSave();
+    if (runtimeLocked || !isConnected || !code.trim()) return;
+
+    const attempt = transitionAttemptRef.current + 1;
+    transitionAttemptRef.current = attempt;
+    setIsTransitioning(true);
+    onRunningChange?.(true);
+    setRenameOpen(false);
+    setImportOpen(false);
+    setImportData(null);
+    setScriptDeleteConfirm(false);
+
+    let started = false;
     try {
-      // Runtime is an immutable snapshot. Editing controls are locked until stop/disconnect.
+      // Save the exact runtime snapshot without calling handleSave: the transition lock is already
+      // active and must stay active across this first asynchronous persistence boundary.
+      if (activeScriptId) {
+        const updated = scripts.map(script =>
+          script.id === activeScriptId ? { ...script, code, updatedAt: Date.now() } : script,
+        );
+        await persistScripts(updated);
+      }
+      if (transitionAttemptRef.current !== attempt) return;
+
       await invoke("start_script_engine", { sessionId, code });
+      if (transitionAttemptRef.current !== attempt) {
+        void invoke("stop_script_engine", { sessionId }).catch(() => undefined);
+        return;
+      }
+
       dispatch({ type: "SET_SCRIPT_RUNNING", running: true });
-      onRunningChange?.(true);
-      setRenameOpen(false);
-      setImportOpen(false);
-      setImportData(null);
-      setScriptDeleteConfirm(false);
-    } catch (e) {
-      dispatch({ type: "APPEND_SCRIPT_LOG", message: `[Error] ${e}` });
+      started = true;
+    } catch (error) {
+      if (transitionAttemptRef.current === attempt) {
+        dispatch({ type: "APPEND_SCRIPT_LOG", message: `[Error] ${String(error)}` });
+      }
+    } finally {
+      if (transitionAttemptRef.current === attempt) {
+        setIsTransitioning(false);
+        if (!started) onRunningChange?.(false);
+      }
     }
-  }, [isRunning, isConnected, code, sessionId, dispatch, onRunningChange, handleSave]);
+  }, [runtimeLocked, isConnected, code, activeScriptId, scripts, persistScripts, sessionId, dispatch, onRunningChange]);
 
   const handleStop = useCallback(async () => {
+    if (!isRunning || isTransitioning) return;
+    setIsTransitioning(true);
     try {
       await invoke("stop_script_engine", { sessionId });
       dispatch({ type: "SET_SCRIPT_RUNNING", running: false });
+      setIsTransitioning(false);
       onRunningChange?.(false);
-    } catch (e) {
-      dispatch({ type: "APPEND_SCRIPT_LOG", message: `[Error] ${e}` });
+    } catch (error) {
+      setIsTransitioning(false);
+      dispatch({ type: "APPEND_SCRIPT_LOG", message: `[Error] ${String(error)}` });
     }
-  }, [sessionId, dispatch, onRunningChange]);
+  }, [sessionId, isRunning, isTransitioning, dispatch, onRunningChange]);
 
   // ── 导入/导出 ──
   const handleExportJSON = useCallback(() => {
+    if (runtimeLocked) return;
     const script = activeScript;
     if (!script) return;
     const json = JSON.stringify(script, null, 2);
@@ -219,9 +259,10 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     anchor.download = `${(script.name || "script").replace(/\s+/g, "_")}.tauterm-script.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [activeScript]);
+  }, [runtimeLocked, activeScript]);
 
   const handleExportLua = useCallback(() => {
+    if (runtimeLocked) return;
     const script = activeScript;
     if (!script) return;
     const blob = new Blob([script.code], { type: "text/plain" });
@@ -231,10 +272,10 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     anchor.download = `${(script.name || "script").replace(/\s+/g, "_")}.lua`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [activeScript]);
+  }, [runtimeLocked, activeScript]);
 
   const handleLoadBuiltinExamples = useCallback(async () => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const existingIds = new Set(scripts.map(script => script.id));
     const newBuiltins = BUILTIN_SCRIPTS.filter(script => !existingIds.has(script.id));
     if (newBuiltins.length === 0) {
@@ -244,10 +285,10 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     if (await persistScripts([...scripts, ...newBuiltins])) {
       showToast("success", t("sendBar.builtinScriptsLoaded", { count: newBuiltins.length }));
     }
-  }, [isRunning, scripts, persistScripts, showToast, t]);
+  }, [runtimeLocked, scripts, persistScripts, showToast, t]);
 
   const handleImport = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json,.lua,.txt";
@@ -264,15 +305,15 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
           setImportData({ name, code: text });
         }
         setImportOpen(true);
-      } catch (err) {
-        showToast("error", `${t("sendBar.importScriptFailed")}: ${String(err)}`);
+      } catch (error) {
+        showToast("error", `${t("sendBar.importScriptFailed")}: ${String(error)}`);
       }
     };
     input.click();
-  }, [isRunning, showToast, t]);
+  }, [runtimeLocked, showToast, t]);
 
   const handleImportOverwrite = useCallback(async () => {
-    if (isRunning || !importData || !activeScriptId) return;
+    if (runtimeLocked || !importData || !activeScriptId) return;
     const name = uniqueAssetName(
       importData.name,
       scripts.filter(script => script.id !== activeScriptId).map(script => script.name),
@@ -288,10 +329,10 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
     setImportOpen(false);
     setImportData(null);
     if (saved) showToast("success", t("sendBar.importScriptSuccess"));
-  }, [isRunning, importData, activeScriptId, scripts, persistScripts, dispatch, showToast, t]);
+  }, [runtimeLocked, importData, activeScriptId, scripts, persistScripts, dispatch, showToast, t]);
 
   const handleImportAppend = useCallback(async () => {
-    if (isRunning || !importData) return;
+    if (runtimeLocked || !importData) return;
     const now = Date.now();
     const newScript: ScriptRecord = {
       id: makeId(),
@@ -300,44 +341,41 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
       createdAt: now,
       updatedAt: now,
     };
-    const [savedScripts, savedActive] = await Promise.all([
-      persistScripts([...scripts, newScript]),
-      persistActive(newScript.id),
-    ]);
+    const savedScripts = await persistScripts([...scripts, newScript]);
+    if (!savedScripts) return;
+    const savedActive = await persistActive(newScript.id);
     dispatch({ type: "SET_SCRIPT_CODE", code: newScript.code });
     setImportOpen(false);
     setImportData(null);
-    if (savedScripts && savedActive) {
-      showToast("success", t("sendBar.importScriptSuccess"));
-    }
-  }, [isRunning, importData, scripts, persistScripts, persistActive, dispatch, showToast, t]);
+    if (savedActive) showToast("success", t("sendBar.importScriptSuccess"));
+  }, [runtimeLocked, importData, scripts, persistScripts, persistActive, dispatch, showToast, t]);
 
   const lineCount = code.split("\n").length;
 
   return (
-    <div className={styles.panel}>
+    <div className={styles.panel} aria-busy={isTransitioning || undefined}>
       <div className={styles.toolbar}>
         <div className={styles.configActions}>
           <select
             className={`${styles.scriptSelect} liquid-glass-input liquid-glass-select`}
             value={activeScriptId || ""}
             onChange={event => handleSelectScript(event.target.value)}
-            disabled={isRunning}
+            disabled={runtimeLocked}
           >
             {scripts.map(script => (
               <option key={script.id} value={script.id}>{script.name}</option>
             ))}
           </select>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleNewScript} title={t("sendBar.new")} disabled={isRunning}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleNewScript} title={t("sendBar.new")} disabled={runtimeLocked}>
             <Icon name="plus" size="sm" />
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleRenameScript} title={t("sendBar.rename")} disabled={isRunning || !activeScriptId}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleRenameScript} title={t("sendBar.rename")} disabled={runtimeLocked || !activeScriptId}>
             <Icon name="edit" size="sm" />
           </button>
           <button
             className={`${styles.toolBtn} liquid-glass-button`}
             onClick={() => setScriptDeleteConfirm(true)}
-            disabled={isRunning || !activeScriptId}
+            disabled={runtimeLocked || !activeScriptId}
             title={t("sendBar.delete")}
           >
             <Icon name="trash" size="sm" />
@@ -347,19 +385,19 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
           <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => setHelpOpen(true)} title={t("sendBar.helpTitle")}>
             {t("sendBar.help")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleLoadBuiltinExamples} title={t("sendBar.loadBuiltinScripts")} disabled={isRunning}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => { void handleLoadBuiltinExamples(); }} title={t("sendBar.loadBuiltinScripts")} disabled={runtimeLocked}>
             {t("sendBar.loadBuiltinScripts")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleExportJSON} disabled={!activeScriptId} title={t("sendBar.exportScriptJSON")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleExportJSON} disabled={runtimeLocked || !activeScriptId} title={t("sendBar.exportScriptJSON")}>
             {t("sendBar.exportScriptJSON")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleExportLua} disabled={!activeScriptId} title={t("sendBar.exportScriptLua")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleExportLua} disabled={runtimeLocked || !activeScriptId} title={t("sendBar.exportScriptLua")}>
             {t("sendBar.exportScriptLua")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleImport} title={t("sendBar.importScript")} disabled={isRunning}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleImport} title={t("sendBar.importScript")} disabled={runtimeLocked}>
             {t("sendBar.importScript")}
           </button>
-          <button className={`${styles.saveBtn} liquid-glass-button`} onClick={() => { void handleSave(); }} disabled={isRunning || !isDirty} title={t("sendBar.save")}>
+          <button className={`${styles.saveBtn} liquid-glass-button`} onClick={() => { void handleSave(); }} disabled={runtimeLocked || !isDirty} title={t("sendBar.save")}>
             {t("sendBar.save")}
           </button>
         </div>
@@ -382,8 +420,8 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
               onChange={event => handleCodeChange(event.target.value)}
               placeholder={t("sendBar.scriptPlaceholder")}
               spellCheck={false}
-              readOnly={isRunning}
-              aria-readonly={isRunning}
+              readOnly={runtimeLocked}
+              aria-readonly={runtimeLocked}
             />
           </div>
 
@@ -425,18 +463,18 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
         </span>
         <div className={styles.controlBtns}>
           {!isRunning ? (
-            <button className={`${styles.startBtn} liquid-primary-button`} onClick={() => { void handleStart(); }} disabled={!isConnected || !code.trim()}>
+            <button className={`${styles.startBtn} liquid-primary-button`} onClick={() => { void handleStart(); }} disabled={runtimeLocked || !isConnected || !code.trim()}>
               <Icon name="play" size="xs" /> {t("commandPanel.start")}
             </button>
           ) : (
-            <button className={styles.stopBtn} onClick={() => { void handleStop(); }}>
+            <button className={styles.stopBtn} onClick={() => { void handleStop(); }} disabled={isTransitioning}>
               <Icon name="stop" size="xs" /> {t("commandPanel.stopExecution")}
             </button>
           )}
         </div>
       </div>
 
-      {renameOpen && createPortal(
+      {renameOpen && !runtimeLocked && createPortal(
         <div className={`${styles.modalOverlay} glass-overlay`} onClick={handleCancelRename}>
           <div className={`${styles.renameModal} liquid-glass`} onClick={event => event.stopPropagation()}>
             <h3 className={styles.renameTitle}>{t("sendBar.renameTitle")}</h3>
@@ -467,7 +505,7 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
 
       <LuaHelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
 
-      {importOpen && importData && createPortal(
+      {importOpen && importData && !runtimeLocked && createPortal(
         <div className={`${styles.modalOverlay} glass-overlay`} onClick={() => { setImportOpen(false); setImportData(null); }}>
           <div className={`${styles.renameModal} liquid-glass`} onClick={event => event.stopPropagation()}>
             <h3 className={styles.renameTitle}>{t("sendBar.importScriptConfirmTitle")}</h3>
@@ -492,7 +530,7 @@ export default function ScriptEditor({ sessionId, isActive, onRunningChange }: S
       )}
 
       <ConfirmDialog
-        open={scriptDeleteConfirm}
+        open={scriptDeleteConfirm && !runtimeLocked}
         title={t("sendBar.confirmDeleteScript")}
         message={activeScript?.name}
         intent="danger"
