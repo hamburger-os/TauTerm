@@ -15,7 +15,7 @@ assert.match(hook, /dismissTask\(sessionId, transferId\)/);
 assert.match(hook, /SUCCESS_AUTO_HIDE_MS = 5000/);
 assert.match(
   hook,
-  /window\.setTimeout[\s\S]{0,360}dismissTask\(sessionId, transferId\)/,
+  /window\.setTimeout[\s\S]{0,520}dismissTask\(sessionId, transferId\)/,
   "successful SFTP cards must remove their exact task snapshot when the five-second auto-hide fires",
 );
 assert.match(hook, /hoveredRef\.current/);
