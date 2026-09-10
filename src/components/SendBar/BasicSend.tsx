@@ -6,6 +6,7 @@ import { useToast } from "../../context/ToastContext";
 import Icon from "../common/Icon";
 import type { NewlineMode } from "./types";
 import { useSendBar } from "./SendBarContext";
+import { buildSendPayload, isHexInputValid } from "./sendPayload";
 import styles from "./BasicSend.module.css";
 
 interface BasicSendProps {
@@ -14,18 +15,12 @@ interface BasicSendProps {
   onSendingChange?: (sending: boolean) => void;
 }
 
-const NEWLINE_MAP: Record<NewlineMode, string> = {
-  crlf: "\r\n",
-  lf: "\n",
-  cr: "\r",
-  none: "",
-};
-
 /**
  * 基础发送面板
  *
  * 支持文本/HEX 输入、换行符追加、重复发送、发送历史。
- * 从原 SendBar.tsx 提取，逻辑保持不变。
+ * 手动发送与重复发送共用同一 payload 编码入口；重复发送严格串行，
+ * 下一次发送仅在上一次 sendToTarget 完成后才开始计时。
  */
 export default function BasicSend({ sessionId, isActive, onSendingChange }: BasicSendProps) {
   const { t } = useTranslation();
@@ -46,92 +41,95 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const repeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const repeatRunIdRef = useRef(0);
   const historyBtnRef = useRef<HTMLButtonElement>(null);
-  const inputRefForInterval = useRef(inputText);
-  inputRefForInterval.current = inputText;
+  const inputRefForRepeat = useRef(inputText);
+  inputRefForRepeat.current = inputText;
 
   // 网络调试对端经 peerSessions 注册表判定；普通会话走 tabs
   const isConnected = isSessionConnected(sessionId);
 
-  const isHexValid = (value: string): boolean => {
-    const hex = value.replace(/\s/g, "");
-    return hex.length > 0 && hex.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(hex);
-  };
+  const doSend = useCallback(async () => {
+    if (!isConnected) return;
+    const currentInput = inputRefForRepeat.current;
+    const data = buildSendPayload(currentInput, sendMode, newlineMode);
+    if (data === null) return;
 
-  const doSend = useCallback(() => {
-    const currentInput = inputRefForInterval.current;
-    if (!currentInput.trim() && sendMode === "text") return;
-
-    let data: string | Uint8Array;
-    if (sendMode === "hex") {
-      const hex = currentInput.replace(/\s/g, "");
-      if (hex.length === 0 || hex.length % 2 !== 0) return;
-      if (!/^[0-9a-fA-F]+$/.test(hex)) return;
-      const len = hex.length / 2;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-      }
-      data = bytes;
-    } else {
-      data = currentInput + NEWLINE_MAP[newlineMode];
-    }
-
-    // 统一发送路由：网络容器按当前目标路由，非网络会话走默认 sendData
-    sendToTarget(sessionId, data).catch((e) => {
+    try {
+      await sendToTarget(sessionId, data);
+      dispatch({ type: "ADD_SEND_HISTORY", entry: currentInput });
+    } catch (e) {
       showToast("error", String(e));
-    });
-
-    dispatch({ type: "ADD_SEND_HISTORY", entry: currentInput });
-
-    inputRef.current?.focus();
-  }, [newlineMode, sendMode, sessionId, sendToTarget, showToast, dispatch]);
-
-  const doIntervalSend = useCallback(() => {
-    const currentInput = inputRefForInterval.current;
-    if (!currentInput.trim() && sendMode === "text") return;
-
-    let data: string | Uint8Array;
-    if (sendMode === "hex") {
-      const hex = currentInput.replace(/\s/g, "");
-      if (hex.length === 0 || hex.length % 2 !== 0) return;
-      if (!/^[0-9a-fA-F]+$/.test(hex)) return;
-      const len = hex.length / 2;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-      }
-      data = bytes;
-    } else {
-      data = currentInput + NEWLINE_MAP[newlineMode];
+    } finally {
+      inputRef.current?.focus();
     }
+  }, [isConnected, newlineMode, sendMode, sessionId, sendToTarget, showToast, dispatch]);
 
-    // 统一发送路由：网络容器按当前目标路由，非网络会话走默认 sendData
-    sendToTarget(sessionId, data).catch((e) => {
-      showToast("error", String(e));
-    });
-
-    dispatch({ type: "ADD_SEND_HISTORY", entry: currentInput });
-  }, [newlineMode, sendMode, sessionId, sendToTarget, showToast, dispatch]);
-
-  // 重复发送定时器
+  // 重复发送：使用 self-scheduling timeout 保证背压。底层写入未完成时绝不重叠发送。
   useEffect(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    repeatRunIdRef.current += 1;
+    const runId = repeatRunIdRef.current;
+
+    if (repeatTimerRef.current) {
+      clearTimeout(repeatTimerRef.current);
+      repeatTimerRef.current = null;
     }
-    if (!isActive || !isConnected) return;
-    const hasValidInput = sendMode === "hex"
-      ? isHexValid(inputRefForInterval.current)
-      : inputRefForInterval.current.trim().length > 0;
-    if (repeatEnabled && repeatInterval >= 50 && hasValidInput) {
-      intervalRef.current = setInterval(doIntervalSend, repeatInterval);
+
+    if (!isActive || !isConnected || !repeatEnabled || repeatInterval < 50) return;
+
+    const initialPayload = buildSendPayload(inputRefForRepeat.current, sendMode, newlineMode);
+    if (initialPayload !== null) {
+      dispatch({ type: "ADD_SEND_HISTORY", entry: inputRefForRepeat.current });
     }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+
+    const scheduleNext = () => {
+      if (repeatRunIdRef.current !== runId) return;
+      repeatTimerRef.current = setTimeout(() => { void sendOnce(); }, repeatInterval);
     };
-  }, [isActive, isConnected, repeatEnabled, repeatInterval, sendMode]);
+
+    const sendOnce = async () => {
+      if (repeatRunIdRef.current !== runId) return;
+      const currentInput = inputRefForRepeat.current;
+      const data = buildSendPayload(currentInput, sendMode, newlineMode);
+
+      if (data !== null) {
+        try {
+          await sendToTarget(sessionId, data);
+        } catch (e) {
+          if (repeatRunIdRef.current === runId) {
+            repeatRunIdRef.current += 1;
+            dispatch({ type: "SET_REPEAT_ENABLED", enabled: false });
+            showToast("error", String(e));
+          }
+          return;
+        }
+      }
+
+      scheduleNext();
+    };
+
+    scheduleNext();
+
+    return () => {
+      if (repeatRunIdRef.current === runId) repeatRunIdRef.current += 1;
+      if (repeatTimerRef.current) {
+        clearTimeout(repeatTimerRef.current);
+        repeatTimerRef.current = null;
+      }
+    };
+  }, [
+    isActive,
+    isConnected,
+    repeatEnabled,
+    repeatInterval,
+    sendMode,
+    newlineMode,
+    sessionId,
+    sendToTarget,
+    showToast,
+    dispatch,
+  ]);
 
   // 断开会话时重置
   const prevConnectedRef = useRef(isConnected);
@@ -158,7 +156,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
-      doSend();
+      void doSend();
     }
   }, [doSend]);
 
@@ -166,8 +164,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     if (sendMode === "hex") {
-      const filtered = val.replace(/[^0-9a-fA-F\s]/g, "");
-      dispatch({ type: "SET_INPUT_TEXT", text: filtered });
+      dispatch({ type: "SET_INPUT_TEXT", text: val.replace(/[^0-9a-fA-F\s]/g, "") });
     } else {
       dispatch({ type: "SET_INPUT_TEXT", text: val });
     }
@@ -189,17 +186,15 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
         const gap = 4;
         const spaceAbove = rect.top - gap;
         const spaceBelow = window.innerHeight - rect.bottom - gap;
-        // 优先选空间大的方向
         const openAbove = spaceAbove >= maxDropdownH || spaceAbove >= spaceBelow;
-
         const availableH = openAbove ? spaceAbove : spaceBelow;
-        const maxH = Math.min(maxDropdownH, availableH);
+        const maxH = Math.max(0, Math.min(maxDropdownH, availableH));
+        const left = Math.max(8, Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8));
 
         setDropdownStyle({
           position: "fixed",
-          left: Math.min(rect.right - dropdownWidth, window.innerWidth - dropdownWidth - 8),
+          left,
           maxHeight: maxH,
-          // 向上打开：用 bottom 对齐按钮上方；向下打开：用 top 对齐按钮下方
           ...(openAbove
             ? { bottom: window.innerHeight - rect.top + gap }
             : { top: rect.bottom + gap }),
@@ -226,7 +221,6 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
 
   return (
     <div className={styles.basicSend}>
-      {/* 输入区域 */}
       <div className={styles.inputArea}>
         <textarea
           ref={inputRef}
@@ -236,7 +230,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
           onKeyDown={handleKeyDown}
           placeholder={
             isConnected
-              ? sendMode === "hex" ? "FF 01 02..." : (t("sendBar.placeholder"))
+              ? sendMode === "hex" ? "FF 01 02..." : t("sendBar.placeholder")
               : t("sendBar.disconnected")
           }
           disabled={!isConnected}
@@ -245,9 +239,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
         />
       </div>
 
-      {/* 底部单行控件栏 */}
       <div className={styles.controls}>
-        {/* ── 组1: 数据格式 ── */}
         <div className={styles.dropdown}>
           <select
             className={`${styles.select} liquid-glass-input liquid-glass-select`}
@@ -276,7 +268,6 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
 
         <div className={styles.groupSep} />
 
-        {/* ── 组2: 循环发送 ── */}
         <label className="liquid-glass-toggle" title={t("sendBar.repeatSend")}>
           <input
             type="checkbox"
@@ -292,7 +283,7 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
             type="number"
             className={`${styles.intervalInput} liquid-glass-input`}
             value={repeatInterval}
-            onChange={(e) => dispatch({ type: "SET_REPEAT_INTERVAL", ms: Math.max(50, Number(e.target.value)) })}
+            onChange={(e) => dispatch({ type: "SET_REPEAT_INTERVAL", ms: Math.max(50, Number(e.target.value) || 50) })}
             min={50}
             step={100}
             title={t("sendBar.interval")}
@@ -304,7 +295,6 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
 
         <div className={styles.groupSep} />
 
-        {/* ── 组3: 发送操作 ── */}
         <div className={styles.historyWrap}>
           <button
             ref={historyBtnRef}
@@ -337,8 +327,8 @@ export default function BasicSend({ sessionId, isActive, onSendingChange }: Basi
 
         <button
           className={`${styles.sendBtn} liquid-primary-button`}
-          onClick={doSend}
-          disabled={!isConnected || (sendMode === "text" && !inputText.trim()) || (sendMode === "hex" && !isHexValid(inputText))}
+          onClick={() => { void doSend(); }}
+          disabled={!isConnected || (sendMode === "text" && !inputText.trim()) || (sendMode === "hex" && !isHexInputValid(inputText))}
         >
           {t("sendBar.send")}
         </button>
