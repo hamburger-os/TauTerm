@@ -73,9 +73,9 @@ impl TransferScheduler {
     }
 
     fn has_inline_transfer(&self) -> bool {
-        self.active.values().any(|transfer| {
-            matches!(&transfer.cancel, TransferCancelSignal::Inline(_))
-        })
+        self.active
+            .values()
+            .any(|transfer| matches!(&transfer.cancel, TransferCancelSignal::Inline(_)))
     }
 
     fn ensure_side_channel_capacity(&self) -> Result<(), String> {
