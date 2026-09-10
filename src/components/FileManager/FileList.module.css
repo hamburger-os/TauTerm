@@ -33,6 +33,13 @@
 
 /* ── 列标题 ───────────────────────────── */
 
+.gridFrame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .header {
   display: flex;
   align-items: center;
