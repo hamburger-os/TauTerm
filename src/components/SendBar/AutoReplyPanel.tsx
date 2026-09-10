@@ -60,6 +60,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
   const [importOpen, setImportOpen] = useState(false);
   const [logExpanded, setLogExpanded] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const transitionAttemptRef = useRef(0);
   const runtimeLocked = isRunning || isLoading;
 
   const activeConfig = useMemo(
@@ -70,6 +71,12 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     () => rules.find(rule => rule.id === deleteConfirmId) ?? null,
     [rules, deleteConfirmId],
   );
+
+  useEffect(() => {
+    return () => {
+      transitionAttemptRef.current += 1;
+    };
+  }, []);
 
   // Runtime uses a generated Lua snapshot. While starting/running, keep the visible rule set frozen.
   useEffect(() => {
@@ -86,15 +93,17 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     setDeleteConfirmId(null);
   }, [activeConfigName]);
 
+  // A disconnect invalidates a pending start attempt as well as an already running engine.
   useEffect(() => {
     const unlisten = listen<{ session_id: string }>("session-disconnected", event => {
-      if (event.payload.session_id === sessionId && isRunning) {
-        dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: false });
-        onRunningChange?.(false);
-      }
+      if (event.payload.session_id !== sessionId) return;
+      transitionAttemptRef.current += 1;
+      if (isLoading) setIsLoading(false);
+      if (isRunning) dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: false });
+      if (isLoading || isRunning) onRunningChange?.(false);
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [sessionId, isRunning, dispatch, onRunningChange]);
+  }, [sessionId, isLoading, isRunning, dispatch, onRunningChange]);
 
   useEffect(() => {
     const lastMsg = scriptLogs[scriptLogs.length - 1];
@@ -252,8 +261,8 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
   const handleStart = useCallback(async () => {
     if (runtimeLocked || !isConnected) return;
 
-    // Lock the parent mode before the first async boundary. Otherwise the panel could unmount while
-    // rules_to_script/start_script_engine is still pending and later report a stale running state.
+    const attempt = transitionAttemptRef.current + 1;
+    transitionAttemptRef.current = attempt;
     setIsLoading(true);
     onRunningChange?.(true);
     setEditorOpen(false);
@@ -264,35 +273,53 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     setDeleteConfirmId(null);
     setConfigDeleteConfirm(false);
 
+    let started = false;
     try {
       const code: string = await invoke("rules_to_script", {
         rules: rules.filter(rule => rule.enabled),
         name: activeConfigName,
         matchStrategy,
       });
+      if (transitionAttemptRef.current !== attempt) return;
+
       await invoke("start_script_engine", { sessionId, code });
+      if (transitionAttemptRef.current !== attempt) {
+        void invoke("stop_script_engine", { sessionId }).catch(() => undefined);
+        return;
+      }
+
       dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: true });
-    } catch (e) {
-      onRunningChange?.(false);
-      console.error("Failed to start auto-reply:", e);
-      showToast("error", `${t("sendBar.startFailed")}: ${String(e)}`);
+      started = true;
+    } catch (error) {
+      if (transitionAttemptRef.current === attempt) {
+        console.error("Failed to start auto-reply:", error);
+        showToast("error", `${t("sendBar.startFailed")}: ${String(error)}`);
+      }
     } finally {
-      setIsLoading(false);
+      if (transitionAttemptRef.current === attempt) {
+        setIsLoading(false);
+        if (!started) onRunningChange?.(false);
+      }
     }
   }, [runtimeLocked, isConnected, rules, activeConfigName, matchStrategy, sessionId, dispatch, onRunningChange, showToast, t]);
 
   const handleStop = useCallback(async () => {
     if (!isRunning || isLoading) return;
+    const attempt = transitionAttemptRef.current + 1;
+    transitionAttemptRef.current = attempt;
     setIsLoading(true);
     try {
       await invoke("stop_script_engine", { sessionId });
+      if (transitionAttemptRef.current !== attempt) return;
       dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: false });
-      onRunningChange?.(false);
-    } catch (e) {
-      console.error("Failed to stop auto-reply:", e);
-      showToast("error", `${t("sendBar.stopFailed")}: ${String(e)}`);
-    } finally {
       setIsLoading(false);
+      onRunningChange?.(false);
+    } catch (error) {
+      if (transitionAttemptRef.current === attempt) {
+        setIsLoading(false);
+        console.error("Failed to stop auto-reply:", error);
+        showToast("error", `${t("sendBar.stopFailed")}: ${String(error)}`);
+      }
     }
   }, [sessionId, isRunning, isLoading, dispatch, onRunningChange, showToast, t]);
 
@@ -319,9 +346,9 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
       dispatch({ type: "SET_ACTIVE_SCRIPT", id: newScript.id });
       dispatch({ type: "SET_SCRIPT_CODE", code });
       dispatch({ type: "SET_MODE", mode: "script" });
-    } catch (e) {
-      console.error("Failed to convert to script:", e);
-      showToast("error", `${t("sendBar.convertFailed")}: ${String(e)}`);
+    } catch (error) {
+      console.error("Failed to convert to script:", error);
+      showToast("error", `${t("sendBar.convertFailed")}: ${String(error)}`);
     }
   }, [runtimeLocked, rules, scripts, activeConfigName, matchStrategy, dispatch, showToast, t]);
 
@@ -351,8 +378,8 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
       try {
         setImportData(parseAutoReplyConfig(JSON.parse(await file.text())));
         setImportOpen(true);
-      } catch (err) {
-        showToast("error", `${t("sendBar.importFailed")}: ${String(err)}`);
+      } catch (error) {
+        showToast("error", `${t("sendBar.importFailed")}: ${String(error)}`);
       }
     };
     input.click();
