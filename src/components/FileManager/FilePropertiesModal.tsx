@@ -301,56 +301,60 @@ export default function FilePropertiesModal({
                 {canChmod && (
                   <div className={styles.fieldRow}>
                     <span className={styles.fieldLabel}>{t("fileManager.chmod")}</span>
-                    <div className={styles.chmodRow}>
-                      {chmodEditing ? (
-                        <>
-                          <input
-                            className={`${styles.chmodInput} liquid-glass-input`}
-                            type="text"
-                            value={chmodValue}
-                            maxLength={4}
-                            aria-label={t("fileManager.chmod")}
-                            onChange={(e) => {
-                              setChmodValue(e.target.value.replace(/[^0-7]/g, ""));
-                              setChmodError(null);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleChmodApply();
-                            }}
-                            autoFocus
-                          />
-                          <GlassButton
-                            type="button"
-                            size="sm"
-                            className={styles.chmodBtn}
-                            onClick={handleChmodApply}
-                          >
-                            {t("fileManager.apply")}
-                          </GlassButton>
-                          <GlassButton
-                            type="button"
-                            size="sm"
-                            className={styles.chmodBtn}
-                            onClick={cancelChmodEdit}
-                          >
-                            {t("fileManager.cancel")}
-                          </GlassButton>
-                        </>
-                      ) : (
-                        <>
-                          <code className={styles.fieldValueMono}>{chmodValue}</code>
-                          <GlassButton
-                            type="button"
-                            size="sm"
-                            className={styles.chmodBtn}
-                            onClick={() => setChmodEditing(true)}
-                          >
-                            {t("fileManager.edit")}
-                          </GlassButton>
-                        </>
+                    <div className={styles.chmodEditor}>
+                      <div className={styles.chmodRow}>
+                        {chmodEditing ? (
+                          <>
+                            <input
+                              className={`${styles.chmodInput} liquid-glass-input`}
+                              type="text"
+                              value={chmodValue}
+                              maxLength={4}
+                              aria-label={t("fileManager.chmod")}
+                              onChange={(e) => {
+                                setChmodValue(e.target.value.replace(/[^0-7]/g, ""));
+                                setChmodError(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleChmodApply();
+                              }}
+                              autoFocus
+                            />
+                            <GlassButton
+                              type="button"
+                              size="sm"
+                              className={styles.chmodBtn}
+                              onClick={handleChmodApply}
+                            >
+                              {t("fileManager.apply")}
+                            </GlassButton>
+                            <GlassButton
+                              type="button"
+                              size="sm"
+                              className={styles.chmodBtn}
+                              onClick={cancelChmodEdit}
+                            >
+                              {t("fileManager.cancel")}
+                            </GlassButton>
+                          </>
+                        ) : (
+                          <>
+                            <code className={styles.fieldValueMono}>{chmodValue}</code>
+                            <GlassButton
+                              type="button"
+                              size="sm"
+                              className={styles.chmodBtn}
+                              onClick={() => setChmodEditing(true)}
+                            >
+                              {t("fileManager.edit")}
+                            </GlassButton>
+                          </>
+                        )}
+                      </div>
+                      {chmodError && (
+                        <span className={styles.chmodError} role="alert">{chmodError}</span>
                       )}
                     </div>
-                    {chmodError && <span className={styles.chmodError} role="alert">{chmodError}</span>}
                   </div>
                 )}
               </div>
