@@ -39,7 +39,7 @@ interface SessionSidebarProps {
 export default function SessionSidebar({ onSelectSession, onEditSession, onSettingsClick, onNewSession }: SessionSidebarProps) {
   const { t } = useTranslation();
   const { state, switchTab, disconnect, deleteSession, reconnectSession, startSessionLog, stopSessionLog, loggingSessions, openChannel, closeChannel, selectNetworkPeer, disconnectNetworkPeer, clearNetworkPeer } = useSession();
-  const { state: splitLayout, sessionToPane, paneCount, selectPane } = useSplitLayout();
+  const { state: splitLayout, sessionToPane, paneCount, selectPane, clearPane } = useSplitLayout();
   const [search, setSearch] = useState("");
   const { menu, openMenu, openPeerMenu, closeMenu } = useContextMenu();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -210,7 +210,6 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     });
   }, []);
 
-  // 双击父节点：如果未展开则自动展开
   const handleParentSelect = useCallback((node: TreeNode) => {
     // 先展开（SSH connected 会话有子项 / 网络容器有对端时）
     if (node.children.length > 0 || node.peerChildren.length > 0) {
@@ -236,6 +235,18 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     switchTab(child.id);
     onSelectSession?.(child.id);
   }, [switchTab, onSelectSession]);
+
+  const handleDisplayedSessionDoubleClick = useCallback((
+    event: React.MouseEvent,
+    sessionId: string,
+    paneId: string | undefined,
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!paneId || paneId !== splitLayout.selectedPaneId) return;
+    if (splitLayout.assignments[paneId] !== sessionId) return;
+    clearPane(paneId);
+  }, [clearPane, splitLayout.assignments, splitLayout.selectedPaneId]);
 
   /** 网络对端：路由到容器 tab + 选中该对端（详情区/发送栏目标跟随） */
   const handlePeerChildSelect = useCallback((container: TabInfo, peerId: string) => {
@@ -473,7 +484,11 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                   className={`${styles.item} ${state.activeTabId === node.tab.id ? styles.active : ""}`}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => handleParentSelect(node)}
+                  onClick={(e) => {
+                    if (e.detail > 1) return;
+                    handleParentSelect(node);
+                  }}
+                  onDoubleClick={(e) => handleDisplayedSessionDoubleClick(e, node.tab.id, parentPaneId)}
                   onContextMenu={(e) => handleContextMenu(e, node.tab)}
                 >
                   <div className={styles.itemLeft}>
@@ -536,7 +551,11 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                         className={`${styles.childItem} ${state.activeTabId === child.id ? styles.active : ""}`}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={() => handleChildSelect(child)}
+                        onClick={(e) => {
+                          if (e.detail > 1) return;
+                          handleChildSelect(child);
+                        }}
+                        onDoubleClick={(e) => handleDisplayedSessionDoubleClick(e, child.id, childPaneId)}
                         onContextMenu={(e) => handleContextMenu(e, child)}
                       >
                         <div className={styles.itemLeft}>
