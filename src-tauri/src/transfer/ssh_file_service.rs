@@ -1601,6 +1601,14 @@ mod progress_tests {
         assert_eq!(rate.sample(1024), Some(sample));
     }
 
+    #[test]
+    fn permission_strings_preserve_posix_special_bits() {
+        assert_eq!(permissions_to_string(Some(0o104755)), "-rwsr-xr-x");
+        assert_eq!(permissions_to_string(Some(0o102755)), "-rwxr-sr-x");
+        assert_eq!(permissions_to_string(Some(0o101755)), "-rwxr-xr-t");
+        assert_eq!(permissions_to_string(Some(0o107000)), "---S--S--T");
+    }
+
     #[tokio::test]
     async fn local_keep_both_never_overwrites_existing_file() {
         let dir = tempfile::tempdir().expect("tempdir");
