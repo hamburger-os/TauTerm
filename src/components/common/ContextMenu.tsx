@@ -47,6 +47,7 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
     if (rect.right > vw) adjustedX = vw - rect.width - 8;
     if (rect.bottom > vh) adjustedY = vh - rect.height - 8;
     if (adjustedX < 0) adjustedX = 8;
+    if (adjustedY < 0) adjustedY = 8;
 
     if (adjustedX !== state.x || adjustedY !== state.y) {
       menuRef.current.style.left = `${adjustedX}px`;
