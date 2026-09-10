@@ -171,7 +171,7 @@ type SessionAction =
   | { type: "REMOVE_TAB"; id: string }
   | { type: "RENAME_TAB"; id: string; name: string }
   | { type: "REORDER_TABS"; ids: string[] }
-  | { type: "SET_ACTIVE"; id: string }
+  | { type: "SET_ACTIVE"; id: string | null }
   | { type: "SET_CONNECTION_TYPES"; types: ConnectionTypeInfo[] }
   | { type: "SET_ENDPOINTS"; endpoints: EndpointInfo[] }
   | { type: "REPLACE_ENDPOINTS_FOR_PLUGIN"; pluginId: string; endpoints: EndpointInfo[] }
@@ -518,7 +518,7 @@ interface SessionContextValue {
   disconnect: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
-  switchTab: (sessionId: string) => Promise<void>;
+  switchTab: (sessionId: string | null) => Promise<void>;
   renameTab: (sessionId: string, name: string) => Promise<void>;
   reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string, journaldEnabled?: boolean) => Promise<void>;
   /** 在已有 SSH 会话上打开新 channel */
@@ -919,7 +919,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const switchTab = useCallback(async (sessionId: string) => {
+  const switchTab = useCallback(async (sessionId: string | null) => {
+    if (sessionId === null) {
+      // Workspace 可以存在选中的空 Pane。空选择只属于前端 UI 上下文；后端切换命令
+      // 只接收真实运行时 Session，因此这里不发送伪 ID 或空字符串。
+      dispatch({ type: "SET_ACTIVE", id: null });
+      return;
+    }
+
     const tabs = tabsRef.current;
     const targetTab = tabs.find(tab => tab.id === sessionId);
     let resolvedSessionId = sessionId;
