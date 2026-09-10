@@ -1,11 +1,10 @@
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTransfer } from "../../context/TransferContext";
 import Icon from "../common/Icon";
-import type { TransferConfig } from "../../types/transfer";
+import type { ProtocolType, TransferConfig } from "../../types/transfer";
 import { PROTOCOL_REGISTRY } from "../../types/transfer";
-import type { ProtocolType } from "../../types/transfer";
 import ProtocolSelector from "../FileTransfer/protocol-config/ProtocolSelector";
 import ProtocolConfigForm from "../FileTransfer/protocol-config/ProtocolConfigForm";
 import AggregateProgress from "../FileTransfer/progress/AggregateProgress";
@@ -24,171 +23,195 @@ interface TransmissionPanelProps {
 }
 
 /**
- * 传输子系统面板 (竖向布局)
+ * 传输子系统面板。
  *
- * 位于终端右侧，条件显示。包含文件传输的配置、
- * 进度和操作按钮，采用竖向排列适合侧面板显示。
+ * 面板只投影 TransferContext 中属于当前 Session 的任务，不再拥有或读取全局
+ * “active transfer” 状态，因此多个 Session 的传输不会互相覆盖 UI 所有权。
  */
-export default function TransmissionPanel({ sessionId, isConnected, initialProtocol, style }: TransmissionPanelProps) {
+export default function TransmissionPanel({
+  sessionId,
+  isConnected,
+  initialProtocol,
+  style,
+}: TransmissionPanelProps) {
   const { t } = useTranslation();
   const {
-    state: transferState,
+    state,
     startTransfer,
     cancelTransfer,
     clearError,
+    getTaskForSession,
+    getActiveTaskForSession,
   } = useTransfer();
 
-  const initialConfig = PROTOCOL_REGISTRY[initialProtocol || "ymodem"]?.defaultConfig ?? PROTOCOL_REGISTRY.ymodem.defaultConfig;
+  const initialConfig =
+    PROTOCOL_REGISTRY[initialProtocol || "ymodem"]?.defaultConfig
+    ?? PROTOCOL_REGISTRY.ymodem.defaultConfig;
   const [config, setConfig] = useState<TransferConfig>(initialConfig);
 
-  const {
-    status,
-    error,
-    batchFiles,
-    aggregateBytesTransferred,
-    aggregateTotalBytes,
-    currentFileIndex,
-    totalFiles,
-    speed,
-  } = transferState;
-
-  const isTransferring = status === "transferring";
+  const task = getTaskForSession(sessionId);
+  const activeTask = getActiveTaskForSession(sessionId);
+  const isTransferring = Boolean(activeTask);
+  const isCancelling = activeTask?.phase === "cancelling";
   const canTransfer = isConnected && !isTransferring;
-  const batchEntries = Object.values(batchFiles);
+  const batchEntries = task?.files ?? [];
+  const error = task?.error ?? state.startErrorsBySession[sessionId] ?? null;
 
-  // 发送文件
   const handleSend = useCallback(async () => {
     if (!sessionId) return;
     try {
-      const selected = await open({ multiple: true, filters: [{ name: t("transmission.allFiles") || "All Files", extensions: ["*"] }] });
-      if (selected) {
-        const paths = Array.isArray(selected) ? selected : [selected];
-        startTransfer(config, sessionId, "send", paths);
-      }
-    } catch (e) {
-      // errors are handled by TransferContext
+      const selected = await open({
+        multiple: true,
+        filters: [{
+          name: t("transmission.allFiles") || "All Files",
+          extensions: ["*"],
+        }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      await startTransfer(config, sessionId, "send", paths);
+    } catch {
+      // 启动错误由 TransferContext 按 Session 保存并展示。
     }
-  }, [sessionId, startTransfer, config]);
+  }, [config, sessionId, startTransfer, t]);
 
-  // 接收文件
   const handleReceive = useCallback(async () => {
     if (!sessionId) return;
     try {
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === "string") {
-        startTransfer(config, sessionId, "receive", undefined, selected);
+        await startTransfer(config, sessionId, "receive", undefined, selected);
       }
-    } catch (e) {
-      // errors are handled by TransferContext
+    } catch {
+      // 启动错误由 TransferContext 按 Session 保存并展示。
     }
-  }, [sessionId, startTransfer, config]);
+  }, [config, sessionId, startTransfer]);
 
-  const handleCancel = useCallback(() => {
-    cancelTransfer(sessionId);
-  }, [sessionId, cancelTransfer]);
+  const handleCancel = useCallback(async () => {
+    try {
+      await cancelTransfer(sessionId);
+    } catch {
+      // 取消错误会回写到精确 transfer_id 的任务卡。
+    }
+  }, [cancelTransfer, sessionId]);
 
-  const showActiveTransfer = batchEntries.length > 0 || isTransferring;
-  const failedCount = batchEntries.filter(e => e.status === "failed").length;
-  const skippedCount = batchEntries.filter(e => e.status === "skipped").length;
+  const showActiveTransfer = Boolean(task);
+  const failedCount = batchEntries.filter((entry) => entry.status === "failed").length;
+  const skippedCount = batchEntries.filter((entry) => entry.status === "skipped").length;
 
   return (
     <div className={styles.panel} style={style}>
       <div className={styles.body}>
-          {/* 操作按钮 */}
-          <div className={styles.actionRow}>
-            {isTransferring ? (
-              <GlassButton variant="danger" size="sm" onClick={handleCancel}>
-                <Icon name="stop" size="sm" /> {t("transmission.cancel")}
+        <div className={styles.actionRow}>
+          {isTransferring ? (
+            <GlassButton
+              variant="danger"
+              size="sm"
+              disabled={isCancelling}
+              onClick={handleCancel}
+            >
+              <Icon name="stop" size="sm" /> {t("transmission.cancel")}
+            </GlassButton>
+          ) : (
+            <>
+              <GlassButton
+                variant="primary"
+                size="sm"
+                disabled={!canTransfer}
+                onClick={handleSend}
+              >
+                <Icon name="upload" size="sm" /> {t("transmission.send")}
               </GlassButton>
-            ) : (
-              <>
-                <GlassButton
-                  variant="primary"
-                  size="sm"
-                  disabled={!canTransfer}
-                  onClick={handleSend}
-                >
-                  <Icon name="upload" size="sm" /> {t("transmission.send")}
-                </GlassButton>
-                <GlassButton
-                  variant="primary"
-                  size="sm"
-                  disabled={!canTransfer}
-                  onClick={handleReceive}
-                >
-                  <Icon name="download" size="sm" /> {t("transmission.receive")}
-                </GlassButton>
-              </>
-            )}
-          </div>
+              <GlassButton
+                variant="primary"
+                size="sm"
+                disabled={!canTransfer}
+                onClick={handleReceive}
+              >
+                <Icon name="download" size="sm" /> {t("transmission.receive")}
+              </GlassButton>
+            </>
+          )}
+        </div>
 
-          {/* 连接状态 */}
+        <div className={styles.section}>
+          <ConnectionStatusDot isConnected={isConnected} />
+        </div>
+
+        <div className={styles.section}>
+          <span className={styles.sectionLabel}>{t("transmission.config")}</span>
+          <ProtocolSelector value={config} onChange={setConfig} />
+          <ProtocolConfigForm config={config} onChange={setConfig} />
+        </div>
+
+        {batchEntries.length > 0 && (
           <div className={styles.section}>
-            <ConnectionStatusDot isConnected={isConnected} />
+            <span className={styles.sectionLabel}>{t("transmission.selectFiles")}</span>
+            <div className={styles.fileSummary}>
+              <span>{batchEntries.length} {t("transfer.filesSelected")}</span>
+              <span>{formatBytes(task?.aggregateTotal ?? 0)}</span>
+            </div>
           </div>
+        )}
 
-          {/* 协议配置区 */}
-          <div className={styles.section}>
-            <span className={styles.sectionLabel}>{t("transmission.config")}</span>
-            <ProtocolSelector value={config} onChange={setConfig} />
-            <ProtocolConfigForm config={config} onChange={setConfig} />
-          </div>
-
-          {/* 已选文件 */}
-          {batchEntries.length > 0 && (
-            <div className={styles.section}>
-              <span className={styles.sectionLabel}>{t("transmission.selectFiles")}</span>
-              <div className={styles.fileSummary}>
-                <span>{batchEntries.length} {t("transfer.filesSelected")}</span>
-                <span>{formatBytes(aggregateTotalBytes)}</span>
+        <div className={styles.progressSection}>
+          {showActiveTransfer && task ? (
+            <>
+              <AggregateProgress
+                currentFileIndex={task.fileIndex}
+                totalFiles={task.totalFiles}
+                aggregateBytesTransferred={task.aggregateBytes}
+                aggregateTotalBytes={task.aggregateTotal}
+                currentFileName={task.fileName || undefined}
+                speed={task.speed ?? undefined}
+              />
+              <div className={styles.fileListScroll}>
+                <PerFileList entries={batchEntries} />
               </div>
+
+              {error && (
+                <div className={styles.errorBox}>
+                  <span className={styles.errorText}>{error}</span>
+                  <button
+                    className={styles.errorClose}
+                    onClick={() => clearError(sessionId)}
+                    aria-label={t("common.close")}
+                  >
+                    <Icon name="close" size="sm" />
+                  </button>
+                </div>
+              )}
+
+              {failedCount > 0 && !isTransferring && (
+                <div className={styles.failSummary}>
+                  <Icon name="warning" size="sm" /> {failedCount} {t("transfer.filesFailed")}
+                </div>
+              )}
+
+              {skippedCount > 0 && !isTransferring && (
+                <div className={styles.skipSummary}>
+                  <Icon name="status-skipped" size="sm" /> {skippedCount} {t("transfer.filesSkipped")}
+                </div>
+              )}
+            </>
+          ) : error ? (
+            <div className={styles.errorBox}>
+              <span className={styles.errorText}>{error}</span>
+              <button
+                className={styles.errorClose}
+                onClick={() => clearError(sessionId)}
+                aria-label={t("common.close")}
+              >
+                <Icon name="close" size="sm" />
+              </button>
+            </div>
+          ) : (
+            <div className={styles.placeholder}>
+              {t("transmission.noActiveTransfer")}
             </div>
           )}
-
-          {/* 传输进度区 */}
-          <div className={styles.progressSection}>
-            {showActiveTransfer ? (
-              <>
-                <AggregateProgress
-                  currentFileIndex={currentFileIndex}
-                  totalFiles={totalFiles}
-                  aggregateBytesTransferred={aggregateBytesTransferred}
-                  aggregateTotalBytes={aggregateTotalBytes}
-                  speed={speed}
-                />
-                <div className={styles.fileListScroll}>
-                  <PerFileList entries={batchEntries} />
-                </div>
-
-                {/* 错误 */}
-                {error && (
-                  <div className={styles.errorBox}>
-                    <span className={styles.errorText}>{error}</span>
-                    <button className={styles.errorClose} onClick={clearError}><Icon name="close" size="sm" /></button>
-                  </div>
-                )}
-
-                {/* 失败汇总 */}
-                {failedCount > 0 && !isTransferring && (
-                  <div className={styles.failSummary}>
-                    <Icon name="warning" size="sm" /> {failedCount} {t("transfer.filesFailed")}
-                  </div>
-                )}
-
-                {/* 跳过汇总 */}
-                {skippedCount > 0 && !isTransferring && (
-                  <div className={styles.skipSummary}>
-                    <Icon name="status-skipped" size="sm" /> {skippedCount} {t("transfer.filesSkipped")}
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className={styles.placeholder}>
-                {t("transmission.noActiveTransfer")}
-              </div>
-            )}
-          </div>
         </div>
+      </div>
     </div>
   );
 }
