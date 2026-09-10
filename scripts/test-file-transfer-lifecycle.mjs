@@ -589,6 +589,12 @@ assert.match(
 );
 assert.match(
   service,
+  /p & 0o4000 != 0[\s\S]{0,260}'s'[\s\S]{0,520}p & 0o2000 != 0[\s\S]{0,260}'s'[\s\S]{0,520}p & 0o1000 != 0[\s\S]{0,260}'t'/,
+  "permission strings must preserve setuid, setgid and sticky bits for the chmod editor",
+);
+assert.match(service, /permission_strings_preserve_posix_special_bits/);
+assert.match(
+  service,
   /仅支持修改普通文件或目录权限/,
   "chmod must reject symlink/special-file targets",
 );
