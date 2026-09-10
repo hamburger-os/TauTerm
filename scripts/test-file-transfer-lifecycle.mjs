@@ -323,6 +323,13 @@ assert.match(
   "an unseen/stale upload conflict must default to no-clobber",
 );
 assert.match(panel, /fileManager\.deleteFailed/);
+assert.match(panel, /function canPreviewEntry\(entry: SftpEntry\)/);
+assert.match(
+  panel,
+  /if \(canPreviewEntry\(ctxTarget\)\)[\s\S]{0,120}id: "preview"/,
+  "ordinary files must expose the bounded byte preview regardless of filename extension",
+);
+assert.doesNotMatch(panel, /TEXT_EXTENSIONS|function isTextFile/);
 assert.match(panel, /name === "\." \|\| name === "\.\."/);
 assert.match(panel, /name\.includes\("\/"\)/);
 
@@ -403,6 +410,12 @@ assert.match(deleteDialog, /variant="ghost"/);
 assert.match(deleteDialog, /variant="danger"/);
 assert.match(deleteDialog, /size="md"/);
 assert.match(deleteDialog, /deleteConfirmAction/);
+assert.match(deleteDialog, /useReducedMotion/);
+assert.match(
+  deleteDialog,
+  /transition=\{\{ duration: reducedMotion \? 0 : 0\.12 \}\}/,
+  "destructive confirmation motion must respect the system reduced-motion preference",
+);
 
 const deleteDialogCss = await source("src/components/FileManager/DeleteConfirmationDialog.module.css");
 assert.match(deleteDialogCss, /border-radius:\s*var\(--radius-xl\)/);
@@ -430,6 +443,7 @@ assert.match(
   "Keep Both must stay on the neutral secondary surface while retaining safe default focus",
 );
 assert.match(conflictDialog, /variant="ghost"/);
+assert.match(conflictDialog, /useReducedMotion/);
 assert.match(
   conflictDialog,
   /variant="ghost"[\s\S]{0,80}size="md"/,
@@ -451,6 +465,13 @@ assert.match(propertiesModal, /dialogRef\.current\?\.querySelectorAll/);
 assert.match(propertiesModal, /event\.key !== "Tab"/);
 assert.match(propertiesModal, /const canChmod = entryType === "file" \|\| entryType === "directory"/);
 assert.match(propertiesModal, /\{canChmod && \(/);
+assert.match(propertiesModal, /getEntryIcon/);
+assert.match(
+  propertiesModal,
+  /setChmodValue\(getOctalFromPerms\(statInfo\?\.permissions \?\? null\)\)/,
+  "Properties must clear stale chmod state when the next entry has no reported permissions",
+);
+assert.match(propertiesModal, /chmodError && <span className=\{styles\.chmodError\} role="alert">/);
 
 assert.match(
   service,
@@ -481,6 +502,9 @@ assert.match(fileList, /case "ArrowDown"/);
 assert.match(fileList, /case "Home"/);
 assert.match(fileList, /case "End"/);
 assert.match(fileList, /virtualCanvas/);
+assert.match(fileList, /aria-sort=/);
+assert.match(fileList, /className=\{styles\.errorBanner\} role="alert"/);
+assert.match(fileList, /styles\.colPerms\} role="columnheader"/);
 
 const fileGrid = await source("src/components/FileManager/FileGrid.tsx");
 assert.match(fileGrid, /VIRTUAL_THRESHOLD = 300/);
@@ -491,12 +515,36 @@ assert.match(fileGrid, /case "ArrowRight"/);
 assert.match(fileGrid, /case "ArrowUp"/);
 assert.match(fileGrid, /case "ArrowDown"/);
 assert.match(fileGrid, /tabIndex=\{activeItem === itemIndex \? 0 : -1\}/);
+assert.match(fileGrid, /className=\{styles\.errorBanner\} role="alert"/);
 
 const multiSelect = await source("src/components/FileManager/hooks/useMultiSelect.ts");
 assert.match(
   multiSelect,
   /if \(shiftKey && lastClickedIndex !== null\)[\s\S]{0,180}if \(!ctrlKey\) next\.clear\(\)/,
   "plain Shift must replace selection with the anchor range while Ctrl+Shift extends it",
+);
+
+const breadcrumb = await source("src/components/FileManager/BreadcrumbNav.tsx");
+assert.match(breadcrumb, /<nav className=\{styles\.breadcrumb\}/);
+assert.match(breadcrumb, /aria-current="page"/);
+
+const inlinePrompt = await source("src/components/FileManager/InlinePrompt.tsx");
+assert.match(inlinePrompt, /GlassButton/);
+assert.match(inlinePrompt, /aria-label=\{placeholder \?\? t\("fileManager\.name"\)\}/);
+
+const contextMenu = await source("src/components/common/ContextMenu.tsx");
+assert.match(contextMenu, /role="menu"/);
+assert.match(contextMenu, /role="menuitem"/);
+assert.match(contextMenu, /role="separator"/);
+assert.match(contextMenu, /case "ArrowDown"/);
+assert.match(contextMenu, /case "ArrowUp"/);
+assert.match(contextMenu, /case "Home"/);
+assert.match(contextMenu, /case "End"/);
+assert.match(contextMenu, /useReducedMotion/);
+assert.match(
+  contextMenu,
+  /querySelector<HTMLButtonElement>\('button\[role="menuitem"\]:not\(:disabled\)'\)/,
+  "context menus must move focus to the first enabled action when opened",
 );
 
 const preview = await source("src/components/FileManager/FilePreviewModal.tsx");
