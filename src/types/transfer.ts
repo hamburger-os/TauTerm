@@ -83,8 +83,8 @@ export type TransferConfig =
 
 export interface ProtocolMeta {
   type: ProtocolType;
-  i18nKey: string; // e.g. "transfer.protocols.ymodem.name"
-  icon: IconName; // e.g. "package"
+  i18nKey: string;
+  icon: IconName;
   defaultConfig: TransferConfig;
 }
 
@@ -136,30 +136,65 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
 
 // ── Transfer Events ───────────────────────────────────────
 
-/** 传输进度信息 */
-export interface TransferProgress {
-  file_name: string;
-  bytes_transferred: number;
-  total_bytes: number;
+/** 后端 file-transfer:started 事件。 */
+export interface TransferStartedPayload {
+  session_id: string;
+  transfer_id: string;
+  protocol: string;
   direction: TransferDirection;
-  /** 当前文件在批次中的索引（0-based） */
-  file_index?: number;
-  /** 批次中文件总数 */
-  total_files?: number;
-  /** 聚合已传输字节（已完成文件 + 当前文件进度） */
-  aggregate_bytes_transferred?: number;
-  /** 聚合总字节 */
-  aggregate_total_bytes?: number;
-  /** 后端协议层可选的真实 I/O 测速（bytes/s）；未提供时通用 UI 可自行回退估算 */
-  bytes_per_second?: number;
 }
 
-/** 批次中单个文件的结果 */
+/** 后端 file-transfer:progress 统一事件。 */
+export interface UnifiedTransferProgressPayload {
+  session_id: string;
+  transfer_id: string;
+  protocol: string;
+  file_name: string;
+  bytes_done: number;
+  bytes_total: number;
+  bytes_per_second: number | null;
+  file_index: number;
+  total_files: number;
+  aggregate_bytes: number;
+  aggregate_total: number;
+  direction: TransferDirection;
+  is_file_start: boolean;
+  is_file_complete: boolean;
+  file_success: boolean | null;
+  file_error: string | null;
+  is_batch_complete: boolean;
+}
+
+/** 批次中单个文件的结果。 */
 export interface BatchFileResult {
   file_name: string;
   status: "completed" | "failed" | "skipped";
   size: number;
   error?: string | null;
+}
+
+/** 后端 file-transfer:finished 事件。results 在正常完成的协议执行中保留精确文件终态。 */
+export interface TransferFinishedPayload {
+  session_id: string;
+  transfer_id?: string;
+  protocol?: string;
+  success: boolean;
+  cancelled?: boolean;
+  error?: string | null;
+  results?: BatchFileResult[];
+}
+
+/** 兼容通用进度组件的扁平进度信息。 */
+export interface TransferProgress {
+  file_name: string;
+  bytes_transferred: number;
+  total_bytes: number;
+  direction: TransferDirection;
+  file_index?: number;
+  total_files?: number;
+  aggregate_bytes_transferred?: number;
+  aggregate_total_bytes?: number;
+  bytes_per_second?: number;
 }
 
 // ── Frontend State Types ──────────────────────────────────
@@ -173,7 +208,6 @@ export interface TransferHistoryItem {
   status: TransferStatus;
   timestamp: number;
   error?: string;
-  /** 使用的协议 */
   protocol: ProtocolType | "unknown";
 }
 
