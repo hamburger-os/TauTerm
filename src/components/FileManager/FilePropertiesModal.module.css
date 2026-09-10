@@ -136,7 +136,7 @@
 }
 
 .chmodInput {
-  width: 48px;
+  width: 58px;
   padding: 0 var(--spacing-xs);
   font-family: var(--font-mono, monospace);
   font-size: var(--text-sm);
