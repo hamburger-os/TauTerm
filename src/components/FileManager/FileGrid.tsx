@@ -279,7 +279,7 @@ export default function FileGrid({
       onContextMenu={handleBlankContext}
     >
       {error && (
-        <div className={styles.errorBanner}>
+        <div className={styles.errorBanner} role="alert">
           <span>{error}</span>
           <button
             type="button"
