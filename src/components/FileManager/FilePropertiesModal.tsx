@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
+import GlassButton from "../common/GlassButton";
 import { invoke } from "@tauri-apps/api/core";
 import { formatTime } from "../../utils/format";
 import type { SftpEntry } from "./types";
@@ -212,7 +213,7 @@ export default function FilePropertiesModal({
           ) : statInfo ? (
             <>
               {/* 类型标签 */}
-              <div className={styles.typeTag}>{typeLabel}</div>
+              <div className={`${styles.typeTag} liquid-glass-mini-card`}>{typeLabel}</div>
 
               <div className={styles.fieldList}>
                 {/* 完整路径 */}
@@ -225,6 +226,7 @@ export default function FilePropertiesModal({
                       className={`${styles.copyBtn} liquid-glass-ghost-button`}
                       onClick={handleCopyPath}
                       title={t("fileManager.copyPath")}
+                      aria-label={t("fileManager.copyPath")}
                     >
                       <Icon name="clipboard" size="sm" />
                     </button>
@@ -291,12 +293,18 @@ export default function FilePropertiesModal({
                             }}
                             autoFocus
                           />
-                          <button type="button" className={`${styles.chmodBtn} liquid-glass-button`} onClick={handleChmodApply}>
-                            {t("fileManager.apply")}
-                          </button>
-                          <button
+                          <GlassButton
                             type="button"
-                            className={`${styles.chmodBtn} liquid-glass-button`}
+                            size="sm"
+                            className={styles.chmodBtn}
+                            onClick={handleChmodApply}
+                          >
+                            {t("fileManager.apply")}
+                          </GlassButton>
+                          <GlassButton
+                            type="button"
+                            size="sm"
+                            className={styles.chmodBtn}
                             onClick={() => {
                               setChmodEditing(false);
                               setChmodError(null);
@@ -306,18 +314,19 @@ export default function FilePropertiesModal({
                             }}
                           >
                             {t("fileManager.cancel")}
-                          </button>
+                          </GlassButton>
                         </>
                       ) : (
                         <>
                           <code className={styles.fieldValueMono}>{chmodValue}</code>
-                          <button
+                          <GlassButton
                             type="button"
-                            className={`${styles.chmodBtn} liquid-glass-button`}
+                            size="sm"
+                            className={styles.chmodBtn}
                             onClick={() => setChmodEditing(true)}
                           >
                             {t("fileManager.edit")}
-                          </button>
+                          </GlassButton>
                         </>
                       )}
                     </div>
