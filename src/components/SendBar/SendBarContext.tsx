@@ -161,8 +161,26 @@ function sendBarReducer(state: SendBarState, action: SendBarAction): SendBarStat
       return { ...state, autoReply: { ...state.autoReply, activeConfigName: action.name } };
     case "SET_AUTO_REPLY_RULES":
       return { ...state, autoReply: { ...state.autoReply, rules: action.rules } };
-    case "SET_AUTO_REPLY_RUNNING":
-      return { ...state, autoReply: { ...state.autoReply, isRunning: action.running } };
+    case "SET_AUTO_REPLY_RUNNING": {
+      if (action.running) {
+        return { ...state, autoReply: { ...state.autoReply, isRunning: true } };
+      }
+      const current = state.autoReply;
+      if (current.activeConfigName && !current.configs.some(config => config.name === current.activeConfigName)) {
+        const fallback = current.configs[0];
+        return {
+          ...state,
+          autoReply: {
+            ...current,
+            activeConfigName: fallback?.name ?? "",
+            rules: fallback?.rules ?? [],
+            matchStrategy: fallback?.matchStrategy ?? "all",
+            isRunning: false,
+          },
+        };
+      }
+      return { ...state, autoReply: { ...current, isRunning: false } };
+    }
     case "SET_MATCH_STRATEGY":
       return { ...state, autoReply: { ...state.autoReply, matchStrategy: action.strategy } };
 
@@ -173,8 +191,19 @@ function sendBarReducer(state: SendBarState, action: SendBarAction): SendBarStat
       return { ...state, script: { ...state.script, activeScriptId: action.id } };
     case "SET_SCRIPT_CODE":
       return { ...state, script: { ...state.script, code: action.code } };
-    case "SET_SCRIPT_RUNNING":
-      return { ...state, script: { ...state.script, isRunning: action.running } };
+    case "SET_SCRIPT_RUNNING": {
+      if (action.running) {
+        return { ...state, script: { ...state.script, isRunning: true } };
+      }
+      const current = state.script;
+      if (current.activeScriptId && !current.scripts.some(script => script.id === current.activeScriptId)) {
+        return {
+          ...state,
+          script: { ...current, activeScriptId: null, code: "", isRunning: false },
+        };
+      }
+      return { ...state, script: { ...current, isRunning: false } };
+    }
 
     // Shared script logs
     case "APPEND_SCRIPT_LOG":
@@ -255,12 +284,16 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
       value => {
         const configs = Array.isArray(value) ? value : [];
         const current = stateRef.current.autoReply;
+        dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs });
+
+        // The engine is executing a generated snapshot. Shared edits may update the asset catalog,
+        // but the visible/active runtime selection stays frozen until SET_AUTO_REPLY_RUNNING(false).
+        if (current.isRunning) return;
+
         const activeName = configs.some(config => config.name === current.activeConfigName)
           ? current.activeConfigName
           : configs[0]?.name ?? "";
         const active = configs.find(config => config.name === activeName);
-
-        dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs });
         if (activeName !== current.activeConfigName) {
           dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeName });
           dispatch({ type: "SET_AUTO_REPLY_RULES", rules: active?.rules ?? [] });
@@ -283,6 +316,10 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
         const hasLocalDraft = previousActive != null && current.code !== previousActive.code;
 
         dispatch({ type: "SET_SCRIPTS", scripts });
+
+        // As with auto-reply, an executing script is an immutable snapshot. Reconcile deletion only
+        // after the engine stops so the UI cannot contradict the running code.
+        if (current.isRunning) return;
 
         if (current.activeScriptId && !nextActive) {
           dispatch({ type: "SET_ACTIVE_SCRIPT", id: null });
