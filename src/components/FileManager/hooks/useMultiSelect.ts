@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { SftpEntry } from '../types';
 
 export interface UseMultiSelectReturn {
@@ -29,6 +29,25 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
     if (lastClickedPath === null) return null;
     const index = entries.findIndex((entry) => entry.path === lastClickedPath);
     return index >= 0 ? index : null;
+  }, [entries, lastClickedPath]);
+
+  // Refreshes can remove entries while preserving the current directory. Keep
+  // selection state limited to paths that still exist so later Ctrl/Command
+  // clicks never carry invisible "ghost" selections forward.
+  useEffect(() => {
+    const validPaths = new Set(entries.map((entry) => entry.path));
+    setSelectedPaths((current) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const path of current) {
+        if (validPaths.has(path)) next.add(path);
+        else changed = true;
+      }
+      return changed ? next : current;
+    });
+    if (lastClickedPath !== null && !validPaths.has(lastClickedPath)) {
+      setLastClickedPath(null);
+    }
   }, [entries, lastClickedPath]);
 
   const handleClick = useCallback(
