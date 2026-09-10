@@ -164,7 +164,13 @@ export default function FileManagerPanel({
     (e: React.MouseEvent, entry: SftpEntry | null, _index?: number) => {
       e.preventDefault();
       if (import.meta.env.DEV) console.debug("[FileManager] showContextMenu direct → entry=", entry?.name ?? "<blank>", "sessionId=", sessionId);
-      ctxOpenedRef.current = true; // 阻止 CustomEvent 重复触发（同步执行，先于 dispatchEvent 回调）
+      // Deduplicate only the current contextmenu event. Keeping this flag true
+      // until the menu closes would incorrectly block a later right-click on the
+      // RightSidebarPanel blank area while the first menu is still open.
+      ctxOpenedRef.current = true;
+      queueMicrotask(() => {
+        ctxOpenedRef.current = false;
+      });
       if (entry !== null) {
         ms.handleRightClick(entry);
       }
