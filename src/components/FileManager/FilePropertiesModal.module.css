@@ -129,6 +129,14 @@
 }
 
 /* Chmod editor */
+.chmodEditor {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 .chmodRow {
   display: flex;
   align-items: center;
