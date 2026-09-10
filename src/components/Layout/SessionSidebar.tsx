@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useSession, type NetworkPeerEntry } from "../../context/SessionContext";
 import { useSplitLayout } from "../../context/SplitLayoutContext";
 import { useContextMenu } from "../../hooks/useContextMenu";
+import ConfirmDialog from "../common/ConfirmDialog";
 import ContextMenu from "../common/ContextMenu";
 import Icon from "../common/Icon";
 import PaneMiniMap from "./PaneMiniMap";
@@ -42,6 +43,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   const [search, setSearch] = useState("");
   const { menu, openMenu, openPeerMenu, closeMenu } = useContextMenu();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
   /** 右键菜单打开前的 Pane。新建子终端时用它作为落点，避免右键导航抢走空 Pane。 */
   const contextMenuOriginPaneRef = useRef(splitLayout.selectedPaneId);
 
@@ -379,9 +381,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         break;
       }
       case "delete":
-        if (window.confirm(t("session.deleteConfirm") || "Delete this session?")) {
-          deleteSession(sessionId);
-        }
+        setPendingDeleteSessionId(sessionId);
         break;
       case "close_channel": {
         const parentId = menu.session?.parentId;
@@ -405,7 +405,13 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         break;
       }
     }
-  }, [menu.session, menu.peer, state.tabs, t, reconnectSession, disconnect, deleteSession, openChannel, closeChannel, selectPane, onEditSession, loggingSessions, startSessionLog, stopSessionLog, disconnectNetworkPeer, clearNetworkPeer]);
+  }, [menu.session, menu.peer, state.tabs, reconnectSession, disconnect, openChannel, closeChannel, selectPane, onEditSession, loggingSessions, startSessionLog, stopSessionLog, disconnectNetworkPeer, clearNetworkPeer]);
+
+  const confirmSessionDelete = useCallback(() => {
+    const sessionId = pendingDeleteSessionId;
+    setPendingDeleteSessionId(null);
+    if (sessionId) void deleteSession(sessionId);
+  }, [deleteSession, pendingDeleteSessionId]);
 
   return (
     <div className={styles.sidebar}>
@@ -625,6 +631,16 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
         items={getMenuItems()}
         onSelect={(itemId) => handleMenuSelect(itemId)}
         onClose={closeMenu}
+      />
+
+      <ConfirmDialog
+        open={pendingDeleteSessionId !== null}
+        title={t("fileManager.deleteConfirmTitle")}
+        message={t("session.deleteConfirm")}
+        intent="danger"
+        size="compact"
+        onConfirm={confirmSessionDelete}
+        onCancel={() => setPendingDeleteSessionId(null)}
       />
     </div>
   );
