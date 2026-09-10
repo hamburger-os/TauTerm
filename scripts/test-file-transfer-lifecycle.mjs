@@ -364,6 +364,11 @@ assert.doesNotMatch(panel, /TEXT_EXTENSIONS|function isTextFile/);
 assert.match(panel, /ms\.handleRightClick\(entry\);/);
 assert.match(
   panel,
+  /ctxOpenedRef\.current = true;[\s\S]{0,180}queueMicrotask\(\(\) => \{[\s\S]{0,80}ctxOpenedRef\.current = false/,
+  "context-menu dedupe must expire after the current right-click instead of blocking later blank-area menus",
+);
+assert.match(
+  panel,
   /if \(isConnected\) return;[\s\S]{0,220}resolveConflictPolicy\(null\)[\s\S]{0,180}closePreview\(\)/,
   "disconnect must close transient FileManager UI and resolve any pending conflict decision",
 );
