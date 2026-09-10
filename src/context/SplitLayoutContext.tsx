@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { invoke } from "@tauri-apps/api/core";
 import { useSession } from "./SessionContext";
 import {
+  MAX_WORKSPACE_PANES,
   activateSessionInLayout,
+  clearPaneInLayout,
   closePaneInLayout,
   collectPaneIds,
   computeBlockedEdges,
@@ -13,6 +15,7 @@ import {
   findPaneForSession,
   pruneAssignments,
   remapRemovedChildrenToDisconnectedRoots,
+  resetPaneSplitRatioInLayout,
   selectPaneInLayout,
   setSplitRatioInLayout,
   splitPaneInLayout,
@@ -37,7 +40,9 @@ interface SplitLayoutContextValue {
   sessionToPane: Record<string, PaneId>;
   selectPane: (paneId: PaneId) => void;
   splitPane: (paneId: PaneId, edge: SplitEdge) => void;
+  clearPane: (paneId: PaneId) => void;
   closePane: (paneId: PaneId) => void;
+  resetPaneRatio: (paneId: PaneId) => void;
   resizeSplit: (splitId: string, ratio: number) => void;
   activateSession: (sessionId: string) => void;
 }
@@ -118,9 +123,7 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const syncActiveSession = useCallback((sessionId: string | null) => {
-    // 空字符串沿用现有 switchTab 的容错路径，前端等价于“当前无会话”：
-    // App 的 activeTab 查找失败，因此 SendBar / RightSidebar / Sidebar active 状态都会隐藏。
-    void switchTab(sessionId ?? "");
+    void switchTab(sessionId);
   }, [switchTab]);
 
   const persistWorkspaceNow = useCallback(() => {
@@ -223,6 +226,7 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     if (!collectPaneIds(current.root).includes(paneId)) return;
     const next = selectPaneInLayout(current, paneId);
+    if (next === current) return;
     stateRef.current = next;
     setState(next);
     syncActiveSession(next.assignments[paneId] ?? null);
@@ -230,20 +234,30 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
 
   const splitPane = useCallback((paneId: PaneId, edge: SplitEdge) => {
     const current = stateRef.current;
-    if (countPanes(current.root) >= 4) return;
+    if (countPanes(current.root) >= MAX_WORKSPACE_PANES) return;
     const next = splitPaneInLayout(
       current,
       paneId,
       edge,
       makePaneId(current.root),
       makeSplitId(current.root),
-      4,
     );
     if (next === current) return;
     stateRef.current = next;
     setState(next);
     // 新 Pane 按产品规则为空且自动 selected；附属 Session UI 同步为空。
     syncActiveSession(null);
+  }, [syncActiveSession]);
+
+  const clearPane = useCallback((paneId: PaneId) => {
+    const current = stateRef.current;
+    const next = clearPaneInLayout(current, paneId);
+    if (next === current) return;
+    stateRef.current = next;
+    setState(next);
+    if (current.selectedPaneId === paneId) {
+      syncActiveSession(null);
+    }
   }, [syncActiveSession]);
 
   const closePane = useCallback((paneId: PaneId) => {
@@ -256,6 +270,14 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
       syncActiveSession(result.selectedSessionId);
     }
   }, [syncActiveSession]);
+
+  const resetPaneRatio = useCallback((paneId: PaneId) => {
+    const current = stateRef.current;
+    const next = resetPaneSplitRatioInLayout(current, paneId);
+    if (next === current) return;
+    stateRef.current = next;
+    setState(next);
+  }, []);
 
   const resizeSplit = useCallback((splitId: string, ratio: number) => {
     setState(prev => {
@@ -295,7 +317,9 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     sessionToPane,
     selectPane,
     splitPane,
+    clearPane,
     closePane,
+    resetPaneRatio,
     resizeSplit,
     activateSession,
   }), [
@@ -307,7 +331,9 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     sessionToPane,
     selectPane,
     splitPane,
+    clearPane,
     closePane,
+    resetPaneRatio,
     resizeSplit,
     activateSession,
   ]);
