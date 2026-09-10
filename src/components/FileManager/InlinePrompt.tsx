@@ -6,6 +6,7 @@
  */
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import GlassButton from "../common/GlassButton";
 import styles from "./InlinePrompt.module.css";
 
 interface InlinePromptProps {
@@ -68,15 +69,27 @@ export default function InlinePrompt({
         type="text"
         value={value}
         placeholder={placeholder}
+        aria-label={placeholder ?? t("fileManager.name")}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={handleKeyDown}
       />
-      <button className={`${styles.btn} liquid-glass-button`} onClick={handleConfirm}>
+      <GlassButton
+        type="button"
+        size="sm"
+        className={styles.btn}
+        disabled={!value.trim()}
+        onClick={handleConfirm}
+      >
         {t("common.ok")}
-      </button>
-      <button className={`${styles.btn} liquid-glass-button`} onClick={onCancel}>
+      </GlassButton>
+      <GlassButton
+        type="button"
+        size="sm"
+        className={styles.btn}
+        onClick={onCancel}
+      >
         {t("common.cancel")}
-      </button>
+      </GlassButton>
     </div>
   );
 }

@@ -118,6 +118,13 @@ export default function FileList({
       className={`${styles.headerCell} ${extraClass || ""}`}
       onClick={() => onSortChange(field)}
       role="columnheader"
+      aria-sort={
+        field === sortField
+          ? sortDirection === "asc"
+            ? "ascending"
+            : "descending"
+          : "none"
+      }
       tabIndex={0}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -148,12 +155,13 @@ export default function FileList({
       isSelected={selectedPaths.has(entry.path)}
       tabIndex={activeIndex === index ? 0 : -1}
       dataIndex={index}
+      ariaRowIndex={index + 2 + (parentVisible ? 1 : 0)}
       style={virtualized
         ? { position: "absolute", top: index * ROW_HEIGHT, left: 0, right: 0 }
         : undefined}
       onFocus={() => setActiveIndex(index)}
       onKeyDown={(e) => handleNavigationKey(index, e)}
-      onClick={(e) => onEntryClick(entry, index, e.ctrlKey, e.shiftKey)}
+      onClick={(additiveKey, shiftKey) => onEntryClick(entry, index, additiveKey, shiftKey)}
       onDoubleClick={() => onEntryDoubleClick(entry)}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -168,20 +176,12 @@ export default function FileList({
       className={`${styles.container} ${showProgress ? styles.containerWithProgress : ""}`}
       onContextMenu={handleBlankContext}
     >
-      <div className={styles.header} onContextMenu={handleBlankContext}>
-        {renderHeader("name", t("fileManager.name"), styles.colName)}
-        {renderHeader("size", t("fileManager.size"), styles.colSize)}
-        {renderHeader("modified", t("fileManager.modified"), styles.colTime)}
-        <div className={`${styles.headerCell} ${styles.colPerms}`}>
-          {t("fileManager.permissions")}
-        </div>
-      </div>
-
       {error && (
-        <div className={styles.errorBanner}>
+        <div className={styles.errorBanner} role="alert">
           <span>{error}</span>
           <button
-            className={styles.errorClose}
+            type="button"
+            className={`${styles.errorClose} liquid-glass-ghost-button`}
             onClick={onClearError}
             aria-label={t("common.close")}
           >
@@ -191,14 +191,27 @@ export default function FileList({
       )}
 
       <div
-        ref={virtual.containerRef}
-        className={styles.body}
+        className={styles.gridFrame}
         role="grid"
         aria-multiselectable="true"
-        aria-rowcount={entries.length + (parentVisible ? 1 : 0)}
-        onContextMenu={handleBlankContext}
-        onScroll={virtual.onScroll}
+        aria-rowcount={entries.length + (parentVisible ? 1 : 0) + 1}
       >
+        <div className={styles.header} role="row" onContextMenu={handleBlankContext}>
+          {renderHeader("name", t("fileManager.name"), styles.colName)}
+          {renderHeader("size", t("fileManager.size"), styles.colSize)}
+          {renderHeader("modified", t("fileManager.modified"), styles.colTime)}
+          <div className={`${styles.headerCell} ${styles.colPerms}`} role="columnheader">
+            {t("fileManager.permissions")}
+          </div>
+        </div>
+
+        <div
+          ref={virtual.containerRef}
+          className={styles.body}
+          role="presentation"
+          onContextMenu={handleBlankContext}
+          onScroll={virtual.onScroll}
+        >
         {parentVisible && (
           <div
             className={`${styles.parentDirRow} ${parentSelected ? styles.parentDirSelected : ""}`}
@@ -210,6 +223,7 @@ export default function FileList({
               onContextMenu(e, null, undefined);
             }}
             role="row"
+            aria-rowindex={2}
             aria-selected={parentSelected}
             tabIndex={activeIndex === -1 ? 0 : -1}
             data-file-index="parent"
@@ -251,6 +265,7 @@ export default function FileList({
             entries.map((entry, index) => renderRow(entry, index, false))
           )
         )}
+        </div>
       </div>
     </div>
   );

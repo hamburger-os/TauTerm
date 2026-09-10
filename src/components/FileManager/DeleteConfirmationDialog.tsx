@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import Icon from "../common/Icon";
 import GlassButton from "../common/GlassButton";
@@ -19,6 +19,7 @@ export default function DeleteConfirmationDialog({
 }: DeleteConfirmationDialogProps) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const reducedMotion = useReducedMotion();
   const isOpen = message !== null;
 
   useEffect(() => {
@@ -65,10 +66,10 @@ export default function DeleteConfirmationDialog({
       {isOpen && (
         <motion.div
           className={`${styles.overlay} glass-overlay`}
-          initial={{ opacity: 0 }}
+          initial={reducedMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.12 }}
+          transition={{ duration: reducedMotion ? 0 : 0.12 }}
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) onCancel();
           }}
@@ -80,10 +81,10 @@ export default function DeleteConfirmationDialog({
             aria-modal="true"
             aria-labelledby="file-delete-title"
             aria-describedby="file-delete-message"
-            initial={{ opacity: 0, scale: 0.97, y: 6 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.97, y: 6 }}
-            transition={{ duration: 0.12 }}
+            initial={reducedMotion ? false : { opacity: 0, scale: 0.97, y: 6 }}
+            animate={reducedMotion ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
+            exit={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 6 }}
+            transition={{ duration: reducedMotion ? 0 : 0.12 }}
           >
             <div className={styles.header}>
               <span className={styles.warningIcon} aria-hidden="true">

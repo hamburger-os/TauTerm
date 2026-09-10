@@ -2,6 +2,7 @@
 
 .container {
   display: flex;
+  align-items: center;
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) 0;
   flex-shrink: 0;
@@ -9,7 +10,9 @@
 
 .input {
   flex: 1;
-  padding: 2px 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--spacing-sm);
   font-size: var(--text-xs);
   font-family: inherit;
   /* accent 色边框覆盖全局类，表示活动状态 */
@@ -22,8 +25,5 @@
 }
 
 .btn {
-  padding: 2px 8px;
-  font-size: var(--text-xs);
-  font-family: inherit;
-  cursor: pointer;
+  flex: 0 0 auto;
 }

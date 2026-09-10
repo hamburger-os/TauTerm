@@ -61,6 +61,9 @@ export default function TransferProgressBar({
   const cancelling = phase === "cancelling";
 
   const detail = (() => {
+    if (error && phase !== "completed" && phase !== "cancelled") {
+      return error;
+    }
     switch (phase) {
       case "preparing":
         return t("fileManager.transferPreparing");
@@ -91,6 +94,7 @@ export default function TransferProgressBar({
     <div
       className={`${styles.bar} liquid-glass-float`}
       data-phase={phase}
+      data-has-error={Boolean(error) ? "true" : "false"}
       role="status"
       aria-live="polite"
       onMouseEnter={onMouseEnter}
@@ -150,7 +154,9 @@ export default function TransferProgressBar({
         aria-label={
           terminal
             ? t("common.close")
-            : t("fileManager.cancelTransfer")
+            : cancelling
+              ? t("fileManager.transferCancelling")
+              : t("fileManager.cancelTransfer")
         }
         type="button"
       >

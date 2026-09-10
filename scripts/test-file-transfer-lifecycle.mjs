@@ -15,10 +15,32 @@ assert.match(hook, /dismissTask\(sessionId, transferId\)/);
 assert.match(hook, /SUCCESS_AUTO_HIDE_MS = 5000/);
 assert.match(
   hook,
-  /window\.setTimeout[\s\S]{0,360}dismissTask\(sessionId, transferId\)/,
+  /window\.setTimeout[\s\S]{0,520}dismissTask\(sessionId, transferId\)/,
   "successful SFTP cards must remove their exact task snapshot when the five-second auto-hide fires",
 );
 assert.match(hook, /hoveredRef\.current/);
+assert.match(hook, /autoHideDeadlineRef/);
+assert.match(hook, /autoHideRemainingRef/);
+assert.match(
+  hook,
+  /autoHideRemainingRef\.current = Math\.max\([\s\S]{0,180}autoHideDeadlineRef\.current - Date\.now\(\)/,
+  "hovering a completed SFTP card must preserve the remaining auto-hide duration",
+);
+assert.match(
+  hook,
+  /scheduleAutoHide\(sftpTask\.transferId, autoHideRemainingRef\.current\)/,
+  "leaving a completed SFTP card must resume the paused auto-hide duration",
+);
+assert.match(
+  hook,
+  /autoHideTransferIdRef\.current !== sftpTask\.transferId[\s\S]{0,520}hoveredRef\.current = false/,
+  "a new transfer must not inherit hover state from a previously dismissed card",
+);
+assert.match(
+  hook,
+  /const hideProgress = useCallback[\s\S]{0,180}hoveredRef\.current = false/,
+  "manually closing a completed card must clear its hover state",
+);
 assert.doesNotMatch(
   hook,
   /listen<|file-transfer:started|file-transfer:progress|file-transfer:finished/,
@@ -54,6 +76,12 @@ assert.match(
 );
 assert.match(bar, /return "—"/);
 assert.doesNotMatch(bar, /0 KB\/s/);
+assert.match(
+  bar,
+  /if \(error && phase !== "completed" && phase !== "cancelled"\)[\s\S]{0,80}return error/,
+  "active transfer/cancellation errors must be visible instead of tooltip-only",
+);
+assert.match(bar, /data-has-error=\{Boolean\(error\)/);
 
 const barCss = await source("src/components/FileManager/TransferProgressBar.module.css");
 assert.match(barCss, /grid-template-areas:\s*"name progress percent detail action"/);
@@ -255,6 +283,21 @@ assert.match(
 );
 
 // ── Standard file-manager interaction rules ────────────────────────────────
+const rightSidebar = await source("src/components/RightSidebar/SessionRightSidebar.tsx");
+assert.match(
+  rightSidebar,
+  /const FileManagerPanel = lazy\(\(\) => import\("\.\.\/FileManager\/FileManagerPanel"\)\)/,
+  "SSH FileManager should remain lazy-loaded instead of inflating daily-driver ui-core",
+);
+
+const viteConfig = await source("vite.config.ts");
+assert.match(viteConfig, /return "ui-file-manager"/);
+assert.doesNotMatch(
+  viteConfig,
+  /components\\\/\(Common\|Layout\|Terminal\|RightSidebar\|JournaldViewer\|FileManager\|SendBar\)/,
+  "FileManager must not be forced back into the ui-core manual chunk",
+);
+
 const panel = await source("src/components/FileManager/FileManagerPanel.tsx");
 assert.match(panel, /useToast/);
 assert.doesNotMatch(
@@ -311,6 +354,66 @@ assert.match(
   "an unseen/stale upload conflict must default to no-clobber",
 );
 assert.match(panel, /fileManager\.deleteFailed/);
+assert.match(panel, /function canPreviewEntry\(entry: SftpEntry\)/);
+assert.match(
+  panel,
+  /if \(canPreviewEntry\(ctxTarget\)\)[\s\S]{0,120}id: "preview"/,
+  "ordinary files must expose the bounded byte preview regardless of filename extension",
+);
+assert.doesNotMatch(panel, /TEXT_EXTENSIONS|function isTextFile/);
+assert.match(panel, /ms\.handleRightClick\(entry\);/);
+assert.match(
+  panel,
+  /ctxOpenedRef\.current = true;[\s\S]{0,180}queueMicrotask\(\(\) => \{[\s\S]{0,80}ctxOpenedRef\.current = false/,
+  "context-menu dedupe must expire after the current right-click instead of blocking later blank-area menus",
+);
+assert.match(
+  panel,
+  /if \(isConnected\) return;[\s\S]{0,220}resolveConflictPolicy\(null\)[\s\S]{0,180}closePreview\(\)/,
+  "disconnect must close transient FileManager UI and resolve any pending conflict decision",
+);
+assert.match(
+  panel,
+  /const handleNewFile = useCallback\(\(\) => \{[\s\S]{0,180}if \(!isConnected\)[\s\S]{0,140}sessionDisconnected/,
+  "new-file actions must fail closed while the SFTP session is disconnected",
+);
+assert.match(
+  panel,
+  /id: "upload"[\s\S]{0,100}disabled: !isConnected/,
+  "disconnected blank-area context menus must disable upload actions",
+);
+assert.match(
+  panel,
+  /onClick=\{handleNewFile\}[\s\S]{0,100}disabled=\{!isConnected\}/,
+  "disconnected toolbar mutation actions must be visibly disabled",
+);
+assert.match(
+  panel,
+  /\.catch\(\(error\) => \{[\s\S]{0,180}showToast\("error", String\(error\)\)/,
+  "post-chmod metadata refresh failures must not be swallowed",
+);
+assert.match(panel, /const propsRequestGenerationRef = useRef\(0\)/);
+assert.match(panel, /const previewRequestGenerationRef = useRef\(0\)/);
+assert.match(
+  panel,
+  /generation !== propsRequestGenerationRef\.current[\s\S]{0,80}return/,
+  "stale Properties stat responses must be ignored",
+);
+assert.match(
+  panel,
+  /generation !== previewRequestGenerationRef\.current[\s\S]{0,80}return/,
+  "stale Preview byte responses must be ignored",
+);
+assert.match(
+  panel,
+  /const closeProperties = useCallback[\s\S]{0,160}propsRequestGenerationRef\.current \+= 1/,
+  "closing Properties must invalidate its in-flight stat request",
+);
+assert.match(
+  panel,
+  /const closePreview = useCallback[\s\S]{0,160}previewRequestGenerationRef\.current \+= 1/,
+  "closing Preview must invalidate its in-flight read request",
+);
 assert.match(panel, /name === "\." \|\| name === "\.\."/);
 assert.match(panel, /name\.includes\("\/"\)/);
 
@@ -391,6 +494,12 @@ assert.match(deleteDialog, /variant="ghost"/);
 assert.match(deleteDialog, /variant="danger"/);
 assert.match(deleteDialog, /size="md"/);
 assert.match(deleteDialog, /deleteConfirmAction/);
+assert.match(deleteDialog, /useReducedMotion/);
+assert.match(
+  deleteDialog,
+  /transition=\{\{ duration: reducedMotion \? 0 : 0\.12 \}\}/,
+  "destructive confirmation motion must respect the system reduced-motion preference",
+);
 
 const deleteDialogCss = await source("src/components/FileManager/DeleteConfirmationDialog.module.css");
 assert.match(deleteDialogCss, /border-radius:\s*var\(--radius-xl\)/);
@@ -407,8 +516,18 @@ assert.match(conflictDialog, /dialogRef\.current\?\.querySelectorAll/);
 assert.match(conflictDialog, /styles\.policyList/);
 assert.match(conflictDialog, /styles\.footer/);
 assert.match(conflictDialog, /variant="danger"/);
-assert.match(conflictDialog, /variant="primary"/);
+assert.doesNotMatch(
+  conflictDialog,
+  /variant="primary"/,
+  "multi-choice conflict decisions must not promote a recommendation to a full Prism Primary button",
+);
+assert.match(
+  conflictDialog,
+  /variant="secondary"[\s\S]{0,120}data-policy="keep-both"/,
+  "Keep Both must stay on the neutral secondary surface while retaining safe default focus",
+);
 assert.match(conflictDialog, /variant="ghost"/);
+assert.match(conflictDialog, /useReducedMotion/);
 assert.match(
   conflictDialog,
   /variant="ghost"[\s\S]{0,80}size="md"/,
@@ -430,12 +549,50 @@ assert.match(propertiesModal, /dialogRef\.current\?\.querySelectorAll/);
 assert.match(propertiesModal, /event\.key !== "Tab"/);
 assert.match(propertiesModal, /const canChmod = entryType === "file" \|\| entryType === "directory"/);
 assert.match(propertiesModal, /\{canChmod && \(/);
+assert.match(propertiesModal, /getEntryIcon/);
+assert.match(
+  propertiesModal,
+  /setChmodValue\(getOctalFromPerms\(statInfo\?\.permissions \?\? null\)\)/,
+  "Properties must clear stale chmod state when the next entry has no reported permissions",
+);
+assert.match(propertiesModal, /className=\{styles\.chmodEditor\}/);
+assert.match(propertiesModal, /className=\{styles\.chmodError\} role="alert"/);
+assert.match(
+  propertiesModal,
+  /if \(chmodEditingRef\.current\)[\s\S]{0,120}cancelChmodEditRef\.current\(\)[\s\S]{0,120}else[\s\S]{0,80}onClose\(\)/,
+  "Escape must leave chmod editing before it closes the Properties dialog",
+);
+assert.match(
+  propertiesModal,
+  /\}, \[visible, onClose\]\);/,
+  "changing chmod edit state must not rerun the modal focus-entry effect and steal input focus",
+);
+assert.match(propertiesModal, /perms\[3\] === "s" \|\| perms\[3\] === "S"/);
+assert.match(propertiesModal, /perms\[6\] === "s" \|\| perms\[6\] === "S"/);
+assert.match(propertiesModal, /perms\[9\] === "t" \|\| perms\[9\] === "T"/);
+assert.match(
+  propertiesModal,
+  /\^\[0-7\]\{3,4\}\$/,
+  "chmod editor must accept special-bit forms such as 4755",
+);
+assert.match(propertiesModal, /maxLength=\{4\}/);
+assert.match(
+  propertiesModal,
+  /if \(!activeRef\.current\) return;[\s\S]{0,120}onChmodComplete\?\.\(\)/,
+  "a chmod response arriving after the dialog closes must not restart Properties work",
+);
 
 assert.match(
   service,
   /file_type_bits = stat\.permissions\.unwrap_or\(0\) & 0o170000[\s\S]*mode & 0o7777/,
   "chmod must preserve POSIX file-type bits",
 );
+assert.match(
+  service,
+  /p & 0o4000 != 0[\s\S]{0,260}'s'[\s\S]{0,520}p & 0o2000 != 0[\s\S]{0,260}'s'[\s\S]{0,520}p & 0o1000 != 0[\s\S]{0,260}'t'/,
+  "permission strings must preserve setuid, setgid and sticky bits for the chmod editor",
+);
+assert.match(service, /permission_strings_preserve_posix_special_bits/);
 assert.match(
   service,
   /仅支持修改普通文件或目录权限/,
@@ -460,6 +617,27 @@ assert.match(fileList, /case "ArrowDown"/);
 assert.match(fileList, /case "Home"/);
 assert.match(fileList, /case "End"/);
 assert.match(fileList, /virtualCanvas/);
+assert.match(fileList, /aria-sort=/);
+assert.match(fileList, /className=\{styles\.errorBanner\} role="alert"/);
+assert.match(fileList, /styles\.colPerms[^\n]*role="columnheader"/);
+assert.match(fileList, /onClick=\{\(additiveKey, shiftKey\) => onEntryClick/);
+assert.match(fileList, /className=\{styles\.gridFrame\}[\s\S]{0,80}role="grid"/);
+assert.match(fileList, /className=\{styles\.header\} role="row"/);
+assert.match(fileList, /className=\{styles\.body\}[\s\S]{0,60}role="presentation"/);
+assert.match(
+  fileList,
+  /aria-rowcount=\{entries\.length \+ \(parentVisible \? 1 : 0\) \+ 1\}/,
+  "list grid row count must include the column-header row",
+);
+
+const fileRow = await source("src/components/FileManager/FileRow.tsx");
+assert.match(fileRow, /e\.ctrlKey \|\| e\.metaKey/);
+assert.match(
+  fileRow,
+  /onClick\(e\.ctrlKey \|\| e\.metaKey, e\.shiftKey\)/,
+  "keyboard Space must preserve additive/range selection modifiers",
+);
+assert.match(fileRow, /aria-rowindex=\{ariaRowIndex\}/);
 
 const fileGrid = await source("src/components/FileManager/FileGrid.tsx");
 assert.match(fileGrid, /VIRTUAL_THRESHOLD = 300/);
@@ -470,6 +648,64 @@ assert.match(fileGrid, /case "ArrowRight"/);
 assert.match(fileGrid, /case "ArrowUp"/);
 assert.match(fileGrid, /case "ArrowDown"/);
 assert.match(fileGrid, /tabIndex=\{activeItem === itemIndex \? 0 : -1\}/);
+assert.match(fileGrid, /className=\{styles\.errorBanner\} role="alert"/);
+assert.match(fileGrid, /e\.ctrlKey \|\| e\.metaKey/);
+assert.match(fileGrid, /aria-rowindex=\{ariaRowIndex\}/);
+assert.match(fileGrid, /aria-rowindex=\{itemIndex \+ 1\}/);
+
+const multiSelect = await source("src/components/FileManager/hooks/useMultiSelect.ts");
+assert.match(
+  multiSelect,
+  /if \(shiftKey && lastClickedIndex !== null\)[\s\S]{0,180}if \(!additiveKey\) next\.clear\(\)/,
+  "plain Shift must replace selection with the anchor range while Ctrl/Command+Shift extends it",
+);
+assert.match(multiSelect, /handleRightClick: \(entry: SftpEntry\) => void/);
+assert.match(multiSelect, /const \[lastClickedPath, setLastClickedPath\] = useState<string \| null>\(null\)/);
+assert.match(
+  multiSelect,
+  /entries\.findIndex\(\(entry\) => entry\.path === lastClickedPath\)/,
+  "range selection anchor must follow entry identity across sort/reload order changes",
+);
+assert.match(
+  multiSelect,
+  /const validPaths = new Set\(entries\.map\(\(entry\) => entry\.path\)\)[\s\S]{0,360}validPaths\.has\(path\)/,
+  "refreshes must prune selected paths that no longer exist in the current directory",
+);
+assert.doesNotMatch(
+  multiSelect,
+  /handleRightClick[\s\S]{0,320}ctrlKey/,
+  "context-menu selection must not treat macOS Control-click as an additive-selection modifier",
+);
+
+const breadcrumb = await source("src/components/FileManager/BreadcrumbNav.tsx");
+assert.match(breadcrumb, /<nav className=\{styles\.breadcrumb\}/);
+assert.match(breadcrumb, /aria-current="page"/);
+
+const inlinePrompt = await source("src/components/FileManager/InlinePrompt.tsx");
+assert.match(inlinePrompt, /GlassButton/);
+assert.match(inlinePrompt, /aria-label=\{placeholder \?\? t\("fileManager\.name"\)\}/);
+
+const contextMenu = await source("src/components/common/ContextMenu.tsx");
+assert.match(contextMenu, /role="menu"/);
+assert.match(contextMenu, /role="menuitem"/);
+assert.match(contextMenu, /role="separator"/);
+assert.match(contextMenu, /case "ArrowDown"/);
+assert.match(contextMenu, /case "ArrowUp"/);
+assert.match(contextMenu, /case "Home"/);
+assert.match(contextMenu, /case "End"/);
+assert.match(contextMenu, /useReducedMotion/);
+assert.match(contextMenu, /const previousFocusRef = useRef<HTMLElement \| null>\(null\)/);
+assert.match(
+  contextMenu,
+  /\}, \[state\.visible, state\.x, state\.y\]\);/,
+  "menu positioning/focus work must rerun for a fresh context-click without depending on unstable state object identity",
+);
+assert.match(contextMenu, /if \(adjustedY < 0\) adjustedY = 8/);
+assert.match(
+  contextMenu,
+  /querySelector<HTMLButtonElement>\('button\[role="menuitem"\]:not\(:disabled\)'\)/,
+  "context menus must move focus to the first enabled action when opened",
+);
 
 const preview = await source("src/components/FileManager/FilePreviewModal.tsx");
 assert.match(preview, /role="dialog"/);
@@ -483,7 +719,17 @@ assert.match(preview, /"shift_jis"/);
 assert.match(preview, /function formatHex/);
 assert.match(preview, /HEX_RENDER_LIMIT/);
 assert.match(preview, /new TextDecoder\(encoding/);
+assert.match(
+  preview,
+  /detected === "utf-16le" \|\| detected === "utf-16be"[\s\S]{0,80}\? "text"/,
+  "BOM-detected UTF-16 files must default to Text instead of being misclassified by NUL bytes",
+);
+assert.match(preview, /className=\{styles\.error\} role="alert"/);
+assert.match(preview, /Math\.min\(bytes\.length, HEX_RENDER_LIMIT\)/);
 assert.match(preview, /aria-pressed=\{mode === "text"\}/);
+assert.match(preview, /liquid-selector-strip/);
+assert.match(preview, /liquid-selector-button/);
+assert.doesNotMatch(preview, /modeButtonActive/);
 assert.match(
   preview,
   /encodingSelect\} liquid-glass-input liquid-glass-select/,

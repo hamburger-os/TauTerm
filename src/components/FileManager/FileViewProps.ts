@@ -12,7 +12,7 @@ export interface FileViewProps {
   onEntryClick: (
     entry: SftpEntry,
     index: number,
-    ctrlKey: boolean,
+    additiveKey: boolean,
     shiftKey: boolean
   ) => void;
   onEntryDoubleClick: (entry: SftpEntry) => void;

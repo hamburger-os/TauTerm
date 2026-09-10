@@ -1,9 +1,12 @@
 .menu {
   position: fixed;
   z-index: var(--z-overlay);
-  min-width: 160px;
+  min-width: min(160px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   border-radius: var(--radius-md);
-  padding: 4px;
+  padding: var(--spacing-xs);
   display: flex;
   flex-direction: column;
 }
@@ -11,7 +14,7 @@
 .menuItem {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   padding: 7px 12px;
   background: transparent;
   border: none;
@@ -49,12 +52,15 @@
 }
 
 .itemLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .separator {
   height: 1px;
-  margin: 4px 8px;
+  margin: var(--spacing-xs) var(--spacing-sm);
   background: var(--glass-border-default);
   pointer-events: none;
 }
@@ -62,18 +68,18 @@
 .header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px 8px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-md) var(--spacing-sm);
   border-bottom: 1px solid var(--glass-border-default);
-  margin-bottom: 4px;
+  margin-bottom: var(--spacing-xs);
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   user-select: none;
   cursor: default;
 }
 
 .headerIcon {
-  font-size: 14px;
+  font-size: var(--text-md);
   flex-shrink: 0;
 }
 

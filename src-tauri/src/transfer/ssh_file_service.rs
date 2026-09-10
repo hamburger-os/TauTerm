@@ -1462,13 +1462,28 @@ fn permissions_to_string(perm: Option<u32>) -> String {
     s.push(type_char);
     s.push(if p & 0o400 != 0 { 'r' } else { '-' });
     s.push(if p & 0o200 != 0 { 'w' } else { '-' });
-    s.push(if p & 0o100 != 0 { 'x' } else { '-' });
+    s.push(match (p & 0o4000 != 0, p & 0o100 != 0) {
+        (true, true) => 's',
+        (true, false) => 'S',
+        (false, true) => 'x',
+        (false, false) => '-',
+    });
     s.push(if p & 0o040 != 0 { 'r' } else { '-' });
     s.push(if p & 0o020 != 0 { 'w' } else { '-' });
-    s.push(if p & 0o010 != 0 { 'x' } else { '-' });
+    s.push(match (p & 0o2000 != 0, p & 0o010 != 0) {
+        (true, true) => 's',
+        (true, false) => 'S',
+        (false, true) => 'x',
+        (false, false) => '-',
+    });
     s.push(if p & 0o004 != 0 { 'r' } else { '-' });
     s.push(if p & 0o002 != 0 { 'w' } else { '-' });
-    s.push(if p & 0o001 != 0 { 'x' } else { '-' });
+    s.push(match (p & 0o1000 != 0, p & 0o001 != 0) {
+        (true, true) => 't',
+        (true, false) => 'T',
+        (false, true) => 'x',
+        (false, false) => '-',
+    });
     s
 }
 
@@ -1584,6 +1599,14 @@ mod progress_tests {
         assert!(sample.is_finite());
         assert!(sample > 0.0);
         assert_eq!(rate.sample(1024), Some(sample));
+    }
+
+    #[test]
+    fn permission_strings_preserve_posix_special_bits() {
+        assert_eq!(permissions_to_string(Some(0o104755)), "-rwsr-xr-x");
+        assert_eq!(permissions_to_string(Some(0o102755)), "-rwxr-sr-x");
+        assert_eq!(permissions_to_string(Some(0o101755)), "-rwxr-xr-t");
+        assert_eq!(permissions_to_string(Some(0o107000)), "---S--S--T");
     }
 
     #[tokio::test]

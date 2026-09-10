@@ -111,6 +111,10 @@
   color: var(--color-error);
 }
 
+.bar[data-has-error="true"] .detailText {
+  color: var(--color-error);
+}
+
 .bar[data-phase="cancelled"] .detailText {
   color: var(--text-secondary);
 }

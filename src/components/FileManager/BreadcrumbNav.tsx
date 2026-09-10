@@ -3,6 +3,7 @@
  *
  * 可点击的路径段，用于文件管理器目录导航。
  */
+import { useTranslation } from "react-i18next";
 import styles from "./BreadcrumbNav.module.css";
 
 interface BreadcrumbSegments {
@@ -16,24 +17,31 @@ interface BreadcrumbNavProps {
 }
 
 export default function BreadcrumbNav({ segments, onNavigate }: BreadcrumbNavProps) {
+  const { t } = useTranslation();
+
   return (
-    <div className={styles.breadcrumb}>
-      {segments.map((seg, i) => (
-        <span key={seg.path} className={styles.segmentWrapper}>
-          {i > 0 && <span className={styles.separator}>/</span>}
-          <span
-            className={`${styles.segment} ${i === segments.length - 1 ? styles.current : ""}`}
-            onClick={() => onNavigate(seg.path)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") onNavigate(seg.path);
-            }}
-          >
-            {seg.name}
+    <nav className={styles.breadcrumb} aria-label={t("fileManager.path")}>
+      {segments.map((seg, i) => {
+        const current = i === segments.length - 1;
+        return (
+          <span key={seg.path} className={styles.segmentWrapper}>
+            {i > 0 && <span className={styles.separator}>/</span>}
+            {current ? (
+              <span className={styles.current} aria-current="page">
+                {seg.name}
+              </span>
+            ) : (
+              <button
+                type="button"
+                className={styles.segment}
+                onClick={() => onNavigate(seg.path)}
+              >
+                {seg.name}
+              </button>
+            )}
           </span>
-        </span>
-      ))}
-    </div>
+        );
+      })}
+    </nav>
   );
 }

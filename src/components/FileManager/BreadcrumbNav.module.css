@@ -22,6 +22,11 @@
 }
 
 .segment {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
   cursor: pointer;
   color: var(--accent-primary);
   text-decoration: none;
@@ -34,9 +39,5 @@
 .current {
   font-weight: 700;
   color: var(--text-primary);
-}
-
-.current:hover {
-  text-decoration: none;
   cursor: default;
 }

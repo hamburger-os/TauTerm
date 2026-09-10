@@ -3,8 +3,8 @@ import { lazy, Suspense, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "./RightSidebarPanel";
 import TransmissionPanel from "../Transmission/TransmissionPanel";
-import FileManagerPanel from "../FileManager/FileManagerPanel";
 import JournaldViewerPanel from "../JournaldViewer/JournaldViewerPanel";
+const FileManagerPanel = lazy(() => import("../FileManager/FileManagerPanel"));
 const ProtocolTool = lazy(() => import("../Tools/ProtocolTool"));
 const CalculatorTool = lazy(() => import("../Tools/CalculatorTool"));
 
@@ -57,10 +57,12 @@ export default function SessionRightSidebar({
           defaultExpanded={true}
           onContextMenu={handleFileManagerWrapperContext}
         >
-          <FileManagerPanel
-            sessionId={sessionId}
-            isConnected={isConnected}
-          />
+          <Suspense fallback={null}>
+            <FileManagerPanel
+              sessionId={sessionId}
+              isConnected={isConnected}
+            />
+          </Suspense>
         </RightSidebarPanel>
       )}
       {/* 日志查看器（SSH journald）—— 组件自行管理 RightSidebarPanel */}

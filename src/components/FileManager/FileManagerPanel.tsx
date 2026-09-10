@@ -33,19 +33,13 @@ const ConflictResolutionModal = lazy(() => import("./ConflictResolutionModal"));
 const FilePropertiesModal = lazy(() => import("./FilePropertiesModal"));
 const FilePreviewModal = lazy(() => import("./FilePreviewModal"));
 
-// ── 文本文件扩展名判定 ─────────────────────────────────
-
-const TEXT_EXTENSIONS = new Set([
-  ".txt", ".log", ".cfg", ".conf", ".ini", ".json", ".xml", ".yaml", ".yml",
-  ".toml", ".sh", ".bash", ".zsh", ".py", ".rb", ".js", ".ts", ".jsx", ".tsx",
-  ".css", ".html", ".md", ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".java",
-  ".lua", ".service", ".env", ".gitignore", ".editorconfig",
-]);
-
-function isTextFile(name: string): boolean {
-  const dot = name.lastIndexOf(".");
-  if (dot === -1) return false;
-  return TEXT_EXTENSIONS.has(name.slice(dot).toLowerCase());
+// ── 预览能力判定 ───────────────────────────────────────
+//
+// 预览器本身基于原始字节，支持 Text / HEX；因此不再用文件扩展名把二进制
+// 普通文件挡在入口外。目录、符号链接与特殊文件仍不开放预览。
+function canPreviewEntry(entry: SftpEntry): boolean {
+  const entryType = entry.entry_type ?? (entry.is_dir ? "directory" : "file");
+  return entryType === "file" && !entry.is_dir;
 }
 
 type ViewMode = "list" | "grid";
@@ -170,9 +164,15 @@ export default function FileManagerPanel({
     (e: React.MouseEvent, entry: SftpEntry | null, _index?: number) => {
       e.preventDefault();
       if (import.meta.env.DEV) console.debug("[FileManager] showContextMenu direct → entry=", entry?.name ?? "<blank>", "sessionId=", sessionId);
-      ctxOpenedRef.current = true; // 阻止 CustomEvent 重复触发（同步执行，先于 dispatchEvent 回调）
+      // Deduplicate only the current contextmenu event. Keeping this flag true
+      // until the menu closes would incorrectly block a later right-click on the
+      // RightSidebarPanel blank area while the first menu is still open.
+      ctxOpenedRef.current = true;
+      queueMicrotask(() => {
+        ctxOpenedRef.current = false;
+      });
       if (entry !== null) {
-        ms.handleRightClick(entry, e.ctrlKey);
+        ms.handleRightClick(entry);
       }
       setCtxX(e.clientX);
       setCtxY(e.clientY);
@@ -192,6 +192,7 @@ export default function FileManagerPanel({
   const [propsTarget, setPropsTarget] = useState<SftpEntry | null>(null);
   const [propsInfo, setPropsInfo] = useState<FileStatInfo | null>(null);
   const [propsLoading, setPropsLoading] = useState(false);
+  const propsRequestGenerationRef = useRef(0);
 
   // ── Preview modal state ───────────────────────────────
   const [previewVisible, setPreviewVisible] = useState(false);
@@ -200,11 +201,12 @@ export default function FileManagerPanel({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewFileSize, setPreviewFileSize] = useState(0);
+  const previewRequestGenerationRef = useRef(0);
 
   // ── Entry click / double-click ──────────────────────
   const handleEntryClick = useCallback(
-    (entry: SftpEntry, index: number, ctrlKey: boolean, shiftKey: boolean) => {
-      ms.handleClick(entry, index, ctrlKey, shiftKey);
+    (entry: SftpEntry, index: number, additiveKey: boolean, shiftKey: boolean) => {
+      ms.handleClick(entry, index, additiveKey, shiftKey);
     },
     [ms],
   );
@@ -383,14 +385,22 @@ export default function FileManagerPanel({
   }, [handleDroppedPaths, isConnected]);
 
   const handleNewFile = useCallback(() => {
+    if (!isConnected) {
+      showToast("warning", t("fileManager.sessionDisconnected"));
+      return;
+    }
     fm.setPromptMode("newFile");
     fm.setPromptValue("");
-  }, [fm]);
+  }, [fm, isConnected, showToast, t]);
 
   const handleNewFolder = useCallback(() => {
+    if (!isConnected) {
+      showToast("warning", t("fileManager.sessionDisconnected"));
+      return;
+    }
     fm.setPromptMode("newFolder");
     fm.setPromptValue("");
-  }, [fm]);
+  }, [fm, isConnected, showToast, t]);
 
   const handleDownload = useCallback(async () => {
     if (!isConnected) {
@@ -541,17 +551,22 @@ export default function FileManagerPanel({
   const handleProperties = useCallback(async () => {
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
     if (!target) return;
+
+    const generation = ++propsRequestGenerationRef.current;
     setPropsTarget(target);
     setPropsInfo(null);
     setPropsLoading(true);
     setPropsVisible(true);
+
     try {
       const info = await invoke<FileStatInfo>("sftp_stat_cmd", {
         sessionId,
         remotePath: target.path,
       });
+      if (generation !== propsRequestGenerationRef.current) return;
       setPropsInfo(info);
-    } catch (e) {
+    } catch {
+      if (generation !== propsRequestGenerationRef.current) return;
       // 如果 stat 失败，使用 entry 本身的字段作为回退
       setPropsInfo({
         name: target.name,
@@ -563,12 +578,17 @@ export default function FileManagerPanel({
         permissions: target.permissions,
         entryType: target.entry_type,
       });
+    } finally {
+      if (generation === propsRequestGenerationRef.current) {
+        setPropsLoading(false);
+      }
     }
-    setPropsLoading(false);
   }, [sessionId, ms, ctxTarget]);
 
   const closeProperties = useCallback(() => {
+    propsRequestGenerationRef.current += 1;
     setPropsVisible(false);
+    setPropsLoading(false);
     setPropsTarget(null);
     setPropsInfo(null);
   }, []);
@@ -576,9 +596,10 @@ export default function FileManagerPanel({
   // ── 文件预览（使用 sftp_read_head 部分读取，无需临时文件）──
   const handlePreview = useCallback(async () => {
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
-    if (!target || target.is_dir) return;
+    if (!target || !canPreviewEntry(target)) return;
 
     const MAX_PREVIEW = 1_048_576; // 1 MB
+    const generation = ++previewRequestGenerationRef.current;
 
     setPreviewFileName(target.name);
     setPreviewData(null);
@@ -597,17 +618,45 @@ export default function FileManagerPanel({
         },
       );
 
+      if (generation !== previewRequestGenerationRef.current) return;
       setPreviewData(result.data);
       setPreviewFileSize(result.total_size);
-    } catch (e) {
-      setPreviewError(String(e));
+    } catch (error) {
+      if (generation !== previewRequestGenerationRef.current) return;
+      setPreviewError(String(error));
+    } finally {
+      if (generation === previewRequestGenerationRef.current) {
+        setPreviewLoading(false);
+      }
     }
-    setPreviewLoading(false);
-  }, [sessionId, ms, ctxTarget, t]);
+  }, [sessionId, ms, ctxTarget]);
 
   const closePreview = useCallback(() => {
+    previewRequestGenerationRef.current += 1;
     setPreviewVisible(false);
+    setPreviewLoading(false);
+    setPreviewData(null);
+    setPreviewError(null);
   }, []);
+
+  // Connection loss invalidates transient file-service interactions. In
+  // particular, resolve an outstanding conflict prompt so its awaiting upload
+  // flow cannot remain suspended after the SSH/SFTP channel disappears.
+  useEffect(() => {
+    if (isConnected) return;
+    closeContextMenu();
+    cancelDelete();
+    resolveConflictPolicy(null);
+    closeProperties();
+    closePreview();
+  }, [
+    isConnected,
+    closeContextMenu,
+    cancelDelete,
+    resolveConflictPolicy,
+    closeProperties,
+    closePreview,
+  ]);
 
   // ── Inline prompt actions ───────────────────────────
   const handlePromptConfirm = useCallback(
@@ -707,12 +756,12 @@ export default function FileManagerPanel({
   const contextMenuItems = useMemo((): ContextMenuItem[] => {
     if (ctxTarget === null) {
       return [
-        { id: "upload", label: t("fileManager.upload") },
-        { id: "uploadFolder", label: t("fileManager.uploadFolder") },
-        { id: "newFile", label: t("fileManager.newFile") },
-        { id: "newFolder", label: t("fileManager.newFolder") },
+        { id: "upload", label: t("fileManager.upload"), disabled: !isConnected },
+        { id: "uploadFolder", label: t("fileManager.uploadFolder"), disabled: !isConnected },
+        { id: "newFile", label: t("fileManager.newFile"), disabled: !isConnected },
+        { id: "newFolder", label: t("fileManager.newFolder"), disabled: !isConnected },
         { id: "sep1", label: "", type: "separator" },
-        { id: "refresh", label: t("fileManager.refresh") },
+        { id: "refresh", label: t("fileManager.refresh"), disabled: !isConnected },
       ];
     }
 
@@ -735,7 +784,7 @@ export default function FileManagerPanel({
       const items: ContextMenuItem[] = [
         { id: "download", label: t("fileManager.download") },
       ];
-      if (isTextFile(ctxTarget.name)) {
+      if (canPreviewEntry(ctxTarget)) {
         items.push({ id: "preview", label: t("fileManager.preview") });
       }
       items.push(
@@ -763,7 +812,7 @@ export default function FileManagerPanel({
         danger: true,
       },
     ];
-  }, [ctxTarget, contextMenuSelectedCount, t]);
+  }, [ctxTarget, contextMenuSelectedCount, isConnected, t]);
 
   const handleContextMenuSelect = useCallback(
     (id: string) => {
@@ -816,32 +865,40 @@ export default function FileManagerPanel({
       <div className={styles.toolbar}>
         <div className={styles.toolbarActions}>
           <button
+            type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleRefresh}
+            disabled={!isConnected}
             title={t("fileManager.refresh")}
             aria-label={t("fileManager.refresh")}
           >
             <Icon name="refresh" size="sm" />
           </button>
           <button
+            type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleNewFile}
+            disabled={!isConnected}
             title={t("fileManager.newFile")}
             aria-label={t("fileManager.newFile")}
           >
             <Icon name="file" size="sm" />
           </button>
           <button
+            type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleNewFolder}
+            disabled={!isConnected}
             title={t("fileManager.newFolder")}
             aria-label={t("fileManager.newFolder")}
           >
             <Icon name="folder" size="sm" />
           </button>
           <button
+            type="button"
             className={`${styles.toolbarBtn} liquid-glass-ghost-button`}
             onClick={handleUpload}
+            disabled={!isConnected}
             title={t("fileManager.upload")}
             aria-label={t("fileManager.upload")}
           >
@@ -849,6 +906,7 @@ export default function FileManagerPanel({
           </button>
         </div>
         <button
+          type="button"
           className={`${styles.toolbarBtn} ${styles.viewToggleBtn} liquid-glass-ghost-button`}
           onClick={() => changeViewMode(viewMode === "list" ? "grid" : "list")}
           title={viewMode === "list" ? t("fileManager.switchToGrid") : t("fileManager.switchToList")}
@@ -994,21 +1052,31 @@ export default function FileManagerPanel({
             onClose={closeProperties}
             sessionId={sessionId}
             onChmodComplete={() => {
-              if (propsTarget) {
-                setPropsLoading(true);
-                invoke<FileStatInfo>("sftp_stat_cmd", {
-                  sessionId,
-                  remotePath: propsTarget.path,
+              if (!propsTarget) return;
+              const target = propsTarget;
+              const generation = ++propsRequestGenerationRef.current;
+              // Keep the existing metadata visible while refreshing after chmod.
+              // Replacing the whole body with a loading state would unmount the
+              // focused controls and create an unnecessary visual/focus flash.
+              invoke<FileStatInfo>("sftp_stat_cmd", {
+                sessionId,
+                remotePath: target.path,
+              })
+                .then((info) => {
+                  if (generation === propsRequestGenerationRef.current) {
+                    setPropsInfo(info);
+                  }
                 })
-                  .then(setPropsInfo)
-                  .catch(() => {})
-                  .finally(() => setPropsLoading(false));
-              }
+                .catch((error) => {
+                  if (generation === propsRequestGenerationRef.current) {
+                    showToast("error", String(error));
+                  }
+                });
             }}
           />
         )}
 
-        {/* 文本预览弹窗 */}
+        {/* 文件预览弹窗（Text / HEX） */}
         {previewVisible && (
           <FilePreviewModal
             visible

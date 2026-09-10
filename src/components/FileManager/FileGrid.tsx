@@ -6,6 +6,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import Icon from "../common/Icon";
 import { formatBytes } from "../../utils/format";
 import type { SftpEntry } from "./types";
 import type { FileViewProps } from "./FileViewProps";
@@ -26,9 +27,10 @@ interface FileTileProps {
   typeLabel: string;
   tabIndex: number;
   dataIndex: number;
+  ariaRowIndex: number;
   onFocus: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
-  onClick: (e: React.MouseEvent) => void;
+  onClick: (additiveKey: boolean, shiftKey: boolean) => void;
   onDoubleClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -39,6 +41,7 @@ const FileTile = memo(function FileTile({
   typeLabel,
   tabIndex,
   dataIndex,
+  ariaRowIndex,
   onFocus,
   onKeyDown,
   onClick,
@@ -52,10 +55,11 @@ const FileTile = memo(function FileTile({
   return (
     <div
       className={tileClass}
-      onClick={onClick}
+      onClick={(e) => onClick(e.ctrlKey || e.metaKey, e.shiftKey)}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       role="row"
+      aria-rowindex={ariaRowIndex}
       aria-selected={isSelected}
       tabIndex={tabIndex}
       data-grid-index={dataIndex}
@@ -68,7 +72,7 @@ const FileTile = memo(function FileTile({
           onDoubleClick();
         } else if (e.key === " ") {
           e.preventDefault();
-          onClick({ ctrlKey: false, shiftKey: false } as React.MouseEvent);
+          onClick(e.ctrlKey || e.metaKey, e.shiftKey);
         }
       }}
     >
@@ -221,6 +225,7 @@ export default function FileGrid({
             onContextMenu(e, null, undefined);
           }}
           role="row"
+          aria-rowindex={itemIndex + 1}
           aria-selected={parentSelected}
           tabIndex={activeItem === itemIndex ? 0 : -1}
           data-grid-index={itemIndex}
@@ -255,9 +260,10 @@ export default function FileGrid({
         typeLabel={t(CATEGORY_LABEL_KEYS[getEntryCategory(item)])}
         tabIndex={activeItem === itemIndex ? 0 : -1}
         dataIndex={itemIndex}
+        ariaRowIndex={itemIndex + 1}
         onFocus={() => setActiveItem(itemIndex)}
         onKeyDown={(e) => handleNavigationKey(itemIndex, e)}
-        onClick={(e) => onEntryClick(item, entryIndex, e.ctrlKey, e.shiftKey)}
+        onClick={(additiveKey, shiftKey) => onEntryClick(item, entryIndex, additiveKey, shiftKey)}
         onDoubleClick={() => onEntryDoubleClick(item)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -278,14 +284,15 @@ export default function FileGrid({
       onContextMenu={handleBlankContext}
     >
       {error && (
-        <div className={styles.errorBanner}>
+        <div className={styles.errorBanner} role="alert">
           <span>{error}</span>
           <button
-            className={styles.errorClose}
+            type="button"
+            className={`${styles.errorClose} liquid-glass-ghost-button`}
             onClick={onClearError}
             aria-label={t("common.close")}
           >
-            ×
+            <Icon name="close" size="xs" />
           </button>
         </div>
       )}
