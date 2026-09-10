@@ -210,7 +210,6 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     });
   }, []);
 
-  // 双击父节点：如果未展开则自动展开
   const handleParentSelect = useCallback((node: TreeNode) => {
     // 先展开（SSH connected 会话有子项 / 网络容器有对端时）
     if (node.children.length > 0 || node.peerChildren.length > 0) {
