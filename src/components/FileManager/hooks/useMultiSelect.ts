@@ -7,8 +7,8 @@ export interface UseMultiSelectReturn {
   selectedEntries: SftpEntry[];
   /** 上级目录（`..`）是否处于选中态；与文件路径选择互斥 */
   parentSelected: boolean;
-  handleClick: (entry: SftpEntry, index: number, ctrlKey: boolean, shiftKey: boolean) => void;
-  handleRightClick: (entry: SftpEntry, ctrlKey: boolean) => void;
+  handleClick: (entry: SftpEntry, index: number, additiveKey: boolean, shiftKey: boolean) => void;
+  handleRightClick: (entry: SftpEntry) => void;
   selectAll: (entries: SftpEntry[]) => void;
   /** 选中上级目录（清除文件选择） */
   selectParent: () => void;
@@ -23,7 +23,7 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
   const [parentSelected, setParentSelected] = useState(false);
 
   const handleClick = useCallback(
-    (entry: SftpEntry, index: number, ctrlKey: boolean, shiftKey: boolean) => {
+    (entry: SftpEntry, index: number, additiveKey: boolean, shiftKey: boolean) => {
       setParentSelected(false);
       setSelectedPaths(prev => {
         const next = new Set(prev);
@@ -31,7 +31,7 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
         if (shiftKey && lastClickedIndex !== null) {
           // Desktop file-manager semantics:
           // Shift replaces selection with the anchor range; Ctrl+Shift extends it.
-          if (!ctrlKey) next.clear();
+          if (!additiveKey) next.clear();
           const start = Math.min(lastClickedIndex, index);
           const end = Math.max(lastClickedIndex, index);
           for (let i = start; i <= end; i++) {
@@ -43,7 +43,7 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
           return next;
         }
 
-        if (ctrlKey) {
+        if (additiveKey) {
           // Toggle the clicked entry.
           if (next.has(entry.path)) {
             next.delete(entry.path);
@@ -84,26 +84,14 @@ export function useMultiSelect(entries: SftpEntry[]): UseMultiSelectReturn {
 
   // ── Right-click: auto-select only if not already in selection ──
   //
-  // Matches common desktop file-manager selection behavior:
-  // - Right-click unselected file → clear + select it (single-item menu)
-  // - Right-click file that's already in multi-select → keep selection (batch menu)
-  // - Ctrl+right-click → toggle file in/out of selection
+  // Keep context-menu selection independent of modifier keys. In particular,
+  // macOS Control-click is a standard secondary-click gesture and must not be
+  // misinterpreted as an additive-selection toggle.
   const handleRightClick = useCallback(
-    (entry: SftpEntry, ctrlKey: boolean) => {
+    (entry: SftpEntry) => {
       setParentSelected(false);
       setSelectedPaths(prev => {
         const next = new Set(prev);
-
-        if (ctrlKey) {
-          if (next.has(entry.path)) {
-            next.delete(entry.path);
-          } else {
-            next.add(entry.path);
-          }
-          setLastClickedIndex(null);
-          return next;
-        }
-
         if (!next.has(entry.path)) {
           next.clear();
           next.add(entry.path);
