@@ -1,0 +1,144 @@
+name: Temporary Transfer Shutdown Safety Fix
+
+on:
+  push:
+    branches:
+      - refactor/transfer-runtime-unification
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refactor/transfer-runtime-unification
+          persist-credentials: true
+      - name: Apply reviewed shutdown invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          orchestrator_path = Path('src-tauri/src/transfer/orchestrator.rs')
+          text = orchestrator_path.read_text(encoding='utf-8')
+
+          old = '''fn restore_session_state(app: &AppHandle, session_id: &str) {
+              if let Some(state) = app.try_state::<AppState>() {
+                  if let Ok(mut store) = state.session_store.lock() {
+                      if let Some(handle) = store.get_session_mut(session_id) {
+                          handle.state = SessionState::Connected;
+                          handle.channel_return_tx = None;
+                          let _ = handle.transfer_scheduler.finish(None);
+                      }
+                  }
+              }
+          }
+          '''
+          new = '''fn restore_session_state(app: &AppHandle, session_id: &str, transfer_id: &str) {
+              if let Some(state) = app.try_state::<AppState>() {
+                  if let Ok(mut store) = state.session_store.lock() {
+                      if let Some(handle) = store.get_session_mut(session_id) {
+                          let _ = handle.transfer_scheduler.finish(Some(transfer_id));
+                          handle.channel_return_tx = None;
+                          if handle.state != SessionState::Disconnected {
+                              handle.state = SessionState::Connected;
+                          }
+                      }
+                  }
+              }
+          }
+          '''
+          if text.count(old) != 1:
+              raise SystemExit('restore_session_state shape changed; refusing unsafe patch')
+          text = text.replace(old, new)
+
+          old_call = 'restore_session_state(app, session_id);'
+          if text.count(old_call) != 3:
+              raise SystemExit(f'expected 3 restore_session_state calls, found {text.count(old_call)}')
+          text = text.replace(old_call, 'restore_session_state(app, session_id, transfer_id);')
+
+          old = '''                    let _ = handle.transfer_scheduler.finish(Some(transfer_id));
+                              handle.state = SessionState::Connected;
+                              if let Some(tx) = handle.channel_return_tx.take() {
+          '''
+          new = '''                    let _ = handle.transfer_scheduler.finish(Some(transfer_id));
+                              if handle.state != SessionState::Disconnected {
+                                  handle.state = SessionState::Connected;
+                              }
+                              if let Some(tx) = handle.channel_return_tx.take() {
+          '''
+          if text.count(old) != 1:
+              raise SystemExit('return_port shape changed; refusing unsafe patch')
+          text = text.replace(old, new)
+
+          old = '''                    let _ = handle.transfer_scheduler.finish(Some(transfer_id));
+                              handle.state = SessionState::Connected;
+                              handle.channel_return_tx = None;
+          '''
+          new = '''                    let _ = handle.transfer_scheduler.finish(Some(transfer_id));
+                              if handle.state != SessionState::Disconnected {
+                                  handle.state = SessionState::Connected;
+                              }
+                              handle.channel_return_tx = None;
+          '''
+          if text.count(old) != 1:
+              raise SystemExit('release_after_port_loss shape changed; refusing unsafe patch')
+          text = text.replace(old, new)
+          orchestrator_path.write_text(text, encoding='utf-8')
+
+          session_path = Path('src-tauri/src/kernel/session_store.rs')
+          session = session_path.read_text(encoding='utf-8')
+          session = session.replace(
+              '    /// 侧通道异步传输任务的 JoinHandle 集合。\n',
+              '    /// 后台文件传输任务（Inline / SideChannel）的 JoinHandle 集合。\n',
+          )
+          session = session.replace(
+              '        // ── 等待进行中的侧通道传输完成 ──\n',
+              '        // ── 等待进行中的后台文件传输任务完成 ──\n',
+          )
+          session_path.write_text(session, encoding='utf-8')
+
+          contract_path = Path('scripts/test-file-transfer-lifecycle.mjs')
+          contract = contract_path.read_text(encoding='utf-8')
+          old_name = 'bounded_map_model_supports_future_multi_task_policy'
+          if old_name not in contract:
+              raise SystemExit('scheduler contract marker missing')
+          contract = contract.replace(
+              old_name,
+              'bounded_map_model_supports_future_side_channel_concurrency',
+          )
+          marker = '''assert.match(scheduler, /存在多个传输任务，请指定 transfer_id/);\nassert.match(scheduler, /bounded_map_model_supports_future_side_channel_concurrency/);\n'''
+          replacement = '''assert.match(scheduler, /存在多个传输任务，请指定 transfer_id/);\nassert.match(scheduler, /fn has_inline_transfer/);\nassert.match(scheduler, /bounded_map_model_supports_future_side_channel_concurrency/);\nassert.match(scheduler, /inline_is_exclusive_even_when_side_channel_limit_is_higher/);\nassert.match(scheduler, /side_channel_cannot_start_while_inline_owns_session_io/);\n'''
+          if contract.count(marker) != 1:
+              raise SystemExit('scheduler contract block shape changed')
+          contract = contract.replace(marker, replacement)
+          marker = '''assert.match(\n  orchestrator,\n  /return_port[\\s\\S]*emit_transfer_finished/,\n  "Inline resources must be returned before terminal event is emitted",\n);\n'''
+          replacement = marker + '''assert.match(\n  orchestrator,\n  /handle\\.state != SessionState::Disconnected[\\s\\S]{0,120}handle\\.state = SessionState::Connected/,\n  "Inline cleanup must never resurrect a Session that was disconnected while a background transfer was finishing",\n);\n'''
+          if contract.count(marker) != 1:
+              raise SystemExit('orchestrator contract block shape changed')
+          contract = contract.replace(marker, replacement)
+          contract_path.write_text(contract, encoding='utf-8')
+          PY
+      - name: Format Rust with pinned toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Commit reviewed fix and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/_temporary-transfer-close-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/src/transfer/orchestrator.rs src-tauri/src/kernel/session_store.rs scripts/test-file-transfer-lifecycle.mjs .github/workflows/_temporary-transfer-close-fix.yml
+          git commit -m "fix: preserve disconnected state during inline cleanup"
+          git push origin HEAD:refactor/transfer-runtime-unification
