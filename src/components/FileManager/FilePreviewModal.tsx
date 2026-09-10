@@ -116,8 +116,17 @@ export default function FilePreviewModal({
 
   useEffect(() => {
     if (!data) return;
-    setEncoding(detectEncoding(bytes));
-    setMode(looksBinary(bytes) ? "hex" : "text");
+    const detected = detectEncoding(bytes);
+    setEncoding(detected);
+    // UTF-16 text naturally contains many NUL bytes, so the generic binary
+    // heuristic would otherwise open a clearly text-encoded file in HEX mode.
+    setMode(
+      detected === "utf-16le" || detected === "utf-16be"
+        ? "text"
+        : looksBinary(bytes)
+          ? "hex"
+          : "text",
+    );
   }, [bytes, data]);
 
   const text = useMemo(() => decodeBytes(bytes, encoding), [bytes, encoding]);
@@ -240,8 +249,8 @@ export default function FilePreviewModal({
         )}
 
         <div className={styles.body}>
-          {loading && <div className={styles.loading}>{t("fileManager.loading")}</div>}
-          {error && <div className={styles.error}>{error}</div>}
+          {loading && <div className={styles.loading} role="status">{t("fileManager.loading")}</div>}
+          {error && <div className={styles.error} role="alert">{error}</div>}
           {!loading && !error && data !== null && (
             <>
               {truncated && (
@@ -274,7 +283,7 @@ export default function FilePreviewModal({
             <span className={styles.statusItem}>
               {mode === "text"
                 ? t("fileManager.lines", { count: lineCount })
-                : t("fileManager.previewBytes", { count: bytes.length })}
+                : t("fileManager.previewBytes", { count: Math.min(bytes.length, HEX_RENDER_LIMIT) })}
             </span>
             {mode === "text" && (
               <span className={styles.statusItem}>{encoding.toUpperCase()}</span>
