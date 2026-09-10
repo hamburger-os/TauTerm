@@ -92,6 +92,9 @@ export function useSftpProgress(sessionId: string) {
   const [dismissedTransferId, setDismissedTransferId] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const autoHideTimerRef = useRef<number | null>(null);
+  const autoHideDeadlineRef = useRef<number | null>(null);
+  const autoHideRemainingRef = useRef(SUCCESS_AUTO_HIDE_MS);
+  const autoHideTransferIdRef = useRef<string | null>(null);
   const hoveredRef = useRef(false);
 
   const clearAutoHideTimer = useCallback(() => {
@@ -106,21 +109,36 @@ export function useSftpProgress(sessionId: string) {
     delayMs = SUCCESS_AUTO_HIDE_MS,
   ) => {
     clearAutoHideTimer();
+    const delay = Math.max(0, delayMs);
+    autoHideRemainingRef.current = delay;
+    autoHideDeadlineRef.current = Date.now() + delay;
     autoHideTimerRef.current = window.setTimeout(() => {
       autoHideTimerRef.current = null;
+      autoHideDeadlineRef.current = null;
+      autoHideRemainingRef.current = 0;
       setDismissedTransferId(transferId);
       setVisible(false);
       // Successful cards are not only hidden locally: remove the exact finished
       // snapshot so reopening/remounting the right sidebar cannot resurrect it.
       dismissTask(sessionId, transferId);
-    }, delayMs);
+    }, delay);
   }, [clearAutoHideTimer, dismissTask, sessionId]);
 
   useEffect(() => {
     if (!sftpTask) {
       clearAutoHideTimer();
+      autoHideDeadlineRef.current = null;
+      autoHideRemainingRef.current = SUCCESS_AUTO_HIDE_MS;
+      autoHideTransferIdRef.current = null;
       setVisible(false);
       return;
+    }
+
+    if (autoHideTransferIdRef.current !== sftpTask.transferId) {
+      clearAutoHideTimer();
+      autoHideTransferIdRef.current = sftpTask.transferId;
+      autoHideDeadlineRef.current = null;
+      autoHideRemainingRef.current = SUCCESS_AUTO_HIDE_MS;
     }
 
     if (
@@ -209,21 +227,24 @@ export function useSftpProgress(sessionId: string) {
 
   const pauseAutoHide = useCallback(() => {
     hoveredRef.current = true;
-    if (sftpTask?.phase === "completed") clearAutoHideTimer();
+    if (sftpTask?.phase !== "completed") return;
+
+    if (autoHideDeadlineRef.current !== null) {
+      autoHideRemainingRef.current = Math.max(
+        0,
+        autoHideDeadlineRef.current - Date.now(),
+      );
+      autoHideDeadlineRef.current = null;
+    }
+    clearAutoHideTimer();
   }, [clearAutoHideTimer, sftpTask?.phase]);
 
   const resumeAutoHide = useCallback(() => {
     hoveredRef.current = false;
     if (sftpTask?.phase === "completed" && visible) {
-      const elapsed = sftpTask.completedAt === null
-        ? 0
-        : Math.max(0, Date.now() - sftpTask.completedAt);
-      scheduleAutoHide(
-        sftpTask.transferId,
-        Math.max(0, SUCCESS_AUTO_HIDE_MS - elapsed),
-      );
+      scheduleAutoHide(sftpTask.transferId, autoHideRemainingRef.current);
     }
-  }, [scheduleAutoHide, sftpTask, visible]);
+  }, [scheduleAutoHide, sftpTask?.phase, sftpTask?.transferId, visible]);
 
   return {
     progress,
