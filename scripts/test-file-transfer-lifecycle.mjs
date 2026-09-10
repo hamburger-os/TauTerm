@@ -688,6 +688,12 @@ assert.match(contextMenu, /case "ArrowUp"/);
 assert.match(contextMenu, /case "Home"/);
 assert.match(contextMenu, /case "End"/);
 assert.match(contextMenu, /useReducedMotion/);
+assert.match(contextMenu, /const previousFocusRef = useRef<HTMLElement \| null>\(null\)/);
+assert.match(
+  contextMenu,
+  /\}, \[state\.visible, state\.x, state\.y\]\);/,
+  "menu positioning/focus work must rerun for a fresh context-click without depending on unstable state object identity",
+);
 assert.match(contextMenu, /if \(adjustedY < 0\) adjustedY = 8/);
 assert.match(
   contextMenu,
