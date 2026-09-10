@@ -3,6 +3,8 @@ export type SplitId = string;
 export type SplitDirection = "horizontal" | "vertical";
 export type SplitEdge = "left" | "right" | "top" | "bottom";
 
+export const MAX_WORKSPACE_PANES = 4;
+
 export type LayoutNode =
   | { type: "pane"; id: PaneId }
   | {
@@ -101,6 +103,24 @@ export function selectPaneInLayout(
   return { ...state, selectedPaneId: paneId };
 }
 
+/**
+ * 解除 Pane 与 Session 的显示绑定，但不改变 Pane 树、选择状态或 Session 生命周期。
+ */
+export function clearPaneInLayout(
+  state: SplitLayoutState,
+  paneId: PaneId,
+): SplitLayoutState {
+  if (!Object.prototype.hasOwnProperty.call(state.assignments, paneId)) return state;
+  if (state.assignments[paneId] === null) return state;
+  return {
+    ...state,
+    assignments: {
+      ...state.assignments,
+      [paneId]: null,
+    },
+  };
+}
+
 function replacePane(
   node: LayoutNode,
   paneId: PaneId,
@@ -120,7 +140,7 @@ export function splitPaneInLayout(
   edge: SplitEdge,
   newPaneId: PaneId,
   newSplitId: SplitId,
-  maxPanes = 4,
+  maxPanes = MAX_WORKSPACE_PANES,
 ): SplitLayoutState {
   if (countPanes(state.root) >= maxPanes) return state;
   if (!collectPaneIds(state.root).includes(paneId)) return state;
@@ -249,6 +269,56 @@ export function setSplitRatioInLayout(
 ): SplitLayoutState {
   const clamped = Math.max(0.05, Math.min(0.95, ratio));
   return { ...state, root: updateSplitRatio(state.root, splitId, clamped) };
+}
+
+interface ResetParentSplitResult {
+  node: LayoutNode;
+  found: boolean;
+  changed: boolean;
+}
+
+function resetParentSplitRatio(node: LayoutNode, paneId: PaneId): ResetParentSplitResult {
+  if (node.type === "pane") {
+    return { node, found: false, changed: false };
+  }
+
+  const directChild = (node.first.type === "pane" && node.first.id === paneId)
+    || (node.second.type === "pane" && node.second.id === paneId);
+  if (directChild) {
+    if (node.ratio === 0.5) return { node, found: true, changed: false };
+    return { node: { ...node, ratio: 0.5 }, found: true, changed: true };
+  }
+
+  const first = resetParentSplitRatio(node.first, paneId);
+  if (first.found) {
+    return {
+      node: first.changed ? { ...node, first: first.node } : node,
+      found: true,
+      changed: first.changed,
+    };
+  }
+
+  const second = resetParentSplitRatio(node.second, paneId);
+  if (second.found) {
+    return {
+      node: second.changed ? { ...node, second: second.node } : node,
+      found: true,
+      changed: second.changed,
+    };
+  }
+
+  return { node, found: false, changed: false };
+}
+
+/**
+ * 将目标 Pane 的直接父 Split 恢复为 50/50；没有父 Split 或本就均分时保持对象 identity。
+ */
+export function resetPaneSplitRatioInLayout(
+  state: SplitLayoutState,
+  paneId: PaneId,
+): SplitLayoutState {
+  const result = resetParentSplitRatio(state.root, paneId);
+  return result.changed ? { ...state, root: result.node } : state;
 }
 
 export function pruneAssignments(
