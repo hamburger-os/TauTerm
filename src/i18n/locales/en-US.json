@@ -1088,8 +1088,8 @@
     "transferFailed": "Transfer failed",
     "transferCancelled": "Cancelled",
     "invalidName": "The file name cannot be empty, '.', '..', or contain '/'.",
-    "conflictTitle": "Destination files already exist",
-    "conflictMessage": "{{count}} file(s) with the same name already exist in this directory. Choose how to handle conflicts for this upload.",
+    "conflictTitle": "Destination items already exist",
+    "conflictMessage": "{{count}} item(s) with the same name already exist in this directory. Choose how to handle conflicts for this upload.",
     "conflictReplace": "Replace",
     "conflictKeepBoth": "Keep Both",
     "conflictSkip": "Skip Existing",
@@ -1107,9 +1107,9 @@
     "previewBytes": "{{count}} bytes shown in HEX",
     "dropToUpload": "Drop here to upload",
     "conflictChoicesLabel": "Conflict resolution",
-    "conflictReplaceHint": "Replace the existing files with this upload.",
-    "conflictKeepBothHint": "Keep the existing files and create distinct names for this upload.",
-    "conflictSkipHint": "Keep the existing files and do not upload the conflicting items."
+    "conflictReplaceHint": "Replace the existing items with this upload.",
+    "conflictKeepBothHint": "Keep the existing items and create distinct names for this upload.",
+    "conflictSkipHint": "Keep the existing items and do not upload the conflicting items."
   },
   "ssh": {
     "host": "Host",
