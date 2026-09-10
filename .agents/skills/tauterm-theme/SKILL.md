@@ -4,10 +4,10 @@ description: "Single source of truth for TauTerm Liquid Glass UI, four-color amb
 license: MIT
 metadata:
   author: tauterm
-  version: "9.11"
+  version: "9.12"
 ---
 
-# TauTerm Liquid Glass v9.11 — 唯一主题规范源
+# TauTerm Liquid Glass v9.12 — 唯一主题规范源
 
 > **SSOT**：TauTerm 的主题、材质、四色环境色谱、Liquid Glass Physics、Theme Veil、Structural Panel、SendBar、SplitView 视觉状态与渲染性能规则只在本文件维护。  
 > `docs/` 不复制主题规则；`tauterm-theme-review` 只维护审查流程。
@@ -336,7 +336,7 @@ Network Debug 与其它会话共用 SplitView 的 `PaneEmptyState`。所有 disc
 
 - 两按钮确认框：Cancel 是次要动作，Confirm/Save/Delete 是主动作；沿用右对齐 footer。
 - 三个及以上互斥业务决策（例如文件冲突 Replace / Keep Both / Skip Existing）：业务决策组成独立 option group；Cancel 单独位于 footer，视觉与语义都不是第四个平级选项。
-- 有破坏性的决策使用 danger 语义；推荐的无损决策可使用 primary；其它决策使用 secondary。默认焦点优先落在最安全的无损决策，危险操作不得默认获焦。
+- 有破坏性的决策使用 danger 语义。对于三个及以上、点击即生效的互斥业务决策，非破坏选项统一使用 neutral secondary surface；推荐项通过安全的默认焦点、顺序或克制的辅助文案表达，**不得仅因“推荐”就把整颗按钮升级为四色 Prism Primary**。Prism Primary 在 Dialog 中保留给 Confirm / Save / Continue 等“提交整个弹窗”的单一主动作。危险操作不得默认获焦。
 - Dialog 必须复用 `.liquid-glass` 外壳和公共 GlassButton/全局按钮材质；禁止组件私建另一套弹窗背景/按钮玻璃。
 - 标准 Dialog 使用 `--radius-xl`；常规 padding 使用 `--spacing-xl`，窄窗口可降为 `--spacing-lg`。标题统一 `--text-md` + 700，正文统一 `--text-sm`，辅助/元信息统一 `--text-xs`；标准动作按钮使用 `GlassButton size="md"`，不得在单个弹窗里另写近似字号/按钮体系。
 - 两按钮确认框的默认焦点必须落在 Cancel/安全动作；危险动作不得默认获焦。Tab 在弹窗动作内循环，Esc 取消。
@@ -462,7 +462,7 @@ npm run build
 - **窄 Sidebar 的一级工具导航不出现横向滚动条；类别较多时使用主题 Select，滚动条只用于内容区域**
 - **文件管理器传输状态条在常规窄 Sidebar 中仍显示真实传输速度并能直接点击取消/关闭；只有 <=220px 的极窄档才可隐藏速度/进度，关键操作不得被裁掉**
 - **展开任意主题 Select 时，原生 option popup 的明暗必须与当前主题一致，不得出现深色主题白底白字/浅字菜单**
-- **文件冲突弹窗的 Replace / Keep Both / Skip Existing 是业务决策组，Cancel 独立位于 footer；危险/推荐/普通动作层级清楚，不出现四个等权按钮的 2×2 网格**
+- **文件冲突弹窗的 Replace / Keep Both / Skip Existing 是业务决策组，Cancel 独立位于 footer；Replace 使用 danger，Keep Both / Skip Existing 使用同级 neutral secondary，安全默认焦点落在 Keep Both，互斥选项不出现整颗四色 Prism，也不出现四个等权按钮的 2×2 网格**
 - **Divider 拖动每动画帧最多提交一次布局更新，释放鼠标后最终 ratio 不丢失**
 - **效果优先正常观察 3–5 秒能看出两层 Ambient 明显位移与交叠；四色 Prism 按钮也能感知低频连续流动；色团更大但 raster layer 不扩大**
 - **系统 reduced-motion 生效时，设置页必须明确显示“系统动态效果已关闭/减少动态效果”，并解释效果优先因此静止**
