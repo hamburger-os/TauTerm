@@ -45,8 +45,11 @@
 /* 主体 */
 .body {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
   display: flex;
+  flex-direction: column;
 }
 
 .loading {
@@ -71,6 +74,8 @@
 
 .previewArea {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   margin: 0;
   padding: 12px 16px;
   overflow: auto;
