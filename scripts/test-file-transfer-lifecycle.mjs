@@ -559,8 +559,13 @@ assert.match(propertiesModal, /className=\{styles\.chmodEditor\}/);
 assert.match(propertiesModal, /className=\{styles\.chmodError\} role="alert"/);
 assert.match(
   propertiesModal,
-  /if \(chmodEditing\)[\s\S]{0,120}cancelChmodEdit\(\)[\s\S]{0,120}else[\s\S]{0,80}onClose\(\)/,
+  /if \(chmodEditingRef\.current\)[\s\S]{0,120}cancelChmodEditRef\.current\(\)[\s\S]{0,120}else[\s\S]{0,80}onClose\(\)/,
   "Escape must leave chmod editing before it closes the Properties dialog",
+);
+assert.match(
+  propertiesModal,
+  /\}, \[visible, onClose\]\);/,
+  "changing chmod edit state must not rerun the modal focus-entry effect and steal input focus",
 );
 assert.match(propertiesModal, /perms\[3\] === "s" \|\| perms\[3\] === "S"/);
 assert.match(propertiesModal, /perms\[6\] === "s" \|\| perms\[6\] === "S"/);
