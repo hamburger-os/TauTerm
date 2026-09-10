@@ -51,6 +51,14 @@ export default function FilePropertiesModal({
 }: FilePropertiesModalProps) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef(false);
+
+  useEffect(() => {
+    activeRef.current = visible;
+    return () => {
+      activeRef.current = false;
+    };
+  }, [visible]);
 
   // ── Chmod state ──
   const [chmodValue, setChmodValue] = useState("");
@@ -110,11 +118,13 @@ export default function FilePropertiesModal({
         remotePath: statInfo!.path,
         mode,
       });
+      if (!activeRef.current) return;
       setChmodEditing(false);
       setChmodError(null);
       onChmodComplete?.();
-    } catch (e) {
-      setChmodError(String(e));
+    } catch (error) {
+      if (!activeRef.current) return;
+      setChmodError(String(error));
     }
   }, [chmodValue, sessionId, statInfo, t, onChmodComplete]);
 
