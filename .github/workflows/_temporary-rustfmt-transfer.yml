@@ -1,0 +1,40 @@
+name: Temporary Rustfmt Transfer Review
+
+on:
+  push:
+    branches:
+      - refactor/transfer-runtime-unification
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refactor/transfer-runtime-unification
+          persist-credentials: true
+      - name: Install pinned rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
+      - name: Format and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          rm .github/workflows/_temporary-rustfmt-transfer.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/src .github/workflows/_temporary-rustfmt-transfer.yml
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "style: apply pinned rustfmt to transfer refactor"
+          git push origin HEAD:refactor/transfer-runtime-unification
