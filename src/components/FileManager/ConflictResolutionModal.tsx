@@ -126,7 +126,7 @@ export default function ConflictResolutionModal({
               <div className={styles.policyRow}>
                 <GlassButton
                   type="button"
-                  variant="primary"
+                  variant="secondary"
                   fullWidth
                   data-policy="keep-both"
                   onClick={() => onResolve("keep-both")}
