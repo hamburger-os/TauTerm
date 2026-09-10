@@ -31,6 +31,16 @@ assert.match(
   /scheduleAutoHide\(sftpTask\.transferId, autoHideRemainingRef\.current\)/,
   "leaving a completed SFTP card must resume the paused auto-hide duration",
 );
+assert.match(
+  hook,
+  /autoHideTransferIdRef\.current !== sftpTask\.transferId[\s\S]{0,300}hoveredRef\.current = false/,
+  "a new transfer must not inherit hover state from a previously dismissed card",
+);
+assert.match(
+  hook,
+  /const hideProgress = useCallback[\s\S]{0,180}hoveredRef\.current = false/,
+  "manually closing a completed card must clear its hover state",
+);
 assert.doesNotMatch(
   hook,
   /listen<|file-transfer:started|file-transfer:progress|file-transfer:finished/,
@@ -66,6 +76,12 @@ assert.match(
 );
 assert.match(bar, /return "—"/);
 assert.doesNotMatch(bar, /0 KB\/s/);
+assert.match(
+  bar,
+  /if \(error && phase !== "completed" && phase !== "cancelled"\)[\s\S]{0,80}return error/,
+  "active transfer/cancellation errors must be visible instead of tooltip-only",
+);
+assert.match(bar, /data-has-error=\{Boolean\(error\)/);
 
 const barCss = await source("src/components/FileManager/TransferProgressBar.module.css");
 assert.match(barCss, /grid-template-areas:\s*"name progress percent detail action"/);
@@ -371,6 +387,28 @@ assert.match(
   /\.catch\(\(error\) => showToast\("error", String\(error\)\)\)/,
   "post-chmod metadata refresh failures must not be swallowed",
 );
+assert.match(panel, /const propsRequestGenerationRef = useRef\(0\)/);
+assert.match(panel, /const previewRequestGenerationRef = useRef\(0\)/);
+assert.match(
+  panel,
+  /generation !== propsRequestGenerationRef\.current[\s\S]{0,80}return/,
+  "stale Properties stat responses must be ignored",
+);
+assert.match(
+  panel,
+  /generation !== previewRequestGenerationRef\.current[\s\S]{0,80}return/,
+  "stale Preview byte responses must be ignored",
+);
+assert.match(
+  panel,
+  /const closeProperties = useCallback[\s\S]{0,160}propsRequestGenerationRef\.current \+= 1/,
+  "closing Properties must invalidate its in-flight stat request",
+);
+assert.match(
+  panel,
+  /const closePreview = useCallback[\s\S]{0,160}previewRequestGenerationRef\.current \+= 1/,
+  "closing Preview must invalidate its in-flight read request",
+);
 assert.match(panel, /name === "\." \|\| name === "\.\."/);
 assert.match(panel, /name\.includes\("\/"\)/);
 
@@ -518,6 +556,20 @@ assert.match(
   /if \(chmodEditing\)[\s\S]{0,120}cancelChmodEdit\(\)[\s\S]{0,120}else[\s\S]{0,80}onClose\(\)/,
   "Escape must leave chmod editing before it closes the Properties dialog",
 );
+assert.match(propertiesModal, /perms\[3\] === "s" \|\| perms\[3\] === "S"/);
+assert.match(propertiesModal, /perms\[6\] === "s" \|\| perms\[6\] === "S"/);
+assert.match(propertiesModal, /perms\[9\] === "t" \|\| perms\[9\] === "T"/);
+assert.match(
+  propertiesModal,
+  /\^\[0-7\]\{3,4\}\$/,
+  "chmod editor must accept special-bit forms such as 4755",
+);
+assert.match(propertiesModal, /maxLength=\{4\}/);
+assert.match(
+  propertiesModal,
+  /if \(!activeRef\.current\) return;[\s\S]{0,120}onChmodComplete\?\.\(\)/,
+  "a chmod response arriving after the dialog closes must not restart Properties work",
+);
 
 assert.match(
   service,
@@ -580,6 +632,12 @@ assert.match(
   "plain Shift must replace selection with the anchor range while Ctrl/Command+Shift extends it",
 );
 assert.match(multiSelect, /handleRightClick: \(entry: SftpEntry\) => void/);
+assert.match(multiSelect, /const \[lastClickedPath, setLastClickedPath\] = useState<string \| null>\(null\)/);
+assert.match(
+  multiSelect,
+  /entries\.findIndex\(\(entry\) => entry\.path === lastClickedPath\)/,
+  "range selection anchor must follow entry identity across sort/reload order changes",
+);
 assert.doesNotMatch(
   multiSelect,
   /handleRightClick[\s\S]{0,320}ctrlKey/,
@@ -622,6 +680,13 @@ assert.match(preview, /"shift_jis"/);
 assert.match(preview, /function formatHex/);
 assert.match(preview, /HEX_RENDER_LIMIT/);
 assert.match(preview, /new TextDecoder\(encoding/);
+assert.match(
+  preview,
+  /detected === "utf-16le" \|\| detected === "utf-16be"[\s\S]{0,80}\? "text"/,
+  "BOM-detected UTF-16 files must default to Text instead of being misclassified by NUL bytes",
+);
+assert.match(preview, /className=\{styles\.error\} role="alert"/);
+assert.match(preview, /Math\.min\(bytes\.length, HEX_RENDER_LIMIT\)/);
 assert.match(preview, /aria-pressed=\{mode === "text"\}/);
 assert.match(preview, /liquid-selector-strip/);
 assert.match(preview, /liquid-selector-button/);
