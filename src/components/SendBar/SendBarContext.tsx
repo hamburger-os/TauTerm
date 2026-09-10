@@ -213,24 +213,18 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
     ]).then(([storedConfigs, storedActiveConfig, storedScripts, storedActiveScript]) => {
       if (cancelled) return;
 
-      const existingConfigs = Array.isArray(storedConfigs) ? storedConfigs : [];
-      const existingConfigNames = new Set(existingConfigs.map(config => config.name));
-      const autoReplyConfigs = [
-        ...existingConfigs,
-        ...BUILTIN_CONFIGS.filter(config => !existingConfigNames.has(config.name)),
-      ];
+      // Built-ins seed an uninitialized store once. An explicit empty array is a valid user state:
+      // deleted examples stay deleted until the user chooses "load built-in examples" again.
+      const hasStoredConfigs = Array.isArray(storedConfigs);
+      const autoReplyConfigs = hasStoredConfigs ? storedConfigs : [...BUILTIN_CONFIGS];
       const activeConfigName = storedActiveConfig
         && autoReplyConfigs.some(config => config.name === storedActiveConfig)
         ? storedActiveConfig
         : autoReplyConfigs[0]?.name ?? "";
       const activeConfig = autoReplyConfigs.find(config => config.name === activeConfigName);
 
-      const existingScripts = Array.isArray(storedScripts) ? storedScripts : [];
-      const existingScriptIds = new Set(existingScripts.map(script => script.id));
-      const scripts = [
-        ...existingScripts,
-        ...BUILTIN_SCRIPTS.filter(script => !existingScriptIds.has(script.id)),
-      ];
+      const hasStoredScripts = Array.isArray(storedScripts);
+      const scripts = hasStoredScripts ? storedScripts : [...BUILTIN_SCRIPTS];
       const activeScriptId = storedActiveScript
         && scripts.some(script => script.id === storedActiveScript)
         ? storedActiveScript
@@ -245,9 +239,8 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_ACTIVE_SCRIPT", id: activeScriptId });
       dispatch({ type: "SET_SCRIPT_CODE", code: activeCode });
 
-      // Built-in definitions are global engineering assets. Persist only the canonical asset data.
-      void persistAsset(ASSET_KEYS.autoReplyConfigs, autoReplyConfigs);
-      void persistAsset(ASSET_KEYS.scripts, scripts);
+      if (!hasStoredConfigs) void persistAsset(ASSET_KEYS.autoReplyConfigs, autoReplyConfigs);
+      if (!hasStoredScripts) void persistAsset(ASSET_KEYS.scripts, scripts);
     }).catch(() => {
       // Built-ins remain usable if the persistent store is temporarily unavailable.
     });
@@ -256,13 +249,11 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Asset definitions are global; active selections and editor drafts are session-local.
-  // A save from another tab may refresh the shared asset list, but it must not overwrite a
-  // different tab's current script draft or force that tab to follow another active selection.
   useEffect(() => {
     const unsubscribeConfigs = subscribeAsset<AutoReplyConfig[]>(
       ASSET_KEYS.autoReplyConfigs,
       value => {
-        const configs = Array.isArray(value) && value.length > 0 ? value : [...BUILTIN_CONFIGS];
+        const configs = Array.isArray(value) ? value : [];
         const current = stateRef.current.autoReply;
         const activeName = configs.some(config => config.name === current.activeConfigName)
           ? current.activeConfigName
@@ -281,15 +272,27 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
     const unsubscribeScripts = subscribeAsset<ScriptRecord[]>(
       ASSET_KEYS.scripts,
       value => {
-        const scripts = Array.isArray(value) && value.length > 0 ? value : [...BUILTIN_SCRIPTS];
+        const scripts = Array.isArray(value) ? value : [];
         const current = stateRef.current.script;
+        const previousActive = current.activeScriptId
+          ? current.scripts.find(script => script.id === current.activeScriptId)
+          : undefined;
+        const nextActive = current.activeScriptId
+          ? scripts.find(script => script.id === current.activeScriptId)
+          : undefined;
+        const hasLocalDraft = previousActive != null && current.code !== previousActive.code;
+
         dispatch({ type: "SET_SCRIPTS", scripts });
 
-        // Preserve the local editor draft while the selected script still exists. Only clear the
-        // selection when another session actually removed that asset.
-        if (current.activeScriptId && !scripts.some(script => script.id === current.activeScriptId)) {
+        if (current.activeScriptId && !nextActive) {
           dispatch({ type: "SET_ACTIVE_SCRIPT", id: null });
           dispatch({ type: "SET_SCRIPT_CODE", code: "" });
+          return;
+        }
+
+        // A clean editor follows shared asset changes; an unsaved local draft remains untouched.
+        if (nextActive && !hasLocalDraft && nextActive.code !== current.code) {
+          dispatch({ type: "SET_SCRIPT_CODE", code: nextActive.code });
         }
       },
     );
