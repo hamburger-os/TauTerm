@@ -47,12 +47,15 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   const { sendToTarget, isSessionConnected } = useSession();
   const isConnected = isSessionConnected(sessionId);
   const { state: sendBarState, dispatch } = useSendBar();
-  const { selectedIds, loopCount } = sendBarState.command;
+  const { activeConfigName, selectedIds, loopCount } = sendBarState.command;
 
   const [configs, setConfigs] = useState<CommandConfig[]>([defaultCommands as CommandConfig]);
-  const [activeConfigName, setActiveConfigName] = useState(defaultCommands.name);
   const activeConfigNameRef = useRef(activeConfigName);
   activeConfigNameRef.current = activeConfigName;
+
+  const setActiveConfigName = useCallback((name: string) => {
+    dispatch({ type: "SET_ACTIVE_COMMAND_CONFIG", name });
+  }, [dispatch]);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<CommandItem | null>(null);
@@ -62,7 +65,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   const [configDeleteConfirm, setConfigDeleteConfirm] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Command Set 是全局可复用工程资产；当前选中的命令集仍属于本会话 UI 状态。
+  // Command Set 是全局工程资产；当前命令集选择由 SendBarContext 按会话保留。
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
@@ -73,21 +76,23 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       const nextConfigs = Array.isArray(storedConfigs) && storedConfigs.length > 0
         ? storedConfigs
         : [defaultCommands as CommandConfig];
-      const nextActive = storedActive && nextConfigs.some(config => config.name === storedActive)
-        ? storedActive
-        : nextConfigs[0]?.name ?? "";
+      const sessionActive = activeConfigNameRef.current;
+      const nextActive = sessionActive && nextConfigs.some(config => config.name === sessionActive)
+        ? sessionActive
+        : storedActive && nextConfigs.some(config => config.name === storedActive)
+          ? storedActive
+          : nextConfigs[0]?.name ?? "";
 
       setConfigs(nextConfigs);
       setActiveConfigName(nextActive);
       if (!Array.isArray(storedConfigs) || storedConfigs.length === 0) {
         void saveConfigs(nextConfigs);
       }
-      void saveActiveConfig(nextActive);
     }).catch(() => {
       // 内置命令集保持可用；统一持久化层负责报告存储错误。
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [setActiveConfigName]);
 
   useEffect(() => {
     return subscribeAsset<CommandConfig[]>(CONFIG_STORE_KEY, value => {
@@ -96,16 +101,13 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
         : [defaultCommands as CommandConfig];
       setConfigs(next);
 
-      // Shared asset updates must not make this mounted session follow another session's active
-      // selection. Only fall back when the currently selected asset was actually removed.
       const current = activeConfigNameRef.current;
       if (!next.some(config => config.name === current)) {
-        const fallback = next[0]?.name ?? "";
-        setActiveConfigName(fallback);
+        setActiveConfigName(next[0]?.name ?? "");
         dispatch({ type: "CLEAR_COMMAND_SELECTION" });
       }
     });
-  }, [dispatch]);
+  }, [dispatch, setActiveConfigName]);
 
   const activeConfig = useMemo(
     () => configs.find(config => config.name === activeConfigName) ?? configs[0],
@@ -151,6 +153,10 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     });
   }, [activeConfigName, defaultDelay]);
 
+  const handleReorder = useCallback((next: CommandItem[]) => {
+    persistConfig(next);
+  }, [persistConfig]);
+
   const {
     isDragging,
     dropIndex,
@@ -158,14 +164,13 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     handlePointerMove,
     handlePointerUp,
     handlePointerCancel,
-  } = usePointerDragReorder(commands, next => persistConfig(next), {
+  } = usePointerDragReorder(commands, handleReorder, {
     itemSelector: `.${styles.commandRow}`,
     draggingClass: styles.rowDragging,
     disabled: runner.isRunning,
     listRef,
   });
 
-  // ── 命令集管理 ──
   const handleConfigChange = useCallback((name: string) => {
     if (runner.isRunning) return;
     setActiveConfigName(name);
@@ -173,7 +178,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     dispatch({ type: "CLEAR_COMMAND_SELECTION" });
     setDeleteConfirmId(null);
     setConfigDeleteConfirm(false);
-  }, [runner.isRunning, dispatch]);
+  }, [runner.isRunning, dispatch, setActiveConfigName]);
 
   const handleRenameStart = useCallback(() => {
     if (runner.isRunning || !activeConfig) return;
@@ -203,7 +208,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     setActiveConfigName(newName);
     void saveActiveConfig(newName);
     setRenameOpen(false);
-  }, [runner.isRunning, renameValue, activeConfigName, configs, showToast, t]);
+  }, [runner.isRunning, renameValue, activeConfigName, configs, showToast, t, setActiveConfigName]);
 
   const handleRenameCancel = useCallback(() => setRenameOpen(false), []);
 
@@ -219,7 +224,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     dispatch({ type: "CLEAR_COMMAND_SELECTION" });
     setDeleteConfirmId(null);
     setConfigDeleteConfirm(false);
-  }, [runner.isRunning, activeConfig, configs, activeConfigName, dispatch]);
+  }, [runner.isRunning, activeConfig, configs, activeConfigName, dispatch, setActiveConfigName]);
 
   const handleAddConfig = useCallback(() => {
     if (runner.isRunning) return;
@@ -243,9 +248,8 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     void saveActiveConfig(newName);
     dispatch({ type: "CLEAR_COMMAND_SELECTION" });
     setConfigDeleteConfirm(false);
-  }, [runner.isRunning, configs, dispatch, t]);
+  }, [runner.isRunning, configs, dispatch, t, setActiveConfigName]);
 
-  // ── 命令操作 ──
   const handleAdd = useCallback(() => {
     if (runner.isRunning) return;
     setEditingItem(null);
@@ -297,7 +301,6 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     ));
   }, [runner.isRunning, commands, persistConfig]);
 
-  // ── 执行 ──
   const handleStart = useCallback(() => {
     if (runner.isRunning) {
       runner.stop();
@@ -325,7 +328,6 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     }
   }, [runner.isRunning, commands, selectedIds, dispatch]);
 
-  // ── 导入导出 ──
   const handleImport = useCallback(async () => {
     if (runner.isRunning) return;
     try {
@@ -348,7 +350,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       console.error("Import command set failed:", error);
       showToast("error", t("commandPanel.importFailed"));
     }
-  }, [runner.isRunning, configs, showToast, t, dispatch]);
+  }, [runner.isRunning, configs, showToast, t, dispatch, setActiveConfigName]);
 
   const handleLoadExamples = useCallback(async () => {
     if (runner.isRunning) return;
@@ -369,7 +371,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
     if (savedConfigs && savedActive) {
       showToast("success", t("sendBar.examplesLoaded", { count: 1 }));
     }
-  }, [runner.isRunning, configs, showToast, t, dispatch]);
+  }, [runner.isRunning, configs, showToast, t, dispatch, setActiveConfigName]);
 
   const handleExport = useCallback(async () => {
     if (runner.isRunning || !activeConfig) return;
