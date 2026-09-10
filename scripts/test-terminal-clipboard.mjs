@@ -62,6 +62,8 @@ assert.match(confirmDialogSource, /querySelectorAll<HTMLElement>/);
 assert.match(confirmDialogSource, /dialog\?\.contains\(active\)/);
 assert.match(confirmDialogSource, /onCancelRef\.current\(\)/);
 assert.match(confirmDialogSource, /busyRef\.current/);
+assert.match(confirmDialogSource, /document\.activeElement === confirmAction/);
+assert.match(confirmDialogSource, /\[busy, message, open, title\]/);
 assert.match(confirmDialogSource, /t\("common\.cancel"\)/);
 assert.match(confirmDialogSource, /t\("common\.confirm"\)/);
 
