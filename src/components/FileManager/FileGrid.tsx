@@ -27,6 +27,7 @@ interface FileTileProps {
   typeLabel: string;
   tabIndex: number;
   dataIndex: number;
+  ariaRowIndex: number;
   onFocus: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
   onClick: (additiveKey: boolean, shiftKey: boolean) => void;
@@ -40,6 +41,7 @@ const FileTile = memo(function FileTile({
   typeLabel,
   tabIndex,
   dataIndex,
+  ariaRowIndex,
   onFocus,
   onKeyDown,
   onClick,
@@ -57,6 +59,7 @@ const FileTile = memo(function FileTile({
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       role="row"
+      aria-rowindex={ariaRowIndex}
       aria-selected={isSelected}
       tabIndex={tabIndex}
       data-grid-index={dataIndex}
@@ -222,6 +225,7 @@ export default function FileGrid({
             onContextMenu(e, null, undefined);
           }}
           role="row"
+          aria-rowindex={itemIndex + 1}
           aria-selected={parentSelected}
           tabIndex={activeItem === itemIndex ? 0 : -1}
           data-grid-index={itemIndex}
@@ -256,6 +260,7 @@ export default function FileGrid({
         typeLabel={t(CATEGORY_LABEL_KEYS[getEntryCategory(item)])}
         tabIndex={activeItem === itemIndex ? 0 : -1}
         dataIndex={itemIndex}
+        ariaRowIndex={itemIndex + 1}
         onFocus={() => setActiveItem(itemIndex)}
         onKeyDown={(e) => handleNavigationKey(itemIndex, e)}
         onClick={(additiveKey, shiftKey) => onEntryClick(item, entryIndex, additiveKey, shiftKey)}
