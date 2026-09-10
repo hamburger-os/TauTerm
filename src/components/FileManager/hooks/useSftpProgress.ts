@@ -215,7 +215,13 @@ export function useSftpProgress(sessionId: string) {
   const resumeAutoHide = useCallback(() => {
     hoveredRef.current = false;
     if (sftpTask?.phase === "completed" && visible) {
-      scheduleAutoHide(sftpTask.transferId);
+      const elapsed = sftpTask.completedAt === null
+        ? 0
+        : Math.max(0, Date.now() - sftpTask.completedAt);
+      scheduleAutoHide(
+        sftpTask.transferId,
+        Math.max(0, SUCCESS_AUTO_HIDE_MS - elapsed),
+      );
     }
   }, [scheduleAutoHide, sftpTask, visible]);
 
