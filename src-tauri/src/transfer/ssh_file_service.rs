@@ -14,7 +14,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
@@ -152,17 +152,10 @@ pub fn transfer_cancelled_error() -> String {
     "传输已被用户取消".to_string()
 }
 
-/// 检查取消标志，若已取消则返回 true
 fn is_cancelled(cancel: Option<&Arc<AtomicBool>>) -> bool {
     cancel.map(|c| c.load(Ordering::SeqCst)).unwrap_or(false)
 }
 
-/// 获取或创建缓存的 SFTP 对象（仅在首次调用时打开子系统通道）
-///
-/// 后续调用直接复用缓存的 SftpSession，避免每次操作都进行 SSH 通道协商（节省 100-200ms × RTT）。
-///
-/// russh-sftp 要求先 `channel.request_subsystem(true, "sftp")` 激活 SFTP 子系统，
-/// 再用 `SftpSession::new(channel)` 初始化协议握手。
 async fn get_or_create_sftp(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -186,7 +179,6 @@ async fn get_or_create_sftp(
     Ok(())
 }
 
-/// SFTP 目录项类型。默认不跟随符号链接，避免目录遍历意外穿出用户选中的树。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SftpEntryType {
@@ -215,27 +207,18 @@ fn entry_type_from_permissions(perm: Option<u32>, fallback_is_dir: bool) -> Sftp
     }
 }
 
-/// SFTP 目录项
 #[derive(Debug, Clone, Serialize)]
 pub struct SftpEntry {
-    /// 文件/目录名（不含路径）
     pub name: String,
-    /// 完整路径
     pub path: String,
-    /// 是否为目录（兼容现有前端；新代码应优先使用 entry_type）
     pub is_dir: bool,
     pub entry_type: SftpEntryType,
-    /// 文件大小（字节），目录为 0
     pub size: u64,
-    /// 访问时间（Unix 时间戳，秒）
     pub accessed: Option<u64>,
-    /// 修改时间（Unix 时间戳，秒）
     pub modified: Option<u64>,
-    /// 权限字符串（如 "-rw-r--r--"）
     pub permissions: Option<String>,
 }
 
-/// SFTP 文件信息（stat 结果）
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SftpFileInfo {
@@ -244,14 +227,11 @@ pub struct SftpFileInfo {
     pub is_dir: bool,
     pub entry_type: SftpEntryType,
     pub size: u64,
-    /// 访问时间（Unix 时间戳，秒）
     pub accessed: Option<u64>,
-    /// 修改时间（Unix 时间戳，秒）
     pub modified: Option<u64>,
     pub permissions: Option<String>,
 }
 
-/// 列出远程目录内容
 pub async fn sftp_list_dir(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -261,11 +241,7 @@ pub async fn sftp_list_dir(
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
 
-    let path = if remote_path.is_empty() {
-        "."
-    } else {
-        remote_path
-    };
+    let path = if remote_path.is_empty() { "." } else { remote_path };
     let read_dir = sftp
         .read_dir(path)
         .await
@@ -304,11 +280,9 @@ pub async fn sftp_list_dir(
             .cmp(&a.is_dir)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
-
     Ok(result)
 }
 
-/// 获取远程文件信息（lstat 语义，不跟随符号链接）
 pub async fn sftp_stat(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -322,7 +296,6 @@ pub async fn sftp_stat(
         .symlink_metadata(remote_path)
         .await
         .map_err(|e| format!("获取文件信息 '{}' 失败: {}", remote_path, e))?;
-
     let name = std::path::Path::new(remote_path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -341,7 +314,6 @@ pub async fn sftp_stat(
     })
 }
 
-/// 读取文件头 N 字节（用于预览），返回 (数据, 文件总大小)
 pub async fn sftp_read_head(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -350,7 +322,6 @@ pub async fn sftp_read_head(
 ) -> Result<(Vec<u8>, u64), String> {
     get_or_create_sftp(session, sftp_cache).await?;
 
-    // 只在 lstat + open 期间持缓存锁，真实读取期间释放，避免预览阻塞目录浏览/stat。
     let (mut remote_file, total_size) = {
         let cache = sftp_cache.lock().await;
         let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
@@ -372,7 +343,6 @@ pub async fn sftp_read_head(
     let read_len = std::cmp::min(max_bytes, total_size);
     let mut buf = vec![0u8; read_len as usize];
     let mut total_read: u64 = 0;
-
     while total_read < read_len {
         let remaining = (read_len - total_read) as usize;
         let start = total_read as usize;
@@ -385,7 +355,6 @@ pub async fn sftp_read_head(
         }
         total_read += n as u64;
     }
-
     buf.truncate(total_read as usize);
     log::info!(
         "SFTP 读取文件头: {} (读取 {} / 共 {} bytes)",
@@ -439,22 +408,14 @@ async fn resolve_local_destination(
             OverwritePolicy::Replace if meta.is_dir() => {
                 Err(format!("下载目标已存在且是目录: {}", requested.display()))
             }
-            OverwritePolicy::Replace | OverwritePolicy::KeepBoth => {
-                Ok(Some(requested.to_path_buf()))
-            }
+            OverwritePolicy::Replace | OverwritePolicy::KeepBoth => Ok(Some(requested.to_path_buf())),
             OverwritePolicy::Skip => Ok(None),
         },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Some(requested.to_path_buf())),
-        Err(e) => Err(format!(
-            "检查下载目标 '{}' 失败: {}",
-            requested.display(),
-            e
-        )),
+        Err(e) => Err(format!("检查下载目标 '{}' 失败: {}", requested.display(), e)),
     }
 }
 
-/// 同目录临时文件通过 hard-link 原子抢占最终名字，避免 Unix rename 的覆盖语义
-/// 破坏 KeepBoth/Skip。返回 false 表示目标名已被其他对象占用。
 async fn try_commit_local_noreplace(temp: &Path, candidate: &Path) -> Result<bool, String> {
     match tokio::fs::hard_link(temp, candidate).await {
         Ok(()) => {
@@ -468,11 +429,7 @@ async fn try_commit_local_noreplace(temp: &Path, candidate: &Path) -> Result<boo
             Ok(true)
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-        Err(e) => Err(format!(
-            "无覆盖提交下载文件 '{}' 失败: {}",
-            candidate.display(),
-            e
-        )),
+        Err(e) => Err(format!("无覆盖提交下载文件 '{}' 失败: {}", candidate.display(), e)),
     }
 }
 
@@ -500,10 +457,7 @@ async fn commit_local_temp(
                     return Ok(Some(candidate));
                 }
             }
-            Err(format!(
-                "无法为 '{}' 生成不冲突文件名",
-                final_path.display()
-            ))
+            Err(format!("无法为 '{}' 生成不冲突文件名", final_path.display()))
         }
         OverwritePolicy::Replace => match tokio::fs::symlink_metadata(final_path).await {
             Ok(meta) if meta.is_dir() => {
@@ -537,17 +491,11 @@ async fn commit_local_temp(
                     },
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                tokio::fs::rename(temp, final_path)
-                    .await
-                    .map(|_| Some(final_path.to_path_buf()))
-                    .map_err(|e| format!("提交下载文件 '{}' 失败: {}", final_path.display(), e))
-            }
-            Err(e) => Err(format!(
-                "检查下载目标 '{}' 失败: {}",
-                final_path.display(),
-                e
-            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => tokio::fs::rename(temp, final_path)
+                .await
+                .map(|_| Some(final_path.to_path_buf()))
+                .map_err(|e| format!("提交下载文件 '{}' 失败: {}", final_path.display(), e)),
+            Err(e) => Err(format!("检查下载目标 '{}' 失败: {}", final_path.display(), e)),
         },
     }
 }
@@ -599,7 +547,6 @@ async fn resolve_remote_destination(
     if !exists {
         return Ok(Some(requested.to_string()));
     }
-
     match policy {
         OverwritePolicy::Skip => Ok(None),
         OverwritePolicy::KeepBoth => Ok(Some(requested.to_string())),
@@ -608,9 +555,7 @@ async fn resolve_remote_destination(
                 .symlink_metadata(requested)
                 .await
                 .map_err(|e| format!("获取远程目标 '{}' 信息失败: {}", requested, e))?;
-            if entry_type_from_permissions(meta.permissions, meta.is_dir())
-                == SftpEntryType::Directory
-            {
+            if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
                 Err(format!("远程目标已存在且是目录: {}", requested))
             } else {
                 Ok(Some(requested.to_string()))
@@ -619,8 +564,6 @@ async fn resolve_remote_destination(
     }
 }
 
-/// SFTP v3 的普通 RENAME 在目标已存在时应失败；这里在失败后重新检查目标，
-/// 将并发抢占识别为“名字已被占用”，供 KeepBoth 继续尝试下一个候选名。
 async fn try_commit_remote_noreplace(
     sftp: &russh_sftp::client::SftpSession,
     temp: &str,
@@ -633,7 +576,6 @@ async fn try_commit_remote_noreplace(
     {
         return Ok(false);
     }
-
     match sftp.rename(temp, candidate).await {
         Ok(()) => Ok(true),
         Err(rename_error) => {
@@ -644,10 +586,7 @@ async fn try_commit_remote_noreplace(
             if now_exists {
                 Ok(false)
             } else {
-                Err(format!(
-                    "无覆盖提交远程文件 '{}' 失败: {}",
-                    candidate, rename_error
-                ))
+                Err(format!("无覆盖提交远程文件 '{}' 失败: {}", candidate, rename_error))
             }
         }
     }
@@ -692,17 +631,13 @@ async fn commit_remote_temp(
                     .map(|_| Some(final_path.to_string()))
                     .map_err(|e| format!("提交远程文件 '{}' 失败: {}", final_path, e));
             }
-
             let meta = sftp
                 .symlink_metadata(final_path)
                 .await
                 .map_err(|e| format!("获取远程目标 '{}' 信息失败: {}", final_path, e))?;
-            if entry_type_from_permissions(meta.permissions, meta.is_dir())
-                == SftpEntryType::Directory
-            {
+            if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
                 return Err(format!("远程目标已存在且是目录: {}", final_path));
             }
-
             let backup = remote_sibling_artifact(final_path, "backup");
             sftp.rename(final_path, &backup)
                 .await
@@ -715,10 +650,7 @@ async fn commit_remote_temp(
                     Ok(Some(final_path.to_string()))
                 }
                 Err(commit_error) => match sftp.rename(&backup, final_path).await {
-                    Ok(()) => Err(format!(
-                        "提交远程文件 '{}' 失败: {}",
-                        final_path, commit_error
-                    )),
+                    Ok(()) => Err(format!("提交远程文件 '{}' 失败: {}", final_path, commit_error)),
                     Err(rollback_error) => Err(format!(
                         "提交远程文件 '{}' 失败: {}；回滚也失败，原文件仍保留在 '{}': {}",
                         final_path, commit_error, backup, rollback_error
@@ -729,9 +661,17 @@ async fn commit_remote_temp(
     }
 }
 
+fn same_modified_time(left: Option<SystemTime>, right: Option<SystemTime>) -> bool {
+    match (left, right) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
 /// 下载远程文件到本地。
 ///
-/// 始终先写同目录临时文件，只有完整写入、flush 与取消窗口结束后才提交到正式路径。
+/// 始终先写同目录临时文件。提交前不仅要求 EOF 正常结束，还会重新核对远端
+/// size/mtime 与起始快照；源文件在传输期间被截断、增长或替换时绝不提交正式目标。
 pub async fn sftp_download(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -750,7 +690,7 @@ pub async fn sftp_download(
         });
     };
 
-    let (mut remote_file, remote_size) = {
+    let (mut remote_file, remote_size, remote_mtime) = {
         let cache = sftp_cache.lock().await;
         let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
         let meta = sftp
@@ -759,16 +699,13 @@ pub async fn sftp_download(
             .map_err(|e| format!("获取远程文件信息 '{}' 失败: {}", remote_path, e))?;
         let entry_type = entry_type_from_permissions(meta.permissions, meta.is_dir());
         if entry_type != SftpEntryType::File {
-            return Err(format!(
-                "仅支持下载普通文件，'{}' 类型为 {:?}",
-                remote_path, entry_type
-            ));
+            return Err(format!("仅支持下载普通文件，'{}' 类型为 {:?}", remote_path, entry_type));
         }
         let file = sftp
             .open(remote_path)
             .await
             .map_err(|e| format!("打开远程文件 '{}' 失败: {}", remote_path, e))?;
-        (file, meta.size.unwrap_or(0))
+        (file, meta.size.unwrap_or(0), meta.mtime)
     };
 
     if let Some(parent) = final_path.parent() {
@@ -815,6 +752,27 @@ pub async fn sftp_download(
                 cb(total, remote_size, rate.sample(total));
             }
         }
+    }
+
+    let remote_unchanged = {
+        let cache = sftp_cache.lock().await;
+        let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
+        match sftp.symlink_metadata(remote_path).await {
+            Ok(meta) => {
+                entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::File
+                    && meta.size.unwrap_or(0) == remote_size
+                    && (remote_mtime.is_none() || meta.mtime == remote_mtime)
+            }
+            Err(_) => false,
+        }
+    };
+    if total != remote_size || !remote_unchanged {
+        drop(local_file);
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(format!(
+            "远端源文件 '{}' 在传输期间发生变化（预期 {} bytes，实际读取 {} bytes），已丢弃临时文件且未提交正式目标",
+            remote_path, remote_size, total
+        ));
     }
 
     if let Some(cb) = on_progress {
@@ -869,8 +827,8 @@ pub struct SftpUploadOptions {
 
 /// 上传本地文件到远程。
 ///
-/// 写入远端同目录临时文件，flush/mtime 完成后才通过 rename 提交；Replace 时会先
-/// 备份旧目标并在提交失败时回滚，取消/失败绝不删除原有正式文件。
+/// 数据先写远端同目录临时文件；提交前重新核对打开文件的 size/modified 快照，
+/// 源文件在传输期间变化时清理临时文件，不触碰已有正式目标。
 pub async fn sftp_upload(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -880,23 +838,23 @@ pub async fn sftp_upload(
     on_progress: Option<&(dyn Fn(u64, u64, Option<f64>) + Send + Sync)>,
     cancel: Option<&Arc<AtomicBool>>,
 ) -> Result<SftpWriteOutcome, String> {
-    let SftpUploadOptions {
-        mtime,
-        overwrite_policy,
-    } = options;
+    let SftpUploadOptions { mtime, overwrite_policy } = options;
     get_or_create_sftp(session, sftp_cache).await?;
 
     let mut local_file = tokio::fs::File::open(local_path)
         .await
         .map_err(|e| format!("打开本地文件 '{}' 失败: {}", local_path, e))?;
-    let local_size = local_file.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let initial_meta = local_file
+        .metadata()
+        .await
+        .map_err(|e| format!("读取本地文件 '{}' 元数据失败: {}", local_path, e))?;
+    let local_size = initial_meta.len();
+    let local_modified = initial_meta.modified().ok();
 
     let (final_path, temp_path, mut remote_file) = {
         let cache = sftp_cache.lock().await;
         let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-        let Some(final_path) =
-            resolve_remote_destination(sftp, remote_path, overwrite_policy).await?
-        else {
+        let Some(final_path) = resolve_remote_destination(sftp, remote_path, overwrite_policy).await? else {
             return Ok(SftpWriteOutcome::Skipped {
                 final_path: remote_path.to_string(),
             });
@@ -957,6 +915,27 @@ pub async fn sftp_upload(
         }
     }
 
+    let final_meta = local_file.metadata().await.ok();
+    let local_unchanged = final_meta
+        .as_ref()
+        .map(|meta| {
+            meta.len() == local_size
+                && same_modified_time(local_modified, meta.modified().ok())
+        })
+        .unwrap_or(false);
+    if total != local_size || !local_unchanged {
+        remote_file.flush().await.ok();
+        drop(remote_file);
+        let cache = sftp_cache.lock().await;
+        if let Some(sftp) = cache.as_ref() {
+            let _ = sftp.remove_file(&temp_path).await;
+        }
+        return Err(format!(
+            "本地源文件 '{}' 在传输期间发生变化（预期 {} bytes，实际读取 {} bytes），已清理远端临时文件且未提交正式目标",
+            local_path, local_size, total
+        ));
+    }
+
     if let Some(cb) = on_progress {
         if throttle.should_emit_final(total, local_size) {
             cb(total, local_size, rate.sample(total));
@@ -972,8 +951,6 @@ pub async fn sftp_upload(
     }
     drop(remote_file);
 
-    // 时间戳同步是 best-effort：写在临时文件上，因此即使服务器不支持也不会
-    // 破坏正式目标；失败会记录日志但不把完整数据传输降级为失败。
     if let Some(mtime_secs) = mtime {
         let cache = sftp_cache.lock().await;
         if let Some(sftp) = cache.as_ref() {
@@ -986,9 +963,7 @@ pub async fn sftp_upload(
                         log::warn!("同步远程临时文件时间戳 '{}' 失败: {}", temp_path, e);
                     }
                 }
-                Err(e) => {
-                    log::warn!("读取远程临时文件元数据 '{}' 失败: {}", temp_path, e);
-                }
+                Err(e) => log::warn!("读取远程临时文件元数据 '{}' 失败: {}", temp_path, e),
             }
         }
     }
@@ -1037,7 +1012,6 @@ pub async fn sftp_upload(
     })
 }
 
-/// 删除远程文件
 pub async fn sftp_delete(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1046,24 +1020,15 @@ pub async fn sftp_delete(
     get_or_create_sftp(session, sftp_cache).await?;
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-
     let stat = sftp
         .symlink_metadata(remote_path)
         .await
         .map_err(|e| format!("获取文件信息 '{}' 失败: {}", remote_path, e))?;
 
     if stat.is_dir() {
-        // rmdir 要求目录为空
         match sftp.remove_dir(remote_path).await {
-            Ok(()) => {
-                log::info!("SFTP 已删除目录: {}", remote_path);
-            }
-            Err(e) => {
-                return Err(format!(
-                    "删除目录 '{}' 失败（可能非空）: {}",
-                    remote_path, e
-                ));
-            }
+            Ok(()) => log::info!("SFTP 已删除目录: {}", remote_path),
+            Err(e) => return Err(format!("删除目录 '{}' 失败（可能非空）: {}", remote_path, e)),
         }
     } else {
         sftp.remove_file(remote_path)
@@ -1071,11 +1036,9 @@ pub async fn sftp_delete(
             .map_err(|e| format!("删除文件 '{}' 失败: {}", remote_path, e))?;
         log::info!("SFTP 已删除文件: {}", remote_path);
     }
-
     Ok(())
 }
 
-/// 重命名/移动远程文件
 pub async fn sftp_rename(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1085,16 +1048,13 @@ pub async fn sftp_rename(
     get_or_create_sftp(session, sftp_cache).await?;
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-
     sftp.rename(from_path, to_path)
         .await
         .map_err(|e| format!("重命名 '{}' -> '{}' 失败: {}", from_path, to_path, e))?;
-
     log::info!("SFTP 重命名: {} -> {}", from_path, to_path);
     Ok(())
 }
 
-/// 创建远程目录
 pub async fn sftp_mkdir(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1103,11 +1063,9 @@ pub async fn sftp_mkdir(
     get_or_create_sftp(session, sftp_cache).await?;
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-
     sftp.create_dir(remote_path)
         .await
         .map_err(|e| format!("创建目录 '{}' 失败: {}", remote_path, e))?;
-
     log::info!("SFTP 已创建目录: {}", remote_path);
     Ok(())
 }
@@ -1123,7 +1081,6 @@ async fn try_create_remote_directory(
     {
         return Ok(false);
     }
-
     match sftp.create_dir(candidate).await {
         Ok(()) => Ok(true),
         Err(create_error) => {
@@ -1134,19 +1091,12 @@ async fn try_create_remote_directory(
             if now_exists {
                 Ok(false)
             } else {
-                Err(format!(
-                    "创建远程目录 '{}' 失败: {}",
-                    candidate, create_error
-                ))
+                Err(format!("创建远程目录 '{}' 失败: {}", candidate, create_error))
             }
         }
     }
 }
 
-/// 为目录上传原子保留远端根目录。
-///
-/// 目录 Replace 不做隐式递归覆盖：若目标已经存在则明确失败；KeepBoth 使用
-/// create_dir 的排他创建语义挑选一个不冲突名字；Skip 在冲突时跳过整棵目录。
 pub async fn sftp_prepare_upload_directory(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1199,7 +1149,6 @@ pub async fn sftp_prepare_upload_directory(
     }
 }
 
-/// 确保远端子目录存在。已有对象必须确实是目录；不会跟随符号链接。
 pub async fn sftp_ensure_directory(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1218,8 +1167,7 @@ pub async fn sftp_ensure_directory(
             .symlink_metadata(remote_path)
             .await
             .map_err(|e| format!("获取远程目录 '{}' 信息失败: {}", remote_path, e))?;
-        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory
-        {
+        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
             return Ok(());
         }
         return Err(format!("远程路径 '{}' 已存在且不是目录", remote_path));
@@ -1232,8 +1180,7 @@ pub async fn sftp_ensure_directory(
             .symlink_metadata(remote_path)
             .await
             .map_err(|e| format!("获取远程目录 '{}' 信息失败: {}", remote_path, e))?;
-        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory
-        {
+        if entry_type_from_permissions(meta.permissions, meta.is_dir()) == SftpEntryType::Directory {
             Ok(())
         } else {
             Err(format!("远程路径 '{}' 被非目录对象占用", remote_path))
@@ -1241,7 +1188,6 @@ pub async fn sftp_ensure_directory(
     }
 }
 
-/// 创建空文件（touch）
 pub async fn sftp_new_file(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1250,7 +1196,6 @@ pub async fn sftp_new_file(
     get_or_create_sftp(session, sftp_cache).await?;
     let cache = sftp_cache.lock().await;
     let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-
     let mut file = sftp
         .open_with_flags(
             remote_path,
@@ -1261,12 +1206,10 @@ pub async fn sftp_new_file(
     file.flush()
         .await
         .map_err(|e| format!("刷新文件 '{}' 失败: {}", remote_path, e))?;
-
     log::info!("SFTP 已创建空文件: {}", remote_path);
     Ok(())
 }
 
-/// 修改远程文件权限（通过 set_metadata 实现）
 pub async fn sftp_chmod(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1288,23 +1231,15 @@ pub async fn sftp_chmod(
             remote_path, entry_type
         ));
     }
-
-    // SFTP permissions 字段包含 POSIX mode；保留文件类型位，只替换权限位。
     let file_type_bits = stat.permissions.unwrap_or(0) & 0o170000;
     stat.permissions = Some(file_type_bits | (mode & 0o7777));
     sftp.set_metadata(remote_path, stat)
         .await
         .map_err(|e| format!("修改权限 '{}' 失败: {}", remote_path, e))?;
-
     log::info!("SFTP chmod: {} -> {:o}", remote_path, mode);
     Ok(())
 }
 
-/// 批量删除远程文件和空目录
-/// 返回删除失败的项目路径列表（空列表表示全部成功）
-///
-/// 每次迭代独立获取/释放 sftp_cache 锁，避免长时间持锁阻塞
-/// 同会话的其他 SFTP 操作（目录刷新、stat、下载等）。
 pub async fn sftp_delete_batch(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1340,8 +1275,7 @@ pub async fn sftp_delete_batch(
                     .await
                     .map_err(|e| format!("删除文件失败: {}", e))
             }
-        }; // sftp_cache 锁在此释放，允许其他 SFTP 操作穿插
-
+        };
         match result {
             Ok(()) => log::info!("SFTP 批量删除: {}", remote_path),
             Err(e) => {
@@ -1350,15 +1284,9 @@ pub async fn sftp_delete_batch(
             }
         }
     }
-
     Ok(failed)
 }
 
-/// 递归删除远程文件或目录（包括所有子内容）
-///
-/// 每次递归层级独立获取/释放 `sftp_cache` 锁，避免长时间持锁阻塞
-/// 同会话的其他 SFTP 操作（目录刷新、stat、下载等）。
-/// 与 `sftp_delete_batch` 的逐条目释放锁策略一致。
 pub async fn sftp_delete_recursive(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1387,14 +1315,12 @@ fn delete_recursive_inner<'a>(
         let (_is_dir, children) = {
             let cache = sftp_cache.lock().await;
             let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
-
             let stat = sftp
                 .symlink_metadata(path)
                 .await
                 .map_err(|e| format!("获取 '{}' 信息失败: {}", path, e))?;
 
             if !stat.is_dir() {
-                // 文件：持锁删除后释放
                 sftp.remove_file(path)
                     .await
                     .map_err(|e| format!("删除文件 '{}' 失败: {}", path, e))?;
@@ -1406,7 +1332,6 @@ fn delete_recursive_inner<'a>(
                 .read_dir(path)
                 .await
                 .map_err(|e| format!("读取目录 '{}' 失败: {}", path, e))?;
-
             let children: Vec<String> = read_dir
                 .into_iter()
                 .filter_map(|entry| {
@@ -1421,16 +1346,12 @@ fn delete_recursive_inner<'a>(
                     })
                 })
                 .collect();
-
             (true, children)
-        }; // 锁在此释放
+        };
 
-        // 递归删除子条目（每层独立获取锁）
         for child_path in &children {
             delete_recursive_inner(sftp_cache, child_path, depth + 1).await?;
         }
-
-        // 删除已清空的目录本身
         {
             let cache = sftp_cache.lock().await;
             let sftp = cache.as_ref().ok_or_else(|| "SFTP 未初始化".to_string())?;
@@ -1443,13 +1364,9 @@ fn delete_recursive_inner<'a>(
     })
 }
 
-// ── 辅助函数 ───────────────────────────────────────────
-
-/// 将 Unix 权限位转换为字符串表示（如 "-rw-r--r--"）
 fn permissions_to_string(perm: Option<u32>) -> String {
     let p = perm.unwrap_or(0);
     let mut s = String::with_capacity(10);
-
     let type_char = match p & 0o170000 {
         0o040000 => 'd',
         0o120000 => 'l',
@@ -1487,9 +1404,6 @@ fn permissions_to_string(perm: Option<u32>) -> String {
     s
 }
 
-// ── 递归目录列表 ────────────────────────────────────────
-
-/// 目录树条目。递归枚举不跟随符号链接；调用方可决定是否跳过或以后实现保留链接。
 #[derive(Debug, Clone)]
 pub struct SftpTreeEntry {
     pub path: String,
@@ -1497,7 +1411,6 @@ pub struct SftpTreeEntry {
     pub size: u64,
 }
 
-/// 递归列出远程目录树（包含目录本身的子目录条目，因此空目录不会丢失）。
 pub async fn sftp_list_tree_recursive(
     session: &Arc<russh::client::Handle<SshHandler>>,
     sftp_cache: &Arc<Mutex<Option<russh_sftp::client::SftpSession>>>,
@@ -1520,10 +1433,7 @@ fn list_tree_recursive_inner<'a>(
     Box::pin(async move {
         const MAX_DEPTH: u32 = 50;
         if depth > MAX_DEPTH {
-            return Err(format!(
-                "SFTP 递归列表超过最大深度 {} 层: {}",
-                MAX_DEPTH, path
-            ));
+            return Err(format!("SFTP 递归列表超过最大深度 {} 层: {}", MAX_DEPTH, path));
         }
 
         let children: Vec<SftpTreeEntry> = {
@@ -1533,7 +1443,6 @@ fn list_tree_recursive_inner<'a>(
                 .read_dir(path)
                 .await
                 .map_err(|e| format!("读取目录 '{}' 失败: {}", path, e))?;
-
             read_dir
                 .into_iter()
                 .filter_map(|entry| {
@@ -1565,7 +1474,6 @@ fn list_tree_recursive_inner<'a>(
                 list_tree_recursive_inner(sftp_cache, &child_path, depth + 1, result).await?;
             }
         }
-
         Ok(())
     })
 }
@@ -1609,28 +1517,26 @@ mod progress_tests {
         assert_eq!(permissions_to_string(Some(0o107000)), "---S--S--T");
     }
 
+    #[test]
+    fn modification_guard_treats_missing_timestamps_as_unknown_not_changed() {
+        assert!(same_modified_time(None, None));
+        assert!(same_modified_time(None, Some(SystemTime::now())));
+    }
+
     #[tokio::test]
     async fn local_keep_both_never_overwrites_existing_file() {
         let dir = tempfile::tempdir().expect("tempdir");
         let final_path = dir.path().join("report.txt");
         let temp_path = dir.path().join(".report.part");
-        tokio::fs::write(&final_path, b"old")
-            .await
-            .expect("write old");
-        tokio::fs::write(&temp_path, b"new")
-            .await
-            .expect("write temp");
+        tokio::fs::write(&final_path, b"old").await.expect("write old");
+        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
 
         let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::KeepBoth)
             .await
             .expect("commit")
             .expect("committed path");
-
         assert_ne!(committed, final_path);
-        assert_eq!(
-            tokio::fs::read(&final_path).await.expect("read old"),
-            b"old"
-        );
+        assert_eq!(tokio::fs::read(&final_path).await.expect("read old"), b"old");
         assert_eq!(tokio::fs::read(&committed).await.expect("read new"), b"new");
         assert!(tokio::fs::symlink_metadata(&temp_path).await.is_err());
     }
@@ -1640,23 +1546,15 @@ mod progress_tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let final_path = dir.path().join("report.txt");
         let temp_path = dir.path().join(".report.part");
-        tokio::fs::write(&final_path, b"old")
-            .await
-            .expect("write old");
-        tokio::fs::write(&temp_path, b"new")
-            .await
-            .expect("write temp");
+        tokio::fs::write(&final_path, b"old").await.expect("write old");
+        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
 
         let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::Replace)
             .await
             .expect("commit")
             .expect("committed path");
-
         assert_eq!(committed, final_path);
-        assert_eq!(
-            tokio::fs::read(&final_path).await.expect("read final"),
-            b"new"
-        );
+        assert_eq!(tokio::fs::read(&final_path).await.expect("read final"), b"new");
         let mut entries = tokio::fs::read_dir(dir.path()).await.expect("read dir");
         while let Some(entry) = entries.next_entry().await.expect("entry") {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -1669,20 +1567,13 @@ mod progress_tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let final_path = dir.path().join("report.txt");
         let temp_path = dir.path().join(".report.part");
-        tokio::fs::write(&final_path, b"old")
-            .await
-            .expect("write old");
-        tokio::fs::write(&temp_path, b"new")
-            .await
-            .expect("write temp");
+        tokio::fs::write(&final_path, b"old").await.expect("write old");
+        tokio::fs::write(&temp_path, b"new").await.expect("write temp");
 
         let committed = commit_local_temp(&temp_path, &final_path, OverwritePolicy::Skip)
             .await
             .expect("commit");
         assert!(committed.is_none());
-        assert_eq!(
-            tokio::fs::read(&final_path).await.expect("read final"),
-            b"old"
-        );
+        assert_eq!(tokio::fs::read(&final_path).await.expect("read final"), b"old");
     }
 }
