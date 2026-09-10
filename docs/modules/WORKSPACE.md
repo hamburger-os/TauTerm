@@ -40,8 +40,6 @@ Pane Header 是 Pane 级操作的正式边界；会话内容区的右键行为�
 - **均分当前分屏**：只把目标 Pane 的直接父 Split 恢复为 50/50，不改动更外层 Split。
 - **关闭分屏**：删除 Pane 并折叠失去意义的父 Split；Session 生命周期不受影响。
 
-单 Pane 不额外占用 Header 高度。为了让 1 Pane 也能显式回到空状态，左侧会话列表支持双击**当前 selected Pane 已经显示的 Session 卡片**执行“清空分屏”。该手势只在双击开始前 Session 就已绑定当前 Pane 时成立；双击未显示 Session、其它 Pane 的 Session 或网络对端不会清空当前 Pane。
-
 “清空分屏”和“关闭分屏”必须保持为两个不同状态转换：前者保留 Pane，仅解除 Pane → Session 显示绑定；后者删除 Pane 本身。打开非 selected Pane 的 Pane 菜单不应为了显示菜单而先切换当前 Session，上述动作直接作用于目标 Pane。
 
 ## 交互与数据流
@@ -63,7 +61,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 
 | 布局 | 结构合同 | 内容合同 |
 |---|---|---|
-| 1 Pane | 单 Pane 无额外 Header inset；当前 Session 卡片可双击清空 | Terminal/Custom 均填满工作区 |
+| 1 Pane | 单 Pane 无额外 Header inset | Terminal/Custom 均填满工作区 |
 | 横向 2 Pane | 50/50 初始几何，可拖动且保留最小 Pane 尺寸 | 自定义视图按 Pane 宽度响应 |
 | 纵向 2 Pane | 50/50 初始几何 | 高度不足时由内容视图自己滚动 |
 | 2×2 | 四个 0.5×0.5 Pane，不复制同一 Session | TFTP/iperf/TRDP/Network 主操作仍可达 |
