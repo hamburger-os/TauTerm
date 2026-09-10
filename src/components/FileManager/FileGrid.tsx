@@ -6,6 +6,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import Icon from "../common/Icon";
 import { formatBytes } from "../../utils/format";
 import type { SftpEntry } from "./types";
 import type { FileViewProps } from "./FileViewProps";
@@ -281,11 +282,12 @@ export default function FileGrid({
         <div className={styles.errorBanner}>
           <span>{error}</span>
           <button
-            className={styles.errorClose}
+            type="button"
+            className={`${styles.errorClose} liquid-glass-ghost-button`}
             onClick={onClearError}
             aria-label={t("common.close")}
           >
-            ×
+            <Icon name="close" size="xs" />
           </button>
         </div>
       )}
