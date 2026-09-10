@@ -17,6 +17,8 @@ export interface SendBarState {
     sendHistory: string[];
   };
   command: {
+    /** Per-session selection. The global asset key is only a default for a new SendBar. */
+    activeConfigName: string;
     selectedIds: Set<string>;
     loopCount: number;
   };
@@ -55,6 +57,7 @@ function buildInitialState(): SendBarState {
     mode: "basic",
     basic: initialBasicState(),
     command: {
+      activeConfigName: "",
       selectedIds: new Set<string>(),
       loopCount: 1,
     },
@@ -88,6 +91,7 @@ export type SendBarAction =
   | { type: "ADD_SEND_HISTORY"; entry: string }
   | { type: "RESET_BASIC" }
   // Command
+  | { type: "SET_ACTIVE_COMMAND_CONFIG"; name: string }
   | { type: "TOGGLE_COMMAND_SELECT"; id: string }
   | { type: "CLEAR_COMMAND_SELECTION" }
   | { type: "SELECT_ALL_COMMANDS"; ids: string[] }
@@ -135,6 +139,8 @@ function sendBarReducer(state: SendBarState, action: SendBarAction): SendBarStat
       return { ...state, basic: initialBasicState() };
 
     // Command
+    case "SET_ACTIVE_COMMAND_CONFIG":
+      return { ...state, command: { ...state.command, activeConfigName: action.name } };
     case "TOGGLE_COMMAND_SELECT": {
       const next = new Set(state.command.selectedIds);
       if (next.has(action.id)) next.delete(action.id);
