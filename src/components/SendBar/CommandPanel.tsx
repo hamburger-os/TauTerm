@@ -66,6 +66,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
   const listRef = useRef<HTMLDivElement>(null);
 
   // Command Set 是全局工程资产；当前命令集选择由 SendBarContext 按会话保留。
+  // 内置命令只在存储尚未初始化时播种一次；空数组代表用户明确删除了全部命令集。
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
@@ -73,9 +74,8 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
       loadAsset<string>(ACTIVE_CONFIG_STORE_KEY),
     ]).then(([storedConfigs, storedActive]) => {
       if (cancelled) return;
-      const nextConfigs = Array.isArray(storedConfigs) && storedConfigs.length > 0
-        ? storedConfigs
-        : [defaultCommands as CommandConfig];
+      const hasStoredConfigs = Array.isArray(storedConfigs);
+      const nextConfigs = hasStoredConfigs ? storedConfigs : [defaultCommands as CommandConfig];
       const sessionActive = activeConfigNameRef.current;
       const nextActive = sessionActive && nextConfigs.some(config => config.name === sessionActive)
         ? sessionActive
@@ -85,9 +85,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
 
       setConfigs(nextConfigs);
       setActiveConfigName(nextActive);
-      if (!Array.isArray(storedConfigs) || storedConfigs.length === 0) {
-        void saveConfigs(nextConfigs);
-      }
+      if (!hasStoredConfigs) void saveConfigs(nextConfigs);
     }).catch(() => {
       // 内置命令集保持可用；统一持久化层负责报告存储错误。
     });
@@ -96,9 +94,7 @@ export default function CommandPanel({ sessionId, isActive, onRunningChange }: C
 
   useEffect(() => {
     return subscribeAsset<CommandConfig[]>(CONFIG_STORE_KEY, value => {
-      const next = Array.isArray(value) && value.length > 0
-        ? value
-        : [defaultCommands as CommandConfig];
+      const next = Array.isArray(value) ? value : [];
       setConfigs(next);
 
       const current = activeConfigNameRef.current;
