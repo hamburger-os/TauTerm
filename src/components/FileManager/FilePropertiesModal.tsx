@@ -82,6 +82,12 @@ export default function FilePropertiesModal({
     setChmodError(null);
   }, [statInfo?.path, statInfo?.permissions, getOctalFromPerms]);
 
+  const cancelChmodEdit = useCallback(() => {
+    setChmodEditing(false);
+    setChmodError(null);
+    setChmodValue(getOctalFromPerms(statInfo?.permissions ?? null));
+  }, [statInfo?.permissions, getOctalFromPerms]);
+
   const handleChmodApply = useCallback(async () => {
     if (!/^[0-7]{3}$/.test(chmodValue)) {
       setChmodError(t("fileManager.chmodInvalid"));
@@ -133,7 +139,11 @@ export default function FilePropertiesModal({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        onClose();
+        if (chmodEditing) {
+          cancelChmodEdit();
+        } else {
+          onClose();
+        }
         return;
       }
       if (event.key !== "Tab") return;
@@ -160,7 +170,7 @@ export default function FilePropertiesModal({
       cancelAnimationFrame(frame);
       document.removeEventListener("keydown", handler, true);
     };
-  }, [visible, onClose]);
+  }, [visible, onClose, chmodEditing, cancelChmodEdit]);
 
   if (!visible || !entry) return null;
 
@@ -285,13 +295,6 @@ export default function FilePropertiesModal({
                             }}
                             onKeyDown={(e) => {
                               if (e.key === "Enter") handleChmodApply();
-                              if (e.key === "Escape") {
-                                setChmodEditing(false);
-                                setChmodError(null);
-                                if (statInfo?.permissions) {
-                                  setChmodValue(getOctalFromPerms(statInfo.permissions));
-                                }
-                              }
                             }}
                             autoFocus
                           />
@@ -307,13 +310,7 @@ export default function FilePropertiesModal({
                             type="button"
                             size="sm"
                             className={styles.chmodBtn}
-                            onClick={() => {
-                              setChmodEditing(false);
-                              setChmodError(null);
-                              if (statInfo?.permissions) {
-                                setChmodValue(getOctalFromPerms(statInfo.permissions));
-                              }
-                            }}
+                            onClick={cancelChmodEdit}
                           >
                             {t("fileManager.cancel")}
                           </GlassButton>
