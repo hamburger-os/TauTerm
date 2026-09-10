@@ -64,6 +64,9 @@ export default function FilePropertiesModal({
   const [chmodValue, setChmodValue] = useState("");
   const [chmodEditing, setChmodEditing] = useState(false);
   const [chmodError, setChmodError] = useState<string | null>(null);
+  const chmodEditingRef = useRef(chmodEditing);
+  chmodEditingRef.current = chmodEditing;
+  const cancelChmodEditRef = useRef<() => void>(() => {});
 
   // Extract chmod octal from a POSIX permission string. Preserve setuid,
   // setgid and sticky bits so editing rwx permissions never clears an existing
@@ -105,6 +108,8 @@ export default function FilePropertiesModal({
     setChmodError(null);
     setChmodValue(getOctalFromPerms(statInfo?.permissions ?? null));
   }, [statInfo?.permissions, getOctalFromPerms]);
+
+  cancelChmodEditRef.current = cancelChmodEdit;
 
   const handleChmodApply = useCallback(async () => {
     if (!/^[0-7]{3,4}$/.test(chmodValue)) {
@@ -159,8 +164,8 @@ export default function FilePropertiesModal({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        if (chmodEditing) {
-          cancelChmodEdit();
+        if (chmodEditingRef.current) {
+          cancelChmodEditRef.current();
         } else {
           onClose();
         }
@@ -190,7 +195,7 @@ export default function FilePropertiesModal({
       cancelAnimationFrame(frame);
       document.removeEventListener("keydown", handler, true);
     };
-  }, [visible, onClose, chmodEditing, cancelChmodEdit]);
+  }, [visible, onClose]);
 
   if (!visible || !entry) return null;
 
