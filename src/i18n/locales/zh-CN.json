@@ -1088,8 +1088,8 @@
     "transferFailed": "传输失败",
     "transferCancelled": "已取消",
     "invalidName": "文件名不能为空，且不能为 .、.. 或包含 /。",
-    "conflictTitle": "目标文件已存在",
-    "conflictMessage": "当前目录中有 {{count}} 个同名文件。请选择本次上传的冲突处理方式。",
+    "conflictTitle": "目标项目已存在",
+    "conflictMessage": "当前目录中有 {{count}} 个同名项目。请选择本次上传的冲突处理方式。",
     "conflictReplace": "替换",
     "conflictKeepBoth": "保留两份",
     "conflictSkip": "跳过已有",
@@ -1107,9 +1107,9 @@
     "previewBytes": "HEX 显示 {{count}} 字节",
     "dropToUpload": "拖放到此处上传",
     "conflictChoicesLabel": "冲突处理方式",
-    "conflictReplaceHint": "用本次上传内容替换已有同名文件。",
-    "conflictKeepBothHint": "保留已有文件，并为本次上传自动生成不冲突名称。",
-    "conflictSkipHint": "保留已有文件，不上传这些同名文件。"
+    "conflictReplaceHint": "用本次上传内容替换已有同名项目。",
+    "conflictKeepBothHint": "保留已有项目，并为本次上传自动生成不冲突名称。",
+    "conflictSkipHint": "保留已有项目，不上传这些同名项目。"
   },
   "ssh": {
     "host": "主机地址",
