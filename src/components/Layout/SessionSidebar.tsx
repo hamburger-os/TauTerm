@@ -46,6 +46,8 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
   /** 右键菜单打开前的 Pane。新建子终端时用它作为落点，避免右键导航抢走空 Pane。 */
   const contextMenuOriginPaneRef = useRef(splitLayout.selectedPaneId);
+  /** 双击开始前已经位于当前 Pane 的 Session；防止首次双击未显示卡片出现“先挂载再清空”。 */
+  const paneClearDoubleClickCandidateRef = useRef<string | null>(null);
 
   // 构建树形结构（排序：connection_type → [网络会话: 传输层→角色] → endpoint → name）
   const tree = useMemo<TreeNode[]>(() => {
@@ -236,6 +238,19 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     onSelectSession?.(child.id);
   }, [switchTab, onSelectSession]);
 
+  const recordPaneClearDoubleClickCandidate = useCallback((
+    event: React.MouseEvent,
+    sessionId: string,
+    paneId: string | undefined,
+  ) => {
+    if (event.button !== 0 || event.detail !== 1) return;
+    paneClearDoubleClickCandidateRef.current = paneId
+      && paneId === splitLayout.selectedPaneId
+      && splitLayout.assignments[paneId] === sessionId
+      ? sessionId
+      : null;
+  }, [splitLayout.assignments, splitLayout.selectedPaneId]);
+
   const handleDisplayedSessionDoubleClick = useCallback((
     event: React.MouseEvent,
     sessionId: string,
@@ -243,6 +258,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   ) => {
     event.preventDefault();
     event.stopPropagation();
+    const wasCurrentBeforeGesture = paneClearDoubleClickCandidateRef.current === sessionId;
+    paneClearDoubleClickCandidateRef.current = null;
+    if (!wasCurrentBeforeGesture) return;
     if (!paneId || paneId !== splitLayout.selectedPaneId) return;
     if (splitLayout.assignments[paneId] !== sessionId) return;
     clearPane(paneId);
@@ -484,6 +502,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                   className={`${styles.item} ${state.activeTabId === node.tab.id ? styles.active : ""}`}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
+                  onMouseDown={(e) => recordPaneClearDoubleClickCandidate(e, node.tab.id, parentPaneId)}
                   onClick={(e) => {
                     if (e.detail > 1) return;
                     handleParentSelect(node);
@@ -496,7 +515,9 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                     {canExpand ? (
                       <span
                         className={`${styles.expandArrow} ${isExpanded ? styles.open : ""}`}
+                        onMouseDown={(e) => e.stopPropagation()}
                         onClick={(e) => toggleExpand(node.tab.id, e)}
+                        onDoubleClick={(e) => e.stopPropagation()}
                       >
                         ▶
                       </span>
@@ -551,6 +572,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
                         className={`${styles.childItem} ${state.activeTabId === child.id ? styles.active : ""}`}
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
+                        onMouseDown={(e) => recordPaneClearDoubleClickCandidate(e, child.id, childPaneId)}
                         onClick={(e) => {
                           if (e.detail > 1) return;
                           handleChildSelect(child);
