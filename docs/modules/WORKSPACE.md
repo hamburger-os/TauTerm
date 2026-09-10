@@ -31,16 +31,18 @@ TauWorkspace
 
 安全凭据永远不进入 Workspace；这里只能保存 credential reference。
 
-Pane Header 是 Pane 级操作的唯一正式边界；会话内容区的右键行为属于 Session。未连接的不同会话类型应提供一致的连接/配置/删除直觉，不能因为是 custom view 就失去公共会话操作。
+Pane Header 是 Pane 级操作的正式边界；会话内容区的右键行为属于 Session。未连接的不同会话类型应提供一致的连接/配置/删除直觉，不能因为是 custom view 就失去公共会话操作。
 
-在多 Pane Workspace 中，Pane Header 的右键菜单提供以下结构操作：
+在多 Pane Workspace 中，Pane Header 通过可见的 `…` 按钮和右键打开同一套公共 `ContextMenu`，提供以下结构操作：
 
 - **清空分屏**：只把该 Pane 的 assignment 设为 `null`，不关闭、不删除、不重连 Session，也不改变 Split Tree 或比例；若清空的是 selected Pane，则当前 UI Session 上下文变为真正的 `null`，发送区、右栏和状态上下文随之退出会话态。
 - **向右分屏 / 向下分屏**：作为可发现的标准入口；Pane 四个自由边缘的 hover 触发仍保留，用于更快地选择左/右/上/下方向。
 - **均分当前分屏**：只把目标 Pane 的直接父 Split 恢复为 50/50，不改动更外层 Split。
 - **关闭分屏**：删除 Pane 并折叠失去意义的父 Split；Session 生命周期不受影响。
 
-“清空分屏”和“关闭分屏”必须保持为两个不同状态转换：前者保留 Pane，仅解除 Pane → Session 显示绑定；后者删除 Pane 本身。右键非 selected Pane 不应为了显示菜单而先切换当前 Session，上述动作直接作用于被右键的 Pane。
+单 Pane 不额外占用 Header 高度。为了让 1 Pane 也能显式回到空状态，左侧会话列表支持双击**当前 selected Pane 已经显示的 Session 卡片**执行“清空分屏”。该手势只在双击开始前 Session 就已绑定当前 Pane 时成立；双击未显示 Session、其它 Pane 的 Session 或网络对端不会清空当前 Pane。
+
+“清空分屏”和“关闭分屏”必须保持为两个不同状态转换：前者保留 Pane，仅解除 Pane → Session 显示绑定；后者删除 Pane 本身。打开非 selected Pane 的 Pane 菜单不应为了显示菜单而先切换当前 Session，上述动作直接作用于目标 Pane。
 
 ## 交互与数据流
 
@@ -61,7 +63,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 
 | 布局 | 结构合同 | 内容合同 |
 |---|---|---|
-| 1 Pane | 单 Pane 无额外 Header inset | Terminal/Custom 均填满工作区 |
+| 1 Pane | 单 Pane 无额外 Header inset；当前 Session 卡片可双击清空 | Terminal/Custom 均填满工作区 |
 | 横向 2 Pane | 50/50 初始几何，可拖动且保留最小 Pane 尺寸 | 自定义视图按 Pane 宽度响应 |
 | 纵向 2 Pane | 50/50 初始几何 | 高度不足时由内容视图自己滚动 |
 | 2×2 | 四个 0.5×0.5 Pane，不复制同一 Session | TFTP/iperf/TRDP/Network 主操作仍可达 |
@@ -71,7 +73,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 - `SplitView.paneSurface` 是命名 size container（`session-pane`）；
 - custom view 的 Pane surface 本身 `overflow: hidden`，滚动由 TFTP/iperf/TRDP/Network 等内容视图拥有，避免同轴双滚动；
 - Pane Header 的 24px 内容 inset 与实际 header 几何保持一致；
-- Pane Header 右键菜单复用公共 `ContextMenu`，边界定位、键盘导航、焦点恢复和主题材质只维护一份实现；
+- Pane Header 的 `…` 与右键菜单复用公共 `ContextMenu`，边界定位、键盘导航、焦点恢复和主题材质只维护一份实现；
 - TRDP 顶部 tab strip 高度固定，hover/selected 不改变兄弟按钮几何；
 - TRDP Analysis 在窄 Pane 下从双列折叠为单列；
 - TFTP/iperf 在窄 Pane 下将多列配置折叠为纵向布局。
@@ -84,7 +86,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 - `PaneId -> SessionId | null` 是 Layout 的正式状态模型；空 Pane 不使用空字符串或其它伪 Session ID 表示。
 - 布局恢复只能引用稳定配置；临时 child session 必须归一到可恢复的父配置或被丢弃。
 - 分屏尺寸不足时，内容必须按 Pane 的真实宽度与高度响应式重排或进入明确的内部滚动，不能让控制项变得不可达；custom Session 自己拥有滚动边界，Pane surface 不再叠加第二层同轴滚动。
-- Pane 级右键菜单只作用于 Pane chrome；内容区交互不得误触清空或关闭 Pane。
+- Pane 级菜单只作用于 Pane chrome；内容区交互不得误触清空或关闭 Pane。
 - 视觉材质、圆角和主题动画由主题规范统一定义，本文只记录结构和交互所有权。
 
 ## 代码锚点
