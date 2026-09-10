@@ -96,7 +96,6 @@
   pointer-events: none;
 }
 
-
 .paneHeader {
   position: absolute;
   z-index: 9;
@@ -321,33 +320,4 @@
 .horizontalDivider span {
   height: 1px;
   width: 100%;
-}
-
-.paneMenu {
-  position: fixed;
-  z-index: 1000;
-  min-width: 112px;
-  padding: 4px;
-  border-radius: var(--radius-md);
-}
-
-.paneMenu button {
-  width: 100%;
-  min-height: 30px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--text-xs);
-  text-align: left;
-  cursor: pointer;
-}
-
-.paneMenu button:hover {
-  background: var(--glass-bg-hover);
 }
