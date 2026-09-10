@@ -41,6 +41,15 @@ const commandSet = parseCommandConfig({
 assert.equal(commandSet.commands[0].command, "AT");
 assert.throws(() => parseCommandConfig({ version: 0, name: "legacy", defaultDelay: 0, commands: [] }));
 assert.throws(() => parseCommandConfig({ version: 1, name: "bad", defaultDelay: -1, commands: [] }));
+assert.throws(() => parseCommandConfig({
+  version: 1,
+  name: "dupe",
+  defaultDelay: 0,
+  commands: [
+    { id: "same", command: "AT", note: "", delay: 0 },
+    { id: "same", command: "ATI", note: "", delay: 0 },
+  ],
+}));
 
 const autoReply = parseAutoReplyConfig({
   name: "Reply",
@@ -63,6 +72,20 @@ assert.throws(() => parseAutoReplyConfig({
   rules: [{
     id: "r1",
     triggerType: "data",
+    timerIntervalMs: 0,
+    conditions: [],
+    conditionLogic: "and",
+    actions: [],
+    enabled: true,
+    cooldownMs: 0,
+  }],
+}));
+assert.throws(() => parseAutoReplyConfig({
+  name: "bad timer",
+  matchStrategy: "all",
+  rules: [{
+    id: "r1",
+    triggerType: "timer",
     timerIntervalMs: 0,
     conditions: [],
     conditionLogic: "and",
@@ -98,7 +121,10 @@ const context = source("src/components/SendBar/SendBarContext.tsx");
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeScriptId"));
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeAutoReplyConfig"));
 assert.ok(context.includes('type: "SET_ACTIVE_COMMAND_CONFIG"'));
-assert.ok(context.includes("Preserve the local editor draft"));
+assert.ok(context.includes("hasStoredConfigs ? storedConfigs : [...BUILTIN_CONFIGS]"));
+assert.ok(context.includes("hasStoredScripts ? storedScripts : [...BUILTIN_SCRIPTS]"));
+assert.ok(context.includes("A clean editor follows shared asset changes"));
+assert.ok(context.includes("if (current.isRunning) return"));
 
 const sendBar = source("src/components/SendBar/SendBar.tsx");
 assert.ok(!sendBar.includes("wrapperHidden"), "inactive mode panels should not stay mounted");
@@ -110,6 +136,7 @@ assert.ok(commandPanel.includes("usePointerDragReorder"));
 assert.ok(!commandPanel.includes("dragIndexRef"), "command panel must use the shared reorder hook");
 assert.ok(!commandPanel.includes("subscribeAsset<string>(ACTIVE_CONFIG_STORE_KEY"));
 assert.ok(commandPanel.includes("sendBarState.command"));
+assert.ok(commandPanel.includes("hasStoredConfigs ? storedConfigs"));
 assert.ok(commandPanel.includes("<ConfirmDialog"));
 
 const commandRunner = source("src/components/SendBar/useCommandRunner.ts");
@@ -120,12 +147,16 @@ assert.ok(!stopBody.includes("setIsRunning(false)"), "stop must stay locked unti
 
 const autoReplyPanel = source("src/components/SendBar/AutoReplyPanel.tsx");
 assert.ok(autoReplyPanel.includes("parseAutoReplyConfig"));
-assert.ok(autoReplyPanel.includes("disabled={isRunning}"));
+assert.ok(autoReplyPanel.includes("const runtimeLocked = isRunning || isLoading"));
+assert.ok(autoReplyPanel.includes("transitionAttemptRef"));
+assert.ok(autoReplyPanel.includes("disabled={runtimeLocked}"));
 assert.ok(autoReplyPanel.includes("<ConfirmDialog"));
 
 const scriptEditor = source("src/components/SendBar/ScriptEditor.tsx");
 assert.ok(scriptEditor.includes("parseScriptImport"));
-assert.ok(scriptEditor.includes("readOnly={isRunning}"));
+assert.ok(scriptEditor.includes("const runtimeLocked = isRunning || isTransitioning"));
+assert.ok(scriptEditor.includes("transitionAttemptRef"));
+assert.ok(scriptEditor.includes("readOnly={runtimeLocked}"));
 assert.ok(scriptEditor.includes("<ConfirmDialog"));
 
 const types = source("src/components/SendBar/types.ts");
