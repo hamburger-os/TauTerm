@@ -21,6 +21,7 @@ interface FileRowProps {
   onContextMenu: (e: React.MouseEvent) => void;
   tabIndex?: number;
   dataIndex?: number;
+  ariaRowIndex?: number;
   style?: CSSProperties;
   onFocus?: () => void;
   onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
@@ -34,6 +35,7 @@ const FileRow = memo(function FileRow({
   onContextMenu,
   tabIndex = 0,
   dataIndex,
+  ariaRowIndex,
   style,
   onFocus,
   onKeyDown,
@@ -52,6 +54,7 @@ const FileRow = memo(function FileRow({
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       role="row"
+      aria-rowindex={ariaRowIndex}
       aria-selected={isSelected}
       tabIndex={tabIndex}
       data-file-index={dataIndex}
