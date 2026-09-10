@@ -58,7 +58,10 @@ assert.match(confirmDialogSource, /data-action="confirm"/);
 assert.match(confirmDialogSource, /variant="ghost"/);
 assert.match(confirmDialogSource, /variant=\{intent\}/);
 assert.match(confirmDialogSource, /size="md"/);
-assert.match(confirmDialogSource, /dialogRef\.current\?\.querySelectorAll/);
+assert.match(confirmDialogSource, /querySelectorAll<HTMLElement>/);
+assert.match(confirmDialogSource, /dialog\?\.contains\(active\)/);
+assert.match(confirmDialogSource, /onCancelRef\.current\(\)/);
+assert.match(confirmDialogSource, /busyRef\.current/);
 assert.match(confirmDialogSource, /t\("common\.cancel"\)/);
 assert.match(confirmDialogSource, /t\("common\.confirm"\)/);
 
