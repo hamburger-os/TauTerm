@@ -57,20 +57,30 @@ export default function FilePropertiesModal({
   const [chmodEditing, setChmodEditing] = useState(false);
   const [chmodError, setChmodError] = useState<string | null>(null);
 
-  // Extract octal from permissions string (e.g. "-rw-r--r--" → "644")
+  // Extract chmod octal from a POSIX permission string. Preserve setuid,
+  // setgid and sticky bits so editing rwx permissions never clears an existing
+  // special bit accidentally (e.g. "-rwsr-xr-x" -> "4755").
   const getOctalFromPerms = useCallback((perms: string | null): string => {
     if (!perms || perms.length < 10) return "";
-    let octal = 0;
-    if (perms[1] === "r") octal += 0o400;
-    if (perms[2] === "w") octal += 0o200;
-    if (perms[3] === "x") octal += 0o100;
-    if (perms[4] === "r") octal += 0o040;
-    if (perms[5] === "w") octal += 0o020;
-    if (perms[6] === "x") octal += 0o010;
-    if (perms[7] === "r") octal += 0o004;
-    if (perms[8] === "w") octal += 0o002;
-    if (perms[9] === "x") octal += 0o001;
-    return octal.toString(8).padStart(3, "0");
+
+    let mode = 0;
+    if (perms[1] === "r") mode += 0o400;
+    if (perms[2] === "w") mode += 0o200;
+    if (perms[3] === "x" || perms[3] === "s") mode += 0o100;
+    if (perms[4] === "r") mode += 0o040;
+    if (perms[5] === "w") mode += 0o020;
+    if (perms[6] === "x" || perms[6] === "s") mode += 0o010;
+    if (perms[7] === "r") mode += 0o004;
+    if (perms[8] === "w") mode += 0o002;
+    if (perms[9] === "x" || perms[9] === "t") mode += 0o001;
+
+    if (perms[3] === "s" || perms[3] === "S") mode += 0o4000;
+    if (perms[6] === "s" || perms[6] === "S") mode += 0o2000;
+    if (perms[9] === "t" || perms[9] === "T") mode += 0o1000;
+
+    return mode > 0o777
+      ? mode.toString(8).padStart(4, "0")
+      : mode.toString(8).padStart(3, "0");
   }, []);
 
   // Reset chmod whenever the inspected target changes, including targets whose
@@ -89,7 +99,7 @@ export default function FilePropertiesModal({
   }, [statInfo?.permissions, getOctalFromPerms]);
 
   const handleChmodApply = useCallback(async () => {
-    if (!/^[0-7]{3}$/.test(chmodValue)) {
+    if (!/^[0-7]{3,4}$/.test(chmodValue)) {
       setChmodError(t("fileManager.chmodInvalid"));
       return;
     }
@@ -288,7 +298,8 @@ export default function FilePropertiesModal({
                             className={`${styles.chmodInput} liquid-glass-input`}
                             type="text"
                             value={chmodValue}
-                            maxLength={3}
+                            maxLength={4}
+                            aria-label={t("fileManager.chmod")}
                             onChange={(e) => {
                               setChmodValue(e.target.value.replace(/[^0-7]/g, ""));
                               setChmodError(null);
