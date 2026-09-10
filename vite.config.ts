@@ -76,13 +76,16 @@ export default defineConfig(async () => ({
           // Protocol/data engineering tools are lazy-loaded from SessionRightSidebar and are
           // intentionally isolated from the daily-driver UI chunk. Keep their pure parsers and
           // tool-specific hook with the same chunk so opening the sidebar pays one coherent load.
-          // File-manager dialogs are mounted only on demand via React.lazy. Do not force
-          // them back into ui-core, otherwise manualChunks defeats the dynamic import and
-          // the daily-driver chunk crosses the repository's 500KB warning budget.
+          // FileManager is an SSH-side feature and is lazy-loaded from SessionRightSidebar.
+          // Keep its main implementation out of ui-core so non-SSH/daily-driver startup does
+          // not pay for SFTP browsing code. Dialogs remain their own on-demand chunks.
           if (
             /\/src\/components\/FileManager\/(FilePropertiesModal|FilePreviewModal|ConflictResolutionModal|DeleteConfirmationDialog)\.tsx$/.test(normalized)
           ) {
             return undefined;
+          }
+          if (/\/src\/components\/FileManager\//.test(normalized)) {
+            return "ui-file-manager";
           }
           if (
             /\/src\/components\/Tools\//.test(normalized)
@@ -92,7 +95,7 @@ export default defineConfig(async () => ({
           ) {
             return "ui-engineering";
           }
-          if (normalized.includes("/src/context/") || /\/src\/components\/(Common|Layout|Terminal|RightSidebar|JournaldViewer|FileManager|SendBar)\//.test(normalized)) {
+          if (normalized.includes("/src/context/") || /\/src\/components\/(Common|Layout|Terminal|RightSidebar|JournaldViewer|SendBar)\//.test(normalized)) {
             return "ui-core";
           }
           if (!normalized.includes("node_modules")) return undefined;
