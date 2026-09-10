@@ -272,12 +272,16 @@ export default function SplitView({
     window.addEventListener("blur", handleUp);
   }, [onResizeSplit]);
 
+  const openPaneMenuAt = useCallback((paneId: PaneId, x: number, y: number) => {
+    closeDisconnectedSessionMenu();
+    setPaneMenu({ paneId, x, y });
+  }, [closeDisconnectedSessionMenu]);
+
   const openPaneMenu = useCallback((e: React.MouseEvent, paneId: PaneId) => {
     e.preventDefault();
     e.stopPropagation();
-    closeDisconnectedSessionMenu();
-    setPaneMenu({ paneId, x: e.clientX, y: e.clientY });
-  }, [closeDisconnectedSessionMenu]);
+    openPaneMenuAt(paneId, e.clientX, e.clientY);
+  }, [openPaneMenuAt]);
 
   const closePaneMenu = useCallback(() => {
     setPaneMenu(null);
@@ -447,7 +451,7 @@ export default function SplitView({
         }}
       />
 
-      {/* Pane Header Layer：标题栏拥有 Pane 级右键菜单；Workspace root 独占外框。 */}
+      {/* Pane Header Layer：标题栏拥有 Pane 级菜单；Workspace root 独占外框。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
         const sessionId = layout.assignments[paneId] ?? null;
         const tab = sessionId ? tabsById.get(sessionId) : undefined;
@@ -493,6 +497,23 @@ export default function SplitView({
                     <span className={styles.paneHeaderStateText}>{stateLabel}</span>
                   </span>
                 )}
+                <button
+                  type="button"
+                  className={styles.paneHeaderMenuButton}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const bounds = e.currentTarget.getBoundingClientRect();
+                    openPaneMenuAt(paneId, bounds.right, bounds.bottom + 2);
+                  }}
+                  aria-label={t("split.paneMenu", { defaultValue: "分屏菜单" })}
+                  title={t("split.paneMenu", { defaultValue: "分屏菜单" })}
+                >
+                  <span aria-hidden="true">…</span>
+                </button>
               </div>
             )}
             {paneCount < MAX_WORKSPACE_PANES && EDGES.map(edge => {
