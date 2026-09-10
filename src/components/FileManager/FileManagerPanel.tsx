@@ -33,19 +33,13 @@ const ConflictResolutionModal = lazy(() => import("./ConflictResolutionModal"));
 const FilePropertiesModal = lazy(() => import("./FilePropertiesModal"));
 const FilePreviewModal = lazy(() => import("./FilePreviewModal"));
 
-// ── 文本文件扩展名判定 ─────────────────────────────────
-
-const TEXT_EXTENSIONS = new Set([
-  ".txt", ".log", ".cfg", ".conf", ".ini", ".json", ".xml", ".yaml", ".yml",
-  ".toml", ".sh", ".bash", ".zsh", ".py", ".rb", ".js", ".ts", ".jsx", ".tsx",
-  ".css", ".html", ".md", ".c", ".cpp", ".h", ".hpp", ".rs", ".go", ".java",
-  ".lua", ".service", ".env", ".gitignore", ".editorconfig",
-]);
-
-function isTextFile(name: string): boolean {
-  const dot = name.lastIndexOf(".");
-  if (dot === -1) return false;
-  return TEXT_EXTENSIONS.has(name.slice(dot).toLowerCase());
+// ── 预览能力判定 ───────────────────────────────────────
+//
+// 预览器本身基于原始字节，支持 Text / HEX；因此不再用文件扩展名把二进制
+// 普通文件挡在入口外。目录、符号链接与特殊文件仍不开放预览。
+function canPreviewEntry(entry: SftpEntry): boolean {
+  const entryType = entry.entry_type ?? (entry.is_dir ? "directory" : "file");
+  return entryType === "file" && !entry.is_dir;
 }
 
 type ViewMode = "list" | "grid";
@@ -576,7 +570,7 @@ export default function FileManagerPanel({
   // ── 文件预览（使用 sftp_read_head 部分读取，无需临时文件）──
   const handlePreview = useCallback(async () => {
     const target = ms.selectedEntries.length === 1 ? ms.selectedEntries[0] : ctxTarget;
-    if (!target || target.is_dir) return;
+    if (!target || !canPreviewEntry(target)) return;
 
     const MAX_PREVIEW = 1_048_576; // 1 MB
 
@@ -735,7 +729,7 @@ export default function FileManagerPanel({
       const items: ContextMenuItem[] = [
         { id: "download", label: t("fileManager.download") },
       ];
-      if (isTextFile(ctxTarget.name)) {
+      if (canPreviewEntry(ctxTarget)) {
         items.push({ id: "preview", label: t("fileManager.preview") });
       }
       items.push(
@@ -1008,7 +1002,7 @@ export default function FileManagerPanel({
           />
         )}
 
-        {/* 文本预览弹窗 */}
+        {/* 文件预览弹窗（Text / HEX） */}
         {previewVisible && (
           <FilePreviewModal
             visible
