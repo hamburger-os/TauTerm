@@ -358,9 +358,7 @@ impl InlineTransferOrchestrator {
         }
     }
 
-    fn spawn_cancel_bridge(
-        cancel_rx: tokio::sync::oneshot::Receiver<()>,
-    ) -> Arc<AtomicBool> {
+    fn spawn_cancel_bridge(cancel_rx: tokio::sync::oneshot::Receiver<()>) -> Arc<AtomicBool> {
         let cancel = Arc::new(AtomicBool::new(false));
         let signal = cancel.clone();
         std::thread::spawn(move || {
@@ -437,7 +435,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             }
 
             let result = transfer
-                .send(&task_files, None, &task_options, progress_tx.clone(), cancel)
+                .send(
+                    &task_files,
+                    None,
+                    &task_options,
+                    progress_tx.clone(),
+                    cancel,
+                )
                 .await;
             drop(progress_tx);
             let _ = broadcaster.await;
@@ -464,13 +468,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             store.register_transfer_task(&ctx.session_id, handle)?;
         }
-        emit_transfer_started(
-            &app,
-            &client_id,
-            &transfer_id,
-            self.pt.as_str(),
-            "send",
-        );
+        emit_transfer_started(&app, &client_id, &transfer_id, self.pt.as_str(), "send");
         let _ = start_tx.send(());
         Ok(ack)
     }
@@ -568,13 +566,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             store.register_transfer_task(&ctx.session_id, handle)?;
         }
-        emit_transfer_started(
-            &app,
-            &client_id,
-            &transfer_id,
-            self.pt.as_str(),
-            "receive",
-        );
+        emit_transfer_started(&app, &client_id, &transfer_id, self.pt.as_str(), "receive");
         let _ = start_tx.send(());
         Ok(ack)
     }
