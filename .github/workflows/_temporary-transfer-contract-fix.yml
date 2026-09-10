@@ -26,7 +26,7 @@ jobs:
           path = Path('scripts/test-file-transfer-lifecycle.mjs')
           text = path.read_text(encoding='utf-8')
           old = '''assert.match(\n  context,\n  /resultProjection\\(payload\\)[\\s\\S]{0,500}payload\\.results/,\n  "finished results must be able to replace provisional per-file progress with exact terminal results",\n);\n'''
-          new = '''assert.match(\n  context,\n  /function resultProjection\\(payload: TransferFinishedPayload\\)[\\s\\S]{0,220}payload\\.results\\.map/,\n  "finished payload results must be projected into exact per-file terminal entries",\n);\nassert.match(\n  context,\n  /case "TASK_FINISHED"[\\s\\S]{0,520}const exactResults = resultProjection\\(payload\\)[\\s\\S]{0,120}const files = exactResults \\?\\? current\\.files/,\n  "TASK_FINISHED must prefer exact backend results over provisional progress state",\n);\n'''
+          new = '''assert.match(\n  context,\n  /function resultProjection\\(payload: TransferFinishedPayload\\)[\\s\\S]{0,300}payload\\.results\\.map/,\n  "finished payload results must be projected into exact per-file terminal entries",\n);\nassert.match(\n  context,\n  /const exactResults = resultProjection\\(payload\\);/,\n  "TASK_FINISHED must consume exact backend results",\n);\nassert.match(\n  context,\n  /const files = exactResults \\?\\? current\\.files\\.map/,\n  "TASK_FINISHED must prefer exact backend results over provisional progress state",\n);\n'''
           if text.count(old) != 1:
               raise SystemExit('exact-results assertion shape changed; refusing patch')
           path.write_text(text.replace(old, new), encoding='utf-8')
