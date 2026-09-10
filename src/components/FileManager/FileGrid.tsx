@@ -29,7 +29,7 @@ interface FileTileProps {
   dataIndex: number;
   onFocus: () => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
-  onClick: (e: React.MouseEvent) => void;
+  onClick: (additiveKey: boolean, shiftKey: boolean) => void;
   onDoubleClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -53,7 +53,7 @@ const FileTile = memo(function FileTile({
   return (
     <div
       className={tileClass}
-      onClick={onClick}
+      onClick={(e) => onClick(e.ctrlKey || e.metaKey, e.shiftKey)}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
       role="row"
@@ -69,7 +69,7 @@ const FileTile = memo(function FileTile({
           onDoubleClick();
         } else if (e.key === " ") {
           e.preventDefault();
-          onClick({ ctrlKey: false, shiftKey: false } as React.MouseEvent);
+          onClick(e.ctrlKey || e.metaKey, e.shiftKey);
         }
       }}
     >
@@ -258,7 +258,7 @@ export default function FileGrid({
         dataIndex={itemIndex}
         onFocus={() => setActiveItem(itemIndex)}
         onKeyDown={(e) => handleNavigationKey(itemIndex, e)}
-        onClick={(e) => onEntryClick(item, entryIndex, e.ctrlKey, e.shiftKey)}
+        onClick={(additiveKey, shiftKey) => onEntryClick(item, entryIndex, additiveKey, shiftKey)}
         onDoubleClick={() => onEntryDoubleClick(item)}
         onContextMenu={(e) => {
           e.preventDefault();
