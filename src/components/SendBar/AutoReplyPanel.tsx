@@ -60,6 +60,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
   const [importOpen, setImportOpen] = useState(false);
   const [logExpanded, setLogExpanded] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const runtimeLocked = isRunning || isLoading;
 
   const activeConfig = useMemo(
     () => configs.find(config => config.name === activeConfigName) ?? configs[0],
@@ -70,13 +71,15 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     [rules, deleteConfirmId],
   );
 
-  // Runtime uses a generated Lua snapshot. While running, keep the visible rule set frozen too;
-  // shared asset changes from another session are applied after stop via the isRunning dependency.
+  // Runtime uses a generated Lua snapshot. While starting/running, keep the visible rule set frozen.
   useEffect(() => {
-    if (!activeConfig || isRunning) return;
+    if (!activeConfig || runtimeLocked) return;
+    if (activeConfig.name !== activeConfigName) {
+      dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeConfig.name });
+    }
     dispatch({ type: "SET_AUTO_REPLY_RULES", rules: activeConfig.rules });
     dispatch({ type: "SET_MATCH_STRATEGY", strategy: activeConfig.matchStrategy });
-  }, [activeConfigName, activeConfig, isRunning, dispatch]);
+  }, [activeConfigName, activeConfig, runtimeLocked, dispatch]);
 
   useEffect(() => {
     setConfigDeleteConfirm(false);
@@ -113,13 +116,13 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
   }, [dispatch]);
 
   const persistRules = useCallback((updated: AutoReplyRule[]) => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     dispatch({ type: "SET_AUTO_REPLY_RULES", rules: updated });
     const updatedConfigs = configs.map(config =>
       config.name === activeConfigName ? { ...config, rules: updated } : config,
     );
     void persist(updatedConfigs);
-  }, [isRunning, configs, activeConfigName, dispatch, persist]);
+  }, [runtimeLocked, configs, activeConfigName, dispatch, persist]);
 
   const {
     isDragging,
@@ -131,17 +134,17 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
   } = usePointerDragReorder(rules, persistRules, {
     itemSelector: `.${styles.ruleRow}`,
     draggingClass: styles.rowDragging,
-    disabled: isRunning,
+    disabled: runtimeLocked,
     listRef,
   });
 
   // ── 配置管理 ──
   const handleSelectConfig = useCallback((name: string) => {
-    if (!isRunning) void persistActive(name);
-  }, [isRunning, persistActive]);
+    if (!runtimeLocked) void persistActive(name);
+  }, [runtimeLocked, persistActive]);
 
   const handleNewConfig = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const existing = new Set(configs.map(config => config.name));
     let index = configs.length + 1;
     let name = t("sendBar.newConfigName", { n: index });
@@ -151,16 +154,16 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     }
     void persist([...configs, defaultConfig(name)]);
     void persistActive(name);
-  }, [isRunning, configs, persist, persistActive, t]);
+  }, [runtimeLocked, configs, persist, persistActive, t]);
 
   const handleRenameConfig = useCallback(() => {
-    if (isRunning || !activeConfig) return;
+    if (runtimeLocked || !activeConfig) return;
     setRenameValue(activeConfig.name);
     setRenameOpen(true);
-  }, [isRunning, activeConfig]);
+  }, [runtimeLocked, activeConfig]);
 
   const handleConfirmRename = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const newName = renameValue.trim();
     if (!newName || newName === activeConfigName) {
       setRenameOpen(false);
@@ -176,12 +179,12 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     void persist(updated);
     void persistActive(newName);
     setRenameOpen(false);
-  }, [isRunning, renameValue, activeConfigName, configs, persist, persistActive, showToast, t]);
+  }, [runtimeLocked, renameValue, activeConfigName, configs, persist, persistActive, showToast, t]);
 
   const handleCancelRename = useCallback(() => setRenameOpen(false), []);
 
   const handleDeleteConfig = useCallback(() => {
-    if (isRunning || configs.length === 0) return;
+    if (runtimeLocked || configs.length === 0) return;
     const updated = configs.filter(config => config.name !== activeConfigName);
     void persist(updated);
     void persistActive(updated[0]?.name || "");
@@ -189,11 +192,11 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
       dispatch({ type: "SET_AUTO_REPLY_RULES", rules: [] });
     }
     setConfigDeleteConfirm(false);
-  }, [isRunning, activeConfigName, configs, persist, persistActive, dispatch]);
+  }, [runtimeLocked, activeConfigName, configs, persist, persistActive, dispatch]);
 
   // ── 规则管理 ──
   const handleAddRule = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const newRule: AutoReplyRule = {
       id: makeId(),
       label: undefined,
@@ -207,48 +210,60 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     };
     setEditingRule(newRule);
     setEditorOpen(true);
-  }, [isRunning]);
+  }, [runtimeLocked]);
 
   const handleEditRule = useCallback((rule: AutoReplyRule) => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     setDeleteConfirmId(null);
     setEditingRule({ ...rule });
     setEditorOpen(true);
-  }, [isRunning]);
+  }, [runtimeLocked]);
 
   const handleSaveRule = useCallback((rule: AutoReplyRule) => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const exists = rules.some(existing => existing.id === rule.id);
     const next = exists ? rules.map(existing => existing.id === rule.id ? rule : existing) : [...rules, rule];
     persistRules(next);
     setEditorOpen(false);
     setEditingRule(null);
-  }, [isRunning, rules, persistRules]);
+  }, [runtimeLocked, rules, persistRules]);
 
   const handleToggleRule = useCallback((ruleId: string) => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     setDeleteConfirmId(null);
     persistRules(rules.map(rule =>
       rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule,
     ));
-  }, [isRunning, rules, persistRules]);
+  }, [runtimeLocked, rules, persistRules]);
 
   const handleSelectAllRules = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const allEnabled = rules.length > 0 && rules.every(rule => rule.enabled);
     persistRules(rules.map(rule => ({ ...rule, enabled: !allEnabled })));
-  }, [isRunning, rules, persistRules]);
+  }, [runtimeLocked, rules, persistRules]);
 
   const confirmDeleteRule = useCallback(() => {
-    if (isRunning || !deleteConfirmId) return;
+    if (runtimeLocked || !deleteConfirmId) return;
     persistRules(rules.filter(rule => rule.id !== deleteConfirmId));
     setDeleteConfirmId(null);
-  }, [isRunning, deleteConfirmId, rules, persistRules]);
+  }, [runtimeLocked, deleteConfirmId, rules, persistRules]);
 
   // ── 执行控制 ──
   const handleStart = useCallback(async () => {
-    if (isRunning || !isConnected) return;
+    if (runtimeLocked || !isConnected) return;
+
+    // Lock the parent mode before the first async boundary. Otherwise the panel could unmount while
+    // rules_to_script/start_script_engine is still pending and later report a stale running state.
     setIsLoading(true);
+    onRunningChange?.(true);
+    setEditorOpen(false);
+    setEditingRule(null);
+    setRenameOpen(false);
+    setImportOpen(false);
+    setImportData(null);
+    setDeleteConfirmId(null);
+    setConfigDeleteConfirm(false);
+
     try {
       const code: string = await invoke("rules_to_script", {
         rules: rules.filter(rule => rule.enabled),
@@ -257,23 +272,18 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
       });
       await invoke("start_script_engine", { sessionId, code });
       dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: true });
-      onRunningChange?.(true);
-      setEditorOpen(false);
-      setEditingRule(null);
-      setRenameOpen(false);
-      setImportOpen(false);
-      setImportData(null);
-      setDeleteConfirmId(null);
-      setConfigDeleteConfirm(false);
     } catch (e) {
+      onRunningChange?.(false);
       console.error("Failed to start auto-reply:", e);
       showToast("error", `${t("sendBar.startFailed")}: ${String(e)}`);
     } finally {
       setIsLoading(false);
     }
-  }, [isRunning, isConnected, rules, activeConfigName, matchStrategy, sessionId, dispatch, onRunningChange, showToast, t]);
+  }, [runtimeLocked, isConnected, rules, activeConfigName, matchStrategy, sessionId, dispatch, onRunningChange, showToast, t]);
 
   const handleStop = useCallback(async () => {
+    if (!isRunning || isLoading) return;
+    setIsLoading(true);
     try {
       await invoke("stop_script_engine", { sessionId });
       dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: false });
@@ -281,12 +291,14 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     } catch (e) {
       console.error("Failed to stop auto-reply:", e);
       showToast("error", `${t("sendBar.stopFailed")}: ${String(e)}`);
+    } finally {
+      setIsLoading(false);
     }
-  }, [sessionId, dispatch, onRunningChange, showToast, t]);
+  }, [sessionId, isRunning, isLoading, dispatch, onRunningChange, showToast, t]);
 
   // ── 转换为脚本 ──
   const handleConvertToScript = useCallback(async () => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     try {
       const code: string = await invoke("rules_to_script", {
         rules: rules.filter(rule => rule.enabled),
@@ -301,10 +313,8 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
         updatedAt: Date.now(),
       };
       const updatedScripts = [...scripts, newScript];
-      await Promise.all([
-        persistAsset(ASSET_KEYS.scripts, updatedScripts),
-        persistAsset(ASSET_KEYS.activeScriptId, newScript.id),
-      ]);
+      if (!await persistAsset(ASSET_KEYS.scripts, updatedScripts)) return;
+      if (!await persistAsset(ASSET_KEYS.activeScriptId, newScript.id)) return;
       dispatch({ type: "SET_SCRIPTS", scripts: updatedScripts });
       dispatch({ type: "SET_ACTIVE_SCRIPT", id: newScript.id });
       dispatch({ type: "SET_SCRIPT_CODE", code });
@@ -313,11 +323,11 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
       console.error("Failed to convert to script:", e);
       showToast("error", `${t("sendBar.convertFailed")}: ${String(e)}`);
     }
-  }, [isRunning, rules, scripts, activeConfigName, matchStrategy, dispatch, showToast, t]);
+  }, [runtimeLocked, rules, scripts, activeConfigName, matchStrategy, dispatch, showToast, t]);
 
   // ── 导入/导出 ──
   const handleExport = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const config = activeConfig;
     if (!config) return;
     const json = JSON.stringify(config, null, 2);
@@ -328,10 +338,10 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     anchor.download = `${(config.name || "config").replace(/\s+/g, "_")}.tauterm-reply.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-  }, [isRunning, activeConfig]);
+  }, [runtimeLocked, activeConfig]);
 
   const handleImport = useCallback(() => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json";
@@ -346,10 +356,10 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
       }
     };
     input.click();
-  }, [isRunning, showToast, t]);
+  }, [runtimeLocked, showToast, t]);
 
   const handleImportOverwrite = useCallback(async () => {
-    if (isRunning || !importData || !activeConfig) return;
+    if (runtimeLocked || !importData || !activeConfig) return;
     const updated = configs.map(config =>
       config.name === activeConfigName ? { ...importData, name: activeConfigName } : config,
     );
@@ -359,23 +369,22 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     setImportOpen(false);
     setImportData(null);
     if (saved) showToast("success", t("sendBar.importSuccess"));
-  }, [isRunning, importData, activeConfig, activeConfigName, configs, persist, dispatch, showToast, t]);
+  }, [runtimeLocked, importData, activeConfig, activeConfigName, configs, persist, dispatch, showToast, t]);
 
   const handleImportAppend = useCallback(async () => {
-    if (isRunning || !importData) return;
+    if (runtimeLocked || !importData) return;
     const newName = uniqueAssetName(importData.name, configs.map(config => config.name), t("sendBar.imported"));
     const updated = [...configs, { ...importData, name: newName }];
-    const [savedConfigs, savedActive] = await Promise.all([
-      persist(updated),
-      persistActive(newName),
-    ]);
+    const savedConfigs = await persist(updated);
+    if (!savedConfigs) return;
+    const savedActive = await persistActive(newName);
     setImportOpen(false);
     setImportData(null);
-    if (savedConfigs && savedActive) showToast("success", t("sendBar.importSuccess"));
-  }, [isRunning, importData, configs, persist, persistActive, showToast, t]);
+    if (savedActive) showToast("success", t("sendBar.importSuccess"));
+  }, [runtimeLocked, importData, configs, persist, persistActive, showToast, t]);
 
   const handleLoadExamples = useCallback(async () => {
-    if (isRunning) return;
+    if (runtimeLocked) return;
     const existingNames = new Set(configs.map(config => config.name));
     const newBuiltins = BUILTIN_CONFIGS.filter(config => !existingNames.has(config.name));
     if (newBuiltins.length === 0) {
@@ -385,19 +394,19 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     if (await persist([...configs, ...newBuiltins])) {
       showToast("success", t("sendBar.examplesLoaded", { count: newBuiltins.length }));
     }
-  }, [isRunning, configs, persist, showToast, t]);
+  }, [runtimeLocked, configs, persist, showToast, t]);
 
   const enabledCount = rules.filter(rule => rule.enabled).length;
 
   return (
-    <div className={styles.panel}>
+    <div className={styles.panel} aria-busy={isLoading || undefined}>
       <div className={styles.toolbar}>
         <div className={styles.configActions}>
           <select
             className={`${styles.configSelect} liquid-glass-input liquid-glass-select`}
             value={activeConfigName}
             onChange={event => handleSelectConfig(event.target.value)}
-            disabled={isRunning}
+            disabled={runtimeLocked}
           >
             {configs.map(config => (
               <option key={config.name} value={config.name}>{config.name}</option>
@@ -408,7 +417,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
             className={`${styles.strategyDropdown} liquid-glass-input liquid-glass-select`}
             value={matchStrategy}
             onChange={event => {
-              if (isRunning) return;
+              if (runtimeLocked) return;
               const strategy = event.target.value as MatchStrategy;
               dispatch({ type: "SET_MATCH_STRATEGY", strategy });
               void persist(configs.map(config =>
@@ -416,36 +425,36 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
               ));
             }}
             title={t("sendBar.matchStrategy")}
-            disabled={isRunning}
+            disabled={runtimeLocked}
           >
             <option value="all">{t("sendBar.matchStrategyAll")}</option>
             <option value="first">{t("sendBar.matchStrategyFirst")}</option>
           </select>
           <span className={styles.toolbarDivider} />
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleNewConfig} title={t("sendBar.new")} disabled={isRunning}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleNewConfig} title={t("sendBar.new")} disabled={runtimeLocked}>
             <Icon name="plus" size="sm" />
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleRenameConfig} title={t("sendBar.rename")} disabled={isRunning || !activeConfig}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleRenameConfig} title={t("sendBar.rename")} disabled={runtimeLocked || !activeConfig}>
             <Icon name="edit" size="sm" />
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => setConfigDeleteConfirm(true)} disabled={isRunning || configs.length === 0} title={t("sendBar.delete")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => setConfigDeleteConfirm(true)} disabled={runtimeLocked || configs.length === 0} title={t("sendBar.delete")}>
             <Icon name="trash" size="sm" />
           </button>
         </div>
         <div className={styles.toolbarActions}>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => { void handleLoadExamples(); }} title={t("sendBar.loadBuiltinExamples")} disabled={isRunning}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => { void handleLoadExamples(); }} title={t("sendBar.loadBuiltinExamples")} disabled={runtimeLocked}>
             {t("sendBar.loadBuiltinExamples")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleExport} disabled={isRunning || !activeConfig} title={t("sendBar.exportConfig")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleExport} disabled={runtimeLocked || !activeConfig} title={t("sendBar.exportConfig")}>
             {t("sendBar.exportConfig")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleImport} title={t("sendBar.importConfig")} disabled={isRunning}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleImport} title={t("sendBar.importConfig")} disabled={runtimeLocked}>
             {t("sendBar.importConfig")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleAddRule} disabled={isRunning}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleAddRule} disabled={runtimeLocked}>
             + {t("sendBar.addRule")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => { void handleConvertToScript(); }} disabled={isRunning || enabledCount === 0}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => { void handleConvertToScript(); }} disabled={runtimeLocked || enabledCount === 0}>
             {t("sendBar.convertToScript")}
           </button>
         </div>
@@ -484,7 +493,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
                       className={styles.checkInput}
                       checked={rule.enabled}
                       onChange={() => handleToggleRule(rule.id)}
-                      disabled={isRunning}
+                      disabled={runtimeLocked}
                     />
                     <div className={styles.checkTrack} />
                   </label>
@@ -535,10 +544,10 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
                   </code>
                   <div className={styles.ruleSpacer} />
                   <span className={styles.ruleLabelText}>{rule.label?.trim() || ""}</span>
-                  <button className={`${styles.editBtn} liquid-glass-button`} onClick={() => handleEditRule(rule)} title={t("sendBar.edit")} disabled={isRunning}>
+                  <button className={`${styles.editBtn} liquid-glass-button`} onClick={() => handleEditRule(rule)} title={t("sendBar.edit")} disabled={runtimeLocked}>
                     <Icon name="edit" size="sm" />
                   </button>
-                  <button className={`${styles.deleteBtn} liquid-glass-button`} onClick={() => setDeleteConfirmId(rule.id)} title={t("sendBar.delete")} disabled={isRunning}>
+                  <button className={`${styles.deleteBtn} liquid-glass-button`} onClick={() => setDeleteConfirmId(rule.id)} title={t("sendBar.delete")} disabled={runtimeLocked}>
                     <Icon name="trash" size="sm" />
                   </button>
                 </div>
@@ -593,25 +602,25 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
             className={styles.checkInput}
             checked={rules.length > 0 && rules.every(rule => rule.enabled)}
             onChange={handleSelectAllRules}
-            disabled={isRunning || rules.length === 0}
+            disabled={runtimeLocked || rules.length === 0}
           />
           <div className={styles.checkTrack} />
           <span>{t("commandPanel.selectAll")}</span>
         </label>
         <div className={styles.controlBtns}>
           {!isRunning ? (
-            <button className={`${styles.startBtn} liquid-primary-button`} onClick={() => { void handleStart(); }} disabled={!isConnected || enabledCount === 0 || isLoading}>
+            <button className={`${styles.startBtn} liquid-primary-button`} onClick={() => { void handleStart(); }} disabled={runtimeLocked || !isConnected || enabledCount === 0}>
               <Icon name="play" size="xs" /> {t("commandPanel.start")}
             </button>
           ) : (
-            <button className={styles.stopBtn} onClick={() => { void handleStop(); }}>
+            <button className={styles.stopBtn} onClick={() => { void handleStop(); }} disabled={isLoading}>
               <Icon name="stop" size="xs" /> {t("commandPanel.stopExecution")}
             </button>
           )}
         </div>
       </div>
 
-      {editorOpen && editingRule && !isRunning && (
+      {editorOpen && editingRule && !runtimeLocked && (
         <AutoReplyRuleEditor
           rule={editingRule}
           onSave={handleSaveRule}
@@ -619,7 +628,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
         />
       )}
 
-      {renameOpen && !isRunning && createPortal(
+      {renameOpen && !runtimeLocked && createPortal(
         <div className={`${styles.modalOverlay} glass-overlay`} onClick={handleCancelRename}>
           <div className={`${styles.renameModal} liquid-glass`} onClick={event => event.stopPropagation()}>
             <h3 className={styles.renameTitle}>{t("sendBar.renameTitle")}</h3>
@@ -648,7 +657,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
         document.body,
       )}
 
-      {importOpen && importData && !isRunning && createPortal(
+      {importOpen && importData && !runtimeLocked && createPortal(
         <div className={`${styles.modalOverlay} glass-overlay`} onClick={() => { setImportOpen(false); setImportData(null); }}>
           <div className={`${styles.renameModal} liquid-glass`} onClick={event => event.stopPropagation()}>
             <h3 className={styles.renameTitle}>{t("sendBar.importConfirmTitle")}</h3>
@@ -673,7 +682,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
       )}
 
       <ConfirmDialog
-        open={configDeleteConfirm}
+        open={configDeleteConfirm && !runtimeLocked}
         title={t("sendBar.confirmDeleteHint")}
         message={activeConfig?.name}
         intent="danger"
@@ -682,7 +691,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
         onCancel={() => setConfigDeleteConfirm(false)}
       />
       <ConfirmDialog
-        open={deleteConfirmId !== null}
+        open={deleteConfirmId !== null && !runtimeLocked}
         title={t("commandPanel.confirmDelete")}
         message={deletingRule?.label?.trim() || (deletingRule?.triggerType === "timer" ? `${deletingRule.timerIntervalMs}ms` : deletingRule?.conditions[0]?.pattern)}
         intent="danger"
