@@ -141,6 +141,8 @@ assert.ok(commandPanel.includes("usePointerDragReorder"));
 assert.ok(!commandPanel.includes("dragIndexRef"), "command panel must use the shared reorder hook");
 assert.ok(!commandPanel.includes("subscribeAsset<string>(ACTIVE_CONFIG_STORE_KEY"));
 assert.ok(commandPanel.includes("sendBarState.command"));
+assert.ok(commandPanel.includes('sendBarState.executionMode === "command"'));
+assert.ok(commandPanel.includes("pendingConfigsRef"), "shared command assets must be deferred while executing");
 assert.ok(commandPanel.includes("hasStoredConfigs ? storedConfigs"));
 assert.ok(commandPanel.includes("<ConfirmDialog"));
 
