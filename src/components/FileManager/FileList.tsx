@@ -181,7 +181,8 @@ export default function FileList({
         <div className={styles.errorBanner}>
           <span>{error}</span>
           <button
-            className={styles.errorClose}
+            type="button"
+            className={`${styles.errorClose} liquid-glass-ghost-button`}
             onClick={onClearError}
             aria-label={t("common.close")}
           >
