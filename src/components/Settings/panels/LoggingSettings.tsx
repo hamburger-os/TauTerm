@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { useToast } from "../../../context/ToastContext";
+import ConfirmDialog from "../../common/ConfirmDialog";
 import Icon from "../../common/Icon";
 import GlassButton from "../../common/GlassButton";
 import OptionButton from "../../common/OptionButton";
@@ -20,6 +22,7 @@ interface LogHealth {
 
 export default function LoggingSettings() {
   const { t } = useTranslation();
+  const { showToast } = useToast();
 
   const [systemEnabled, setSystemEnabled] = useState(true);
   const [systemLevel, setSystemLevel] = useState("info");
@@ -33,6 +36,8 @@ export default function LoggingSettings() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [systemConfigError, setSystemConfigError] = useState<string | null>(null);
   const [sessionConfigError, setSessionConfigError] = useState<string | null>(null);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [clearingLogs, setClearingLogs] = useState(false);
   const configError = loadError ?? systemConfigError ?? sessionConfigError;
   const skipSystemPersistRef = useRef(false);
   const skipSessionPersistRef = useRef(false);
@@ -211,13 +216,21 @@ export default function LoggingSettings() {
   }, []);
 
   const handleClearLogs = useCallback(() => {
-    if (!window.confirm(t("logging.clearConfirm") || "Delete all log files? This cannot be undone.")) return;
-    invoke("clear_all_logs").then(() => {
-      alert(t("logging.cleared") || "All log files cleared.");
-    }).catch((e) => {
-      alert(`${t("logging.clearError") || "Failed to clear logs"}: ${e}`);
-    });
-  }, [t]);
+    setClearConfirmOpen(true);
+  }, []);
+
+  const confirmClearLogs = useCallback(async () => {
+    setClearingLogs(true);
+    try {
+      await invoke("clear_all_logs");
+      setClearConfirmOpen(false);
+      showToast("success", t("logging.cleared") || "All log files cleared.");
+    } catch (error) {
+      showToast("error", `${t("logging.clearError") || "Failed to clear logs"}: ${error}`);
+    } finally {
+      setClearingLogs(false);
+    }
+  }, [showToast, t]);
 
   return (
     <div>
@@ -380,6 +393,17 @@ export default function LoggingSettings() {
           <p className={styles.settingDesc}>{t("logging.loading") || "Loading..."}</p>
         )}
       </div>
+
+      <ConfirmDialog
+        open={clearConfirmOpen}
+        title={t("common.confirm")}
+        message={t("logging.clearConfirm") || "Delete all log files? This cannot be undone."}
+        intent="danger"
+        size="compact"
+        busy={clearingLogs}
+        onConfirm={() => void confirmClearLogs()}
+        onCancel={() => setClearConfirmOpen(false)}
+      />
     </div>
   );
 }
