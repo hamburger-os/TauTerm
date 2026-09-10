@@ -133,6 +133,23 @@ export default function ConfirmDialog({
     return () => cancelAnimationFrame(frame);
   }, [busy, open]);
 
+  // 队列型确认（例如多个 SSH 主机密钥请求）可能在保持 open=true 的同时
+  // 替换标题/正文。若上一项通过“确认”按钮完成，焦点会留在同一按钮 DOM 上；
+  // 新一项必须重新回到安全的“取消”动作，避免 Enter/Space 连续接受下一项。
+  useEffect(() => {
+    if (!open || busy) return;
+    const frame = requestAnimationFrame(() => {
+      const dialog = dialogRef.current;
+      const confirmAction = dialog?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
+      if (confirmAction && document.activeElement === confirmAction) {
+        dialog
+          ?.querySelector<HTMLButtonElement>('[data-action="cancel"]:not(:disabled)')
+          ?.focus();
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [busy, message, open, title]);
+
   return createPortal(
     <AnimatePresence>
       {open && (
