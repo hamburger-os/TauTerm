@@ -555,7 +555,8 @@ assert.match(
   /setChmodValue\(getOctalFromPerms\(statInfo\?\.permissions \?\? null\)\)/,
   "Properties must clear stale chmod state when the next entry has no reported permissions",
 );
-assert.match(propertiesModal, /chmodError && <span className=\{styles\.chmodError\} role="alert">/);
+assert.match(propertiesModal, /className=\{styles\.chmodEditor\}/);
+assert.match(propertiesModal, /className=\{styles\.chmodError\} role="alert"/);
 assert.match(
   propertiesModal,
   /if \(chmodEditing\)[\s\S]{0,120}cancelChmodEdit\(\)[\s\S]{0,120}else[\s\S]{0,80}onClose\(\)/,
