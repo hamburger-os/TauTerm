@@ -33,7 +33,8 @@
     "check:runtime-errors": "node scripts/check-runtime-error-contract.mjs",
     "check:terminal-clipboard": "node --experimental-strip-types scripts/test-terminal-clipboard.mjs",
     "check:engineering-tools": "node --experimental-strip-types scripts/test-engineering-tools.mjs",
-    "check:file-transfer": "node scripts/test-file-transfer-lifecycle.mjs"
+    "check:file-transfer": "node scripts/test-file-transfer-lifecycle.mjs",
+    "check:sendbar": "node --experimental-strip-types scripts/test-sendbar-contract.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
