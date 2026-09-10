@@ -610,6 +610,14 @@ assert.match(fileList, /aria-sort=/);
 assert.match(fileList, /className=\{styles\.errorBanner\} role="alert"/);
 assert.match(fileList, /styles\.colPerms[^\n]*role="columnheader"/);
 assert.match(fileList, /onClick=\{\(additiveKey, shiftKey\) => onEntryClick/);
+assert.match(fileList, /className=\{styles\.gridFrame\}[\s\S]{0,80}role="grid"/);
+assert.match(fileList, /className=\{styles\.header\} role="row"/);
+assert.match(fileList, /className=\{styles\.body\}[\s\S]{0,60}role="presentation"/);
+assert.match(
+  fileList,
+  /aria-rowcount=\{entries\.length \+ \(parentVisible \? 1 : 0\) \+ 1\}/,
+  "list grid row count must include the column-header row",
+);
 
 const fileRow = await source("src/components/FileManager/FileRow.tsx");
 assert.match(fileRow, /e\.ctrlKey \|\| e\.metaKey/);
@@ -618,6 +626,7 @@ assert.match(
   /onClick\(e\.ctrlKey \|\| e\.metaKey, e\.shiftKey\)/,
   "keyboard Space must preserve additive/range selection modifiers",
 );
+assert.match(fileRow, /aria-rowindex=\{ariaRowIndex\}/);
 
 const fileGrid = await source("src/components/FileManager/FileGrid.tsx");
 assert.match(fileGrid, /VIRTUAL_THRESHOLD = 300/);
@@ -630,6 +639,8 @@ assert.match(fileGrid, /case "ArrowDown"/);
 assert.match(fileGrid, /tabIndex=\{activeItem === itemIndex \? 0 : -1\}/);
 assert.match(fileGrid, /className=\{styles\.errorBanner\} role="alert"/);
 assert.match(fileGrid, /e\.ctrlKey \|\| e\.metaKey/);
+assert.match(fileGrid, /aria-rowindex=\{ariaRowIndex\}/);
+assert.match(fileGrid, /aria-rowindex=\{itemIndex \+ 1\}/);
 
 const multiSelect = await source("src/components/FileManager/hooks/useMultiSelect.ts");
 assert.match(
