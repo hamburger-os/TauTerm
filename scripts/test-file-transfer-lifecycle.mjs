@@ -504,7 +504,7 @@ assert.match(fileList, /case "End"/);
 assert.match(fileList, /virtualCanvas/);
 assert.match(fileList, /aria-sort=/);
 assert.match(fileList, /className=\{styles\.errorBanner\} role="alert"/);
-assert.match(fileList, /styles\.colPerms\} role="columnheader"/);
+assert.match(fileList, /styles\.colPerms[^\n]*role="columnheader"/);
 
 const fileGrid = await source("src/components/FileManager/FileGrid.tsx");
 assert.match(fileGrid, /VIRTUAL_THRESHOLD = 300/);
