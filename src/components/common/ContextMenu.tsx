@@ -54,7 +54,7 @@ export default function ContextMenu({ state, items, onSelect, onClose, header }:
       menuRef.current.style.left = `${adjustedX}px`;
       menuRef.current.style.top = `${adjustedY}px`;
     }
-  }, [state]);
+  }, [state.visible, state.x, state.y]);
 
   // 点击外部关闭
   useEffect(() => {
