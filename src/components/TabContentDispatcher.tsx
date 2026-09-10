@@ -18,7 +18,9 @@ export default function TabContentDispatcher() {
     paneCount,
     selectPane,
     splitPane,
+    clearPane,
     closePane,
+    resetPaneRatio,
     resizeSplit,
   } = useSplitLayout();
 
@@ -31,7 +33,9 @@ export default function TabContentDispatcher() {
       paneCount={paneCount}
       onSelectPane={selectPane}
       onSplitPane={splitPane}
+      onClearPane={clearPane}
       onClosePane={closePane}
+      onResetPaneRatio={resetPaneRatio}
       onResizeSplit={resizeSplit}
     />
   );
