@@ -15,10 +15,21 @@ function isFiniteNonNegative(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function hasUniqueIds(items: Array<{ id: string }>): boolean {
+  const ids = new Set<string>();
+  for (const item of items) {
+    if (!item.id || ids.has(item.id)) return false;
+    ids.add(item.id);
+  }
+  return true;
+}
+
 function isCommandItem(value: unknown): value is CommandItem {
   return isRecord(value)
     && typeof value.id === "string"
+    && value.id.length > 0
     && typeof value.command === "string"
+    && value.command.trim().length > 0
     && typeof value.note === "string"
     && isFiniteNonNegative(value.delay);
 }
@@ -30,7 +41,8 @@ export function parseCommandConfig(value: unknown): CommandConfig {
     || !value.name.trim()
     || !isFiniteNonNegative(value.defaultDelay)
     || !Array.isArray(value.commands)
-    || !value.commands.every(isCommandItem)) {
+    || !value.commands.every(isCommandItem)
+    || !hasUniqueIds(value.commands as CommandItem[])) {
     throw new Error("Invalid command-set format");
   }
   return value as unknown as CommandConfig;
@@ -60,6 +72,7 @@ function isReplyAction(value: unknown): value is ReplyAction {
 function isAutoReplyRule(value: unknown): value is AutoReplyRule {
   if (!isRecord(value)
     || typeof value.id !== "string"
+    || value.id.length === 0
     || (value.label !== undefined && typeof value.label !== "string")
     || (value.triggerType !== "data" && value.triggerType !== "timer")
     || !isFiniteNonNegative(value.timerIntervalMs)
@@ -73,7 +86,10 @@ function isAutoReplyRule(value: unknown): value is AutoReplyRule {
     return false;
   }
 
-  return value.triggerType === "timer" || value.conditions.length > 0;
+  if (value.triggerType === "timer") {
+    return value.timerIntervalMs > 0 && value.actions.length > 0;
+  }
+  return value.conditions.length > 0;
 }
 
 export function parseAutoReplyConfig(value: unknown): AutoReplyConfig {
@@ -82,7 +98,8 @@ export function parseAutoReplyConfig(value: unknown): AutoReplyConfig {
     || !value.name.trim()
     || (value.matchStrategy !== "first" && value.matchStrategy !== "all")
     || !Array.isArray(value.rules)
-    || !value.rules.every(isAutoReplyRule)) {
+    || !value.rules.every(isAutoReplyRule)
+    || !hasUniqueIds(value.rules as AutoReplyRule[])) {
     throw new Error("Invalid auto-reply format");
   }
   return value as unknown as AutoReplyConfig;
