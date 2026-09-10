@@ -72,6 +72,8 @@ export interface TransferState {
   taskIdsBySession: Record<string, string[]>;
   /** 启动阶段尚未产生 transfer_id 时的 Session 级错误。 */
   startErrorsBySession: Record<string, string>;
+  /** 仅供应用级 Toast 投影最近一次错误；不参与任务所有权或生命周期判断。 */
+  error: string | null;
   history: TransferHistoryItem[];
 }
 
@@ -97,6 +99,7 @@ const initialState: TransferState = {
   tasksById: {},
   taskIdsBySession: {},
   startErrorsBySession: {},
+  error: null,
   history: [],
 };
 
@@ -224,8 +227,6 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
         return state;
       }
 
-      // 当前后端默认每 Session 一个活动任务。开始新任务时只清理该 Session 已终止的
-      // 旧快照；未来提高 SideChannel 并发时，仍可同时保留多个非终态任务。
       const oldIds = state.taskIdsBySession[payload.session_id] ?? [];
       const retainedIds = oldIds.filter((id) => {
         const task = state.tasksById[id];
@@ -251,6 +252,7 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
           [payload.session_id]: [...retainedIds, payload.transfer_id],
         },
         startErrorsBySession,
+        error: null,
       };
     }
 
@@ -260,8 +262,6 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
       let tasksById = state.tasksById;
       let taskIdsBySession = state.taskIdsBySession;
 
-      // started 事件理论上先于 progress；若 WebView 极端情况下漏掉 started，
-      // 仍以 progress 中的完整身份建立任务，避免丢失真实传输状态。
       if (!current) {
         current = createTask(
           payload.session_id,
@@ -428,6 +428,7 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
           ...state.tasksById,
           [payload.transfer_id]: nextTask,
         },
+        error,
         history: [historyItem, ...state.history].slice(0, 100),
       };
     }
@@ -469,6 +470,7 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
             error: action.error,
           },
         },
+        error: action.error,
       };
     }
 
@@ -479,6 +481,7 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
           ...state.startErrorsBySession,
           [action.sessionId]: action.error,
         },
+        error: action.error,
       };
 
     case "TASK_CLEAR_ERROR": {
@@ -490,13 +493,14 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
           ...state,
           tasksById,
           startErrorsBySession: {},
+          error: null,
         };
       }
       const startErrorsBySession = { ...state.startErrorsBySession };
       delete startErrorsBySession[action.sessionId];
       const latest = latestTaskForSession(state, action.sessionId);
       if (!latest || !latest.error) {
-        return { ...state, startErrorsBySession };
+        return { ...state, startErrorsBySession, error: null };
       }
       return {
         ...state,
@@ -505,6 +509,7 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
           ...state.tasksById,
           [latest.transferId]: { ...latest, error: null },
         },
+        error: null,
       };
     }
 
@@ -594,7 +599,6 @@ export function TransferProvider({ children }: { children: ReactNode }) {
 
       try {
         const ack = await startFileTransfer(direction, request);
-        // started 是首选身份源；ack 作为事件丢失时的防御性兜底。重复 started 会被 reducer 忽略。
         dispatch({
           type: "TASK_STARTED",
           payload: {
