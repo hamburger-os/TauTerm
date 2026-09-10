@@ -200,10 +200,14 @@ export default function FilePreviewModal({
 
         {data !== null && !loading && !error && (
           <div className={styles.previewToolbar}>
-            <div className={styles.modeGroup} role="group" aria-label={t("fileManager.previewMode")}>
+            <div
+              className={`${styles.modeGroup} liquid-selector-strip`}
+              role="group"
+              aria-label={t("fileManager.previewMode")}
+            >
               <button
                 type="button"
-                className={`${styles.modeButton} ${mode === "text" ? styles.modeButtonActive : ""} liquid-glass-ghost-button`}
+                className={`liquid-glass-button liquid-selector-button ${mode === "text" ? "active" : ""}`}
                 aria-pressed={mode === "text"}
                 onClick={() => setMode("text")}
               >
@@ -211,7 +215,7 @@ export default function FilePreviewModal({
               </button>
               <button
                 type="button"
-                className={`${styles.modeButton} ${mode === "hex" ? styles.modeButtonActive : ""} liquid-glass-ghost-button`}
+                className={`liquid-glass-button liquid-selector-button ${mode === "hex" ? "active" : ""}`}
                 aria-pressed={mode === "hex"}
                 onClick={() => setMode("hex")}
               >
