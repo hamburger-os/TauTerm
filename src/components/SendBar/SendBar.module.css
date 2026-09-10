@@ -1,4 +1,4 @@
-/* SendBar v8.1 — 保留原有左侧竖排模式布局，Structural Panel 只负责统一材质。 */
+/* SendBar — 左侧竖排模式布局；Structural Panel 只负责统一材质。 */
 .container {
   display: flex;
   flex-direction: column;
@@ -56,8 +56,4 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-}
-
-.wrapperHidden {
-  display: none;
 }

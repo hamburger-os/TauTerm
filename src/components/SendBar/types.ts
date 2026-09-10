@@ -23,22 +23,6 @@ export interface CommandConfig {
   commands: CommandItem[];
 }
 
-/** 循环配置 — 由 BasicSend 和 CommandPanel 共用 */
-export interface LoopConfig {
-  /** 循环总次数。-1 = 无限循环，0 = 已停止/未开始 */
-  count: number;
-  /** 当前循环进度 (0-based) */
-  current: number;
-}
-
-/** 执行状态 — 由 BasicSend 和 CommandPanel 共用 */
-export interface ExecutionState {
-  isRunning: boolean;
-  loopConfig: LoopConfig | null;
-  /** 仅 CommandPanel 使用，当前正在执行的命令索引 */
-  currentCommandIndex: number | null;
-}
-
 // ── 自动应答模式 ──────────────────────────────────────
 
 /** 匹配模式 */
@@ -147,7 +131,7 @@ export interface AutoReplyConfig {
 
 // ── 脚本模式 ──────────────────────────────────────────
 
-/** 脚本记录（持久化到 localStorage） */
+/** 可复用脚本工程资产；持久化权威源为 Rust ConfigStore。 */
 export interface ScriptRecord {
   id: string;
   name: string;

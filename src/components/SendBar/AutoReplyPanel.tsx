@@ -1,17 +1,19 @@
-import { useState, useCallback, useEffect, useMemo, useRef, Fragment } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useSession } from "../../context/SessionContext";
 import { useToast } from "../../context/ToastContext";
-import { useSendBar } from "./SendBarContext";
 import { usePointerDragReorder } from "../../hooks/usePointerDragReorder";
+import ConfirmDialog from "../common/ConfirmDialog";
 import Icon from "../common/Icon";
 import AutoReplyRuleEditor from "./AutoReplyRuleEditor";
+import { useSendBar } from "./SendBarContext";
 import type { AutoReplyRule, AutoReplyConfig, MatchStrategy, ScriptRecord } from "./types";
 import { BUILTIN_CONFIGS } from "./builtinRules";
 import { ASSET_KEYS, clearAsset, persistAsset } from "./assetStore";
+import { parseAutoReplyConfig, uniqueAssetName } from "./assetValidation";
 import styles from "./AutoReplyPanel.module.css";
 
 interface AutoReplyPanelProps {
@@ -20,7 +22,6 @@ interface AutoReplyPanelProps {
   onRunningChange?: (running: boolean) => void;
 }
 
-// 匹配模式 → i18n key（与 AutoReplyRuleEditor 的模式选项一致）
 const MATCH_MODE_KEY: Record<string, string> = {
   contains: "matchContains",
   equals: "matchEquals",
@@ -33,15 +34,14 @@ function makeId(): string {
   return crypto.randomUUID();
 }
 
-function defaultConfig(): AutoReplyConfig {
-  return { name: "New Config", matchStrategy: "all", rules: [] };
+function defaultConfig(name: string): AutoReplyConfig {
+  return { name, matchStrategy: "all", rules: [] };
 }
 
 export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }: AutoReplyPanelProps) {
   const { t } = useTranslation();
   const { isSessionConnected } = useSession();
   const { showToast } = useToast();
-  // 网络调试对端经 peerSessions 注册表判定；普通会话走 tabs
   const isConnected = isSessionConnected(sessionId);
 
   const { state: sendBarState, dispatch } = useSendBar();
@@ -59,52 +59,59 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
   const [importData, setImportData] = useState<AutoReplyConfig | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [logExpanded, setLogExpanded] = useState(false);
-
   const listRef = useRef<HTMLDivElement>(null);
+  const transitionAttemptRef = useRef(0);
+  const runtimeLocked = isRunning || isLoading;
 
-  // 激活当前配置的规则
   const activeConfig = useMemo(
-    () => configs.find(c => c.name === activeConfigName) ?? configs[0],
-    [configs, activeConfigName]
+    () => configs.find(config => config.name === activeConfigName) ?? configs[0],
+    [configs, activeConfigName],
+  );
+  const deletingRule = useMemo(
+    () => rules.find(rule => rule.id === deleteConfirmId) ?? null,
+    [rules, deleteConfirmId],
   );
 
   useEffect(() => {
-    if (activeConfig) {
-      dispatch({ type: "SET_AUTO_REPLY_RULES", rules: activeConfig.rules });
-      // 同步匹配策略，避免切换配置后策略与配置不一致
-      dispatch({ type: "SET_MATCH_STRATEGY", strategy: activeConfig.matchStrategy });
-    }
-  }, [activeConfigName, activeConfig, dispatch]);
+    return () => {
+      transitionAttemptRef.current += 1;
+    };
+  }, []);
 
-  // 切换配置时重置删除确认（配置集与规则行）
+  // Runtime uses a generated Lua snapshot. While starting/running, keep the visible rule set frozen.
+  useEffect(() => {
+    if (!activeConfig || runtimeLocked) return;
+    if (activeConfig.name !== activeConfigName) {
+      dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeConfig.name });
+    }
+    dispatch({ type: "SET_AUTO_REPLY_RULES", rules: activeConfig.rules });
+    dispatch({ type: "SET_MATCH_STRATEGY", strategy: activeConfig.matchStrategy });
+  }, [activeConfigName, activeConfig, runtimeLocked, dispatch]);
+
   useEffect(() => {
     setConfigDeleteConfirm(false);
     setDeleteConfirmId(null);
   }, [activeConfigName]);
 
-  // 会话断开时自动停止自动应答
+  // A disconnect invalidates a pending start attempt as well as an already running engine.
   useEffect(() => {
-    const unlisten = listen<{ session_id: string }>("session-disconnected", (event) => {
-      if (event.payload.session_id === sessionId && isRunning) {
-        dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: false });
-        onRunningChange?.(false);
-      }
+    const unlisten = listen<{ session_id: string }>("session-disconnected", event => {
+      if (event.payload.session_id !== sessionId) return;
+      transitionAttemptRef.current += 1;
+      if (isLoading) setIsLoading(false);
+      if (isRunning) dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: false });
+      if (isLoading || isRunning) onRunningChange?.(false);
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [sessionId, isRunning, dispatch, onRunningChange]);
+  }, [sessionId, isLoading, isRunning, dispatch, onRunningChange]);
 
-  // 错误级日志以 Toast 呈现（共享日志已由 SendBarInner 层始终监听）
   useEffect(() => {
     const lastMsg = scriptLogs[scriptLogs.length - 1];
     if (lastMsg && (lastMsg.includes("失败") || lastMsg.includes("错误") || lastMsg.includes("Error"))) {
-      // 仅当当前面板活跃且引擎运行时弹 Toast，避免重复打扰
-      if (isActive && isRunning) {
-        showToast("error", lastMsg);
-      }
+      if (isActive && isRunning) showToast("error", lastMsg);
     }
   }, [scriptLogs, isActive, isRunning, showToast]);
 
-  // 持久化：自动应答规则属于工程资产，统一写 Rust ConfigStore。
   const persist = useCallback((updated: AutoReplyConfig[]) => {
     dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs: updated });
     return persistAsset(ASSET_KEYS.autoReplyConfigs, updated);
@@ -117,16 +124,15 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
       : clearAsset(ASSET_KEYS.activeAutoReplyConfig);
   }, [dispatch]);
 
-  // 更新规则并写回当前配置（context + persistent asset store）
   const persistRules = useCallback((updated: AutoReplyRule[]) => {
+    if (runtimeLocked) return;
     dispatch({ type: "SET_AUTO_REPLY_RULES", rules: updated });
-    const updatedConfigs = configs.map(c =>
-      c.name === activeConfigName ? { ...c, rules: updated } : c
+    const updatedConfigs = configs.map(config =>
+      config.name === activeConfigName ? { ...config, rules: updated } : config,
     );
-    persist(updatedConfigs);
-  }, [configs, activeConfigName, dispatch, persist]);
+    void persist(updatedConfigs);
+  }, [runtimeLocked, configs, activeConfigName, dispatch, persist]);
 
-  // 拖拽排序（使用通用 hook，与 ReplyActionEditor 保持一致；必须在 persistRules 之后声明）
   const {
     isDragging,
     dropIndex,
@@ -137,65 +143,69 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
   } = usePointerDragReorder(rules, persistRules, {
     itemSelector: `.${styles.ruleRow}`,
     draggingClass: styles.rowDragging,
-    disabled: isRunning,
+    disabled: runtimeLocked,
     listRef,
   });
 
   // ── 配置管理 ──
   const handleSelectConfig = useCallback((name: string) => {
-    persistActive(name);
-  }, [persistActive]);
+    if (!runtimeLocked) void persistActive(name);
+  }, [runtimeLocked, persistActive]);
 
   const handleNewConfig = useCallback(() => {
-    const name = t("sendBar.newConfigName", { n: configs.length + 1 });
-    const updated = [...configs, { ...defaultConfig(), name }];
-    persist(updated);
-    persistActive(name);
-  }, [configs, persist, persistActive]);
+    if (runtimeLocked) return;
+    const existing = new Set(configs.map(config => config.name));
+    let index = configs.length + 1;
+    let name = t("sendBar.newConfigName", { n: index });
+    while (existing.has(name)) {
+      index += 1;
+      name = t("sendBar.newConfigName", { n: index });
+    }
+    void persist([...configs, defaultConfig(name)]);
+    void persistActive(name);
+  }, [runtimeLocked, configs, persist, persistActive, t]);
 
   const handleRenameConfig = useCallback(() => {
-    const currentName = activeConfig?.name || activeConfigName || "";
-    setRenameValue(currentName);
+    if (runtimeLocked || !activeConfig) return;
+    setRenameValue(activeConfig.name);
     setRenameOpen(true);
-  }, [activeConfig, activeConfigName]);
+  }, [runtimeLocked, activeConfig]);
 
   const handleConfirmRename = useCallback(() => {
+    if (runtimeLocked) return;
     const newName = renameValue.trim();
     if (!newName || newName === activeConfigName) {
       setRenameOpen(false);
       return;
     }
-    const updated = configs.map(c =>
-      c.name === activeConfigName ? { ...c, name: newName } : c
-    );
-    persist(updated);
-    persistActive(newName);
-    setRenameOpen(false);
-  }, [renameValue, activeConfigName, configs, persist, persistActive]);
-
-  const handleCancelRename = useCallback(() => {
-    setRenameOpen(false);
-  }, []);
-
-  const handleDeleteConfig = useCallback(() => {
-    if (configs.length === 0) return;
-    if (!configDeleteConfirm) {
-      setConfigDeleteConfirm(true);
+    if (configs.some(config => config.name === newName)) {
+      showToast("error", t("sendBar.nameExists", { defaultValue: "Name already exists" }));
       return;
     }
-    // 确认删除
-    const updated = configs.filter(c => c.name !== activeConfigName);
-    persist(updated);
-    persistActive(updated[0]?.name || "");
-    // 删除最后一个配置：清空规则，避免底部状态/开始按钮引用旧规则
+    const updated = configs.map(config =>
+      config.name === activeConfigName ? { ...config, name: newName } : config,
+    );
+    void persist(updated);
+    void persistActive(newName);
+    setRenameOpen(false);
+  }, [runtimeLocked, renameValue, activeConfigName, configs, persist, persistActive, showToast, t]);
+
+  const handleCancelRename = useCallback(() => setRenameOpen(false), []);
+
+  const handleDeleteConfig = useCallback(() => {
+    if (runtimeLocked || configs.length === 0) return;
+    const updated = configs.filter(config => config.name !== activeConfigName);
+    void persist(updated);
+    void persistActive(updated[0]?.name || "");
     if (updated.length === 0) {
       dispatch({ type: "SET_AUTO_REPLY_RULES", rules: [] });
     }
     setConfigDeleteConfirm(false);
-  }, [activeConfigName, configs, configDeleteConfirm, persist, persistActive, dispatch]);
+  }, [runtimeLocked, activeConfigName, configs, persist, persistActive, dispatch]);
 
   // ── 规则管理 ──
   const handleAddRule = useCallback(() => {
+    if (runtimeLocked) return;
     const newRule: AutoReplyRule = {
       id: makeId(),
       label: undefined,
@@ -209,174 +219,201 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     };
     setEditingRule(newRule);
     setEditorOpen(true);
-  }, []);
+  }, [runtimeLocked]);
 
   const handleEditRule = useCallback((rule: AutoReplyRule) => {
+    if (runtimeLocked) return;
     setDeleteConfirmId(null);
     setEditingRule({ ...rule });
     setEditorOpen(true);
-  }, []);
+  }, [runtimeLocked]);
 
   const handleSaveRule = useCallback((rule: AutoReplyRule) => {
-    const updated = rules.map(r => r.id === rule.id ? rule : r);
-    const exists = rules.some(r => r.id === rule.id);
-    const final = exists ? updated : [...rules, rule];
-    persistRules(final);
+    if (runtimeLocked) return;
+    const exists = rules.some(existing => existing.id === rule.id);
+    const next = exists ? rules.map(existing => existing.id === rule.id ? rule : existing) : [...rules, rule];
+    persistRules(next);
     setEditorOpen(false);
     setEditingRule(null);
-  }, [rules, persistRules]);
+  }, [runtimeLocked, rules, persistRules]);
 
   const handleToggleRule = useCallback((ruleId: string) => {
+    if (runtimeLocked) return;
     setDeleteConfirmId(null);
-    persistRules(rules.map(r =>
-      r.id === ruleId ? { ...r, enabled: !r.enabled } : r
+    persistRules(rules.map(rule =>
+      rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule,
     ));
-  }, [rules, persistRules]);
+  }, [runtimeLocked, rules, persistRules]);
 
-  // 全选/取消全选 = 启用/停用全部规则（规则复选框即持久 enabled）
   const handleSelectAllRules = useCallback(() => {
-    const allEnabled = rules.length > 0 && rules.every(r => r.enabled);
-    persistRules(rules.map(r => ({ ...r, enabled: !allEnabled })));
-  }, [rules, persistRules]);
+    if (runtimeLocked) return;
+    const allEnabled = rules.length > 0 && rules.every(rule => rule.enabled);
+    persistRules(rules.map(rule => ({ ...rule, enabled: !allEnabled })));
+  }, [runtimeLocked, rules, persistRules]);
 
-  const handleDeleteRule = useCallback((ruleId: string) => {
-    setDeleteConfirmId(ruleId);
-  }, []);
-
-  const confirmDeleteRule = useCallback((ruleId: string) => {
-    persistRules(rules.filter(r => r.id !== ruleId));
+  const confirmDeleteRule = useCallback(() => {
+    if (runtimeLocked || !deleteConfirmId) return;
+    persistRules(rules.filter(rule => rule.id !== deleteConfirmId));
     setDeleteConfirmId(null);
-  }, [rules, persistRules]);
+  }, [runtimeLocked, deleteConfirmId, rules, persistRules]);
 
   // ── 执行控制 ──
   const handleStart = useCallback(async () => {
-    if (!isConnected) return;
+    if (runtimeLocked || !isConnected) return;
+
+    const attempt = transitionAttemptRef.current + 1;
+    transitionAttemptRef.current = attempt;
     setIsLoading(true);
+    onRunningChange?.(true);
+    setEditorOpen(false);
+    setEditingRule(null);
+    setRenameOpen(false);
+    setImportOpen(false);
+    setImportData(null);
+    setDeleteConfirmId(null);
+    setConfigDeleteConfirm(false);
+
+    let started = false;
     try {
       const code: string = await invoke("rules_to_script", {
-        rules: rules.filter(r => r.enabled),
+        rules: rules.filter(rule => rule.enabled),
         name: activeConfigName,
-        matchStrategy: matchStrategy,
+        matchStrategy,
       });
+      if (transitionAttemptRef.current !== attempt) return;
+
       await invoke("start_script_engine", { sessionId, code });
+      if (transitionAttemptRef.current !== attempt) {
+        void invoke("stop_script_engine", { sessionId }).catch(() => undefined);
+        return;
+      }
+
       dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: true });
-      onRunningChange?.(true);
-    } catch (e) {
-      console.error("Failed to start auto-reply:", e);
-      showToast("error", `${t("sendBar.startFailed")}: ${e}`);
+      started = true;
+    } catch (error) {
+      if (transitionAttemptRef.current === attempt) {
+        console.error("Failed to start auto-reply:", error);
+        showToast("error", `${t("sendBar.startFailed")}: ${String(error)}`);
+      }
     } finally {
-      setIsLoading(false);
+      if (transitionAttemptRef.current === attempt) {
+        setIsLoading(false);
+        if (!started) onRunningChange?.(false);
+      }
     }
-  }, [isConnected, rules, activeConfigName, matchStrategy, sessionId, dispatch, onRunningChange, showToast, t]);
+  }, [runtimeLocked, isConnected, rules, activeConfigName, matchStrategy, sessionId, dispatch, onRunningChange, showToast, t]);
 
   const handleStop = useCallback(async () => {
+    if (!isRunning || isLoading) return;
+    const attempt = transitionAttemptRef.current + 1;
+    transitionAttemptRef.current = attempt;
+    setIsLoading(true);
     try {
       await invoke("stop_script_engine", { sessionId });
+      if (transitionAttemptRef.current !== attempt) return;
       dispatch({ type: "SET_AUTO_REPLY_RUNNING", running: false });
+      setIsLoading(false);
       onRunningChange?.(false);
-    } catch (e) {
-      console.error("Failed to stop auto-reply:", e);
-      showToast("error", `${t("sendBar.stopFailed")}: ${e}`);
+    } catch (error) {
+      if (transitionAttemptRef.current === attempt) {
+        setIsLoading(false);
+        console.error("Failed to stop auto-reply:", error);
+        showToast("error", `${t("sendBar.stopFailed")}: ${String(error)}`);
+      }
     }
-  }, [sessionId, dispatch, onRunningChange, showToast, t]);
+  }, [sessionId, isRunning, isLoading, dispatch, onRunningChange, showToast, t]);
 
   // ── 转换为脚本 ──
   const handleConvertToScript = useCallback(async () => {
+    if (runtimeLocked) return;
     try {
       const code: string = await invoke("rules_to_script", {
-        rules: rules.filter(r => r.enabled),
+        rules: rules.filter(rule => rule.enabled),
         name: activeConfigName,
-        matchStrategy: matchStrategy,
+        matchStrategy,
       });
-      // 自动创建脚本条目，确保编辑器可渲染（ScriptEditor 在 scripts.length === 0 时不渲染编辑器）
       const newScript: ScriptRecord = {
         id: crypto.randomUUID(),
-        name: activeConfigName,
+        name: uniqueAssetName(activeConfigName || "Auto Reply", scripts.map(script => script.name), t("sendBar.imported")),
         code,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
       const updatedScripts = [...scripts, newScript];
-      persistAsset(ASSET_KEYS.scripts, updatedScripts);
-      persistAsset(ASSET_KEYS.activeScriptId, newScript.id);
+      if (!await persistAsset(ASSET_KEYS.scripts, updatedScripts)) return;
+      if (!await persistAsset(ASSET_KEYS.activeScriptId, newScript.id)) return;
       dispatch({ type: "SET_SCRIPTS", scripts: updatedScripts });
       dispatch({ type: "SET_ACTIVE_SCRIPT", id: newScript.id });
-      // 加载生成的代码并切换到脚本模式
       dispatch({ type: "SET_SCRIPT_CODE", code });
       dispatch({ type: "SET_MODE", mode: "script" });
-    } catch (e) {
-      console.error("Failed to convert to script:", e);
-      showToast("error", `${t("sendBar.convertFailed")}: ${e}`);
+    } catch (error) {
+      console.error("Failed to convert to script:", error);
+      showToast("error", `${t("sendBar.convertFailed")}: ${String(error)}`);
     }
-  }, [rules, scripts, activeConfigName, matchStrategy, dispatch, showToast, t]);
+  }, [runtimeLocked, rules, scripts, activeConfigName, matchStrategy, dispatch, showToast, t]);
 
   // ── 导入/导出 ──
   const handleExport = useCallback(() => {
+    if (runtimeLocked) return;
     const config = activeConfig;
     if (!config) return;
     const json = JSON.stringify(config, null, 2);
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(config.name || "config").replace(/\s+/g, "_")}.tauterm-reply.json`;
-    a.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${(config.name || "config").replace(/\s+/g, "_")}.tauterm-reply.json`;
+    anchor.click();
     URL.revokeObjectURL(url);
-  }, [activeConfig]);
+  }, [runtimeLocked, activeConfig]);
 
   const handleImport = useCallback(() => {
+    if (runtimeLocked) return;
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json";
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
+    input.onchange = async event => {
+      const file = (event.target as HTMLInputElement).files?.[0];
       if (!file) return;
       try {
-        const text = await file.text();
-        const parsed = JSON.parse(text);
-        if (!Array.isArray(parsed.rules)) {
-          throw new Error("Invalid config format: missing rules");
-        }
-        setImportData(parsed as AutoReplyConfig);
+        setImportData(parseAutoReplyConfig(JSON.parse(await file.text())));
         setImportOpen(true);
-      } catch (err) {
-        showToast("error", `${t("sendBar.importFailed")}: ${err}`);
+      } catch (error) {
+        showToast("error", `${t("sendBar.importFailed")}: ${String(error)}`);
       }
     };
     input.click();
-  }, [showToast, t]);
+  }, [runtimeLocked, showToast, t]);
 
   const handleImportOverwrite = useCallback(async () => {
-    if (!importData) return;
-    const updated = configs.map(c =>
-      c.name === activeConfigName ? { ...importData, name: activeConfigName } : c
+    if (runtimeLocked || !importData || !activeConfig) return;
+    const updated = configs.map(config =>
+      config.name === activeConfigName ? { ...importData, name: activeConfigName } : config,
     );
     const saved = await persist(updated);
     dispatch({ type: "SET_AUTO_REPLY_RULES", rules: importData.rules });
+    dispatch({ type: "SET_MATCH_STRATEGY", strategy: importData.matchStrategy });
     setImportOpen(false);
     setImportData(null);
     if (saved) showToast("success", t("sendBar.importSuccess"));
-  }, [importData, activeConfigName, configs, persist, dispatch, showToast, t]);
+  }, [runtimeLocked, importData, activeConfig, activeConfigName, configs, persist, dispatch, showToast, t]);
 
   const handleImportAppend = useCallback(async () => {
-    if (!importData) return;
-    const newName = `${importData.name || "Imported"} (${t("sendBar.imported")})`;
+    if (runtimeLocked || !importData) return;
+    const newName = uniqueAssetName(importData.name, configs.map(config => config.name), t("sendBar.imported"));
     const updated = [...configs, { ...importData, name: newName }];
-    const [savedConfigs, savedActive] = await Promise.all([
-      persist(updated),
-      persistActive(newName),
-    ]);
+    const savedConfigs = await persist(updated);
+    if (!savedConfigs) return;
+    const savedActive = await persistActive(newName);
     setImportOpen(false);
     setImportData(null);
-    if (savedConfigs && savedActive) {
-      showToast("success", t("sendBar.importSuccess"));
-    }
-  }, [importData, configs, persist, persistActive, showToast, t]);
+    if (savedActive) showToast("success", t("sendBar.importSuccess"));
+  }, [runtimeLocked, importData, configs, persist, persistActive, showToast, t]);
 
-  // ── 加载内置示例 ──
   const handleLoadExamples = useCallback(async () => {
-    const existingNames = new Set(configs.map(c => c.name));
-    const newBuiltins = BUILTIN_CONFIGS.filter(c => !existingNames.has(c.name));
+    if (runtimeLocked) return;
+    const existingNames = new Set(configs.map(config => config.name));
+    const newBuiltins = BUILTIN_CONFIGS.filter(config => !existingNames.has(config.name));
     if (newBuiltins.length === 0) {
       showToast("info", t("sendBar.noNewExamples"));
       return;
@@ -384,214 +421,170 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
     if (await persist([...configs, ...newBuiltins])) {
       showToast("success", t("sendBar.examplesLoaded", { count: newBuiltins.length }));
     }
-  }, [configs, persist, showToast, t]);
+  }, [runtimeLocked, configs, persist, showToast, t]);
 
-  const enabledCount = rules.filter(r => r.enabled).length;
+  const enabledCount = rules.filter(rule => rule.enabled).length;
 
   return (
-    <div className={styles.panel}>
-      {/* 配置工具栏 */}
+    <div className={styles.panel} aria-busy={isLoading || undefined}>
       <div className={styles.toolbar}>
-        {/* 左侧：配置管理 */}
         <div className={styles.configActions}>
           <select
             className={`${styles.configSelect} liquid-glass-input liquid-glass-select`}
             value={activeConfigName}
-            onChange={e => handleSelectConfig(e.target.value)}
+            onChange={event => handleSelectConfig(event.target.value)}
+            disabled={runtimeLocked}
           >
-            {configs.map(c => (
-              <option key={c.name} value={c.name}>{c.name}</option>
+            {configs.map(config => (
+              <option key={config.name} value={config.name}>{config.name}</option>
             ))}
           </select>
-          {/* 匹配策略 — 与配置关联 */}
           <span className={styles.toolbarDivider} />
           <select
             className={`${styles.strategyDropdown} liquid-glass-input liquid-glass-select`}
             value={matchStrategy}
-            onChange={e => {
-              const strategy = e.target.value as MatchStrategy;
+            onChange={event => {
+              if (runtimeLocked) return;
+              const strategy = event.target.value as MatchStrategy;
               dispatch({ type: "SET_MATCH_STRATEGY", strategy });
-              // write back to active config
-              const updatedConfigs = configs.map(c =>
-                c.name === activeConfigName ? { ...c, matchStrategy: strategy } : c
-              );
-              persist(updatedConfigs);
+              void persist(configs.map(config =>
+                config.name === activeConfigName ? { ...config, matchStrategy: strategy } : config,
+              ));
             }}
             title={t("sendBar.matchStrategy")}
+            disabled={runtimeLocked}
           >
             <option value="all">{t("sendBar.matchStrategyAll")}</option>
             <option value="first">{t("sendBar.matchStrategyFirst")}</option>
           </select>
           <span className={styles.toolbarDivider} />
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleNewConfig} title={t("sendBar.new")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleNewConfig} title={t("sendBar.new")} disabled={runtimeLocked}>
             <Icon name="plus" size="sm" />
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleRenameConfig} title={t("sendBar.rename")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleRenameConfig} title={t("sendBar.rename")} disabled={runtimeLocked || !activeConfig}>
             <Icon name="edit" size="sm" />
           </button>
-          {configDeleteConfirm ? (
-            <div className={styles.toolConfirm}>
-              <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleDeleteConfig}
-                title={t("sendBar.confirmDeleteHint")}>
-                <Icon name="warning" size="sm" />
-                <span className={styles.deleteHint}>{t("sendBar.confirmDeleteHint")}</span>
-              </button>
-              <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => setConfigDeleteConfirm(false)}
-                title={t("sendBar.cancel")}>
-                <Icon name="close" size="sm" />
-              </button>
-            </div>
-          ) : (
-            <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleDeleteConfig} disabled={configs.length === 0}
-              title={t("sendBar.delete")}>
-              <Icon name="trash" size="sm" />
-            </button>
-          )}
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => setConfigDeleteConfirm(true)} disabled={runtimeLocked || configs.length === 0} title={t("sendBar.delete")}>
+            <Icon name="trash" size="sm" />
+          </button>
         </div>
-        {/* 右侧：操作按钮 */}
         <div className={styles.toolbarActions}>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleLoadExamples}
-            title={t("sendBar.loadBuiltinExamples")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => { void handleLoadExamples(); }} title={t("sendBar.loadBuiltinExamples")} disabled={runtimeLocked}>
             {t("sendBar.loadBuiltinExamples")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleExport} disabled={!activeConfig}
-            title={t("sendBar.exportConfig")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleExport} disabled={runtimeLocked || !activeConfig} title={t("sendBar.exportConfig")}>
             {t("sendBar.exportConfig")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleImport}
-            title={t("sendBar.importConfig")}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleImport} title={t("sendBar.importConfig")} disabled={runtimeLocked}>
             {t("sendBar.importConfig")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleAddRule}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleAddRule} disabled={runtimeLocked}>
             + {t("sendBar.addRule")}
           </button>
-          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={handleConvertToScript} disabled={enabledCount === 0}>
+          <button className={`${styles.toolBtn} liquid-glass-button`} onClick={() => { void handleConvertToScript(); }} disabled={runtimeLocked || enabledCount === 0}>
             {t("sendBar.convertToScript")}
           </button>
         </div>
       </div>
 
-      {/* 规则列表 */}
       {configs.length === 0 ? (
         <div className={styles.ruleList}>
           <div className={styles.empty}>{t("sendBar.noConfigs")}</div>
         </div>
       ) : (
-      <div
-        ref={listRef}
-        className={`${styles.ruleList} ${isDragging ? styles.listDragging : ""}`}
-      >
-        {rules.length === 0 && (
-          <div className={styles.empty}>{t("sendBar.noRules")}</div>
-        )}
-        {rules.map((rule, i) => {
-          const confirming = deleteConfirmId === rule.id;
-          const seqSummary = rule.actions.map((a) => a.data).filter(Boolean).join(" › ");
-          return (
-            <Fragment key={rule.id}>
-              {isDragging && dropIndex === i && (
-                <div className={styles.dropIndicator} />
-              )}
-              <div className={`${styles.ruleRow} ${rule.enabled ? styles.rowEnabled : ""} ${confirming ? styles.rowConfirming : ""}`}>
-                <span
-                  className={styles.dragHandle}
-                  title={t("commandPanel.dragToReorder")}
-                  onPointerDown={(e) => handlePointerDown(e, i)}
-                  onPointerMove={handlePointerMove}
-                  onPointerUp={handlePointerUp}
-                  onPointerCancel={handlePointerCancel}
-                  style={{ touchAction: 'none' }}
-                >
-                  <Icon name="drag-handle" size={16} />
-                </span>
-                <label className={styles.checkLabel}>
-                  <input
-                    type="checkbox"
-                    className={styles.checkInput}
-                    checked={rule.enabled}
-                    onChange={() => handleToggleRule(rule.id)}
-                  />
-                  <div className={styles.checkTrack} />
-                </label>
-                <code className={styles.rulePatternText} title={rule.triggerType === "timer" ? `Timer ${rule.timerIntervalMs}ms` : (rule.conditions.length > 0 ? rule.conditions.map(c => c.pattern).join(rule.conditionLogic === "or" ? " | " : " & ") : "(empty)")}>
-                  {rule.triggerType === "timer"
-                    ? <><Icon name="stopwatch" size="xs" /> {rule.timerIntervalMs}ms</>
-                    : rule.conditions.length > 0
-                      ? rule.conditions.map(c => (c.negate ? "!" : "") + (c.pattern || "(empty)")).join(rule.conditionLogic === "or" ? " | " : " & ")
-                      : "(empty)"}
-                </code>
-                {rule.triggerType !== "timer" && rule.conditions.length > 0 && (
-                  <span className={styles.matchModeBadge}>
-                    {rule.conditions.length > 1
-                      ? (rule.conditionLogic === "or" ? "OR" : "AND")
-                      : t("sendBar." + (MATCH_MODE_KEY[rule.conditions[0].mode] || "matchContains"))}
-                    {rule.conditions.length === 1 && rule.conditions[0].caseSensitive && <span className={styles.caseSensitiveMark}>Aa</span>}
+        <div ref={listRef} className={`${styles.ruleList} ${isDragging ? styles.listDragging : ""}`}>
+          {rules.length === 0 && <div className={styles.empty}>{t("sendBar.noRules")}</div>}
+          {rules.map((rule, index) => {
+            const seqSummary = rule.actions.map(action => action.data).filter(Boolean).join(" › ");
+            const conditionSummary = rule.conditions.length > 0
+              ? rule.conditions.map(condition => condition.pattern).join(rule.conditionLogic === "or" ? " | " : " & ")
+              : "(empty)";
+            return (
+              <Fragment key={rule.id}>
+                {isDragging && dropIndex === index && <div className={styles.dropIndicator} />}
+                <div className={`${styles.ruleRow} ${rule.enabled ? styles.rowEnabled : ""}`}>
+                  <span
+                    className={styles.dragHandle}
+                    title={t("commandPanel.dragToReorder")}
+                    onPointerDown={event => handlePointerDown(event, index)}
+                    onPointerMove={handlePointerMove}
+                    onPointerUp={handlePointerUp}
+                    onPointerCancel={handlePointerCancel}
+                    style={{ touchAction: "none" }}
+                  >
+                    <Icon name="drag-handle" size={16} />
                   </span>
-                )}
-                {rule.conditions.some(c => c.matchFormat === "hex") && (
-                  <span className={styles.ruleBadge} title={t("sendBar.matchFormatHex")}>HEX</span>
-                )}
-                {rule.triggerType === "timer" && (
-                  <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={t("sendBar.triggerTypeTimer")}>
-                    <Icon name="stopwatch" size="xs" />
-                  </span>
-                )}
-                {rule.triggerType !== "timer" && rule.conditions.length === 1 && rule.conditions[0].mode === "regex" && (
-                  <span className={styles.ruleBadge} title={t("sendBar.matchRegex")}>.*</span>
-                )}
-                {rule.actions.some(a => a.data.includes("{{")) && (
-                  <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title="Macros">
-                    <Icon name="code" size="xs" />
-                  </span>
-                )}
-                {rule.actions.length > 0 && (
-                  <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={t("sendBar.sequenceSummary", { count: rule.actions.length })}>
-                    <Icon name="steps" size="xs" />
-                    {rule.actions.length}
-                  </span>
-                )}
-                {rule.cooldownMs > 0 && (
-                  <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={`${t("sendBar.cooldownMs")}: ${rule.cooldownMs}ms`}>
-                    <Icon name="stopwatch" size="xs" />
-                  </span>
-                )}
-                <code
-                  className={styles.ruleReplyText}
-                  title={seqSummary || t("sendBar.sequenceSummary", { count: rule.actions.length })}
-                >
-                  {seqSummary || t("sendBar.sequenceSummary", { count: rule.actions.length })}
-                </code>
-                <div className={styles.ruleSpacer} />
-                <span className={styles.ruleLabelText}>{rule.label?.trim() || ""}</span>
-                <button className={`${styles.editBtn} liquid-glass-button`} onClick={() => handleEditRule(rule)} title={t("sendBar.edit")}>
-                  <Icon name="edit" size="sm" />
-                </button>
-                {confirming ? (
-                  <div className={styles.confirmBox}>
-                    <span className={styles.confirmText}>{t("commandPanel.confirmDelete")}</span>
-                    <button className={`${styles.confirmBtn} liquid-glass-button`} onClick={() => confirmDeleteRule(rule.id)}>
-                      {t("common.confirm")}
-                    </button>
-                    <button className={`${styles.confirmBtn} liquid-glass-button`} onClick={() => setDeleteConfirmId(null)}>
-                      {t("common.cancel")}
-                    </button>
-                  </div>
-                ) : (
-                  <button className={`${styles.deleteBtn} liquid-glass-button`} onClick={() => handleDeleteRule(rule.id)} title={t("sendBar.delete")}>
+                  <label className={styles.checkLabel}>
+                    <input
+                      type="checkbox"
+                      className={styles.checkInput}
+                      checked={rule.enabled}
+                      onChange={() => handleToggleRule(rule.id)}
+                      disabled={runtimeLocked}
+                    />
+                    <div className={styles.checkTrack} />
+                  </label>
+                  <code className={styles.rulePatternText} title={rule.triggerType === "timer" ? `Timer ${rule.timerIntervalMs}ms` : conditionSummary}>
+                    {rule.triggerType === "timer"
+                      ? <><Icon name="stopwatch" size="xs" /> {rule.timerIntervalMs}ms</>
+                      : rule.conditions.length > 0
+                        ? rule.conditions.map(condition => (condition.negate ? "!" : "") + (condition.pattern || "(empty)")).join(rule.conditionLogic === "or" ? " | " : " & ")
+                        : "(empty)"}
+                  </code>
+                  {rule.triggerType !== "timer" && rule.conditions.length > 0 && (
+                    <span className={styles.matchModeBadge}>
+                      {rule.conditions.length > 1
+                        ? (rule.conditionLogic === "or" ? "OR" : "AND")
+                        : t("sendBar." + (MATCH_MODE_KEY[rule.conditions[0].mode] || "matchContains"))}
+                      {rule.conditions.length === 1 && rule.conditions[0].caseSensitive && <span className={styles.caseSensitiveMark}>Aa</span>}
+                    </span>
+                  )}
+                  {rule.conditions.some(condition => condition.matchFormat === "hex") && (
+                    <span className={styles.ruleBadge} title={t("sendBar.matchFormatHex")}>HEX</span>
+                  )}
+                  {rule.triggerType === "timer" && (
+                    <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={t("sendBar.triggerTypeTimer")}>
+                      <Icon name="stopwatch" size="xs" />
+                    </span>
+                  )}
+                  {rule.triggerType !== "timer" && rule.conditions.length === 1 && rule.conditions[0].mode === "regex" && (
+                    <span className={styles.ruleBadge} title={t("sendBar.matchRegex")}>.*</span>
+                  )}
+                  {rule.actions.some(action => action.data.includes("{{")) && (
+                    <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title="Macros">
+                      <Icon name="code" size="xs" />
+                    </span>
+                  )}
+                  {rule.actions.length > 0 && (
+                    <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={t("sendBar.sequenceSummary", { count: rule.actions.length })}>
+                      <Icon name="steps" size="xs" />
+                      {rule.actions.length}
+                    </span>
+                  )}
+                  {rule.cooldownMs > 0 && (
+                    <span className={`${styles.ruleBadge} ${styles.ruleBadgeIcon}`} title={`${t("sendBar.cooldownMs")}: ${rule.cooldownMs}ms`}>
+                      <Icon name="stopwatch" size="xs" />
+                    </span>
+                  )}
+                  <code className={styles.ruleReplyText} title={seqSummary || t("sendBar.sequenceSummary", { count: rule.actions.length })}>
+                    {seqSummary || t("sendBar.sequenceSummary", { count: rule.actions.length })}
+                  </code>
+                  <div className={styles.ruleSpacer} />
+                  <span className={styles.ruleLabelText}>{rule.label?.trim() || ""}</span>
+                  <button className={`${styles.editBtn} liquid-glass-button`} onClick={() => handleEditRule(rule)} title={t("sendBar.edit")} disabled={runtimeLocked}>
+                    <Icon name="edit" size="sm" />
+                  </button>
+                  <button className={`${styles.deleteBtn} liquid-glass-button`} onClick={() => setDeleteConfirmId(rule.id)} title={t("sendBar.delete")} disabled={runtimeLocked}>
                     <Icon name="trash" size="sm" />
                   </button>
-                )}
-              </div>
-            </Fragment>
-          );
-        })}
-        {isDragging && dropIndex === rules.length && rules.length > 0 && (
-          <div className={styles.dropIndicator} />
-        )}
-      </div>
+                </div>
+              </Fragment>
+            );
+          })}
+          {isDragging && dropIndex === rules.length && rules.length > 0 && <div className={styles.dropIndicator} />}
+        </div>
       )}
 
-      {/* 脚本输出面板 — 始终可见（日志由 Provider 层始终监听） */}
       <div className={`${styles.logPanel} ${logExpanded ? "" : styles.logPanelCollapsed}`}>
         <div className={styles.logPanelHeader} onClick={() => setLogExpanded(!logExpanded)}>
           <span className={styles.logPanelTitle}>
@@ -602,7 +595,7 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
             {scriptLogs.length > 0 && (
               <button
                 className={`${styles.logClearBtn} liquid-glass-button`}
-                onClick={(e) => { e.stopPropagation(); dispatch({ type: "CLEAR_SCRIPT_LOGS" }); }}
+                onClick={event => { event.stopPropagation(); dispatch({ type: "CLEAR_SCRIPT_LOGS" }); }}
                 title={t("sendBar.clearOutput")}
               >
                 <Icon name="trash" size="xs" />
@@ -613,17 +606,14 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
         </div>
         {logExpanded && (
           <div className={styles.logPanelContent}>
-            {scriptLogs.length === 0 && (
-              <div className={styles.logPanelEmpty}>{t("sendBar.noOutput")}</div>
-            )}
-            {scriptLogs.map((msg, i) => (
-              <div key={i} className={styles.logPanelLine}>{msg}</div>
+            {scriptLogs.length === 0 && <div className={styles.logPanelEmpty}>{t("sendBar.noOutput")}</div>}
+            {scriptLogs.map((message, index) => (
+              <div key={index} className={styles.logPanelLine}>{message}</div>
             ))}
           </div>
         )}
       </div>
 
-      {/* 执行控制 */}
       <div className={styles.controls}>
         <span className={styles.status}>
           <Icon name={isRunning ? "status-connected" : "status-idle"} size={10} />
@@ -637,28 +627,27 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
           <input
             type="checkbox"
             className={styles.checkInput}
-            checked={rules.length > 0 && rules.every(r => r.enabled)}
+            checked={rules.length > 0 && rules.every(rule => rule.enabled)}
             onChange={handleSelectAllRules}
-            disabled={rules.length === 0}
+            disabled={runtimeLocked || rules.length === 0}
           />
           <div className={styles.checkTrack} />
           <span>{t("commandPanel.selectAll")}</span>
         </label>
         <div className={styles.controlBtns}>
           {!isRunning ? (
-            <button className={`${styles.startBtn} liquid-primary-button`} onClick={handleStart} disabled={!isConnected || enabledCount === 0 || isLoading}>
+            <button className={`${styles.startBtn} liquid-primary-button`} onClick={() => { void handleStart(); }} disabled={runtimeLocked || !isConnected || enabledCount === 0}>
               <Icon name="play" size="xs" /> {t("commandPanel.start")}
             </button>
           ) : (
-            <button className={styles.stopBtn} onClick={handleStop}>
+            <button className={styles.stopBtn} onClick={() => { void handleStop(); }} disabled={isLoading}>
               <Icon name="stop" size="xs" /> {t("commandPanel.stopExecution")}
             </button>
           )}
         </div>
       </div>
 
-      {/* 规则编辑弹窗 */}
-      {editorOpen && editingRule && (
+      {editorOpen && editingRule && !runtimeLocked && (
         <AutoReplyRuleEditor
           rule={editingRule}
           onSave={handleSaveRule}
@@ -666,19 +655,18 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
         />
       )}
 
-      {/* 重命名弹窗 */}
-      {renameOpen && createPortal(
+      {renameOpen && !runtimeLocked && createPortal(
         <div className={`${styles.modalOverlay} glass-overlay`} onClick={handleCancelRename}>
-          <div className={`${styles.renameModal} liquid-glass`} onClick={e => e.stopPropagation()}>
+          <div className={`${styles.renameModal} liquid-glass`} onClick={event => event.stopPropagation()}>
             <h3 className={styles.renameTitle}>{t("sendBar.renameTitle")}</h3>
             <input
               className={`${styles.renameInput} liquid-glass-input`}
               type="text"
               value={renameValue}
-              onChange={e => setRenameValue(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === "Enter") handleConfirmRename();
-                else if (e.key === "Escape") handleCancelRename();
+              onChange={event => setRenameValue(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === "Enter") handleConfirmRename();
+                else if (event.key === "Escape") handleCancelRename();
               }}
               placeholder={t("sendBar.renamePlaceholder")}
               autoFocus
@@ -693,34 +681,51 @@ export default function AutoReplyPanel({ sessionId, isActive, onRunningChange }:
             </div>
           </div>
         </div>,
-        document.body
+        document.body,
       )}
 
-      {/* 导入确认弹窗 */}
-      {importOpen && importData && createPortal(
+      {importOpen && importData && !runtimeLocked && createPortal(
         <div className={`${styles.modalOverlay} glass-overlay`} onClick={() => { setImportOpen(false); setImportData(null); }}>
-          <div className={`${styles.renameModal} liquid-glass`} onClick={e => e.stopPropagation()}>
+          <div className={`${styles.renameModal} liquid-glass`} onClick={event => event.stopPropagation()}>
             <h3 className={styles.renameTitle}>{t("sendBar.importConfirmTitle")}</h3>
             <p className={styles.importInfo}>
-              {t("sendBar.importName")}: {importData.name}<br/>
+              {t("sendBar.importName")}: {importData.name}<br />
               {t("sendBar.importRules")}: {importData.rules.length}
             </p>
             <div className={styles.renameBtns}>
-              <button className={`${styles.renameCancelBtn} liquid-glass-button`}
-                onClick={() => { setImportOpen(false); setImportData(null); }}>
+              <button className={`${styles.renameCancelBtn} liquid-glass-button`} onClick={() => { setImportOpen(false); setImportData(null); }}>
                 {t("sendBar.cancel")}
               </button>
-              <button className={`${styles.renameSaveBtn} liquid-glass-button`} onClick={handleImportAppend}>
+              <button className={`${styles.renameSaveBtn} liquid-glass-button`} onClick={() => { void handleImportAppend(); }}>
                 {t("sendBar.importAppend")}
               </button>
-              <button className={`${styles.renameSaveBtn} liquid-primary-button`} onClick={handleImportOverwrite}>
+              <button className={`${styles.renameSaveBtn} liquid-primary-button`} onClick={() => { void handleImportOverwrite(); }} disabled={!activeConfig}>
                 {t("sendBar.importOverwrite")}
               </button>
             </div>
           </div>
         </div>,
-        document.body
+        document.body,
       )}
+
+      <ConfirmDialog
+        open={configDeleteConfirm && !runtimeLocked}
+        title={t("sendBar.confirmDeleteHint")}
+        message={activeConfig?.name}
+        intent="danger"
+        size="compact"
+        onConfirm={handleDeleteConfig}
+        onCancel={() => setConfigDeleteConfirm(false)}
+      />
+      <ConfirmDialog
+        open={deleteConfirmId !== null && !runtimeLocked}
+        title={t("commandPanel.confirmDelete")}
+        message={deletingRule?.label?.trim() || (deletingRule?.triggerType === "timer" ? `${deletingRule.timerIntervalMs}ms` : deletingRule?.conditions[0]?.pattern)}
+        intent="danger"
+        size="compact"
+        onConfirm={confirmDeleteRule}
+        onCancel={() => setDeleteConfirmId(null)}
+      />
     </div>
   );
 }

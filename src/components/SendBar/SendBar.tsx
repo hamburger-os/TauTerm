@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { SendBarProvider, useSendBar } from "./SendBarContext";
@@ -7,65 +7,55 @@ import CommandPanel from "./CommandPanel";
 import AutoReplyPanel from "./AutoReplyPanel";
 import ScriptEditor from "./ScriptEditor";
 import TargetBar from "./TargetBar";
+import { useNetworkSendTargetSync } from "./useNetworkSendTargetSync";
 import Icon from "../common/Icon";
 import type { IconName } from "../common/Icon";
 import type { SendBarMode } from "./types";
 import styles from "./SendBar.module.css";
 
 interface SendBarProps {
-  /** 容器会话 ID（目标路由与目标栏用；网络调试为容器，普通会话为标签页） */
+  /** 当前发送栏所属会话 ID，也是脚本/自动应答运行时的绑定 ID。 */
   containerId: string;
-  /** 脚本/自动应答引擎绑定的会话 ID（TCP 网络为选中对端；缺省等于 containerId） */
-  engineSessionId?: string;
 }
 
 /**
- * 发送栏容器组件
+ * 发送栏容器组件。
  *
- * - 左侧竖向模式切换器：基本发送 / 指令面板 / 自动应答 / 脚本编辑器
- * - 内容区：四个子视图始终挂载，通过 CSS display 切换可见性
- * - 高度由 App.tsx 通过 CSS 控制（支持拖拽调整）
- * - 状态由 SendBarContext 管理，切换视图时不会丢失输入数据
+ * 每个会话保留自己的 SendBarProvider，从而保留草稿、选择与执行所有权；四个模式不再全部常驻 DOM，
+ * 仅挂载当前模式。工程资产仍通过 AssetStore 跨会话共享。
  */
-export default function SendBar({ containerId, engineSessionId }: SendBarProps) {
+export default function SendBar({ containerId }: SendBarProps) {
   return (
     <SendBarProvider>
-      <SendBarInner containerId={containerId} engineSessionId={engineSessionId} />
+      <SendBarInner containerId={containerId} />
     </SendBarProvider>
   );
 }
 
-function SendBarInner({ containerId, engineSessionId }: SendBarProps) {
+function SendBarInner({ containerId }: SendBarProps) {
   const { t } = useTranslation();
   const { state, dispatch } = useSendBar();
-  const { mode } = state;
+  const { mode, executionMode } = state;
 
-  // 引擎绑定会话：TCP 网络为选中对端，其余为容器
-  const engineId = engineSessionId ?? containerId;
-
-  const [isChildRunning, setIsChildRunning] = useState(false);
+  useNetworkSendTargetSync(containerId);
 
   const handleModeChange = useCallback((newMode: SendBarMode) => {
-    if (isChildRunning) return;
+    if (executionMode !== null) return;
     dispatch({ type: "SET_MODE", mode: newMode });
-  }, [isChildRunning, dispatch]);
+  }, [executionMode, dispatch]);
 
-  const handleSendingChange = useCallback((sending: boolean) => {
-    setIsChildRunning(sending);
-  }, []);
-
-  const handleRunningChange = useCallback((running: boolean) => {
-    setIsChildRunning(running);
-  }, []);
+  const handleExecutionChange = useCallback((owner: SendBarMode, running: boolean) => {
+    dispatch({ type: "SET_EXECUTION_MODE", owner, running });
+  }, [dispatch]);
 
   // ── 共享脚本日志：始终监听 script-log，不依赖面板焦点 ──
   useEffect(() => {
     const unlisten = listen<{ session_id?: string; message: string }>("script-log", (event) => {
-      if (event.payload.session_id && event.payload.session_id !== engineId) return;
+      if (event.payload.session_id && event.payload.session_id !== containerId) return;
       dispatch({ type: "APPEND_SCRIPT_LOG", message: event.payload.message });
     });
     return () => { unlisten.then(fn => fn()); };
-  }, [engineId, dispatch]);
+  }, [containerId, dispatch]);
 
   const modeButtons: { mode: SendBarMode; icon: IconName; title: string }[] = [
     { mode: "basic", icon: "send", title: t("sendBar.basicMode") },
@@ -76,56 +66,61 @@ function SendBarInner({ containerId, engineSessionId }: SendBarProps) {
 
   return (
     <div className={styles.container}>
-      {/* 发送目标栏 — 网络调试（TCP server / UDP server）跨四模式共享，其余返回 null */}
       <TargetBar containerId={containerId} />
 
-      {/* 主体：保留原有左侧竖排四模式布局；外壳仍与左右侧栏共用同一 Structural Panel。 */}
       <div className={`${styles.body} liquid-glass-panel`}>
         <div className={styles.modeSwitcher}>
-          {modeButtons.map((btn) => (
+          {modeButtons.map(btn => (
             <button
               key={btn.mode}
               className={`${styles.modeBtn} liquid-glass-button ${mode === btn.mode ? "liquid-theme-selected" : ""}`}
               onClick={() => handleModeChange(btn.mode)}
-              disabled={isChildRunning}
+              disabled={executionMode !== null}
               aria-pressed={mode === btn.mode}
-              title={isChildRunning ? t("sendBar.modeLocked") : btn.title}
+              title={executionMode !== null ? t("sendBar.modeLocked") : btn.title}
             >
               <Icon name={btn.icon} size="md" />
             </button>
           ))}
         </div>
 
-        {/* 内容区 — 四个视图始终挂载，CSS 显隐切换 */}
         <div className={styles.content}>
-          <div className={mode === "basic" ? styles.wrapperVisible : styles.wrapperHidden}>
-            <BasicSend
-              sessionId={containerId}
-              isActive={mode === "basic"}
-              onSendingChange={handleSendingChange}
-            />
-          </div>
-          <div className={mode === "command" ? styles.wrapperVisible : styles.wrapperHidden}>
-            <CommandPanel
-              sessionId={containerId}
-              isActive={mode === "command"}
-              onRunningChange={handleRunningChange}
-            />
-          </div>
-          <div className={mode === "auto-reply" ? styles.wrapperVisible : styles.wrapperHidden}>
-            <AutoReplyPanel
-              sessionId={engineId}
-              isActive={mode === "auto-reply"}
-              onRunningChange={handleRunningChange}
-            />
-          </div>
-          <div className={mode === "script" ? styles.wrapperVisible : styles.wrapperHidden}>
-            <ScriptEditor
-              sessionId={engineId}
-              isActive={mode === "script"}
-              onRunningChange={handleRunningChange}
-            />
-          </div>
+          {mode === "basic" && (
+            <div className={styles.wrapperVisible}>
+              <BasicSend
+                sessionId={containerId}
+                isActive
+                onSendingChange={running => handleExecutionChange("basic", running)}
+              />
+            </div>
+          )}
+          {mode === "command" && (
+            <div className={styles.wrapperVisible}>
+              <CommandPanel
+                sessionId={containerId}
+                isActive
+                onRunningChange={running => handleExecutionChange("command", running)}
+              />
+            </div>
+          )}
+          {mode === "auto-reply" && (
+            <div className={styles.wrapperVisible}>
+              <AutoReplyPanel
+                sessionId={containerId}
+                isActive
+                onRunningChange={running => handleExecutionChange("auto-reply", running)}
+              />
+            </div>
+          )}
+          {mode === "script" && (
+            <div className={styles.wrapperVisible}>
+              <ScriptEditor
+                sessionId={containerId}
+                isActive
+                onRunningChange={running => handleExecutionChange("script", running)}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

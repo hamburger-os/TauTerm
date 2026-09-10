@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CommandItem } from "./types";
 
 interface UseCommandRunnerOptions {
@@ -8,13 +8,12 @@ interface UseCommandRunnerOptions {
 interface UseCommandRunner {
   isRunning: boolean;
   currentIndex: number | null;
-  /** Loop progress. null when not running. current=0-based, total=-1 for infinite */
+  /** Loop progress. null when not running. current=0-based, total=-1 for infinite. */
   loopProgress: { current: number; total: number } | null;
   start: (commands: CommandItem[], loopCount: number) => void;
   stop: () => void;
 }
 
-/** 延迟函数 */
 function sleep(ms: number): { promise: Promise<void>; cancel: () => void } {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let rejectFn: ((reason?: unknown) => void) | null = null;
@@ -25,80 +24,98 @@ function sleep(ms: number): { promise: Promise<void>; cancel: () => void } {
   return {
     promise,
     cancel: () => {
-      if (timer) { clearTimeout(timer); timer = null; }
-      if (rejectFn) rejectFn(new Error("CANCELLED"));
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      if (rejectFn) {
+        rejectFn(new Error("CANCELLED"));
+        rejectFn = null;
+      }
     },
   };
 }
 
 /**
- * 命令执行引擎 Hook
- *
- * 管理命令队列的逐条执行，支持单次/循环模式，
- * 每条命令独立延时，支持中途停止。
+ * 串行命令执行器。内部立即用 ref 抢占运行权，避免快速双击在 React state 刷新前
+ * 启动两条并发执行链。停止时先取消后续工作；若当前底层 send 尚未返回，则保持
+ * running 状态直到该调用真正结束，避免用户立即重启形成两条发送链。
  */
 export default function useCommandRunner({ onSend }: UseCommandRunnerOptions): UseCommandRunner {
   const [isRunning, setIsRunning] = useState(false);
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
   const [loopProgress, setLoopProgress] = useState<{ current: number; total: number } | null>(null);
 
+  const mountedRef = useRef(true);
+  const runningRef = useRef(false);
   const stopFlagRef = useRef(false);
   const cancelSleepRef = useRef<(() => void) | null>(null);
 
-  // 组件卸载时清理
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
       stopFlagRef.current = true;
       cancelSleepRef.current?.();
-      setIsRunning(false);
-      setCurrentIndex(null);
-      setLoopProgress(null);
+      cancelSleepRef.current = null;
     };
   }, []);
 
   const stop = useCallback(() => {
     stopFlagRef.current = true;
     cancelSleepRef.current?.();
-    setIsRunning(false);
-    setCurrentIndex(null);
-    setLoopProgress(null);
+    cancelSleepRef.current = null;
+    // Do not clear runningRef/isRunning here. A send already in flight cannot be cancelled by this
+    // hook, so the execution remains locked until the async chain reaches finally.
   }, []);
 
   const start = useCallback(async (commands: CommandItem[], loopCount: number) => {
-    if (commands.length === 0) return;
+    if (commands.length === 0 || runningRef.current) return;
 
+    runningRef.current = true;
     stopFlagRef.current = false;
-    setIsRunning(true);
-    const maxLoops = loopCount === 0 ? Infinity : loopCount;
+    if (mountedRef.current) setIsRunning(true);
+    const maxLoops = loopCount === 0 ? Infinity : Math.max(1, loopCount);
 
     try {
       let loopIndex = 0;
-      while (loopIndex < maxLoops) {
-        for (let i = 0; i < commands.length; i++) {
+      while (loopIndex < maxLoops && !stopFlagRef.current) {
+        for (let index = 0; index < commands.length; index++) {
           if (stopFlagRef.current) break;
-          setCurrentIndex(i);
-          setLoopProgress({ current: loopIndex, total: loopCount === 0 ? -1 : loopCount });
-          await onSend(commands[i]);
+          if (mountedRef.current) {
+            setCurrentIndex(index);
+            setLoopProgress({ current: loopIndex, total: loopCount === 0 ? -1 : loopCount });
+          }
+
+          await onSend(commands[index]);
           if (stopFlagRef.current) break;
 
-          // Apply delay (skip last command of last loop)
-          const isLastCmdOfLastLoop = loopIndex === maxLoops - 1 && i === commands.length - 1;
-          const delay = Math.max(0, commands[i].delay);
-          if (delay > 0 && !isLastCmdOfLastLoop) {
-            const s = sleep(delay);
-            cancelSleepRef.current = s.cancel;
-            try { await s.promise; } catch { break; }
+          const isLastCommandOfLastLoop = loopIndex === maxLoops - 1 && index === commands.length - 1;
+          const delay = Math.max(0, commands[index].delay);
+          if (delay > 0 && !isLastCommandOfLastLoop) {
+            const wait = sleep(delay);
+            cancelSleepRef.current = wait.cancel;
+            try {
+              await wait.promise;
+            } catch {
+              break;
+            } finally {
+              if (cancelSleepRef.current === wait.cancel) cancelSleepRef.current = null;
+            }
           }
         }
-        if (stopFlagRef.current) break;
-        loopIndex++;
+        if (!stopFlagRef.current) loopIndex += 1;
       }
     } catch {
-      // 发送失败时停止
+      // onSend owns user-facing error reporting; an error terminates this execution chain.
     } finally {
-      setIsRunning(false);
-      setCurrentIndex(null);
-      setLoopProgress(null);
+      runningRef.current = false;
+      cancelSleepRef.current = null;
+      if (mountedRef.current) {
+        setIsRunning(false);
+        setCurrentIndex(null);
+        setLoopProgress(null);
+      }
     }
   }, [onSend]);
 

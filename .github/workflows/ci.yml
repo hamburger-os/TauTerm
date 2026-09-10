@@ -190,6 +190,9 @@ jobs:
       - name: Engineering tool correctness contract
         run: npm run check:engineering-tools
 
+      - name: SendBar payload and architecture contract
+        run: npm run check:sendbar
+
       - name: File-transfer lifecycle and responsive UI contract
         run: npm run check:file-transfer
 
