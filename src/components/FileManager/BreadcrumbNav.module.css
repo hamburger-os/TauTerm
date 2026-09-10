@@ -39,8 +39,5 @@
 .current {
   font-weight: 700;
   color: var(--text-primary);
-}
-
-.current {
   cursor: default;
 }
