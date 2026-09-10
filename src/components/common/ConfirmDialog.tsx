@@ -42,10 +42,20 @@ export default function ConfirmDialog({
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const onCancelRef = useRef(onCancel);
+  const busyRef = useRef(busy);
   const reducedMotion = useReducedMotion();
   const id = useId().replace(/:/g, "");
   const titleId = `confirm-dialog-title-${id}`;
   const messageId = `confirm-dialog-message-${id}`;
+
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
+
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
 
   useEffect(() => {
     if (!open) return;
@@ -55,35 +65,41 @@ export default function ConfirmDialog({
 
     const frame = requestAnimationFrame(() => {
       dialogRef.current
-        ?.querySelector<HTMLButtonElement>('[data-action="cancel"]')
+        ?.querySelector<HTMLButtonElement>('[data-action="cancel"]:not(:disabled)')
         ?.focus();
     });
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) {
+      if (event.key === "Escape" && !busyRef.current) {
         event.preventDefault();
         event.stopPropagation();
-        onCancel();
+        onCancelRef.current();
         return;
       }
       if (event.key !== "Tab") return;
 
+      const dialog = dialogRef.current;
       const focusable = Array.from(
-        dialogRef.current?.querySelectorAll<HTMLElement>(
+        dialog?.querySelectorAll<HTMLElement>(
           'button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
         ) ?? [],
       );
       if (focusable.length === 0) {
         event.preventDefault();
+        dialog?.focus();
         return;
       }
 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+      if (!dialog?.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
+      } else if (!event.shiftKey && active === last) {
         event.preventDefault();
         first.focus();
       }
@@ -94,11 +110,28 @@ export default function ConfirmDialog({
       cancelAnimationFrame(frame);
       document.removeEventListener("keydown", onKeyDown, true);
       const previous = previouslyFocusedRef.current;
+      previouslyFocusedRef.current = null;
       requestAnimationFrame(() => {
         if (previous?.isConnected) previous.focus();
       });
     };
-  }, [busy, onCancel, open]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      if (busy) {
+        dialogRef.current?.focus();
+        return;
+      }
+      if (document.activeElement === dialogRef.current) {
+        dialogRef.current
+          ?.querySelector<HTMLButtonElement>('[data-action="cancel"]:not(:disabled)')
+          ?.focus();
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [busy, open]);
 
   return createPortal(
     <AnimatePresence>
@@ -118,8 +151,10 @@ export default function ConfirmDialog({
             className={`${styles.dialog} ${size === "compact" ? styles.compact : ""} liquid-glass`}
             role="alertdialog"
             aria-modal="true"
+            aria-busy={busy || undefined}
             aria-labelledby={titleId}
             aria-describedby={message ? messageId : undefined}
+            tabIndex={-1}
             initial={reducedMotion ? false : { opacity: 0, scale: 0.97, y: 6 }}
             animate={reducedMotion ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
             exit={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.97, y: 6 }}
