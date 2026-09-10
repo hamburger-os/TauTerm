@@ -160,7 +160,7 @@ export default function FileList({
         : undefined}
       onFocus={() => setActiveIndex(index)}
       onKeyDown={(e) => handleNavigationKey(index, e)}
-      onClick={(e) => onEntryClick(entry, index, e.ctrlKey, e.shiftKey)}
+      onClick={(additiveKey, shiftKey) => onEntryClick(entry, index, additiveKey, shiftKey)}
       onDoubleClick={() => onEntryDoubleClick(entry)}
       onContextMenu={(e) => {
         e.preventDefault();
