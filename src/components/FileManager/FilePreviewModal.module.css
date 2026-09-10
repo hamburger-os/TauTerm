@@ -36,9 +36,9 @@
 }
 
 .closeBtn {
-  font-size: var(--text-md);
-  cursor: pointer;
-  padding: 4px 8px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   flex-shrink: 0;
 }
 
@@ -114,20 +114,6 @@
 
 .modeGroup {
   display: inline-flex;
-  gap: 4px;
-}
-
-.modeButton {
-  min-width: 54px;
-  height: 30px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-sm);
-}
-
-.modeButtonActive {
-  background: var(--accent-primary-muted);
-  color: var(--text-primary);
 }
 
 .encodingControl {
