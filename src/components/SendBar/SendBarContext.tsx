@@ -8,6 +8,8 @@ import { ASSET_KEYS, loadAsset, persistAsset, subscribeAsset } from "./assetStor
 
 export interface SendBarState {
   mode: SendBarMode;
+  /** 当前占有发送栏执行权的模式；从启动请求发出到停止/失败完成期间保持锁定。 */
+  executionMode: SendBarMode | null;
   basic: {
     inputText: string;
     newlineMode: NewlineMode;
@@ -55,6 +57,7 @@ function buildInitialState(): SendBarState {
   const active = autoReplyConfigs.find(config => config.name === activeConfigName);
   return {
     mode: "basic",
+    executionMode: null,
     basic: initialBasicState(),
     command: {
       activeConfigName: "",
@@ -82,6 +85,7 @@ function buildInitialState(): SendBarState {
 
 export type SendBarAction =
   | { type: "SET_MODE"; mode: SendBarMode }
+  | { type: "SET_EXECUTION_MODE"; owner: SendBarMode; running: boolean }
   // Basic
   | { type: "SET_INPUT_TEXT"; text: string }
   | { type: "SET_NEWLINE_MODE"; mode: NewlineMode }
@@ -115,6 +119,9 @@ function sendBarReducer(state: SendBarState, action: SendBarAction): SendBarStat
   switch (action.type) {
     case "SET_MODE":
       return { ...state, mode: action.mode };
+    case "SET_EXECUTION_MODE":
+      if (action.running) return { ...state, executionMode: action.owner };
+      return state.executionMode === action.owner ? { ...state, executionMode: null } : state;
 
     // Basic
     case "SET_INPUT_TEXT":
@@ -277,7 +284,7 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  // Asset definitions are global; active selections and editor drafts are session-local.
+  // Asset definitions are global; active selections, drafts and execution ownership are session-local.
   useEffect(() => {
     const unsubscribeConfigs = subscribeAsset<AutoReplyConfig[]>(
       ASSET_KEYS.autoReplyConfigs,
@@ -286,9 +293,9 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
         const current = stateRef.current.autoReply;
         dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs });
 
-        // The engine is executing a generated snapshot. Shared edits may update the asset catalog,
-        // but the visible/active runtime selection stays frozen until SET_AUTO_REPLY_RUNNING(false).
-        if (current.isRunning) return;
+        // From the first start request until stop/failure finishes, the session executes one immutable
+        // snapshot. Shared edits may refresh the catalog, but cannot change the active runtime view.
+        if (stateRef.current.executionMode === "auto-reply" || current.isRunning) return;
 
         const activeName = configs.some(config => config.name === current.activeConfigName)
           ? current.activeConfigName
@@ -317,9 +324,7 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
 
         dispatch({ type: "SET_SCRIPTS", scripts });
 
-        // As with auto-reply, an executing script is an immutable snapshot. Reconcile deletion only
-        // after the engine stops so the UI cannot contradict the running code.
-        if (current.isRunning) return;
+        if (stateRef.current.executionMode === "script" || current.isRunning) return;
 
         if (current.activeScriptId && !nextActive) {
           dispatch({ type: "SET_ACTIVE_SCRIPT", id: null });
