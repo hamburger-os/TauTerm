@@ -30,6 +30,7 @@ export interface SendBarState {
   script: {
     scripts: ScriptRecord[];
     activeScriptId: string | null;
+    /** Per-session editor draft. Shared asset updates must never overwrite it implicitly. */
     code: string;
     isRunning: boolean;
   };
@@ -37,16 +38,14 @@ export interface SendBarState {
   scriptLogs: string[];
 }
 
-const initialBasicState = (): SendBarState["basic"] => {
-  return {
-    inputText: "",
-    newlineMode: "crlf",
-    sendMode: "text",
-    repeatEnabled: false,
-    repeatInterval: 1000,
-    sendHistory: [],
-  };
-};
+const initialBasicState = (): SendBarState["basic"] => ({
+  inputText: "",
+  newlineMode: "crlf",
+  sendMode: "text",
+  repeatEnabled: false,
+  repeatInterval: 1000,
+  sendHistory: [],
+});
 
 function buildInitialState(): SendBarState {
   const autoReplyConfigs = [...BUILTIN_CONFIGS];
@@ -116,19 +115,14 @@ function sendBarReducer(state: SendBarState, action: SendBarAction): SendBarStat
     // Basic
     case "SET_INPUT_TEXT":
       return { ...state, basic: { ...state.basic, inputText: action.text } };
-
     case "SET_NEWLINE_MODE":
       return { ...state, basic: { ...state.basic, newlineMode: action.mode } };
-
     case "SET_SEND_MODE":
       return { ...state, basic: { ...state.basic, sendMode: action.mode } };
-
     case "SET_REPEAT_ENABLED":
       return { ...state, basic: { ...state.basic, repeatEnabled: action.enabled } };
-
     case "SET_REPEAT_INTERVAL":
       return { ...state, basic: { ...state.basic, repeatInterval: action.ms } };
-
     case "ADD_SEND_HISTORY": {
       const entry = action.entry;
       const next = [entry, ...state.basic.sendHistory.filter(h => h !== entry)];
@@ -137,56 +131,42 @@ function sendBarReducer(state: SendBarState, action: SendBarAction): SendBarStat
         basic: { ...state.basic, sendHistory: next.slice(0, 50) },
       };
     }
-
     case "RESET_BASIC":
       return { ...state, basic: initialBasicState() };
 
     // Command
     case "TOGGLE_COMMAND_SELECT": {
       const next = new Set(state.command.selectedIds);
-      if (next.has(action.id)) {
-        next.delete(action.id);
-      } else {
-        next.add(action.id);
-      }
+      if (next.has(action.id)) next.delete(action.id);
+      else next.add(action.id);
       return { ...state, command: { ...state.command, selectedIds: next } };
     }
-
     case "CLEAR_COMMAND_SELECTION":
       return { ...state, command: { ...state.command, selectedIds: new Set<string>() } };
-
     case "SELECT_ALL_COMMANDS":
       return { ...state, command: { ...state.command, selectedIds: new Set(action.ids) } };
-
     case "SET_LOOP_COUNT":
       return { ...state, command: { ...state.command, loopCount: action.count } };
 
     // AutoReply
     case "SET_AUTO_REPLY_CONFIGS":
       return { ...state, autoReply: { ...state.autoReply, configs: action.configs } };
-
     case "SET_ACTIVE_AUTO_REPLY_CONFIG":
       return { ...state, autoReply: { ...state.autoReply, activeConfigName: action.name } };
-
     case "SET_AUTO_REPLY_RULES":
       return { ...state, autoReply: { ...state.autoReply, rules: action.rules } };
-
     case "SET_AUTO_REPLY_RUNNING":
       return { ...state, autoReply: { ...state.autoReply, isRunning: action.running } };
-
     case "SET_MATCH_STRATEGY":
       return { ...state, autoReply: { ...state.autoReply, matchStrategy: action.strategy } };
 
     // Script
     case "SET_SCRIPTS":
       return { ...state, script: { ...state.script, scripts: action.scripts } };
-
     case "SET_ACTIVE_SCRIPT":
       return { ...state, script: { ...state.script, activeScriptId: action.id } };
-
     case "SET_SCRIPT_CODE":
       return { ...state, script: { ...state.script, code: action.code } };
-
     case "SET_SCRIPT_RUNNING":
       return { ...state, script: { ...state.script, isRunning: action.running } };
 
@@ -196,10 +176,8 @@ function sendBarReducer(state: SendBarState, action: SendBarAction): SendBarStat
         ...state,
         scriptLogs: [...state.scriptLogs.slice(-499), action.message],
       };
-
     case "CLEAR_SCRIPT_LOGS":
       return { ...state, scriptLogs: [] };
-
     default:
       return state;
   }
@@ -261,88 +239,58 @@ export function SendBarProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_ACTIVE_SCRIPT", id: activeScriptId });
       dispatch({ type: "SET_SCRIPT_CODE", code: activeCode });
 
-      // Built-in examples are assets too. Persist the merged canonical view once so later
-      // components can update it without browser-local fallback state.
-      persistAsset(ASSET_KEYS.autoReplyConfigs, autoReplyConfigs);
-      persistAsset(ASSET_KEYS.activeAutoReplyConfig, activeConfigName);
-      persistAsset(ASSET_KEYS.scripts, scripts);
-      if (activeScriptId) {
-        persistAsset(ASSET_KEYS.activeScriptId, activeScriptId);
-      }
+      // Built-in definitions are global engineering assets. Persist only the canonical asset data.
+      void persistAsset(ASSET_KEYS.autoReplyConfigs, autoReplyConfigs);
+      void persistAsset(ASSET_KEYS.scripts, scripts);
     }).catch(() => {
-      // Built-ins remain fully usable if the persistent store is temporarily unavailable.
+      // Built-ins remain usable if the persistent store is temporarily unavailable.
     });
 
     return () => { cancelled = true; };
   }, []);
 
-  // Engineering asset definitions are global within the current WebView even though each Session
-  // keeps its own SendBar runtime/UI state. Subscribe every per-session provider to the shared
-  // asset cache so an edit in one Session cannot leave another mounted SendBar with a stale copy
-  // that later overwrites the durable global asset.
+  // Asset definitions are global; active selections and editor drafts are session-local.
+  // A save from another tab may refresh the shared asset list, but it must not overwrite a
+  // different tab's current script draft or force that tab to follow another active selection.
   useEffect(() => {
     const unsubscribeConfigs = subscribeAsset<AutoReplyConfig[]>(
       ASSET_KEYS.autoReplyConfigs,
       value => {
         const configs = Array.isArray(value) && value.length > 0 ? value : [...BUILTIN_CONFIGS];
-        const currentActive = stateRef.current.autoReply.activeConfigName;
-        const activeName = configs.some(config => config.name === currentActive)
-          ? currentActive
+        const current = stateRef.current.autoReply;
+        const activeName = configs.some(config => config.name === current.activeConfigName)
+          ? current.activeConfigName
           : configs[0]?.name ?? "";
         const active = configs.find(config => config.name === activeName);
+
         dispatch({ type: "SET_AUTO_REPLY_CONFIGS", configs });
-        dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeName });
-        dispatch({ type: "SET_AUTO_REPLY_RULES", rules: active?.rules ?? [] });
-        dispatch({ type: "SET_MATCH_STRATEGY", strategy: active?.matchStrategy ?? "all" });
+        if (activeName !== current.activeConfigName) {
+          dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeName });
+          dispatch({ type: "SET_AUTO_REPLY_RULES", rules: active?.rules ?? [] });
+          dispatch({ type: "SET_MATCH_STRATEGY", strategy: active?.matchStrategy ?? "all" });
+        }
       },
     );
-    const unsubscribeActiveConfig = subscribeAsset<string>(
-      ASSET_KEYS.activeAutoReplyConfig,
-      value => {
-        const configs = stateRef.current.autoReply.configs;
-        const activeName = value && configs.some(config => config.name === value)
-          ? value
-          : configs[0]?.name ?? "";
-        const active = configs.find(config => config.name === activeName);
-        dispatch({ type: "SET_ACTIVE_AUTO_REPLY_CONFIG", name: activeName });
-        dispatch({ type: "SET_AUTO_REPLY_RULES", rules: active?.rules ?? [] });
-        dispatch({ type: "SET_MATCH_STRATEGY", strategy: active?.matchStrategy ?? "all" });
-      },
-    );
+
     const unsubscribeScripts = subscribeAsset<ScriptRecord[]>(
       ASSET_KEYS.scripts,
       value => {
         const scripts = Array.isArray(value) && value.length > 0 ? value : [...BUILTIN_SCRIPTS];
-        const currentActive = stateRef.current.script.activeScriptId;
-        const activeId = currentActive && scripts.some(script => script.id === currentActive)
-          ? currentActive
-          : null;
+        const current = stateRef.current.script;
         dispatch({ type: "SET_SCRIPTS", scripts });
-        dispatch({ type: "SET_ACTIVE_SCRIPT", id: activeId });
-        dispatch({
-          type: "SET_SCRIPT_CODE",
-          code: scripts.find(script => script.id === activeId)?.code ?? "",
-        });
-      },
-    );
-    const unsubscribeActiveScript = subscribeAsset<string>(
-      ASSET_KEYS.activeScriptId,
-      value => {
-        const scripts = stateRef.current.script.scripts;
-        const activeId = value && scripts.some(script => script.id === value) ? value : null;
-        dispatch({ type: "SET_ACTIVE_SCRIPT", id: activeId });
-        dispatch({
-          type: "SET_SCRIPT_CODE",
-          code: scripts.find(script => script.id === activeId)?.code ?? "",
-        });
+
+        // Preserve the local editor draft while the selected script still exists. Only clear the
+        // selection when another session actually removed that asset.
+        if (current.activeScriptId && !scripts.some(script => script.id === current.activeScriptId)) {
+          dispatch({ type: "SET_ACTIVE_SCRIPT", id: null });
+          dispatch({ type: "SET_SCRIPT_CODE", code: "" });
+        }
       },
     );
 
     return () => {
       unsubscribeConfigs();
-      unsubscribeActiveConfig();
       unsubscribeScripts();
-      unsubscribeActiveScript();
     };
   }, []);
 
