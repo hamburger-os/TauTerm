@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  isManagedTransferTerminalPhase,
   useTransfer,
   type ManagedTransferPhase,
   type ManagedTransferTask,
@@ -28,7 +29,7 @@ export interface TransferProgressState {
 const SUCCESS_AUTO_HIDE_MS = 5000;
 
 export function isTransferTerminalPhase(phase: TransferPhase): boolean {
-  return phase === "completed" || phase === "failed" || phase === "cancelled";
+  return isManagedTransferTerminalPhase(phase);
 }
 
 function initialProgressState(): TransferProgressState {
@@ -81,12 +82,12 @@ function toProgress(task: ManagedTransferTask, error: string | null): TransferPr
 /**
  * 文件管理器的紧凑传输投影。
  *
- * 后端 started/progress/finished 只由顶层 TransferContext 监听一次；这里不再拥有
- * 第二套 transfer_id/终态状态机，只负责可见性、成功自动收起和悬停暂停。
+ * 后端 started/progress/finished 只由顶层 TransferContext 监听一次；这里仅选择当前
+ * Session 最新的 SFTP 任务，并负责可见性、成功自动收起和悬停暂停。
  */
 export function useSftpProgress(sessionId: string) {
-  const { state, cancelTask, dismissTask } = useTransfer();
-  const task = state.tasksBySession[sessionId];
+  const { getTaskForSession, cancelTask, dismissTask } = useTransfer();
+  const task = getTaskForSession(sessionId);
   const sftpTask = task?.protocol === "sftp" ? task : undefined;
   const [visible, setVisible] = useState(false);
   const [dismissedTransferId, setDismissedTransferId] = useState<string | null>(null);
@@ -118,8 +119,6 @@ export function useSftpProgress(sessionId: string) {
       autoHideRemainingRef.current = 0;
       setDismissedTransferId(transferId);
       setVisible(false);
-      // Successful cards are not only hidden locally: remove the exact finished
-      // snapshot so reopening/remounting the right sidebar cannot resurrect it.
       dismissTask(sessionId, transferId);
     }, delay);
   }, [clearAutoHideTimer, dismissTask, sessionId]);
@@ -140,9 +139,6 @@ export function useSftpProgress(sessionId: string) {
       autoHideTransferIdRef.current = sftpTask.transferId;
       autoHideDeadlineRef.current = null;
       autoHideRemainingRef.current = SUCCESS_AUTO_HIDE_MS;
-      // A previous card can disappear while hovered (for example by pressing its
-      // close button), in which case the browser need not dispatch mouseleave.
-      // Do not let that stale hover state suppress auto-hide for the next task.
       hoveredRef.current = false;
     }
 
