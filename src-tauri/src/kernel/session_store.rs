@@ -243,7 +243,7 @@ pub struct ActiveSessionHandle {
     pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
     /// Session 级传输调度器：统一拥有 Inline/SideChannel 的准入、任务 ID 与取消信号。
     pub transfer_scheduler: TransferScheduler,
-    /// 侧通道异步传输任务的 JoinHandle 集合。
+    /// 后台文件传输任务（Inline / SideChannel）的 JoinHandle 集合。
     /// 关闭会话时 join 所有 handle，确保传输 task 的 Drop 清理逻辑执行完毕，
     /// 避免残留半成品文件（上传残留远端，下载残留本地）。
     pub transfer_tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -935,7 +935,7 @@ impl SessionStore {
             None => {}
         }
 
-        // ── 等待进行中的侧通道传输完成 ──
+        // ── 等待进行中的后台文件传输任务完成 ──
         // 采用 mark_disconnected 中已验证的模式：drain handles 后在独立 task 中
         // 以超时方式 join，避免持锁阻塞（传输 task 完成时需要 session_store 锁来
         // 调用 transfer_done，若此处持锁 block_on 会形成循环死锁）。

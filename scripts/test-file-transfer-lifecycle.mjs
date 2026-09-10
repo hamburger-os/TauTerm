@@ -133,7 +133,10 @@ assert.match(scheduler, /pub fn with_max_active/);
 assert.match(scheduler, /pub fn active_count/);
 assert.match(scheduler, /self\.active\.len\(\) >= self\.max_active/);
 assert.match(scheduler, /存在多个传输任务，请指定 transfer_id/);
-assert.match(scheduler, /bounded_map_model_supports_future_multi_task_policy/);
+assert.match(scheduler, /fn has_inline_transfer/);
+assert.match(scheduler, /bounded_map_model_supports_future_side_channel_concurrency/);
+assert.match(scheduler, /inline_is_exclusive_even_when_side_channel_limit_is_higher/);
+assert.match(scheduler, /side_channel_cannot_start_while_inline_owns_session_io/);
 
 const sessionStore = await source("src-tauri/src/kernel/session_store.rs");
 assert.match(sessionStore, /pub transfer_scheduler:\s*TransferScheduler/);
@@ -172,6 +175,11 @@ assert.match(
   orchestrator,
   /return_port[\s\S]*emit_transfer_finished/,
   "Inline resources must be returned before terminal event is emitted",
+);
+assert.match(
+  orchestrator,
+  /handle\.state != SessionState::Disconnected[\s\S]{0,120}handle\.state = SessionState::Connected/,
+  "Inline cleanup must never resurrect a Session that was disconnected while a background transfer was finishing",
 );
 assert.doesNotMatch(orchestrator, /emit_transfer_failed/);
 assert.doesNotMatch(orchestrator, /active_transfer_id|cancel_transfer_tx/);

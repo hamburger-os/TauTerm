@@ -135,13 +135,15 @@ pub fn spawn_progress_broadcaster(
     })
 }
 
-fn restore_session_state(app: &AppHandle, session_id: &str) {
+fn restore_session_state(app: &AppHandle, session_id: &str, transfer_id: &str) {
     if let Some(state) = app.try_state::<AppState>() {
         if let Ok(mut store) = state.session_store.lock() {
             if let Some(handle) = store.get_session_mut(session_id) {
-                handle.state = SessionState::Connected;
+                let _ = handle.transfer_scheduler.finish(Some(transfer_id));
                 handle.channel_return_tx = None;
-                let _ = handle.transfer_scheduler.finish(None);
+                if handle.state != SessionState::Disconnected {
+                    handle.state = SessionState::Connected;
+                }
             }
         }
     }
@@ -300,19 +302,19 @@ impl InlineTransferOrchestrator {
         }
 
         let mut channel = give_rx.recv().map_err(|error| {
-            restore_session_state(app, session_id);
+            restore_session_state(app, session_id, transfer_id);
             format!("无法从 I/O 线程获取 Channel: {}", error)
         })?;
 
         let port_box = channel.try_handoff().ok_or_else(|| {
-            restore_session_state(app, session_id);
+            restore_session_state(app, session_id, transfer_id);
             "Channel 不支持端口移交".to_string()
         })?;
 
         let port = port_box
             .downcast::<Box<dyn serialport::SerialPort>>()
             .map_err(|_| {
-                restore_session_state(app, session_id);
+                restore_session_state(app, session_id, transfer_id);
                 "端口类型转换失败".to_string()
             })?;
         drop(channel);
@@ -330,7 +332,9 @@ impl InlineTransferOrchestrator {
             if let Ok(mut store) = app_state.session_store.lock() {
                 if let Some(handle) = store.get_session_mut(session_id) {
                     let _ = handle.transfer_scheduler.finish(Some(transfer_id));
-                    handle.state = SessionState::Connected;
+                    if handle.state != SessionState::Disconnected {
+                        handle.state = SessionState::Connected;
+                    }
                     if let Some(tx) = handle.channel_return_tx.take() {
                         let new_channel = crate::channel::serial_channel::SerialChannel::new(port);
                         if let Err(error) = tx.send(Box::new(new_channel)) {
@@ -351,7 +355,9 @@ impl InlineTransferOrchestrator {
             if let Ok(mut store) = app_state.session_store.lock() {
                 if let Some(handle) = store.get_session_mut(session_id) {
                     let _ = handle.transfer_scheduler.finish(Some(transfer_id));
-                    handle.state = SessionState::Connected;
+                    if handle.state != SessionState::Disconnected {
+                        handle.state = SessionState::Connected;
+                    }
                     handle.channel_return_tx = None;
                 }
             }
