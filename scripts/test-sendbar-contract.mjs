@@ -83,7 +83,7 @@ assert.equal(
   "Demo (Imported 3)",
 );
 
-// Architecture contracts: keep presentation, session UI state, shared assets and execution separate.
+// Architecture contracts: presentation, per-session UI state, shared assets and execution stay separate.
 const basicSend = source("src/components/SendBar/BasicSend.tsx");
 assert.ok(basicSend.includes("buildSendPayload"));
 assert.ok(!basicSend.includes("setInterval("), "repeat sends must provide backpressure");
@@ -97,6 +97,7 @@ assert.ok(!targetSync.includes("catch(() =>"), "target sync failures must not be
 const context = source("src/components/SendBar/SendBarContext.tsx");
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeScriptId"));
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeAutoReplyConfig"));
+assert.ok(context.includes('type: "SET_ACTIVE_COMMAND_CONFIG"'));
 assert.ok(context.includes("Preserve the local editor draft"));
 
 const sendBar = source("src/components/SendBar/SendBar.tsx");
@@ -107,7 +108,15 @@ assert.ok(!sendBar.includes("engineSessionId"), "dead optional engine routing AP
 const commandPanel = source("src/components/SendBar/CommandPanel.tsx");
 assert.ok(commandPanel.includes("usePointerDragReorder"));
 assert.ok(!commandPanel.includes("dragIndexRef"), "command panel must use the shared reorder hook");
+assert.ok(!commandPanel.includes("subscribeAsset<string>(ACTIVE_CONFIG_STORE_KEY"));
+assert.ok(commandPanel.includes("sendBarState.command"));
 assert.ok(commandPanel.includes("<ConfirmDialog"));
+
+const commandRunner = source("src/components/SendBar/useCommandRunner.ts");
+const stopBody = commandRunner.match(/const stop = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] ?? "";
+assert.ok(stopBody.includes("stopFlagRef.current = true"));
+assert.ok(!stopBody.includes("runningRef.current = false"), "stop must stay locked until in-flight send settles");
+assert.ok(!stopBody.includes("setIsRunning(false)"), "stop must stay locked until in-flight send settles");
 
 const autoReplyPanel = source("src/components/SendBar/AutoReplyPanel.tsx");
 assert.ok(autoReplyPanel.includes("parseAutoReplyConfig"));
