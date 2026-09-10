@@ -330,6 +330,7 @@ assert.match(
   "ordinary files must expose the bounded byte preview regardless of filename extension",
 );
 assert.doesNotMatch(panel, /TEXT_EXTENSIONS|function isTextFile/);
+assert.match(panel, /ms\.handleRightClick\(entry\);/);
 assert.match(panel, /name === "\." \|\| name === "\.\."/);
 assert.match(panel, /name\.includes\("\/"\)/);
 
@@ -472,6 +473,11 @@ assert.match(
   "Properties must clear stale chmod state when the next entry has no reported permissions",
 );
 assert.match(propertiesModal, /chmodError && <span className=\{styles\.chmodError\} role="alert">/);
+assert.match(
+  propertiesModal,
+  /if \(chmodEditing\)[\s\S]{0,120}cancelChmodEdit\(\)[\s\S]{0,120}else[\s\S]{0,80}onClose\(\)/,
+  "Escape must leave chmod editing before it closes the Properties dialog",
+);
 
 assert.match(
   service,
@@ -505,6 +511,15 @@ assert.match(fileList, /virtualCanvas/);
 assert.match(fileList, /aria-sort=/);
 assert.match(fileList, /className=\{styles\.errorBanner\} role="alert"/);
 assert.match(fileList, /styles\.colPerms[^\n]*role="columnheader"/);
+assert.match(fileList, /onClick=\{\(additiveKey, shiftKey\) => onEntryClick/);
+
+const fileRow = await source("src/components/FileManager/FileRow.tsx");
+assert.match(fileRow, /e\.ctrlKey \|\| e\.metaKey/);
+assert.match(
+  fileRow,
+  /onClick\(e\.ctrlKey \|\| e\.metaKey, e\.shiftKey\)/,
+  "keyboard Space must preserve additive/range selection modifiers",
+);
 
 const fileGrid = await source("src/components/FileManager/FileGrid.tsx");
 assert.match(fileGrid, /VIRTUAL_THRESHOLD = 300/);
@@ -516,12 +531,19 @@ assert.match(fileGrid, /case "ArrowUp"/);
 assert.match(fileGrid, /case "ArrowDown"/);
 assert.match(fileGrid, /tabIndex=\{activeItem === itemIndex \? 0 : -1\}/);
 assert.match(fileGrid, /className=\{styles\.errorBanner\} role="alert"/);
+assert.match(fileGrid, /e\.ctrlKey \|\| e\.metaKey/);
 
 const multiSelect = await source("src/components/FileManager/hooks/useMultiSelect.ts");
 assert.match(
   multiSelect,
-  /if \(shiftKey && lastClickedIndex !== null\)[\s\S]{0,180}if \(!ctrlKey\) next\.clear\(\)/,
-  "plain Shift must replace selection with the anchor range while Ctrl+Shift extends it",
+  /if \(shiftKey && lastClickedIndex !== null\)[\s\S]{0,180}if \(!additiveKey\) next\.clear\(\)/,
+  "plain Shift must replace selection with the anchor range while Ctrl/Command+Shift extends it",
+);
+assert.match(multiSelect, /handleRightClick: \(entry: SftpEntry\) => void/);
+assert.doesNotMatch(
+  multiSelect,
+  /handleRightClick[\s\S]{0,320}ctrlKey/,
+  "context-menu selection must not treat macOS Control-click as an additive-selection modifier",
 );
 
 const breadcrumb = await source("src/components/FileManager/BreadcrumbNav.tsx");
