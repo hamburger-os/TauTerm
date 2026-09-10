@@ -121,14 +121,19 @@ const context = source("src/components/SendBar/SendBarContext.tsx");
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeScriptId"));
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeAutoReplyConfig"));
 assert.ok(context.includes('type: "SET_ACTIVE_COMMAND_CONFIG"'));
+assert.ok(context.includes('type: "SET_EXECUTION_MODE"'));
+assert.ok(context.includes("executionMode: SendBarMode | null"));
 assert.ok(context.includes("hasStoredConfigs ? storedConfigs : [...BUILTIN_CONFIGS]"));
 assert.ok(context.includes("hasStoredScripts ? storedScripts : [...BUILTIN_SCRIPTS]"));
-assert.ok(context.includes("A clean editor follows shared asset changes"));
-assert.ok(context.includes("if (current.isRunning) return"));
+assert.ok(context.includes("const hasLocalDraft = previousActive != null && current.code !== previousActive.code"));
+assert.ok(context.includes('stateRef.current.executionMode === "auto-reply"'));
+assert.ok(context.includes('stateRef.current.executionMode === "script"'));
 
 const sendBar = source("src/components/SendBar/SendBar.tsx");
 assert.ok(!sendBar.includes("wrapperHidden"), "inactive mode panels should not stay mounted");
-assert.ok(sendBar.includes("type ExecutionMode = SendBarMode | null"));
+assert.ok(sendBar.includes("const { mode, executionMode } = state"));
+assert.ok(sendBar.includes('dispatch({ type: "SET_EXECUTION_MODE", owner, running })'));
+assert.ok(!sendBar.includes("useState<"), "execution ownership should live in SendBarContext");
 assert.ok(!sendBar.includes("engineSessionId"), "dead optional engine routing API must not return");
 
 const commandPanel = source("src/components/SendBar/CommandPanel.tsx");
