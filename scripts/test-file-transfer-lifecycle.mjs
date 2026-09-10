@@ -336,6 +336,26 @@ assert.match(
   /if \(isConnected\) return;[\s\S]{0,220}resolveConflictPolicy\(null\)[\s\S]{0,180}closePreview\(\)/,
   "disconnect must close transient FileManager UI and resolve any pending conflict decision",
 );
+assert.match(
+  panel,
+  /const handleNewFile = useCallback\(\(\) => \{[\s\S]{0,180}if \(!isConnected\)[\s\S]{0,140}sessionDisconnected/,
+  "new-file actions must fail closed while the SFTP session is disconnected",
+);
+assert.match(
+  panel,
+  /id: "upload"[\s\S]{0,100}disabled: !isConnected/,
+  "disconnected blank-area context menus must disable upload actions",
+);
+assert.match(
+  panel,
+  /onClick=\{handleNewFile\}[\s\S]{0,100}disabled=\{!isConnected\}/,
+  "disconnected toolbar mutation actions must be visibly disabled",
+);
+assert.match(
+  panel,
+  /\.catch\(\(error\) => showToast\("error", String\(error\)\)\)/,
+  "post-chmod metadata refresh failures must not be swallowed",
+);
 assert.match(panel, /name === "\." \|\| name === "\.\."/);
 assert.match(panel, /name\.includes\("\/"\)/);
 
