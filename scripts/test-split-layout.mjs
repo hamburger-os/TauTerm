@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import {
+  MAX_WORKSPACE_PANES,
   activateSessionInLayout,
+  clearPaneInLayout,
   closePaneInLayout,
   collectPaneIds,
   computePaneRects,
@@ -9,6 +11,7 @@ import {
   findPaneForSession,
   pruneAssignments,
   remapRemovedChildrenToDisconnectedRoots,
+  resetPaneSplitRatioInLayout,
   setSplitRatioInLayout,
   splitPaneInLayout,
 } from "../src/core/split-layout.ts";
@@ -36,6 +39,19 @@ assert.equal(state.assignments.p2, null);
 state = activateSessionInLayout(state, "serial-com3");
 assert.equal(state.assignments.p2, "serial-com3");
 assert.equal(findPaneForSession(state.assignments, "serial-com3"), "p2");
+
+// Clearing a Pane only detaches its Session. Pane geometry and selection stay intact,
+// and the same Session can be assigned again immediately.
+const clearRoot = state.root;
+state = clearPaneInLayout(state, "p2");
+assert.strictEqual(state.root, clearRoot);
+assert.equal(state.selectedPaneId, "p2");
+assert.equal(state.assignments.p1, "ssh-a");
+assert.equal(state.assignments.p2, null);
+const alreadyEmpty = clearPaneInLayout(state, "p2");
+assert.strictEqual(alreadyEmpty, state);
+state = activateSessionInLayout(state, "serial-com3");
+assert.equal(state.assignments.p2, "serial-com3");
 
 // Clicking a Session that is already visible focuses its existing Pane instead of cloning it.
 state = activateSessionInLayout(state, "ssh-a");
@@ -70,11 +86,25 @@ grid = splitPaneInLayout(grid, "g1", "right", "g2", "gs1");
 grid = splitPaneInLayout(grid, "g1", "bottom", "g3", "gs2");
 grid = splitPaneInLayout(grid, "g2", "bottom", "g4", "gs3");
 const gridRects = computePaneRects(grid.root);
-assert.equal(countPanes(grid.root), 4);
+assert.equal(countPanes(grid.root), MAX_WORKSPACE_PANES);
 assert.deepEqual(gridRects.g1, { left: 0, top: 0, width: 0.5, height: 0.5 });
 assert.deepEqual(gridRects.g3, { left: 0, top: 0.5, width: 0.5, height: 0.5 });
 assert.deepEqual(gridRects.g2, { left: 0.5, top: 0, width: 0.5, height: 0.5 });
 assert.deepEqual(gridRects.g4, { left: 0.5, top: 0.5, width: 0.5, height: 0.5 });
+
+// Resetting a Pane ratio affects only its immediate parent Split, not the outer tree.
+let ratioTree = createInitialSplitLayout("r1");
+ratioTree = splitPaneInLayout(ratioTree, "r1", "right", "r2", "rs1");
+ratioTree = setSplitRatioInLayout(ratioTree, "rs1", 0.7);
+ratioTree = splitPaneInLayout(ratioTree, "r1", "bottom", "r3", "rs2");
+ratioTree = setSplitRatioInLayout(ratioTree, "rs2", 0.3);
+ratioTree = resetPaneSplitRatioInLayout(ratioTree, "r1");
+assert.equal(ratioTree.root.type, "split");
+assert.equal(ratioTree.root.ratio, 0.7);
+assert.equal(ratioTree.root.first.type, "split");
+assert.equal(ratioTree.root.first.ratio, 0.5);
+const alreadyBalanced = resetPaneSplitRatioInLayout(ratioTree, "r1");
+assert.strictEqual(alreadyBalanced, ratioTree);
 
 // Closing a Pane removes only the view slot and collapses its now-redundant parent split.
 const closed = closePaneInLayout(state, "p3");
@@ -100,13 +130,13 @@ state = pruneAssignments(state, new Set(["ssh-a"]));
 assert.equal(state.assignments.p2, null);
 assert.deepEqual(collectPaneIds(state.root), beforePrunePanes);
 
-// Hard cap: no more than four Pane leaves.
-state = splitPaneInLayout(state, "p2", "bottom", "p4", "s3", 4);
-state = splitPaneInLayout(state, "p4", "right", "p5", "s4", 4);
-assert.equal(countPanes(state.root), 4);
-const capped = splitPaneInLayout(state, "p5", "bottom", "p6", "s5", 4);
+// Hard cap: no more than the shared Workspace Pane limit.
+state = splitPaneInLayout(state, "p2", "bottom", "p4", "s3", MAX_WORKSPACE_PANES);
+state = splitPaneInLayout(state, "p4", "right", "p5", "s4", MAX_WORKSPACE_PANES);
+assert.equal(countPanes(state.root), MAX_WORKSPACE_PANES);
+const capped = splitPaneInLayout(state, "p5", "bottom", "p6", "s5", MAX_WORKSPACE_PANES);
 assert.strictEqual(capped, state);
-assert.equal(countPanes(capped.root), 4);
+assert.equal(countPanes(capped.root), MAX_WORKSPACE_PANES);
 
 // Workspace persistence preserves geometry/selection while converting runtime child channels
 // to stable saved Session IDs. Duplicate child channels of the same parent restore only once.

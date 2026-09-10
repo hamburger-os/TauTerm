@@ -1,13 +1,13 @@
-import type {
-  LayoutNode,
-  PaneId,
-  SplitLayoutState,
-} from "./split-layout";
+import {
+  MAX_WORKSPACE_PANES,
+  type LayoutNode,
+  type PaneId,
+  type SplitLayoutState,
+} from "./split-layout.ts";
 
 export const WORKSPACE_LAYOUT_VERSION = 1;
 
-const MAX_WORKSPACE_PANES = 4;
-const MAX_WORKSPACE_TREE_DEPTH = 4;
+const MAX_WORKSPACE_TREE_DEPTH = MAX_WORKSPACE_PANES;
 
 interface PersistedWorkspaceLayoutV1 {
   version: 1;
@@ -36,8 +36,8 @@ function parseLayoutNode(
   splitIds: Set<string>,
   depth: number,
 ): LayoutNode | null {
-  // Four Pane leaves can never require an arbitrarily deep tree. Bound recursion before reading
-  // untrusted/corrupt localStorage deeply enough to risk a startup stack overflow.
+  // With the current Pane cap, a valid tree cannot require arbitrary recursion depth. Bound parsing
+  // before walking a corrupt persisted payload deeply enough to risk a startup stack overflow.
   if (depth > MAX_WORKSPACE_TREE_DEPTH) return null;
   if (!isRecord(value) || typeof value.type !== "string" || typeof value.id !== "string" || !value.id) {
     return null;
