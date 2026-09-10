@@ -267,6 +267,21 @@ assert.match(
 );
 
 // ── Standard file-manager interaction rules ────────────────────────────────
+const rightSidebar = await source("src/components/RightSidebar/SessionRightSidebar.tsx");
+assert.match(
+  rightSidebar,
+  /const FileManagerPanel = lazy\(\(\) => import\("\.\.\/FileManager\/FileManagerPanel"\)\)/,
+  "SSH FileManager should remain lazy-loaded instead of inflating daily-driver ui-core",
+);
+
+const viteConfig = await source("vite.config.ts");
+assert.match(viteConfig, /return "ui-file-manager"/);
+assert.doesNotMatch(
+  viteConfig,
+  /components\\\/\(Common\|Layout\|Terminal\|RightSidebar\|JournaldViewer\|FileManager\|SendBar\)/,
+  "FileManager must not be forced back into the ui-core manual chunk",
+);
+
 const panel = await source("src/components/FileManager/FileManagerPanel.tsx");
 assert.match(panel, /useToast/);
 assert.doesNotMatch(
