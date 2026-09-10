@@ -384,7 +384,7 @@ assert.match(
 );
 assert.match(
   panel,
-  /\.catch\(\(error\) => showToast\("error", String\(error\)\)\)/,
+  /\.catch\(\(error\) => \{[\s\S]{0,180}showToast\("error", String\(error\)\)/,
   "post-chmod metadata refresh failures must not be swallowed",
 );
 assert.match(panel, /const propsRequestGenerationRef = useRef\(0\)/);
