@@ -745,7 +745,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const tab = tabsRef.current.find(item => item.id === sessionId);
     if (!tab || tab.state !== "disconnected" || !tab.params) return null;
 
-    let params = tab.params as Record<string, unknown>;
+    const params = tab.params as Record<string, unknown>;
     if (tab.pluginId === "tftp") {
       const bindIp = String(params.listen_ip ?? "").trim().toLowerCase();
       const loopback = bindIp === "127.0.0.1" || bindIp === "::1" || bindIp === "localhost";
@@ -755,12 +755,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         && params.overwrite === true
         && params.exposure_confirmed !== true
       ) {
-        const ok = window.confirm(i18n.t("tftp.exposureWarning", {
-          defaultValue:
-            "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network.",
-        }));
-        if (!ok) return null;
-        params = { ...params, exposure_confirmed: true };
+        // SessionContext 不拥有 UI。需要用户确认的 TFTP 配置必须先在连接对话框中
+        // 使用统一 ConfirmDialog 明确确认；此处保持 fail-closed，绝不回退到原生 confirm()。
+        dispatch({
+          type: "SET_ERROR",
+          error: i18n.t("tftp.exposureWarning", {
+            defaultValue:
+              "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network.",
+          }),
+        });
+        return null;
       }
     }
 
