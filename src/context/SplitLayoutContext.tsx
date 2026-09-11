@@ -15,7 +15,6 @@ import {
   findPaneForSession,
   pruneAssignments,
   remapRemovedChildrenToDisconnectedRoots,
-  resetPaneSplitRatioInLayout,
   selectPaneInLayout,
   setSplitRatioInLayout,
   splitPaneInLayout,
@@ -42,7 +41,6 @@ interface SplitLayoutContextValue {
   splitPane: (paneId: PaneId, edge: SplitEdge) => void;
   clearPane: (paneId: PaneId) => void;
   closePane: (paneId: PaneId) => void;
-  resetPaneRatio: (paneId: PaneId) => void;
   resizeSplit: (splitId: string, ratio: number) => void;
   activateSession: (sessionId: string) => void;
 }
@@ -271,14 +269,6 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     }
   }, [syncActiveSession]);
 
-  const resetPaneRatio = useCallback((paneId: PaneId) => {
-    const current = stateRef.current;
-    const next = resetPaneSplitRatioInLayout(current, paneId);
-    if (next === current) return;
-    stateRef.current = next;
-    setState(next);
-  }, []);
-
   const resizeSplit = useCallback((splitId: string, ratio: number) => {
     setState(prev => {
       const next = setSplitRatioInLayout(prev, splitId, ratio);
@@ -319,7 +309,6 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     splitPane,
     clearPane,
     closePane,
-    resetPaneRatio,
     resizeSplit,
     activateSession,
   }), [
@@ -333,7 +322,6 @@ export function SplitLayoutProvider({ children }: { children: ReactNode }) {
     splitPane,
     clearPane,
     closePane,
-    resetPaneRatio,
     resizeSplit,
     activateSession,
   ]);

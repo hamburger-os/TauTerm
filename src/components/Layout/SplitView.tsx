@@ -4,7 +4,6 @@ import { useSession, type TabInfo } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import {
   MAX_WORKSPACE_PANES,
-  canResetPaneSplitRatioInLayout,
   type DividerGeometry,
   type PaneId,
   type PaneRect,
@@ -35,7 +34,6 @@ interface SplitViewProps {
   onSplitPane: (paneId: PaneId, edge: SplitEdge) => void;
   onClearPane: (paneId: PaneId) => void;
   onClosePane: (paneId: PaneId) => void;
-  onResetPaneRatio: (paneId: PaneId) => void;
   onResizeSplit: (splitId: string, ratio: number) => void;
 }
 
@@ -147,7 +145,6 @@ export default function SplitView({
   onSplitPane,
   onClearPane,
   onClosePane,
-  onResetPaneRatio,
   onResizeSplit,
 }: SplitViewProps) {
   const { t } = useTranslation();
@@ -319,7 +316,6 @@ export default function SplitView({
     const occupied = Boolean(layout.assignments[paneMenu.paneId]);
     const canSplitRight = Boolean(rect && canOfferSplit(rect, "right"));
     const canSplitDown = Boolean(rect && canOfferSplit(rect, "bottom"));
-    const canResetPaneRatio = canResetPaneSplitRatioInLayout(layout, paneMenu.paneId);
     return [
       {
         id: "clear-pane",
@@ -337,11 +333,6 @@ export default function SplitView({
         label: t("split.splitDown", { defaultValue: "向下分屏" }),
         disabled: !canSplitDown,
       },
-      {
-        id: "reset-pane-ratio",
-        label: t("split.resetRatio", { defaultValue: "均分当前分屏" }),
-        disabled: !canResetPaneRatio,
-      },
       { id: "pane-separator-2", label: "", type: "separator" },
       {
         id: "close-pane",
@@ -349,7 +340,7 @@ export default function SplitView({
         disabled: paneCount <= 1,
       },
     ];
-  }, [paneMenu, paneRects, layout.assignments, layout.root, canOfferSplit, paneCount, t]);
+  }, [paneMenu, paneRects, layout.assignments, canOfferSplit, paneCount, t]);
 
   const handlePaneMenuSelect = useCallback((itemId: string) => {
     const paneId = paneMenu?.paneId;
@@ -365,14 +356,11 @@ export default function SplitView({
       case "split-down":
         onSplitPane(paneId, "bottom");
         break;
-      case "reset-pane-ratio":
-        onResetPaneRatio(paneId);
-        break;
       case "close-pane":
         onClosePane(paneId);
         break;
     }
-  }, [paneMenu, onClearPane, onClosePane, onResetPaneRatio, onSplitPane]);
+  }, [paneMenu, onClearPane, onClosePane, onSplitPane]);
 
   const previewRect = useMemo(() => {
     if (!hoveredSplit || paneCount >= MAX_WORKSPACE_PANES) return null;
