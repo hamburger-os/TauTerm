@@ -25,7 +25,7 @@ use crate::AppState;
 
 use client::{ModbusClient, TransactionResult};
 use codec::ModbusRequest;
-use config::{ModbusConfig, ModbusMode, ModbusRole};
+use config::{ModbusConfig, ModbusMode, ModbusRole, ServerFaultConfig};
 use polling::{WatchRow, WatchScheduler, WatchValue};
 use server::ModbusServer;
 
@@ -75,33 +75,32 @@ impl ProtocolAdapter for ModbusAdapter {
 
         let (client, server, watch) = match config.role {
             ModbusRole::Client => {
-                let runtime =
-                    match config.mode {
-                        ModbusMode::Rtu | ModbusMode::Ascii => {
-                            let driver = open_serial(&config.serial_port, &config.serial).map_err(
-                                |error| SessionError::ConnectionFailed {
-                                    reason: error.to_string(),
-                                },
-                            )?;
-                            DataPlaneRuntime::spawn(Box::new(driver))
-                        }
-                        ModbusMode::Tcp => {
-                            let driver = connect_tcp(&config.host, config.port, &config.tcp)
-                                .map_err(|error| SessionError::ConnectionFailed {
-                                    reason: error.to_string(),
-                                })?;
-                            DataPlaneRuntime::spawn(Box::new(driver))
-                        }
-                    };
+                let runtime = match config.mode {
+                    ModbusMode::Rtu | ModbusMode::Ascii => {
+                        let driver = open_serial(&config.serial_port, &config.serial).map_err(
+                            |error| SessionError::ConnectionFailed {
+                                reason: error.to_string(),
+                            },
+                        )?;
+                        DataPlaneRuntime::spawn(Box::new(driver))
+                    }
+                    ModbusMode::Tcp => {
+                        let driver = connect_tcp(&config.host, config.port, &config.tcp).map_err(
+                            |error| SessionError::ConnectionFailed {
+                                reason: error.to_string(),
+                            },
+                        )?;
+                        DataPlaneRuntime::spawn(Box::new(driver))
+                    }
+                };
                 let client = Arc::new(ModbusClient::new(config.clone(), runtime));
                 let watch = Arc::new(WatchScheduler::new(client.clone()));
                 (Some(client), None, Some(watch))
             }
             ModbusRole::Server => {
-                let server = Arc::new(
-                    ModbusServer::new(config.clone())
-                        .map_err(|reason| SessionError::ConnectionFailed { reason })?,
-                );
+                let server = Arc::new(ModbusServer::new(config.clone()).map_err(|reason| {
+                    SessionError::ConnectionFailed { reason }
+                })?);
                 server.start().map_err(SessionError::Other)?;
                 (None, Some(server), None)
             }
@@ -156,19 +155,16 @@ pub async fn connect_session(
         .ok_or("Modbus runtime type mismatch")?
         .config
         .clone();
-    let session_name = name
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| match config.mode {
+    let session_name = name.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| {
+        match config.mode {
             ModbusMode::Tcp => format!("Modbus TCP {}:{}", config.host, config.port),
             ModbusMode::Rtu => format!("Modbus RTU {}", config.serial_port),
             ModbusMode::Ascii => format!("Modbus ASCII {}", config.serial_port),
-        });
+        }
+    });
 
     let session_id = {
-        let mut store = state
-            .session_store
-            .lock()
-            .map_err(|error| error.to_string())?;
+        let mut store = state.session_store.lock().map_err(|error| error.to_string())?;
         store.create_container_session(
             ContainerSessionCreateOptions {
                 name: session_name.clone(),
@@ -204,10 +200,7 @@ pub async fn connect_session(
 }
 
 fn runtime(state: &State<'_, AppState>, session_id: &str) -> Result<Arc<dyn SideChannel>, String> {
-    let store = state
-        .session_store
-        .lock()
-        .map_err(|error| error.to_string())?;
+    let store = state.session_store.lock().map_err(|error| error.to_string())?;
     store
         .get_side_channel(session_id)
         .ok_or_else(|| format!("Modbus 会话 {session_id} 未连接"))
@@ -258,10 +251,7 @@ pub fn modbus_status(
             role: side.config.role,
             mode: side.config.mode,
             running: side.client.is_some()
-                || side
-                    .server
-                    .as_ref()
-                    .is_some_and(|server| server.is_running()),
+                || side.server.as_ref().is_some_and(|server| server.is_running()),
             unit_id: side.config.unit_id,
         })
     })
@@ -282,7 +272,10 @@ pub fn modbus_watch_set(
 }
 
 #[tauri::command]
-pub fn modbus_watch_start(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub fn modbus_watch_start(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
     with_modbus(&state, &session_id, |side| {
         side.watch
             .as_ref()
@@ -293,7 +286,10 @@ pub fn modbus_watch_start(state: State<'_, AppState>, session_id: String) -> Res
 }
 
 #[tauri::command]
-pub fn modbus_watch_stop(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+pub fn modbus_watch_stop(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
     with_modbus(&state, &session_id, |side| {
         side.watch
             .as_ref()
@@ -330,20 +326,31 @@ pub enum ServerArea {
 pub fn modbus_server_set_value(
     state: State<'_, AppState>,
     session_id: String,
-    area: ServerArea,
-    address: u16,
-    value: u16,
+    area: Option<ServerArea>,
+    address: Option<u16>,
+    value: Option<u16>,
+    fault: Option<ServerFaultConfig>,
 ) -> Result<(), String> {
     with_modbus(&state, &session_id, |side| {
         let server = side
             .server
             .as_ref()
             .ok_or("server data model requires server role")?;
-        match area {
-            ServerArea::Coil => server.model.set_coil(address, value != 0),
-            ServerArea::DiscreteInput => server.model.set_discrete_input(address, value != 0),
-            ServerArea::HoldingRegister => server.model.set_holding_register(address, value),
-            ServerArea::InputRegister => server.model.set_input_register(address, value),
+        if let Some(fault) = fault {
+            server.set_fault(fault)?;
+        }
+        if let Some(area) = area {
+            let address = address.ok_or("address is required when area is set")?;
+            let value = value.ok_or("value is required when area is set")?;
+            match area {
+                ServerArea::Coil => server.model.set_coil(address, value != 0),
+                ServerArea::DiscreteInput => server.model.set_discrete_input(address, value != 0),
+                ServerArea::HoldingRegister => server.model.set_holding_register(address, value),
+                ServerArea::InputRegister => server.model.set_input_register(address, value),
+            }
+        }
+        if area.is_none() && fault.is_none() {
+            return Err("either area or fault must be provided".into());
         }
         Ok(())
     })
