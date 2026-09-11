@@ -236,6 +236,47 @@ if errorlevel 1 (\r\n\
     ));
 }
 
+#[cfg(target_os = "windows")]
+fn append_best_effort_remove_batch(batch: &mut String, setupc: &str, bus: u32) {
+    batch.push_str(&format!(
+        "\"{setupc}\" remove {bus} >nul 2>&1\r\n\
+if errorlevel 1 (\r\n\
+  \"{setupc}\" change CNCA{bus} PortName=- >nul 2>&1\r\n\
+  \"{setupc}\" change CNCB{bus} PortName=- >nul 2>&1\r\n\
+  ping -n 2 127.0.0.1 >nul\r\n\
+  \"{setupc}\" remove {bus} >nul 2>&1\r\n\
+)\r\n"
+    ));
+}
+
+#[cfg(target_os = "windows")]
+fn build_elevated_create_batch(
+    resource: &str,
+    setupc: &str,
+    orphans: &[VirtualEndpoint],
+    pairs: &[VirtualEndpoint],
+) -> String {
+    let mut batch = format!("@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n");
+    for orphan in orphans {
+        append_remove_batch(&mut batch, setupc, orphan.resource_id);
+    }
+    for endpoint in pairs {
+        batch.push_str(&format!(
+            "\"{setupc}\" install {bus} PortName={bridge} PortName={external},PlugInMode=yes\r\n\
+if errorlevel 1 goto rollback\r\n",
+            bus = endpoint.resource_id,
+            bridge = endpoint.bridge_path,
+            external = endpoint.external_path
+        ));
+    }
+    batch.push_str("goto success\r\n:rollback\r\n");
+    for endpoint in pairs {
+        append_best_effort_remove_batch(&mut batch, setupc, endpoint.resource_id);
+    }
+    batch.push_str("exit /b 1\r\n:success\r\nexit /b 0\r\n");
+    batch
+}
+
 impl VirtualPortManager {
     pub fn new(resource_dir: PathBuf, state_dir: PathBuf) -> Self {
         let manager = Self {
@@ -389,16 +430,24 @@ impl VirtualPortManager {
         }
     }
 
+    fn remember_owned_endpoints(&mut self, endpoints: &[VirtualEndpoint]) {
+        if endpoints.is_empty() {
+            return;
+        }
+        let mut owned = self.load_owned_endpoints();
+        for endpoint in endpoints {
+            register_internal_endpoint_path(&endpoint.bridge_path);
+            owned.retain(|existing| existing.resource_id != endpoint.resource_id);
+            owned.push(endpoint.clone());
+        }
+        self.persist_owned_endpoints(&owned);
+    }
+
     fn track_active_endpoint(&mut self, endpoint: VirtualEndpoint) {
-        register_internal_endpoint_path(&endpoint.bridge_path);
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
         self.active_endpoints.insert(endpoint.clone());
-
-        let mut owned = self.load_owned_endpoints();
-        owned.retain(|existing| existing.resource_id != endpoint.resource_id);
-        owned.push(endpoint);
-        self.persist_owned_endpoints(&owned);
+        self.remember_owned_endpoints(std::slice::from_ref(&endpoint));
     }
 
     fn forget_owned_endpoint(&mut self, endpoint: &VirtualEndpoint) {
@@ -426,15 +475,7 @@ impl VirtualPortManager {
         // owner 消失，但驱动资源可能仍存在：从 active 移除、保留 ownership。
         self.active_endpoints
             .retain(|existing| existing.resource_id != endpoint.resource_id);
-        register_internal_endpoint_path(&endpoint.bridge_path);
-        let mut owned = self.load_owned_endpoints();
-        if !owned
-            .iter()
-            .any(|existing| existing.resource_id == endpoint.resource_id)
-        {
-            owned.push(endpoint.clone());
-            self.persist_owned_endpoints(&owned);
-        }
+        self.remember_owned_endpoints(std::slice::from_ref(endpoint));
     }
 
     fn orphan_endpoints(&self) -> Vec<VirtualEndpoint> {
@@ -797,40 +838,40 @@ exit /b 0\r\n"
             return Err("No available COM port pairs".into());
         }
 
-        let setupc = self.setupc_path().display().to_string();
-        let resource = self.resource_dir.display().to_string();
-        let mut batch = format!("@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n");
-        for orphan in &orphans {
-            append_remove_batch(&mut batch, &setupc, orphan.resource_id);
-        }
-
         let mut next_bus = self.next_free_bus(&driver);
         let mut pairs = Vec::new();
         for (bridge_number, external_number) in candidates.into_iter().take(count as usize) {
-            let endpoint = VirtualEndpoint {
+            pairs.push(VirtualEndpoint {
                 bridge_path: format!("COM{bridge_number}"),
                 external_path: format!("COM{external_number}"),
                 resource_id: next_bus,
-            };
-            batch.push_str(&format!(
-                "\"{setupc}\" install {bus} PortName={bridge} PortName={external},PlugInMode=yes\r\n\
-if errorlevel 1 exit /b 1\r\n",
-                bus = endpoint.resource_id,
-                bridge = endpoint.bridge_path,
-                external = endpoint.external_path
-            ));
-            pairs.push(endpoint);
+            });
             next_bus = self.next_bus_after(next_bus, &driver);
         }
-        batch.push_str("exit /b 0\r\n");
 
-        run_elevated(&batch).map_err(|error| {
+        // 在启动提权子进程前先登记 ownership。这样即使进程超时/被终止，
+        // 任何已经安装但来不及执行 rollback 的端口对也不会成为不可追踪资源。
+        self.remember_owned_endpoints(&pairs);
+
+        let setupc = self.setupc_path().display().to_string();
+        let resource = self.resource_dir.display().to_string();
+        let batch = build_elevated_create_batch(&resource, &setupc, &orphans, &pairs);
+
+        if let Err(error) = run_elevated(&batch) {
             if error.to_lowercase().contains("cancel") {
-                "User cancelled the UAC elevation prompt".to_string()
-            } else {
-                format!("Elevated virtual-port creation failed: {error}")
+                // ShellExecuteEx 在 UAC 取消时没有创建子进程，因此这些预登记资源
+                // 一定不存在，可以立即撤销 ownership。
+                for endpoint in &pairs {
+                    self.forget_owned_endpoint(endpoint);
+                }
+                return Err("User cancelled the UAC elevation prompt".to_string());
             }
-        })?;
+
+            // 正常失败路径会在同一批处理中 rollback；超时/异常终止则可能留下
+            // 部分资源。重新读取驱动状态，只撤销已确认不存在的 ownership。
+            self.reconcile_orphan_state();
+            return Err(format!("Elevated virtual-port creation failed: {error}"));
+        }
 
         // 同一提权事务已成功清理 orphan；保留当前 active ownership，仅移除这些 orphan。
         for orphan in &orphans {
@@ -1110,6 +1151,18 @@ mod tests {
     }
 
     #[test]
+    fn remembered_endpoint_is_orphan_until_activated() {
+        let (mut manager, root) = test_manager();
+        let endpoint = sample_endpoint(5);
+        manager.remember_owned_endpoints(std::slice::from_ref(&endpoint));
+        assert_eq!(manager.pending_orphan_count(), 1);
+        manager.track_active_endpoint(endpoint.clone());
+        assert_eq!(manager.pending_orphan_count(), 0);
+        manager.forget_owned_endpoint(&endpoint);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn persisted_owned_endpoint_becomes_orphan_after_restart() {
         let (mut manager, root) = test_manager();
         let endpoint = sample_endpoint(2);
@@ -1145,5 +1198,21 @@ mod tests {
         let root = std::env::temp_dir().join("tauterm-vport-stateless-test");
         let manager = VirtualPortManager::new_stateless(root);
         assert_eq!(manager.pending_orphan_count(), 0);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn elevated_create_batch_rolls_back_every_new_pair() {
+        let orphans = vec![sample_endpoint(6)];
+        let pairs = vec![sample_endpoint(10), sample_endpoint(11)];
+        let batch = build_elevated_create_batch("C:\\TauTerm", "setupc.exe", &orphans, &pairs);
+
+        assert!(batch.contains("if errorlevel 1 goto rollback"));
+        assert!(batch.contains("goto success\r\n:rollback\r\n"));
+        assert!(batch.contains(":success\r\nexit /b 0"));
+        for endpoint in &pairs {
+            let remove = format!("\"setupc.exe\" remove {}", endpoint.resource_id);
+            assert_eq!(batch.matches(&remove).count(), 1);
+        }
     }
 }
