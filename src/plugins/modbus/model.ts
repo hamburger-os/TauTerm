@@ -20,7 +20,15 @@ export type ModbusRequest =
   | { kind: "mei"; mei_type: number; data: number[] }
   | { kind: "raw"; function: number; data: number[] };
 
+export type ModbusOperation = ModbusRequest | {
+  kind: "raw_adu";
+  data: number[];
+  wait_response: boolean;
+  quiet_period_ms: number;
+};
+
 export interface TransactionResult {
+  timestamp_ms: number;
   status: "success" | "broadcast" | "modbus_exception" | "protocol_error" | "malformed_response" | "timeout" | "transport_error" | "cancelled";
   function: number;
   transaction_id: number | null;
@@ -35,6 +43,21 @@ export interface TransactionResult {
   attempt: number;
 }
 
+export interface ServerFaultConfig {
+  no_response: boolean;
+  delay_ms: number;
+  exception_code: number | null;
+}
+
+export interface ModbusStatus {
+  role: ModbusRole;
+  mode: ModbusMode;
+  running: boolean;
+  unit_id: number;
+  transactions: TransactionResult[];
+  server_fault: ServerFaultConfig | null;
+}
+
 export interface WatchRow {
   id: string;
   enabled: boolean;
@@ -43,6 +66,7 @@ export interface WatchRow {
   period_ms: number;
   format?: ValueFormat;
 }
+
 export interface WatchValue {
   row_id: string;
   status: string;
@@ -52,6 +76,7 @@ export interface WatchValue {
   message: string | null;
   updated_at_ms: number;
 }
+
 export interface ValueFormat {
   value_type: "bool" | "uint16" | "int16" | "uint32" | "int32" | "float32" | "uint64" | "int64" | "float64" | "hex" | "binary" | "ascii" | "utf8";
   byte_order: "ABCD" | "BADC" | "CDAB" | "DCBA";
@@ -90,6 +115,18 @@ export const FUNCTION_LABELS: Record<number, string> = {
   0x2b: "2B · Encapsulated Interface / MEI",
 };
 
+export const STANDARD_EXCEPTIONS: Record<number, string> = {
+  1: "Illegal Function",
+  2: "Illegal Data Address",
+  3: "Illegal Data Value",
+  4: "Server Device Failure",
+  5: "Acknowledge",
+  6: "Server Device Busy",
+  8: "Memory Parity Error",
+  10: "Gateway Path Unavailable",
+  11: "Gateway Target Failed to Respond",
+};
+
 export function hex(bytes: number[]): string {
   return bytes.map(byte => byte.toString(16).padStart(2, "0").toUpperCase()).join(" ");
 }
@@ -101,6 +138,20 @@ export function parseHex(text: string): number[] {
   const bytes = compact.map(token => Number.parseInt(token, 16));
   if (bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error("无效十六进制字节");
   return bytes;
+}
+
+export function parseU16List(text: string): number[] {
+  const values = text.split(/[\s,;]+/).filter(Boolean).map(token => token.toLowerCase().startsWith("0x") ? Number.parseInt(token.slice(2), 16) : Number(token));
+  if (values.some(value => !Number.isInteger(value) || value < 0 || value > 0xffff)) throw new Error("寄存器值必须是 0..65535");
+  return values;
+}
+
+export function packCoils(text: string): { quantity: number; values: number[] } {
+  const bits = text.split(/[\s,;]+/).filter(Boolean).map(token => token === "1" || token.toLowerCase() === "true");
+  if (bits.length === 0 || bits.length > 1968) throw new Error("线圈数量必须是 1..1968");
+  const values = new Array(Math.ceil(bits.length / 8)).fill(0) as number[];
+  bits.forEach((bit, index) => { if (bit) values[Math.floor(index / 8)] |= 1 << (index % 8); });
+  return { quantity: bits.length, values };
 }
 
 export function traditionalAddress(functionCode: number, protocolAddress: number): string {
