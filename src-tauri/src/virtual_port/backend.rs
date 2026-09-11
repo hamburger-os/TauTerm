@@ -1,19 +1,39 @@
 //! VirtualPortBackend trait — 虚拟端点后端抽象接口
 //!
-//! 按“能力”抽象虚拟串口，而不是把 Windows 的 COM 端口对模型泄漏到上层。
-//! 当前实现：Windows 使用 com0com；Linux/macOS 使用进程内 POSIX PTY。
+//! 上层只依赖“创建/销毁外部虚拟端点”的能力，不感知 Windows COM 端口对
+//! 或 Unix PTY 的实现差异。Windows 的 bridge 端属于 TauTerm 内部资源，
+//! 通过本模块的进程级可见性注册表从普通串口发现结果中排除。
+
+use std::collections::HashSet;
+use std::sync::{LazyLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
 /// 一个由 TauTerm 管理并暴露给外部工具的虚拟端点。
 ///
-/// `bridge_path` 仅供桥接层定位内部侧；`external_path` 是外部程序应打开的路径；
+/// `bridge_path` 仅供桥接层定位内部侧；`external_path` 是用户和外部程序应打开的路径；
 /// `resource_id` 是后端不透明资源标识，不承诺具有端口号或 bus 语义。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VirtualEndpoint {
     pub bridge_path: String,
     pub external_path: String,
     pub resource_id: u32,
+}
+
+/// 前端可见的虚拟端点投影。
+///
+/// 内部 bridge path 不属于 UI 契约，避免 Windows COM 端口对实现细节泄漏到上层。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExternalVirtualEndpoint {
+    pub external_path: String,
+}
+
+impl From<&VirtualEndpoint> for ExternalVirtualEndpoint {
+    fn from(endpoint: &VirtualEndpoint) -> Self {
+        Self {
+            external_path: endpoint.external_path.clone(),
+        }
+    }
 }
 
 /// 用于创建虚拟端点的配置。
@@ -23,16 +43,58 @@ pub struct VirtualPortConfig {
     pub count: u32,
 }
 
+/// 当前进程内由虚拟串口子系统占用、不得作为普通 Serial 端点展示的内部路径。
+///
+/// 这是平台资源可见性的单一注册表：Windows 直连后端和特权服务客户端在创建/销毁
+/// 虚拟端点时维护它，SerialAdapter 只做只读查询。路径在 Windows 上按不区分大小写
+/// 的方式规范化；Unix PTY 后端不需要注册内部 master。
+static INTERNAL_ENDPOINT_PATHS: LazyLock<RwLock<HashSet<String>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
+
+fn normalize_endpoint_path(path: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        path.to_ascii_uppercase()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
+}
+
+pub fn register_internal_endpoint_path(path: &str) {
+    if path.is_empty() {
+        return;
+    }
+    if let Ok(mut paths) = INTERNAL_ENDPOINT_PATHS.write() {
+        paths.insert(normalize_endpoint_path(path));
+    }
+}
+
+pub fn unregister_internal_endpoint_path(path: &str) {
+    if path.is_empty() {
+        return;
+    }
+    if let Ok(mut paths) = INTERNAL_ENDPOINT_PATHS.write() {
+        paths.remove(&normalize_endpoint_path(path));
+    }
+}
+
+pub fn is_internal_endpoint_path(path: &str) -> bool {
+    INTERNAL_ENDPOINT_PATHS
+        .read()
+        .map(|paths| paths.contains(&normalize_endpoint_path(path)))
+        .unwrap_or(false)
+}
+
 /// 统一权限不足检测 — 同时用于 `Err(String)`（spawn 失败）和
 /// `Ok(Output)`（setupc.exe 启动成功但内核驱动拒绝操作）两个路径。
 ///
-/// 返回 true 表示错误由管理员权限缺失导致，调用者应：
-/// - 仅更新本地簿记，延迟驱动级清理到下次 UAC 提权操作
-/// - 或触发 UAC 提权路径
+/// 返回 true 表示错误由管理员权限缺失导致，调用者应延迟驱动级清理到显式提权操作。
 pub fn contains_elevation_indicator(text: &str) -> bool {
     let lower = text.to_lowercase();
     lower.contains("740")
-        || lower.contains("提升")              // zh-CN
+        || lower.contains("提升")
         || lower.contains("elevation")
         || lower.contains("elevated")
         || lower.contains("access is denied")
@@ -40,79 +102,54 @@ pub fn contains_elevation_indicator(text: &str) -> bool {
         || lower.contains("privilege")
         || lower.contains("requires elevation")
         || lower.contains("administrator")
-        // 多语言系统错误消息覆盖
-        || lower.contains("管理者")            // ja: 管理者として実行
-        || lower.contains("관리자")            // ko: 관리자 권한
-        || lower.contains("verweigert")        // de: Zugriff verweigert
-        || lower.contains("refusé")            // fr: Accès refusé
-        || lower.contains("elevación")         // es: elevación requerida
-        || lower.contains("necessária")        // pt: elevação necessária
-        || lower.contains("elevata") // it: autorizzazione elevata
+        || lower.contains("管理者")
+        || lower.contains("관리자")
+        || lower.contains("verweigert")
+        || lower.contains("refusé")
+        || lower.contains("elevación")
+        || lower.contains("necessária")
+        || lower.contains("elevata")
 }
 
 /// 虚拟端点后端的统一接口。
 ///
-/// 每个实现负责自己的平台资源生命周期。Windows com0com 可以拥有真正的两端配对，
-/// Unix PTY 则由 TauTerm 持有 master、仅暴露 slave；这些差异都不进入上层 session 模型。
-///
-/// # 线程安全
-///
-/// 所有可变方法接收 `&mut self` —— 调用者负责将实现包装在
-/// `Mutex<Box<dyn VirtualPortBackend>>` 中以实现线程安全访问。
-///
-/// # 实现示例
-///
-/// ```ignore
-/// // com0com (Windows)
-/// impl VirtualPortBackend for VirtualPortManager { ... }
-///
-/// // native POSIX PTY (Linux/macOS)
-/// struct PtyBackend { ... }
-/// impl VirtualPortBackend for PtyBackend { ... }
-/// ```
-/// Send supertrait 是必需的：AppState 通过 Tauri State 在线程间共享。
+/// 每个实现负责自己的平台资源生命周期。Windows com0com 拥有真正的两端配对，
+/// Unix PTY 由 TauTerm 持有 master、只暴露 slave；这些差异不进入上层 session 模型。
 pub trait VirtualPortBackend: Send {
-    /// 检查后端所需资源是否存在。
-    ///
-    /// com0com 需要随包驱动文件；原生 PTY 后端不依赖外部二进制。
     fn are_files_present(&self) -> bool;
-
-    /// 检测后端驱动/内核能力是否可用。
     fn detect_driver(&self) -> bool;
-
-    /// 安装/初始化后端（普通权限路径）。
     fn install_driver(&mut self) -> Result<(), String>;
-
-    /// 通过管理员提权安装后端驱动（UAC / sudo）。
-    ///
-    /// 当 `install_driver()` 因权限不足失败时调用。
-    /// 返回 `Ok(())` 表示提权安装成功。
     fn install_driver_elevated(&mut self) -> Result<(), String>;
 
-    /// 创建 `count` 个虚拟端点（普通权限路径）。
     fn create_endpoints(
         &mut self,
         config: &VirtualPortConfig,
     ) -> Result<Vec<VirtualEndpoint>, String>;
 
-    /// 通过管理员提权创建虚拟端点；仅需要提权的后端实际使用此路径。
     fn create_endpoints_elevated(
         &mut self,
         config: &VirtualPortConfig,
     ) -> Result<Vec<VirtualEndpoint>, String>;
 
-    /// 销毁一个虚拟端点（含优雅降级策略）。
     fn destroy_endpoint(&mut self, endpoint: &VirtualEndpoint) -> Result<(), String>;
-
-    /// 退出时清理所有活跃端点。
     fn cleanup_all(&mut self);
-
-    /// 启动时清理上次异常退出遗留的后端资源。
     fn cleanup_orphans(&mut self) -> u32;
-
-    /// 通过提权批量清理残留后端资源。
     fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String>;
-
-    /// 返回后端记录的待清理资源数量。
     fn pending_orphan_count(&self) -> u32;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_endpoint_registry_round_trip() {
+        let path = "COM197";
+        unregister_internal_endpoint_path(path);
+        assert!(!is_internal_endpoint_path(path));
+        register_internal_endpoint_path(path);
+        assert!(is_internal_endpoint_path(path));
+        unregister_internal_endpoint_path(path);
+        assert!(!is_internal_endpoint_path(path));
+    }
 }
