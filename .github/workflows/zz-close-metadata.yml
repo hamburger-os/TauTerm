@@ -1,0 +1,81 @@
+name: Transport Close Metadata Migration
+
+on:
+  push:
+    branches: [feat/transport-runtime-modbus]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: ${{ !contains(github.event.head_commit.message, '[close-metadata-bot]') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+          fetch-depth: 0
+      - name: Propagate close metadata through DataPlane
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('src-tauri/src/transport/runtime.rs')
+          s=p.read_text()
+          s=s.replace('use crate::transport::stream::{BlockingByteStream, ReadStatus};', 'use crate::transport::stream::{BlockingByteStream, ReadStatus, StreamCloseMetadata};')
+          s=s.replace('''pub struct TransportCloseInfo {\n    pub kind: TransportErrorKind,\n    pub reason: String,\n}''', '''pub struct TransportCloseInfo {\n    pub kind: TransportErrorKind,\n    pub reason: String,\n    pub exit_code: Option<u32>,\n    pub signal: Option<String>,\n}\n\nimpl TransportCloseInfo {\n    fn from_driver(\n        kind: TransportErrorKind,\n        reason: impl Into<String>,\n        metadata: StreamCloseMetadata,\n    ) -> Self {\n        Self {\n            kind,\n            reason: reason.into(),\n            exit_code: metadata.exit_code,\n            signal: metadata.signal,\n        }\n    }\n}''')
+          old='''                    TransportCloseInfo {\n                        kind: TransportErrorKind::RemoteClosed,\n                        reason: "remote endpoint closed the stream".into(),\n                    },'''
+          new='''                    TransportCloseInfo::from_driver(\n                        TransportErrorKind::RemoteClosed,\n                        "remote endpoint closed the stream",\n                        driver.close_metadata(),\n                    ),'''
+          if old not in s:
+              raise SystemExit('EOF close anchor missing')
+          s=s.replace(old,new,1)
+          old='''                    TransportCloseInfo {\n                        kind: error.kind,\n                        reason: error.to_string(),\n                    },'''
+          new='''                    TransportCloseInfo::from_driver(\n                        error.kind,\n                        error.to_string(),\n                        driver.close_metadata(),\n                    ),'''
+          if old not in s:
+              raise SystemExit('error close anchor missing')
+          s=s.replace(old,new,1)
+          # Test literals should make absence of process metadata explicit.
+          s=s.replace('''TransportCloseInfo {\n                        kind: TransportErrorKind::RemoteClosed,\n                        reason: "''', '''TransportCloseInfo {\n                        kind: TransportErrorKind::RemoteClosed,\n                        reason: "''')
+          # Add fields to any remaining struct literals in tests by parser-safe targeted regex-like line handling.
+          lines=s.splitlines()
+          out=[]
+          i=0
+          while i < len(lines):
+              out.append(lines[i])
+              if lines[i].strip().startswith('reason:'):
+                  # If inside a TransportCloseInfo literal and next nonblank closes it, add metadata fields.
+                  window='\n'.join(lines[max(0,i-4):i+1])
+                  if 'TransportCloseInfo {' in window:
+                      indent=lines[i][:len(lines[i])-len(lines[i].lstrip())]
+                      out.append(indent+'exit_code: None,')
+                      out.append(indent+'signal: None,')
+              i+=1
+          s='\n'.join(out)+'\n'
+          p.write_text(s)
+
+          p=Path('src-tauri/src/session/state.rs')
+          s=p.read_text()
+          old='''impl From<TransportCloseInfo> for DisconnectInfo {\n    fn from(info: TransportCloseInfo) -> Self {\n        let kind = match info.kind {\n            TransportErrorKind::RemoteClosed => DisconnectKind::RemoteEof,\n            TransportErrorKind::DeviceNotFound => DisconnectKind::DeviceRemoved,\n            _ => DisconnectKind::IoError,\n        };\n        Self {\n            kind,\n            reason: info.reason,\n            exit_code: None,\n            retain_terminal: true,\n        }\n    }\n}'''
+          new='''impl From<TransportCloseInfo> for DisconnectInfo {\n    fn from(info: TransportCloseInfo) -> Self {\n        if let Some(exit_code) = info.exit_code {\n            return DisconnectInfo::process_exited(exit_code, info.signal.as_deref());\n        }\n        let kind = match info.kind {\n            TransportErrorKind::RemoteClosed => DisconnectKind::RemoteEof,\n            TransportErrorKind::DeviceNotFound => DisconnectKind::DeviceRemoved,\n            _ => DisconnectKind::IoError,\n        };\n        Self {\n            kind,\n            reason: info.reason,\n            exit_code: None,\n            retain_terminal: true,\n        }\n    }\n}'''
+          if old not in s:
+              raise SystemExit('session close conversion anchor missing')
+          p.write_text(s.replace(old,new))
+
+          p=Path('src-tauri/src/transport/mod.rs')
+          s=p.read_text().replace('pub use stream::{AsyncBridgeDriver, AsyncByteStream, BlockingByteStream, ReadStatus};', 'pub use stream::{\n    AsyncBridgeDriver, AsyncByteStream, BlockingByteStream, ReadStatus, StreamCloseMetadata,\n};')
+          p.write_text(s)
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          git diff --check
+      - name: Commit close metadata migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src-tauri/src/transport src-tauri/src/session/state.rs
+          git commit -m '[close-metadata-bot] preserve stream exit metadata'
+          git push origin HEAD:feat/transport-runtime-modbus
