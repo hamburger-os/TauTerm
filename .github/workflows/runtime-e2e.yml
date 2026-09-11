@@ -4,27 +4,38 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit or ref to validate
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit or ref to validate
+        required: false
+        type: string
+    outputs:
+      windows_status:
+        description: passed when Windows WebView smoke executed, blocked when the known hosted-runner WebView2 limitation prevented session creation
+        value: ${{ jobs.windows.outputs.runtime_status }}
 
 permissions:
   contents: read
 
 concurrency:
-  group: runtime-e2e-${{ github.event.pull_request.number || github.ref }}
+  group: runtime-e2e-${{ github.event.pull_request.number || inputs.ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  desktop:
-    name: Tauri runtime smoke (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+  linux:
+    name: Tauri runtime smoke (ubuntu-22.04)
+    runs-on: ubuntu-22.04
     timeout-minutes: 50
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, windows-2025]
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -40,12 +51,14 @@ jobs:
           rustup toolchain install "$TOOLCHAIN" --profile minimal
 
       - name: Install Linux WebView/WebDriver dependencies
-        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev             libjavascriptcoregtk-4.1-dev libssl-dev libudev-dev             webkit2gtk-driver xvfb
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libssl-dev libudev-dev \
+            webkit2gtk-driver xvfb
 
       - name: Install application dependencies
         run: npm ci --no-audit --no-fund
@@ -57,15 +70,56 @@ jobs:
         run: cargo install tauri-driver --locked --version 2.0.6
 
       - name: Verify Linux WebDriver
-        if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           command -v WebKitWebDriver
           command -v tauri-driver
 
+      - name: Install pinned E2E tooling
+        working-directory: tests/e2e
+        run: npm install --no-audit --no-fund --no-package-lock
+
+      - name: Run Linux runtime smoke
+        shell: bash
+        env:
+          TAUTERM_E2E_BINARY: ${{ github.workspace }}/src-tauri/target/debug/tauterm
+        run: xvfb-run -a npm --prefix tests/e2e test
+
+  windows:
+    name: Tauri runtime smoke (windows-2025)
+    runs-on: windows-2025
+    timeout-minutes: 50
+    outputs:
+      runtime_status: ${{ steps.windows-smoke.outputs.runtime_status }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - name: Install application dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build debug application through Tauri CLI
+        run: npm run tauri build -- --debug --no-bundle
+
+      - name: Install pinned tauri-driver
+        run: cargo install tauri-driver --locked --version 2.0.6
+
       - name: Install matching Windows Edge WebDriver
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           cargo install --git https://github.com/chippers/msedgedriver-tool --rev 8c4b34f51b45f5cf08013366d703de464ab871d1 --locked
@@ -79,15 +133,8 @@ jobs:
         working-directory: tests/e2e
         run: npm install --no-audit --no-fund --no-package-lock
 
-      - name: Run Linux runtime smoke
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          TAUTERM_E2E_BINARY: ${{ github.workspace }}/src-tauri/target/debug/tauterm
-        run: xvfb-run -a npm --prefix tests/e2e test
-
       - name: Run Windows runtime smoke
-        if: runner.os == 'Windows'
+        id: windows-smoke
         shell: pwsh
         env:
           TAUTERM_E2E_BINARY: ${{ github.workspace }}\src-tauri\target\debug\tauterm.exe
@@ -101,6 +148,8 @@ jobs:
           npm --prefix tests/e2e test 2>&1 | Tee-Object -FilePath windows-e2e.log
           $status = $LASTEXITCODE
           if ($status -eq 0) {
+            "runtime_status=passed" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            "### Windows Runtime E2E`nReal WebView smoke executed successfully." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
             exit 0
           }
 
@@ -109,14 +158,17 @@ jobs:
             $runtimeMajor -ge 150 -and
             $log -match "DevToolsActivePort file doesn't exist"
           ) {
-            Write-Output "::warning::Windows WebView E2E is blocked by the known WebView2 150+ elevated-host remote-debugging hardening. Only this exact upstream signature is tolerated; all other failures remain fatal."
+            "runtime_status=blocked" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Output "::warning::Windows WebView E2E did not execute: WebView2 150+ on the elevated GitHub-hosted runner blocked DevToolsActivePort. This is recorded as BLOCKED, not PASSED. Release must supply exact-SHA manual Windows validation evidence."
+            "### Windows Runtime E2E`n**BLOCKED** by the known hosted-runner WebView2 150+ elevated-host limitation. No Windows UI smoke assertions executed." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
             exit 0
           }
 
+          "runtime_status=failed" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           exit $status
 
       - name: Upload Windows runtime E2E evidence
-        if: runner.os == 'Windows' && always()
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-e2e-windows-${{ github.sha }}
