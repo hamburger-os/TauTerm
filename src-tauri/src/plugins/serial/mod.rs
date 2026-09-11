@@ -143,10 +143,14 @@ impl SerialAdapter {
 fn normalize_device_label(label: &str, port_name: &str) -> String {
     let trimmed = label.trim();
     let suffix = format!(" ({port_name})");
-    if trimmed.len() >= suffix.len()
-        && trimmed[trimmed.len() - suffix.len()..].eq_ignore_ascii_case(&suffix)
-    {
-        trimmed[..trimmed.len() - suffix.len()]
+    let start = trimmed.len().saturating_sub(suffix.len());
+    let matches = trimmed
+        .get(start..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(&suffix));
+    if matches {
+        trimmed
+            .get(..start)
+            .unwrap_or(trimmed)
             .trim_end()
             .to_string()
     } else {
@@ -195,7 +199,12 @@ impl ProtocolAdapter for SerialAdapter {
                             .as_deref()
                             .or(info.manufacturer.as_deref())
                             .unwrap_or("USB Serial");
-                        let label = normalize_device_label(raw_label, &port_name);
+                        let normalized = normalize_device_label(raw_label, &port_name);
+                        let label = if normalized.is_empty() {
+                            "USB Serial".to_string()
+                        } else {
+                            normalized
+                        };
                         let description = format!("{label} [{:04X}:{:04X}]", info.vid, info.pid);
                         let stable_id = info.serial_number.as_ref().map(|serial| {
                             format!("usb:{:04x}:{:04x}:{serial}", info.vid, info.pid)
@@ -325,6 +334,7 @@ mod tests {
             normalize_device_label("Adapter (COM6)", "COM5"),
             "Adapter (COM6)"
         );
+        assert_eq!(normalize_device_label("设备适配器", "COM5"), "设备适配器");
     }
 
     #[test]
