@@ -9,11 +9,14 @@ import { useJournalExport } from "./useJournalExport";
 import { useJournalHistory } from "./useJournalHistory";
 import { useJournalStream } from "./useJournalStream";
 
+export type JournaldErrorSource = "stream" | "history" | "export";
+
 export interface UseJournaldViewerReturn {
   subTab: SubTab;
   entries: ReturnType<typeof useJournalStream>["entries"];
   loading: boolean;
   error: JournaldErrorPayload | null;
+  errorSource: JournaldErrorSource | null;
   filter: JournaldFilter;
   displayMode: DisplayMode;
   isStreaming: boolean;
@@ -65,22 +68,25 @@ export function useJournaldViewer(
 
   const queryHistory = useCallback(
     async (append = false) => {
+      exporter.clearError();
       await history.query(filter, append);
     },
-    [filter, history.query],
+    [exporter.clearError, filter, history.query],
   );
 
   const runHistoryQuery = useCallback(async () => {
+    exporter.clearError();
     await history.query(filter, false);
-  }, [filter, history.query]);
+  }, [exporter.clearError, filter, history.query]);
 
   const toggleStreaming = useCallback(async () => {
     await stream.toggle(filter);
   }, [filter, stream.toggle]);
 
   const startExport = useCallback(async () => {
+    history.clearError();
     await exporter.start(filter);
-  }, [exporter.start, filter]);
+  }, [exporter.start, filter, history.clearError]);
 
   const clearEntries = useCallback(() => {
     if (subTab === "realtime") {
@@ -97,11 +103,23 @@ export function useJournaldViewer(
   }, [exporter.clearError, history.clearError, stream.clearError]);
 
   const realtime = subTab === "realtime";
+  const error = realtime ? stream.error : history.error ?? exporter.error;
+  const errorSource: JournaldErrorSource | null = realtime
+    ? stream.error
+      ? "stream"
+      : null
+    : history.error
+      ? "history"
+      : exporter.error
+        ? "export"
+        : null;
+
   return {
     subTab,
     entries: realtime ? stream.entries : history.entries,
     loading: realtime ? stream.loading : history.loading,
-    error: realtime ? stream.error : history.error ?? exporter.error,
+    error,
+    errorSource,
     filter,
     displayMode,
     isStreaming: stream.isStreaming,
