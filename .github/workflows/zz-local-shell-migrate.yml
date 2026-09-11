@@ -23,6 +23,11 @@ jobs:
           git mv src-tauri/src/channel/local_shell_channel.rs src-tauri/src/plugins/local_shell/driver.rs
           python3 - <<'PY'
           from pathlib import Path
+
+          p=Path('src-tauri/src/channel/mod.rs')
+          s=p.read_text().replace('pub mod local_shell_channel;\n', '')
+          p.write_text(s)
+
           p=Path('src-tauri/src/plugins/local_shell/driver.rs')
           s=p.read_text()
           s=s.replace('use crate::channel::error::ChannelError;\nuse crate::channel::{Channel, DisconnectInfo};\n', 'use crate::transport::{ReadStatus, StreamCloseMetadata, TransportError};\n')
@@ -58,6 +63,6 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src-tauri/src/plugins/local_shell src-tauri/src/channel/local_shell_channel.rs
+          git add src-tauri/src/channel/mod.rs src-tauri/src/plugins/local_shell src-tauri/src/channel/local_shell_channel.rs
           git commit -m '[local-shell-bot] migrate PTY driver to DataPlane'
           git push origin HEAD:feat/transport-runtime-modbus
