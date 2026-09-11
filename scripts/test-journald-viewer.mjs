@@ -1,0 +1,102 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+const files = {
+  backend: "src-tauri/src/plugins/ssh/journald.rs",
+  client: "src/components/JournaldViewer/hooks/journaldClient.ts",
+  stream: "src/components/JournaldViewer/hooks/useJournalStream.ts",
+  history: "src/components/JournaldViewer/hooks/useJournalHistory.ts",
+  viewer: "src/components/JournaldViewer/hooks/useJournaldViewer.ts",
+  panel: "src/components/JournaldViewer/JournaldViewerPanel.tsx",
+  sidebar: "src/components/RightSidebar/SessionRightSidebar.tsx",
+};
+
+const source = Object.fromEntries(
+  await Promise.all(
+    Object.entries(files).map(async ([name, path]) => [name, await readFile(path, "utf8")]),
+  ),
+);
+
+// History must page from newest to older records and must never regress to
+// constructing --after-cursor, which points in the opposite direction for this UI.
+assert.match(source.backend, /args\.push\("-r"\.to_string\(\)\)/);
+assert.match(source.backend, /--cursor=/);
+assert.doesNotMatch(source.backend, /format!\("--after-cursor=/);
+assert.match(source.backend, /limit\.saturating_add\(lookahead\)/);
+assert.match(source.backend, /entries\.len\(\) > limit/);
+
+// Realtime semantics are explicit: only records generated after Start.
+assert.match(source.backend, /"-n0"\.to_string\(\)/);
+assert.match(source.backend, /"-f"\.to_string\(\)/);
+
+// Kernel-only history must not silently collapse to the current boot.
+assert.match(source.backend, /_TRANSPORT=kernel/);
+assert.doesNotMatch(source.backend, /args\.push\("-k"/);
+
+// The SSH runner must observe remote stderr/exit status and bound memory/time.
+assert.match(source.backend, /ChannelMsg::ExtendedData/);
+assert.match(source.backend, /ChannelMsg::ExitStatus/);
+assert.match(source.backend, /MAX_QUERY_OUTPUT_BYTES/);
+assert.match(source.backend, /QUERY_TIMEOUT/);
+
+// Operation cancellation/completion is event-driven rather than registry polling.
+assert.match(source.backend, /tokio::sync::Notify/);
+assert.match(source.backend, /wait_done/);
+assert.doesNotMatch(source.backend, /wait_until_unregistered/);
+
+// Export terminal events are emitted only after temp-file cleanup and operation
+// unregister, so an immediate next export cannot race the previous registry entry.
+assert.match(source.backend, /uuid::Uuid::new_v4\(\)/);
+assert.match(
+  source.backend,
+  /let outcome = run_journald_export_task[\s\S]*drop\(guard\);[\s\S]*match outcome/,
+);
+
+// IPC is batched on the Rust side; the frontend no longer consumes a per-entry event.
+assert.match(source.backend, /journald:batch/);
+assert.match(source.stream, /journald:batch/);
+assert.doesNotMatch(source.stream, /journald:entry/);
+
+// Stream startup/listener setup must be teardown-safe even if the panel unmounts
+// while async setup or the start IPC is still in flight. Stream errors do not
+// independently mutate terminal state; stream-ended owns that transition.
+assert.match(source.stream, /disposedRef/);
+assert.match(source.stream, /listenerEpochRef/);
+assert.match(source.stream, /generation !== generationRef\.current/);
+assert.match(source.stream, /await stopJournalStream\(sessionId\)\.catch/);
+assert.match(
+  source.stream,
+  /listen<JournalErrorEvent>[\s\S]*setError\(event\.payload\.error\);[\s\S]*listen<JournalEndedEvent>/,
+);
+
+// Literal search is escaped before it is handed to journalctl --grep; regex mode is explicit.
+assert.match(source.client, /escapePcreLiteral/);
+assert.match(source.client, /searchMode/);
+assert.match(source.client, /next_cursor !== null/);
+
+// A stale SSH history response must never overwrite a newer filter/query result.
+assert.match(source.history, /generationRef/);
+assert.match(source.history, /generation !== generationRef\.current/);
+assert.doesNotMatch(source.history, /sortEntries/);
+
+// Error retry preserves which operation failed, and compact-to-full expansion is
+// tied to a stable entry identity rather than an index that can shift under live data.
+assert.match(source.viewer, /JournaldErrorSource/);
+assert.match(source.viewer, /errorSource/);
+assert.match(source.panel, /source === "export"/);
+assert.match(source.panel, /data-journal-key/);
+assert.match(source.panel, /entryDomKey/);
+
+// The compact viewer is windowed and CSS-module severity classes are resolved correctly.
+assert.match(source.panel, /compactWindow/);
+assert.match(source.panel, /virtualRow/);
+assert.match(source.panel, /styles\[priorityToLevelClass\(entry\.priority\)\]/);
+assert.match(source.panel, /t\("common\.retry"\)/);
+
+// Journald remains an optional, lazy right-sidebar tool.
+assert.match(
+  source.sidebar,
+  /lazy\(\(\) => import\("\.\.\/JournaldViewer\/JournaldViewerPanel"\)\)/,
+);
+
+console.log("journald viewer contract: ok");

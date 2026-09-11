@@ -1,15 +1,35 @@
-import { useRef, useEffect, useCallback } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import RightSidebarPanel from "../RightSidebar/RightSidebarPanel";
 import Icon from "../common/Icon";
 import { useJournaldViewer } from "./hooks/useJournaldViewer";
 import type { JournalEntry } from "./types";
-import { LOG_LEVELS, priorityToLevelClass, formatTimestamp, formatTimestampTime, priorityLabel } from "./types";
+import {
+  LOG_LEVELS,
+  formatTimestamp,
+  formatTimestampTime,
+  priorityLabel,
+  priorityToLevelClass,
+} from "./types";
 import styles from "./JournaldViewerPanel.module.css";
 
 interface JournaldViewerPanelProps {
   sessionId: string;
   isConnected: boolean;
+}
+
+const COMPACT_ROW_HEIGHT = 22;
+const VIRTUAL_OVERSCAN = 8;
+
+function entryDomKey(entry: JournalEntry, index: number): string {
+  if (entry.cursor) return `cursor-${encodeURIComponent(entry.cursor)}`;
+  return `fallback-${encodeURIComponent(entry.realtimeTimestamp ?? "0")}-${index}`;
 }
 
 export default function JournaldViewerPanel({
@@ -20,51 +40,115 @@ export default function JournaldViewerPanel({
   const jvd = useJournaldViewer(sessionId, isConnected);
   const logListRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
-  // ── 自动滚动（实时模式）──
-  useEffect(() => {
-    if (jvd.subTab === "realtime" && autoScrollRef.current && logListRef.current) {
-      logListRef.current.scrollTop = 0;
-    }
-  }, [jvd.entries, jvd.subTab]);
+  const expandKeyRef = useRef<string | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(500);
 
-  const handleScroll = useCallback(() => {
-    if (!logListRef.current) return;
-    const el = logListRef.current;
-    // 靠近顶部时启用自动滚动
-    autoScrollRef.current = el.scrollTop < 40;
+  useEffect(() => {
+    const element = logListRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setViewportHeight(entry.contentRect.height);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
   }, []);
 
-  // ── 历史查询加载更多 ──
-  const handleLoadMore = useCallback(() => {
-    jvd.queryHistory(true);
-  }, [jvd]);
+  useEffect(() => {
+    if (
+      jvd.subTab === "realtime" &&
+      autoScrollRef.current &&
+      logListRef.current
+    ) {
+      logListRef.current.scrollTop = 0;
+      setScrollTop(0);
+    }
+  }, [jvd.displayMode, jvd.entries, jvd.subTab]);
 
-  // ── 过滤栏 ──
+  useEffect(() => {
+    if (jvd.displayMode !== "full" || expandKeyRef.current === null) return;
+    const key = expandKeyRef.current;
+    expandKeyRef.current = null;
+    requestAnimationFrame(() => {
+      const target = logListRef.current?.querySelector<HTMLElement>(
+        `[data-journal-key="${key}"]`,
+      );
+      target?.scrollIntoView({ block: "nearest" });
+    });
+  }, [jvd.displayMode]);
+
+  const handleScroll = useCallback(() => {
+    const element = logListRef.current;
+    if (!element) return;
+    autoScrollRef.current = element.scrollTop < 40;
+    setScrollTop(element.scrollTop);
+  }, []);
+
+  const compactWindow = useMemo(() => {
+    if (jvd.displayMode !== "compact") {
+      return { start: 0, end: jvd.entries.length };
+    }
+    const visibleRows = Math.ceil(viewportHeight / COMPACT_ROW_HEIGHT);
+    const start = Math.max(
+      0,
+      Math.floor(scrollTop / COMPACT_ROW_HEIGHT) - VIRTUAL_OVERSCAN,
+    );
+    const end = Math.min(
+      jvd.entries.length,
+      start + visibleRows + VIRTUAL_OVERSCAN * 2,
+    );
+    return { start, end };
+  }, [jvd.displayMode, jvd.entries.length, scrollTop, viewportHeight]);
+
+  const handleLoadMore = useCallback(() => {
+    void jvd.queryHistory(true);
+  }, [jvd.queryHistory]);
+
+  const levelClass = (entry: JournalEntry) =>
+    styles[priorityToLevelClass(entry.priority)];
+
   const renderFilterBar = () => (
     <div className={`${styles.filterBar} liquid-glass-card`}>
       <div className={styles.filterRow}>
         <select
           className={`${styles.filterSelect} liquid-glass-input liquid-glass-select`}
           value={jvd.filter.level ?? ""}
-          onChange={(e) =>
+          onChange={(event) =>
             jvd.setFilter({
-              level: (e.target.value || null) as typeof jvd.filter.level,
+              level: (event.target.value || null) as typeof jvd.filter.level,
             })
           }
         >
           <option value="">{t("journald.filterLevelAll")}</option>
-          {LOG_LEVELS.map((l) => (
-            <option key={l.value} value={l.value}>
-              {t(`journald.level${l.value.charAt(0).toUpperCase() + l.value.slice(1)}`)}
+          {LOG_LEVELS.map((level) => (
+            <option key={level.value} value={level.value}>
+              {t(
+                `journald.level${level.value.charAt(0).toUpperCase()}${level.value.slice(1)}`,
+              )}
             </option>
           ))}
+        </select>
+        <select
+          className={`${styles.searchModeSelect} liquid-glass-input liquid-glass-select`}
+          value={jvd.filter.searchMode ?? "literal"}
+          onChange={(event) =>
+            jvd.setFilter({
+              searchMode: event.target.value as "literal" | "regex",
+            })
+          }
+          title={t("journald.filterKeyword") as string}
+        >
+          <option value="literal">{t("serial.dataModeText")}</option>
+          <option value="regex">{t("sendBar.matchRegex")}</option>
         </select>
         <input
           className={`${styles.filterInput} liquid-glass-input`}
           type="text"
           placeholder={t("journald.filterKeyword") ?? "Keyword"}
           value={jvd.filter.keyword ?? ""}
-          onChange={(e) => jvd.setFilter({ keyword: e.target.value || undefined })}
+          onChange={(event) =>
+            jvd.setFilter({ keyword: event.target.value || undefined })
+          }
         />
       </div>
       <div className={styles.filterRow}>
@@ -73,13 +157,17 @@ export default function JournaldViewerPanel({
           type="text"
           placeholder={t("journald.filterUnit") ?? "Service Unit"}
           value={jvd.filter.unit ?? ""}
-          onChange={(e) => jvd.setFilter({ unit: e.target.value || undefined })}
+          onChange={(event) =>
+            jvd.setFilter({ unit: event.target.value || undefined })
+          }
         />
         <label className={`liquid-glass-toggle ${styles.filterCheckbox}`}>
           <input
             type="checkbox"
             checked={jvd.filter.kernelOnly ?? false}
-            onChange={(e) => jvd.setFilter({ kernelOnly: e.target.checked })}
+            onChange={(event) =>
+              jvd.setFilter({ kernelOnly: event.target.checked })
+            }
           />
           <div />
           <span className={styles.filterCheckboxLabel}>
@@ -97,7 +185,9 @@ export default function JournaldViewerPanel({
               className={`${styles.filterInput} liquid-glass-input`}
               type="datetime-local"
               value={jvd.filter.since ?? ""}
-              onChange={(e) => jvd.setFilter({ since: e.target.value || null })}
+              onChange={(event) =>
+                jvd.setFilter({ since: event.target.value || null })
+              }
             />
           </label>
           <label className={styles.filterDateLabel}>
@@ -108,7 +198,9 @@ export default function JournaldViewerPanel({
               className={`${styles.filterInput} liquid-glass-input`}
               type="datetime-local"
               value={jvd.filter.until ?? ""}
-              onChange={(e) => jvd.setFilter({ until: e.target.value || null })}
+              onChange={(event) =>
+                jvd.setFilter({ until: event.target.value || null })
+              }
             />
           </label>
         </div>
@@ -116,11 +208,9 @@ export default function JournaldViewerPanel({
     </div>
   );
 
-  // ── 工具栏 ──
   const renderToolbar = () => (
     <div className={styles.toolbar}>
       <div className={styles.toolbarLeft}>
-        {/* 模式切换 Toggle — 显示当前模式，点击切换 */}
         <button
           className={`${styles.modeToggleBtn} liquid-glass-button`}
           onClick={() =>
@@ -132,25 +222,21 @@ export default function JournaldViewerPanel({
               : (t("journald.displayCompact") as string)
           }
         >
-          <span>
-            {jvd.displayMode === "compact"
-              ? (t("journald.displayCompact") as string)
-              : (t("journald.displayFull") as string)}
-          </span>
+          {jvd.displayMode === "compact"
+            ? t("journald.displayCompact")
+            : t("journald.displayFull")}
         </button>
 
-        {/* 导出按钮（仅历史查询模式） */}
         {jvd.subTab === "history" &&
           (jvd.exporting ? (
-            /* 导出中：进度 + 取消 */
             <div className={styles.exportProgress}>
-              <span className={`liquid-glass-dot dot-success`} />
+              <span className="liquid-glass-dot dot-success" />
               <span>
                 {t("journald.exportProgress", { loaded: jvd.exportLoaded })}
               </span>
               <button
                 className={`${styles.cancelExportBtn} liquid-glass-button`}
-                onClick={() => jvd.cancelExport()}
+                onClick={() => void jvd.cancelExport()}
               >
                 {t("journald.exportCancel")}
               </button>
@@ -158,7 +244,7 @@ export default function JournaldViewerPanel({
           ) : (
             <button
               className={`${styles.exportBtn} liquid-glass-button`}
-              onClick={() => jvd.startExport()}
+              onClick={() => void jvd.startExport()}
             >
               <Icon name="download" size="sm" />
               <span>{t("journald.exportAll")}</span>
@@ -174,107 +260,98 @@ export default function JournaldViewerPanel({
             />
             <button
               className={`${styles.actionBtn} liquid-glass-button`}
-              onClick={() => jvd.toggleStreaming()}
+              onClick={() => void jvd.toggleStreaming()}
+              disabled={jvd.loading}
             >
               <Icon name={jvd.isStreaming ? "stop" : "play"} size="sm" />
               {jvd.isStreaming
                 ? t("journald.stopTracking")
                 : t("journald.startTracking")}
             </button>
-            {jvd.totalLoaded > 0 && (
-              <span className={`${styles.countBadge} liquid-glass-mini-card`}>
-                {jvd.totalLoaded}
-              </span>
-            )}
           </>
         ) : (
-          <>
-            <button
-              className={`${styles.actionBtn} liquid-glass-button`}
-              onClick={() => jvd.runHistoryQuery()}
-              disabled={jvd.loading}
-            >
-              <Icon name="search" size="sm" />
-              {jvd.loading ? t("journald.loading") : t("journald.query")}
-            </button>
-            {jvd.totalLoaded > 0 && (
-              <span className={`${styles.countBadge} liquid-glass-mini-card`}>
-                {jvd.totalLoaded}
-              </span>
-            )}
-          </>
+          <button
+            className={`${styles.actionBtn} liquid-glass-button`}
+            onClick={() => void jvd.runHistoryQuery()}
+            disabled={jvd.loading}
+          >
+            <Icon name="search" size="sm" />
+            {jvd.loading ? t("journald.loading") : t("journald.query")}
+          </button>
+        )}
+        {jvd.totalLoaded > 0 && (
+          <span className={`${styles.countBadge} liquid-glass-mini-card`}>
+            {jvd.totalLoaded}
+          </span>
         )}
       </div>
     </div>
   );
 
-  // ── 单条日志（紧凑模式）──
-  const renderCompactEntry = (entry: JournalEntry, index: number) => (
-    <div
-      key={entry.__CURSOR ?? `${entry.__REALTIME_TIMESTAMP ?? '0'}-${index}`}
-      className={`${styles.logEntry} ${styles.logEntryCompact} liquid-glass-mini-card`}
-      onClick={() => {
-        // 点击展开：切换到完整模式并滚动到该条目
-        jvd.setDisplayMode("full");
-      }}
-    >
+  const renderCompactEntry = (entry: JournalEntry, index: number) => {
+    const domKey = entryDomKey(entry, index);
+    return (
       <div
-        className={`${styles.logLevel} ${priorityToLevelClass(entry.PRIORITY)}`}
-        title={priorityLabel(entry.PRIORITY)}
-      />
-      <span className={styles.logTimestamp}>
-        {entry.__REALTIME_TIMESTAMP
-          ? formatTimestampTime(entry.__REALTIME_TIMESTAMP)
-          : ""}
-      </span>
-      <span className={styles.logUnit}>
-        {entry.SYSLOG_IDENTIFIER ??
-          entry._SYSTEMD_UNIT?.split(".")[0] ??
-          t("journald.unknownService")}
-      </span>
-      <span className={styles.logMessageCompact}>
-        {entry.MESSAGE ?? ""}
-      </span>
-    </div>
-  );
+        key={entry.cursor ?? `${entry.realtimeTimestamp ?? "0"}-${index}`}
+        className={`${styles.logEntry} ${styles.logEntryCompact} liquid-glass-mini-card`}
+        data-journal-key={domKey}
+        onClick={() => {
+          expandKeyRef.current = domKey;
+          jvd.setDisplayMode("full");
+        }}
+      >
+        <div
+          className={`${styles.logLevel} ${levelClass(entry)}`}
+          title={priorityLabel(entry.priority)}
+        />
+        <span className={styles.logTimestamp}>
+          {formatTimestampTime(entry.realtimeTimestamp)}
+        </span>
+        <span className={styles.logUnit}>
+          {entry.identifier ??
+            entry.unit?.split(".")[0] ??
+            t("journald.unknownService")}
+        </span>
+        <span className={styles.logMessageCompact}>{entry.message ?? ""}</span>
+      </div>
+    );
+  };
 
-  // ── 单条日志（完整模式）──
   const renderFullEntry = (entry: JournalEntry, index: number) => (
     <div
-      key={entry.__CURSOR ?? `${entry.__REALTIME_TIMESTAMP ?? '0'}-${index}`}
+      key={entry.cursor ?? `${entry.realtimeTimestamp ?? "0"}-${index}`}
       className={`${styles.logEntryFull} liquid-glass-mini-card`}
+      data-journal-key={entryDomKey(entry, index)}
     >
       <div className={styles.logEntryFullHeader}>
         <div
-          className={`${styles.logLevel} ${priorityToLevelClass(entry.PRIORITY)}`}
-          title={priorityLabel(entry.PRIORITY)}
+          className={`${styles.logLevel} ${levelClass(entry)}`}
+          title={priorityLabel(entry.priority)}
         />
         <span className={styles.logTimestamp}>
-          {formatTimestamp(entry.__REALTIME_TIMESTAMP)}
+          {formatTimestamp(entry.realtimeTimestamp)}
         </span>
         <span className={styles.logUnit}>
-          {entry.SYSLOG_IDENTIFIER ??
-            entry._SYSTEMD_UNIT ??
-            t("journald.unknownService")}
+          {entry.identifier ?? entry.unit ?? t("journald.unknownService")}
         </span>
-        <span className={styles.countBadge}>{priorityLabel(entry.PRIORITY)}</span>
+        <span className={styles.countBadge}>{priorityLabel(entry.priority)}</span>
       </div>
-      <div className={styles.logMessageFull}>{entry.MESSAGE ?? ""}</div>
-      {(entry._HOSTNAME || entry._BOOT_ID || entry.__CURSOR) && (
+      <div className={styles.logMessageFull}>{entry.message ?? ""}</div>
+      {(entry.hostname || entry.bootId || entry.cursor) && (
         <div className={styles.logExtra}>
-          {entry._HOSTNAME && (
+          {entry.hostname && (
             <span className={`${styles.logExtraField} liquid-glass-mini-card`}>
-              {t("journald.hostname")}: {entry._HOSTNAME}
+              {t("journald.hostname")}: {entry.hostname}
             </span>
           )}
-          {entry._BOOT_ID && (
+          {entry.bootId && (
             <span className={`${styles.logExtraField} liquid-glass-mini-card`}>
-              {t("journald.bootId")}: {entry._BOOT_ID.slice(0, 8)}...
+              {t("journald.bootId")}: {entry.bootId.slice(0, 8)}...
             </span>
           )}
-          {entry.__CURSOR && (
+          {entry.cursor && (
             <span className={`${styles.logExtraField} liquid-glass-mini-card`}>
-              {t("journald.cursor")}: {entry.__CURSOR.slice(0, 16)}...
+              {t("journald.cursor")}: {entry.cursor.slice(0, 16)}...
             </span>
           )}
         </div>
@@ -282,67 +359,85 @@ export default function JournaldViewerPanel({
     </div>
   );
 
-  // ── 日志列表 ──
+  const renderEntries = () => {
+    if (jvd.displayMode === "full") {
+      return (
+        <div className={styles.logListInner}>
+          {jvd.entries.map(renderFullEntry)}
+        </div>
+      );
+    }
+
+    const visible = jvd.entries.slice(compactWindow.start, compactWindow.end);
+    return (
+      <div
+        className={styles.virtualList}
+        style={{ height: jvd.entries.length * COMPACT_ROW_HEIGHT }}
+      >
+        {visible.map((entry, offset) => {
+          const index = compactWindow.start + offset;
+          return (
+            <div
+              key={entry.cursor ?? `${entry.realtimeTimestamp ?? "0"}-${index}`}
+              className={styles.virtualRow}
+              style={{ transform: `translateY(${index * COMPACT_ROW_HEIGHT}px)` }}
+            >
+              {renderCompactEntry(entry, index)}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const renderLogList = () => (
     <div className={styles.logList} ref={logListRef} onScroll={handleScroll}>
-      <div className={styles.logListInner}>
-        {jvd.entries.map((entry, i) =>
-          jvd.displayMode === "compact"
-            ? renderCompactEntry(entry, i)
-            : renderFullEntry(entry, i),
-        )}
-
-        {/* 历史查询加载更多 */}
-        {jvd.subTab === "history" && jvd.hasMore && (
-          <button
-            className={`${styles.loadMoreBtn} liquid-glass-button`}
-            onClick={handleLoadMore}
-            disabled={jvd.loading}
-          >
-            {jvd.loading ? t("journald.loading") : t("journald.loadMore")}
-          </button>
-        )}
-
-        {/* 加载中 */}
-        {jvd.loading && (
-          <div className={styles.loadingContainer}>
-            <span className={styles.loadingText}>{t("journald.loading")}</span>
-          </div>
-        )}
-
-        {/* 空状态 */}
-        {!jvd.loading && jvd.entries.length === 0 && !jvd.error && (
-          <div className={styles.emptyState}>
-            <span className={styles.emptyText}>{t("journald.noEntries")}</span>
-          </div>
-        )}
-      </div>
+      {renderEntries()}
+      {jvd.subTab === "history" && jvd.hasMore && (
+        <button
+          className={`${styles.loadMoreBtn} liquid-glass-button`}
+          onClick={handleLoadMore}
+          disabled={jvd.loading}
+        >
+          {jvd.loading ? t("journald.loading") : t("journald.loadMore")}
+        </button>
+      )}
+      {jvd.loading && jvd.entries.length === 0 && (
+        <div className={styles.loadingContainer}>
+          <span className={styles.loadingText}>{t("journald.loading")}</span>
+        </div>
+      )}
+      {!jvd.loading && jvd.entries.length === 0 && !jvd.error && (
+        <div className={styles.emptyState}>
+          <span className={styles.emptyText}>{t("journald.noEntries")}</span>
+        </div>
+      )}
     </div>
   );
 
-  // ── 错误横幅 ──
   const renderError = () => {
     if (!jvd.error) return null;
-    const isNotAvailable = jvd.error.includes("不可用") || jvd.error.includes("not available");
+    const unavailable = jvd.error.code === "command_unavailable";
     return (
       <div className={`${styles.errorBanner} liquid-glass-mini-card`}>
         <span className="liquid-glass-dot dot-error" />
-        <span>
-          {isNotAvailable ? t("journald.notAvailable") : jvd.error}
-        </span>
-        {!isNotAvailable && (
+        <span>{unavailable ? t("journald.notAvailable") : jvd.error.message}</span>
+        {!unavailable && (
           <button
             className={`${styles.errorRetryBtn} liquid-glass-button`}
             onClick={() => {
+              const source = jvd.errorSource;
               jvd.clearError();
-              if (jvd.subTab === "realtime") {
-                jvd.toggleStreaming();
+              if (source === "export") {
+                void jvd.startExport();
+              } else if (source === "stream") {
+                void jvd.toggleStreaming();
               } else {
-                jvd.runHistoryQuery();
+                void jvd.runHistoryQuery();
               }
             }}
           >
-            Retry
+            {t("common.retry")}
           </button>
         )}
       </div>
@@ -350,9 +445,11 @@ export default function JournaldViewerPanel({
   };
 
   return (
-    <RightSidebarPanel title={t("journald.title") ?? "Journald Viewer"} defaultExpanded={true}>
+    <RightSidebarPanel
+      title={t("journald.title") ?? "Journald Viewer"}
+      defaultExpanded={true}
+    >
       <div className={styles.panel}>
-        {/* 子标签页 */}
         <div className={styles.subTabs}>
           <button
             className={`${styles.subTab} liquid-glass-button ${
@@ -371,17 +468,9 @@ export default function JournaldViewerPanel({
             {t("journald.history")}
           </button>
         </div>
-
-        {/* 错误横幅 */}
         {renderError()}
-
-        {/* 过滤栏 */}
         {renderFilterBar()}
-
-        {/* 工具栏 */}
         {renderToolbar()}
-
-        {/* 日志列表 */}
         {renderLogList()}
       </div>
     </RightSidebarPanel>
