@@ -1,0 +1,76 @@
+name: Feature Migration Helper
+
+on:
+  push:
+    branches:
+      - feat/transport-runtime-modbus
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: ${{ !contains(github.event.head_commit.message, '[migration-bot]') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+          fetch-depth: 0
+      - name: Apply deterministic transport migration edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src-tauri/src/transport/runtime.rs')
+          text = path.read_text()
+          text = text.replace(
+              'const READ_BUFFER_SIZE: usize = 16 * 1024;\n',
+              'const READ_BUFFER_SIZE: usize = 16 * 1024;\nconst STARTUP_BUFFER_LIMIT: usize = 64 * 1024;\n',
+          )
+          text = text.replace(
+              '    let mut subscribers: Vec<(u64, mpsc::Sender<DataPlaneEvent>)> = Vec::new();\n    let mut exclusive: Option<ExclusiveState> = None;\n',
+              '    let mut subscribers: Vec<(u64, mpsc::Sender<DataPlaneEvent>)> = Vec::new();\n    let mut startup_buffer: VecDeque<Vec<u8>> = VecDeque::new();\n    let mut startup_buffer_bytes = 0usize;\n    let mut exclusive: Option<ExclusiveState> = None;\n',
+          )
+          text = text.replace(
+              '                        &mut subscribers,\n                        &mut exclusive,\n                        &tx_bytes,\n',
+              '                        &mut subscribers,\n                        &mut startup_buffer,\n                        &mut startup_buffer_bytes,\n                        &mut exclusive,\n                        &tx_bytes,\n',
+          )
+          old = '''                } else {\n                    subscribers.retain(|(_, subscriber)| {\n                        subscriber.send(DataPlaneEvent::Data(data.clone())).is_ok()\n                    });\n                }\n'''
+          new = '''                } else if subscribers.is_empty() {\n                    startup_buffer_bytes += data.len();\n                    startup_buffer.push_back(data);\n                    while startup_buffer_bytes > STARTUP_BUFFER_LIMIT {\n                        if let Some(dropped) = startup_buffer.pop_front() {\n                            startup_buffer_bytes = startup_buffer_bytes.saturating_sub(dropped.len());\n                        } else {\n                            break;\n                        }\n                    }\n                } else {\n                    subscribers.retain(|(_, subscriber)| {\n                        subscriber.send(DataPlaneEvent::Data(data.clone())).is_ok()\n                    });\n                }\n'''
+          if old not in text:
+              raise SystemExit('runtime data fanout anchor not found')
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              '    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,\n    exclusive: &mut Option<ExclusiveState>,\n',
+              '    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,\n    startup_buffer: &mut VecDeque<Vec<u8>>,\n    startup_buffer_bytes: &mut usize,\n    exclusive: &mut Option<ExclusiveState>,\n',
+          )
+          old = '''        RuntimeCommand::Subscribe { id, subscriber } => {\n            subscribers.push((id, subscriber));\n            false\n        }\n'''
+          new = '''        RuntimeCommand::Subscribe { id, subscriber } => {\n            let mut alive = true;\n            while let Some(data) = startup_buffer.pop_front() {\n                *startup_buffer_bytes = startup_buffer_bytes.saturating_sub(data.len());\n                if subscriber.send(DataPlaneEvent::Data(data)).is_err() {\n                    alive = false;\n                    break;\n                }\n            }\n            if alive {\n                subscribers.push((id, subscriber));\n            } else {\n                startup_buffer.clear();\n                *startup_buffer_bytes = 0;\n            }\n            false\n        }\n'''
+          if old not in text:
+              raise SystemExit('runtime subscribe anchor not found')
+          text = text.replace(old, new, 1)
+          test_anchor = '''    #[test]\n    fn dropped_subscription_unregisters_without_waiting_for_data() {\n'''
+          test = '''    #[test]\n    fn data_received_before_first_subscription_is_delivered_once() {\n        let writes = Arc::new(Mutex::new(Vec::new()));\n        let runtime = DataPlaneRuntime::spawn(Box::new(MockStream {\n            reads: VecDeque::from([ReadStatus::Data(3), ReadStatus::Idle]),\n            writes,\n        }));\n        std::thread::sleep(Duration::from_millis(10));\n        let subscription = runtime.handle.subscribe().unwrap();\n        match subscription.recv_timeout(Duration::from_secs(1)).unwrap() {\n            DataPlaneEvent::Data(data) => assert_eq!(data, vec![0, 1, 2]),\n            DataPlaneEvent::Closed(info) => panic!("unexpected close: {}", info.reason),\n        }\n        drop(subscription);\n        runtime.join();\n    }\n\n'''
+          if test_anchor not in text:
+              raise SystemExit('runtime test anchor not found')
+          text = text.replace(test_anchor, test + test_anchor, 1)
+          path.write_text(text)
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          git diff --check
+      - name: Commit migration edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No migration changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src-tauri/src/transport/runtime.rs
+          git commit -m '[migration-bot] harden DataPlane startup delivery'
+          git push origin HEAD:feat/transport-runtime-modbus
