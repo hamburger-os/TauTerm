@@ -102,11 +102,9 @@ pub async fn cleanup_virtual_ports(
                 ),
             }))
         }
-        Err(error) if error.to_lowercase().contains("cancel") || error.contains("取消") => {
-            Err(format!(
-                "用户取消了提权操作（已直接清理 {direct_cleaned} 个，剩余资源保持待清理状态）"
-            ))
-        }
+        Err(error) if error.to_lowercase().contains("cancel") || error.contains("取消") => Err(
+            format!("用户取消了提权操作（已直接清理 {direct_cleaned} 个，剩余资源保持待清理状态）"),
+        ),
         Err(error) => Err(format!("提权清理失败: {error}")),
     }
 }
