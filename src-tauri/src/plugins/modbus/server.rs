@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 use crate::plugins::modbus::codec;
-use crate::plugins::modbus::config::{ModbusConfig, ModbusMode};
+use crate::plugins::modbus::config::{ModbusConfig, ModbusMode, ServerFaultConfig};
 use crate::plugins::modbus::data_model::ModbusDataModel;
 use crate::transport::runtime::DataPlaneEvent;
 use crate::transport::serial::open_serial;
@@ -14,6 +14,7 @@ use crate::transport::DataPlaneRuntime;
 pub struct ModbusServer {
     config: ModbusConfig,
     pub model: Arc<ModbusDataModel>,
+    fault: Arc<RwLock<ServerFaultConfig>>,
     running: Arc<AtomicBool>,
     workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
     serial_runtime: Mutex<Option<DataPlaneRuntime>>,
@@ -36,9 +37,11 @@ impl ModbusServer {
                 (None, Some(listener))
             }
         };
+        let fault = Arc::new(RwLock::new(config.server_fault.clone()));
         Ok(Self {
             config,
             model: Arc::new(ModbusDataModel::default()),
+            fault,
             running: Arc::new(AtomicBool::new(false)),
             workers: Arc::new(Mutex::new(Vec::new())),
             serial_runtime: Mutex::new(serial_runtime),
@@ -50,10 +53,14 @@ impl ModbusServer {
         if self.running.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        match self.config.mode {
+        let result = match self.config.mode {
             ModbusMode::Rtu | ModbusMode::Ascii => self.start_serial(),
             ModbusMode::Tcp => self.start_tcp(),
+        };
+        if result.is_err() {
+            self.running.store(false, Ordering::Release);
         }
+        result
     }
 
     fn start_serial(&self) -> Result<(), String> {
@@ -69,6 +76,7 @@ impl ModbusServer {
         let running = self.running.clone();
         let config = self.config.clone();
         let model = self.model.clone();
+        let fault = self.fault.clone();
         let worker = std::thread::spawn(move || {
             let mut buffer = Vec::new();
             while running.load(Ordering::Acquire) {
@@ -88,7 +96,7 @@ impl ModbusServer {
                         if config.mode == ModbusMode::Ascii {
                             while let Some(end) = buffer.windows(2).position(|w| w == b"\r\n") {
                                 let frame: Vec<u8> = buffer.drain(..end + 2).collect();
-                                process_serial_frame(&handle, &config, &model, &frame);
+                                process_serial_frame(&handle, &config, &model, &fault, &frame);
                             }
                         }
                     }
@@ -96,7 +104,7 @@ impl ModbusServer {
                         if !buffer.is_empty() && config.mode == ModbusMode::Rtu =>
                     {
                         let frame = std::mem::take(&mut buffer);
-                        process_serial_frame(&handle, &config, &model, &frame);
+                        process_serial_frame(&handle, &config, &model, &fault, &frame);
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -117,6 +125,7 @@ impl ModbusServer {
         let running = self.running.clone();
         let workers = self.workers.clone();
         let model = self.model.clone();
+        let fault = self.fault.clone();
         let config = self.config.clone();
         let active = Arc::new(AtomicUsize::new(0));
         let listener_worker = std::thread::spawn(move || {
@@ -130,10 +139,17 @@ impl ModbusServer {
                         active.fetch_add(1, Ordering::AcqRel);
                         let running_peer = running.clone();
                         let model_peer = model.clone();
+                        let fault_peer = fault.clone();
                         let config_peer = config.clone();
                         let active_peer = active.clone();
                         let peer = std::thread::spawn(move || {
-                            run_tcp_peer(driver, running_peer, model_peer, config_peer);
+                            run_tcp_peer(
+                                driver,
+                                running_peer,
+                                model_peer,
+                                fault_peer,
+                                config_peer,
+                            );
                             active_peer.fetch_sub(1, Ordering::AcqRel);
                         });
                         if let Ok(mut list) = workers.lock() {
@@ -153,6 +169,26 @@ impl ModbusServer {
             .map_err(|e| e.to_string())?
             .push(listener_worker);
         Ok(())
+    }
+
+    pub fn set_fault(&self, fault: ServerFaultConfig) -> Result<(), String> {
+        if fault.delay_ms > 60_000 {
+            return Err("fault delay_ms must be <= 60000".into());
+        }
+        if let Some(code) = fault.exception_code {
+            if !(1..=11).contains(&code) {
+                return Err("fault exception_code must be 1..=11".into());
+            }
+        }
+        *self.fault.write().map_err(|e| e.to_string())? = fault;
+        Ok(())
+    }
+
+    pub fn fault(&self) -> ServerFaultConfig {
+        self.fault
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn shutdown(&self) {
@@ -181,6 +217,7 @@ fn process_serial_frame(
     handle: &crate::transport::DataPlaneHandle,
     config: &ModbusConfig,
     model: &ModbusDataModel,
+    fault: &RwLock<ServerFaultConfig>,
     frame: &[u8],
 ) {
     let decoded = match config.mode {
@@ -212,7 +249,7 @@ fn process_serial_frame(
     if broadcast && !request.is_write() {
         return;
     }
-    let response = execute_with_fault(config, model, &request);
+    let response = execute_with_fault(fault, model, &request);
     if broadcast {
         return;
     }
@@ -241,6 +278,7 @@ fn run_tcp_peer(
     driver: crate::transport::tcp::TcpDriver,
     running: Arc<AtomicBool>,
     model: Arc<ModbusDataModel>,
+    fault: Arc<RwLock<ServerFaultConfig>>,
     config: ModbusConfig,
 ) {
     let runtime = DataPlaneRuntime::spawn(Box::new(driver));
@@ -279,7 +317,7 @@ fn run_tcp_peer(
                             continue;
                         }
                     };
-                    if let Some(response) = execute_with_fault(&config, &model, &request) {
+                    if let Some(response) = execute_with_fault(&fault, &model, &request) {
                         if let Ok(adu) = codec::tcp::encode(tid, unit, &response) {
                             let _ = handle.write(&adu);
                         }
@@ -294,19 +332,18 @@ fn run_tcp_peer(
 }
 
 fn execute_with_fault(
-    config: &ModbusConfig,
+    fault: &RwLock<ServerFaultConfig>,
     model: &ModbusDataModel,
     request: &codec::ModbusRequest,
 ) -> Option<Vec<u8>> {
-    if config.server_fault.no_response {
+    let fault = fault.read().unwrap_or_else(|e| e.into_inner()).clone();
+    if fault.no_response {
         return None;
     }
-    if config.server_fault.delay_ms > 0 {
-        std::thread::sleep(Duration::from_millis(
-            config.server_fault.delay_ms.min(60_000),
-        ));
+    if fault.delay_ms > 0 {
+        std::thread::sleep(Duration::from_millis(fault.delay_ms.min(60_000)));
     }
-    if let Some(code) = config.server_fault.exception_code {
+    if let Some(code) = fault.exception_code {
         return Some(exception_pdu(request.function(), code));
     }
     Some(match model.execute(request) {
@@ -314,6 +351,7 @@ fn execute_with_fault(
         Err(code) => exception_pdu(request.function(), code),
     })
 }
+
 fn exception_pdu(function: u8, code: u8) -> Vec<u8> {
     vec![function | 0x80, code]
 }
