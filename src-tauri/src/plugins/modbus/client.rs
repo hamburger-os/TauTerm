@@ -36,6 +36,18 @@ pub struct TransactionResult {
     pub attempt: u8,
 }
 
+struct TransactionFailure {
+    status: TransactionStatus,
+    function: u8,
+    transaction_id: Option<u16>,
+    started: Instant,
+    raw_tx: Vec<u8>,
+    raw_rx: Vec<u8>,
+    message: String,
+    write_outcome_unknown: bool,
+    attempt: u8,
+}
+
 pub struct ModbusClient {
     config: ModbusConfig,
     runtime: Mutex<Option<DataPlaneRuntime>>,
@@ -92,52 +104,52 @@ impl ModbusClient {
         let pdu = match codec::encode_request(request) {
             Ok(pdu) => pdu,
             Err(message) => {
-                return self.failure(
-                    TransactionStatus::ProtocolError,
+                return self.failure(TransactionFailure {
+                    status: TransactionStatus::ProtocolError,
                     function,
                     transaction_id,
                     started,
-                    Vec::new(),
-                    Vec::new(),
+                    raw_tx: Vec::new(),
+                    raw_rx: Vec::new(),
                     message,
-                    false,
+                    write_outcome_unknown: false,
                     attempt,
-                )
+                });
             }
         };
         if self.config.unit_id == 0 && self.config.mode != ModbusMode::Tcp && !request.is_write() {
-            return self.failure(
-                TransactionStatus::ProtocolError,
+            return self.failure(TransactionFailure {
+                status: TransactionStatus::ProtocolError,
                 function,
                 transaction_id,
                 started,
-                Vec::new(),
-                Vec::new(),
-                "broadcast address 0 is write-only".into(),
-                false,
+                raw_tx: Vec::new(),
+                raw_rx: Vec::new(),
+                message: "broadcast address 0 is write-only".into(),
+                write_outcome_unknown: false,
                 attempt,
-            );
+            });
         }
-        let mode = mode(self.config.mode);
+        let adu_mode = mode(self.config.mode);
         let tx = match codec::encode_adu(
-            mode,
+            adu_mode,
             self.config.unit_id,
             transaction_id.unwrap_or(0),
             &pdu,
         ) {
             Ok(frame) => frame,
             Err(message) => {
-                return self.failure(
-                    TransactionStatus::ProtocolError,
+                return self.failure(TransactionFailure {
+                    status: TransactionStatus::ProtocolError,
                     function,
                     transaction_id,
                     started,
-                    Vec::new(),
-                    Vec::new(),
+                    raw_tx: Vec::new(),
+                    raw_rx: Vec::new(),
                     message,
-                    false,
+                    write_outcome_unknown: false,
                     attempt,
-                )
+                });
             }
         };
 
@@ -149,51 +161,50 @@ impl ModbusClient {
             match runtime.as_ref() {
                 Some(runtime) => runtime.handle.clone(),
                 None => {
-                    return self.failure(
-                        TransactionStatus::Cancelled,
+                    return self.failure(TransactionFailure {
+                        status: TransactionStatus::Cancelled,
                         function,
                         transaction_id,
                         started,
-                        tx,
-                        Vec::new(),
-                        "client is closed".into(),
-                        false,
+                        raw_tx: tx,
+                        raw_rx: Vec::new(),
+                        message: "client is closed".into(),
+                        write_outcome_unknown: false,
                         attempt,
-                    )
+                    });
                 }
             }
         };
         let events = match handle.subscribe() {
             Ok(receiver) => receiver,
             Err(error) => {
-                return self.failure(
-                    TransactionStatus::TransportError,
+                return self.failure(TransactionFailure {
+                    status: TransactionStatus::TransportError,
                     function,
                     transaction_id,
                     started,
-                    tx,
-                    Vec::new(),
-                    error.to_string(),
-                    request.is_write(),
+                    raw_tx: tx,
+                    raw_rx: Vec::new(),
+                    message: error.to_string(),
+                    write_outcome_unknown: request.is_write(),
                     attempt,
-                )
+                });
             }
         };
         if let Err(error) = handle.write(&tx) {
-            return self.failure(
-                TransactionStatus::TransportError,
+            return self.failure(TransactionFailure {
+                status: TransactionStatus::TransportError,
                 function,
                 transaction_id,
                 started,
-                tx,
-                Vec::new(),
-                error.to_string(),
-                request.is_write(),
+                raw_tx: tx,
+                raw_rx: Vec::new(),
+                message: error.to_string(),
+                write_outcome_unknown: request.is_write(),
                 attempt,
-            );
+            });
         }
 
-        // Serial broadcast has no response by definition.
         if self.config.unit_id == 0 && self.config.mode != ModbusMode::Tcp {
             return TransactionResult {
                 status: TransactionStatus::Broadcast,
@@ -230,56 +241,56 @@ impl ModbusClient {
         let (raw_rx, response_pdu) = match received {
             Ok(value) => value,
             Err(ReceiveError::Timeout) => {
-                return self.failure(
-                    TransactionStatus::Timeout,
+                return self.failure(TransactionFailure {
+                    status: TransactionStatus::Timeout,
                     function,
                     transaction_id,
                     started,
-                    tx,
-                    Vec::new(),
-                    "response timeout".into(),
-                    request.is_write(),
+                    raw_tx: tx,
+                    raw_rx: Vec::new(),
+                    message: "response timeout".into(),
+                    write_outcome_unknown: request.is_write(),
                     attempt,
-                )
+                });
             }
             Err(ReceiveError::Transport(message)) => {
-                return self.failure(
-                    TransactionStatus::TransportError,
+                return self.failure(TransactionFailure {
+                    status: TransactionStatus::TransportError,
                     function,
                     transaction_id,
                     started,
-                    tx,
-                    Vec::new(),
+                    raw_tx: tx,
+                    raw_rx: Vec::new(),
                     message,
-                    request.is_write(),
+                    write_outcome_unknown: request.is_write(),
                     attempt,
-                )
+                });
             }
             Err(ReceiveError::Malformed(message, raw)) => {
-                return self.failure(
-                    TransactionStatus::MalformedResponse,
+                return self.failure(TransactionFailure {
+                    status: TransactionStatus::MalformedResponse,
                     function,
                     transaction_id,
                     started,
-                    tx,
-                    raw,
+                    raw_tx: tx,
+                    raw_rx: raw,
                     message,
-                    false,
+                    write_outcome_unknown: false,
                     attempt,
-                )
+                });
             }
             Err(ReceiveError::Protocol(message, raw)) => {
-                return self.failure(
-                    TransactionStatus::ProtocolError,
+                return self.failure(TransactionFailure {
+                    status: TransactionStatus::ProtocolError,
                     function,
                     transaction_id,
                     started,
-                    tx,
-                    raw,
+                    raw_tx: tx,
+                    raw_rx: raw,
                     message,
-                    false,
+                    write_outcome_unknown: false,
                     attempt,
-                )
+                });
             }
         };
         match codec::validate_response(request, &response_pdu) {
@@ -301,46 +312,34 @@ impl ModbusClient {
                 write_outcome_unknown: false,
                 attempt,
             },
-            Err(message) => self.failure(
-                TransactionStatus::ProtocolError,
+            Err(message) => self.failure(TransactionFailure {
+                status: TransactionStatus::ProtocolError,
                 function,
                 transaction_id,
                 started,
-                tx,
+                raw_tx: tx,
                 raw_rx,
                 message,
-                false,
+                write_outcome_unknown: false,
                 attempt,
-            ),
+            }),
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn failure(
-        &self,
-        status: TransactionStatus,
-        function: u8,
-        transaction_id: Option<u16>,
-        started: Instant,
-        raw_tx: Vec<u8>,
-        raw_rx: Vec<u8>,
-        message: String,
-        write_unknown: bool,
-        attempt: u8,
-    ) -> TransactionResult {
+    fn failure(&self, failure: TransactionFailure) -> TransactionResult {
         TransactionResult {
-            status,
-            function,
-            transaction_id,
+            status: failure.status,
+            function: failure.function,
+            transaction_id: failure.transaction_id,
             unit_id: self.config.unit_id,
-            latency_ms: started.elapsed().as_millis(),
+            latency_ms: failure.started.elapsed().as_millis(),
             exception_code: None,
-            raw_tx,
-            raw_rx,
+            raw_tx: failure.raw_tx,
+            raw_rx: failure.raw_rx,
             response_pdu: Vec::new(),
-            message: Some(message),
-            write_outcome_unknown: write_unknown,
-            attempt,
+            message: Some(failure.message),
+            write_outcome_unknown: failure.write_outcome_unknown,
+            attempt: failure.attempt,
         }
     }
 
