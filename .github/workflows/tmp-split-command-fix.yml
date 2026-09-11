@@ -1,0 +1,233 @@
+name: Temporary Split Command Fix
+
+on:
+  push:
+    branches: [fix/split-command-availability]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/split-command-availability
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply split command fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          core = Path("src/core/split-layout.ts")
+          text = core.read_text(encoding="utf-8")
+          old = '''function updateSplitRatio(node: LayoutNode, splitId: SplitId, ratio: number): LayoutNode {
+            if (node.type === "pane") return node;
+            if (node.id === splitId) return { ...node, ratio };
+            return {
+              ...node,
+              first: updateSplitRatio(node.first, splitId, ratio),
+              second: updateSplitRatio(node.second, splitId, ratio),
+            };
+          }
+
+          export function setSplitRatioInLayout(
+            state: SplitLayoutState,
+            splitId: SplitId,
+            ratio: number,
+          ): SplitLayoutState {
+            const clamped = Math.max(0.05, Math.min(0.95, ratio));
+            return { ...state, root: updateSplitRatio(state.root, splitId, clamped) };
+          }
+
+          interface ResetParentSplitResult {'''
+          new = '''function updateSplitRatio(node: LayoutNode, splitId: SplitId, ratio: number): LayoutNode {
+            if (node.type === "pane") return node;
+            if (node.id === splitId) {
+              return node.ratio === ratio ? node : { ...node, ratio };
+            }
+
+            const first = updateSplitRatio(node.first, splitId, ratio);
+            if (first !== node.first) return { ...node, first };
+
+            const second = updateSplitRatio(node.second, splitId, ratio);
+            return second === node.second ? node : { ...node, second };
+          }
+
+          export function setSplitRatioInLayout(
+            state: SplitLayoutState,
+            splitId: SplitId,
+            ratio: number,
+          ): SplitLayoutState {
+            const clamped = Math.max(0.05, Math.min(0.95, ratio));
+            const root = updateSplitRatio(state.root, splitId, clamped);
+            return root === state.root ? state : { ...state, root };
+          }
+
+          function splitHasDirectPane(
+            node: Extract<LayoutNode, { type: "split" }>,
+            paneId: PaneId,
+          ): boolean {
+            return (node.first.type === "pane" && node.first.id === paneId)
+              || (node.second.type === "pane" && node.second.id === paneId);
+          }
+
+          function findParentSplitRatio(node: LayoutNode, paneId: PaneId): number | null {
+            if (node.type === "pane") return null;
+            if (splitHasDirectPane(node, paneId)) return node.ratio;
+            return findParentSplitRatio(node.first, paneId)
+              ?? findParentSplitRatio(node.second, paneId);
+          }
+
+          /**
+           * Whether resetting this Pane's immediate parent split would change layout geometry.
+           * UI command availability must derive from this same layout rule rather than pane count.
+           */
+          export function canResetPaneSplitRatioInLayout(
+            state: SplitLayoutState,
+            paneId: PaneId,
+          ): boolean {
+            const ratio = findParentSplitRatio(state.root, paneId);
+            return ratio !== null && ratio !== 0.5;
+          }
+
+          interface ResetParentSplitResult {'''
+          if text.count(old) != 1:
+              raise SystemExit("split-layout ratio block did not match exactly")
+          text = text.replace(old, new)
+          old_direct = '''  const directChild = (node.first.type === "pane" && node.first.id === paneId)
+            || (node.second.type === "pane" && node.second.id === paneId);
+          if (directChild) {'''
+          new_direct = '''  if (splitHasDirectPane(node, paneId)) {'''
+          if text.count(old_direct) != 1:
+              raise SystemExit("reset direct-child block did not match exactly")
+          text = text.replace(old_direct, new_direct)
+          core.write_text(text, encoding="utf-8")
+
+          view = Path("src/components/Layout/SplitView.tsx")
+          text = view.read_text(encoding="utf-8")
+          old_import = '''import {
+            MAX_WORKSPACE_PANES,
+            type DividerGeometry,'''
+          new_import = '''import {
+            MAX_WORKSPACE_PANES,
+            canResetPaneSplitRatioInLayout,
+            type DividerGeometry,'''
+          if text.count(old_import) != 1:
+              raise SystemExit("SplitView import block did not match exactly")
+          text = text.replace(old_import, new_import)
+          old_caps = '''  const canSplitRight = Boolean(rect && canOfferSplit(rect, "right"));
+            const canSplitDown = Boolean(rect && canOfferSplit(rect, "bottom"));
+            return ['''
+          new_caps = '''  const canSplitRight = Boolean(rect && canOfferSplit(rect, "right"));
+            const canSplitDown = Boolean(rect && canOfferSplit(rect, "bottom"));
+            const canResetPaneRatio = canResetPaneSplitRatioInLayout(layout, paneMenu.paneId);
+            return ['''
+          if text.count(old_caps) != 1:
+              raise SystemExit("SplitView capability block did not match exactly")
+          text = text.replace(old_caps, new_caps)
+          old_disabled = '''        disabled: paneCount <= 1,
+              },
+              { id: "pane-separator-2"'''
+          new_disabled = '''        disabled: !canResetPaneRatio,
+              },
+              { id: "pane-separator-2"'''
+          if text.count(old_disabled) != 1:
+              raise SystemExit("SplitView reset disabled block did not match exactly")
+          text = text.replace(old_disabled, new_disabled)
+          old_deps = '''  }, [paneMenu, paneRects, layout.assignments, canOfferSplit, paneCount, t]);'''
+          new_deps = '''  }, [paneMenu, paneRects, layout.assignments, layout.root, canOfferSplit, paneCount, t]);'''
+          if text.count(old_deps) != 1:
+              raise SystemExit("SplitView menu dependencies did not match exactly")
+          text = text.replace(old_deps, new_deps)
+          view.write_text(text, encoding="utf-8")
+
+          test = Path("scripts/test-split-layout.mjs")
+          text = test.read_text(encoding="utf-8")
+          old_test_import = '''  activateSessionInLayout,
+            clearPaneInLayout,'''
+          new_test_import = '''  activateSessionInLayout,
+            canResetPaneSplitRatioInLayout,
+            clearPaneInLayout,'''
+          if text.count(old_test_import) != 1:
+              raise SystemExit("split test import block did not match exactly")
+          text = text.replace(old_test_import, new_test_import)
+          grid_marker = '''assert.deepEqual(gridRects.g4, { left: 0.5, top: 0.5, width: 0.5, height: 0.5 });
+
+          // Resetting a Pane ratio affects only its immediate parent Split, not the outer tree.'''
+          grid_new = '''assert.deepEqual(gridRects.g4, { left: 0.5, top: 0.5, width: 0.5, height: 0.5 });
+          // A balanced 2x2 grid has no meaningful reset action on any Pane. This mirrors the
+          // Pane context menu: commands that are guaranteed no-ops must be disabled.
+          for (const paneId of ["g1", "g2", "g3", "g4"]) {
+            assert.equal(canResetPaneSplitRatioInLayout(grid, paneId), false);
+          }
+          assert.equal(canResetPaneSplitRatioInLayout(grid, "missing-pane"), false);
+
+          // Resetting a Pane ratio affects only its immediate parent Split, not the outer tree.'''
+          if text.count(grid_marker) != 1:
+              raise SystemExit("grid test marker did not match exactly")
+          text = text.replace(grid_marker, grid_new)
+          ratio_marker = '''ratioTree = setSplitRatioInLayout(ratioTree, "rs2", 0.3);
+          ratioTree = resetPaneSplitRatioInLayout(ratioTree, "r1");'''
+          ratio_new = '''ratioTree = setSplitRatioInLayout(ratioTree, "rs2", 0.3);
+          assert.equal(canResetPaneSplitRatioInLayout(ratioTree, "r1"), true);
+          ratioTree = resetPaneSplitRatioInLayout(ratioTree, "r1");'''
+          if text.count(ratio_marker) != 1:
+              raise SystemExit("ratio test marker did not match exactly")
+          text = text.replace(ratio_marker, ratio_new)
+          balanced_marker = '''const alreadyBalanced = resetPaneSplitRatioInLayout(ratioTree, "r1");
+          assert.strictEqual(alreadyBalanced, ratioTree);
+
+          // Closing a Pane removes only the view slot and collapses its now-redundant parent split.'''
+          balanced_new = '''const alreadyBalanced = resetPaneSplitRatioInLayout(ratioTree, "r1");
+          assert.strictEqual(alreadyBalanced, ratioTree);
+          assert.equal(canResetPaneSplitRatioInLayout(ratioTree, "r1"), false);
+
+          // Closing a Pane removes only the view slot and collapses its now-redundant parent split.'''
+          if text.count(balanced_marker) != 1:
+              raise SystemExit("balanced reset marker did not match exactly")
+          text = text.replace(balanced_marker, balanced_new)
+          divider_marker = '''state = setSplitRatioInLayout(state, "s1", 2);
+          assert.equal(state.root.type, "split");
+          assert.equal(state.root.ratio, 0.95);
+
+          // A removed Session clears its Pane assignment but does not mutate/collapse the layout.'''
+          divider_new = '''state = setSplitRatioInLayout(state, "s1", 2);
+          assert.equal(state.root.type, "split");
+          assert.equal(state.root.ratio, 0.95);
+          // No-op resize writes preserve identity so React/persistence do not churn.
+          assert.strictEqual(setSplitRatioInLayout(state, "s1", 0.95), state);
+          assert.strictEqual(setSplitRatioInLayout(state, "missing-split", 0.5), state);
+
+          // A removed Session clears its Pane assignment but does not mutate/collapse the layout.'''
+          if text.count(divider_marker) != 1:
+              raise SystemExit("divider identity marker did not match exactly")
+          text = text.replace(divider_marker, divider_new)
+          test.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Validate split layout and frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check:split-layout
+          npx tsc --noEmit
+          npm run build
+          git diff --check
+
+      - name: Commit fix and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tmp-split-command-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/core/split-layout.ts src/components/Layout/SplitView.tsx scripts/test-split-layout.mjs .github/workflows/tmp-split-command-fix.yml
+          git commit -m "fix(workspace): align split command availability with layout"
+          git push origin HEAD:fix/split-command-availability
