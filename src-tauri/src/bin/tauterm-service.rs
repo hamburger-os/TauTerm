@@ -11,7 +11,9 @@
 //! - 仅接受固定的窄操作集，绝不透传任意 `setupc` 参数。
 //!
 //! 客户端以「连接」为单位记账：`hello` 上报 `client_id`，断开（管道关闭）时
-//! 自动清理该客户端创建的全部端口对——即使 App 崩溃，OS 也会关闭管道触发清理。
+//! 自动清理该客户端创建的全部端口对。服务同时在 ProgramData 持久化自己的
+//! ownership；若服务自身崩溃或系统异常掉电，重启后只恢复/清理有 ownership
+//! 证据的 TauTerm 资源，不扫描删除第三方 com0com bus。
 
 #[cfg(windows)]
 mod service {
@@ -74,6 +76,14 @@ mod service {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect()
+    }
+
+    fn service_state_dir() -> PathBuf {
+        std::env::var_os("PROGRAMDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+            .join("TauTerm")
+            .join("service")
     }
 
     // ── 命名管道 + 帧协议 ──────────────────────────────
@@ -288,7 +298,7 @@ mod service {
                     .and_then(|c| c.as_u64())
                     .unwrap_or(1) as u32;
                 let config = VirtualPortConfig {
-                    enabled: true,
+                    enabled: count > 0,
                     count,
                 };
                 match vpm.create_endpoints(&config) {
@@ -312,10 +322,11 @@ mod service {
                     Some(bus) => {
                         if let Some(list) = clients.get_mut(&req.client_id) {
                             if let Some(pos) = list.iter().position(|p| p.resource_id == bus) {
-                                let pair = list.remove(pos);
-                                if let Err(e) = vpm.destroy_endpoint(&pair) {
-                                    log::warn!("remove_pair bus {} failed: {}", bus, e);
+                                let pair = list[pos].clone();
+                                if let Err(error) = vpm.destroy_endpoint(&pair) {
+                                    return Response::err(id, error);
                                 }
+                                list.remove(pos);
                             }
                         }
                         Some(serde_json::json!({}))
@@ -325,11 +336,21 @@ mod service {
             }
             "cleanup_client" => {
                 if let Some(list) = clients.remove(&req.client_id) {
-                    for p in &list {
-                        let _ = vpm.destroy_endpoint(p);
+                    for pair in list {
+                        if let Err(error) = vpm.destroy_endpoint(&pair) {
+                            log::warn!(
+                                "cleanup_client bus {} deferred after error: {}",
+                                pair.resource_id,
+                                error
+                            );
+                        }
                     }
                 }
                 Some(serde_json::json!({}))
+            }
+            "cleanup_orphans" => {
+                let cleaned = vpm.cleanup_orphans();
+                Some(serde_json::json!({ "cleaned": cleaned }))
             }
             other => return Response::err(id, format!("unknown op: {}", other)),
         };
@@ -362,13 +383,20 @@ mod service {
             }
         }
 
-        // 管道关闭 = 客户端消失 → 自动清理其端口对（崩溃也无孤儿）
+        // 管道关闭 = 客户端消失。逐一释放该客户端资源；若底层删除失败，
+        // VirtualPortManager 会把 ownership 留在持久化 orphan 集中供后续恢复清理。
         if let Some(cid) = client_id {
             if let Ok(mut v) = vpm.lock() {
                 if let Ok(mut c) = clients.lock() {
                     if let Some(list) = c.remove(&cid) {
                         for p in &list {
-                            let _ = v.destroy_endpoint(p);
+                            if let Err(error) = v.destroy_endpoint(p) {
+                                log::warn!(
+                                    "disconnect cleanup bus {} deferred after error: {}",
+                                    p.resource_id,
+                                    error
+                                );
+                            }
                         }
                     }
                 }
@@ -411,13 +439,21 @@ mod service {
     }
 
     fn run_server(resource_dir: PathBuf) {
-        // 无状态模式：服务不落盘 com0com 簿记，也不创建 ProgramData 目录。
-        // 各客户端端口对在内存中按 client_id 管理，断开/崩溃时自动清理；
-        // 孤儿/总线号以驱动真实状态（setupc list）为准，避免卸载残留目录。
-        let vpm = Mutex::new(VirtualPortManager::new_stateless(resource_dir));
+        // 服务的 ownership 簿记属于机器级特权状态，存放在 ProgramData，而不是
+        // 安装目录或某个交互用户的 AppData。它只记录 TauTerm 自己创建的 endpoint，
+        // 因而服务崩溃/掉电后仍能安全恢复，且不会把第三方 com0com bus 当作孤儿。
+        let state_dir = service_state_dir();
+        if let Err(error) = std::fs::create_dir_all(&state_dir) {
+            log::error!(
+                "cannot create privileged virtual-port state directory {:?}: {}",
+                state_dir,
+                error
+            );
+        }
+        let vpm = Mutex::new(VirtualPortManager::new(resource_dir, state_dir));
         let clients: Mutex<Clients> = Mutex::new(HashMap::new());
 
-        // 启动时清理上次异常退出遗留的孤儿端口对
+        // 启动时只清理有 TauTerm ownership 证据、且当前无 active owner 的资源。
         if let Ok(mut v) = vpm.lock() {
             let cleaned = v.cleanup_orphans();
             if cleaned > 0 {
