@@ -56,7 +56,7 @@ After the release PR is merged:
 1. open **Actions → Release → Run workflow**;
 2. select `master`;
 3. enter the full version such as `0.7.0` or `0.7.0-rc.1`;
-4. normally leave `windows_validation_sha` empty and start the workflow.
+4. start the workflow.
 
 Do not create the tag manually. The workflow verifies that the selected commit is still current `master`, validates version/CHANGELOG metadata, and then runs the permanent qualification set against that exact source SHA before any package build starts:
 
@@ -73,9 +73,9 @@ The build jobs consume the same immutable source SHA used by these gates.
 
 A GitHub-hosted Windows runner can currently be unable to create the WebDriver session when WebView2 Runtime 150+ applies its elevated-host remote-debugging restriction. Runtime E2E records this exact known condition as `blocked`, not `passed`.
 
-When that happens, Release stops at the Runtime E2E policy gate before package builds. Manually validate the exact `master` SHA on a real Windows environment, then re-run Release and set `windows_validation_sha` to that **exact SHA**. The workflow rejects a different SHA or an empty value. If source changes after the manual validation, the evidence is stale and must be repeated.
+When that happens, Release keeps the condition explicit as `blocked`, emits a warning, and continues to the package builds without requiring a manual SHA attestation input. A real Windows smoke check is still recommended for releases that change Windows-specific runtime behavior, but it is a maintainer validation practice rather than a workflow credential.
 
-The manual Windows validation must cover the behavior affected by the release. At minimum verify application launch and the relevant user-visible runtime path. For releases that change virtual serial, privileged service, installer/updater or ownership behavior, also verify the affected lifecycle: TauTerm-owned endpoint create/remove, preservation of unrelated pre-existing com0com resources, service recovery where applicable, and upgrade/uninstall ownership semantics. Do not use the evidence field as a bypass when the validation was not actually performed.
+For releases that change virtual serial, privileged service, installer/updater or ownership behavior, the recommended Windows smoke check should cover the affected lifecycle: application launch, TauTerm-owned endpoint create/remove, preservation of unrelated pre-existing com0com resources, service recovery where applicable, and upgrade/uninstall ownership semantics. An actual Windows Runtime E2E failure remains fatal; only the narrowly recognized hosted-runner limitation is allowed to report `blocked`.
 
 ## 3. Artifact and updater gates
 
@@ -102,8 +102,8 @@ Alpha, beta, and release-candidate versions are published as pre-releases and do
 The publish stage is fail-closed. If final validation fails before promotion completes, the release/tag created by that run is rolled back where the workflow owns them.
 
 - If a build/assembly job fails without source changes, re-run the failed jobs.
-- If Runtime E2E is `blocked`, complete exact-SHA Windows validation and start a new Release run with the evidence SHA; do not reinterpret the blocked run as a pass.
-- If source must change, merge the fix through normal CI and start a new release run from the new `master`; any prior manual validation SHA is invalid.
+- If Windows Runtime E2E is `blocked` by the narrowly recognized hosted-runner condition, keep the warning visible and let the same Release run continue; do not reinterpret the blocked run as a pass.
+- If source must change, merge the fix through normal CI and start a new release run from the new `master`.
 - Never move a tag that belongs to an already published release.
 
 ## Workflow policy

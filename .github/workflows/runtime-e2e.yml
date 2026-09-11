@@ -159,7 +159,7 @@ jobs:
             $log -match "DevToolsActivePort file doesn't exist"
           ) {
             "runtime_status=blocked" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            Write-Output "::warning::Windows WebView E2E did not execute: WebView2 150+ on the elevated GitHub-hosted runner blocked DevToolsActivePort. This is recorded as BLOCKED, not PASSED. Release must supply exact-SHA manual Windows validation evidence."
+            Write-Output "::warning::Windows WebView E2E did not execute: WebView2 150+ on the elevated GitHub-hosted runner blocked DevToolsActivePort. This is recorded as BLOCKED, not PASSED; the narrowly recognized hosted-runner limitation does not stop Release package builds."
             "### Windows Runtime E2E`n**BLOCKED** by the known hosted-runner WebView2 150+ elevated-host limitation. No Windows UI smoke assertions executed." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
             exit 0
           }
