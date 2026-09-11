@@ -1,0 +1,25 @@
+name: Feature Architecture Audit
+
+on:
+  push:
+    branches:
+      - feat/transport-runtime-modbus
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Legacy transport reference inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== legacy transport references ==='
+          git grep -n -E 'crate::channel|ChannelKind|IoLoopCmd|CommHandle|SideChannel|SessionChannelFactory|try_handoff|channel_return_tx|spawn_sync_io_loop|spawn_async_io_loop' -- 'src-tauri/src/**/*.rs' || true
+          echo '=== channel directory ==='
+          find src-tauri/src/channel -maxdepth 2 -type f -print 2>/dev/null | sort || true
+          echo '=== transport references ==='
+          git grep -n -E 'DataPlaneHandle|DataPlaneRuntime|BlockingByteStream|ExclusiveIo' -- 'src-tauri/src/**/*.rs' || true
