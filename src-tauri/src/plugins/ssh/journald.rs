@@ -938,12 +938,6 @@ pub fn stop_journald_export(session_id: &str) {
     ACTIVE_EXPORTS.cancel(session_id);
 }
 
-pub async fn stop_journald_export_confirm(session_id: &str) {
-    if let Some(operation) = ACTIVE_EXPORTS.cancel(session_id) {
-        operation.wait_done().await;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
