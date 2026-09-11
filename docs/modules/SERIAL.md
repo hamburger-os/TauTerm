@@ -64,7 +64,7 @@ orphan = owned_endpoints - active_endpoints
 6. 如果销毁因权限或系统状态暂时失败，只移除 active、保留 owned，此时才成为可提示的 orphan；
 7. 进程异常退出后，新进程没有 active owner，而持久化 owned 仍存在，因此这些端点自然成为可恢复清理的 orphan；
 8. 手动“清理残留端口”只能处理已证明属于 TauTerm 且当前非 active 的资源，禁止删除第三方/用户自行创建的 com0com bus；
-9. 特权服务模式按 `client_id` 在服务进程内记录自己创建的端点，客户端断开时只清理该客户端资源，不做驱动全局扫除。
+9. 特权服务模式同样使用 ownership 模型：`client_id` 负责当前连接的运行期归属，机器级 ownership 持久化到 ProgramData。客户端断开时只释放该客户端资源；服务自身崩溃或系统异常掉电后，重启只恢复/清理有 ownership 证据的 TauTerm orphan，绝不做驱动全局扫除。在线升级保留该状态，正式卸载时由 NSIS 清理。
 
 持久化状态采用当前唯一 schema，不保留旧版 bus-only 兼容逻辑；预稳定阶段发现旧/损坏 schema 时只备份用于诊断，并重新建立当前模型。
 
