@@ -25,6 +25,10 @@
 4. **bind 前置 / 监听器复用**（TauTerm 服务端状态准确性）：
    - `src/server.rs` — `run_once()` 拆分为 `bind()` + `run_once_with_listener(&TcpListener)`：宿主先 bind（端口占用等绑定失败在 emit `running:true` 之前暴露，无"先绿后红"闪烁），再复用同一监听器循环 `run_once_with_listener`（消除每轮重新 bind 的窗口）。`run_once()` 保持组合语义（`run()` 不受影响）。
 
+5. **移除未使用的 RSA 认证能力（RustSec 边界收敛）**：
+   - TauTerm 的 iperf3 产品契约不提供 `--username`、RSA 公私钥或 authorized-users 配置，宿主调用也从未设置这些 builder 字段；vendored fork 因此不再携带未使用的 RSA 认证模块/API。
+   - 删除 `auth.rs` 以及仅由该模块使用的 `rsa`/`base64`/`rpassword`/`sha2` 依赖，避免把 `RUSTSEC-2023-0071` 的网络可观察 RSA 时序侧信道带入 TauTerm 依赖图；若未来要提供 iperf3 认证，必须在引入前选择无该 advisory 的实现并重新完成互通与安全审查。
+
 ## 上游同步步骤
 
 1. 从 crates.io 下载新版本源码，覆盖本目录（保留本文件）。

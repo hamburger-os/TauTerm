@@ -76,10 +76,6 @@ pub struct Client {
     pub(crate) format_char: char,
     pub(crate) interval: Option<f64>,
     pub(crate) cntl_ka: Option<String>,
-    pub(crate) username: Option<String>,
-    pub(crate) password: Option<String>,
-    pub(crate) rsa_public_key_path: Option<String>,
-    pub(crate) use_pkcs1_padding: bool,
     /// [TauTerm fork] Live interval channel (see
     /// [`crate::reporter::IntervalReporterConfig::interval_tx`]).
     pub(crate) interval_tx: Option<crate::reporter::IntervalSender>,
@@ -999,26 +995,6 @@ impl Client {
         }
         if let Some(blocks) = self.blocks_to_send {
             p.blockcount = Some(blocks);
-        }
-
-        // Auth: encrypt credentials if username and public key are set
-        if let (Some(ref username), Some(ref pubkey_path)) =
-            (&self.username, &self.rsa_public_key_path)
-        {
-            let pubkey_pem = std::fs::read(pubkey_path).unwrap_or_default();
-            let password = self
-                .password
-                .clone()
-                .or_else(|| crate::auth::read_password().ok())
-                .unwrap_or_default();
-            if let Ok(token) = crate::auth::encode_auth_token(
-                username,
-                &password,
-                &pubkey_pem,
-                self.use_pkcs1_padding,
-            ) {
-                p.authtoken = Some(token);
-            }
         }
 
         p
@@ -2442,10 +2418,6 @@ pub struct ClientBuilder {
     format_char: char,
     interval: Option<f64>,
     cntl_ka: Option<String>,
-    username: Option<String>,
-    password: Option<String>,
-    rsa_public_key_path: Option<String>,
-    use_pkcs1_padding: bool,
     /// [TauTerm fork] Live interval channel (see
     /// [`crate::reporter::IntervalReporterConfig::interval_tx`]).
     interval_tx: Option<crate::reporter::IntervalSender>,
@@ -2508,10 +2480,6 @@ impl Default for ClientBuilder {
             format_char: 'a',
             interval: None,
             cntl_ka: None,
-            username: None,
-            password: None,
-            rsa_public_key_path: None,
-            use_pkcs1_padding: false,
             interval_tx: None,
             quiet: false,
         }
@@ -2917,35 +2885,6 @@ impl ClientBuilder {
         self
     }
 
-    /// `--username`: username for authentication (used with a password and
-    /// [`Self::rsa_public_key_path`]).
-    pub fn username(mut self, name: &str) -> Self {
-        self.username = Some(name.to_string());
-        self
-    }
-
-    /// Password for authentication. iperf3 has no flag for this; the CLI reads
-    /// the `RIPERF3_PASSWORD`/`IPERF3_PASSWORD` environment variables or prompts.
-    pub fn password(mut self, pass: &str) -> Self {
-        self.password = Some(pass.to_string());
-        self
-    }
-
-    /// `--rsa-public-key-path`: path to the RSA public key used to encrypt the
-    /// authentication credentials.
-    pub fn rsa_public_key_path(mut self, path: &str) -> Self {
-        self.rsa_public_key_path = Some(path.to_string());
-        self
-    }
-
-    /// `--use-pkcs1-padding`: encrypt credentials with PKCS#1 v1.5 padding
-    /// instead of OAEP (for pre-3.17 iperf3 servers). The CLI rejects this flag
-    /// for clients, matching iperf3 (#100); only embedders can set it here.
-    pub fn use_pkcs1_padding(mut self, enabled: bool) -> Self {
-        self.use_pkcs1_padding = enabled;
-        self
-    }
-
     // String-accepting variants — parse KMG suffixes (e.g., "1M", "512K", "10G")
     // so callers don't need to import parse_kmg/parse_bitrate.
 
@@ -3223,10 +3162,6 @@ impl ClientBuilder {
             format_char: self.format_char,
             interval: self.interval,
             cntl_ka: self.cntl_ka,
-            username: self.username,
-            password: self.password,
-            rsa_public_key_path: self.rsa_public_key_path,
-            use_pkcs1_padding: self.use_pkcs1_padding,
             interval_tx: self.interval_tx,
             quiet: self.quiet,
         })
