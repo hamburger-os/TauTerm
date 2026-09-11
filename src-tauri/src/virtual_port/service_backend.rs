@@ -13,8 +13,8 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_IO_PENDING, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
-use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
 use super::backend::{
     register_internal_endpoint_path, unregister_internal_endpoint_path, VirtualEndpoint,
