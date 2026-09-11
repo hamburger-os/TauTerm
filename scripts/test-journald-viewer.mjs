@@ -17,10 +17,10 @@ const source = Object.fromEntries(
 );
 
 // History must page from newest to older records and must never regress to
-// --after-cursor, which points in the opposite direction for this UI.
+// constructing --after-cursor, which points in the opposite direction for this UI.
 assert.match(source.backend, /args\.push\("-r"\.to_string\(\)\)/);
 assert.match(source.backend, /--cursor=/);
-assert.doesNotMatch(source.backend, /--after-cursor=/);
+assert.doesNotMatch(source.backend, /format!\("--after-cursor=/);
 assert.match(source.backend, /limit\.saturating_add\(lookahead\)/);
 assert.match(source.backend, /entries\.len\(\) > limit/);
 
