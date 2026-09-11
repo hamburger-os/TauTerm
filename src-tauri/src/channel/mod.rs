@@ -9,7 +9,6 @@ pub mod async_io_loop;
 pub mod elevated_shell_channel;
 pub mod error;
 pub mod io_loop;
-pub mod local_shell_channel;
 pub mod serial_channel;
 pub mod serial_comm;
 pub mod ssh_channel;

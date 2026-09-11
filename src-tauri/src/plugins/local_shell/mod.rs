@@ -3,13 +3,15 @@
 //! 负责配置验证、系统 Shell 探测与 PTY 通道创建。平台 PTY/进程生命周期
 //! 细节封装在 `LocalShellChannel`，调用方只接触 `ProtocolAdapter` interface。
 
-use crate::channel::error::SessionError;
-use crate::channel::local_shell_channel::LocalShellChannel;
-use crate::channel::{ContentType, IoStrategy};
+mod driver;
+
 use crate::kernel::plugin_adapter::{
-    ChannelKind, ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection,
+    ChannelOpenMode, ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection,
     SessionChannelFactory, TransferProtocolType,
 };
+use crate::session::SessionError;
+use crate::transport::DataPlaneRuntime;
+use driver::LocalShellDriver;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -264,10 +266,9 @@ impl LocalShellAdapter {
                 capability: "elevated_shell".into(),
             });
         }
-        let channel = factory.open_channel(mode).await?;
+        let data_plane = factory.open_channel(mode).await?;
         Ok(ProtocolConnection {
-            channel: Some(channel),
-            comm_handle: None,
+            data_plane: Some(data_plane),
             side_channel: None,
             channel_factory: Some(factory),
             teardown_delay: std::time::Duration::ZERO,
@@ -283,14 +284,14 @@ struct LocalShellFactory {
 
 #[async_trait::async_trait]
 impl SessionChannelFactory for LocalShellFactory {
-    async fn open_channel(&self, mode: ChannelOpenMode) -> Result<ChannelKind, SessionError> {
+    async fn open_channel(&self, mode: ChannelOpenMode) -> Result<DataPlaneRuntime, SessionError> {
         let executable = self.resolved.executable.to_string_lossy().to_string();
         match mode {
             ChannelOpenMode::Standard => {
                 let channel =
-                    LocalShellChannel::spawn(&executable, &self.resolved.args, &self.resolved.cwd)
-                        .map_err(SessionError::ChannelError)?;
-                Ok(ChannelKind::Sync(Box::new(channel)))
+                    LocalShellDriver::spawn(&executable, &self.resolved.args, &self.resolved.cwd)
+                        .map_err(SessionError::Io)?;
+                Ok(DataPlaneRuntime::spawn(Box::new(channel)))
             }
             ChannelOpenMode::Elevated if self.elevated_supported => {
                 #[cfg(windows)]
@@ -351,10 +352,6 @@ impl ProtocolAdapter for LocalShellAdapter {
 
     fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
         vec![]
-    }
-
-    fn io_strategy(&self) -> IoStrategy {
-        IoStrategy::Sync
     }
 }
 
