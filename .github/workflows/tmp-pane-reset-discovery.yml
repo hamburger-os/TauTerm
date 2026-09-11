@@ -1,21 +1,156 @@
-name: Temporary Pane Reset Discovery
+name: Temporary Pane Reset Cleanup
 
 on:
   push:
     branches: [fix/split-command-availability]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  inspect:
+  cleanup:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: fix/split-command-availability
-      - name: Find pane reset references
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Remove low-value pane reset command
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str = ""):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}: {old[:100]!r}")
+              p.write_text(text.replace(old, new), encoding="utf-8")
+
+          # SplitView: remove command surface and callback wiring.
+          path = "src/components/Layout/SplitView.tsx"
+          replace_once(path, "  canResetPaneSplitRatioInLayout,\n")
+          replace_once(path, "  onResetPaneRatio: (paneId: PaneId) => void;\n")
+          replace_once(path, "  onResetPaneRatio,\n")
+          replace_once(path, "    const canResetPaneRatio = canResetPaneSplitRatioInLayout(layout, paneMenu.paneId);\n")
+          replace_once(path, '''      {
+                id: "reset-pane-ratio",
+                label: t("split.resetRatio", { defaultValue: "均分当前分屏" }),
+                disabled: !canResetPaneRatio,
+              },
+''')
+          replace_once(
+              path,
+              "  }, [paneMenu, paneRects, layout.assignments, layout.root, canOfferSplit, paneCount, t]);",
+              "  }, [paneMenu, paneRects, layout.assignments, canOfferSplit, paneCount, t]);",
+          )
+          replace_once(path, '''      case "reset-pane-ratio":
+                onResetPaneRatio(paneId);
+                break;
+''')
+          replace_once(
+              path,
+              "  }, [paneMenu, onClearPane, onClosePane, onResetPaneRatio, onSplitPane]);",
+              "  }, [paneMenu, onClearPane, onClosePane, onSplitPane]);",
+          )
+
+          # Dispatcher: remove the now-dead callback plumbing.
+          path = "src/components/TabContentDispatcher.tsx"
+          replace_once(path, "    resetPaneRatio,\n")
+          replace_once(path, "      onResetPaneRatio={resetPaneRatio}\n")
+
+          # Context: remove the public action and implementation entirely.
+          path = "src/context/SplitLayoutContext.tsx"
+          replace_once(path, "  resetPaneSplitRatioInLayout,\n")
+          replace_once(path, "  resetPaneRatio: (paneId: PaneId) => void;\n")
+          replace_once(path, '''  const resetPaneRatio = useCallback((paneId: PaneId) => {
+            const current = stateRef.current;
+            const next = resetPaneSplitRatioInLayout(current, paneId);
+            if (next === current) return;
+            stateRef.current = next;
+            setState(next);
+          }, []);
+
+''')
+          replace_once(path, "    resetPaneRatio,\n")
+          replace_once(path, "    resetPaneRatio,\n")
+
+          # Core: remove both the reset implementation and the temporary capability helper.
+          p = Path("src/core/split-layout.ts")
+          text = p.read_text(encoding="utf-8")
+          start = text.find("function splitHasDirectPane(")
+          end_marker = "export function pruneAssignments("
+          end = text.find(end_marker)
+          if start < 0 or end < 0 or start >= end:
+              raise SystemExit("src/core/split-layout.ts: reset helper block boundaries not found")
+          text = text[:start] + text[end:]
+          p.write_text(text, encoding="utf-8")
+
+          # Tests: delete reset-specific imports and scenarios; keep ratio-write no-op coverage.
+          path = "scripts/test-split-layout.mjs"
+          replace_once(path, "  canResetPaneSplitRatioInLayout,\n")
+          replace_once(path, "  resetPaneSplitRatioInLayout,\n")
+          p = Path(path)
+          text = p.read_text(encoding="utf-8")
+          start_marker = "// A balanced 2x2 grid has no meaningful reset action on any Pane."
+          end_marker = "// Closing a Pane removes only the view slot and collapses its now-redundant parent split."
+          start = text.find(start_marker)
+          end = text.find(end_marker)
+          if start < 0 or end < 0 or start >= end:
+              raise SystemExit("scripts/test-split-layout.mjs: reset scenario block boundaries not found")
+          text = text[:start] + text[end:]
+          p.write_text(text, encoding="utf-8")
+
+          # Translation keys are dead once the command is gone; do not leave compatibility residue.
+          for path in ["src/i18n/locales/en-US.json", "src/i18n/locales/zh-CN.json"]:
+              p = Path(path)
+              lines = p.read_text(encoding="utf-8").splitlines()
+              matches = [i for i, line in enumerate(lines) if '"resetRatio"' in line]
+              if len(matches) > 1:
+                  raise SystemExit(f"{path}: multiple resetRatio keys found")
+              if matches:
+                  del lines[matches[0]]
+                  p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Verify no pane reset residue remains
         shell: bash
         run: |
           set -euo pipefail
-          grep -R -n -E "resetPaneSplitRatioInLayout|canResetPaneSplitRatioInLayout|onResetPaneRatio|reset-pane-ratio|split\.resetRatio|均分当前分屏" src scripts || true
+          if grep -R -n -E "resetPaneSplitRatioInLayout|canResetPaneSplitRatioInLayout|onResetPaneRatio|resetPaneRatio|reset-pane-ratio|resetRatio|均分当前分屏" src scripts; then
+            echo "Pane reset residue remains" >&2
+            exit 1
+          fi
+
+      - name: Validate frontend and layout contracts
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check:split-layout
+          npx tsc --noEmit
+          npm run build
+          git diff --check
+
+      - name: Commit cleanup and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tmp-pane-reset-discovery.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/components/Layout/SplitView.tsx \
+                  src/components/TabContentDispatcher.tsx \
+                  src/context/SplitLayoutContext.tsx \
+                  src/core/split-layout.ts \
+                  scripts/test-split-layout.mjs \
+                  src/i18n/locales/en-US.json \
+                  src/i18n/locales/zh-CN.json \
+                  .github/workflows/tmp-pane-reset-discovery.yml
+          git commit -m "refactor(workspace): remove pane ratio reset command"
+          git push origin HEAD:fix/split-command-availability
