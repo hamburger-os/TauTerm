@@ -1,0 +1,125 @@
+name: Temporary Split Layout Cleanup
+
+on:
+  push:
+    branches: [fix/split-command-availability]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/split-command-availability
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Normalize split layout implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/core/split-layout.ts")
+          lines = path.read_text(encoding="utf-8").splitlines()
+
+          def unique(exact):
+              hits = [i for i, line in enumerate(lines) if line == exact]
+              if len(hits) != 1:
+                  raise SystemExit(f"expected one line {exact!r}, found {len(hits)}")
+              return hits[0]
+
+          start = unique("function updateSplitRatio(node: LayoutNode, splitId: SplitId, ratio: number): LayoutNode {")
+          end = unique("interface ResetParentSplitResult {")
+          replacement = [
+              'function updateSplitRatio(node: LayoutNode, splitId: SplitId, ratio: number): LayoutNode {',
+              '  if (node.type === "pane") return node;',
+              '  if (node.id === splitId) {',
+              '    return node.ratio === ratio ? node : { ...node, ratio };',
+              '  }',
+              '',
+              '  const first = updateSplitRatio(node.first, splitId, ratio);',
+              '  if (first !== node.first) return { ...node, first };',
+              '',
+              '  const second = updateSplitRatio(node.second, splitId, ratio);',
+              '  return second === node.second ? node : { ...node, second };',
+              '}',
+              '',
+              'export function setSplitRatioInLayout(',
+              '  state: SplitLayoutState,',
+              '  splitId: SplitId,',
+              '  ratio: number,',
+              '): SplitLayoutState {',
+              '  const clamped = Math.max(0.05, Math.min(0.95, ratio));',
+              '  const root = updateSplitRatio(state.root, splitId, clamped);',
+              '  return root === state.root ? state : { ...state, root };',
+              '}',
+              '',
+              'function splitHasDirectPane(',
+              '  node: Extract<LayoutNode, { type: "split" }>,',
+              '  paneId: PaneId,',
+              '): boolean {',
+              '  return (node.first.type === "pane" && node.first.id === paneId)',
+              '    || (node.second.type === "pane" && node.second.id === paneId);',
+              '}',
+              '',
+              'function findParentSplitRatio(node: LayoutNode, paneId: PaneId): number | null {',
+              '  if (node.type === "pane") return null;',
+              '  if (splitHasDirectPane(node, paneId)) return node.ratio;',
+              '  return findParentSplitRatio(node.first, paneId)',
+              '    ?? findParentSplitRatio(node.second, paneId);',
+              '}',
+              '',
+              '/**',
+              " * Whether resetting this Pane's immediate parent split would change geometry.",
+              ' * Command availability derives from the same immediate-parent rule as reset.',
+              ' */',
+              'export function canResetPaneSplitRatioInLayout(',
+              '  state: SplitLayoutState,',
+              '  paneId: PaneId,',
+              '): boolean {',
+              '  const ratio = findParentSplitRatio(state.root, paneId);',
+              '  return ratio !== null && ratio !== 0.5;',
+              '}',
+              '',
+              'interface ResetParentSplitResult {',
+          ]
+          lines[start:end + 1] = replacement
+
+          direct = unique('  const directChild = (node.first.type === "pane" && node.first.id === paneId)')
+          expected = [
+              '  const directChild = (node.first.type === "pane" && node.first.id === paneId)',
+              '    || (node.second.type === "pane" && node.second.id === paneId);',
+              '  if (directChild) {',
+          ]
+          if lines[direct:direct + 3] != expected:
+              raise SystemExit("reset direct-child block changed unexpectedly")
+          lines[direct:direct + 3] = ['  if (splitHasDirectPane(node, paneId)) {']
+
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Validate cleanup
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check:split-layout
+          npx tsc --noEmit
+          npm run build
+          git diff --check
+
+      - name: Commit cleanup and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tmp-split-format.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/core/split-layout.ts .github/workflows/tmp-split-format.yml
+          git commit -m "refactor(workspace): share split parent predicate"
+          git push origin HEAD:fix/split-command-availability
