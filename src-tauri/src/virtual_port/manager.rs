@@ -1212,7 +1212,7 @@ mod tests {
         assert!(batch.contains(":success\r\nexit /b 0"));
         for endpoint in &pairs {
             let remove = format!("\"setupc.exe\" remove {}", endpoint.resource_id);
-            assert_eq!(batch.matches(&remove).count(), 1);
+            assert_eq!(batch.matches(&remove).count(), 2);
         }
     }
 }
