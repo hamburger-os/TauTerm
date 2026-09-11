@@ -4,7 +4,7 @@ description: "TauTerm Windows com0com virtual-port architecture and maintenance 
 license: MIT
 metadata:
   author: tauterm
-  version: "3.0"
+  version: "3.1"
 ---
 
 # TauTerm com0com 虚拟串口维护参考
@@ -21,12 +21,13 @@ metadata:
 2. **用户只看到 external endpoint。** `VirtualEndpoint.bridge_path` 是 TauTerm 内部桥接资源，`external_path` 才是用户和第三方串口工具应该打开的端口。
 3. **内部 bridge 必须从普通 Serial 端点发现中隐藏。** Windows 直连后端和 ServiceBackend 客户端都通过 `virtual_port::backend` 的内部端点注册表维护可见性。
 4. **前端契约只暴露 `external_path`。** 不把 `bridge_path`、CNCA/CNCB 或 bus 编号泄漏到 UI。状态栏示例：`VPort: COM21`。
-5. **删除授权来自 ownership，不来自驱动枚举。** `setupc list` 可以用于端口/bus 冲突检测和状态核对，但绝不能因为“驱动里存在某个 bus”就推断它属于 TauTerm。
+5. **删除授权来自 endpoint ownership，不来自驱动枚举。** `setupc list` 可以用于端口/bus 冲突检测和状态核对，但绝不能因为“驱动里存在某个 bus”就推断它属于 TauTerm。
 6. **严格定义 `orphan = owned_endpoints - active_endpoints`。** active 端点永远不是残留；外部程序关闭 external endpoint 也不会改变父 Serial Session 的 ownership。
 7. **第三方 com0com 端口对不可被 TauTerm 清理。** 手动“清理残留端口”只能处理 TauTerm 有 ownership 证据且当前无 active owner 的资源。
-8. **服务自身崩溃也不能丢失 ownership。** `TauTermService` 的机器级 ownership 持久化在 `%ProgramData%\TauTerm\service\com0com_state.json`。服务重启只恢复/清理这些有证据的 orphan。
-9. **在线升级保留服务 ownership；正式卸载删除它。** NSIS hook 负责服务生命周期、com0com 驱动卸载以及 `%ProgramData%\TauTerm\service` 清理。
-10. **当前 schema 唯一，不做旧 bus-only 兼容迁移。** 预稳定阶段遇到旧/损坏 schema，只做诊断备份并重新建立当前模型。
+8. **服务自身崩溃也不能丢失 endpoint ownership。** `TauTermService` 的机器级 ownership 持久化在 `%ProgramData%\TauTerm\service\com0com_state.json`。服务重启只恢复/清理这些有证据的 TauTerm orphan。
+9. **在线升级保留服务 ownership；正式卸载删除 TauTerm 自己的机器级状态。** NSIS hook 负责服务生命周期和 `%ProgramData%\TauTerm\service` 清理。
+10. **当前 endpoint ownership schema 唯一，不做旧 bus-only 兼容迁移。** 预稳定阶段遇到旧/损坏 schema，只做诊断备份并重新建立当前模型。
+11. **com0com 驱动是系统级共享资源，driver ownership 与 endpoint ownership 完全分离。** 只有安装前确认系统没有 com0com、且本次由 TauTerm 成功安装时，才写 `%ProgramData%\TauTerm\service\driver-owned.marker`。卸载时必须同时满足“driver-owned marker 存在”和“`setupc list` 已确认没有任何端口对”，才允许全局 `setupc uninstall`；否则保留共享驱动。
 
 典型数据流：
 
@@ -53,7 +54,7 @@ com0com bus
 | 责任 | 文件 |
 |---|---|
 | 平台无关后端接口、`VirtualEndpoint`、内部端点可见性注册表 | `src-tauri/src/virtual_port/backend.rs` |
-| Windows com0com ownership、分配、创建、销毁、恢复 | `src-tauri/src/virtual_port/manager.rs` |
+| Windows com0com endpoint ownership、分配、创建、销毁、恢复 | `src-tauri/src/virtual_port/manager.rs` |
 | App ↔ 特权服务客户端 | `src-tauri/src/virtual_port/service_backend.rs` |
 | Windows LocalSystem 服务 | `src-tauri/src/bin/tauterm-service.rs` |
 | Session 创建/桥接生命周期 | `src-tauri/src/commands.rs` |
@@ -61,7 +62,7 @@ com0com bus
 | Serial 端点发现与展示描述 | `src-tauri/src/plugins/serial/mod.rs` |
 | 前端状态栏 | `src/components/Layout/StatusBar.tsx` |
 | 前端驱动/orphan 状态 | `src/hooks/useCom0comStatus.ts` |
-| Windows 安装/更新/卸载 | `src-tauri/windows/hooks.nsh` |
+| Windows 安装/更新/卸载与 driver ownership | `src-tauri/windows/hooks.nsh` |
 | 产品设计 | `docs/modules/SERIAL.md` |
 
 修改这些边界时同步更新本文和 `docs/modules/SERIAL.md`，不要再建立第二套 ownership、清理或可见性逻辑。
@@ -82,15 +83,15 @@ COM20       COM21
 TauTerm 当前创建时约定：
 
 ```text
-CNCA<n> -> bridge_path   -> PortName=COMxx
-CNCB<n> -> external_path -> PortName=COMyy,PlugInMode=yes
+CNCA<n> -> bridge_path    -> PortName=COMxx
+CNCB<n> -> external_path  -> PortName=COMyy,PlugInMode=yes
 ```
 
 bus 是后端资源标识；前端不得依赖它。
 
 ### 3.2 写操作需要管理员权限
 
-`install`、`remove`、`change`、`uninstall` 等写操作需要管理员权限。产品安装后由 `TauTermService` 承担这些特权操作；不要在 UI 层直接拼接 PowerShell/setupc 命令。
+`install`、`remove`、`change`、`uninstall` 等写操作需要管理员权限。产品安装后由 `TauTermService` 承担 endpoint 特权操作；不要在 UI 层直接拼接 PowerShell/setupc 命令。
 
 ### 3.3 setupc 必须在资源目录运行
 
@@ -117,7 +118,7 @@ bus 是后端资源标识；前端不得依赖它。
 
 ---
 
-## 4. Ownership 模型
+## 4. Endpoint ownership 模型
 
 Windows 有状态后端维护：
 
@@ -183,7 +184,7 @@ setupc remove <bus>
 
 ### 服务崩溃/掉电恢复
 
-`TauTermService` 使用 `%ProgramData%\TauTerm\service` 的持久化 ownership。服务启动时：
+`TauTermService` 使用 `%ProgramData%\TauTerm\service` 的持久化 endpoint ownership。服务启动时：
 
 1. 载入 owned；
 2. 当前没有旧进程 active owner，因此这些记录是候选 orphan；
@@ -212,9 +213,9 @@ setupc remove <bus>
 - 客户端与服务可执行文件必须位于同一安装目录；
 - 只接受固定 op：hello/status/install/create/remove/cleanup 等窄操作；
 - 不接受任意 setupc 参数、shell 文本或命令行透传；
-- `client_id` 只表示当前管道连接的运行期资源归属，机器级 crash recovery 仍依赖持久化 ownership。
+- `client_id` 只表示当前管道连接的运行期资源归属，机器级 crash recovery 仍依赖持久化 endpoint ownership。
 
-不要把“驱动里可枚举到的 bus”加入服务 ownership；ownership 只能由 TauTerm 自己的创建路径产生。
+不要把“驱动里可枚举到的 bus”加入服务 endpoint ownership；ownership 只能由 TauTerm 自己的创建路径产生。
 
 ---
 
@@ -269,7 +270,7 @@ setupc.exe list
 
 确认 7 个必需文件全部存在于打包资源目录。
 
-### 7.4 检查 ownership
+### 7.4 检查 endpoint ownership
 
 生产服务状态：
 
@@ -285,7 +286,17 @@ owned - active
 
 不能把 `setupc list` 的全部 bus 数量当作 `orphan_count`。
 
-### 7.5 检查可见性
+### 7.5 检查 driver ownership
+
+TauTerm 只有在“安装前 com0com 不存在、安装动作成功”时才创建：
+
+```text
+%ProgramData%\TauTerm\service\driver-owned.marker
+```
+
+marker 仅表示 **TauTerm 对系统级驱动安装拥有卸载资格的必要条件之一**，并不意味着可以无条件卸载。真正卸载前还必须确认 `setupc list` 中没有任何端口对。
+
+### 7.6 检查可见性
 
 假设物理端口 COM6，TauTerm 创建 COM20/COM21：
 
@@ -317,7 +328,7 @@ setupc.exe busynames COM*
 
 ### 8.3 `remove` 非零但资源已经不存在
 
-不要仅凭 exit code 推断资源存在。用 `setupc list` 核对目标 bus；若已经不存在，应清掉 TauTerm 对应 ownership 记录，而不是反复删除。
+不要仅凭 exit code 推断资源存在。用 `setupc list` 核对目标 bus；若已经不存在，应清掉 TauTerm 对应 endpoint ownership 记录，而不是反复删除。
 
 ### 8.4 外部 COM 断开后状态栏出现“残留端口”
 
@@ -331,7 +342,7 @@ endpoint ∈ active
 
 ### 8.5 服务崩溃后留下端口
 
-重启服务应根据 ProgramData ownership 自动恢复/清理。若 orphan 仍存在，检查：
+重启服务应根据 ProgramData endpoint ownership 自动恢复/清理。若 orphan 仍存在，检查：
 
 - ownership 文件是否存在且可读；
 - `setupc list` 是否仍能看到 bus；
@@ -340,18 +351,30 @@ endpoint ∈ active
 
 不要“修复”为删除驱动中所有 com0com bus。
 
+### 8.6 卸载后 com0com 驱动仍存在
+
+这不一定是残留错误。若以下任一条件成立，TauTerm 应主动保留共享驱动：
+
+- 安装 TauTerm 前 com0com 已存在；
+- `driver-owned.marker` 不存在；
+- `setupc list` 仍有任意端口对；
+- 无法可靠确认驱动当前端口状态。
+
+只有 marker 存在且驱动中已经没有任何端口对时，才允许 `setupc uninstall`。
+
 ---
 
 ## 9. 安装、更新与卸载
 
 NSIS 规则：
 
-- 安装：使用随包 setupc 触发驱动安装，并注册 `TauTermService`；
-- 在线升级：先停止/结束旧 App 与服务以释放文件锁，**保留 ProgramData ownership**，新服务启动后继续恢复；
-- 卸载：停止并删除服务、卸载 com0com 驱动、删除 `%ProgramData%\TauTerm\service`，最后同步清理安装目录；
+- **安装**：安装前先查询 `sc query com0com`。若驱动原本不存在且 TauTerm 成功通过临时端口对装入驱动，创建 `driver-owned.marker`；若驱动原本存在，不取得 driver ownership；
+- **在线升级**：先停止/结束旧 App 与服务以释放文件锁，保留 ProgramData endpoint ownership 和 driver marker，新服务启动后继续恢复；
+- **卸载**：先结束 GUI，让服务处理客户端管道断开；再优雅停止服务并以强杀兜底。只有 driver marker 存在且 `setupc list` 已确认没有任何端口对时，才卸载 com0com；否则保留共享驱动。随后删除 TauTerm 自己的 `%ProgramData%\TauTerm\service` 状态和安装目录；
+- **禁止**：因为 TauTerm 曾使用 com0com 就无条件执行全局 `setupc uninstall`。全局驱动和 endpoint ownership 是两个不同资源层级；
 - 不用“重启后删除”掩盖安装目录锁问题。
 
-修改 `src-tauri/windows/hooks.nsh` 后必须在 Windows CI/安装包实测：安装、在线更新、卸载三条路径都要覆盖。
+修改 `src-tauri/windows/hooks.nsh` 后必须在 Windows CI/安装包实测：安装、已有第三方 com0com 的安装、在线更新、正常卸载、存在第三方端口对时卸载五条路径都要覆盖。
 
 ---
 
@@ -363,15 +386,18 @@ NSIS 规则：
 |---|---|
 | 普通物理串口发现 | 名称不重复，identity 保留 |
 | 创建 1 对虚拟端口 | bridge 隐藏，external 可见/可用 |
-| 创建多对 | bus/COM 不冲突，全部 ownership 明确 |
+| 创建多对 | bus/COM 不冲突，全部 endpoint ownership 明确 |
 | 第三方打开/关闭 external | 不产生 orphan，可重新打开 |
 | 父 Serial Session 断开 | 只清理该 Session 的端点 |
 | App 崩溃 | 服务检测管道断开并清理该 client |
-| Service 崩溃/掉电 | 重启依据 ProgramData ownership 恢复 |
+| Service 崩溃/掉电 | 重启依据 ProgramData endpoint ownership 恢复 |
 | 部分创建失败 | 已创建的新资源回滚或保留明确 ownership，不产生未知资源 |
 | 手动 cleanup | 不删除 active、不删除第三方 bus |
-| 在线升级 | ownership 保留，新服务恢复 |
-| 正式卸载 | 服务、驱动、机器级 service state 清理 |
+| 系统已有第三方 com0com 后安装 TauTerm | 不创建 driver marker，卸载时不碰共享驱动 |
+| TauTerm 自己安装 com0com，驱动中无任何端口对 | 卸载时允许删除驱动 |
+| TauTerm 自己安装 com0com，但仍有第三方端口对 | 卸载时保留驱动 |
+| 在线升级 | endpoint ownership 与 driver marker 保留，新服务恢复 |
+| 正式卸载 | 服务和 TauTerm 自己的机器级状态清理；共享驱动按 ownership 边界决定是否保留 |
 | reserved test region | 产品不分配 COM/bus 200..=255 |
 
 Windows 真实 com0com 驱动回归不能完全由跨平台单元测试替代。合并前至少保证仓库 CI、Windows Rust checks、Runtime E2E 全绿；发布前再做真实驱动链路验证。
@@ -392,7 +418,7 @@ setupc.exe remove <bus>
 setupc.exe uninstall
 ```
 
-所有写操作必须在明确的权限边界内执行；产品代码优先通过 TauTermService，不要把这些命令直接暴露给 WebView。
+所有写操作必须在明确的权限边界内执行；产品代码优先通过 TauTermService，不要把这些命令直接暴露给 WebView。`setupc uninstall` 是全局操作，必须额外满足 driver ownership + 无端口对条件。
 
 ---
 
