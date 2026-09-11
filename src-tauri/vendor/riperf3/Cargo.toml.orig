@@ -13,15 +13,11 @@ license = "MIT OR Apache-2.0"
 readme = "../README.md"
 
 [dependencies]
-base64.workspace = true
 libc.workspace = true
 log.workspace = true
-rpassword.workspace = true
 rand.workspace = true
-rsa.workspace = true
 serde.workspace = true
 sha1.workspace = true
-sha2.workspace = true
 # raw_value enabled at the crate level (not just the workspace) so it flattens
 # into the PUBLISHED manifest: #57 emits cJSON-formatted number tokens via
 # serde_json::value::RawValue. A workspace-only feature does NOT flatten on

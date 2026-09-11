@@ -157,10 +157,6 @@ pub struct Server {
     pub(crate) ip_version: Option<u8>,
     pub(crate) timestamps: Option<String>,
     pub(crate) file: Option<String>,
-    pub(crate) rsa_private_key_path: Option<String>,
-    pub(crate) authorized_users_path: Option<String>,
-    pub(crate) time_skew_threshold: u32,
-    pub(crate) use_pkcs1_padding: bool,
     /// Emit the test results as iperf3-schema JSON on stdout instead of text (#50).
     pub(crate) json_output: bool,
     /// Stream line-delimited interval JSON during the test (`--json-stream`).
@@ -514,39 +510,6 @@ impl Server {
                         vprintln!("      Target Bitrate: {b}");
                     }
                 }
-            }
-        }
-
-        // ---- Auth validation (after params, before streams) ----
-        if let (Some(ref privkey_path), Some(ref users_path)) =
-            (&self.rsa_private_key_path, &self.authorized_users_path)
-        {
-            if let Some(ref token) = params.authtoken {
-                let privkey_pem = std::fs::read(privkey_path).map_err(|e| {
-                    RiperfError::Protocol(format!("cannot read RSA private key: {e}"))
-                })?;
-                match crate::auth::decode_auth_token(token, &privkey_pem, self.use_pkcs1_padding) {
-                    Ok((username, password, ts)) => {
-                        crate::auth::check_credentials(
-                            &username,
-                            &password,
-                            ts,
-                            users_path,
-                            self.time_skew_threshold,
-                        )?;
-                        if self.verbose {
-                            vprintln!("Authenticated user: {username}");
-                        }
-                    }
-                    Err(e) => {
-                        protocol::send_state(&mut ctrl, TestState::AccessDenied).await?;
-                        return Err(e);
-                    }
-                }
-            } else {
-                // Server requires auth but client didn't send token
-                protocol::send_state(&mut ctrl, TestState::AccessDenied).await?;
-                return Err(RiperfError::AccessDenied);
             }
         }
 
@@ -2191,10 +2154,6 @@ pub struct ServerBuilder {
     ip_version: Option<u8>,
     timestamps: Option<String>,
     file: Option<String>,
-    rsa_private_key_path: Option<String>,
-    authorized_users_path: Option<String>,
-    time_skew_threshold: u32,
-    use_pkcs1_padding: bool,
     json_output: bool,
     json_stream: bool,
     interrupt: Option<crate::client::InterruptWatch>,
@@ -2223,10 +2182,6 @@ impl Default for ServerBuilder {
             ip_version: None,
             timestamps: None,
             file: None,
-            rsa_private_key_path: None,
-            authorized_users_path: None,
-            time_skew_threshold: 10,
-            use_pkcs1_padding: false,
             json_output: false,
             json_stream: false,
             interrupt: None,
@@ -2396,34 +2351,6 @@ impl ServerBuilder {
         self
     }
 
-    /// `--rsa-private-key-path`: path to the RSA private key used to decrypt
-    /// client authentication credentials.
-    pub fn rsa_private_key_path(mut self, path: &str) -> Self {
-        self.rsa_private_key_path = Some(path.to_string());
-        self
-    }
-
-    /// `--authorized-users-path`: path to the file of users authorized to run
-    /// authenticated tests.
-    pub fn authorized_users_path(mut self, path: &str) -> Self {
-        self.authorized_users_path = Some(path.to_string());
-        self
-    }
-
-    /// `--time-skew-threshold`: allowed clock skew in seconds when validating
-    /// an authentication token's timestamp (default 10).
-    pub fn time_skew_threshold(mut self, secs: u32) -> Self {
-        self.time_skew_threshold = secs;
-        self
-    }
-
-    /// `--use-pkcs1-padding`: decrypt credentials with PKCS#1 v1.5 padding
-    /// instead of OAEP (for tokens from pre-3.17 iperf3 clients).
-    pub fn use_pkcs1_padding(mut self, enabled: bool) -> Self {
-        self.use_pkcs1_padding = enabled;
-        self
-    }
-
     /// Like [`Self::server_bitrate_limit`], accepting an iperf3 rate string
     /// (`--server-bitrate-limit 1G`; decimal, 1000-based).
     pub fn server_bitrate_limit_str(self, s: &str) -> std::result::Result<Self, ConfigError> {
@@ -2478,10 +2405,6 @@ impl ServerBuilder {
             ip_version: self.ip_version,
             timestamps: self.timestamps,
             file: self.file,
-            rsa_private_key_path: self.rsa_private_key_path,
-            authorized_users_path: self.authorized_users_path,
-            time_skew_threshold: self.time_skew_threshold,
-            use_pkcs1_padding: self.use_pkcs1_padding,
             json_output: self.json_output,
             json_stream: self.json_stream,
             interrupt: self.interrupt.clone(),

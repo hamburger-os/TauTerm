@@ -62,7 +62,6 @@ pub use net::set_cpu_affinity;
 // 0.8.0 — #283), since they are assembled solely by the crate-private
 // `build_report_input`.
 
-pub(crate) mod auth;
 pub(crate) mod cpu;
 pub mod json_report;
 pub(crate) mod net;
