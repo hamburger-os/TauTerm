@@ -651,7 +651,9 @@ pub async fn start_journald_stream(
                     let _ = channel.close().await;
                     flush_partial_line(&mut line_buffer, &mut batch, &sid);
                     emit_stream_batch(&app_handle, &sid, &mut batch);
-                    emit_stream_ended(&app_handle, &sid, "cancelled");
+                    // Explicit Stop awaits this task through OperationState. Do not
+                    // emit stream-ended for cancellation: a queued old end event
+                    // could otherwise flip a freshly restarted stream back to false.
                     break;
                 }
                 _ = flush_tick.tick() => {
