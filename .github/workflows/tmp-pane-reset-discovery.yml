@@ -18,4 +18,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rg -n "resetPaneSplitRatioInLayout|canResetPaneSplitRatioInLayout|onResetPaneRatio|reset-pane-ratio|split\.resetRatio|均分当前分屏" src scripts || true
+          grep -R -n -E "resetPaneSplitRatioInLayout|canResetPaneSplitRatioInLayout|onResetPaneRatio|reset-pane-ratio|split\.resetRatio|均分当前分屏" src scripts || true
