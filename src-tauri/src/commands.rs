@@ -556,6 +556,7 @@ pub async fn connect_session(
         "local-shell" => connect_session_local_shell(app, state, request).await,
         "network" => connect_session_network(app, state, request).await,
         "trdp" => crate::plugins::trdp::connect_session(app, state, request).await,
+        "modbus" => crate::plugins::modbus::connect_session(app, state, request).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }

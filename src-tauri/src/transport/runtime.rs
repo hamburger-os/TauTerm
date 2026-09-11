@@ -431,7 +431,9 @@ fn handle_command(
                     "write",
                     exclusive
                         .as_ref()
-                        .map(|lease| format!("data plane is exclusively owned by {}", lease.owner_name))
+                        .map(|lease| {
+                            format!("data plane is exclusively owned by {}", lease.owner_name)
+                        })
                         .unwrap_or_else(|| "write owner mismatch".into()),
                 ))
             } else {
@@ -499,7 +501,11 @@ fn handle_command(
 }
 
 fn broadcast_close(subscribers: &mut Vec<mpsc::Sender<DataPlaneEvent>>, info: TransportCloseInfo) {
-    subscribers.retain(|subscriber| subscriber.send(DataPlaneEvent::Closed(info.clone())).is_ok());
+    subscribers.retain(|subscriber| {
+        subscriber
+            .send(DataPlaneEvent::Closed(info.clone()))
+            .is_ok()
+    });
 }
 
 fn next_owner_id() -> u64 {

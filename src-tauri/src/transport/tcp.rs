@@ -26,14 +26,26 @@ impl Default for TcpConnectConfig {
     }
 }
 
-fn default_connect_timeout_ms() -> u64 { 5_000 }
-fn default_read_timeout_ms() -> u64 { 20 }
-fn default_nodelay() -> bool { true }
+fn default_connect_timeout_ms() -> u64 {
+    5_000
+}
+fn default_read_timeout_ms() -> u64 {
+    20
+}
+fn default_nodelay() -> bool {
+    true
+}
 
 pub fn resolve_tcp(host: &str, port: u16) -> Result<Vec<SocketAddr>, TransportError> {
     let addrs = (host, port)
         .to_socket_addrs()
-        .map_err(|error| TransportError::new(TransportErrorKind::Resolve, "tcp_resolve", error.to_string()))?
+        .map_err(|error| {
+            TransportError::new(
+                TransportErrorKind::Resolve,
+                "tcp_resolve",
+                error.to_string(),
+            )
+        })?
         .collect::<Vec<_>>();
     if addrs.is_empty() {
         return Err(TransportError::new(
@@ -72,9 +84,14 @@ pub struct TcpDriver {
 }
 
 impl TcpDriver {
-    pub fn from_stream(stream: TcpStream, config: &TcpConnectConfig) -> Result<Self, TransportError> {
+    pub fn from_stream(
+        stream: TcpStream,
+        config: &TcpConnectConfig,
+    ) -> Result<Self, TransportError> {
         stream
-            .set_read_timeout(Some(Duration::from_millis(config.read_timeout_ms.clamp(1, 1000))))
+            .set_read_timeout(Some(Duration::from_millis(
+                config.read_timeout_ms.clamp(1, 1000),
+            )))
             .map_err(|error| TransportError::io("tcp_set_read_timeout", error))?;
         stream
             .set_nodelay(config.nodelay)
@@ -83,11 +100,15 @@ impl TcpDriver {
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        self.stream.local_addr().map_err(|error| TransportError::io("tcp_local_addr", error))
+        self.stream
+            .local_addr()
+            .map_err(|error| TransportError::io("tcp_local_addr", error))
     }
 
     pub fn peer_addr(&self) -> Result<SocketAddr, TransportError> {
-        self.stream.peer_addr().map_err(|error| TransportError::io("tcp_peer_addr", error))
+        self.stream
+            .peer_addr()
+            .map_err(|error| TransportError::io("tcp_peer_addr", error))
     }
 }
 
@@ -145,7 +166,10 @@ impl TcpListenerTransport {
         listener
             .set_nonblocking(true)
             .map_err(|error| TransportError::io("tcp_listener_mode", error))?;
-        Ok(Self { listener, client_config })
+        Ok(Self {
+            listener,
+            client_config,
+        })
     }
 
     pub fn accept(&self) -> Result<Option<(TcpDriver, SocketAddr)>, TransportError> {
@@ -160,7 +184,9 @@ impl TcpListenerTransport {
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        self.listener.local_addr().map_err(|error| TransportError::io("tcp_listener_local_addr", error))
+        self.listener
+            .local_addr()
+            .map_err(|error| TransportError::io("tcp_listener_local_addr", error))
     }
 }
 

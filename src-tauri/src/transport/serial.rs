@@ -34,12 +34,24 @@ impl Default for SerialTransportConfig {
     }
 }
 
-fn default_baud_rate() -> u32 { 115_200 }
-fn default_data_bits() -> u8 { 8 }
-fn default_parity() -> String { "none".into() }
-fn default_stop_bits() -> String { "1".into() }
-fn default_flow_control() -> String { "none".into() }
-fn default_read_timeout_ms() -> u64 { 20 }
+fn default_baud_rate() -> u32 {
+    115_200
+}
+fn default_data_bits() -> u8 {
+    8
+}
+fn default_parity() -> String {
+    "none".into()
+}
+fn default_stop_bits() -> String {
+    "1".into()
+}
+fn default_flow_control() -> String {
+    "none".into()
+}
+fn default_read_timeout_ms() -> u64 {
+    20
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SerialEndpoint {
@@ -54,11 +66,7 @@ pub struct SerialEndpoint {
 
 pub fn discover_serial_endpoints() -> Result<Vec<SerialEndpoint>, TransportError> {
     let ports = serialport::available_ports().map_err(|error| {
-        TransportError::new(
-            TransportErrorKind::Io,
-            "serial_discover",
-            error.to_string(),
-        )
+        TransportError::new(TransportErrorKind::Io, "serial_discover", error.to_string())
     })?;
     Ok(ports
         .into_iter()
@@ -161,7 +169,10 @@ fn validate_config(config: &SerialTransportConfig) -> Result<(), TransportError>
     let valid = matches!(config.data_bits, 5..=8)
         && matches!(config.parity.as_str(), "none" | "even" | "odd")
         && matches!(config.stop_bits.as_str(), "1" | "2")
-        && matches!(config.flow_control.as_str(), "none" | "rts_cts" | "xon_xoff")
+        && matches!(
+            config.flow_control.as_str(),
+            "none" | "rts_cts" | "xon_xoff"
+        )
         && config.baud_rate > 0;
     if valid {
         Ok(())
@@ -210,13 +221,15 @@ impl BlockingByteStream for SerialDriver {
     }
 
     fn purge_input(&mut self) -> Result<(), TransportError> {
-        self.port.clear(serialport::ClearBuffer::Input).map_err(|error| {
-            TransportError::new(
-                TransportErrorKind::Io,
-                "serial_purge_input",
-                error.to_string(),
-            )
-        })
+        self.port
+            .clear(serialport::ClearBuffer::Input)
+            .map_err(|error| {
+                TransportError::new(
+                    TransportErrorKind::Io,
+                    "serial_purge_input",
+                    error.to_string(),
+                )
+            })
     }
 }
 
@@ -239,6 +252,9 @@ mod tests {
     fn invalid_serial_config_is_rejected_before_open() {
         let mut config = SerialTransportConfig::default();
         config.data_bits = 9;
-        assert_eq!(validate_config(&config).unwrap_err().kind, TransportErrorKind::InvalidConfiguration);
+        assert_eq!(
+            validate_config(&config).unwrap_err().kind,
+            TransportErrorKind::InvalidConfiguration
+        );
     }
 }

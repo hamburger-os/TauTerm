@@ -9,8 +9,8 @@ pub struct UdpTransport {
 
 impl UdpTransport {
     pub fn bind(host: &str, port: u16) -> Result<Self, TransportError> {
-        let socket = UdpSocket::bind((host, port))
-            .map_err(|error| TransportError::io("udp_bind", error))?;
+        let socket =
+            UdpSocket::bind((host, port)).map_err(|error| TransportError::io("udp_bind", error))?;
         Ok(Self { socket })
     }
 
@@ -72,7 +72,13 @@ impl UdpTransport {
 pub fn resolve_udp(host: &str, port: u16) -> Result<SocketAddr, TransportError> {
     (host, port)
         .to_socket_addrs()
-        .map_err(|error| TransportError::new(TransportErrorKind::Resolve, "udp_resolve", error.to_string()))?
+        .map_err(|error| {
+            TransportError::new(
+                TransportErrorKind::Resolve,
+                "udp_resolve",
+                error.to_string(),
+            )
+        })?
         .next()
         .ok_or_else(|| {
             TransportError::new(
