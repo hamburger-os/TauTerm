@@ -13,6 +13,7 @@ import {
   parseScriptImport,
   uniqueAssetName,
 } from "../src/components/SendBar/assetValidation.ts";
+import { canSyncNetworkSendTarget } from "../src/components/SendBar/networkSendTarget.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -106,6 +107,17 @@ assert.equal(
   "Demo (Imported 3)",
 );
 
+// Network target selection may exist while disconnected, but runtime sync starts only once
+// the matching Network Debug server session owns a live backend side channel.
+const tcpServerParams = { transport: "tcp", role: "server" };
+const udpServerParams = { transport: "udp", role: "server" };
+assert.equal(canSyncNetworkSendTarget("network", "disconnected", tcpServerParams), false);
+assert.equal(canSyncNetworkSendTarget("network", "connecting", tcpServerParams), false);
+assert.equal(canSyncNetworkSendTarget("network", "connected", tcpServerParams), true);
+assert.equal(canSyncNetworkSendTarget("network", "connected", udpServerParams), true);
+assert.equal(canSyncNetworkSendTarget("network", "connected", { transport: "tcp", role: "client" }), false);
+assert.equal(canSyncNetworkSendTarget("serial", "connected", tcpServerParams), false);
+
 // Architecture contracts: presentation, per-session UI state, shared assets and execution stay separate.
 const basicSend = source("src/components/SendBar/BasicSend.tsx");
 assert.ok(basicSend.includes("buildSendPayload"));
@@ -115,7 +127,10 @@ const targetBar = source("src/components/SendBar/TargetBar.tsx");
 assert.ok(!targetBar.includes("invoke("), "TargetBar must remain presentation-only");
 const targetSync = source("src/components/SendBar/useNetworkSendTargetSync.ts");
 assert.ok(targetSync.includes('invoke("set_network_send_target"'));
-assert.ok(!targetSync.includes("catch(() =>"), "target sync failures must not be swallowed");
+assert.ok(targetSync.includes("canSyncNetworkSendTarget"));
+assert.ok(targetSync.includes("if (!syncReady) return;"));
+assert.ok(targetSync.includes("if (!active) return;"), "stale target-sync failures must not surface after lifecycle changes");
+assert.ok(!targetSync.includes("catch(() =>"), "current target sync failures must not be swallowed");
 
 const context = source("src/components/SendBar/SendBarContext.tsx");
 assert.ok(!context.includes("subscribeAsset<string>(\n      ASSET_KEYS.activeScriptId"));
@@ -171,4 +186,4 @@ assert.ok(!types.includes("interface LoopConfig"));
 assert.ok(!types.includes("interface ExecutionState"));
 assert.ok(!types.includes("localStorage"));
 
-console.log("SendBar payload, state-boundary, execution and UI contracts passed.");
+console.log("SendBar payload, state-boundary, lifecycle, execution and UI contracts passed.");
