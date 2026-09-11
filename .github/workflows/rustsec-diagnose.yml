@@ -1,22 +1,287 @@
-name: RustSec riperf3 diagnosis
+name: RustSec riperf3 remediation
 
 on:
   push:
     branches: [release/0.6.5-rustsec-fix]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  remediate:
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Inspect riperf3 authentication surface
+        with:
+          ref: release/0.6.5-rustsec-fix
+
+      - name: Install pinned Rust toolchain
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== auth module references ==='
-          grep -RInE 'crate::auth|mod auth|rsa_|authorized_users|use_pkcs1_padding|username|password|base64|rpassword|sha2' src-tauri/vendor/riperf3/src src-tauri/vendor/riperf3/Cargo.toml src-tauri/vendor/riperf3/Cargo.toml.orig || true
-          echo '=== TauTerm wrapper auth references ==='
-          grep -RInE 'username|password|rsa_|authorized_users|use_pkcs1_padding|auth' src-tauri/src/plugins/iperf || true
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal
+
+      - name: Remove unused riperf3 RSA authentication surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new="", expected=1):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f"{path}: expected {expected} exact match(es), found {count}")
+              p.write_text(text.replace(old, new))
+
+          client = "src-tauri/vendor/riperf3/src/client.rs"
+          replace_exact(client, '''    pub(crate) username: Option<String>,
+              pub(crate) password: Option<String>,
+              pub(crate) rsa_public_key_path: Option<String>,
+              pub(crate) use_pkcs1_padding: bool,
+          '''.replace('              ', ''))
+          replace_exact(client, '''        // Auth: encrypt credentials if username and public key are set
+          if let (Some(ref username), Some(ref pubkey_path)) =
+              (&self.username, &self.rsa_public_key_path)
+          {
+              let pubkey_pem = std::fs::read(pubkey_path).unwrap_or_default();
+              let password = self
+                  .password
+                  .clone()
+                  .or_else(|| crate::auth::read_password().ok())
+                  .unwrap_or_default();
+              if let Ok(token) = crate::auth::encode_auth_token(
+                  username,
+                  &password,
+                  &pubkey_pem,
+                  self.use_pkcs1_padding,
+              ) {
+                  p.authtoken = Some(token);
+              }
+          }
+
+          '''.replace('          ', ''))
+          replace_exact(client, '''    username: Option<String>,
+              password: Option<String>,
+              rsa_public_key_path: Option<String>,
+              use_pkcs1_padding: bool,
+          '''.replace('              ', ''))
+          replace_exact(client, '''            username: None,
+              password: None,
+              rsa_public_key_path: None,
+              use_pkcs1_padding: false,
+          '''.replace('              ', ''))
+          replace_exact(client, '''    /// `--username`: username for authentication (used with a password and
+          /// [`Self::rsa_public_key_path`]).
+          pub fn username(mut self, name: &str) -> Self {
+              self.username = Some(name.to_string());
+              self
+          }
+
+          /// Password for authentication. iperf3 has no flag for this; the CLI reads
+          /// the `RIPERF3_PASSWORD`/`IPERF3_PASSWORD` environment variables or prompts.
+          pub fn password(mut self, pass: &str) -> Self {
+              self.password = Some(pass.to_string());
+              self
+          }
+
+          /// `--rsa-public-key-path`: path to the RSA public key used to encrypt the
+          /// authentication credentials.
+          pub fn rsa_public_key_path(mut self, path: &str) -> Self {
+              self.rsa_public_key_path = Some(path.to_string());
+              self
+          }
+
+          /// `--use-pkcs1-padding`: encrypt credentials with PKCS#1 v1.5 padding
+          /// instead of OAEP (for pre-3.17 iperf3 servers). The CLI rejects this flag
+          /// for clients, matching iperf3 (#100); only embedders can set it here.
+          pub fn use_pkcs1_padding(mut self, enabled: bool) -> Self {
+              self.use_pkcs1_padding = enabled;
+              self
+          }
+
+          '''.replace('          ', ''))
+          replace_exact(client, '''            username: self.username,
+              password: self.password,
+              rsa_public_key_path: self.rsa_public_key_path,
+              use_pkcs1_padding: self.use_pkcs1_padding,
+          '''.replace('              ', ''))
+
+          server = "src-tauri/vendor/riperf3/src/server.rs"
+          for block in (
+              '''    pub(crate) rsa_private_key_path: Option<String>,
+              pub(crate) authorized_users_path: Option<String>,
+              pub(crate) time_skew_threshold: u32,
+              pub(crate) use_pkcs1_padding: bool,
+          '''.replace('              ', ''),
+              '''    rsa_private_key_path: Option<String>,
+              authorized_users_path: Option<String>,
+              time_skew_threshold: u32,
+              use_pkcs1_padding: bool,
+          '''.replace('              ', ''),
+              '''            rsa_private_key_path: None,
+              authorized_users_path: None,
+              time_skew_threshold: 10,
+              use_pkcs1_padding: false,
+          '''.replace('              ', ''),
+              '''            rsa_private_key_path: self.rsa_private_key_path,
+              authorized_users_path: self.authorized_users_path,
+              time_skew_threshold: self.time_skew_threshold,
+              use_pkcs1_padding: self.use_pkcs1_padding,
+          '''.replace('              ', ''),
+          ):
+              replace_exact(server, block)
+          replace_exact(server, '''        // ---- Auth validation (after params, before streams) ----
+          if let (Some(ref privkey_path), Some(ref users_path)) =
+              (&self.rsa_private_key_path, &self.authorized_users_path)
+          {
+              if let Some(ref token) = params.authtoken {
+                  let privkey_pem = std::fs::read(privkey_path).map_err(|e| {
+                      RiperfError::Protocol(format!("cannot read RSA private key: {e}"))
+                  })?;
+                  match crate::auth::decode_auth_token(token, &privkey_pem, self.use_pkcs1_padding) {
+                      Ok((username, password, ts)) => {
+                          crate::auth::check_credentials(
+                              &username,
+                              &password,
+                              ts,
+                              users_path,
+                              self.time_skew_threshold,
+                          )?;
+                          if self.verbose {
+                              vprintln!("Authenticated user: {username}");
+                          }
+                      }
+                      Err(e) => {
+                          protocol::send_state(&mut ctrl, TestState::AccessDenied).await?;
+                          return Err(e);
+                      }
+                  }
+              } else {
+                  // Server requires auth but client didn't send token
+                  protocol::send_state(&mut ctrl, TestState::AccessDenied).await?;
+                  return Err(RiperfError::AccessDenied);
+              }
+          }
+
+          '''.replace('          ', ''))
+          replace_exact(server, '''    /// `--rsa-private-key-path`: path to the RSA private key used to decrypt
+          /// client authentication credentials.
+          pub fn rsa_private_key_path(mut self, path: &str) -> Self {
+              self.rsa_private_key_path = Some(path.to_string());
+              self
+          }
+
+          /// `--authorized-users-path`: path to the file of users authorized to run
+          /// authenticated tests.
+          pub fn authorized_users_path(mut self, path: &str) -> Self {
+              self.authorized_users_path = Some(path.to_string());
+              self
+          }
+
+          /// `--time-skew-threshold`: allowed clock skew in seconds when validating
+          /// an authentication token's timestamp (default 10).
+          pub fn time_skew_threshold(mut self, secs: u32) -> Self {
+              self.time_skew_threshold = secs;
+              self
+          }
+
+          /// `--use-pkcs1-padding`: decrypt credentials with PKCS#1 v1.5 padding
+          /// instead of OAEP (for tokens from pre-3.17 iperf3 clients).
+          pub fn use_pkcs1_padding(mut self, enabled: bool) -> Self {
+              self.use_pkcs1_padding = enabled;
+              self
+          }
+
+          '''.replace('          ', ''))
+
+          replace_exact("src-tauri/vendor/riperf3/src/lib.rs", "pub(crate) mod auth;\n")
+          Path("src-tauri/vendor/riperf3/src/auth.rs").unlink()
+
+          manifest = "src-tauri/vendor/riperf3/Cargo.toml"
+          for dep, version in (("base64", "0.22"), ("rpassword", "5"), ("rsa", "0.9"), ("sha2", "0.10")):
+              replace_exact(manifest, f'[dependencies.{dep}]\nversion = "{version}"\n\n')
+
+          orig = "src-tauri/vendor/riperf3/Cargo.toml.orig"
+          for line in ("base64.workspace = true\n", "rpassword.workspace = true\n", "rsa.workspace = true\n", "sha2.workspace = true\n"):
+              replace_exact(orig, line)
+
+          notes = "src-tauri/vendor/riperf3/VENDOR-NOTES.md"
+          marker = "## 上游同步步骤\n"
+          addition = '''5. **移除未使用的 RSA 认证能力（RustSec 边界收敛）**：
+          - TauTerm 的 iperf3 产品契约不提供 `--username`、RSA 公私钥或 authorized-users 配置，宿主调用也从未设置这些 builder 字段；vendored fork 因此不再携带未使用的 RSA 认证模块/API。
+          - 删除 `auth.rs` 以及仅由该模块使用的 `rsa`/`base64`/`rpassword`/`sha2` 依赖，避免把 `RUSTSEC-2023-0071` 的网络可观察 RSA 时序侧信道带入 TauTerm 依赖图；若未来要提供 iperf3 认证，必须在引入前选择无该 advisory 的实现并重新完成互通与安全审查。
+
+          '''.replace('          ', '')
+          replace_exact(notes, marker, addition + marker)
+
+          changelog = "CHANGELOG.md"
+          marker = "### Fixed\n- **Serial endpoint labels and virtual bridge visibility**"
+          security = '''### Security
+          - **iperf3 dependency boundary** — removes the unused RSA authentication surface from TauTerm's vendored riperf3 fork, including the `rsa` dependency affected by `RUSTSEC-2023-0071`. TauTerm's iperf3 client/server product contract does not expose RSA authentication; future authentication support must use a reviewed implementation without that advisory before it can enter the dependency graph.
+
+          ### Fixed
+          - **Serial endpoint labels and virtual bridge visibility**'''.replace('          ', '')
+          replace_exact(changelog, marker, security)
+          PY
+
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+
+          echo '=== remaining removed-auth references ==='
+          if grep -RInE 'crate::auth|rsa_private_key_path|rsa_public_key_path|authorized_users_path|use_pkcs1_padding|\[dependencies\.rsa\]' \
+              src-tauri/vendor/riperf3/src src-tauri/vendor/riperf3/Cargo.toml; then
+            echo 'Unexpected RSA authentication reference remains' >&2
+            exit 1
+          fi
+
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libssl-dev libudev-dev
+
+      - name: Refresh lockfile and compile all targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+          if grep -q '^name = "rsa"$' src-tauri/Cargo.lock; then
+            echo 'rsa is still present in Cargo.lock' >&2
+            cargo tree --manifest-path src-tauri/Cargo.toml -i rsa || true
+            exit 1
+          fi
+
+      - name: Run RustSec gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-audit --locked --version 0.22.1
+          cargo audit --file src-tauri/Cargo.lock
+
+      - name: Commit validated remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status --short
+          git diff --check
+          git add \
+            CHANGELOG.md \
+            src-tauri/Cargo.lock \
+            src-tauri/vendor/riperf3/Cargo.toml \
+            src-tauri/vendor/riperf3/Cargo.toml.orig \
+            src-tauri/vendor/riperf3/VENDOR-NOTES.md \
+            src-tauri/vendor/riperf3/src/client.rs \
+            src-tauri/vendor/riperf3/src/server.rs \
+            src-tauri/vendor/riperf3/src/lib.rs \
+            src-tauri/vendor/riperf3/src/auth.rs
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'security: remove unused riperf3 RSA authentication'
+          git push origin HEAD:release/0.6.5-rustsec-fix
