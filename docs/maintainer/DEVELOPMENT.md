@@ -30,7 +30,7 @@
 | `npm run toolchain:check` | 检查 Rust 工具链是否与仓库锁定值一致 |
 | `npm run version:check` | 检查各处版本号是否一致 |
 | `npm run release:check -- X.Y.Z` | 发布前检查指定版本与 CHANGELOG |
-| `npm run version:sync` | 从 `package.json` 同步 Cargo/Tauri 版本元数据 |
+| `npm run version:sync` | 从 `package.json` 同步 Tauri、Cargo manifest 与 `Cargo.lock` 中 TauTerm 自身版本；`package-lock.json` 由 `npm version` 维护 |
 | `npm run check-com0com` | Windows com0com 分发文件与合规文件完整性检查 |
 | `npm run check-reserved-region` | 检查虚拟串口测试保留区与产品常量一致 |
 | `npm run check:brand-neutral-ui` | 检查产品 UI 与主题文案的品牌中性约束 |
@@ -84,8 +84,10 @@
 
 发布流程以 [社区发布文档](../community/RELEASING.md) 为准。维护者只需要特别确认：
 
-1. `CHANGELOG.md` 已准确描述本版本；
-2. `npm run docs:check` 和 `npm run license:check` 通过；
-3. 版本/工具链检查通过；
-4. CI 三平台全部通过；
-5. 第三方源码、许可证和二进制分发方式没有在本版本中发生未记录变化。
+1. `CHANGELOG.md` 已准确覆盖本版本全部合并内容，发布段与新的空 `Unreleased` 段边界正确；
+2. `npm run docs:check`、`npm run license:check` 和需要时的 `npm run license:cargo` 通过；
+3. 版本/工具链检查通过，`package.json`、npm lock、Tauri、Cargo manifest 与 `Cargo.lock` 版本一致；
+4. CI 三平台与 PR Runtime E2E 已完成；
+5. 正式 Release 会在 exact SHA 上重新执行 CI、TRDP Native、Runtime E2E、依赖安全、性能合同与 release reliability qualification，不使用旧 workflow 结果替代；
+6. 如果 hosted Windows Runtime E2E 显示 `blocked`，只能在真实 Windows 上验证同一个 release SHA 后提交该 SHA 作为证据，不能把 `blocked` 当作 `passed`；
+7. 第三方源码、许可证和二进制分发方式没有在本版本中发生未记录变化。

@@ -3,10 +3,25 @@ name: Reliability Soak
 on:
   workflow_dispatch:
     inputs:
+      ref:
+        description: Commit or ref to validate
+        required: false
+        type: string
       duration_seconds:
         description: Soak duration in seconds (5-14400)
         required: false
         default: "3600"
+        type: string
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit or ref to validate
+        required: false
+        type: string
+      duration_seconds:
+        description: Soak duration in seconds (5-14400)
+        required: false
+        default: "300"
         type: string
   schedule:
     - cron: "41 2 * * 0"
@@ -23,6 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
       - name: Install pinned Rust toolchain
@@ -52,7 +68,7 @@ jobs:
           REQUESTED: ${{ inputs.duration_seconds }}
         run: |
           set -euo pipefail
-          SECONDS="${REQUESTED:-1800}"
+          SECONDS="${REQUESTED:-3600}"
           [[ "$SECONDS" =~ ^[0-9]+$ ]] || { echo "::error::duration must be numeric"; exit 1; }
           (( SECONDS >= 5 && SECONDS <= 14400 )) || { echo "::error::duration must be 5-14400"; exit 1; }
           echo "seconds=$SECONDS" >> "$GITHUB_OUTPUT"

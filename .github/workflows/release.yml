@@ -7,6 +7,10 @@ on:
         description: Version to release (X.Y.Z, X.Y.Z-alpha.N, beta.N or rc.N)
         required: true
         type: string
+      windows_validation_sha:
+        description: Exact master SHA manually validated on Windows when hosted Runtime E2E reports BLOCKED; leave empty when Windows E2E really passes
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -106,9 +110,69 @@ jobs:
     with:
       ref: ${{ needs.prepare.outputs.source_sha }}
 
+  runtime-e2e:
+    name: Runtime E2E Gate
+    needs: prepare
+    uses: ./.github/workflows/runtime-e2e.yml
+    with:
+      ref: ${{ needs.prepare.outputs.source_sha }}
+
+  dependency-security:
+    name: Dependency Security Gate
+    needs: prepare
+    uses: ./.github/workflows/security.yml
+    with:
+      ref: ${{ needs.prepare.outputs.source_sha }}
+
+  performance:
+    name: Performance Contract Gate
+    needs: prepare
+    uses: ./.github/workflows/performance.yml
+    with:
+      ref: ${{ needs.prepare.outputs.source_sha }}
+
+  reliability:
+    name: Reliability Qualification Gate
+    needs: prepare
+    uses: ./.github/workflows/reliability.yml
+    with:
+      ref: ${{ needs.prepare.outputs.source_sha }}
+      duration_seconds: "900"
+
+  runtime-policy:
+    name: Runtime E2E Release Policy
+    needs: [prepare, runtime-e2e]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Enforce Windows runtime evidence
+        shell: bash
+        env:
+          WINDOWS_STATUS: ${{ needs.runtime-e2e.outputs.windows_status }}
+          WINDOWS_VALIDATION_SHA: ${{ inputs.windows_validation_sha }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          case "$WINDOWS_STATUS" in
+            passed)
+              echo "Windows hosted Runtime E2E executed and passed for $SOURCE_SHA."
+              ;;
+            blocked)
+              if [ "$WINDOWS_VALIDATION_SHA" != "$SOURCE_SHA" ]; then
+                echo "::error::Windows hosted Runtime E2E was BLOCKED, not PASSED. Manually validate the exact release SHA on Windows and restart Release with windows_validation_sha=$SOURCE_SHA."
+                exit 1
+              fi
+              echo "Windows hosted Runtime E2E was upstream-blocked; exact-SHA manual Windows validation was explicitly attested for $SOURCE_SHA."
+              ;;
+            *)
+              echo "::error::Unexpected Windows Runtime E2E status: ${WINDOWS_STATUS:-<empty>}"
+              exit 1
+              ;;
+          esac
+
   build-windows:
     name: Windows x64 NSIS
-    needs: [prepare, quality, trdp-native]
+    needs: [prepare, quality, trdp-native, runtime-policy, dependency-security, performance, reliability]
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
@@ -162,7 +226,7 @@ jobs:
 
   build-linux:
     name: Linux x64 packages (Ubuntu 22.04 baseline)
-    needs: [prepare, quality, trdp-native]
+    needs: [prepare, quality, trdp-native, runtime-policy, dependency-security, performance, reliability]
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     steps:
@@ -221,7 +285,7 @@ jobs:
 
   build-macos-arm:
     name: macOS Apple Silicon packages
-    needs: [prepare, quality, trdp-native]
+    needs: [prepare, quality, trdp-native, runtime-policy, dependency-security, performance, reliability]
     runs-on: macos-15
     timeout-minutes: 90
     steps:
