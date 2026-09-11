@@ -6,6 +6,7 @@ const files = {
   client: "src/components/JournaldViewer/hooks/journaldClient.ts",
   stream: "src/components/JournaldViewer/hooks/useJournalStream.ts",
   history: "src/components/JournaldViewer/hooks/useJournalHistory.ts",
+  viewer: "src/components/JournaldViewer/hooks/useJournaldViewer.ts",
   panel: "src/components/JournaldViewer/JournaldViewerPanel.tsx",
   sidebar: "src/components/RightSidebar/SessionRightSidebar.tsx",
 };
@@ -57,11 +58,16 @@ assert.match(source.stream, /journald:batch/);
 assert.doesNotMatch(source.stream, /journald:entry/);
 
 // Stream startup/listener setup must be teardown-safe even if the panel unmounts
-// while async setup or the start IPC is still in flight.
+// while async setup or the start IPC is still in flight. Stream errors do not
+// independently mutate terminal state; stream-ended owns that transition.
 assert.match(source.stream, /disposedRef/);
 assert.match(source.stream, /listenerEpochRef/);
 assert.match(source.stream, /generation !== generationRef\.current/);
 assert.match(source.stream, /await stopJournalStream\(sessionId\)\.catch/);
+assert.match(
+  source.stream,
+  /listen<JournalErrorEvent>[\s\S]*setError\(event\.payload\.error\);[\s\S]*listen<JournalEndedEvent>/,
+);
 
 // Literal search is escaped before it is handed to journalctl --grep; regex mode is explicit.
 assert.match(source.client, /escapePcreLiteral/);
@@ -72,6 +78,14 @@ assert.match(source.client, /next_cursor !== null/);
 assert.match(source.history, /generationRef/);
 assert.match(source.history, /generation !== generationRef\.current/);
 assert.doesNotMatch(source.history, /sortEntries/);
+
+// Error retry preserves which operation failed, and compact-to-full expansion is
+// tied to a stable entry identity rather than an index that can shift under live data.
+assert.match(source.viewer, /JournaldErrorSource/);
+assert.match(source.viewer, /errorSource/);
+assert.match(source.panel, /source === "export"/);
+assert.match(source.panel, /data-journal-key/);
+assert.match(source.panel, /entryDomKey/);
 
 // The compact viewer is windowed and CSS-module severity classes are resolved correctly.
 assert.match(source.panel, /compactWindow/);
