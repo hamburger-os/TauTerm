@@ -1,5 +1,7 @@
 ; TauTerm NSIS Installer Hooks
-; Installs the com0com kernel driver during setup and removes it on uninstall.
+; Installs the com0com kernel driver during setup. On uninstall, the shared
+; system driver is removed only when TauTerm installed it and no port pairs
+; remain; third-party com0com installations and endpoints are never removed.
 ; Requires Tauri v2 bundle.windows.nsis.installerHooks configuration.
 ;
 ; With installMode: "perMachine" in tauri.conf.json, the NSIS installer
@@ -73,11 +75,23 @@
   ${AndIf} ${FileExists} "$INSTDIR\com0com.sys"
     SetOutPath "$INSTDIR"
 
+    ; com0com 是系统级共享驱动。先记录安装前是否已经存在，只有从“未安装”
+    ; 状态由 TauTerm 成功装入时才写 ownership marker。这样卸载 TauTerm 不会
+    ; 把用户/其它软件原本已有的 com0com 驱动当成自己的资源。
+    ExecWait 'sc.exe query com0com' $R6
+
     ; 在总线 0 上创建临时端口对以触发驱动安装
     ExecWait '"$INSTDIR\setupc.exe" install 0 - -' $0
 
     ${If} $0 == 0
       DetailPrint "TauTerm: com0com driver installed."
+      ${If} $R6 <> 0
+        CreateDirectory "$COMMONAPPDATA\TauTerm\service"
+        FileOpen $R5 "$COMMONAPPDATA\TauTerm\service\driver-owned.marker" w
+        FileWrite $R5 "installed-by-tauterm$\r$\n"
+        FileClose $R5
+      ${EndIf}
+
       ; 删除临时端口对（用总线号 0 而非端口名 CNCA0），只保留驱动程序；
       ; 若删除失败会在设备管理器遗留一个可见的 COM 端口对，需提示用户。
       ExecWait '"$INSTDIR\setupc.exe" remove 0' $1
@@ -144,50 +158,71 @@
   ; 这里先把 CWD 移到临时目录释放该锁。
   SetOutPath "$TEMP"
 
-  ; ── 结束仍在运行的 TauTerm 程序 / 服务 / WebView2 进程 ──
-  ; 卸载器自身无法删除被进程锁定的文件，提前结束可避免 Program Files
-  ; 目录删不干净（Geek/NSIS 卸载残渣的主要来源）。taskkill 返回非零表示
-  ; 进程本就不在运行，属预期，忽略即可。
-  ; 说明：tauterm.exe 的 WebView2 子进程（msedgewebview2.exe）常会脱离
-  ; 父进程树成为孤儿，继续持有安装目录 .exe 的文件句柄，导致文件删不掉。
-  ; 因此除主/服务进程外，还按命令行过滤精准结束 TauTerm 的 WebView2 实例
-  ;（不会误杀用户其它基于 WebView2 的应用）。
-  DetailPrint "TauTerm: Terminating running processes..."
+  ; ── 结束仍在运行的 TauTerm 程序 / WebView2 进程 ──
+  ; 先结束 GUI，让服务端观察到客户端管道关闭并有机会按 ownership 释放本次
+  ; 会话创建的端口；不要在这里同时强杀服务，否则会打断正常资源回收。
+  DetailPrint "TauTerm: Terminating running application processes..."
   ExecWait '"taskkill.exe" /IM tauterm.exe /F /T' $0
-  ExecWait '"taskkill.exe" /IM tauterm-service.exe /F /T' $0
   ExecWait '"taskkill.exe" /F /IM msedgewebview2.exe /FI "COMMANDLINE eq *TauTerm*" /T' $0
-  ; taskkill /F 的进程结束是异步的，稍候让内核真正回收句柄，否则删目录仍会失败。
   Sleep 1000
 
   ; ── 停止并删除特权服务（LocalSystem，binPath 指向安装目录）──
-  ; sc stop/delete 只移除 SCM 注册，不保证进程已退出；若服务进程仍存活，
-  ; 会持续持有 $INSTDIR\tauterm-service.exe，导致 RMDIR_Retry "$INSTDIR" 删不掉。
-  ; 故先优雅停止（服务内含 SHUTDOWN 处理），再按映像名反复强杀，留出回收句柄时间。
+  ; 先请求优雅停止，让服务完成已知 ownership 的回收；随后才强杀作为兜底，
+  ; 避免卸载时人为制造 orphan。最后删除 SCM 注册并释放二进制文件锁。
   ExecWait 'sc.exe stop TauTermService' $0
-  ExecWait 'sc.exe delete TauTermService' $0
+  Sleep 1500
   StrCpy $R7 0
   ${Do}
     ExecWait '"taskkill.exe" /F /IM tauterm-service.exe /T' $0
-    Sleep 500
+    Sleep 300
     IntOp $R7 $R7 + 1
-  ${LoopWhile} $R7 < 6
+  ${LoopWhile} $R7 < 3
+  ExecWait 'sc.exe delete TauTermService' $0
 
-  ; ── 卸载 com0com 内核驱动（系统级，必须先于删除 setupc.exe）──
+  ; ── 安全处理 com0com 系统级共享驱动 ──
+  ; 只有“TauTerm 最初安装了驱动”且驱动中已经没有任何端口对时才卸载驱动。
+  ; 若仍有任意端口对，它可能属于第三方，也可能是未能安全回收的资源；此时
+  ; 宁可保留共享驱动，也绝不通过全局 uninstall 删除无法证明属于 TauTerm 的资源。
   ${If} ${FileExists} "$INSTDIR\setupc.exe"
-    DetailPrint "TauTerm: Removing com0com virtual serial port driver..."
-    ; setupc 需要以自身目录为工作目录，但用完必须立刻把 CWD 移回 $TEMP，
-    ; 否则后面 RMDir "$INSTDIR" 会因 CWD 占用而失败。
-    SetOutPath "$INSTDIR"
-    ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
-    ; 内核驱动被占时卸载可能失败，重试一次；仍失败只影响系统级驱动残留，
-    ; 不阻塞用户可见目录的清理。
-    ${If} $0 <> 0
-      Sleep 500
-      ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
+    ${If} ${FileExists} "$COMMONAPPDATA\TauTerm\service\driver-owned.marker"
+      SetOutPath "$INSTDIR"
+
+      ; 先单独执行 list 并保留它自己的退出码。不能直接 `list | findstr`，否则
+      ; pipeline 只返回 findstr 的状态，setupc list 失败也可能被误判成“没有端口”。
+      ; 状态无法确认时必须 fail closed：保留共享驱动。
+      Delete "$TEMP\tauterm-com0com-list.txt"
+      ExecWait '"$SYSDIR\cmd.exe" /D /S /C ""$INSTDIR\setupc.exe" list > "$TEMP\tauterm-com0com-list.txt" 2>&1"' $R6
+      ${If} $R6 == 0
+        ExecWait '"$SYSDIR\findstr.exe" /R /C:"CNCA[0-9]" /C:"CNCB[0-9]" "$TEMP\tauterm-com0com-list.txt"' $R5
+        ${If} $R5 == 1
+          DetailPrint "TauTerm: Removing TauTerm-owned com0com driver..."
+          ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
+          ${If} $0 <> 0
+            Sleep 500
+            ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
+          ${EndIf}
+          DetailPrint "TauTerm: com0com driver removal completed with code $0."
+        ${ElseIf} $R5 == 0
+          DetailPrint "TauTerm: com0com port pairs still exist; shared driver left installed for safety."
+        ${Else}
+          DetailPrint "TauTerm: unable to parse com0com port state; shared driver left installed for safety."
+        ${EndIf}
+      ${Else}
+        DetailPrint "TauTerm: unable to query com0com port state; shared driver left installed for safety."
+      ${EndIf}
+      Delete "$TEMP\tauterm-com0com-list.txt"
+      SetOutPath "$TEMP"
+    ${Else}
+      DetailPrint "TauTerm: com0com was not installed by TauTerm; shared driver left untouched."
     ${EndIf}
-    SetOutPath "$TEMP"
-    DetailPrint "TauTerm: com0com driver removal completed with code $0."
   ${EndIf}
+
+  ; ── 清理特权服务的机器级 ownership 状态 ──
+  ; 在线升级必须保留该状态，供新服务恢复异常中断资源；只有真正卸载时删除。
+  DetailPrint "TauTerm: Removing privileged virtual-port state..."
+  !insertmacro RMDIR_Retry "$COMMONAPPDATA\TauTerm\service" 3
+  ; 若 TauTerm 下没有其它机器级数据，顺带删除空父目录；非空时 RMDir 会安全失败。
+  RMDir "$COMMONAPPDATA\TauTerm"
 
   ; ── 同步清理安装目录 ──
   ; 标准卸载流程（Uninstall 段）会在最后 RMDir "$INSTDIR"，并由 NSIS 的

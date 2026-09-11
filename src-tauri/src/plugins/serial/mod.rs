@@ -1,6 +1,6 @@
 //! 串口协议插件
 //!
-//! 实现 `ProtocolAdapter` trait，提供 串口终端会话。
+//! 实现 `ProtocolAdapter` trait，提供串口终端会话。
 
 use crate::channel::error::SessionError;
 use crate::channel::serial_channel::SerialChannel;
@@ -8,11 +8,11 @@ use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
     EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
 };
+use crate::virtual_port::backend::is_internal_endpoint_path;
 use serde::{Deserialize, Serialize};
 
 // ── 串口配置 ────────────────────────────────────────
 
-/// 串口连接参数
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerialConfig {
     #[serde(default = "default_baud_rate")]
@@ -27,10 +27,8 @@ pub struct SerialConfig {
     pub flow_control: String,
     #[serde(default = "default_data_mode")]
     pub data_mode: String,
-    /// 虚拟串口是否启用（仅用于 serde 反序列化默认值，实际逻辑在 commands::connect_session_serial 中）
     #[serde(default = "default_virtual_port_enabled")]
     pub virtual_port_enabled: bool,
-    /// 虚拟串口设备数量（仅用于 serde 反序列化默认值，实际逻辑在 commands::connect_session_serial 中）
     #[serde(default = "default_virtual_port_count")]
     pub virtual_port_count: u32,
 }
@@ -77,7 +75,6 @@ impl Default for SerialConfig {
 
 // ── 串口适配器 ──────────────────────────────────────
 
-/// 串口协议适配器
 pub struct SerialAdapter;
 
 impl SerialAdapter {
@@ -85,47 +82,45 @@ impl SerialAdapter {
         Self
     }
 
-    /// 从 JSON Value 解析串口参数
     fn parse_params(params: &serde_json::Value) -> SerialConfig {
         serde_json::from_value(params.clone()).unwrap_or_default()
     }
 
-    /// 打开串口端口（带重试）
     fn open_port(
         endpoint: &str,
         config: &SerialConfig,
     ) -> Result<Box<dyn serialport::SerialPort>, SessionError> {
-        let db = match config.data_bits {
+        let data_bits = match config.data_bits {
             5 => serialport::DataBits::Five,
             6 => serialport::DataBits::Six,
             7 => serialport::DataBits::Seven,
             _ => serialport::DataBits::Eight,
         };
-        let pa = match config.parity.as_str() {
+        let parity = match config.parity.as_str() {
             "even" => serialport::Parity::Even,
             "odd" => serialport::Parity::Odd,
             _ => serialport::Parity::None,
         };
-        let sb = match config.stop_bits.as_str() {
+        let stop_bits = match config.stop_bits.as_str() {
             "2" => serialport::StopBits::Two,
             _ => serialport::StopBits::One,
         };
-        let fc = match config.flow_control.as_str() {
+        let flow_control = match config.flow_control.as_str() {
             "rts_cts" => serialport::FlowControl::Hardware,
             "xon_xoff" => serialport::FlowControl::Software,
             _ => serialport::FlowControl::None,
         };
 
-        let mut last_err = String::new();
+        let mut last_error = String::new();
         for attempt in 0..3 {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
             match serialport::new(endpoint, config.baud_rate)
-                .data_bits(db)
-                .parity(pa)
-                .stop_bits(sb)
-                .flow_control(fc)
+                .data_bits(data_bits)
+                .parity(parity)
+                .stop_bits(stop_bits)
+                .flow_control(flow_control)
                 .timeout(std::time::Duration::from_millis(50))
                 .open()
             {
@@ -134,12 +129,32 @@ impl SerialAdapter {
                     std::thread::sleep(std::time::Duration::from_millis(30));
                     return Ok(port);
                 }
-                Err(e) => {
-                    last_err = format!("无法打开端口 {}: {}", endpoint, e);
+                Err(error) => {
+                    last_error = format!("无法打开端口 {endpoint}: {error}");
                 }
             }
         }
-        Err(SessionError::ConnectionFailed { reason: last_err })
+        Err(SessionError::ConnectionFailed { reason: last_error })
+    }
+}
+
+/// 驱动友好名经常以 `(COMx)` 重复携带当前系统端口名。
+/// 只移除与当前端口完全匹配的末尾标记，保留其它产品文本原样。
+fn normalize_device_label(label: &str, port_name: &str) -> String {
+    let trimmed = label.trim();
+    let suffix = format!(" ({port_name})");
+    let start = trimmed.len().saturating_sub(suffix.len());
+    let matches = trimmed
+        .get(start..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(&suffix));
+    if matches {
+        trimmed
+            .get(..start)
+            .unwrap_or(trimmed)
+            .trim_end()
+            .to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -165,26 +180,34 @@ impl ProtocolAdapter for SerialAdapter {
     }
 
     fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError> {
-        let ports = serialport::available_ports().map_err(|e| SessionError::ConnectionFailed {
-            reason: e.to_string(),
-        })?;
+        let ports =
+            serialport::available_ports().map_err(|error| SessionError::ConnectionFailed {
+                reason: error.to_string(),
+            })?;
+
         Ok(ports
             .into_iter()
+            // Windows 虚拟串口的 bridge 端只供 TauTerm 内部桥接线程打开，不能作为
+            // 用户可选串口再次暴露；external 端则仍正常出现在列表中。
+            .filter(|port| !is_internal_endpoint_path(&port.port_name))
             .map(|port| {
                 let port_name = port.port_name.clone();
                 let (description, identity) = match &port.port_type {
                     serialport::SerialPortType::UsbPort(info) => {
-                        let label = info
+                        let raw_label = info
                             .product
                             .as_deref()
                             .or(info.manufacturer.as_deref())
                             .unwrap_or("USB Serial");
-                        let description = format!(
-                            "{} — {} [{:04X}:{:04X}]",
-                            port_name, label, info.vid, info.pid
-                        );
+                        let normalized = normalize_device_label(raw_label, &port_name);
+                        let label = if normalized.is_empty() {
+                            "USB Serial".to_string()
+                        } else {
+                            normalized
+                        };
+                        let description = format!("{label} [{:04X}:{:04X}]", info.vid, info.pid);
                         let stable_id = info.serial_number.as_ref().map(|serial| {
-                            format!("usb:{:04x}:{:04x}:{}", info.vid, info.pid, serial)
+                            format!("usb:{:04x}:{:04x}:{serial}", info.vid, info.pid)
                         });
                         (
                             description,
@@ -201,14 +224,14 @@ impl ProtocolAdapter for SerialAdapter {
                         )
                     }
                     serialport::SerialPortType::BluetoothPort => (
-                        format!("{} — Bluetooth Serial", port_name),
+                        "Bluetooth Serial".to_string(),
                         serde_json::json!({
                             "kind": "bluetooth",
                             "system_port": port_name.clone(),
                         }),
                     ),
                     serialport::SerialPortType::PciPort => (
-                        format!("{} — PCI Serial", port_name),
+                        "PCI Serial".to_string(),
                         serde_json::json!({
                             "kind": "pci",
                             "system_port": port_name.clone(),
@@ -250,7 +273,6 @@ impl ProtocolAdapter for SerialAdapter {
         IoStrategy::Sync
     }
 
-    /// Windows 上串口驱动释放端口需要短暂等待，避免立即重连时端口仍被占用。
     fn teardown_delay(&self) -> std::time::Duration {
         #[cfg(target_os = "windows")]
         {
@@ -300,6 +322,19 @@ mod tests {
         assert_eq!(config.data_mode, "hex");
         assert!(config.virtual_port_enabled);
         assert_eq!(config.virtual_port_count, 2);
+    }
+
+    #[test]
+    fn device_label_drops_only_matching_port_suffix() {
+        assert_eq!(
+            normalize_device_label("STLink Virtual COM Port (COM5)", "COM5"),
+            "STLink Virtual COM Port"
+        );
+        assert_eq!(
+            normalize_device_label("Adapter (COM6)", "COM5"),
+            "Adapter (COM6)"
+        );
+        assert_eq!(normalize_device_label("设备适配器", "COM5"), "设备适配器");
     }
 
     #[test]

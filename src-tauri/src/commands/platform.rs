@@ -5,7 +5,10 @@ use tauri::{AppHandle, Emitter, State};
 
 // ── 虚拟串口驱动管理 ────────────────────────────────
 
-/// 查询 com0com 驱动状态（前端主动拉取，解决事件在组件挂载前发射的竞态）
+/// 返回虚拟串口后端能力状态。
+///
+/// `orphan_count` 的唯一语义是：TauTerm 能证明由自己创建、但当前没有活跃 owner
+/// 且仍待回收的资源数量。不得把驱动中任意 com0com bus 计入其中。
 #[tauri::command]
 pub async fn check_virtual_port_driver(
     state: State<'_, AppState>,
@@ -13,7 +16,7 @@ pub async fn check_virtual_port_driver(
     let vpm = state
         .virtual_port_manager
         .lock()
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
     Ok(serde_json::json!({
         "files_present": vpm.are_files_present(),
         "driver_installed": vpm.detect_driver(),
@@ -21,10 +24,7 @@ pub async fn check_virtual_port_driver(
     }))
 }
 
-/// 尝试安装 com0com 虚拟串口驱动
-///
-/// 优先直接安装（当前进程已提权时成功）；普通权限下则在 Windows 上
-/// 通过 PowerShell Start-Process -Verb RunAs 触发 UAC 提权安装。
+/// 安装/初始化虚拟串口后端。
 #[tauri::command]
 pub async fn install_virtual_port_driver(
     app: AppHandle,
@@ -33,57 +33,40 @@ pub async fn install_virtual_port_driver(
     let mut vpm = state
         .virtual_port_manager
         .lock()
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
 
-    // 先检测是否已安装
     if vpm.detect_driver() {
-        log::info!("com0com 驱动已安装，无需重复操作");
+        log::info!("虚拟串口驱动已就绪，无需重复安装");
         return Ok("already_installed".into());
     }
-
-    // 检查驱动文件是否存在
     if !vpm.are_files_present() {
         return Err("com0com driver files missing — please reinstall TauTerm".into());
     }
 
-    // 第 1 层: 尝试直接安装（当前进程已提权时成功）
-    log::info!("尝试直接安装 com0com 驱动...");
-    match vpm.install_driver() {
-        Ok(()) => {
-            let _ = app.emit("virtual-port-driver-ready", serde_json::json!({}));
-            return Ok("installed".into());
-        }
-        Err(direct_err) => {
-            log::info!("直接安装失败: {}；尝试提权安装...", direct_err);
-        }
+    log::info!("尝试直接初始化虚拟串口驱动...");
+    if vpm.install_driver().is_ok() {
+        let _ = app.emit("virtual-port-driver-ready", serde_json::json!({}));
+        return Ok("installed".into());
     }
 
-    // 第 2 层: 通过提权安装（UAC / sudo），逻辑下沉到 VirtualPortManager
-    //      避免 commands 层直接依赖 com0com 的 setupc_path/resource_dir
     match vpm.install_driver_elevated() {
-        Ok(()) => {
-            log::info!("com0com 驱动提权安装成功");
-            // 重新检测确认安装成功
-            if vpm.detect_driver() {
-                let _ = app.emit("virtual-port-driver-ready", serde_json::json!({}));
-                return Ok("installed".into());
-            }
-            Err("Driver installed but detection failed — please restart TauTerm".into())
+        Ok(()) if vpm.detect_driver() => {
+            let _ = app.emit("virtual-port-driver-ready", serde_json::json!({}));
+            Ok("installed".into())
         }
-        Err(elevated_err) => Err(format!(
-            "Driver installation failed.\n\n{}\n\n\
-                 Action: Run TauTerm as administrator once to install the driver.",
-            elevated_err
+        Ok(()) => Err("Driver installed but detection failed — please restart TauTerm".into()),
+        Err(error) => Err(format!(
+            "Driver installation failed.\n\n{error}\n\nAction: Run TauTerm as administrator once to install the driver."
         )),
     }
 }
 
-/// 手动触发虚拟端口残留清理（通过 UAC 提权，单次弹窗）。
+/// 清理确认属于 TauTerm 且当前无活跃 owner 的残留虚拟端口。
 ///
-/// 收集所有已知的残留 bus 号（active_endpoints + com0com_state.json + 驱动真实状态），
-/// 通过单个提权的 PowerShell 脚本批量清理。
-///
-/// 返回 `{ cleaned: N, message: "..." }`。
+/// 安全边界：
+/// - 不触碰当前 active endpoint；
+/// - 不扫描删除第三方/用户自己创建的 com0com bus；
+/// - 先走普通权限清理，仅对仍需权限的已知 orphan 执行一次提权批处理。
 #[tauri::command]
 pub async fn cleanup_virtual_ports(
     state: State<'_, AppState>,
@@ -91,50 +74,37 @@ pub async fn cleanup_virtual_ports(
     let mut vpm = state
         .virtual_port_manager
         .lock()
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
 
-    // 先尝试直接清理孤儿端口（无需管理员权限的场景）
     let direct_cleaned = vpm.cleanup_orphans();
-
-    // 检查是否还有残留需要 UAC 提权（pending_orphan_count > 0）
-    let has_more_work = vpm.pending_orphan_count() > 0;
-
-    if !has_more_work && direct_cleaned > 0 {
+    if vpm.pending_orphan_count() == 0 {
         return Ok(serde_json::json!({
             "cleaned": direct_cleaned,
-            "message": format!("已清理 {} 个遗留端口对", direct_cleaned),
+            "message": if direct_cleaned == 0 {
+                "没有需要清理的残留端口对".to_string()
+            } else {
+                format!("已清理 {direct_cleaned} 个残留端口对")
+            },
         }));
     }
 
-    if !has_more_work && direct_cleaned == 0 {
-        return Ok(serde_json::json!({
-            "cleaned": 0,
-            "message": "没有需要清理的端口对",
-        }));
-    }
-
-    // 有残留且需要 UAC 提权
     log::info!(
-        "cleanup_virtual_ports: 直接清理完成 {} 个，剩余端口对需要 UAC 提权",
+        "cleanup_virtual_ports: directly cleaned {}, remaining owned orphans require elevation",
         direct_cleaned
     );
     match vpm.cleanup_endpoints_elevated() {
-        Ok(uac_cleaned) => {
-            let total = direct_cleaned + uac_cleaned;
+        Ok(elevated_cleaned) => {
+            let total = direct_cleaned + elevated_cleaned;
             Ok(serde_json::json!({
                 "cleaned": total,
-                "message": format!("已清理 {} 个端口对（含 UAC 提权清理 {} 个）", total, uac_cleaned),
+                "message": format!(
+                    "已清理 {total} 个残留端口对（其中 {elevated_cleaned} 个通过提权清理）"
+                ),
             }))
         }
-        Err(e) => {
-            if e.contains("取消") || e.contains("cancel") {
-                Err(format!(
-                    "用户取消了 UAC 提权弹窗（已直接清理 {} 个，余下将保留至下次操作）",
-                    direct_cleaned
-                ))
-            } else {
-                Err(format!("UAC 提权清理失败: {}", e))
-            }
-        }
+        Err(error) if error.to_lowercase().contains("cancel") || error.contains("取消") => Err(
+            format!("用户取消了提权操作（已直接清理 {direct_cleaned} 个，剩余资源保持待清理状态）"),
+        ),
+        Err(error) => Err(format!("提权清理失败: {error}")),
     }
 }

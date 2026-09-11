@@ -3,20 +3,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 /**
- * com0com 虚拟串口驱动状态管理 hook。
+ * 虚拟串口后端状态管理。
  *
- * 集中管理驱动检测、事件监听、安装/清理操作的异步状态，
- * 供 StatusBar 等展示组件消费。
+ * UI 只消费能力状态与“确认属于 TauTerm 且当前无活跃 owner”的 orphan 数量；
+ * 不根据系统中存在多少 com0com 端口自行推断残留资源。
  */
 export function useCom0comStatus() {
-  // ── State ──────────────────────────────────────────
-
   const [driverMissing, setDriverMissing] = useState(false);
   const [driverInstalling, setDriverInstalling] = useState(false);
   const [cleaningPorts, setCleaningPorts] = useState(false);
   const [orphanCount, setOrphanCount] = useState(0);
-
-  // ── Driver status check ────────────────────────────
 
   const checkDriverStatus = useCallback(async () => {
     try {
@@ -25,18 +21,13 @@ export function useCom0comStatus() {
         driver_installed: boolean;
         orphan_count: number;
       }>("check_virtual_port_driver");
-      if (status.files_present && !status.driver_installed) {
-        setDriverMissing(true);
-      }
+      setDriverMissing(status.files_present && !status.driver_installed);
       setOrphanCount(status.orphan_count ?? 0);
     } catch {
-      // Platforms without this capability may reject the command; silently ignore.
+      // 不支持该能力的平台保持静默；平台后端负责给出功能可用性。
     }
   }, []);
 
-  // ── Event listeners ────────────────────────────────
-
-  // Listen for backend driver-missing notifications (runtime status changes)
   useEffect(() => {
     let cancelled = false;
     const unlistenPromise = listen<{ reason: string; can_install: boolean }>(
@@ -47,44 +38,38 @@ export function useCom0comStatus() {
     );
     return () => {
       cancelled = true;
-      unlistenPromise.then((fn) => fn());
+      unlistenPromise.then(fn => fn());
     };
   }, []);
 
-  // Re-check driver/orphan status after session disconnect
-  // (destroy_endpoint may leave orphans when lacking admin privileges)
+  // 端点资源的 owner 变化发生在会话断开生命周期中；事件后重新读取后端真相，
+  // 不在前端猜测“应该减一/清零”。
   useEffect(() => {
     let cancelled = false;
     const unlistenPromise = listen("session-disconnected", () => {
-      if (!cancelled) checkDriverStatus();
+      if (!cancelled) void checkDriverStatus();
     });
     return () => {
       cancelled = true;
-      unlistenPromise.then((fn) => fn());
+      unlistenPromise.then(fn => fn());
     };
   }, [checkDriverStatus]);
 
-  // Proactive driver check on mount (handles race where event fires before
-  // component subscribes)
   useEffect(() => {
-    checkDriverStatus();
+    void checkDriverStatus();
   }, [checkDriverStatus]);
-
-  // ── Actions ────────────────────────────────────────
 
   const handleRetryVPort = useCallback(async () => {
     setDriverInstalling(true);
     try {
-      const result = await invoke<string>("install_virtual_port_driver");
-      if (result === "installed" || result === "already_installed") {
-        setDriverMissing(false);
-      }
-    } catch (e) {
-      console.warn("VPort driver installation failed:", e);
+      await invoke<string>("install_virtual_port_driver");
+    } catch (error) {
+      console.warn("VPort driver installation failed:", error);
     } finally {
       setDriverInstalling(false);
+      await checkDriverStatus();
     }
-  }, []);
+  }, [checkDriverStatus]);
 
   const handleCleanupVPorts = useCallback(async () => {
     setCleaningPorts(true);
@@ -93,15 +78,13 @@ export function useCom0comStatus() {
         "cleanup_virtual_ports"
       );
       console.log("VPort cleanup result:", result.message);
-      if (result.cleaned > 0) {
-        setOrphanCount(0);
-      }
-    } catch (e) {
-      console.warn("VPort cleanup failed:", e);
+    } catch (error) {
+      console.warn("VPort cleanup failed:", error);
     } finally {
       setCleaningPorts(false);
+      await checkDriverStatus();
     }
-  }, []);
+  }, [checkDriverStatus]);
 
   return {
     driverMissing,

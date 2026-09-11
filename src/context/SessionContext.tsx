@@ -26,6 +26,11 @@ export interface SessionStats {
   txPackets?: number;
 }
 
+/** 前端只接收用户可访问的虚拟端点；内部 bridge path 不属于 UI 契约。 */
+export interface VirtualPortEndpoint {
+  external_path: string;
+}
+
 export interface TabInfo {
   id: string;
   name: string;
@@ -54,8 +59,8 @@ export interface TabInfo {
   virtualPortEnabled?: boolean;
   /** 虚拟端口对数量（默认 1） */
   virtualPortCount?: number;
-  /** 虚拟端口对列表（连接成功时后端推送） */
-  virtualVirtualEndpoints?: Array<{ bridge_path: string; external_path: string }>;
+  /** 对外虚拟端点列表（连接成功时后端推送） */
+  virtualVirtualEndpoints?: VirtualPortEndpoint[];
   /** 虚拟端口创建失败时的错误信息 */
   virtualPortError?: string;
   /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed），供前端本地化 */
@@ -181,7 +186,7 @@ type SessionAction =
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
   | { type: "UPDATE_TAB_ECHO"; id: string; localEcho: boolean }
   | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean; fileServiceEnabled?: boolean; fileServiceProtocol?: string }
-  | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: Array<{ bridge_path: string; external_path: string }> }
+  | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: VirtualPortEndpoint[] }
   | { type: "SET_VPORT_ERROR"; id: string; error: string; kind?: string }
   | { type: "CLEAR_VPORT_ERROR"; id: string }
   | { type: "CLEAR_TABS" }
@@ -551,7 +556,7 @@ interface SessionContextValue {
   setNetworkBroadcast: (containerId: string, on: boolean) => void;
   /**
    * 统一发送路由：网络容器按「当前目标」（选中对端 / 全部 / 手动地址）路由，
-   * 非网络会话走默认 sendData(sessionId)。基本发送与指令面板共用。
+   * 非网络会话走默认 sendData(sessionId)。基本发送与指令面板共用此入口。
    */
   sendToTarget: (containerId: string, data: string | Uint8Array) => Promise<void>;
   /** 更新指定会话的 I/O 统计（网络调试容器汇总对端统计到状态栏用） */
@@ -1348,7 +1353,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1b(); return; }
       unlisteners.push(u1b);
 
-      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_endpoints?: Array<{ bridge_path: string; external_path: string }>; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; elevated?: boolean; is_container?: boolean; local_addr?: string | null }>(
+      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_endpoints?: VirtualPortEndpoint[]; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; elevated?: boolean; is_container?: boolean; local_addr?: string | null }>(
         "session-connected",
         (event) => {
           const sid = event.payload.session_id;
@@ -1477,13 +1482,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2(); return; }
       unlisteners.push(u2);
 
-      const u2b = await listen<{ session_id: string; pairs: Array<{ bridge_path: string; external_path: string }> }>(
+      const u2b = await listen<{ session_id: string; endpoints: VirtualPortEndpoint[] }>(
         "virtual-port-created",
         (event) => {
           dispatch({
             type: "UPDATE_TAB_VPORTS",
             id: event.payload.session_id,
-            pairs: event.payload.pairs,
+            pairs: event.payload.endpoints,
           });
         }
       );
