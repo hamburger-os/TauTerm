@@ -146,7 +146,9 @@ fn normalize_device_label(label: &str, port_name: &str) -> String {
     if trimmed.len() >= suffix.len()
         && trimmed[trimmed.len() - suffix.len()..].eq_ignore_ascii_case(&suffix)
     {
-        trimmed[..trimmed.len() - suffix.len()].trim_end().to_string()
+        trimmed[..trimmed.len() - suffix.len()]
+            .trim_end()
+            .to_string()
     } else {
         trimmed.to_string()
     }
@@ -174,11 +176,10 @@ impl ProtocolAdapter for SerialAdapter {
     }
 
     fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError> {
-        let ports = serialport::available_ports().map_err(|error| {
-            SessionError::ConnectionFailed {
+        let ports =
+            serialport::available_ports().map_err(|error| SessionError::ConnectionFailed {
                 reason: error.to_string(),
-            }
-        })?;
+            })?;
 
         Ok(ports
             .into_iter()
