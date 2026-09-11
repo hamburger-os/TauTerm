@@ -14,7 +14,8 @@ TCP/UDP 使用统一的网络调试入口，但保持传输语义差异：
 
 - TCP Client 是单连接流；TCP Server 可以管理多个 peer；
 - UDP 是无连接 datagram，会保留报文边界和来源/目标信息；
-- 发送目标由公共目标上下文表达，而不是把“广播”做成独立 UI 模式。
+- 发送目标由公共目标上下文表达，而不是把“广播”做成独立 UI 模式；
+- TCP/UDP Server 的目标选择可以在未连接会话中保留，但只有父 Session 进入 `connected` 后才同步到后端 `NetworkSideChannel`，避免已保存会话启动时触发不存在的运行时资源。
 
 ### TFTP
 
@@ -32,7 +33,7 @@ iperf 是自包含测试 Session，承载测试配置、运行过程、结果和
 
 - TCP stream 与 UDP datagram 的数据模型不能被强行统一到丢失边界信息的表示。
 - Server peer 是运行时对象；Workspace 只保存稳定父配置。
-- Network Debug 的公共发送目标应被手动发送和脚本共享，避免不同发送入口状态漂移。
+- Network Debug 的公共发送目标应被手动发送和脚本共享，避免不同发送入口状态漂移；目标同步属于运行时副作用，只能发生在已连接的 Network Debug server 会话上。
 - TFTP/iperf 这类 custom Session 的连接/配置/删除体验仍要遵守公共 Session 规则。
 - 协议安全确认属于真正存在风险的操作边界，不靠普通提示文案替代。
 
