@@ -75,32 +75,33 @@ impl ProtocolAdapter for ModbusAdapter {
 
         let (client, server, watch) = match config.role {
             ModbusRole::Client => {
-                let runtime = match config.mode {
-                    ModbusMode::Rtu | ModbusMode::Ascii => {
-                        let driver = open_serial(&config.serial_port, &config.serial).map_err(
-                            |error| SessionError::ConnectionFailed {
-                                reason: error.to_string(),
-                            },
-                        )?;
-                        DataPlaneRuntime::spawn(Box::new(driver))
-                    }
-                    ModbusMode::Tcp => {
-                        let driver = connect_tcp(&config.host, config.port, &config.tcp).map_err(
-                            |error| SessionError::ConnectionFailed {
-                                reason: error.to_string(),
-                            },
-                        )?;
-                        DataPlaneRuntime::spawn(Box::new(driver))
-                    }
-                };
+                let runtime =
+                    match config.mode {
+                        ModbusMode::Rtu | ModbusMode::Ascii => {
+                            let driver = open_serial(&config.serial_port, &config.serial).map_err(
+                                |error| SessionError::ConnectionFailed {
+                                    reason: error.to_string(),
+                                },
+                            )?;
+                            DataPlaneRuntime::spawn(Box::new(driver))
+                        }
+                        ModbusMode::Tcp => {
+                            let driver = connect_tcp(&config.host, config.port, &config.tcp)
+                                .map_err(|error| SessionError::ConnectionFailed {
+                                    reason: error.to_string(),
+                                })?;
+                            DataPlaneRuntime::spawn(Box::new(driver))
+                        }
+                    };
                 let client = Arc::new(ModbusClient::new(config.clone(), runtime));
                 let watch = Arc::new(WatchScheduler::new(client.clone()));
                 (Some(client), None, Some(watch))
             }
             ModbusRole::Server => {
-                let server = Arc::new(ModbusServer::new(config.clone()).map_err(|reason| {
-                    SessionError::ConnectionFailed { reason }
-                })?);
+                let server = Arc::new(
+                    ModbusServer::new(config.clone())
+                        .map_err(|reason| SessionError::ConnectionFailed { reason })?,
+                );
                 server.start().map_err(SessionError::Other)?;
                 (None, Some(server), None)
             }
@@ -155,16 +156,19 @@ pub async fn connect_session(
         .ok_or("Modbus runtime type mismatch")?
         .config
         .clone();
-    let session_name = name.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| {
-        match config.mode {
+    let session_name = name
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| match config.mode {
             ModbusMode::Tcp => format!("Modbus TCP {}:{}", config.host, config.port),
             ModbusMode::Rtu => format!("Modbus RTU {}", config.serial_port),
             ModbusMode::Ascii => format!("Modbus ASCII {}", config.serial_port),
-        }
-    });
+        });
 
     let session_id = {
-        let mut store = state.session_store.lock().map_err(|error| error.to_string())?;
+        let mut store = state
+            .session_store
+            .lock()
+            .map_err(|error| error.to_string())?;
         store.create_container_session(
             ContainerSessionCreateOptions {
                 name: session_name.clone(),
@@ -200,7 +204,10 @@ pub async fn connect_session(
 }
 
 fn runtime(state: &State<'_, AppState>, session_id: &str) -> Result<Arc<dyn SideChannel>, String> {
-    let store = state.session_store.lock().map_err(|error| error.to_string())?;
+    let store = state
+        .session_store
+        .lock()
+        .map_err(|error| error.to_string())?;
     store
         .get_side_channel(session_id)
         .ok_or_else(|| format!("Modbus 会话 {session_id} 未连接"))
@@ -250,14 +257,10 @@ pub fn modbus_execute(
         if request.get("kind").and_then(Value::as_str) == Some("raw_adu") {
             let raw: RawAduOperation = serde_json::from_value(request)
                 .map_err(|error| format!("Raw ADU 参数无效: {error}"))?;
-            return Ok(client.execute_raw_adu(
-                raw.data,
-                raw.wait_response,
-                raw.quiet_period_ms,
-            ));
+            return Ok(client.execute_raw_adu(raw.data, raw.wait_response, raw.quiet_period_ms));
         }
-        let request: ModbusRequest = serde_json::from_value(request)
-            .map_err(|error| format!("Modbus 请求无效: {error}"))?;
+        let request: ModbusRequest =
+            serde_json::from_value(request).map_err(|error| format!("Modbus 请求无效: {error}"))?;
         Ok(client.execute(request))
     })
 }
@@ -282,7 +285,10 @@ pub fn modbus_status(
             role: side.config.role,
             mode: side.config.mode,
             running: side.client.is_some()
-                || side.server.as_ref().is_some_and(|server| server.is_running()),
+                || side
+                    .server
+                    .as_ref()
+                    .is_some_and(|server| server.is_running()),
             unit_id: side.config.unit_id,
             transactions: side
                 .client
@@ -308,10 +314,7 @@ pub fn modbus_watch_set(
 }
 
 #[tauri::command]
-pub fn modbus_watch_start(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn modbus_watch_start(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     with_modbus(&state, &session_id, |side| {
         side.watch
             .as_ref()
@@ -322,10 +325,7 @@ pub fn modbus_watch_start(
 }
 
 #[tauri::command]
-pub fn modbus_watch_stop(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn modbus_watch_stop(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     with_modbus(&state, &session_id, |side| {
         side.watch
             .as_ref()

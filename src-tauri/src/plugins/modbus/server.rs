@@ -143,13 +143,7 @@ impl ModbusServer {
                         let config_peer = config.clone();
                         let active_peer = active.clone();
                         let peer = std::thread::spawn(move || {
-                            run_tcp_peer(
-                                driver,
-                                running_peer,
-                                model_peer,
-                                fault_peer,
-                                config_peer,
-                            );
+                            run_tcp_peer(driver, running_peer, model_peer, fault_peer, config_peer);
                             active_peer.fetch_sub(1, Ordering::AcqRel);
                         });
                         if let Ok(mut list) = workers.lock() {
@@ -185,10 +179,7 @@ impl ModbusServer {
     }
 
     pub fn fault(&self) -> ServerFaultConfig {
-        self.fault
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.fault.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn shutdown(&self) {

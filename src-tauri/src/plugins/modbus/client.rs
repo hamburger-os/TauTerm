@@ -527,7 +527,10 @@ impl ModbusClient {
     }
 
     fn record(&self, result: TransactionResult) {
-        let mut history = self.history.lock().unwrap_or_else(|error| error.into_inner());
+        let mut history = self
+            .history
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if history.len() >= HISTORY_LIMIT {
             history.pop_front();
         }
