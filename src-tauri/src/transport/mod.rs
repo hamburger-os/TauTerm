@@ -12,6 +12,7 @@ pub mod udp;
 
 pub use error::{TransportError, TransportErrorKind};
 pub use runtime::{
-    DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, ExclusiveIo, TransportCloseInfo,
+    DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, DataPlaneSubscription, ExclusiveIo,
+    TransportCloseInfo,
 };
-pub use stream::{BlockingByteStream, ReadStatus};
+pub use stream::{AsyncBridgeDriver, AsyncByteStream, BlockingByteStream, ReadStatus};
