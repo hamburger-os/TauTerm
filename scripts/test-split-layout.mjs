@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   MAX_WORKSPACE_PANES,
   activateSessionInLayout,
+  canResetPaneSplitRatioInLayout,
   clearPaneInLayout,
   closePaneInLayout,
   collectPaneIds,
@@ -91,6 +92,11 @@ assert.deepEqual(gridRects.g1, { left: 0, top: 0, width: 0.5, height: 0.5 });
 assert.deepEqual(gridRects.g3, { left: 0, top: 0.5, width: 0.5, height: 0.5 });
 assert.deepEqual(gridRects.g2, { left: 0.5, top: 0, width: 0.5, height: 0.5 });
 assert.deepEqual(gridRects.g4, { left: 0.5, top: 0.5, width: 0.5, height: 0.5 });
+// A balanced 2x2 grid has no meaningful reset action on any Pane.
+for (const paneId of ["g1", "g2", "g3", "g4"]) {
+  assert.equal(canResetPaneSplitRatioInLayout(grid, paneId), false);
+}
+assert.equal(canResetPaneSplitRatioInLayout(grid, "missing-pane"), false);
 
 // Resetting a Pane ratio affects only its immediate parent Split, not the outer tree.
 let ratioTree = createInitialSplitLayout("r1");
@@ -98,6 +104,7 @@ ratioTree = splitPaneInLayout(ratioTree, "r1", "right", "r2", "rs1");
 ratioTree = setSplitRatioInLayout(ratioTree, "rs1", 0.7);
 ratioTree = splitPaneInLayout(ratioTree, "r1", "bottom", "r3", "rs2");
 ratioTree = setSplitRatioInLayout(ratioTree, "rs2", 0.3);
+assert.equal(canResetPaneSplitRatioInLayout(ratioTree, "r1"), true);
 ratioTree = resetPaneSplitRatioInLayout(ratioTree, "r1");
 assert.equal(ratioTree.root.type, "split");
 assert.equal(ratioTree.root.ratio, 0.7);
@@ -105,6 +112,7 @@ assert.equal(ratioTree.root.first.type, "split");
 assert.equal(ratioTree.root.first.ratio, 0.5);
 const alreadyBalanced = resetPaneSplitRatioInLayout(ratioTree, "r1");
 assert.strictEqual(alreadyBalanced, ratioTree);
+assert.equal(canResetPaneSplitRatioInLayout(ratioTree, "r1"), false);
 
 // Closing a Pane removes only the view slot and collapses its now-redundant parent split.
 const closed = closePaneInLayout(state, "p3");
@@ -123,6 +131,9 @@ assert.equal(state.root.ratio, 0.05);
 state = setSplitRatioInLayout(state, "s1", 2);
 assert.equal(state.root.type, "split");
 assert.equal(state.root.ratio, 0.95);
+// No-op resize writes preserve identity so React/persistence do not churn.
+assert.strictEqual(setSplitRatioInLayout(state, "s1", 0.95), state);
+assert.strictEqual(setSplitRatioInLayout(state, "missing-split", 0.5), state);
 
 // A removed Session clears its Pane assignment but does not mutate/collapse the layout.
 const beforePrunePanes = collectPaneIds(state.root);
