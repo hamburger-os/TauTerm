@@ -27,6 +27,11 @@ interface JournaldViewerPanelProps {
 const COMPACT_ROW_HEIGHT = 22;
 const VIRTUAL_OVERSCAN = 8;
 
+function entryDomKey(entry: JournalEntry, index: number): string {
+  if (entry.cursor) return `cursor-${encodeURIComponent(entry.cursor)}`;
+  return `fallback-${encodeURIComponent(entry.realtimeTimestamp ?? "0")}-${index}`;
+}
+
 export default function JournaldViewerPanel({
   sessionId,
   isConnected,
@@ -35,7 +40,7 @@ export default function JournaldViewerPanel({
   const jvd = useJournaldViewer(sessionId, isConnected);
   const logListRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
-  const expandIndexRef = useRef<number | null>(null);
+  const expandKeyRef = useRef<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(500);
 
@@ -61,12 +66,12 @@ export default function JournaldViewerPanel({
   }, [jvd.displayMode, jvd.entries, jvd.subTab]);
 
   useEffect(() => {
-    if (jvd.displayMode !== "full" || expandIndexRef.current === null) return;
-    const index = expandIndexRef.current;
-    expandIndexRef.current = null;
+    if (jvd.displayMode !== "full" || expandKeyRef.current === null) return;
+    const key = expandKeyRef.current;
+    expandKeyRef.current = null;
     requestAnimationFrame(() => {
       const target = logListRef.current?.querySelector<HTMLElement>(
-        `[data-journal-index="${index}"]`,
+        `[data-journal-key="${key}"]`,
       );
       target?.scrollIntoView({ block: "nearest" });
     });
@@ -283,35 +288,40 @@ export default function JournaldViewerPanel({
     </div>
   );
 
-  const renderCompactEntry = (entry: JournalEntry, index: number) => (
-    <div
-      key={entry.cursor ?? `${entry.realtimeTimestamp ?? "0"}-${index}`}
-      className={`${styles.logEntry} ${styles.logEntryCompact} liquid-glass-mini-card`}
-      data-journal-index={index}
-      onClick={() => {
-        expandIndexRef.current = index;
-        jvd.setDisplayMode("full");
-      }}
-    >
+  const renderCompactEntry = (entry: JournalEntry, index: number) => {
+    const domKey = entryDomKey(entry, index);
+    return (
       <div
-        className={`${styles.logLevel} ${levelClass(entry)}`}
-        title={priorityLabel(entry.priority)}
-      />
-      <span className={styles.logTimestamp}>
-        {formatTimestampTime(entry.realtimeTimestamp)}
-      </span>
-      <span className={styles.logUnit}>
-        {entry.identifier ?? entry.unit?.split(".")[0] ?? t("journald.unknownService")}
-      </span>
-      <span className={styles.logMessageCompact}>{entry.message ?? ""}</span>
-    </div>
-  );
+        key={entry.cursor ?? `${entry.realtimeTimestamp ?? "0"}-${index}`}
+        className={`${styles.logEntry} ${styles.logEntryCompact} liquid-glass-mini-card`}
+        data-journal-key={domKey}
+        onClick={() => {
+          expandKeyRef.current = domKey;
+          jvd.setDisplayMode("full");
+        }}
+      >
+        <div
+          className={`${styles.logLevel} ${levelClass(entry)}`}
+          title={priorityLabel(entry.priority)}
+        />
+        <span className={styles.logTimestamp}>
+          {formatTimestampTime(entry.realtimeTimestamp)}
+        </span>
+        <span className={styles.logUnit}>
+          {entry.identifier ??
+            entry.unit?.split(".")[0] ??
+            t("journald.unknownService")}
+        </span>
+        <span className={styles.logMessageCompact}>{entry.message ?? ""}</span>
+      </div>
+    );
+  };
 
   const renderFullEntry = (entry: JournalEntry, index: number) => (
     <div
       key={entry.cursor ?? `${entry.realtimeTimestamp ?? "0"}-${index}`}
       className={`${styles.logEntryFull} liquid-glass-mini-card`}
-      data-journal-index={index}
+      data-journal-key={entryDomKey(entry, index)}
     >
       <div className={styles.logEntryFullHeader}>
         <div
@@ -416,8 +426,11 @@ export default function JournaldViewerPanel({
           <button
             className={`${styles.errorRetryBtn} liquid-glass-button`}
             onClick={() => {
+              const source = jvd.errorSource;
               jvd.clearError();
-              if (jvd.subTab === "realtime") {
+              if (source === "export") {
+                void jvd.startExport();
+              } else if (source === "stream") {
                 void jvd.toggleStreaming();
               } else {
                 void jvd.runHistoryQuery();
