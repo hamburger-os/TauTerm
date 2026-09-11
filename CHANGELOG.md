@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-09-11
+
 ### Added
 - **Protocol Inspector v2** — replaces the old lightweight parser with a reusable offline inspector for automatic detection, Modbus RTU/ASCII/TCP, structured AT responses, NMEA 0183, raw frames and local custom binary schemas. Field ranges now drive raw-data highlighting, while frame structure, checksum and protocol semantics are reported independently so a valid CRC no longer implies a valid protocol frame.
 - **Engineering data workflows** — adds a multi-view Data Inspector plus serial frame timing, Unix/HEX timestamp conversion, IPv4/CIDR calculation and byte-level diffing. Quick-tool panels remain mounted so switching between checksum, encoding, bit/layout, data and engineering views preserves current working input.
