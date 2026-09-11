@@ -56,6 +56,13 @@ assert.match(source.backend, /journald:batch/);
 assert.match(source.stream, /journald:batch/);
 assert.doesNotMatch(source.stream, /journald:entry/);
 
+// Stream startup/listener setup must be teardown-safe even if the panel unmounts
+// while async setup or the start IPC is still in flight.
+assert.match(source.stream, /disposedRef/);
+assert.match(source.stream, /listenerEpochRef/);
+assert.match(source.stream, /generation !== generationRef\.current/);
+assert.match(source.stream, /await stopJournalStream\(sessionId\)\.catch/);
+
 // Literal search is escaped before it is handed to journalctl --grep; regex mode is explicit.
 assert.match(source.client, /escapePcreLiteral/);
 assert.match(source.client, /searchMode/);
