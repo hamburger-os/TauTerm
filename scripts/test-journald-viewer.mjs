@@ -43,6 +43,14 @@ assert.match(source.backend, /tokio::sync::Notify/);
 assert.match(source.backend, /wait_done/);
 assert.doesNotMatch(source.backend, /wait_until_unregistered/);
 
+// Export terminal events are emitted only after temp-file cleanup and operation
+// unregister, so an immediate next export cannot race the previous registry entry.
+assert.match(source.backend, /uuid::Uuid::new_v4\(\)/);
+assert.match(
+  source.backend,
+  /let outcome = run_journald_export_task[\s\S]*drop\(guard\);[\s\S]*match outcome/,
+);
+
 // IPC is batched on the Rust side; the frontend no longer consumes a per-entry event.
 assert.match(source.backend, /journald:batch/);
 assert.match(source.stream, /journald:batch/);
