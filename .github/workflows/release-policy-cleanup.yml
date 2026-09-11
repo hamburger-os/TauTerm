@@ -23,110 +23,33 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Remove manual Windows SHA release attestation
+      - name: Align v0.6.5 changelog with release policy
         shell: python
         run: |
           from pathlib import Path
-
-          def replace_once(path: str, old: str, new: str) -> None:
-              p = Path(path)
-              text = p.read_text(encoding="utf-8")
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{path}: expected exactly one match, found {count}")
-              p.write_text(text.replace(old, new, 1), encoding="utf-8")
-
-          release_path = Path(".github/workflows/release.yml")
-          release = release_path.read_text(encoding="utf-8")
-          input_block = """      windows_validation_sha:\n        description: Exact master SHA manually validated on Windows when hosted Runtime E2E reports BLOCKED; leave empty when Windows E2E really passes\n        required: false\n        type: string\n"""
-          if release.count(input_block) != 1:
-              raise SystemExit("release.yml: windows_validation_sha input block not found exactly once")
-          release = release.replace(input_block, "", 1)
-
-          start_marker = "      - name: Enforce Windows runtime evidence\n"
-          end_marker = "\n  build-windows:\n"
-          start = release.find(start_marker)
-          end = release.find(end_marker, start)
-          if start < 0 or end < 0:
-              raise SystemExit("release.yml: runtime policy block boundaries not found")
-
-          expr = lambda body: "$" + "{{ " + body + " }}"
-          new_policy = (
-              "      - name: Enforce Windows runtime outcome\n"
-              "        shell: bash\n"
-              "        env:\n"
-              f"          WINDOWS_STATUS: {expr('needs.runtime-e2e.outputs.windows_status')}\n"
-              f"          SOURCE_SHA: {expr('needs.prepare.outputs.source_sha')}\n"
-              "        run: |\n"
-              "          set -euo pipefail\n"
-              "          case \"$WINDOWS_STATUS\" in\n"
-              "            passed)\n"
-              "              echo \"Windows hosted Runtime E2E executed and passed for $SOURCE_SHA.\"\n"
-              "              ;;\n"
-              "            blocked)\n"
-              "              echo \"::warning::Windows hosted Runtime E2E was BLOCKED by the known WebView2 hosted-runner limitation; continuing release without manual SHA attestation.\"\n"
-              "              ;;\n"
-              "            *)\n"
-              "              echo \"::error::Unexpected Windows Runtime E2E status: ${WINDOWS_STATUS:-<empty>}\"\n"
-              "              exit 1\n"
-              "              ;;\n"
-              "          esac\n"
-          )
-          release = release[:start] + new_policy + release[end:]
-          release_path.write_text(release, encoding="utf-8")
-
-          replace_once(
-              "docs/community/RELEASING.md",
-              """4. normally leave `windows_validation_sha` empty and start the workflow.\n""",
-              """4. start the workflow.\n""",
-          )
-
-          replace_once(
-              "docs/community/RELEASING.md",
-              """When that happens, Release stops at the Runtime E2E policy gate before package builds. Manually validate the exact `master` SHA on a real Windows environment, then re-run Release and set `windows_validation_sha` to that **exact SHA**. The workflow rejects a different SHA or an empty value. If source changes after the manual validation, the evidence is stale and must be repeated.\n\nThe manual Windows validation must cover the behavior affected by the release. At minimum verify application launch and the relevant user-visible runtime path. For releases that change virtual serial, privileged service, installer/updater or ownership behavior, also verify the affected lifecycle: TauTerm-owned endpoint create/remove, preservation of unrelated pre-existing com0com resources, service recovery where applicable, and upgrade/uninstall ownership semantics. Do not use the evidence field as a bypass when the validation was not actually performed.\n""",
-              """When that happens, Release keeps the condition explicit as `blocked`, emits a warning, and continues to the package builds without requiring a manual SHA attestation input. A real Windows smoke check is still recommended for releases that change Windows-specific runtime behavior, but it is a maintainer validation practice rather than a workflow credential.\n\nFor releases that change virtual serial, privileged service, installer/updater or ownership behavior, the recommended Windows smoke check should cover the affected lifecycle: application launch, TauTerm-owned endpoint create/remove, preservation of unrelated pre-existing com0com resources, service recovery where applicable, and upgrade/uninstall ownership semantics. An actual Windows Runtime E2E failure remains fatal; only the narrowly recognized hosted-runner limitation is allowed to report `blocked`.\n""",
-          )
-
-          replace_once(
-              "docs/community/RELEASING.md",
-              """- If Runtime E2E is `blocked`, complete exact-SHA Windows validation and start a new Release run with the evidence SHA; do not reinterpret the blocked run as a pass.\n- If source must change, merge the fix through normal CI and start a new release run from the new `master`; any prior manual validation SHA is invalid.\n""",
-              """- If Windows Runtime E2E is `blocked` by the narrowly recognized hosted-runner condition, keep the warning visible and let the same Release run continue; do not reinterpret the blocked run as a pass.\n- If source must change, merge the fix through normal CI and start a new release run from the new `master`.\n""",
-          )
-
-          replace_once(
-              "docs/community/TESTING.md",
-              """A PR may remain green when Windows is `blocked` so an upstream hosted-runner limitation does not stop normal development, but Release has a stricter policy. Release re-runs Runtime E2E against the exact release SHA. If Windows returns `blocked`, the release cannot build packages until a maintainer has manually validated that exact SHA on a real Windows environment and supplies the same SHA through the Release workflow evidence input. A different SHA is rejected. Remove this exception when the upstream WebView2/WRY limitation is resolved.\n""",
-              """A PR may remain green when Windows is `blocked` so an upstream hosted-runner limitation does not stop normal development. Release still re-runs Runtime E2E against the exact release SHA and preserves `blocked` as an explicit warning, but that narrowly recognized hosted-runner condition does not require a manual SHA input and does not stop package builds. Any other Windows E2E failure remains fatal. Remove this exception when the upstream WebView2/WRY limitation is resolved.\n""",
-          )
-
-          replace_once(
-              "docs/community/TESTING.md",
-              """Manual evidence must always refer to the exact commit being released; changing source invalidates the evidence.\n""",
-              """These manual checks are still valuable release practice for OS and hardware boundaries, but they are not represented by a Release workflow SHA-attestation field.\n""",
-          )
-
-          replace_once(
-              "CHANGELOG.md",
-              """- **Release qualification gates** — Runtime E2E, dependency advisory checks, the release-mode performance contract and a release reliability soak are reusable exact-SHA gates in the permanent Release workflow. Hosted Windows WebView E2E explicitly reports `blocked` rather than `passed` when the known WebView2 150+ elevated-runner limitation prevents session creation; publishing then requires manual Windows validation of that exact release SHA. Version synchronization also updates TauTerm's `Cargo.lock` root-package version so `npm version` leaves all locked metadata consistent.\n""",
-              """- **Release qualification gates** — Runtime E2E, dependency advisory checks, the release-mode performance contract and a release reliability soak are reusable exact-SHA gates in the permanent Release workflow. Hosted Windows WebView E2E explicitly reports `blocked` rather than `passed` when the known WebView2 150+ elevated-runner limitation prevents session creation; that narrowly recognized hosted-runner block remains visible as a warning without requiring a manual SHA input, while any actual Windows E2E failure remains fatal. Version synchronization also updates TauTerm's `Cargo.lock` root-package version so `npm version` leaves all locked metadata consistent.\n""",
-          )
-      - name: Validate release policy cleanup
+          path = Path("CHANGELOG.md")
+          text = path.read_text(encoding="utf-8")
+          old = "- **Release qualification gates** — Runtime E2E, dependency advisory checks, the release-mode performance contract and a release reliability soak are reusable exact-SHA gates in the permanent Release workflow. Hosted Windows WebView E2E explicitly reports `blocked` rather than `passed` when the known WebView2 150+ elevated-runner limitation prevents session creation; publishing then requires manual Windows validation of that exact release SHA. Version synchronization also updates TauTerm's `Cargo.lock` root-package version so `npm version` leaves all locked metadata consistent."
+          new = "- **Release qualification gates** — Runtime E2E, dependency advisory checks, the release-mode performance contract and a release reliability soak are reusable exact-SHA gates in the permanent Release workflow. Hosted Windows WebView E2E explicitly reports `blocked` rather than `passed` when the known WebView2 150+ elevated-runner limitation prevents session creation; that narrowly recognized hosted-runner block remains visible as a warning without requiring a manual SHA input, while any actual Windows E2E failure remains fatal. Version synchronization also updates TauTerm's `Cargo.lock` root-package version so `npm version` leaves all locked metadata consistent."
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one changelog policy line, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+      - name: Validate final release policy
         shell: bash
         run: |
           set -euo pipefail
           ! grep -R "windows_validation_sha" .github/workflows/release.yml docs/community/RELEASING.md docs/community/TESTING.md CHANGELOG.md
-          ! grep -R "complete exact-SHA Windows validation\|evidence SHA\|any prior manual validation SHA" docs/community/RELEASING.md docs/community/TESTING.md
           git diff --check
           npm ci --no-audit --no-fund
           npm run release:check -- 0.6.5
           npm run docs:check
-      - name: Commit cleanup
+      - name: Commit changelog alignment
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/release.yml docs/community/RELEASING.md docs/community/TESTING.md CHANGELOG.md
+          git add CHANGELOG.md
           git diff --cached --quiet && { echo "No changes produced"; exit 1; }
-          git commit -m "release: simplify blocked Windows E2E policy"
+          git commit -m "docs: align v0.6.5 release policy notes"
           git push origin HEAD:release/0.6.5-policy-cleanup
