@@ -283,7 +283,7 @@ impl Write for ExclusiveIo {
         ack_rx
             .recv()
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed"))?
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
         Ok(buf.len())
     }
 
@@ -344,16 +344,25 @@ fn run_blocking_runtime(
     let mut closing = false;
 
     while !closing {
-        while let Ok(command) = commands.try_recv() {
-            closing = handle_command(
-                command,
-                &mut *driver,
-                &mut subscribers,
-                &mut exclusive,
-                &tx_bytes,
-            );
-            if closing {
-                break;
+        loop {
+            match commands.try_recv() {
+                Ok(command) => {
+                    closing = handle_command(
+                        command,
+                        &mut *driver,
+                        &mut subscribers,
+                        &mut exclusive,
+                        &tx_bytes,
+                    );
+                    if closing {
+                        break;
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    closing = true;
+                    break;
+                }
             }
         }
         if closing {
@@ -365,8 +374,8 @@ fn run_blocking_runtime(
                 rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
                 let data = read_buf[..n].to_vec();
                 if let Some(lease) = exclusive.as_ref() {
-                    // A bounded exclusive consumer is allowed to apply backpressure: exclusive
-                    // protocols own the data plane and must not silently lose bytes.
+                    // Exclusive consumers own the byte stream; applying backpressure here is
+                    // preferable to silently dropping bytes in protocols such as X/Y/ZModem.
                     if lease.data_tx.send(data).is_err() {
                         exclusive = None;
                     }
@@ -398,10 +407,6 @@ fn run_blocking_runtime(
                 break;
             }
         }
-
-        if matches!(commands.try_recv(), Err(mpsc::TryRecvError::Disconnected)) {
-            break;
-        }
     }
 
     connected.store(false, Ordering::Release);
@@ -430,12 +435,11 @@ fn handle_command(
                         .unwrap_or_else(|| "write owner mismatch".into()),
                 ))
             } else {
-                driver
-                    .write_all(&data)
-                    .and_then(|_| driver.flush())
-                    .inspect(|_| {
-                        tx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
-                    })
+                let result = driver.write_all(&data).and_then(|_| driver.flush());
+                if result.is_ok() {
+                    tx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
+                }
+                result
             };
             let _ = ack.send(result);
             false
@@ -462,7 +466,7 @@ fn handle_command(
                 } else {
                     Ok(())
                 };
-                purge_result.map(|_| {
+                purge_result.map(|()| {
                     *exclusive = Some(ExclusiveState {
                         owner_id,
                         owner_name,
@@ -474,7 +478,10 @@ fn handle_command(
             false
         }
         RuntimeCommand::ReleaseExclusive { owner_id } => {
-            if exclusive.as_ref().is_some_and(|lease| lease.owner_id == owner_id) {
+            if exclusive
+                .as_ref()
+                .is_some_and(|lease| lease.owner_id == owner_id)
+            {
                 *exclusive = None;
             }
             false
@@ -547,11 +554,31 @@ mod tests {
             writes: writes.clone(),
         }));
         let mut lease = runtime.handle.acquire_exclusive("test", false).unwrap();
-        assert_eq!(runtime.handle.write(b"blocked").unwrap_err().kind, TransportErrorKind::Busy);
+        assert_eq!(
+            runtime.handle.write(b"blocked").unwrap_err().kind,
+            TransportErrorKind::Busy
+        );
         lease.write_all(b"owned").unwrap();
         lease.release().unwrap();
         runtime.handle.write(b"shared").unwrap();
-        assert_eq!(writes.lock().unwrap().as_slice(), &[b"owned".to_vec(), b"shared".to_vec()]);
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            &[b"owned".to_vec(), b"shared".to_vec()]
+        );
+        runtime.join();
+    }
+
+    #[test]
+    fn queued_commands_are_not_consumed_by_disconnect_probe() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let runtime = DataPlaneRuntime::spawn(Box::new(MockStream {
+            reads: VecDeque::new(),
+            writes: writes.clone(),
+        }));
+        for value in 0u8..32 {
+            runtime.handle.write(&[value]).unwrap();
+        }
+        assert_eq!(writes.lock().unwrap().len(), 32);
         runtime.join();
     }
 }
