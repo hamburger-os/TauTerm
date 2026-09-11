@@ -9,7 +9,7 @@ pub mod value;
 use std::any::Any;
 use std::sync::Arc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
@@ -219,17 +219,46 @@ fn with_modbus<T>(
     function(modbus)
 }
 
+#[derive(Deserialize)]
+struct RawAduOperation {
+    data: Vec<u8>,
+    #[serde(default = "default_wait_response")]
+    wait_response: bool,
+    #[serde(default = "default_quiet_period_ms")]
+    quiet_period_ms: u64,
+}
+
+fn default_wait_response() -> bool {
+    true
+}
+
+fn default_quiet_period_ms() -> u64 {
+    50
+}
+
 #[tauri::command]
 pub fn modbus_execute(
     state: State<'_, AppState>,
     session_id: String,
-    request: ModbusRequest,
+    request: Value,
 ) -> Result<TransactionResult, String> {
     with_modbus(&state, &session_id, |side| {
-        side.client
+        let client = side
+            .client
             .as_ref()
-            .map(|client| client.execute(request))
-            .ok_or_else(|| "Modbus server 会话不能发起 client transaction".into())
+            .ok_or("Modbus server 会话不能发起 client transaction")?;
+        if request.get("kind").and_then(Value::as_str) == Some("raw_adu") {
+            let raw: RawAduOperation = serde_json::from_value(request)
+                .map_err(|error| format!("Raw ADU 参数无效: {error}"))?;
+            return Ok(client.execute_raw_adu(
+                raw.data,
+                raw.wait_response,
+                raw.quiet_period_ms,
+            ));
+        }
+        let request: ModbusRequest = serde_json::from_value(request)
+            .map_err(|error| format!("Modbus 请求无效: {error}"))?;
+        Ok(client.execute(request))
     })
 }
 
@@ -239,6 +268,8 @@ pub struct ModbusStatus {
     pub mode: ModbusMode,
     pub running: bool,
     pub unit_id: u8,
+    pub transactions: Vec<TransactionResult>,
+    pub server_fault: Option<ServerFaultConfig>,
 }
 
 #[tauri::command]
@@ -253,6 +284,11 @@ pub fn modbus_status(
             running: side.client.is_some()
                 || side.server.as_ref().is_some_and(|server| server.is_running()),
             unit_id: side.config.unit_id,
+            transactions: side
+                .client
+                .as_ref()
+                .map_or_else(Vec::new, |client| client.history()),
+            server_fault: side.server.as_ref().map(|server| server.fault()),
         })
     })
 }
@@ -336,6 +372,8 @@ pub fn modbus_server_set_value(
             .server
             .as_ref()
             .ok_or("server data model requires server role")?;
+        let has_area = area.is_some();
+        let has_fault = fault.is_some();
         if let Some(fault) = fault {
             server.set_fault(fault)?;
         }
@@ -349,7 +387,7 @@ pub fn modbus_server_set_value(
                 ServerArea::InputRegister => server.model.set_input_register(address, value),
             }
         }
-        if area.is_none() && fault.is_none() {
+        if !has_area && !has_fault {
             return Err("either area or fault must be provided".into());
         }
         Ok(())
