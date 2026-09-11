@@ -127,6 +127,8 @@ impl BlockingByteStream for TcpDriver {
     }
 }
 
+/// Non-blocking listener owned by a protocol/service runtime. `accept()` returns `Ok(None)` when
+/// there is currently no peer, allowing the owner to observe cancellation without helper sockets.
 pub struct TcpListenerTransport {
     listener: TcpListener,
     client_config: TcpConnectConfig,
@@ -141,18 +143,20 @@ impl TcpListenerTransport {
         let listener = TcpListener::bind((host, port))
             .map_err(|error| TransportError::io("tcp_bind", error))?;
         listener
-            .set_nonblocking(false)
+            .set_nonblocking(true)
             .map_err(|error| TransportError::io("tcp_listener_mode", error))?;
         Ok(Self { listener, client_config })
     }
 
-    pub fn accept(&self) -> Result<(TcpDriver, SocketAddr), TransportError> {
-        let (stream, peer) = self
-            .listener
-            .accept()
-            .map_err(|error| TransportError::io("tcp_accept", error))?;
-        let driver = TcpDriver::from_stream(stream, &self.client_config)?;
-        Ok((driver, peer))
+    pub fn accept(&self) -> Result<Option<(TcpDriver, SocketAddr)>, TransportError> {
+        match self.listener.accept() {
+            Ok((stream, peer)) => {
+                let driver = TcpDriver::from_stream(stream, &self.client_config)?;
+                Ok(Some((driver, peer)))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(TransportError::io("tcp_accept", error)),
+        }
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
