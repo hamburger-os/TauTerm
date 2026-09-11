@@ -7,7 +7,8 @@
 //! - **Plugin Host**: 插件注册与发现（`kernel/plugin_host`）
 //! - **Protocol Adapter**: 协议插件通过 `ProtocolAdapter` trait 管理连接
 //! - **Transport Runtime**: 协议无关的物理 I/O、DataPlane 与独占租约（`transport`）
-//! - **Session Store**: 管理活跃会话生命周期（`kernel/session_store`）
+//! - **Session Runtime**: 会话生命周期、脚本 I/O 与断开语义（`session`）
+//! - **Session Store**: 活跃会话注册与持久化（`kernel/session_store`）
 //! - **Transfer Manager**: 文件传输调度（`transfer/manager`）
 //! - **Config Store**: 版本化非敏感配置/工程资产存储（`kernel/config_store`）
 //! - **Theme Engine**: CSS 变量主题切换（`kernel/theme_engine`）
@@ -21,6 +22,7 @@ mod kernel;
 mod performance_contract;
 mod plugins;
 mod security;
+mod session;
 mod transfer;
 mod transport;
 pub mod virtual_port;
@@ -178,229 +180,52 @@ pub fn run() {
                                 .config_store
                                 .get::<String>("logging.system_level")
                                 .unwrap_or_else(|| "info".to_string());
-                            if let Err(error) =
-                                kernel::log_engine::set_system_log_config(system_enabled, &system_level)
-                            {
-                                log::warn!("系统日志运行态配置初始化失败: {}", error);
-                            }
+                            let system_max_file_size = state
+                                .config_store
+                                .get::<u64>("logging.system_max_file_size")
+                                .unwrap_or(5 * 1024 * 1024);
+                            let system_max_files = state
+                                .config_store
+                                .get::<usize>("logging.system_max_files")
+                                .unwrap_or(3);
+                            let session_enabled = state
+                                .config_store
+                                .get::<bool>("logging.session_enabled")
+                                .unwrap_or(false);
+                            let session_format = state
+                                .config_store
+                                .get::<String>("logging.session_format")
+                                .unwrap_or_else(|| "text".to_string());
+                            let session_max_file_size = state
+                                .config_store
+                                .get::<u64>("logging.session_max_file_size")
+                                .unwrap_or(10 * 1024 * 1024);
+                            let session_max_files = state
+                                .config_store
+                                .get::<usize>("logging.session_max_files")
+                                .unwrap_or(5);
 
-                            if let Ok(log_engine) = state.log_engine.lock() {
-                                if let Err(error) =
-                                    log_engine.update_config(kernel::log_engine::LogConfigUpdate {
-                                        session_enabled: state
-                                            .config_store
-                                            .get::<bool>("logging.session_enabled"),
-                                        file_max_size: state
-                                            .config_store
-                                            .get::<u64>("logging.file_max_size"),
-                                        buffer_size: state
-                                            .config_store
-                                            .get::<usize>("logging.buffer_size"),
-                                        flush_interval_ms: state
-                                            .config_store
-                                            .get::<u64>("logging.flush_interval_ms"),
-                                        retention_days: state
-                                            .config_store
-                                            .get::<u64>("logging.retention_days"),
-                                    })
-                                {
-                                    log::warn!("Session 日志运行态配置初始化失败: {}", error);
-                                }
+                            if let Ok(mut engine) = state.log_engine.lock() {
+                                engine.update_config(LogConfig {
+                                    system_enabled,
+                                    system_level,
+                                    system_max_file_size,
+                                    system_max_files,
+                                    session_enabled,
+                                    session_format,
+                                    session_max_file_size,
+                                    session_max_files,
+                                    ..LogConfig::default()
+                                });
                             }
-                        }
-
-                        if let Err(error) = state
-                            .host_key_verifier
-                            .configure_known_hosts(config_dir.join("known_hosts.json"))
-                        {
-                            log::warn!("SSH known-host 存储初始化失败: {}", error);
                         }
                     }
                     Err(error) => {
-                        log::warn!(
-                            "应用配置目录不可用；ConfigStore 与 SSH known-host 保持 fail-closed: {}",
-                            error
-                        );
+                        log::warn!("无法确定应用配置目录: {}", error);
                     }
                 }
             }
 
-            let log_dir = {
-                let writable = |dir: std::path::PathBuf| -> Option<std::path::PathBuf> {
-                    std::fs::create_dir_all(&dir).ok()?;
-                    let test_file = dir.join(".write_test");
-                    std::fs::write(&test_file, b"tau").ok()?;
-                    let _ = std::fs::remove_file(&test_file);
-                    Some(dir)
-                };
-
-                let exe_candidate = std::env::current_exe()
-                    .ok()
-                    .and_then(|path| path.parent().map(|dir| dir.join("logs")));
-                if let Some(dir) = exe_candidate.and_then(&writable) {
-                    dir
-                } else {
-                    let app_candidate = app.path().app_data_dir().ok().map(|dir| dir.join("logs"));
-                    if let Some(dir) = app_candidate.and_then(&writable) {
-                        log::warn!("exe 同级日志目录不可写，回退到应用数据目录: {:?}", dir);
-                        dir
-                    } else {
-                        let temp = std::env::temp_dir().join("TauTerm").join("logs");
-                        match writable(temp.clone()) {
-                            Some(dir) => {
-                                eprintln!(
-                                    "TauTerm: durable log directories unavailable; using temporary directory {:?}",
-                                    dir
-                                );
-                                dir
-                            }
-                            None => {
-                                eprintln!(
-                                    "TauTerm: no writable log directory is available; using unresolved temporary path {:?}",
-                                    temp
-                                );
-                                temp
-                            }
-                        }
-                    }
-                }
-            };
-            if let Some(state) = app.try_state::<AppState>() {
-                if let Ok(log_engine) = state.log_engine.lock() {
-                    if let Err(error) = log_engine.set_log_dir(log_dir.clone()) {
-                        log::warn!("日志目录运行态配置失败: {}", error);
-                    }
-                }
-            }
-            if let Err(error) = std::fs::create_dir_all(&log_dir) {
-                eprintln!(
-                    "TauTerm: failed to create resolved log directory {:?}: {}",
-                    log_dir, error
-                );
-            }
-            log::info!("TauTerm v{} 已启动", env!("CARGO_PKG_VERSION"));
-            log::info!("日志目录: {:?}", log_dir);
-
-            if let Some(state) = app.try_state::<AppState>() {
-                state.telnet_adapter.inject_app_handle(app.handle().clone());
-                if let Ok(mut vpm) = state.virtual_port_manager.lock() {
-                    #[cfg(target_os = "windows")]
-                    {
-                        let resource_dir = match app.path().resource_dir() {
-                            Ok(path) => path,
-                            Err(error) => {
-                                let fallback = std::env::temp_dir()
-                                    .join("TauTerm")
-                                    .join("missing-resources");
-                                log::warn!(
-                                    "应用资源目录不可用，虚拟串口驱动资源保持不可用状态: {} ({:?})",
-                                    error,
-                                    fallback
-                                );
-                                fallback
-                            }
-                        };
-                        let vpm_dir = if resource_dir.join("setupc.exe").exists() {
-                            resource_dir
-                        } else {
-                            let dev_path = resource_dir.join("../resources/com0com");
-                            if dev_path.join("setupc.exe").exists() {
-                                log::info!(
-                                    "开发模式: com0com 驱动文件位于 {:?}",
-                                    dev_path
-                                        .canonicalize()
-                                        .unwrap_or_else(|_| dev_path.clone())
-                                );
-                                dev_path
-                            } else {
-                                log::warn!("com0com 驱动文件未找到（resource_dir 和 dev_path 均无 setupc.exe）");
-                                resource_dir
-                            }
-                        };
-                        let state_dir = match app.path().app_data_dir() {
-                            Ok(path) => path,
-                            Err(error) => {
-                                let fallback = std::env::temp_dir()
-                                    .join("TauTerm")
-                                    .join("virtual-port-state");
-                                log::warn!(
-                                    "应用数据目录不可用，虚拟串口状态使用临时隔离目录: {} ({:?})",
-                                    error,
-                                    fallback
-                                );
-                                fallback
-                            }
-                        };
-                        if let Err(error) = std::fs::create_dir_all(&state_dir) {
-                            log::warn!(
-                                "无法创建虚拟串口状态目录 {:?}: {}",
-                                state_dir,
-                                error
-                            );
-                        }
-                        let service_backend = virtual_port::service_backend::ServiceBackend::new();
-                        if service_backend.connect().is_ok() {
-                            log::info!("虚拟串口特权服务已连接");
-                            *vpm = Box::new(service_backend);
-                        } else {
-                            log::warn!("虚拟串口特权服务不可用，回退到直连模式（按需 UAC）");
-                            *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
-                        }
-                        let orphan_count = vpm.cleanup_orphans();
-                        if orphan_count > 0 {
-                            log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
-                        }
-                        if !vpm.are_files_present() {
-                            log::warn!("com0com 驱动文件缺失，虚拟串口功能不可用");
-                        } else if vpm.detect_driver() {
-                            log::info!("com0com 驱动已就绪（安装时已自动安装或先前已安装）");
-                        } else {
-                            log::info!("com0com 驱动文件已找到但驱动未安装 \u{2014} 首次连接时将通过 NSIS 安装或需管理员权限运行时安装");
-                        }
-                        let driver_installed = vpm.detect_driver();
-                        let files_present = vpm.are_files_present();
-                        drop(vpm);
-                        if files_present && !driver_installed {
-                            let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                                "reason": "com0com driver not installed. Run TauTerm as administrator once to install the driver.",
-                                "can_install": true,
-                            }));
-                        } else if !files_present {
-                            let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                                "reason": "com0com driver files missing. Virtual serial port feature unavailable.",
-                                "can_install": false,
-                            }));
-                        }
-                    }
-                    #[cfg(any(target_os = "linux", target_os = "macos"))]
-                    {
-                        *vpm = Box::new(PtyBackend::new());
-                        let orphan_count = vpm.cleanup_orphans();
-                        if orphan_count > 0 {
-                            log::info!("已清理 {} 个遗留虚拟端点资源", orphan_count);
-                        }
-                        if vpm.are_files_present() {
-                            log::info!("原生 PTY 后端已就绪，虚拟串口功能可用");
-                        } else {
-                            log::warn!("原生 PTY 后端不可用");
-                            let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                                "reason": "Native PTY backend unavailable",
-                                "can_install": false,
-                            }));
-                        }
-                        drop(vpm);
-                    }
-                    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-                    {
-                        log::warn!("当前平台不支持虚拟串口功能");
-                        let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
-                            "reason": "Virtual serial port feature not yet supported on this platform",
-                            "can_install": false,
-                        }));
-                        drop(vpm);
-                    }
-                }
-            }
             Ok(())
         })
         .manage(AppState {
@@ -418,137 +243,112 @@ pub fn run() {
             plugin_host: Mutex::new(plugin_host),
             theme_engine: ThemeEngine::new(),
             credential_store: CredentialStore::new(),
-            log_engine: Mutex::new(LogEngine::new(LogConfig::default())),
-            #[cfg(target_os = "windows")]
-            virtual_port_manager: Mutex::new(Box::new(VirtualPortManager::new(
-                std::env::temp_dir().join("TauTerm").join("missing-resources"),
-                std::env::temp_dir().join("TauTerm").join("virtual-port-state"),
-            ))),
-            #[cfg(not(target_os = "windows"))]
-            virtual_port_manager: Mutex::new(Box::new(PtyBackend::new())),
+            log_engine: Mutex::new(LogEngine::new()),
+            virtual_port_manager: Mutex::new({
+                #[cfg(target_os = "windows")]
+                {
+                    Box::new(VirtualPortManager::new())
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    Box::new(PtyBackend::new())
+                }
+            }),
         })
         .invoke_handler(tauri::generate_handler![
-            commands::get_connection_types,
+            commands::get_plugins,
             commands::enumerate_endpoints,
             commands::connect_session,
             commands::disconnect_session,
-            commands::write_data,
-            commands::switch_active_session,
-            commands::rename_session,
-            commands::reorder_tabs,
-            commands::get_tabs,
-            commands::open_channel,
-            commands::close_channel,
-            commands::connect_session_network,
-            commands::list_network_peers,
-            commands::close_network_peer,
-            commands::network_udp_send_to,
-            commands::network_udp_send,
-            commands::set_network_send_target,
-            plugins::modbus::modbus_execute,
-            plugins::modbus::modbus_status,
-            plugins::modbus::modbus_watch_set,
-            plugins::modbus::modbus_watch_start,
-            plugins::modbus::modbus_watch_stop,
-            plugins::modbus::modbus_watch_values,
-            plugins::modbus::modbus_server_set_value,
-            plugins::modbus::modbus_server_snapshot,
-            plugins::trdp::trdp_command,
-            plugins::trdp::trdp_capture_interfaces,
-            plugins::trdp::trdp_open_capture,
-            plugins::trdp::trdp_capture_packets,
-            plugins::trdp::trdp_capture_summary,
-            plugins::trdp::trdp_save_capture,
-            plugins::trdp::trdp_release_capture,
-            plugins::trdp::trdp_import_xml,
-            plugins::trdp::trdp_decode_dataset,
-            commands::load_sessions,
+            commands::write_to_session,
+            commands::resize_session,
+            commands::get_session_stats,
+            commands::start_script,
+            commands::stop_script,
             commands::save_session_config,
-            commands::resolve_local_shell_session_name,
+            commands::load_session_configs,
             commands::delete_session_config,
-            commands::file_transfer_send,
-            commands::file_transfer_receive,
-            commands::file_transfer_cancel,
-            commands::files::import_command_set_file,
-            commands::files::export_command_set_file,
-            commands::credential_storage_status,
-            commands::unlock_credential_vault,
-            commands::lock_credential_vault,
-            commands::config::get_config,
-            commands::config::set_config,
-            commands::config::delete_config,
-            commands::config::get_theme_list,
-            commands::config::get_active_theme,
-            commands::config::set_theme,
-            commands::start_session_log,
-            commands::stop_session_log,
-            commands::log_event,
-            commands::get_log_status,
-            commands::get_log_health,
-            commands::set_system_log_config,
-            commands::get_log_dir,
-            commands::get_log_config,
-            commands::open_log_dir,
-            commands::update_log_config,
-            commands::clear_all_logs,
-            commands::platform::install_virtual_port_driver,
-            commands::platform::check_virtual_port_driver,
-            commands::platform::cleanup_virtual_ports,
-            commands::start_script_engine,
-            commands::stop_script_engine,
-            commands::rules_to_script,
-            commands::test_match,
-            commands::sftp_list_dir_cmd,
-            commands::sftp_stat_cmd,
-            commands::sftp_read_head_cmd,
-            commands::sftp_chmod_cmd,
-            commands::sftp_delete_cmd,
-            commands::sftp_rename_cmd,
-            commands::sftp_mkdir_cmd,
-            commands::sftp_new_file_cmd,
-            commands::sftp_delete_batch_cmd,
-            commands::sftp_delete_recursive_cmd,
-            commands::start_journald_stream,
-            commands::stop_journald_stream,
-            commands::journald_query_cmd,
-            commands::start_journald_export,
-            commands::stop_journald_export,
-            commands::get_ssh_home_dir,
-            commands::resize_pty,
-            commands::confirm_host_key,
-            commands::tftp_server_start,
-            commands::tftp_server_stop,
-            commands::tftp_client_get,
-            commands::tftp_client_put,
-            commands::tftp_update_params,
-            commands::tftp_get_status,
-            commands::iperf_server_start,
-            commands::iperf_server_stop,
-            commands::iperf_client_run,
-            commands::iperf_client_stop,
-            commands::iperf_update_params,
-            commands::iperf_get_status,
+            commands::rename_session_config,
+            commands::set_session_config_param,
+            commands::open_sub_connection,
+            commands::close_sub_connection,
+            commands::get_session_peers,
+            commands::send_file,
+            commands::receive_file,
+            commands::cancel_file_transfer,
+            commands::get_transfer_status,
+            commands::disconnect_all_sessions,
+            plugins::modbus::modbus_execute,
+            plugins::modbus::modbus_start_polling,
+            plugins::modbus::modbus_stop_polling,
+            plugins::modbus::modbus_get_transactions,
+            plugins::modbus::modbus_clear_transactions,
+            plugins::modbus::modbus_start_server,
+            plugins::modbus::modbus_stop_server,
+            plugins::modbus::modbus_server_snapshot,
+            plugins::modbus::modbus_server_write,
+            plugins::modbus::modbus_server_set_fault,
+            plugins::network::network_send,
+            plugins::network::network_send_to,
+            plugins::network::network_get_peers,
+            plugins::network::network_close_peer,
+            plugins::tftp::tftp_list_transfers,
+            plugins::tftp::tftp_send_file,
+            plugins::tftp::tftp_receive_file,
+            plugins::tftp::tftp_cancel_transfer,
+            plugins::iperf::iperf_start,
+            plugins::iperf::iperf_stop,
+            plugins::iperf::iperf_status,
+            plugins::trdp::trdp_connect,
+            plugins::trdp::trdp_disconnect,
+            plugins::trdp::trdp_start,
+            plugins::trdp::trdp_stop,
+            plugins::trdp::trdp_status,
+            plugins::trdp::trdp_discover,
+            plugins::trdp::trdp_write_dataset,
+            plugins::trdp::trdp_get_dataset,
+            plugins::trdp::trdp_start_capture,
+            plugins::trdp::trdp_stop_capture,
+            plugins::trdp::trdp_capture_status,
+            plugins::trdp::trdp_capture_export,
+            plugins::trdp::trdp_capture_clear,
+            plugins::ssh::sftp::sftp_list_dir,
+            plugins::ssh::sftp::sftp_stat,
+            plugins::ssh::sftp::sftp_mkdir,
+            plugins::ssh::sftp::sftp_remove,
+            plugins::ssh::sftp::sftp_rename,
+            plugins::ssh::sftp::sftp_upload,
+            plugins::ssh::sftp::sftp_download,
+            plugins::ssh::journald::journald_query,
+            plugins::ssh::journald::journald_start_stream,
+            plugins::ssh::journald::journald_stop_stream,
+            plugins::ssh::journald::journald_export,
+            plugins::ssh::journald::journald_cancel_export,
+            diagnostics::get_diagnostics,
             diagnostics::export_diagnostics,
+            security::store_credential,
+            security::get_credential,
+            security::delete_credential,
+            security::list_credentials,
+            commands::get_log_config,
+            commands::update_log_config,
+            commands::list_log_files,
+            commands::open_log_folder,
+            commands::clear_logs,
+            commands::export_log,
+            commands::read_log_file,
+            commands::get_theme,
+            commands::set_theme,
+            commands::get_settings,
+            commands::set_setting,
+            commands::get_virtual_ports,
+            commands::create_virtual_port,
+            commands::remove_virtual_port,
+            commands::remove_all_virtual_ports,
+            commands::get_update_status,
+            commands::check_for_updates,
+            commands::install_update,
         ])
-        .build(tauri::generate_context!())
-        .expect("启动 TauTerm 时发生错误")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
-                if let Some(state) = app_handle.try_state::<AppState>() {
-                    if let Ok(mut store) = state.session_store.lock() {
-                        let ids: Vec<String> = store.tab_ids().to_vec();
-                        for id in &ids {
-                            if let Err(e) = store.close_session(id) {
-                                log::warn!("退出时关闭会话 {} 失败: {}", id, e);
-                            }
-                        }
-                        // Saved Session Library is configuration state, not an exit snapshot.
-                        // Closing runtime resources must never overwrite it.
-                    }
-                    if let Ok(mut vpm) = state.virtual_port_manager.lock() {
-                        vpm.cleanup_all();
-                    }
-                }
-            }
-        });
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }
