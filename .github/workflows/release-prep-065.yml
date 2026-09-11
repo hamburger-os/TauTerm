@@ -1,0 +1,58 @@
+name: Temporary v0.6.5 Release Prep
+
+on:
+  push:
+    branches: [release/0.6.5]
+    paths:
+      - .github/workflows/release-prep-065.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: release/0.6.5
+          persist-credentials: true
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Synchronize 0.6.5 version metadata and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm version 0.6.5 --no-git-tag-version --allow-same-version
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'CHANGELOG.md';
+          let text = fs.readFileSync(path, 'utf8');
+          if (/^## \[0\.6\.5\]/m.test(text)) process.exit(0);
+          const marker = '## [Unreleased]';
+          if (!text.startsWith(marker)) {
+            throw new Error('CHANGELOG.md must start with ## [Unreleased]');
+          }
+          text = text.replace(marker, `${marker}\n\n## [0.6.5] — 2026-09-11`);
+          fs.writeFileSync(path, text);
+          NODE
+          npm run release:check -- 0.6.5
+
+      - name: Commit generated release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "Release metadata already synchronized."
+            exit 0
+          fi
+          git commit -m "release: finalize v0.6.5 metadata"
+          git push origin HEAD:release/0.6.5
