@@ -291,7 +291,10 @@ impl VirtualPortManager {
         service_query.args(["query", "com0com"]);
         #[cfg(target_os = "windows")]
         service_query.creation_flags(CREATE_NO_WINDOW);
-        if service_query.output().is_ok_and(|output| output.status.success()) {
+        if service_query
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
             return true;
         }
 
@@ -326,7 +329,9 @@ impl VirtualPortManager {
         };
         match serde_json::from_str::<PersistedState>(&content) {
             Ok(mut state) => {
-                state.owned_endpoints.sort_by_key(|endpoint| endpoint.resource_id);
+                state
+                    .owned_endpoints
+                    .sort_by_key(|endpoint| endpoint.resource_id);
                 state
                     .owned_endpoints
                     .dedup_by_key(|endpoint| endpoint.resource_id);
@@ -532,7 +537,11 @@ impl VirtualPortManager {
             .max_bus
             .into_iter()
             .chain(owned_ids.iter().copied())
-            .chain(self.active_endpoints.iter().map(|endpoint| endpoint.resource_id))
+            .chain(
+                self.active_endpoints
+                    .iter()
+                    .map(|endpoint| endpoint.resource_id),
+            )
             .max()
             .map_or(0, |max| max.saturating_add(1));
         while is_reserved_bus(bus) || driver.buses.contains(&bus) || owned_ids.contains(&bus) {
@@ -565,10 +574,7 @@ impl VirtualPortManager {
 
         let driver = self.query_driver_state();
         let bus = self.next_free_bus(&driver);
-        let output = run_setupc(
-            &self.resource_dir,
-            &["install", &bus.to_string(), "-", "-"],
-        )?;
+        let output = run_setupc(&self.resource_dir, &["install", &bus.to_string(), "-", "-"])?;
         if !output.status.success() {
             return Err(format!(
                 "com0com driver install failed (exit {:?}): {}",
@@ -613,10 +619,7 @@ exit /b 0\r\n"
 
     /// 扫描空闲连续 COM 号。extra_occupied 来自 com0com 驱动自身，因为
     /// PlugInMode 端口可能不会出现在 serialport::available_ports() 中。
-    pub fn find_available_port_pairs(
-        count: u32,
-        extra_occupied: &HashSet<u32>,
-    ) -> Vec<(u32, u32)> {
+    pub fn find_available_port_pairs(count: u32, extra_occupied: &HashSet<u32>) -> Vec<(u32, u32)> {
         let mut in_use = serialport::available_ports()
             .map(|ports| {
                 ports
@@ -793,9 +796,7 @@ exit /b 0\r\n"
 
         let setupc = self.setupc_path().display().to_string();
         let resource = self.resource_dir.display().to_string();
-        let mut batch = format!(
-            "@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n"
-        );
+        let mut batch = format!("@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n");
         for orphan in &orphans {
             append_remove_batch(&mut batch, &setupc, orphan.resource_id);
         }
@@ -860,9 +861,7 @@ if errorlevel 1 exit /b 1\r\n",
 
         let setupc = self.setupc_path().display().to_string();
         let resource = self.resource_dir.display().to_string();
-        let mut batch = format!(
-            "@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n"
-        );
+        let mut batch = format!("@echo off\r\nchcp 65001 >nul\r\ncd /d \"{resource}\"\r\n");
         for orphan in &orphans {
             append_remove_batch(&mut batch, &setupc, orphan.resource_id);
         }
@@ -988,10 +987,9 @@ if errorlevel 1 exit /b 1\r\n",
                     log::info!("Cleaned {cleaned} deferred virtual-port pair(s)")
                 }
                 Ok(_) => {}
-                Err(error) => log::warn!(
-                    "Deferred virtual-port cleanup remains pending: {}",
-                    error
-                ),
+                Err(error) => {
+                    log::warn!("Deferred virtual-port cleanup remains pending: {}", error)
+                }
             }
         }
     }
