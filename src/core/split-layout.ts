@@ -253,47 +253,53 @@ export function closePaneInLayout(
 }
 
 function updateSplitRatio(node: LayoutNode, splitId: SplitId, ratio: number): LayoutNode {
-if (node.type === "pane") return node;
-if (node.id === splitId) {
-  return node.ratio === ratio ? node : { ...node, ratio };
-}
+  if (node.type === "pane") return node;
+  if (node.id === splitId) {
+    return node.ratio === ratio ? node : { ...node, ratio };
+  }
 
-const first = updateSplitRatio(node.first, splitId, ratio);
-if (first !== node.first) return { ...node, first };
+  const first = updateSplitRatio(node.first, splitId, ratio);
+  if (first !== node.first) return { ...node, first };
 
-const second = updateSplitRatio(node.second, splitId, ratio);
-return second === node.second ? node : { ...node, second };
+  const second = updateSplitRatio(node.second, splitId, ratio);
+  return second === node.second ? node : { ...node, second };
 }
 
 export function setSplitRatioInLayout(
-state: SplitLayoutState,
-splitId: SplitId,
-ratio: number,
+  state: SplitLayoutState,
+  splitId: SplitId,
+  ratio: number,
 ): SplitLayoutState {
-const clamped = Math.max(0.05, Math.min(0.95, ratio));
-const root = updateSplitRatio(state.root, splitId, clamped);
-return root === state.root ? state : { ...state, root };
+  const clamped = Math.max(0.05, Math.min(0.95, ratio));
+  const root = updateSplitRatio(state.root, splitId, clamped);
+  return root === state.root ? state : { ...state, root };
+}
+
+function splitHasDirectPane(
+  node: Extract<LayoutNode, { type: "split" }>,
+  paneId: PaneId,
+): boolean {
+  return (node.first.type === "pane" && node.first.id === paneId)
+    || (node.second.type === "pane" && node.second.id === paneId);
 }
 
 function findParentSplitRatio(node: LayoutNode, paneId: PaneId): number | null {
-if (node.type === "pane") return null;
-const directChild = (node.first.type === "pane" && node.first.id === paneId)
-  || (node.second.type === "pane" && node.second.id === paneId);
-if (directChild) return node.ratio;
-return findParentSplitRatio(node.first, paneId)
-  ?? findParentSplitRatio(node.second, paneId);
+  if (node.type === "pane") return null;
+  if (splitHasDirectPane(node, paneId)) return node.ratio;
+  return findParentSplitRatio(node.first, paneId)
+    ?? findParentSplitRatio(node.second, paneId);
 }
 
 /**
-* Whether resetting this Pane's immediate parent split would change geometry.
-* Command availability derives from the same immediate-parent rule as reset.
-*/
+ * Whether resetting this Pane's immediate parent split would change geometry.
+ * Command availability derives from the same immediate-parent rule as reset.
+ */
 export function canResetPaneSplitRatioInLayout(
-state: SplitLayoutState,
-paneId: PaneId,
+  state: SplitLayoutState,
+  paneId: PaneId,
 ): boolean {
-const ratio = findParentSplitRatio(state.root, paneId);
-return ratio !== null && ratio !== 0.5;
+  const ratio = findParentSplitRatio(state.root, paneId);
+  return ratio !== null && ratio !== 0.5;
 }
 
 interface ResetParentSplitResult {
@@ -307,9 +313,7 @@ function resetParentSplitRatio(node: LayoutNode, paneId: PaneId): ResetParentSpl
     return { node, found: false, changed: false };
   }
 
-  const directChild = (node.first.type === "pane" && node.first.id === paneId)
-    || (node.second.type === "pane" && node.second.id === paneId);
-  if (directChild) {
+  if (splitHasDirectPane(node, paneId)) {
     if (node.ratio === 0.5) return { node, found: true, changed: false };
     return { node: { ...node, ratio: 0.5 }, found: true, changed: true };
   }
