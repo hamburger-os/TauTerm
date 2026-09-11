@@ -1,0 +1,22 @@
+name: RustSec riperf3 diagnosis
+
+on:
+  push:
+    branches: [release/0.6.5-rustsec-fix]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Inspect riperf3 authentication surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== auth module references ==='
+          grep -RInE 'crate::auth|mod auth|rsa_|authorized_users|use_pkcs1_padding|username|password|base64|rpassword|sha2' src-tauri/vendor/riperf3/src src-tauri/vendor/riperf3/Cargo.toml src-tauri/vendor/riperf3/Cargo.toml.orig || true
+          echo '=== TauTerm wrapper auth references ==='
+          grep -RInE 'username|password|rsa_|authorized_users|use_pkcs1_padding|auth' src-tauri/src/plugins/iperf || true
