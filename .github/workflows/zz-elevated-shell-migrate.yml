@@ -1,0 +1,75 @@
+name: Elevated Shell Transport Migration
+
+on:
+  push:
+    branches: [feat/transport-runtime-modbus]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: ${{ !contains(github.event.head_commit.message, '[elevated-shell-bot]') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+          fetch-depth: 0
+      - name: Migrate elevated shell driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          git mv src-tauri/src/channel/elevated_shell_channel.rs src-tauri/src/plugins/local_shell/elevated.rs
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('src-tauri/src/channel/mod.rs')
+          s=p.read_text().replace('#[cfg(windows)]\npub mod elevated_shell_channel;\n','')
+          p.write_text(s)
+
+          p=Path('src-tauri/src/plugins/local_shell/elevated.rs')
+          s=p.read_text()
+          s=s.replace('use crate::channel::error::ChannelError;\nuse crate::channel::local_shell_channel::LocalShellChannel;\nuse crate::channel::{Channel, DisconnectInfo};\n', 'use super::driver::LocalShellDriver;\nuse crate::session::DisconnectInfo;\nuse crate::transport::{BlockingByteStream, ReadStatus, StreamCloseMetadata, TransportError};\n')
+          s=s.replace('ElevatedShellChannel','ElevatedShellDriver')
+          s=s.replace('LocalShellChannel','LocalShellDriver')
+          s=s.replace('Result<Self, ChannelError>', 'std::io::Result<Self>')
+          s=s.replace('.map_err(ChannelError::Io)?', '?')
+          s=s.replace('return Err(ChannelError::Io(error));', 'return Err(error);')
+          s=s.replace('return Err(ChannelError::Io(io_other(format!(', 'return Err(io_other(format!(')
+          # The previous replacement removes one wrapper parenthesis in the serialization error branch.
+          s=s.replace('"管理员 Shell 配置序列化失败: {error}"\n                ))));', '"管理员 Shell 配置序列化失败: {error}"\n                )));')
+          start=s.index('impl Channel for ElevatedShellDriver {')
+          end=s.index('\nimpl Drop for ElevatedShellDriver', start)
+          replacement='''impl BlockingByteStream for ElevatedShellDriver {\n    fn read(&mut self, buf: &mut [u8]) -> Result<ReadStatus, TransportError> {\n        match Read::read(self, buf) {\n            Ok(n) if n > 0 => Ok(ReadStatus::Data(n)),\n            Ok(_) => Ok(ReadStatus::Idle),\n            Err(error) if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => Ok(ReadStatus::Idle),\n            Err(error) if matches!(error.kind(), std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof) => Ok(ReadStatus::Eof),\n            Err(error) => Err(TransportError::io("elevated_shell_read", error)),\n        }\n    }\n\n    fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {\n        Write::write_all(self, data).map_err(|error| TransportError::io("elevated_shell_write", error))\n    }\n\n    fn flush(&mut self) -> Result<(), TransportError> {\n        Write::flush(self).map_err(|error| TransportError::io("elevated_shell_flush", error))\n    }\n\n    fn resize_terminal(&mut self, cols: u32, rows: u32) -> Result<(), TransportError> {\n        let payload = serde_json::to_vec(&ResizeRequest { cols, rows })\n            .map_err(|error| TransportError::io("elevated_shell_resize", io_other(error.to_string())))?;\n        self.send(FRAME_RESIZE, &payload)\n            .map_err(|error| TransportError::io("elevated_shell_resize", error))\n    }\n\n    fn supports_terminal_control(&self) -> bool { true }\n\n    fn shutdown(&mut self) -> Result<(), TransportError> {\n        self.shutdown_helper();\n        Ok(())\n    }\n\n    fn close_metadata(&self) -> StreamCloseMetadata {\n        self.exit\n            .lock()\n            .ok()\n            .and_then(|slot| slot.clone())\n            .map(|info| StreamCloseMetadata { exit_code: info.exit_code, signal: None })\n            .unwrap_or_default()\n    }\n}\n'''
+          s=s[:start]+replacement+s[end:]
+          s=s.replace('''                    shell\n                        .resize_pty(resize.cols, resize.rows)\n                        .map_err(|error| io_other(error.to_string()))?;''', '''                    BlockingByteStream::resize_terminal(&mut shell, resize.cols, resize.rows)\n                        .map_err(|error| io_other(error.to_string()))?;''')
+          s=s.replace('let _ = shell.shutdown();', 'let _ = BlockingByteStream::shutdown(&mut shell);')
+          s=s.replace('''                let info = shell.disconnect_info(DisconnectInfo::io_error(error.to_string()));''', '''                let metadata = BlockingByteStream::close_metadata(&shell);\n                let info = metadata\n                    .exit_code\n                    .map(|code| DisconnectInfo::process_exited(code, metadata.signal.as_deref()))\n                    .unwrap_or_else(|| DisconnectInfo::io_error(error.to_string()));''')
+          p.write_text(s)
+
+          p=Path('src-tauri/src/plugins/local_shell/mod.rs')
+          s=p.read_text()
+          s=s.replace('mod driver;\n', 'mod driver;\n#[cfg(windows)]\npub(crate) mod elevated;\n')
+          old='''                    let channel =\n                        crate::channel::elevated_shell_channel::ElevatedShellChannel::spawn(\n                            &executable,\n                            &self.resolved.args,\n                            &self.resolved.cwd,\n                        )\n                        .map_err(SessionError::ChannelError)?;\n                    Ok(ChannelKind::Sync(Box::new(channel)))'''
+          new='''                    let driver = elevated::ElevatedShellDriver::spawn(\n                        &executable,\n                        &self.resolved.args,\n                        &self.resolved.cwd,\n                    )\n                    .map_err(SessionError::Io)?;\n                    Ok(DataPlaneRuntime::spawn(Box::new(driver)))'''
+          if old not in s:
+              raise SystemExit('elevated factory anchor not found')
+          s=s.replace(old,new)
+          p.write_text(s)
+
+          p=Path('src-tauri/src/lib.rs')
+          s=p.read_text().replace('channel::elevated_shell_channel::maybe_run_helper()', 'plugins::local_shell::elevated::maybe_run_helper()')
+          p.write_text(s)
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          git diff --check
+      - name: Commit elevated shell migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A src-tauri/src/channel src-tauri/src/plugins/local_shell src-tauri/src/lib.rs
+          git commit -m '[elevated-shell-bot] migrate elevated shell to DataPlane'
+          git push origin HEAD:feat/transport-runtime-modbus
