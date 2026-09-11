@@ -16,6 +16,16 @@ jobs:
         with:
           ref: feat/transport-runtime-modbus
           fetch-depth: 0
+      - name: Normalize already-applied prelude
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/migrations/protocol_dataplane.py')
+          s = p.read_text()
+          start = s.index('# 1. Repair close metadata helper')
+          end = s.index('# 2. Add one explicit protocol/session attachment hook')
+          p.write_text(s[:start] + s[end:])
+          PY
       - name: Apply migration
         run: python3 .github/migrations/protocol_dataplane.py
       - name: Format Rust
