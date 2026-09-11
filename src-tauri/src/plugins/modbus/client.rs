@@ -1,0 +1,250 @@
+use serde::Serialize;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::{mpsc, Mutex};
+use std::time::{Duration, Instant};
+
+use crate::plugins::modbus::codec::{self, AduMode, ModbusRequest};
+use crate::plugins::modbus::config::{ModbusConfig, ModbusMode};
+use crate::transport::{DataPlaneEvent, DataPlaneRuntime, TransportErrorKind};
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionStatus {
+    Success,
+    Broadcast,
+    ModbusException,
+    ProtocolError,
+    MalformedResponse,
+    Timeout,
+    TransportError,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransactionResult {
+    pub status: TransactionStatus,
+    pub function: u8,
+    pub transaction_id: Option<u16>,
+    pub unit_id: u8,
+    pub latency_ms: u128,
+    pub exception_code: Option<u8>,
+    pub raw_tx: Vec<u8>,
+    pub raw_rx: Vec<u8>,
+    pub response_pdu: Vec<u8>,
+    pub message: Option<String>,
+    pub write_outcome_unknown: bool,
+    pub attempt: u8,
+}
+
+pub struct ModbusClient {
+    config: ModbusConfig,
+    runtime: Mutex<Option<DataPlaneRuntime>>,
+    transaction_guard: Mutex<()>,
+    next_transaction_id: AtomicU16,
+}
+
+impl ModbusClient {
+    pub fn new(config: ModbusConfig, runtime: DataPlaneRuntime) -> Self {
+        Self {
+            config,
+            runtime: Mutex::new(Some(runtime)),
+            transaction_guard: Mutex::new(()),
+            next_transaction_id: AtomicU16::new(1),
+        }
+    }
+
+    pub fn execute(&self, request: ModbusRequest) -> TransactionResult {
+        let _guard = self.transaction_guard.lock().unwrap_or_else(|e| e.into_inner());
+        let max_retries = if request.is_write() {
+            if self.config.retry_writes { self.config.read_retries } else { 0 }
+        } else {
+            self.config.read_retries
+        };
+        let mut attempt = 0u8;
+        loop {
+            let result = self.execute_once(&request, attempt);
+            let retryable = matches!(result.status, TransactionStatus::Timeout | TransactionStatus::TransportError)
+                && attempt < max_retries;
+            if !retryable {
+                return result;
+            }
+            attempt = attempt.saturating_add(1);
+        }
+    }
+
+    fn execute_once(&self, request: &ModbusRequest, attempt: u8) -> TransactionResult {
+        let started = Instant::now();
+        let function = request.function();
+        let transaction_id = if self.config.mode == ModbusMode::Tcp {
+            Some(self.next_transaction_id.fetch_add(1, Ordering::Relaxed))
+        } else {
+            None
+        };
+        let pdu = match codec::encode_request(request) {
+            Ok(pdu) => pdu,
+            Err(message) => return self.failure(TransactionStatus::ProtocolError, function, transaction_id, started, Vec::new(), Vec::new(), message, false, attempt),
+        };
+        if self.config.unit_id == 0 && self.config.mode != ModbusMode::Tcp && !request.is_write() {
+            return self.failure(TransactionStatus::ProtocolError, function, transaction_id, started, Vec::new(), Vec::new(), "broadcast address 0 is write-only".into(), false, attempt);
+        }
+        let mode = mode(self.config.mode);
+        let tx = match codec::encode_adu(mode, self.config.unit_id, transaction_id.unwrap_or(0), &pdu) {
+            Ok(frame) => frame,
+            Err(message) => return self.failure(TransactionStatus::ProtocolError, function, transaction_id, started, Vec::new(), Vec::new(), message, false, attempt),
+        };
+
+        let handle = {
+            let runtime = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+            match runtime.as_ref() {
+                Some(runtime) => runtime.handle.clone(),
+                None => return self.failure(TransactionStatus::Cancelled, function, transaction_id, started, tx, Vec::new(), "client is closed".into(), false, attempt),
+            }
+        };
+        let events = match handle.subscribe() {
+            Ok(rx) => rx,
+            Err(error) => return self.failure(TransactionStatus::TransportError, function, transaction_id, started, tx, Vec::new(), error.to_string(), request.is_write(), attempt),
+        };
+        if let Err(error) = handle.write(&tx) {
+            return self.failure(TransactionStatus::TransportError, function, transaction_id, started, tx, Vec::new(), error.to_string(), request.is_write(), attempt);
+        }
+
+        // Serial broadcast has no response by definition.
+        if self.config.unit_id == 0 && self.config.mode != ModbusMode::Tcp {
+            return TransactionResult {
+                status: TransactionStatus::Broadcast,
+                function,
+                transaction_id,
+                unit_id: 0,
+                latency_ms: started.elapsed().as_millis(),
+                exception_code: None,
+                raw_tx: tx,
+                raw_rx: Vec::new(),
+                response_pdu: Vec::new(),
+                message: None,
+                write_outcome_unknown: false,
+                attempt,
+            };
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(self.config.response_timeout_ms);
+        let received = match self.config.mode {
+            ModbusMode::Tcp => receive_tcp(&events, deadline, transaction_id.unwrap_or(0), self.config.unit_id),
+            ModbusMode::Ascii => receive_ascii(&events, deadline, self.config.unit_id),
+            ModbusMode::Rtu => receive_rtu(&events, deadline, self.config.rtu_frame_gap(), self.config.unit_id),
+        };
+        let (raw_rx, response_pdu) = match received {
+            Ok(value) => value,
+            Err(ReceiveError::Timeout) => {
+                return self.failure(TransactionStatus::Timeout, function, transaction_id, started, tx, Vec::new(), "response timeout".into(), request.is_write(), attempt)
+            }
+            Err(ReceiveError::Transport(message)) => {
+                return self.failure(TransactionStatus::TransportError, function, transaction_id, started, tx, Vec::new(), message, request.is_write(), attempt)
+            }
+            Err(ReceiveError::Malformed(message, raw)) => {
+                return self.failure(TransactionStatus::MalformedResponse, function, transaction_id, started, tx, raw, message, false, attempt)
+            }
+            Err(ReceiveError::Protocol(message, raw)) => {
+                return self.failure(TransactionStatus::ProtocolError, function, transaction_id, started, tx, raw, message, false, attempt)
+            }
+        };
+        match codec::validate_response(request, &response_pdu) {
+            Ok(response) => TransactionResult {
+                status: if response.exception.is_some() { TransactionStatus::ModbusException } else { TransactionStatus::Success },
+                function,
+                transaction_id,
+                unit_id: self.config.unit_id,
+                latency_ms: started.elapsed().as_millis(),
+                exception_code: response.exception,
+                raw_tx: tx,
+                raw_rx,
+                response_pdu,
+                message: None,
+                write_outcome_unknown: false,
+                attempt,
+            },
+            Err(message) => self.failure(TransactionStatus::ProtocolError, function, transaction_id, started, tx, raw_rx, message, false, attempt),
+        }
+    }
+
+    fn failure(&self, status:TransactionStatus,function:u8,transaction_id:Option<u16>,started:Instant,raw_tx:Vec<u8>,raw_rx:Vec<u8>,message:String,write_unknown:bool,attempt:u8)->TransactionResult{
+        TransactionResult { status,function,transaction_id,unit_id:self.config.unit_id,latency_ms:started.elapsed().as_millis(),exception_code:None,raw_tx,raw_rx,response_pdu:Vec::new(),message:Some(message),write_outcome_unknown:write_unknown,attempt }
+    }
+
+    pub fn shutdown(&self) {
+        if let Some(runtime) = self.runtime.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            runtime.join();
+        }
+    }
+}
+
+enum ReceiveError {
+    Timeout,
+    Transport(String),
+    Malformed(String, Vec<u8>),
+    Protocol(String, Vec<u8>),
+}
+
+fn receive_tcp(events:&mpsc::Receiver<DataPlaneEvent>,deadline:Instant,transaction_id:u16,unit_id:u8)->Result<(Vec<u8>,Vec<u8>),ReceiveError>{
+    let mut framer=codec::tcp::TcpFramer::default();
+    loop {
+        let event=recv_until(events,deadline)?;
+        match event {
+            DataPlaneEvent::Closed(info)=>return Err(ReceiveError::Transport(info.reason)),
+            DataPlaneEvent::Data(data)=>{
+                let frames=framer.push(&data).map_err(|e|ReceiveError::Malformed(e,data.clone()))?;
+                for frame in frames {
+                    let (tid,unit,pdu)=codec::tcp::decode(&frame).map_err(|e|ReceiveError::Malformed(e,frame.clone()))?;
+                    if tid!=transaction_id { return Err(ReceiveError::Protocol(format!("transaction id mismatch: expected {transaction_id}, got {tid}"),frame)); }
+                    if unit!=unit_id { return Err(ReceiveError::Protocol(format!("unit id mismatch: expected {unit_id}, got {unit}"),frame)); }
+                    return Ok((frame,pdu));
+                }
+            }
+        }
+    }
+}
+
+fn receive_ascii(events:&mpsc::Receiver<DataPlaneEvent>,deadline:Instant,unit_id:u8)->Result<(Vec<u8>,Vec<u8>),ReceiveError>{
+    let mut raw=Vec::new();
+    loop {
+        match recv_until(events,deadline)? {
+            DataPlaneEvent::Closed(info)=>return Err(ReceiveError::Transport(info.reason)),
+            DataPlaneEvent::Data(data)=>{
+                raw.extend_from_slice(&data);
+                if let Some(end)=raw.windows(2).position(|window|window==b"\r\n") {
+                    let frame=raw[..end+2].to_vec();
+                    let (unit,pdu)=codec::ascii::decode(&frame).map_err(|e|ReceiveError::Malformed(e,frame.clone()))?;
+                    if unit!=unit_id { return Err(ReceiveError::Protocol(format!("unit id mismatch: expected {unit_id}, got {unit}"),frame)); }
+                    return Ok((frame,pdu));
+                }
+            }
+        }
+    }
+}
+
+fn receive_rtu(events:&mpsc::Receiver<DataPlaneEvent>,deadline:Instant,gap:Duration,unit_id:u8)->Result<(Vec<u8>,Vec<u8>),ReceiveError>{
+    let mut raw=Vec::new();
+    loop {
+        let remaining=deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero(){ return Err(ReceiveError::Timeout); }
+        let wait=if raw.is_empty(){remaining}else{remaining.min(gap)};
+        match events.recv_timeout(wait) {
+            Ok(DataPlaneEvent::Closed(info))=>return Err(ReceiveError::Transport(info.reason)),
+            Ok(DataPlaneEvent::Data(data))=>raw.extend_from_slice(&data),
+            Err(mpsc::RecvTimeoutError::Timeout) if raw.is_empty()=>return Err(ReceiveError::Timeout),
+            Err(mpsc::RecvTimeoutError::Timeout)=>{
+                let (unit,pdu)=codec::rtu::decode(&raw).map_err(|e|ReceiveError::Malformed(e,raw.clone()))?;
+                if unit!=unit_id{return Err(ReceiveError::Protocol(format!("unit id mismatch: expected {unit_id}, got {unit}"),raw));}
+                return Ok((raw,pdu));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected)=>return Err(ReceiveError::Transport("transport event stream closed".into())),
+        }
+    }
+}
+
+fn recv_until(events:&mpsc::Receiver<DataPlaneEvent>,deadline:Instant)->Result<DataPlaneEvent,ReceiveError>{
+    let remaining=deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero(){return Err(ReceiveError::Timeout);}
+    events.recv_timeout(remaining).map_err(|error|match error{mpsc::RecvTimeoutError::Timeout=>ReceiveError::Timeout,mpsc::RecvTimeoutError::Disconnected=>ReceiveError::Transport("transport event stream closed".into())})
+}
+
+fn mode(value:ModbusMode)->AduMode{match value{ModbusMode::Rtu=>AduMode::Rtu,ModbusMode::Ascii=>AduMode::Ascii,ModbusMode::Tcp=>AduMode::Tcp}}
