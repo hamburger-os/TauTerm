@@ -48,7 +48,7 @@ Windows and Linux are the automated real-WebView targets for this direct externa
 - `blocked`: only the exact Runtime 150+ `DevToolsActivePort file doesn't exist` hosted-runner limitation occurred, so no Windows UI assertion is counted as passed;
 - `failed`: any other Windows E2E failure, which remains fatal.
 
-A PR may remain green when Windows is `blocked` so an upstream hosted-runner limitation does not stop normal development, but Release has a stricter policy. Release re-runs Runtime E2E against the exact release SHA. If Windows returns `blocked`, the release cannot build packages until a maintainer has manually validated that exact SHA on a real Windows environment and supplies the same SHA through the Release workflow evidence input. A different SHA is rejected. Remove this exception when the upstream WebView2/WRY limitation is resolved.
+A PR may remain green when Windows is `blocked` so an upstream hosted-runner limitation does not stop normal development. Release still re-runs Runtime E2E against the exact release SHA and preserves `blocked` as an explicit warning, but that narrowly recognized hosted-runner condition does not require a manual SHA input and does not stop package builds. Any other Windows E2E failure remains fatal. Remove this exception when the upstream WebView2/WRY limitation is resolved.
 
 macOS remains covered by build/Rust checks and manual release validation until a no-production-backdoor native automation path is adopted.
 
@@ -116,6 +116,6 @@ Automation intentionally does not pretend to replace real environment testing. B
 - OS-specific installer/updater/reputation behavior;
 - visual judgment across GPUs, scaling factors and accessibility settings.
 
-For a release that changes Windows virtual-port ownership or installer/uninstaller behavior, the Windows validation should cover the affected lifecycle rather than only launching the app: create/remove TauTerm-owned endpoints, preserve unrelated pre-existing com0com resources, exercise privileged-service recovery where applicable, and verify upgrade/uninstall ownership semantics. Manual evidence must always refer to the exact commit being released; changing source invalidates the evidence.
+For a release that changes Windows virtual-port ownership or installer/uninstaller behavior, the Windows validation should cover the affected lifecycle rather than only launching the app: create/remove TauTerm-owned endpoints, preserve unrelated pre-existing com0com resources, exercise privileged-service recovery where applicable, and verify upgrade/uninstall ownership semantics. These manual checks are still valuable release practice for OS and hardware boundaries, but they are not represented by a Release workflow SHA-attestation field.
 
 The goal is to reduce manual testing to cases where real hardware, OS policy or human visual judgment is genuinely necessary, while making those remaining cases explicit rather than hiding them behind a green workflow result.
