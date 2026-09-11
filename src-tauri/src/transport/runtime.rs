@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{Read, Write};
+use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
@@ -32,6 +33,28 @@ pub struct DataPlaneHandle {
     terminal_control: bool,
 }
 
+pub struct DataPlaneSubscription {
+    id: u64,
+    command_tx: mpsc::SyncSender<RuntimeCommand>,
+    receiver: mpsc::Receiver<DataPlaneEvent>,
+}
+
+impl Deref for DataPlaneSubscription {
+    type Target = mpsc::Receiver<DataPlaneEvent>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.receiver
+    }
+}
+
+impl Drop for DataPlaneSubscription {
+    fn drop(&mut self) {
+        let _ = self
+            .command_tx
+            .try_send(RuntimeCommand::Unsubscribe { id: self.id });
+    }
+}
+
 impl DataPlaneHandle {
     pub fn write(&self, data: &[u8]) -> Result<(), TransportError> {
         self.write_owned(None, data)
@@ -61,10 +84,14 @@ impl DataPlaneHandle {
         })?
     }
 
-    pub fn subscribe(&self) -> Result<mpsc::Receiver<DataPlaneEvent>, TransportError> {
+    pub fn subscribe(&self) -> Result<DataPlaneSubscription, TransportError> {
+        let id = next_subscription_id();
         let (event_tx, event_rx) = mpsc::channel();
         self.command_tx
-            .send(RuntimeCommand::Subscribe(event_tx))
+            .send(RuntimeCommand::Subscribe {
+                id,
+                subscriber: event_tx,
+            })
             .map_err(|_| {
                 TransportError::new(
                     TransportErrorKind::RemoteClosed,
@@ -72,7 +99,11 @@ impl DataPlaneHandle {
                     "transport runtime is closed",
                 )
             })?;
-        Ok(event_rx)
+        Ok(DataPlaneSubscription {
+            id,
+            command_tx: self.command_tx.clone(),
+            receiver: event_rx,
+        })
     }
 
     pub fn acquire_exclusive(
@@ -304,7 +335,13 @@ enum RuntimeCommand {
         data: Vec<u8>,
         ack: mpsc::SyncSender<Result<(), TransportError>>,
     },
-    Subscribe(mpsc::Sender<DataPlaneEvent>),
+    Subscribe {
+        id: u64,
+        subscriber: mpsc::Sender<DataPlaneEvent>,
+    },
+    Unsubscribe {
+        id: u64,
+    },
     AcquireExclusive {
         owner_id: u64,
         owner_name: String,
@@ -338,7 +375,7 @@ fn run_blocking_runtime(
     rx_bytes: Arc<AtomicU64>,
     connected: Arc<AtomicBool>,
 ) {
-    let mut subscribers: Vec<mpsc::Sender<DataPlaneEvent>> = Vec::new();
+    let mut subscribers: Vec<(u64, mpsc::Sender<DataPlaneEvent>)> = Vec::new();
     let mut exclusive: Option<ExclusiveState> = None;
     let mut read_buf = [0u8; READ_BUFFER_SIZE];
     let mut closing = false;
@@ -374,13 +411,11 @@ fn run_blocking_runtime(
                 rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
                 let data = read_buf[..n].to_vec();
                 if let Some(lease) = exclusive.as_ref() {
-                    // Exclusive consumers own the byte stream; applying backpressure here is
-                    // preferable to silently dropping bytes in protocols such as X/Y/ZModem.
                     if lease.data_tx.send(data).is_err() {
                         exclusive = None;
                     }
                 } else {
-                    subscribers.retain(|subscriber| {
+                    subscribers.retain(|(_, subscriber)| {
                         subscriber.send(DataPlaneEvent::Data(data.clone())).is_ok()
                     });
                 }
@@ -416,7 +451,7 @@ fn run_blocking_runtime(
 fn handle_command(
     command: RuntimeCommand,
     driver: &mut dyn BlockingByteStream,
-    subscribers: &mut Vec<mpsc::Sender<DataPlaneEvent>>,
+    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,
     exclusive: &mut Option<ExclusiveState>,
     tx_bytes: &Arc<AtomicU64>,
 ) -> bool {
@@ -446,8 +481,12 @@ fn handle_command(
             let _ = ack.send(result);
             false
         }
-        RuntimeCommand::Subscribe(subscriber) => {
-            subscribers.push(subscriber);
+        RuntimeCommand::Subscribe { id, subscriber } => {
+            subscribers.push((id, subscriber));
+            false
+        }
+        RuntimeCommand::Unsubscribe { id } => {
+            subscribers.retain(|(subscriber_id, _)| *subscriber_id != id);
             false
         }
         RuntimeCommand::AcquireExclusive {
@@ -500,8 +539,11 @@ fn handle_command(
     }
 }
 
-fn broadcast_close(subscribers: &mut Vec<mpsc::Sender<DataPlaneEvent>>, info: TransportCloseInfo) {
-    subscribers.retain(|subscriber| {
+fn broadcast_close(
+    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,
+    info: TransportCloseInfo,
+) {
+    subscribers.retain(|(_, subscriber)| {
         subscriber
             .send(DataPlaneEvent::Closed(info.clone()))
             .is_ok()
@@ -509,6 +551,11 @@ fn broadcast_close(subscribers: &mut Vec<mpsc::Sender<DataPlaneEvent>>, info: Tr
 }
 
 fn next_owner_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+fn next_subscription_id() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
@@ -585,6 +632,19 @@ mod tests {
             runtime.handle.write(&[value]).unwrap();
         }
         assert_eq!(writes.lock().unwrap().len(), 32);
+        runtime.join();
+    }
+
+    #[test]
+    fn dropped_subscription_unregisters_without_waiting_for_data() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let runtime = DataPlaneRuntime::spawn(Box::new(MockStream {
+            reads: VecDeque::new(),
+            writes,
+        }));
+        let subscription = runtime.handle.subscribe().unwrap();
+        drop(subscription);
+        runtime.handle.write(b"wake").unwrap();
         runtime.join();
     }
 }
