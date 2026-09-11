@@ -8,13 +8,13 @@ This document is the repository source of truth for automated verification level
 
 | Layer | Scope | Typical trigger | Purpose |
 |---|---|---|---|
-| Static/contract | TypeScript, Clippy, formatting, docs, plugin/persistence/UI contracts | Every PR | Catch structural regressions cheaply |
-| Rust unit/integration | Session/I/O, persistence, security, protocol algorithms and localhost sockets | Every PR | Verify core lifecycle and error semantics |
+| Static/contract | TypeScript, Clippy, formatting, docs, plugin/persistence/UI contracts | Every PR + release exact SHA | Catch structural regressions cheaply |
+| Rust unit/integration | Session/I/O, persistence, security, protocol algorithms and localhost sockets | Every PR + release exact SHA | Verify core lifecycle and error semantics |
 | Protocol fixtures | Reusable Telnet/Serial/TRDP test peers and fixture self-tests | Every PR where practical | Keep deterministic simulated devices healthy |
-| Runtime E2E | Real TauTerm desktop app driven through Tauri WebDriver on Windows/Linux | Every PR | Verify user-visible application paths in an actual WebView |
-| Performance contract | Release-mode I/O dispatch and persistence benchmark with JSON artifact | Scheduled/manual | Track performance trends without noisy per-PR hard thresholds |
-| Reliability soak | Repeated create/write/shutdown I/O lifecycle for configurable duration | Scheduled/manual | Find leaks, hangs and lifecycle accumulation |
-| Dependency security | npm + RustSec advisory reports and Dependabot | Scheduled/manual + update PRs | Keep dependency risk visible |
+| Runtime E2E | Real TauTerm desktop app driven through Tauri WebDriver on Windows/Linux | Every PR + release exact SHA | Verify user-visible application paths in an actual WebView |
+| Performance contract | Release-mode I/O dispatch and persistence benchmark with JSON artifact | Scheduled/manual + release exact SHA | Track performance trends and keep release evidence current |
+| Reliability soak | Repeated create/write/shutdown I/O lifecycle for configurable duration | Scheduled/manual + release exact SHA | Find leaks, hangs and lifecycle accumulation |
+| Dependency security | npm + RustSec advisory reports and Dependabot | Scheduled/manual + release exact SHA | Keep dependency risk visible |
 
 ## Pull-request gate
 
@@ -30,7 +30,7 @@ Runtime E2E is a separate PR workflow because it builds and starts the real desk
 
 ## Runtime E2E
 
-tests/e2e uses bare WebdriverIO against a pinned external tauri-driver process. No WebDriver/automation plugin is compiled into or shipped with TauTerm itself.
+`tests/e2e` uses bare WebdriverIO against a pinned external `tauri-driver` process. No WebDriver/automation plugin is compiled into or shipped with TauTerm itself.
 
 The permanent smoke contract covers:
 
@@ -40,18 +40,26 @@ The permanent smoke contract covers:
 - new-session workflow opens and closes;
 - no unhandled frontend runtime errors occur during those interactions.
 
-Stable data-testid attributes are test contracts only; they do not carry product state.
+Stable `data-testid` attributes are test contracts only; they do not carry product state.
 
-Windows and Linux are the automated real-WebView targets for this direct external-driver path. Linux remains a hard real-WebView gate. On GitHub-hosted Windows runners, WebView2 Runtime 150+ currently blocks the remote-debugging port when the host is elevated; the workflow tolerates only the exact `DevToolsActivePort file doesn't exist` signature on Runtime 150+ and uploads the log as evidence. Any other Windows E2E failure remains fatal. Remove this exception when the upstream WebView2/WRY limitation is resolved. macOS remains covered by build/Rust checks and manual release validation until a no-production-backdoor native automation path is adopted.
+Windows and Linux are the automated real-WebView targets for this direct external-driver path. Linux is a hard real-WebView gate. On GitHub-hosted Windows runners, WebView2 Runtime 150+ currently blocks the remote-debugging port when the host is elevated. The workflow therefore records one of three explicit Windows outcomes:
+
+- `passed`: the real Windows WebView smoke assertions executed successfully;
+- `blocked`: only the exact Runtime 150+ `DevToolsActivePort file doesn't exist` hosted-runner limitation occurred, so no Windows UI assertion is counted as passed;
+- `failed`: any other Windows E2E failure, which remains fatal.
+
+A PR may remain green when Windows is `blocked` so an upstream hosted-runner limitation does not stop normal development, but Release has a stricter policy. Release re-runs Runtime E2E against the exact release SHA. If Windows returns `blocked`, the release cannot build packages until a maintainer has manually validated that exact SHA on a real Windows environment and supplies the same SHA through the Release workflow evidence input. A different SHA is rejected. Remove this exception when the upstream WebView2/WRY limitation is resolved.
+
+macOS remains covered by build/Rust checks and manual release validation until a no-production-backdoor native automation path is adopted.
 
 ## Protocol fixtures
 
 Reusable fixture assets include:
 
-- scripts/test-serial-session.py: high-fidelity RT-Thread/FinSH-style Serial device simulator, including transfer/script scenarios; real virtual COM use remains Windows/manual where com0com is required;
-- scripts/test-telnet-server.py: deterministic Telnet negotiation/login/shell peer;
-- scripts/test-protocol-fixtures.py: automated fixture self-test;
-- tools/trdp-test-peer/: native TRDP interoperability peer used by the TRDP workflow.
+- `scripts/test-serial-session.py`: high-fidelity RT-Thread/FinSH-style Serial device simulator, including transfer/script scenarios; real virtual COM use remains Windows/manual where com0com is required;
+- `scripts/test-telnet-server.py`: deterministic Telnet negotiation/login/shell peer;
+- `scripts/test-protocol-fixtures.py`: automated fixture self-test;
+- `tools/trdp-test-peer/`: native TRDP interoperability peer used by the TRDP workflow.
 
 Protocol fixtures should model peer behavior, not duplicate TauTerm protocol implementations.
 
@@ -71,11 +79,13 @@ The current release-mode contract records:
 - 200 atomic 16 KiB persistence replacements;
 - elapsed time and derived throughput/rate.
 
-The workflow stores performance-contract.json and logs as artifacts. Hosted-runner measurements are initially trend data, not strict PR blockers. A numerical threshold should become a hard gate only after enough history exists to distinguish product regressions from runner variance.
+The workflow stores `performance-contract.json` and logs as artifacts. Hosted-runner measurements are trend data, not strict PR blockers. Release still runs the contract on its exact source SHA so the published version has current evidence. A numerical threshold should become a hard gate only after enough history exists to distinguish product regressions from runner variance.
 
 ## Reliability soak
 
-The hosted reliability workflow runs repeated Session I/O lifecycle iterations for 5 seconds to 4 hours, within the GitHub-hosted job timeout. The underlying ignored Rust test accepts up to 8 hours for local or self-hosted runs. Scheduled runs use a practical default; maintainers can request longer hosted runs before a release.
+The hosted reliability workflow runs repeated Session I/O lifecycle iterations for 5 seconds to 4 hours, within the GitHub-hosted job timeout. The underlying ignored Rust test accepts up to 8 hours for local or self-hosted runs.
+
+Scheduled runs use a one-hour default. The permanent Release workflow additionally executes a 15-minute release-mode qualification soak against the exact release SHA before package builds begin. Maintainers can still request a longer manual run when a release substantially changes I/O ownership, transfer scheduling, subprocess/native-handle lifetime or other long-lived resources.
 
 The soak produces a JSON artifact containing duration, completed iterations and payload volume. Any hang, panic or incorrect byte accounting fails the run.
 
@@ -87,7 +97,7 @@ Dependabot tracks npm, Cargo and GitHub Actions dependencies weekly. The Depende
 - full npm advisory report;
 - RustSec cargo audit.
 
-Security reports are stored as workflow artifacts for review.
+Security reports are stored as workflow artifacts for review. Release re-runs this workflow against the exact source SHA rather than relying on the age of the last scheduled report.
 
 ## Diagnostics during testing
 
@@ -97,13 +107,15 @@ It excludes credentials, endpoint values, Session names, raw Session payloads, S
 
 ## Manual validation that still matters
 
-Automation intentionally does not pretend to replace real environment testing. Before releases that touch the relevant areas, manual/real-hardware validation remains valuable for:
+Automation intentionally does not pretend to replace real environment testing. Before releases that touch the relevant areas, manual/real-hardware validation remains required where hosted automation cannot exercise the operating-system boundary:
 
 - physical Serial adapters, unplug/replug and vendor drivers;
-- Windows com0com/UAC/service behavior;
+- Windows com0com/UAC/privileged-service behavior;
 - real SSH servers, agents/key formats and remote journald/SFTP environments;
 - Npcap/libpcap live capture permissions and real TRDP networks;
 - OS-specific installer/updater/reputation behavior;
 - visual judgment across GPUs, scaling factors and accessibility settings.
 
-The goal is to reduce manual testing to cases where real hardware, OS policy or human visual judgment is genuinely necessary.
+For a release that changes Windows virtual-port ownership or installer/uninstaller behavior, the Windows validation should cover the affected lifecycle rather than only launching the app: create/remove TauTerm-owned endpoints, preserve unrelated pre-existing com0com resources, exercise privileged-service recovery where applicable, and verify upgrade/uninstall ownership semantics. Manual evidence must always refer to the exact commit being released; changing source invalidates the evidence.
+
+The goal is to reduce manual testing to cases where real hardware, OS policy or human visual judgment is genuinely necessary, while making those remaining cases explicit rather than hiding them behind a green workflow result.
