@@ -1,32 +1,33 @@
-/** 单条 journald 日志条目（从 `journalctl -o json` 解析） */
+/** Normalized journald record plus the complete raw field map. */
 export interface JournalEntry {
-  /** 单调时间戳（微秒） */
-  __MONOTONIC_TIMESTAMP?: string;
-  /** 墙上时钟时间戳（微秒） */
-  __REALTIME_TIMESTAMP?: string;
-  /** journald 游标（用于分页） */
-  __CURSOR?: string;
-  /** syslog 标识符（如 "sshd"） */
-  SYSLOG_IDENTIFIER?: string;
-  /** systemd 单元名（如 "sshd.service"） */
-  _SYSTEMD_UNIT?: string;
-  /** 日志消息正文 */
-  MESSAGE?: string;
-  /** 优先级 0-7 (0=emerg, 7=debug) */
-  PRIORITY?: string;
-  /** 来源主机名 */
-  _HOSTNAME?: string;
-  /** 启动 ID */
-  _BOOT_ID?: string;
-  /** 其他动态字段（journald JSON 输出可包含 number/object/array 等任意类型） */
-  [key: string]: unknown;
+  monotonicTimestamp?: string | null;
+  realtimeTimestamp?: string | null;
+  cursor?: string | null;
+  identifier?: string | null;
+  unit?: string | null;
+  message?: string | null;
+  priority?: string | null;
+  hostname?: string | null;
+  bootId?: string | null;
+  fields: Record<string, unknown>;
 }
 
-export type LogLevel = "emerg" | "alert" | "crit" | "err" | "warning" | "notice" | "info" | "debug";
+export type LogLevel =
+  | "emerg"
+  | "alert"
+  | "crit"
+  | "err"
+  | "warning"
+  | "notice"
+  | "info"
+  | "debug";
+
+export type JournaldSearchMode = "literal" | "regex";
 
 export interface JournaldFilter {
   level?: LogLevel | null;
   keyword?: string;
+  searchMode?: JournaldSearchMode;
   unit?: string;
   kernelOnly?: boolean;
   since?: string | null;
@@ -34,7 +35,6 @@ export interface JournaldFilter {
 }
 
 export type DisplayMode = "compact" | "full";
-
 export type SubTab = "realtime" | "history";
 
 export interface JournaldQueryResponse {
@@ -43,7 +43,11 @@ export interface JournaldQueryResponse {
   has_more: boolean;
 }
 
-/** 日志级别映射 */
+export interface JournaldErrorPayload {
+  code: string;
+  message: string;
+}
+
 export const LOG_LEVELS: { value: LogLevel; priority: number }[] = [
   { value: "emerg", priority: 0 },
   { value: "alert", priority: 1 },
@@ -55,50 +59,61 @@ export const LOG_LEVELS: { value: LogLevel; priority: number }[] = [
   { value: "debug", priority: 7 },
 ];
 
-/** 根据优先级数字获取 CSS 类名 */
-export function priorityToLevelClass(priority: string | undefined): string {
-  const p = parseInt(priority ?? "6", 10);
-  if (p <= 3) return "levelError";
-  if (p === 4) return "levelWarning";
-  if (p <= 6) return "levelInfo";
+export type PriorityLevelClass =
+  | "levelError"
+  | "levelWarning"
+  | "levelInfo"
+  | "levelDebug";
+
+export function priorityToLevelClass(priority: string | null | undefined): PriorityLevelClass {
+  const parsed = Number.parseInt(priority ?? "6", 10);
+  if (parsed <= 3) return "levelError";
+  if (parsed === 4) return "levelWarning";
+  if (parsed <= 6) return "levelInfo";
   return "levelDebug";
 }
 
-/** 将微秒时间戳转换为可读本地时间（locale-independent 格式：YYYY-MM-DD HH:mm:ss.SSS） */
-export function formatTimestamp(microTimestamp: string | undefined): string {
+export function formatTimestamp(microTimestamp: string | null | undefined): string {
   if (!microTimestamp) return "";
-  const micro = parseInt(microTimestamp, 10);
-  if (isNaN(micro)) return microTimestamp;
-  const d = new Date(micro / 1000);
-  const Y = d.getFullYear();
-  const M = String(d.getMonth() + 1).padStart(2, "0");
-  const D = String(d.getDate()).padStart(2, "0");
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const s = String(d.getSeconds()).padStart(2, "0");
-  const ms = String(d.getMilliseconds()).padStart(3, "0");
-  return `${Y}-${M}-${D} ${h}:${m}:${s}.${ms}`;
+  const micro = Number.parseInt(microTimestamp, 10);
+  if (Number.isNaN(micro)) return microTimestamp;
+  const date = new Date(micro / 1000);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const second = String(date.getSeconds()).padStart(2, "0");
+  const millisecond = String(date.getMilliseconds()).padStart(3, "0");
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}.${millisecond}`;
 }
 
-/** 从微秒时间戳中仅提取时间部分 (HH:mm:ss.SSS) */
-export function formatTimestampTime(microTimestamp: string | undefined): string {
+export function formatTimestampTime(microTimestamp: string | null | undefined): string {
   if (!microTimestamp) return "";
-  const micro = parseInt(microTimestamp, 10);
-  if (isNaN(micro)) return microTimestamp;
-  const d = new Date(micro / 1000);
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const s = String(d.getSeconds()).padStart(2, "0");
-  const ms = String(d.getMilliseconds()).padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
+  const micro = Number.parseInt(microTimestamp, 10);
+  if (Number.isNaN(micro)) return microTimestamp;
+  const date = new Date(micro / 1000);
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const second = String(date.getSeconds()).padStart(2, "0");
+  const millisecond = String(date.getMilliseconds()).padStart(3, "0");
+  return `${hour}:${minute}:${second}.${millisecond}`;
 }
 
-/** 优先级数字转可读标签 */
-export function priorityLabel(priority: string | undefined): string {
-  const p = parseInt(priority ?? "6", 10);
-  const labels = ["EMERG", "ALERT", "CRIT", "ERR", "WARNING", "NOTICE", "INFO", "DEBUG"];
-  return labels[p] ?? "INFO";
+export function priorityLabel(priority: string | null | undefined): string {
+  const parsed = Number.parseInt(priority ?? "6", 10);
+  const labels = [
+    "EMERG",
+    "ALERT",
+    "CRIT",
+    "ERR",
+    "WARNING",
+    "NOTICE",
+    "INFO",
+    "DEBUG",
+  ];
+  return labels[parsed] ?? "INFO";
 }
 
-/** 最大条目缓冲区（防止内存溢出） */
-export const MAX_ENTRIES = 1000;
+/** Realtime UI buffer. Rendering is windowed in compact mode. */
+export const MAX_ENTRIES = 5000;

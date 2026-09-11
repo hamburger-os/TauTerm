@@ -40,6 +40,7 @@
 | `npm run check:engineering-tools` | 检查 CRC 标准向量、严格数值/位运算转换以及 Modbus/AT 协议解析合同 |
 | `npm run check:sendbar` | 检查发送 payload、循环发送背压、SendBar 会话态/工程资产边界、运行快照与统一确认弹窗合同 |
 | `npm run check:file-transfer` | 检查文件传输 transfer_id、事件完成顺序、SFTP 测速/100% 语义以及窄栏状态条可达性合同 |
+| `npm run check:journald` | 检查 journald 历史分页方向、精确 `hasMore`、实时批量事件、搜索语义、任务取消与紧凑列表窗口化合同 |
 | `npm run check:product-integrity` | 检查插件单一来源、工程资产持久化、日志可观测性、SSH 主机信任与 Pane UI 结构合同 |
 | `npm run check:split-layout` | Workspace/Split View 几何、持久化与 1/2/2×2 Pane 不变量回归 |
 | `npm run check:session-buffer` | 会话启动数据缓冲回归 |
