@@ -114,15 +114,16 @@ export function useJournalStream(
         collected.push(
           await listen<JournalErrorEvent>("journald:error", (event) => {
             if (isStale() || event.payload.session_id !== sessionId) return;
+            // Error reporting and stream lifetime are separate signals. Fatal
+            // remote exits are followed by stream-ended; non-fatal record
+            // problems may report an error while the stream keeps running.
             setError(event.payload.error);
-            setIsStreaming(false);
-            streamingRef.current = false;
-            runningFilterKeyRef.current = "";
           }),
         );
         collected.push(
           await listen<JournalEndedEvent>("journald:stream-ended", (event) => {
             if (isStale() || event.payload.session_id !== sessionId) return;
+            ++generationRef.current;
             setIsStreaming(false);
             streamingRef.current = false;
             runningFilterKeyRef.current = "";
