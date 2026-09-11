@@ -345,6 +345,8 @@ impl VirtualPortManager {
                     "virtual-port ownership state has obsolete/corrupt schema ({error}); backed up to {:?}",
                     backup
                 );
+                // 当前版本只接受唯一 ownership schema；不迁移旧 bus-only 状态。
+                self.persist_owned_endpoints(&[]);
                 Vec::new()
             }
         }
@@ -383,6 +385,7 @@ impl VirtualPortManager {
         if let Err(error) = std::fs::rename(&temporary, &path) {
             log::warn!("Failed to atomically replace virtual-port state: {error}");
             let _ = std::fs::write(&path, json);
+            let _ = std::fs::remove_file(&temporary);
         }
     }
 
@@ -981,16 +984,14 @@ if errorlevel 1 exit /b 1\r\n",
             }
         }
 
-        if self.pending_orphan_count() > 0 {
-            match self.cleanup_endpoints_elevated() {
-                Ok(cleaned) if cleaned > 0 => {
-                    log::info!("Cleaned {cleaned} deferred virtual-port pair(s)")
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    log::warn!("Deferred virtual-port cleanup remains pending: {}", error)
-                }
-            }
+        let pending = self.pending_orphan_count();
+        if pending > 0 {
+            // 退出/断开路径绝不主动弹 UAC。已持久化 orphan 由下次显式创建或
+            // “清理残留端口”操作处理，避免在关闭应用时出现意外权限提示。
+            log::warn!(
+                "{} virtual-port pair(s) remain pending for explicit cleanup",
+                pending
+            );
         }
     }
 
