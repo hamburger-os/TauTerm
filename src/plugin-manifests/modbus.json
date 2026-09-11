@@ -1,0 +1,19 @@
+{
+  "id": "modbus",
+  "name": "Modbus",
+  "version": "1.0.0",
+  "category": "industrial_protocol",
+  "description": "Modbus RTU · ASCII · TCP client/server debugger",
+  "icon": "activity",
+  "content_type": "custom",
+  "send_bar": false,
+  "capabilities": [
+    "connection",
+    "serial",
+    "network_outbound",
+    "network_listen",
+    "modbus_client",
+    "modbus_server"
+  ],
+  "transfer_protocols": []
+}
