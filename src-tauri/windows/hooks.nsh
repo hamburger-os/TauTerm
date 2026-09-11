@@ -189,6 +189,13 @@
     DetailPrint "TauTerm: com0com driver removal completed with code $0."
   ${EndIf}
 
+  ; ── 清理特权服务的机器级 ownership 状态 ──
+  ; 在线升级必须保留该状态，供新服务恢复异常中断资源；只有真正卸载时删除。
+  DetailPrint "TauTerm: Removing privileged virtual-port state..."
+  !insertmacro RMDIR_Retry "$COMMONAPPDATA\TauTerm\service" 3
+  ; 若 TauTerm 下没有其它机器级数据，顺带删除空父目录；非空时 RMDir 会安全失败。
+  RMDir "$COMMONAPPDATA\TauTerm"
+
   ; ── 同步清理安装目录 ──
   ; 标准卸载流程（Uninstall 段）会在最后 RMDir "$INSTDIR"，并由 NSIS 的
   ; "临时副本自删除"机制在退出前补删 uninstall.exe 与目录。此处结束所有进程
