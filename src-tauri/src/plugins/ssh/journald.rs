@@ -402,7 +402,9 @@ async fn run_journalctl(
                         stderr.extend_from_slice(&data[..data.len().min(remaining)]);
                     }
                 }
-                Some(ChannelMsg::ExitStatus { exit_status: status }) => {
+                Some(ChannelMsg::ExitStatus {
+                    exit_status: status,
+                }) => {
                     exit_status = Some(status);
                 }
                 Some(ChannelMsg::Eof) => {
@@ -527,11 +529,7 @@ pub async fn journald_query(
 
 // ── Realtime stream ──────────────────────────────────────────────────
 
-fn push_complete_lines(
-    line_buffer: &mut Vec<u8>,
-    batch: &mut Vec<JournalEntry>,
-    session_id: &str,
-) {
+fn push_complete_lines(line_buffer: &mut Vec<u8>, batch: &mut Vec<JournalEntry>, session_id: &str) {
     while let Some(newline) = line_buffer.iter().position(|byte| *byte == b'\n') {
         let mut line = line_buffer.drain(..=newline).collect::<Vec<_>>();
         line.pop();
@@ -552,11 +550,7 @@ fn push_complete_lines(
     }
 }
 
-fn flush_partial_line(
-    line_buffer: &mut Vec<u8>,
-    batch: &mut Vec<JournalEntry>,
-    session_id: &str,
-) {
+fn flush_partial_line(line_buffer: &mut Vec<u8>, batch: &mut Vec<JournalEntry>, session_id: &str) {
     if line_buffer.is_empty() {
         return;
     }
@@ -799,20 +793,16 @@ pub async fn start_journald_export(
                 emit_export_cancelled(&app_handle, &sid);
                 return;
             }
-            let page = match journald_query_page(
-                &session,
-                &filters,
-                cursor.as_deref(),
-                EXPORT_PAGE_LIMIT,
-            )
-            .await
-            {
-                Ok(page) => page,
-                Err(error) => {
-                    emit_export_error(&app_handle, &sid, format!("query failed: {error}"));
-                    return;
-                }
-            };
+            let page =
+                match journald_query_page(&session, &filters, cursor.as_deref(), EXPORT_PAGE_LIMIT)
+                    .await
+                {
+                    Ok(page) => page,
+                    Err(error) => {
+                        emit_export_error(&app_handle, &sid, format!("query failed: {error}"));
+                        return;
+                    }
+                };
 
             for entry in &page.entries {
                 if operation.is_cancelled() {
