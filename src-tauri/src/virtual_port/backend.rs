@@ -20,22 +20,6 @@ pub struct VirtualEndpoint {
     pub resource_id: u32,
 }
 
-/// 前端可见的虚拟端点投影。
-///
-/// 内部 bridge path 不属于 UI 契约，避免 Windows COM 端口对实现细节泄漏到上层。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExternalVirtualEndpoint {
-    pub external_path: String,
-}
-
-impl From<&VirtualEndpoint> for ExternalVirtualEndpoint {
-    fn from(endpoint: &VirtualEndpoint) -> Self {
-        Self {
-            external_path: endpoint.external_path.clone(),
-        }
-    }
-}
-
 /// 用于创建虚拟端点的配置。
 #[derive(Debug, Clone)]
 pub struct VirtualPortConfig {
@@ -151,5 +135,37 @@ mod tests {
         assert!(is_internal_endpoint_path(path));
         unregister_internal_endpoint_path(path);
         assert!(!is_internal_endpoint_path(path));
+    }
+
+    #[test]
+    fn elevation_detection_covers_supported_system_messages() {
+        for message in [
+            "Access is denied. (os error 740)",
+            "requires elevation",
+            "run as administrator",
+            "需要提升权限",
+            "管理者として実行してください",
+            "관리자 권한이 필요합니다",
+            "Zugriff verweigert",
+            "Accès refusé",
+            "elevación requerida",
+            "elevação necessária",
+            "autorizzazione elevata",
+        ] {
+            assert!(contains_elevation_indicator(message), "{message}");
+        }
+    }
+
+    #[test]
+    fn elevation_detection_rejects_unrelated_cleanup_failures() {
+        for message in [
+            "setupc.exe execution timed out",
+            "PortName COM22 in use",
+            "already exists",
+            "already logged",
+            "",
+        ] {
+            assert!(!contains_elevation_indicator(message), "{message}");
+        }
     }
 }
