@@ -56,14 +56,15 @@ orphan = owned_endpoints - active_endpoints
 
 由此得到以下生命周期规则：
 
-1. 创建成功后立即登记 ownership，并把 bridge path 注册为内部不可见端点；
-2. 正常活动期间，端点同时属于 `owned` 和 `active`，因此绝不是 orphan；
-3. 外部程序断开 external endpoint 不改变父 Serial Session 的 ownership，端点仍可再次打开；
-4. 父 Serial Session 结束时尝试销毁端口对；销毁成功后同时移除 active/owned 和内部隐藏注册；
-5. 如果销毁因权限或系统状态暂时失败，只移除 active、保留 owned，此时才成为可提示的 orphan；
-6. 进程异常退出后，新进程没有 active owner，而持久化 owned 仍存在，因此这些端点自然成为可恢复清理的 orphan；
-7. 手动“清理残留端口”只能处理已证明属于 TauTerm 且当前非 active 的资源，禁止删除第三方/用户自行创建的 com0com bus；
-8. 特权服务模式按 `client_id` 在服务进程内记录自己创建的端点，客户端断开时只清理该客户端资源，不做驱动全局扫除。
+1. 普通创建成功后立即登记 ownership；提权批量创建会在启动特权子进程前先预登记目标 ownership，并在任一安装失败时于同一批处理中回滚已创建端口。即使特权进程超时或异常终止，可能已创建的资源也仍有 ownership 证据可供后续恢复清理；
+2. 创建成功后把 bridge path 注册为内部不可见端点，并将 endpoint 转为 `active`；
+3. 正常活动期间，端点同时属于 `owned` 和 `active`，因此绝不是 orphan；
+4. 外部程序断开 external endpoint 不改变父 Serial Session 的 ownership，端点仍可再次打开；
+5. 父 Serial Session 结束时尝试销毁端口对；销毁成功后同时移除 active/owned 和内部隐藏注册；
+6. 如果销毁因权限或系统状态暂时失败，只移除 active、保留 owned，此时才成为可提示的 orphan；
+7. 进程异常退出后，新进程没有 active owner，而持久化 owned 仍存在，因此这些端点自然成为可恢复清理的 orphan；
+8. 手动“清理残留端口”只能处理已证明属于 TauTerm 且当前非 active 的资源，禁止删除第三方/用户自行创建的 com0com bus；
+9. 特权服务模式按 `client_id` 在服务进程内记录自己创建的端点，客户端断开时只清理该客户端资源，不做驱动全局扫除。
 
 持久化状态采用当前唯一 schema，不保留旧版 bus-only 兼容逻辑；预稳定阶段发现旧/损坏 schema 时只备份用于诊断，并重新建立当前模型。
 
