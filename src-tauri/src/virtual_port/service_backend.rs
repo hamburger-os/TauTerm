@@ -13,8 +13,8 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_IO_PENDING, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
-use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
 use super::backend::{
     register_internal_endpoint_path, unregister_internal_endpoint_path, VirtualEndpoint,
@@ -237,9 +237,12 @@ impl ServiceBackend {
         }
         let frame = read_frame(raw)
             .ok_or_else(|| "virtual port service handshake read failed".to_string())?;
-        let response: Response = serde_json::from_slice(&frame).map_err(|error| error.to_string())?;
+        let response: Response =
+            serde_json::from_slice(&frame).map_err(|error| error.to_string())?;
         if !response.ok {
-            return Err(response.error.unwrap_or_else(|| "handshake rejected".into()));
+            return Err(response
+                .error
+                .unwrap_or_else(|| "handshake rejected".into()));
         }
         inner.pipe = Some(pipe);
         Ok(())
@@ -266,7 +269,10 @@ impl ServiceBackend {
                 "payload": {},
             });
             let raw = pipe.as_raw_handle();
-            if !write_frame(raw, &serde_json::to_vec(&hello).map_err(|error| error.to_string())?) {
+            if !write_frame(
+                raw,
+                &serde_json::to_vec(&hello).map_err(|error| error.to_string())?,
+            ) {
                 return Err("virtual port service handshake write failed".into());
             }
             let frame = read_frame(raw)
@@ -274,7 +280,9 @@ impl ServiceBackend {
             let response: Response =
                 serde_json::from_slice(&frame).map_err(|error| error.to_string())?;
             if !response.ok {
-                return Err(response.error.unwrap_or_else(|| "handshake rejected".into()));
+                return Err(response
+                    .error
+                    .unwrap_or_else(|| "handshake rejected".into()));
             }
             inner.pipe = Some(pipe);
         }
@@ -311,7 +319,9 @@ impl ServiceBackend {
         if response.ok {
             Ok(response.data.unwrap_or_else(|| serde_json::json!({})))
         } else {
-            Err(response.error.unwrap_or_else(|| "unknown service error".into()))
+            Err(response
+                .error
+                .unwrap_or_else(|| "unknown service error".into()))
         }
     }
 
@@ -323,7 +333,9 @@ impl ServiceBackend {
         let mut inner = self.inner.lock().map_err(|error| error.to_string())?;
         for endpoint in endpoints {
             register_internal_endpoint_path(&endpoint.bridge_path);
-            inner.endpoints.insert(endpoint.resource_id, endpoint.clone());
+            inner
+                .endpoints
+                .insert(endpoint.resource_id, endpoint.clone());
         }
         Ok(())
     }
