@@ -73,7 +73,7 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: performance-contract-${{ inputs.ref || github.sha }}
+          name: performance-contract-${{ github.sha }}
           path: |
             performance-contract.json
             performance-contract.log
