@@ -36,17 +36,44 @@ jobs:
                   raise SystemExit(f"{path}: expected exactly one match, found {count}")
               p.write_text(text.replace(old, new, 1), encoding="utf-8")
 
-          replace_once(
-              ".github/workflows/release.yml",
-              """      windows_validation_sha:\n        description: Exact master SHA manually validated on Windows when hosted Runtime E2E reports BLOCKED; leave empty when Windows E2E really passes\n        required: false\n        type: string\n""",
-              "",
-          )
+          release_path = Path(".github/workflows/release.yml")
+          release = release_path.read_text(encoding="utf-8")
+          input_block = """      windows_validation_sha:\n        description: Exact master SHA manually validated on Windows when hosted Runtime E2E reports BLOCKED; leave empty when Windows E2E really passes\n        required: false\n        type: string\n"""
+          if release.count(input_block) != 1:
+              raise SystemExit("release.yml: windows_validation_sha input block not found exactly once")
+          release = release.replace(input_block, "", 1)
 
-          replace_once(
-              ".github/workflows/release.yml",
-              """      - name: Enforce Windows runtime evidence\n        shell: bash\n        env:\n          WINDOWS_STATUS: ${{ needs.runtime-e2e.outputs.windows_status }}\n          WINDOWS_VALIDATION_SHA: ${{ inputs.windows_validation_sha }}\n          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}\n        run: |\n          set -euo pipefail\n          case \"$WINDOWS_STATUS\" in\n            passed)\n              echo \"Windows hosted Runtime E2E executed and passed for $SOURCE_SHA.\"\n              ;;\n            blocked)\n              if [ \"$WINDOWS_VALIDATION_SHA\" != \"$SOURCE_SHA\" ]; then\n                echo \"::error::Windows hosted Runtime E2E was BLOCKED, not PASSED. Manually validate the exact release SHA on Windows and restart Release with windows_validation_sha=$SOURCE_SHA.\"\n                exit 1\n              fi\n              echo \"Windows hosted Runtime E2E was upstream-blocked; exact-SHA manual Windows validation was explicitly attested for $SOURCE_SHA.\"\n              ;;\n            *)\n              echo \"::error::Unexpected Windows Runtime E2E status: ${WINDOWS_STATUS:-<empty>}\"\n              exit 1\n              ;;\n          esac\n""",
-              """      - name: Enforce Windows runtime outcome\n        shell: bash\n        env:\n          WINDOWS_STATUS: ${{ needs.runtime-e2e.outputs.windows_status }}\n          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}\n        run: |\n          set -euo pipefail\n          case \"$WINDOWS_STATUS\" in\n            passed)\n              echo \"Windows hosted Runtime E2E executed and passed for $SOURCE_SHA.\"\n              ;;\n            blocked)\n              echo \"::warning::Windows hosted Runtime E2E was BLOCKED by the known WebView2 hosted-runner limitation; continuing release without manual SHA attestation.\"\n              ;;\n            *)\n              echo \"::error::Unexpected Windows Runtime E2E status: ${WINDOWS_STATUS:-<empty>}\"\n              exit 1\n              ;;\n          esac\n""",
+          start_marker = "      - name: Enforce Windows runtime evidence\n"
+          end_marker = "\n  build-windows:\n"
+          start = release.find(start_marker)
+          end = release.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit("release.yml: runtime policy block boundaries not found")
+
+          expr = lambda body: "$" + "{{ " + body + " }}"
+          new_policy = (
+              "      - name: Enforce Windows runtime outcome\n"
+              "        shell: bash\n"
+              "        env:\n"
+              f"          WINDOWS_STATUS: {expr('needs.runtime-e2e.outputs.windows_status')}\n"
+              f"          SOURCE_SHA: {expr('needs.prepare.outputs.source_sha')}\n"
+              "        run: |\n"
+              "          set -euo pipefail\n"
+              "          case \"$WINDOWS_STATUS\" in\n"
+              "            passed)\n"
+              "              echo \"Windows hosted Runtime E2E executed and passed for $SOURCE_SHA.\"\n"
+              "              ;;\n"
+              "            blocked)\n"
+              "              echo \"::warning::Windows hosted Runtime E2E was BLOCKED by the known WebView2 hosted-runner limitation; continuing release without manual SHA attestation.\"\n"
+              "              ;;\n"
+              "            *)\n"
+              "              echo \"::error::Unexpected Windows Runtime E2E status: ${WINDOWS_STATUS:-<empty>}\"\n"
+              "              exit 1\n"
+              "              ;;\n"
+              "          esac\n"
           )
+          release = release[:start] + new_policy + release[end:]
+          release_path.write_text(release, encoding="utf-8")
 
           replace_once(
               "docs/community/RELEASING.md",
@@ -88,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           ! grep -R "windows_validation_sha" .github/workflows/release.yml docs/community/RELEASING.md docs/community/TESTING.md CHANGELOG.md
-          ! grep -R "manual validation SHA\|manual SHA attestation\|evidence SHA" docs/community/RELEASING.md docs/community/TESTING.md
+          ! grep -R "complete exact-SHA Windows validation\|evidence SHA\|any prior manual validation SHA" docs/community/RELEASING.md docs/community/TESTING.md
           git diff --check
           npm ci --no-audit --no-fund
           npm run release:check -- 0.6.5
