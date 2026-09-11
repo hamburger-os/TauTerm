@@ -4,6 +4,8 @@
 //! 细节封装在 `LocalShellChannel`，调用方只接触 `ProtocolAdapter` interface。
 
 mod driver;
+#[cfg(windows)]
+pub(crate) mod elevated;
 
 use crate::kernel::plugin_adapter::{
     ChannelOpenMode, ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection,
@@ -296,14 +298,13 @@ impl SessionChannelFactory for LocalShellFactory {
             ChannelOpenMode::Elevated if self.elevated_supported => {
                 #[cfg(windows)]
                 {
-                    let channel =
-                        crate::channel::elevated_shell_channel::ElevatedShellChannel::spawn(
-                            &executable,
-                            &self.resolved.args,
-                            &self.resolved.cwd,
-                        )
-                        .map_err(SessionError::ChannelError)?;
-                    Ok(ChannelKind::Sync(Box::new(channel)))
+                    let driver = elevated::ElevatedShellDriver::spawn(
+                        &executable,
+                        &self.resolved.args,
+                        &self.resolved.cwd,
+                    )
+                    .map_err(SessionError::Io)?;
+                    Ok(DataPlaneRuntime::spawn(Box::new(driver)))
                 }
                 #[cfg(not(windows))]
                 {

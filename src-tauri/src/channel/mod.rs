@@ -5,8 +5,6 @@
 //! 成为可被 I/O 循环引擎驱动的统一接口。
 
 pub mod async_io_loop;
-#[cfg(windows)]
-pub mod elevated_shell_channel;
 pub mod error;
 pub mod io_loop;
 pub mod serial_channel;

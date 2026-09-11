@@ -29,7 +29,7 @@ pub mod virtual_port;
 
 #[cfg(windows)]
 pub fn maybe_run_elevated_shell_helper() -> bool {
-    channel::elevated_shell_channel::maybe_run_helper()
+    plugins::local_shell::elevated::maybe_run_helper()
 }
 
 use kernel::config_store::ConfigStore;
