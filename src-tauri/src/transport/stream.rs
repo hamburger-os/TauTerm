@@ -11,6 +11,15 @@ pub enum ReadStatus {
     Eof,
 }
 
+/// Optional process/channel metadata captured by terminal-like transports when the remote endpoint
+/// exits. Keeping it in the transport contract preserves exit status without making the session
+/// runtime depend on PTY or SSH implementation details.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StreamCloseMetadata {
+    pub exit_code: Option<u32>,
+    pub signal: Option<String>,
+}
+
 /// Blocking driver contract hidden inside the transport runtime.
 ///
 /// Implementations may wrap serial ports, std TCP streams or blocking PTYs. Protocol/session
@@ -37,6 +46,10 @@ pub trait BlockingByteStream: Send + 'static {
     fn supports_terminal_control(&self) -> bool {
         false
     }
+
+    fn close_metadata(&self) -> StreamCloseMetadata {
+        StreamCloseMetadata::default()
+    }
 }
 
 /// Async byte-stream driver contract used by protocol-native async transports such as SSH.
@@ -60,6 +73,10 @@ pub trait AsyncByteStream: Send + 'static {
 
     fn supports_terminal_control(&self) -> bool {
         false
+    }
+
+    fn close_metadata(&self) -> StreamCloseMetadata {
+        StreamCloseMetadata::default()
     }
 }
 
@@ -128,5 +145,9 @@ impl BlockingByteStream for AsyncBridgeDriver {
 
     fn supports_terminal_control(&self) -> bool {
         self.inner.supports_terminal_control()
+    }
+
+    fn close_metadata(&self) -> StreamCloseMetadata {
+        self.inner.close_metadata()
     }
 }
