@@ -6,7 +6,7 @@ use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
 
 use crate::transport::error::{TransportError, TransportErrorKind};
-use crate::transport::stream::{BlockingByteStream, ReadStatus};
+use crate::transport::stream::{BlockingByteStream, ReadStatus, StreamCloseMetadata};
 
 const COMMAND_CAPACITY: usize = 256;
 const EXCLUSIVE_RX_CAPACITY: usize = 256;
@@ -23,6 +23,25 @@ pub enum DataPlaneEvent {
 pub struct TransportCloseInfo {
     pub kind: TransportErrorKind,
     pub reason: String,
+    pub exit_code: Option<u32>,
+    pub signal: Option<String>,
+}
+
+impl TransportCloseInfo {
+    fn from_driver(
+        kind: TransportErrorKind,
+        reason: impl Into<String>,
+        exit_code: None,
+        signal: None,
+        metadata: StreamCloseMetadata,
+    ) -> Self {
+        Self {
+            kind,
+            reason: reason.into(),
+            exit_code: metadata.exit_code,
+            signal: metadata.signal,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -440,20 +459,22 @@ fn run_blocking_runtime(
             Ok(ReadStatus::Eof) => {
                 broadcast_close(
                     &mut subscribers,
-                    TransportCloseInfo {
-                        kind: TransportErrorKind::RemoteClosed,
-                        reason: "remote endpoint closed the stream".into(),
-                    },
+                    TransportCloseInfo::from_driver(
+                        TransportErrorKind::RemoteClosed,
+                        "remote endpoint closed the stream",
+                        driver.close_metadata(),
+                    ),
                 );
                 break;
             }
             Err(error) => {
                 broadcast_close(
                     &mut subscribers,
-                    TransportCloseInfo {
-                        kind: error.kind,
-                        reason: error.to_string(),
-                    },
+                    TransportCloseInfo::from_driver(
+                        error.kind,
+                        error.to_string(),
+                        driver.close_metadata(),
+                    ),
                 );
                 break;
             }

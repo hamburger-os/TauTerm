@@ -77,6 +77,9 @@ impl DisconnectInfo {
 
 impl From<TransportCloseInfo> for DisconnectInfo {
     fn from(info: TransportCloseInfo) -> Self {
+        if let Some(exit_code) = info.exit_code {
+            return DisconnectInfo::process_exited(exit_code, info.signal.as_deref());
+        }
         let kind = match info.kind {
             TransportErrorKind::RemoteClosed => DisconnectKind::RemoteEof,
             TransportErrorKind::DeviceNotFound => DisconnectKind::DeviceRemoved,

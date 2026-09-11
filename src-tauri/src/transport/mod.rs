@@ -15,4 +15,6 @@ pub use runtime::{
     DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, DataPlaneSubscription, ExclusiveIo,
     TransportCloseInfo,
 };
-pub use stream::{AsyncBridgeDriver, AsyncByteStream, BlockingByteStream, ReadStatus};
+pub use stream::{
+    AsyncBridgeDriver, AsyncByteStream, BlockingByteStream, ReadStatus, StreamCloseMetadata,
+};
