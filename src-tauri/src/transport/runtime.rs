@@ -11,6 +11,7 @@ use crate::transport::stream::{BlockingByteStream, ReadStatus};
 const COMMAND_CAPACITY: usize = 256;
 const EXCLUSIVE_RX_CAPACITY: usize = 256;
 const READ_BUFFER_SIZE: usize = 16 * 1024;
+const STARTUP_BUFFER_LIMIT: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub enum DataPlaneEvent {
@@ -376,6 +377,8 @@ fn run_blocking_runtime(
     connected: Arc<AtomicBool>,
 ) {
     let mut subscribers: Vec<(u64, mpsc::Sender<DataPlaneEvent>)> = Vec::new();
+    let mut startup_buffer: VecDeque<Vec<u8>> = VecDeque::new();
+    let mut startup_buffer_bytes = 0usize;
     let mut exclusive: Option<ExclusiveState> = None;
     let mut read_buf = [0u8; READ_BUFFER_SIZE];
     let mut closing = false;
@@ -388,6 +391,8 @@ fn run_blocking_runtime(
                         command,
                         &mut *driver,
                         &mut subscribers,
+                        &mut startup_buffer,
+                        &mut startup_buffer_bytes,
                         &mut exclusive,
                         &tx_bytes,
                     );
@@ -413,6 +418,17 @@ fn run_blocking_runtime(
                 if let Some(lease) = exclusive.as_ref() {
                     if lease.data_tx.send(data).is_err() {
                         exclusive = None;
+                    }
+                } else if subscribers.is_empty() {
+                    startup_buffer_bytes += data.len();
+                    startup_buffer.push_back(data);
+                    while startup_buffer_bytes > STARTUP_BUFFER_LIMIT {
+                        if let Some(dropped) = startup_buffer.pop_front() {
+                            startup_buffer_bytes =
+                                startup_buffer_bytes.saturating_sub(dropped.len());
+                        } else {
+                            break;
+                        }
                     }
                 } else {
                     subscribers.retain(|(_, subscriber)| {
@@ -452,6 +468,8 @@ fn handle_command(
     command: RuntimeCommand,
     driver: &mut dyn BlockingByteStream,
     subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,
+    startup_buffer: &mut VecDeque<Vec<u8>>,
+    startup_buffer_bytes: &mut usize,
     exclusive: &mut Option<ExclusiveState>,
     tx_bytes: &Arc<AtomicU64>,
 ) -> bool {
@@ -482,7 +500,20 @@ fn handle_command(
             false
         }
         RuntimeCommand::Subscribe { id, subscriber } => {
-            subscribers.push((id, subscriber));
+            let mut alive = true;
+            while let Some(data) = startup_buffer.pop_front() {
+                *startup_buffer_bytes = startup_buffer_bytes.saturating_sub(data.len());
+                if subscriber.send(DataPlaneEvent::Data(data)).is_err() {
+                    alive = false;
+                    break;
+                }
+            }
+            if alive {
+                subscribers.push((id, subscriber));
+            } else {
+                startup_buffer.clear();
+                *startup_buffer_bytes = 0;
+            }
             false
         }
         RuntimeCommand::Unsubscribe { id } => {
@@ -632,6 +663,23 @@ mod tests {
             runtime.handle.write(&[value]).unwrap();
         }
         assert_eq!(writes.lock().unwrap().len(), 32);
+        runtime.join();
+    }
+
+    #[test]
+    fn data_received_before_first_subscription_is_delivered_once() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let runtime = DataPlaneRuntime::spawn(Box::new(MockStream {
+            reads: VecDeque::from([ReadStatus::Data(3), ReadStatus::Idle]),
+            writes,
+        }));
+        std::thread::sleep(Duration::from_millis(10));
+        let subscription = runtime.handle.subscribe().unwrap();
+        match subscription.recv_timeout(Duration::from_secs(1)).unwrap() {
+            DataPlaneEvent::Data(data) => assert_eq!(data, vec![0, 1, 2]),
+            DataPlaneEvent::Closed(info) => panic!("unexpected close: {}", info.reason),
+        }
+        drop(subscription);
         runtime.join();
     }
 
