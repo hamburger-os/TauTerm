@@ -1,11 +1,14 @@
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{mpsc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::plugins::modbus::codec::{self, AduMode, ModbusRequest};
 use crate::plugins::modbus::config::{ModbusConfig, ModbusMode};
 use crate::transport::{DataPlaneEvent, DataPlaneRuntime};
+
+const HISTORY_LIMIT: usize = 1000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,6 +25,7 @@ pub enum TransactionStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TransactionResult {
+    pub timestamp_ms: u64,
     pub status: TransactionStatus,
     pub function: u8,
     pub transaction_id: Option<u16>,
@@ -53,6 +57,7 @@ pub struct ModbusClient {
     runtime: Mutex<Option<DataPlaneRuntime>>,
     transaction_guard: Mutex<()>,
     next_transaction_id: AtomicU16,
+    history: Mutex<VecDeque<TransactionResult>>,
 }
 
 impl ModbusClient {
@@ -62,6 +67,7 @@ impl ModbusClient {
             runtime: Mutex::new(Some(runtime)),
             transaction_guard: Mutex::new(()),
             next_transaction_id: AtomicU16::new(1),
+            history: Mutex::new(VecDeque::with_capacity(HISTORY_LIMIT)),
         }
     }
 
@@ -80,17 +86,192 @@ impl ModbusClient {
             self.config.read_retries
         };
         let mut attempt = 0u8;
-        loop {
+        let result = loop {
             let result = self.execute_once(&request, attempt);
             let retryable = matches!(
                 result.status,
                 TransactionStatus::Timeout | TransactionStatus::TransportError
             ) && attempt < max_retries;
             if !retryable {
-                return result;
+                break result;
             }
             attempt = attempt.saturating_add(1);
+        };
+        self.record(result.clone());
+        result
+    }
+
+    pub fn execute_raw_adu(
+        &self,
+        data: Vec<u8>,
+        wait_response: bool,
+        quiet_period_ms: u64,
+    ) -> TransactionResult {
+        let _guard = self
+            .transaction_guard
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let started = Instant::now();
+        let handle = {
+            let runtime = self
+                .runtime
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            match runtime.as_ref() {
+                Some(runtime) => runtime.handle.clone(),
+                None => {
+                    let result = self.failure(TransactionFailure {
+                        status: TransactionStatus::Cancelled,
+                        function: 0,
+                        transaction_id: None,
+                        started,
+                        raw_tx: data,
+                        raw_rx: Vec::new(),
+                        message: "client is closed".into(),
+                        write_outcome_unknown: false,
+                        attempt: 0,
+                    });
+                    self.record(result.clone());
+                    return result;
+                }
+            }
+        };
+        let events = match handle.subscribe() {
+            Ok(events) => events,
+            Err(error) => {
+                let result = self.failure(TransactionFailure {
+                    status: TransactionStatus::TransportError,
+                    function: 0,
+                    transaction_id: None,
+                    started,
+                    raw_tx: data,
+                    raw_rx: Vec::new(),
+                    message: error.to_string(),
+                    write_outcome_unknown: false,
+                    attempt: 0,
+                });
+                self.record(result.clone());
+                return result;
+            }
+        };
+        if let Err(error) = handle.write(&data) {
+            let result = self.failure(TransactionFailure {
+                status: TransactionStatus::TransportError,
+                function: 0,
+                transaction_id: None,
+                started,
+                raw_tx: data,
+                raw_rx: Vec::new(),
+                message: error.to_string(),
+                write_outcome_unknown: false,
+                attempt: 0,
+            });
+            self.record(result.clone());
+            return result;
         }
+        if !wait_response {
+            let result = TransactionResult {
+                timestamp_ms: now_ms(),
+                status: TransactionStatus::Success,
+                function: 0,
+                transaction_id: None,
+                unit_id: self.config.unit_id,
+                latency_ms: started.elapsed().as_millis(),
+                exception_code: None,
+                raw_tx: data,
+                raw_rx: Vec::new(),
+                response_pdu: Vec::new(),
+                message: Some("exact Raw ADU sent without response validation".into()),
+                write_outcome_unknown: false,
+                attempt: 0,
+            };
+            self.record(result.clone());
+            return result;
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(self.config.response_timeout_ms);
+        let quiet = Duration::from_millis(quiet_period_ms.clamp(1, 1000));
+        let mut raw_rx = Vec::new();
+        let result = loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break if raw_rx.is_empty() {
+                    self.failure(TransactionFailure {
+                        status: TransactionStatus::Timeout,
+                        function: 0,
+                        transaction_id: None,
+                        started,
+                        raw_tx: data.clone(),
+                        raw_rx,
+                        message: "Raw ADU response timeout".into(),
+                        write_outcome_unknown: false,
+                        attempt: 0,
+                    })
+                } else {
+                    raw_success(&self.config, started, data.clone(), raw_rx)
+                };
+            }
+            let wait = if raw_rx.is_empty() {
+                remaining
+            } else {
+                remaining.min(quiet)
+            };
+            match events.recv_timeout(wait) {
+                Ok(DataPlaneEvent::Data(chunk)) => raw_rx.extend_from_slice(&chunk),
+                Ok(DataPlaneEvent::Closed(info)) if raw_rx.is_empty() => {
+                    break self.failure(TransactionFailure {
+                        status: TransactionStatus::TransportError,
+                        function: 0,
+                        transaction_id: None,
+                        started,
+                        raw_tx: data.clone(),
+                        raw_rx,
+                        message: info.reason,
+                        write_outcome_unknown: false,
+                        attempt: 0,
+                    });
+                }
+                Ok(DataPlaneEvent::Closed(info)) => {
+                    let mut result = raw_success(&self.config, started, data.clone(), raw_rx);
+                    result.message = Some(format!(
+                        "Raw ADU response is unvalidated; transport closed: {}",
+                        info.reason
+                    ));
+                    break result;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) if raw_rx.is_empty() => {
+                    break self.failure(TransactionFailure {
+                        status: TransactionStatus::Timeout,
+                        function: 0,
+                        transaction_id: None,
+                        started,
+                        raw_tx: data.clone(),
+                        raw_rx,
+                        message: "Raw ADU response timeout".into(),
+                        write_outcome_unknown: false,
+                        attempt: 0,
+                    });
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    break raw_success(&self.config, started, data.clone(), raw_rx);
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    break self.failure(TransactionFailure {
+                        status: TransactionStatus::TransportError,
+                        function: 0,
+                        transaction_id: None,
+                        started,
+                        raw_tx: data.clone(),
+                        raw_rx,
+                        message: "transport event stream closed".into(),
+                        write_outcome_unknown: false,
+                        attempt: 0,
+                    });
+                }
+            }
+        };
+        self.record(result.clone());
+        result
     }
 
     fn execute_once(&self, request: &ModbusRequest, attempt: u8) -> TransactionResult {
@@ -130,9 +311,8 @@ impl ModbusClient {
                 attempt,
             });
         }
-        let adu_mode = mode(self.config.mode);
         let tx = match codec::encode_adu(
-            adu_mode,
+            mode(self.config.mode),
             self.config.unit_id,
             transaction_id.unwrap_or(0),
             &pdu,
@@ -207,6 +387,7 @@ impl ModbusClient {
 
         if self.config.unit_id == 0 && self.config.mode != ModbusMode::Tcp {
             return TransactionResult {
+                timestamp_ms: now_ms(),
                 status: TransactionStatus::Broadcast,
                 function,
                 transaction_id,
@@ -295,6 +476,7 @@ impl ModbusClient {
         };
         match codec::validate_response(request, &response_pdu) {
             Ok(response) => TransactionResult {
+                timestamp_ms: now_ms(),
                 status: if response.exception.is_some() {
                     TransactionStatus::ModbusException
                 } else {
@@ -328,6 +510,7 @@ impl ModbusClient {
 
     fn failure(&self, failure: TransactionFailure) -> TransactionResult {
         TransactionResult {
+            timestamp_ms: now_ms(),
             status: failure.status,
             function: failure.function,
             transaction_id: failure.transaction_id,
@@ -341,6 +524,24 @@ impl ModbusClient {
             write_outcome_unknown: failure.write_outcome_unknown,
             attempt: failure.attempt,
         }
+    }
+
+    fn record(&self, result: TransactionResult) {
+        let mut history = self.history.lock().unwrap_or_else(|error| error.into_inner());
+        if history.len() >= HISTORY_LIMIT {
+            history.pop_front();
+        }
+        history.push_back(result);
+    }
+
+    pub fn history(&self) -> Vec<TransactionResult> {
+        self.history
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .rev()
+            .cloned()
+            .collect()
     }
 
     pub fn shutdown(&self) {
@@ -360,6 +561,29 @@ enum ReceiveError {
     Transport(String),
     Malformed(String, Vec<u8>),
     Protocol(String, Vec<u8>),
+}
+
+fn raw_success(
+    config: &ModbusConfig,
+    started: Instant,
+    raw_tx: Vec<u8>,
+    raw_rx: Vec<u8>,
+) -> TransactionResult {
+    TransactionResult {
+        timestamp_ms: now_ms(),
+        status: TransactionStatus::Success,
+        function: 0,
+        transaction_id: None,
+        unit_id: config.unit_id,
+        latency_ms: started.elapsed().as_millis(),
+        exception_code: None,
+        raw_tx,
+        raw_rx,
+        response_pdu: Vec::new(),
+        message: Some("Raw ADU response is unvalidated".into()),
+        write_outcome_unknown: false,
+        attempt: 0,
+    }
 }
 
 fn receive_tcp(
@@ -494,4 +718,11 @@ fn mode(value: ModbusMode) -> AduMode {
         ModbusMode::Ascii => AduMode::Ascii,
         ModbusMode::Tcp => AduMode::Tcp,
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
