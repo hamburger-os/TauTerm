@@ -198,6 +198,8 @@ struct Response {
 
 struct ServiceInner {
     pipe: Option<OwnedHandle>,
+    /// 仅属于当前 pipe generation。重连必须换新 ID，避免旧连接迟到的断开清理
+    /// 误删新连接刚创建的资源。
     client_id: String,
     next_id: u64,
     endpoints: HashMap<u32, VirtualEndpoint>,
@@ -212,22 +214,26 @@ impl ServiceBackend {
         Self {
             inner: Mutex::new(ServiceInner {
                 pipe: None,
-                client_id: uuid::Uuid::new_v4().to_string(),
+                client_id: String::new(),
                 next_id: 0,
                 endpoints: HashMap::new(),
             }),
         }
     }
 
-    pub fn connect(&self) -> Result<(), String> {
-        let mut inner = self.inner.lock().map_err(|error| error.to_string())?;
+    fn connect_inner(inner: &mut ServiceInner) -> Result<(), String> {
+        if inner.pipe.is_some() {
+            return Ok(());
+        }
+
         let pipe = open_pipe()?;
+        let client_id = uuid::Uuid::new_v4().to_string();
         let id = inner.next_id;
         inner.next_id += 1;
         let hello = serde_json::json!({
             "id": id,
             "op": "hello",
-            "client_id": inner.client_id,
+            "client_id": client_id,
             "payload": {},
         });
         let raw = pipe.as_raw_handle();
@@ -244,8 +250,15 @@ impl ServiceBackend {
                 .error
                 .unwrap_or_else(|| "handshake rejected".into()));
         }
+
+        inner.client_id = client_id;
         inner.pipe = Some(pipe);
         Ok(())
+    }
+
+    pub fn connect(&self) -> Result<(), String> {
+        let mut inner = self.inner.lock().map_err(|error| error.to_string())?;
+        Self::connect_inner(&mut inner)
     }
 
     fn clear_local_endpoints(inner: &mut ServiceInner) {
@@ -255,37 +268,15 @@ impl ServiceBackend {
         inner.endpoints.clear();
     }
 
+    fn reset_connection(inner: &mut ServiceInner) {
+        inner.pipe = None;
+        inner.client_id.clear();
+        Self::clear_local_endpoints(inner);
+    }
+
     fn call(&self, op: &str, payload: serde_json::Value) -> Result<serde_json::Value, String> {
         let mut inner = self.inner.lock().map_err(|error| error.to_string())?;
-
-        if inner.pipe.is_none() {
-            let pipe = open_pipe()?;
-            let id = inner.next_id;
-            inner.next_id += 1;
-            let hello = serde_json::json!({
-                "id": id,
-                "op": "hello",
-                "client_id": inner.client_id,
-                "payload": {},
-            });
-            let raw = pipe.as_raw_handle();
-            if !write_frame(
-                raw,
-                &serde_json::to_vec(&hello).map_err(|error| error.to_string())?,
-            ) {
-                return Err("virtual port service handshake write failed".into());
-            }
-            let frame = read_frame(raw)
-                .ok_or_else(|| "virtual port service handshake read failed".to_string())?;
-            let response: Response =
-                serde_json::from_slice(&frame).map_err(|error| error.to_string())?;
-            if !response.ok {
-                return Err(response
-                    .error
-                    .unwrap_or_else(|| "handshake rejected".into()));
-            }
-            inner.pipe = Some(pipe);
-        }
+        Self::connect_inner(&mut inner)?;
 
         let raw = inner
             .pipe
@@ -302,15 +293,13 @@ impl ServiceBackend {
         });
         let body = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
         if !write_frame(raw, &body) {
-            inner.pipe = None;
-            Self::clear_local_endpoints(&mut inner);
+            Self::reset_connection(&mut inner);
             return Err("virtual port service write failed".into());
         }
         let frame = match read_frame(raw) {
             Some(frame) => frame,
             None => {
-                inner.pipe = None;
-                Self::clear_local_endpoints(&mut inner);
+                Self::reset_connection(&mut inner);
                 return Err("virtual port service read failed (connection closed)".into());
             }
         };
