@@ -7,6 +7,7 @@ This document is the canonical maintainer procedure for producing a release. Rel
 A release version is prepared from one `master` commit.
 
 - Version metadata is synchronized from `package.json` by the repository version scripts.
+- `npm version X.Y.Z --no-git-tag-version` updates the npm metadata, and the `postversion` synchronizer updates Tauri, Cargo manifest and TauTerm's root-package entry in `Cargo.lock` so subsequent `--locked` checks operate on one version.
 - The released change description exists once: the matching version section in `CHANGELOG.md`.
 - Do **not** add `docs/RELEASE_NOTES_vX.Y.Z.md` files. The GitHub Release body is derived from the CHANGELOG section by the release workflow.
 - The exact compiler is pinned in `rust-toolchain.toml`.
@@ -28,6 +29,8 @@ Move the completed `Unreleased` entries into:
 ## [X.Y.Z] — YYYY-MM-DD
 ```
 
+Keep a fresh `## [Unreleased]` section above it for future work. Do not cut the version section until its entries describe all merged user-visible and release-critical changes.
+
 Then validate metadata, documentation/licensing, and build the current platform release:
 
 ```bash
@@ -38,7 +41,7 @@ npm run license:cargo
 npm run build:release
 ```
 
-`build:release` may update the pinned stable Rust version. Review and commit that toolchain change with the release PR. Merge only after normal CI passes.
+`build:release` may update the pinned stable Rust version. Review and commit that toolchain change with the release PR. Merge only after normal CI and Runtime E2E have completed for the PR head.
 
 ## Windows release trust status
 
@@ -53,9 +56,26 @@ After the release PR is merged:
 1. open **Actions → Release → Run workflow**;
 2. select `master`;
 3. enter the full version such as `0.7.0` or `0.7.0-rc.1`;
-4. run the workflow.
+4. normally leave `windows_validation_sha` empty and start the workflow.
 
-Do not create the tag manually. The workflow verifies that the selected commit is still current `master`, validates version/CHANGELOG metadata, runs both the normal CI quality gate and the reusable TRDP Native interoperability gate on the exact release commit, builds all supported targets, and only then creates the release tag/draft.
+Do not create the tag manually. The workflow verifies that the selected commit is still current `master`, validates version/CHANGELOG metadata, and then runs the permanent qualification set against that exact source SHA before any package build starts:
+
+- normal cross-platform CI quality gate;
+- TRDP Native/interoperability gate;
+- Linux and Windows Runtime E2E;
+- dependency advisory security gate;
+- release-mode performance contract;
+- 15-minute release-mode reliability qualification soak.
+
+The build jobs consume the same immutable source SHA used by these gates.
+
+### Windows Runtime E2E blocked case
+
+A GitHub-hosted Windows runner can currently be unable to create the WebDriver session when WebView2 Runtime 150+ applies its elevated-host remote-debugging restriction. Runtime E2E records this exact known condition as `blocked`, not `passed`.
+
+When that happens, Release stops at the Runtime E2E policy gate before package builds. Manually validate the exact `master` SHA on a real Windows environment, then re-run Release and set `windows_validation_sha` to that **exact SHA**. The workflow rejects a different SHA or an empty value. If source changes after the manual validation, the evidence is stale and must be repeated.
+
+The manual Windows validation must cover the behavior affected by the release. At minimum verify application launch and the relevant user-visible runtime path. For releases that change virtual serial, privileged service, installer/updater or ownership behavior, also verify the affected lifecycle: TauTerm-owned endpoint create/remove, preservation of unrelated pre-existing com0com resources, service recovery where applicable, and upgrade/uninstall ownership semantics. Do not use the evidence field as a bypass when the validation was not actually performed.
 
 ## 3. Artifact and updater gates
 
@@ -82,7 +102,8 @@ Alpha, beta, and release-candidate versions are published as pre-releases and do
 The publish stage is fail-closed. If final validation fails before promotion completes, the release/tag created by that run is rolled back where the workflow owns them.
 
 - If a build/assembly job fails without source changes, re-run the failed jobs.
-- If source must change, merge the fix through normal CI and start a new release run from the new `master`.
+- If Runtime E2E is `blocked`, complete exact-SHA Windows validation and start a new Release run with the evidence SHA; do not reinterpret the blocked run as a pass.
+- If source must change, merge the fix through normal CI and start a new release run from the new `master`; any prior manual validation SHA is invalid.
 - Never move a tag that belongs to an already published release.
 
 ## Workflow policy
