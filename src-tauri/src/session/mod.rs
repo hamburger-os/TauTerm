@@ -6,8 +6,10 @@
 
 pub mod error;
 pub mod io;
+pub mod runtime;
 pub mod state;
 
 pub use error::SessionError;
 pub use io::{SessionIo, SessionIoError, TargetedIo};
+pub use runtime::SessionDataPlane;
 pub use state::{DisconnectInfo, DisconnectKind};
