@@ -13,8 +13,8 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, ERROR_IO_PENDING, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{CreateFileW, ReadFile, WriteFile};
-use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
+use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
 use super::backend::{
     register_internal_endpoint_path, unregister_internal_endpoint_path, VirtualEndpoint,
@@ -381,6 +381,9 @@ impl VirtualPortBackend for ServiceBackend {
         &mut self,
         config: &VirtualPortConfig,
     ) -> Result<Vec<VirtualEndpoint>, String> {
+        if !config.enabled || config.count == 0 {
+            return Ok(Vec::new());
+        }
         let data = self.call(
             "create_endpoints",
             serde_json::json!({ "count": config.count }),
@@ -413,14 +416,15 @@ impl VirtualPortBackend for ServiceBackend {
     }
 
     fn cleanup_orphans(&mut self) -> u32 {
-        // 服务端通过 client_id 管理自己创建的端口；客户端不存在“扫描驱动找孤儿”的权限。
-        0
+        self.call("cleanup_orphans", serde_json::json!({}))
+            .ok()
+            .and_then(|data| data["cleaned"].as_u64())
+            .unwrap_or(0) as u32
     }
 
     fn cleanup_endpoints_elevated(&mut self) -> Result<u32, String> {
-        self.call("cleanup_client", serde_json::json!({}))?;
-        self.forget_all_endpoints()?;
-        Ok(0)
+        let data = self.call("cleanup_orphans", serde_json::json!({}))?;
+        Ok(data["cleaned"].as_u64().unwrap_or(0) as u32)
     }
 
     fn pending_orphan_count(&self) -> u32 {
