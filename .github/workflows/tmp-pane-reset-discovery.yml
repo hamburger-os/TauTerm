@@ -1,0 +1,21 @@
+name: Temporary Pane Reset Discovery
+
+on:
+  push:
+    branches: [fix/split-command-availability]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/split-command-availability
+      - name: Find pane reset references
+        shell: bash
+        run: |
+          set -euo pipefail
+          rg -n "resetPaneSplitRatioInLayout|canResetPaneSplitRatioInLayout|onResetPaneRatio|reset-pane-ratio|split\.resetRatio|均分当前分屏" src scripts || true
