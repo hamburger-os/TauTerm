@@ -63,11 +63,18 @@ export function useJournalStream(
 
   const streamingRef = useRef(false);
   const busyRef = useRef(false);
+  const disposedRef = useRef(false);
+  const activeRef = useRef(active);
+  const connectedRef = useRef(isConnected);
   const generationRef = useRef(0);
+  const listenerEpochRef = useRef(0);
   const runningFilterKeyRef = useRef("");
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unlistenersRef = useRef<UnlistenFn[]>([]);
   const listenersReadyRef = useRef<Promise<void> | null>(null);
+
+  activeRef.current = active;
+  connectedRef.current = isConnected;
 
   const clear = useCallback(() => {
     setEntries([]);
@@ -82,12 +89,15 @@ export function useJournalStream(
       return listenersReadyRef.current;
     }
 
-    listenersReadyRef.current = (async () => {
+    const listenerEpoch = listenerEpochRef.current;
+    const setupPromise = (async () => {
       const collected: UnlistenFn[] = [];
+      const isStale = () =>
+        disposedRef.current || listenerEpoch !== listenerEpochRef.current;
       try {
         collected.push(
           await listen<JournalBatchEvent>("journald:batch", (event) => {
-            if (event.payload.session_id !== sessionId) return;
+            if (isStale() || event.payload.session_id !== sessionId) return;
             const batch = event.payload.entries;
             if (batch.length > 0) {
               setEntries((previous) => {
@@ -103,7 +113,7 @@ export function useJournalStream(
         );
         collected.push(
           await listen<JournalErrorEvent>("journald:error", (event) => {
-            if (event.payload.session_id !== sessionId) return;
+            if (isStale() || event.payload.session_id !== sessionId) return;
             setError(event.payload.error);
             setIsStreaming(false);
             streamingRef.current = false;
@@ -112,45 +122,82 @@ export function useJournalStream(
         );
         collected.push(
           await listen<JournalEndedEvent>("journald:stream-ended", (event) => {
-            if (event.payload.session_id !== sessionId) return;
+            if (isStale() || event.payload.session_id !== sessionId) return;
             setIsStreaming(false);
             streamingRef.current = false;
             runningFilterKeyRef.current = "";
           }),
         );
+        if (isStale()) {
+          collected.forEach((unlisten) => unlisten());
+          return;
+        }
         unlistenersRef.current = collected;
       } catch (listenerError) {
         collected.forEach((unlisten) => unlisten());
-        listenersReadyRef.current = null;
         throw listenerError;
       }
     })();
 
-    return listenersReadyRef.current;
+    listenersReadyRef.current = setupPromise;
+    try {
+      await setupPromise;
+    } catch (listenerError) {
+      if (listenersReadyRef.current === setupPromise) {
+        listenersReadyRef.current = null;
+      }
+      throw listenerError;
+    }
   }, [sessionId]);
 
   const start = useCallback(
     async (nextFilter: JournaldFilter) => {
-      if (!isConnected || busyRef.current || streamingRef.current) return;
+      if (
+        !isConnected ||
+        !activeRef.current ||
+        disposedRef.current ||
+        busyRef.current ||
+        streamingRef.current
+      ) {
+        return;
+      }
       busyRef.current = true;
       const generation = ++generationRef.current;
       setLoading(true);
       setError(null);
       try {
         await ensureListeners();
+        if (
+          generation !== generationRef.current ||
+          disposedRef.current ||
+          !activeRef.current ||
+          !connectedRef.current
+        ) {
+          return;
+        }
+
         await startJournalStream(sessionId, nextFilter);
-        if (generation !== generationRef.current) return;
+        if (
+          generation !== generationRef.current ||
+          disposedRef.current ||
+          !activeRef.current ||
+          !connectedRef.current
+        ) {
+          await stopJournalStream(sessionId).catch(() => undefined);
+          return;
+        }
+
         streamingRef.current = true;
         setIsStreaming(true);
         runningFilterKeyRef.current = filterKey(nextFilter);
       } catch (startError) {
-        if (generation !== generationRef.current) return;
+        if (generation !== generationRef.current || disposedRef.current) return;
         streamingRef.current = false;
         setIsStreaming(false);
         runningFilterKeyRef.current = "";
         setError(normalizeJournaldError(startError));
       } finally {
-        if (generation === generationRef.current) {
+        if (generation === generationRef.current && !disposedRef.current) {
           setLoading(false);
         }
         busyRef.current = false;
@@ -171,12 +218,16 @@ export function useJournalStream(
     try {
       await stopJournalStream(sessionId);
     } catch (stopError) {
-      setError(normalizeJournaldError(stopError));
+      if (!disposedRef.current) {
+        setError(normalizeJournaldError(stopError));
+      }
     } finally {
       streamingRef.current = false;
-      setIsStreaming(false);
       runningFilterKeyRef.current = "";
-      setLoading(false);
+      if (!disposedRef.current) {
+        setIsStreaming(false);
+        setLoading(false);
+      }
       busyRef.current = false;
     }
   }, [sessionId]);
@@ -230,17 +281,30 @@ export function useJournalStream(
   }, [active, clear, filter, isConnected, isStreaming, start, stop]);
 
   useEffect(() => {
+    disposedRef.current = false;
+    ++listenerEpochRef.current;
     void ensureListeners().catch((listenerError) => {
-      setError(normalizeJournaldError(listenerError));
+      if (!disposedRef.current) {
+        setError(normalizeJournaldError(listenerError));
+      }
     });
+
     return () => {
-      if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
+      disposedRef.current = true;
+      ++generationRef.current;
+      ++listenerEpochRef.current;
+      if (restartTimerRef.current) {
+        clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
+      }
       unlistenersRef.current.forEach((unlisten) => unlisten());
       unlistenersRef.current = [];
       listenersReadyRef.current = null;
-      if (streamingRef.current) {
+      if (streamingRef.current || busyRef.current) {
         void stopJournalStream(sessionId).catch(() => undefined);
       }
+      streamingRef.current = false;
+      runningFilterKeyRef.current = "";
     };
   }, [ensureListeners, sessionId]);
 
