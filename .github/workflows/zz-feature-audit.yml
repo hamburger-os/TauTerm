@@ -13,13 +13,19 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Legacy transport reference inventory
+      - name: Architecture inventory
         shell: bash
         run: |
           set -euo pipefail
           echo '=== legacy transport references ==='
           git grep -n -E 'crate::channel|ChannelKind|IoLoopCmd|CommHandle|SideChannel|SessionChannelFactory|try_handoff|channel_return_tx|spawn_sync_io_loop|spawn_async_io_loop' -- 'src-tauri/src/**/*.rs' || true
-          echo '=== channel directory ==='
-          find src-tauri/src/channel -maxdepth 2 -type f -print 2>/dev/null | sort || true
+          echo '=== SessionStore public API ==='
+          grep -nE '^    pub (async )?fn |^pub (struct|enum) ' src-tauri/src/kernel/session_store.rs || true
+          echo '=== Protocol adapter public API ==='
+          grep -nE '^pub (trait|struct|enum) |^    (async )?fn |^    pub (async )?fn ' src-tauri/src/kernel/plugin_adapter.rs || true
+          echo '=== ProtocolConnection constructors ==='
+          git grep -n -E 'ProtocolConnection \{' -- 'src-tauri/src/**/*.rs' || true
+          echo '=== SessionStore call sites ==='
+          git grep -n -E '\.(create_session|create_container_session|close_session|send_data|send_text|resize|open_sub_connection|close_sub_connection|get_comm_handle|get_side_channel|get_write_tx|get_session|start_script|stop_script|reserve_|finish_|register_)\(' -- 'src-tauri/src/**/*.rs' || true
           echo '=== transport references ==='
           git grep -n -E 'DataPlaneHandle|DataPlaneRuntime|BlockingByteStream|ExclusiveIo' -- 'src-tauri/src/**/*.rs' || true
