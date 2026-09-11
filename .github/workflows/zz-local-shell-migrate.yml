@@ -1,0 +1,70 @@
+name: Local Shell Transport Migration
+
+on:
+  push:
+    branches: [feat/transport-runtime-modbus]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: ${{ !contains(github.event.head_commit.message, '[local-shell-bot]') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+          fetch-depth: 0
+      - name: Migrate Local Shell PTY driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          git mv src-tauri/src/channel/local_shell_channel.rs src-tauri/src/plugins/local_shell/driver.rs
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src-tauri/src/plugins/local_shell/driver.rs')
+          s=p.read_text()
+          s=s.replace('//! Local Shell PTY 通道。','//! Local Shell PTY transport driver。')
+          s=s.replace('向通用同步 I/O loop 暴露可超时的 `Read`。这样 PTY 无输出时仍能及时','向 transport actor 暴露可区分 Idle/EOF 的字节流。这样 PTY 无输出时仍能及时')
+          s=s.replace('use crate::channel::error::ChannelError;\nuse crate::channel::{Channel, DisconnectInfo};\n', 'use crate::transport::{ReadStatus, StreamCloseMetadata, TransportError};\n')
+          s=s.replace('pub struct LocalShellChannel', 'pub struct LocalShellDriver')
+          s=s.replace('impl LocalShellChannel', 'impl LocalShellDriver')
+          s=s.replace('Result<Self, ChannelError>', 'std::io::Result<Self>')
+          s=s.replace('.map_err(ChannelError::Io)?', '?')
+          s=s.replace('impl Read for LocalShellChannel', 'impl Read for LocalShellDriver')
+          s=s.replace('impl Write for LocalShellChannel', 'impl Write for LocalShellDriver')
+          start=s.index('impl Channel for LocalShellDriver {')
+          end=s.index('\nimpl Drop for LocalShellDriver', start)
+          replacement='''impl crate::transport::BlockingByteStream for LocalShellDriver {\n    fn read(&mut self, buf: &mut [u8]) -> Result<ReadStatus, TransportError> {\n        match Read::read(self, buf) {\n            Ok(n) if n > 0 => Ok(ReadStatus::Data(n)),\n            Ok(_) => Ok(ReadStatus::Idle),\n            Err(error) if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => Ok(ReadStatus::Idle),\n            Err(error) if matches!(error.kind(), std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof) => Ok(ReadStatus::Eof),\n            Err(error) => Err(TransportError::io("local_shell_read", error)),\n        }\n    }\n\n    fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {\n        Write::write_all(self, data).map_err(|error| TransportError::io("local_shell_write", error))\n    }\n\n    fn flush(&mut self) -> Result<(), TransportError> {\n        Write::flush(self).map_err(|error| TransportError::io("local_shell_flush", error))\n    }\n\n    fn shutdown(&mut self) -> Result<(), TransportError> {\n        self.shutdown_process();\n        Ok(())\n    }\n\n    fn resize_terminal(&mut self, cols: u32, rows: u32) -> Result<(), TransportError> {\n        self.master\n            .resize(PtySize {\n                rows: rows.clamp(1, u16::MAX as u32) as u16,\n                cols: cols.clamp(1, u16::MAX as u32) as u16,\n                pixel_width: 0,\n                pixel_height: 0,\n            })\n            .map_err(|error| TransportError::io("local_shell_resize", io_other(format!("PTY resize failed: {error}"))))\n    }\n\n    fn supports_terminal_control(&self) -> bool {\n        true\n    }\n\n    fn close_metadata(&self) -> StreamCloseMetadata {\n        self.exit_snapshot()\n            .map(|exit| StreamCloseMetadata { exit_code: Some(exit.code), signal: exit.signal })\n            .unwrap_or_default()\n    }\n}\n'''
+          s=s[:start]+replacement+s[end:]
+          s=s.replace('impl Drop for LocalShellDriver', 'impl Drop for LocalShellDriver')
+          s=s.replace('LocalShellChannel::spawn', 'LocalShellDriver::spawn')
+          s=s.replace('channel.resize_pty(132, 43).expect("resize PTY");', 'crate::transport::BlockingByteStream::resize_terminal(&mut channel, 132, 43).expect("resize PTY");')
+          s=s.replace('let info = channel.disconnect_info(DisconnectInfo::io_error("fallback"));\n        assert_eq!(info.exit_code, Some(7));\n        assert!(info.retain_terminal);', 'let info = crate::transport::BlockingByteStream::close_metadata(&channel);\n        assert_eq!(info.exit_code, Some(7));')
+          s=s.replace('assert!(channel.is_connected());\n        channel.shutdown().expect("shutdown shell");', 'assert!(channel.running.load(Ordering::SeqCst));\n        crate::transport::BlockingByteStream::shutdown(&mut channel).expect("shutdown shell");')
+          p.write_text(s)
+
+          p=Path('src-tauri/src/plugins/local_shell/mod.rs')
+          s=p.read_text()
+          s=s.replace('//! 细节封装在 `LocalShellChannel`，调用方只接触 `ProtocolAdapter` interface。', '//! 细节封装在 `LocalShellDriver`，调用方只接触 `ProtocolAdapter` 与 DataPlane。')
+          s=s.replace('use crate::channel::error::SessionError;\nuse crate::channel::local_shell_channel::LocalShellChannel;\nuse crate::channel::{ContentType, IoStrategy};\n', 'mod driver;\n\nuse crate::session::SessionError;\nuse crate::transport::DataPlaneRuntime;\nuse driver::LocalShellDriver;\n')
+          s=s.replace('    ChannelKind, ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection,\n    SessionChannelFactory, TransferProtocolType,\n', '    ChannelOpenMode, ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection,\n    SessionChannelFactory, TransferProtocolType,\n')
+          s=s.replace('        let channel = factory.open_channel(mode).await?;\n        Ok(ProtocolConnection {\n            channel: Some(channel),\n            comm_handle: None,', '        let data_plane = factory.open_channel(mode).await?;\n        Ok(ProtocolConnection {\n            data_plane: Some(data_plane),')
+          s=s.replace('async fn open_channel(&self, mode: ChannelOpenMode) -> Result<ChannelKind, SessionError> {', 'async fn open_channel(&self, mode: ChannelOpenMode) -> Result<DataPlaneRuntime, SessionError> {')
+          s=s.replace('LocalShellChannel::spawn(&executable, &self.resolved.args, &self.resolved.cwd)\n                        .map_err(SessionError::ChannelError)?;\n                Ok(ChannelKind::Sync(Box::new(channel)))', 'LocalShellDriver::spawn(&executable, &self.resolved.args, &self.resolved.cwd)\n                        .map_err(SessionError::Io)?;\n                Ok(DataPlaneRuntime::spawn(Box::new(channel)))')
+          s=s.replace('                        .map_err(SessionError::ChannelError)?;\n                    Ok(ChannelKind::Sync(Box::new(channel)))', '                        .map_err(SessionError::Io)?;\n                    Ok(DataPlaneRuntime::spawn(Box::new(channel)))')
+          s=s.replace('\n    fn io_strategy(&self) -> IoStrategy {\n        IoStrategy::Sync\n    }\n', '\n')
+          p.write_text(s)
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+          git diff --check
+      - name: Commit Local Shell migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src-tauri/src/plugins/local_shell src-tauri/src/channel/local_shell_channel.rs
+          git commit -m '[local-shell-bot] migrate PTY driver to DataPlane'
+          git push origin HEAD:feat/transport-runtime-modbus
