@@ -14,6 +14,10 @@ use std::sync::Arc;
 /// generic byte I/O path is exclusively DataPlane. Generic file-transfer capability is exposed
 /// directly through `create_file_transfer`; plugin-specific command registries are migrated away
 /// from `as_any` separately.
+pub trait SessionAttach: Send + Sync {
+    fn on_attached(&self, session_id: &str);
+}
+
 pub trait SideChannel: Send + Sync {
     fn as_any(&self) -> &dyn Any;
 
@@ -64,6 +68,7 @@ pub struct ProtocolConnection {
     pub data_plane: Option<DataPlaneRuntime>,
     pub side_channel: Option<Arc<dyn SideChannel>>,
     pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
+    pub on_attached: Option<Arc<dyn SessionAttach>>,
     pub teardown_delay: std::time::Duration,
 }
 
@@ -170,7 +175,10 @@ pub trait ProtocolAdapter: Send + Sync {
         std::time::Duration::ZERO
     }
 
-    fn create_file_transfer(&self, connection: &ProtocolConnection) -> Option<Arc<dyn FileTransfer>> {
+    fn create_file_transfer(
+        &self,
+        connection: &ProtocolConnection,
+    ) -> Option<Arc<dyn FileTransfer>> {
         connection
             .side_channel
             .as_ref()

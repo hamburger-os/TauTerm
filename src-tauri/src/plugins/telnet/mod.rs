@@ -13,12 +13,13 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use telnet::{Action, Telnet, TelnetOption};
 
-use crate::channel::error::SessionError;
-use crate::channel::{ContentType, IoStrategy};
+use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    ChannelKind, EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
+    EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach, TransferProtocolType,
 };
-use channel::{TelnetChannel, READ_TIMEOUT};
+use crate::session::SessionError;
+use crate::transport::DataPlaneRuntime;
+use channel::{TelnetDriver, READ_TIMEOUT};
 
 // ── Telnet 配置 ──────────────────────────────────────
 
@@ -40,6 +41,18 @@ impl Default for TelnetConfig {
         Self {
             host: String::new(),
             port: 23,
+        }
+    }
+}
+
+struct TelnetSessionAttach {
+    slot: Arc<Mutex<Option<String>>>,
+}
+
+impl SessionAttach for TelnetSessionAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut slot) = self.slot.lock() {
+            *slot = Some(session_id.to_string());
         }
     }
 }
@@ -182,13 +195,15 @@ impl ProtocolAdapter for TelnetAdapter {
                 ),
             }
         });
-        let channel = TelnetChannel::new(telnet, probe, on_echo_change, session_id_slot);
+        let driver = TelnetDriver::new(telnet, probe, on_echo_change, session_id_slot.clone());
 
         Ok(ProtocolConnection {
-            channel: Some(ChannelKind::Sync(Box::new(channel))),
-            comm_handle: None,
+            data_plane: Some(DataPlaneRuntime::spawn(Box::new(driver))),
             side_channel: None,
             channel_factory: None,
+            on_attached: Some(Arc::new(TelnetSessionAttach {
+                slot: session_id_slot,
+            })),
             teardown_delay: self.teardown_delay(),
         })
     }
@@ -205,10 +220,6 @@ impl ProtocolAdapter for TelnetAdapter {
         vec![]
     }
 
-    fn io_strategy(&self) -> IoStrategy {
-        IoStrategy::Sync
-    }
-
     fn teardown_delay(&self) -> std::time::Duration {
         Duration::ZERO
     }
@@ -222,7 +233,6 @@ impl ProtocolAdapter for TelnetAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::channel::Channel;
     use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpListener, TcpStream};
     use std::sync::mpsc::{self, Receiver};
@@ -240,13 +250,13 @@ mod tests {
         (handle, addr)
     }
 
-    /// 建立 TelnetChannel（与适配器 connect 相同路径），等待对端 accept，
+    /// 建立 TelnetDriver（与适配器 connect 相同路径），等待对端 accept，
     /// 返回 (channel, peer, echo_rx)：echo_rx 收集回显状态回调调用（bool）。
     /// 测试中回调用 std mpsc 收集，语义与原事件通道一致。
     fn connect_channel(
         peer_handle: JoinHandle<TcpStream>,
         addr: SocketAddr,
-    ) -> (TelnetChannel, TcpStream, Receiver<bool>) {
+    ) -> (TelnetDriver, TcpStream, Receiver<bool>) {
         let config = TelnetConfig {
             host: "127.0.0.1".into(),
             port: addr.port(),
@@ -256,7 +266,7 @@ mod tests {
         let on_echo_change = Box::new(move |local_echo: bool| {
             let _ = events_tx.send(local_echo);
         });
-        let channel = TelnetChannel::new(telnet, probe, on_echo_change, Arc::new(Mutex::new(None)));
+        let channel = TelnetDriver::new(telnet, probe, on_echo_change, Arc::new(Mutex::new(None)));
         let peer = peer_handle.join().expect("对端线程失败");
         (channel, peer, events_rx)
     }

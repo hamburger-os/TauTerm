@@ -129,14 +129,16 @@ impl ProtocolAdapter for SerialAdapter {
             data_plane: Some(DataPlaneRuntime::spawn(Box::new(driver))),
             side_channel: None,
             channel_factory: None,
+            on_attached: None,
             teardown_delay: self.teardown_delay(),
         })
     }
 
     fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError> {
-        let ports = serialport::available_ports().map_err(|error| SessionError::ConnectionFailed {
-            reason: error.to_string(),
-        })?;
+        let ports =
+            serialport::available_ports().map_err(|error| SessionError::ConnectionFailed {
+                reason: error.to_string(),
+            })?;
 
         Ok(ports
             .into_iter()

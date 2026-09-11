@@ -9,7 +9,6 @@ pub mod error;
 pub mod io_loop;
 pub mod serial_channel;
 pub mod serial_comm;
-pub mod ssh_channel;
 
 use error::ChannelError;
 use serde::{Deserialize, Serialize};

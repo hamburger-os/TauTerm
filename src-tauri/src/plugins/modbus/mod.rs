@@ -13,11 +13,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::channel::error::SessionError;
-use crate::channel::{ContentType, IoStrategy};
 use crate::commands::ConnectSessionRequest;
+use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{ProtocolAdapter, ProtocolConnection, SideChannel};
 use crate::kernel::session_store::ContainerSessionCreateOptions;
+use crate::session::SessionError;
 use crate::transport::runtime::DataPlaneRuntime;
 use crate::transport::serial::open_serial;
 use crate::transport::tcp::connect_tcp;
@@ -108,8 +108,7 @@ impl ProtocolAdapter for ModbusAdapter {
         };
 
         Ok(ProtocolConnection {
-            channel: None,
-            comm_handle: None,
+            data_plane: None,
             side_channel: Some(Arc::new(ModbusSideChannel {
                 config,
                 client,
@@ -117,16 +116,13 @@ impl ProtocolAdapter for ModbusAdapter {
                 watch,
             })),
             channel_factory: None,
+            on_attached: None,
             teardown_delay: std::time::Duration::ZERO,
         })
     }
 
     fn content_type(&self) -> ContentType {
         ContentType::Custom
-    }
-
-    fn io_strategy(&self) -> IoStrategy {
-        IoStrategy::Sync
     }
 }
 

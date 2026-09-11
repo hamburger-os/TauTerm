@@ -1,4 +1,4 @@
-//! Telnet 通道实现
+//! Telnet transport driver
 //!
 //! 包装 `telnet` crate 的 `Telnet`（RFC 854 协议层：IAC 解析、0xFF 转义、
 //! 协商/子协商收发）实现内核 `Channel` trait。
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use telnet::{Action, Event, Telnet, TelnetOption};
 
-use crate::channel::{error::ChannelError, Channel};
+use crate::transport::{BlockingByteStream, ReadStatus, TransportError, TransportErrorKind};
 
 /// 通道读超时：驱动 read() 排空循环终止（与串口 50ms 读超时策略一致）
 pub(crate) const READ_TIMEOUT: Duration = Duration::from_millis(50);
@@ -19,7 +19,7 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_millis(50);
 ///
 /// 包装 `telnet::Telnet`。`probe` 为 `try_clone` 的 socket 句柄，
 /// 用于 EOF 检测与超时管理（克隆共享底层 socket 与超时配置）。
-pub struct TelnetChannel {
+pub struct TelnetDriver {
     telnet: Telnet,
     probe: std::net::TcpStream,
     /// 回显状态变化回调（由适配器注入；内部捕获 AppHandle 与 session_id 槽）
@@ -34,7 +34,7 @@ pub struct TelnetChannel {
     connected: bool,
 }
 
-impl TelnetChannel {
+impl TelnetDriver {
     pub fn new(
         telnet: Telnet,
         probe: std::net::TcpStream,
@@ -119,7 +119,7 @@ impl TelnetChannel {
     }
 }
 
-impl Read for TelnetChannel {
+impl Read for TelnetDriver {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // 残留数据优先交付：上次 read() 未消费完的净载荷先返回（不排空），
         // 由 I/O 循环连续 read 追平。绝不因清除缓冲而丢弃数据。
@@ -195,7 +195,7 @@ impl Read for TelnetChannel {
     }
 }
 
-impl TelnetChannel {
+impl TelnetDriver {
     /// 从 clean_buffer 头部拷贝最多 `buf.len()` 字节并原地移除已消费前缀，
     /// 余量保留供下一次 read() 继续消费（顺序正确：残留在前，新数据在后）。
     fn serve_clean(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -208,7 +208,7 @@ impl TelnetChannel {
     }
 }
 
-impl Write for TelnetChannel {
+impl Write for TelnetDriver {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         // crate 的 write() 已处理 0xFF → IAC IAC 转义（BINARY 模式安全）
         self.telnet.write(buf)
@@ -219,26 +219,33 @@ impl Write for TelnetChannel {
     }
 }
 
-impl Channel for TelnetChannel {
-    /// I/O 循环启动回调：注入 session_id，保证回显事件 emit 携带正确的会话标识。
-    /// I/O 循环在读循环前调用此钩子，故协商事件触发回调时槽必已注入。
-    fn on_session_started(&mut self, session_id: &str) {
-        *self.session_id_slot.lock().unwrap() = Some(session_id.to_string());
+impl BlockingByteStream for TelnetDriver {
+    fn read(&mut self, buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+        match Read::read(self, buf) {
+            Ok(0) => Ok(ReadStatus::Idle),
+            Ok(n) => Ok(ReadStatus::Data(n)),
+            Err(error) if error.kind() == ErrorKind::UnexpectedEof => Ok(ReadStatus::Eof),
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                Ok(ReadStatus::Idle)
+            }
+            Err(error) => Err(TransportError::io("telnet_read", error)),
+        }
     }
 
-    fn is_connected(&self) -> bool {
-        self.connected
+    fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
+        Write::write_all(self, data).map_err(|error| TransportError::io("telnet_write", error))
     }
 
-    fn set_timeout(&mut self, dur: Duration) -> Result<(), ChannelError> {
-        self.probe
-            .set_read_timeout(Some(dur))
-            .map_err(ChannelError::Io)
+    fn flush(&mut self) -> Result<(), TransportError> {
+        Write::flush(self).map_err(|error| TransportError::io("telnet_flush", error))
     }
 
-    /// 发送 NAWS 窗口尺寸（RFC 1073）：
-    /// `IAC SB NAWS w_hi w_lo h_hi h_lo IAC SE`（如 132×43 → FF FA 1F 00 84 00 2B FF F0）
-    fn resize_pty(&mut self, cols: u32, rows: u32) -> Result<(), ChannelError> {
+    fn shutdown(&mut self) -> Result<(), TransportError> {
+        self.connected = false;
+        Ok(())
+    }
+
+    fn resize_terminal(&mut self, cols: u32, rows: u32) -> Result<(), TransportError> {
         let w = cols.clamp(1, u16::MAX as u32) as u16;
         let h = rows.clamp(1, u16::MAX as u32) as u16;
         let payload = [
@@ -249,6 +256,12 @@ impl Channel for TelnetChannel {
         ];
         self.telnet
             .subnegotiate(TelnetOption::NAWS, &payload)
-            .map_err(|e| ChannelError::Io(std::io::Error::other(format!("NAWS 发送失败: {e}"))))
+            .map_err(|error| {
+                TransportError::new(TransportErrorKind::Io, "telnet_naws", error.to_string())
+            })
+    }
+
+    fn supports_terminal_control(&self) -> bool {
+        true
     }
 }

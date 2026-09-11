@@ -24,7 +24,6 @@ use std::time::Duration;
 use serde_json::Value;
 use tauri::{Emitter, Manager};
 
-use crate::channel::error::SessionError;
 use crate::channel::io_loop::IoLoopCmd;
 use crate::kernel::comm_handle::{CommHandle, DataCallback};
 use crate::kernel::data_batcher::base64_encode;
@@ -33,6 +32,7 @@ use crate::kernel::plugin_adapter::{
     ChannelKind, ProtocolAdapter, ProtocolConnection, SideChannel,
 };
 use crate::kernel::session_store::PeerChannelRegistration;
+use crate::session::SessionError;
 
 mod comm;
 mod tcp_channel;
@@ -710,12 +710,8 @@ impl ProtocolAdapter for NetworkAdapter {
         })
     }
 
-    fn content_type(&self) -> crate::channel::ContentType {
-        crate::channel::ContentType::Custom
-    }
-
-    fn io_strategy(&self) -> crate::channel::IoStrategy {
-        crate::channel::IoStrategy::Sync
+    fn content_type(&self) -> crate::kernel::plugin_adapter::ContentType {
+        crate::kernel::plugin_adapter::ContentType::Custom
     }
 }
 

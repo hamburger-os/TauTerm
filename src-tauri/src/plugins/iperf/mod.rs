@@ -22,11 +22,11 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel::error::SessionError;
-use crate::channel::{ContentType, IoStrategy};
+use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
 };
+use crate::session::SessionError;
 
 // ── 基础枚举 ─────────────────────────────────────────────
 
@@ -383,20 +383,16 @@ impl ProtocolAdapter for IperfAdapter {
         let side_channel = Arc::new(IperfSideChannel::new(config));
 
         Ok(ProtocolConnection {
-            channel: None,
-            comm_handle: None,
+            data_plane: None,
             side_channel: Some(side_channel),
             channel_factory: None,
+            on_attached: None,
             teardown_delay: Duration::from_millis(100),
         })
     }
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal // 前端通过 manifest.content_type="custom" 路由
-    }
-
-    fn io_strategy(&self) -> IoStrategy {
-        IoStrategy::Async
     }
 
     fn transfer_protocols(&self) -> Vec<TransferProtocolType> {

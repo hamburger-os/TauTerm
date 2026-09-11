@@ -18,11 +18,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel::error::SessionError;
-use crate::channel::{ContentType, IoStrategy};
+use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
 };
+use crate::session::SessionError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TftpConfig {
@@ -327,20 +327,16 @@ impl ProtocolAdapter for TftpAdapter {
         let side_channel = Arc::new(TftpSideChannel::new(Arc::new(socket), config));
 
         Ok(ProtocolConnection {
-            channel: None,
-            comm_handle: None,
+            data_plane: None,
             side_channel: Some(side_channel),
             channel_factory: None,
+            on_attached: None,
             teardown_delay: Duration::from_millis(100),
         })
     }
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn io_strategy(&self) -> IoStrategy {
-        IoStrategy::Async
     }
 
     fn transfer_protocols(&self) -> Vec<TransferProtocolType> {

@@ -5,6 +5,7 @@
 //! 文件服务（SFTP）通过独立的侧通道操作，不中断终端 I/O 循环。
 //! russh Handle 内部线程安全，终端 I/O 与 SFTP 可安全并发。
 
+mod driver;
 pub mod handler;
 pub mod journald;
 mod known_hosts;
@@ -15,14 +16,15 @@ use std::time::Duration;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
-use crate::channel::error::SessionError;
-use crate::channel::ssh_channel::SshChannel;
-use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::file_transfer::FileTransfer;
+use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    ChannelKind, ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection,
-    SessionChannelFactory, SideChannel, TransferProtocolType,
+    ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionChannelFactory,
+    SideChannel, TransferProtocolType,
 };
+use crate::session::SessionError;
+use crate::transport::{AsyncBridgeDriver, DataPlaneRuntime};
+use driver::SshDriver;
 use handler::SshHandler;
 use known_hosts::{HostTrustDecision, KnownHostStore};
 
@@ -107,13 +109,12 @@ impl SshAdapter {
             result.host_key_fingerprint,
             result.home_dir,
         ));
+        let bridge = AsyncBridgeDriver::new(Box::new(result.driver))?;
         Ok(ProtocolConnection {
-            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(
-                result.channel,
-            ))),
-            comm_handle: None,
+            data_plane: Some(DataPlaneRuntime::spawn(Box::new(bridge))),
             side_channel: Some(shared.clone()),
             channel_factory: Some(shared),
+            on_attached: None,
             teardown_delay: self.teardown_delay(),
         })
     }
@@ -272,9 +273,9 @@ impl SessionChannelFactory for SshSideChannel {
                 capability: "elevated_shell".into(),
             });
         }
-        Ok(ChannelKind::Async(Box::new(
-            open_pty_shell_channel(self.handle()).await?,
-        )))
+        let driver = open_pty_shell_channel(self.handle()).await?;
+        let bridge = AsyncBridgeDriver::new(Box::new(driver))?;
+        Ok(DataPlaneRuntime::spawn(Box::new(bridge)))
     }
 
     fn child_name_prefix(&self) -> &'static str {
@@ -284,7 +285,7 @@ impl SessionChannelFactory for SshSideChannel {
 
 /// 建立连接的产物
 struct BuildConnectionResult {
-    channel: SshChannel,
+    driver: SshDriver,
     session: Arc<russh::client::Handle<SshHandler>>,
     /// 主机密钥 SHA256 指纹（如 "SHA256:xxxx"），供前端展示/确认
     host_key_fingerprint: Option<String>,
@@ -542,7 +543,7 @@ async fn build_connection_with_config(
     let ssh_channel = open_pty_shell_channel(handle.clone()).await?;
 
     Ok(BuildConnectionResult {
-        channel: ssh_channel,
+        driver: ssh_channel,
         session: handle,
         host_key_fingerprint,
         home_dir,
@@ -555,7 +556,7 @@ async fn build_connection_with_config(
 /// Tauri 命令（SSH 多连接）共用。跳过了 TCP 连接、密钥验证和认证步骤。
 pub async fn open_pty_shell_channel(
     handle: Arc<russh::client::Handle<SshHandler>>,
-) -> Result<SshChannel, SessionError> {
+) -> Result<SshDriver, SessionError> {
     // 1. 打开交互式 shell 通道
     let channel =
         handle
@@ -581,9 +582,7 @@ pub async fn open_pty_shell_channel(
             reason: format!("启动 shell 失败: {}", e),
         })?;
 
-    let ssh_channel = SshChannel::new(channel, handle);
-
-    Ok(ssh_channel)
+    Ok(SshDriver::new(channel, handle))
 }
 
 #[async_trait::async_trait]
@@ -602,11 +601,6 @@ impl ProtocolAdapter for SshAdapter {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn io_strategy(&self) -> IoStrategy {
-        // russh 是 async API，使用异步 I/O 循环
-        IoStrategy::Async
     }
 
     fn transfer_protocols(&self) -> Vec<TransferProtocolType> {

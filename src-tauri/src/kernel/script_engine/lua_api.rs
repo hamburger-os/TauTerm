@@ -71,9 +71,7 @@ pub fn inject_lua_api(
             targeted_text_io
                 .send_to_text(&target, &bytes)
                 .map(|_| ())
-                .map_err(|error| {
-                    mlua::Error::RuntimeError(format!("send_to_text 失败: {error}"))
-                })
+                .map_err(|error| mlua::Error::RuntimeError(format!("send_to_text 失败: {error}")))
         })?;
     globals.set("send_to_text", send_to_text_fn)?;
 
@@ -164,8 +162,9 @@ pub fn inject_lua_api(
         lua.create_function(|lua, (pattern, data): (mlua::String, mlua::String)| {
             let pat_str = pattern.to_str()?;
             let data_str = data.to_str()?;
-            let re = regex::Regex::new(&pat_str)
-                .map_err(|error| mlua::Error::RuntimeError(format!("正则表达式语法错误: {error}")))?;
+            let re = regex::Regex::new(&pat_str).map_err(|error| {
+                mlua::Error::RuntimeError(format!("正则表达式语法错误: {error}"))
+            })?;
             if let Some(caps) = re.captures(&data_str) {
                 let result = lua.create_table()?;
                 for (index, cap) in caps.iter().enumerate() {

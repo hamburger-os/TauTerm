@@ -72,14 +72,12 @@ impl ScriptEngine {
     ) -> Result<Self, ScriptEngineError> {
         let lua = create_sandboxed_lua()?;
         inject_lua_api(&lua, io, app_handle.clone(), session_id, shutdown)?;
-        let feed_fn = lua
-            .load(FEED_CODE)
-            .into_function()
-            .map_err(|error| ScriptEngineError::LuaError(format!("预编译 feed_fn 失败: {error}")))?;
-        let tick_fn = lua
-            .load(TICK_CODE)
-            .into_function()
-            .map_err(|error| ScriptEngineError::LuaError(format!("预编译 tick_fn 失败: {error}")))?;
+        let feed_fn = lua.load(FEED_CODE).into_function().map_err(|error| {
+            ScriptEngineError::LuaError(format!("预编译 feed_fn 失败: {error}"))
+        })?;
+        let tick_fn = lua.load(TICK_CODE).into_function().map_err(|error| {
+            ScriptEngineError::LuaError(format!("预编译 tick_fn 失败: {error}"))
+        })?;
         Ok(Self {
             lua,
             app_handle,
@@ -149,7 +147,10 @@ impl From<mlua::Error> for ScriptEngineError {
     }
 }
 
-fn drain_data_plane(engine: &ScriptEngine, subscription: &mut Option<DataPlaneSubscription>) -> bool {
+fn drain_data_plane(
+    engine: &ScriptEngine,
+    subscription: &mut Option<DataPlaneSubscription>,
+) -> bool {
     let Some(subscription) = subscription.as_ref() else {
         return true;
     };

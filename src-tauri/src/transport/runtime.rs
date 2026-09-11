@@ -31,8 +31,6 @@ impl TransportCloseInfo {
     fn from_driver(
         kind: TransportErrorKind,
         reason: impl Into<String>,
-        exit_code: None,
-        signal: None,
         metadata: StreamCloseMetadata,
     ) -> Self {
         Self {
