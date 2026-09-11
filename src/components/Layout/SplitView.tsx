@@ -34,7 +34,6 @@ interface SplitViewProps {
   onSplitPane: (paneId: PaneId, edge: SplitEdge) => void;
   onClearPane: (paneId: PaneId) => void;
   onClosePane: (paneId: PaneId) => void;
-  onResetPaneRatio: (paneId: PaneId) => void;
   onResizeSplit: (splitId: string, ratio: number) => void;
 }
 
@@ -146,7 +145,6 @@ export default function SplitView({
   onSplitPane,
   onClearPane,
   onClosePane,
-  onResetPaneRatio,
   onResizeSplit,
 }: SplitViewProps) {
   const { t } = useTranslation();
@@ -335,11 +333,6 @@ export default function SplitView({
         label: t("split.splitDown", { defaultValue: "向下分屏" }),
         disabled: !canSplitDown,
       },
-      {
-        id: "reset-pane-ratio",
-        label: t("split.resetRatio", { defaultValue: "均分当前分屏" }),
-        disabled: paneCount <= 1,
-      },
       { id: "pane-separator-2", label: "", type: "separator" },
       {
         id: "close-pane",
@@ -363,14 +356,11 @@ export default function SplitView({
       case "split-down":
         onSplitPane(paneId, "bottom");
         break;
-      case "reset-pane-ratio":
-        onResetPaneRatio(paneId);
-        break;
       case "close-pane":
         onClosePane(paneId);
         break;
     }
-  }, [paneMenu, onClearPane, onClosePane, onResetPaneRatio, onSplitPane]);
+  }, [paneMenu, onClearPane, onClosePane, onSplitPane]);
 
   const previewRect = useMemo(() => {
     if (!hoveredSplit || paneCount >= MAX_WORKSPACE_PANES) return null;
