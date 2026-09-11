@@ -725,6 +725,127 @@ pub async fn stop_journald_stream_confirm(session_id: &str) {
 
 // ── Streaming export ─────────────────────────────────────────────────
 
+enum ExportOutcome {
+    Complete { total: usize },
+    Cancelled,
+    Error(String),
+}
+
+struct TempExportFile {
+    path: String,
+    keep: bool,
+}
+
+impl Drop for TempExportFile {
+    fn drop(&mut self) {
+        if !self.keep {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+async fn run_journald_export_task(
+    session: &Arc<russh::client::Handle<SshHandler>>,
+    app_handle: &AppHandle,
+    session_id: &str,
+    filters: &JournaldQueryFilters,
+    target_path: &str,
+    operation: &OperationState,
+) -> ExportOutcome {
+    let temporary_path = format!("{}.{}.tmp", target_path, uuid::Uuid::new_v4());
+    let mut temp_guard = TempExportFile {
+        path: temporary_path.clone(),
+        keep: false,
+    };
+    let mut file = match tokio::fs::File::create(&temporary_path).await {
+        Ok(file) => file,
+        Err(error) => {
+            return ExportOutcome::Error(format!("create export file failed: {error}"));
+        }
+    };
+    if let Err(error) = file.write_all(b"[\n").await {
+        return ExportOutcome::Error(format!("write export file failed: {error}"));
+    }
+
+    let mut cursor: Option<String> = None;
+    let mut total = 0usize;
+    let mut first = true;
+    let mut last_progress = std::time::Instant::now()
+        .checked_sub(Duration::from_secs(1))
+        .unwrap_or_else(std::time::Instant::now);
+
+    loop {
+        if operation.is_cancelled() {
+            return ExportOutcome::Cancelled;
+        }
+        let page =
+            match journald_query_page(session, filters, cursor.as_deref(), EXPORT_PAGE_LIMIT).await {
+                Ok(page) => page,
+                Err(error) => {
+                    return ExportOutcome::Error(format!("query failed: {error}"));
+                }
+            };
+
+        for entry in &page.entries {
+            if operation.is_cancelled() {
+                return ExportOutcome::Cancelled;
+            }
+            if !first {
+                if let Err(error) = file.write_all(b",\n").await {
+                    return ExportOutcome::Error(format!("write export file failed: {error}"));
+                }
+            }
+            first = false;
+            let json = match serde_json::to_vec(entry) {
+                Ok(json) => json,
+                Err(error) => {
+                    return ExportOutcome::Error(format!("serialize log entry failed: {error}"));
+                }
+            };
+            if let Err(error) = file.write_all(&json).await {
+                return ExportOutcome::Error(format!("write export file failed: {error}"));
+            }
+        }
+
+        total += page.entries.len();
+        let final_page = !page.has_more || page.next_cursor.is_none();
+        let now = std::time::Instant::now();
+        if final_page || now.duration_since(last_progress) >= Duration::from_millis(200) {
+            let _ = app_handle.emit(
+                "journald:export-progress",
+                serde_json::json!({ "session_id": session_id, "loaded": total }),
+            );
+            last_progress = now;
+        }
+        if final_page {
+            break;
+        }
+        cursor = page.next_cursor;
+    }
+
+    if let Err(error) = file.write_all(b"\n]\n").await {
+        return ExportOutcome::Error(format!("write export file failed: {error}"));
+    }
+    if let Err(error) = file.flush().await {
+        return ExportOutcome::Error(format!("flush export file failed: {error}"));
+    }
+    drop(file);
+
+    if operation.is_cancelled() {
+        return ExportOutcome::Cancelled;
+    }
+    if let Err(first_error) = tokio::fs::rename(&temporary_path, target_path).await {
+        let _ = tokio::fs::remove_file(target_path).await;
+        if let Err(second_error) = tokio::fs::rename(&temporary_path, target_path).await {
+            return ExportOutcome::Error(format!(
+                "save export file failed: {second_error} (initial rename: {first_error})"
+            ));
+        }
+    }
+    temp_guard.keep = true;
+    ExportOutcome::Complete { total }
+}
+
 pub async fn start_journald_export(
     session: &Arc<russh::client::Handle<SshHandler>>,
     app_handle: AppHandle,
@@ -739,168 +860,38 @@ pub async fn start_journald_export(
     let session = session.clone();
     let filters = filters.clone();
     let sid = session_id.clone();
-    let target_path = file_path.clone();
+    let target_path = file_path;
 
     tokio::spawn(async move {
-        let _guard = guard;
-        let temporary_path = format!("{}.tmp", target_path);
+        let outcome = run_journald_export_task(
+            &session,
+            &app_handle,
+            &sid,
+            &filters,
+            &target_path,
+            &operation,
+        )
+        .await;
 
-        struct TempFileGuard {
-            path: String,
-            keep: bool,
-        }
-        impl Drop for TempFileGuard {
-            fn drop(&mut self) {
-                if !self.keep {
-                    let _ = std::fs::remove_file(&self.path);
-                }
-            }
-        }
+        // Terminal events are completion signals for the UI. Release the
+        // operation registry first so an immediate next export cannot observe
+        // the previous task as still running.
+        drop(guard);
 
-        let mut temp_guard = TempFileGuard {
-            path: temporary_path.clone(),
-            keep: false,
-        };
-        let mut file = match tokio::fs::File::create(&temporary_path).await {
-            Ok(file) => file,
-            Err(error) => {
-                emit_export_error(
-                    &app_handle,
-                    &sid,
-                    format!("create export file failed: {error}"),
-                );
-                return;
-            }
-        };
-        if let Err(error) = file.write_all(b"[\n").await {
-            emit_export_error(
-                &app_handle,
-                &sid,
-                format!("write export file failed: {error}"),
-            );
-            return;
-        }
-
-        let mut cursor: Option<String> = None;
-        let mut total = 0usize;
-        let mut first = true;
-        let mut last_progress = std::time::Instant::now()
-            .checked_sub(Duration::from_secs(1))
-            .unwrap_or_else(std::time::Instant::now);
-
-        loop {
-            if operation.is_cancelled() {
-                emit_export_cancelled(&app_handle, &sid);
-                return;
-            }
-            let page =
-                match journald_query_page(&session, &filters, cursor.as_deref(), EXPORT_PAGE_LIMIT)
-                    .await
-                {
-                    Ok(page) => page,
-                    Err(error) => {
-                        emit_export_error(&app_handle, &sid, format!("query failed: {error}"));
-                        return;
-                    }
-                };
-
-            for entry in &page.entries {
-                if operation.is_cancelled() {
-                    emit_export_cancelled(&app_handle, &sid);
-                    return;
-                }
-                if !first {
-                    if let Err(error) = file.write_all(b",\n").await {
-                        emit_export_error(
-                            &app_handle,
-                            &sid,
-                            format!("write export file failed: {error}"),
-                        );
-                        return;
-                    }
-                }
-                first = false;
-                let json = match serde_json::to_vec(entry) {
-                    Ok(json) => json,
-                    Err(error) => {
-                        emit_export_error(
-                            &app_handle,
-                            &sid,
-                            format!("serialize log entry failed: {error}"),
-                        );
-                        return;
-                    }
-                };
-                if let Err(error) = file.write_all(&json).await {
-                    emit_export_error(
-                        &app_handle,
-                        &sid,
-                        format!("write export file failed: {error}"),
-                    );
-                    return;
-                }
-            }
-
-            total += page.entries.len();
-            let final_page = !page.has_more || page.next_cursor.is_none();
-            let now = std::time::Instant::now();
-            if final_page || now.duration_since(last_progress) >= Duration::from_millis(200) {
+        match outcome {
+            ExportOutcome::Complete { total } => {
                 let _ = app_handle.emit(
-                    "journald:export-progress",
-                    serde_json::json!({ "session_id": sid, "loaded": total }),
+                    "journald:export-complete",
+                    serde_json::json!({
+                        "session_id": sid,
+                        "file_path": target_path,
+                        "total": total,
+                    }),
                 );
-                last_progress = now;
             }
-            if final_page {
-                break;
-            }
-            cursor = page.next_cursor;
+            ExportOutcome::Cancelled => emit_export_cancelled(&app_handle, &sid),
+            ExportOutcome::Error(message) => emit_export_error(&app_handle, &sid, message),
         }
-
-        if let Err(error) = file.write_all(b"\n]\n").await {
-            emit_export_error(
-                &app_handle,
-                &sid,
-                format!("write export file failed: {error}"),
-            );
-            return;
-        }
-        if let Err(error) = file.flush().await {
-            emit_export_error(
-                &app_handle,
-                &sid,
-                format!("flush export file failed: {error}"),
-            );
-            return;
-        }
-        drop(file);
-
-        if operation.is_cancelled() {
-            emit_export_cancelled(&app_handle, &sid);
-            return;
-        }
-        if let Err(first_error) = tokio::fs::rename(&temporary_path, &target_path).await {
-            let _ = tokio::fs::remove_file(&target_path).await;
-            if let Err(second_error) = tokio::fs::rename(&temporary_path, &target_path).await {
-                emit_export_error(
-                    &app_handle,
-                    &sid,
-                    format!(
-                        "save export file failed: {second_error} (initial rename: {first_error})"
-                    ),
-                );
-                return;
-            }
-        }
-        temp_guard.keep = true;
-        let _ = app_handle.emit(
-            "journald:export-complete",
-            serde_json::json!({
-                "session_id": sid,
-                "file_path": target_path,
-                "total": total,
-            }),
-        );
     });
     Ok(())
 }
