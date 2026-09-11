@@ -76,3 +76,12 @@ Transport 错误是结构化语义：resolve、connect、bind、timeout、permis
 ## Modbus
 
 Modbus RTU/ASCII 复用 Serial transport；Modbus TCP 复用 TCP transport。Modbus codec、transaction、polling、server state machine 保持在 Modbus plugin 内，Transport 不包含 CRC、LRC、MBAP、Unit ID 或功能码知识。
+
+## 代码锚点
+
+- `src-tauri/src/transport/mod.rs`
+- `src-tauri/src/transport/runtime.rs`
+- `src-tauri/src/transport/stream.rs`
+- `src-tauri/src/transport/serial.rs`
+- `src-tauri/src/transport/tcp.rs`
+- `src-tauri/src/transport/udp.rs`
