@@ -186,20 +186,31 @@
   ${If} ${FileExists} "$INSTDIR\setupc.exe"
     ${If} ${FileExists} "$COMMONAPPDATA\TauTerm\service\driver-owned.marker"
       SetOutPath "$INSTDIR"
-      ExecWait '"$SYSDIR\cmd.exe" /D /S /C ""$INSTDIR\setupc.exe" list | findstr.exe /R /C:"CNCA[0-9]" /C:"CNCB[0-9]" >nul 2>&1"' $R6
-      ${If} $R6 == 1
-        DetailPrint "TauTerm: Removing TauTerm-owned com0com driver..."
-        ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
-        ${If} $0 <> 0
-          Sleep 500
+
+      ; 先单独执行 list 并保留它自己的退出码。不能直接 `list | findstr`，否则
+      ; pipeline 只返回 findstr 的状态，setupc list 失败也可能被误判成“没有端口”。
+      ; 状态无法确认时必须 fail closed：保留共享驱动。
+      Delete "$TEMP\tauterm-com0com-list.txt"
+      ExecWait '"$SYSDIR\cmd.exe" /D /S /C ""$INSTDIR\setupc.exe" list > "$TEMP\tauterm-com0com-list.txt" 2>&1"' $R6
+      ${If} $R6 == 0
+        ExecWait '"$SYSDIR\findstr.exe" /R /C:"CNCA[0-9]" /C:"CNCB[0-9]" "$TEMP\tauterm-com0com-list.txt"' $R5
+        ${If} $R5 == 1
+          DetailPrint "TauTerm: Removing TauTerm-owned com0com driver..."
           ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
+          ${If} $0 <> 0
+            Sleep 500
+            ExecWait '"$INSTDIR\setupc.exe" uninstall' $0
+          ${EndIf}
+          DetailPrint "TauTerm: com0com driver removal completed with code $0."
+        ${ElseIf} $R5 == 0
+          DetailPrint "TauTerm: com0com port pairs still exist; shared driver left installed for safety."
+        ${Else}
+          DetailPrint "TauTerm: unable to parse com0com port state; shared driver left installed for safety."
         ${EndIf}
-        DetailPrint "TauTerm: com0com driver removal completed with code $0."
-      ${ElseIf} $R6 == 0
-        DetailPrint "TauTerm: com0com port pairs still exist; shared driver left installed for safety."
       ${Else}
-        DetailPrint "TauTerm: unable to verify com0com port ownership; shared driver left installed for safety."
+        DetailPrint "TauTerm: unable to query com0com port state; shared driver left installed for safety."
       ${EndIf}
+      Delete "$TEMP\tauterm-com0com-list.txt"
       SetOutPath "$TEMP"
     ${Else}
       DetailPrint "TauTerm: com0com was not installed by TauTerm; shared driver left untouched."
