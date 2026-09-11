@@ -64,7 +64,8 @@ orphan = owned_endpoints - active_endpoints
 6. 如果销毁因权限或系统状态暂时失败，只移除 active、保留 owned，此时才成为可提示的 orphan；
 7. 进程异常退出后，新进程没有 active owner，而持久化 owned 仍存在，因此这些端点自然成为可恢复清理的 orphan；
 8. 手动“清理残留端口”只能处理已证明属于 TauTerm 且当前非 active 的资源，禁止删除第三方/用户自行创建的 com0com bus；
-9. 特权服务模式同样使用 ownership 模型：`client_id` 负责当前连接的运行期归属，机器级 ownership 持久化到 ProgramData。客户端断开时只释放该客户端资源；服务自身崩溃或系统异常掉电后，重启只恢复/清理有 ownership 证据的 TauTerm orphan，绝不做驱动全局扫除。在线升级保留该状态，正式卸载时由 NSIS 清理。
+9. 特权服务模式同样使用 ownership 模型：`client_id` 负责当前连接的运行期归属，机器级 ownership 持久化到 ProgramData。客户端断开时只释放该客户端资源；服务自身崩溃或系统异常掉电后，重启只恢复/清理有 ownership 证据的 TauTerm orphan，绝不做驱动全局扫除。在线升级保留该状态，正式卸载时删除 TauTerm 的机器级 ownership 状态；
+10. com0com 驱动本身是系统级共享资源，与 TauTerm endpoint ownership 分开处理。安装器只在安装前确认系统没有 com0com、且本次由 TauTerm 成功装入驱动时记录 driver ownership；卸载时还必须确认驱动中已没有任何端口对才允许执行全局 driver uninstall。若驱动原本就存在、仍有第三方端口对，或无法确认状态，则保留共享驱动而不是冒险删除其它软件的资源。
 
 持久化状态采用当前唯一 schema，不保留旧版 bus-only 兼容逻辑；预稳定阶段发现旧/损坏 schema 时只备份用于诊断，并重新建立当前模型。
 
@@ -88,6 +89,7 @@ flowchart LR
 - 自动化发送、编码与日志继续复用公共能力，不建立串口专属第二套实现。
 - 当前已经采集设备 identity，但“热插拔后按 stable identity 自动匹配并重连”仍属于 Daily Driver 后续能力；不能把元数据采集宣传成已经完成自动重连。
 - orphan/cleanup 必须基于 TauTerm 所有权证据，绝不以驱动全局枚举结果作为删除授权。
+- 系统级共享驱动的卸载权限必须独立于 endpoint ownership 判断；不能因为 TauTerm 使用过 com0com 就默认拥有系统中的 com0com 安装。
 
 ## 代码锚点
 
