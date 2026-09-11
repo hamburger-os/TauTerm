@@ -778,13 +778,14 @@ async fn run_journald_export_task(
         if operation.is_cancelled() {
             return ExportOutcome::Cancelled;
         }
-        let page =
-            match journald_query_page(session, filters, cursor.as_deref(), EXPORT_PAGE_LIMIT).await {
-                Ok(page) => page,
-                Err(error) => {
-                    return ExportOutcome::Error(format!("query failed: {error}"));
-                }
-            };
+        let page = match journald_query_page(session, filters, cursor.as_deref(), EXPORT_PAGE_LIMIT)
+            .await
+        {
+            Ok(page) => page,
+            Err(error) => {
+                return ExportOutcome::Error(format!("query failed: {error}"));
+            }
+        };
 
         for entry in &page.entries {
             if operation.is_cancelled() {
