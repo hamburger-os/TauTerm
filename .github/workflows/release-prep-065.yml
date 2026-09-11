@@ -33,13 +33,14 @@ jobs:
           const fs = require('fs');
           const path = 'CHANGELOG.md';
           let text = fs.readFileSync(path, 'utf8');
-          if (/^## \[0\.6\.5\]/m.test(text)) process.exit(0);
-          const marker = '## [Unreleased]';
-          if (!text.startsWith(marker)) {
-            throw new Error('CHANGELOG.md must start with ## [Unreleased]');
+          if (!/^## \[0\.6\.5\]/m.test(text)) {
+            const marker = '## [Unreleased]';
+            if (!text.includes(marker)) {
+              throw new Error('CHANGELOG.md is missing ## [Unreleased]');
+            }
+            text = text.replace(marker, `${marker}\n\n## [0.6.5] — 2026-09-11`);
+            fs.writeFileSync(path, text);
           }
-          text = text.replace(marker, `${marker}\n\n## [0.6.5] — 2026-09-11`);
-          fs.writeFileSync(path, text);
           NODE
           npm run release:check -- 0.6.5
 
