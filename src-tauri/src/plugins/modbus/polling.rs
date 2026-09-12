@@ -251,7 +251,30 @@ fn watch_value(row: &WatchRow, result: &TransactionResult) -> WatchValue {
 mod tests {
     use super::*;
     use crate::plugins::modbus::codec::{BitReadArea, RegisterReadArea};
+    use crate::plugins::modbus::config::{ModbusConfig, ModbusRole};
     use crate::plugins::modbus::value::{ByteOrder, ValueType, WordOrder};
+    use crate::transport::{BlockingByteStream, DataPlaneRuntime, ReadStatus, TransportError};
+
+    struct IdleDriver;
+
+    impl BlockingByteStream for IdleDriver {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(ReadStatus::Idle)
+        }
+
+        fn write_all(&mut self, _data: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
 
     fn register_format(value_type: ValueType) -> ValueFormat {
         ValueFormat {
@@ -279,6 +302,23 @@ mod tests {
             period_ms,
             format: Some(register_format(ValueType::UInt16)),
         }
+    }
+
+    fn client() -> Arc<ModbusClient> {
+        let config = ModbusConfig {
+            mode: ModbusMode::Rtu,
+            role: ModbusRole::Client,
+            serial_port: "test".into(),
+            response_timeout_ms: 5,
+            ..Default::default()
+        };
+        Arc::new(
+            ModbusClient::new(
+                config.validated().expect("valid polling test config"),
+                DataPlaneRuntime::spawn(Box::new(IdleDriver)),
+            )
+            .expect("client runtime"),
+        )
     }
 
     #[test]
@@ -353,5 +393,18 @@ mod tests {
         let mut invalid = row("unit", 1000);
         invalid.unit_id = 248;
         assert!(WatchScheduler::validate_rows(&[invalid], ModbusMode::Rtu).is_err());
+    }
+
+    #[test]
+    fn watch_runtime_stays_running_until_explicit_stop() {
+        let client = client();
+        let scheduler = WatchScheduler::new(client.clone());
+        scheduler.set_rows(vec![row("live", 20)]).unwrap();
+        scheduler.start();
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(scheduler.is_running());
+        scheduler.stop();
+        assert!(!scheduler.is_running());
+        client.shutdown();
     }
 }
