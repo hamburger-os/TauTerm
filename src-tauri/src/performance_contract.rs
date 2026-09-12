@@ -23,8 +23,7 @@ impl BlockingByteStream for MemoryStream {
     }
 
     fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
-        self.written
-            .fetch_add(data.len() as u64, Ordering::Relaxed);
+        self.written.fetch_add(data.len() as u64, Ordering::Relaxed);
         Ok(())
     }
 

@@ -183,9 +183,14 @@ assert.match(
 );
 assert.match(
   orchestrator,
-  /return_port[\s\S]*emit_transfer_finished/,
-  "Inline resources must be returned before terminal event is emitted",
+  /drop\(transfer\);[\s\S]*restore_session_state\(&task_app, &task_sid, &task_transfer_id\);[\s\S]*emit_transfer_finished/,
+  "Inline ExclusiveIo must be released and Session state restored before terminal event is emitted",
 );
+for (const legacyToken of ["HandoffPort", "channel_return_tx", "try_handoff", "return_port("]) {
+  if (orchestrator.includes(legacyToken)) {
+    throw new Error(`legacy inline-transfer handoff token must be removed: ${legacyToken}`);
+  }
+}
 assert.match(
   orchestrator,
   /handle\.state != SessionState::Disconnected[\s\S]{0,120}handle\.state = SessionState::Connected/,

@@ -1,7 +1,7 @@
 //! 协议适配器 trait 和插件清单类型。
 //!
 //! Adapter 只描述协议如何建立会话；物理 I/O 由 transport DataPlane 持有，SessionStore
-//! 不再区分同步/异步 Channel，也不再创建第二套 CommHandle。
+//! 协议统一返回 DataPlaneRuntime，不再区分同步/异步上层 I/O 模型。
 
 use crate::kernel::file_transfer::FileTransfer;
 use crate::session::SessionError;

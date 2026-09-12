@@ -14,7 +14,6 @@
 //! - **Theme Engine**: CSS 变量主题切换（`kernel/theme_engine`）
 //! - **Content Renderers**: content_type 驱动的渲染器系统（前端 `renderers/`）
 
-mod channel;
 mod commands;
 mod diagnostics;
 mod kernel;

@@ -690,7 +690,7 @@ impl SessionStore {
     ///
     /// 与 `commands::create_ssh_sub_channel` 的通道创建流程等价，但面向会话内
     /// 多对端模型：对端不占独立标签页（`tabbed = false`），拥有独立的 I/O loop、
-    /// 统计采集、CommHandle（自动应答/脚本按对端生效）与日志路由。
+    /// 统计采集、SessionIo（自动应答/脚本按对端生效）与日志路由。
     ///
     /// 对端 I/O loop 断开时广播 `netdbg-peer-left` 事件；本方法广播
     /// `netdbg-peer-joined` 事件，供前端对端列表刷新。
@@ -891,7 +891,7 @@ impl SessionStore {
 
     /// 获取通信句柄（支持对端路由）。
     ///
-    /// 先尝试匹配会话；否则搜索对端（网络调试）。对端拥有各自的 CommHandle，
+    /// 先尝试匹配会话；否则搜索对端（网络调试）。对端拥有各自的 SessionIo，
     /// 使文本转码、脚本、自动应答按对端生效。
     pub fn get_io_for(&self, session_id: &str) -> Option<Arc<SessionIo>> {
         if let Some(handle) = self.sessions.get(session_id) {

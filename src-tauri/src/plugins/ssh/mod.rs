@@ -79,7 +79,7 @@ fn default_file_service_protocol() -> String {
 /// 无状态结构体——每次 `connect()` 调用建立全新的 TCP 连接和 SSH 会话。
 /// 通过 `connect()` 返回 `ProtocolConnection`，携带：
 /// - `channel`: `SshChannel`（终端 I/O，async 路径）
-/// - `comm_handle`: None（由 SessionStore 统一使用默认 CommHandle 包装 write_tx）
+/// - 会话 I/O：由 SessionStore 统一绑定返回的 DataPlaneRuntime 与 SessionIo
 /// - `side_channel`: `SshSideChannel`（供 SFTP 文件服务复用 SSH Handle 和 SFTP 缓存）
 pub struct SshAdapter;
 

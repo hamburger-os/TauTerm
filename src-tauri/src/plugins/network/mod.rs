@@ -668,7 +668,7 @@ impl ProtocolAdapter for NetworkAdapter {
 
         let runtime = DataPlaneRuntime::spawn(Box::new(NetworkMuxDriver::new(
             aggregate_rx,
-            core,
+            core.clone(),
             side.running.clone(),
         )));
         log::info!("网络调试会话已初始化: transport={transport} role={role} endpoint={endpoint}");

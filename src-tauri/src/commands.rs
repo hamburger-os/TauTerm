@@ -701,7 +701,7 @@ async fn connect_session_serial(
     };
 
     // 共享 on_data 回调：DataBatcher + 日志 + 虚拟端口转发
-    // 数据推送至脚本引擎由 CommHandle::notify_receive() 统一扇出
+    // 数据推送至脚本引擎由 SessionDataPlane subscription 统一扇出
     let on_data = create_on_data_callback(
         &app_data,
         log_tx,
@@ -1541,8 +1541,8 @@ pub async fn disconnect_session(
 /// 向指定会话写入数据
 ///
 /// `transcode` 为 true 时（文本发送路径），将前端 UTF-8 字节委托会话
-/// `CommHandle::send_text` 按会话编码转码后写设备；false 时（HEX 发送 /
-/// 脚本原始字节路径）原样透传。转码策略只存在于 CommHandle（单一知识源），
+/// `SessionIo::send_text` 按会话编码转码后写设备；false 时（HEX 发送 /
+/// 脚本原始字节路径）原样透传。转码策略只存在于 SessionIo（单一知识源），
 /// 未来协议原生 handle 可自行覆盖。
 /// 返回实际写入设备的字节（文本路径为转码后字节），供前端 TX 显示与
 /// 日志面板使用，保证面板所见与线上字节一致。
@@ -1573,7 +1573,7 @@ pub fn write_data(
             .map(str::to_string)
             .unwrap_or_else(|| "text".to_string());
         // 克隆 Arc 后释放锁；send_text 内部完成转码（含 UTF-8 短路与未知编码透传）。
-        // 对端（网络调试）拥有各自 CommHandle，文本路径按对端编码转码。
+        // 对端（网络调试）拥有各自 SessionIo，文本路径按对端编码转码。
         (encoding, data_mode, store.get_io_for(&session_id))
     };
     let io = comm.ok_or_else(|| format!("会话 {} 没有可写 I/O 能力", session_id))?;
@@ -2311,7 +2311,7 @@ fn udp_send_impl(
         .as_any()
         .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
         .ok_or("会话不是网络调试会话".to_string())?;
-    // 文本路径：UTF-8 → 会话编码转码（与 write_data 的 CommHandle::send_text 一致）；
+    // 文本路径：UTF-8 → 会话编码转码（与 write_data 的 SessionIo::send_text 一致）；
     // 字节路径（HEX 发送）原样透传
     let out = if transcode {
         if encoding.eq_ignore_ascii_case("utf-8") {
@@ -3584,7 +3584,7 @@ pub fn file_transfer_cancel(
 
 /// 请求 SSH PTY 窗口大小调整
 ///
-/// 前端终端 resize 时调用，通过 IoLoopCmd::ResizePty 转发到 I/O 循环线程，
+/// 前端终端 resize 时调用，通过 SessionIo 的 terminal-control capability 转发到 DataPlane，
 /// 再由 Channel::resize_pty 发送 window_change 请求到远端。
 /// 非 SSH 协议（串口等）的 Channel 默认空实现，调用无副作用。
 /// 支持子连接路由：若 session_id 属于 SSH 子通道，命令通过子通道的 write_tx 发送。
