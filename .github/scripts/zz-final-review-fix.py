@@ -1,14 +1,6 @@
 from pathlib import Path
 
 
-def replace_exact(path: str, old: str, new: str) -> None:
-    p = Path(path)
-    text = p.read_text()
-    if old not in text:
-        raise SystemExit(f"anchor missing in {path}: {old[:120]!r}")
-    p.write_text(text.replace(old, new, 1))
-
-
 # Session lifecycle: disconnected/zombie handles must detach typed runtime registries even when
 # they are removed without the normal close_session path. Keep shutdown non-blocking in Drop.
 store_path = Path("src-tauri/src/kernel/session_store.rs")
@@ -110,6 +102,20 @@ for rel in [
     text = text.replace("side_channel", "auxiliary")
     p.write_text(text)
 
+# SSH comments must describe the typed runtime registry and explicit FileTransfer capability.
+ssh = Path("src-tauri/src/plugins/ssh/mod.rs")
+text = ssh.read_text()
+text = text.replace(
+    "文件服务（SFTP）通过独立的侧通道操作，不中断终端 I/O 循环。",
+    "文件服务（SFTP）通过显式 FileTransfer capability 操作，不中断终端 I/O 循环。",
+)
+text = text.replace("/// 供 SFTP 文件服务使用的侧通道资源。", "/// SSH 协议类型化运行时，供 SFTP 文件服务和子终端工厂复用。")
+text = text.replace(
+    "/// 持有 SSH 会话引用和缓存的 SFTP 对象，通过 `ProtocolConnection::runtime`\n/// 传递给 `SessionStore`。SFTP 命令通过 `downcast_ref::<SshRuntime>()` 还原。",
+    "/// 持有 SSH 会话引用和缓存的 SFTP 对象。SessionStore 只持有协议无关生命周期\n/// capability；SSH 命令通过插件自己的 typed runtime registry 按 session_id 获取本对象。",
+)
+ssh.write_text(text)
+
 # Current architecture docs must use the new capability contract, not historical SideChannel terms.
 core = Path("docs/modules/CORE.md")
 text = core.read_text()
@@ -130,12 +136,17 @@ text = text.replace("SideChannel 后台 task", "辅助文件传输后台 task")
 text = text.replace("lease/side resource", "lease/auxiliary resource")
 transfer.write_text(text)
 
-# No erased runtime / legacy SideChannel terminology is allowed in current source or module docs.
+# No erased protocol-runtime architecture may remain. Generic downcasts elsewhere are not banned;
+# the ban is specifically on the removed Session runtime Any/as_any path and concrete runtime casts.
+runtime_names = ["SshRuntime", "NetworkRuntime", "TftpRuntime", "IperfRuntime", "TrdpRuntime", "ModbusRuntime"]
 for root in [Path("src-tauri/src"), Path("docs/modules")]:
     for path in root.rglob("*"):
         if not path.is_file() or path.suffix not in {".rs", ".md"}:
             continue
         text = path.read_text(errors="ignore")
-        for token in ["SideChannel", "side_channel", "get_side_channel", ".as_any()", "std::any::Any", "downcast_ref"]:
+        for token in ["SideChannel", "side_channel", "get_side_channel", ".as_any()", "std::any::Any"]:
             if token in text:
                 raise SystemExit(f"forbidden runtime token {token!r} remains in {path}")
+        for runtime_name in runtime_names:
+            if f"downcast_ref::<{runtime_name}" in text or f"downcast::<{runtime_name}" in text:
+                raise SystemExit(f"forbidden runtime downcast for {runtime_name} remains in {path}")
