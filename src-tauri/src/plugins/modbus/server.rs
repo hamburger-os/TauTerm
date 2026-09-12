@@ -101,14 +101,21 @@ impl ModbusServer {
         let fault = self.fault.clone();
         let history = self.history.clone();
         let sequence = self.next_history_sequence.clone();
-        let worker = std::thread::spawn(move || match config.mode() {
-            ModbusMode::Rtu => run_rtu_server(
-                &handle, &events, &running, &config, &model, &fault, &history, &sequence,
-            ),
-            ModbusMode::Ascii => run_ascii_server(
-                &handle, &events, &running, &config, &model, &fault, &history, &sequence,
-            ),
-            ModbusMode::Tcp => unreachable!(),
+        let worker = std::thread::spawn(move || {
+            let context = SerialServerContext {
+                handle: &handle,
+                running: &running,
+                config: &config,
+                model: &model,
+                fault: &fault,
+                history: &history,
+                sequence: &sequence,
+            };
+            match config.mode() {
+                ModbusMode::Rtu => run_rtu_server(&context, &events),
+                ModbusMode::Ascii => run_ascii_server(&context, &events),
+                ModbusMode::Tcp => unreachable!(),
+            }
         });
         self.workers.lock().map_err(|e| e.to_string())?.push(worker);
         Ok(())
@@ -263,23 +270,35 @@ fn reap_finished_workers(workers: &mut Vec<JoinHandle<()>>) {
     }
 }
 
+struct SerialServerContext<'a> {
+    handle: &'a crate::transport::DataPlaneHandle,
+    running: &'a AtomicBool,
+    config: &'a ValidatedModbusConfig,
+    model: &'a ModbusDataModel,
+    fault: &'a RwLock<ServerFaultConfig>,
+    history: &'a Mutex<VecDeque<TransactionRecord>>,
+    sequence: &'a AtomicU64,
+}
+
 fn run_ascii_server(
-    handle: &crate::transport::DataPlaneHandle,
+    context: &SerialServerContext<'_>,
     events: &std::sync::mpsc::Receiver<DataPlaneEvent>,
-    running: &AtomicBool,
-    config: &ValidatedModbusConfig,
-    model: &ModbusDataModel,
-    fault: &RwLock<ServerFaultConfig>,
-    history: &Mutex<VecDeque<TransactionRecord>>,
-    sequence: &AtomicU64,
 ) {
     let mut framer = codec::ascii::AsciiFramer::default();
-    while running.load(Ordering::Acquire) {
+    while context.running.load(Ordering::Acquire) {
         match events.recv_timeout(Duration::from_millis(50)) {
             Ok(DataPlaneEvent::Closed(_)) => break,
             Ok(DataPlaneEvent::Data(data)) => {
                 for frame in framer.push(&data) {
-                    process_serial_frame(handle, config, model, fault, history, sequence, &frame);
+                    process_serial_frame(
+                        context.handle,
+                        context.config,
+                        context.model,
+                        context.fault,
+                        context.history,
+                        context.sequence,
+                        &frame,
+                    );
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -289,20 +308,14 @@ fn run_ascii_server(
 }
 
 fn run_rtu_server(
-    handle: &crate::transport::DataPlaneHandle,
+    context: &SerialServerContext<'_>,
     events: &std::sync::mpsc::Receiver<DataPlaneEvent>,
-    running: &AtomicBool,
-    config: &ValidatedModbusConfig,
-    model: &ModbusDataModel,
-    fault: &RwLock<ServerFaultConfig>,
-    history: &Mutex<VecDeque<TransactionRecord>>,
-    sequence: &AtomicU64,
 ) {
     let mut buffer = Vec::new();
-    let inter_char = config.rtu_inter_char_gap();
-    let frame_gap = config.rtu_frame_gap();
+    let inter_char = context.config.rtu_inter_char_gap();
+    let frame_gap = context.config.rtu_frame_gap();
     let frame_tail = frame_gap.saturating_sub(inter_char);
-    while running.load(Ordering::Acquire) {
+    while context.running.load(Ordering::Acquire) {
         let wait = if buffer.is_empty() {
             Duration::from_millis(50)
         } else {
@@ -324,7 +337,13 @@ fn run_rtu_server(
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         let frame = std::mem::take(&mut buffer);
                         process_serial_frame(
-                            handle, config, model, fault, history, sequence, &frame,
+                            context.handle,
+                            context.config,
+                            context.model,
+                            context.fault,
+                            context.history,
+                            context.sequence,
+                            &frame,
                         );
                     }
                 }
