@@ -1,8 +1,8 @@
 //! TFTP protocol plugin.
 //!
 //! The session owns one UDP listener and exposes client/server transfers through a
-//! side channel. Defaults are kept for compatibility, while validation and
-//! diagnostics are deliberately fail-closed around filesystem and bind errors.
+//! side channel. Writable and overwrite access default off; validation and
+//! diagnostics remain fail-closed around filesystem and bind errors.
 
 pub mod client;
 pub mod counting_socket;
@@ -30,14 +30,12 @@ pub struct TftpConfig {
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
     pub file_root: String,
-    #[serde(default = "default_true", deserialize_with = "deserialize_bool")]
+    #[serde(default)]
     pub write_enabled: bool,
-    #[serde(default = "default_true", deserialize_with = "deserialize_bool")]
+    #[serde(default)]
     pub overwrite: bool,
-    #[serde(default, deserialize_with = "deserialize_bool")]
+    #[serde(default)]
     pub single_port: bool,
-    #[serde(default, deserialize_with = "deserialize_bool")]
-    pub exposure_confirmed: bool,
 }
 
 fn default_listen_ip() -> String {
@@ -48,19 +46,6 @@ fn default_listen_port() -> u16 {
 }
 fn default_true() -> bool {
     true
-}
-
-/// 容忍持久化/旧数据中误存的非布尔值（如空对象 `{}`、字符串、数字等）——此类字段
-/// 一旦被错误序列化，默认 serde 会崩溃于 `invalid type: map, expected a boolean`。
-/// 这里凡非字面 `true` 一律视为 `false`。对安全敏感的 `exposure_confirmed` 尤其重要：
-/// 损坏/错误的值绝不自动授权暴露写入口——必须显式 `true` 才视为已确认（与
-/// `exposure_warning`/connect 里 `!config.exposure_confirmed` 的失败关闭语义一致）。
-fn deserialize_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let v = serde_json::Value::deserialize(deserializer)?;
-    Ok(v.as_bool().unwrap_or(false))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,9 +246,9 @@ impl TftpAdapter {
     }
 }
 
-/// Returns a warning for configurations that intentionally expose a writable
-/// server to non-loopback interfaces. The defaults are not changed; callers can
-/// surface this warning before starting the session.
+/// Returns a diagnostic warning for configurations that intentionally expose a
+/// writable server to non-loopback interfaces. Writable access defaults off;
+/// this warning informs operators without acting as an authorization gate.
 pub fn exposure_warning(config: &TftpConfig) -> Option<&'static str> {
     let ip: IpAddr = config.listen_ip.parse().ok()?;
     if !ip.is_loopback() && config.write_enabled && config.overwrite {
@@ -338,13 +323,8 @@ impl ProtocolAdapter for TftpAdapter {
                 })?;
         let listen_addr = SocketAddr::new(listen_ip, config.listen_port);
 
-        if exposure_warning(&config).is_some() && !config.exposure_confirmed {
-            return Err(SessionError::ConnectionFailed {
-                reason: "TFTP is exposed to a non-loopback network with remote writes and overwrite enabled; explicit user confirmation is required".into(),
-            });
-        }
         if let Some(warning) = exposure_warning(&config) {
-            log::warn!("[TFTP] confirmed exposure: {}", warning);
+            log::warn!("[TFTP] exposure warning: {}", warning);
         }
 
         let socket = std::net::UdpSocket::bind(listen_addr)
@@ -465,6 +445,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn writable_server_defaults_are_disabled() {
+        let config: TftpConfig = serde_json::from_value(serde_json::json!({
+            "file_root": "/tmp"
+        }))
+        .unwrap();
+        assert!(!config.write_enabled);
+        assert!(!config.overwrite);
+        assert!(!config.single_port);
+    }
+
+    #[test]
     fn exposure_warning_only_for_writable_non_loopback() {
         let mut config = TftpConfig {
             listen_ip: "0.0.0.0".into(),
@@ -473,7 +464,6 @@ mod tests {
             write_enabled: true,
             overwrite: true,
             single_port: false,
-            exposure_confirmed: false,
         };
         assert!(exposure_warning(&config).is_some());
         config.listen_ip = "127.0.0.1".into();

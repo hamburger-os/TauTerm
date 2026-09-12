@@ -23,7 +23,7 @@ TCP connect/listen 使用 `transport::tcp`，UDP bind/recv/send 使用 `transpor
 
 ### TFTP
 
-TFTP 是自包含 custom Session，文件传输和服务端控制在自己的视图完成，不使用全局 SendBar。对非本机监听并允许远端写入/覆盖的高风险组合，需要显式确认。
+TFTP 是自包含 custom Session，文件传输和服务端控制在自己的视图完成，不使用全局 SendBar。服务端默认关闭远程写入和覆盖；用户主动开启“允许写入”后才可配置覆盖。对“非回环监听 + 允许写入 + 允许覆盖”的组合，配置页显示非阻塞行内风险提示，但不再追加二次确认弹窗或后端确认令牌。
 
 ### Telnet
 
@@ -41,7 +41,7 @@ iperf 是自包含测试 Session，承载测试配置、运行过程、结果和
 - Network aggregate DataPlane 只为 Session 级脚本/自动回复提供统一接收与发送语义；来源地址、peer ID 等协议视图信息仍归 Network 模块。
 - Network Debug 的目标选择必须被手动发送和脚本共享；目标同步属于运行时副作用，只能发生在已连接 Network Debug 会话。
 - TFTP/iperf custom Session 的连接/配置/删除仍遵守公共 Session 规则。
-- 协议安全确认属于真实风险边界，不靠普通提示文案替代。
+- TFTP 的保护策略以保守默认值和显式开关为主；高风险组合需要清楚可见的行内 warning，但不阻塞专业调试流程。
 
 ## 代码锚点
 
