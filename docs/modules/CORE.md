@@ -2,17 +2,19 @@
 
 ## 目标
 
-核心层负责把不同协议统一成可管理的 Session，同时提供插件注册、主 I/O 所有权、状态、配置和公共生命周期。它不负责解释某个协议的业务语义。
+核心层负责把不同协议统一成可管理的 Session，并提供插件注册、运行时 I/O 能力、状态、配置和公共生命周期。它不解释任何具体协议的业务语义。
 
 ## 当前方案
 
-后端以 Rust 核心作为 Session 生命周期的权威所有者。协议通过 Adapter/插件接入，连接后向核心提供同步或异步通道、侧通道能力，或容器型会话能力。前端插件注册表负责声明内容类型、发送栏等 UI 能力，React 只消费统一的 Session 状态和协议暴露的视图。
+后端以 Rust `SessionStore` 作为用户可见 Session 生命周期的权威所有者。协议 Adapter 负责建立协议资源，并以 `ProtocolConnection` 返回 `DataPlaneRuntime`、可选 SideChannel、可选子终端工厂等明确能力；核心把 DataPlane 绑定为 `SessionDataPlane + SessionIo`，统一承担收发、订阅、统计、终端 resize 和独占 I/O lease。
 
-一个配置可以对应单个 Session，也可以由协议提供“一个父配置、多子终端/连接”的工厂能力。公共核心负责子会话编号、活动根 Session 资源预算、状态与清理，协议只负责创建自身资源。Saved Session Library 是独立的版本化磁盘配置集合，不受活动运行时数量预算约束。Runtime Session 只消费这份配置，不再在 connect/disconnect/channel 生命周期中把当前运行态反向 bulk-save 到 Library；Library 只允许通过显式的单 Session 保存、删除、重命名与参数事务入口修改。Session Library、ConfigStore 与 SSH known-host 等 TauTerm 自有 JSON 状态通过共享原子写入边界提交：新快照完整写入后才替换旧文件；read-modify-write 遇到读取 I/O 错误必须失败而不是把现有状态当成空集合继续覆盖。
+Transport、Protocol、Session Runtime 三层职责固定：Transport 只拥有串口/TCP/UDP/PTY 等物理或系统资源；Protocol 解释 Telnet、Modbus、SSH 等协议语义；Session Runtime 负责生命周期、事件、日志、脚本、统计、子连接和取消。协议不得复制公共 Session 生命周期，Session Runtime 也不得解析协议字段。
 
-Tauri command 按阻塞风险分类：纯内存/短锁读取可以保持同步；文件系统、进程、凭据后端、驱动/平台探测、thread join 等潜在阻塞工作必须使用 async command，并在需要等待阻塞资源时进入 blocking worker。CI 会阻止这些风险重新进入同步 command 分发路径。配置/主题与平台命令已从单体 `commands.rs` 拆入职责子模块，公共 invoke 名称保持不变。
+一个配置可以对应单个 Session，也可以由协议提供“一个父配置、多子终端/peer”的工厂能力。公共核心负责子连接编号、活动根 Session 资源预算、状态与清理，协议只负责创建自身资源。Network peer 和 SSH/local-shell 子终端都使用同一 `SubConnection` 生命周期；是否显示为独立 tab 属于表现能力，而不是第二套后端模型。
 
-端点发现属于配置辅助能力，不属于 Session 生命周期。前端按当前协议进入配置页时才请求发现，并复用短时缓存；后端对可能阻塞的平台/硬件枚举放到 blocking worker，避免设备驱动或平台命令拖住应用 UI。
+Saved Session Library 是独立的版本化磁盘配置集合，不受活动运行时数量预算约束。Runtime Session 只消费稳定配置，不把 socket、PTY、DataPlane、任务、计数器等运行态写回 Library；Library 只允许通过显式保存、删除、重命名与参数事务入口修改。Session Library、ConfigStore 与 SSH known-host 等 TauTerm 自有 JSON 状态通过共享原子写入边界提交，新快照完整写入后才替换旧文件。
+
+Tauri command 按阻塞风险分类：纯内存/短锁读取可以同步；文件系统、进程、凭据后端、驱动/平台探测、thread join 等潜在阻塞工作必须使用 async command，并在需要时进入 blocking worker。端点发现同样是配置辅助能力，不属于 Session 生命周期；前端进入配置页时按需请求，后端不得让硬件枚举阻塞 UI。
 
 ## 关键生命周期
 
@@ -22,42 +24,51 @@ stateDiagram-v2
   Saved --> Connecting
   Connecting --> Connected
   Connecting --> Disconnected
+  Connected --> Transferring
+  Transferring --> Connected
   Connected --> Disconnected
+  Transferring --> Disconnected
   Disconnected --> Connecting
   Disconnected --> [*]
 ```
 
-连接、断开、异常退出和删除必须通过统一生命周期收敛。协议可以提供更细的内部状态，但不能绕过公共 Session 状态制造第二个连接真相。
+`Transferring` 只表示 Session 的 inline 独占资源被传输任务占用；真实底层资源仍归 DataPlane Runtime 所有。连接、断开、异常退出、子连接关闭和传输结束必须通过统一生命周期收敛。
 
 ## 设计边界
 
-- 核心只拥有可复用机制，不加入 TRDP、SSH、串口等协议专属判断。
-- 协议连接入口最终由统一的内核路由分发，避免多个前端入口各自实现连接逻辑。
-- UI 能力由插件声明；例如 SendBar 是否适用属于插件能力，不由页面临时猜测。
-- 运行时对象不能被当成持久化配置保存。
-- 异常断开要留下足够状态供 UI 呈现，但清理资源仍由后端完成；同步/异步 I/O loop 必须自动覆盖读写、部分写、取消、Shutdown 与注入失败路径。
-- 新协议优先复用现有 Session/Channel/SideChannel/Factory 模型，只有现有抽象无法表达稳定需求时才扩展核心。
+- 核心只拥有可复用机制，不加入 TRDP、SSH、Modbus、串口等协议专属判断。
+- 协议连接入口最终由统一内核路由分发，避免前端入口各自实现连接生命周期。
+- UI 能力由插件 manifest 声明；SendBar、自定义视图等不由页面临时猜测。
+- 运行时对象不能被持久化为 Session 配置。
+- 所有流式 Session 都通过 `SessionIo/DataPlane` 发送、订阅和关闭，不建立协议专属第二套发送总线。
+- 需要独占主字节流的操作使用 `SessionIo::acquire_exclusive`；不转移底层 handle 所有权。
+- PTY resize、targeted send、多 peer、SFTP 等属于独立 capability，不塞进万能 stream trait。
+- 异常断开必须保留足够信息供 UI 呈现，同时后端负责确定性资源清理。
+- 新协议优先组合 Transport + Protocol + Session Runtime 现有能力；只有稳定需求无法表达时才扩展公共契约。
 
 ## 代码锚点
 
 - `src-tauri/src/kernel/session_store.rs`
 - `src-tauri/src/kernel/plugin_adapter.rs`
 - `src-tauri/src/kernel/plugin_host.rs`
+- `src-tauri/src/session/io.rs`
+- `src-tauri/src/session/runtime.rs`
+- `src-tauri/src/transport/runtime.rs`
 - `src-tauri/src/kernel/config_store.rs`
 - `src-tauri/src/kernel/persistence.rs`
-- `src-tauri/src/channel/`
-- `src-tauri/src/commands.rs`、`src-tauri/src/commands/`
+- `src-tauri/src/commands.rs`
+- `src-tauri/src/commands/`
 - `src/core/plugin-registry.ts`
 - `src/context/SessionContext.tsx`
 
-## 何时更新本文
-
-修改 Session 状态机、插件注册契约、公共连接路由、通道模型、父子会话模型或配置公共职责时，必须同步更新本文。
-
-共享文件传输由 [TRANSFER.md](TRANSFER.md) 负责；数据批处理/日志由 [OBSERVABILITY_TOOLS.md](OBSERVABILITY_TOOLS.md) 负责；应用壳/i18n/Settings 由 [UI_FOUNDATION.md](UI_FOUNDATION.md) 负责。
-
 ## 单一来源约束
 
-内建插件元数据位于 `src/plugin-manifests/*.json`，TypeScript PluginRegistry 与 Rust PluginHost 都消费这组 canonical manifest。PluginHost 不再维护独立生命周期 descriptor；Session 运行时生命周期由 SessionStore 负责。
+内建插件元数据位于 `src/plugin-manifests/*.json`，TypeScript PluginRegistry 与 Rust PluginHost 都消费这组 canonical manifest。PluginHost 不维护平行生命周期 descriptor；Session 运行时生命周期由 SessionStore 负责。
 
 分屏/Workspace Layout 的真实 owner 是前端 SplitLayoutContext + `core/split-layout.ts`；不保留未接入运行时的平行 WindowManager/TabHost/IPC 骨架。通用 Tauri invoke/event 是当前 IPC 边界。
+
+## 何时更新本文
+
+修改 Session 状态机、插件注册契约、公共连接路由、DataPlane/SessionIo 能力、父子会话模型或配置公共职责时，必须同步更新本文。
+
+Transport/DataPlane 细节见 [TRANSPORT_RUNTIME.md](TRANSPORT_RUNTIME.md)；共享文件传输见 [TRANSFER.md](TRANSFER.md)；数据批处理/日志见 [OBSERVABILITY_TOOLS.md](OBSERVABILITY_TOOLS.md)。
