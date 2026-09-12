@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use crate::kernel::charset::transcode_utf8_to_encoding;
-use crate::transport::{DataPlaneHandle, TransportError};
+use crate::transport::{
+    DataPlaneHandle, DataPlaneSubscription, ExclusiveIo, TransportError,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionIoError {
@@ -24,8 +26,9 @@ pub trait TargetedIo: Send + Sync {
     fn send_to(&self, target: &str, data: &[u8]) -> Result<(), SessionIoError>;
 }
 
-/// Script/send-bar facing capability composed from the canonical DataPlane plus optional targeted
-/// addressing. This type has no receive callback registry: consumers subscribe to DataPlane events.
+/// Session-facing I/O capability composed from the canonical DataPlane plus optional targeted
+/// addressing. This type deliberately has no receive callback registry: every consumer owns an
+/// independent DataPlane subscription.
 #[derive(Clone)]
 pub struct SessionIo {
     primary: Option<DataPlaneHandle>,
@@ -48,6 +51,14 @@ impl SessionIo {
 
     pub fn primary(&self) -> Option<&DataPlaneHandle> {
         self.primary.as_ref()
+    }
+
+    pub fn subscribe(&self) -> Result<DataPlaneSubscription, SessionIoError> {
+        self.primary
+            .as_ref()
+            .ok_or(SessionIoError::NoPrimaryDataPlane)?
+            .subscribe()
+            .map_err(Into::into)
     }
 
     pub fn send(&self, data: &[u8]) -> Result<(), SessionIoError> {
@@ -84,5 +95,39 @@ impl SessionIo {
         };
         self.send_to(target, &out)?;
         Ok(out)
+    }
+
+    pub fn resize_terminal(&self, cols: u32, rows: u32) -> Result<(), SessionIoError> {
+        self.primary
+            .as_ref()
+            .ok_or(SessionIoError::NoPrimaryDataPlane)?
+            .resize_terminal(cols, rows)
+            .map_err(Into::into)
+    }
+
+    pub fn acquire_exclusive(
+        &self,
+        owner_name: impl Into<String>,
+        purge_input: bool,
+    ) -> Result<ExclusiveIo, SessionIoError> {
+        self.primary
+            .as_ref()
+            .ok_or(SessionIoError::NoPrimaryDataPlane)?
+            .acquire_exclusive(owner_name, purge_input)
+            .map_err(Into::into)
+    }
+
+    pub fn tx_bytes(&self) -> u64 {
+        self.primary.as_ref().map_or(0, DataPlaneHandle::tx_bytes)
+    }
+
+    pub fn rx_bytes(&self) -> u64 {
+        self.primary.as_ref().map_or(0, DataPlaneHandle::rx_bytes)
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.primary
+            .as_ref()
+            .is_some_and(DataPlaneHandle::is_connected)
     }
 }
