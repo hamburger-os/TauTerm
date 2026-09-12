@@ -68,6 +68,25 @@ jobs:
           script = script[:section_start] + replacement + script[section_end:]
           exec(compile(script, 'typed_runtime_final.py', 'exec'), {'__name__': '__main__'})
 
+          # The generic V6 state rename also touched set_runtime_param, where state
+          # is intentionally used to update the live Session params.
+          modbus = Path('src-tauri/src/plugins/modbus/mod.rs')
+          text = modbus.read_text()
+          old = "fn set_runtime_param(\n    _state: &State<'_, AppState>,"
+          new = "fn set_runtime_param(\n    state: &State<'_, AppState>,"
+          if old not in text:
+              raise SystemExit('Modbus set_runtime_param state anchor missing')
+          modbus.write_text(text.replace(old, new, 1))
+
+          # Network's typed runtime is named `side`; the attach hook must reference
+          # that exact Arc rather than the removed side_channel variable.
+          network = Path('src-tauri/src/plugins/network/mod.rs')
+          text = network.read_text()
+          old = "runtime: side_channel,"
+          if old not in text:
+              raise SystemExit('Network RuntimeAttach variable anchor missing')
+          network.write_text(text.replace(old, "runtime: side,", 1))
+
           commands = Path('src-tauri/src/commands.rs')
           text = commands.read_text()
           old = "            });\n        }\n    }\n\n    // 会话未连接"
