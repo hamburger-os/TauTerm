@@ -464,7 +464,7 @@ impl SessionStore {
 
     /// 创建终端父容器（SSH / Local Shell，无 I/O loop）。
     ///
-    /// 仅持有可选 side_channel、channel factory 和元数据，不创建 I/O 线程。
+    /// 仅持有可选协议 service、文件传输 capability、channel factory 和元数据，不创建 I/O 线程。
     /// 实际终端通过 `add_sub_connection` 添加。
     pub fn create_container_session(
         &mut self,

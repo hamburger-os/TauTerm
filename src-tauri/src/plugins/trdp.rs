@@ -34,7 +34,7 @@ pub struct TrdpCaptureInterface {
 type PendingRequest = mpsc::Sender<Result<Value, String>>;
 type PendingRequests = Arc<Mutex<HashMap<String, PendingRequest>>>;
 
-pub struct TrdpSideChannel {
+pub struct TrdpRuntime {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
     start_control: Mutex<()>,
@@ -54,19 +54,19 @@ pub struct TrdpSideChannel {
 }
 
 fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<TrdpSideChannel>>> {
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<TrdpRuntime>>> {
     static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<TrdpSideChannel>>>,
+        std::sync::Mutex<std::collections::HashMap<String, Arc<TrdpRuntime>>>,
     > = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-pub fn runtime(session_id: &str) -> Option<Arc<TrdpSideChannel>> {
+pub fn runtime(session_id: &str) -> Option<Arc<TrdpRuntime>> {
     runtime_registry().lock().ok()?.get(session_id).cloned()
 }
 
 struct RuntimeAttach {
-    runtime: Arc<TrdpSideChannel>,
+    runtime: Arc<TrdpRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
@@ -81,7 +81,7 @@ impl SessionAttach for RuntimeAttach {
     }
 }
 
-impl TrdpSideChannel {
+impl TrdpRuntime {
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
     fn new(params: Value) -> Self {
@@ -607,7 +607,7 @@ impl TrdpSideChannel {
     }
 }
 
-impl SessionService for TrdpSideChannel {
+impl SessionService for TrdpRuntime {
     fn shutdown(&self) {
         self.stop_process(true);
     }
@@ -655,7 +655,7 @@ pub async fn connect_session(
         return Err(format!("未知 TRDP 会话模式: {mode}"));
     }
 
-    let side_channel = Arc::new(TrdpSideChannel::new(params.clone()));
+    let runtime = Arc::new(TrdpRuntime::new(params.clone()));
     let session_name = name.unwrap_or_else(|| {
         if mode == "monitor" {
             "TRDP @ Monitor".to_string()
@@ -680,19 +680,19 @@ pub async fn connect_session(
                 id_override: session_id,
             },
             crate::kernel::session_store::ContainerSessionRuntime {
-                service: Some(side_channel.clone()),
+                service: Some(runtime.clone()),
                 file_transfer: None,
                 channel_factory: None,
                 io: None,
                 attachment: Some(Arc::new(RuntimeAttach {
-                    runtime: side_channel.clone(),
+                    runtime: runtime.clone(),
                 })),
             },
         )?
     };
 
     if mode == "node" {
-        if let Err(error) = side_channel.start(app.clone(), &session_id) {
+        if let Err(error) = runtime.start(app.clone(), &session_id) {
             if let Ok(mut store) = state.session_store.lock() {
                 let _ = store.close_session(&session_id);
             }
@@ -700,13 +700,12 @@ pub async fn connect_session(
         }
     }
 
-    let lifecycle_guard = side_channel
+    let lifecycle_guard = runtime
         .lifecycle
         .lock()
         .map_err(|error| error.to_string())?;
     if mode == "node"
-        && (!side_channel.alive.load(Ordering::Acquire)
-            || !side_channel.ready.load(Ordering::Acquire))
+        && (!runtime.alive.load(Ordering::Acquire) || !runtime.ready.load(Ordering::Acquire))
     {
         drop(lifecycle_guard);
         if let Ok(mut store) = state.session_store.lock() {
@@ -724,9 +723,7 @@ pub async fn connect_session(
             .get_session(&session_id)
             .and_then(|handle| handle.connected_at)
     };
-    side_channel
-        .connected_announced
-        .store(true, Ordering::Release);
+    runtime.connected_announced.store(true, Ordering::Release);
     let _ = app.emit(
         "session-connected",
         json!({
@@ -1163,7 +1160,7 @@ pub fn trdp_command(
         let new_capture = capture::create_live_capture(expected_cycles);
         *trdp.capture_id.lock().map_err(|error| error.to_string())? = Some(new_capture.clone());
 
-        match trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT) {
+        match trdp.request(command, TrdpRuntime::REQUEST_TIMEOUT) {
             Ok(_) => {
                 if let Some(previous_capture) = previous_capture {
                     capture::release_capture(&previous_capture);
@@ -1186,7 +1183,7 @@ pub fn trdp_command(
             .capture_control
             .lock()
             .map_err(|error| error.to_string())?;
-        return trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
+        return trdp.request(command, TrdpRuntime::REQUEST_TIMEOUT);
     }
 
     if matches!(operation.as_str(), "md_confirm" | "md_abort") {
@@ -1205,7 +1202,7 @@ pub fn trdp_command(
                 return Err("当前 Node runtime 不拥有可确认的 MD ReplyQuery 事务".to_string());
             }
         }
-        let result = trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
+        let result = trdp.request(command, TrdpRuntime::REQUEST_TIMEOUT);
         if result.is_ok() {
             if let Ok(mut sessions) = trdp.confirmable_md_sessions.lock() {
                 sessions.remove(&md_session_id);
@@ -1270,7 +1267,7 @@ pub fn trdp_command(
         }
     }
 
-    let result = trdp.request(command, TrdpSideChannel::REQUEST_TIMEOUT);
+    let result = trdp.request(command, TrdpRuntime::REQUEST_TIMEOUT);
     if let Some(id) = tracked_object {
         let next_state = {
             let mut states = trdp
@@ -1311,9 +1308,9 @@ pub fn trdp_command(
 #[tauri::command]
 pub fn trdp_capture_interfaces(app: AppHandle) -> Result<Vec<TrdpCaptureInterface>, String> {
     let resource_dir = app.path().resource_dir().ok();
-    let bridge = TrdpSideChannel::bridge_candidates(resource_dir)
+    let bridge = TrdpRuntime::bridge_candidates(resource_dir)
         .into_iter()
-        .find(TrdpSideChannel::bridge_candidate_is_usable)
+        .find(TrdpRuntime::bridge_candidate_is_usable)
         .ok_or_else(|| {
             "TRDP 原生桥接组件未就绪。`npm run tauri dev` 会自动构建该组件；如果开发启动失败，请确认 CMake 3.20+ 与 Windows C++ 构建工具链可用。也可单独运行 `npm run trdp:build` 诊断原生构建。".to_string()
         })?;

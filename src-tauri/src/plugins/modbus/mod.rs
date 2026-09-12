@@ -32,19 +32,19 @@ use polling::{WatchRow, WatchScheduler, WatchValue};
 use server::ModbusServer;
 
 fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<ModbusSideChannel>>> {
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<ModbusRuntime>>> {
     static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<ModbusSideChannel>>>,
+        std::sync::Mutex<std::collections::HashMap<String, Arc<ModbusRuntime>>>,
     > = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-pub fn runtime(session_id: &str) -> Option<Arc<ModbusSideChannel>> {
+pub fn runtime(session_id: &str) -> Option<Arc<ModbusRuntime>> {
     runtime_registry().lock().ok()?.get(session_id).cloned()
 }
 
 struct RuntimeAttach {
-    runtime: Arc<ModbusSideChannel>,
+    runtime: Arc<ModbusRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
@@ -59,14 +59,14 @@ impl SessionAttach for RuntimeAttach {
     }
 }
 
-pub struct ModbusSideChannel {
+pub struct ModbusRuntime {
     pub config: ModbusConfig,
     pub client: Option<Arc<ModbusClient>>,
     pub server: Option<Arc<ModbusServer>>,
     pub watch: Option<Arc<WatchScheduler>>,
 }
 
-impl SessionService for ModbusSideChannel {
+impl SessionService for ModbusRuntime {
     fn shutdown(&self) {
         if let Some(watch) = &self.watch {
             watch.stop();
@@ -87,7 +87,7 @@ impl ModbusAdapter {
         Self
     }
 
-    pub fn runtime(&self, session_id: &str) -> Option<Arc<ModbusSideChannel>> {
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<ModbusRuntime>> {
         runtime(session_id)
     }
 }
@@ -145,7 +145,7 @@ impl ProtocolAdapter for ModbusAdapter {
             }
         };
 
-        let runtime = Arc::new(ModbusSideChannel {
+        let runtime = Arc::new(ModbusRuntime {
             config,
             client,
             server,
@@ -273,7 +273,7 @@ pub async fn connect_session(
 fn with_modbus<T>(
     _state: &State<'_, AppState>,
     session_id: &str,
-    function: impl FnOnce(&ModbusSideChannel) -> Result<T, String>,
+    function: impl FnOnce(&ModbusRuntime) -> Result<T, String>,
 ) -> Result<T, String> {
     let modbus = runtime(session_id).ok_or_else(|| format!("Modbus 会话 {session_id} 未连接"))?;
     function(&modbus)

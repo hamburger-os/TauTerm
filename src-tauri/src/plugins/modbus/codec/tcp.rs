@@ -93,4 +93,15 @@ mod tests {
         assert_eq!(frames, vec![a, b]);
         assert_eq!(framer.buffered_len(), 0);
     }
+
+    #[test]
+    fn invalid_protocol_id_and_mbap_length_are_rejected() {
+        let mut bad_protocol = encode(7, 1, &[0x03, 0, 0, 0, 1]).unwrap();
+        bad_protocol[3] = 1;
+        assert!(decode(&bad_protocol).is_err());
+
+        let mut bad_length = encode(7, 1, &[0x03, 0, 0, 0, 1]).unwrap();
+        bad_length[5] = bad_length[5].saturating_add(1);
+        assert!(decode(&bad_length).is_err());
+    }
 }

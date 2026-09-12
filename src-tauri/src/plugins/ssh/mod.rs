@@ -79,7 +79,7 @@ fn default_file_service_protocol() -> String {
 /// 通过 `connect()` 返回 `ProtocolConnection`，携带：
 /// - `channel`: `SshChannel`（终端 I/O，async 路径）
 /// - 会话 I/O：由 SessionStore 统一绑定返回的 DataPlaneRuntime 与 SessionIo
-/// - `side_channel`: `SshSideChannel`（供 SFTP 文件服务复用 SSH Handle 和 SFTP 缓存）
+/// - `runtime`: `SshRuntime`（供 SFTP 文件服务复用 SSH Handle 和 SFTP 缓存）
 pub struct SshAdapter;
 
 impl SshAdapter {
@@ -87,7 +87,7 @@ impl SshAdapter {
         Self
     }
 
-    pub fn runtime(&self, session_id: &str) -> Option<Arc<SshSideChannel>> {
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<SshRuntime>> {
         runtime(session_id)
     }
 
@@ -107,7 +107,7 @@ impl SshAdapter {
         verifier: &HostKeyVerifier,
     ) -> Result<ProtocolConnection, SessionError> {
         let result = build_connection_with_config(config, app_handle, verifier).await?;
-        let shared = Arc::new(SshSideChannel::new(
+        let shared = Arc::new(SshRuntime::new(
             result.session,
             result.host_key_fingerprint,
             result.home_dir,
@@ -220,12 +220,12 @@ impl HostKeyVerifier {
 
 /// 供 SFTP 文件服务使用的侧通道资源。
 ///
-/// 持有 SSH 会话引用和缓存的 SFTP 对象，通过 `ProtocolConnection::side_channel`
-/// 传递给 `SessionStore`。SFTP 命令通过 `downcast_ref::<SshSideChannel>()` 还原。
+/// 持有 SSH 会话引用和缓存的 SFTP 对象，通过 `ProtocolConnection::runtime`
+/// 传递给 `SessionStore`。SFTP 命令通过 `downcast_ref::<SshRuntime>()` 还原。
 ///
 /// - `session` — russh Handle（内部线程安全，与 SshChannel 共享同一 Arc）
 /// - `sftp` — 缓存的 SFTP 子系统通道，避免每次操作重新协商
-pub struct SshSideChannel {
+pub struct SshRuntime {
     /// russh Handle（内部线程安全，与 SshChannel 共享）
     pub session: Arc<russh::client::Handle<SshHandler>>,
     /// 缓存的 SFTP 对象，首次 SFTP 操作时惰性创建。
@@ -239,19 +239,19 @@ pub struct SshSideChannel {
 }
 
 fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<SshSideChannel>>> {
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<SshRuntime>>> {
     static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<SshSideChannel>>>,
+        std::sync::Mutex<std::collections::HashMap<String, Arc<SshRuntime>>>,
     > = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-pub fn runtime(session_id: &str) -> Option<Arc<SshSideChannel>> {
+pub fn runtime(session_id: &str) -> Option<Arc<SshRuntime>> {
     runtime_registry().lock().ok()?.get(session_id).cloned()
 }
 
 struct RuntimeAttach {
-    runtime: Arc<SshSideChannel>,
+    runtime: Arc<SshRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
@@ -266,7 +266,7 @@ impl SessionAttach for RuntimeAttach {
     }
 }
 
-impl SshSideChannel {
+impl SshRuntime {
     pub fn new(
         session: Arc<russh::client::Handle<SshHandler>>,
         host_key_fingerprint: Option<String>,
@@ -286,10 +286,10 @@ impl SshSideChannel {
     }
 }
 
-impl SessionService for SshSideChannel {}
+impl SessionService for SshRuntime {}
 
 #[async_trait::async_trait]
-impl SessionChannelFactory for SshSideChannel {
+impl SessionChannelFactory for SshRuntime {
     async fn open_channel(&self, mode: ChannelOpenMode) -> Result<DataPlaneRuntime, SessionError> {
         if mode != ChannelOpenMode::Standard {
             return Err(SessionError::CapabilityDenied {

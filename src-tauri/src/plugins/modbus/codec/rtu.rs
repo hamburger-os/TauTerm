@@ -57,4 +57,12 @@ mod tests {
         assert_eq!(&frame[frame.len() - 2..], &[0xC5, 0xCD]);
         assert_eq!(decode(&frame).unwrap(), (1, vec![0x03, 0, 0, 0, 0x0A]));
     }
+
+    #[test]
+    fn corrupted_crc_is_rejected() {
+        let mut frame = encode(1, &[0x03, 0, 0, 0, 1]).unwrap();
+        let last = frame.len() - 1;
+        frame[last] ^= 0x01;
+        assert!(decode(&frame).is_err());
+    }
 }

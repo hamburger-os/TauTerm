@@ -2184,7 +2184,7 @@ pub async fn close_network_peer(
     Ok(())
 }
 
-/// 网络调试会话连接（容器会话 + NetworkSideChannel）
+/// 网络调试会话连接（容器会话 + NetworkRuntime）
 #[tauri::command]
 pub async fn connect_session_network(
     app: AppHandle,
@@ -3079,17 +3079,17 @@ fn test_match_lua_pattern(
 
 // ── 命令：SSH 文件服务（SFTP）────────────────────
 
-use crate::plugins::ssh::SshSideChannel;
+use crate::plugins::ssh::SshRuntime;
 use crate::transfer::ssh_file_service::{
     sftp_chmod, sftp_delete, sftp_delete_batch, sftp_delete_recursive, sftp_list_dir, sftp_mkdir,
     sftp_new_file, sftp_read_head, sftp_rename, sftp_stat,
 };
 
 /// 解析父 Session 后从 SSH 插件自己的 typed registry 获取 runtime。
-fn get_ssh_side_channel(
+fn get_ssh_runtime(
     state: &State<'_, AppState>,
     session_id: &str,
-) -> Result<std::sync::Arc<SshSideChannel>, String> {
+) -> Result<std::sync::Arc<SshRuntime>, String> {
     let parent_id = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         let parent_id = store
@@ -3116,8 +3116,8 @@ pub async fn sftp_list_dir_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<Vec<crate::transfer::ssh_file_service::SftpEntry>, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_list_dir(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_list_dir(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 获取文件信息
@@ -3127,8 +3127,8 @@ pub async fn sftp_stat_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<crate::transfer::ssh_file_service::SftpFileInfo, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_stat(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_stat(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 读取文件头（用于预览）
@@ -3145,11 +3145,16 @@ pub async fn sftp_read_head_cmd(
     remote_path: String,
     max_bytes: u64,
 ) -> Result<ReadHeadResult, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     // 后端再次收紧上限，不能依赖 WebView 调用方自律。
     let max_bytes = max_bytes.min(1_048_576);
-    let (data, total_size) =
-        sftp_read_head(&ssh_sc.session, &ssh_sc.sftp, &remote_path, max_bytes).await?;
+    let (data, total_size) = sftp_read_head(
+        &ssh_runtime.session,
+        &ssh_runtime.sftp,
+        &remote_path,
+        max_bytes,
+    )
+    .await?;
     Ok(ReadHeadResult { data, total_size })
 }
 
@@ -3161,8 +3166,8 @@ pub async fn sftp_chmod_cmd(
     remote_path: String,
     mode: u32,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_chmod(&ssh_sc.session, &ssh_sc.sftp, &remote_path, mode).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_chmod(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path, mode).await
 }
 
 /// SFTP 删除文件或目录
@@ -3172,8 +3177,8 @@ pub async fn sftp_delete_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_delete(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_delete(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 重命名/移动文件或目录
@@ -3184,8 +3189,14 @@ pub async fn sftp_rename_cmd(
     from_path: String,
     to_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_rename(&ssh_sc.session, &ssh_sc.sftp, &from_path, &to_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_rename(
+        &ssh_runtime.session,
+        &ssh_runtime.sftp,
+        &from_path,
+        &to_path,
+    )
+    .await
 }
 
 /// SFTP 创建目录
@@ -3195,8 +3206,8 @@ pub async fn sftp_mkdir_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_mkdir(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_mkdir(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 创建空文件
@@ -3206,8 +3217,8 @@ pub async fn sftp_new_file_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_new_file(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_new_file(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 批量删除
@@ -3217,8 +3228,8 @@ pub async fn sftp_delete_batch_cmd(
     session_id: String,
     paths: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_delete_batch(&ssh_sc.session, &ssh_sc.sftp, &paths).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_delete_batch(&ssh_runtime.session, &ssh_runtime.sftp, &paths).await
 }
 
 /// SFTP 递归删除目录（包括子内容）
@@ -3228,18 +3239,21 @@ pub async fn sftp_delete_recursive_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_delete_recursive(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_delete_recursive(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// 获取 SSH 会话的远程用户 home 目录
 ///
-/// 连接建立阶段通过 `echo $HOME` 解析并缓存于 `SshSideChannel.home_dir`。
+/// 连接建立阶段通过 `echo $HOME` 解析并缓存于 `SshRuntime.home_dir`。
 /// 若获取失败或值为 None，回退到 `"/"`。
 #[tauri::command]
 pub fn get_ssh_home_dir(state: State<'_, AppState>, session_id: String) -> Result<String, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    Ok(ssh_sc.home_dir.clone().unwrap_or_else(|| "/".to_string()))
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    Ok(ssh_runtime
+        .home_dir
+        .clone()
+        .unwrap_or_else(|| "/".to_string()))
 }
 
 // ── Journald 日志查看器命令 ──────────────────────────
@@ -3258,7 +3272,7 @@ pub async fn start_journald_stream(
     unit: Option<String>,
     kernel_only: Option<bool>,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -3267,8 +3281,13 @@ pub async fn start_journald_stream(
         since: None,
         until: None,
     };
-    crate::plugins::ssh::journald::start_journald_stream(&ssh_sc.session, app, session_id, &filters)
-        .await
+    crate::plugins::ssh::journald::start_journald_stream(
+        &ssh_runtime.session,
+        app,
+        session_id,
+        &filters,
+    )
+    .await
 }
 
 /// 停止 journald 实时追踪
@@ -3299,7 +3318,7 @@ pub async fn journald_query_cmd(
         cursor,
         limit,
     } = request;
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -3310,7 +3329,7 @@ pub async fn journald_query_cmd(
     };
     let limit = limit.unwrap_or(100);
     let (entries, next_cursor) = crate::plugins::ssh::journald::journald_query(
-        &ssh_sc.session,
+        &ssh_runtime.session,
         &filters,
         cursor.as_deref(),
         limit,
@@ -3346,7 +3365,7 @@ pub async fn start_journald_export(
         since,
         until,
     } = request;
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -3356,7 +3375,7 @@ pub async fn start_journald_export(
         until,
     };
     crate::plugins::ssh::journald::start_journald_export(
-        &ssh_sc.session,
+        &ssh_runtime.session,
         app,
         session_id,
         &filters,
@@ -3379,7 +3398,7 @@ pub fn stop_journald_export(session_id: String) -> Result<(), String> {
 /// 统一文件传输发送命令（协议无关）
 ///
 /// 前端统一入口。通过 TransferOrchestrator 策略模式分发到
-/// Inline（串口 X/Y/ZModem）或 SideChannel（SSH SFTP）策略。
+/// Inline（串口 X/Y/ZModem）或辅助传输（SSH SFTP）策略。
 #[tauri::command]
 pub async fn file_transfer_send(
     app: AppHandle,
@@ -3462,7 +3481,7 @@ pub async fn file_transfer_send(
 /// 统一文件传输接收命令（协议无关）
 ///
 /// 通过 TransferOrchestrator 策略模式分发到
-/// Inline（串口 X/Y/ZModem）或 SideChannel（SSH SFTP）策略。
+/// Inline（串口 X/Y/ZModem）或辅助传输（SSH SFTP）策略。
 #[tauri::command]
 pub async fn file_transfer_receive(
     app: AppHandle,
@@ -3577,7 +3596,7 @@ use crate::plugins::tftp::{self, TftpDynamicParams, TftpStatus};
 /// TFTP 会话连接
 ///
 /// 创建容器会话（无终端 I/O loop），然后自动启动服务端。
-/// 侧通道 `TftpSideChannel` 持有 UDP socket，由独立线程处理所有传输。
+/// 侧通道 `TftpRuntime` 持有 UDP socket，由独立线程处理所有传输。
 async fn connect_session_tftp(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -3696,10 +3715,10 @@ pub async fn tftp_server_stop(
     Ok(())
 }
 
-/// TFTP 客户端 GET（下载）——自给自足，不依赖 side_channel
+/// TFTP 客户端 GET（下载）——自给自足，不依赖已连接会话 runtime
 ///
 /// 每次调用生成独立的 UUID 作为 transfer_id，绑定临时 UDP socket 完成传输。
-/// 在会话未连接（无 side_channel）时也能正常工作。
+/// 在会话未连接（无已连接 runtime）时也能正常工作。
 ///
 /// 调用前先同步服务端的 dynamic_params，消除前端 500ms 防抖导致的竞态窗口。
 #[tauri::command]
@@ -3731,7 +3750,7 @@ pub async fn tftp_client_get(
     sync_tftp_server_params(&state, &session_id, &params);
 
     // 客户端操作自给自足：使用 UUID 生成全局唯一 transfer_id，
-    // 不依赖会话的 side_channel（后者在断连后被释放）
+    // 不依赖会话的 typed runtime（后者在断连后被释放）
     let transfer_id = uuid::Uuid::new_v4().to_string();
 
     tftp::client::tftp_client_get(
@@ -3751,10 +3770,10 @@ pub async fn tftp_client_get(
     Ok(transfer_id)
 }
 
-/// TFTP 客户端 PUT（上传）——自给自足，不依赖 side_channel
+/// TFTP 客户端 PUT（上传）——自给自足，不依赖已连接会话 runtime
 ///
 /// 每次调用生成独立的 UUID 作为 transfer_id，绑定临时 UDP socket 完成传输。
-/// 在会话未连接（无 side_channel）时也能正常工作。
+/// 在会话未连接（无已连接 runtime）时也能正常工作。
 ///
 /// 调用前先同步服务端的 dynamic_params，消除前端 500ms 防抖导致的竞态窗口。
 #[tauri::command]
@@ -3786,7 +3805,7 @@ pub async fn tftp_client_put(
     sync_tftp_server_params(&state, &session_id, &params);
 
     // 客户端操作自给自足：使用 UUID 生成全局唯一 transfer_id，
-    // 不依赖会话的 side_channel（后者在断连后被释放）
+    // 不依赖会话的 typed runtime（后者在断连后被释放）
     let transfer_id = uuid::Uuid::new_v4().to_string();
 
     tftp::client::tftp_client_put(
@@ -3806,8 +3825,8 @@ pub async fn tftp_client_put(
     Ok(transfer_id)
 }
 
-/// 同步 TFTP 服务端参数到 side_channel（客户端 GET/PUT 前调用）。
-/// 若 side_channel 不存在（会话未连接），静默跳过。
+/// 同步 TFTP 服务端参数到 typed runtime（客户端 GET/PUT 前调用）。
+/// 若 runtime 不存在（会话未连接），静默跳过。
 fn sync_tftp_server_params(state: &AppState, session_id: &str, params: &TftpDynamicParams) {
     if let Some(runtime) = state.tftp_adapter.runtime(session_id) {
         match runtime.dynamic_params.lock() {
@@ -3824,7 +3843,7 @@ fn sync_tftp_server_params(state: &AppState, session_id: &str, params: &TftpDyna
 
 /// 更新 TFTP 动态参数
 ///
-/// 若会话已连接（side_channel 存在），更新服务端的共享参数。
+/// 若会话已连接（runtime 已注册），更新服务端的共享参数。
 /// 若会话未连接，仅记录日志后返回 Ok——客户端操作从前端传参，不依赖此处。
 #[tauri::command]
 pub async fn tftp_update_params(
@@ -3849,7 +3868,7 @@ pub async fn tftp_update_params(
 
 /// 获取 TFTP 状态
 ///
-/// 若会话已连接（side_channel 存在），从侧通道读取实时状态。
+/// 若会话已连接（runtime 已注册），从 typed runtime 读取实时状态。
 /// 若会话未连接，返回默认值（server_running=false，其余字段为空/默认）。
 #[tauri::command]
 pub async fn tftp_get_status(
@@ -3902,7 +3921,7 @@ static IPERF_CLIENT_REGISTRY: LazyLock<Mutex<HashMap<String, RegisteredClientRun
 
 /// iperf 会话连接
 ///
-/// 创建容器会话（无终端 I/O loop）。侧通道 `IperfSideChannel` 持有
+/// 创建容器会话（无终端 I/O loop）。侧通道 `IperfRuntime` 持有
 /// 服务端监听线程句柄与测试状态。
 /// 对齐 TFTP：连接即自动启动服务端（配置于 ConnectDialog 表单），
 /// 断开自动停止；服务端生命周期跟随会话生命周期。
@@ -4075,7 +4094,7 @@ pub async fn iperf_client_run(
     sanitize_iperf_params(&mut params);
 
     // 客户端自给自足（对齐 TFTP）：侧通道存在时复用其状态（停止按钮可中断）；
-    // 会话未连接（无 side_channel）时命令内自建一次性状态，测速照常可用。
+    // 会话未连接（无已连接 runtime）时命令内自建一次性状态，测速照常可用。
     // 注意：客户端中止标志独立于服务端监听标志（client_abort_flag vs
     // server_abort_flag）——客户端测速结束/被停止不得杀死会话内的服务端。
     let (client_abort_flag, client_test_running, last_summary) = {
@@ -4150,7 +4169,7 @@ pub async fn iperf_client_run(
     client_abort_flag.store(false, Ordering::Relaxed);
     client_test_running.store(true, Ordering::Relaxed);
 
-    // 同步动态参数到 side_channel（服务端与客户端共享，含版本与监听参数）；
+    // 同步动态参数到 typed runtime（服务端与客户端共享，含版本与监听参数）；
     // 会话未连接时静默跳过（sync_iperf_params 已容忍）
     sync_iperf_params(&state, &session_id, &params);
 
@@ -4185,8 +4204,8 @@ fn sanitize_iperf_params(params: &mut IperfDynamicParams) {
     params.report_interval_secs = params.report_interval_secs.clamp(1, 60);
 }
 
-/// 同步 iperf 动态参数到 side_channel（客户端测速前调用）。
-/// 若 side_channel 不存在（会话未连接），静默跳过。
+/// 同步 iperf 动态参数到 typed runtime（客户端测速前调用）。
+/// 若 runtime 不存在（会话未连接），静默跳过。
 fn sync_iperf_params(state: &AppState, session_id: &str, params: &IperfDynamicParams) {
     if let Some(runtime) = state.iperf_adapter.runtime(session_id) {
         *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = params.clone();
@@ -4202,7 +4221,7 @@ fn sync_iperf_params(state: &AppState, session_id: &str, params: &IperfDynamicPa
 /// 中止进行中的客户端测速
 ///
 /// 会话已连接时置位侧通道中止标志；会话未连接时查任务注册表
-///（`iperf_client_run` 无 side_channel 时注册的一次性任务）。
+///（`iperf_client_run` 无已连接 runtime 时注册的一次性任务）。
 /// 两者皆无则静默返回——任务已完成或从未启动。
 #[tauri::command]
 pub async fn iperf_client_stop(
@@ -4239,7 +4258,7 @@ pub async fn iperf_update_params(
 
 /// 获取 iperf 状态
 ///
-/// 若会话已连接（side_channel 存在），从侧通道读取实时状态。
+/// 若会话已连接（runtime 已注册），从 typed runtime 读取实时状态。
 /// 若会话未连接，返回默认值。
 #[tauri::command]
 pub async fn iperf_get_status(
@@ -4277,7 +4296,7 @@ pub async fn iperf_get_status(
         });
     }
 
-    // 会话未连接（无 side_channel），返回默认值
+    // 会话未连接（无已连接 runtime），返回默认值
     log::debug!("iperf get_status: 会话 {} 未连接，返回默认状态", session_id);
     Ok(IperfStatus {
         server_running: false,

@@ -2,7 +2,7 @@
 //!
 //! 将 `ssh_file_service.rs` 中的 SFTP 自由函数适配到统一的 `FileTransfer` trait。
 //! 通过 `explicit SSH file-transfer capability` 创建，消除 commands.rs 中的
-//! `downcast_ref::<SshSideChannel>()` 类型不安全转换。
+//! `downcast_ref::<SshRuntime>()` 类型不安全转换。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

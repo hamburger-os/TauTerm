@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "../Modbus.module.css";
-import type { ModbusRequest, ValueFormat, WatchRow, WatchValue } from "../model";
+import type { ModbusRequest, ModbusStatus, ValueFormat, WatchRow, WatchValue } from "../model";
 
 const DEFAULT_FORMAT: ValueFormat = {
   value_type: "uint16",
@@ -24,18 +24,38 @@ function requestFields(request: ModbusRequest): { functionCode: number; address:
   return { functionCode: 3, address: 0, quantity: 1 };
 }
 
-export default function MonitorPanel({ sessionId }: { sessionId: string }) {
-  const [rows, setRows] = useState<WatchRow[]>([{
+function defaultWatchRow(): WatchRow {
+  return {
     id: crypto.randomUUID(),
     enabled: true,
     name: "Holding 0",
     request: { kind: "read_registers", function: 3, address: 0, quantity: 1 },
     period_ms: 1000,
     format: DEFAULT_FORMAT,
-  }]);
+  };
+}
+
+export default function MonitorPanel({ sessionId }: { sessionId: string }) {
+  const [rows, setRows] = useState<WatchRow[]>(() => [defaultWatchRow()]);
   const [values, setValues] = useState<Record<string, WatchValue>>({});
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    setRows([defaultWatchRow()]);
+    setValues({});
+    setRunning(false);
+    setError("");
+    void invoke<ModbusStatus>("modbus_status", { sessionId })
+      .then(status => {
+        if (mounted && status.watch_rows.length > 0) setRows(status.watch_rows);
+      })
+      .catch(cause => {
+        if (mounted) setError(String(cause));
+      });
+    return () => { mounted = false; };
+  }, [sessionId]);
 
   useEffect(() => {
     if (!running) return;

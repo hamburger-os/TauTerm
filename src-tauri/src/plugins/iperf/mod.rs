@@ -255,13 +255,13 @@ pub struct IperfStatus {
     pub last_summary: Option<IperfSummary>,
 }
 
-// ── IperfSideChannel ─────────────────────────────────────
+// ── IperfRuntime ─────────────────────────────────────
 
 /// iperf 侧通道资源
 ///
 /// 持有服务端监听线程、动态参数与最近一次测试汇总。
-/// 通过 `ProtocolConnection::side_channel` 传递给 `SessionStore`。
-pub struct IperfSideChannel {
+/// 通过 `ProtocolConnection::runtime` 传递给 `SessionStore`。
+pub struct IperfRuntime {
     /// Session 配置（不可变）
     pub config: IperfConfig,
     /// 动态参数（可实时修改）
@@ -293,19 +293,19 @@ pub struct IperfSideChannel {
 }
 
 fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<IperfSideChannel>>> {
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<IperfRuntime>>> {
     static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<IperfSideChannel>>>,
+        std::sync::Mutex<std::collections::HashMap<String, Arc<IperfRuntime>>>,
     > = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-pub fn runtime(session_id: &str) -> Option<Arc<IperfSideChannel>> {
+pub fn runtime(session_id: &str) -> Option<Arc<IperfRuntime>> {
     runtime_registry().lock().ok()?.get(session_id).cloned()
 }
 
 struct RuntimeAttach {
-    runtime: Arc<IperfSideChannel>,
+    runtime: Arc<IperfRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
@@ -320,7 +320,7 @@ impl SessionAttach for RuntimeAttach {
     }
 }
 
-impl IperfSideChannel {
+impl IperfRuntime {
     /// 创建新的 iperf 侧通道
     pub fn new(config: IperfConfig) -> Self {
         // 动态参数初始化时同步 config 的版本、监听地址与端口
@@ -352,7 +352,7 @@ impl IperfSideChannel {
     }
 }
 
-impl SessionService for IperfSideChannel {
+impl SessionService for IperfRuntime {
     fn shutdown(&self) {
         // 会话关闭：一次性取消服务端监听与客户端测速（各自线程检测后退出）。
         // 递增代际作废旧线程的退出写回（重连后旧线程迟到 emit 不得翻转
@@ -374,7 +374,7 @@ impl SessionService for IperfSideChannel {
 /// 无状态结构体——每次 `connect()` 创建侧通道。
 /// 通过 `connect()` 返回 `ProtocolConnection`，携带：
 /// - `channel`: `None`（无终端 I/O — 容器会话模式，不创建 I/O loop）
-/// - `side_channel`: `IperfSideChannel`（服务端监听 + 测试状态管理）
+/// - `runtime`: `IperfRuntime`（服务端监听 + 测试状态管理）
 pub struct IperfAdapter;
 
 impl IperfAdapter {
@@ -382,7 +382,7 @@ impl IperfAdapter {
         Self
     }
 
-    pub fn runtime(&self, session_id: &str) -> Option<Arc<IperfSideChannel>> {
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<IperfRuntime>> {
         runtime(session_id)
     }
 }
@@ -407,16 +407,14 @@ impl ProtocolAdapter for IperfAdapter {
             config.listen_port
         );
 
-        let side_channel = Arc::new(IperfSideChannel::new(config));
+        let runtime = Arc::new(IperfRuntime::new(config));
 
         Ok(ProtocolConnection {
             data_plane: None,
-            service: Some(side_channel.clone()),
+            service: Some(runtime.clone()),
             file_transfer: None,
             channel_factory: None,
-            on_attached: Some(Arc::new(RuntimeAttach {
-                runtime: side_channel,
-            })),
+            on_attached: Some(Arc::new(RuntimeAttach { runtime: runtime })),
             teardown_delay: Duration::from_millis(100),
         })
     }
@@ -475,17 +473,17 @@ pub fn join_server_handle(
     }
 }
 
-/// 尝试从会话的 side_channel 启动 iperf 服务端。
+/// 尝试从会话的 runtime 启动 iperf 服务端。
 ///
 /// 供 `connect_session_iperf` 和 `iperf_server_start` 共用。
-/// 若 side_channel 不存在、非 iperf 类型、或已在运行，返回 `Err`。
+/// 若 runtime 不存在、非 iperf 类型、或已在运行，返回 `Err`。
 ///
 /// 与 `iperf_server_stop` 经 lifecycle 锁互斥：Stop 不会落在 join/复位窗口
 /// 内被静默覆盖；join 期间新到的停止请求（入口时 abort 尚未置位）使本次
 /// 启动放弃。join 轮询在 spawn_blocking 中执行，不占用 tokio worker。
 pub async fn try_start_server<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-    iperf_sc: &Arc<IperfSideChannel>,
+    iperf_sc: &Arc<IperfRuntime>,
     session_id: &str,
 ) -> Result<(), String> {
     // 与 iperf_server_stop 串行化（tokio Mutex：await 不阻塞 worker）

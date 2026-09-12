@@ -730,3 +730,104 @@ fn now_ms() -> u64 {
         .unwrap_or_default()
         .as_millis() as u64
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{BlockingByteStream, ReadStatus, TransportError};
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    struct IdleDriver {
+        writes: Arc<AtomicUsize>,
+    }
+
+    impl BlockingByteStream for IdleDriver {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(ReadStatus::Idle)
+        }
+
+        fn write_all(&mut self, _data: &[u8]) -> Result<(), TransportError> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
+
+    fn client_with(mut config: ModbusConfig) -> (ModbusClient, Arc<AtomicUsize>) {
+        config.response_timeout_ms = 15;
+        let writes = Arc::new(AtomicUsize::new(0));
+        let runtime = DataPlaneRuntime::spawn(Box::new(IdleDriver {
+            writes: writes.clone(),
+        }));
+        (ModbusClient::new(config, runtime), writes)
+    }
+
+    #[test]
+    fn read_timeout_retries_to_configured_budget() {
+        let mut config = ModbusConfig::default();
+        config.mode = ModbusMode::Tcp;
+        config.read_retries = 1;
+        let (client, writes) = client_with(config);
+        let result = client.execute(ModbusRequest::ReadRegisters {
+            function: 0x03,
+            address: 0,
+            quantity: 1,
+        });
+        assert!(matches!(result.status, TransactionStatus::Timeout));
+        assert_eq!(result.attempt, 1);
+        assert_eq!(writes.load(Ordering::Relaxed), 2);
+        client.shutdown();
+    }
+
+    #[test]
+    fn write_timeout_is_not_retried_by_default_and_outcome_is_unknown() {
+        let mut config = ModbusConfig::default();
+        config.mode = ModbusMode::Tcp;
+        config.read_retries = 3;
+        config.retry_writes = false;
+        let (client, writes) = client_with(config);
+        let result = client.execute(ModbusRequest::WriteSingle {
+            function: 0x06,
+            address: 7,
+            value: 42,
+        });
+        assert!(matches!(result.status, TransactionStatus::Timeout));
+        assert_eq!(result.attempt, 0);
+        assert!(result.write_outcome_unknown);
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+        client.shutdown();
+    }
+
+    #[test]
+    fn serial_unit_zero_write_is_broadcast_and_read_is_rejected() {
+        let mut config = ModbusConfig::default();
+        config.mode = ModbusMode::Rtu;
+        config.unit_id = 0;
+        let (client, writes) = client_with(config);
+        let write = client.execute(ModbusRequest::WriteSingle {
+            function: 0x06,
+            address: 7,
+            value: 42,
+        });
+        assert!(matches!(write.status, TransactionStatus::Broadcast));
+        assert!(!write.write_outcome_unknown);
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+        let read = client.execute(ModbusRequest::ReadRegisters {
+            function: 0x03,
+            address: 0,
+            quantity: 1,
+        });
+        assert!(matches!(read.status, TransactionStatus::ProtocolError));
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+        client.shutdown();
+    }
+}

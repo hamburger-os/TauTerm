@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Modbus Session** — adds first-class Modbus RTU, ASCII and TCP client/server sessions with common and advanced operations, strict transaction validation, watch polling, typed value transforms, raw PDU/ADU workflows, simulator data models and fault injection.
+
+### Changed
+- **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.
+
 ## [0.6.5] — 2026-09-11
 
 ### Added

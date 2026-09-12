@@ -212,7 +212,7 @@ impl BlockingByteStream for NetworkMuxDriver {
 }
 
 /// Protocol-specific service for listener lifecycle, UDP addressing and TCP peer registry.
-pub struct NetworkSideChannel {
+pub struct NetworkRuntime {
     running: Arc<AtomicBool>,
     session_id: Mutex<Option<String>>,
     max_clients: usize,
@@ -226,19 +226,19 @@ pub struct NetworkSideChannel {
 }
 
 fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<NetworkSideChannel>>> {
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<NetworkRuntime>>> {
     static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<NetworkSideChannel>>>,
+        std::sync::Mutex<std::collections::HashMap<String, Arc<NetworkRuntime>>>,
     > = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-pub fn runtime(session_id: &str) -> Option<Arc<NetworkSideChannel>> {
+pub fn runtime(session_id: &str) -> Option<Arc<NetworkRuntime>> {
     runtime_registry().lock().ok()?.get(session_id).cloned()
 }
 
 struct RuntimeAttach {
-    runtime: Arc<NetworkSideChannel>,
+    runtime: Arc<NetworkRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
@@ -253,7 +253,7 @@ impl SessionAttach for RuntimeAttach {
     }
 }
 
-impl NetworkSideChannel {
+impl NetworkRuntime {
     fn new(
         max_clients: usize,
         aggregate_tx: mpsc::Sender<Vec<u8>>,
@@ -420,7 +420,7 @@ impl NetworkSideChannel {
     }
 }
 
-impl SessionService for NetworkSideChannel {
+impl SessionService for NetworkRuntime {
     fn shutdown(&self) {
         self.running.store(false, Ordering::SeqCst);
     }
@@ -513,7 +513,7 @@ impl NetworkAdapter {
         Self
     }
 
-    pub fn runtime(&self, session_id: &str) -> Option<Arc<NetworkSideChannel>> {
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<NetworkRuntime>> {
         runtime(session_id)
     }
 }
@@ -552,7 +552,7 @@ impl ProtocolAdapter for NetworkAdapter {
 
         let (aggregate_tx, aggregate_rx) = mpsc::channel();
         let core = Arc::new(NetworkCore::new(transport.clone(), role.clone()));
-        let side = Arc::new(NetworkSideChannel::new(
+        let side = Arc::new(NetworkRuntime::new(
             max_clients,
             aggregate_tx,
             core.clone(),

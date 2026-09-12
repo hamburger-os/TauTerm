@@ -29,7 +29,7 @@ export type ModbusOperation = ModbusRequest | {
 
 export interface TransactionResult {
   timestamp_ms: number;
-  status: "success" | "broadcast" | "modbus_exception" | "protocol_error" | "malformed_response" | "timeout" | "transport_error" | "cancelled";
+  status: "success" | "broadcast" | "modbus_exception" | "protocol_error" | "malformed_response" | "timeout" | "transport_error" | "cancelled" | "fault_injected";
   function: number;
   transaction_id: number | null;
   unit_id: number;
@@ -56,6 +56,7 @@ export interface ModbusStatus {
   unit_id: number;
   transactions: TransactionResult[];
   server_fault: ServerFaultConfig | null;
+  watch_rows: WatchRow[];
 }
 
 export interface WatchRow {
