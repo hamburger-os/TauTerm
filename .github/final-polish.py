@@ -1,0 +1,332 @@
+from pathlib import Path
+import re
+
+RUST_ROOT = Path("src-tauri/src")
+
+TYPE_RENAMES = {
+    "SshSideChannel": "SshRuntime",
+    "TftpSideChannel": "TftpRuntime",
+    "IperfSideChannel": "IperfRuntime",
+    "TrdpSideChannel": "TrdpRuntime",
+    "NetworkSideChannel": "NetworkRuntime",
+    "ModbusSideChannel": "ModbusRuntime",
+    "get_ssh_side_channel": "get_ssh_runtime",
+}
+
+for path in RUST_ROOT.rglob("*.rs"):
+    text = path.read_text()
+    original = text
+    for old, new in TYPE_RENAMES.items():
+        text = text.replace(old, new)
+    if text != original:
+        path.write_text(text)
+
+for path in Path("docs").rglob("*.md"):
+    text = path.read_text()
+    original = text
+    for old, new in TYPE_RENAMES.items():
+        text = text.replace(old, new)
+    text = text.replace("ProtocolConnection::side_channel", "ProtocolConnection::service")
+    if text != original:
+        path.write_text(text)
+
+# Protocol-owned service objects are typed runtimes, not erased side channels.
+for rel in [
+    "src-tauri/src/plugins/ssh/mod.rs",
+    "src-tauri/src/plugins/tftp/mod.rs",
+    "src-tauri/src/plugins/iperf/mod.rs",
+    "src-tauri/src/plugins/trdp.rs",
+    "src-tauri/src/plugins/network/mod.rs",
+    "src-tauri/src/plugins/modbus/mod.rs",
+]:
+    path = Path(rel)
+    path.write_text(path.read_text().replace("side_channel", "runtime"))
+
+commands = Path("src-tauri/src/commands.rs")
+text = commands.read_text()
+text = re.sub(r"\bssh_sc\b", "ssh_runtime", text)
+for old, new in {
+    "Inline（串口 X/Y/ZModem）或 SideChannel（SSH SFTP）策略。": "Inline（串口 X/Y/ZModem）或辅助传输（SSH SFTP）策略。",
+    "不依赖 side_channel": "不依赖已连接会话 runtime",
+    "无 side_channel": "无已连接 runtime",
+    "会话的 side_channel": "会话的 typed runtime",
+    "side_channel 不存在": "runtime 不存在",
+    "side_channel 存在": "runtime 已注册",
+    "同步 TFTP 服务端参数到 side_channel": "同步 TFTP 服务端参数到 typed runtime",
+    "同步 iperf 动态参数到 side_channel": "同步 iperf 动态参数到 typed runtime",
+    "同步动态参数到 side_channel": "同步动态参数到 typed runtime",
+    "从侧通道读取实时状态": "从 typed runtime 读取实时状态",
+}.items():
+    text = text.replace(old, new)
+commands.write_text(text)
+
+store = Path("src-tauri/src/kernel/session_store.rs")
+text = store.read_text().replace(
+    "仅持有可选 side_channel、channel factory 和元数据，不创建 I/O 线程。",
+    "仅持有可选协议 service、文件传输 capability、channel factory 和元数据，不创建 I/O 线程。",
+)
+store.write_text(text)
+
+# Frontend contract mirrors backend status values and stable watch configuration.
+model = Path("src/plugins/modbus/model.ts")
+text = model.read_text()
+old = 'status: "success" | "broadcast" | "modbus_exception" | "protocol_error" | "malformed_response" | "timeout" | "transport_error" | "cancelled";'
+new = 'status: "success" | "broadcast" | "modbus_exception" | "protocol_error" | "malformed_response" | "timeout" | "transport_error" | "cancelled" | "fault_injected";'
+if old not in text:
+    raise SystemExit("Modbus transaction-status union anchor missing")
+text = text.replace(old, new, 1)
+old = "  server_fault: ServerFaultConfig | null;\n}"
+new = "  server_fault: ServerFaultConfig | null;\n  watch_rows: WatchRow[];\n}"
+if old not in text:
+    raise SystemExit("ModbusStatus watch_rows anchor missing")
+model.write_text(text.replace(old, new, 1))
+
+monitor = Path("src/plugins/modbus/components/MonitorPanel.tsx")
+text = monitor.read_text()
+old = 'import type { ModbusRequest, ValueFormat, WatchRow, WatchValue } from "../model";'
+new = 'import type { ModbusRequest, ModbusStatus, ValueFormat, WatchRow, WatchValue } from "../model";'
+if old not in text:
+    raise SystemExit("MonitorPanel import anchor missing")
+text = text.replace(old, new, 1)
+old = '''export default function MonitorPanel({ sessionId }: { sessionId: string }) {
+  const [rows, setRows] = useState<WatchRow[]>([{
+    id: crypto.randomUUID(),
+    enabled: true,
+    name: "Holding 0",
+    request: { kind: "read_registers", function: 3, address: 0, quantity: 1 },
+    period_ms: 1000,
+    format: DEFAULT_FORMAT,
+  }]);'''
+new = '''function defaultWatchRow(): WatchRow {
+  return {
+    id: crypto.randomUUID(),
+    enabled: true,
+    name: "Holding 0",
+    request: { kind: "read_registers", function: 3, address: 0, quantity: 1 },
+    period_ms: 1000,
+    format: DEFAULT_FORMAT,
+  };
+}
+
+export default function MonitorPanel({ sessionId }: { sessionId: string }) {
+  const [rows, setRows] = useState<WatchRow[]>(() => [defaultWatchRow()]);'''
+if old not in text:
+    raise SystemExit("MonitorPanel default-row anchor missing")
+text = text.replace(old, new, 1)
+anchor = '''  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!running) return;'''
+replacement = '''  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    setRows([defaultWatchRow()]);
+    setValues({});
+    setRunning(false);
+    setError("");
+    void invoke<ModbusStatus>("modbus_status", { sessionId })
+      .then(status => {
+        if (mounted && status.watch_rows.length > 0) setRows(status.watch_rows);
+      })
+      .catch(cause => {
+        if (mounted) setError(String(cause));
+      });
+    return () => { mounted = false; };
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!running) return;'''
+if anchor not in text:
+    raise SystemExit("MonitorPanel hydration anchor missing")
+monitor.write_text(text.replace(anchor, replacement, 1))
+
+# Repository ownership and release history follow the single-source rules.
+agents = Path("AGENTS.md")
+text = agents.read_text()
+old = '| Serial and virtual serial integration | `docs/modules/SERIAL.md` |\n| shared file transfer abstraction, X/Y/ZModem and SFTP orchestration | `docs/modules/TRANSFER.md` |'
+new = '| Serial and virtual serial integration | `docs/modules/SERIAL.md` |\n| shared Stream/DataPlane transport runtime and Serial/TCP/UDP transport adapters | `docs/modules/TRANSPORT_RUNTIME.md` |\n| shared file transfer abstraction, X/Y/ZModem and SFTP orchestration | `docs/modules/TRANSFER.md` |'
+if old not in text:
+    raise SystemExit("AGENTS transport ownership anchor missing")
+text = text.replace(old, new, 1)
+old = '| TCP/UDP Network Debug, TFTP, Telnet, iperf | `docs/modules/NETWORK.md` |\n| TRDP Node/Monitor, capture, XML/Dataset, native sidecar | `docs/modules/TRDP.md` |'
+new = '| TCP/UDP Network Debug, TFTP, Telnet, iperf | `docs/modules/NETWORK.md` |\n| Modbus RTU/ASCII/TCP client/server, codec, watch and data model | `docs/modules/MODBUS.md` |\n| TRDP Node/Monitor, capture, XML/Dataset, native sidecar | `docs/modules/TRDP.md` |'
+if old not in text:
+    raise SystemExit("AGENTS Modbus ownership anchor missing")
+agents.write_text(text.replace(old, new, 1))
+
+changelog = Path("CHANGELOG.md")
+text = changelog.read_text()
+anchor = "## [Unreleased]\n\n"
+insertion = '''## [Unreleased]
+
+### Added
+- **Modbus Session** — adds first-class Modbus RTU, ASCII and TCP client/server sessions with common and advanced operations, strict transaction validation, watch polling, typed value transforms, raw PDU/ADU workflows, simulator data models and fault injection.
+
+### Changed
+- **Shared transport runtime** — consolidates Serial/TCP/UDP/PTY stream ownership behind protocol-agnostic DataPlane/SessionIo capabilities with subscriptions, deterministic shutdown and exclusive I/O leases, removing the legacy Channel/IoLoop/CommHandle stack.
+
+'''
+if anchor not in text:
+    raise SystemExit("CHANGELOG Unreleased anchor missing")
+changelog.write_text(text.replace(anchor, insertion, 1))
+
+# Client strategy tests: retry policy, write uncertainty, and serial broadcast semantics.
+client = Path("src-tauri/src/plugins/modbus/client.rs")
+text = client.read_text()
+if "#[cfg(test)]\nmod tests {" in text:
+    raise SystemExit("client.rs already contains tests; review before appending")
+tests = r'''
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{BlockingByteStream, ReadStatus, TransportError};
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    struct IdleDriver {
+        writes: Arc<AtomicUsize>,
+    }
+
+    impl BlockingByteStream for IdleDriver {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(ReadStatus::Idle)
+        }
+
+        fn write_all(&mut self, _data: &[u8]) -> Result<(), TransportError> {
+            self.writes.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
+
+    fn client_with(mut config: ModbusConfig) -> (ModbusClient, Arc<AtomicUsize>) {
+        config.response_timeout_ms = 15;
+        let writes = Arc::new(AtomicUsize::new(0));
+        let runtime = DataPlaneRuntime::spawn(Box::new(IdleDriver {
+            writes: writes.clone(),
+        }));
+        (ModbusClient::new(config, runtime), writes)
+    }
+
+    #[test]
+    fn read_timeout_retries_to_configured_budget() {
+        let mut config = ModbusConfig::default();
+        config.mode = ModbusMode::Tcp;
+        config.read_retries = 1;
+        let (client, writes) = client_with(config);
+        let result = client.execute(ModbusRequest::ReadRegisters {
+            function: 0x03,
+            address: 0,
+            quantity: 1,
+        });
+        assert!(matches!(result.status, TransactionStatus::Timeout));
+        assert_eq!(result.attempt, 1);
+        assert_eq!(writes.load(Ordering::Relaxed), 2);
+        client.shutdown();
+    }
+
+    #[test]
+    fn write_timeout_is_not_retried_by_default_and_outcome_is_unknown() {
+        let mut config = ModbusConfig::default();
+        config.mode = ModbusMode::Tcp;
+        config.read_retries = 3;
+        config.retry_writes = false;
+        let (client, writes) = client_with(config);
+        let result = client.execute(ModbusRequest::WriteSingle {
+            function: 0x06,
+            address: 7,
+            value: 42,
+        });
+        assert!(matches!(result.status, TransactionStatus::Timeout));
+        assert_eq!(result.attempt, 0);
+        assert!(result.write_outcome_unknown);
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+        client.shutdown();
+    }
+
+    #[test]
+    fn serial_unit_zero_write_is_broadcast_and_read_is_rejected() {
+        let mut config = ModbusConfig::default();
+        config.mode = ModbusMode::Rtu;
+        config.unit_id = 0;
+        let (client, writes) = client_with(config);
+        let write = client.execute(ModbusRequest::WriteSingle {
+            function: 0x06,
+            address: 7,
+            value: 42,
+        });
+        assert!(matches!(write.status, TransactionStatus::Broadcast));
+        assert!(!write.write_outcome_unknown);
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+        let read = client.execute(ModbusRequest::ReadRegisters {
+            function: 0x03,
+            address: 0,
+            quantity: 1,
+        });
+        assert!(matches!(read.status, TransactionStatus::ProtocolError));
+        assert_eq!(writes.load(Ordering::Relaxed), 1);
+        client.shutdown();
+    }
+}
+'''
+client.write_text(text.rstrip() + tests + "\n")
+
+# Strict framing regressions.
+tcp = Path("src-tauri/src/plugins/modbus/codec/tcp.rs")
+text = tcp.read_text()
+anchor = '''        assert_eq!(frames, vec![a, b]);
+        assert_eq!(framer.buffered_len(), 0);
+    }
+}'''
+replacement = '''        assert_eq!(frames, vec![a, b]);
+        assert_eq!(framer.buffered_len(), 0);
+    }
+
+    #[test]
+    fn invalid_protocol_id_and_mbap_length_are_rejected() {
+        let mut bad_protocol = encode(7, 1, &[0x03, 0, 0, 0, 1]).unwrap();
+        bad_protocol[3] = 1;
+        assert!(decode(&bad_protocol).is_err());
+
+        let mut bad_length = encode(7, 1, &[0x03, 0, 0, 0, 1]).unwrap();
+        bad_length[5] = bad_length[5].saturating_add(1);
+        assert!(decode(&bad_length).is_err());
+    }
+}'''
+if anchor not in text:
+    raise SystemExit("TCP codec test anchor missing")
+tcp.write_text(text.replace(anchor, replacement, 1))
+
+rtu = Path("src-tauri/src/plugins/modbus/codec/rtu.rs")
+text = rtu.read_text()
+anchor = '''        assert_eq!(&frame[frame.len() - 2..], &[0xC5, 0xCD]);
+        assert_eq!(decode(&frame).unwrap(), (1, vec![0x03, 0, 0, 0, 0x0A]));
+    }
+}'''
+replacement = '''        assert_eq!(&frame[frame.len() - 2..], &[0xC5, 0xCD]);
+        assert_eq!(decode(&frame).unwrap(), (1, vec![0x03, 0, 0, 0, 0x0A]));
+    }
+
+    #[test]
+    fn corrupted_crc_is_rejected() {
+        let mut frame = encode(1, &[0x03, 0, 0, 0, 1]).unwrap();
+        let last = frame.len() - 1;
+        frame[last] ^= 0x01;
+        assert!(decode(&frame).is_err());
+    }
+}'''
+if anchor not in text:
+    raise SystemExit("RTU codec test anchor missing")
+rtu.write_text(text.replace(anchor, replacement, 1))
