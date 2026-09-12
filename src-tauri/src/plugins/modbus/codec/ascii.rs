@@ -84,11 +84,7 @@ impl AsciiFramer {
                 }
             }
 
-            let Some(end) = self
-                .buffer
-                .windows(2)
-                .position(|window| window == b"\r\n")
-            else {
+            let Some(end) = self.buffer.windows(2).position(|window| window == b"\r\n") else {
                 if self.buffer.len() > MAX_ASCII_ADU_LEN {
                     self.buffer.clear();
                 }
