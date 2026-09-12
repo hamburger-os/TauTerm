@@ -106,3 +106,63 @@ impl Drop for SessionDataPlane {
         self.join_runtime_actor();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{BlockingByteStream, ReadStatus};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    struct PanicAfterGate {
+        panic_now: std::sync::Arc<AtomicBool>,
+    }
+
+    impl BlockingByteStream for PanicAfterGate {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+            if self.panic_now.load(Ordering::Acquire) {
+                panic!("intentional transport actor panic");
+            }
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(ReadStatus::Idle)
+        }
+
+        fn write_all(&mut self, _data: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn unexpected_transport_actor_exit_surfaces_disconnect() {
+        let panic_now = std::sync::Arc::new(AtomicBool::new(false));
+        let runtime = DataPlaneRuntime::spawn(Box::new(PanicAfterGate {
+            panic_now: panic_now.clone(),
+        }));
+        let (disconnect_tx, disconnect_rx) = mpsc::channel();
+        let mut owner = SessionDataPlane::attach(
+            runtime,
+            "test-session".into(),
+            Box::new(|_, _| {}),
+            Box::new(move |_, info| {
+                let _ = disconnect_tx.send(info);
+            }),
+        )
+        .unwrap();
+
+        panic_now.store(true, Ordering::Release);
+        let info = disconnect_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("unexpected actor exit should become a disconnect");
+        assert_eq!(info.reason, "transport runtime stopped unexpectedly");
+
+        owner.shutdown();
+    }
+}
