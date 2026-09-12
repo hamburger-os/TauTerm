@@ -1,5 +1,14 @@
 import { normalizeModbusSessionParams } from "./model";
 
+const GENERATED_SESSION_TITLES = new Set([
+  "Modbus @ RTU Master",
+  "Modbus @ RTU Slave",
+  "Modbus @ ASCII Master",
+  "Modbus @ ASCII Slave",
+  "Modbus @ TCP Client",
+  "Modbus @ TCP Server",
+]);
+
 export function modbusTypeLabel(params: Record<string, unknown>): string {
   const normalized = normalizeModbusSessionParams(params);
   const mode = normalized.mode.toUpperCase();
@@ -11,6 +20,10 @@ export function modbusTypeLabel(params: Record<string, unknown>): string {
 
 export function modbusSessionTitle(params: Record<string, unknown>): string {
   return `Modbus @ ${modbusTypeLabel(params)}`;
+}
+
+export function isGeneratedModbusSessionTitle(name: string): boolean {
+  return GENERATED_SESSION_TITLES.has(name);
 }
 
 export function modbusEndpointLabel(params: Record<string, unknown>): string {
