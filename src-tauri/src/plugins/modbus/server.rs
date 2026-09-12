@@ -1,10 +1,13 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::plugins::modbus::client::{TransactionResult, TransactionStatus};
+use crate::plugins::modbus::capability::request_supported_on_mode;
+use crate::plugins::modbus::client::{
+    TransactionHistoryBatch, TransactionRecord, TransactionResult, TransactionStatus,
+};
 use crate::plugins::modbus::codec;
 use crate::plugins::modbus::config::{
     validate_fault, ModbusEndpointConfig, ModbusMode, ServerFaultConfig, ValidatedModbusConfig,
@@ -16,12 +19,16 @@ use crate::transport::tcp::TcpListenerTransport;
 use crate::transport::DataPlaneRuntime;
 
 const SERVER_HISTORY_LIMIT: usize = 1000;
+const HISTORY_QUERY_LIMIT: usize = 500;
+
+type ServerHistory = Arc<Mutex<VecDeque<TransactionRecord>>>;
 
 pub struct ModbusServer {
     config: ValidatedModbusConfig,
     pub model: Arc<ModbusDataModel>,
     fault: Arc<RwLock<ServerFaultConfig>>,
-    history: Arc<Mutex<VecDeque<TransactionResult>>>,
+    history: ServerHistory,
+    next_history_sequence: Arc<AtomicU64>,
     running: Arc<AtomicBool>,
     workers: Arc<Mutex<Vec<JoinHandle<()>>>>,
     serial_runtime: Mutex<Option<DataPlaneRuntime>>,
@@ -56,6 +63,7 @@ impl ModbusServer {
             model: Arc::new(ModbusDataModel::default()),
             fault,
             history: Arc::new(Mutex::new(VecDeque::with_capacity(SERVER_HISTORY_LIMIT))),
+            next_history_sequence: Arc::new(AtomicU64::new(1)),
             running: Arc::new(AtomicBool::new(false)),
             workers: Arc::new(Mutex::new(Vec::new())),
             serial_runtime: Mutex::new(serial_runtime),
@@ -92,12 +100,13 @@ impl ModbusServer {
         let model = self.model.clone();
         let fault = self.fault.clone();
         let history = self.history.clone();
+        let sequence = self.next_history_sequence.clone();
         let worker = std::thread::spawn(move || match config.mode() {
             ModbusMode::Rtu => run_rtu_server(
-                &handle, &events, &running, &config, &model, &fault, &history,
+                &handle, &events, &running, &config, &model, &fault, &history, &sequence,
             ),
             ModbusMode::Ascii => run_ascii_server(
-                &handle, &events, &running, &config, &model, &fault, &history,
+                &handle, &events, &running, &config, &model, &fault, &history, &sequence,
             ),
             ModbusMode::Tcp => unreachable!(),
         });
@@ -117,6 +126,7 @@ impl ModbusServer {
         let model = self.model.clone();
         let fault = self.fault.clone();
         let history = self.history.clone();
+        let sequence = self.next_history_sequence.clone();
         let config = self.config.clone();
         let max_clients = self
             .config
@@ -126,6 +136,9 @@ impl ModbusServer {
         let active = Arc::new(AtomicUsize::new(0));
         let listener_worker = std::thread::spawn(move || {
             while running.load(Ordering::Acquire) {
+                if let Ok(mut list) = workers.lock() {
+                    reap_finished_workers(&mut list);
+                }
                 match listener.accept() {
                     Ok(Some((driver, _peer))) => {
                         if max_clients > 0 && active.load(Ordering::Acquire) >= max_clients {
@@ -136,6 +149,7 @@ impl ModbusServer {
                         let model_peer = model.clone();
                         let fault_peer = fault.clone();
                         let history_peer = history.clone();
+                        let sequence_peer = sequence.clone();
                         let config_peer = config.clone();
                         let active_peer = active.clone();
                         let peer = std::thread::spawn(move || {
@@ -145,11 +159,13 @@ impl ModbusServer {
                                 model_peer,
                                 fault_peer,
                                 history_peer,
+                                sequence_peer,
                                 config_peer,
                             );
                             active_peer.fetch_sub(1, Ordering::AcqRel);
                         });
                         if let Ok(mut list) = workers.lock() {
+                            reap_finished_workers(&mut list);
                             list.push(peer);
                         }
                     }
@@ -178,14 +194,37 @@ impl ModbusServer {
         self.fault.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    pub fn history(&self) -> Vec<TransactionResult> {
+    pub fn history_since(&self, after_sequence: u64, limit: usize) -> TransactionHistoryBatch {
+        let history = self
+            .history
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let latest_sequence = history.back().map_or(after_sequence, |record| record.sequence);
+        let limit = limit.clamp(1, HISTORY_QUERY_LIMIT);
+        let records = if after_sequence == 0 {
+            let mut recent: Vec<_> = history.iter().rev().take(limit).cloned().collect();
+            recent.reverse();
+            recent
+        } else {
+            history
+                .iter()
+                .filter(|record| record.sequence > after_sequence)
+                .take(limit)
+                .cloned()
+                .collect()
+        };
+        TransactionHistoryBatch {
+            records,
+            latest_sequence,
+        }
+    }
+
+    pub fn last_result(&self) -> Option<TransactionResult> {
         self.history
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .iter()
-            .rev()
-            .cloned()
-            .collect()
+            .back()
+            .map(|record| record.result.clone())
     }
 
     pub fn shutdown(&self) {
@@ -210,6 +249,18 @@ impl ModbusServer {
     }
 }
 
+fn reap_finished_workers(workers: &mut Vec<JoinHandle<()>>) {
+    let mut index = 0;
+    while index < workers.len() {
+        if workers[index].is_finished() {
+            let handle = workers.remove(index);
+            let _ = handle.join();
+        } else {
+            index += 1;
+        }
+    }
+}
+
 fn run_ascii_server(
     handle: &crate::transport::DataPlaneHandle,
     events: &std::sync::mpsc::Receiver<DataPlaneEvent>,
@@ -217,17 +268,18 @@ fn run_ascii_server(
     config: &ValidatedModbusConfig,
     model: &ModbusDataModel,
     fault: &RwLock<ServerFaultConfig>,
-    history: &Mutex<VecDeque<TransactionResult>>,
+    history: &Mutex<VecDeque<TransactionRecord>>,
+    sequence: &AtomicU64,
 ) {
-    let mut buffer = Vec::new();
+    let mut framer = codec::ascii::AsciiFramer::default();
     while running.load(Ordering::Acquire) {
         match events.recv_timeout(Duration::from_millis(50)) {
             Ok(DataPlaneEvent::Closed(_)) => break,
             Ok(DataPlaneEvent::Data(data)) => {
-                buffer.extend_from_slice(&data);
-                while let Some(end) = buffer.windows(2).position(|w| w == b"\r\n") {
-                    let frame: Vec<u8> = buffer.drain(..end + 2).collect();
-                    process_serial_frame(handle, config, model, fault, history, &frame);
+                for frame in framer.push(&data) {
+                    process_serial_frame(
+                        handle, config, model, fault, history, sequence, &frame,
+                    );
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -243,7 +295,8 @@ fn run_rtu_server(
     config: &ValidatedModbusConfig,
     model: &ModbusDataModel,
     fault: &RwLock<ServerFaultConfig>,
-    history: &Mutex<VecDeque<TransactionResult>>,
+    history: &Mutex<VecDeque<TransactionRecord>>,
+    sequence: &AtomicU64,
 ) {
     let mut buffer = Vec::new();
     let inter_char = config.rtu_inter_char_gap();
@@ -270,7 +323,9 @@ fn run_rtu_server(
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         let frame = std::mem::take(&mut buffer);
-                        process_serial_frame(handle, config, model, fault, history, &frame);
+                        process_serial_frame(
+                            handle, config, model, fault, history, sequence, &frame,
+                        );
                     }
                 }
             }
@@ -284,7 +339,8 @@ fn process_serial_frame(
     config: &ValidatedModbusConfig,
     model: &ModbusDataModel,
     fault: &RwLock<ServerFaultConfig>,
-    history: &Mutex<VecDeque<TransactionResult>>,
+    history: &Mutex<VecDeque<TransactionRecord>>,
+    sequence: &AtomicU64,
     frame: &[u8],
 ) {
     let started = Instant::now();
@@ -311,14 +367,17 @@ fn process_serial_frame(
                 return;
             }
             let response_pdu = exception_pdu(pdu.first().copied().unwrap_or(0), 0x03);
-            let raw_tx = encode_serial(config, unit, &response_pdu)
-                .and_then(|frame| handle.write(&frame).ok().map(|_| frame))
-                .unwrap_or_default();
+            let (raw_tx, delivery_error) = send_serial_response(handle, config, unit, &response_pdu);
             record_server(
                 history,
+                sequence,
                 TransactionResult {
                     timestamp_ms: now_ms(),
-                    status: TransactionStatus::ProtocolError,
+                    status: if delivery_error.is_some() {
+                        TransactionStatus::TransportError
+                    } else {
+                        TransactionStatus::ProtocolError
+                    },
                     function: pdu.first().copied().unwrap_or(0),
                     transaction_id: None,
                     unit_id: unit,
@@ -327,7 +386,8 @@ fn process_serial_frame(
                     raw_tx,
                     raw_rx: frame.to_vec(),
                     response_pdu,
-                    message: Some(message),
+                    semantic_response: None,
+                    message: Some(append_delivery_error(message, delivery_error)),
                     write_outcome_unknown: false,
                     attempt: 0,
                 },
@@ -342,6 +402,7 @@ fn process_serial_frame(
     if broadcast {
         record_server(
             history,
+            sequence,
             TransactionResult {
                 timestamp_ms: now_ms(),
                 status: TransactionStatus::Broadcast,
@@ -353,6 +414,7 @@ fn process_serial_frame(
                 raw_tx: Vec::new(),
                 raw_rx: frame.to_vec(),
                 response_pdu: Vec::new(),
+                semantic_response: None,
                 message: execution.message,
                 write_outcome_unknown: false,
                 attempt: 0,
@@ -360,20 +422,30 @@ fn process_serial_frame(
         );
         return;
     }
+
+    let mut status = execution.status;
+    let mut message = execution.message;
     let (raw_tx, response_pdu) = match execution.response {
         Some(response_pdu) => {
-            let raw_tx = encode_serial(config, unit, &response_pdu)
-                .and_then(|frame| handle.write(&frame).ok().map(|_| frame))
-                .unwrap_or_default();
+            let (raw_tx, delivery_error) =
+                send_serial_response(handle, config, unit, &response_pdu);
+            if let Some(error) = delivery_error {
+                status = TransactionStatus::TransportError;
+                message = Some(append_delivery_error(
+                    message.unwrap_or_else(|| "request processed".into()),
+                    Some(error),
+                ));
+            }
             (raw_tx, response_pdu)
         }
         None => (Vec::new(), Vec::new()),
     };
     record_server(
         history,
+        sequence,
         TransactionResult {
             timestamp_ms: now_ms(),
-            status: execution.status,
+            status,
             function: request.function(),
             transaction_id: None,
             unit_id: unit,
@@ -382,18 +454,31 @@ fn process_serial_frame(
             raw_tx,
             raw_rx: frame.to_vec(),
             response_pdu,
-            message: execution.message,
+            semantic_response: None,
+            message,
             write_outcome_unknown: false,
             attempt: 0,
         },
     );
 }
 
-fn encode_serial(config: &ValidatedModbusConfig, unit: u8, pdu: &[u8]) -> Option<Vec<u8>> {
-    match config.mode() {
-        ModbusMode::Rtu => codec::rtu::encode(unit, pdu).ok(),
-        ModbusMode::Ascii => codec::ascii::encode(unit, pdu).ok(),
-        ModbusMode::Tcp => None,
+fn send_serial_response(
+    handle: &crate::transport::DataPlaneHandle,
+    config: &ValidatedModbusConfig,
+    unit: u8,
+    pdu: &[u8],
+) -> (Vec<u8>, Option<String>) {
+    let encoded = match config.mode() {
+        ModbusMode::Rtu => codec::rtu::encode(unit, pdu),
+        ModbusMode::Ascii => codec::ascii::encode(unit, pdu),
+        ModbusMode::Tcp => return (Vec::new(), Some("invalid serial response mode".into())),
+    };
+    match encoded {
+        Ok(frame) => match handle.write(&frame) {
+            Ok(()) => (frame, None),
+            Err(error) => (frame, Some(error.to_string())),
+        },
+        Err(error) => (Vec::new(), Some(error)),
     }
 }
 
@@ -402,7 +487,8 @@ fn run_tcp_peer(
     running: Arc<AtomicBool>,
     model: Arc<ModbusDataModel>,
     fault: Arc<RwLock<ServerFaultConfig>>,
-    history: Arc<Mutex<VecDeque<TransactionResult>>>,
+    history: ServerHistory,
+    sequence: Arc<AtomicU64>,
     config: ValidatedModbusConfig,
 ) {
     let runtime = DataPlaneRuntime::spawn(Box::new(driver));
@@ -421,7 +507,10 @@ fn run_tcp_peer(
             Ok(DataPlaneEvent::Data(data)) => {
                 let frames = match framer.push(&data) {
                     Ok(frames) => frames,
-                    Err(_) => break,
+                    Err(error) => {
+                        log::debug!("Closing malformed Modbus TCP peer: {error}");
+                        break;
+                    }
                 };
                 for frame in frames {
                     let started = Instant::now();
@@ -437,15 +526,18 @@ fn run_tcp_peer(
                         Err(message) => {
                             let response_pdu =
                                 exception_pdu(pdu.first().copied().unwrap_or(0), 0x03);
-                            let raw_tx = codec::tcp::encode(tid, unit, &response_pdu)
-                                .ok()
-                                .and_then(|adu| handle.write(&adu).ok().map(|_| adu))
-                                .unwrap_or_default();
+                            let (raw_tx, delivery_error) =
+                                send_tcp_response(&handle, tid, unit, &response_pdu);
                             record_server(
                                 &history,
+                                &sequence,
                                 TransactionResult {
                                     timestamp_ms: now_ms(),
-                                    status: TransactionStatus::ProtocolError,
+                                    status: if delivery_error.is_some() {
+                                        TransactionStatus::TransportError
+                                    } else {
+                                        TransactionStatus::ProtocolError
+                                    },
                                     function: pdu.first().copied().unwrap_or(0),
                                     transaction_id: Some(tid),
                                     unit_id: unit,
@@ -454,7 +546,8 @@ fn run_tcp_peer(
                                     raw_tx,
                                     raw_rx: frame,
                                     response_pdu,
-                                    message: Some(message),
+                                    semantic_response: None,
+                                    message: Some(append_delivery_error(message, delivery_error)),
                                     write_outcome_unknown: false,
                                     attempt: 0,
                                 },
@@ -462,7 +555,7 @@ fn run_tcp_peer(
                             continue;
                         }
                     };
-                    let execution = if serial_only_request(&request) {
+                    let execution = if !request_supported_on_mode(ModbusMode::Tcp, &request) {
                         ServerExecution {
                             response: Some(exception_pdu(request.function(), 0x01)),
                             status: TransactionStatus::ModbusException,
@@ -474,21 +567,29 @@ fn run_tcp_peer(
                     } else {
                         execute_with_fault(&fault, &model, &request)
                     };
+                    let mut status = execution.status;
+                    let mut message = execution.message;
                     let (raw_tx, response_pdu) = match execution.response {
                         Some(response_pdu) => {
-                            let raw_tx = codec::tcp::encode(tid, unit, &response_pdu)
-                                .ok()
-                                .and_then(|adu| handle.write(&adu).ok().map(|_| adu))
-                                .unwrap_or_default();
+                            let (raw_tx, delivery_error) =
+                                send_tcp_response(&handle, tid, unit, &response_pdu);
+                            if let Some(error) = delivery_error {
+                                status = TransactionStatus::TransportError;
+                                message = Some(append_delivery_error(
+                                    message.unwrap_or_else(|| "request processed".into()),
+                                    Some(error),
+                                ));
+                            }
                             (raw_tx, response_pdu)
                         }
                         None => (Vec::new(), Vec::new()),
                     };
                     record_server(
                         &history,
+                        &sequence,
                         TransactionResult {
                             timestamp_ms: now_ms(),
-                            status: execution.status,
+                            status,
                             function: request.function(),
                             transaction_id: Some(tid),
                             unit_id: unit,
@@ -497,7 +598,8 @@ fn run_tcp_peer(
                             raw_tx,
                             raw_rx: frame,
                             response_pdu,
-                            message: execution.message,
+                            semantic_response: None,
+                            message,
                             write_outcome_unknown: false,
                             attempt: 0,
                         },
@@ -510,6 +612,21 @@ fn run_tcp_peer(
     }
     drop(events);
     runtime.join();
+}
+
+fn send_tcp_response(
+    handle: &crate::transport::DataPlaneHandle,
+    tid: u16,
+    unit: u8,
+    pdu: &[u8],
+) -> (Vec<u8>, Option<String>) {
+    match codec::tcp::encode(tid, unit, pdu) {
+        Ok(frame) => match handle.write(&frame) {
+            Ok(()) => (frame, None),
+            Err(error) => (frame, Some(error.to_string())),
+        },
+        Err(error) => (Vec::new(), Some(error)),
+    }
 }
 
 struct ServerExecution {
@@ -564,23 +681,24 @@ fn execute_with_fault(
     }
 }
 
-fn serial_only_request(request: &codec::ModbusRequest) -> bool {
-    matches!(
-        request,
-        codec::ModbusRequest::ReadExceptionStatus
-            | codec::ModbusRequest::Diagnostics { .. }
-            | codec::ModbusRequest::GetCommEventCounter
-            | codec::ModbusRequest::GetCommEventLog
-            | codec::ModbusRequest::ReportServerId
-    )
+fn append_delivery_error(message: String, delivery_error: Option<String>) -> String {
+    match delivery_error {
+        Some(error) => format!("{message}; response delivery failed: {error}"),
+        None => message,
+    }
 }
 
-fn record_server(history: &Mutex<VecDeque<TransactionResult>>, result: TransactionResult) {
+fn record_server(
+    history: &Mutex<VecDeque<TransactionRecord>>,
+    sequence: &AtomicU64,
+    result: TransactionResult,
+) {
+    let sequence = sequence.fetch_add(1, Ordering::Relaxed);
     let mut history = history.lock().unwrap_or_else(|error| error.into_inner());
     if history.len() >= SERVER_HISTORY_LIMIT {
         history.pop_front();
     }
-    history.push_back(result);
+    history.push_back(TransactionRecord { sequence, result });
 }
 
 fn exception_pdu(function: u8, code: u8) -> Vec<u8> {
@@ -664,12 +782,28 @@ mod tests {
     }
 
     #[test]
-    fn tcp_server_rejects_serial_only_standard_functions() {
-        assert!(serial_only_request(&codec::ModbusRequest::GetCommEventLog));
-        assert!(!serial_only_request(&codec::ModbusRequest::ReadRegisters {
-            area: RegisterReadArea::HoldingRegisters,
-            address: 0,
-            quantity: 1,
-        }));
+    fn tcp_server_uses_shared_transport_capability() {
+        assert!(!request_supported_on_mode(
+            ModbusMode::Tcp,
+            &codec::ModbusRequest::GetCommEventLog
+        ));
+        assert!(request_supported_on_mode(
+            ModbusMode::Tcp,
+            &codec::ModbusRequest::ReadRegisters {
+                area: RegisterReadArea::HoldingRegisters,
+                address: 0,
+                quantity: 1,
+            }
+        ));
+    }
+
+    #[test]
+    fn finished_worker_handles_are_reaped() {
+        let mut workers = vec![std::thread::spawn(|| {})];
+        while !workers[0].is_finished() {
+            std::thread::yield_now();
+        }
+        reap_finished_workers(&mut workers);
+        assert!(workers.is_empty());
     }
 }
