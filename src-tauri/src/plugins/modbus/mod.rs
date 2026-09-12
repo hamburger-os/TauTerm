@@ -468,20 +468,14 @@ pub fn modbus_watch_set(
     })?;
     WatchScheduler::validate_rows(&rows, mode)?;
     let value = serde_json::to_value(&rows).map_err(|error| error.to_string())?;
-    persist_param_if_saved_transactional(
-        &app,
-        &session_id,
-        "watch_rows",
-        value.clone(),
-        || {
-            watch.set_rows(rows)?;
-            if let Err(error) = set_runtime_param(&state, &session_id, "watch_rows", value) {
-                let _ = watch.set_rows(previous_rows);
-                return Err(error);
-            }
-            Ok(())
-        },
-    )
+    persist_param_if_saved_transactional(&app, &session_id, "watch_rows", value.clone(), || {
+        watch.set_rows(rows)?;
+        if let Err(error) = set_runtime_param(&state, &session_id, "watch_rows", value) {
+            let _ = watch.set_rows(previous_rows);
+            return Err(error);
+        }
+        Ok(())
+    })
 }
 
 #[tauri::command]
