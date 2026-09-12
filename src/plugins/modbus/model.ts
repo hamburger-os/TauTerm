@@ -42,7 +42,7 @@ export function defaultModbusSessionParams(): ModbusSessionParams {
     role: "client",
     serial_port: "",
     serial: {
-      baud_rate: 9600,
+      baud_rate: 115200,
       data_bits: 8,
       parity: "none",
       stop_bits: "1",
