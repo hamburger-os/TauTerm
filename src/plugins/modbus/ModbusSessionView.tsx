@@ -34,6 +34,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const params = useMemo(() => normalizeModbusSessionParams(tab?.params ?? {}), [tab?.params]);
   const role = params.role;
   const mode = params.mode as ModbusMode;
+  const connected = tab?.state === "connected" || tab?.state === "transferring";
   const [page, setPage] = useState<Page>(role === "server" ? "server" : "readwrite");
   const [history, setHistory] = useState<TransactionResult[]>([]);
 
@@ -47,6 +48,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   }, [params, renameTab, sessionId, tab?.name]);
 
   const execute = async (request: ModbusOperation) => {
+    if (!connected) throw new Error("Modbus 会话尚未连接");
     const result = await invoke<TransactionResult>("modbus_execute", { sessionId, request });
     setHistory(current => [result, ...current].slice(0, 500));
     return result;
@@ -83,11 +85,11 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
 
     <div className={styles.body}>
       <div className={styles.workspaceContent}>
-        {page === "readwrite" && <ReadWritePanel execute={execute} />}
-        {page === "monitor" && <MonitorPanel sessionId={sessionId} />}
-        {page === "transactions" && <TransactionsPanel sessionId={sessionId} fallback={history} />}
-        {page === "advanced" && <AdvancedPanel sessionId={sessionId} execute={execute} mode={mode} role={role} initialFault={serverFault} />}
-        {page === "server" && <ServerPanel sessionId={sessionId} />}
+        {page === "readwrite" && <ReadWritePanel execute={execute} connected={connected} />}
+        {page === "monitor" && <MonitorPanel sessionId={sessionId} connected={connected} />}
+        {page === "transactions" && <TransactionsPanel sessionId={sessionId} fallback={history} connected={connected} />}
+        {page === "advanced" && <AdvancedPanel sessionId={sessionId} execute={execute} mode={mode} role={role} initialFault={serverFault} connected={connected} />}
+        {page === "server" && <ServerPanel sessionId={sessionId} connected={connected} />}
       </div>
     </div>
   </div>;
