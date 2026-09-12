@@ -199,7 +199,9 @@ impl ModbusServer {
             .history
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let latest_sequence = history.back().map_or(after_sequence, |record| record.sequence);
+        let latest_sequence = history
+            .back()
+            .map_or(after_sequence, |record| record.sequence);
         let limit = limit.clamp(1, HISTORY_QUERY_LIMIT);
         let records = if after_sequence == 0 {
             let mut recent: Vec<_> = history.iter().rev().take(limit).cloned().collect();
@@ -277,9 +279,7 @@ fn run_ascii_server(
             Ok(DataPlaneEvent::Closed(_)) => break,
             Ok(DataPlaneEvent::Data(data)) => {
                 for frame in framer.push(&data) {
-                    process_serial_frame(
-                        handle, config, model, fault, history, sequence, &frame,
-                    );
+                    process_serial_frame(handle, config, model, fault, history, sequence, &frame);
                 }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -323,9 +323,7 @@ fn run_rtu_server(
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         let frame = std::mem::take(&mut buffer);
-                        process_serial_frame(
-                            handle, config, model, fault, history, sequence, &frame,
-                        );
+                        process_serial_frame(handle, config, model, fault, history, sequence, &frame);
                     }
                 }
             }
@@ -367,7 +365,8 @@ fn process_serial_frame(
                 return;
             }
             let response_pdu = exception_pdu(pdu.first().copied().unwrap_or(0), 0x03);
-            let (raw_tx, delivery_error) = send_serial_response(handle, config, unit, &response_pdu);
+            let (raw_tx, delivery_error) =
+                send_serial_response(handle, config, unit, &response_pdu);
             record_server(
                 history,
                 sequence,
