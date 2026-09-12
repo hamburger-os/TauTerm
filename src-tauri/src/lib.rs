@@ -16,6 +16,7 @@
 
 mod commands;
 mod diagnostics;
+mod ipc_transport;
 mod kernel;
 #[cfg(test)]
 mod performance_contract;
@@ -433,13 +434,13 @@ pub fn run() {
             commands::enumerate_endpoints,
             commands::connect_session,
             commands::disconnect_session,
-            commands::write_data,
+            ipc_transport::write_data,
             commands::switch_active_session,
             commands::rename_session,
             commands::reorder_tabs,
             commands::get_tabs,
             commands::open_channel,
-            commands::close_channel,
+            ipc_transport::close_channel,
             commands::connect_session_network,
             commands::list_network_peers,
             commands::close_network_peer,
@@ -515,7 +516,7 @@ pub fn run() {
             commands::start_journald_export,
             commands::stop_journald_export,
             commands::get_ssh_home_dir,
-            commands::resize_pty,
+            ipc_transport::resize_pty,
             commands::confirm_host_key,
             commands::tftp_server_start,
             commands::tftp_server_stop,
