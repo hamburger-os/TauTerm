@@ -1,7 +1,9 @@
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: var(--z-overlay);
+  /* Shared confirmation dialogs are intentionally one layer above normal overlays
+     and below toast notifications: --z-overlay (30) < confirm (40) < --z-toast (50). */
+  z-index: calc(var(--z-overlay) + 10);
   display: flex;
   align-items: center;
   justify-content: center;
