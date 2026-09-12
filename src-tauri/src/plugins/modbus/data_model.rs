@@ -96,6 +96,7 @@ struct ModelInner {
     device_objects: BTreeMap<u8, String>,
     exception_status: u8,
     comm_event_count: u16,
+    message_count: u16,
 }
 
 pub struct ModbusDataModel {
@@ -169,7 +170,17 @@ impl ModbusDataModel {
     /// Failed requests therefore never leave a partially updated simulator state.
     pub fn execute(&self, request: &ModbusRequest) -> Result<Vec<u8>, u8> {
         let mut inner = self.inner.write().map_err(|_| EX_SERVER_DEVICE_FAILURE)?;
+        let clear_counters = matches!(
+            request,
+            ModbusRequest::Diagnostics {
+                sub_function: 0x000A,
+                data,
+            } if data.as_slice() == [0x00, 0x00]
+        );
         let result = execute_request(&mut inner, request);
+        if !clear_counters {
+            inner.message_count = inner.message_count.wrapping_add(1);
+        }
         if result.is_ok() && counts_comm_event(request) {
             inner.comm_event_count = inner.comm_event_count.wrapping_add(1);
         }
@@ -232,9 +243,11 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             out.extend_from_slice(&sub_function.to_be_bytes());
             match *sub_function {
                 0x0000 => out.extend_from_slice(data),
-                0x000A if data.is_empty() => {
+                0x000A if data.as_slice() == [0x00, 0x00] => {
                     inner.comm_event_count = 0;
+                    inner.message_count = 0;
                     inner.exception_status = 0;
+                    out.extend_from_slice(data);
                 }
                 0x000A => return Err(EX_ILLEGAL_DATA_VALUE),
                 _ => return Err(EX_ILLEGAL_DATA_VALUE),
@@ -248,7 +261,7 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             out.push(6);
             out.extend_from_slice(&0u16.to_be_bytes());
             out.extend_from_slice(&inner.comm_event_count.to_be_bytes());
-            out.extend_from_slice(&inner.comm_event_count.to_be_bytes());
+            out.extend_from_slice(&inner.message_count.to_be_bytes());
         }
         ModbusRequest::WriteMultipleCoils { address, values } => {
             inner.address_space.coils.write(*address, values)?;
@@ -356,7 +369,12 @@ fn encode_mei_response(
             .get_key_value(&start)
             .ok_or(EX_ILLEGAL_DATA_ADDRESS)?]
     } else {
-        objects.range(start..).take(17).collect()
+        let first = if objects.contains_key(&start) {
+            start
+        } else {
+            0
+        };
+        objects.range(first..).take(17).collect()
     };
     let more_follows = selected.len() > 16;
     let visible = selected.iter().take(16).copied().collect::<Vec<_>>();
@@ -364,7 +382,7 @@ fn encode_mei_response(
     out.extend_from_slice(&[
         0x0E,
         read_code,
-        0x01,
+        0x81,
         if more_follows { 0xFF } else { 0x00 },
         next_object,
         visible.len() as u8,
@@ -553,7 +571,7 @@ mod tests {
         model
             .execute(&ModbusRequest::Diagnostics {
                 sub_function: 0x000A,
-                data: Vec::new(),
+                data: vec![0x00, 0x00],
             })
             .unwrap();
         let after = model.execute(&ModbusRequest::GetCommEventCounter).unwrap();
@@ -573,6 +591,56 @@ mod tests {
     }
 
     #[test]
+    fn clear_counters_requires_and_echoes_standard_zero_data() {
+        let model = ModbusDataModel::default();
+        assert_eq!(
+            model.execute(&ModbusRequest::Diagnostics {
+                sub_function: 0x000A,
+                data: Vec::new(),
+            }),
+            Err(EX_ILLEGAL_DATA_VALUE)
+        );
+        assert_eq!(
+            model
+                .execute(&ModbusRequest::Diagnostics {
+                    sub_function: 0x000A,
+                    data: vec![0x00, 0x00],
+                })
+                .unwrap(),
+            vec![0x08, 0x00, 0x0A, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn event_log_uses_distinct_message_and_event_counters() {
+        let model = ModbusDataModel::default();
+        model.set_holding_register(0, 1);
+        model
+            .execute(&ModbusRequest::ReadRegisters {
+                area: RegisterReadArea::HoldingRegisters,
+                address: 0,
+                quantity: 1,
+            })
+            .unwrap();
+        let _ = model.execute(&ModbusRequest::GetCommEventCounter).unwrap();
+        let log = model.execute(&ModbusRequest::GetCommEventLog).unwrap();
+        assert_eq!(&log[4..6], &[0x00, 0x01]);
+        assert_eq!(&log[6..8], &[0x00, 0x02]);
+    }
+
+    #[test]
+    fn device_identification_unknown_stream_object_restarts_at_zero() {
+        let model = ModbusDataModel::default();
+        let pdu = model
+            .execute(&ModbusRequest::Mei {
+                mei_type: 0x0E,
+                data: vec![0x01, 0x7F],
+            })
+            .unwrap();
+        assert_eq!(pdu[7], 0x00);
+    }
+
+    #[test]
     fn device_identification_individual_access_returns_only_requested_object() {
         let model = ModbusDataModel::default();
         let pdu = model
@@ -581,7 +649,7 @@ mod tests {
                 data: vec![0x04, 0x01],
             })
             .unwrap();
-        assert_eq!(pdu[1..7], [0x0E, 0x04, 0x01, 0x00, 0x00, 0x01]);
+        assert_eq!(pdu[1..7], [0x0E, 0x04, 0x81, 0x00, 0x00, 0x01]);
         assert_eq!(pdu[7], 0x01);
     }
 }

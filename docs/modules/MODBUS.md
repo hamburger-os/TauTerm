@@ -98,7 +98,7 @@ Advanced 入口覆盖串口诊断和高级功能：07、08、0B、0C、11、14�
 Diagnostics 当前明确支持：
 
 - `0x0000` Return Query Data；
-- `0x000A` Clear Counters and Diagnostic Register。
+- `0x000A` Clear Counters and Diagnostic Register（Data 必须为 `0x0000`，响应回显该 Data）。
 
 其它 Diagnostics sub-function 在未实现完整语义前不得做“透明成功回显”，而应返回标准非法数据值。通信事件计数器只在成功处理且标准语义要求计数的消息后增加；读取事件计数器本身和清零诊断不自增。
 
@@ -151,7 +151,7 @@ Server 的四个标准地址域由统一 `AddressSpace` 管理，每个区使用
 
 所有可能跨多个地址的写操作必须先验证完整目标范围，再提交修改；如果请求最终返回异常，不能留下“前半段已经写入”的部分状态。FC17 在读写范围重叠时仍保持标准的 write-before-read 结果，但在提交写入前先确认最终读范围可满足，因此错误响应不会伴随部分写入。
 
-Device Identification 的 individual access 只返回所请求对象；不存在的对象返回 Illegal Data Address。常规对象读取按对象 ID 有序返回，并正确生成 more-follows / next-object 元数据，而不是把所有情况都伪装成“没有后续对象”。
+Device Identification 的 individual access 只返回所请求对象，使用支持 individual access 的 conformity level；不存在的对象返回 Illegal Data Address。stream access 遇到未知 Object ID 时按规范从 Object 0 重新开始，并按对象 ID 有序返回、正确生成 more-follows / next-object 元数据。
 
 Server fault injection 可动态设置：
 

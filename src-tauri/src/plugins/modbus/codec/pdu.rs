@@ -196,6 +196,9 @@ pub fn encode_request(request: &ModbusRequest) -> Result<Vec<u8>, String> {
         | ModbusRequest::GetCommEventLog
         | ModbusRequest::ReportServerId => {}
         ModbusRequest::Diagnostics { sub_function, data } => {
+            if *sub_function == 0x000A && data.as_slice() != [0x00, 0x00] {
+                return Err("Clear Counters and Diagnostic Register requires data 0x0000".into());
+            }
             push_u16(&mut pdu, *sub_function);
             pdu.extend_from_slice(data);
         }
@@ -704,7 +707,25 @@ fn validate_mei_response(data: &[u8], mei_type: u8, request_data: &[u8]) -> Resu
     if !matches!(data[3], 0x00 | 0xFF) {
         return Err("invalid Read Device Identification more-follows flag".into());
     }
+    let more_follows = data[3];
+    let next_object = data[4];
     let object_count = data[5] as usize;
+    if request_data[0] == 0x04 {
+        if conformity < 0x80 {
+            return Err(
+                "individual Read Device Identification requires individual-access conformity"
+                    .into(),
+            );
+        }
+        if more_follows != 0x00 || next_object != 0x00 || object_count != 1 {
+            return Err(
+                "individual Read Device Identification must return exactly one final object".into(),
+            );
+        }
+    } else if more_follows == 0x00 && next_object != 0x00 {
+        return Err("final Read Device Identification response must use next object id 0".into());
+    }
+
     let mut cursor = 6usize;
     let mut previous_id = None;
     for _ in 0..object_count {
@@ -726,10 +747,13 @@ fn validate_mei_response(data: &[u8], mei_type: u8, request_data: &[u8]) -> Resu
     if cursor != data.len() {
         return Err("unexpected trailing Read Device Identification data".into());
     }
-    if request_data[0] == 0x04 && object_count > 0 && previous_id != Some(request_data[1]) {
+    if request_data[0] == 0x04 && previous_id != Some(request_data[1]) {
         return Err(
             "specific Read Device Identification response returned a different object".into(),
         );
+    }
+    if more_follows == 0xFF && previous_id.is_some_and(|last| next_object <= last) {
+        return Err("next Read Device Identification object id must advance".into());
     }
     Ok(())
 }
@@ -936,6 +960,36 @@ mod tests {
             validate_response(&request, &[0x14, 0x06, 0x05, 0x06, 0x12, 0x34, 0x56, 0x78]).is_ok()
         );
         assert!(validate_response(&request, &[0x14, 0x04, 0x03, 0x06, 0x12, 0x34]).is_err());
+    }
+
+    #[test]
+    fn clear_counters_request_requires_standard_zero_data() {
+        assert!(encode_request(&ModbusRequest::Diagnostics {
+            sub_function: 0x000A,
+            data: Vec::new(),
+        })
+        .is_err());
+        assert_eq!(
+            encode_request(&ModbusRequest::Diagnostics {
+                sub_function: 0x000A,
+                data: vec![0x00, 0x00],
+            })
+            .unwrap(),
+            vec![0x08, 0x00, 0x0A, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn individual_device_identification_requires_individual_access_shape() {
+        let request = ModbusRequest::Mei {
+            mei_type: 0x0E,
+            data: vec![0x04, 0x01],
+        };
+        let good = [0x2B, 0x0E, 0x04, 0x81, 0x00, 0x00, 0x01, 0x01, 0x01, b'X'];
+        assert!(validate_response(&request, &good).is_ok());
+        let mut bad = good;
+        bad[3] = 0x01;
+        assert!(validate_response(&request, &bad).is_err());
     }
 
     #[test]
