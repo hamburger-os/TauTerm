@@ -1,0 +1,52 @@
+name: Windows Local Shell Final Fix
+
+on:
+  push:
+    branches: [feat/transport-runtime-modbus]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+          fetch-depth: 0
+
+      - name: Apply Windows local-shell fix
+        shell: bash
+        run: python3 .github/scripts/zz-windows-local-shell-fix.py
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+
+      - name: Format
+        shell: bash
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+
+      - name: Strict Clippy
+        shell: pwsh
+        run: cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Rust tests
+        shell: pwsh
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Commit fix and remove temporary runner
+        shell: bash
+        run: |
+          rm -f .github/workflows/zz-windows-local-shell-fix.yml .github/scripts/zz-windows-local-shell-fix.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: disambiguate Windows local-shell I/O'
+          git push origin HEAD:feat/transport-runtime-modbus
