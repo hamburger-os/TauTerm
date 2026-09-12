@@ -1,8 +1,10 @@
+pub mod capability;
 pub mod client;
 pub mod codec;
 pub mod config;
 pub mod data_model;
 pub mod polling;
+pub mod response;
 pub mod server;
 pub mod value;
 
@@ -24,7 +26,9 @@ use crate::transport::serial::open_serial;
 use crate::transport::tcp::connect_tcp;
 use crate::AppState;
 
-use client::{ModbusClient, TransactionResult};
+use client::{
+    ModbusClient, TransactionHistoryBatch, TransactionResult, TransactionStatus,
+};
 use codec::ModbusRequest;
 use config::{
     ModbusConfig, ModbusEndpointConfig, ModbusMode, ModbusRole, ServerFaultConfig,
@@ -49,12 +53,14 @@ pub fn runtime(session_id: &str) -> Option<Arc<ModbusRuntime>> {
 struct RuntimeAttach {
     runtime: Arc<ModbusRuntime>,
 }
+
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
         if let Ok(mut map) = runtime_registry().lock() {
             map.insert(session_id.to_string(), self.runtime.clone());
         }
     }
+
     fn on_detached(&self, session_id: &str) {
         if let Ok(mut map) = runtime_registry().lock() {
             map.remove(session_id);
@@ -105,7 +111,8 @@ impl ProtocolAdapter for ModbusAdapter {
         let wire_config: ModbusConfig = serde_json::from_value(params.clone())
             .map_err(|error| SessionError::Other(format!("Modbus 配置解析失败: {error}")))?;
         let config = wire_config.validated().map_err(SessionError::Other)?;
-        let initial_watch_rows = parse_watch_rows(params).map_err(SessionError::Other)?;
+        let initial_watch_rows =
+            parse_watch_rows(params, config.mode()).map_err(SessionError::Other)?;
         let initial_server_model = parse_server_model(params).map_err(SessionError::Other)?;
 
         let (client, server, watch) = match config.role() {
@@ -177,13 +184,13 @@ impl ProtocolAdapter for ModbusAdapter {
     }
 }
 
-fn parse_watch_rows(params: &Value) -> Result<Vec<WatchRow>, String> {
+fn parse_watch_rows(params: &Value, mode: ModbusMode) -> Result<Vec<WatchRow>, String> {
     let Some(value) = params.get("watch_rows") else {
         return Ok(Vec::new());
     };
     let rows: Vec<WatchRow> = serde_json::from_value(value.clone())
         .map_err(|error| format!("watch_rows 无效: {error}"))?;
-    WatchScheduler::validate_rows(&rows)?;
+    WatchScheduler::validate_rows(&rows, mode)?;
     Ok(rows)
 }
 
@@ -319,15 +326,6 @@ fn set_runtime_param(
     Ok(())
 }
 
-#[derive(Deserialize)]
-struct RawAduOperation {
-    data: Vec<u8>,
-    #[serde(default = "default_wait_response")]
-    wait_response: bool,
-    #[serde(default = "default_quiet_period_ms")]
-    quiet_period_ms: u64,
-}
-
 fn default_wait_response() -> bool {
     true
 }
@@ -336,25 +334,41 @@ fn default_quiet_period_ms() -> u64 {
     50
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModbusOperation {
+    Request {
+        unit_id: u8,
+        request: ModbusRequest,
+    },
+    RawAdu {
+        data: Vec<u8>,
+        #[serde(default = "default_wait_response")]
+        wait_response: bool,
+        #[serde(default = "default_quiet_period_ms")]
+        quiet_period_ms: u64,
+    },
+}
+
 #[tauri::command]
 pub fn modbus_execute(
     state: State<'_, AppState>,
     session_id: String,
-    request: Value,
+    operation: ModbusOperation,
 ) -> Result<TransactionResult, String> {
     with_modbus(&state, &session_id, |side| {
         let client = side
             .client
             .as_ref()
             .ok_or("Modbus server 会话不能发起 client transaction")?;
-        if request.get("kind").and_then(Value::as_str) == Some("raw_adu") {
-            let raw: RawAduOperation = serde_json::from_value(request)
-                .map_err(|error| format!("Raw ADU 参数无效: {error}"))?;
-            return Ok(client.execute_raw_adu(raw.data, raw.wait_response, raw.quiet_period_ms));
-        }
-        let request: ModbusRequest =
-            serde_json::from_value(request).map_err(|error| format!("Modbus 请求无效: {error}"))?;
-        Ok(client.execute(request))
+        Ok(match operation {
+            ModbusOperation::Request { unit_id, request } => client.execute(unit_id, request),
+            ModbusOperation::RawAdu {
+                data,
+                wait_response,
+                quiet_period_ms,
+            } => client.execute_raw_adu(data, wait_response, quiet_period_ms),
+        })
     })
 }
 
@@ -363,9 +377,9 @@ pub struct ModbusStatus {
     pub role: ModbusRole,
     pub mode: ModbusMode,
     pub running: bool,
-    pub unit_id: u8,
-    pub transactions: Vec<TransactionResult>,
+    pub default_unit_id: u8,
     pub watch_rows: Vec<WatchRow>,
+    pub watch_running: bool,
     pub server_fault: Option<ServerFaultConfig>,
 }
 
@@ -383,20 +397,83 @@ pub fn modbus_status(
                     .server
                     .as_ref()
                     .is_some_and(|server| server.is_running()),
-            unit_id: side.config.unit_id,
-            transactions: if let Some(client) = &side.client {
-                client.history()
-            } else {
-                side.server
-                    .as_ref()
-                    .map_or_else(Vec::new, |server| server.history())
-            },
+            default_unit_id: side.config.unit_id,
             watch_rows: side
                 .watch
                 .as_ref()
                 .map_or_else(Vec::new, |watch| watch.rows()),
+            watch_running: side.watch.as_ref().is_some_and(|watch| watch.is_running()),
             server_fault: side.server.as_ref().map(|server| server.fault()),
         })
+    })
+}
+
+#[derive(Serialize)]
+pub struct ModbusSummary {
+    pub role: ModbusRole,
+    pub mode: ModbusMode,
+    pub running: bool,
+    pub default_unit_id: u8,
+    pub watch_running: bool,
+    pub watch_enabled: usize,
+    pub watch_total: usize,
+    pub last_status: Option<TransactionStatus>,
+    pub last_unit_id: Option<u8>,
+    pub last_latency_ms: Option<u128>,
+}
+
+#[tauri::command]
+pub fn modbus_summary(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<ModbusSummary, String> {
+    with_modbus(&state, &session_id, |side| {
+        let rows = side
+            .watch
+            .as_ref()
+            .map_or_else(Vec::new, |watch| watch.rows());
+        let last = if let Some(client) = &side.client {
+            client.last_result()
+        } else {
+            side.server.as_ref().and_then(|server| server.last_result())
+        };
+        Ok(ModbusSummary {
+            role: side.config.role(),
+            mode: side.config.mode(),
+            running: side.client.is_some()
+                || side
+                    .server
+                    .as_ref()
+                    .is_some_and(|server| server.is_running()),
+            default_unit_id: side.config.unit_id,
+            watch_running: side.watch.as_ref().is_some_and(|watch| watch.is_running()),
+            watch_enabled: rows.iter().filter(|row| row.enabled).count(),
+            watch_total: rows.len(),
+            last_status: last.as_ref().map(|result| result.status),
+            last_unit_id: last.as_ref().map(|result| result.unit_id),
+            last_latency_ms: last.as_ref().map(|result| result.latency_ms),
+        })
+    })
+}
+
+#[tauri::command]
+pub fn modbus_transactions_since(
+    state: State<'_, AppState>,
+    session_id: String,
+    after_sequence: u64,
+    limit: Option<usize>,
+) -> Result<TransactionHistoryBatch, String> {
+    with_modbus(&state, &session_id, |side| {
+        let limit = limit.unwrap_or(250);
+        if let Some(client) = &side.client {
+            Ok(client.history_since(after_sequence, limit))
+        } else {
+            Ok(side
+                .server
+                .as_ref()
+                .ok_or("Modbus runtime has no client or server")?
+                .history_since(after_sequence, limit))
+        }
     })
 }
 
@@ -407,7 +484,8 @@ pub fn modbus_watch_set(
     session_id: String,
     rows: Vec<WatchRow>,
 ) -> Result<(), String> {
-    WatchScheduler::validate_rows(&rows)?;
+    let mode = with_modbus(&state, &session_id, |side| Ok(side.config.mode()))?;
+    WatchScheduler::validate_rows(&rows, mode)?;
     let value = serde_json::to_value(&rows).map_err(|error| error.to_string())?;
     persist_param_if_saved(&app, &session_id, "watch_rows", value.clone())?;
     with_modbus(&state, &session_id, |side| {
