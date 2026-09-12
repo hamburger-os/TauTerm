@@ -29,7 +29,7 @@ use crate::AppState;
 use client::{ModbusClient, TransactionHistoryBatch, TransactionResult, TransactionStatus};
 use codec::ModbusRequest;
 use config::{
-    ModbusConfig, ModbusEndpointConfig, ModbusMode, ModbusRole, ServerFaultConfig,
+    validate_fault, ModbusConfig, ModbusEndpointConfig, ModbusMode, ModbusRole, ServerFaultConfig,
     ValidatedModbusConfig,
 };
 use data_model::DataModelSnapshot;
@@ -290,18 +290,29 @@ fn with_modbus<T>(
     function(&modbus)
 }
 
-fn persist_param_if_saved(
+fn persist_param_if_saved_transactional<F>(
     app: &AppHandle,
     session_id: &str,
     key: &str,
     value: Value,
-) -> Result<(), String> {
+    post_commit: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
     let path = SessionStore::sessions_file_path(app)?;
     let saved = SessionStore::load_from_disk(&path)?;
-    if !saved.iter().any(|session| session.id == session_id) {
-        return Ok(());
+    if saved.iter().any(|session| session.id == session_id) {
+        SessionStore::set_config_param_on_disk_transactional(
+            app,
+            session_id,
+            key,
+            value,
+            post_commit,
+        )
+    } else {
+        post_commit()
     }
-    SessionStore::set_config_param_on_disk_transactional(app, session_id, key, value, || Ok(()))
 }
 
 fn set_runtime_param(
@@ -443,17 +454,30 @@ pub fn modbus_watch_set(
     session_id: String,
     rows: Vec<WatchRow>,
 ) -> Result<(), String> {
-    let mode = with_modbus(&state, &session_id, |side| Ok(side.config.mode()))?;
-    WatchScheduler::validate_rows(&rows, mode)?;
-    let value = serde_json::to_value(&rows).map_err(|error| error.to_string())?;
-    persist_param_if_saved(&app, &session_id, "watch_rows", value.clone())?;
-    with_modbus(&state, &session_id, |side| {
-        side.watch
+    let (mode, watch, previous_rows) = with_modbus(&state, &session_id, |side| {
+        let watch = side
+            .watch
             .as_ref()
             .ok_or("watch table requires client role")?
-            .set_rows(rows)
+            .clone();
+        Ok((side.config.mode(), watch.clone(), watch.rows()))
     })?;
-    set_runtime_param(&state, &session_id, "watch_rows", value)
+    WatchScheduler::validate_rows(&rows, mode)?;
+    let value = serde_json::to_value(&rows).map_err(|error| error.to_string())?;
+    persist_param_if_saved_transactional(
+        &app,
+        &session_id,
+        "watch_rows",
+        value.clone(),
+        || {
+            watch.set_rows(rows)?;
+            if let Err(error) = set_runtime_param(&state, &session_id, "watch_rows", value) {
+                let _ = watch.set_rows(previous_rows);
+                return Err(error);
+            }
+            Ok(())
+        },
+    )
 }
 
 #[tauri::command]
@@ -492,13 +516,43 @@ pub fn modbus_watch_values(
     })
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, Copy, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServerArea {
     Coil,
     DiscreteInput,
     HoldingRegister,
     InputRegister,
+}
+
+fn set_snapshot_point(
+    snapshot: &mut DataModelSnapshot,
+    area: ServerArea,
+    address: u16,
+    value: u16,
+) {
+    fn set<T: Copy>(points: &mut Vec<(u16, T)>, address: u16, value: T) {
+        match points.binary_search_by_key(&address, |(current, _)| *current) {
+            Ok(index) => points[index].1 = value,
+            Err(index) => points.insert(index, (address, value)),
+        }
+    }
+
+    match area {
+        ServerArea::Coil => set(&mut snapshot.coils, address, value != 0),
+        ServerArea::DiscreteInput => set(&mut snapshot.discrete_inputs, address, value != 0),
+        ServerArea::HoldingRegister => set(&mut snapshot.holding_registers, address, value),
+        ServerArea::InputRegister => set(&mut snapshot.input_registers, address, value),
+    }
+}
+
+fn apply_server_point(server: &ModbusServer, area: ServerArea, address: u16, value: u16) {
+    match area {
+        ServerArea::Coil => server.model.set_coil(address, value != 0),
+        ServerArea::DiscreteInput => server.model.set_discrete_input(address, value != 0),
+        ServerArea::HoldingRegister => server.model.set_holding_register(address, value),
+        ServerArea::InputRegister => server.model.set_input_register(address, value),
+    }
 }
 
 #[tauri::command]
@@ -511,47 +565,45 @@ pub fn modbus_server_set_value(
     value: Option<u16>,
     fault: Option<ServerFaultConfig>,
 ) -> Result<(), String> {
-    let has_area = area.is_some();
-    let has_fault = fault.is_some();
-    if !has_area && !has_fault {
-        return Err("either area or fault must be provided".into());
+    if area.is_some() == fault.is_some() {
+        return Err("provide exactly one of area or fault".into());
     }
 
-    let (snapshot, persisted_fault) = with_modbus(&state, &session_id, |side| {
-        let server = side
-            .server
+    let server = with_modbus(&state, &session_id, |side| {
+        side.server
             .as_ref()
-            .ok_or("server data model requires server role")?;
-        if let Some(fault) = fault {
-            server.set_fault(fault)?;
-        }
-        if let Some(area) = area {
-            let address = address.ok_or("address is required when area is set")?;
-            let value = value.ok_or("value is required when area is set")?;
-            match area {
-                ServerArea::Coil => server.model.set_coil(address, value != 0),
-                ServerArea::DiscreteInput => server.model.set_discrete_input(address, value != 0),
-                ServerArea::HoldingRegister => server.model.set_holding_register(address, value),
-                ServerArea::InputRegister => server.model.set_input_register(address, value),
-            }
-        }
-        Ok((
-            has_area.then(|| server.model.snapshot()),
-            has_fault.then(|| server.fault()),
-        ))
+            .ok_or("server data model requires server role")
+            .cloned()
     })?;
 
-    if let Some(snapshot) = snapshot {
-        let value = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
-        persist_param_if_saved(&app, &session_id, "server_model", value.clone())?;
-        set_runtime_param(&state, &session_id, "server_model", value)?;
+    if let Some(area) = area {
+        let address = address.ok_or("address is required when area is set")?;
+        let value = value.ok_or("value is required when area is set")?;
+        let mut snapshot = server.model.snapshot();
+        set_snapshot_point(&mut snapshot, area, address, value);
+        let persisted = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
+        persist_param_if_saved_transactional(
+            &app,
+            &session_id,
+            "server_model",
+            persisted.clone(),
+            || set_runtime_param(&state, &session_id, "server_model", persisted),
+        )?;
+        apply_server_point(&server, area, address, value);
+        return Ok(());
     }
-    if let Some(fault) = persisted_fault {
-        let value = serde_json::to_value(fault).map_err(|error| error.to_string())?;
-        persist_param_if_saved(&app, &session_id, "server_fault", value.clone())?;
-        set_runtime_param(&state, &session_id, "server_fault", value)?;
-    }
-    Ok(())
+
+    let fault = fault.expect("exclusive area/fault check");
+    validate_fault(&fault)?;
+    let persisted = serde_json::to_value(&fault).map_err(|error| error.to_string())?;
+    persist_param_if_saved_transactional(
+        &app,
+        &session_id,
+        "server_fault",
+        persisted.clone(),
+        || set_runtime_param(&state, &session_id, "server_fault", persisted),
+    )?;
+    server.set_fault(fault)
 }
 
 #[tauri::command]
