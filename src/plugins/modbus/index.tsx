@@ -3,11 +3,13 @@ import manifestJson from "../../plugin-manifests/modbus.json";
 import ModbusConnectForm from "./ModbusConnectForm";
 import ModbusSessionView from "./ModbusSessionView";
 import ModbusStatusBarItem from "./ModbusStatusBarItem";
+import { modbusLocales } from "./locales";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: ModbusConnectForm,
   customView: ModbusSessionView,
+  locales: modbusLocales,
   statusBarItems: [
     {
       id: "modbus-runtime",
