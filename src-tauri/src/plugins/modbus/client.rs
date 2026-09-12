@@ -21,6 +21,7 @@ pub enum TransactionStatus {
     Timeout,
     TransportError,
     Cancelled,
+    FaultInjected,
 }
 
 #[derive(Debug, Clone, Serialize)]
