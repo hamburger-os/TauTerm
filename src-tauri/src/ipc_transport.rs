@@ -116,10 +116,10 @@ pub async fn close_channel(
         let retain_history = store
             .get_session(&pid)
             .map(|handle| {
-                handle
-                    .sub_connections
-                    .iter()
-                    .any(|child| child.state == crate::kernel::session_store::SessionState::Disconnected && child.retain_terminal)
+                handle.sub_connections.iter().any(|child| {
+                    child.state == crate::kernel::session_store::SessionState::Disconnected
+                        && child.retain_terminal
+                })
             })
             .unwrap_or(false);
         if last {
