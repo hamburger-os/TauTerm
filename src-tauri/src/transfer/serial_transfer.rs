@@ -42,10 +42,6 @@ impl FileTransfer for SerialFileTransfer {
         self.protocol_type.as_str()
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     async fn send(
         &self,
         files: &[FileInfo],

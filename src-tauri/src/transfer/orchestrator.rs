@@ -99,7 +99,7 @@ pub fn create_orchestrator(
         Ok(Box::new(InlineTransferOrchestrator {
             pt: protocol_type.clone(),
         }))
-    } else if protocol_type.is_side_channel() {
+    } else if protocol_type.is_auxiliary_transfer() {
         Ok(Box::new(SideChannelTransferOrchestrator {
             pt: protocol_type.clone(),
         }))
@@ -524,9 +524,8 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
                 return Err("会话未连接".into());
             }
             let ft = handle
-                .side_channel
-                .as_ref()
-                .and_then(|side_channel| side_channel.create_file_transfer())
+                .file_transfer
+                .clone()
                 .ok_or_else(|| "此会话不支持侧通道文件传输".to_string())?;
             let cancel_flag = store.transfer_start(&internal_id, &transfer_id)?;
             (ft, cancel_flag)
@@ -619,9 +618,8 @@ impl TransferOrchestrator for SideChannelTransferOrchestrator {
                 return Err("会话未连接".into());
             }
             let ft = handle
-                .side_channel
-                .as_ref()
-                .and_then(|side_channel| side_channel.create_file_transfer())
+                .file_transfer
+                .clone()
                 .ok_or_else(|| "此会话不支持侧通道文件传输".to_string())?;
             let cancel_flag = store.transfer_start(&internal_id, &transfer_id)?;
             (ft, cancel_flag)

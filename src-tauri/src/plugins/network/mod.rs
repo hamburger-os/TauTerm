@@ -5,7 +5,6 @@
 //! datagram transport but feeds received payloads into that aggregate DataPlane so upper layers do
 //! not need a second callback bus.
 
-use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,7 +16,9 @@ use tauri::{Emitter, Manager};
 
 use crate::kernel::data_batcher::base64_encode;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
-use crate::kernel::plugin_adapter::{ProtocolAdapter, ProtocolConnection, SideChannel};
+use crate::kernel::plugin_adapter::{
+    ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
+};
 use crate::kernel::session_store::PeerChannelRegistration;
 use crate::session::SessionError;
 use crate::transport::tcp::{connect_tcp, TcpConnectConfig, TcpDriver, TcpListenerTransport};
@@ -224,6 +225,34 @@ pub struct NetworkSideChannel {
     udp_client_local_addr: Mutex<Option<SocketAddr>>,
 }
 
+fn runtime_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<NetworkSideChannel>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<NetworkSideChannel>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn runtime(session_id: &str) -> Option<Arc<NetworkSideChannel>> {
+    runtime_registry().lock().ok()?.get(session_id).cloned()
+}
+
+struct RuntimeAttach {
+    runtime: Arc<NetworkSideChannel>,
+}
+impl SessionAttach for RuntimeAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.insert(session_id.to_string(), self.runtime.clone());
+        }
+    }
+    fn on_detached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+}
+
 impl NetworkSideChannel {
     fn new(
         max_clients: usize,
@@ -391,11 +420,7 @@ impl NetworkSideChannel {
     }
 }
 
-impl SideChannel for NetworkSideChannel {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl SessionService for NetworkSideChannel {
     fn shutdown(&self) {
         self.running.store(false, Ordering::SeqCst);
     }
@@ -486,6 +511,10 @@ pub struct NetworkAdapter;
 impl NetworkAdapter {
     pub fn new() -> Self {
         Self
+    }
+
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<NetworkSideChannel>> {
+        runtime(session_id)
     }
 }
 
@@ -675,9 +704,10 @@ impl ProtocolAdapter for NetworkAdapter {
         log::info!("网络调试会话已初始化: transport={transport} role={role} endpoint={endpoint}");
         Ok(ProtocolConnection {
             data_plane: Some(runtime),
-            side_channel: Some(side),
+            service: Some(side.clone()),
+            file_transfer: None,
             channel_factory: None,
-            on_attached: None,
+            on_attached: Some(Arc::new(RuntimeAttach { runtime: side })),
             teardown_delay: Duration::ZERO,
         })
     }

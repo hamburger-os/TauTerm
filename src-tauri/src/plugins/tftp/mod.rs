@@ -9,7 +9,6 @@ pub mod counting_socket;
 pub mod server;
 pub mod transfer;
 
-use std::any::Any;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -20,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
+    ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService, TransferProtocolType,
 };
 use crate::session::SessionError;
 
@@ -196,6 +195,34 @@ pub struct TftpSideChannel {
     pub active_server_transfers: Arc<AtomicU64>,
 }
 
+fn runtime_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<TftpSideChannel>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<TftpSideChannel>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn runtime(session_id: &str) -> Option<Arc<TftpSideChannel>> {
+    runtime_registry().lock().ok()?.get(session_id).cloned()
+}
+
+struct RuntimeAttach {
+    runtime: Arc<TftpSideChannel>,
+}
+impl SessionAttach for RuntimeAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.insert(session_id.to_string(), self.runtime.clone());
+        }
+    }
+    fn on_detached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+}
+
 impl TftpSideChannel {
     pub fn new(socket: Arc<std::net::UdpSocket>, config: TftpConfig) -> Self {
         Self {
@@ -214,11 +241,7 @@ impl TftpSideChannel {
     }
 }
 
-impl SideChannel for TftpSideChannel {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl SessionService for TftpSideChannel {
     fn shutdown(&self) {
         self.abort_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -231,6 +254,10 @@ pub struct TftpAdapter;
 impl TftpAdapter {
     pub fn new() -> Self {
         Self
+    }
+
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<TftpSideChannel>> {
+        runtime(session_id)
     }
 }
 
@@ -328,9 +355,12 @@ impl ProtocolAdapter for TftpAdapter {
 
         Ok(ProtocolConnection {
             data_plane: None,
-            side_channel: Some(side_channel),
+            service: Some(side_channel.clone()),
+            file_transfer: None,
             channel_factory: None,
-            on_attached: None,
+            on_attached: Some(Arc::new(RuntimeAttach {
+                runtime: side_channel,
+            })),
             teardown_delay: Duration::from_millis(100),
         })
     }
@@ -403,14 +433,9 @@ pub fn build_oack_options(
 
 pub fn try_start_server(
     app: &tauri::AppHandle,
-    side_channel: &Arc<dyn crate::kernel::plugin_adapter::SideChannel>,
+    tftp_sc: &Arc<TftpSideChannel>,
     session_id: &str,
 ) -> Result<(), String> {
-    let tftp_sc = side_channel
-        .as_any()
-        .downcast_ref::<TftpSideChannel>()
-        .ok_or_else(|| "side channel is not TFTP".to_string())?;
-
     if tftp_sc
         .server_running
         .load(std::sync::atomic::Ordering::Relaxed)

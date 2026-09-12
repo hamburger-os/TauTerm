@@ -113,9 +113,7 @@ impl ModbusServer {
                         if !buffer.is_empty() && config.mode == ModbusMode::Rtu =>
                     {
                         let frame = std::mem::take(&mut buffer);
-                        process_serial_frame(
-                            &handle, &config, &model, &fault, &history, &frame,
-                        );
+                        process_serial_frame(&handle, &config, &model, &fault, &history, &frame);
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,

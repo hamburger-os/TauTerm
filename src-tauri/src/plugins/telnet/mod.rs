@@ -199,7 +199,8 @@ impl ProtocolAdapter for TelnetAdapter {
 
         Ok(ProtocolConnection {
             data_plane: Some(DataPlaneRuntime::spawn(Box::new(driver))),
-            side_channel: None,
+            service: None,
+            file_transfer: None,
             channel_factory: None,
             on_attached: Some(Arc::new(TelnetSessionAttach {
                 slot: session_id_slot,

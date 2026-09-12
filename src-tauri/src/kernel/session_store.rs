@@ -4,9 +4,12 @@
 //! `SessionDataPlane`; callers interact through `SessionIo` capabilities.
 
 use crate::kernel::data_batcher::DataBatcher;
+use crate::kernel::file_transfer::FileTransfer;
 use crate::kernel::log_engine::{DataDirection, DataLogEntry, LogEntry};
 use crate::kernel::persistence::atomic_write;
-use crate::kernel::plugin_adapter::{ProtocolConnection, SessionChannelFactory, SideChannel};
+use crate::kernel::plugin_adapter::{
+    ProtocolConnection, SessionAttach, SessionChannelFactory, SessionService,
+};
 use crate::kernel::script_engine::{spawn_script_thread, ScriptCmd};
 use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
 use crate::transfer::scheduler::TransferScheduler;
@@ -120,7 +123,9 @@ pub struct ActiveSessionHandle {
     pub script_tx: Option<mpsc::SyncSender<ScriptCmd>>,
     pub script_thread: Option<std::thread::JoinHandle<()>>,
     pub script_shutdown: Option<Arc<AtomicBool>>,
-    pub side_channel: Option<Arc<dyn SideChannel>>,
+    pub service: Option<Arc<dyn SessionService>>,
+    pub file_transfer: Option<Arc<dyn FileTransfer>>,
+    pub attachment: Option<Arc<dyn SessionAttach>>,
     pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
     pub transfer_scheduler: TransferScheduler,
     pub transfer_tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -271,6 +276,26 @@ pub struct SessionCreateOptions {
 }
 
 /// 容器会话创建参数。
+pub struct ContainerSessionRuntime {
+    pub service: Option<Arc<dyn SessionService>>,
+    pub file_transfer: Option<Arc<dyn FileTransfer>>,
+    pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
+    pub io: Option<Arc<SessionIo>>,
+    pub attachment: Option<Arc<dyn SessionAttach>>,
+}
+
+impl Default for ContainerSessionRuntime {
+    fn default() -> Self {
+        Self {
+            service: None,
+            file_transfer: None,
+            channel_factory: None,
+            io: None,
+            attachment: None,
+        }
+    }
+}
+
 pub struct ContainerSessionCreateOptions {
     pub name: String,
     pub plugin_id: String,
@@ -360,9 +385,6 @@ impl SessionStore {
                 .unwrap_or_default()
                 .as_millis() as u64,
         );
-        if let Some(attach) = conn.on_attached.take() {
-            attach.on_attached(&id);
-        }
         let runtime = conn.data_plane.take().ok_or_else(|| {
             "create_session requires a DataPlane; use create_container_session for headless protocols".to_string()
         })?;
@@ -381,6 +403,9 @@ impl SessionStore {
             connected_at,
             stats_cancel_flag.clone(),
         );
+        if let Some(attach) = conn.on_attached.as_ref() {
+            attach.on_attached(&id);
+        }
         let handle = ActiveSessionHandle {
             id: id.clone(),
             name: tab_name.clone(),
@@ -400,7 +425,9 @@ impl SessionStore {
             script_tx: None,
             script_thread: None,
             script_shutdown: None,
-            side_channel: conn.side_channel,
+            service: conn.service,
+            file_transfer: conn.file_transfer,
+            attachment: conn.on_attached,
             channel_factory: conn.channel_factory,
             transfer_scheduler: TransferScheduler::default(),
             transfer_tasks: Vec::new(),
@@ -442,10 +469,15 @@ impl SessionStore {
     pub fn create_container_session(
         &mut self,
         options: ContainerSessionCreateOptions,
-        side_channel: Option<Arc<dyn SideChannel>>,
-        channel_factory: Option<Arc<dyn SessionChannelFactory>>,
-        io: Option<Arc<SessionIo>>,
+        runtime: ContainerSessionRuntime,
     ) -> Result<TabId, String> {
+        let ContainerSessionRuntime {
+            service,
+            file_transfer,
+            channel_factory,
+            io,
+            attachment,
+        } = runtime;
         let ContainerSessionCreateOptions {
             name,
             plugin_id,
@@ -514,7 +546,9 @@ impl SessionStore {
             script_tx: None,
             script_thread: None,
             script_shutdown: None,
-            side_channel,
+            service,
+            file_transfer,
+            attachment: attachment.clone(),
             channel_factory,
             transfer_scheduler: TransferScheduler::default(),
             transfer_tasks: Vec::new(),
@@ -522,6 +556,9 @@ impl SessionStore {
             sub_connections: Vec::new(),
             next_child_index: preserved_next_child_index,
         };
+        if let Some(attach) = attachment.as_ref() {
+            attach.on_attached(&id);
+        }
         self.sessions.insert(id.clone(), handle);
         self.tab_order.retain(|tid| tid != &id);
         self.tab_order.push(id.clone());
@@ -604,10 +641,15 @@ impl SessionStore {
         if self.active_id.as_deref() == Some(session_id) {
             self.active_id = self.tab_order.first().cloned();
         }
-        if let Some(sc) = &handle.side_channel {
-            sc.shutdown();
+        if let Some(service) = &handle.service {
+            service.shutdown();
         }
-        handle.side_channel = None;
+        if let Some(attachment) = &handle.attachment {
+            attachment.on_detached(session_id);
+        }
+        handle.service = None;
+        handle.file_transfer = None;
+        handle.attachment = None;
         handle.channel_factory = None;
         handle.io = None;
         handle.state = SessionState::Disconnected;
@@ -958,13 +1000,6 @@ impl SessionStore {
         ))
     }
 
-    /// 获取会话的 side_channel（用于 SSH 多连接复用）
-    pub fn get_side_channel(&self, session_id: &str) -> Option<Arc<dyn SideChannel>> {
-        self.sessions
-            .get(session_id)
-            .and_then(|h| h.side_channel.clone())
-    }
-
     /// 解析 session_id，返回实际的顶层会话 ID。
     ///
     /// 如果 session_id 是子连接，返回其父会话的 ID；否则返回自身。
@@ -973,25 +1008,6 @@ impl SessionStore {
             return Some(session_id.to_string());
         }
         self.find_parent_of_channel(session_id)
-    }
-
-    /// 获取 side_channel（支持子连接路由）。
-    ///
-    /// 先尝试直接查找 session_id 的 side_channel；若未找到，
-    /// 则通过子连接的父会话查找。SSH 父会话持有 `russh::client::Handle`，
-    /// 供 SFTP 文件服务和 journald 日志查看器复用。
-    pub fn get_side_channel_for(&self, session_id: &str) -> Option<Arc<dyn SideChannel>> {
-        if let Some(sc) = self
-            .sessions
-            .get(session_id)
-            .and_then(|h| h.side_channel.clone())
-        {
-            return Some(sc);
-        }
-        let parent_id = self.find_parent_of_channel(session_id)?;
-        self.sessions
-            .get(&parent_id)
-            .and_then(|h| h.side_channel.clone())
     }
 
     /// 查找子连接所属的父会话 ID

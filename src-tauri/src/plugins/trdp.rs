@@ -10,12 +10,11 @@ pub mod capture;
 pub mod xml;
 
 use crate::commands::ConnectSessionRequest;
-use crate::kernel::plugin_adapter::SideChannel;
+use crate::kernel::plugin_adapter::{SessionAttach, SessionService};
 use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionState};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -52,6 +51,34 @@ pub struct TrdpSideChannel {
     capture_control: Mutex<()>,
     object_states: Arc<Mutex<HashMap<String, String>>>,
     confirmable_md_sessions: Arc<Mutex<HashSet<String>>>,
+}
+
+fn runtime_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<TrdpSideChannel>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<TrdpSideChannel>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn runtime(session_id: &str) -> Option<Arc<TrdpSideChannel>> {
+    runtime_registry().lock().ok()?.get(session_id).cloned()
+}
+
+struct RuntimeAttach {
+    runtime: Arc<TrdpSideChannel>,
+}
+impl SessionAttach for RuntimeAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.insert(session_id.to_string(), self.runtime.clone());
+        }
+    }
+    fn on_detached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
 }
 
 impl TrdpSideChannel {
@@ -580,11 +607,7 @@ impl TrdpSideChannel {
     }
 }
 
-impl SideChannel for TrdpSideChannel {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl SessionService for TrdpSideChannel {
     fn shutdown(&self) {
         self.stop_process(true);
     }
@@ -656,9 +679,15 @@ pub async fn connect_session(
                 send_bar_enabled: send_bar_enabled.unwrap_or(false),
                 id_override: session_id,
             },
-            Some(side_channel.clone()),
-            None,
-            None,
+            crate::kernel::session_store::ContainerSessionRuntime {
+                service: Some(side_channel.clone()),
+                file_transfer: None,
+                channel_factory: None,
+                io: None,
+                attachment: Some(Arc::new(RuntimeAttach {
+                    runtime: side_channel.clone(),
+                })),
+            },
         )?
     };
 
@@ -715,19 +744,6 @@ pub async fn connect_session(
     );
     drop(lifecycle_guard);
     Ok(session_id)
-}
-
-fn side_channel(
-    state: &State<'_, AppState>,
-    session_id: &str,
-) -> Result<Arc<dyn SideChannel>, String> {
-    let store = state
-        .session_store
-        .lock()
-        .map_err(|error| error.to_string())?;
-    store
-        .get_side_channel(session_id)
-        .ok_or_else(|| "TRDP 会话不存在或已断开".to_string())
 }
 
 fn validate_workspace_object(value: &Value, index: usize) -> Result<(), String> {
@@ -1089,11 +1105,7 @@ pub fn trdp_command(
         _ => {}
     }
 
-    let side_channel = side_channel(&state, &session_id)?;
-    let trdp = side_channel
-        .as_any()
-        .downcast_ref::<TrdpSideChannel>()
-        .ok_or("会话不是 TRDP 会话")?;
+    let trdp = runtime(&session_id).ok_or("会话不是 TRDP 会话")?;
     let operation = command
         .get("command")
         .and_then(Value::as_str)

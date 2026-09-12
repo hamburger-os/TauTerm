@@ -127,7 +127,8 @@ impl ProtocolAdapter for SerialAdapter {
         let driver = open_serial(endpoint, &config.transport())?;
         Ok(ProtocolConnection {
             data_plane: Some(DataPlaneRuntime::spawn(Box::new(driver))),
-            side_channel: None,
+            service: None,
+            file_transfer: None,
             channel_factory: None,
             on_attached: None,
             teardown_delay: self.teardown_delay(),

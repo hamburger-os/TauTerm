@@ -6,7 +6,6 @@ pub mod polling;
 pub mod server;
 pub mod value;
 
-use std::any::Any;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -15,7 +14,9 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::ConnectSessionRequest;
 use crate::kernel::plugin_adapter::ContentType;
-use crate::kernel::plugin_adapter::{ProtocolAdapter, ProtocolConnection, SideChannel};
+use crate::kernel::plugin_adapter::{
+    ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
+};
 use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionStore};
 use crate::session::SessionError;
 use crate::transport::runtime::DataPlaneRuntime;
@@ -30,6 +31,34 @@ use data_model::DataModelSnapshot;
 use polling::{WatchRow, WatchScheduler, WatchValue};
 use server::ModbusServer;
 
+fn runtime_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<ModbusSideChannel>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<ModbusSideChannel>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn runtime(session_id: &str) -> Option<Arc<ModbusSideChannel>> {
+    runtime_registry().lock().ok()?.get(session_id).cloned()
+}
+
+struct RuntimeAttach {
+    runtime: Arc<ModbusSideChannel>,
+}
+impl SessionAttach for RuntimeAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.insert(session_id.to_string(), self.runtime.clone());
+        }
+    }
+    fn on_detached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+}
+
 pub struct ModbusSideChannel {
     pub config: ModbusConfig,
     pub client: Option<Arc<ModbusClient>>,
@@ -37,11 +66,7 @@ pub struct ModbusSideChannel {
     pub watch: Option<Arc<WatchScheduler>>,
 }
 
-impl SideChannel for ModbusSideChannel {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl SessionService for ModbusSideChannel {
     fn shutdown(&self) {
         if let Some(watch) = &self.watch {
             watch.stop();
@@ -60,6 +85,10 @@ pub struct ModbusAdapter;
 impl ModbusAdapter {
     pub fn new() -> Self {
         Self
+    }
+
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<ModbusSideChannel>> {
+        runtime(session_id)
     }
 }
 
@@ -116,16 +145,18 @@ impl ProtocolAdapter for ModbusAdapter {
             }
         };
 
+        let runtime = Arc::new(ModbusSideChannel {
+            config,
+            client,
+            server,
+            watch,
+        });
         Ok(ProtocolConnection {
             data_plane: None,
-            side_channel: Some(Arc::new(ModbusSideChannel {
-                config,
-                client,
-                server,
-                watch,
-            })),
+            service: Some(runtime.clone()),
+            file_transfer: None,
             channel_factory: None,
-            on_attached: None,
+            on_attached: Some(Arc::new(RuntimeAttach { runtime })),
             teardown_delay: std::time::Duration::ZERO,
         })
     }
@@ -186,15 +217,8 @@ pub async fn connect_session(
         .connect(&endpoint, &params)
         .await
         .map_err(|error| error.to_string())?;
-    let side = conn
-        .side_channel
-        .ok_or("Modbus adapter returned no runtime")?;
-    let config = side
-        .as_any()
-        .downcast_ref::<ModbusSideChannel>()
-        .ok_or("Modbus runtime type mismatch")?
-        .config
-        .clone();
+    let config: ModbusConfig = serde_json::from_value(params.clone())
+        .map_err(|error| format!("Modbus 配置解析失败: {error}"))?;
     let session_name = name
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| match config.mode {
@@ -219,9 +243,13 @@ pub async fn connect_session(
                 send_bar_enabled: false,
                 id_override: session_id,
             },
-            Some(side),
-            None,
-            None,
+            crate::kernel::session_store::ContainerSessionRuntime {
+                service: conn.service,
+                file_transfer: conn.file_transfer,
+                channel_factory: conn.channel_factory,
+                io: None,
+                attachment: conn.on_attached,
+            },
         )?
     };
 
@@ -242,27 +270,13 @@ pub async fn connect_session(
     Ok(session_id)
 }
 
-fn runtime(state: &State<'_, AppState>, session_id: &str) -> Result<Arc<dyn SideChannel>, String> {
-    let store = state
-        .session_store
-        .lock()
-        .map_err(|error| error.to_string())?;
-    store
-        .get_side_channel(session_id)
-        .ok_or_else(|| format!("Modbus 会话 {session_id} 未连接"))
-}
-
 fn with_modbus<T>(
-    state: &State<'_, AppState>,
+    _state: &State<'_, AppState>,
     session_id: &str,
     function: impl FnOnce(&ModbusSideChannel) -> Result<T, String>,
 ) -> Result<T, String> {
-    let side = runtime(state, session_id)?;
-    let modbus = side
-        .as_any()
-        .downcast_ref::<ModbusSideChannel>()
-        .ok_or("会话不是 Modbus")?;
-    function(modbus)
+    let modbus = runtime(session_id).ok_or_else(|| format!("Modbus 会话 {session_id} 未连接"))?;
+    function(&modbus)
 }
 
 fn persist_param_if_saved(

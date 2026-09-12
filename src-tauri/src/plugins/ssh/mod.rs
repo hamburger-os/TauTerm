@@ -16,11 +16,10 @@ use std::time::Duration;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
-use crate::kernel::file_transfer::FileTransfer;
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionChannelFactory,
-    SideChannel, TransferProtocolType,
+    ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach,
+    SessionChannelFactory, SessionService, TransferProtocolType,
 };
 use crate::session::SessionError;
 use crate::transport::{AsyncBridgeDriver, DataPlaneRuntime};
@@ -88,6 +87,10 @@ impl SshAdapter {
         Self
     }
 
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<SshSideChannel>> {
+        runtime(session_id)
+    }
+
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
     ///
     /// `connect_session_ssh` 已在前端参数验证阶段反序列化 `SshConfig`，
@@ -110,11 +113,16 @@ impl SshAdapter {
             result.home_dir,
         ));
         let bridge = AsyncBridgeDriver::new(Box::new(result.driver))?;
+        let file_transfer = Arc::new(crate::transfer::sftp_transfer::SftpFileTransfer::new(
+            shared.session.clone(),
+            shared.sftp.clone(),
+        ));
         Ok(ProtocolConnection {
             data_plane: Some(DataPlaneRuntime::spawn(Box::new(bridge))),
-            side_channel: Some(shared.clone()),
-            channel_factory: Some(shared),
-            on_attached: None,
+            service: Some(shared.clone()),
+            file_transfer: Some(file_transfer),
+            channel_factory: Some(shared.clone()),
+            on_attached: Some(Arc::new(RuntimeAttach { runtime: shared })),
             teardown_delay: self.teardown_delay(),
         })
     }
@@ -230,6 +238,34 @@ pub struct SshSideChannel {
     pub home_dir: Option<String>,
 }
 
+fn runtime_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<SshSideChannel>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<SshSideChannel>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn runtime(session_id: &str) -> Option<Arc<SshSideChannel>> {
+    runtime_registry().lock().ok()?.get(session_id).cloned()
+}
+
+struct RuntimeAttach {
+    runtime: Arc<SshSideChannel>,
+}
+impl SessionAttach for RuntimeAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.insert(session_id.to_string(), self.runtime.clone());
+        }
+    }
+    fn on_detached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+}
+
 impl SshSideChannel {
     pub fn new(
         session: Arc<russh::client::Handle<SshHandler>>,
@@ -250,20 +286,7 @@ impl SshSideChannel {
     }
 }
 
-impl SideChannel for SshSideChannel {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn create_file_transfer(&self) -> Option<Arc<dyn FileTransfer>> {
-        Some(Arc::new(
-            crate::transfer::sftp_transfer::SftpFileTransfer::new(
-                self.session.clone(),
-                self.sftp.clone(),
-            ),
-        ))
-    }
-}
+impl SessionService for SshSideChannel {}
 
 #[async_trait::async_trait]
 impl SessionChannelFactory for SshSideChannel {

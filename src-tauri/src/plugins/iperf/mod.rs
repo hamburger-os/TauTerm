@@ -15,7 +15,6 @@ pub mod server;
 mod iperf2;
 mod iperf3;
 
-use std::any::Any;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -24,7 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
+    ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService, TransferProtocolType,
 };
 use crate::session::SessionError;
 
@@ -293,6 +292,34 @@ pub struct IperfSideChannel {
     pub lifecycle: tokio::sync::Mutex<()>,
 }
 
+fn runtime_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<IperfSideChannel>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<IperfSideChannel>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn runtime(session_id: &str) -> Option<Arc<IperfSideChannel>> {
+    runtime_registry().lock().ok()?.get(session_id).cloned()
+}
+
+struct RuntimeAttach {
+    runtime: Arc<IperfSideChannel>,
+}
+impl SessionAttach for RuntimeAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.insert(session_id.to_string(), self.runtime.clone());
+        }
+    }
+    fn on_detached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+}
+
 impl IperfSideChannel {
     /// 创建新的 iperf 侧通道
     pub fn new(config: IperfConfig) -> Self {
@@ -325,11 +352,7 @@ impl IperfSideChannel {
     }
 }
 
-impl SideChannel for IperfSideChannel {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl SessionService for IperfSideChannel {
     fn shutdown(&self) {
         // 会话关闭：一次性取消服务端监听与客户端测速（各自线程检测后退出）。
         // 递增代际作废旧线程的退出写回（重连后旧线程迟到 emit 不得翻转
@@ -358,6 +381,10 @@ impl IperfAdapter {
     pub fn new() -> Self {
         Self
     }
+
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<IperfSideChannel>> {
+        runtime(session_id)
+    }
 }
 
 #[async_trait::async_trait]
@@ -384,9 +411,12 @@ impl ProtocolAdapter for IperfAdapter {
 
         Ok(ProtocolConnection {
             data_plane: None,
-            side_channel: Some(side_channel),
+            service: Some(side_channel.clone()),
+            file_transfer: None,
             channel_factory: None,
-            on_attached: None,
+            on_attached: Some(Arc::new(RuntimeAttach {
+                runtime: side_channel,
+            })),
             teardown_delay: Duration::from_millis(100),
         })
     }
@@ -455,14 +485,9 @@ pub fn join_server_handle(
 /// 启动放弃。join 轮询在 spawn_blocking 中执行，不占用 tokio worker。
 pub async fn try_start_server<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-    side_channel: &Arc<dyn crate::kernel::plugin_adapter::SideChannel>,
+    iperf_sc: &Arc<IperfSideChannel>,
     session_id: &str,
 ) -> Result<(), String> {
-    let iperf_sc = side_channel
-        .as_any()
-        .downcast_ref::<IperfSideChannel>()
-        .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
-
     // 与 iperf_server_stop 串行化（tokio Mutex：await 不阻塞 worker）
     let _lifecycle = iperf_sc.lifecycle.lock().await;
 

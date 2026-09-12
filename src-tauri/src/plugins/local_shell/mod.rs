@@ -271,7 +271,8 @@ impl LocalShellAdapter {
         let data_plane = factory.open_channel(mode).await?;
         Ok(ProtocolConnection {
             data_plane: Some(data_plane),
-            side_channel: None,
+            service: None,
+            file_transfer: None,
             channel_factory: Some(factory),
             on_attached: None,
             teardown_delay: std::time::Duration::ZERO,

@@ -13,7 +13,6 @@
 //! - 串口 trait 同步，本 trait async（统一 tokio 运行时调度）
 
 use serde::Serialize;
-use std::any::Any;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
@@ -284,8 +283,6 @@ pub enum FileTransferError {
 #[async_trait::async_trait]
 pub trait FileTransfer: Send + Sync {
     fn protocol(&self) -> &str;
-
-    fn as_any(&self) -> &dyn Any;
 
     async fn send(
         &self,

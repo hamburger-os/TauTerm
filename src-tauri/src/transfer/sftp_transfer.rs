@@ -1,7 +1,7 @@
 //! SFTP 文件传输适配器
 //!
 //! 将 `ssh_file_service.rs` 中的 SFTP 自由函数适配到统一的 `FileTransfer` trait。
-//! 通过 `SshSideChannel::create_file_transfer()` 创建，消除 commands.rs 中的
+//! 通过 `explicit SSH file-transfer capability` 创建，消除 commands.rs 中的
 //! `downcast_ref::<SshSideChannel>()` 类型不安全转换。
 
 use std::path::{Path, PathBuf};
@@ -343,10 +343,6 @@ async fn scan_local_directory(root: &Path) -> Result<LocalDirectoryScan, FileTra
 impl FileTransfer for SftpFileTransfer {
     fn protocol(&self) -> &str {
         "sftp"
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 
     async fn send(
