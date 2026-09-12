@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::session::DisconnectInfo;
 use crate::transport::{DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, TransportError};
 
@@ -17,8 +15,8 @@ impl SessionDataPlane {
     pub fn attach(
         runtime: DataPlaneRuntime,
         session_id: String,
-        on_data: Arc<dyn Fn(String, Vec<u8>) + Send + Sync>,
-        on_disconnect: Arc<dyn Fn(String, DisconnectInfo) + Send + Sync>,
+        on_data: Box<dyn Fn(String, Vec<u8>) + Send + 'static>,
+        on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
     ) -> Result<Self, TransportError> {
         let handle = runtime.handle.clone();
         let subscription = handle.subscribe()?;
@@ -46,6 +44,13 @@ impl SessionDataPlane {
         &self.handle
     }
 
+    /// Request resource shutdown without joining callback threads. SessionStore uses this while its
+    /// mutex is held so a disconnect callback can never deadlock waiting for the same store lock.
+    pub fn request_shutdown(&self) {
+        let _ = self.handle.shutdown();
+    }
+
+    /// Deterministic cleanup for callers that are outside the SessionStore lock.
     pub fn shutdown(&mut self) {
         if let Some(runtime) = self.runtime.take() {
             runtime.join();
@@ -53,13 +58,17 @@ impl SessionDataPlane {
             let _ = self.handle.shutdown();
         }
         if let Some(thread) = self.event_thread.take() {
-            let _ = thread.join();
+            if thread.thread().id() != std::thread::current().id() {
+                let _ = thread.join();
+            }
         }
     }
 }
 
 impl Drop for SessionDataPlane {
     fn drop(&mut self) {
-        self.shutdown();
+        // Drop must never block: ActiveSessionHandle is commonly dropped while SessionStore is
+        // locked, and the event pump may be inside a callback that needs that same lock.
+        self.request_shutdown();
     }
 }
