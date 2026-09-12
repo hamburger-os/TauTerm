@@ -105,7 +105,7 @@ lifecycle = Path("scripts/test-file-transfer-lifecycle.mjs")
 text = lifecycle.read_text().replace("SideChannel", "Auxiliary").replace("side_channel", "auxiliary")
 lifecycle.write_text(text)
 
-# Fix stale SSH/iPerf prose left from the old erased runtime model.
+# Fix stale prose left from the old erased runtime model.
 ssh = Path("src-tauri/src/plugins/ssh/mod.rs")
 text = ssh.read_text()
 text = text.replace(
@@ -129,6 +129,14 @@ text = text.replace("/// iperf 独立协议能力资源", "/// iperf 类型化�
 text = text.replace("/// 创建新的 iperf 独立协议能力", "/// 创建新的 iperf runtime")
 text = text.replace("/// 通过 `ProtocolConnection::runtime` 传递给 `SessionStore`。", "/// SessionStore 只持有 SessionService；协议命令从插件 typed registry 获取本 runtime。")
 iperf.write_text(text)
+
+sftp = Path("src-tauri/src/transfer/sftp_transfer.rs")
+text = sftp.read_text().replace(
+    "//! 通过 `explicit SSH file-transfer capability` 创建，消除 commands.rs 中的\n//! `downcast_ref::<SshRuntime>()` 类型不安全转换。",
+    "//! 由 SSH adapter 直接构造为显式 FileTransfer capability；传输层不恢复或解析协议 runtime 类型。",
+)
+text = text.replace("/// 从 SSH 侧通道创建，复用现有的 SSH session 和缓存的 SFTP 子系统。", "/// 由 SSH adapter 直接注入现有 SSH session 和缓存的 SFTP 子系统。")
+sftp.write_text(text)
 
 # Current architecture docs must use the new capability contract.
 core = Path("docs/modules/CORE.md")
