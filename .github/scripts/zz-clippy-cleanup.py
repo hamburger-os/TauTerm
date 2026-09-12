@@ -43,7 +43,8 @@ text = text.replace("    pub fn buffered_len(&self) -> usize {", "    #[cfg(test
 p.write_text(text)
 
 # Telnet attach slot is already captured by the echo callback and attach hook; the driver did not
-# read its duplicate Arc field. Remove duplicate ownership and the unused status accessor.
+# read its duplicate Arc field. Remove duplicate ownership while retaining test-only connectivity
+# introspection used by EOF regression coverage.
 p = Path("src-tauri/src/plugins/telnet/channel.rs")
 text = p.read_text()
 text = text.replace("//! 协商/子协商收发）实现内核 `Channel` trait。", "//! 协商/子协商收发）实现 transport `BlockingByteStream`。")
@@ -59,13 +60,20 @@ text = text.replace(
     "        on_echo_change: Box<dyn Fn(bool) + Send>,\n",
 )
 text = text.replace("            on_echo_change,\n            session_id_slot,\n", "            on_echo_change,\n")
-text = re.sub(r"\n    pub\(crate\) fn is_connected\(&self\) -> bool \{\n        self\.connected\n    \}\n", "\n", text, count=1)
+text = text.replace(
+    "    pub(crate) fn is_connected(&self) -> bool {\n        self.connected\n    }",
+    "    #[cfg(test)]\n    pub(crate) fn is_connected(&self) -> bool {\n        self.connected\n    }",
+)
 p.write_text(text)
 
 p = Path("src-tauri/src/plugins/telnet/mod.rs")
 text = p.read_text().replace(
     "let driver = TelnetDriver::new(telnet, probe, on_echo_change, session_id_slot.clone());",
     "let driver = TelnetDriver::new(telnet, probe, on_echo_change);",
+)
+text = text.replace(
+    "let channel = TelnetDriver::new(telnet, probe, on_echo_change, Arc::new(Mutex::new(None)));",
+    "let channel = TelnetDriver::new(telnet, probe, on_echo_change);",
 )
 text = text.replace(
     "// 回显状态 → 前端事件。session_id 由 I/O 循环启动时经\n        // `Channel::on_session_started` 注入槽中；I/O 循环先于任何协商\n        // 事件调用该钩子，故正常流程下事件必带正确标识、永不丢失。",
