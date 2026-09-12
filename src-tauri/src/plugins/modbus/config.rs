@@ -122,7 +122,7 @@ impl ValidatedModbusConfig {
     }
 
     pub fn role(&self) -> ModbusRole {
-        match self.role {
+        match &self.role {
             ModbusRuntimeRole::Client(_) => ModbusRole::Client,
             ModbusRuntimeRole::Server(_) => ModbusRole::Server,
         }
