@@ -143,7 +143,10 @@ impl DataPlaneHandle {
         self.exclusive_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| {
-                TransportError::busy("acquire_exclusive", "data plane is already exclusively owned")
+                TransportError::busy(
+                    "acquire_exclusive",
+                    "data plane is already exclusively owned",
+                )
             })?;
 
         let owner_id = next_owner_id();
@@ -663,16 +666,14 @@ fn handle_command(
             }
             CommandOutcome::Continue
         }
-        RuntimeCommand::ResizeTerminal { cols, rows } => {
-            match driver.resize_terminal(cols, rows) {
-                Ok(()) => CommandOutcome::Continue,
-                Err(error) => CommandOutcome::Close(TransportCloseInfo::from_driver(
-                    error.kind,
-                    error.to_string(),
-                    driver.close_metadata(),
-                )),
-            }
-        }
+        RuntimeCommand::ResizeTerminal { cols, rows } => match driver.resize_terminal(cols, rows) {
+            Ok(()) => CommandOutcome::Continue,
+            Err(error) => CommandOutcome::Close(TransportCloseInfo::from_driver(
+                error.kind,
+                error.to_string(),
+                driver.close_metadata(),
+            )),
+        },
         RuntimeCommand::Shutdown { ack } => {
             let result = driver.shutdown();
             let _ = ack.send(result);
