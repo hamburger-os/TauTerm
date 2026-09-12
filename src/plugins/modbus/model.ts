@@ -1,6 +1,162 @@
 export type ModbusMode = "rtu" | "ascii" | "tcp";
 export type ModbusRole = "client" | "server";
 
+export interface ModbusSerialParams {
+  baud_rate: number;
+  data_bits: number;
+  parity: "none" | "even" | "odd";
+  stop_bits: string;
+  flow_control: string;
+  read_timeout_ms: number;
+}
+
+export interface ModbusTcpParams {
+  connect_timeout_ms: number;
+  read_timeout_ms: number;
+  nodelay: boolean;
+}
+
+export interface ModbusSessionParams extends Record<string, unknown> {
+  mode: ModbusMode;
+  role: ModbusRole;
+  serial_port: string;
+  serial: ModbusSerialParams;
+  host: string;
+  port: number;
+  tcp: ModbusTcpParams;
+  unit_id: number;
+  response_timeout_ms: number;
+  read_retries: number;
+  retry_writes: boolean;
+  server_max_clients: number;
+  server_fault: {
+    no_response: boolean;
+    delay_ms: number;
+    exception_code: number | null;
+  };
+}
+
+export function defaultModbusSessionParams(): ModbusSessionParams {
+  return {
+    mode: "tcp",
+    role: "client",
+    serial_port: "",
+    serial: {
+      baud_rate: 9600,
+      data_bits: 8,
+      parity: "none",
+      stop_bits: "1",
+      flow_control: "none",
+      read_timeout_ms: 20,
+    },
+    host: "127.0.0.1",
+    port: 502,
+    tcp: {
+      connect_timeout_ms: 5000,
+      read_timeout_ms: 20,
+      nodelay: true,
+    },
+    unit_id: 1,
+    response_timeout_ms: 1000,
+    read_retries: 1,
+    retry_writes: false,
+    server_max_clients: 16,
+    server_fault: { no_response: false, delay_ms: 0, exception_code: null },
+  };
+}
+
+const numberParam = (value: unknown, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+const stringParam = (value: unknown, fallback = ""): string =>
+  typeof value === "string" ? value : fallback;
+
+export function normalizeModbusSessionParams(params: Record<string, unknown>): ModbusSessionParams {
+  const defaults = defaultModbusSessionParams();
+  const serial = typeof params.serial === "object" && params.serial
+    ? params.serial as Record<string, unknown>
+    : {};
+  const tcp = typeof params.tcp === "object" && params.tcp
+    ? params.tcp as Record<string, unknown>
+    : {};
+  const serverFault = typeof params.server_fault === "object" && params.server_fault
+    ? params.server_fault as Record<string, unknown>
+    : {};
+  const mode: ModbusMode = params.mode === "rtu" || params.mode === "ascii" || params.mode === "tcp"
+    ? params.mode
+    : defaults.mode;
+  const role: ModbusRole = params.role === "server" ? "server" : "client";
+  return {
+    ...defaults,
+    ...params,
+    mode,
+    role,
+    serial_port: stringParam(params.serial_port, defaults.serial_port),
+    host: stringParam(params.host, role === "server" ? "0.0.0.0" : defaults.host),
+    port: numberParam(params.port, defaults.port),
+    unit_id: numberParam(params.unit_id, defaults.unit_id),
+    response_timeout_ms: numberParam(params.response_timeout_ms, defaults.response_timeout_ms),
+    read_retries: numberParam(params.read_retries, defaults.read_retries),
+    retry_writes: params.retry_writes === true,
+    server_max_clients: numberParam(params.server_max_clients, defaults.server_max_clients),
+    serial: {
+      ...defaults.serial,
+      ...serial,
+      baud_rate: numberParam(serial.baud_rate, defaults.serial.baud_rate),
+      data_bits: numberParam(serial.data_bits, defaults.serial.data_bits),
+      parity: serial.parity === "even" || serial.parity === "odd" ? serial.parity : "none",
+      stop_bits: stringParam(serial.stop_bits, defaults.serial.stop_bits),
+      flow_control: stringParam(serial.flow_control, defaults.serial.flow_control),
+      read_timeout_ms: numberParam(serial.read_timeout_ms, defaults.serial.read_timeout_ms),
+    },
+    tcp: {
+      ...defaults.tcp,
+      ...tcp,
+      connect_timeout_ms: numberParam(tcp.connect_timeout_ms, defaults.tcp.connect_timeout_ms),
+      read_timeout_ms: numberParam(tcp.read_timeout_ms, defaults.tcp.read_timeout_ms),
+      nodelay: tcp.nodelay !== false,
+    },
+    server_fault: {
+      ...defaults.server_fault,
+      ...serverFault,
+      no_response: serverFault.no_response === true,
+      delay_ms: numberParam(serverFault.delay_ms, defaults.server_fault.delay_ms),
+      exception_code: typeof serverFault.exception_code === "number" ? serverFault.exception_code : null,
+    },
+  };
+}
+
+export function modbusModeRoleLabel(params: Record<string, unknown>): string {
+  const normalized = normalizeModbusSessionParams(params);
+  const mode = normalized.mode.toUpperCase();
+  const role = normalized.mode === "tcp"
+    ? (normalized.role === "server" ? "Server" : "Client")
+    : (normalized.role === "server" ? "Slave" : "Master");
+  return `Modbus ${mode} ${role}`;
+}
+
+export function modbusEndpointSummary(params: Record<string, unknown>): string {
+  const normalized = normalizeModbusSessionParams(params);
+  if (normalized.mode === "tcp") {
+    const host = normalized.host.trim() || (normalized.role === "server" ? "0.0.0.0" : "127.0.0.1");
+    return `${host}:${normalized.port}`;
+  }
+  return normalized.serial_port.trim() || "未选择串口";
+}
+
+export function modbusConnectionSummary(params: Record<string, unknown>): string {
+  const normalized = normalizeModbusSessionParams(params);
+  if (normalized.mode === "tcp") {
+    return `${modbusEndpointSummary(normalized)} · Unit ${normalized.unit_id}`;
+  }
+  const parity = normalized.serial.parity === "even" ? "E" : normalized.serial.parity === "odd" ? "O" : "N";
+  const framing = `${normalized.serial.data_bits}${parity}${normalized.serial.stop_bits}`;
+  return `${modbusEndpointSummary(normalized)} · ${normalized.serial.baud_rate} ${framing} · Unit ${normalized.unit_id}`;
+}
+
+export function modbusDefaultSessionName(params: Record<string, unknown>): string {
+  return `${modbusModeRoleLabel(params)} @ ${modbusEndpointSummary(params)}`;
+}
+
 export type ModbusRequest =
   | { kind: "read_bits"; function: 1 | 2; address: number; quantity: number }
   | { kind: "read_registers"; function: 3 | 4; address: number; quantity: number }
