@@ -60,7 +60,7 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
 
   return (
     <div className={styles.connectRoot} data-testid="tauterm-modbus-connect-form">
-      <section className={`${styles.formSection} liquid-glass-card`}>
+      <section className={styles.formSection}>
         <div className={styles.sectionHeading}>
           <strong>会话模式</strong>
           <span className={styles.hint}>选择传输方式和当前站点角色；界面只显示该组合真正需要的参数。</span>
@@ -92,7 +92,7 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
         </div>
       </section>
 
-      <section className={`${styles.formSection} liquid-glass-card`}>
+      <section className={styles.formSection}>
         <div className={styles.sectionHeading}>
           <strong>{mode === "tcp" ? "网络参数" : "串口参数"}</strong>
           <span className={styles.hint}>{role === "server" ? "配置本地监听端点。" : "配置目标设备的连接端点。"}</span>
@@ -134,7 +134,7 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
         )}
       </section>
 
-      <section className={`${styles.formSection} liquid-glass-card`}>
+      <section className={styles.formSection}>
         <div className={styles.sectionHeading}>
           <strong>协议参数</strong>
           <span className={styles.hint}>协议地址统一使用 0-based；传统 4xxxx 等引用只用于显示辅助。</span>
