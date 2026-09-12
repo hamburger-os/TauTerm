@@ -570,7 +570,7 @@ pub fn modbus_server_set_value(
     let server = with_modbus(&state, &session_id, |side| {
         side.server
             .as_ref()
-            .ok_or("server data model requires server role")
+            .ok_or_else(|| "server data model requires server role".to_string())
             .cloned()
     })?;
 
