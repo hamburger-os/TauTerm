@@ -183,11 +183,7 @@ mod tests {
             Ok(())
         }
 
-        async fn resize_terminal(
-            &mut self,
-            _cols: u32,
-            _rows: u32,
-        ) -> Result<(), TransportError> {
+        async fn resize_terminal(&mut self, _cols: u32, _rows: u32) -> Result<(), TransportError> {
             tokio::task::yield_now().await;
             Ok(())
         }
