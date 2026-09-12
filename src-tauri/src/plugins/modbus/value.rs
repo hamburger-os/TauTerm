@@ -90,46 +90,69 @@ pub fn decode_register_bytes(
     use ValueType::*;
     match format.value_type {
         Bool => {
-            let ordered = ordered_register_bytes(take(bytes, 2)?, format.byte_order, WordOrder::Normal)?;
-            Ok(serde_json::json!(u16::from_be_bytes([ordered[0], ordered[1]]) != 0))
+            let ordered =
+                ordered_register_bytes(take(bytes, 2)?, format.byte_order, WordOrder::Normal)?;
+            Ok(serde_json::json!(
+                u16::from_be_bytes([ordered[0], ordered[1]]) != 0
+            ))
         }
         UInt16 => {
-            let ordered = ordered_register_bytes(take(bytes, 2)?, format.byte_order, WordOrder::Normal)?;
+            let ordered =
+                ordered_register_bytes(take(bytes, 2)?, format.byte_order, WordOrder::Normal)?;
             scaled(u16::from_be_bytes([ordered[0], ordered[1]]) as f64, format)
         }
         Int16 => {
-            let ordered = ordered_register_bytes(take(bytes, 2)?, format.byte_order, WordOrder::Normal)?;
+            let ordered =
+                ordered_register_bytes(take(bytes, 2)?, format.byte_order, WordOrder::Normal)?;
             scaled(i16::from_be_bytes([ordered[0], ordered[1]]) as f64, format)
         }
         UInt32 => {
-            let ordered = ordered_register_bytes(take(bytes, 4)?, format.byte_order, format.word_order)?;
-            scaled(u32::from_be_bytes(ordered.try_into().expect("length checked")) as f64, format)
+            let ordered =
+                ordered_register_bytes(take(bytes, 4)?, format.byte_order, format.word_order)?;
+            scaled(
+                u32::from_be_bytes(ordered.try_into().expect("length checked")) as f64,
+                format,
+            )
         }
         Int32 => {
-            let ordered = ordered_register_bytes(take(bytes, 4)?, format.byte_order, format.word_order)?;
-            scaled(i32::from_be_bytes(ordered.try_into().expect("length checked")) as f64, format)
+            let ordered =
+                ordered_register_bytes(take(bytes, 4)?, format.byte_order, format.word_order)?;
+            scaled(
+                i32::from_be_bytes(ordered.try_into().expect("length checked")) as f64,
+                format,
+            )
         }
         Float32 => {
-            let ordered = ordered_register_bytes(take(bytes, 4)?, format.byte_order, format.word_order)?;
-            scaled(f32::from_be_bytes(ordered.try_into().expect("length checked")) as f64, format)
+            let ordered =
+                ordered_register_bytes(take(bytes, 4)?, format.byte_order, format.word_order)?;
+            scaled(
+                f32::from_be_bytes(ordered.try_into().expect("length checked")) as f64,
+                format,
+            )
         }
         UInt64 => {
             require_identity_scaling(format, "uint64")?;
-            let ordered = ordered_register_bytes(take(bytes, 8)?, format.byte_order, format.word_order)?;
+            let ordered =
+                ordered_register_bytes(take(bytes, 8)?, format.byte_order, format.word_order)?;
             Ok(serde_json::Value::String(
                 u64::from_be_bytes(ordered.try_into().expect("length checked")).to_string(),
             ))
         }
         Int64 => {
             require_identity_scaling(format, "int64")?;
-            let ordered = ordered_register_bytes(take(bytes, 8)?, format.byte_order, format.word_order)?;
+            let ordered =
+                ordered_register_bytes(take(bytes, 8)?, format.byte_order, format.word_order)?;
             Ok(serde_json::Value::String(
                 i64::from_be_bytes(ordered.try_into().expect("length checked")).to_string(),
             ))
         }
         Float64 => {
-            let ordered = ordered_register_bytes(take(bytes, 8)?, format.byte_order, format.word_order)?;
-            scaled(f64::from_be_bytes(ordered.try_into().expect("length checked")), format)
+            let ordered =
+                ordered_register_bytes(take(bytes, 8)?, format.byte_order, format.word_order)?;
+            scaled(
+                f64::from_be_bytes(ordered.try_into().expect("length checked")),
+                format,
+            )
         }
         Hex => Ok(serde_json::Value::String(
             bytes
@@ -175,7 +198,9 @@ fn require_identity_scaling(format: &ValueFormat, label: &str) -> Result<(), Str
 }
 
 fn take(bytes: &[u8], len: usize) -> Result<&[u8], String> {
-    bytes.get(..len).ok_or_else(|| format!("requires {len} bytes"))
+    bytes
+        .get(..len)
+        .ok_or_else(|| format!("requires {len} bytes"))
 }
 
 fn ordered_register_bytes(
