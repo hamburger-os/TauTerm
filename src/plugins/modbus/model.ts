@@ -24,6 +24,7 @@ export interface ModbusSessionParams extends Record<string, unknown> {
   host: string;
   port: number;
   tcp: ModbusTcpParams;
+  /** Client 默认目标 Unit；实际事务和 Watch 行可以覆盖。Server 时为本机 Unit。 */
   unit_id: number;
   response_timeout_ms: number;
   read_retries: number;
@@ -148,16 +149,40 @@ export type ModbusRequest =
   | { kind: "mei"; mei_type: number; data: number[] }
   | { kind: "raw"; function: number; data: number[] };
 
-export type ModbusOperation = ModbusRequest | {
-  kind: "raw_adu";
-  data: number[];
-  wait_response: boolean;
-  quiet_period_ms: number;
-};
+export type ModbusOperation =
+  | { kind: "request"; unit_id: number; request: ModbusRequest }
+  | {
+      kind: "raw_adu";
+      data: number[];
+      wait_response: boolean;
+      quiet_period_ms: number;
+    };
+
+export function requestOperation(unitId: number, request: ModbusRequest): ModbusOperation {
+  return { kind: "request", unit_id: unitId, request };
+}
+
+export type TransactionStatus =
+  | "success"
+  | "broadcast"
+  | "modbus_exception"
+  | "protocol_error"
+  | "malformed_response"
+  | "timeout"
+  | "transport_error"
+  | "cancelled"
+  | "fault_injected";
+
+export type SemanticResponse =
+  | { kind: "bits"; values: boolean[] }
+  | { kind: "registers"; values: number[] }
+  | { kind: "acknowledged" }
+  | { kind: "diagnostics"; sub_function: number; data: number[] }
+  | { kind: "raw"; data: number[] };
 
 export interface TransactionResult {
   timestamp_ms: number;
-  status: "success" | "broadcast" | "modbus_exception" | "protocol_error" | "malformed_response" | "timeout" | "transport_error" | "cancelled" | "fault_injected";
+  status: TransactionStatus;
   function: number;
   transaction_id: number | null;
   unit_id: number;
@@ -166,9 +191,20 @@ export interface TransactionResult {
   raw_tx: number[];
   raw_rx: number[];
   response_pdu: number[];
+  semantic_response: SemanticResponse | null;
   message: string | null;
   write_outcome_unknown: boolean;
   attempt: number;
+}
+
+export interface TransactionRecord {
+  sequence: number;
+  result: TransactionResult;
+}
+
+export interface TransactionHistoryBatch {
+  records: TransactionRecord[];
+  latest_sequence: number;
 }
 
 export interface ServerFaultConfig {
@@ -181,16 +217,23 @@ export interface ModbusStatus {
   role: ModbusRole;
   mode: ModbusMode;
   running: boolean;
-  unit_id: number;
-  transactions: TransactionResult[];
-  server_fault: ServerFaultConfig | null;
+  default_unit_id: number;
   watch_rows: WatchRow[];
+  watch_running: boolean;
+  server_fault: ServerFaultConfig | null;
+  transactions: TransactionHistoryBatch;
+  watch_enabled: number;
+  watch_total: number;
+  last_status: TransactionStatus | null;
+  last_unit_id: number | null;
+  last_latency_ms: number | null;
 }
 
 export interface WatchRow {
   id: string;
   enabled: boolean;
   name: string;
+  unit_id: number;
   request: ModbusRequest;
   period_ms: number;
   format?: ValueFormat;
@@ -198,7 +241,7 @@ export interface WatchRow {
 
 export interface WatchValue {
   row_id: string;
-  status: string;
+  status: TransactionStatus;
   value: unknown;
   raw: number[];
   latency_ms: number;
@@ -301,4 +344,8 @@ export function traditionalAddress(functionCode: number, protocolAddress: number
     : functionCode === 4 ? 30001
     : 40001;
   return String(base + protocolAddress).padStart(5, "0");
+}
+
+export function unitIdMax(mode: ModbusMode): number {
+  return mode === "tcp" ? 255 : 247;
 }
