@@ -35,7 +35,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const connected = tab?.state === "connected" || tab?.state === "transferring";
   const [page, setPage] = useState<Page>(role === "server" ? "server" : "readwrite");
   const [history, setHistory] = useState<TransactionResult[]>([]);
-  const identityNormalized = useRef<Set<string>>(new Set());
+  const identityNormalizationKey = useRef<string | null>(null);
 
   useEffect(() => {
     setPage(role === "server" ? "server" : "readwrite");
@@ -45,10 +45,16 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const generatedTitle = modbusSessionTitle(params);
   const generatedEndpoint = modbusEndpointLabel(params);
   useEffect(() => {
-    if (!tab || tab.state !== "disconnected" || identityNormalized.current.has(sessionId)) return;
+    if (!tab || tab.state !== "disconnected") return;
     const hasCreationPlaceholder = tab.name === "Modbus @ modbus" || tab.endpoint === "modbus";
-    if (!hasCreationPlaceholder) return;
-    identityNormalized.current.add(sessionId);
+    if (!hasCreationPlaceholder) {
+      identityNormalizationKey.current = null;
+      return;
+    }
+
+    const normalizationKey = `${sessionId}\u0000${tab.name}\u0000${tab.endpoint}\u0000${generatedTitle}\u0000${generatedEndpoint}`;
+    if (identityNormalizationKey.current === normalizationKey) return;
+    identityNormalizationKey.current = normalizationKey;
     void reconfigureSession(
       sessionId,
       generatedEndpoint,
