@@ -131,7 +131,7 @@ Modbus 使用独立 `customView`，不显示全局 SendBar。新建会话入口�
 
 工作区标题沿用第一行身份，摘要再补充串口波特率/帧格式或 TCP endpoint 与 Unit ID。用户显式输入的自定义会话名始终优先。
 
-会话展示字符串集中在 `src/plugins/modbus/presentation.ts`，协议模型与 UI 文案分离。新建离线会话首次进入 Modbus 工作区时会把内核占位 endpoint 规范化为真实串口或 TCP endpoint，因此通用侧栏不需要知道 Modbus 的字段结构。
+会话展示字符串集中在 `src/plugins/modbus/presentation.ts`，协议模型与 UI 文案分离。离线会话进入 Modbus 工作区后，会把生成式会话名和 endpoint 与当前 RTU/ASCII/TCP 配置保持同步；用户自定义会话名不被覆盖，因此通用侧栏不需要知道 Modbus 的字段结构。
 
 ## 设计边界
 
