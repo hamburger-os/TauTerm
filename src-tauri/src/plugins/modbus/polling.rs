@@ -127,6 +127,11 @@ impl WatchScheduler {
         self.rows.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
+    pub fn counts(&self) -> (usize, usize) {
+        let rows = self.rows.lock().unwrap_or_else(|e| e.into_inner());
+        (rows.iter().filter(|row| row.enabled).count(), rows.len())
+    }
+
     pub fn values(&self) -> Vec<WatchValue> {
         let mut values: Vec<_> = self
             .values
