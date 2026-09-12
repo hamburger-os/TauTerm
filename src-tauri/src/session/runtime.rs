@@ -42,9 +42,7 @@ impl SessionDataPlane {
                         if event_handle.is_connected() {
                             on_disconnect(
                                 session_id.clone(),
-                                DisconnectInfo::io_error(
-                                    "transport runtime stopped unexpectedly",
-                                ),
+                                DisconnectInfo::io_error("transport runtime stopped unexpectedly"),
                             );
                         }
                         break;
