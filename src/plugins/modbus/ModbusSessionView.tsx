@@ -51,15 +51,16 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const generatedEndpoint = modbusEndpointLabel(params);
   useEffect(() => {
     if (!tab || tab.state !== "disconnected") return;
-    const hasCreationPlaceholder = tab.name === "Modbus @ modbus" || tab.endpoint === "modbus";
-    if (!hasCreationPlaceholder) {
-      identityNormalizationKey.current = null;
-      return;
-    }
 
     const nextName = tab.name === "Modbus @ modbus" || isGeneratedModbusSessionTitle(tab.name)
       ? generatedTitle
       : tab.name;
+    const needsNormalization = tab.endpoint !== generatedEndpoint || tab.name !== nextName;
+    if (!needsNormalization) {
+      identityNormalizationKey.current = null;
+      return;
+    }
+
     const normalizationKey = `${sessionId}\u0000${tab.name}\u0000${tab.endpoint}\u0000${nextName}\u0000${generatedEndpoint}`;
     if (identityNormalizationKey.current === normalizationKey) return;
     identityNormalizationKey.current = normalizationKey;
@@ -71,11 +72,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
       false,
       undefined,
       false,
-    ).catch(() => {
-      if (identityNormalizationKey.current === normalizationKey) {
-        identityNormalizationKey.current = null;
-      }
-    });
+    );
   }, [generatedEndpoint, generatedTitle, params, reconfigureSession, sessionId, tab]);
 
   const execute = async (request: ModbusOperation) => {
