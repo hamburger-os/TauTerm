@@ -267,7 +267,7 @@ impl SideChannel for SshSideChannel {
 
 #[async_trait::async_trait]
 impl SessionChannelFactory for SshSideChannel {
-    async fn open_channel(&self, mode: ChannelOpenMode) -> Result<ChannelKind, SessionError> {
+    async fn open_channel(&self, mode: ChannelOpenMode) -> Result<DataPlaneRuntime, SessionError> {
         if mode != ChannelOpenMode::Standard {
             return Err(SessionError::CapabilityDenied {
                 capability: "elevated_shell".into(),

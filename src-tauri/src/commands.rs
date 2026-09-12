@@ -7,21 +7,19 @@ pub(crate) mod config;
 pub(crate) mod files;
 pub(crate) mod platform;
 
-use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
-use crate::channel::DisconnectInfo;
 use crate::kernel::charset::transcode_utf8_to_encoding;
 use crate::kernel::log_engine::{
     try_send_session_log, try_send_system_event, DataDirection, DataLogEntry, LogConfigResponse,
     LogConfigUpdate, LogEntry, LogHealth, LogStatus,
 };
-use crate::kernel::plugin_adapter::{
-    ChannelKind, ChannelOpenMode, ProtocolAdapter, TransferProtocolType,
-};
+use crate::kernel::plugin_adapter::{ChannelOpenMode, ProtocolAdapter, TransferProtocolType};
 use crate::kernel::script_engine::codegen::{hex_to_bytes, interpret_escape_sequences};
 use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use crate::kernel::session_store::{
-    ContainerSessionCreateOptions, IoTaskHandle, SessionCreateOptions, SessionState, SessionStore,
+    ContainerSessionCreateOptions, SessionCreateOptions, SessionState, SessionStore,
 };
+use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
+use crate::transport::DataPlaneRuntime;
 use crate::virtual_port::backend::{
     contains_elevation_indicator, VirtualEndpoint, VirtualPortConfig,
 };
@@ -651,12 +649,10 @@ async fn connect_session_serial(
 
     // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
     let content_type = state.serial_adapter.content_type();
-    let io_strategy = state.serial_adapter.io_strategy();
     let transfer_protocols = state.serial_adapter.transfer_protocols();
     log::info!(
-        "串口连接: content_type={:?}, io_strategy={:?}, transfer_protocols={:?}",
+        "串口连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
-        io_strategy,
         transfer_protocols
     );
 
@@ -1007,12 +1003,10 @@ async fn connect_session_telnet(
 
     // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
     let content_type = state.telnet_adapter.content_type();
-    let io_strategy = state.telnet_adapter.io_strategy();
     let transfer_protocols = state.telnet_adapter.transfer_protocols();
     log::info!(
-        "Telnet 连接: content_type={:?}, io_strategy={:?}, transfer_protocols={:?}",
+        "Telnet 连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
-        io_strategy,
         transfer_protocols
     );
 
@@ -1045,9 +1039,9 @@ async fn connect_session_local_shell(
         .await
         .map_err(|e| e.to_string())?;
     let first_channel = conn
-        .channel
+        .data_plane
         .take()
-        .ok_or("Local Shell 连接缺少 PTY channel")?;
+        .ok_or("Local Shell 连接缺少 DataPlane")?;
     let factory = conn
         .channel_factory
         .take()
@@ -1290,12 +1284,10 @@ async fn connect_session_ssh(
     }
 
     let content_type = state.ssh_adapter.content_type();
-    let io_strategy = state.ssh_adapter.io_strategy();
     let transfer_protocols_list = state.ssh_adapter.transfer_protocols();
     log::info!(
-        "SSH 连接: content_type={:?}, io_strategy={:?}, transfer_protocols={:?}",
+        "SSH 连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
-        io_strategy,
         transfer_protocols_list
     );
 
@@ -1308,16 +1300,10 @@ async fn connect_session_ssh(
     // 分离 side_channel（SSH Handle，供后续子连接复用）
     let side_channel = conn.side_channel;
     let channel_factory = conn.channel_factory;
-    // 分离 channel（第一个 PTY，作为通道 0 的 I/O）
-    let channel_for_ch0 = match conn.channel {
-        Some(ChannelKind::Async(ch)) => ChannelKind::Async(ch),
-        Some(crate::kernel::plugin_adapter::ChannelKind::Sync(_)) => {
-            return Err("SSH 连接期望 Async channel".to_string());
-        }
-        None => {
-            return Err("SSH 连接缺少 I/O channel".to_string());
-        }
-    };
+    // 第一个 SSH PTY 已由 transport async bridge 收敛为普通 DataPlaneRuntime。
+    let channel_for_ch0 = conn
+        .data_plane
+        .ok_or_else(|| "SSH 连接缺少 DataPlane".to_string())?;
 
     // 1. 创建容器父 session（无 I/O loop）
     let parent_id = {
@@ -1588,17 +1574,14 @@ pub fn write_data(
             .unwrap_or_else(|| "text".to_string());
         // 克隆 Arc 后释放锁；send_text 内部完成转码（含 UTF-8 短路与未知编码透传）。
         // 对端（网络调试）拥有各自 CommHandle，文本路径按对端编码转码。
-        (encoding, data_mode, store.get_comm_handle_for(&session_id))
+        (encoding, data_mode, store.get_io_for(&session_id))
     };
-    // 文本路径：委托会话 CommHandle::send_text（单一转码策略点）；
-    // 字节路径或会话无 comm_handle（SSH 容器）：直接写入原样透传
-    let data_out = match (transcode, comm) {
-        (true, Some(handle)) => handle.send_text(&data).map_err(|e| e.to_string())?,
-        (true, None) | (false, _) => {
-            let store = state.session_store.lock().map_err(|e| e.to_string())?;
-            store.write(&session_id, &data)?;
-            data
-        }
+    let io = comm.ok_or_else(|| format!("会话 {} 没有可写 I/O 能力", session_id))?;
+    let data_out = if transcode {
+        io.send_text(&data).map_err(|e| e.to_string())?
+    } else {
+        io.send(&data).map_err(|e| e.to_string())?;
+        data
     };
     // 异步发送 TX 数据日志（非阻塞，best-effort：失败不影响主流程）
     // 日志记录实际写入设备的字节（转码后），text 格式按会话编码解码回 UTF-8
@@ -1745,11 +1728,10 @@ async fn create_terminal_sub_channel(
     app: &tauri::AppHandle,
     app_state: &AppState,
     parent_id: &str,
-    channel: ChannelKind,
+    runtime: DataPlaneRuntime,
     elevated: bool,
     announce_connected: bool,
 ) -> Result<String, String> {
-    // ── 阶段 1: 获取锁 → 检查父存活 + 预留 channel_index + 读取配置 → 释放锁 ──
     let (
         endpoint,
         plugin_id,
@@ -1775,66 +1757,52 @@ async fn create_terminal_sub_channel(
         if active_children >= 32 {
             return Err("每个父会话最多允许 32 个活动终端".to_string());
         }
-        let dm = handle
-            .params
-            .get("data_mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("text")
-            .to_string();
-        let enc = handle
-            .params
-            .get("encoding")
-            .and_then(|v| v.as_str())
-            .unwrap_or("utf-8")
-            .to_string();
-        let sbe = handle.send_bar_enabled;
-        let fse = handle
-            .params
-            .get("file_service_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let jde = handle
-            .params
-            .get("journald_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let fsp = handle
-            .params
-            .get("file_service_protocol")
-            .and_then(|v| v.as_str())
-            .unwrap_or("sftp")
-            .to_string();
         (
             handle.endpoint.clone(),
             handle.plugin_id.clone(),
             handle.params.clone(),
-            dm,
-            enc,
-            sbe,
-            fse,
-            jde,
-            fsp,
+            handle
+                .params
+                .get("data_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("text")
+                .to_string(),
+            handle
+                .params
+                .get("encoding")
+                .and_then(Value::as_str)
+                .unwrap_or("utf-8")
+                .to_string(),
+            handle.send_bar_enabled,
+            handle
+                .params
+                .get("file_service_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            handle
+                .params
+                .get("journald_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            handle
+                .params
+                .get("file_service_protocol")
+                .and_then(Value::as_str)
+                .unwrap_or("sftp")
+                .to_string(),
         )
     };
 
-    // ── 阶段 2: 创建 I/O 资源（无锁）──
     let channel_id = uuid::Uuid::new_v4().to_string();
-    let (write_tx, write_rx) = std::sync::mpsc::sync_channel::<IoLoopCmd>(256);
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-    let tx_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let rx_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let tx_clone = tx_bytes.clone();
-    let rx_clone = rx_bytes.clone();
-
-    let log_tx = {
-        let log_engine = app_state.log_engine.lock().map_err(|e| e.to_string())?;
-        log_engine.sender()
-    };
-    let on_data = create_on_data_callback(app, log_tx, data_mode, encoding, None);
+    let log_tx = app_state
+        .log_engine
+        .lock()
+        .map_err(|e| e.to_string())?
+        .sender();
+    let on_data = create_on_data_callback(app, log_tx, data_mode, encoding.clone(), None);
 
     let app_disconnect = app.clone();
     let pid = parent_id.to_string();
-    let ch_id = channel_id.clone();
     let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
         Box::new(move |channel_id, info| {
             let (parent_disconnected, retain_history) = {
@@ -1893,67 +1861,33 @@ async fn create_terminal_sub_channel(
             }
         });
 
-    let io_context = IoLoopContext {
-        session_id: ch_id.clone(),
-        write_rx,
-        cancel_rx,
-        tx_bytes: tx_clone,
-        rx_bytes: rx_clone,
-    };
-    let io_handle = match channel {
-        ChannelKind::Sync(channel) => {
-            IoTaskHandle::Sync(crate::channel::io_loop::spawn_sync_io_loop(
-                channel,
-                Box::new(on_data),
-                on_disconnect,
-                io_context,
-            ))
-        }
-        ChannelKind::Async(channel) => {
-            IoTaskHandle::Async(crate::channel::async_io_loop::spawn_async_io_loop(
-                channel,
-                Box::new(on_data),
-                on_disconnect,
-                io_context,
-            ))
-        }
-    };
-
-    let stats_cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let io = Arc::new(SessionIo::new(Some(runtime.handle.clone()), None, encoding));
+    let data_plane = SessionDataPlane::attach(runtime, channel_id.clone(), on_data, on_disconnect)
+        .map_err(|e| e.to_string())?;
+    let stats_cancel_flag = Arc::new(AtomicBool::new(false));
     let connected_at = Some(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64,
     );
-
-    crate::kernel::session_store::SessionStore::spawn_stats_collector(
+    SessionStore::spawn_stats_collector(
         app.clone(),
         channel_id.clone(),
-        tx_bytes.clone(),
-        rx_bytes.clone(),
+        io.clone(),
         connected_at,
         stats_cancel_flag.clone(),
     );
 
-    // ── 阶段 3: 获取锁 → 验证父仍存活 → push sub_connection 或回滚清理 ──
     let (actual_index, channel_name) = {
         let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
         let not_found = store.session_not_found(parent_id);
         let handle = store.get_session_mut(parent_id).ok_or(not_found)?;
         if handle.state != SessionState::Connected {
-            // 父会话在阶段 1 和 3 之间被断开 — 回滚清理
             stats_cancel_flag.store(true, Ordering::SeqCst);
-            let _ = cancel_tx.send(());
-            log::warn!(
-                "父会话 {} 在子通道创建中途断开，已清理 I/O 资源: {}",
-                parent_id,
-                channel_id
-            );
+            data_plane.request_shutdown();
             return Err("父会话已断开，无法创建子连接".to_string());
         }
-        // 阶段 1 到阶段 3 之间可能有并发创建完成；在真正注册前再次校验，
-        // 保证 32 个活动子会话上限不会因竞态被突破。
         let active_children = handle
             .sub_connections
             .iter()
@@ -1961,7 +1895,7 @@ async fn create_terminal_sub_channel(
             .count();
         if active_children >= 32 {
             stats_cancel_flag.store(true, Ordering::SeqCst);
-            let _ = cancel_tx.send(());
+            data_plane.request_shutdown();
             return Err("每个父会话最多允许 32 个活动终端".to_string());
         }
         let actual_idx = handle.next_child_index;
@@ -1972,15 +1906,13 @@ async fn create_terminal_sub_channel(
             .map(|factory| factory.child_name_prefix())
             .unwrap_or("Channel");
         let actual_name = format!("{} {}", prefix, actual_idx + 1);
-
         let mut sub = crate::kernel::session_store::SubConnection::new(
             channel_id.clone(),
             actual_name.clone(),
-            write_tx,
-            io_handle,
+            data_plane,
+            io,
             actual_idx,
             elevated,
-            Some(cancel_tx),
         );
         sub.connected_at = connected_at;
         sub.stats_cancel_flag = Some(stats_cancel_flag);
@@ -2010,14 +1942,6 @@ async fn create_terminal_sub_channel(
             }),
         );
     }
-
-    log::info!(
-        "终端子会话已创建: {} (parent: {}, channel_index: {}, elevated: {})",
-        channel_id,
-        parent_id,
-        actual_index,
-        elevated
-    );
     Ok(channel_id)
 }
 
@@ -2294,7 +2218,7 @@ pub async fn connect_session_network(
             },
             conn.side_channel.clone(),
             None,
-            conn.comm_handle.clone(),
+            None,
         )?
     };
 
@@ -3670,12 +3594,13 @@ pub fn resize_pty(
     cols: u32,
     rows: u32,
 ) -> Result<(), String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let tx = store
-        .get_write_tx(&session_id)
-        .ok_or_else(|| store.session_not_found(&session_id))?;
-    tx.send(IoLoopCmd::ResizePty { cols, rows })
-        .map_err(|e| format!("发送 resize 命令失败: {}", e))
+    let io = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store
+            .get_io_for(&session_id)
+            .ok_or_else(|| store.session_not_found(&session_id))?
+    };
+    io.resize_terminal(cols, rows).map_err(|e| e.to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════
