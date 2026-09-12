@@ -31,8 +31,7 @@ pub fn decode_semantic_response(
                 .collect();
             Some(SemanticResponse::Bits { values })
         }
-        ModbusRequest::ReadRegisters { .. }
-        | ModbusRequest::ReadWriteMultipleRegisters { .. } => {
+        ModbusRequest::ReadRegisters { .. } | ModbusRequest::ReadWriteMultipleRegisters { .. } => {
             let bytes = response.data.get(1..)?;
             if !bytes.len().is_multiple_of(2) {
                 return None;
