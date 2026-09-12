@@ -26,6 +26,7 @@ struct AddressBlock<T> {
 }
 
 impl<T: Copy> AddressBlock<T> {
+    /// Administrative definition/update path used by the simulator workbench.
     fn set(&mut self, address: u16, value: T) {
         self.values.insert(address, value);
     }
@@ -37,17 +38,29 @@ impl<T: Copy> AddressBlock<T> {
             .ok_or(EX_ILLEGAL_DATA_ADDRESS)
     }
 
+    fn ensure_defined(&self, address: u16, len: usize) -> Result<(), u8> {
+        ensure_span(address, len)?;
+        for offset in 0..len {
+            if !self.values.contains_key(&(address + offset as u16)) {
+                return Err(EX_ILLEGAL_DATA_ADDRESS);
+            }
+        }
+        Ok(())
+    }
+
     fn read(&self, address: u16, quantity: u16) -> Result<Vec<T>, u8> {
-        ensure_span(address, quantity as usize)?;
+        self.ensure_defined(address, quantity as usize)?;
         (0..quantity)
             .map(|offset| self.get(address + offset))
             .collect()
     }
 
-    fn write(&mut self, address: u16, values: &[T]) -> Result<(), u8> {
-        ensure_span(address, values.len())?;
+    /// Protocol write path. A Modbus request may mutate only addresses that the
+    /// simulator workbench has already defined.
+    fn write_existing(&mut self, address: u16, values: &[T]) -> Result<(), u8> {
+        self.ensure_defined(address, values.len())?;
         for (index, value) in values.iter().enumerate() {
-            self.set(address + index as u16, *value);
+            self.values.insert(address + index as u16, *value);
         }
         Ok(())
     }
@@ -57,26 +70,6 @@ impl<T: Copy> AddressBlock<T> {
             .iter()
             .map(|(address, value)| (*address, *value))
             .collect()
-    }
-
-    fn can_read_after_write(
-        &self,
-        read_address: u16,
-        read_quantity: u16,
-        write_address: u16,
-        write_len: usize,
-    ) -> Result<(), u8> {
-        ensure_span(read_address, read_quantity as usize)?;
-        ensure_span(write_address, write_len)?;
-        let write_end = write_address + (write_len - 1) as u16;
-        for offset in 0..read_quantity {
-            let target = read_address + offset;
-            if !self.values.contains_key(&target) && !(write_address..=write_end).contains(&target)
-            {
-                return Err(EX_ILLEGAL_DATA_ADDRESS);
-            }
-        }
-        Ok(())
     }
 }
 
@@ -166,8 +159,9 @@ impl ModbusDataModel {
 
     /// Execute one decoded request atomically and return a complete response PDU.
     ///
-    /// Every multi-address mutation validates its complete target before the first write.
-    /// Failed requests therefore never leave a partially updated simulator state.
+    /// Address definitions belong to the simulator workbench. Protocol writes first
+    /// validate that their whole destination is defined, so an error never creates
+    /// new points or leaves a partially updated address range.
     pub fn execute(&self, request: &ModbusRequest) -> Result<Vec<u8>, u8> {
         let mut inner = self.inner.write().map_err(|_| EX_SERVER_DEVICE_FAILURE)?;
         let clear_counters = matches!(
@@ -229,12 +223,18 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             }
         }
         ModbusRequest::WriteSingleCoil { address, value } => {
-            inner.address_space.coils.set(*address, *value);
+            inner
+                .address_space
+                .coils
+                .write_existing(*address, std::slice::from_ref(value))?;
             out.extend_from_slice(&address.to_be_bytes());
             out.extend_from_slice(&(if *value { 0xFF00u16 } else { 0x0000u16 }).to_be_bytes());
         }
         ModbusRequest::WriteSingleRegister { address, value } => {
-            inner.address_space.holding_registers.set(*address, *value);
+            inner
+                .address_space
+                .holding_registers
+                .write_existing(*address, std::slice::from_ref(value))?;
             out.extend_from_slice(&address.to_be_bytes());
             out.extend_from_slice(&value.to_be_bytes());
         }
@@ -264,7 +264,7 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             out.extend_from_slice(&inner.message_count.to_be_bytes());
         }
         ModbusRequest::WriteMultipleCoils { address, values } => {
-            inner.address_space.coils.write(*address, values)?;
+            inner.address_space.coils.write_existing(*address, values)?;
             out.extend_from_slice(&address.to_be_bytes());
             out.extend_from_slice(&(values.len() as u16).to_be_bytes());
         }
@@ -272,7 +272,7 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             inner
                 .address_space
                 .holding_registers
-                .write(*address, values)?;
+                .write_existing(*address, values)?;
             out.extend_from_slice(&address.to_be_bytes());
             out.extend_from_slice(&(values.len() as u16).to_be_bytes());
         }
@@ -300,7 +300,10 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
         } => {
             let current = inner.address_space.holding_registers.get(*address)?;
             let value = (current & *and_mask) | (*or_mask & !*and_mask);
-            inner.address_space.holding_registers.set(*address, value);
+            inner
+                .address_space
+                .holding_registers
+                .write_existing(*address, &[value])?;
             out.extend_from_slice(&address.to_be_bytes());
             out.extend_from_slice(&and_mask.to_be_bytes());
             out.extend_from_slice(&or_mask.to_be_bytes());
@@ -311,16 +314,18 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             write_address,
             values,
         } => {
-            inner.address_space.holding_registers.can_read_after_write(
-                *read_address,
-                *read_quantity,
-                *write_address,
-                values.len(),
-            )?;
             inner
                 .address_space
                 .holding_registers
-                .write(*write_address, values)?;
+                .ensure_defined(*read_address, *read_quantity as usize)?;
+            inner
+                .address_space
+                .holding_registers
+                .ensure_defined(*write_address, values.len())?;
+            inner
+                .address_space
+                .holding_registers
+                .write_existing(*write_address, values)?;
             let read = inner
                 .address_space
                 .holding_registers
@@ -506,11 +511,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn protocol_write_requires_predefined_address() {
+        let model = ModbusDataModel::default();
+        assert_eq!(
+            model.execute(&ModbusRequest::WriteSingleRegister {
+                address: 7,
+                value: 42,
+            }),
+            Err(EX_ILLEGAL_DATA_ADDRESS)
+        );
+        model.set_holding_register(7, 1);
+        assert!(model
+            .execute(&ModbusRequest::WriteSingleRegister {
+                address: 7,
+                value: 42,
+            })
+            .is_ok());
+        assert_eq!(model.snapshot().holding_registers, vec![(7, 42)]);
+    }
+
+    #[test]
     fn address_block_validates_before_multi_write() {
         let mut block = AddressBlock::default();
         block.set(u16::MAX, 7u16);
-        assert_eq!(block.write(u16::MAX, &[1, 2]), Err(EX_ILLEGAL_DATA_ADDRESS));
+        assert_eq!(
+            block.write_existing(u16::MAX, &[1, 2]),
+            Err(EX_ILLEGAL_DATA_ADDRESS)
+        );
         assert_eq!(block.snapshot(), vec![(u16::MAX, 7)]);
+    }
+
+    #[test]
+    fn multi_write_rejects_undefined_point_without_partial_commit() {
+        let model = ModbusDataModel::default();
+        model.set_holding_register(10, 1);
+        let result = model.execute(&ModbusRequest::WriteMultipleRegisters {
+            address: 10,
+            values: vec![2, 3],
+        });
+        assert_eq!(result, Err(EX_ILLEGAL_DATA_ADDRESS));
+        assert_eq!(model.snapshot().holding_registers, vec![(10, 1)]);
     }
 
     #[test]
