@@ -1,0 +1,74 @@
+name: Temporary Modbus cleanup
+
+on:
+  push:
+    branches:
+      - refactor/modbus-core-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refactor/modbus-core-hardening
+          fetch-depth: 0
+      - name: Install pinned Rust formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
+      - name: Apply mechanical Clippy fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"expected cleanup pattern not found in {path}")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace(
+              "src-tauri/src/plugins/modbus/polling.rs",
+              "use crate::plugins::modbus::codec::{ModbusRequest, RegisterReadArea};",
+              "use crate::plugins::modbus::codec::ModbusRequest;",
+          )
+          replace(
+              "src-tauri/src/plugins/modbus/codec/pdu.rs",
+              '''            if *mei_type == 0x0E {\n                if data.len() != 2 || !(1..=4).contains(&data[0]) {\n                    return Err("Read Device Identification requires read code 1..=4 and object id".into());\n                }\n            }''',
+              '''            if *mei_type == 0x0E\n                && (data.len() != 2 || !(1..=4).contains(&data[0]))\n            {\n                return Err("Read Device Identification requires read code 1..=4 and object id".into());\n            }''',
+          )
+          replace(
+              "src-tauri/src/plugins/modbus/codec/pdu.rs",
+              '''            if matches!(*sub_function, 0x0000 | 0x000A) {\n                if data.len() != 2 + request_data.len() || data[2..] != request_data[..] {\n                    return Err("diagnostics response does not echo the implemented request".into());\n                }\n            }''',
+              '''            if matches!(*sub_function, 0x0000 | 0x000A)\n                && (data.len() != 2 + request_data.len() || data[2..] != request_data[..])\n            {\n                return Err("diagnostics response does not echo the implemented request".into());\n            }''',
+          )
+          replace(
+              "src-tauri/src/plugins/modbus/value.rs",
+              '''    let mut words: Vec<[u8; 2]> = bytes\n        .chunks_exact(2)\n        .map(|chunk| match byte_order {''',
+              '''    let mut words: Vec<[u8; 2]> = bytes\n        .as_chunks::<2>()\n        .0\n        .iter()\n        .map(|chunk| match byte_order {''',
+          )
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src-tauri/src/plugins/modbus
+          git commit -m "chore(modbus): apply formatter and clippy cleanups"
+          git push origin HEAD:refactor/modbus-core-hardening
