@@ -21,7 +21,8 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
   const { mode, role, serial, tcp } = normalized;
 
   useEffect(() => {
-    if (Object.keys(params).length === 0) onChange(defaultModbusSessionParams());
+    if (Object.keys(params).length !== 0) return;
+    onChange({ ...defaultModbusSessionParams(), mode: "rtu" });
   }, [onChange, params]);
 
   useEffect(() => {
@@ -64,11 +65,8 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
 
   return (
     <div className={styles.connectRoot} data-testid="tauterm-modbus-connect-form">
-      <section className={styles.formSection}>
-        <div className={styles.sectionHeading}>
-          <strong>会话模式</strong>
-          <span className={styles.hint}>选择传输方式和当前站点角色；界面只显示该组合真正需要的参数。</span>
-        </div>
+      <div className={styles.connectGroup}>
+        <div className={styles.connectGroupTitle}>会话模式</div>
         <div className={styles.twoColumns}>
           <Field label="传输模式">
             <select
@@ -94,13 +92,10 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
             </select>
           </Field>
         </div>
-      </section>
+      </div>
 
-      <section className={styles.formSection}>
-        <div className={styles.sectionHeading}>
-          <strong>{mode === "tcp" ? "网络参数" : "串口参数"}</strong>
-          <span className={styles.hint}>{role === "server" ? "配置本地监听端点。" : "配置目标设备的连接端点。"}</span>
-        </div>
+      <div className={styles.connectGroup}>
+        <div className={styles.connectGroupTitle}>{mode === "tcp" ? "网络参数" : "串口参数"}</div>
         {mode === "tcp" ? (
           <div className={styles.twoColumns}>
             <Field label={role === "client" ? "远端主机" : "监听地址"}>
@@ -130,35 +125,31 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
             </Field>
             <div className={styles.serialGrid}>
               <Field label="波特率"><input className="liquid-glass-input" type="number" min={1} value={serial.baud_rate} onChange={event => patchSerial({ baud_rate: Number(event.target.value) })} /></Field>
-              <Field label="数据位"><select className="liquid-glass-input liquid-glass-select" value={serial.data_bits} onChange={event => patchSerial({ data_bits: Number(event.target.value) })}>{[5, 6, 7, 8].map(value => <option key={value}>{value}</option>)}</select></Field>
+              <Field label="数据位"><select className="liquid-glass-input liquid-glass-select" value={serial.data_bits} onChange={event => patchSerial({ data_bits: Number(event.target.value) })}>{[5, 6, 7, 8].map(value => <option key={value} value={value}>{value}</option>)}</select></Field>
               <Field label="校验"><select className="liquid-glass-input liquid-glass-select" value={serial.parity} onChange={event => patchSerial({ parity: event.target.value })}><option value="none">None</option><option value="even">Even</option><option value="odd">Odd</option></select></Field>
               <Field label="停止位"><select className="liquid-glass-input liquid-glass-select" value={serial.stop_bits} onChange={event => patchSerial({ stop_bits: event.target.value })}><option value="1">1</option><option value="2">2</option></select></Field>
             </div>
           </>
         )}
-      </section>
+      </div>
 
-      <section className={styles.formSection}>
-        <div className={styles.sectionHeading}>
-          <strong>协议参数</strong>
-          <span className={styles.hint}>协议地址统一使用 0-based；传统 4xxxx 等引用只用于显示辅助。</span>
-        </div>
+      <div className={styles.connectGroup}>
+        <div className={styles.connectGroupTitle}>协议参数</div>
         <div className={styles.twoColumns}>
           <Field label="Unit ID">
             <input className="liquid-glass-input" type="number" min={unitIdMin} max={mode === "tcp" ? 255 : 247} value={normalized.unit_id} onChange={event => patch({ unit_id: Number(event.target.value) })} />
-            {mode !== "tcp" && role === "client" && normalized.unit_id === 0 && <span className={styles.hint}>地址 0 为广播：仅允许写入且不会等待响应。</span>}
+            {mode !== "tcp" && role === "client" && normalized.unit_id === 0 && <span className={styles.hint}>地址 0 为广播，仅允许写入且不等待响应。</span>}
           </Field>
           {role === "client" ? (
             <Field label="响应超时 (ms)"><input className="liquid-glass-input" type="number" min={1} max={120000} value={normalized.response_timeout_ms} onChange={event => patch({ response_timeout_ms: Number(event.target.value) })} /></Field>
           ) : mode === "tcp" ? (
             <Field label="最大客户端">
               <input className="liquid-glass-input" type="number" min={0} max={256} value={normalized.server_max_clients} onChange={event => patch({ server_max_clients: Number(event.target.value) })} />
-              <span className={styles.hint}>0 表示不限制；最大 256。</span>
+              <span className={styles.hint}>0 表示不限制，最大 256。</span>
             </Field>
           ) : null}
         </div>
-        {role === "server" && <span className={styles.hint}>Server Simulator 的数据模型和故障注入在会话工作区中动态调整。</span>}
-      </section>
+      </div>
 
       {role === "client" && (
         <details className={`${styles.details} liquid-glass-card`}>
@@ -170,6 +161,8 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
           </div>
         </details>
       )}
+
+      {role === "server" && <span className={styles.connectFootnote}>数据模型与故障注入在会话工作区中动态调整。</span>}
     </div>
   );
 }
