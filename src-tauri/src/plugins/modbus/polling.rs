@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::plugins::modbus::client::{ModbusClient, TransactionResult, TransactionStatus};
 use crate::plugins::modbus::codec::ModbusRequest;
-use crate::plugins::modbus::value::{decode_register_bytes, ValueFormat};
+use crate::plugins::modbus::value::{decode_register_bytes, required_registers, ValueFormat};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WatchRow {
@@ -74,11 +74,32 @@ impl WatchScheduler {
                 ModbusRequest::ReadBits {
                     function: 0x01 | 0x02,
                     ..
-                } => {}
+                } => {
+                    if row.format.is_some() {
+                        return Err(format!(
+                            "watch row {} bit area must not use register value format",
+                            row.id
+                        ));
+                    }
+                }
                 ModbusRequest::ReadRegisters {
                     function: 0x03 | 0x04,
+                    quantity,
                     ..
-                } => {}
+                } => {
+                    let format = row
+                        .format
+                        .as_ref()
+                        .ok_or_else(|| format!("watch row {} register area requires a value format", row.id))?;
+                    if let Some(required) = required_registers(format) {
+                        if *quantity != required {
+                            return Err(format!(
+                                "watch row {} value format requires exactly {required} register(s)",
+                                row.id
+                            ));
+                        }
+                    }
+                }
                 _ => {
                     return Err(format!(
                         "watch row {} must use read function 01/02/03/04",
@@ -172,16 +193,26 @@ impl Drop for WatchScheduler {
 }
 
 fn watch_value(row: &WatchRow, result: &TransactionResult) -> WatchValue {
-    let raw =
-        if matches!(result.status, TransactionStatus::Success) && !result.response_pdu.is_empty() {
-            extract_data(&result.response_pdu)
-        } else {
-            Vec::new()
-        };
-    let value = row
-        .format
-        .as_ref()
-        .and_then(|format| decode_register_bytes(&raw, format).ok());
+    let raw = if matches!(result.status, TransactionStatus::Success) && !result.response_pdu.is_empty()
+    {
+        extract_data(&result.response_pdu)
+    } else {
+        Vec::new()
+    };
+
+    let value = if !matches!(result.status, TransactionStatus::Success) {
+        None
+    } else {
+        match &row.request {
+            ModbusRequest::ReadBits { quantity, .. } => Some(decode_bits(&raw, *quantity)),
+            ModbusRequest::ReadRegisters { .. } => row
+                .format
+                .as_ref()
+                .and_then(|format| decode_register_bytes(&raw, format).ok()),
+            _ => None,
+        }
+    };
+
     WatchValue {
         row_id: row.id.clone(),
         status: format!("{:?}", result.status).to_ascii_lowercase(),
@@ -190,6 +221,20 @@ fn watch_value(row: &WatchRow, result: &TransactionResult) -> WatchValue {
         latency_ms: result.latency_ms,
         message: result.message.clone(),
         updated_at_ms: chrono::Utc::now().timestamp_millis().max(0) as u64,
+    }
+}
+
+fn decode_bits(bytes: &[u8], quantity: u16) -> serde_json::Value {
+    let bits: Vec<bool> = (0..quantity as usize)
+        .map(|index| {
+            let byte = bytes.get(index / 8).copied().unwrap_or(0);
+            ((byte >> (index % 8)) & 1) != 0
+        })
+        .collect();
+    if bits.len() == 1 {
+        serde_json::Value::Bool(bits[0])
+    } else {
+        serde_json::Value::Array(bits.into_iter().map(serde_json::Value::Bool).collect())
     }
 }
 
@@ -206,6 +251,19 @@ fn extract_data(pdu: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::modbus::value::{ByteOrder, ValueType, WordOrder};
+
+    fn register_format(value_type: ValueType) -> ValueFormat {
+        ValueFormat {
+            value_type,
+            byte_order: ByteOrder::Big,
+            word_order: WordOrder::Normal,
+            scale: 1.0,
+            offset: 0.0,
+            unit: String::new(),
+            bit: None,
+        }
+    }
 
     fn row(id: &str, period_ms: u64) -> WatchRow {
         WatchRow {
@@ -218,7 +276,7 @@ mod tests {
                 quantity: 1,
             },
             period_ms,
-            format: None,
+            format: Some(register_format(ValueType::UInt16)),
         }
     }
 
@@ -238,5 +296,40 @@ mod tests {
             value: 1,
         };
         assert!(WatchScheduler::validate_rows(&[invalid]).is_err());
+    }
+
+    #[test]
+    fn bit_rows_do_not_accept_register_value_format() {
+        let mut invalid = row("bit", 1000);
+        invalid.request = ModbusRequest::ReadBits {
+            function: 1,
+            address: 0,
+            quantity: 1,
+        };
+        assert!(WatchScheduler::validate_rows(&[invalid]).is_err());
+        invalid.format = None;
+        assert!(WatchScheduler::validate_rows(&[invalid]).is_ok());
+    }
+
+    #[test]
+    fn fixed_scalar_width_must_match_request_quantity() {
+        let mut invalid = row("float", 1000);
+        invalid.format = Some(register_format(ValueType::Float32));
+        assert!(WatchScheduler::validate_rows(&[invalid.clone()]).is_err());
+        invalid.request = ModbusRequest::ReadRegisters {
+            function: 3,
+            address: 0,
+            quantity: 2,
+        };
+        assert!(WatchScheduler::validate_rows(&[invalid]).is_ok());
+    }
+
+    #[test]
+    fn bit_payload_is_decoded_without_register_codec() {
+        assert_eq!(decode_bits(&[0b0000_0001], 1), serde_json::json!(true));
+        assert_eq!(
+            decode_bits(&[0b0000_0101], 3),
+            serde_json::json!([true, false, true])
+        );
     }
 }
