@@ -49,6 +49,7 @@ pub struct DataPlaneHandle {
     tx_bytes: Arc<AtomicU64>,
     rx_bytes: Arc<AtomicU64>,
     connected: Arc<AtomicBool>,
+    async_command_order: Arc<tokio::sync::Mutex<()>>,
     terminal_control: bool,
 }
 
@@ -85,7 +86,7 @@ impl DataPlaneHandle {
             .send(RuntimeCommand::Write {
                 owner,
                 data: data.to_vec(),
-                ack: ack_tx,
+                ack: CommandAck::Blocking(ack_tx),
             })
             .map_err(|_| {
                 TransportError::new(
@@ -101,6 +102,51 @@ impl DataPlaneHandle {
                 "transport runtime closed before acknowledging write",
             )
         })?
+    }
+
+    /// Async frontend/session path. The short ordering lock protects only command enqueue order;
+    /// acknowledgement happens after releasing it, so a burst of terminal input can queue behind a
+    /// transport read slice and then be drained together without serializing every keypress on its
+    /// predecessor's round trip.
+    pub async fn write_async(&self, data: Vec<u8>) -> Result<(), TransportError> {
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        {
+            let _order = self.async_command_order.lock().await;
+            self.try_send_async_command(
+                RuntimeCommand::Write {
+                    owner: None,
+                    data,
+                    ack: CommandAck::Async(ack_tx),
+                },
+                "write",
+            )?;
+        }
+        ack_rx.await.map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::RemoteClosed,
+                "write",
+                "transport runtime closed before acknowledging write",
+            )
+        })?
+    }
+
+    fn try_send_async_command(
+        &self,
+        command: RuntimeCommand,
+        operation: &'static str,
+    ) -> Result<(), TransportError> {
+        match self.command_tx.try_send(command) {
+            Ok(()) => Ok(()),
+            Err(mpsc::TrySendError::Full(_)) => Err(TransportError::busy(
+                operation,
+                "transport command queue is full",
+            )),
+            Err(mpsc::TrySendError::Disconnected(_)) => Err(TransportError::new(
+                TransportErrorKind::RemoteClosed,
+                operation,
+                "transport runtime is closed",
+            )),
+        }
     }
 
     pub fn subscribe(&self) -> Result<DataPlaneSubscription, TransportError> {
@@ -176,7 +222,7 @@ impl DataPlaneHandle {
             .send(RuntimeCommand::ResizeTerminal {
                 cols,
                 rows,
-                ack: ack_tx,
+                ack: CommandAck::Blocking(ack_tx),
             })
             .map_err(|_| {
                 TransportError::new(
@@ -186,6 +232,38 @@ impl DataPlaneHandle {
                 )
             })?;
         ack_rx.recv().map_err(|_| {
+            TransportError::new(
+                TransportErrorKind::RemoteClosed,
+                "resize_terminal",
+                "transport runtime closed before resize acknowledgement",
+            )
+        })?
+    }
+
+    pub async fn resize_terminal_async(
+        &self,
+        cols: u32,
+        rows: u32,
+    ) -> Result<(), TransportError> {
+        if !self.terminal_control {
+            return Err(TransportError::unsupported(
+                "resize_terminal",
+                "session has no terminal-control capability",
+            ));
+        }
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        {
+            let _order = self.async_command_order.lock().await;
+            self.try_send_async_command(
+                RuntimeCommand::ResizeTerminal {
+                    cols,
+                    rows,
+                    ack: CommandAck::Async(ack_tx),
+                },
+                "resize_terminal",
+            )?;
+        }
+        ack_rx.await.map_err(|_| {
             TransportError::new(
                 TransportErrorKind::RemoteClosed,
                 "resize_terminal",
@@ -240,6 +318,7 @@ impl DataPlaneRuntime {
             tx_bytes: tx_bytes.clone(),
             rx_bytes: rx_bytes.clone(),
             connected: connected.clone(),
+            async_command_order: Arc::new(tokio::sync::Mutex::new(())),
             terminal_control,
         };
         let thread = std::thread::spawn(move || {
@@ -338,7 +417,7 @@ impl Write for ExclusiveIo {
             .send(RuntimeCommand::Write {
                 owner: Some(self.owner_id),
                 data: buf.to_vec(),
-                ack: ack_tx,
+                ack: CommandAck::Blocking(ack_tx),
             })
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed"))?;
         ack_rx
@@ -359,11 +438,29 @@ impl Drop for ExclusiveIo {
     }
 }
 
+enum CommandAck {
+    Blocking(mpsc::SyncSender<Result<(), TransportError>>),
+    Async(tokio::sync::oneshot::Sender<Result<(), TransportError>>),
+}
+
+impl CommandAck {
+    fn send(self, result: Result<(), TransportError>) {
+        match self {
+            Self::Blocking(sender) => {
+                let _ = sender.send(result);
+            }
+            Self::Async(sender) => {
+                let _ = sender.send(result);
+            }
+        }
+    }
+}
+
 enum RuntimeCommand {
     Write {
         owner: Option<u64>,
         data: Vec<u8>,
-        ack: mpsc::SyncSender<Result<(), TransportError>>,
+        ack: CommandAck,
     },
     Subscribe {
         id: u64,
@@ -385,7 +482,7 @@ enum RuntimeCommand {
     ResizeTerminal {
         cols: u32,
         rows: u32,
-        ack: mpsc::SyncSender<Result<(), TransportError>>,
+        ack: CommandAck,
     },
     Shutdown {
         ack: mpsc::SyncSender<Result<(), TransportError>>,
@@ -541,7 +638,7 @@ fn handle_command(
                 }
                 result
             };
-            let _ = ack.send(result);
+            ack.send(result);
             false
         }
         RuntimeCommand::Subscribe { id, subscriber } => {
@@ -604,7 +701,7 @@ fn handle_command(
             false
         }
         RuntimeCommand::ResizeTerminal { cols, rows, ack } => {
-            let _ = ack.send(driver.resize_terminal(cols, rows));
+            ack.send(driver.resize_terminal(cols, rows));
             false
         }
         RuntimeCommand::Shutdown { ack } => {
@@ -726,6 +823,29 @@ mod tests {
             runtime.handle.write(&[value]).unwrap();
         }
         assert_eq!(writes.lock().unwrap().len(), 32);
+        runtime.join();
+    }
+
+    #[test]
+    fn async_writes_use_the_actor_ack_path_without_blocking_command_threads() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let runtime = DataPlaneRuntime::spawn(Box::new(MockStream {
+            reads: VecDeque::new(),
+            writes: writes.clone(),
+        }));
+        let handle = runtime.handle.clone();
+        let async_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        async_runtime.block_on(async {
+            handle.write_async(vec![1, 2, 3]).await.unwrap();
+            handle.write_async(vec![4, 5]).await.unwrap();
+        });
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            &[vec![1, 2, 3], vec![4, 5]]
+        );
         runtime.join();
     }
 
