@@ -125,7 +125,9 @@
 }
 
 .identityGroup,
-.statusLabel {
+.statusLabel,
+.headerRuntime,
+.targetUnit {
   display: flex;
   align-items: center;
 }
@@ -157,6 +159,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.headerRuntime {
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.targetUnit {
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.targetUnit input {
+  width: 64px;
+  min-height: 28px;
+  padding-inline: 7px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
 
 .statusLabel {
@@ -250,6 +272,16 @@
   padding-inline: 12px;
 }
 
+.runtimeState {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.runtimeStateActive {
+  color: var(--color-success);
+}
+
 .tableWrap {
   width: 100%;
   min-width: 0;
@@ -296,6 +328,49 @@
 .table select {
   min-width: 76px;
   font-size: var(--text-xs);
+}
+
+.monitorLayout {
+  grid-template-columns: minmax(0, 1.7fr) minmax(230px, 0.65fr);
+  gap: 0;
+  padding: 0;
+}
+
+.monitorTablePane,
+.monitorInspector {
+  min-width: 0;
+  padding: 12px;
+}
+
+.monitorInspector {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border-left: 1px solid var(--glass-border-default);
+  background: color-mix(in srgb, var(--glass-input-bg) 22%, transparent);
+}
+
+.monitorTable {
+  min-width: 52rem;
+}
+
+.monitorTable td:nth-child(2) input {
+  min-width: 110px;
+}
+
+.monitorTable td:nth-child(3) input {
+  min-width: 54px;
+  width: 62px;
+}
+
+.rowSelected {
+  background: color-mix(in srgb, var(--glass-bg-hover) 76%, transparent);
+}
+
+.inspectorGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .mono {
@@ -409,9 +484,49 @@
   gap: 3px;
 }
 
+.statusBarPlugin {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.statusBarPlugin > span + span {
+  padding-left: 7px;
+  border-left: 1px solid var(--glass-border-default);
+}
+
+.statusBarType {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.statusBarActive,
+.statusBarSuccess {
+  color: var(--color-success);
+}
+
+.statusBarWarning {
+  color: var(--color-warning);
+}
+
 @container session-pane (max-width: 900px) {
   .root .grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .root .monitorLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .root .monitorInspector {
+    border-left: 0;
+    border-top: 1px solid var(--glass-border-default);
   }
 }
 
@@ -424,11 +539,18 @@
     border-left: 0;
     border-top: 1px solid var(--glass-border-default);
   }
+
+  .headerRuntime {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 4px;
+  }
 }
 
 @container session-pane (max-width: 520px) {
   .root .twoColumns,
-  .root .grid {
+  .root .grid,
+  .root .inspectorGrid {
     grid-template-columns: 1fr;
   }
 
@@ -442,6 +564,10 @@
 
   .table {
     min-width: 38rem;
+  }
+
+  .monitorTable {
+    min-width: 48rem;
   }
 }
 
@@ -461,7 +587,9 @@
 
   .workbenchSection,
   .serverEditor,
-  .serverTablePane {
+  .serverTablePane,
+  .monitorTablePane,
+  .monitorInspector {
     padding: 9px;
     gap: 8px;
   }

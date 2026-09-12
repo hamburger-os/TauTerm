@@ -70,6 +70,30 @@ describe("TauTerm runtime smoke", () => {
     await dialog.waitForDisplayed({ reverse: true });
   });
 
+  it("renders Modbus configuration with RTU client defaults", async () => {
+    await $('[data-testid="new-session-button"]').click();
+    const dialog = await $('[data-testid="connect-dialog-overlay"]');
+    await dialog.waitForDisplayed();
+
+    const selected = await browser.execute(() => {
+      const button = Array.from(document.querySelectorAll("button"))
+        .find(element => element.textContent?.includes("Modbus 调试助手"));
+      if (!(button instanceof HTMLButtonElement)) return false;
+      button.click();
+      return true;
+    });
+    expect(selected).toBe(true);
+
+    const form = await $('[data-testid="tauterm-modbus-connect-form"]');
+    await form.waitForDisplayed();
+    await expect($('[data-testid="tauterm-modbus-mode"]')).toHaveValue("rtu");
+    await expect($('[data-testid="tauterm-modbus-role"]')).toHaveValue("client");
+    await expect($('[data-testid="tauterm-modbus-serial-port"]')).toBeDisplayed();
+
+    await browser.keys(["Escape"]);
+    await dialog.waitForDisplayed({ reverse: true });
+  });
+
   after(async () => {
     const errors = await browser.execute(() => window.__tautermE2eErrors || []);
     expect(errors).toEqual([]);

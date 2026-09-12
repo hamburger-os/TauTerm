@@ -1,16 +1,19 @@
 use serde::Serialize;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::plugins::modbus::capability::{request_supported_on_mode, validate_client_unit_id};
 use crate::plugins::modbus::codec::{self, AduMode, ModbusRequest};
 use crate::plugins::modbus::config::{ModbusMode, ValidatedModbusConfig};
+use crate::plugins::modbus::response::{decode_semantic_response, SemanticResponse};
 use crate::transport::{DataPlaneEvent, DataPlaneRuntime, DataPlaneSubscription};
 
 const HISTORY_LIMIT: usize = 1000;
+const HISTORY_QUERY_LIMIT: usize = 500;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransactionStatus {
     Success,
@@ -36,15 +39,29 @@ pub struct TransactionResult {
     pub raw_tx: Vec<u8>,
     pub raw_rx: Vec<u8>,
     pub response_pdu: Vec<u8>,
+    pub semantic_response: Option<SemanticResponse>,
     pub message: Option<String>,
     pub write_outcome_unknown: bool,
     pub attempt: u8,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransactionRecord {
+    pub sequence: u64,
+    pub result: TransactionResult,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransactionHistoryBatch {
+    pub records: Vec<TransactionRecord>,
+    pub latest_sequence: u64,
 }
 
 struct TransactionFailure {
     status: TransactionStatus,
     function: u8,
     transaction_id: Option<u16>,
+    unit_id: u8,
     started: Instant,
     raw_tx: Vec<u8>,
     raw_rx: Vec<u8>,
@@ -59,7 +76,8 @@ pub struct ModbusClient {
     events: Mutex<Option<DataPlaneSubscription>>,
     transaction_guard: Mutex<()>,
     next_transaction_id: AtomicU16,
-    history: Mutex<VecDeque<TransactionResult>>,
+    next_history_sequence: AtomicU64,
+    history: Mutex<VecDeque<TransactionRecord>>,
 }
 
 impl ModbusClient {
@@ -73,11 +91,20 @@ impl ModbusClient {
             events: Mutex::new(None),
             transaction_guard: Mutex::new(()),
             next_transaction_id: AtomicU16::new(1),
+            next_history_sequence: AtomicU64::new(1),
             history: Mutex::new(VecDeque::with_capacity(HISTORY_LIMIT)),
         })
     }
 
-    pub fn execute(&self, request: ModbusRequest) -> TransactionResult {
+    pub fn mode(&self) -> ModbusMode {
+        self.config.mode()
+    }
+
+    pub fn default_unit_id(&self) -> u8 {
+        self.config.unit_id
+    }
+
+    pub fn execute(&self, unit_id: u8, request: ModbusRequest) -> TransactionResult {
         let _guard = self
             .transaction_guard
             .lock()
@@ -93,7 +120,7 @@ impl ModbusClient {
         };
         let mut attempt = 0u8;
         let result = loop {
-            let result = self.execute_once(&request, attempt);
+            let result = self.execute_once(unit_id, &request, attempt);
             let retryable = matches!(
                 result.status,
                 TransactionStatus::Timeout | TransactionStatus::TransportError
@@ -118,6 +145,7 @@ impl ModbusClient {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let started = Instant::now();
+        let unit_id = self.config.unit_id;
         let handle = {
             let runtime = self
                 .runtime
@@ -130,6 +158,7 @@ impl ModbusClient {
                         status: TransactionStatus::Cancelled,
                         function: 0,
                         transaction_id: None,
+                        unit_id,
                         started,
                         raw_tx: data,
                         raw_rx: Vec::new(),
@@ -154,6 +183,7 @@ impl ModbusClient {
                         status: TransactionStatus::TransportError,
                         function: 0,
                         transaction_id: None,
+                        unit_id,
                         started,
                         raw_tx: data,
                         raw_rx: Vec::new(),
@@ -172,6 +202,7 @@ impl ModbusClient {
                 status: TransactionStatus::TransportError,
                 function: 0,
                 transaction_id: None,
+                unit_id,
                 started,
                 raw_tx: data,
                 raw_rx: Vec::new(),
@@ -188,12 +219,13 @@ impl ModbusClient {
                 status: TransactionStatus::Success,
                 function: 0,
                 transaction_id: None,
-                unit_id: self.config.unit_id,
+                unit_id,
                 latency_ms: started.elapsed().as_millis(),
                 exception_code: None,
                 raw_tx: data,
                 raw_rx: Vec::new(),
                 response_pdu: Vec::new(),
+                semantic_response: None,
                 message: Some("exact Raw ADU sent without response validation".into()),
                 write_outcome_unknown: false,
                 attempt: 0,
@@ -218,6 +250,7 @@ impl ModbusClient {
                         status: TransactionStatus::Timeout,
                         function: 0,
                         transaction_id: None,
+                        unit_id,
                         started,
                         raw_tx: data.clone(),
                         raw_rx,
@@ -226,7 +259,7 @@ impl ModbusClient {
                         attempt: 0,
                     })
                 } else {
-                    raw_success(self.config.unit_id, started, data.clone(), raw_rx)
+                    raw_success(unit_id, started, data.clone(), raw_rx)
                 };
             }
             let wait = if raw_rx.is_empty() {
@@ -241,6 +274,7 @@ impl ModbusClient {
                         status: TransactionStatus::TransportError,
                         function: 0,
                         transaction_id: None,
+                        unit_id,
                         started,
                         raw_tx: data.clone(),
                         raw_rx,
@@ -250,8 +284,7 @@ impl ModbusClient {
                     });
                 }
                 Ok(DataPlaneEvent::Closed(info)) => {
-                    let mut result =
-                        raw_success(self.config.unit_id, started, data.clone(), raw_rx);
+                    let mut result = raw_success(unit_id, started, data.clone(), raw_rx);
                     result.message = Some(format!(
                         "Raw ADU response is unvalidated; transport closed: {}",
                         info.reason
@@ -263,6 +296,7 @@ impl ModbusClient {
                         status: TransactionStatus::Timeout,
                         function: 0,
                         transaction_id: None,
+                        unit_id,
                         started,
                         raw_tx: data.clone(),
                         raw_rx,
@@ -272,13 +306,14 @@ impl ModbusClient {
                     });
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    break raw_success(self.config.unit_id, started, data.clone(), raw_rx);
+                    break raw_success(unit_id, started, data.clone(), raw_rx);
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     break self.failure(TransactionFailure {
                         status: TransactionStatus::TransportError,
                         function: 0,
                         transaction_id: None,
+                        unit_id,
                         started,
                         raw_tx: data.clone(),
                         raw_rx,
@@ -293,7 +328,7 @@ impl ModbusClient {
         result
     }
 
-    fn execute_once(&self, request: &ModbusRequest, attempt: u8) -> TransactionResult {
+    fn execute_once(&self, unit_id: u8, request: &ModbusRequest, attempt: u8) -> TransactionResult {
         let started = Instant::now();
         let function = request.function();
         let current_mode = self.config.mode();
@@ -302,11 +337,26 @@ impl ModbusClient {
         } else {
             None
         };
+        if let Err(message) = validate_client_unit_id(current_mode, unit_id) {
+            return self.failure(TransactionFailure {
+                status: TransactionStatus::ProtocolError,
+                function,
+                transaction_id,
+                unit_id,
+                started,
+                raw_tx: Vec::new(),
+                raw_rx: Vec::new(),
+                message,
+                write_outcome_unknown: false,
+                attempt,
+            });
+        }
         if !request_supported_on_mode(current_mode, request) {
             return self.failure(TransactionFailure {
                 status: TransactionStatus::ProtocolError,
                 function,
                 transaction_id,
+                unit_id,
                 started,
                 raw_tx: Vec::new(),
                 raw_rx: Vec::new(),
@@ -324,6 +374,7 @@ impl ModbusClient {
                     status: TransactionStatus::ProtocolError,
                     function,
                     transaction_id,
+                    unit_id,
                     started,
                     raw_tx: Vec::new(),
                     raw_rx: Vec::new(),
@@ -333,11 +384,12 @@ impl ModbusClient {
                 });
             }
         };
-        if self.config.unit_id == 0 && current_mode != ModbusMode::Tcp && !request.is_write() {
+        if unit_id == 0 && current_mode != ModbusMode::Tcp && !request.is_write() {
             return self.failure(TransactionFailure {
                 status: TransactionStatus::ProtocolError,
                 function,
                 transaction_id,
+                unit_id,
                 started,
                 raw_tx: Vec::new(),
                 raw_rx: Vec::new(),
@@ -348,7 +400,7 @@ impl ModbusClient {
         }
         let tx = match codec::encode_adu(
             mode(current_mode),
-            self.config.unit_id,
+            unit_id,
             transaction_id.unwrap_or(0),
             &pdu,
         ) {
@@ -358,6 +410,7 @@ impl ModbusClient {
                     status: TransactionStatus::ProtocolError,
                     function,
                     transaction_id,
+                    unit_id,
                     started,
                     raw_tx: Vec::new(),
                     raw_rx: Vec::new(),
@@ -380,6 +433,7 @@ impl ModbusClient {
                         status: TransactionStatus::Cancelled,
                         function,
                         transaction_id,
+                        unit_id,
                         started,
                         raw_tx: tx,
                         raw_rx: Vec::new(),
@@ -402,11 +456,12 @@ impl ModbusClient {
                         status: TransactionStatus::TransportError,
                         function,
                         transaction_id,
+                        unit_id,
                         started,
                         raw_tx: tx,
                         raw_rx: Vec::new(),
                         message: error.to_string(),
-                        write_outcome_unknown: request.is_write(),
+                        write_outcome_unknown: false,
                         attempt,
                     });
                 }
@@ -418,6 +473,7 @@ impl ModbusClient {
                 status: TransactionStatus::TransportError,
                 function,
                 transaction_id,
+                unit_id,
                 started,
                 raw_tx: tx,
                 raw_rx: Vec::new(),
@@ -427,7 +483,7 @@ impl ModbusClient {
             });
         }
 
-        if self.config.unit_id == 0 && current_mode != ModbusMode::Tcp {
+        if unit_id == 0 && current_mode != ModbusMode::Tcp {
             return TransactionResult {
                 timestamp_ms: now_ms(),
                 status: TransactionStatus::Broadcast,
@@ -439,6 +495,7 @@ impl ModbusClient {
                 raw_tx: tx,
                 raw_rx: Vec::new(),
                 response_pdu: Vec::new(),
+                semantic_response: None,
                 message: None,
                 write_outcome_unknown: false,
                 attempt,
@@ -452,19 +509,14 @@ impl ModbusClient {
             .response_timeout_ms;
         let deadline = Instant::now() + Duration::from_millis(response_timeout_ms);
         let received = match current_mode {
-            ModbusMode::Tcp => receive_tcp(
-                events,
-                deadline,
-                transaction_id.unwrap_or(0),
-                self.config.unit_id,
-            ),
-            ModbusMode::Ascii => receive_ascii(events, deadline, self.config.unit_id),
+            ModbusMode::Tcp => receive_tcp(events, deadline, transaction_id.unwrap_or(0), unit_id),
+            ModbusMode::Ascii => receive_ascii(events, deadline, unit_id),
             ModbusMode::Rtu => receive_rtu(
                 events,
                 deadline,
                 self.config.rtu_inter_char_gap(),
                 self.config.rtu_frame_gap(),
-                self.config.unit_id,
+                unit_id,
             ),
         };
         let (raw_rx, response_pdu) = match received {
@@ -474,6 +526,7 @@ impl ModbusClient {
                     status: TransactionStatus::Timeout,
                     function,
                     transaction_id,
+                    unit_id,
                     started,
                     raw_tx: tx,
                     raw_rx: Vec::new(),
@@ -487,6 +540,7 @@ impl ModbusClient {
                     status: TransactionStatus::TransportError,
                     function,
                     transaction_id,
+                    unit_id,
                     started,
                     raw_tx: tx,
                     raw_rx: Vec::new(),
@@ -500,6 +554,7 @@ impl ModbusClient {
                     status: TransactionStatus::MalformedResponse,
                     function,
                     transaction_id,
+                    unit_id,
                     started,
                     raw_tx: tx,
                     raw_rx: raw,
@@ -513,6 +568,7 @@ impl ModbusClient {
                     status: TransactionStatus::ProtocolError,
                     function,
                     transaction_id,
+                    unit_id,
                     started,
                     raw_tx: tx,
                     raw_rx: raw,
@@ -532,12 +588,13 @@ impl ModbusClient {
                 },
                 function,
                 transaction_id,
-                unit_id: self.config.unit_id,
+                unit_id,
                 latency_ms: started.elapsed().as_millis(),
                 exception_code: response.exception,
                 raw_tx: tx,
                 raw_rx,
                 response_pdu,
+                semantic_response: decode_semantic_response(request, &response),
                 message: None,
                 write_outcome_unknown: false,
                 attempt,
@@ -546,6 +603,7 @@ impl ModbusClient {
                 status: TransactionStatus::ProtocolError,
                 function,
                 transaction_id,
+                unit_id,
                 started,
                 raw_tx: tx,
                 raw_rx,
@@ -562,12 +620,13 @@ impl ModbusClient {
             status: failure.status,
             function: failure.function,
             transaction_id: failure.transaction_id,
-            unit_id: self.config.unit_id,
+            unit_id: failure.unit_id,
             latency_ms: failure.started.elapsed().as_millis(),
             exception_code: None,
             raw_tx: failure.raw_tx,
             raw_rx: failure.raw_rx,
             response_pdu: Vec::new(),
+            semantic_response: None,
             message: Some(failure.message),
             write_outcome_unknown: failure.write_outcome_unknown,
             attempt: failure.attempt,
@@ -575,6 +634,7 @@ impl ModbusClient {
     }
 
     fn record(&self, result: TransactionResult) {
+        let sequence = self.next_history_sequence.fetch_add(1, Ordering::Relaxed);
         let mut history = self
             .history
             .lock()
@@ -582,17 +642,42 @@ impl ModbusClient {
         if history.len() >= HISTORY_LIMIT {
             history.pop_front();
         }
-        history.push_back(result);
+        history.push_back(TransactionRecord { sequence, result });
     }
 
-    pub fn history(&self) -> Vec<TransactionResult> {
+    pub fn history_since(&self, after_sequence: u64, limit: usize) -> TransactionHistoryBatch {
+        let history = self
+            .history
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let latest_sequence = history
+            .back()
+            .map_or(after_sequence, |record| record.sequence);
+        let limit = limit.clamp(1, HISTORY_QUERY_LIMIT);
+        let records = if after_sequence == 0 {
+            let mut recent: Vec<_> = history.iter().rev().take(limit).cloned().collect();
+            recent.reverse();
+            recent
+        } else {
+            history
+                .iter()
+                .filter(|record| record.sequence > after_sequence)
+                .take(limit)
+                .cloned()
+                .collect()
+        };
+        TransactionHistoryBatch {
+            records,
+            latest_sequence,
+        }
+    }
+
+    pub fn last_result(&self) -> Option<TransactionResult> {
         self.history
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .iter()
-            .rev()
-            .cloned()
-            .collect()
+            .back()
+            .map(|record| record.result.clone())
     }
 
     pub fn shutdown(&self) {
@@ -636,6 +721,7 @@ fn raw_success(
         raw_tx,
         raw_rx,
         response_pdu: Vec::new(),
+        semantic_response: None,
         message: Some("Raw ADU response is unvalidated".into()),
         write_outcome_unknown: false,
         attempt: 0,
@@ -681,21 +767,16 @@ fn receive_ascii(
     deadline: Instant,
     unit_id: u8,
 ) -> Result<(Vec<u8>, Vec<u8>), ReceiveError> {
-    let mut raw = Vec::new();
+    let mut framer = codec::ascii::AsciiFramer::default();
     loop {
         match recv_until(events, deadline)? {
             DataPlaneEvent::Closed(info) => return Err(ReceiveError::Transport(info.reason)),
             DataPlaneEvent::Data(data) => {
-                raw.extend_from_slice(&data);
-                if let Some(end) = raw.windows(2).position(|window| window == b"\r\n") {
-                    let frame = raw[..end + 2].to_vec();
+                for frame in framer.push(&data) {
                     let (unit, pdu) = codec::ascii::decode(&frame)
                         .map_err(|error| ReceiveError::Malformed(error, frame.clone()))?;
                     if unit != unit_id {
-                        return Err(ReceiveError::Protocol(
-                            format!("unit id mismatch: expected {unit_id}, got {unit}"),
-                            frame,
-                        ));
+                        continue;
                     }
                     return Ok((frame, pdu));
                 }
@@ -756,15 +837,13 @@ fn receive_rtu(
                         ))
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => {
-                        let (unit, pdu) = codec::rtu::decode(&raw)
-                            .map_err(|error| ReceiveError::Malformed(error, raw.clone()))?;
+                        let frame = std::mem::take(&mut raw);
+                        let (unit, pdu) = codec::rtu::decode(&frame)
+                            .map_err(|error| ReceiveError::Malformed(error, frame.clone()))?;
                         if unit != unit_id {
-                            return Err(ReceiveError::Protocol(
-                                format!("unit id mismatch: expected {unit_id}, got {unit}"),
-                                raw,
-                            ));
+                            continue;
                         }
-                        return Ok((raw, pdu));
+                        return Ok((frame, pdu));
                     }
                 }
             }
@@ -791,20 +870,6 @@ fn recv_until(
             ReceiveError::Transport("transport event stream closed".into())
         }
     })
-}
-
-fn request_supported_on_mode(mode: ModbusMode, request: &ModbusRequest) -> bool {
-    if mode != ModbusMode::Tcp {
-        return true;
-    }
-    !matches!(
-        request,
-        ModbusRequest::ReadExceptionStatus
-            | ModbusRequest::Diagnostics { .. }
-            | ModbusRequest::GetCommEventCounter
-            | ModbusRequest::GetCommEventLog
-            | ModbusRequest::ReportServerId
-    )
 }
 
 fn mode(value: ModbusMode) -> AduMode {
@@ -881,12 +946,16 @@ mod tests {
             ..Default::default()
         };
         let (client, writes) = client_with(config);
-        let result = client.execute(ModbusRequest::ReadRegisters {
-            area: RegisterReadArea::HoldingRegisters,
-            address: 0,
-            quantity: 1,
-        });
+        let result = client.execute(
+            7,
+            ModbusRequest::ReadRegisters {
+                area: RegisterReadArea::HoldingRegisters,
+                address: 0,
+                quantity: 1,
+            },
+        );
         assert!(matches!(result.status, TransactionStatus::Timeout));
+        assert_eq!(result.unit_id, 7);
         assert_eq!(result.attempt, 1);
         assert_eq!(writes.load(Ordering::Relaxed), 2);
         client.shutdown();
@@ -901,10 +970,13 @@ mod tests {
             ..Default::default()
         };
         let (client, writes) = client_with(config);
-        let result = client.execute(ModbusRequest::WriteSingleRegister {
-            address: 7,
-            value: 42,
-        });
+        let result = client.execute(
+            2,
+            ModbusRequest::WriteSingleRegister {
+                address: 7,
+                value: 42,
+            },
+        );
         assert!(matches!(result.status, TransactionStatus::Timeout));
         assert_eq!(result.attempt, 0);
         assert!(result.write_outcome_unknown);
@@ -916,24 +988,50 @@ mod tests {
     fn serial_unit_zero_write_is_broadcast_and_read_is_rejected() {
         let config = ModbusConfig {
             mode: ModbusMode::Rtu,
-            unit_id: 0,
+            unit_id: 1,
             ..Default::default()
         };
         let (client, writes) = client_with(config);
-        let write = client.execute(ModbusRequest::WriteSingleRegister {
-            address: 7,
-            value: 42,
-        });
+        let write = client.execute(
+            0,
+            ModbusRequest::WriteSingleRegister {
+                address: 7,
+                value: 42,
+            },
+        );
         assert!(matches!(write.status, TransactionStatus::Broadcast));
         assert!(!write.write_outcome_unknown);
         assert_eq!(writes.load(Ordering::Relaxed), 1);
-        let read = client.execute(ModbusRequest::ReadRegisters {
-            area: RegisterReadArea::HoldingRegisters,
-            address: 0,
-            quantity: 1,
-        });
+        let read = client.execute(
+            0,
+            ModbusRequest::ReadRegisters {
+                area: RegisterReadArea::HoldingRegisters,
+                address: 0,
+                quantity: 1,
+            },
+        );
         assert!(matches!(read.status, TransactionStatus::ProtocolError));
         assert_eq!(writes.load(Ordering::Relaxed), 1);
+        client.shutdown();
+    }
+
+    #[test]
+    fn serial_reserved_unit_is_rejected_before_write() {
+        let config = ModbusConfig {
+            mode: ModbusMode::Rtu,
+            ..Default::default()
+        };
+        let (client, writes) = client_with(config);
+        let result = client.execute(
+            248,
+            ModbusRequest::ReadRegisters {
+                area: RegisterReadArea::HoldingRegisters,
+                address: 0,
+                quantity: 1,
+            },
+        );
+        assert!(matches!(result.status, TransactionStatus::ProtocolError));
+        assert_eq!(writes.load(Ordering::Relaxed), 0);
         client.shutdown();
     }
 
@@ -951,18 +1049,25 @@ mod tests {
     }
 
     #[test]
-    fn serial_only_functions_are_rejected_for_tcp_core() {
-        assert!(!request_supported_on_mode(
-            ModbusMode::Tcp,
-            &ModbusRequest::GetCommEventCounter
-        ));
-        assert!(request_supported_on_mode(
-            ModbusMode::Tcp,
-            &ModbusRequest::ReadRegisters {
+    fn history_is_incremental_and_bounded_by_query_limit() {
+        let config = ModbusConfig {
+            mode: ModbusMode::Tcp,
+            read_retries: 0,
+            ..Default::default()
+        };
+        let (client, _) = client_with(config);
+        let _ = client.execute(
+            1,
+            ModbusRequest::ReadRegisters {
                 area: RegisterReadArea::HoldingRegisters,
                 address: 0,
                 quantity: 1,
-            }
-        ));
+            },
+        );
+        let first = client.history_since(0, 10);
+        assert_eq!(first.records.len(), 1);
+        let cursor = first.latest_sequence;
+        assert!(client.history_since(cursor, 10).records.is_empty());
+        client.shutdown();
     }
 }

@@ -7,6 +7,7 @@
 
 import type { ComponentType, ReactNode } from "react";
 import type { IconName } from "../components/common/Icon";
+import i18n from "../i18n";
 
 // ── Types ───────────────────────────────────────────
 
@@ -103,7 +104,7 @@ export interface StatusBarItem {
 /** 状态栏项渲染函数 */
 export type StatusBarRenderer = (context: StatusBarContext) => ReactNode;
 
-/** 翻译资源映射 */
+/** 插件翻译资源：language -> plugin-local key/value。 */
 export type LocaleMap = Record<string, Record<string, string>>;
 
 /** 插件注册对象 */
@@ -131,6 +132,16 @@ class PluginRegistry {
       console.warn(`[PluginRegistry] 插件 "${id}" 已注册，将被覆盖`);
     }
     this.plugins.set(id, registration);
+
+    for (const [language, resources] of Object.entries(registration.locales ?? {})) {
+      i18n.addResourceBundle(
+        language,
+        "translation",
+        { [id]: resources },
+        true,
+        true,
+      );
+    }
   }
 
   /** 注销插件 */
