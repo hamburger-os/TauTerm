@@ -27,19 +27,19 @@ interface Props {
 
 type Operation = "status" | "diagnostics" | "counter" | "event_log" | "server_id" | "read_file" | "write_file" | "fifo" | "device_id" | "canopen" | "raw_pdu" | "raw_adu";
 
-const OPTIONS: { value: Operation; label: string }[] = [
-  { value: "status", label: "07 · Read Exception Status · Serial only" },
-  { value: "diagnostics", label: "08 · Diagnostics · Serial only" },
-  { value: "counter", label: "0B · Get Comm Event Counter · Serial only" },
-  { value: "event_log", label: "0C · Get Comm Event Log · Serial only" },
-  { value: "server_id", label: "11 · Report Server ID · Serial only" },
-  { value: "read_file", label: "14 · Read File Record" },
-  { value: "write_file", label: "15 · Write File Record" },
-  { value: "fifo", label: "18 · Read FIFO Queue" },
-  { value: "device_id", label: "2B/0E · Read Device Identification" },
-  { value: "canopen", label: "2B/0D · CANopen General Reference" },
-  { value: "raw_pdu", label: "Raw PDU · Auto envelope" },
-  { value: "raw_adu", label: "Raw ADU · Exact bytes" },
+const OPTIONS: { value: Operation; key: string }[] = [
+  { value: "status", key: "advancedOpStatus" },
+  { value: "diagnostics", key: "advancedOpDiagnostics" },
+  { value: "counter", key: "advancedOpCounter" },
+  { value: "event_log", key: "advancedOpEventLog" },
+  { value: "server_id", key: "advancedOpServerId" },
+  { value: "read_file", key: "advancedOpReadFile" },
+  { value: "write_file", key: "advancedOpWriteFile" },
+  { value: "fifo", key: "advancedOpFifo" },
+  { value: "device_id", key: "advancedOpDeviceId" },
+  { value: "canopen", key: "advancedOpCanopen" },
+  { value: "raw_pdu", key: "advancedOpRawPdu" },
+  { value: "raw_adu", key: "advancedOpRawAdu" },
 ];
 
 export default function AdvancedPanel({ sessionId, execute, mode, role, initialFault, connected }: Props) {
@@ -101,25 +101,29 @@ function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["exe
     }
   };
 
-  const envelope = mode === "tcp" ? "MBAP + Unit ID" : mode === "rtu" ? "Unit ID + CRC" : "Unit ID + LRC + ASCII delimiters";
+  const envelope = mode === "tcp"
+    ? t("modbus.advancedEnvelopeTcp")
+    : mode === "rtu"
+      ? t("modbus.advancedEnvelopeRtu")
+      : t("modbus.advancedEnvelopeAscii");
 
   return <div className={styles.panelPage}>
     <section className={styles.workbenchSection}>
       <div className={styles.panelHeading}><div><strong>{t("modbus.advancedTitle")}</strong><span className={styles.hint}>{t("modbus.advancedHint")}</span></div></div>
-      <label className={styles.field}><span className={styles.label}>{t("modbus.advancedOperation")}</span><select className="liquid-glass-input liquid-glass-select" value={operation} onChange={event => setOperation(event.target.value as Operation)}>{OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      <label className={styles.field}><span className={styles.label}>{t("modbus.advancedOperation")}</span><select className="liquid-glass-input liquid-glass-select" value={operation} onChange={event => setOperation(event.target.value as Operation)}>{OPTIONS.map(option => <option key={option.value} value={option.value}>{t(`modbus.${option.key}`)}</option>)}</select></label>
       {(operation === "read_file" || operation === "write_file") && <div className={styles.grid}>
-        <Field label="File Number"><NumberInput value={fileNumber} set={setFileNumber} /></Field>
-        <Field label="Record Number"><NumberInput value={recordNumber} set={setRecordNumber} /></Field>
-        {operation === "read_file" ? <Field label="Record Length"><NumberInput value={recordLength} set={setRecordLength} min={1} /></Field> : <Field label={t("modbus.advancedRegisterValues")}><input className="liquid-glass-input" value={values} onChange={event => setValues(event.target.value)} /></Field>}
+        <Field label={t("modbus.advancedFileNumber")}><NumberInput value={fileNumber} set={setFileNumber} /></Field>
+        <Field label={t("modbus.advancedRecordNumber")}><NumberInput value={recordNumber} set={setRecordNumber} /></Field>
+        {operation === "read_file" ? <Field label={t("modbus.advancedRecordLength")}><NumberInput value={recordLength} set={setRecordLength} min={1} /></Field> : <Field label={t("modbus.advancedRegisterValues")}><input className="liquid-glass-input" value={values} onChange={event => setValues(event.target.value)} /></Field>}
       </div>}
-      {operation === "fifo" && <Field label="FIFO Pointer Address"><NumberInput value={address} set={setAddress} /></Field>}
-      {operation === "diagnostics" && <div className={styles.twoColumns}><Field label="Sub-function"><NumberInput value={subFunction} set={setSubFunction} /></Field><Field label="Data (hex; 0x000A → 00 00)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div>}
+      {operation === "fifo" && <Field label={t("modbus.advancedFifoAddress")}><NumberInput value={address} set={setAddress} /></Field>}
+      {operation === "diagnostics" && <div className={styles.twoColumns}><Field label={t("modbus.advancedSubFunction")}><NumberInput value={subFunction} set={setSubFunction} /></Field><Field label={t("modbus.advancedDiagnosticData")}><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div>}
       {operation === "device_id" && <div className={styles.twoColumns}>
-        <Field label="Read Device ID Code"><select className="liquid-glass-input liquid-glass-select" value={deviceReadCode} onChange={event => setDeviceReadCode(Number(event.target.value))}><option value={1}>1 · Basic</option><option value={2}>2 · Regular</option><option value={3}>3 · Extended</option><option value={4}>4 · Individual</option></select></Field>
-        <Field label="Object ID"><NumberInput value={deviceObjectId} set={setDeviceObjectId} max={255} /></Field>
+        <Field label={t("modbus.advancedDeviceReadCode")}><select className="liquid-glass-input liquid-glass-select" value={deviceReadCode} onChange={event => setDeviceReadCode(Number(event.target.value))}><option value={1}>{t("modbus.advancedDeviceBasic")}</option><option value={2}>{t("modbus.advancedDeviceRegular")}</option><option value={3}>{t("modbus.advancedDeviceExtended")}</option><option value={4}>{t("modbus.advancedDeviceIndividual")}</option></select></Field>
+        <Field label={t("modbus.advancedObjectId")}><NumberInput value={deviceObjectId} set={setDeviceObjectId} max={255} /></Field>
       </div>}
-      {operation === "canopen" && <Field label="MEI 0x0D Data (hex)"><input className="liquid-glass-input" value={meiData} onChange={event => setMeiData(event.target.value)} placeholder="00" /></Field>}
-      {operation === "raw_pdu" && <><div className={styles.notice}>{t("modbus.advancedRawPduNotice", { envelope })}</div><div className={styles.twoColumns}><Field label="Function Code (hex)"><input className="liquid-glass-input" value={functionCode} onChange={event => setFunctionCode(event.target.value)} /></Field><Field label="PDU Data (hex)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div></>}
+      {operation === "canopen" && <Field label={t("modbus.advancedCanopenData")}><input className="liquid-glass-input" value={meiData} onChange={event => setMeiData(event.target.value)} placeholder="00" /></Field>}
+      {operation === "raw_pdu" && <><div className={styles.notice}>{t("modbus.advancedRawPduNotice", { envelope })}</div><div className={styles.twoColumns}><Field label={t("modbus.advancedFunctionCodeHex")}><input className="liquid-glass-input" value={functionCode} onChange={event => setFunctionCode(event.target.value)} /></Field><Field label={t("modbus.advancedPduDataHex")}><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div></>}
       {operation === "raw_adu" && <><div className={`${styles.notice} ${styles.warning}`}>{t("modbus.advancedRawAduNotice")}</div><Field label={t("modbus.advancedFullAdu")}><textarea className={`${styles.textarea} liquid-glass-input`} value={rawAdu} onChange={event => setRawAdu(event.target.value)} /></Field><div className={styles.twoColumns}><label className="liquid-glass-toggle"><input type="checkbox" checked={waitResponse} onChange={event => setWaitResponse(event.target.checked)} /><div/><span>{t("modbus.advancedWaitRawResponse")}</span></label><Field label={t("modbus.advancedQuietPeriod")}><NumberInput value={quietPeriod} set={setQuietPeriod} min={1} max={1000} /></Field></div></>}
       <div className={styles.actions}><button className="liquid-glass-button" disabled={busy || !connected} onClick={() => void run()}>{busy ? t("modbus.executing") : t("modbus.execute")}</button>{!connected && <span className={styles.hint}>{t("modbus.advancedConnectHint")}</span>}{error && <span className={styles.error}>{error}</span>}</div>
     </section>
