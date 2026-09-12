@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import Icon, { type IconName } from "../../components/common/Icon";
 import { useSession } from "../../context/SessionContext";
@@ -28,14 +29,15 @@ import TransactionsPanel from "./components/TransactionsPanel";
 type Page = "readwrite" | "monitor" | "transactions" | "advanced" | "server";
 type ClientAction = ModbusRequest | Extract<ModbusOperation, { kind: "raw_adu" }>;
 
-const statusPresentation: Record<string, { icon: IconName; label: string }> = {
-  disconnected: { icon: "status-disconnected", label: "未连接" },
-  connecting: { icon: "status-connecting", label: "连接中" },
-  connected: { icon: "status-connected", label: "已连接" },
-  transferring: { icon: "status-transferring", label: "传输中" },
+const statusPresentation: Record<string, { icon: IconName; labelKey: string }> = {
+  disconnected: { icon: "status-disconnected", labelKey: "modbus.sessionDisconnected" },
+  connecting: { icon: "status-connecting", labelKey: "modbus.sessionConnecting" },
+  connected: { icon: "status-connected", labelKey: "modbus.sessionConnected" },
+  transferring: { icon: "status-transferring", labelKey: "modbus.sessionTransferring" },
 };
 
 export default function ModbusSessionView({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation();
   const { state, reconfigureSession } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = useMemo(() => normalizeModbusSessionParams(tab?.params ?? {}), [tab?.params]);
@@ -83,7 +85,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   }, [generatedEndpoint, generatedTitle, params, reconfigureSession, sessionId, tab]);
 
   const execute = async (action: ClientAction) => {
-    if (!connected) throw new Error("Modbus 会话尚未连接");
+    if (!connected) throw new Error(t("modbus.connectToExecute"));
     const operation: ModbusOperation = action.kind === "raw_adu"
       ? action
       : requestOperation(targetUnit, action);
@@ -91,8 +93,8 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   };
 
   const pages = useMemo<[Page, string][]>(() => role === "server"
-    ? [["server", "数据模型"], ["transactions", "事务"], ["advanced", "高级"]]
-    : [["readwrite", "读写"], ["monitor", "监控"], ["transactions", "事务"], ["advanced", "高级"]], [role]);
+    ? [["server", t("modbus.tabServer")], ["transactions", t("modbus.tabTransactions")], ["advanced", t("modbus.tabAdvanced")]]
+    : [["readwrite", t("modbus.tabReadWrite")], ["monitor", t("modbus.tabMonitor")], ["transactions", t("modbus.tabTransactions")], ["advanced", t("modbus.tabAdvanced")]], [role, t]);
   const serverFault = params.server_fault as ServerFaultConfig;
   const summary = modbusConnectionSubtitle(params);
   const sessionTitle = tab?.name && tab.name !== "Modbus @ modbus" ? tab.name : generatedTitle;
@@ -109,7 +111,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
       </div>
       <div className={styles.headerRuntime}>
         {role === "client" && <label className={styles.targetUnit}>
-          <span>Unit</span>
+          <span>{t("modbus.targetUnit")}</span>
           <input
             className="liquid-glass-input"
             type="number"
@@ -120,7 +122,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
             aria-label="Modbus target Unit ID"
           />
         </label>}
-        <span className={styles.statusLabel}><Icon name={status.icon} size="xs" />{status.label}</span>
+        <span className={styles.statusLabel}><Icon name={status.icon} size="xs" />{t(status.labelKey)}</span>
       </div>
     </header>
 
