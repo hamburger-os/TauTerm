@@ -1,0 +1,29 @@
+name: Compile Cleanup
+
+on:
+  push:
+    branches: [feat/transport-runtime-modbus]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+          fetch-depth: 0
+      - name: Apply migration
+        run: python3 .github/migrations/compile_cleanup.py
+      - name: Format Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Commit cleanup
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m '[compile-cleanup-bot] finish network DataPlane wiring and compile cleanup'
+          git push origin HEAD:feat/transport-runtime-modbus
