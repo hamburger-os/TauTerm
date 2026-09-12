@@ -24,6 +24,18 @@ interface ResultView {
 
 const COMMON_FUNCTIONS = [1, 2, 3, 4, 5, 6, 15, 16, 22, 23] as const;
 
+function singleRegister(text: string): number {
+  const values = parseU16List(text);
+  if (values.length !== 1) throw new Error("单寄存器写入必须提供且只能提供一个 0..65535 的值");
+  return values[0];
+}
+
+function singleCoil(text: string): number {
+  const packed = packCoils(text);
+  if (packed.quantity !== 1) throw new Error("单线圈写入必须提供且只能提供一个 0/1/true/false 值");
+  return packed.values[0] & 1 ? 0xff00 : 0x0000;
+}
+
 export default function ReadWritePanel({ execute, connected }: Props) {
   const [fc, setFc] = useState<number>(3);
   const [address, setAddress] = useState(0);
@@ -57,22 +69,26 @@ export default function ReadWritePanel({ execute, connected }: Props) {
           kind: "write_single",
           function: fc,
           address,
-          value: fc === 5 ? (Number(value) !== 0 ? 0xff00 : 0) : parseU16List(value)[0] ?? 0,
+          value: fc === 5 ? singleCoil(value) : singleRegister(value),
         };
       } else if (fc === 15) {
         const coils = packCoils(value);
         request = { kind: "write_multiple_coils", address, ...coils };
       } else if (fc === 16) {
-        request = { kind: "write_multiple_registers", address, values: parseU16List(value) };
+        const values = parseU16List(value);
+        if (values.length === 0) throw new Error("多寄存器写入至少需要一个值");
+        request = { kind: "write_multiple_registers", address, values };
       } else if (fc === 22) {
         request = { kind: "mask_write_register", address, and_mask: andMask, or_mask: orMask };
       } else {
+        const values = parseU16List(value);
+        if (values.length === 0) throw new Error("读写多寄存器事务至少需要一个写入值");
         request = {
           kind: "read_write_multiple_registers",
           read_address: readAddress,
           read_quantity: readQuantity,
           write_address: address,
-          values: parseU16List(value),
+          values,
         };
       }
       const result = await execute(request);
