@@ -7,14 +7,17 @@ import {
   STANDARD_EXCEPTIONS,
   type ModbusMode,
   type ModbusOperation,
+  type ModbusRequest,
   type ServerFaultConfig,
   type TransactionResult,
 } from "../model";
 import ResultCard from "./ResultCard";
 
+type ClientAction = ModbusRequest | Extract<ModbusOperation, { kind: "raw_adu" }>;
+
 interface Props {
   sessionId: string;
-  execute: (request: ModbusOperation) => Promise<TransactionResult>;
+  execute: (request: ClientAction) => Promise<TransactionResult>;
   mode: ModbusMode;
   role: "client" | "server";
   initialFault?: ServerFaultConfig | null;
@@ -51,7 +54,9 @@ function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["exe
   const [recordLength, setRecordLength] = useState(1);
   const [values, setValues] = useState("0");
   const [subFunction, setSubFunction] = useState(0);
-  const [meiData, setMeiData] = useState("01 00");
+  const [deviceReadCode, setDeviceReadCode] = useState(1);
+  const [deviceObjectId, setDeviceObjectId] = useState(0);
+  const [meiData, setMeiData] = useState("00");
   const [functionCode, setFunctionCode] = useState("2B");
   const [rawData, setRawData] = useState("");
   const [rawAdu, setRawAdu] = useState("");
@@ -71,7 +76,7 @@ function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["exe
     setBusy(true);
     setError("");
     try {
-      let request: ModbusOperation;
+      let request: ClientAction;
       switch (operation) {
         case "status": request = { kind: "read_exception_status" }; break;
         case "diagnostics": request = { kind: "diagnostics", sub_function: subFunction, data: parseHex(rawData) }; break;
@@ -81,7 +86,7 @@ function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["exe
         case "read_file": request = { kind: "read_file_record", records: [{ file_number: fileNumber, record_number: recordNumber, record_length: recordLength }] }; break;
         case "write_file": request = { kind: "write_file_record", records: [{ file_number: fileNumber, record_number: recordNumber, values: parseU16List(values) }] }; break;
         case "fifo": request = { kind: "read_fifo_queue", address }; break;
-        case "device_id": request = { kind: "mei", mei_type: 0x0e, data: parseHex(meiData) }; break;
+        case "device_id": request = { kind: "mei", mei_type: 0x0e, data: [deviceReadCode, deviceObjectId] }; break;
         case "canopen": request = { kind: "mei", mei_type: 0x0d, data: parseHex(meiData) }; break;
         case "raw_pdu": request = { kind: "raw", function: Number.parseInt(functionCode, 16), data: parseHex(rawData) }; break;
         case "raw_adu": request = { kind: "raw_adu", data: parseHex(rawAdu), wait_response: waitResponse, quiet_period_ms: quietPeriod }; break;
@@ -96,7 +101,7 @@ function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["exe
 
   return <div className={styles.panelPage}>
     <section className={styles.workbenchSection}>
-      <div className={styles.panelHeading}><div><strong>高级事务</strong><span className={styles.hint}>诊断、文件记录、设备标识与原始帧集中在此。串行线专用功能会明确标注，实际协议 capability 与范围统一由 Rust 协议核心校验。</span></div></div>
+      <div className={styles.panelHeading}><div><strong>高级事务</strong><span className={styles.hint}>标准高级功能优先使用语义字段；只有 Raw PDU / Raw ADU 直接编辑协议字节。串行线 capability 由 Rust 协议核心统一裁决。</span></div></div>
       <label className={styles.field}><span className={styles.label}>高级操作</span><select className="liquid-glass-input liquid-glass-select" value={operation} onChange={event => setOperation(event.target.value as Operation)}>{OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
       {(operation === "read_file" || operation === "write_file") && <div className={styles.grid}>
         <Field label="File Number"><NumberInput value={fileNumber} set={setFileNumber} /></Field>
@@ -105,7 +110,11 @@ function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["exe
       </div>}
       {operation === "fifo" && <Field label="FIFO Pointer Address"><NumberInput value={address} set={setAddress} /></Field>}
       {operation === "diagnostics" && <div className={styles.twoColumns}><Field label="Sub-function"><NumberInput value={subFunction} set={setSubFunction} /></Field><Field label="Data (hex；0x000A 需 00 00)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div>}
-      {(operation === "device_id" || operation === "canopen") && <Field label={operation === "device_id" ? "Read Device ID Code + Object ID (hex)" : "MEI 0x0D Data (hex)"}><input className="liquid-glass-input" value={meiData} onChange={event => setMeiData(event.target.value)} placeholder={operation === "device_id" ? "01 00" : "00"} /></Field>}
+      {operation === "device_id" && <div className={styles.twoColumns}>
+        <Field label="Read Device ID Code"><select className="liquid-glass-input liquid-glass-select" value={deviceReadCode} onChange={event => setDeviceReadCode(Number(event.target.value))}><option value={1}>1 · Basic</option><option value={2}>2 · Regular</option><option value={3}>3 · Extended</option><option value={4}>4 · Individual</option></select></Field>
+        <Field label="Object ID"><NumberInput value={deviceObjectId} set={setDeviceObjectId} max={255} /></Field>
+      </div>}
+      {operation === "canopen" && <Field label="MEI 0x0D Data (hex)"><input className="liquid-glass-input" value={meiData} onChange={event => setMeiData(event.target.value)} placeholder="00" /></Field>}
       {operation === "raw_pdu" && <><div className={styles.notice}>Raw PDU 由 TauTerm 自动添加 {mode === "tcp" ? "MBAP + Unit ID" : mode === "rtu" ? "Unit ID + CRC" : "Unit ID + LRC + ASCII delimiters"}，输入内容本身不解释为完整 ADU。</div><div className={styles.twoColumns}><Field label="Function Code (hex)"><input className="liquid-glass-input" value={functionCode} onChange={event => setFunctionCode(event.target.value)} /></Field><Field label="PDU Data (hex)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div></>}
       {operation === "raw_adu" && <><div className={`${styles.notice} ${styles.warning}`}>Raw ADU 会逐字节原样发送，不自动修正 CRC/LRC、MBAP Length、Transaction ID、Byte Count 或任何协议字段，可用于故意发送畸形帧。</div><Field label="完整 ADU (hex)"><textarea className={`${styles.textarea} liquid-glass-input`} value={rawAdu} onChange={event => setRawAdu(event.target.value)} /></Field><div className={styles.twoColumns}><label className="liquid-glass-toggle"><input type="checkbox" checked={waitResponse} onChange={event => setWaitResponse(event.target.checked)} /><div/><span>等待原始响应</span></label><Field label="响应静默边界 (ms)"><NumberInput value={quietPeriod} set={setQuietPeriod} min={1} max={1000} /></Field></div></>}
       <div className={styles.actions}><button className="liquid-glass-button" disabled={busy || !connected} onClick={() => void run()}>{busy ? "执行中…" : "执行"}</button>{!connected && <span className={styles.hint}>连接会话后才能执行高级事务。</span>}{error && <span className={styles.error}>{error}</span>}</div>
