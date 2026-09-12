@@ -91,20 +91,23 @@ function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["exe
     }
   };
 
-  return <div className={`${styles.card} liquid-glass-card`}>
-    <label className={styles.field}><span className={styles.label}>高级操作</span><select className="liquid-glass-input liquid-glass-select" value={operation} onChange={event => setOperation(event.target.value as Operation)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-    {(operation === "read_file" || operation === "write_file") && <div className={styles.grid}>
-      <Field label="File Number"><NumberInput value={fileNumber} set={setFileNumber} /></Field>
-      <Field label="Record Number"><NumberInput value={recordNumber} set={setRecordNumber} /></Field>
-      {operation === "read_file" ? <Field label="Record Length"><NumberInput value={recordLength} set={setRecordLength} min={1} max={125} /></Field> : <Field label="寄存器值"><input className="liquid-glass-input" value={values} onChange={event => setValues(event.target.value)} /></Field>}
-    </div>}
-    {operation === "fifo" && <Field label="FIFO Pointer Address"><NumberInput value={address} set={setAddress} /></Field>}
-    {operation === "diagnostics" && <div className={styles.twoColumns}><Field label="Sub-function"><NumberInput value={subFunction} set={setSubFunction} /></Field><Field label="Data (hex)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div>}
-    {(operation === "device_id" || operation === "canopen") && <Field label={operation === "device_id" ? "Read Device ID Code + Object ID (hex)" : "MEI 0x0D Data (hex)"}><input className="liquid-glass-input" value={meiData} onChange={event => setMeiData(event.target.value)} placeholder={operation === "device_id" ? "01 00" : "00"} /></Field>}
-    {operation === "raw_pdu" && <><div className={styles.notice}>Raw PDU 仅由 TauTerm 自动添加 {mode === "tcp" ? "MBAP + Unit ID" : mode === "rtu" ? "Unit ID + CRC" : "Unit ID + LRC + ASCII delimiters"}；输入内容本身不会被解释为完整 ADU。</div><div className={styles.twoColumns}><Field label="Function Code (hex)"><input className="liquid-glass-input" value={functionCode} onChange={event => setFunctionCode(event.target.value)} /></Field><Field label="PDU Data (hex)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div></>}
-    {operation === "raw_adu" && <><div className={`${styles.notice} ${styles.warning}`}>Raw ADU 会逐字节原样发送，不自动修正 CRC/LRC、MBAP Length、Transaction ID、Byte Count 或任何协议字段，可用于故意发送畸形帧。</div><Field label="完整 ADU (hex)"><textarea className={`${styles.textarea} liquid-glass-input`} value={rawAdu} onChange={event => setRawAdu(event.target.value)} /></Field><div className={styles.twoColumns}><label className="liquid-glass-toggle"><input type="checkbox" checked={waitResponse} onChange={event => setWaitResponse(event.target.checked)} /><div/><span>等待原始响应</span></label><Field label="响应静默边界 (ms)"><NumberInput value={quietPeriod} set={setQuietPeriod} min={1} max={1000} /></Field></div></>}
-    <div className={styles.actions}><button className="liquid-glass-button" disabled={busy || !connected} onClick={() => void run()}>{busy ? "执行中…" : "执行"}</button>{!connected && <span className={styles.hint}>连接会话后才能执行高级事务。</span>}{error && <span className={styles.error}>{error}</span>}</div>
-    {result && <ResultCard result={result} />}
+  return <div className={styles.panelPage}>
+    <section className={styles.workbenchSection}>
+      <div className={styles.panelHeading}><div><strong>高级事务</strong><span className={styles.hint}>诊断、文件记录、设备标识与原始帧集中在此；常规读写保持在“读写”页。</span></div></div>
+      <label className={styles.field}><span className={styles.label}>高级操作</span><select className="liquid-glass-input liquid-glass-select" value={operation} onChange={event => setOperation(event.target.value as Operation)}>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      {(operation === "read_file" || operation === "write_file") && <div className={styles.grid}>
+        <Field label="File Number"><NumberInput value={fileNumber} set={setFileNumber} /></Field>
+        <Field label="Record Number"><NumberInput value={recordNumber} set={setRecordNumber} /></Field>
+        {operation === "read_file" ? <Field label="Record Length"><NumberInput value={recordLength} set={setRecordLength} min={1} max={125} /></Field> : <Field label="寄存器值"><input className="liquid-glass-input" value={values} onChange={event => setValues(event.target.value)} /></Field>}
+      </div>}
+      {operation === "fifo" && <Field label="FIFO Pointer Address"><NumberInput value={address} set={setAddress} /></Field>}
+      {operation === "diagnostics" && <div className={styles.twoColumns}><Field label="Sub-function"><NumberInput value={subFunction} set={setSubFunction} /></Field><Field label="Data (hex)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div>}
+      {(operation === "device_id" || operation === "canopen") && <Field label={operation === "device_id" ? "Read Device ID Code + Object ID (hex)" : "MEI 0x0D Data (hex)"}><input className="liquid-glass-input" value={meiData} onChange={event => setMeiData(event.target.value)} placeholder={operation === "device_id" ? "01 00" : "00"} /></Field>}
+      {operation === "raw_pdu" && <><div className={styles.notice}>Raw PDU 由 TauTerm 自动添加 {mode === "tcp" ? "MBAP + Unit ID" : mode === "rtu" ? "Unit ID + CRC" : "Unit ID + LRC + ASCII delimiters"}，输入内容本身不解释为完整 ADU。</div><div className={styles.twoColumns}><Field label="Function Code (hex)"><input className="liquid-glass-input" value={functionCode} onChange={event => setFunctionCode(event.target.value)} /></Field><Field label="PDU Data (hex)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div></>}
+      {operation === "raw_adu" && <><div className={`${styles.notice} ${styles.warning}`}>Raw ADU 会逐字节原样发送，不自动修正 CRC/LRC、MBAP Length、Transaction ID、Byte Count 或任何协议字段，可用于故意发送畸形帧。</div><Field label="完整 ADU (hex)"><textarea className={`${styles.textarea} liquid-glass-input`} value={rawAdu} onChange={event => setRawAdu(event.target.value)} /></Field><div className={styles.twoColumns}><label className="liquid-glass-toggle"><input type="checkbox" checked={waitResponse} onChange={event => setWaitResponse(event.target.checked)} /><div/><span>等待原始响应</span></label><Field label="响应静默边界 (ms)"><NumberInput value={quietPeriod} set={setQuietPeriod} min={1} max={1000} /></Field></div></>}
+      <div className={styles.actions}><button className="liquid-glass-button" disabled={busy || !connected} onClick={() => void run()}>{busy ? "执行中…" : "执行"}</button>{!connected && <span className={styles.hint}>连接会话后才能执行高级事务。</span>}{error && <span className={styles.error}>{error}</span>}</div>
+    </section>
+    {result && <section className={styles.workbenchSection}><div className={styles.panelHeading}><div><strong>结果</strong></div></div><ResultCard result={result} /></section>}
   </div>;
 }
 
@@ -116,19 +119,20 @@ function ServerFaultPanel({ sessionId, initial, connected }: { sessionId: string
     if (!connected) return;
     setSaved(""); setError("");
     try {
-      await invoke("modbus_server_set_value", { sessionId, fault });
+      await invoke("modbus_server_set_fault", { sessionId, fault });
       setSaved("故障注入已更新");
     } catch (cause) { setError(String(cause)); }
   };
-  return <div className={`${styles.card} liquid-glass-card`}>
-    <strong>Server 故障注入</strong>
-    <span className={styles.hint}>动态生效，不需要重建会话。无响应优先级最高，其次延迟，再返回指定标准异常。</span>
-    <label className="liquid-glass-toggle"><input type="checkbox" checked={fault.no_response} onChange={event => setFault(current => ({ ...current, no_response: event.target.checked }))} /><div/><span>不响应请求</span></label>
-    <div className={styles.twoColumns}>
-      <Field label="响应延迟 (ms)"><NumberInput value={fault.delay_ms} set={value => setFault(current => ({ ...current, delay_ms: value }))} min={0} max={60000} /></Field>
-      <Field label="强制异常"><select className="liquid-glass-input liquid-glass-select" value={fault.exception_code ?? ""} onChange={event => setFault(current => ({ ...current, exception_code: event.target.value ? Number(event.target.value) : null }))}><option value="">正常处理</option>{Object.entries(STANDARD_EXCEPTIONS).map(([code, label]) => <option key={code} value={code}>{code} · {label}</option>)}</select></Field>
-    </div>
-    <div className={styles.actions}><button className="liquid-glass-button" disabled={!connected} onClick={() => void apply()}>应用故障配置</button>{!connected && <span className={styles.hint}>连接 Server 会话后才能应用运行时故障配置。</span>}{saved && <span className={styles.success}>{saved}</span>}{error && <span className={styles.error}>{error}</span>}</div>
+  return <div className={styles.panelPage}>
+    <section className={styles.workbenchSection}>
+      <div className={styles.panelHeading}><div><strong>Server 故障注入</strong><span className={styles.hint}>动态生效，不需要重建会话。无响应优先级最高，其次延迟，再返回指定标准异常。</span></div></div>
+      <label className="liquid-glass-toggle"><input type="checkbox" checked={fault.no_response} onChange={event => setFault(current => ({ ...current, no_response: event.target.checked }))} /><div/><span>不响应请求</span></label>
+      <div className={styles.twoColumns}>
+        <Field label="响应延迟 (ms)"><NumberInput value={fault.delay_ms} set={value => setFault(current => ({ ...current, delay_ms: value }))} min={0} max={60000} /></Field>
+        <Field label="强制异常"><select className="liquid-glass-input liquid-glass-select" value={fault.exception_code ?? ""} onChange={event => setFault(current => ({ ...current, exception_code: event.target.value ? Number(event.target.value) : null }))}><option value="">正常处理</option>{Object.entries(STANDARD_EXCEPTIONS).map(([code, label]) => <option key={code} value={code}>{code} · {label}</option>)}</select></Field>
+      </div>
+      <div className={styles.actions}><button className="liquid-glass-button" disabled={!connected} onClick={() => void apply()}>应用故障配置</button>{!connected && <span className={styles.hint}>连接 Server 会话后才能应用运行时故障配置。</span>}{saved && <span className={styles.success}>{saved}</span>}{error && <span className={styles.error}>{error}</span>}</div>
+    </section>
   </div>;
 }
 
