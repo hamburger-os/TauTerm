@@ -142,11 +142,18 @@ impl ModbusConfig {
 
     fn serial_chars_duration(&self, chars: f64) -> std::time::Duration {
         let data_bits = self.serial.data_bits as f64;
-        let parity_bits = if self.serial.parity == "none" { 0.0 } else { 1.0 };
-        let stop_bits = if self.serial.stop_bits == "2" { 2.0 } else { 1.0 };
+        let parity_bits = if self.serial.parity == "none" {
+            0.0
+        } else {
+            1.0
+        };
+        let stop_bits = if self.serial.stop_bits == "2" {
+            2.0
+        } else {
+            1.0
+        };
         let bits_per_char = 1.0 + data_bits + parity_bits + stop_bits;
-        let micros = (chars * bits_per_char * 1_000_000.0
-            / self.serial.baud_rate.max(1) as f64)
+        let micros = (chars * bits_per_char * 1_000_000.0 / self.serial.baud_rate.max(1) as f64)
             .ceil() as u64;
         std::time::Duration::from_micros(micros.max(1))
     }
