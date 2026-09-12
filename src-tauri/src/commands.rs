@@ -1,7 +1,7 @@
 //! Tauri 命令处理模块
 //!
 //! 所有面向前端的 Tauri 命令。
-//! 通过 SerialAdapter + SessionStore + Channel 架构管理会话。
+//! 通过协议 Adapter + SessionStore + DataPlane/SessionIo 架构管理会话。
 
 pub(crate) mod config;
 pub(crate) mod files;
@@ -1067,6 +1067,7 @@ async fn connect_session_local_shell(
                 channel_factory: Some(factory),
                 io: None,
                 attachment: None,
+                teardown_delay: std::time::Duration::ZERO,
             },
         )?
     };
@@ -1288,6 +1289,7 @@ async fn connect_session_ssh(
     let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "sftp".into());
     let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
 
+    let teardown_delay = conn.teardown_delay;
     let service = conn.service;
     let file_transfer = conn.file_transfer;
     let channel_factory = conn.channel_factory;
@@ -1318,6 +1320,7 @@ async fn connect_session_ssh(
                 channel_factory,
                 io: None,
                 attachment,
+                teardown_delay,
             },
         )?
     };
@@ -3638,6 +3641,7 @@ async fn connect_session_tftp(
                 channel_factory: conn.channel_factory,
                 io: None,
                 attachment: conn.on_attached,
+                teardown_delay: conn.teardown_delay,
             },
         )?
     };
@@ -3980,6 +3984,7 @@ async fn connect_session_iperf(
                 channel_factory: conn.channel_factory,
                 io: None,
                 attachment: conn.on_attached,
+                teardown_delay: conn.teardown_delay,
             },
         )?
     };

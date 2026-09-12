@@ -79,7 +79,7 @@ pub struct PeerInfo {
 
 /// 子连接句柄（SSH 多连接 / 网络调试会话多对端）。
 ///
-/// 每个子连接有独立的 I/O loop、write channel 和统计信息。
+/// 每个子连接有独立的 DataPlane、SessionIo 和统计信息。
 /// 关闭子连接不影响父 session，关闭父 session 级联清理所有子连接。
 ///
 /// 两种用途：
@@ -291,6 +291,7 @@ pub struct ContainerSessionRuntime {
     pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
     pub io: Option<Arc<SessionIo>>,
     pub attachment: Option<Arc<dyn SessionAttach>>,
+    pub teardown_delay: Duration,
 }
 
 pub struct ContainerSessionCreateOptions {
@@ -474,6 +475,7 @@ impl SessionStore {
             channel_factory,
             io,
             attachment,
+            teardown_delay,
         } = runtime;
         let ContainerSessionCreateOptions {
             name,
@@ -551,7 +553,7 @@ impl SessionStore {
             channel_factory,
             transfer_scheduler: TransferScheduler::default(),
             transfer_tasks: Vec::new(),
-            teardown_delay: Duration::ZERO,
+            teardown_delay,
             sub_connections: Vec::new(),
             next_child_index: preserved_next_child_index,
         };
@@ -730,7 +732,7 @@ impl SessionStore {
     /// 注册一个"对端通道"到容器会话（网络调试等协议使用）。
     ///
     /// 与 `commands::create_ssh_sub_channel` 的通道创建流程等价，但面向会话内
-    /// 多对端模型：对端不占独立标签页（`tabbed = false`），拥有独立的 I/O loop、
+    /// 多对端模型：对端不占独立标签页（`tabbed = false`），拥有独立的 DataPlane、
     /// 统计采集、SessionIo（自动应答/脚本按对端生效）与日志路由。
     ///
     /// 对端 I/O loop 断开时广播 `netdbg-peer-left` 事件；本方法广播

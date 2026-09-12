@@ -687,6 +687,7 @@ pub async fn connect_session(
                 attachment: Some(Arc::new(RuntimeAttach {
                     runtime: runtime.clone(),
                 })),
+                teardown_delay: std::time::Duration::ZERO,
             },
         )?
     };

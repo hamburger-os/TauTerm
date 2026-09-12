@@ -249,6 +249,7 @@ pub async fn connect_session(
                 channel_factory: conn.channel_factory,
                 io: None,
                 attachment: conn.on_attached,
+                teardown_delay: conn.teardown_delay,
             },
         )?
     };
