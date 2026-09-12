@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Icon, { type IconName } from "../../components/common/Icon";
 import { useSession } from "../../context/SessionContext";
@@ -37,6 +37,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const connected = tab?.state === "connected" || tab?.state === "transferring";
   const [page, setPage] = useState<Page>(role === "server" ? "server" : "readwrite");
   const [history, setHistory] = useState<TransactionResult[]>([]);
+  const autoRenameAttempted = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setPage(role === "server" ? "server" : "readwrite");
@@ -44,7 +45,8 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   }, [role, sessionId]);
 
   useEffect(() => {
-    if (tab?.name !== "Modbus @ modbus") return;
+    if (tab?.name !== "Modbus @ modbus" || autoRenameAttempted.current.has(sessionId)) return;
+    autoRenameAttempted.current.add(sessionId);
     void renameTab(sessionId, modbusDefaultSessionName(params));
   }, [params, renameTab, sessionId, tab?.name]);
 
@@ -85,7 +87,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
     </nav>
 
     <div className={styles.body}>
-      <div className={styles.workspaceContent}>
+      <div key={sessionId} className={styles.workspaceContent}>
         {page === "readwrite" && <ReadWritePanel execute={execute} connected={connected} />}
         {page === "monitor" && <MonitorPanel sessionId={sessionId} connected={connected} />}
         {page === "transactions" && <TransactionsPanel sessionId={sessionId} fallback={history} connected={connected} />}
