@@ -1020,7 +1020,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                               value={tftpFileRoot}
                               onChange={e => setTftpFileRoot(e.target.value)}
                               disabled={connecting}
-                              placeholder="C:\\tftp-root\\"
+                              placeholder={"C:\\tftp-root\\"}
                             />
                             <button
                               className={`${styles.iconBtn} liquid-glass-button`}
