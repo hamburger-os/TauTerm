@@ -36,13 +36,20 @@ const fixedRegisterWidth = (format: ValueFormat): number | null => {
 const isExactInteger64 = (format: ValueFormat) => format.value_type === "uint64" || format.value_type === "int64";
 
 function readRequest(functionCode: number, address: number, quantity: number): ModbusRequest {
-  if (functionCode === 1 || functionCode === 2) return { kind: "read_bits", function: functionCode, address, quantity };
-  return { kind: "read_registers", function: functionCode === 4 ? 4 : 3, address, quantity };
+  switch (functionCode) {
+    case 1: return { kind: "read_bits", area: "coils", address, quantity };
+    case 2: return { kind: "read_bits", area: "discrete_inputs", address, quantity };
+    case 4: return { kind: "read_registers", area: "input_registers", address, quantity };
+    default: return { kind: "read_registers", area: "holding_registers", address, quantity };
+  }
 }
 
 function requestFields(request: ModbusRequest): { functionCode: number; address: number; quantity: number } {
-  if (request.kind === "read_bits" || request.kind === "read_registers") {
-    return { functionCode: request.function, address: request.address, quantity: request.quantity };
+  if (request.kind === "read_bits") {
+    return { functionCode: request.area === "coils" ? 1 : 2, address: request.address, quantity: request.quantity };
+  }
+  if (request.kind === "read_registers") {
+    return { functionCode: request.area === "holding_registers" ? 3 : 4, address: request.address, quantity: request.quantity };
   }
   return { functionCode: 3, address: 0, quantity: 1 };
 }
@@ -52,7 +59,7 @@ function defaultWatchRow(): WatchRow {
     id: crypto.randomUUID(),
     enabled: true,
     name: "Holding 0",
-    request: { kind: "read_registers", function: 3, address: 0, quantity: 1 },
+    request: { kind: "read_registers", area: "holding_registers", address: 0, quantity: 1 },
     period_ms: 1000,
     format: DEFAULT_FORMAT,
   };
@@ -139,7 +146,7 @@ export default function MonitorPanel({ sessionId, connected }: { sessionId: stri
     id: crypto.randomUUID(),
     enabled: true,
     name: `Watch ${current.length + 1}`,
-    request: { kind: "read_registers", function: 3, address: 0, quantity: 1 },
+    request: { kind: "read_registers", area: "holding_registers", address: 0, quantity: 1 },
     period_ms: 1000,
     format: DEFAULT_FORMAT,
   }]);
@@ -178,14 +185,13 @@ export default function MonitorPanel({ sessionId, connected }: { sessionId: stri
               const format = { ...DEFAULT_FORMAT, ...row.format };
               const width = isBits ? null : fixedRegisterWidth(format);
               const current = values[row.id];
-              const maxQuantity = isBits ? 2000 : 125;
               const exact64 = isExactInteger64(format);
               return <tr key={row.id}>
                 <td><input type="checkbox" checked={row.enabled} onChange={event => patchRow(row.id, { enabled: event.target.checked })} /></td>
                 <td><input className="liquid-glass-input" value={row.name} onChange={event => patchRow(row.id, { name: event.target.value })} /></td>
                 <td><select className="liquid-glass-input liquid-glass-select" value={request.functionCode} onChange={event => setReadField(row, { functionCode: Number(event.target.value), quantity: 1 })}><option value={1}>Coils</option><option value={2}>Discrete Inputs</option><option value={3}>Holding Registers</option><option value={4}>Input Registers</option></select></td>
                 <td><input className="liquid-glass-input" type="number" min={0} max={65535} value={request.address} onChange={event => setReadField(row, { address: Number(event.target.value) })} /></td>
-                <td><input className="liquid-glass-input" type="number" min={1} max={maxQuantity} disabled={!isBits && width != null} value={request.quantity} onChange={event => setReadField(row, { quantity: Number(event.target.value) })} /></td>
+                <td><input className="liquid-glass-input" type="number" min={1} disabled={!isBits && width != null} value={request.quantity} onChange={event => setReadField(row, { quantity: Number(event.target.value) })} /></td>
                 <td><select className="liquid-glass-input liquid-glass-select" value={format.value_type} disabled={isBits} onChange={event => patchFormat(row, { value_type: event.target.value as ValueFormat["value_type"], bit: null })}>{REGISTER_TYPES.map(item => <option key={item}>{item}</option>)}</select></td>
                 <td><select className="liquid-glass-input liquid-glass-select" value={format.byte_order} disabled={isBits} onChange={event => patchFormat(row, { byte_order: event.target.value as ValueFormat["byte_order"] })}><option value="big">Big</option><option value="little">Little</option></select></td>
                 <td><select className="liquid-glass-input liquid-glass-select" value={format.word_order} disabled={isBits || request.quantity <= 1} onChange={event => patchFormat(row, { word_order: event.target.value as ValueFormat["word_order"] })}><option value="normal">Normal</option><option value="reverse">Reverse</option></select></td>
