@@ -5,8 +5,11 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use crate::plugins::modbus::capability::validate_client_unit_id;
 use crate::plugins::modbus::client::{ModbusClient, TransactionResult, TransactionStatus};
 use crate::plugins::modbus::codec::ModbusRequest;
+use crate::plugins::modbus::config::ModbusMode;
+use crate::plugins::modbus::response::SemanticResponse;
 use crate::plugins::modbus::value::{decode_register_bytes, required_registers, ValueFormat};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -14,6 +17,7 @@ pub struct WatchRow {
     pub id: String,
     pub enabled: bool,
     pub name: String,
+    pub unit_id: u8,
     pub request: ModbusRequest,
     #[serde(default = "default_period")]
     pub period_ms: u64,
@@ -28,7 +32,7 @@ fn default_period() -> u64 {
 #[derive(Debug, Clone, Serialize)]
 pub struct WatchValue {
     pub row_id: String,
-    pub status: String,
+    pub status: TransactionStatus,
     pub value: Option<serde_json::Value>,
     pub raw: Vec<u8>,
     pub latency_ms: u128,
@@ -55,7 +59,7 @@ impl WatchScheduler {
         }
     }
 
-    pub fn validate_rows(rows: &[WatchRow]) -> Result<(), String> {
+    pub fn validate_rows(rows: &[WatchRow], mode: ModbusMode) -> Result<(), String> {
         let mut ids = std::collections::HashSet::with_capacity(rows.len());
         for row in rows {
             if row.id.trim().is_empty() {
@@ -64,6 +68,8 @@ impl WatchScheduler {
             if !ids.insert(row.id.as_str()) {
                 return Err(format!("duplicate watch row id: {}", row.id));
             }
+            validate_client_unit_id(mode, row.unit_id)
+                .map_err(|error| format!("watch row {} invalid target: {error}", row.id))?;
             if row.period_ms < 20 || row.period_ms > 86_400_000 {
                 return Err(format!(
                     "watch row {} period must be 20..=86400000 ms",
@@ -106,7 +112,7 @@ impl WatchScheduler {
     }
 
     pub fn set_rows(&self, rows: Vec<WatchRow>) -> Result<(), String> {
-        Self::validate_rows(&rows)?;
+        Self::validate_rows(&rows, self.client.mode())?;
         let retained_ids: std::collections::HashSet<_> =
             rows.iter().map(|row| row.id.as_str()).collect();
         self.values
@@ -133,6 +139,10 @@ impl WatchScheduler {
         values
     }
 
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::Acquire)
+    }
+
     pub fn start(&self) {
         if self.running.swap(true, Ordering::AcqRel) {
             return;
@@ -154,7 +164,7 @@ impl WatchScheduler {
                     if now < due {
                         continue;
                     }
-                    let result = client.execute(row.request.clone());
+                    let result = client.execute(row.unit_id, row.request.clone());
                     let value = watch_value(&row, &result);
                     values
                         .lock()
@@ -186,59 +196,51 @@ impl Drop for WatchScheduler {
 }
 
 fn watch_value(row: &WatchRow, result: &TransactionResult) -> WatchValue {
-    let raw =
-        if matches!(result.status, TransactionStatus::Success) && !result.response_pdu.is_empty() {
-            extract_data(&result.response_pdu)
-        } else {
-            Vec::new()
-        };
-
-    let value = if !matches!(result.status, TransactionStatus::Success) {
-        None
+    let (raw, value) = if result.status != TransactionStatus::Success {
+        (Vec::new(), None)
     } else {
-        match &row.request {
-            ModbusRequest::ReadBits { quantity, .. } => Some(decode_bits(&raw, *quantity)),
-            ModbusRequest::ReadRegisters { .. } => row
-                .format
-                .as_ref()
-                .and_then(|format| decode_register_bytes(&raw, format).ok()),
-            _ => None,
+        match result.semantic_response.as_ref() {
+            Some(SemanticResponse::Bits { values }) => {
+                let value = if values.len() == 1 {
+                    values.first().copied().map(serde_json::Value::Bool)
+                } else {
+                    Some(serde_json::Value::Array(
+                        values
+                            .iter()
+                            .copied()
+                            .map(serde_json::Value::Bool)
+                            .collect(),
+                    ))
+                };
+                (
+                    values.iter().map(|value| u8::from(*value)).collect(),
+                    value,
+                )
+            }
+            Some(SemanticResponse::Registers { values }) => {
+                let raw = values
+                    .iter()
+                    .flat_map(|value| value.to_be_bytes())
+                    .collect::<Vec<_>>();
+                let value = row
+                    .format
+                    .as_ref()
+                    .and_then(|format| decode_register_bytes(&raw, format).ok());
+                (raw, value)
+            }
+            _ => (Vec::new(), None),
         }
     };
 
     WatchValue {
         row_id: row.id.clone(),
-        status: format!("{:?}", result.status).to_ascii_lowercase(),
+        status: result.status,
         value,
         raw,
         latency_ms: result.latency_ms,
         message: result.message.clone(),
         updated_at_ms: chrono::Utc::now().timestamp_millis().max(0) as u64,
     }
-}
-
-fn decode_bits(bytes: &[u8], quantity: u16) -> serde_json::Value {
-    let bits: Vec<bool> = (0..quantity as usize)
-        .map(|index| {
-            let byte = bytes.get(index / 8).copied().unwrap_or(0);
-            ((byte >> (index % 8)) & 1) != 0
-        })
-        .collect();
-    if bits.len() == 1 {
-        serde_json::Value::Bool(bits[0])
-    } else {
-        serde_json::Value::Array(bits.into_iter().map(serde_json::Value::Bool).collect())
-    }
-}
-
-fn extract_data(pdu: &[u8]) -> Vec<u8> {
-    if pdu.len() >= 2 && matches!(pdu[0], 0x01 | 0x02 | 0x03 | 0x04 | 0x17) {
-        let count = pdu[1] as usize;
-        if pdu.len() >= 2 + count {
-            return pdu[2..2 + count].to_vec();
-        }
-    }
-    pdu.get(1..).unwrap_or_default().to_vec()
 }
 
 #[cfg(test)]
@@ -264,6 +266,7 @@ mod tests {
             id: id.into(),
             enabled: true,
             name: id.into(),
+            unit_id: 1,
             request: ModbusRequest::ReadRegisters {
                 area: RegisterReadArea::HoldingRegisters,
                 address: 0,
@@ -276,9 +279,13 @@ mod tests {
 
     #[test]
     fn watch_rows_reject_duplicate_ids_and_invalid_periods() {
-        assert!(WatchScheduler::validate_rows(&[row("a", 19)]).is_err());
-        assert!(WatchScheduler::validate_rows(&[row("a", 1000), row("a", 1000)]).is_err());
-        assert!(WatchScheduler::validate_rows(&[row("a", 1000)]).is_ok());
+        assert!(WatchScheduler::validate_rows(&[row("a", 19)], ModbusMode::Rtu).is_err());
+        assert!(WatchScheduler::validate_rows(
+            &[row("a", 1000), row("a", 1000)],
+            ModbusMode::Rtu
+        )
+        .is_err());
+        assert!(WatchScheduler::validate_rows(&[row("a", 1000)], ModbusMode::Rtu).is_ok());
     }
 
     #[test]
@@ -288,7 +295,7 @@ mod tests {
             address: 0,
             value: 1,
         };
-        assert!(WatchScheduler::validate_rows(&[invalid]).is_err());
+        assert!(WatchScheduler::validate_rows(&[invalid], ModbusMode::Rtu).is_err());
     }
 
     #[test]
@@ -300,7 +307,7 @@ mod tests {
             quantity: 2001,
         };
         bits.format = None;
-        assert!(WatchScheduler::validate_rows(&[bits]).is_err());
+        assert!(WatchScheduler::validate_rows(&[bits], ModbusMode::Rtu).is_err());
 
         let mut registers = row("registers", 1000);
         registers.request = ModbusRequest::ReadRegisters {
@@ -309,7 +316,7 @@ mod tests {
             quantity: 126,
         };
         registers.format = Some(register_format(ValueType::Hex));
-        assert!(WatchScheduler::validate_rows(&[registers]).is_err());
+        assert!(WatchScheduler::validate_rows(&[registers], ModbusMode::Rtu).is_err());
     }
 
     #[test]
@@ -320,30 +327,28 @@ mod tests {
             address: 0,
             quantity: 1,
         };
-        assert!(WatchScheduler::validate_rows(&[invalid.clone()]).is_err());
+        assert!(WatchScheduler::validate_rows(&[invalid.clone()], ModbusMode::Rtu).is_err());
         invalid.format = None;
-        assert!(WatchScheduler::validate_rows(&[invalid]).is_ok());
+        assert!(WatchScheduler::validate_rows(&[invalid], ModbusMode::Rtu).is_ok());
     }
 
     #[test]
     fn fixed_scalar_width_must_match_request_quantity() {
         let mut invalid = row("float", 1000);
         invalid.format = Some(register_format(ValueType::Float32));
-        assert!(WatchScheduler::validate_rows(&[invalid.clone()]).is_err());
+        assert!(WatchScheduler::validate_rows(&[invalid.clone()], ModbusMode::Rtu).is_err());
         invalid.request = ModbusRequest::ReadRegisters {
             area: RegisterReadArea::HoldingRegisters,
             address: 0,
             quantity: 2,
         };
-        assert!(WatchScheduler::validate_rows(&[invalid]).is_ok());
+        assert!(WatchScheduler::validate_rows(&[invalid], ModbusMode::Rtu).is_ok());
     }
 
     #[test]
-    fn bit_payload_is_decoded_without_register_codec() {
-        assert_eq!(decode_bits(&[0b0000_0001], 1), serde_json::json!(true));
-        assert_eq!(
-            decode_bits(&[0b0000_0101], 3),
-            serde_json::json!([true, false, true])
-        );
+    fn serial_watch_rejects_reserved_unit() {
+        let mut invalid = row("unit", 1000);
+        invalid.unit_id = 248;
+        assert!(WatchScheduler::validate_rows(&[invalid], ModbusMode::Rtu).is_err());
     }
 }
