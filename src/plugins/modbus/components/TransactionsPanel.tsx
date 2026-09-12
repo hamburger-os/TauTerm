@@ -16,6 +16,12 @@ const STATUS_KEY: Partial<Record<TransactionStatus, string>> = {
   fault_injected: "modbus.statusFault",
 };
 
+function formatTimestamp(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  const base = date.toLocaleTimeString(undefined, { hour12: false });
+  return `${base}.${String(date.getMilliseconds()).padStart(3, "0")}`;
+}
+
 export default function TransactionsPanel({ sessionId, connected }: { sessionId: string; connected: boolean }) {
   const { t } = useTranslation();
   const [records, setRecords] = useState<TransactionRecord[]>([]);
@@ -84,7 +90,7 @@ export default function TransactionsPanel({ sessionId, connected }: { sessionId:
           <tbody>{items.length === 0 ? <tr><td colSpan={8} className={styles.empty}>{t("modbus.transactionsEmpty")}</td></tr> : items.map(record => {
             const item = record.result;
             return <tr key={record.sequence}>
-              <td>{new Date(item.timestamp_ms).toLocaleTimeString()}</td>
+              <td className={styles.mono}>{formatTimestamp(item.timestamp_ms)}</td>
               <td title={item.message ?? ""}>{statusLabel(item.status)}{item.exception_code != null ? ` · ${STANDARD_EXCEPTIONS[item.exception_code] ?? `0x${item.exception_code.toString(16)}`}` : ""}{item.write_outcome_unknown ? ` · ${t("modbus.outcomeUnknown")}` : ""}</td>
               <td>{item.unit_id}</td>
               <td>{item.function === 0 ? "Raw ADU" : `0x${item.function.toString(16).padStart(2, "0").toUpperCase()}`}</td>
