@@ -1,0 +1,114 @@
+name: Temporary Modbus review fixes
+
+on:
+  push:
+    branches:
+      - refactor/modbus-core-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refactor/modbus-core-hardening
+          fetch-depth: 0
+      - name: Install pinned Rust formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          test -n "$TOOLCHAIN"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
+      - name: Apply final protocol review fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"expected review-fix pattern not found in {path}: {old[:80]!r}")
+              file.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          path = "src-tauri/src/plugins/modbus/data_model.rs"
+          replace(path,
+              "    comm_event_count: u16,\n",
+              "    comm_event_count: u16,\n    message_count: u16,\n")
+          replace(path,
+              '''        let result = execute_request(&mut inner, request);\n        if result.is_ok() && counts_comm_event(request) {\n            inner.comm_event_count = inner.comm_event_count.wrapping_add(1);\n        }\n        result''',
+              '''        let clear_counters = matches!(\n            request,\n            ModbusRequest::Diagnostics {\n                sub_function: 0x000A,\n                data,\n            } if data.as_slice() == [0x00, 0x00]\n        );\n        let result = execute_request(&mut inner, request);\n        if !clear_counters {\n            inner.message_count = inner.message_count.wrapping_add(1);\n        }\n        if result.is_ok() && counts_comm_event(request) {\n            inner.comm_event_count = inner.comm_event_count.wrapping_add(1);\n        }\n        result''')
+          replace(path,
+              '''                0x000A if data.is_empty() => {\n                    inner.comm_event_count = 0;\n                    inner.exception_status = 0;\n                }''',
+              '''                0x000A if data.as_slice() == [0x00, 0x00] => {\n                    inner.comm_event_count = 0;\n                    inner.message_count = 0;\n                    inner.exception_status = 0;\n                    out.extend_from_slice(data);\n                }''')
+          replace(path,
+              "            out.extend_from_slice(&inner.comm_event_count.to_be_bytes());\n            out.extend_from_slice(&inner.comm_event_count.to_be_bytes());\n",
+              "            out.extend_from_slice(&inner.comm_event_count.to_be_bytes());\n            out.extend_from_slice(&inner.message_count.to_be_bytes());\n")
+          replace(path,
+              '''    let selected: Vec<_> = if read_code == 0x04 {\n        vec![objects\n            .get_key_value(&start)\n            .ok_or(EX_ILLEGAL_DATA_ADDRESS)?]\n    } else {\n        objects.range(start..).take(17).collect()\n    };''',
+              '''    let selected: Vec<_> = if read_code == 0x04 {\n        vec![objects\n            .get_key_value(&start)\n            .ok_or(EX_ILLEGAL_DATA_ADDRESS)?]\n    } else {\n        let first = if objects.contains_key(&start) { start } else { 0 };\n        objects.range(first..).take(17).collect()\n    };''')
+          replace(path,
+              '''        0x01,\n        if more_follows { 0xFF } else { 0x00 },''',
+              '''        0x81,\n        if more_follows { 0xFF } else { 0x00 },''')
+          replace(path,
+              '''                sub_function: 0x000A,\n                data: Vec::new(),\n            })\n            .unwrap();''',
+              '''                sub_function: 0x000A,\n                data: vec![0x00, 0x00],\n            })\n            .unwrap();''')
+          replace(path,
+              '''        assert_eq!(pdu[1..7], [0x0E, 0x04, 0x01, 0x00, 0x00, 0x01]);\n        assert_eq!(pdu[7], 0x01);''',
+              '''        assert_eq!(pdu[1..7], [0x0E, 0x04, 0x81, 0x00, 0x00, 0x01]);\n        assert_eq!(pdu[7], 0x01);''')
+          insert = '''\n    #[test]\n    fn clear_counters_requires_and_echoes_standard_zero_data() {\n        let model = ModbusDataModel::default();\n        assert_eq!(\n            model.execute(&ModbusRequest::Diagnostics {\n                sub_function: 0x000A,\n                data: Vec::new(),\n            }),\n            Err(EX_ILLEGAL_DATA_VALUE)\n        );\n        assert_eq!(\n            model\n                .execute(&ModbusRequest::Diagnostics {\n                    sub_function: 0x000A,\n                    data: vec![0x00, 0x00],\n                })\n                .unwrap(),\n            vec![0x08, 0x00, 0x0A, 0x00, 0x00]\n        );\n    }\n\n    #[test]\n    fn event_log_uses_distinct_message_and_event_counters() {\n        let model = ModbusDataModel::default();\n        model.set_holding_register(0, 1);\n        model\n            .execute(&ModbusRequest::ReadRegisters {\n                area: RegisterReadArea::HoldingRegisters,\n                address: 0,\n                quantity: 1,\n            })\n            .unwrap();\n        let _ = model.execute(&ModbusRequest::GetCommEventCounter).unwrap();\n        let log = model.execute(&ModbusRequest::GetCommEventLog).unwrap();\n        assert_eq!(&log[4..6], &[0x00, 0x01]);\n        assert_eq!(&log[6..8], &[0x00, 0x02]);\n    }\n\n    #[test]\n    fn device_identification_unknown_stream_object_restarts_at_zero() {\n        let model = ModbusDataModel::default();\n        let pdu = model\n            .execute(&ModbusRequest::Mei {\n                mei_type: 0x0E,\n                data: vec![0x01, 0x7F],\n            })\n            .unwrap();\n        assert_eq!(pdu[7], 0x00);\n    }\n'''
+          marker = "\n    #[test]\n    fn device_identification_individual_access_returns_only_requested_object()"
+          file = Path(path)
+          text = file.read_text(encoding="utf-8")
+          if marker not in text:
+              raise SystemExit("data model test insertion marker missing")
+          file.write_text(text.replace(marker, insert + marker, 1), encoding="utf-8")
+
+          path = "src-tauri/src/plugins/modbus/codec/pdu.rs"
+          replace(path,
+              '''        ModbusRequest::Diagnostics { sub_function, data } => {\n            push_u16(&mut pdu, *sub_function);\n            pdu.extend_from_slice(data);\n        }''',
+              '''        ModbusRequest::Diagnostics { sub_function, data } => {\n            if *sub_function == 0x000A && data.as_slice() != [0x00, 0x00] {\n                return Err(\n                    "Clear Counters and Diagnostic Register requires data 0x0000".into(),\n                );\n            }\n            push_u16(&mut pdu, *sub_function);\n            pdu.extend_from_slice(data);\n        }''')
+          old = '''    let object_count = data[5] as usize;\n    let mut cursor = 6usize;\n    let mut previous_id = None;\n    for _ in 0..object_count {\n        if cursor + 2 > data.len() {\n            return Err("truncated Read Device Identification object header".into());\n        }\n        let object_id = data[cursor];\n        let len = data[cursor + 1] as usize;\n        cursor += 2;\n        if cursor + len > data.len() {\n            return Err("truncated Read Device Identification object value".into());\n        }\n        if previous_id.is_some_and(|previous| object_id <= previous) {\n            return Err("Read Device Identification object ids must be strictly increasing".into());\n        }\n        previous_id = Some(object_id);\n        cursor += len;\n    }\n    if cursor != data.len() {\n        return Err("unexpected trailing Read Device Identification data".into());\n    }\n    if request_data[0] == 0x04 && object_count > 0 && previous_id != Some(request_data[1]) {\n        return Err(\n            "specific Read Device Identification response returned a different object".into(),\n        );\n    }\n    Ok(())'''
+          new = '''    let more_follows = data[3];\n    let next_object = data[4];\n    let object_count = data[5] as usize;\n    if request_data[0] == 0x04 {\n        if conformity < 0x80 {\n            return Err(\n                "individual Read Device Identification requires individual-access conformity"\n                    .into(),\n            );\n        }\n        if more_follows != 0x00 || next_object != 0x00 || object_count != 1 {\n            return Err(\n                "individual Read Device Identification must return exactly one final object"\n                    .into(),\n            );\n        }\n    } else if more_follows == 0x00 && next_object != 0x00 {\n        return Err("final Read Device Identification response must use next object id 0".into());\n    }\n\n    let mut cursor = 6usize;\n    let mut previous_id = None;\n    for _ in 0..object_count {\n        if cursor + 2 > data.len() {\n            return Err("truncated Read Device Identification object header".into());\n        }\n        let object_id = data[cursor];\n        let len = data[cursor + 1] as usize;\n        cursor += 2;\n        if cursor + len > data.len() {\n            return Err("truncated Read Device Identification object value".into());\n        }\n        if previous_id.is_some_and(|previous| object_id <= previous) {\n            return Err("Read Device Identification object ids must be strictly increasing".into());\n        }\n        previous_id = Some(object_id);\n        cursor += len;\n    }\n    if cursor != data.len() {\n        return Err("unexpected trailing Read Device Identification data".into());\n    }\n    if request_data[0] == 0x04 && previous_id != Some(request_data[1]) {\n        return Err(\n            "specific Read Device Identification response returned a different object".into(),\n        );\n    }\n    if more_follows == 0xFF && previous_id.is_some_and(|last| next_object <= last) {\n        return Err("next Read Device Identification object id must advance".into());\n    }\n    Ok(())'''
+          replace(path, old, new)
+          insert = '''\n    #[test]\n    fn clear_counters_request_requires_standard_zero_data() {\n        assert!(encode_request(&ModbusRequest::Diagnostics {\n            sub_function: 0x000A,\n            data: Vec::new(),\n        })\n        .is_err());\n        assert_eq!(\n            encode_request(&ModbusRequest::Diagnostics {\n                sub_function: 0x000A,\n                data: vec![0x00, 0x00],\n            })\n            .unwrap(),\n            vec![0x08, 0x00, 0x0A, 0x00, 0x00]\n        );\n    }\n\n    #[test]\n    fn individual_device_identification_requires_individual_access_shape() {\n        let request = ModbusRequest::Mei {\n            mei_type: 0x0E,\n            data: vec![0x04, 0x01],\n        };\n        let good = [0x2B, 0x0E, 0x04, 0x81, 0x00, 0x00, 0x01, 0x01, 0x01, b'X'];\n        assert!(validate_response(&request, &good).is_ok());\n        let mut bad = good;\n        bad[3] = 0x01;\n        assert!(validate_response(&request, &bad).is_err());\n    }\n'''
+          marker = "\n    #[test]\n    fn event_status_fields_are_semantically_validated()"
+          file = Path(path)
+          text = file.read_text(encoding="utf-8")
+          if marker not in text:
+              raise SystemExit("pdu test insertion marker missing")
+          file.write_text(text.replace(marker, insert + marker, 1), encoding="utf-8")
+
+          path = "src/plugins/modbus/components/AdvancedPanel.tsx"
+          replace(path,
+              '<Field label="Data (hex)"><input className="liquid-glass-input" value={rawData}',
+              '<Field label="Data (hex；0x000A 需 00 00)"><input className="liquid-glass-input" value={rawData}')
+
+          path = "docs/modules/MODBUS.md"
+          replace(path,
+              '- `0x000A` Clear Counters and Diagnostic Register。',
+              '- `0x000A` Clear Counters and Diagnostic Register（Data 必须为 `0x0000`，响应回显该 Data）。')
+          replace(path,
+              'Device Identification 的 individual access 只返回所请求对象；不存在的对象返回 Illegal Data Address。常规对象读取按对象 ID 有序返回，并正确生成 more-follows / next-object 元数据，而不是把所有情况都伪装成“没有后续对象”。',
+              'Device Identification 的 individual access 只返回所请求对象，使用支持 individual access 的 conformity level；不存在的对象返回 Illegal Data Address。stream access 遇到未知 Object ID 时按规范从 Object 0 重新开始，并按对象 ID 有序返回、正确生成 more-follows / next-object 元数据。')
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Commit review fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src-tauri/src/plugins/modbus src/plugins/modbus/components/AdvancedPanel.tsx docs/modules/MODBUS.md
+          git commit -m "fix(modbus): align diagnostics and device identification semantics"
+          git push origin HEAD:refactor/modbus-core-hardening
