@@ -82,10 +82,10 @@ jobs:
           # that exact Arc rather than the removed side_channel variable.
           network = Path('src-tauri/src/plugins/network/mod.rs')
           text = network.read_text()
-          old = "runtime: side_channel,"
+          old = "RuntimeAttach { runtime: side_channel }"
           if old not in text:
               raise SystemExit('Network RuntimeAttach variable anchor missing')
-          network.write_text(text.replace(old, "runtime: side,", 1))
+          network.write_text(text.replace(old, "RuntimeAttach { runtime: side }", 1))
 
           commands = Path('src-tauri/src/commands.rs')
           text = commands.read_text()
