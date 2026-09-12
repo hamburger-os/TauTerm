@@ -149,7 +149,7 @@ impl Default for ZModem {
 impl TransferProtocol for ZModem {
     fn send_files(
         &self,
-        port: &mut Box<dyn serialport::SerialPort>,
+        port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
         files: &[FileInfo],
         on_progress: &dyn Fn(TransferProgress),
         on_file_event: &dyn Fn(FileTransferEvent),
@@ -168,7 +168,7 @@ impl TransferProtocol for ZModem {
 
     fn receive_files(
         &self,
-        port: &mut Box<dyn serialport::SerialPort>,
+        port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
         download_dir: &str,
         on_progress: &dyn Fn(TransferProgress),
         on_file_event: &dyn Fn(FileTransferEvent),
@@ -193,7 +193,7 @@ impl TransferProtocol for ZModem {
 ///
 /// 格式: ZPAD ZPAD ZHEX type_hex f3_hex f2_hex f1_hex f0_hex crc1_hex crc2_hex CR LF [XON]
 fn send_hex_header(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     frame_type: u8,
     hdr: &[u8; 4],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -224,7 +224,7 @@ fn send_hex_header(
 ///
 /// 格式: ZPAD ZPAD ZDLE ZBIN{ZBIN32} type f3 f2 f1 f0 crc[16|32]
 fn send_binary_header(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     frame_type: u8,
     hdr: &[u8; 4],
     use_crc32: bool,
@@ -275,7 +275,7 @@ fn send_binary_header(
 ///
 /// 格式: ZPAD ZPAD ZDLE ZBIN{ZBIN32} ZDATA f3 f2 f1 f0 [escaped_data*] crc ZDLE frameend
 fn send_data_frame(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     buf: &[u8],
     frameend: u8,
     use_crc32: bool,
@@ -368,7 +368,7 @@ fn send_data_frame(
 ///
 /// 自动检测 ZHEX / ZBIN / ZBIN32 / CANCEL 帧格式。
 fn receive_frame(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     timeout_s: u32,
 ) -> Result<ZFrame, Box<dyn std::error::Error>> {
     let timeout_ms = (timeout_s as u64) * 1000;
@@ -432,7 +432,7 @@ fn receive_frame(
 
 /// 接收二进制帧（ZBIN 或 ZBIN32）
 fn receive_binary_frame(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     bin_type: u8,
 ) -> Result<ZFrame, Box<dyn std::error::Error>> {
     let use_crc32 = bin_type == ZBIN32;
@@ -537,7 +537,7 @@ fn receive_binary_frame(
 
 /// 接收十六进制帧头（ZHEX）
 fn receive_hex_frame(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
 ) -> Result<ZFrame, Box<dyn std::error::Error>> {
     // Format: ZPAD ZPAD ZHEX type_hex f3_hex f2_hex f1_hex f0_hex crc1 crc2 CR LF [XON]
     // hex = 2 + 2 + 2 + 2 + 2 + 4 + 2 = 16 hex chars + CR LF + optional XON
@@ -590,7 +590,7 @@ fn receive_hex_frame(
 
 /// 读取一个必需字节（有超时）
 fn read_byte_required(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     timeout_ms: u64,
     context: &str,
 ) -> Result<u8, Box<dyn std::error::Error>> {
@@ -606,7 +606,7 @@ fn read_byte_required(
 
 /// ZMODEM 发送文件批次
 fn zmodem_send(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     files: &[FileInfo],
     use_crc32: bool,
     max_block_size: usize,
@@ -1076,7 +1076,7 @@ fn zmodem_send(
 
 /// Send a frame with type + data payload (for ZFILE, ZDATA with non-standard types)
 fn send_data_frame_with_header(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     frame_type: u8,
     data: &[u8],
     frameend: u8,
@@ -1156,7 +1156,7 @@ fn send_data_frame_with_header(
 
 /// ZMODEM 接收文件批次
 fn zmodem_receive(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     download_dir: &str,
     use_crc32: bool,
     on_progress: &dyn Fn(TransferProgress),

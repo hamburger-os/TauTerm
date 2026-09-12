@@ -89,7 +89,7 @@ pub struct XModem;
 impl TransferProtocol for XModem {
     fn send_files(
         &self,
-        port: &mut Box<dyn serialport::SerialPort>,
+        port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
         files: &[FileInfo],
         on_progress: &dyn Fn(TransferProgress),
         on_file_event: &dyn Fn(FileTransferEvent),
@@ -100,7 +100,7 @@ impl TransferProtocol for XModem {
 
     fn receive_files(
         &self,
-        port: &mut Box<dyn serialport::SerialPort>,
+        port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
         download_dir: &str,
         on_progress: &dyn Fn(TransferProgress),
         on_file_event: &dyn Fn(FileTransferEvent),
@@ -114,7 +114,7 @@ impl TransferProtocol for XModem {
 
 /// XMODEM 按 lrzsz 标准发送文件（仅处理第一个文件）
 fn xmodem_send(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     files: &[FileInfo],
     on_progress: &dyn Fn(TransferProgress),
     on_file_event: &dyn Fn(FileTransferEvent),
@@ -307,7 +307,7 @@ fn xmodem_send(
 
 /// 等待接收方发送 NAK/C/G 启动字节，返回协商的变体（对齐 lrzsz getnak）
 fn getnak(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     cancel: &mut dyn FnMut() -> bool,
 ) -> Result<XModemVariant, Box<dyn std::error::Error>> {
     for retry in 0..(INIT_TIMEOUT_SECS) {
@@ -349,7 +349,7 @@ fn getnak(
 ///
 /// 块格式: header_byte + block_num + ~block_num + data(128/1024B) + chk(1B)/crc(2B)
 fn send_block(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     block_num: u8,
     data: &[u8],
     variant: &XModemVariant,
@@ -433,7 +433,7 @@ fn send_block(
 
 /// 发送 EOT 并等待 ACK 确认（对齐 lrzsz）
 fn send_eot(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     cancel: &mut dyn FnMut() -> bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     for retry in 0..MAX_RETRIES {
@@ -479,7 +479,7 @@ fn send_eot(
 
 /// XMODEM 按 lrzsz 标准接收文件
 fn xmodem_receive(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     download_dir: &str,
     on_progress: &dyn Fn(TransferProgress),
     on_file_event: &dyn Fn(FileTransferEvent),
@@ -843,7 +843,7 @@ fn generate_receive_filename() -> String {
 
 /// 从串口读取一个字节（无超时回退，用于在已确认数据流到来时读取）
 fn read_or_fail(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
 ) -> Result<u8, Box<dyn std::error::Error>> {
     match read_byte_with_timeout(port, 3000)? {
         Some(b) => Ok(b),

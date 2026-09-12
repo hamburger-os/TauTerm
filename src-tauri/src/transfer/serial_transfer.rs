@@ -19,30 +19,20 @@ use crate::transfer::types::{BatchFileResult, FileInfo, FileTransferEvent, Trans
 pub struct SerialFileTransfer {
     protocol_type: TransferProtocolType,
     protocol: Arc<Box<dyn TransferProtocol>>,
-    port: Arc<std::sync::Mutex<Box<dyn serialport::SerialPort>>>,
+    port: Arc<std::sync::Mutex<Box<dyn crate::transfer::protocol::TransferIo>>>,
 }
 
 impl SerialFileTransfer {
     pub fn new(
         protocol_type: TransferProtocolType,
         protocol: Box<dyn TransferProtocol>,
-        port: Box<dyn serialport::SerialPort>,
+        port: Box<dyn crate::transfer::protocol::TransferIo>,
     ) -> Self {
         Self {
             protocol_type,
             protocol: Arc::new(protocol),
             port: Arc::new(std::sync::Mutex::new(port)),
         }
-    }
-
-    /// 取出端口（传输完成后归还 I/O 循环）
-    pub fn take_port(self) -> Result<Box<dyn serialport::SerialPort>, String> {
-        Arc::try_unwrap(self.port)
-            .map_err(|_| "SerialFileTransfer: port still referenced (Arc not unique)".to_string())
-            .and_then(|m| {
-                m.into_inner()
-                    .map_err(|e| format!("SerialFileTransfer: port mutex poisoned: {}", e))
-            })
     }
 }
 

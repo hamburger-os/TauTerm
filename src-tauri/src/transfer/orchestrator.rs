@@ -13,8 +13,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
-use crate::channel::io_loop::IoLoopCmd;
-use crate::channel::Channel;
 use crate::kernel::file_transfer::{
     FileTransfer, FileTransferError, FileTransferOptions, UnifiedProgress,
 };
@@ -140,7 +138,6 @@ fn restore_session_state(app: &AppHandle, session_id: &str, transfer_id: &str) {
         if let Ok(mut store) = state.session_store.lock() {
             if let Some(handle) = store.get_session_mut(session_id) {
                 let _ = handle.transfer_scheduler.finish(Some(transfer_id));
-                handle.channel_return_tx = None;
                 if handle.state != SessionState::Disconnected {
                     handle.state = SessionState::Connected;
                 }
@@ -228,8 +225,8 @@ fn emit_transfer_started(
 
 /// 串口内联协议（X/Y/ZModem）。
 ///
-/// 启动阶段同步完成端口 handoff，确保返回 ack 时任务真实可执行；协议算法则放入
-/// 后台 task，内部的同步 I/O 继续由 SerialFileTransfer::spawn_blocking 隔离。
+/// 启动阶段同步获取 Session DataPlane 的 exclusive lease，确保返回 ack 时任务已拥有
+/// 唯一字节流访问权；协议算法放入后台 task，完成后通过 RAII 释放 lease。
 pub struct InlineTransferOrchestrator {
     pt: TransferProtocolType,
 }
@@ -256,110 +253,46 @@ impl InlineTransferOrchestrator {
         }
     }
 
-    fn handoff_port(
+    fn acquire_exclusive_io(
         &self,
         app: &AppHandle,
         session_id: &str,
         transfer_id: &str,
     ) -> Result<
         (
-            Box<dyn serialport::SerialPort>,
+            Box<dyn crate::transfer::protocol::TransferIo>,
             tokio::sync::oneshot::Receiver<()>,
         ),
         String,
     > {
-        let (give_tx, give_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
-        let (return_tx, return_rx) = std::sync::mpsc::sync_channel::<Box<dyn Channel>>(1);
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-
-        {
+        let io = {
             let app_state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
             let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(session_id);
-            let write_tx = {
-                let handle = store.get_session_mut(session_id).ok_or(not_found)?;
+            let io = {
+                let handle = store.get_session(session_id).ok_or(not_found)?;
                 if handle.state != SessionState::Connected {
                     return Err("会话未连接".into());
                 }
                 handle
-                    .write_tx
+                    .io
                     .as_ref()
                     .cloned()
-                    .ok_or("容器会话不支持端口移交（HandoffPort）")?
+                    .ok_or("当前会话没有可独占的数据面")?
             };
-
             store.reserve_inline_transfer(session_id, transfer_id, cancel_tx)?;
             let not_found = store.session_not_found(session_id);
             let handle = store.get_session_mut(session_id).ok_or(not_found)?;
             handle.state = SessionState::Transferring;
-            handle.channel_return_tx = Some(return_tx);
-            if let Err(error) = write_tx.send(IoLoopCmd::HandoffPort { give_tx, return_rx }) {
-                let _ = handle.transfer_scheduler.finish(Some(transfer_id));
-                handle.state = SessionState::Connected;
-                handle.channel_return_tx = None;
-                return Err(format!("无法请求 I/O 线程移交 Channel: {error}"));
-            }
-        }
+            io
+        };
 
-        let mut channel = give_rx.recv().map_err(|error| {
-            restore_session_state(app, session_id, transfer_id);
-            format!("无法从 I/O 线程获取 Channel: {}", error)
-        })?;
-
-        let port_box = channel.try_handoff().ok_or_else(|| {
-            restore_session_state(app, session_id, transfer_id);
-            "Channel 不支持端口移交".to_string()
-        })?;
-
-        let port = port_box
-            .downcast::<Box<dyn serialport::SerialPort>>()
-            .map_err(|_| {
+        match io.acquire_exclusive(format!("file-transfer:{transfer_id}"), true) {
+            Ok(lease) => Ok((Box::new(lease), cancel_rx)),
+            Err(error) => {
                 restore_session_state(app, session_id, transfer_id);
-                "端口类型转换失败".to_string()
-            })?;
-        drop(channel);
-        Ok((*port, cancel_rx))
-    }
-
-    fn return_port(
-        &self,
-        app: &AppHandle,
-        session_id: &str,
-        transfer_id: &str,
-        port: Box<dyn serialport::SerialPort>,
-    ) {
-        if let Some(app_state) = app.try_state::<AppState>() {
-            if let Ok(mut store) = app_state.session_store.lock() {
-                if let Some(handle) = store.get_session_mut(session_id) {
-                    let _ = handle.transfer_scheduler.finish(Some(transfer_id));
-                    if handle.state != SessionState::Disconnected {
-                        handle.state = SessionState::Connected;
-                    }
-                    if let Some(tx) = handle.channel_return_tx.take() {
-                        let new_channel = crate::channel::serial_channel::SerialChannel::new(port);
-                        if let Err(error) = tx.send(Box::new(new_channel)) {
-                            log::error!(
-                                "return_port: 无法归还端口到 I/O 线程（receiver 已断开）— 端口已丢失 (session: {}): {:?}",
-                                session_id,
-                                error
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn release_after_port_loss(&self, app: &AppHandle, session_id: &str, transfer_id: &str) {
-        if let Some(app_state) = app.try_state::<AppState>() {
-            if let Ok(mut store) = app_state.session_store.lock() {
-                if let Some(handle) = store.get_session_mut(session_id) {
-                    let _ = handle.transfer_scheduler.finish(Some(transfer_id));
-                    if handle.state != SessionState::Disconnected {
-                        handle.state = SessionState::Connected;
-                    }
-                    handle.channel_return_tx = None;
-                }
+                Err(format!("无法获取文件传输独占 I/O: {error}"))
             }
         }
     }
@@ -388,7 +321,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         client_id: String,
     ) -> Result<TransferStartAck, String> {
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
+        let (io, cancel_rx) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_protocol_handler(
             ctx.block_size,
             ctx.checksum_mode.clone(),
@@ -396,12 +329,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ) {
             Ok(handler) => handler,
             Err(error) => {
-                self.return_port(&app, &ctx.session_id, &transfer_id, port);
+                drop(io);
+                restore_session_state(&app, &ctx.session_id, &transfer_id);
                 return Err(error);
             }
         };
 
-        let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, port);
+        let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, io);
         let ack = TransferStartAck {
             transfer_id: transfer_id.clone(),
         };
@@ -422,21 +356,12 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let task_files = ctx.files;
         let task_options = ctx.options;
         let progress_tx = ctx.progress_tx;
-        let worker = InlineTransferOrchestrator {
-            pt: self.pt.clone(),
-        };
-
         let handle = tokio::spawn(async move {
             if start_rx.await.is_err() {
                 drop(progress_tx);
                 let _ = broadcaster.await;
-                match transfer.take_port() {
-                    Ok(port) => worker.return_port(&task_app, &task_sid, &task_transfer_id, port),
-                    Err(error) => {
-                        log::error!("启动回滚时无法归还端口: {}", error);
-                        worker.release_after_port_loss(&task_app, &task_sid, &task_transfer_id);
-                    }
-                }
+                drop(transfer);
+                restore_session_state(&task_app, &task_sid, &task_transfer_id);
                 return;
             }
 
@@ -452,13 +377,8 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             drop(progress_tx);
             let _ = broadcaster.await;
 
-            match transfer.take_port() {
-                Ok(port) => worker.return_port(&task_app, &task_sid, &task_transfer_id, port),
-                Err(error) => {
-                    log::error!("无法归还端口: {}", error);
-                    worker.release_after_port_loss(&task_app, &task_sid, &task_transfer_id);
-                }
-            }
+            drop(transfer);
+            restore_session_state(&task_app, &task_sid, &task_transfer_id);
 
             emit_transfer_finished(
                 &task_app,
@@ -486,7 +406,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         client_id: String,
     ) -> Result<TransferStartAck, String> {
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (port, cancel_rx) = self.handoff_port(&app, &ctx.session_id, &transfer_id)?;
+        let (io, cancel_rx) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_protocol_handler(
             ctx.block_size,
             ctx.checksum_mode.clone(),
@@ -494,12 +414,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ) {
             Ok(handler) => handler,
             Err(error) => {
-                self.return_port(&app, &ctx.session_id, &transfer_id, port);
+                drop(io);
+                restore_session_state(&app, &ctx.session_id, &transfer_id);
                 return Err(error);
             }
         };
 
-        let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, port);
+        let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, io);
         let ack = TransferStartAck {
             transfer_id: transfer_id.clone(),
         };
@@ -520,21 +441,12 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let download_dir = ctx.download_dir;
         let task_options = ctx.options;
         let progress_tx = ctx.progress_tx;
-        let worker = InlineTransferOrchestrator {
-            pt: self.pt.clone(),
-        };
-
         let handle = tokio::spawn(async move {
             if start_rx.await.is_err() {
                 drop(progress_tx);
                 let _ = broadcaster.await;
-                match transfer.take_port() {
-                    Ok(port) => worker.return_port(&task_app, &task_sid, &task_transfer_id, port),
-                    Err(error) => {
-                        log::error!("启动回滚时无法归还端口: {}", error);
-                        worker.release_after_port_loss(&task_app, &task_sid, &task_transfer_id);
-                    }
-                }
+                drop(transfer);
+                restore_session_state(&task_app, &task_sid, &task_transfer_id);
                 return;
             }
 
@@ -550,13 +462,8 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             drop(progress_tx);
             let _ = broadcaster.await;
 
-            match transfer.take_port() {
-                Ok(port) => worker.return_port(&task_app, &task_sid, &task_transfer_id, port),
-                Err(error) => {
-                    log::error!("无法归还端口: {}", error);
-                    worker.release_after_port_loss(&task_app, &task_sid, &task_transfer_id);
-                }
-            }
+            drop(transfer);
+            restore_session_state(&task_app, &task_sid, &task_transfer_id);
 
             emit_transfer_finished(
                 &task_app,

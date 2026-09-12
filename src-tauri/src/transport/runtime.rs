@@ -10,6 +10,7 @@ use crate::transport::stream::{BlockingByteStream, ReadStatus, StreamCloseMetada
 
 const COMMAND_CAPACITY: usize = 256;
 const EXCLUSIVE_RX_CAPACITY: usize = 256;
+const EXCLUSIVE_READ_SLICE: std::time::Duration = std::time::Duration::from_millis(20);
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 const STARTUP_BUFFER_LIMIT: usize = 64 * 1024;
 
@@ -306,9 +307,20 @@ impl Read for ExclusiveIo {
             return Ok(0);
         }
         while self.read_buf.is_empty() {
-            match self.data_rx.recv() {
+            match self.data_rx.recv_timeout(EXCLUSIVE_READ_SLICE) {
                 Ok(chunk) => self.read_buf.extend(chunk),
-                Err(_) => return Ok(0),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "exclusive data-plane read timed out",
+                    ));
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "transport closed while exclusive lease was active",
+                    ));
+                }
             }
         }
         let n = buf.len().min(self.read_buf.len());
@@ -668,6 +680,24 @@ mod tests {
             writes.lock().unwrap().as_slice(),
             &[b"owned".to_vec(), b"shared".to_vec()]
         );
+        runtime.join();
+    }
+
+    #[test]
+    fn exclusive_read_times_out_while_transport_is_idle() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let runtime = DataPlaneRuntime::spawn(Box::new(MockStream {
+            reads: VecDeque::new(),
+            writes,
+        }));
+        let mut lease = runtime
+            .handle
+            .acquire_exclusive("test-timeout", false)
+            .unwrap();
+        let mut buf = [0u8; 8];
+        let error = lease.read(&mut buf).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        drop(lease);
         runtime.join();
     }
 
