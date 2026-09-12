@@ -228,11 +228,7 @@ impl DataPlaneHandle {
             .map_err(|_| runtime_closed_before_ack("resize_terminal"))?
     }
 
-    pub async fn resize_terminal_async(
-        &self,
-        cols: u32,
-        rows: u32,
-    ) -> Result<(), TransportError> {
+    pub async fn resize_terminal_async(&self, cols: u32, rows: u32) -> Result<(), TransportError> {
         if !self.terminal_control {
             return Err(TransportError::unsupported(
                 "resize_terminal",
