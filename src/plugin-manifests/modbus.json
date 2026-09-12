@@ -3,7 +3,7 @@
   "name": "Modbus",
   "version": "1.0.0",
   "category": "industrial_protocol",
-  "description": "Modbus 调试助手 · RTU / ASCII / TCP",
+  "description": "Modbus 调试助手",
   "icon": "connection",
   "content_type": "custom",
   "send_bar": false,

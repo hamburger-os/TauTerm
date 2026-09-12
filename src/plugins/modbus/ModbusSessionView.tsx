@@ -4,15 +4,18 @@ import Icon, { type IconName } from "../../components/common/Icon";
 import { useSession } from "../../context/SessionContext";
 import styles from "./Modbus.module.css";
 import {
-  modbusConnectionSummary,
-  modbusDefaultSessionName,
-  modbusModeRoleLabel,
   normalizeModbusSessionParams,
   type ModbusMode,
   type ModbusOperation,
   type ServerFaultConfig,
   type TransactionResult,
 } from "./model";
+import {
+  isGeneratedModbusSessionTitle,
+  modbusConnectionSubtitle,
+  modbusEndpointLabel,
+  modbusSessionTitle,
+} from "./presentation";
 import AdvancedPanel from "./components/AdvancedPanel";
 import MonitorPanel from "./components/MonitorPanel";
 import ReadWritePanel from "./components/ReadWritePanel";
@@ -29,7 +32,7 @@ const statusPresentation: Record<string, { icon: IconName; label: string }> = {
 };
 
 export default function ModbusSessionView({ sessionId }: { sessionId: string }) {
-  const { state, renameTab } = useSession();
+  const { state, reconfigureSession } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = useMemo(() => normalizeModbusSessionParams(tab?.params ?? {}), [tab?.params]);
   const role = params.role;
@@ -37,18 +40,40 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const connected = tab?.state === "connected" || tab?.state === "transferring";
   const [page, setPage] = useState<Page>(role === "server" ? "server" : "readwrite");
   const [history, setHistory] = useState<TransactionResult[]>([]);
-  const autoRenameAttempted = useRef<Set<string>>(new Set());
+  const identityNormalizationKey = useRef<string | null>(null);
 
   useEffect(() => {
     setPage(role === "server" ? "server" : "readwrite");
     setHistory([]);
   }, [role, sessionId]);
 
+  const generatedTitle = modbusSessionTitle(params);
+  const generatedEndpoint = modbusEndpointLabel(params);
   useEffect(() => {
-    if (tab?.name !== "Modbus @ modbus" || autoRenameAttempted.current.has(sessionId)) return;
-    autoRenameAttempted.current.add(sessionId);
-    void renameTab(sessionId, modbusDefaultSessionName(params));
-  }, [params, renameTab, sessionId, tab?.name]);
+    if (!tab || tab.state !== "disconnected") return;
+
+    const nextName = tab.name === "Modbus @ modbus" || isGeneratedModbusSessionTitle(tab.name)
+      ? generatedTitle
+      : tab.name;
+    const needsNormalization = tab.endpoint !== generatedEndpoint || tab.name !== nextName;
+    if (!needsNormalization) {
+      identityNormalizationKey.current = null;
+      return;
+    }
+
+    const normalizationKey = `${sessionId}\u0000${tab.name}\u0000${tab.endpoint}\u0000${nextName}\u0000${generatedEndpoint}`;
+    if (identityNormalizationKey.current === normalizationKey) return;
+    identityNormalizationKey.current = normalizationKey;
+    void reconfigureSession(
+      sessionId,
+      generatedEndpoint,
+      params,
+      nextName,
+      false,
+      undefined,
+      false,
+    );
+  }, [generatedEndpoint, generatedTitle, params, reconfigureSession, sessionId, tab]);
 
   const execute = async (request: ModbusOperation) => {
     if (!connected) throw new Error("Modbus 会话尚未连接");
@@ -61,39 +86,34 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
     ? [["server", "数据模型"], ["transactions", "事务"], ["advanced", "高级"]]
     : [["readwrite", "读写"], ["monitor", "监控"], ["transactions", "事务"], ["advanced", "高级"]], [role]);
   const serverFault = params.server_fault as ServerFaultConfig;
-  const identity = modbusModeRoleLabel(params);
-  const summary = modbusConnectionSummary(params);
-  const sessionTitle = tab?.name && tab.name !== "Modbus @ modbus" ? tab.name : identity;
+  const summary = modbusConnectionSubtitle(params);
+  const sessionTitle = tab?.name && tab.name !== "Modbus @ modbus" ? tab.name : generatedTitle;
   const status = statusPresentation[tab?.state ?? "disconnected"] ?? statusPresentation.disconnected;
 
   return <div className={styles.root} data-testid="tauterm-modbus-session-view">
-    <section className={`${styles.workspaceHeader} liquid-glass-card`}>
+    <header className={styles.workspaceHeader}>
       <div className={styles.identityGroup}>
-        <Icon name="connection" size="lg" />
+        <Icon name="connection" size="md" />
         <div className={styles.identityText}>
           <div className={styles.title}>{sessionTitle}</div>
-          <div className={styles.meta}>{identity} · {summary}</div>
+          <div className={styles.meta}>{summary}</div>
         </div>
       </div>
-      <div className={styles.statusRow}>
-        <span className={styles.badge}>{mode.toUpperCase()}</span>
-        <span className={styles.badge}>{role === "server" ? (mode === "tcp" ? "Server" : "Slave") : (mode === "tcp" ? "Client" : "Master")}</span>
-        <span className={styles.statusLabel}><Icon name={status.icon} size="xs" />{status.label}</span>
-      </div>
-    </section>
+      <span className={styles.statusLabel}><Icon name={status.icon} size="xs" />{status.label}</span>
+    </header>
 
     <nav className={`${styles.tabs} liquid-selector-strip`} aria-label="Modbus workspace tabs">
       {pages.map(([id, label]) => <button key={id} type="button" className={`liquid-selector-button ${page === id ? "liquid-theme-selected" : ""}`} aria-pressed={page === id} onClick={() => setPage(id)}>{label}</button>)}
     </nav>
 
     <div className={styles.body}>
-      <div key={sessionId} className={styles.workspaceContent}>
+      <main key={sessionId} className={`${styles.workspaceSurface} liquid-glass-card`}>
         {page === "readwrite" && <ReadWritePanel execute={execute} connected={connected} />}
         {page === "monitor" && <MonitorPanel sessionId={sessionId} connected={connected} />}
         {page === "transactions" && <TransactionsPanel sessionId={sessionId} fallback={history} connected={connected} />}
         {page === "advanced" && <AdvancedPanel sessionId={sessionId} execute={execute} mode={mode} role={role} initialFault={serverFault} connected={connected} />}
         {page === "server" && <ServerPanel sessionId={sessionId} connected={connected} />}
-      </div>
+      </main>
     </div>
   </div>;
 }

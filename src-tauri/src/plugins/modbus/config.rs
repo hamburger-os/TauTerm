@@ -150,7 +150,7 @@ impl ModbusConfig {
 impl Default for ModbusConfig {
     fn default() -> Self {
         Self {
-            mode: ModbusMode::Tcp,
+            mode: ModbusMode::Rtu,
             role: ModbusRole::Client,
             serial_port: String::new(),
             serial: SerialTransportConfig::default(),

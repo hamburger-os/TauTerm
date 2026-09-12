@@ -108,32 +108,30 @@ Saved Session 只保存可重建的稳定配置，例如：
 
 ## UI
 
-Modbus 使用独立 `customView`，不显示全局 SendBar。主要页面：
+Modbus 使用独立 `customView`，不显示全局 SendBar。新建会话入口统一显示 `Modbus 调试助手`，不在入口标题重复列出 RTU / ASCII / TCP；具体模式由配置页选择。
 
-- Read / Write
-- Monitor
-- Transactions
-- Advanced
-- Server
+连接配置页沿用 TauTerm 通用连接表单的视觉层级：普通字段直接处于对话框内容区，只有低频高级参数使用可折叠玻璃容器。字段按“会话模式 / 串口或网络参数 / 协议参数 / 高级”组织，默认传输模式为 RTU。TCP Client 使用远端主机语义，TCP Server 使用监听地址语义；RTU/ASCII 只显示串口相关字段。Client 专属的响应超时、重试和 TCP 连接超时不会出现在 Server 的主配置路径中。串口列表遵循 `端口 — 描述`，当描述与端口名相同则只显示一次。
 
-Client/Server 角色只显示适用功能；exact Raw ADU 属于 Advanced 的显式高风险调试入口，不与普通请求混在一起。
+工作区采用“一张主工作台 + 内部分区”的信息架构，不把请求、结果、数据模型等每个区域各自包装成独立悬浮玻璃卡片。主页面为：
 
-连接配置页按“会话模式 / 连接参数 / 协议参数 / 高级”分区。TCP Client 使用远端主机语义，TCP Server 使用监听地址语义；RTU/ASCII 只显示串口相关字段。Client 专属的响应超时、重试和 TCP 连接超时不会出现在 Server 的主配置路径中。串口列表显示遵循 `端口 — 描述`，当描述与端口名相同则只显示一次，避免 `COM5 — COM5` 之类重复文本。
+- Read / Write：上方请求编辑器，下方结果区；01/02/03/04 的成功响应优先显示地址和值表格，原始 TX/RX/PDU 收进诊断详情。
+- Monitor：以可编辑 watch table 为主，操作按钮与状态位于表格上方。
+- Transactions：以时间序列事务表为主，原始帧按行展开。
+- Advanced：诊断、文件记录、设备标识与 Raw 操作集中在此，避免挤占常规读写路径。
+- Server：左侧编辑模拟数据点，右侧查看当前数据区，二者位于同一工作台表面内。
 
-工作区采用“会话概览 / 功能页签 / 操作与结果内容”的层级。读写页将请求编辑器与执行结果分开，未执行事务时显示明确空状态；Server 以数据模型为主入口，而不是复用 Client 的请求表单。
+这套 UI 是调试工作流设计，不是 Modbus 协议标准规定的 HMI。协议标准决定功能码、地址、数量、异常、封装与校验语义；界面则遵循成熟 Modbus 调试工具常见的“请求参数 → 结构化结果 → 轮询/事务诊断”的操作顺序。
 
 ### 会话身份
 
-Modbus 的模式与角色必须在任何主要视图中可直接辨认：
+默认会话卡片采用两层信息，不把链路重复塞进名称：
 
-- TCP Client：`Modbus TCP Client`
-- TCP Server：`Modbus TCP Server`
-- RTU Master：`Modbus RTU Master`
-- RTU Slave Simulator：`Modbus RTU Slave`
-- ASCII Master：`Modbus ASCII Master`
-- ASCII Slave Simulator：`Modbus ASCII Slave`
+- 第一行：`Modbus @ RTU Master`、`Modbus @ ASCII Slave`、`Modbus @ TCP Client`、`Modbus @ TCP Server`
+- 第二行：RTU/ASCII 显示串口（例如 `COM5`）；TCP 显示 IP:Port（例如 `192.168.1.10:502`）
 
-默认会话名进一步附带端点，例如 `Modbus TCP Client @ 192.168.1.10:502` 或 `Modbus RTU Master @ COM5`。工作区摘要额外显示 Unit ID；串口模式还显示波特率与帧格式（例如 `9600 8N1`）。用户自定义名称始终优先，不应被自动命名覆盖。
+工作区标题沿用第一行身份，摘要再补充串口波特率/帧格式或 TCP endpoint 与 Unit ID。用户显式输入的自定义会话名始终优先。
+
+会话展示字符串集中在 `src/plugins/modbus/presentation.ts`，协议模型与 UI 文案分离。离线会话进入 Modbus 工作区后，会把生成式会话名和 endpoint 与当前 RTU/ASCII/TCP 配置保持同步；用户自定义会话名不被覆盖，因此通用侧栏不需要知道 Modbus 的字段结构。
 
 ## 设计边界
 
@@ -144,7 +142,7 @@ Modbus 的模式与角色必须在任何主要视图中可直接辨认：
 - 写超时必须保留 outcome unknown 语义。
 - Server model 与 fault injection 属于 Modbus 模块，不做通用 Session capability。
 - exact Raw ADU 不自动修正 CRC/LRC/MBAP，也不能冒充“已通过协议校验”的普通 transaction。
-- 会话命名、模式/角色标签和连接摘要由 `src/plugins/modbus/model.ts` 的纯函数集中生成，避免不同页面自行拼接产生漂移。
+- UI 展示身份由 presentation 层生成，不允许 ConnectDialog、SessionSidebar 和各功能页分别拼接不同格式。
 
 ## 代码锚点
 
@@ -161,6 +159,7 @@ Modbus 的模式与角色必须在任何主要视图中可直接辨认：
 - `src/plugins/modbus/ModbusSessionView.tsx`
 - `src/plugins/modbus/Modbus.module.css`
 - `src/plugins/modbus/model.ts`
+- `src/plugins/modbus/presentation.ts`
 - `src/plugin-manifests/modbus.json`
 
 ## 何时更新本文

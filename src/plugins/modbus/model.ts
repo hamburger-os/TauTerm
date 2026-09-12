@@ -38,7 +38,7 @@ export interface ModbusSessionParams extends Record<string, unknown> {
 
 export function defaultModbusSessionParams(): ModbusSessionParams {
   return {
-    mode: "tcp",
+    mode: "rtu",
     role: "client",
     serial_port: "",
     serial: {
@@ -123,38 +123,6 @@ export function normalizeModbusSessionParams(params: Record<string, unknown>): M
       exception_code: typeof serverFault.exception_code === "number" ? serverFault.exception_code : null,
     },
   };
-}
-
-export function modbusModeRoleLabel(params: Record<string, unknown>): string {
-  const normalized = normalizeModbusSessionParams(params);
-  const mode = normalized.mode.toUpperCase();
-  const role = normalized.mode === "tcp"
-    ? (normalized.role === "server" ? "Server" : "Client")
-    : (normalized.role === "server" ? "Slave" : "Master");
-  return `Modbus ${mode} ${role}`;
-}
-
-export function modbusEndpointSummary(params: Record<string, unknown>): string {
-  const normalized = normalizeModbusSessionParams(params);
-  if (normalized.mode === "tcp") {
-    const host = normalized.host.trim() || (normalized.role === "server" ? "0.0.0.0" : "127.0.0.1");
-    return `${host}:${normalized.port}`;
-  }
-  return normalized.serial_port.trim() || "未选择串口";
-}
-
-export function modbusConnectionSummary(params: Record<string, unknown>): string {
-  const normalized = normalizeModbusSessionParams(params);
-  if (normalized.mode === "tcp") {
-    return `${modbusEndpointSummary(normalized)} · Unit ${normalized.unit_id}`;
-  }
-  const parity = normalized.serial.parity === "even" ? "E" : normalized.serial.parity === "odd" ? "O" : "N";
-  const framing = `${normalized.serial.data_bits}${parity}${normalized.serial.stop_bits}`;
-  return `${modbusEndpointSummary(normalized)} · ${normalized.serial.baud_rate} ${framing} · Unit ${normalized.unit_id}`;
-}
-
-export function modbusDefaultSessionName(params: Record<string, unknown>): string {
-  return `${modbusModeRoleLabel(params)} @ ${modbusEndpointSummary(params)}`;
 }
 
 export type ModbusRequest =
