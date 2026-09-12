@@ -38,6 +38,10 @@ TauTerm 当前凭据存储设计由 [PLATFORM_SECURITY 模块文档](../modules/
 
 Tauri updater 使用签名验证。TauTerm 自己的 release workflow 还会验证最终资产集合、签名和 public download 后再把稳定版本提升为 updater latest。
 
+更新网络故障不得通过关闭证书校验、接受无效主机名或允许不安全传输来规避。Tauri updater 支持请求超时、代理和请求头；涉及网络兼容性时应先保留完整错误链并区分 transport、DNS、proxy、TLS、HTTP、metadata、signature 与 install 阶段，再针对有证据的故障调整实现。任何 fallback 都必须继续保持签名验证和 HTTPS fail-closed 边界。
+
+Updater 的 Rust core 与 JavaScript bindings 属于同一发布基础设施边界。升级时应同步验证两侧解析版本、Windows 安装生命周期和真实 updater asset，不允许依赖宽泛版本范围在构建时静默漂移。
+
 外部机制依据以 Tauri updater 文档为准；TauTerm 自己额外的 fail-closed 发布流程属于 [PLATFORM_SECURITY.md](../modules/PLATFORM_SECURITY.md) 与 [RELEASING.md](../community/RELEASING.md)。
 
 ## 第三方 native 组件

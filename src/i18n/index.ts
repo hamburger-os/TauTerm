@@ -2,14 +2,25 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import zhCN from "./locales/zh-CN.json";
 import enUS from "./locales/en-US.json";
+import { updaterErrorTranslations } from "./updaterErrors";
 
 // 从 localStorage 读取用户语言偏好
 const savedLanguage = localStorage.getItem("tauterm-language") || "zh-CN";
 
 i18n.use(initReactI18next).init({
   resources: {
-    "zh-CN": { translation: zhCN },
-    "en-US": { translation: enUS },
+    "zh-CN": {
+      translation: {
+        ...zhCN,
+        updaterError: updaterErrorTranslations["zh-CN"],
+      },
+    },
+    "en-US": {
+      translation: {
+        ...enUS,
+        updaterError: updaterErrorTranslations["en-US"],
+      },
+    },
   },
   lng: savedLanguage,
   fallbackLng: "zh-CN",
