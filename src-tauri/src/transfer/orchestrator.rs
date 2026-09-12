@@ -2,7 +2,7 @@
 //!
 //! 所有策略遵守同一启动契约：validate/setup → reserve/register task → emit started
 //! → return TransferStartAck。实际传输始终在后台任务中执行，终态只通过
-//! `file-transfer:finished` 表达；因此前端不会再因 Inline/SideChannel 的 invoke
+//! `file-transfer:finished` 表达；因此前端不会再因 Inline/Auxiliary 的 invoke
 //! 返回时机不同而维护第二套状态机。
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -100,7 +100,7 @@ pub fn create_orchestrator(
             pt: protocol_type.clone(),
         }))
     } else if protocol_type.is_auxiliary_transfer() {
-        Ok(Box::new(SideChannelTransferOrchestrator {
+        Ok(Box::new(AuxiliaryTransferOrchestrator {
             pt: protocol_type.clone(),
         }))
     } else if protocol_type.is_separate_connection() {
@@ -110,7 +110,7 @@ pub fn create_orchestrator(
         ))
     } else {
         // TransferProtocolType 是开放集合；未声明执行能力的标识必须显式拒绝，
-        // 绝不静默回退到 SideChannel。
+        // 绝不静默回退到 Auxiliary。
         Err(format!("不支持的传输协议: '{}'", protocol_type))
     }
 }
@@ -492,16 +492,16 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SideChannelTransferOrchestrator
+// AuxiliaryTransferOrchestrator
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// SSH SFTP 等侧通道协议。
-pub struct SideChannelTransferOrchestrator {
+pub struct AuxiliaryTransferOrchestrator {
     pt: TransferProtocolType,
 }
 
 #[async_trait]
-impl TransferOrchestrator for SideChannelTransferOrchestrator {
+impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
     fn protocol(&self) -> &str {
         self.pt.as_str()
     }

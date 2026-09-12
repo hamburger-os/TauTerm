@@ -1,6 +1,6 @@
 //! 文件传输模块
 //!
-//! 多策略传输架构：Inline / SideChannel / SeparateConnection
+//! 多策略传输架构：Inline / Auxiliary / SeparateConnection
 //!
 //! ## 模块结构
 //!
@@ -13,8 +13,8 @@
 //! - `zmodem` — ZModem 协议实现（帧编码、滑动窗口、断点续传）
 //! - `serial_transfer` — SerialFileTransfer 适配器：串口 TransferProtocol → 通用 FileTransfer
 //! - `sftp_transfer` — SftpFileTransfer 适配器：ssh_file_service 自由函数 → FileTransfer
-//! - `orchestrator` — 传输策略的唯一解析与生命周期编排入口（Inline / SideChannel）
-//! - `panic_guard` — RAII 守卫确保 SideChannel 传输 panic 时清理会话状态
+//! - `orchestrator` — 传输策略的唯一解析与生命周期编排入口（Inline / Auxiliary）
+//! - `panic_guard` — RAII 守卫确保 Auxiliary 传输 panic 时清理会话状态
 //! - `scheduler` — Session 级传输准入、任务身份与取消信号的单一所有者
 
 pub mod crc;

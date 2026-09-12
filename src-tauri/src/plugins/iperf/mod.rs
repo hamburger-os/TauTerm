@@ -1,7 +1,7 @@
 //! iperf 网络测速插件
 //!
 //! 同时支持 iperf2（自研协议实现）与 iperf3（riperf3 crate，wire-compatible）。
-//! 采用 SideChannel 模式（对齐 TFTP），会话为容器模式（无终端 I/O 循环）。
+//! 采用容器 Session + typed runtime registry，不创建终端 DataPlane。
 //!
 //! 一个 iperf Session 同时承担客户端和服务端角色：
 //! - 客户端：用户配置目标主机，发起瞬时测速任务（配置 → 运行 → 出结果 → 结束）
@@ -257,10 +257,10 @@ pub struct IperfStatus {
 
 // ── IperfRuntime ─────────────────────────────────────
 
-/// iperf 侧通道资源
+/// iperf 类型化运行时资源
 ///
 /// 持有服务端监听线程、动态参数与最近一次测试汇总。
-/// 通过 `ProtocolConnection::runtime` 传递给 `SessionStore`。
+/// SessionStore 只持有 SessionService；协议命令从插件 typed registry 获取本 runtime。
 pub struct IperfRuntime {
     /// Session 配置（不可变）
     pub config: IperfConfig,

@@ -1,8 +1,7 @@
 //! SFTP 文件传输适配器
 //!
 //! 将 `ssh_file_service.rs` 中的 SFTP 自由函数适配到统一的 `FileTransfer` trait。
-//! 通过 `explicit SSH file-transfer capability` 创建，消除 commands.rs 中的
-//! `downcast_ref::<SshRuntime>()` 类型不安全转换。
+//! 由 SSH adapter 直接构造为显式 FileTransfer capability；传输层不恢复或解析协议 runtime 类型。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,7 +20,7 @@ use crate::transfer::types::{BatchFileResult, FileInfo};
 
 /// SFTP 文件传输处理器
 ///
-/// 从 SSH 侧通道创建，复用现有的 SSH session 和缓存的 SFTP 子系统。
+/// 由 SSH adapter 直接注入现有 SSH session 和缓存的 SFTP 子系统。
 /// 传输操作与终端 I/O 并行执行，不阻塞 shell 交互。
 pub struct SftpFileTransfer {
     session: Arc<russh::client::Handle<crate::plugins::ssh::handler::SshHandler>>,

@@ -189,6 +189,14 @@ impl Drop for ActiveSessionHandle {
             );
             std::thread::spawn(move || bridge.shutdown());
         }
+        if let Some(attachment) = self.attachment.take() {
+            attachment.on_detached(&self.id);
+        }
+        if let Some(service) = self.service.take() {
+            std::thread::spawn(move || service.shutdown());
+        }
+        self.file_transfer = None;
+        self.channel_factory = None;
         self.transfer_scheduler.cancel_for_shutdown();
         if let Some(flag) = &self.stats_cancel_flag {
             flag.store(true, Ordering::SeqCst);
@@ -358,12 +366,14 @@ impl SessionStore {
             if uuid::Uuid::parse_str(raw).is_err() {
                 return Err(format!("无效的 session_id 格式: {}", raw));
             }
-            if self
-                .sessions
-                .get(raw)
-                .is_some_and(|h| h.state == SessionState::Disconnected)
-            {
-                self.sessions.remove(raw);
+            match self.sessions.get(raw).map(|handle| handle.state.clone()) {
+                Some(SessionState::Disconnected) => {
+                    self.sessions.remove(raw);
+                }
+                Some(_) => {
+                    return Err(format!("会话 {} 已存在且未断开，拒绝覆盖活动运行时", raw));
+                }
+                None => {}
             }
         }
         self.purge_zombies();
@@ -435,9 +445,7 @@ impl SessionStore {
             sub_connections: Vec::new(),
             next_child_index: 0,
         };
-        if let Some(old) = self.sessions.remove(&id) {
-            drop(old);
-        }
+        debug_assert!(!self.sessions.contains_key(&id));
         self.tab_order.retain(|tid| tid != &id);
         self.sessions.insert(id.clone(), handle);
         self.tab_order.push(id.clone());
@@ -502,12 +510,14 @@ impl SessionStore {
             .filter(|h| h.state == SessionState::Disconnected)
             .map(|h| h.next_child_index)
             .unwrap_or(0);
-        if self
-            .sessions
-            .get(&id)
-            .is_some_and(|h| h.state == SessionState::Disconnected)
-        {
-            self.sessions.remove(&id);
+        match self.sessions.get(&id).map(|handle| handle.state.clone()) {
+            Some(SessionState::Disconnected) => {
+                self.sessions.remove(&id);
+            }
+            Some(_) => {
+                return Err(format!("会话 {} 已存在且未断开，拒绝覆盖活动运行时", id));
+            }
+            None => {}
         }
         self.purge_zombies();
         if self.sessions.len() >= self.max_active_root_sessions {
@@ -1242,7 +1252,7 @@ impl SessionStore {
             .reserve_inline(transfer_id, cancel_tx)
     }
 
-    /// 为 SideChannel 传输预留活动槽，并返回协议循环使用的取消标志。
+    /// 为 Auxiliary 传输预留活动槽，并返回协议循环使用的取消标志。
     pub fn transfer_start(
         &mut self,
         session_id: &str,
@@ -1250,10 +1260,10 @@ impl SessionStore {
     ) -> Result<Arc<AtomicBool>, String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        handle.transfer_scheduler.reserve_side_channel(transfer_id)
+        handle.transfer_scheduler.reserve_auxiliary(transfer_id)
     }
 
-    /// 精确取消当前 Session 的活动传输，调度器内部区分 Inline / SideChannel。
+    /// 精确取消当前 Session 的活动传输，调度器内部区分 Inline / Auxiliary。
     pub fn cancel_scheduled_transfer(
         &mut self,
         session_id: &str,
@@ -1264,7 +1274,7 @@ impl SessionStore {
         handle.transfer_scheduler.cancel(transfer_id)
     }
 
-    /// 清理当前传输占用。SideChannel PanicGuard 与 Inline 归还端口共用此入口。
+    /// 清理当前传输占用。Auxiliary PanicGuard 与 Inline 归还端口共用此入口。
     pub fn transfer_done(&mut self, session_id: &str, transfer_id: Option<&str>) {
         if let Some(handle) = self.sessions.get_mut(session_id) {
             let _ = handle.transfer_scheduler.finish(transfer_id);

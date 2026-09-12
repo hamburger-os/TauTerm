@@ -1,6 +1,6 @@
 //! PanicGuard — RAII 守卫确保传输任务 panic/abort 时也能清理会话状态
 //!
-//! 用于 SideChannel 传输的 tokio::spawn 块内。即使 task panic 或被 abort，
+//! 用于 Auxiliary 传输的 tokio::spawn 块内。即使 task panic 或被 abort，
 //! Drop 实现也会调用 `transfer_done()` 释放取消标志，防止会话
 //! 永久卡在 "传输中" 状态。
 //!

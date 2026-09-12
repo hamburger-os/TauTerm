@@ -144,15 +144,15 @@ assert.match(scheduler, /pub fn active_count/);
 assert.match(scheduler, /self\.active\.len\(\) >= self\.max_active/);
 assert.match(scheduler, /存在多个传输任务，请指定 transfer_id/);
 assert.match(scheduler, /fn has_inline_transfer/);
-assert.match(scheduler, /bounded_map_model_supports_future_side_channel_concurrency/);
-assert.match(scheduler, /inline_is_exclusive_even_when_side_channel_limit_is_higher/);
-assert.match(scheduler, /side_channel_cannot_start_while_inline_owns_session_io/);
+assert.match(scheduler, /bounded_map_model_supports_future_auxiliary_concurrency/);
+assert.match(scheduler, /inline_is_exclusive_even_when_auxiliary_limit_is_higher/);
+assert.match(scheduler, /auxiliary_cannot_start_while_inline_owns_session_io/);
 
 const sessionStore = await source("src-tauri/src/kernel/session_store.rs");
 assert.match(sessionStore, /pub transfer_scheduler:\s*TransferScheduler/);
 assert.match(sessionStore, /pub transfer_tasks:\s*Vec<tokio::task::JoinHandle<\(\)>>/);
 assert.match(sessionStore, /reserve_inline_transfer/);
-assert.match(sessionStore, /reserve_side_channel/);
+assert.match(sessionStore, /reserve_auxiliary/);
 assert.match(sessionStore, /cancel_scheduled_transfer/);
 assert.match(sessionStore, /register_transfer_task/);
 assert.doesNotMatch(sessionStore, /pub active_transfer_id:|pub transfer_cancel:|pub cancel_transfer_tx:/);
@@ -173,8 +173,8 @@ assert.match(
 );
 assert.match(
   orchestrator,
-  /SideChannelTransferOrchestrator[\s\S]*PanicGuard::new[\s\S]*if start_rx\.await\.is_err\(\)[\s\S]*register_transfer_task/,
-  "SideChannel gate failure must still be guarded so Scheduler occupancy cannot leak",
+  /AuxiliaryTransferOrchestrator[\s\S]*PanicGuard::new[\s\S]*if start_rx\.await\.is_err\(\)[\s\S]*register_transfer_task/,
+  "Auxiliary gate failure must still be guarded so Scheduler occupancy cannot leak",
 );
 assert.match(
   orchestrator,

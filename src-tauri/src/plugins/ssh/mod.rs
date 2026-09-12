@@ -218,10 +218,10 @@ impl HostKeyVerifier {
     }
 }
 
-/// 供 SFTP 文件服务使用的侧通道资源。
+/// 供 SFTP 文件服务使用的类型化运行时资源。
 ///
-/// 持有 SSH 会话引用和缓存的 SFTP 对象，通过 `ProtocolConnection::runtime`
-/// 传递给 `SessionStore`。SFTP 命令通过 `downcast_ref::<SshRuntime>()` 还原。
+/// 持有 SSH 会话引用和缓存的 SFTP 对象。SessionStore 只持有协议无关生命周期
+/// capability；SSH 命令通过插件自己的 typed runtime registry 按 session_id 获取本对象。
 ///
 /// - `session` — russh Handle（内部线程安全，与 SshChannel 共享同一 Arc）
 /// - `sftp` — 缓存的 SFTP 子系统通道，避免每次操作重新协商

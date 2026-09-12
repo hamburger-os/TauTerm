@@ -9,7 +9,7 @@
 后端存在统一 `FileTransfer` 抽象和统一进度模型，传输编排器按资源占用策略组织生命周期：
 
 - **Inline**：传输通过 `SessionIo::acquire_exclusive` 获取当前 Session DataPlane 的独占 lease，例如串口 X/Y/ZModem；
-- **SideChannel**：复用 Session 的独立协议能力，例如 SSH/SFTP；
+- **Auxiliary**：复用 Session 的独立协议能力，例如 SSH/SFTP；
 - **SeparateConnection**：模型已保留，但当前通用编排器尚未实现该策略。
 
 Inline 传输不再移交真实串口或底层 handle。DataPlane Runtime 始终拥有资源，exclusive lease 只临时改变访问权：独占期间普通 Session write 被拒绝，RX 只交给传输 lease；任务结束、失败或取消后 drop lease 即恢复共享模式。X/Y/ZModem 算法只依赖 `TransferIo = Read + Write + Send`，不知道底层是 serialport 还是其它 byte stream。
@@ -18,9 +18,9 @@ Inline 传输不再移交真实串口或底层 handle。DataPlane Runtime 始终
 
 每个已启动传输分配唯一 `transfer_id`。启动命令返回 `TransferStartAck { transfer_id }`，事件仍保留 `started` 作为观察型广播。统一事件顺序是：
 
-`command accepted/ack → file-transfer:started → file-transfer:progress* → progress broadcaster drain → ExclusiveIo/SideChannel 资源释放 → Session 状态恢复 → file-transfer:finished`。
+`command accepted/ack → file-transfer:started → file-transfer:progress* → progress broadcaster drain → ExclusiveIo/Auxiliary 资源释放 → Session 状态恢复 → file-transfer:finished`。
 
-SideChannel 命令只负责接受并注册后台任务，不能等待整个 SFTP 传输完成；调用方需要等待精确 `transfer_id` 的 `finished`。`session_id` 只标识资源归属，`transfer_id` 才标识一次具体传输。
+辅助传输命令只负责接受并注册后台任务，不能等待整个 SFTP 传输完成；调用方需要等待精确 `transfer_id` 的 `finished`。`session_id` 只标识资源归属，`transfer_id` 才标识一次具体传输。
 
 前端 `TransferContext` 是 started/progress/finished 的唯一监听者，并按 Session 保存 `ManagedTransferTask` 快照；Transmission/FileTransfer 与 SSH 文件管理器只消费这个统一任务存储。
 
@@ -32,7 +32,7 @@ flowchart LR
   Context --> Command["传输命令"]
   Command --> Orchestrator["策略编排器"]
   Orchestrator --> Inline["SessionIo ExclusiveIo"]
-  Orchestrator --> Side["SideChannel"]
+  Orchestrator --> Side["Auxiliary FileTransfer"]
   Orchestrator --> Progress["UnifiedProgress"]
   Inline --> DP["DataPlane Runtime"]
   Progress --> Context
@@ -43,15 +43,15 @@ flowchart LR
 - 主字节流同一时间只有一个明确 owner；Inline 传输必须通过 DataPlane exclusive lease 协调，禁止转移真实 transport handle。
 - Exclusive lease 的读必须保留可取消的短超时语义，协议远端无响应时不能无限阻塞任务取消。
 - Session 级传输准入必须经过 `TransferScheduler`；当前默认并发上限为 1，未来并发策略只能演进 Scheduler，不能在 SessionHandle 增加平行状态字段。
-- SideChannel 不应阻塞普通终端 I/O。
+- 辅助文件传输 capability 不应阻塞普通终端 I/O。
 - 进度、取消和完成事件使用统一模型，协议实现不创造第二套后端事件协议。
 - **100% 是 payload 字节进度，不等价于完整生命周期结束。** 最后一个字节后仍可能存在 flush、metadata、协议收尾和资源释放；真正 `finished` 前 UI 显示 Finalizing。
 - SFTP 速率由真实 async I/O 层使用 `Instant` 采样并随进度事件发送；WebView 不以 IPC/React 事件到达时间反推吞吐。
 - 正常完成路径必须先排空进度广播队列，再释放传输资源并恢复 Session，最后 emit `finished`。用户收到完成事件时可以立即安全启动下一次传输。
-- SideChannel 后台 task 使用 start gate：先把 JoinHandle 注册进 SessionStore，再 emit `started`，最后打开 gate，确保会话关闭能够看到并等待已接受任务。
+- 辅助文件传输后台 task 使用 start gate：先把 JoinHandle 注册进 SessionStore，再 emit `started`，最后打开 gate，确保会话关闭能够看到并等待已接受任务。
 - `batch_complete` 只是协议批次收尾进度，不是 UI 终态；completed / failed / cancelled 只由精确匹配 `transfer_id` 的 `file-transfer:finished` 决定。
 - 批量传输中 failed 必须使最终传输失败；用户取消进入 cancelled；显式覆盖策略产生的 skipped 属于已解析用户意图。
-- 失败、取消和 panic 都必须释放 lease/side resource 并把 Session 恢复到可解释状态。
+- 失败、取消和 panic 都必须释放 lease/auxiliary resource 并把 Session 恢复到可解释状态。
 - `cancel` 优先使用精确 `transfer_id`；Session 不是任务身份。
 - 文件路径、覆盖策略、远端路径语义由对应传输实现负责，统一层只携带协议无关 `FileTransferOptions`。
 - **SFTP 覆盖事务式提交。** 上传/下载先写同目录 TauTerm 临时文件，完成 write/flush/metadata 后才提交；Replace 使用 backup + rollback，取消/失败不能删除或截断用户原有正式文件。

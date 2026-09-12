@@ -1,7 +1,7 @@
 //! Session 级传输调度器。
 //!
 //! 默认每个 Session 只允许 1 个活动传输，但内部存储采用有界任务 Map，
-//! 从数据模型上不再把“单任务”写死。SideChannel 可按策略提升有界并发；
+//! 从数据模型上不再把“单任务”写死。Auxiliary 可按策略提升有界并发；
 //! Inline 会接管 Session 主 I/O 资源，因此无论并发上限如何始终保持独占。
 
 use std::collections::HashMap;
@@ -16,7 +16,7 @@ pub const DEFAULT_MAX_ACTIVE_PER_SESSION: usize = 1;
 #[derive(Debug)]
 enum TransferCancelSignal {
     Inline(Option<oneshot::Sender<()>>),
-    SideChannel(Arc<AtomicBool>),
+    Auxiliary(Arc<AtomicBool>),
 }
 
 #[derive(Debug)]
@@ -78,7 +78,7 @@ impl TransferScheduler {
             .any(|transfer| matches!(&transfer.cancel, TransferCancelSignal::Inline(_)))
     }
 
-    fn ensure_side_channel_capacity(&self) -> Result<(), String> {
+    fn ensure_auxiliary_capacity(&self) -> Result<(), String> {
         if self.has_inline_transfer() {
             return Err("该会话正在执行独占式串口传输，暂不能启动侧通道传输".to_string());
         }
@@ -112,14 +112,14 @@ impl TransferScheduler {
         Ok(())
     }
 
-    pub fn reserve_side_channel(&mut self, transfer_id: &str) -> Result<Arc<AtomicBool>, String> {
+    pub fn reserve_auxiliary(&mut self, transfer_id: &str) -> Result<Arc<AtomicBool>, String> {
         self.ensure_new_id(transfer_id)?;
-        self.ensure_side_channel_capacity()?;
+        self.ensure_auxiliary_capacity()?;
         let flag = Arc::new(AtomicBool::new(false));
         self.active.insert(
             transfer_id.to_string(),
             ScheduledTransfer {
-                cancel: TransferCancelSignal::SideChannel(flag.clone()),
+                cancel: TransferCancelSignal::Auxiliary(flag.clone()),
             },
         );
         Ok(flag)
@@ -153,7 +153,7 @@ impl TransferScheduler {
                 let tx = tx.take().ok_or_else(|| "取消请求已经发送".to_string())?;
                 let _ = tx.send(());
             }
-            TransferCancelSignal::SideChannel(flag) => {
+            TransferCancelSignal::Auxiliary(flag) => {
                 flag.store(true, Ordering::SeqCst);
             }
         }
@@ -183,7 +183,7 @@ impl TransferScheduler {
                         let _ = tx.send(());
                     }
                 }
-                TransferCancelSignal::SideChannel(flag) => {
+                TransferCancelSignal::Auxiliary(flag) => {
                     flag.store(true, Ordering::SeqCst);
                 }
             }
@@ -222,29 +222,29 @@ mod tests {
     }
 
     #[test]
-    fn default_side_channel_policy_rejects_second_active_task() {
+    fn default_auxiliary_policy_rejects_second_active_task() {
         let mut scheduler = TransferScheduler::default();
         let flag = scheduler
-            .reserve_side_channel("transfer-a")
+            .reserve_auxiliary("transfer-a")
             .expect("reserve side channel");
-        assert!(scheduler.reserve_side_channel("transfer-b").is_err());
+        assert!(scheduler.reserve_auxiliary("transfer-b").is_err());
         scheduler.cancel(Some("transfer-a")).expect("cancel");
         assert!(flag.load(Ordering::SeqCst));
         assert!(scheduler.finish(Some("transfer-a")));
     }
 
     #[test]
-    fn bounded_map_model_supports_future_side_channel_concurrency() {
+    fn bounded_map_model_supports_future_auxiliary_concurrency() {
         let mut scheduler = TransferScheduler::with_max_active(2);
         let a = scheduler
-            .reserve_side_channel("transfer-a")
+            .reserve_auxiliary("transfer-a")
             .expect("reserve a");
         let b = scheduler
-            .reserve_side_channel("transfer-b")
+            .reserve_auxiliary("transfer-b")
             .expect("reserve b");
         assert_eq!(scheduler.active_count(), 2);
         assert_eq!(scheduler.active_id(), None);
-        assert!(scheduler.reserve_side_channel("transfer-c").is_err());
+        assert!(scheduler.reserve_auxiliary("transfer-c").is_err());
         assert!(scheduler.cancel(None).is_err());
         scheduler.cancel(Some("transfer-b")).expect("cancel b");
         assert!(!a.load(Ordering::SeqCst));
@@ -255,10 +255,10 @@ mod tests {
     }
 
     #[test]
-    fn inline_is_exclusive_even_when_side_channel_limit_is_higher() {
+    fn inline_is_exclusive_even_when_auxiliary_limit_is_higher() {
         let mut scheduler = TransferScheduler::with_max_active(2);
         scheduler
-            .reserve_side_channel("side-a")
+            .reserve_auxiliary("side-a")
             .expect("reserve side channel");
         let (inline_tx, _inline_rx) = oneshot::channel();
         assert!(scheduler.reserve_inline("inline-a", inline_tx).is_err());
@@ -266,13 +266,13 @@ mod tests {
     }
 
     #[test]
-    fn side_channel_cannot_start_while_inline_owns_session_io() {
+    fn auxiliary_cannot_start_while_inline_owns_session_io() {
         let mut scheduler = TransferScheduler::with_max_active(2);
         let (inline_tx, _inline_rx) = oneshot::channel();
         scheduler
             .reserve_inline("inline-a", inline_tx)
             .expect("reserve inline");
-        assert!(scheduler.reserve_side_channel("side-a").is_err());
+        assert!(scheduler.reserve_auxiliary("side-a").is_err());
         let (second_inline_tx, _second_inline_rx) = oneshot::channel();
         assert!(scheduler
             .reserve_inline("inline-b", second_inline_tx)
