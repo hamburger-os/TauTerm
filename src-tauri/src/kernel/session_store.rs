@@ -284,24 +284,13 @@ pub struct SessionCreateOptions {
 }
 
 /// 容器会话创建参数。
+#[derive(Default)]
 pub struct ContainerSessionRuntime {
     pub service: Option<Arc<dyn SessionService>>,
     pub file_transfer: Option<Arc<dyn FileTransfer>>,
     pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
     pub io: Option<Arc<SessionIo>>,
     pub attachment: Option<Arc<dyn SessionAttach>>,
-}
-
-impl Default for ContainerSessionRuntime {
-    fn default() -> Self {
-        Self {
-            service: None,
-            file_transfer: None,
-            channel_factory: None,
-            io: None,
-            attachment: None,
-        }
-    }
 }
 
 pub struct ContainerSessionCreateOptions {

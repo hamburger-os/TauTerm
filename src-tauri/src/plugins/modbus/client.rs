@@ -605,7 +605,7 @@ fn receive_tcp(
                 let frames = framer
                     .push(&data)
                     .map_err(|error| ReceiveError::Malformed(error, data.clone()))?;
-                for frame in frames {
+                if let Some(frame) = frames.into_iter().next() {
                     let (tid, unit, pdu) = codec::tcp::decode(&frame)
                         .map_err(|error| ReceiveError::Malformed(error, frame.clone()))?;
                     if tid != transaction_id {
@@ -773,9 +773,11 @@ mod tests {
 
     #[test]
     fn read_timeout_retries_to_configured_budget() {
-        let mut config = ModbusConfig::default();
-        config.mode = ModbusMode::Tcp;
-        config.read_retries = 1;
+        let config = ModbusConfig {
+            mode: ModbusMode::Tcp,
+            read_retries: 1,
+            ..Default::default()
+        };
         let (client, writes) = client_with(config);
         let result = client.execute(ModbusRequest::ReadRegisters {
             function: 0x03,
@@ -790,10 +792,12 @@ mod tests {
 
     #[test]
     fn write_timeout_is_not_retried_by_default_and_outcome_is_unknown() {
-        let mut config = ModbusConfig::default();
-        config.mode = ModbusMode::Tcp;
-        config.read_retries = 3;
-        config.retry_writes = false;
+        let config = ModbusConfig {
+            mode: ModbusMode::Tcp,
+            read_retries: 3,
+            retry_writes: false,
+            ..Default::default()
+        };
         let (client, writes) = client_with(config);
         let result = client.execute(ModbusRequest::WriteSingle {
             function: 0x06,
@@ -809,9 +813,11 @@ mod tests {
 
     #[test]
     fn serial_unit_zero_write_is_broadcast_and_read_is_rejected() {
-        let mut config = ModbusConfig::default();
-        config.mode = ModbusMode::Rtu;
-        config.unit_id = 0;
+        let config = ModbusConfig {
+            mode: ModbusMode::Rtu,
+            unit_id: 0,
+            ..Default::default()
+        };
         let (client, writes) = client_with(config);
         let write = client.execute(ModbusRequest::WriteSingle {
             function: 0x06,

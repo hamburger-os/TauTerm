@@ -20,10 +20,14 @@ pub enum ValueType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ByteOrder {
-    ABCD,
-    BADC,
-    CDAB,
-    DCBA,
+    #[serde(rename = "ABCD")]
+    Abcd,
+    #[serde(rename = "BADC")]
+    Badc,
+    #[serde(rename = "CDAB")]
+    Cdab,
+    #[serde(rename = "DCBA")]
+    Dcba,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,7 +45,7 @@ pub struct ValueFormat {
     pub bit: Option<u8>,
 }
 fn default_order() -> ByteOrder {
-    ByteOrder::ABCD
+    ByteOrder::Abcd
 }
 fn default_scale() -> f64 {
     1.0
@@ -137,10 +141,10 @@ fn order4(bytes: &[u8], order: ByteOrder) -> Result<[u8; 4], String> {
         .and_then(|v| v.try_into().ok())
         .ok_or("requires 4 bytes")?;
     Ok(match order {
-        ByteOrder::ABCD => b,
-        ByteOrder::BADC => [b[1], b[0], b[3], b[2]],
-        ByteOrder::CDAB => [b[2], b[3], b[0], b[1]],
-        ByteOrder::DCBA => [b[3], b[2], b[1], b[0]],
+        ByteOrder::Abcd => b,
+        ByteOrder::Badc => [b[1], b[0], b[3], b[2]],
+        ByteOrder::Cdab => [b[2], b[3], b[0], b[1]],
+        ByteOrder::Dcba => [b[3], b[2], b[1], b[0]],
     })
 }
 fn order8(bytes: &[u8], order: ByteOrder) -> Result<[u8; 8], String> {
@@ -149,10 +153,10 @@ fn order8(bytes: &[u8], order: ByteOrder) -> Result<[u8; 8], String> {
         .and_then(|v| v.try_into().ok())
         .ok_or("requires 8 bytes")?;
     Ok(match order {
-        ByteOrder::ABCD => b,
-        ByteOrder::BADC => [b[1], b[0], b[3], b[2], b[5], b[4], b[7], b[6]],
-        ByteOrder::CDAB => [b[6], b[7], b[4], b[5], b[2], b[3], b[0], b[1]],
-        ByteOrder::DCBA => [b[7], b[6], b[5], b[4], b[3], b[2], b[1], b[0]],
+        ByteOrder::Abcd => b,
+        ByteOrder::Badc => [b[1], b[0], b[3], b[2], b[5], b[4], b[7], b[6]],
+        ByteOrder::Cdab => [b[6], b[7], b[4], b[5], b[2], b[3], b[0], b[1]],
+        ByteOrder::Dcba => [b[7], b[6], b[5], b[4], b[3], b[2], b[1], b[0]],
     })
 }
 
@@ -163,7 +167,7 @@ mod tests {
     fn byte_orders_are_explicit_application_conventions() {
         let f = ValueFormat {
             value_type: ValueType::UInt32,
-            byte_order: ByteOrder::CDAB,
+            byte_order: ByteOrder::Cdab,
             scale: 1.0,
             offset: 0.0,
             unit: String::new(),

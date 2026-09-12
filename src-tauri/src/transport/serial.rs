@@ -53,52 +53,6 @@ fn default_read_timeout_ms() -> u64 {
     20
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct SerialEndpoint {
-    pub port_name: String,
-    pub product: Option<String>,
-    pub manufacturer: Option<String>,
-    pub serial_number: Option<String>,
-    pub vid: Option<u16>,
-    pub pid: Option<u16>,
-    pub kind: &'static str,
-}
-
-pub fn discover_serial_endpoints() -> Result<Vec<SerialEndpoint>, TransportError> {
-    let ports = serialport::available_ports().map_err(|error| {
-        TransportError::new(TransportErrorKind::Io, "serial_discover", error.to_string())
-    })?;
-    Ok(ports
-        .into_iter()
-        .map(|port| {
-            let (kind, product, manufacturer, serial_number, vid, pid) = match port.port_type {
-                serialport::SerialPortType::UsbPort(info) => (
-                    "usb",
-                    info.product,
-                    info.manufacturer,
-                    info.serial_number,
-                    Some(info.vid),
-                    Some(info.pid),
-                ),
-                serialport::SerialPortType::BluetoothPort => {
-                    ("bluetooth", None, None, None, None, None)
-                }
-                serialport::SerialPortType::PciPort => ("pci", None, None, None, None, None),
-                serialport::SerialPortType::Unknown => ("unknown", None, None, None, None, None),
-            };
-            SerialEndpoint {
-                port_name: port.port_name,
-                product,
-                manufacturer,
-                serial_number,
-                vid,
-                pid,
-                kind,
-            }
-        })
-        .collect())
-}
-
 pub fn open_serial(
     endpoint: &str,
     config: &SerialTransportConfig,
@@ -250,8 +204,10 @@ mod tests {
 
     #[test]
     fn invalid_serial_config_is_rejected_before_open() {
-        let mut config = SerialTransportConfig::default();
-        config.data_bits = 9;
+        let config = SerialTransportConfig {
+            data_bits: 9,
+            ..Default::default()
+        };
         assert_eq!(
             validate_config(&config).unwrap_err().kind,
             TransportErrorKind::InvalidConfiguration

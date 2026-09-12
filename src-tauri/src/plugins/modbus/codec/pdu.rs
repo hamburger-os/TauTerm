@@ -586,11 +586,12 @@ fn validate_fifo_response(data: &[u8]) -> Result<(), String> {
 }
 
 fn decode_file_reads(data: &[u8]) -> Result<Vec<FileRecordRead>, String> {
-    if data.is_empty() || data[0] as usize != data.len() - 1 || (data.len() - 1) % 7 != 0 {
+    if data.is_empty() || data[0] as usize != data.len() - 1 || !(data.len() - 1).is_multiple_of(7)
+    {
         return Err("invalid read-file byte count".into());
     }
     let mut out = Vec::new();
-    for chunk in data[1..].chunks_exact(7) {
+    for chunk in data[1..].as_chunks::<7>().0 {
         if chunk[0] != 0x06 {
             return Err("file reference type must be 0x06".into());
         }
@@ -641,7 +642,9 @@ fn words(bytes: &[u8]) -> Result<Vec<u16>, String> {
         return Err("register bytes must be even".into());
     }
     Ok(bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
         .collect())
 }

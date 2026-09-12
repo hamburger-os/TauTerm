@@ -358,7 +358,7 @@ impl ProtocolAdapter for TftpAdapter {
             service: Some(runtime.clone()),
             file_transfer: None,
             channel_factory: None,
-            on_attached: Some(Arc::new(RuntimeAttach { runtime: runtime })),
+            on_attached: Some(Arc::new(RuntimeAttach { runtime })),
             teardown_delay: Duration::from_millis(100),
         })
     }

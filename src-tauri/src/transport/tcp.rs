@@ -182,12 +182,6 @@ impl TcpListenerTransport {
             Err(error) => Err(TransportError::io("tcp_accept", error)),
         }
     }
-
-    pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        self.listener
-            .local_addr()
-            .map_err(|error| TransportError::io("tcp_listener_local_addr", error))
-    }
 }
 
 #[cfg(test)]

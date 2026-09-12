@@ -174,11 +174,4 @@ pub trait ProtocolAdapter: Send + Sync {
     fn teardown_delay(&self) -> std::time::Duration {
         std::time::Duration::ZERO
     }
-
-    fn create_file_transfer(
-        &self,
-        connection: &ProtocolConnection,
-    ) -> Option<Arc<dyn FileTransfer>> {
-        connection.file_transfer.clone()
-    }
 }

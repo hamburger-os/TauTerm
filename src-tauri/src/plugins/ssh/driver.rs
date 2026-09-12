@@ -64,7 +64,7 @@ impl AsyncByteStream for SshDriver {
                 Some(russh::ChannelMsg::Data { data }) => {
                     return Ok(self.deliver_chunk(data.as_ref(), buf));
                 }
-                Some(russh::ChannelMsg::ExtendedData { data, ext }) if ext == 1 => {
+                Some(russh::ChannelMsg::ExtendedData { data, ext: 1 }) => {
                     return Ok(self.deliver_chunk(data.as_ref(), buf));
                 }
                 Some(russh::ChannelMsg::ExtendedData { .. }) => continue,

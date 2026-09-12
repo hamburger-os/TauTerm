@@ -24,11 +24,11 @@ pub fn decode(frame: &[u8]) -> Result<(u8, Vec<u8>), String> {
         return Err("invalid ASCII frame delimiters".into());
     }
     let hex = &frame[1..frame.len() - 2];
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err("ASCII frame contains odd hex digit count".into());
     }
     let mut raw = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.chunks_exact(2) {
+    for pair in hex.as_chunks::<2>().0 {
         raw.push((hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?);
     }
     if raw.len() < 3 {

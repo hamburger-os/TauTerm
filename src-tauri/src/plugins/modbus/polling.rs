@@ -71,9 +71,14 @@ impl WatchScheduler {
                 ));
             }
             match &row.request {
-                ModbusRequest::ReadBits { function, .. } if matches!(function, 0x01 | 0x02) => {}
-                ModbusRequest::ReadRegisters { function, .. }
-                    if matches!(function, 0x03 | 0x04) => {}
+                ModbusRequest::ReadBits {
+                    function: 0x01 | 0x02,
+                    ..
+                } => {}
+                ModbusRequest::ReadRegisters {
+                    function: 0x03 | 0x04,
+                    ..
+                } => {}
                 _ => {
                     return Err(format!(
                         "watch row {} must use read function 01/02/03/04",

@@ -1,11 +1,10 @@
 //! Telnet transport driver
 //!
 //! 包装 `telnet` crate 的 `Telnet`（RFC 854 协议层：IAC 解析、0xFF 转义、
-//! 协商/子协商收发）实现内核 `Channel` trait。
+//! 协商/子协商收发）实现 transport `BlockingByteStream`。
 //! 本模块只负责**协商策略**与**回显状态跟踪**，IAC 状态机由 `telnet` crate 处理。
 
 use std::io::{ErrorKind, Read, Write};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use telnet::{Action, Event, Telnet, TelnetOption};
@@ -24,9 +23,6 @@ pub struct TelnetDriver {
     probe: std::net::TcpStream,
     /// 回显状态变化回调（由适配器注入；内部捕获 AppHandle 与 session_id 槽）
     on_echo_change: Box<dyn Fn(bool) + Send>,
-    /// session_id 槽：I/O 循环启动时经 `on_session_started` 注入，
-    /// 回调据此携带正确的会话标识（槽未注入时仅记录日志，不丢关键状态）。
-    session_id_slot: Arc<Mutex<Option<String>>>,
     /// 剥离 IAC 后的净载荷缓冲（残留数据跨 read() 调用保留，绝不丢弃）
     clean_buffer: Vec<u8>,
     /// 当前回显协商状态：false = 服务器回显，true = 客户端本地回显
@@ -39,19 +35,18 @@ impl TelnetDriver {
         telnet: Telnet,
         probe: std::net::TcpStream,
         on_echo_change: Box<dyn Fn(bool) + Send>,
-        session_id_slot: Arc<Mutex<Option<String>>>,
     ) -> Self {
         Self {
             telnet,
             probe,
             on_echo_change,
-            session_id_slot,
             clean_buffer: Vec::with_capacity(16384),
             local_echo: false,
             connected: true,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn is_connected(&self) -> bool {
         self.connected
     }

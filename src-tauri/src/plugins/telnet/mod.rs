@@ -160,9 +160,8 @@ impl ProtocolAdapter for TelnetAdapter {
         let config = Self::parse_params(params)?;
         let (telnet, probe) = Self::open_connection(&config)?;
 
-        // 回显状态 → 前端事件。session_id 由 I/O 循环启动时经
-        // `Channel::on_session_started` 注入槽中；I/O 循环先于任何协商
-        // 事件调用该钩子，故正常流程下事件必带正确标识、永不丢失。
+        // 回显状态 → 前端事件。session_id 由 SessionAttach 在会话注册完成后注入；
+        // 回调和 attach hook 共享同一个 slot。
         // 槽为空（仅测试等非 I/O 循环路径）时记录日志而不 emit。
         let session_id_slot = Arc::new(Mutex::new(None));
         // setup 在命令处理器就绪前注入 AppHandle，此处缺失仅可能是
@@ -195,7 +194,7 @@ impl ProtocolAdapter for TelnetAdapter {
                 ),
             }
         });
-        let driver = TelnetDriver::new(telnet, probe, on_echo_change, session_id_slot.clone());
+        let driver = TelnetDriver::new(telnet, probe, on_echo_change);
 
         Ok(ProtocolConnection {
             data_plane: Some(DataPlaneRuntime::spawn(Box::new(driver))),
@@ -267,7 +266,7 @@ mod tests {
         let on_echo_change = Box::new(move |local_echo: bool| {
             let _ = events_tx.send(local_echo);
         });
-        let channel = TelnetDriver::new(telnet, probe, on_echo_change, Arc::new(Mutex::new(None)));
+        let channel = TelnetDriver::new(telnet, probe, on_echo_change);
         let peer = peer_handle.join().expect("对端线程失败");
         (channel, peer, events_rx)
     }

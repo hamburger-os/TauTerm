@@ -70,10 +70,8 @@ impl TcpFramer {
         Ok(frames)
     }
 
-    pub fn clear(&mut self) {
-        self.buffer.clear();
-    }
-    pub fn buffered_len(&self) -> usize {
+    #[cfg(test)]
+    fn buffered_len(&self) -> usize {
         self.buffer.len()
     }
 }
