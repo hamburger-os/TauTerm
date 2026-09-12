@@ -50,6 +50,7 @@ pub struct DataPlaneHandle {
     rx_bytes: Arc<AtomicU64>,
     connected: Arc<AtomicBool>,
     exclusive_active: Arc<AtomicBool>,
+    async_command_order: Arc<tokio::sync::Mutex<()>>,
     terminal_control: bool,
 }
 
@@ -76,12 +77,8 @@ impl Drop for DataPlaneSubscription {
 }
 
 impl DataPlaneHandle {
-    /// Queue ordinary shared-mode output and return once the transport actor owns the bytes.
-    ///
-    /// Interactive frontend sends must never synchronously wait for the physical driver: Tauri's
-    /// synchronous command handlers run on the application main thread. Driver failures are
-    /// reported by the actor through `DataPlaneEvent::Closed`; queue saturation, exclusive leases,
-    /// and a dead actor are still rejected immediately here.
+    /// Confirmed synchronous write for worker/internal callers. Tauri/WebView commands must use the
+    /// async counterpart so waiting for the actor/driver never blocks the application main thread.
     pub fn write(&self, data: &[u8]) -> Result<(), TransportError> {
         if self.exclusive_active.load(Ordering::Acquire) {
             return Err(TransportError::busy(
@@ -89,17 +86,47 @@ impl DataPlaneHandle {
                 "data plane is exclusively owned",
             ));
         }
-        self.try_send_command(
-            RuntimeCommand::Write {
+        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+        self.command_tx
+            .send(RuntimeCommand::Write {
                 owner: None,
                 data: data.to_vec(),
-                ack: None,
-            },
-            "write",
-        )
+                ack: CommandAck::Blocking(ack_tx),
+            })
+            .map_err(|_| runtime_closed("write"))?;
+        ack_rx
+            .recv()
+            .map_err(|_| runtime_closed_before_ack("write"))?
     }
 
-    fn try_send_command(
+    /// Confirmed write for async Tauri/frontend paths. The ordering lock is held only while the
+    /// command is enqueued; the actor acknowledgement is awaited after releasing it, so command
+    /// producers remain concurrent while physical writes preserve actor queue order.
+    pub async fn write_async(&self, data: Vec<u8>) -> Result<(), TransportError> {
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        {
+            let _order = self.async_command_order.lock().await;
+            if self.exclusive_active.load(Ordering::Acquire) {
+                return Err(TransportError::busy(
+                    "write",
+                    "data plane is exclusively owned",
+                ));
+            }
+            self.try_send_async_command(
+                RuntimeCommand::Write {
+                    owner: None,
+                    data,
+                    ack: CommandAck::Async(ack_tx),
+                },
+                "write",
+            )?;
+        }
+        ack_rx
+            .await
+            .map_err(|_| runtime_closed_before_ack("write"))?
+    }
+
+    fn try_send_async_command(
         &self,
         command: RuntimeCommand,
         operation: &'static str,
@@ -110,24 +137,19 @@ impl DataPlaneHandle {
                 operation,
                 "transport command queue is full",
             )),
-            Err(mpsc::TrySendError::Disconnected(_)) => Err(TransportError::new(
-                TransportErrorKind::RemoteClosed,
-                operation,
-                "transport runtime is closed",
-            )),
+            Err(mpsc::TrySendError::Disconnected(_)) => Err(runtime_closed(operation)),
         }
     }
 
     pub fn subscribe(&self) -> Result<DataPlaneSubscription, TransportError> {
         let id = next_subscription_id();
         let (event_tx, event_rx) = mpsc::channel();
-        self.try_send_command(
-            RuntimeCommand::Subscribe {
+        self.command_tx
+            .send(RuntimeCommand::Subscribe {
                 id,
                 subscriber: event_tx,
-            },
-            "subscribe",
-        )?;
+            })
+            .map_err(|_| runtime_closed("subscribe"))?;
         Ok(DataPlaneSubscription {
             id,
             command_tx: self.command_tx.clone(),
@@ -164,11 +186,7 @@ impl DataPlaneHandle {
             .is_err()
         {
             self.exclusive_active.store(false, Ordering::Release);
-            return Err(TransportError::new(
-                TransportErrorKind::RemoteClosed,
-                "acquire_exclusive",
-                "transport runtime is closed",
-            ));
+            return Err(runtime_closed("acquire_exclusive"));
         }
         match ack_rx.recv() {
             Ok(Ok(())) => Ok(ExclusiveIo {
@@ -185,18 +203,11 @@ impl DataPlaneHandle {
             }
             Err(_) => {
                 self.exclusive_active.store(false, Ordering::Release);
-                Err(TransportError::new(
-                    TransportErrorKind::RemoteClosed,
-                    "acquire_exclusive",
-                    "transport runtime closed before granting lease",
-                ))
+                Err(runtime_closed_before_ack("acquire_exclusive"))
             }
         }
     }
 
-    /// Queue terminal resize without waiting for the remote implementation. Unsupported transports
-    /// fail before enqueue; driver failures close the DataPlane and therefore reach the Session as a
-    /// structured disconnect instead of blocking a high-frequency UI resize callback.
     pub fn resize_terminal(&self, cols: u32, rows: u32) -> Result<(), TransportError> {
         if !self.terminal_control {
             return Err(TransportError::unsupported(
@@ -204,10 +215,45 @@ impl DataPlaneHandle {
                 "session has no terminal-control capability",
             ));
         }
-        self.try_send_command(
-            RuntimeCommand::ResizeTerminal { cols, rows },
-            "resize_terminal",
-        )
+        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+        self.command_tx
+            .send(RuntimeCommand::ResizeTerminal {
+                cols,
+                rows,
+                ack: CommandAck::Blocking(ack_tx),
+            })
+            .map_err(|_| runtime_closed("resize_terminal"))?;
+        ack_rx
+            .recv()
+            .map_err(|_| runtime_closed_before_ack("resize_terminal"))?
+    }
+
+    pub async fn resize_terminal_async(
+        &self,
+        cols: u32,
+        rows: u32,
+    ) -> Result<(), TransportError> {
+        if !self.terminal_control {
+            return Err(TransportError::unsupported(
+                "resize_terminal",
+                "session has no terminal-control capability",
+            ));
+        }
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        {
+            let _order = self.async_command_order.lock().await;
+            self.try_send_async_command(
+                RuntimeCommand::ResizeTerminal {
+                    cols,
+                    rows,
+                    ack: CommandAck::Async(ack_tx),
+                },
+                "resize_terminal",
+            )?;
+        }
+        ack_rx
+            .await
+            .map_err(|_| runtime_closed_before_ack("resize_terminal"))?
     }
 
     pub fn shutdown(&self) -> Result<(), TransportError> {
@@ -239,6 +285,22 @@ impl DataPlaneHandle {
     }
 }
 
+fn runtime_closed(operation: &'static str) -> TransportError {
+    TransportError::new(
+        TransportErrorKind::RemoteClosed,
+        operation,
+        "transport runtime is closed",
+    )
+}
+
+fn runtime_closed_before_ack(operation: &'static str) -> TransportError {
+    TransportError::new(
+        TransportErrorKind::RemoteClosed,
+        operation,
+        "transport runtime closed before acknowledging command",
+    )
+}
+
 pub struct DataPlaneRuntime {
     pub handle: DataPlaneHandle,
     thread: Option<JoinHandle<()>>,
@@ -258,6 +320,7 @@ impl DataPlaneRuntime {
             rx_bytes: rx_bytes.clone(),
             connected: connected.clone(),
             exclusive_active: exclusive_active.clone(),
+            async_command_order: Arc::new(tokio::sync::Mutex::new(())),
             terminal_control,
         };
         let thread = std::thread::spawn(move || {
@@ -318,13 +381,7 @@ impl ExclusiveIo {
             .send(RuntimeCommand::ReleaseExclusive {
                 owner_id: self.owner_id,
             })
-            .map_err(|_| {
-                TransportError::new(
-                    TransportErrorKind::RemoteClosed,
-                    "release_exclusive",
-                    "transport runtime is closed",
-                )
-            });
+            .map_err(|_| runtime_closed("release_exclusive"));
         self.exclusive_active.store(false, Ordering::Release);
         result
     }
@@ -367,7 +424,7 @@ impl Write for ExclusiveIo {
             .send(RuntimeCommand::Write {
                 owner: Some(self.owner_id),
                 data: buf.to_vec(),
-                ack: Some(ack_tx),
+                ack: CommandAck::Blocking(ack_tx),
             })
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed"))?;
         ack_rx
@@ -388,11 +445,29 @@ impl Drop for ExclusiveIo {
     }
 }
 
+enum CommandAck {
+    Blocking(mpsc::SyncSender<Result<(), TransportError>>),
+    Async(tokio::sync::oneshot::Sender<Result<(), TransportError>>),
+}
+
+impl CommandAck {
+    fn send(self, result: Result<(), TransportError>) {
+        match self {
+            Self::Blocking(sender) => {
+                let _ = sender.send(result);
+            }
+            Self::Async(sender) => {
+                let _ = sender.send(result);
+            }
+        }
+    }
+}
+
 enum RuntimeCommand {
     Write {
         owner: Option<u64>,
         data: Vec<u8>,
-        ack: Option<mpsc::SyncSender<Result<(), TransportError>>>,
+        ack: CommandAck,
     },
     Subscribe {
         id: u64,
@@ -414,6 +489,7 @@ enum RuntimeCommand {
     ResizeTerminal {
         cols: u32,
         rows: u32,
+        ack: CommandAck,
     },
     Shutdown {
         ack: mpsc::SyncSender<Result<(), TransportError>>,
@@ -466,6 +542,7 @@ fn run_blocking_runtime(
     let mut exclusive: Option<ExclusiveState> = None;
     let mut read_buf = [0u8; READ_BUFFER_SIZE];
     let mut closing = false;
+    let mut driver_shutdown = false;
 
     while !closing {
         loop {
@@ -483,6 +560,7 @@ fn run_blocking_runtime(
                         CommandOutcome::Continue => {}
                         CommandOutcome::Shutdown => {
                             closing = true;
+                            driver_shutdown = true;
                         }
                         CommandOutcome::Close(info) => {
                             broadcast_close(&mut subscribers, info);
@@ -558,7 +636,9 @@ fn run_blocking_runtime(
 
     exclusive_active.store(false, Ordering::Release);
     connected.store(false, Ordering::Release);
-    let _ = driver.shutdown();
+    if !driver_shutdown {
+        let _ = driver.shutdown();
+    }
 }
 
 fn handle_command(
@@ -602,9 +682,7 @@ fn handle_command(
                     )
                 })
             });
-            if let Some(ack) = ack {
-                let _ = ack.send(result);
-            }
+            ack.send(result);
             close_info.map_or(CommandOutcome::Continue, CommandOutcome::Close)
         }
         RuntimeCommand::Subscribe { id, subscriber } => {
@@ -666,14 +744,18 @@ fn handle_command(
             }
             CommandOutcome::Continue
         }
-        RuntimeCommand::ResizeTerminal { cols, rows } => match driver.resize_terminal(cols, rows) {
-            Ok(()) => CommandOutcome::Continue,
-            Err(error) => CommandOutcome::Close(TransportCloseInfo::from_driver(
-                error.kind,
-                error.to_string(),
-                driver.close_metadata(),
-            )),
-        },
+        RuntimeCommand::ResizeTerminal { cols, rows, ack } => {
+            let result = driver.resize_terminal(cols, rows);
+            let close_info = result.as_ref().err().map(|error| {
+                TransportCloseInfo::from_driver(
+                    error.kind,
+                    error.to_string(),
+                    driver.close_metadata(),
+                )
+            });
+            ack.send(result);
+            close_info.map_or(CommandOutcome::Continue, CommandOutcome::Close)
+        }
         RuntimeCommand::Shutdown { ack } => {
             let result = driver.shutdown();
             let _ = ack.send(result);
@@ -791,10 +873,6 @@ mod tests {
         lease.write_all(b"owned").unwrap();
         lease.release().unwrap();
         runtime.handle.write(b"shared").unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while writes.lock().unwrap().len() < 2 && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(1));
-        }
         assert_eq!(
             writes.lock().unwrap().as_slice(),
             &[b"owned".to_vec(), b"shared".to_vec()]
@@ -821,7 +899,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_write_returns_after_enqueue_even_while_driver_read_is_blocked() {
+    fn synchronous_write_waits_for_driver_ack_on_worker_paths() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let (gate_tx, gate_rx) = mpsc::channel();
         let runtime = DataPlaneRuntime::spawn(Box::new(GatedStream {
@@ -834,24 +912,43 @@ mod tests {
         let handle = runtime.handle.clone();
         let (result_tx, result_rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = result_tx.send(handle.write(b"queued"));
+            let _ = result_tx.send(handle.write(b"confirmed"));
         });
-        result_rx
-            .recv_timeout(Duration::from_millis(100))
-            .expect("shared write must not wait for the driver read slice")
-            .unwrap();
-
+        assert!(result_rx.recv_timeout(Duration::from_millis(50)).is_err());
         gate_tx.send(()).unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while writes.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        assert_eq!(writes.lock().unwrap().as_slice(), &[b"queued".to_vec()]);
+        result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("confirmed write should complete after actor services it")
+            .unwrap();
+        assert_eq!(writes.lock().unwrap().as_slice(), &[b"confirmed".to_vec()]);
         runtime.join();
     }
 
     #[test]
-    fn queued_shared_write_failure_is_published_as_close_event() {
+    fn async_write_awaits_ack_without_requiring_an_ambient_driver_runtime() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let runtime = DataPlaneRuntime::spawn(Box::new(MockStream {
+            reads: VecDeque::new(),
+            writes: writes.clone(),
+        }));
+        let handle = runtime.handle.clone();
+        let async_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        async_runtime.block_on(async {
+            handle.write_async(vec![1, 2, 3]).await.unwrap();
+            handle.write_async(vec![4, 5]).await.unwrap();
+        });
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            &[vec![1, 2, 3], vec![4, 5]]
+        );
+        runtime.join();
+    }
+
+    #[test]
+    fn confirmed_write_failure_is_published_as_close_event() {
         let writes = Arc::new(Mutex::new(Vec::new()));
         let (gate_tx, gate_rx) = mpsc::channel();
         let runtime = DataPlaneRuntime::spawn(Box::new(GatedStream {
@@ -860,8 +957,11 @@ mod tests {
             fail_write: true,
         }));
         let subscription = runtime.handle.subscribe().unwrap();
-        runtime.handle.write(b"fail").unwrap();
+        let handle = runtime.handle.clone();
+        let writer = std::thread::spawn(move || handle.write(b"fail"));
         gate_tx.send(()).unwrap();
+        let error = writer.join().unwrap().unwrap_err();
+        assert_eq!(error.kind, TransportErrorKind::Io);
 
         match subscription.recv_timeout(Duration::from_secs(1)).unwrap() {
             DataPlaneEvent::Closed(info) => {
@@ -882,10 +982,6 @@ mod tests {
         }));
         for value in 0u8..32 {
             runtime.handle.write(&[value]).unwrap();
-        }
-        let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while writes.lock().unwrap().len() < 32 && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(1));
         }
         assert_eq!(writes.lock().unwrap().len(), 32);
         runtime.join();
