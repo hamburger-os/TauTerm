@@ -16,6 +16,8 @@ Saved Session Library 是独立的版本化磁盘配置集合，不受活动运�
 
 Tauri command 按阻塞风险分类：纯内存/短锁读取可以同步；文件系统、进程、凭据后端、驱动/平台探测、thread join 等潜在阻塞工作必须使用 async command，并在需要时进入 blocking worker。端点发现同样是配置辅助能力，不属于 Session 生命周期；前端进入配置页时按需请求，后端不得让硬件枚举阻塞 UI。
 
+前端插件连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件。统一 `ConnectDialog` 同时用它控制确认按钮和创建入口；协议专属必填规则留在插件中，公共对话框只消费布尔结果，不增加 Modbus、TRDP 等协议分支。
+
 ## 关键生命周期
 
 ```mermaid
@@ -38,7 +40,7 @@ stateDiagram-v2
 
 - 核心只拥有可复用机制，不加入 TRDP、SSH、Modbus、串口等协议专属判断。
 - 协议连接入口最终由统一内核路由分发，避免前端入口各自实现连接生命周期。
-- UI 能力由插件 manifest 声明；SendBar、自定义视图等不由页面临时猜测。
+- UI 能力由插件 manifest/registration 声明；SendBar、自定义视图、连接配置合法性等不由页面临时猜测。
 - 运行时对象不能被持久化为 Session 配置。
 - 所有流式 Session 都通过 `SessionIo/DataPlane` 发送、订阅和关闭，不建立协议专属第二套发送总线。
 - 需要独占主字节流的操作使用 `SessionIo::acquire_exclusive`；不转移底层 handle 所有权。
