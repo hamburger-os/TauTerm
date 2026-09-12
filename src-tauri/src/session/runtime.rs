@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::session::DisconnectInfo;
 use crate::transport::{DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, TransportError};
@@ -11,7 +12,7 @@ pub struct SessionDataPlane {
     runtime: Option<DataPlaneRuntime>,
     handle: DataPlaneHandle,
     event_thread: Option<std::thread::JoinHandle<()>>,
-    shutdown_requested: AtomicBool,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 impl SessionDataPlane {
@@ -22,8 +23,9 @@ impl SessionDataPlane {
         on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
     ) -> Result<Self, TransportError> {
         let handle = runtime.handle.clone();
-        let event_handle = handle.clone();
         let subscription = handle.subscribe()?;
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let event_shutdown_requested = shutdown_requested.clone();
         let event_thread = std::thread::Builder::new()
             .name(format!("session-data-{session_id}"))
             .spawn(move || loop {
@@ -34,12 +36,13 @@ impl SessionDataPlane {
                         break;
                     }
                     Err(_) => {
-                        // A normal requested shutdown marks the DataPlane disconnected before its
-                        // subscriber senders disappear. If the subscription disappears while the
-                        // handle still reports connected, the transport actor terminated
-                        // unexpectedly (for example because a driver panicked). Surface that as a
-                        // real disconnect instead of leaving the UI in a stale connected state.
-                        if event_handle.is_connected() {
+                        // Subscription loss is expected after an explicit owner shutdown. Any
+                        // other loss means the transport actor vanished without publishing its
+                        // normal Closed event (for example because a driver panicked). Classify
+                        // that from the owner's shutdown intent rather than from the transport's
+                        // connected flag: the runtime now clears that flag on every exit path,
+                        // including panics.
+                        if !event_shutdown_requested.load(Ordering::Acquire) {
                             on_disconnect(
                                 session_id.clone(),
                                 DisconnectInfo::io_error("transport runtime stopped unexpectedly"),
@@ -54,7 +57,7 @@ impl SessionDataPlane {
             runtime: Some(runtime),
             handle,
             event_thread: Some(event_thread),
-            shutdown_requested: AtomicBool::new(false),
+            shutdown_requested,
         })
     }
 
@@ -139,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn unexpected_transport_actor_exit_surfaces_disconnect() {
+    fn unexpected_transport_actor_exit_surfaces_disconnect_and_clears_connected_state() {
         let panic_now = std::sync::Arc::new(AtomicBool::new(false));
         let runtime = DataPlaneRuntime::spawn(Box::new(PanicAfterGate {
             panic_now: panic_now.clone(),
@@ -160,6 +163,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("unexpected actor exit should become a disconnect");
         assert_eq!(info.reason, "transport runtime stopped unexpectedly");
+        assert!(!owner.handle().is_connected());
 
         owner.shutdown();
     }

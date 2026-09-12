@@ -1545,69 +1545,6 @@ pub async fn disconnect_session(
     Ok(())
 }
 
-/// 向指定会话写入数据
-///
-/// `transcode` 为 true 时（文本发送路径），将前端 UTF-8 字节委托会话
-/// `SessionIo::send_text` 按会话编码转码后写设备；false 时（HEX 发送 /
-/// 脚本原始字节路径）原样透传。转码策略只存在于 SessionIo（单一知识源），
-/// 未来协议原生 handle 可自行覆盖。
-/// 返回实际写入设备的字节（文本路径为转码后字节），供前端 TX 显示与
-/// 日志面板使用，保证面板所见与线上字节一致。
-#[tauri::command]
-pub fn write_data(
-    state: State<'_, AppState>,
-    session_id: String,
-    data: Vec<u8>,
-    transcode: bool,
-) -> Result<Vec<u8>, String> {
-    // 锁内仅解析会话参数（O(1)）；转码（encoding_rs 编码）与通道写入在锁外执行，
-    // 避免 CPU 密集的转码阻塞其他会话的写入
-    let (encoding, data_mode, comm) = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        // 解析子连接 ID → 父会话以获取会话参数
-        let resolved_id = store
-            .resolve_parent_id(&session_id)
-            .unwrap_or_else(|| session_id.clone());
-        let handle = store.get_session(&resolved_id);
-        let encoding = handle
-            .and_then(|h| h.params.get("encoding"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("utf-8")
-            .to_string();
-        let data_mode = handle
-            .and_then(|h| h.params.get("data_mode"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| "text".to_string());
-        // 克隆 Arc 后释放锁；send_text 内部完成转码（含 UTF-8 短路与未知编码透传）。
-        // 对端（网络调试）拥有各自 SessionIo，文本路径按对端编码转码。
-        (encoding, data_mode, store.get_io_for(&session_id))
-    };
-    let io = comm.ok_or_else(|| format!("会话 {} 没有可写 I/O 能力", session_id))?;
-    let data_out = if transcode {
-        io.send_text(&data).map_err(|e| e.to_string())?
-    } else {
-        io.send(&data).map_err(|e| e.to_string())?;
-        data
-    };
-    // 异步发送 TX 数据日志（非阻塞，best-effort：失败不影响主流程）
-    // 日志记录实际写入设备的字节（转码后），text 格式按会话编码解码回 UTF-8
-    if let Ok(log_engine) = state.log_engine.lock() {
-        try_send_session_log(
-            &log_engine.sender(),
-            DataLogEntry {
-                session_id,
-                direction: DataDirection::TX,
-                data_mode,
-                encoding,
-                payload: data_out.clone(),
-                timestamp: Local::now(),
-            },
-        );
-    }
-    Ok(data_out)
-}
-
 /// 切换活跃标签页
 #[tauri::command]
 pub fn switch_active_session(
@@ -2079,77 +2016,6 @@ pub async fn open_channel(
 
     log::info!("子终端已打开: {} (parent: {})", channel_id, session_id);
     Ok(channel_id)
-}
-
-/// 关闭单个子连接（若为最后一个则自动断开父会话）。
-#[tauri::command]
-pub async fn close_channel(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    parent_id: Option<String>,
-    reset_counter: Option<bool>,
-) -> Result<(), String> {
-    // 两段式关闭：锁内发信号并取出 join 句柄，锁外 join I/O 线程
-    // （I/O 线程退出路径可能触发 on_disconnect 回调，回调需获取 store 锁）
-    let (parent_id, is_last, retain_history, cleanup) = {
-        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let pid = store
-            .find_parent_of_channel(&session_id)
-            .or(parent_id)
-            .ok_or_else(|| format!("子连接 {} 未找到", session_id))?;
-        let result = store.close_sub_connection(&pid, &session_id);
-        let (last, cleanup) = match result {
-            Ok(result) => result,
-            Err(_) => {
-                if reset_counter.unwrap_or(false) {
-                    store.reset_child_counter(&pid);
-                }
-                // 异常终端现场只驻留在前端内存中；父连接关闭后后端已释放
-                // 对应 I/O 资源，此时关闭卡片是幂等的 UI 清理。
-                return Ok(());
-            }
-        };
-        let retain_history = store
-            .get_session(&pid)
-            .map(|handle| {
-                handle
-                    .sub_connections
-                    .iter()
-                    .any(|child| child.state == SessionState::Disconnected && child.retain_terminal)
-            })
-            .unwrap_or(false);
-        if last {
-            store.close_session(&pid)?;
-            if reset_counter.unwrap_or(false) {
-                store.reset_child_counter(&pid);
-            }
-            // 父会话断开只改变运行态，不写回 Saved Session Library。
-        }
-        (pid, last, retain_history, cleanup)
-    };
-    // 锁外等待 I/O 线程与脚本线程真实退出
-    cleanup.join();
-
-    // 通知前端（仅 session-disconnected；channel-closed 由 on_disconnect 回调单独发出）
-    if is_last {
-        let info = if retain_history {
-            DisconnectInfo::remote_eof("所有活动终端已关闭")
-        } else {
-            DisconnectInfo::user_requested()
-        };
-        let _ = app.emit(
-            "session-disconnected",
-            serde_json::json!({
-                "session_id": parent_id,
-                "reason": "所有终端已关闭",
-                "disconnect_info": info,
-            }),
-        );
-    }
-
-    log::info!("终端子连接已关闭: {}", session_id);
-    Ok(())
 }
 
 // ── 网络调试会话命令 ────────────────────────────────
@@ -3566,28 +3432,6 @@ pub fn file_transfer_cancel(
         .map(|_| {
             log::info!("传输取消已接受: session={}", resolved_id);
         })
-}
-
-/// 请求 SSH PTY 窗口大小调整
-///
-/// 前端终端 resize 时调用，通过 SessionIo 的 terminal-control capability 转发到 DataPlane，
-/// 再由 Channel::resize_pty 发送 window_change 请求到远端。
-/// 非 SSH 协议（串口等）的 Channel 默认空实现，调用无副作用。
-/// 支持子连接路由：若 session_id 属于 SSH 子通道，命令通过子通道的 write_tx 发送。
-#[tauri::command]
-pub fn resize_pty(
-    state: State<'_, AppState>,
-    session_id: String,
-    cols: u32,
-    rows: u32,
-) -> Result<(), String> {
-    let io = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store
-            .get_io_for(&session_id)
-            .ok_or_else(|| store.session_not_found(&session_id))?
-    };
-    io.resize_terminal(cols, rows).map_err(|e| e.to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════
