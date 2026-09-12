@@ -66,3 +66,21 @@ must_replace(
     "                io: None,\n                attachment: conn.on_attached,\n                teardown_delay: conn.teardown_delay,\n            },",
     2,
 )
+
+# Modbus also creates its container directly from ProtocolConnection.
+path = "src-tauri/src/plugins/modbus/mod.rs"
+must_replace(
+    path,
+    "                io: None,\n                attachment: conn.on_attached,\n            },",
+    "                io: None,\n                attachment: conn.on_attached,\n                teardown_delay: conn.teardown_delay,\n            },",
+    1,
+)
+
+# TRDP constructs its runtime locally rather than receiving ProtocolConnection; it has no teardown delay.
+path = "src-tauri/src/plugins/trdp.rs"
+must_replace(
+    path,
+    "                attachment: Some(Arc::new(RuntimeAttach {\n                    runtime: runtime.clone(),\n                })),\n            },",
+    "                attachment: Some(Arc::new(RuntimeAttach {\n                    runtime: runtime.clone(),\n                })),\n                teardown_delay: std::time::Duration::ZERO,\n            },",
+    1,
+)
