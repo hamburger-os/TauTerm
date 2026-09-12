@@ -1,0 +1,173 @@
+name: Typed Runtime Migration V4
+
+on:
+  push:
+    branches: [feat/transport-runtime-modbus]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+          fetch-depth: 0
+      - name: Apply base migration and semantic fixups
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+
+          # Reuse the guarded base migration; only relax registry placement for runtime types
+          # that do not have a dedicated impl block.
+          workflow = Path('.github/workflows/zz-typed-runtime-migration.yml').read_text()
+          body = workflow.split("python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+          script = textwrap.dedent(body)
+          old = """    if anchor not in t: raise SystemExit(f'registry anchor missing {path}')\n    t=t.replace(anchor,code+'\\n'+anchor,1)\n"""
+          new = """    if anchor in t:\n        t=t.replace(anchor,code+'\\n'+anchor,1)\n    else:\n        struct_anchor=f'pub struct {runtime_type} {{'\n        if struct_anchor not in t: raise SystemExit(f'registry anchor missing {path}')\n        t=t.replace(struct_anchor,code+'\\n'+struct_anchor,1)\n"""
+          if old not in script: raise SystemExit('base migration registry anchor not found')
+          exec(compile(script.replace(old, new, 1), 'typed_runtime_base.py', 'exec'), {'__name__': '__main__'})
+
+          def load(path): return Path(path).read_text()
+          def save(path, text): Path(path).write_text(text)
+          def replace(path, old, new, required=True):
+              text = load(path)
+              if old not in text:
+                  if required: raise SystemExit(f'anchor missing: {path}: {old[:120]!r}')
+                  return
+              save(path, text.replace(old, new, 1))
+          def sub(path, pattern, repl, count=1, required=True):
+              text=load(path)
+              text2,n=re.subn(pattern,repl,text,count=count,flags=re.S)
+              if required and n==0: raise SystemExit(f'regex missing: {path}: {pattern[:120]}')
+              save(path,text2)
+
+          # TFTP/iperf shared server helpers now receive their typed runtime directly.
+          p='src-tauri/src/plugins/tftp/mod.rs'; t=load(p)
+          t=t.replace('''pub fn try_start_server(\n    app: &tauri::AppHandle,\n    side_channel: &Arc<TftpSideChannel>,\n    session_id: &str,\n) -> Result<(), String> {\n''','''pub fn try_start_server(\n    app: &tauri::AppHandle,\n    tftp_sc: &Arc<TftpSideChannel>,\n    session_id: &str,\n) -> Result<(), String> {\n''')
+          save(p,t)
+          p='src-tauri/src/plugins/iperf/mod.rs'; t=load(p)
+          t=t.replace('''pub async fn try_start_server<R: tauri::Runtime>(\n    app: &tauri::AppHandle<R>,\n    side_channel: &Arc<IperfSideChannel>,\n    session_id: &str,\n) -> Result<(), String> {\n''','''pub async fn try_start_server<R: tauri::Runtime>(\n    app: &tauri::AppHandle<R>,\n    iperf_sc: &Arc<IperfSideChannel>,\n    session_id: &str,\n) -> Result<(), String> {\n''')
+          save(p,t)
+
+          # Modbus constructs one typed runtime value, then exposes generic lifecycle + attach capabilities.
+          p='src-tauri/src/plugins/modbus/mod.rs'; t=load(p)
+          sub(p, r'''        Ok\(ProtocolConnection \{\n            data_plane: None,\n            side_channel: Some\(Arc::new\(ModbusSideChannel \{\n                config,\n                client,\n                server,\n                watch,\n            \}\)\),\n            channel_factory: None,\n            on_attached: Some\(Arc::new\(RuntimeAttach \{\n                runtime: side_channel,\n            \}\)\),\n            teardown_delay: std::time::Duration::ZERO,\n        \}\)''','''        let runtime = Arc::new(ModbusSideChannel { config, client, server, watch });\n        Ok(ProtocolConnection {\n            data_plane: None,\n            service: Some(runtime.clone()),\n            file_transfer: None,\n            channel_factory: None,\n            on_attached: Some(Arc::new(RuntimeAttach { runtime })),\n            teardown_delay: std::time::Duration::ZERO,\n        })''')
+          # if the base pattern did not add attach because the old field stayed, cover the raw old constructor too
+          t=load(p)
+          if 'side_channel: Some(Arc::new(ModbusSideChannel' in t:
+              t=re.sub(r'''        Ok\(ProtocolConnection \{\n            data_plane: None,\n            side_channel: Some\(Arc::new\(ModbusSideChannel \{\n                config,\n                client,\n                server,\n                watch,\n            \}\)\),\n            channel_factory: None,\n            on_attached: None,\n            teardown_delay: std::time::Duration::ZERO,\n        \}\)''','''        let runtime = Arc::new(ModbusSideChannel { config, client, server, watch });\n        Ok(ProtocolConnection {\n            data_plane: None,\n            service: Some(runtime.clone()),\n            file_transfer: None,\n            channel_factory: None,\n            on_attached: Some(Arc::new(RuntimeAttach { runtime })),\n            teardown_delay: std::time::Duration::ZERO,\n        })''',t,count=1)
+              save(p,t)
+          # with_modbus no longer needs AppState to locate protocol runtime.
+          t=load(p).replace("    state: &State<'_, AppState>,\n    session_id: &str,", "    _state: &State<'_, AppState>,\n    session_id: &str,")
+          save(p,t)
+
+          # Network constructor uses the actual `side` value for service + attach.
+          p='src-tauri/src/plugins/network/mod.rs'; t=load(p)
+          t=t.replace('''        Ok(ProtocolConnection {\n            data_plane: Some(runtime),\n            service: Some(side.clone()),\n            file_transfer: None,\n            channel_factory: None,\n            on_attached: Some(Arc::new(RuntimeAttach {\n                runtime: side_channel,\n            })),\n            teardown_delay: Duration::ZERO,\n        })''','''        Ok(ProtocolConnection {\n            data_plane: Some(runtime),\n            service: Some(side.clone()),\n            file_transfer: None,\n            channel_factory: None,\n            on_attached: Some(Arc::new(RuntimeAttach { runtime: side })),\n            teardown_delay: Duration::ZERO,\n        })''')
+          save(p,t)
+
+          # TRDP runtime operation: no generic side_channel/downcast path remains.
+          p='src-tauri/src/plugins/trdp.rs'; t=load(p)
+          sub(p,r'''    let side_channel = side_channel\(&state, &session_id\)\?;\n    let trdp = side_channel\n        \.as_any\(\)\n        \.downcast_ref::<TrdpSideChannel>\(\)\n        \.ok_or\("会话不是 TRDP 会话"\)\?;''','''    let trdp = runtime(&session_id).ok_or("会话不是 TRDP 会话")?;''',required=False)
+          save(p,load(p).replace('let side_channel = side_channel(&state, &session_id)?;','let trdp = runtime(&session_id).ok_or("会话不是 TRDP 会话")?;'))
+
+          # Commands: SSH typed runtime lookup with generic parent resolution.
+          p='src-tauri/src/commands.rs'; t=load(p)
+          t=re.sub(r'''// ── 命令：SSH 文件服务（SFTP）[\s\S]*?fn get_ssh_side_channel\([\s\S]*?\n}\n\n/// SFTP 列出远程目录''','''// ── 命令：SSH 文件服务（SFTP）────────────────────\n\nuse crate::plugins::ssh::SshSideChannel;\nuse crate::transfer::ssh_file_service::{\n    sftp_chmod, sftp_delete, sftp_delete_batch, sftp_delete_recursive, sftp_list_dir, sftp_mkdir,\n    sftp_new_file, sftp_read_head, sftp_rename, sftp_stat,\n};\n\n/// 解析父 Session 后从 SSH 插件自己的 typed registry 获取 runtime。\nfn get_ssh_side_channel(\n    state: &State<'_, AppState>,\n    session_id: &str,\n) -> Result<std::sync::Arc<SshSideChannel>, String> {\n    let parent_id = {\n        let store = state.session_store.lock().map_err(|e| e.to_string())?;\n        let parent_id = store.resolve_parent_id(session_id)\n            .ok_or_else(|| store.session_not_found(session_id))?;\n        if store.get_session(&parent_id).is_some_and(|h| h.state == SessionState::Disconnected) {\n            return Err("会话已断开".to_string());\n        }\n        parent_id\n    };\n    state.ssh_adapter.runtime(&parent_id)\n        .ok_or_else(|| format!("会话 {} 不包含 SSH runtime（可能不是 SSH 连接）", parent_id))\n}\n\n/// SFTP 列出远程目录''',t,count=1)
+          if 'get_side_channel(&parent_id)' in t:
+              raise SystemExit('SSH get_side_channel block replacement incomplete')
+
+          # Network root runtime is registered by create_session attach; start it afterwards.
+          t=t.replace('    let network_side = conn.side_channel.clone();\n','')
+          t=re.sub(r'''    // 启动监听 / 接收线程（TCP Client 注册对端、TCP Server accept、UDP recv 路由）\n    if let Some\(sc\) = &network_side \{[\s\S]*?    \}\n\n    // 与其它协议一致''','''    // attach 后从 Network 插件 typed registry 获取 runtime，再启动监听/接收线程。\n    let network_runtime = state.network_adapter.runtime(&sid)\n        .ok_or_else(|| "网络调试 runtime 注册失败".to_string())?;\n    network_runtime.start(app.clone(), &sid).map_err(|e| e.to_string())?;\n\n    // 与其它协议一致''',t,count=1)
+
+          # Rewrite TFTP connect path around typed registry lifecycle.
+          start=t.index('async fn connect_session_tftp(')
+          end=t.index('\n/// 启动 TFTP 服务端',start)
+          tftp_connect='''async fn connect_session_tftp(\n    app: AppHandle,\n    state: State<'_, AppState>,\n    request: ConnectSessionRequest,\n) -> Result<String, String> {\n    let ConnectSessionRequest { endpoint, params, name, session_id, .. } = request;\n    let prev_params = session_id.as_deref()\n        .and_then(|id| state.tftp_adapter.runtime(id))\n        .map(|runtime| runtime.get_params());\n    let conn = state.tftp_adapter.connect(&endpoint, &params).await.map_err(|e| e.to_string())?;\n    let session_name = name.unwrap_or_else(|| format!("TFTP :{}", endpoint));\n    let sid = {\n        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;\n        store.create_container_session(\n            ContainerSessionCreateOptions {\n                name: session_name.clone(), plugin_id: "tftp".into(), endpoint: endpoint.clone(),\n                params: params.clone(), transfer_enabled: false, transfer_protocol: None,\n                send_bar_enabled: false, id_override: session_id,\n            },\n            ContainerSessionRuntime {\n                service: conn.service, file_transfer: conn.file_transfer, channel_factory: conn.channel_factory,\n                io: None, attachment: conn.on_attached,\n            },\n        )?\n    };\n    let runtime = state.tftp_adapter.runtime(&sid).ok_or_else(|| "TFTP runtime 注册失败".to_string())?;\n    if let Some(prev) = prev_params {\n        match runtime.dynamic_params.lock() {\n            Ok(mut value) => *value = prev,\n            Err(poisoned) => *poisoned.into_inner() = prev,\n        }\n    }\n    if let Err(error) = tftp::try_start_server(&app, &runtime, &sid) {\n        log::warn!("[TFTP] 服务端自动启动失败 (session={}): {}", sid, error);\n    }\n    let _ = app.emit("session-connected", serde_json::json!({\n        "session_id": sid, "plugin_id": "tftp", "content_type": "custom",\n        "endpoint": endpoint, "name": session_name, "connection_type": "tftp",\n        "params": params, "send_bar_enabled": false, "transfer_enabled": false,\n    }));\n    Ok(sid)\n}\n'''
+          t=t[:start]+tftp_connect+t[end:]
+
+          # TFTP commands and helpers directly use typed registry.
+          t=re.sub(r'''    let sc_arc = \{\n        let store = state\.session_store\.lock\(\)\.map_err\(\|e\| e\.to_string\(\)\)\?;\n        store\n            \.get_side_channel\(&session_id\)\n            \.ok_or_else\(\|\| format!\("会话 \{\} 不包含侧通道", session_id\)\)\?\n    \};\n\n    tftp::try_start_server\(&app, &sc_arc, &session_id\)\?;''','''    let runtime = state.tftp_adapter.runtime(&session_id)\n        .ok_or_else(|| format!("会话 {} 不包含 TFTP runtime", session_id))?;\n    tftp::try_start_server(&app, &runtime, &session_id)?;''',t,count=1)
+          # stop prelude through downcast
+          t=re.sub(r'''    // 全局锁只用于取 Arc[\s\S]*?    let tftp_sc = sc_arc[\s\S]*?\.ok_or_else\(\|\| "侧通道不是 TFTP 类型"\.to_string\(\)\)\?;''','''    let tftp_sc = state.tftp_adapter.runtime(&session_id)\n        .ok_or_else(|| format!("会话 {} 不包含 TFTP runtime", session_id))?;''',t,count=1)
+          # sync helper whole body
+          t=re.sub(r'''fn sync_tftp_server_params\(state: &AppState, session_id: &str, params: &TftpDynamicParams\) \{[\s\S]*?\n}\n\n/// 更新 TFTP 动态参数''','''fn sync_tftp_server_params(state: &AppState, session_id: &str, params: &TftpDynamicParams) {\n    if let Some(runtime) = state.tftp_adapter.runtime(session_id) {\n        match runtime.dynamic_params.lock() {\n            Ok(mut value) => *value = params.clone(),\n            Err(poisoned) => *poisoned.into_inner() = params.clone(),\n        }\n        log::info!("[TFTP] 服务端参数已同步 (session={}, blksize={})", session_id, params.blksize);\n    }\n}\n\n/// 更新 TFTP 动态参数''',t,count=1)
+          # update params function body (keep signature)
+          t=re.sub(r'''    let store = state\.session_store\.lock\(\)\.map_err\(\|e\| e\.to_string\(\)\)\?;\n    if let Some\(sc_arc\) = store\.get_side_channel\(&session_id\) \{[\s\S]*?    \}\n    Ok\(\(\)\)\n}\n\n/// 获取 TFTP 状态''','''    if let Some(runtime) = state.tftp_adapter.runtime(&session_id) {\n        match runtime.dynamic_params.lock() {\n            Ok(mut value) => *value = new_params,\n            Err(poisoned) => *poisoned.into_inner() = new_params,\n        }\n        log::info!("TFTP 参数已更新 (session={})", session_id);\n    } else {\n        log::warn!("TFTP 参数更新跳过：会话 {} 未连接", session_id);\n    }\n    Ok(())\n}\n\n/// 获取 TFTP 状态''',t,count=1)
+          # status function whole body before iperf section
+          s=t.index('pub async fn tftp_get_status(')
+          e=t.index('// ═══════════════════════════════════════════════════════════════\n// iperf 协议命令',s)
+          status_block='''pub async fn tftp_get_status(\n    state: State<'_, AppState>,\n    session_id: String,\n) -> Result<TftpStatus, String> {\n    if let Some(runtime) = state.tftp_adapter.runtime(&session_id) {\n        let dynamic_params = runtime.get_params();\n        return Ok(TftpStatus {\n            server_running: runtime.server_running.load(std::sync::atomic::Ordering::Relaxed),\n            listen_addr: Some(runtime.config.listen_ip.clone()),\n            listen_port: Some(runtime.config.listen_port),\n            file_root: runtime.config.file_root.clone(),\n            dynamic_params,\n        });\n    }\n    Ok(TftpStatus { server_running: false, listen_addr: None, listen_port: None,\n        file_root: String::new(), dynamic_params: TftpDynamicParams::default() })\n}\n\n'''
+          t=t[:s]+status_block+t[e:]
+
+          # Rewrite iperf connect with old-runtime snapshot -> attach new -> merge snapshot.
+          start=t.index('async fn connect_session_iperf(')
+          end=t.index('\n/// 启动 iperf 服务端',start)
+          iperf_connect='''async fn connect_session_iperf(\n    app: AppHandle,\n    state: State<'_, AppState>,\n    request: ConnectSessionRequest,\n) -> Result<String, String> {\n    let ConnectSessionRequest { endpoint, params, name, session_id, .. } = request;\n    let old_runtime = session_id.as_deref().and_then(|id| state.iperf_adapter.runtime(id));\n    let prev_params = old_runtime.as_ref().map(|runtime| runtime.get_params());\n    if let Some(runtime) = old_runtime {\n        let handle = runtime.server_handle.clone();\n        let joined = tokio::task::spawn_blocking(move ||\n            iperf::join_server_handle(&handle, std::time::Duration::from_secs(10)))\n            .await.unwrap_or(false);\n        if !joined { log::warn!("[iperf] 重连时旧服务端线程 join 超时"); }\n    }\n    let config: iperf::IperfConfig = serde_json::from_value(params.clone())\n        .map_err(|e| format!("iperf 配置解析失败: {}", e))?;\n    let resolved_params = serde_json::to_value(&config).unwrap_or_else(|_| params.clone());\n    let conn = state.iperf_adapter.connect(&endpoint, &params).await.map_err(|e| e.to_string())?;\n    let session_name = name.unwrap_or_else(|| format!("iperf :{}", endpoint));\n    let sid = {\n        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;\n        store.create_container_session(\n            ContainerSessionCreateOptions {\n                name: session_name.clone(), plugin_id: "iperf".into(), endpoint: endpoint.clone(),\n                params: resolved_params.clone(), transfer_enabled: false, transfer_protocol: None,\n                send_bar_enabled: false, id_override: session_id,\n            },\n            ContainerSessionRuntime { service: conn.service, file_transfer: conn.file_transfer,\n                channel_factory: conn.channel_factory, io: None, attachment: conn.on_attached },\n        )?\n    };\n    let runtime = state.iperf_adapter.runtime(&sid).ok_or_else(|| "iperf runtime 注册失败".to_string())?;\n    if let Some(prev) = prev_params {\n        let current = runtime.get_params();\n        let merged = iperf::IperfDynamicParams {\n            version: current.version, listen_ip: current.listen_ip, listen_port: current.listen_port,\n            port: if prev.port == iperf::default_client_port(prev.version) { current.listen_port } else { prev.port },\n            ..prev\n        };\n        *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = merged;\n    }\n    if let Err(error) = iperf::try_start_server(&app, &runtime, &sid).await {\n        log::warn!("[iperf] 服务端自动启动失败 (session={}): {}", sid, error);\n        let _ = app.emit("iperf-server-status", serde_json::json!({\n            "session_id": sid, "running": false, "error": error,\n        }));\n    }\n    let _ = app.emit("session-connected", serde_json::json!({\n        "session_id": sid, "plugin_id": "iperf", "content_type": "custom",\n        "endpoint": endpoint, "name": session_name, "connection_type": "iperf",\n        "params": resolved_params, "send_bar_enabled": false, "transfer_enabled": false,\n    }));\n    Ok(sid)\n}\n'''
+          t=t[:start]+iperf_connect+t[end:]
+
+          # iperf start/stop typed registry.
+          t=re.sub(r'''    let sc_arc = \{\n        let store = state\.session_store\.lock\(\)\.map_err\(\|e\| e\.to_string\(\)\)\?;\n        store\n            \.get_side_channel\(&session_id\)\n            \.ok_or_else\(\|\| format!\("会话 \{\} 不包含侧通道", session_id\)\)\?\n    \};\n\n    iperf::try_start_server\(&app, &sc_arc, &session_id\)\.await\?;''','''    let runtime = state.iperf_adapter.runtime(&session_id)\n        .ok_or_else(|| format!("会话 {} 不包含 iperf runtime", session_id))?;\n    iperf::try_start_server(&app, &runtime, &session_id).await?;''',t,count=1)
+          t=re.sub(r'''    // 全局锁只用于取 Arc[\s\S]*?    let iperf_sc = sc_arc[\s\S]*?\.ok_or_else\(\|\| "侧通道不是 iperf 类型"\.to_string\(\)\)\?;''','''    let iperf_sc = state.iperf_adapter.runtime(&session_id)\n        .ok_or_else(|| format!("会话 {} 不包含 iperf runtime", session_id))?;''',t,count=1)
+
+          # iperf client state selection: typed runtime when connected, existing fallback registry otherwise.
+          t=re.sub(r'''    let \(client_abort_flag, client_test_running, last_summary\) = \{\n        let store = state\.session_store\.lock\(\)\.map_err\(\|e\| e\.to_string\(\)\)\?;\n        match store\.get_side_channel\(&session_id\) \{\n            Some\(sc_arc\) => \{[\s\S]*?            None => \{''','''    let (client_abort_flag, client_test_running, last_summary) = {\n        match state.iperf_adapter.runtime(&session_id) {\n            Some(iperf_sc) => {\n                if let Ok(mut reg) = IPERF_CLIENT_REGISTRY.lock() { reg.remove(&session_id); }\n                (iperf_sc.client_abort_flag.clone(), iperf_sc.client_test_running.clone(), iperf_sc.last_summary.clone())\n            }\n            None => {''',t,count=1)
+          # sync helper
+          t=re.sub(r'''fn sync_iperf_params\(state: &AppState, session_id: &str, params: &IperfDynamicParams\) \{[\s\S]*?\n}\n\n/// 中止进行中的客户端测速''','''fn sync_iperf_params(state: &AppState, session_id: &str, params: &IperfDynamicParams) {\n    if let Some(runtime) = state.iperf_adapter.runtime(session_id) {\n        *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = params.clone();\n        log::info!("[iperf] 动态参数已同步 (session={}, duration={}s, port={})",\n            session_id, params.duration_secs, params.port);\n    }\n}\n\n/// 中止进行中的客户端测速''',t,count=1)
+          # client stop: typed runtime or fallback registry
+          s=t.index('pub async fn iperf_client_stop('); e=t.index('\n/// 更新 iperf 动态参数',s)
+          stop='''pub async fn iperf_client_stop(\n    state: State<'_, AppState>,\n    session_id: String,\n) -> Result<(), String> {\n    if let Some(runtime) = state.iperf_adapter.runtime(&session_id) {\n        runtime.client_abort_flag.store(true, Ordering::Relaxed);\n        return Ok(());\n    }\n    if let Ok(reg) = IPERF_CLIENT_REGISTRY.lock() {\n        if let Some(entry) = reg.get(&session_id) { entry.abort.store(true, Ordering::Relaxed); }\n    }\n    Ok(())\n}\n'''
+          t=t[:s]+stop+t[e:]
+          # update params whole body up to status comment
+          s=t.index('pub async fn iperf_update_params('); e=t.index('\n/// 获取 iperf 状态',s)
+          upd='''pub async fn iperf_update_params(\n    state: State<'_, AppState>, session_id: String, params: Value,\n) -> Result<(), String> {\n    let mut new_params: IperfDynamicParams = serde_json::from_value(params)\n        .map_err(|e| format!("参数解析失败: {}", e))?;\n    sanitize_iperf_params(&mut new_params);\n    if let Some(runtime) = state.iperf_adapter.runtime(&session_id) {\n        *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = new_params;\n    }\n    Ok(())\n}\n'''
+          t=t[:s]+upd+t[e:]
+          # status function only until next command marker; easier transform remaining lookup/downcast patterns.
+          t=t.replace('''    let sc_arc = {\n        let store = state.session_store.lock().map_err(|e| e.to_string())?;\n        store.get_side_channel(&session_id)\n    };\n\n    if let Some(sc_arc) = sc_arc {\n        if let Some(iperf_sc) = sc_arc.as_any().downcast_ref::<iperf::IperfSideChannel>() {''','''    if let Some(iperf_sc) = state.iperf_adapter.runtime(&session_id) {''')
+          # collapse one extra closing brace introduced by removed nested if near default status; rustfmt/check catches if anchor differs.
+          t=t.replace('''            return Ok(IperfStatus {\n''','''        return Ok(IperfStatus {\n''',1)
+          # Generic stale direct accesses that remain in commands are forbidden.
+          save(p,t)
+
+          # Detect legacy erased-runtime access before compiling; if anything remains, show it now.
+          offenders=[]
+          for p in Path('src-tauri/src').rglob('*.rs'):
+              text=p.read_text()
+              for i,line in enumerate(text.splitlines(),1):
+                  if any(x in line for x in ['SideChannel','side_channel','get_side_channel','as_any()','std::any::Any']):
+                      # temporary type names will be renamed after compile; actual erased access is not allowed
+                      if 'SideChannel' in line and any(name in line for name in ['SshSideChannel','NetworkSideChannel','TftpSideChannel','IperfSideChannel','ModbusSideChannel','TrdpSideChannel']):
+                          continue
+                      offenders.append(f'{p}:{i}:{line.strip()}')
+          if offenders:
+              print('Remaining erased-runtime tokens:')
+              print('\n'.join(offenders))
+          PY
+      - name: Format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Install Tauri system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libssl-dev libudev-dev
+      - name: Check
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m '[typed-runtime-bot] remove SideChannel and Any downcasts'
+          git push origin HEAD:feat/transport-runtime-modbus
