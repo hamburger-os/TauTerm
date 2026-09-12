@@ -5,8 +5,8 @@ use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::plugins::modbus::codec::{self, AduMode, ModbusRequest};
-use crate::plugins::modbus::config::{ModbusConfig, ModbusMode};
-use crate::transport::{DataPlaneEvent, DataPlaneRuntime};
+use crate::plugins::modbus::config::{ModbusMode, ValidatedModbusConfig};
+use crate::transport::{DataPlaneEvent, DataPlaneRuntime, DataPlaneSubscription};
 
 const HISTORY_LIMIT: usize = 1000;
 
@@ -54,24 +54,27 @@ struct TransactionFailure {
 }
 
 pub struct ModbusClient {
-    config: ModbusConfig,
+    config: ValidatedModbusConfig,
     runtime: Mutex<Option<DataPlaneRuntime>>,
-    events: Mutex<Option<mpsc::Receiver<DataPlaneEvent>>>,
+    events: Mutex<Option<DataPlaneSubscription>>,
     transaction_guard: Mutex<()>,
     next_transaction_id: AtomicU16,
     history: Mutex<VecDeque<TransactionResult>>,
 }
 
 impl ModbusClient {
-    pub fn new(config: ModbusConfig, runtime: DataPlaneRuntime) -> Self {
-        Self {
+    pub fn new(config: ValidatedModbusConfig, runtime: DataPlaneRuntime) -> Result<Self, String> {
+        if config.client().is_none() {
+            return Err("ModbusClient requires client runtime configuration".into());
+        }
+        Ok(Self {
             config,
             runtime: Mutex::new(Some(runtime)),
             events: Mutex::new(None),
             transaction_guard: Mutex::new(()),
             next_transaction_id: AtomicU16::new(1),
             history: Mutex::new(VecDeque::with_capacity(HISTORY_LIMIT)),
-        }
+        })
     }
 
     pub fn execute(&self, request: ModbusRequest) -> TransactionResult {
@@ -79,14 +82,14 @@ impl ModbusClient {
             .transaction_guard
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let max_retries = if request.is_write() {
-            if self.config.retry_writes {
-                self.config.read_retries
-            } else {
-                0
-            }
+        let client_config = self
+            .config
+            .client()
+            .expect("client role checked by constructor");
+        let max_retries = if request.is_write() && !client_config.retry_writes {
+            0
         } else {
-            self.config.read_retries
+            client_config.read_retries
         };
         let mut attempt = 0u8;
         let result = loop {
@@ -199,7 +202,12 @@ impl ModbusClient {
             return result;
         }
 
-        let deadline = Instant::now() + Duration::from_millis(self.config.response_timeout_ms);
+        let response_timeout_ms = self
+            .config
+            .client()
+            .expect("client role checked by constructor")
+            .response_timeout_ms;
+        let deadline = Instant::now() + Duration::from_millis(response_timeout_ms);
         let quiet = Duration::from_millis(quiet_period_ms.clamp(1, 1000));
         let mut raw_rx = Vec::new();
         let result = loop {
@@ -218,7 +226,7 @@ impl ModbusClient {
                         attempt: 0,
                     })
                 } else {
-                    raw_success(&self.config, started, data.clone(), raw_rx)
+                    raw_success(self.config.unit_id, started, data.clone(), raw_rx)
                 };
             }
             let wait = if raw_rx.is_empty() {
@@ -242,7 +250,8 @@ impl ModbusClient {
                     });
                 }
                 Ok(DataPlaneEvent::Closed(info)) => {
-                    let mut result = raw_success(&self.config, started, data.clone(), raw_rx);
+                    let mut result =
+                        raw_success(self.config.unit_id, started, data.clone(), raw_rx);
                     result.message = Some(format!(
                         "Raw ADU response is unvalidated; transport closed: {}",
                         info.reason
@@ -263,7 +272,7 @@ impl ModbusClient {
                     });
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    break raw_success(&self.config, started, data.clone(), raw_rx);
+                    break raw_success(self.config.unit_id, started, data.clone(), raw_rx);
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     break self.failure(TransactionFailure {
@@ -287,12 +296,13 @@ impl ModbusClient {
     fn execute_once(&self, request: &ModbusRequest, attempt: u8) -> TransactionResult {
         let started = Instant::now();
         let function = request.function();
-        let transaction_id = if self.config.mode == ModbusMode::Tcp {
+        let current_mode = self.config.mode();
+        let transaction_id = if current_mode == ModbusMode::Tcp {
             Some(self.next_transaction_id.fetch_add(1, Ordering::Relaxed))
         } else {
             None
         };
-        if !request_supported_on_mode(self.config.mode, request) {
+        if !request_supported_on_mode(current_mode, request) {
             return self.failure(TransactionFailure {
                 status: TransactionStatus::ProtocolError,
                 function,
@@ -323,7 +333,7 @@ impl ModbusClient {
                 });
             }
         };
-        if self.config.unit_id == 0 && self.config.mode != ModbusMode::Tcp && !request.is_write() {
+        if self.config.unit_id == 0 && current_mode != ModbusMode::Tcp && !request.is_write() {
             return self.failure(TransactionFailure {
                 status: TransactionStatus::ProtocolError,
                 function,
@@ -337,7 +347,7 @@ impl ModbusClient {
             });
         }
         let tx = match codec::encode_adu(
-            mode(self.config.mode),
+            mode(current_mode),
             self.config.unit_id,
             transaction_id.unwrap_or(0),
             &pdu,
@@ -417,7 +427,7 @@ impl ModbusClient {
             });
         }
 
-        if self.config.unit_id == 0 && self.config.mode != ModbusMode::Tcp {
+        if self.config.unit_id == 0 && current_mode != ModbusMode::Tcp {
             return TransactionResult {
                 timestamp_ms: now_ms(),
                 status: TransactionStatus::Broadcast,
@@ -435,8 +445,13 @@ impl ModbusClient {
             };
         }
 
-        let deadline = Instant::now() + Duration::from_millis(self.config.response_timeout_ms);
-        let received = match self.config.mode {
+        let response_timeout_ms = self
+            .config
+            .client()
+            .expect("client role checked by constructor")
+            .response_timeout_ms;
+        let deadline = Instant::now() + Duration::from_millis(response_timeout_ms);
+        let received = match current_mode {
             ModbusMode::Tcp => receive_tcp(
                 events,
                 deadline,
@@ -581,6 +596,10 @@ impl ModbusClient {
     }
 
     pub fn shutdown(&self) {
+        self.events
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
         if let Some(runtime) = self
             .runtime
             .lock()
@@ -592,6 +611,7 @@ impl ModbusClient {
     }
 }
 
+#[derive(Debug)]
 enum ReceiveError {
     Timeout,
     Transport(String),
@@ -600,7 +620,7 @@ enum ReceiveError {
 }
 
 fn raw_success(
-    config: &ModbusConfig,
+    unit_id: u8,
     started: Instant,
     raw_tx: Vec<u8>,
     raw_rx: Vec<u8>,
@@ -610,7 +630,7 @@ fn raw_success(
         status: TransactionStatus::Success,
         function: 0,
         transaction_id: None,
-        unit_id: config.unit_id,
+        unit_id,
         latency_ms: started.elapsed().as_millis(),
         exception_code: None,
         raw_tx,
@@ -805,6 +825,8 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::modbus::codec::RegisterReadArea;
+    use crate::plugins::modbus::config::{ModbusConfig, ModbusRole};
     use crate::transport::{BlockingByteStream, ReadStatus, TransportError};
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
@@ -834,12 +856,21 @@ mod tests {
     }
 
     fn client_with(mut config: ModbusConfig) -> (ModbusClient, Arc<AtomicUsize>) {
+        config.role = ModbusRole::Client;
         config.response_timeout_ms = 15;
+        if matches!(config.mode, ModbusMode::Rtu | ModbusMode::Ascii)
+            && config.serial_port.is_empty()
+        {
+            config.serial_port = "test".into();
+        }
         let writes = Arc::new(AtomicUsize::new(0));
         let runtime = DataPlaneRuntime::spawn(Box::new(IdleDriver {
             writes: writes.clone(),
         }));
-        (ModbusClient::new(config, runtime), writes)
+        (
+            ModbusClient::new(config.validated().unwrap(), runtime).unwrap(),
+            writes,
+        )
     }
 
     #[test]
@@ -851,7 +882,7 @@ mod tests {
         };
         let (client, writes) = client_with(config);
         let result = client.execute(ModbusRequest::ReadRegisters {
-            function: 0x03,
+            area: RegisterReadArea::HoldingRegisters,
             address: 0,
             quantity: 1,
         });
@@ -870,8 +901,7 @@ mod tests {
             ..Default::default()
         };
         let (client, writes) = client_with(config);
-        let result = client.execute(ModbusRequest::WriteSingle {
-            function: 0x06,
+        let result = client.execute(ModbusRequest::WriteSingleRegister {
             address: 7,
             value: 42,
         });
@@ -890,8 +920,7 @@ mod tests {
             ..Default::default()
         };
         let (client, writes) = client_with(config);
-        let write = client.execute(ModbusRequest::WriteSingle {
-            function: 0x06,
+        let write = client.execute(ModbusRequest::WriteSingleRegister {
             address: 7,
             value: 42,
         });
@@ -899,7 +928,7 @@ mod tests {
         assert!(!write.write_outcome_unknown);
         assert_eq!(writes.load(Ordering::Relaxed), 1);
         let read = client.execute(ModbusRequest::ReadRegisters {
-            function: 0x03,
+            area: RegisterReadArea::HoldingRegisters,
             address: 0,
             quantity: 1,
         });
@@ -916,7 +945,8 @@ mod tests {
         let mut chunk = stale;
         chunk.extend_from_slice(&current);
         tx.send(DataPlaneEvent::Data(chunk)).unwrap();
-        let (raw, pdu) = receive_tcp(&rx, Instant::now() + Duration::from_secs(1), 8, 1).unwrap();
+        let (raw, pdu) =
+            receive_tcp(&rx, Instant::now() + Duration::from_secs(1), 8, 1).unwrap();
         assert_eq!(raw, current);
         assert_eq!(pdu, vec![0x03, 2, 0, 2]);
     }
@@ -930,7 +960,7 @@ mod tests {
         assert!(request_supported_on_mode(
             ModbusMode::Tcp,
             &ModbusRequest::ReadRegisters {
-                function: 3,
+                area: RegisterReadArea::HoldingRegisters,
                 address: 0,
                 quantity: 1,
             }
