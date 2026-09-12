@@ -27,18 +27,6 @@ interface ResultView {
 
 const COMMON_FUNCTIONS = [1, 2, 3, 4, 5, 6, 15, 16, 22, 23] as const;
 
-function singleRegister(text: string): number {
-  const values = parseU16List(text);
-  if (values.length !== 1) throw new Error("single register write requires exactly one 0..65535 value");
-  return values[0];
-}
-
-function singleCoil(text: string): boolean {
-  const values = parseCoils(text);
-  if (values.length !== 1) throw new Error("single coil write requires exactly one 0/1/true/false value");
-  return values[0];
-}
-
 function bitArea(fc: 1 | 2): BitReadArea {
   return fc === 1 ? "coils" : "discrete_inputs";
 }
@@ -77,20 +65,24 @@ export default function ReadWritePanel({ execute, connected }: Props) {
       } else if (fc === 3 || fc === 4) {
         request = { kind: "read_registers", area: registerArea(fc), address, quantity };
       } else if (fc === 5) {
-        request = { kind: "write_single_coil", address, value: singleCoil(value) };
+        const values = parseCoils(value);
+        if (values.length !== 1) throw new Error(t("modbus.errorSingleCoil"));
+        request = { kind: "write_single_coil", address, value: values[0] };
       } else if (fc === 6) {
-        request = { kind: "write_single_register", address, value: singleRegister(value) };
+        const values = parseU16List(value);
+        if (values.length !== 1) throw new Error(t("modbus.errorSingleRegister"));
+        request = { kind: "write_single_register", address, value: values[0] };
       } else if (fc === 15) {
         request = { kind: "write_multiple_coils", address, values: parseCoils(value) };
       } else if (fc === 16) {
         const values = parseU16List(value);
-        if (values.length === 0) throw new Error("multiple register write requires at least one value");
+        if (values.length === 0) throw new Error(t("modbus.errorMultipleRegisters"));
         request = { kind: "write_multiple_registers", address, values };
       } else if (fc === 22) {
         request = { kind: "mask_write_register", address, and_mask: andMask, or_mask: orMask };
       } else {
         const values = parseU16List(value);
-        if (values.length === 0) throw new Error("read/write multiple registers requires at least one write value");
+        if (values.length === 0) throw new Error(t("modbus.errorReadWriteRegisters"));
         request = {
           kind: "read_write_multiple_registers",
           read_address: readAddress,
