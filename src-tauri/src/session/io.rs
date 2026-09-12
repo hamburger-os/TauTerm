@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use crate::kernel::charset::transcode_utf8_to_encoding;
-use crate::transport::{
-    DataPlaneHandle, DataPlaneSubscription, ExclusiveIo, TransportError,
-};
+use crate::transport::{DataPlaneHandle, DataPlaneSubscription, ExclusiveIo, TransportError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionIoError {
