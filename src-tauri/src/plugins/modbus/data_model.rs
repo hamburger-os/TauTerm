@@ -177,7 +177,6 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             out.extend_from_slice(&inner.comm_event_count.to_be_bytes());
         }
         ModbusRequest::GetCommEventLog => {
-            // status + event count + message count; no event bytes by default.
             out.push(6);
             out.extend_from_slice(&0u16.to_be_bytes());
             out.extend_from_slice(&inner.comm_event_count.to_be_bytes());
@@ -312,11 +311,7 @@ fn ensure_span(address: u16, len: usize) -> Result<(), u8> {
     Ok(())
 }
 
-fn read_bool_range(
-    map: &HashMap<u16, bool>,
-    address: u16,
-    quantity: u16,
-) -> Result<Vec<bool>, u8> {
+fn read_bool_range(map: &HashMap<u16, bool>, address: u16, quantity: u16) -> Result<Vec<bool>, u8> {
     ensure_span(address, quantity as usize)?;
     (0..quantity)
         .map(|offset| {
@@ -327,11 +322,7 @@ fn read_bool_range(
         .collect()
 }
 
-fn read_u16_range(
-    map: &HashMap<u16, u16>,
-    address: u16,
-    quantity: u16,
-) -> Result<Vec<u16>, u8> {
+fn read_u16_range(map: &HashMap<u16, u16>, address: u16, quantity: u16) -> Result<Vec<u16>, u8> {
     ensure_span(address, quantity as usize)?;
     (0..quantity)
         .map(|offset| {
@@ -342,11 +333,7 @@ fn read_u16_range(
         .collect()
 }
 
-fn write_u16_range(
-    map: &mut HashMap<u16, u16>,
-    address: u16,
-    values: &[u16],
-) -> Result<(), u8> {
+fn write_u16_range(map: &mut HashMap<u16, u16>, address: u16, values: &[u16]) -> Result<(), u8> {
     ensure_span(address, values.len())?;
     for (index, value) in values.iter().enumerate() {
         map.insert(address + index as u16, *value);
