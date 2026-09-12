@@ -6,14 +6,14 @@ import {
   parseU16List,
   traditionalAddress,
   type BitReadArea,
-  type ModbusOperation,
+  type ModbusRequest,
   type RegisterReadArea,
   type TransactionResult,
 } from "../model";
 import ResultCard from "./ResultCard";
 
 interface Props {
-  execute: (request: ModbusOperation) => Promise<TransactionResult>;
+  execute: (request: ModbusRequest) => Promise<TransactionResult>;
   connected: boolean;
 }
 
@@ -69,7 +69,7 @@ export default function ReadWritePanel({ execute, connected }: Props) {
     setBusy(true);
     setError("");
     try {
-      let request: ModbusOperation;
+      let request: ModbusRequest;
       if (fc === 1 || fc === 2) {
         request = { kind: "read_bits", area: bitArea(fc), address, quantity };
       } else if (fc === 3 || fc === 4) {
@@ -117,7 +117,7 @@ export default function ReadWritePanel({ execute, connected }: Props) {
         <div className={styles.panelHeading}>
           <div>
             <strong>请求</strong>
-            <span className={styles.hint}>按功能、协议地址和数量组织一次事务；协议地址统一使用 0-based。协议范围由后端标准核心统一校验。</span>
+            <span className={styles.hint}>目标 Unit 在工作台顶部持续可见；这里仅编辑本次 PDU 语义。协议地址统一使用 0-based。</span>
           </div>
         </div>
 
@@ -166,7 +166,7 @@ export default function ReadWritePanel({ execute, connected }: Props) {
         <div className={styles.panelHeading}>
           <div>
             <strong>结果</strong>
-            <span className={styles.hint}>读取结果优先按地址和值呈现；原始 TX / RX / PDU 保留用于协议诊断。</span>
+            <span className={styles.hint}>结构化值由 Rust 协议核心解码；前端不再重复解析 PDU。原始 TX / RX / PDU 仅用于诊断。</span>
           </div>
         </div>
         {resultView ? <>
@@ -180,25 +180,23 @@ export default function ReadWritePanel({ execute, connected }: Props) {
 
 function ReadValues({ result, functionCode, address, quantity }: { result: TransactionResult; functionCode: number; address: number; quantity: number }) {
   const rows = useMemo(() => {
-    if (result.status !== "success" || result.response_pdu.length < 2) return [] as { address: number; value: string; hex: string }[];
-    const pdu = result.response_pdu;
-    const responseFunction = pdu[0];
-    if (responseFunction !== functionCode || ![1, 2, 3, 4, 23].includes(responseFunction)) return [];
-    const data = pdu.slice(2);
-    if (responseFunction === 1 || responseFunction === 2) {
-      return Array.from({ length: quantity }, (_, index) => {
-        const bit = ((data[Math.floor(index / 8)] ?? 0) >> (index % 8)) & 1;
-        return { address: address + index, value: String(bit), hex: bit ? "01" : "00" };
-      });
+    if (result.status !== "success" || !result.semantic_response) return [] as { address: number; value: string; hex: string }[];
+    if (result.semantic_response.kind === "bits") {
+      return result.semantic_response.values.slice(0, quantity).map((value, index) => ({
+        address: address + index,
+        value: value ? "1" : "0",
+        hex: value ? "01" : "00",
+      }));
     }
-    const registerCount = Math.min(quantity, Math.floor(data.length / 2));
-    return Array.from({ length: registerCount }, (_, index) => {
-      const high = data[index * 2] ?? 0;
-      const low = data[index * 2 + 1] ?? 0;
-      const value = (high << 8) | low;
-      return { address: address + index, value: String(value), hex: `0x${value.toString(16).padStart(4, "0").toUpperCase()}` };
-    });
-  }, [address, functionCode, quantity, result]);
+    if (result.semantic_response.kind === "registers") {
+      return result.semantic_response.values.slice(0, quantity).map((value, index) => ({
+        address: address + index,
+        value: String(value),
+        hex: `0x${value.toString(16).padStart(4, "0").toUpperCase()}`,
+      }));
+    }
+    return [];
+  }, [address, quantity, result]);
 
   if (rows.length === 0) return null;
   return <div className={styles.tableWrap}>
