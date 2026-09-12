@@ -2,6 +2,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import zhCN from "./locales/zh-CN.json";
 import enUS from "./locales/en-US.json";
+import { safetyWarningTranslations } from "./safetyWarnings";
 import { updaterErrorTranslations } from "./updaterErrors";
 
 // 从 localStorage 读取用户语言偏好
@@ -12,12 +13,20 @@ i18n.use(initReactI18next).init({
     "zh-CN": {
       translation: {
         ...zhCN,
+        tftp: {
+          ...zhCN.tftp,
+          exposureWarning: safetyWarningTranslations["zh-CN"].tftpExposureWarning,
+        },
         updaterError: updaterErrorTranslations["zh-CN"],
       },
     },
     "en-US": {
       translation: {
         ...enUS,
+        tftp: {
+          ...enUS.tftp,
+          exposureWarning: safetyWarningTranslations["en-US"].tftpExposureWarning,
+        },
         updaterError: updaterErrorTranslations["en-US"],
       },
     },
