@@ -102,16 +102,30 @@ for rel in [
     text = text.replace("side_channel", "auxiliary")
     p.write_text(text)
 
-# SSH comments must describe the typed runtime registry and explicit FileTransfer capability.
+# Remaining protocol-source mentions are stale names/comments from the removed kernel runtime
+# architecture. Protocol-specific runtimes are now obtained only from typed registries.
+for path in Path("src-tauri/src/plugins").rglob("*.rs"):
+    text = path.read_text()
+    text = text.replace("SideChannel", "Runtime")
+    text = text.replace("side_channel", "runtime")
+    text = text.replace("侧通道资源", "类型化运行时资源")
+    text = text.replace("侧通道", "独立协议能力")
+    text = text.replace("`ProtocolConnection::runtime` 传递给 `SessionStore`", "由插件 typed runtime registry 按 session_id 管理")
+    path.write_text(text)
+
+# SSH comments must explicitly describe the typed runtime registry and FileTransfer capability.
 ssh = Path("src-tauri/src/plugins/ssh/mod.rs")
 text = ssh.read_text()
 text = text.replace(
-    "文件服务（SFTP）通过独立的侧通道操作，不中断终端 I/O 循环。",
+    "文件服务（SFTP）通过独立的独立协议能力操作，不中断终端 I/O 循环。",
     "文件服务（SFTP）通过显式 FileTransfer capability 操作，不中断终端 I/O 循环。",
 )
-text = text.replace("/// 供 SFTP 文件服务使用的侧通道资源。", "/// SSH 协议类型化运行时，供 SFTP 文件服务和子终端工厂复用。")
 text = text.replace(
     "/// 持有 SSH 会话引用和缓存的 SFTP 对象，通过 `ProtocolConnection::runtime`\n/// 传递给 `SessionStore`。SFTP 命令通过 `downcast_ref::<SshRuntime>()` 还原。",
+    "/// 持有 SSH 会话引用和缓存的 SFTP 对象。SessionStore 只持有协议无关生命周期\n/// capability；SSH 命令通过插件自己的 typed runtime registry 按 session_id 获取本对象。",
+)
+text = text.replace(
+    "/// 持有 SSH 会话引用和缓存的 SFTP 对象，由插件 typed runtime registry 按 session_id 管理。SFTP 命令通过 `downcast_ref::<SshRuntime>()` 还原。",
     "/// 持有 SSH 会话引用和缓存的 SFTP 对象。SessionStore 只持有协议无关生命周期\n/// capability；SSH 命令通过插件自己的 typed runtime registry 按 session_id 获取本对象。",
 )
 ssh.write_text(text)
@@ -135,6 +149,12 @@ text = text.replace("SideChannel 不应阻塞普通终端 I/O。", "辅助文件
 text = text.replace("SideChannel 后台 task", "辅助文件传输后台 task")
 text = text.replace("lease/side resource", "lease/auxiliary resource")
 transfer.write_text(text)
+
+for path in Path("docs/modules").rglob("*.md"):
+    text = path.read_text()
+    text = text.replace("SideChannel", "auxiliary capability")
+    text = text.replace("side_channel", "runtime")
+    path.write_text(text)
 
 # No erased protocol-runtime architecture may remain. Generic downcasts elsewhere are not banned;
 # the ban is specifically on the removed Session runtime Any/as_any path and concrete runtime casts.
