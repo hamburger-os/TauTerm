@@ -12,14 +12,10 @@ use tauri::{AppHandle, Emitter, State};
 
 /// Write bytes to a session and resolve only after the transport actor confirms the physical write.
 ///
-/// The Rust identifier is intentionally distinct from the older synchronous helper in `commands`;
-/// Tauri's command rename keeps the stable WebView command name without generating duplicate macro
-/// identifiers at crate scope.
-///
 /// Text payloads are encoded by SessionIo before dispatch. The exact wire bytes are returned so TX
 /// rendering and logging remain truthful while the ACK wait stays off the Tauri main thread.
-#[tauri::command(rename = "write_data")]
-pub async fn write_data_ipc(
+#[tauri::command]
+pub async fn write_data(
     state: State<'_, AppState>,
     session_id: String,
     data: Vec<u8>,
@@ -73,8 +69,8 @@ pub async fn write_data_ipc(
 }
 
 /// Resize a terminal-capable DataPlane without blocking the application main thread.
-#[tauri::command(rename = "resize_pty")]
-pub async fn resize_pty_ipc(
+#[tauri::command]
+pub async fn resize_pty(
     state: State<'_, AppState>,
     session_id: String,
     cols: u32,
@@ -93,8 +89,8 @@ pub async fn resize_pty_ipc(
 
 /// Close one terminal child. Blocking thread joins are explicitly offloaded after the SessionStore
 /// lock is released so teardown cannot occupy a Tauri async-runtime worker.
-#[tauri::command(rename = "close_channel")]
-pub async fn close_channel_ipc(
+#[tauri::command]
+pub async fn close_channel(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
