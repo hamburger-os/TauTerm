@@ -5,9 +5,9 @@
 //! 自然 async。进度通过 `UnboundedSender<UnifiedProgress>` 统一广播，
 //! 取消通过 `Arc<AtomicBool>` 统一信号。
 //!
-//! ## 与串口 `TransferProtocol` trait 的区别
+//! ## 与串口 `SerialTransferProtocol` trait 的区别
 //!
-//! - 串口 trait 绑定 `Box<dyn SerialPort>`，仅服务 X/Y/ZModem 协议算法
+//! - 串口算法 trait 依赖协议无关的 `TransferIo = Read + Write + Send`，不绑定具体 serialport handle
 //! - 本 trait 协议无关 — 由具体实现持有各自的 I/O 资源
 //! - 串口 trait 使用闭包回调传递进度，本 trait 使用 channel 广播
 //! - 串口 trait 同步，本 trait async（统一 tokio 运行时调度）

@@ -28,7 +28,7 @@ use crate::transfer::io::{
     self, detect_cancel, drain_rx_buffer, read_byte_with_timeout, read_eot_response,
     wait_for_nak_or_c, EotResponse, WaitResult, C, CAN, G, NAK,
 };
-use crate::transfer::protocol::TransferProtocol;
+use crate::transfer::protocol::SerialTransferProtocol;
 use crate::transfer::types::{
     BatchFileResult, FileInfo, FileTransferEvent, TransferDirection, TransferProgress,
 };
@@ -56,7 +56,7 @@ const CPMEOF: u8 = 0x1A;
 
 /// YMODEM 协议处理器
 ///
-/// 实现 `TransferProtocol` trait，提供标准的 YMODEM 文件收发功能。
+/// 实现 `SerialTransferProtocol` trait，提供标准的 YMODEM 文件收发功能。
 #[derive(Debug, Clone)]
 pub struct YModem {
     /// 默认数据块大小：128 或 1024（默认 1024，对齐 lrzsz `-k` 选项）
@@ -71,7 +71,7 @@ impl Default for YModem {
     }
 }
 
-impl TransferProtocol for YModem {
+impl SerialTransferProtocol for YModem {
     fn send_files(
         &self,
         port: &mut Box<dyn crate::transfer::protocol::TransferIo>,

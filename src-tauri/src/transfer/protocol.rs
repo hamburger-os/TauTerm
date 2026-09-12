@@ -36,10 +36,6 @@ pub trait SerialTransferProtocol: Send + Sync {
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>>;
 }
 
-/// 旧协议实现文件仍通过此内部别名实现 trait；新代码只应使用
-/// `SerialTransferProtocol`。该别名可在协议文件逐步整理时无行为风险地移除。
-pub use SerialTransferProtocol as TransferProtocol;
-
 /// 创建串口内联协议算法处理器。
 pub fn create_protocol(
     protocol_type: &TransferProtocolType,

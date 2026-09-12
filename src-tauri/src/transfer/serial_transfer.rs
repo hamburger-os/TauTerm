@@ -1,6 +1,6 @@
 //! 串口文件传输适配器
 //!
-//! 将现有的同步 `TransferProtocol` trait 适配到统一的异步 `FileTransfer` trait。
+//! 将现有的同步 `SerialTransferProtocol` trait 适配到统一的异步 `FileTransfer` trait。
 //! 通过 `tokio::task::spawn_blocking` 桥接同步协议引擎到 tokio 运行时。
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,20 +12,20 @@ use crate::kernel::file_transfer::{
     UnifiedProgress,
 };
 use crate::kernel::plugin_adapter::TransferProtocolType;
-use crate::transfer::protocol::TransferProtocol;
+use crate::transfer::protocol::SerialTransferProtocol;
 use crate::transfer::types::{BatchFileResult, FileInfo, FileTransferEvent, TransferProgress};
 
 /// 串口文件传输适配器
 pub struct SerialFileTransfer {
     protocol_type: TransferProtocolType,
-    protocol: Arc<Box<dyn TransferProtocol>>,
+    protocol: Arc<Box<dyn SerialTransferProtocol>>,
     port: Arc<std::sync::Mutex<Box<dyn crate::transfer::protocol::TransferIo>>>,
 }
 
 impl SerialFileTransfer {
     pub fn new(
         protocol_type: TransferProtocolType,
-        protocol: Box<dyn TransferProtocol>,
+        protocol: Box<dyn SerialTransferProtocol>,
         port: Box<dyn crate::transfer::protocol::TransferIo>,
     ) -> Self {
         Self {

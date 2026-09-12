@@ -19,7 +19,7 @@ use crate::kernel::file_transfer::{
 use crate::kernel::plugin_adapter::TransferProtocolType;
 use crate::kernel::session_store::SessionState;
 use crate::transfer::panic_guard::PanicGuard;
-use crate::transfer::protocol::TransferProtocol;
+use crate::transfer::protocol::SerialTransferProtocol;
 use crate::transfer::serial_transfer::SerialFileTransfer;
 use crate::transfer::types::{BatchFileResult, FileInfo};
 use crate::AppState;
@@ -237,7 +237,7 @@ impl InlineTransferOrchestrator {
         block_size: Option<usize>,
         checksum_mode: Option<String>,
         streaming: Option<bool>,
-    ) -> Result<Box<dyn TransferProtocol>, String> {
+    ) -> Result<Box<dyn SerialTransferProtocol>, String> {
         if self.pt.as_str() == "ymodem" {
             let bs = block_size.unwrap_or(1024).clamp(128, 1024);
             if let Some(ref cm) = checksum_mode {

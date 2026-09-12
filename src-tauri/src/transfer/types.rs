@@ -58,7 +58,7 @@ pub struct BatchFileResult {
     pub error: Option<String>,
 }
 
-/// 文件信息（用于 TransferProtocol trait 的发送接口）
+/// 文件信息（用于 SerialTransferProtocol trait 的发送接口）
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     /// 文件系统路径

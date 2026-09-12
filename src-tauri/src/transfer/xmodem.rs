@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::transfer::crc::{self, crc16_ccitt_feedthrough_verify, crc16_ccitt_zero_pad};
 use crate::transfer::io::{self, read_byte_with_timeout, CAN};
-use crate::transfer::protocol::TransferProtocol;
+use crate::transfer::protocol::SerialTransferProtocol;
 use crate::transfer::types::{
     BatchFileResult, FileInfo, FileTransferEvent, TransferDirection, TransferProgress,
 };
@@ -81,12 +81,12 @@ impl XModemVariant {
 
 /// XMODEM 协议处理器
 ///
-/// 实现 `TransferProtocol` trait，提供标准的 XMODEM 文件收发功能。
+/// 实现 `SerialTransferProtocol` trait，提供标准的 XMODEM 文件收发功能。
 /// XMODEM 仅支持单文件传输——`send_files` 入参为切片但仅处理第一个文件。
 #[derive(Debug, Clone, Default)]
 pub struct XModem;
 
-impl TransferProtocol for XModem {
+impl SerialTransferProtocol for XModem {
     fn send_files(
         &self,
         port: &mut Box<dyn crate::transfer::protocol::TransferIo>,

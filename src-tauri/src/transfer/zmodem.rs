@@ -22,7 +22,7 @@ use std::path::Path;
 
 use crate::transfer::crc::{crc16_ccitt, crc32_verify, crc32_zmodem};
 use crate::transfer::io::{self, read_byte_with_timeout, CAN};
-use crate::transfer::protocol::TransferProtocol;
+use crate::transfer::protocol::SerialTransferProtocol;
 use crate::transfer::types::{
     BatchFileResult, FileInfo, FileTransferEvent, TransferDirection, TransferProgress,
 };
@@ -146,7 +146,7 @@ impl Default for ZModem {
     }
 }
 
-impl TransferProtocol for ZModem {
+impl SerialTransferProtocol for ZModem {
     fn send_files(
         &self,
         port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
