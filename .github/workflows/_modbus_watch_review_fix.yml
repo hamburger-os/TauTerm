@@ -1,0 +1,65 @@
+name: Temporary Modbus watch review fix
+
+on:
+  push:
+    branches:
+      - refactor/modbus-core-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refactor/modbus-core-hardening
+          fetch-depth: 0
+      - name: Install pinned Rust formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --component rustfmt
+      - name: Close Watch validation boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src-tauri/src/plugins/modbus/polling.rs")
+          text = path.read_text(encoding="utf-8")
+          old = '''            match &row.request {\n                ModbusRequest::ReadBits { .. } => {'''
+          new = '''            crate::plugins::modbus::codec::encode_request(&row.request)\n                .map_err(|error| format!("watch row {} invalid request: {error}", row.id))?;\n            match &row.request {\n                ModbusRequest::ReadBits { .. } => {'''
+          if old not in text:
+              raise SystemExit("Watch validation insertion point missing")
+          text = text.replace(old, new, 1)
+
+          marker = '''    #[test]\n    fn bit_rows_do_not_accept_register_value_format() {'''
+          tests = '''    #[test]\n    fn watch_rows_reuse_protocol_quantity_validation() {\n        let mut bits = row("bits", 1000);\n        bits.request = ModbusRequest::ReadBits {\n            area: BitReadArea::Coils,\n            address: 0,\n            quantity: 2001,\n        };\n        bits.format = None;\n        assert!(WatchScheduler::validate_rows(&[bits]).is_err());\n\n        let mut registers = row("registers", 1000);\n        registers.request = ModbusRequest::ReadRegisters {\n            area: RegisterReadArea::HoldingRegisters,\n            address: 0,\n            quantity: 126,\n        };\n        registers.format = Some(register_format(ValueType::Hex));\n        assert!(WatchScheduler::validate_rows(&[registers]).is_err());\n    }\n\n'''
+          if marker not in text:
+              raise SystemExit("Watch test insertion point missing")
+          text = text.replace(marker, tests + marker, 1)
+          path.write_text(text, encoding="utf-8")
+
+          path = Path("docs/modules/MODBUS.md")
+          text = path.read_text(encoding="utf-8")
+          old = "Bit 区 Watch 不保存寄存器 ValueFormat。寄存器区必须具有明确 ValueFormat；固定宽度格式与 quantity 不一致时拒绝保存，而不是静默截断。"
+          new = "Bit 区 Watch 不保存寄存器 ValueFormat。寄存器区必须具有明确 ValueFormat；固定宽度格式与 quantity 不一致时拒绝保存，而不是静默截断。Watch 保存校验直接复用 Rust protocol core 的请求编码/范围校验，因此数量上限等标准规则不在 Monitor UI 或 Scheduler 中复制第二份。"
+          if old not in text:
+              raise SystemExit("Modbus doc Watch paragraph missing")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Commit Watch review fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src-tauri/src/plugins/modbus/polling.rs docs/modules/MODBUS.md
+          git commit -m "fix(modbus): validate Watch requests through protocol core"
+          git push origin HEAD:refactor/modbus-core-hardening
