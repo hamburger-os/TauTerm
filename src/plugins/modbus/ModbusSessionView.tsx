@@ -46,16 +46,14 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const generatedEndpoint = modbusEndpointLabel(params);
   useEffect(() => {
     if (!tab || tab.state !== "disconnected" || identityNormalized.current.has(sessionId)) return;
-    const generatedLegacyName = tab.name === "Modbus @ modbus"
-      || /^Modbus (RTU|ASCII|TCP) (Master|Slave|Client|Server)( @ .+)?$/.test(tab.name);
-    const needsEndpoint = tab.endpoint === "modbus" || tab.endpoint !== generatedEndpoint;
-    if (!generatedLegacyName && !needsEndpoint) return;
+    const hasCreationPlaceholder = tab.name === "Modbus @ modbus" || tab.endpoint === "modbus";
+    if (!hasCreationPlaceholder) return;
     identityNormalized.current.add(sessionId);
     void reconfigureSession(
       sessionId,
       generatedEndpoint,
       params,
-      generatedLegacyName ? generatedTitle : tab.name,
+      tab.name === "Modbus @ modbus" ? generatedTitle : tab.name,
       false,
       undefined,
       false,
