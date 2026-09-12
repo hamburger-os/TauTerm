@@ -4,9 +4,9 @@
 //! 启动，只承载一个 ConPTY。配置/命令与终端事件通过一对随机、逻辑单向命名管道的
 //! 结构化帧传输，避免同步管道句柄上的阻塞读写互相等待。
 
-use crate::channel::error::ChannelError;
-use crate::channel::local_shell_channel::LocalShellChannel;
-use crate::channel::{Channel, DisconnectInfo};
+use super::driver::LocalShellDriver;
+use crate::session::DisconnectInfo;
+use crate::transport::{BlockingByteStream, ReadStatus, StreamCloseMetadata, TransportError};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -66,7 +66,7 @@ enum ReaderEvent {
     Error(String),
 }
 
-pub struct ElevatedShellChannel {
+pub struct ElevatedShellDriver {
     writer: Arc<Mutex<std::fs::File>>,
     reader_rx: mpsc::Receiver<ReaderEvent>,
     pending: VecDeque<u8>,
@@ -76,10 +76,10 @@ pub struct ElevatedShellChannel {
     shutdown_started: bool,
 }
 
-unsafe impl Send for ElevatedShellChannel {}
+unsafe impl Send for ElevatedShellDriver {}
 
-impl ElevatedShellChannel {
-    pub fn spawn(executable: &str, args: &[String], cwd: &Path) -> Result<Self, ChannelError> {
+impl ElevatedShellDriver {
+    pub fn spawn(executable: &str, args: &[String], cwd: &Path) -> std::io::Result<Self> {
         let pipe_base = format!(
             r"\\.\pipe\TauTermElevatedShell-{}",
             uuid::Uuid::new_v4().simple()
@@ -87,14 +87,14 @@ impl ElevatedShellChannel {
         // The handles are deliberately duplex-capable even though traffic is
         // logically one-way. SetNamedPipeHandleState needs write-attributes
         // access when switching PIPE_NOWAIT back to PIPE_WAIT after connect.
-        let command_pipe = create_server_pipe(&format!("{pipe_base}-commands"), PIPE_ACCESS_DUPLEX)
-            .map_err(ChannelError::Io)?;
+        let command_pipe =
+            create_server_pipe(&format!("{pipe_base}-commands"), PIPE_ACCESS_DUPLEX)?;
         let event_pipe =
             match create_server_pipe(&format!("{pipe_base}-events"), PIPE_ACCESS_DUPLEX) {
                 Ok(pipe) => pipe,
                 Err(error) => {
                     unsafe { CloseHandle(command_pipe) };
-                    return Err(ChannelError::Io(error));
+                    return Err(error);
                 }
             };
 
@@ -105,7 +105,7 @@ impl ElevatedShellChannel {
                     CloseHandle(command_pipe);
                     CloseHandle(event_pipe);
                 }
-                return Err(ChannelError::Io(error));
+                return Err(error);
             }
         };
 
@@ -118,7 +118,7 @@ impl ElevatedShellChannel {
                 CloseHandle(command_pipe);
                 CloseHandle(event_pipe);
             }
-            return Err(ChannelError::Io(error));
+            return Err(error);
         }
 
         let mut writer = unsafe { std::fs::File::from_raw_handle(command_pipe as RawHandle) };
@@ -135,9 +135,7 @@ impl ElevatedShellChannel {
                     TerminateProcess(helper_process, 1);
                     CloseHandle(helper_process);
                 }
-                return Err(ChannelError::Io(io_other(format!(
-                    "管理员 Shell 配置序列化失败: {error}"
-                ))));
+                return Err(io_other(format!("管理员 Shell 配置序列化失败: {error}")));
             }
         };
         if let Err(error) = write_frame(&mut writer, FRAME_CONFIG, &payload) {
@@ -145,7 +143,7 @@ impl ElevatedShellChannel {
                 TerminateProcess(helper_process, 1);
                 CloseHandle(helper_process);
             }
-            return Err(ChannelError::Io(error));
+            return Err(error);
         }
 
         let writer = Arc::new(Mutex::new(writer));
@@ -249,7 +247,7 @@ fn wait_for_helper_connection(pipe: HANDLE, helper_process: HANDLE) -> std::io::
     Ok(())
 }
 
-impl Read for ElevatedShellChannel {
+impl Read for ElevatedShellDriver {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if !self.pending.is_empty() {
             return Ok(drain_pending(&mut self.pending, buf));
@@ -282,7 +280,7 @@ impl Read for ElevatedShellChannel {
     }
 }
 
-impl Write for ElevatedShellChannel {
+impl Write for ElevatedShellDriver {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.send(FRAME_WRITE, buf)?;
         Ok(buf.len())
@@ -296,36 +294,71 @@ impl Write for ElevatedShellChannel {
     }
 }
 
-impl Channel for ElevatedShellChannel {
-    fn is_connected(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+impl BlockingByteStream for ElevatedShellDriver {
+    fn read(&mut self, buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+        match Read::read(self, buf) {
+            Ok(n) if n > 0 => Ok(ReadStatus::Data(n)),
+            Ok(_) => Ok(ReadStatus::Idle),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                Ok(ReadStatus::Idle)
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof
+                ) =>
+            {
+                Ok(ReadStatus::Eof)
+            }
+            Err(error) => Err(TransportError::io("elevated_shell_read", error)),
+        }
     }
 
-    fn set_timeout(&mut self, _dur: Duration) -> Result<(), ChannelError> {
-        Ok(())
+    fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
+        Write::write_all(self, data)
+            .map_err(|error| TransportError::io("elevated_shell_write", error))
     }
 
-    fn resize_pty(&mut self, cols: u32, rows: u32) -> Result<(), ChannelError> {
-        let payload = serde_json::to_vec(&ResizeRequest { cols, rows })
-            .map_err(|error| ChannelError::Io(io_other(error.to_string())))?;
-        self.send(FRAME_RESIZE, &payload).map_err(ChannelError::Io)
+    fn flush(&mut self) -> Result<(), TransportError> {
+        Write::flush(self).map_err(|error| TransportError::io("elevated_shell_flush", error))
     }
 
-    fn shutdown(&mut self) -> Result<(), ChannelError> {
+    fn resize_terminal(&mut self, cols: u32, rows: u32) -> Result<(), TransportError> {
+        let payload = serde_json::to_vec(&ResizeRequest { cols, rows }).map_err(|error| {
+            TransportError::io("elevated_shell_resize", io_other(error.to_string()))
+        })?;
+        self.send(FRAME_RESIZE, &payload)
+            .map_err(|error| TransportError::io("elevated_shell_resize", error))
+    }
+
+    fn supports_terminal_control(&self) -> bool {
+        true
+    }
+
+    fn shutdown(&mut self) -> Result<(), TransportError> {
         self.shutdown_helper();
         Ok(())
     }
 
-    fn disconnect_info(&self, fallback: DisconnectInfo) -> DisconnectInfo {
+    fn close_metadata(&self) -> StreamCloseMetadata {
         self.exit
             .lock()
             .ok()
             .and_then(|slot| slot.clone())
-            .unwrap_or(fallback)
+            .map(|info| StreamCloseMetadata {
+                exit_code: info.exit_code,
+                signal: None,
+            })
+            .unwrap_or_default()
     }
 }
 
-impl Drop for ElevatedShellChannel {
+impl Drop for ElevatedShellDriver {
     fn drop(&mut self) {
         self.shutdown_helper();
         if !self.helper_process.is_null() {
@@ -394,7 +427,7 @@ fn run_helper(pipe_base: &str) -> std::io::Result<()> {
         .map_err(|error| io_other(format!("管理员 Shell 配置无效: {error}")))?;
     validate_helper_config(&config)?;
 
-    let mut shell = LocalShellChannel::spawn(&config.executable, &config.args, &config.cwd)
+    let mut shell = LocalShellDriver::spawn(&config.executable, &config.args, &config.cwd)
         .map_err(|error| io_other(error.to_string()))?;
     let (command_tx, command_rx) = mpsc::sync_channel(64);
     std::thread::Builder::new()
@@ -412,30 +445,33 @@ fn run_helper(pipe_base: &str) -> std::io::Result<()> {
         while let Ok((kind, payload)) = command_rx.try_recv() {
             match kind {
                 FRAME_WRITE => {
-                    shell.write_all(&payload)?;
-                    shell.flush()?;
+                    std::io::Write::write_all(&mut shell, &payload)?;
+                    std::io::Write::flush(&mut shell)?;
                 }
                 FRAME_RESIZE => {
                     let resize: ResizeRequest = serde_json::from_slice(&payload)
                         .map_err(|error| io_other(error.to_string()))?;
-                    shell
-                        .resize_pty(resize.cols, resize.rows)
+                    BlockingByteStream::resize_terminal(&mut shell, resize.cols, resize.rows)
                         .map_err(|error| io_other(error.to_string()))?;
                 }
                 FRAME_SHUTDOWN => {
-                    let _ = shell.shutdown();
+                    let _ = BlockingByteStream::shutdown(&mut shell);
                     return Ok(());
                 }
                 _ => return Err(io_other("管理员 Shell helper 收到未知命令")),
             }
         }
 
-        match shell.read(&mut buffer) {
+        match std::io::Read::read(&mut shell, &mut buffer) {
             Ok(0) => {}
             Ok(count) => write_frame(&mut event_pipe, FRAME_DATA, &buffer[..count])?,
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
             Err(error) => {
-                let info = shell.disconnect_info(DisconnectInfo::io_error(error.to_string()));
+                let metadata = BlockingByteStream::close_metadata(&shell);
+                let info = metadata
+                    .exit_code
+                    .map(|code| DisconnectInfo::process_exited(code, metadata.signal.as_deref()))
+                    .unwrap_or_else(|| DisconnectInfo::io_error(error.to_string()));
                 let payload = serde_json::to_vec(&info)
                     .map_err(|serialize_error| io_other(serialize_error.to_string()))?;
                 write_frame(&mut event_pipe, FRAME_EXIT, &payload)?;

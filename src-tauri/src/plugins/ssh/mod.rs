@@ -5,6 +5,7 @@
 //! 文件服务（SFTP）通过独立的侧通道操作，不中断终端 I/O 循环。
 //! russh Handle 内部线程安全，终端 I/O 与 SFTP 可安全并发。
 
+mod driver;
 pub mod handler;
 pub mod journald;
 mod known_hosts;
@@ -15,14 +16,14 @@ use std::time::Duration;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 
-use crate::channel::error::SessionError;
-use crate::channel::ssh_channel::SshChannel;
-use crate::channel::{ContentType, IoStrategy};
-use crate::kernel::file_transfer::FileTransfer;
+use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    ChannelKind, ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection,
-    SessionChannelFactory, SideChannel, TransferProtocolType,
+    ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach,
+    SessionChannelFactory, SessionService, TransferProtocolType,
 };
+use crate::session::SessionError;
+use crate::transport::{AsyncBridgeDriver, DataPlaneRuntime};
+use driver::SshDriver;
 use handler::SshHandler;
 use known_hosts::{HostTrustDecision, KnownHostStore};
 
@@ -77,13 +78,17 @@ fn default_file_service_protocol() -> String {
 /// 无状态结构体——每次 `connect()` 调用建立全新的 TCP 连接和 SSH 会话。
 /// 通过 `connect()` 返回 `ProtocolConnection`，携带：
 /// - `channel`: `SshChannel`（终端 I/O，async 路径）
-/// - `comm_handle`: None（由 SessionStore 统一使用默认 CommHandle 包装 write_tx）
-/// - `side_channel`: `SshSideChannel`（供 SFTP 文件服务复用 SSH Handle 和 SFTP 缓存）
+/// - 会话 I/O：由 SessionStore 统一绑定返回的 DataPlaneRuntime 与 SessionIo
+/// - `runtime`: `SshRuntime`（供 SFTP 文件服务复用 SSH Handle 和 SFTP 缓存）
 pub struct SshAdapter;
 
 impl SshAdapter {
     pub fn new() -> Self {
         Self
+    }
+
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<SshRuntime>> {
+        runtime(session_id)
     }
 
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
@@ -102,18 +107,22 @@ impl SshAdapter {
         verifier: &HostKeyVerifier,
     ) -> Result<ProtocolConnection, SessionError> {
         let result = build_connection_with_config(config, app_handle, verifier).await?;
-        let shared = Arc::new(SshSideChannel::new(
+        let shared = Arc::new(SshRuntime::new(
             result.session,
             result.host_key_fingerprint,
             result.home_dir,
         ));
+        let bridge = AsyncBridgeDriver::new(Box::new(result.driver))?;
+        let file_transfer = Arc::new(crate::transfer::sftp_transfer::SftpFileTransfer::new(
+            shared.session.clone(),
+            shared.sftp.clone(),
+        ));
         Ok(ProtocolConnection {
-            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Async(Box::new(
-                result.channel,
-            ))),
-            comm_handle: None,
-            side_channel: Some(shared.clone()),
-            channel_factory: Some(shared),
+            data_plane: Some(DataPlaneRuntime::spawn(Box::new(bridge))),
+            service: Some(shared.clone()),
+            file_transfer: Some(file_transfer),
+            channel_factory: Some(shared.clone()),
+            on_attached: Some(Arc::new(RuntimeAttach { runtime: shared })),
             teardown_delay: self.teardown_delay(),
         })
     }
@@ -209,14 +218,14 @@ impl HostKeyVerifier {
     }
 }
 
-/// 供 SFTP 文件服务使用的侧通道资源。
+/// 供 SFTP 文件服务使用的类型化运行时资源。
 ///
-/// 持有 SSH 会话引用和缓存的 SFTP 对象，通过 `ProtocolConnection::side_channel`
-/// 传递给 `SessionStore`。SFTP 命令通过 `downcast_ref::<SshSideChannel>()` 还原。
+/// 持有 SSH 会话引用和缓存的 SFTP 对象。SessionStore 只持有协议无关生命周期
+/// capability；SSH 命令通过插件自己的 typed runtime registry 按 session_id 获取本对象。
 ///
 /// - `session` — russh Handle（内部线程安全，与 SshChannel 共享同一 Arc）
 /// - `sftp` — 缓存的 SFTP 子系统通道，避免每次操作重新协商
-pub struct SshSideChannel {
+pub struct SshRuntime {
     /// russh Handle（内部线程安全，与 SshChannel 共享）
     pub session: Arc<russh::client::Handle<SshHandler>>,
     /// 缓存的 SFTP 对象，首次 SFTP 操作时惰性创建。
@@ -229,7 +238,39 @@ pub struct SshSideChannel {
     pub home_dir: Option<String>,
 }
 
-impl SshSideChannel {
+fn runtime_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<SshRuntime>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<SshRuntime>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn runtime(session_id: &str) -> Option<Arc<SshRuntime>> {
+    runtime_registry().lock().ok()?.get(session_id).cloned()
+}
+
+struct RuntimeAttach {
+    runtime: Arc<SshRuntime>,
+}
+impl SessionAttach for RuntimeAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.insert(session_id.to_string(), self.runtime.clone());
+        }
+    }
+    fn on_detached(&self, session_id: &str) {
+        // SSH-owned background operations are keyed by the final Session id, so their
+        // lifecycle cleanup belongs in the SSH attachment hook rather than SessionStore.
+        journald::stop_journald_stream(session_id);
+        journald::stop_journald_export(session_id);
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+}
+
+impl SshRuntime {
     pub fn new(
         session: Arc<russh::client::Handle<SshHandler>>,
         host_key_fingerprint: Option<String>,
@@ -249,32 +290,19 @@ impl SshSideChannel {
     }
 }
 
-impl SideChannel for SshSideChannel {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn create_file_transfer(&self) -> Option<Arc<dyn FileTransfer>> {
-        Some(Arc::new(
-            crate::transfer::sftp_transfer::SftpFileTransfer::new(
-                self.session.clone(),
-                self.sftp.clone(),
-            ),
-        ))
-    }
-}
+impl SessionService for SshRuntime {}
 
 #[async_trait::async_trait]
-impl SessionChannelFactory for SshSideChannel {
-    async fn open_channel(&self, mode: ChannelOpenMode) -> Result<ChannelKind, SessionError> {
+impl SessionChannelFactory for SshRuntime {
+    async fn open_channel(&self, mode: ChannelOpenMode) -> Result<DataPlaneRuntime, SessionError> {
         if mode != ChannelOpenMode::Standard {
             return Err(SessionError::CapabilityDenied {
                 capability: "elevated_shell".into(),
             });
         }
-        Ok(ChannelKind::Async(Box::new(
-            open_pty_shell_channel(self.handle()).await?,
-        )))
+        let driver = open_pty_shell_channel(self.handle()).await?;
+        let bridge = AsyncBridgeDriver::new(Box::new(driver))?;
+        Ok(DataPlaneRuntime::spawn(Box::new(bridge)))
     }
 
     fn child_name_prefix(&self) -> &'static str {
@@ -284,7 +312,7 @@ impl SessionChannelFactory for SshSideChannel {
 
 /// 建立连接的产物
 struct BuildConnectionResult {
-    channel: SshChannel,
+    driver: SshDriver,
     session: Arc<russh::client::Handle<SshHandler>>,
     /// 主机密钥 SHA256 指纹（如 "SHA256:xxxx"），供前端展示/确认
     host_key_fingerprint: Option<String>,
@@ -542,7 +570,7 @@ async fn build_connection_with_config(
     let ssh_channel = open_pty_shell_channel(handle.clone()).await?;
 
     Ok(BuildConnectionResult {
-        channel: ssh_channel,
+        driver: ssh_channel,
         session: handle,
         host_key_fingerprint,
         home_dir,
@@ -555,7 +583,7 @@ async fn build_connection_with_config(
 /// Tauri 命令（SSH 多连接）共用。跳过了 TCP 连接、密钥验证和认证步骤。
 pub async fn open_pty_shell_channel(
     handle: Arc<russh::client::Handle<SshHandler>>,
-) -> Result<SshChannel, SessionError> {
+) -> Result<SshDriver, SessionError> {
     // 1. 打开交互式 shell 通道
     let channel =
         handle
@@ -581,9 +609,7 @@ pub async fn open_pty_shell_channel(
             reason: format!("启动 shell 失败: {}", e),
         })?;
 
-    let ssh_channel = SshChannel::new(channel, handle);
-
-    Ok(ssh_channel)
+    Ok(SshDriver::new(channel, handle))
 }
 
 #[async_trait::async_trait]
@@ -602,11 +628,6 @@ impl ProtocolAdapter for SshAdapter {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn io_strategy(&self) -> IoStrategy {
-        // russh 是 async API，使用异步 I/O 循环
-        IoStrategy::Async
     }
 
     fn transfer_protocols(&self) -> Vec<TransferProtocolType> {

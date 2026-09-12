@@ -22,7 +22,7 @@ pub const G: u8 = 0x47;
 /// 以 10ms 轮询间隔读取，总等待不超过 `timeout_ms`。
 /// 返回 `Ok(Some(byte))` 收到字节，`Ok(None)` 超时，`Err` I/O 错误。
 pub fn read_byte_with_timeout(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     timeout_ms: u64,
 ) -> Result<Option<u8>, Box<dyn std::error::Error>> {
     let mut buf = [0u8; 1];
@@ -45,7 +45,7 @@ pub fn read_byte_with_timeout(
 ///
 /// 连续读取并丢弃数据，直到连续 3 次读取为空（超时或零字节），
 /// 确保缓冲区完全清空。最多尝试 20 次以避免死循环。
-pub fn flush_port_buffer(port: &mut Box<dyn serialport::SerialPort>) {
+pub fn flush_port_buffer(port: &mut Box<dyn crate::transfer::protocol::TransferIo>) {
     let mut buf = [0u8; 256];
     let mut empty_count: u32 = 0;
     for _ in 0..20 {
@@ -67,7 +67,7 @@ pub fn flush_port_buffer(port: &mut Box<dyn serialport::SerialPort>) {
 ///
 /// 尽力而为通知远端取消传输。发送后刷新输出缓冲区并等待 100ms
 /// 以确保字节发出并被远端处理。
-pub fn send_cancel(port: &mut Box<dyn serialport::SerialPort>) {
+pub fn send_cancel(port: &mut Box<dyn crate::transfer::protocol::TransferIo>) {
     use std::io::Write;
     // lrzsz canit(): 10 × CAN (0x18) + 8 × BS (0x08)
     let sequence: [u8; 18] = [
@@ -111,7 +111,7 @@ pub fn detect_cancel(byte: u8, last_can: &mut bool) -> bool {
 ///
 /// 以短超时（100ms/字节）连续读取并丢弃数据，最多读取 20 字节。
 /// 用于文件传输间隙清理残留字节。
-pub fn drain_rx_buffer(port: &mut Box<dyn serialport::SerialPort>) {
+pub fn drain_rx_buffer(port: &mut Box<dyn crate::transfer::protocol::TransferIo>) {
     for _ in 0..20 {
         match read_byte_with_timeout(port, 100) {
             Ok(Some(_)) => continue,
@@ -147,7 +147,7 @@ pub enum WaitResult {
 /// - `Ok(WaitResult::Cancel)`: 检测到双 CAN 取消序列
 /// - `Err(e)`: I/O 错误或超时（含意外字节达到 max_retries 限制）
 pub fn wait_for_nak_or_c(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     timeout_ms: u64,
     max_retries: u32,
 ) -> Result<WaitResult, Box<dyn std::error::Error>> {
@@ -238,7 +238,7 @@ pub enum EotResponse {
 /// - `port`: 串口设备
 /// - `timeout_ms`: 单字节读取超时（毫秒）
 pub fn read_eot_response(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     timeout_ms: u64,
 ) -> Result<EotResponse, Box<dyn std::error::Error>> {
     match read_byte_with_timeout(port, timeout_ms)? {

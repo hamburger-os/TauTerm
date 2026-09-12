@@ -9,7 +9,6 @@ pub mod counting_socket;
 pub mod server;
 pub mod transfer;
 
-use std::any::Any;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
@@ -18,11 +17,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::channel::error::SessionError;
-use crate::channel::{ContentType, IoStrategy};
+use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    ProtocolAdapter, ProtocolConnection, SideChannel, TransferProtocolType,
+    ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService, TransferProtocolType,
 };
+use crate::session::SessionError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TftpConfig {
@@ -186,7 +185,7 @@ pub struct TftpStatus {
     pub dynamic_params: TftpDynamicParams,
 }
 
-pub struct TftpSideChannel {
+pub struct TftpRuntime {
     pub socket: Arc<std::net::UdpSocket>,
     pub config: TftpConfig,
     pub dynamic_params: Arc<Mutex<TftpDynamicParams>>,
@@ -196,7 +195,35 @@ pub struct TftpSideChannel {
     pub active_server_transfers: Arc<AtomicU64>,
 }
 
-impl TftpSideChannel {
+fn runtime_registry(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<TftpRuntime>>> {
+    static REGISTRY: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Arc<TftpRuntime>>>,
+    > = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+pub fn runtime(session_id: &str) -> Option<Arc<TftpRuntime>> {
+    runtime_registry().lock().ok()?.get(session_id).cloned()
+}
+
+struct RuntimeAttach {
+    runtime: Arc<TftpRuntime>,
+}
+impl SessionAttach for RuntimeAttach {
+    fn on_attached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.insert(session_id.to_string(), self.runtime.clone());
+        }
+    }
+    fn on_detached(&self, session_id: &str) {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+}
+
+impl TftpRuntime {
     pub fn new(socket: Arc<std::net::UdpSocket>, config: TftpConfig) -> Self {
         Self {
             socket,
@@ -214,11 +241,7 @@ impl TftpSideChannel {
     }
 }
 
-impl SideChannel for TftpSideChannel {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
+impl SessionService for TftpRuntime {
     fn shutdown(&self) {
         self.abort_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -231,6 +254,10 @@ pub struct TftpAdapter;
 impl TftpAdapter {
     pub fn new() -> Self {
         Self
+    }
+
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<TftpRuntime>> {
+        runtime(session_id)
     }
 }
 
@@ -251,7 +278,7 @@ pub fn exposure_warning(config: &TftpConfig) -> Option<&'static str> {
 fn bind_error(listen_addr: SocketAddr, error: std::io::Error) -> SessionError {
     #[cfg(target_os = "linux")]
     if error.kind() == std::io::ErrorKind::PermissionDenied && listen_addr.port() < 1024 {
-        return SessionError::IoError(std::io::Error::new(
+        return SessionError::Io(std::io::Error::new(
             error.kind(),
             format!(
                 "cannot bind privileged TFTP port {} as a normal Linux user: {}. Choose a port >= 1024 or grant only the required bind capability; do not run the whole application as root",
@@ -260,7 +287,7 @@ fn bind_error(listen_addr: SocketAddr, error: std::io::Error) -> SessionError {
         ));
     }
 
-    SessionError::IoError(std::io::Error::new(
+    SessionError::Io(std::io::Error::new(
         error.kind(),
         format!("cannot bind TFTP address {}: {}", listen_addr, error),
     ))
@@ -324,23 +351,20 @@ impl ProtocolAdapter for TftpAdapter {
             .map_err(|error| bind_error(listen_addr, error))?;
 
         log::info!("TFTP socket bound to {}", listen_addr);
-        let side_channel = Arc::new(TftpSideChannel::new(Arc::new(socket), config));
+        let runtime = Arc::new(TftpRuntime::new(Arc::new(socket), config));
 
         Ok(ProtocolConnection {
-            channel: None,
-            comm_handle: None,
-            side_channel: Some(side_channel),
+            data_plane: None,
+            service: Some(runtime.clone()),
+            file_transfer: None,
             channel_factory: None,
+            on_attached: Some(Arc::new(RuntimeAttach { runtime })),
             teardown_delay: Duration::from_millis(100),
         })
     }
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn io_strategy(&self) -> IoStrategy {
-        IoStrategy::Async
     }
 
     fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
@@ -407,14 +431,9 @@ pub fn build_oack_options(
 
 pub fn try_start_server(
     app: &tauri::AppHandle,
-    side_channel: &Arc<dyn crate::kernel::plugin_adapter::SideChannel>,
+    tftp_sc: &Arc<TftpRuntime>,
     session_id: &str,
 ) -> Result<(), String> {
-    let tftp_sc = side_channel
-        .as_any()
-        .downcast_ref::<TftpSideChannel>()
-        .ok_or_else(|| "side channel is not TFTP".to_string())?;
-
     if tftp_sc
         .server_running
         .load(std::sync::atomic::Ordering::Relaxed)

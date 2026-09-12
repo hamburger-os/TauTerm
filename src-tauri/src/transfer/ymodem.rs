@@ -28,7 +28,7 @@ use crate::transfer::io::{
     self, detect_cancel, drain_rx_buffer, read_byte_with_timeout, read_eot_response,
     wait_for_nak_or_c, EotResponse, WaitResult, C, CAN, G, NAK,
 };
-use crate::transfer::protocol::TransferProtocol;
+use crate::transfer::protocol::SerialTransferProtocol;
 use crate::transfer::types::{
     BatchFileResult, FileInfo, FileTransferEvent, TransferDirection, TransferProgress,
 };
@@ -56,7 +56,7 @@ const CPMEOF: u8 = 0x1A;
 
 /// YMODEM 协议处理器
 ///
-/// 实现 `TransferProtocol` trait，提供标准的 YMODEM 文件收发功能。
+/// 实现 `SerialTransferProtocol` trait，提供标准的 YMODEM 文件收发功能。
 #[derive(Debug, Clone)]
 pub struct YModem {
     /// 默认数据块大小：128 或 1024（默认 1024，对齐 lrzsz `-k` 选项）
@@ -71,10 +71,10 @@ impl Default for YModem {
     }
 }
 
-impl TransferProtocol for YModem {
+impl SerialTransferProtocol for YModem {
     fn send_files(
         &self,
-        port: &mut Box<dyn serialport::SerialPort>,
+        port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
         files: &[FileInfo],
         on_progress: &dyn Fn(TransferProgress),
         on_file_event: &dyn Fn(FileTransferEvent),
@@ -85,7 +85,7 @@ impl TransferProtocol for YModem {
 
     fn receive_files(
         &self,
-        port: &mut Box<dyn serialport::SerialPort>,
+        port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
         download_dir: &str,
         on_progress: &dyn Fn(TransferProgress),
         on_file_event: &dyn Fn(FileTransferEvent),
@@ -103,7 +103,7 @@ impl TransferProtocol for YModem {
 /// 当剩余数据 ≤ `TRAILER_BLOCK_THRESHOLD` 时自动切换为 128 字节块。
 fn ymodem_send(
     config: &YModem,
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     files: &[FileInfo],
     on_progress: &dyn Fn(TransferProgress),
     on_file_event: &dyn Fn(FileTransferEvent),
@@ -546,7 +546,7 @@ fn ymodem_send(
 ///
 /// 用于 fire-and-forget 场景（如批次结束空块 0）或作为 `send_block` 的构建部分。
 fn send_packet_only(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     block_num: u8,
     data: &[u8],
     block_size: usize,
@@ -589,7 +589,7 @@ fn send_packet_only(
 /// - `crc_mode=true`: CRC-16（2 字节），`crc_mode=false`: 8 位校验和（1 字节）
 /// - `streaming=true`: YMODEM-g 流模式，发送后立即返回不等待 ACK
 fn send_block(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     block_num: u8,
     data: &[u8],
     block_size: usize,
@@ -668,7 +668,7 @@ fn send_block(
 ///
 /// 同时处理设备 `_rym_do_send_eot()` 的另一种变体: EOT → 'C'（直接就绪）
 fn send_eot(
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     cancel: &mut dyn FnMut() -> bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut last_can = false;
@@ -766,7 +766,7 @@ fn send_eot(
 /// YMODEM 按 lrzsz 标准接收文件批次
 fn ymodem_receive(
     _config: &YModem,
-    port: &mut Box<dyn serialport::SerialPort>,
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     download_dir: &str,
     on_progress: &dyn Fn(TransferProgress),
     on_file_event: &dyn Fn(FileTransferEvent),

@@ -30,7 +30,8 @@
 
 | 文档 | 覆盖范围 |
 |---|---|
-| [NETWORK_PROTOCOLS.md](NETWORK_PROTOCOLS.md) | TCP/UDP、SSH/SFTP、Telnet、TFTP、iperf、Modbus |
+| [NETWORK_PROTOCOLS.md](NETWORK_PROTOCOLS.md) | TCP/UDP、SSH/SFTP、Telnet、TFTP、iperf、NMEA 等网络/文本协议入口 |
+| [MODBUS.md](MODBUS.md) | Modbus Application Protocol、Serial Line、RTU/ASCII/TCP framing、功能码与异常语义 |
 | [TERMINAL_SERIAL_AUTOMATION.md](TERMINAL_SERIAL_AUTOMATION.md) | 终端控制序列、PTY/ConPTY、串口标准、Lua |
 | [TRDP.md](TRDP.md) | IEC 61375-2-3 / TRDP、TCNOpen、SDT 边界 |
 | [PLATFORM_SECURITY.md](PLATFORM_SECURITY.md) | Tauri 安全模型、权限、updater、平台 native 边界 |

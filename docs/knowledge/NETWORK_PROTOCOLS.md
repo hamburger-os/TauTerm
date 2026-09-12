@@ -33,7 +33,7 @@ SFTP 没有最终发布为 IETF RFC。TauTerm 当前依赖 `russh-sftp`，其实
 - Historical SFTP v3 draft: https://datatracker.ietf.org/doc/html/draft-ietf-secsh-filexfer-02
 - OpenSSH protocol extensions: https://github.com/openssh/openssh-portable/blob/master/PROTOCOL
 
-因此文档中不要把“SFTP v3”写成“RFC 标准”。需要实现扩展时，应优先确认 `russh-sftp` 实际支持范围。文件管理实现还必须区分 `stat` 与 no-follow/`lstat` 语义；递归树默认不跟随 symbolic link。覆盖文件不能依赖“直接 create 后失败再删除”的模式，因为 `russh-sftp` 的便利 `create()` 会打开并 truncate 已有文件；TauTerm 使用 `CREATE | EXCLUDE` 创建新对象/临时文件，并通过同目录临时产物与 rename 提交边界保护正式目标。历史 SFTP v3 draft 定义普通 RENAME 在目标已存在时失败，因此 Keep Both 可使用 no-overwrite rename + 失败后重检来处理提交竞态；不能只做一次 `exists` 预检。
+因此文档中不要把“SFTP v3”写成“RFC 标准”。需要实现扩展时，应优先确认 `russh-sftp` 实际支持范围。文件管理实现必须区分 `stat` 与 no-follow/`lstat` 语义；递归树默认不跟随 symbolic link。覆盖文件不能依赖“直接 create 后失败再删除”的模式，因为便利 `create()` 会 truncate 已有文件；TauTerm 使用 `CREATE | EXCLUDE` 创建新对象/临时文件，并通过同目录临时产物与 rename 提交边界保护正式目标。
 
 内部设计：[SSH.md](../modules/SSH.md)、[TRANSFER.md](../modules/TRANSFER.md)。
 
@@ -60,7 +60,7 @@ TauTerm 的 option negotiation、local echo 和窗口尺寸更新需要同时满
 - Timeout Interval / Transfer Size — RFC 2349: https://www.rfc-editor.org/rfc/rfc2349
 - Windowsize Option — RFC 7440: https://www.rfc-editor.org/rfc/rfc7440
 
-当前 `tftpd 1.0` 上游声明覆盖 RFC 1350、2347、2348、2349 和 7440；TauTerm 的具体 UI/配置只应声称自身实际暴露和验证过的子集。安全暴露策略（监听非 loopback、远端写入、覆盖）是 TauTerm 产品安全边界，不是 TFTP RFC 本身提供的权限系统。
+当前 `tftpd 1.0` 上游声明覆盖 RFC 1350、2347、2348、2349 和 7440；TauTerm 的具体 UI/配置只应声称自身实际暴露和验证过的子集。安全暴露策略是 TauTerm 产品边界，不是 TFTP RFC 本身提供的权限系统。
 
 ## iperf
 
@@ -74,16 +74,9 @@ TauTerm 的 iperf3 行为还必须参考 `src-tauri/vendor/riperf3/VENDOR-NOTES.
 
 ## Modbus
 
-### 权威来源
+Modbus RTU / ASCII / TCP 的规范性来源、framing、地址、功能码、异常和重试边界统一维护在专用 [MODBUS.md](MODBUS.md)。本文件不再复制 Modbus 协议事实。
 
-- Modbus Organization Specifications: https://www.modbus.org/modbus-specifications
-- Modbus Application Protocol V1.1b3 由上述官方页面发布。
-- Modbus Serial Line Protocol and Implementation Guide V1.02 由上述官方页面发布。
-
-TauTerm 当前 Protocol Inspector 覆盖 Modbus RTU、ASCII 与 TCP 的离线 ADU/PDU 检查，并对常用 01/02/03/04/05/06/0F/10 功能做字段和语义验证。RTU/ASCII 的串行 framing/checksum 与 TCP 的 MBAP 必须保持各自标准语义。该能力不是在线 Modbus stack、设备模拟器或一致性认证工具；未来 Modbus Session 应复用同一协议核心，而不是复制 parser/function table。
-
-内部设计：[OBSERVABILITY_TOOLS.md](../modules/OBSERVABILITY_TOOLS.md)。
-
+当前实现设计见 [模块文档 MODBUS.md](../modules/MODBUS.md)；Protocol Inspector 的离线解析能力见 [OBSERVABILITY_TOOLS.md](../modules/OBSERVABILITY_TOOLS.md)。
 
 ## NMEA 0183
 

@@ -13,7 +13,7 @@ use std::time::Duration;
 use mlua::{Function, Lua, Table};
 use tauri::Emitter;
 
-use crate::kernel::comm_handle::CommHandle;
+use crate::session::SessionIo;
 
 /// 向 Lua 全局环境注入脚本 API
 ///
@@ -21,71 +21,60 @@ use crate::kernel::comm_handle::CommHandle;
 /// 使停止脚本时长睡眠能及时中断（否则 join 会阻塞整段睡眠时长并卡住全局锁）。
 pub fn inject_lua_api(
     lua: &Lua,
-    comm: Arc<dyn CommHandle>,
+    io: Arc<SessionIo>,
     app_handle: tauri::AppHandle,
     session_id: &str,
     shutdown: Arc<AtomicBool>,
 ) -> mlua::Result<()> {
     let globals = lua.globals();
 
-    // 初始化 handler 表（由 Lua 管理）
     let handlers_table = lua.create_table()?;
     globals.set("__handlers", handlers_table)?;
-
-    // 初始化定时器表（由 register_timer 填充，Rust 侧 tick_timers 遍历）
     let timers_table = lua.create_table()?;
     globals.set("__timers", timers_table)?;
 
-    // ── send(data) ── 原始字节透传（可含任意字节，含 \0）
-    let comm_send = comm.clone();
+    let raw_io = io.clone();
     let send_fn = lua.create_function(move |_, data: mlua::String| {
         let bytes: Vec<u8> = data.as_bytes().to_vec();
-        comm_send
+        raw_io
             .send(&bytes)
-            .map_err(|e| mlua::Error::RuntimeError(format!("send 失败: {}", e)))
+            .map_err(|error| mlua::Error::RuntimeError(format!("send 失败: {error}")))
     })?;
     globals.set("send", send_fn)?;
 
-    // ── send_text(text) ── 文本路径：按会话编码转码后发送（UTF-8 → GBK 等），
-    // 与前端 SendBar 文本发送行为一致；发送中文到非 UTF-8 设备不再产生乱码。
-    let comm_send_text = comm.clone();
+    let text_io = io.clone();
     let send_text_fn = lua.create_function(move |_, data: mlua::String| {
         let bytes: Vec<u8> = data.as_bytes().to_vec();
-        comm_send_text
+        text_io
             .send_text(&bytes)
             .map(|_| ())
-            .map_err(|e| mlua::Error::RuntimeError(format!("send_text 失败: {}", e)))
+            .map_err(|error| mlua::Error::RuntimeError(format!("send_text 失败: {error}")))
     })?;
     globals.set("send_text", send_text_fn)?;
 
-    // ── send_to(target, data) ── 向显式目标地址发送原始字节（UDP server 广播/组播/任意地址）
-    let comm_send_to = comm.clone();
+    let targeted_io = io.clone();
     let send_to_fn =
         lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
             let target = target.to_str()?.to_string();
             let bytes: Vec<u8> = data.as_bytes().to_vec();
-            comm_send_to
+            targeted_io
                 .send_to(&target, &bytes)
-                .map_err(|e| mlua::Error::RuntimeError(format!("send_to 失败: {}", e)))
+                .map_err(|error| mlua::Error::RuntimeError(format!("send_to 失败: {error}")))
         })?;
     globals.set("send_to", send_to_fn)?;
 
-    // ── send_to_text(target, text) ── 向显式目标地址按会话编码转码后发送文本
-    let comm_send_to_text = comm.clone();
+    let targeted_text_io = io;
     let send_to_text_fn =
         lua.create_function(move |_, (target, data): (mlua::String, mlua::String)| {
             let target = target.to_str()?.to_string();
             let bytes: Vec<u8> = data.as_bytes().to_vec();
-            comm_send_to_text
+            targeted_text_io
                 .send_to_text(&target, &bytes)
                 .map(|_| ())
-                .map_err(|e| mlua::Error::RuntimeError(format!("send_to_text 失败: {}", e)))
+                .map_err(|error| mlua::Error::RuntimeError(format!("send_to_text 失败: {error}")))
         })?;
     globals.set("send_to_text", send_to_text_fn)?;
 
-    // ── sleep(ms) ──
-    // 协作式分片睡眠：每 50ms 检查一次 shutdown 标志，使停止脚本时能及时中断，
-    // 避免长睡眠期间无法响应 Shutdown 导致 join 阻塞（并卡住 SessionStore 全局锁）。
     let sleep_shutdown = shutdown.clone();
     let sleep_fn = lua.create_function(move |_, ms: u64| {
         const SLICE_MS: u64 = 50;
@@ -102,13 +91,12 @@ pub fn inject_lua_api(
     })?;
     globals.set("sleep", sleep_fn)?;
 
-    // ── log(message) ──
     let app_log = app_handle.clone();
     let sid = session_id.to_string();
     let log_fn = lua.create_function(move |_, msg: mlua::String| {
         let text = msg.to_str()?.to_string();
         let timestamp = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
-        let formatted = format!("[{}] {}", timestamp, text);
+        let formatted = format!("[{timestamp}] {text}");
         let _ = app_log.emit(
             "script-log",
             serde_json::json!({
@@ -120,41 +108,30 @@ pub fn inject_lua_api(
     })?;
     globals.set("log", log_fn)?;
 
-    // ── on_data(pattern, callback) ──
-    // 存储 { pattern = pattern_str, callback = callback_fn } 到 __handlers 表中
     let on_data_fn =
         lua.create_function(|lua, (pattern, callback): (mlua::String, Function)| {
             let pattern_str = pattern.to_str()?.to_string();
             let globals = lua.globals();
             let handlers: Table = globals.get("__handlers")?;
-
             let entry = lua.create_table()?;
             entry.set("pattern", pattern_str)?;
             entry.set("callback", callback)?;
-
-            // 追加到 handlers 表
             let len: i64 = handlers.len()?;
             handlers.set(len + 1, entry)?;
-
             Ok(())
         })?;
     globals.set("on_data", on_data_fn)?;
 
-    // ── register_timer(id, interval_ms, callback) ──
-    // 注册周期定时器。存储 { id, interval_ms, last_fire = 0, callback } 到 __timers。
-    // last_fire = 0 使定时器首次 tick 立即触发一次。
     let register_timer_fn = lua.create_function(
         |lua, (id, interval_ms, callback): (mlua::String, u64, Function)| {
             let id_str = id.to_str()?.to_string();
             let globals = lua.globals();
             let timers: Table = globals.get("__timers")?;
-
             let entry = lua.create_table()?;
             entry.set("id", id_str)?;
             entry.set("interval_ms", interval_ms.max(1) as f64)?;
             entry.set("last_fire", 0.0f64)?;
             entry.set("callback", callback)?;
-
             let len: i64 = timers.len()?;
             timers.set(len + 1, entry)?;
             Ok(())
@@ -162,8 +139,6 @@ pub fn inject_lua_api(
     )?;
     globals.set("register_timer", register_timer_fn)?;
 
-    // ── unregister_timer(id) ──
-    // 从 __timers 中移除指定 id 的定时器（就地重建表以保持 ipairs 连续）。
     let unregister_timer_fn = lua.create_function(|lua, id: mlua::String| {
         let id_str = id.to_str()?.to_string();
         let globals = lua.globals();
@@ -171,10 +146,10 @@ pub fn inject_lua_api(
         let kept = lua.create_table()?;
         let mut idx = 1i64;
         for pair in timers.sequence_values::<Table>() {
-            let t = pair?;
-            let tid: String = t.get("id")?;
-            if tid != id_str {
-                kept.set(idx, t)?;
+            let timer = pair?;
+            let timer_id: String = timer.get("id")?;
+            if timer_id != id_str {
+                kept.set(idx, timer)?;
                 idx += 1;
             }
         }
@@ -183,22 +158,18 @@ pub fn inject_lua_api(
     })?;
     globals.set("unregister_timer", unregister_timer_fn)?;
 
-    // ── regex_find(pattern, data) → captures table or nil ──
-    // 使用 Rust regex crate 提供完整的正则表达式支持。
-    // 返回的捕获组表是 0-indexed（[0] = 完整匹配, [1] = 第一个捕获组...）
     let regex_find_fn =
         lua.create_function(|lua, (pattern, data): (mlua::String, mlua::String)| {
             let pat_str = pattern.to_str()?;
             let data_str = data.to_str()?;
-
-            let re = regex::Regex::new(&pat_str)
-                .map_err(|e| mlua::Error::RuntimeError(format!("正则表达式语法错误: {}", e)))?;
-
+            let re = regex::Regex::new(&pat_str).map_err(|error| {
+                mlua::Error::RuntimeError(format!("正则表达式语法错误: {error}"))
+            })?;
             if let Some(caps) = re.captures(&data_str) {
                 let result = lua.create_table()?;
-                for (i, cap) in caps.iter().enumerate() {
-                    if let Some(m) = cap {
-                        result.set(i, m.as_str().to_string())?;
+                for (index, cap) in caps.iter().enumerate() {
+                    if let Some(value) = cap {
+                        result.set(index, value.as_str().to_string())?;
                     }
                 }
                 Ok(mlua::Value::Table(result))
@@ -208,25 +179,22 @@ pub fn inject_lua_api(
         })?;
     globals.set("regex_find", regex_find_fn)?;
 
-    // ── _time_ms() → Unix 毫秒时间戳 ──
     let time_ms_fn = lua.create_function(|_, _: ()| {
         let ts = chrono::Utc::now().timestamp_millis() as f64;
         Ok(ts)
     })?;
     globals.set("_time_ms", time_ms_fn)?;
 
-    // ── _datetime_iso() → ISO 8601 格式日期时间 ──
     let datetime_iso_fn = lua.create_function(|_, _: ()| {
-        let s = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        Ok(s)
+        let value = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+        Ok(value)
     })?;
     globals.set("_datetime_iso", datetime_iso_fn)?;
 
-    // ── _datetime_format(fmt) → 自定义 strftime 格式 ──
     let datetime_format_fn = lua.create_function(|_, fmt: mlua::String| {
         let format_str = fmt.to_str()?;
-        let s = chrono::Local::now().format(&format_str).to_string();
-        Ok(s)
+        let value = chrono::Local::now().format(&format_str).to_string();
+        Ok(value)
     })?;
     globals.set("_datetime_format", datetime_format_fn)?;
 

@@ -4,45 +4,34 @@
 //! them in release mode and preserve JSON output as artifacts so regressions can be compared over
 //! time without making hosted-runner noise a hard release threshold.
 
-use crate::channel::error::ChannelError;
-use crate::channel::io_loop::{spawn_sync_io_loop, IoLoopCmd, IoLoopContext};
-use crate::channel::Channel;
 use crate::kernel::persistence::atomic_write;
+use crate::transport::{BlockingByteStream, DataPlaneRuntime, ReadStatus, TransportError};
 use serde::Serialize;
-use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-struct MemoryChannel {
+struct MemoryStream {
     written: Arc<AtomicU64>,
 }
 
-impl Read for MemoryChannel {
-    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+impl BlockingByteStream for MemoryStream {
+    fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
         std::thread::sleep(Duration::from_millis(1));
-        Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "idle"))
-    }
-}
-
-impl Write for MemoryChannel {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.written.fetch_add(buf.len() as u64, Ordering::Relaxed);
-        Ok(buf.len())
+        Ok(ReadStatus::Idle)
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
+        self.written.fetch_add(data.len() as u64, Ordering::Relaxed);
         Ok(())
     }
-}
 
-impl Channel for MemoryChannel {
-    fn is_connected(&self) -> bool {
-        true
+    fn flush(&mut self) -> Result<(), TransportError> {
+        Ok(())
     }
 
-    fn set_timeout(&mut self, _dur: Duration) -> Result<(), ChannelError> {
+    fn shutdown(&mut self) -> Result<(), TransportError> {
         Ok(())
     }
 }
@@ -71,37 +60,22 @@ fn performance_contract_runtime_io_and_atomic_persistence() {
     const CHUNK_BYTES: usize = 64 * 1024;
 
     let written = Arc::new(AtomicU64::new(0));
-    let (write_tx, write_rx) = mpsc::sync_channel(1024);
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-    let tx_bytes = Arc::new(AtomicU64::new(0));
-    let rx_bytes = Arc::new(AtomicU64::new(0));
-    let handle = spawn_sync_io_loop(
-        Box::new(MemoryChannel {
-            written: written.clone(),
-        }),
-        |_session_id, _data| {},
-        |_session_id, _info| {},
-        IoLoopContext {
-            session_id: "performance".into(),
-            write_rx,
-            cancel_rx,
-            tx_bytes: tx_bytes.clone(),
-            rx_bytes,
-        },
-    );
+    let runtime = DataPlaneRuntime::spawn(Box::new(MemoryStream {
+        written: written.clone(),
+    }));
+    let io = runtime.handle.clone();
 
     let payload = vec![0xA5; CHUNK_BYTES];
     let start = Instant::now();
     let chunks = TOTAL_BYTES as usize / CHUNK_BYTES;
     for _ in 0..chunks {
-        write_tx.send(IoLoopCmd::Write(payload.clone())).unwrap();
+        io.write(&payload).unwrap();
     }
-    write_tx.send(IoLoopCmd::Shutdown).unwrap();
-    handle.join().unwrap();
-    drop(cancel_tx);
+    let tx_bytes = io.tx_bytes();
+    runtime.join();
     let io_elapsed = start.elapsed();
     assert_eq!(written.load(Ordering::Relaxed), TOTAL_BYTES);
-    assert_eq!(tx_bytes.load(Ordering::Relaxed), TOTAL_BYTES);
+    assert_eq!(tx_bytes, TOTAL_BYTES);
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("performance-state.json");
@@ -116,7 +90,7 @@ fn performance_contract_runtime_io_and_atomic_persistence() {
     let io_secs = io_elapsed.as_secs_f64().max(f64::EPSILON);
     let persist_secs = persist_elapsed.as_secs_f64().max(f64::EPSILON);
     let result = PerformanceResult {
-        schema_version: 1,
+        schema_version: 2,
         io_payload_bytes: TOTAL_BYTES,
         io_elapsed_ms: io_elapsed.as_millis(),
         io_mib_per_sec: TOTAL_BYTES as f64 / (1024.0 * 1024.0) / io_secs,
@@ -155,37 +129,24 @@ fn reliability_soak_repeated_io_lifecycle() {
 
     while Instant::now() < deadline {
         let written = Arc::new(AtomicU64::new(0));
-        let (write_tx, write_rx) = mpsc::sync_channel(8);
-        let (_cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-        let tx_bytes = Arc::new(AtomicU64::new(0));
-        let handle = spawn_sync_io_loop(
-            Box::new(MemoryChannel {
-                written: written.clone(),
-            }),
-            |_session_id, _data| {},
-            |_session_id, _info| {},
-            IoLoopContext {
-                session_id: "soak".into(),
-                write_rx,
-                cancel_rx,
-                tx_bytes: tx_bytes.clone(),
-                rx_bytes: Arc::new(AtomicU64::new(0)),
-            },
-        );
+        let runtime = DataPlaneRuntime::spawn(Box::new(MemoryStream {
+            written: written.clone(),
+        }));
+        let io = runtime.handle.clone();
 
         let payload = vec![0x5A; 4096];
-        write_tx.send(IoLoopCmd::Write(payload.clone())).unwrap();
-        write_tx.send(IoLoopCmd::Shutdown).unwrap();
-        handle.join().unwrap();
+        io.write(&payload).unwrap();
+        let tx_bytes = io.tx_bytes();
+        runtime.join();
         assert_eq!(written.load(Ordering::Relaxed), payload.len() as u64);
-        assert_eq!(tx_bytes.load(Ordering::Relaxed), payload.len() as u64);
+        assert_eq!(tx_bytes, payload.len() as u64);
         iterations += 1;
         payload_bytes += payload.len() as u64;
     }
 
     assert!(iterations > 0);
     let result = SoakResult {
-        schema_version: 1,
+        schema_version: 2,
         duration_seconds: seconds,
         iterations,
         payload_bytes,

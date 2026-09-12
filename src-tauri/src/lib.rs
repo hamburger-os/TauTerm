@@ -6,14 +6,14 @@
 //!
 //! - **Plugin Host**: 插件注册与发现（`kernel/plugin_host`）
 //! - **Protocol Adapter**: 协议插件通过 `ProtocolAdapter` trait 管理连接
-//! - **Channel**: 统一 I/O 抽象，`SerialChannel` 包装串口端口
-//! - **Session Store**: 管理活跃会话的 I/O 线程生命周期（`kernel/session_store`）
-//! - **Transfer Manager**: 三策略传输路由（`transfer/manager`）
+//! - **Transport Runtime**: 协议无关的物理 I/O、DataPlane 与独占租约（`transport`）
+//! - **Session Runtime**: 会话生命周期、脚本 I/O 与断开语义（`session`）
+//! - **Session Store**: 活跃会话注册与持久化（`kernel/session_store`）
+//! - **Transfer Manager**: 文件传输调度（`transfer/manager`）
 //! - **Config Store**: 版本化非敏感配置/工程资产存储（`kernel/config_store`）
 //! - **Theme Engine**: CSS 变量主题切换（`kernel/theme_engine`）
 //! - **Content Renderers**: content_type 驱动的渲染器系统（前端 `renderers/`）
 
-mod channel;
 mod commands;
 mod diagnostics;
 mod kernel;
@@ -21,12 +21,14 @@ mod kernel;
 mod performance_contract;
 mod plugins;
 mod security;
+mod session;
 mod transfer;
+mod transport;
 pub mod virtual_port;
 
 #[cfg(windows)]
 pub fn maybe_run_elevated_shell_helper() -> bool {
-    channel::elevated_shell_channel::maybe_run_helper()
+    plugins::local_shell::elevated::maybe_run_helper()
 }
 
 use kernel::config_store::ConfigStore;
@@ -37,6 +39,7 @@ use kernel::session_store::SessionStore;
 use kernel::theme_engine::ThemeEngine;
 use plugins::iperf::IperfAdapter;
 use plugins::local_shell::LocalShellAdapter;
+use plugins::modbus::ModbusAdapter;
 use plugins::network::NetworkAdapter;
 use plugins::serial::SerialAdapter;
 use plugins::ssh::HostKeyVerifier;
@@ -64,6 +67,7 @@ pub struct AppState {
     pub local_shell_adapter: LocalShellAdapter,
     pub iperf_adapter: IperfAdapter,
     pub network_adapter: NetworkAdapter,
+    pub modbus_adapter: ModbusAdapter,
     pub host_key_verifier: HostKeyVerifier,
     pub config_store: ConfigStore,
     pub plugin_host: Mutex<PluginHost>,
@@ -74,7 +78,7 @@ pub struct AppState {
 }
 
 fn built_in_plugin_manifests() -> Vec<PluginManifest> {
-    const MANIFESTS: [&str; 8] = [
+    const MANIFESTS: [&str; 9] = [
         include_str!("../../src/plugin-manifests/serial.json"),
         include_str!("../../src/plugin-manifests/ssh.json"),
         include_str!("../../src/plugin-manifests/telnet.json"),
@@ -83,6 +87,7 @@ fn built_in_plugin_manifests() -> Vec<PluginManifest> {
         include_str!("../../src/plugin-manifests/iperf.json"),
         include_str!("../../src/plugin-manifests/network.json"),
         include_str!("../../src/plugin-manifests/trdp.json"),
+        include_str!("../../src/plugin-manifests/modbus.json"),
     ];
 
     MANIFESTS
@@ -408,6 +413,7 @@ pub fn run() {
             local_shell_adapter: LocalShellAdapter::new(),
             iperf_adapter: IperfAdapter::new(),
             network_adapter: NetworkAdapter::new(),
+            modbus_adapter: ModbusAdapter::new(),
             host_key_verifier: HostKeyVerifier::new(),
             config_store: ConfigStore::new(),
             plugin_host: Mutex::new(plugin_host),
@@ -440,6 +446,14 @@ pub fn run() {
             commands::network_udp_send_to,
             commands::network_udp_send,
             commands::set_network_send_target,
+            plugins::modbus::modbus_execute,
+            plugins::modbus::modbus_status,
+            plugins::modbus::modbus_watch_set,
+            plugins::modbus::modbus_watch_start,
+            plugins::modbus::modbus_watch_stop,
+            plugins::modbus::modbus_watch_values,
+            plugins::modbus::modbus_server_set_value,
+            plugins::modbus::modbus_server_snapshot,
             plugins::trdp::trdp_command,
             plugins::trdp::trdp_capture_interfaces,
             plugins::trdp::trdp_open_capture,

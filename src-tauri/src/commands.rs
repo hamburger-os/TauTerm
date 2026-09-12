@@ -1,27 +1,26 @@
 //! Tauri 命令处理模块
 //!
 //! 所有面向前端的 Tauri 命令。
-//! 通过 SerialAdapter + SessionStore + Channel 架构管理会话。
+//! 通过协议 Adapter + SessionStore + DataPlane/SessionIo 架构管理会话。
 
 pub(crate) mod config;
 pub(crate) mod files;
 pub(crate) mod platform;
 
-use crate::channel::io_loop::{IoLoopCmd, IoLoopContext};
-use crate::channel::DisconnectInfo;
 use crate::kernel::charset::transcode_utf8_to_encoding;
 use crate::kernel::log_engine::{
     try_send_session_log, try_send_system_event, DataDirection, DataLogEntry, LogConfigResponse,
     LogConfigUpdate, LogEntry, LogHealth, LogStatus,
 };
-use crate::kernel::plugin_adapter::{
-    ChannelKind, ChannelOpenMode, ProtocolAdapter, TransferProtocolType,
-};
+use crate::kernel::plugin_adapter::{ChannelOpenMode, ProtocolAdapter, TransferProtocolType};
 use crate::kernel::script_engine::codegen::{hex_to_bytes, interpret_escape_sequences};
 use crate::kernel::script_engine::sandbox::create_sandboxed_lua;
 use crate::kernel::session_store::{
-    ContainerSessionCreateOptions, IoTaskHandle, SessionCreateOptions, SessionState, SessionStore,
+    ContainerSessionCreateOptions, ContainerSessionRuntime, SessionCreateOptions, SessionState,
+    SessionStore,
 };
+use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
+use crate::transport::DataPlaneRuntime;
 use crate::virtual_port::backend::{
     contains_elevation_indicator, VirtualEndpoint, VirtualPortConfig,
 };
@@ -556,6 +555,7 @@ pub async fn connect_session(
         "local-shell" => connect_session_local_shell(app, state, request).await,
         "network" => connect_session_network(app, state, request).await,
         "trdp" => crate::plugins::trdp::connect_session(app, state, request).await,
+        "modbus" => crate::plugins::modbus::connect_session(app, state, request).await,
         other => Err(format!("插件 '{}' 的连接功能尚未实现", other)),
     }
 }
@@ -650,12 +650,10 @@ async fn connect_session_serial(
 
     // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
     let content_type = state.serial_adapter.content_type();
-    let io_strategy = state.serial_adapter.io_strategy();
     let transfer_protocols = state.serial_adapter.transfer_protocols();
     log::info!(
-        "串口连接: content_type={:?}, io_strategy={:?}, transfer_protocols={:?}",
+        "串口连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
-        io_strategy,
         transfer_protocols
     );
 
@@ -704,7 +702,7 @@ async fn connect_session_serial(
     };
 
     // 共享 on_data 回调：DataBatcher + 日志 + 虚拟端口转发
-    // 数据推送至脚本引擎由 CommHandle::notify_receive() 统一扇出
+    // 数据推送至脚本引擎由 SessionDataPlane subscription 统一扇出
     let on_data = create_on_data_callback(
         &app_data,
         log_tx,
@@ -1006,12 +1004,10 @@ async fn connect_session_telnet(
 
     // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
     let content_type = state.telnet_adapter.content_type();
-    let io_strategy = state.telnet_adapter.io_strategy();
     let transfer_protocols = state.telnet_adapter.transfer_protocols();
     log::info!(
-        "Telnet 连接: content_type={:?}, io_strategy={:?}, transfer_protocols={:?}",
+        "Telnet 连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
-        io_strategy,
         transfer_protocols
     );
 
@@ -1044,9 +1040,9 @@ async fn connect_session_local_shell(
         .await
         .map_err(|e| e.to_string())?;
     let first_channel = conn
-        .channel
+        .data_plane
         .take()
-        .ok_or("Local Shell 连接缺少 PTY channel")?;
+        .ok_or("Local Shell 连接缺少 DataPlane")?;
     let factory = conn
         .channel_factory
         .take()
@@ -1065,9 +1061,14 @@ async fn connect_session_local_shell(
                 send_bar_enabled: request.send_bar_enabled.unwrap_or(false),
                 id_override: request.session_id.clone(),
             },
-            None,
-            Some(factory),
-            None,
+            ContainerSessionRuntime {
+                service: None,
+                file_transfer: None,
+                channel_factory: Some(factory),
+                io: None,
+                attachment: None,
+                teardown_delay: std::time::Duration::ZERO,
+            },
         )?
     };
 
@@ -1274,27 +1275,11 @@ async fn connect_session_ssh(
         .await
         .map_err(|e| e.to_string())?;
 
-    // 提取主机密钥指纹（供前端展示确认）
-    let host_key_fingerprint: Option<String> = conn
-        .side_channel
-        .as_ref()
-        .and_then(|sc| {
-            sc.as_any()
-                .downcast_ref::<crate::plugins::ssh::SshSideChannel>()
-        })
-        .and_then(|ssc| ssc.host_key_fingerprint.clone());
-
-    if let Some(ref fp) = host_key_fingerprint {
-        log::info!("SSH 主机密钥指纹: {}", fp);
-    }
-
     let content_type = state.ssh_adapter.content_type();
-    let io_strategy = state.ssh_adapter.io_strategy();
     let transfer_protocols_list = state.ssh_adapter.transfer_protocols();
     log::info!(
-        "SSH 连接: content_type={:?}, io_strategy={:?}, transfer_protocols={:?}",
+        "SSH 连接: content_type={:?}, transfer_protocols={:?}",
         content_type,
-        io_strategy,
         transfer_protocols_list
     );
 
@@ -1304,19 +1289,15 @@ async fn connect_session_ssh(
     let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "sftp".into());
     let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
 
-    // 分离 side_channel（SSH Handle，供后续子连接复用）
-    let side_channel = conn.side_channel;
+    let teardown_delay = conn.teardown_delay;
+    let service = conn.service;
+    let file_transfer = conn.file_transfer;
     let channel_factory = conn.channel_factory;
-    // 分离 channel（第一个 PTY，作为通道 0 的 I/O）
-    let channel_for_ch0 = match conn.channel {
-        Some(ChannelKind::Async(ch)) => ChannelKind::Async(ch),
-        Some(crate::kernel::plugin_adapter::ChannelKind::Sync(_)) => {
-            return Err("SSH 连接期望 Async channel".to_string());
-        }
-        None => {
-            return Err("SSH 连接缺少 I/O channel".to_string());
-        }
-    };
+    let attachment = conn.on_attached;
+    // 第一个 SSH PTY 已由 transport async bridge 收敛为普通 DataPlaneRuntime。
+    let channel_for_ch0 = conn
+        .data_plane
+        .ok_or_else(|| "SSH 连接缺少 DataPlane".to_string())?;
 
     // 1. 创建容器父 session（无 I/O loop）
     let parent_id = {
@@ -1333,11 +1314,24 @@ async fn connect_session_ssh(
                 send_bar_enabled: send_bar_enabled_val,
                 id_override: Some(effective_session_id.clone()),
             },
-            side_channel,
-            channel_factory,
-            None,
+            ContainerSessionRuntime {
+                service,
+                file_transfer,
+                channel_factory,
+                io: None,
+                attachment,
+                teardown_delay,
+            },
         )?
     };
+
+    let host_key_fingerprint = state
+        .ssh_adapter
+        .runtime(&parent_id)
+        .and_then(|runtime| runtime.host_key_fingerprint.clone());
+    if let Some(ref fp) = host_key_fingerprint {
+        log::info!("SSH 主机密钥指纹: {}", fp);
+    }
 
     // 2. 通过共享逻辑创建通道 0（名称由 create_ssh_sub_channel 按 channel_index 自动生成）
     let channel0_id =
@@ -1554,8 +1548,8 @@ pub async fn disconnect_session(
 /// 向指定会话写入数据
 ///
 /// `transcode` 为 true 时（文本发送路径），将前端 UTF-8 字节委托会话
-/// `CommHandle::send_text` 按会话编码转码后写设备；false 时（HEX 发送 /
-/// 脚本原始字节路径）原样透传。转码策略只存在于 CommHandle（单一知识源），
+/// `SessionIo::send_text` 按会话编码转码后写设备；false 时（HEX 发送 /
+/// 脚本原始字节路径）原样透传。转码策略只存在于 SessionIo（单一知识源），
 /// 未来协议原生 handle 可自行覆盖。
 /// 返回实际写入设备的字节（文本路径为转码后字节），供前端 TX 显示与
 /// 日志面板使用，保证面板所见与线上字节一致。
@@ -1586,18 +1580,15 @@ pub fn write_data(
             .map(str::to_string)
             .unwrap_or_else(|| "text".to_string());
         // 克隆 Arc 后释放锁；send_text 内部完成转码（含 UTF-8 短路与未知编码透传）。
-        // 对端（网络调试）拥有各自 CommHandle，文本路径按对端编码转码。
-        (encoding, data_mode, store.get_comm_handle_for(&session_id))
+        // 对端（网络调试）拥有各自 SessionIo，文本路径按对端编码转码。
+        (encoding, data_mode, store.get_io_for(&session_id))
     };
-    // 文本路径：委托会话 CommHandle::send_text（单一转码策略点）；
-    // 字节路径或会话无 comm_handle（SSH 容器）：直接写入原样透传
-    let data_out = match (transcode, comm) {
-        (true, Some(handle)) => handle.send_text(&data).map_err(|e| e.to_string())?,
-        (true, None) | (false, _) => {
-            let store = state.session_store.lock().map_err(|e| e.to_string())?;
-            store.write(&session_id, &data)?;
-            data
-        }
+    let io = comm.ok_or_else(|| format!("会话 {} 没有可写 I/O 能力", session_id))?;
+    let data_out = if transcode {
+        io.send_text(&data).map_err(|e| e.to_string())?
+    } else {
+        io.send(&data).map_err(|e| e.to_string())?;
+        data
     };
     // 异步发送 TX 数据日志（非阻塞，best-effort：失败不影响主流程）
     // 日志记录实际写入设备的字节（转码后），text 格式按会话编码解码回 UTF-8
@@ -1744,11 +1735,10 @@ async fn create_terminal_sub_channel(
     app: &tauri::AppHandle,
     app_state: &AppState,
     parent_id: &str,
-    channel: ChannelKind,
+    runtime: DataPlaneRuntime,
     elevated: bool,
     announce_connected: bool,
 ) -> Result<String, String> {
-    // ── 阶段 1: 获取锁 → 检查父存活 + 预留 channel_index + 读取配置 → 释放锁 ──
     let (
         endpoint,
         plugin_id,
@@ -1774,66 +1764,52 @@ async fn create_terminal_sub_channel(
         if active_children >= 32 {
             return Err("每个父会话最多允许 32 个活动终端".to_string());
         }
-        let dm = handle
-            .params
-            .get("data_mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("text")
-            .to_string();
-        let enc = handle
-            .params
-            .get("encoding")
-            .and_then(|v| v.as_str())
-            .unwrap_or("utf-8")
-            .to_string();
-        let sbe = handle.send_bar_enabled;
-        let fse = handle
-            .params
-            .get("file_service_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let jde = handle
-            .params
-            .get("journald_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let fsp = handle
-            .params
-            .get("file_service_protocol")
-            .and_then(|v| v.as_str())
-            .unwrap_or("sftp")
-            .to_string();
         (
             handle.endpoint.clone(),
             handle.plugin_id.clone(),
             handle.params.clone(),
-            dm,
-            enc,
-            sbe,
-            fse,
-            jde,
-            fsp,
+            handle
+                .params
+                .get("data_mode")
+                .and_then(Value::as_str)
+                .unwrap_or("text")
+                .to_string(),
+            handle
+                .params
+                .get("encoding")
+                .and_then(Value::as_str)
+                .unwrap_or("utf-8")
+                .to_string(),
+            handle.send_bar_enabled,
+            handle
+                .params
+                .get("file_service_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            handle
+                .params
+                .get("journald_enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            handle
+                .params
+                .get("file_service_protocol")
+                .and_then(Value::as_str)
+                .unwrap_or("sftp")
+                .to_string(),
         )
     };
 
-    // ── 阶段 2: 创建 I/O 资源（无锁）──
     let channel_id = uuid::Uuid::new_v4().to_string();
-    let (write_tx, write_rx) = std::sync::mpsc::sync_channel::<IoLoopCmd>(256);
-    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-    let tx_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let rx_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    let tx_clone = tx_bytes.clone();
-    let rx_clone = rx_bytes.clone();
-
-    let log_tx = {
-        let log_engine = app_state.log_engine.lock().map_err(|e| e.to_string())?;
-        log_engine.sender()
-    };
-    let on_data = create_on_data_callback(app, log_tx, data_mode, encoding, None);
+    let log_tx = app_state
+        .log_engine
+        .lock()
+        .map_err(|e| e.to_string())?
+        .sender();
+    let on_data = create_on_data_callback(app, log_tx, data_mode, encoding.clone(), None);
 
     let app_disconnect = app.clone();
     let pid = parent_id.to_string();
-    let ch_id = channel_id.clone();
     let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
         Box::new(move |channel_id, info| {
             let (parent_disconnected, retain_history) = {
@@ -1892,67 +1868,33 @@ async fn create_terminal_sub_channel(
             }
         });
 
-    let io_context = IoLoopContext {
-        session_id: ch_id.clone(),
-        write_rx,
-        cancel_rx,
-        tx_bytes: tx_clone,
-        rx_bytes: rx_clone,
-    };
-    let io_handle = match channel {
-        ChannelKind::Sync(channel) => {
-            IoTaskHandle::Sync(crate::channel::io_loop::spawn_sync_io_loop(
-                channel,
-                Box::new(on_data),
-                on_disconnect,
-                io_context,
-            ))
-        }
-        ChannelKind::Async(channel) => {
-            IoTaskHandle::Async(crate::channel::async_io_loop::spawn_async_io_loop(
-                channel,
-                Box::new(on_data),
-                on_disconnect,
-                io_context,
-            ))
-        }
-    };
-
-    let stats_cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let io = Arc::new(SessionIo::new(Some(runtime.handle.clone()), None, encoding));
+    let data_plane = SessionDataPlane::attach(runtime, channel_id.clone(), on_data, on_disconnect)
+        .map_err(|e| e.to_string())?;
+    let stats_cancel_flag = Arc::new(AtomicBool::new(false));
     let connected_at = Some(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64,
     );
-
-    crate::kernel::session_store::SessionStore::spawn_stats_collector(
+    SessionStore::spawn_stats_collector(
         app.clone(),
         channel_id.clone(),
-        tx_bytes.clone(),
-        rx_bytes.clone(),
+        io.clone(),
         connected_at,
         stats_cancel_flag.clone(),
     );
 
-    // ── 阶段 3: 获取锁 → 验证父仍存活 → push sub_connection 或回滚清理 ──
     let (actual_index, channel_name) = {
         let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
         let not_found = store.session_not_found(parent_id);
         let handle = store.get_session_mut(parent_id).ok_or(not_found)?;
         if handle.state != SessionState::Connected {
-            // 父会话在阶段 1 和 3 之间被断开 — 回滚清理
             stats_cancel_flag.store(true, Ordering::SeqCst);
-            let _ = cancel_tx.send(());
-            log::warn!(
-                "父会话 {} 在子通道创建中途断开，已清理 I/O 资源: {}",
-                parent_id,
-                channel_id
-            );
+            data_plane.request_shutdown();
             return Err("父会话已断开，无法创建子连接".to_string());
         }
-        // 阶段 1 到阶段 3 之间可能有并发创建完成；在真正注册前再次校验，
-        // 保证 32 个活动子会话上限不会因竞态被突破。
         let active_children = handle
             .sub_connections
             .iter()
@@ -1960,7 +1902,7 @@ async fn create_terminal_sub_channel(
             .count();
         if active_children >= 32 {
             stats_cancel_flag.store(true, Ordering::SeqCst);
-            let _ = cancel_tx.send(());
+            data_plane.request_shutdown();
             return Err("每个父会话最多允许 32 个活动终端".to_string());
         }
         let actual_idx = handle.next_child_index;
@@ -1971,15 +1913,13 @@ async fn create_terminal_sub_channel(
             .map(|factory| factory.child_name_prefix())
             .unwrap_or("Channel");
         let actual_name = format!("{} {}", prefix, actual_idx + 1);
-
         let mut sub = crate::kernel::session_store::SubConnection::new(
             channel_id.clone(),
             actual_name.clone(),
-            write_tx,
-            io_handle,
+            data_plane,
+            io,
             actual_idx,
             elevated,
-            Some(cancel_tx),
         );
         sub.connected_at = connected_at;
         sub.stats_cancel_flag = Some(stats_cancel_flag);
@@ -2009,14 +1949,6 @@ async fn create_terminal_sub_channel(
             }),
         );
     }
-
-    log::info!(
-        "终端子会话已创建: {} (parent: {}, channel_index: {}, elevated: {})",
-        channel_id,
-        parent_id,
-        actual_index,
-        elevated
-    );
     Ok(channel_id)
 }
 
@@ -2255,7 +2187,7 @@ pub async fn close_network_peer(
     Ok(())
 }
 
-/// 网络调试会话连接（容器会话 + NetworkSideChannel）
+/// 网络调试会话连接（容器会话 + NetworkRuntime）
 #[tauri::command]
 pub async fn connect_session_network(
     app: AppHandle,
@@ -2280,8 +2212,8 @@ pub async fn connect_session_network(
 
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.create_container_session(
-            ContainerSessionCreateOptions {
+        store.create_session(
+            SessionCreateOptions {
                 name: name.unwrap_or_else(|| "网络调试".to_string()),
                 plugin_id: "network".into(),
                 endpoint: endpoint.clone(),
@@ -2291,21 +2223,21 @@ pub async fn connect_session_network(
                 send_bar_enabled: send_bar_enabled.unwrap_or(true),
                 id_override: session_id,
             },
-            conn.side_channel.clone(),
-            None,
-            conn.comm_handle.clone(),
+            conn,
+            Box::new(|_, _| {}),
+            Box::new(|_, _| {}),
+            app.clone(),
         )?
     };
 
-    // 启动监听 / 接收线程（TCP Client 注册对端、TCP Server accept、UDP recv 路由）
-    if let Some(sc) = &conn.side_channel {
-        if let Some(net) = sc
-            .as_any()
-            .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
-        {
-            net.start(app.clone(), &sid).map_err(|e| e.to_string())?;
-        }
-    }
+    // attach 后从 Network 插件 typed registry 获取 runtime，再启动监听/接收线程。
+    let network_runtime = state
+        .network_adapter
+        .runtime(&sid)
+        .ok_or_else(|| "网络调试 runtime 注册失败".to_string())?;
+    network_runtime
+        .start(app.clone(), &sid)
+        .map_err(|e| e.to_string())?;
 
     // 与其它协议一致：emit session-connected（网络调试容器会话本身是根标签页）。
     // 前端据此把 tab 状态从 connecting 置为 connected 并回填配置。
@@ -2317,13 +2249,9 @@ pub async fn connect_session_network(
         (handle.name.clone(), handle.connected_at)
     };
     // UDP Client 本地绑定地址（前端展示本机 ip:port 用；其它角色为 null）
-    let udp_local_addr = conn
-        .side_channel
-        .as_ref()
-        .and_then(|sc| {
-            sc.as_any()
-                .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
-        })
+    let udp_local_addr = state
+        .network_adapter
+        .runtime(&sid)
         .and_then(|net| net.udp_client_local_addr())
         .map(|a| a.to_string());
 
@@ -2358,15 +2286,8 @@ fn udp_send_impl(
     transcode: bool,
 ) -> Result<Vec<u8>, String> {
     // 锁内：取侧通道 Arc + 会话编码/数据模式（转码 + TX 日志用），随后立即释放锁
-    let (net, encoding, data_mode) = {
+    let (encoding, data_mode) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let sc = store
-            .get_side_channel(&session_id)
-            .ok_or("会话无网络侧通道".to_string())?;
-        // 校验确为网络调试会话（锁外 downcast 使用）
-        sc.as_any()
-            .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
-            .ok_or("会话不是网络调试会话".to_string())?;
         let handle = store.get_session(&session_id);
         let encoding = handle
             .and_then(|h| h.params.get("encoding"))
@@ -2378,14 +2299,13 @@ fn udp_send_impl(
             .and_then(|v| v.as_str())
             .unwrap_or("dual")
             .to_string();
-        // 锁内借用完成发送所需的全部引用值，Arc clone 保活到锁外
-        (sc.clone(), encoding, data_mode)
+        (encoding, data_mode)
     };
-    let net = net
-        .as_any()
-        .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
+    let net = state
+        .network_adapter
+        .runtime(&session_id)
         .ok_or("会话不是网络调试会话".to_string())?;
-    // 文本路径：UTF-8 → 会话编码转码（与 write_data 的 CommHandle::send_text 一致）；
+    // 文本路径：UTF-8 → 会话编码转码（与 write_data 的 SessionIo::send_text 一致）；
     // 字节路径（HEX 发送）原样透传
     let out = if transcode {
         if encoding.eq_ignore_ascii_case("utf-8") {
@@ -2451,15 +2371,9 @@ pub fn set_network_send_target(
     session_id: String,
     target: Option<String>,
 ) -> Result<(), String> {
-    let sc = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store
-            .get_side_channel(&session_id)
-            .ok_or("会话无网络侧通道".to_string())?
-    };
-    let net = sc
-        .as_any()
-        .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
+    let net = state
+        .network_adapter
+        .runtime(&session_id)
         .ok_or("会话不是网络调试会话".to_string())?;
     net.set_send_target(target);
     Ok(())
@@ -3167,56 +3081,35 @@ fn test_match_lua_pattern(
 }
 
 // ── 命令：SSH 文件服务（SFTP）────────────────────
-//
-// SFTP 命令组遵循统一模式：get_ssh_side_channel() → 委托函数。
-// 每条命令 2 行样板代码，显式优于隐式（macro 会破坏 IDE 导航和重构工具）。
-// 如需缩减，可提取 sftp_command!(name, fn, ret_type, arg_pattern) 声明宏。
 
-use crate::plugins::ssh::SshSideChannel;
+use crate::plugins::ssh::SshRuntime;
 use crate::transfer::ssh_file_service::{
     sftp_chmod, sftp_delete, sftp_delete_batch, sftp_delete_recursive, sftp_list_dir, sftp_mkdir,
     sftp_new_file, sftp_read_head, sftp_rename, sftp_stat,
 };
 
-/// 从 SessionStore 获取 SSH 侧通道（含 session 和 sftp 缓存）的共享句柄。
-///
-/// 通过 `SideChannel::as_any()` + `downcast_ref` 集中处理类型还原，
-/// 避免每个 SFTP 命令重复样板代码。
-///
-/// 返回 `Arc<SshSideChannel>` 的克隆——其内部 `session` 字段为
-/// `Arc<russh::client::Handle<SshHandler>>`（russh Handle 内部线程安全），
-/// `sftp` 字段为 `Arc<tokio::sync::Mutex<Option<russh_sftp::client::SftpSession>>>`（惰性缓存）。
-/// 通过 `Arc::clone` 共享同一底层资源，因此 SFTP 缓存在多次命令调用间保持有效。
-fn get_ssh_side_channel(
+/// 解析父 Session 后从 SSH 插件自己的 typed registry 获取 runtime。
+fn get_ssh_runtime(
     state: &State<'_, AppState>,
     session_id: &str,
-) -> Result<std::sync::Arc<SshSideChannel>, String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    // 支持子连接路由：若 session_id 是子连接，通过父会话获取 side_channel
-    let parent_id = store
-        .resolve_parent_id(session_id)
-        .ok_or_else(|| store.session_not_found(session_id))?;
-    let sc = store
-        .get_side_channel(&parent_id)
-        .ok_or_else(|| format!("会话 {} 不包含 SSH 侧通道（可能不是 SSH 连接）", parent_id))?;
-    // 检查父会话状态
-    if let Some(h) = store.get_session(&parent_id) {
-        if h.state == SessionState::Disconnected {
+) -> Result<std::sync::Arc<SshRuntime>, String> {
+    let parent_id = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        let parent_id = store
+            .resolve_parent_id(session_id)
+            .ok_or_else(|| store.session_not_found(session_id))?;
+        if store
+            .get_session(&parent_id)
+            .is_some_and(|h| h.state == SessionState::Disconnected)
+        {
             return Err("会话已断开".to_string());
         }
-    }
-    let ssh_sc_ref = sc
-        .as_any()
-        .downcast_ref::<SshSideChannel>()
-        .ok_or_else(|| "侧通道类型不匹配（期望 SshSideChannel）".to_string())?;
-    // 通过克隆内部 Arc 字段构造新的 SshSideChannel，
-    // 与 SessionStore 中持有的 Arc<dyn SideChannel> 共享同一 session 和 sftp 缓存。
-    Ok(std::sync::Arc::new(SshSideChannel {
-        session: ssh_sc_ref.session.clone(),
-        sftp: ssh_sc_ref.sftp.clone(),
-        host_key_fingerprint: ssh_sc_ref.host_key_fingerprint.clone(),
-        home_dir: ssh_sc_ref.home_dir.clone(),
-    }))
+        parent_id
+    };
+    state
+        .ssh_adapter
+        .runtime(&parent_id)
+        .ok_or_else(|| format!("会话 {} 不包含 SSH runtime（可能不是 SSH 连接）", parent_id))
 }
 
 /// SFTP 列出远程目录
@@ -3226,8 +3119,8 @@ pub async fn sftp_list_dir_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<Vec<crate::transfer::ssh_file_service::SftpEntry>, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_list_dir(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_list_dir(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 获取文件信息
@@ -3237,8 +3130,8 @@ pub async fn sftp_stat_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<crate::transfer::ssh_file_service::SftpFileInfo, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_stat(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_stat(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 读取文件头（用于预览）
@@ -3255,11 +3148,16 @@ pub async fn sftp_read_head_cmd(
     remote_path: String,
     max_bytes: u64,
 ) -> Result<ReadHeadResult, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     // 后端再次收紧上限，不能依赖 WebView 调用方自律。
     let max_bytes = max_bytes.min(1_048_576);
-    let (data, total_size) =
-        sftp_read_head(&ssh_sc.session, &ssh_sc.sftp, &remote_path, max_bytes).await?;
+    let (data, total_size) = sftp_read_head(
+        &ssh_runtime.session,
+        &ssh_runtime.sftp,
+        &remote_path,
+        max_bytes,
+    )
+    .await?;
     Ok(ReadHeadResult { data, total_size })
 }
 
@@ -3271,8 +3169,8 @@ pub async fn sftp_chmod_cmd(
     remote_path: String,
     mode: u32,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_chmod(&ssh_sc.session, &ssh_sc.sftp, &remote_path, mode).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_chmod(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path, mode).await
 }
 
 /// SFTP 删除文件或目录
@@ -3282,8 +3180,8 @@ pub async fn sftp_delete_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_delete(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_delete(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 重命名/移动文件或目录
@@ -3294,8 +3192,14 @@ pub async fn sftp_rename_cmd(
     from_path: String,
     to_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_rename(&ssh_sc.session, &ssh_sc.sftp, &from_path, &to_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_rename(
+        &ssh_runtime.session,
+        &ssh_runtime.sftp,
+        &from_path,
+        &to_path,
+    )
+    .await
 }
 
 /// SFTP 创建目录
@@ -3305,8 +3209,8 @@ pub async fn sftp_mkdir_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_mkdir(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_mkdir(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 创建空文件
@@ -3316,8 +3220,8 @@ pub async fn sftp_new_file_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_new_file(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_new_file(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// SFTP 批量删除
@@ -3327,8 +3231,8 @@ pub async fn sftp_delete_batch_cmd(
     session_id: String,
     paths: Vec<String>,
 ) -> Result<Vec<String>, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_delete_batch(&ssh_sc.session, &ssh_sc.sftp, &paths).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_delete_batch(&ssh_runtime.session, &ssh_runtime.sftp, &paths).await
 }
 
 /// SFTP 递归删除目录（包括子内容）
@@ -3338,18 +3242,21 @@ pub async fn sftp_delete_recursive_cmd(
     session_id: String,
     remote_path: String,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    sftp_delete_recursive(&ssh_sc.session, &ssh_sc.sftp, &remote_path).await
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    sftp_delete_recursive(&ssh_runtime.session, &ssh_runtime.sftp, &remote_path).await
 }
 
 /// 获取 SSH 会话的远程用户 home 目录
 ///
-/// 连接建立阶段通过 `echo $HOME` 解析并缓存于 `SshSideChannel.home_dir`。
+/// 连接建立阶段通过 `echo $HOME` 解析并缓存于 `SshRuntime.home_dir`。
 /// 若获取失败或值为 None，回退到 `"/"`。
 #[tauri::command]
 pub fn get_ssh_home_dir(state: State<'_, AppState>, session_id: String) -> Result<String, String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
-    Ok(ssh_sc.home_dir.clone().unwrap_or_else(|| "/".to_string()))
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
+    Ok(ssh_runtime
+        .home_dir
+        .clone()
+        .unwrap_or_else(|| "/".to_string()))
 }
 
 // ── Journald 日志查看器命令 ──────────────────────────
@@ -3368,7 +3275,7 @@ pub async fn start_journald_stream(
     unit: Option<String>,
     kernel_only: Option<bool>,
 ) -> Result<(), String> {
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -3377,8 +3284,13 @@ pub async fn start_journald_stream(
         since: None,
         until: None,
     };
-    crate::plugins::ssh::journald::start_journald_stream(&ssh_sc.session, app, session_id, &filters)
-        .await
+    crate::plugins::ssh::journald::start_journald_stream(
+        &ssh_runtime.session,
+        app,
+        session_id,
+        &filters,
+    )
+    .await
 }
 
 /// 停止 journald 实时追踪
@@ -3409,7 +3321,7 @@ pub async fn journald_query_cmd(
         cursor,
         limit,
     } = request;
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -3420,7 +3332,7 @@ pub async fn journald_query_cmd(
     };
     let limit = limit.unwrap_or(100);
     let (entries, next_cursor) = crate::plugins::ssh::journald::journald_query(
-        &ssh_sc.session,
+        &ssh_runtime.session,
         &filters,
         cursor.as_deref(),
         limit,
@@ -3456,7 +3368,7 @@ pub async fn start_journald_export(
         since,
         until,
     } = request;
-    let ssh_sc = get_ssh_side_channel(&state, &session_id)?;
+    let ssh_runtime = get_ssh_runtime(&state, &session_id)?;
     let filters = crate::plugins::ssh::journald::JournaldQueryFilters {
         level,
         keyword,
@@ -3466,7 +3378,7 @@ pub async fn start_journald_export(
         until,
     };
     crate::plugins::ssh::journald::start_journald_export(
-        &ssh_sc.session,
+        &ssh_runtime.session,
         app,
         session_id,
         &filters,
@@ -3489,7 +3401,7 @@ pub fn stop_journald_export(session_id: String) -> Result<(), String> {
 /// 统一文件传输发送命令（协议无关）
 ///
 /// 前端统一入口。通过 TransferOrchestrator 策略模式分发到
-/// Inline（串口 X/Y/ZModem）或 SideChannel（SSH SFTP）策略。
+/// Inline（串口 X/Y/ZModem）或辅助传输（SSH SFTP）策略。
 #[tauri::command]
 pub async fn file_transfer_send(
     app: AppHandle,
@@ -3572,7 +3484,7 @@ pub async fn file_transfer_send(
 /// 统一文件传输接收命令（协议无关）
 ///
 /// 通过 TransferOrchestrator 策略模式分发到
-/// Inline（串口 X/Y/ZModem）或 SideChannel（SSH SFTP）策略。
+/// Inline（串口 X/Y/ZModem）或辅助传输（SSH SFTP）策略。
 #[tauri::command]
 pub async fn file_transfer_receive(
     app: AppHandle,
@@ -3658,7 +3570,7 @@ pub fn file_transfer_cancel(
 
 /// 请求 SSH PTY 窗口大小调整
 ///
-/// 前端终端 resize 时调用，通过 IoLoopCmd::ResizePty 转发到 I/O 循环线程，
+/// 前端终端 resize 时调用，通过 SessionIo 的 terminal-control capability 转发到 DataPlane，
 /// 再由 Channel::resize_pty 发送 window_change 请求到远端。
 /// 非 SSH 协议（串口等）的 Channel 默认空实现，调用无副作用。
 /// 支持子连接路由：若 session_id 属于 SSH 子通道，命令通过子通道的 write_tx 发送。
@@ -3669,12 +3581,13 @@ pub fn resize_pty(
     cols: u32,
     rows: u32,
 ) -> Result<(), String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let tx = store
-        .get_write_tx(&session_id)
-        .ok_or_else(|| store.session_not_found(&session_id))?;
-    tx.send(IoLoopCmd::ResizePty { cols, rows })
-        .map_err(|e| format!("发送 resize 命令失败: {}", e))
+    let io = {
+        let store = state.session_store.lock().map_err(|e| e.to_string())?;
+        store
+            .get_io_for(&session_id)
+            .ok_or_else(|| store.session_not_found(&session_id))?
+    };
+    io.resize_terminal(cols, rows).map_err(|e| e.to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -3686,7 +3599,7 @@ use crate::plugins::tftp::{self, TftpDynamicParams, TftpStatus};
 /// TFTP 会话连接
 ///
 /// 创建容器会话（无终端 I/O loop），然后自动启动服务端。
-/// 侧通道 `TftpSideChannel` 持有 UDP socket，由独立线程处理所有传输。
+/// 侧通道 `TftpRuntime` 持有 UDP socket，由独立线程处理所有传输。
 async fn connect_session_tftp(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -3699,48 +3612,16 @@ async fn connect_session_tftp(
         session_id,
         ..
     } = request;
-    // 通过 TftpAdapter 创建连接产物（channel=None，仅包含 side_channel）
+    let prev_params = session_id
+        .as_deref()
+        .and_then(|id| state.tftp_adapter.runtime(id))
+        .map(|runtime| runtime.get_params());
     let conn = state
         .tftp_adapter
         .connect(&endpoint, &params)
         .await
         .map_err(|e| e.to_string())?;
-
     let session_name = name.unwrap_or_else(|| format!("TFTP :{}", endpoint));
-
-    let side_channel = conn
-        .side_channel
-        .ok_or_else(|| "TFTP 适配器未返回侧通道".to_string())?;
-
-    // 重连保留上一轮动态参数（blksize/window 等会话内调整不因重连丢失）：
-    // 新侧通道 dynamic_params 归默认值且无重同步，UI 显示与后端实际协商
-    // 参数会永久分叉。快照须在 create_container_session 替换旧会话之前读取
-    let prev_params: Option<tftp::TftpDynamicParams> = match session_id.as_deref() {
-        Some(prev_sid) => state.session_store.lock().ok().and_then(|store| {
-            store
-                .get_session(prev_sid)
-                .and_then(|h| h.side_channel.as_ref())
-                .and_then(|sc| sc.as_any().downcast_ref::<tftp::TftpSideChannel>())
-                .map(|tsc| tsc.get_params())
-        }),
-        None => None,
-    };
-    if let Some(prev) = prev_params {
-        if let Some(tsc) = side_channel
-            .as_any()
-            .downcast_ref::<tftp::TftpSideChannel>()
-        {
-            match tsc.dynamic_params.lock() {
-                Ok(mut p) => *p = prev,
-                Err(poisoned) => {
-                    log::warn!("[TFTP] dynamic_params 锁中毒，恢复后写入重连参数");
-                    *poisoned.into_inner() = prev;
-                }
-            }
-        }
-    }
-
-    // 使用容器会话模式（无 I/O loop — TFTP 无终端数据流）
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.create_container_session(
@@ -3754,38 +3635,37 @@ async fn connect_session_tftp(
                 send_bar_enabled: false,
                 id_override: session_id,
             },
-            Some(side_channel.clone()),
-            None,
-            None,
+            ContainerSessionRuntime {
+                service: conn.service,
+                file_transfer: conn.file_transfer,
+                channel_factory: conn.channel_factory,
+                io: None,
+                attachment: conn.on_attached,
+                teardown_delay: conn.teardown_delay,
+            },
         )?
     };
-
-    log::info!("TFTP 会话已创建（容器模式）: {}", sid);
-
-    // 自动启动服务端
-    if let Err(e) = tftp::try_start_server(&app, &side_channel, &sid) {
-        log::warn!("[TFTP] 服务端自动启动失败 (session={}): {}", sid, e);
+    let runtime = state
+        .tftp_adapter
+        .runtime(&sid)
+        .ok_or_else(|| "TFTP runtime 注册失败".to_string())?;
+    if let Some(prev) = prev_params {
+        match runtime.dynamic_params.lock() {
+            Ok(mut value) => *value = prev,
+            Err(poisoned) => *poisoned.into_inner() = prev,
+        }
     }
-
+    if let Err(error) = tftp::try_start_server(&app, &runtime, &sid) {
+        log::warn!("[TFTP] 服务端自动启动失败 (session={}): {}", sid, error);
+    }
     let _ = app.emit(
         "session-connected",
         serde_json::json!({
-            "session_id": sid,
-            "plugin_id": "tftp",
-            "content_type": "custom",
-            "endpoint": endpoint,
-            "name": session_name,
-            "connection_type": "tftp",
-            "params": params,
-            "send_bar_enabled": false,
-            "transfer_enabled": false,
+            "session_id": sid, "plugin_id": "tftp", "content_type": "custom",
+            "endpoint": endpoint, "name": session_name, "connection_type": "tftp",
+            "params": params, "send_bar_enabled": false, "transfer_enabled": false,
         }),
     );
-
-    // 不再用 200ms 延迟探测：服务端线程进入监听后权威 emit running:true
-    //（socket 在连接时已同步绑定，bind 失败直接使连接失败）；
-    // 挂载期首次 getStatus 兜底错过事件的情况
-
     Ok(sid)
 }
 
@@ -3796,14 +3676,11 @@ pub async fn tftp_server_start(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let sc_arc = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store
-            .get_side_channel(&session_id)
-            .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?
-    };
-
-    tftp::try_start_server(&app, &sc_arc, &session_id)?;
+    let runtime = state
+        .tftp_adapter
+        .runtime(&session_id)
+        .ok_or_else(|| format!("会话 {} 不包含 TFTP runtime", session_id))?;
+    tftp::try_start_server(&app, &runtime, &session_id)?;
 
     // 状态由服务端线程权威 emit（真实进入监听后 running:true）；此处不再
     // 无条件乐观 emit——Start 与 Stop 交错时线程在启动前 abort 检查处退出，
@@ -3819,19 +3696,10 @@ pub async fn tftp_server_stop(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 全局锁只用于取 Arc（对齐 disconnect_session 先例：emit 期间不得持有
-    // session_store 锁）
-    let sc_arc = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store
-            .get_side_channel(&session_id)
-            .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?
-    };
-
-    let tftp_sc = sc_arc
-        .as_any()
-        .downcast_ref::<tftp::TftpSideChannel>()
-        .ok_or_else(|| "侧通道不是 TFTP 类型".to_string())?;
+    let tftp_sc = state
+        .tftp_adapter
+        .runtime(&session_id)
+        .ok_or_else(|| format!("会话 {} 不包含 TFTP runtime", session_id))?;
 
     tftp_sc
         .abort_flag
@@ -3851,10 +3719,10 @@ pub async fn tftp_server_stop(
     Ok(())
 }
 
-/// TFTP 客户端 GET（下载）——自给自足，不依赖 side_channel
+/// TFTP 客户端 GET（下载）——自给自足，不依赖已连接会话 runtime
 ///
 /// 每次调用生成独立的 UUID 作为 transfer_id，绑定临时 UDP socket 完成传输。
-/// 在会话未连接（无 side_channel）时也能正常工作。
+/// 在会话未连接（无已连接 runtime）时也能正常工作。
 ///
 /// 调用前先同步服务端的 dynamic_params，消除前端 500ms 防抖导致的竞态窗口。
 #[tauri::command]
@@ -3886,7 +3754,7 @@ pub async fn tftp_client_get(
     sync_tftp_server_params(&state, &session_id, &params);
 
     // 客户端操作自给自足：使用 UUID 生成全局唯一 transfer_id，
-    // 不依赖会话的 side_channel（后者在断连后被释放）
+    // 不依赖会话的 typed runtime（后者在断连后被释放）
     let transfer_id = uuid::Uuid::new_v4().to_string();
 
     tftp::client::tftp_client_get(
@@ -3906,10 +3774,10 @@ pub async fn tftp_client_get(
     Ok(transfer_id)
 }
 
-/// TFTP 客户端 PUT（上传）——自给自足，不依赖 side_channel
+/// TFTP 客户端 PUT（上传）——自给自足，不依赖已连接会话 runtime
 ///
 /// 每次调用生成独立的 UUID 作为 transfer_id，绑定临时 UDP socket 完成传输。
-/// 在会话未连接（无 side_channel）时也能正常工作。
+/// 在会话未连接（无已连接 runtime）时也能正常工作。
 ///
 /// 调用前先同步服务端的 dynamic_params，消除前端 500ms 防抖导致的竞态窗口。
 #[tauri::command]
@@ -3941,7 +3809,7 @@ pub async fn tftp_client_put(
     sync_tftp_server_params(&state, &session_id, &params);
 
     // 客户端操作自给自足：使用 UUID 生成全局唯一 transfer_id，
-    // 不依赖会话的 side_channel（后者在断连后被释放）
+    // 不依赖会话的 typed runtime（后者在断连后被释放）
     let transfer_id = uuid::Uuid::new_v4().to_string();
 
     tftp::client::tftp_client_put(
@@ -3961,26 +3829,25 @@ pub async fn tftp_client_put(
     Ok(transfer_id)
 }
 
-/// 同步 TFTP 服务端参数到 side_channel（客户端 GET/PUT 前调用）。
-/// 若 side_channel 不存在（会话未连接），静默跳过。
+/// 同步 TFTP 服务端参数到 typed runtime（客户端 GET/PUT 前调用）。
+/// 若 runtime 不存在（会话未连接），静默跳过。
 fn sync_tftp_server_params(state: &AppState, session_id: &str, params: &TftpDynamicParams) {
-    if let Ok(store) = state.session_store.lock() {
-        if let Some(sc_arc) = store.get_side_channel(session_id) {
-            if let Some(tftp_sc) = sc_arc.as_any().downcast_ref::<tftp::TftpSideChannel>() {
-                *tftp_sc.dynamic_params.lock().unwrap() = params.clone();
-                log::info!(
-                    "[TFTP] 服务端参数已同步 (session={}, blksize={})",
-                    session_id,
-                    params.blksize
-                );
-            }
+    if let Some(runtime) = state.tftp_adapter.runtime(session_id) {
+        match runtime.dynamic_params.lock() {
+            Ok(mut value) => *value = params.clone(),
+            Err(poisoned) => *poisoned.into_inner() = params.clone(),
         }
+        log::info!(
+            "[TFTP] 服务端参数已同步 (session={}, blksize={})",
+            session_id,
+            params.blksize
+        );
     }
 }
 
 /// 更新 TFTP 动态参数
 ///
-/// 若会话已连接（side_channel 存在），更新服务端的共享参数。
+/// 若会话已连接（runtime 已注册），更新服务端的共享参数。
 /// 若会话未连接，仅记录日志后返回 Ok——客户端操作从前端传参，不依赖此处。
 #[tauri::command]
 pub async fn tftp_update_params(
@@ -3991,55 +3858,39 @@ pub async fn tftp_update_params(
     let new_params: TftpDynamicParams =
         serde_json::from_value(params).map_err(|e| format!("参数解析失败: {}", e))?;
 
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    if let Some(sc_arc) = store.get_side_channel(&session_id) {
-        if let Some(tftp_sc) = sc_arc.as_any().downcast_ref::<tftp::TftpSideChannel>() {
-            *tftp_sc.dynamic_params.lock().unwrap() = new_params;
-            log::info!("TFTP 参数已更新 (session={})", session_id);
+    if let Some(runtime) = state.tftp_adapter.runtime(&session_id) {
+        match runtime.dynamic_params.lock() {
+            Ok(mut value) => *value = new_params,
+            Err(poisoned) => *poisoned.into_inner() = new_params,
         }
+        log::info!("TFTP 参数已更新 (session={})", session_id);
     } else {
-        log::warn!(
-            "TFTP 参数更新跳过：会话 {} 未连接（无 side_channel）",
-            session_id
-        );
+        log::warn!("TFTP 参数更新跳过：会话 {} 未连接", session_id);
     }
     Ok(())
 }
 
 /// 获取 TFTP 状态
 ///
-/// 若会话已连接（side_channel 存在），从侧通道读取实时状态。
+/// 若会话已连接（runtime 已注册），从 typed runtime 读取实时状态。
 /// 若会话未连接，返回默认值（server_running=false，其余字段为空/默认）。
 #[tauri::command]
 pub async fn tftp_get_status(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<TftpStatus, String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-
-    if let Some(sc_arc) = store.get_side_channel(&session_id) {
-        if let Some(tftp_sc) = sc_arc.as_any().downcast_ref::<tftp::TftpSideChannel>() {
-            let server_running = tftp_sc
+    if let Some(runtime) = state.tftp_adapter.runtime(&session_id) {
+        let dynamic_params = runtime.get_params();
+        return Ok(TftpStatus {
+            server_running: runtime
                 .server_running
-                .load(std::sync::atomic::Ordering::Relaxed);
-            let listen_addr = Some(tftp_sc.config.listen_ip.clone());
-            let listen_port = Some(tftp_sc.config.listen_port);
-            let file_root = tftp_sc.config.file_root.clone();
-            let dynamic_params = tftp_sc.get_params();
-            drop(store);
-            return Ok(TftpStatus {
-                server_running,
-                listen_addr,
-                listen_port,
-                file_root,
-                dynamic_params,
-            });
-        }
+                .load(std::sync::atomic::Ordering::Relaxed),
+            listen_addr: Some(runtime.config.listen_ip.clone()),
+            listen_port: Some(runtime.config.listen_port),
+            file_root: runtime.config.file_root.clone(),
+            dynamic_params,
+        });
     }
-    drop(store);
-
-    // 会话未连接（无 side_channel），返回默认值
-    log::debug!("TFTP get_status: 会话 {} 未连接，返回默认状态", session_id);
     Ok(TftpStatus {
         server_running: false,
         listen_addr: None,
@@ -4074,7 +3925,7 @@ static IPERF_CLIENT_REGISTRY: LazyLock<Mutex<HashMap<String, RegisteredClientRun
 
 /// iperf 会话连接
 ///
-/// 创建容器会话（无终端 I/O loop）。侧通道 `IperfSideChannel` 持有
+/// 创建容器会话（无终端 I/O loop）。侧通道 `IperfRuntime` 持有
 /// 服务端监听线程句柄与测试状态。
 /// 对齐 TFTP：连接即自动启动服务端（配置于 ConnectDialog 表单），
 /// 断开自动停止；服务端生命周期跟随会话生命周期。
@@ -4090,103 +3941,30 @@ async fn connect_session_iperf(
         session_id,
         ..
     } = request;
-    // 通过 IperfAdapter 创建连接产物（channel=None，仅包含 side_channel）
+    let old_runtime = session_id
+        .as_deref()
+        .and_then(|id| state.iperf_adapter.runtime(id));
+    let prev_params = old_runtime.as_ref().map(|runtime| runtime.get_params());
+    if let Some(runtime) = old_runtime {
+        let handle = runtime.server_handle.clone();
+        let joined = tokio::task::spawn_blocking(move || {
+            iperf::join_server_handle(&handle, std::time::Duration::from_secs(10))
+        })
+        .await
+        .unwrap_or(false);
+        if !joined {
+            log::warn!("[iperf] 重连时旧服务端线程 join 超时");
+        }
+    }
+    let config: iperf::IperfConfig =
+        serde_json::from_value(params.clone()).map_err(|e| format!("iperf 配置解析失败: {}", e))?;
+    let resolved_params = serde_json::to_value(&config).unwrap_or_else(|_| params.clone());
     let conn = state
         .iperf_adapter
         .connect(&endpoint, &params)
         .await
         .map_err(|e| e.to_string())?;
-
     let session_name = name.unwrap_or_else(|| format!("iperf :{}", endpoint));
-
-    let side_channel = conn
-        .side_channel
-        .ok_or_else(|| "iperf 适配器未返回侧通道".to_string())?;
-
-    // 重连保留上一轮动态参数：会话内调整的客户端目标端口/协议/时长等不因
-    // 重连丢失（此前新侧通道回落到 config 播种值，用户 -p 编辑静默丢失）。
-    // 快照须在 create_container_session 替换旧会话之前读取
-    let prev_params: Option<iperf::IperfDynamicParams> = match session_id.as_deref() {
-        Some(prev_sid) => state.session_store.lock().ok().and_then(|store| {
-            store
-                .get_session(prev_sid)
-                .and_then(|h| h.side_channel.as_ref())
-                .and_then(|sc| sc.as_any().downcast_ref::<iperf::IperfSideChannel>())
-                .map(|isc| isc.get_params())
-        }),
-        None => None,
-    };
-    if let Some(prev) = prev_params {
-        if let Some(isc) = side_channel
-            .as_any()
-            .downcast_ref::<iperf::IperfSideChannel>()
-        {
-            // version/listen_ip/listen_port 属会话配置，以本次连接解析结果
-            // 为准（重配置可修改）；其余为会话内可调参数，跨重连保留。
-            // 客户端目标端口联动：仅当旧端口仍是其版本的默认值（未自定义）
-            // 时跟随新的监听端口——版本切换 5001↔5201 联动；自定义端口保留。
-            // 注意必须按"旧版本默认值"判定（不能简单判定 ∈{5001,5201}）：
-            // iperf2 下用户特意把 -p 设为 5201 测外部服务器时属于自定义，
-            // 重连不得被改回监听端口（D1 修复保护的场景）
-            let current = isc.get_params();
-            let merged = iperf::IperfDynamicParams {
-                version: current.version,
-                listen_ip: current.listen_ip,
-                listen_port: current.listen_port,
-                port: if prev.port == iperf::default_client_port(prev.version) {
-                    current.listen_port
-                } else {
-                    prev.port
-                },
-                ..prev
-            };
-            match isc.dynamic_params.lock() {
-                Ok(mut p) => *p = merged,
-                Err(poisoned) => {
-                    log::warn!("[iperf] dynamic_params 锁中毒，恢复后写入重连参数");
-                    *poisoned.into_inner() = merged;
-                }
-            }
-        }
-    }
-
-    // 重连前有界 join 旧服务端线程：断开置位 abort 后线程 ≤10s 退出（正常
-    // 瞬时返回）；不 join 则新线程与仍持有监听端口的僵尸线程抢端口，
-    // 自动启动失败"端口被占用"
-    if let Some(prev_sid) = session_id.as_deref() {
-        let old_handle = state.session_store.lock().ok().and_then(|store| {
-            store
-                .get_session(prev_sid)
-                .and_then(|h| h.side_channel.as_ref())
-                .and_then(|sc| sc.as_any().downcast_ref::<iperf::IperfSideChannel>())
-                .map(|isc| isc.server_handle.clone())
-        });
-        if let Some(handle) = old_handle {
-            let joined = tokio::task::spawn_blocking(move || {
-                iperf::join_server_handle(&handle, std::time::Duration::from_secs(10))
-            })
-            .await
-            .unwrap_or(false);
-            if !joined {
-                log::warn!(
-                    "[iperf] 重连时旧服务端线程 join 超时，端口可能仍被占用 (session={})",
-                    prev_sid
-                );
-            }
-        }
-    }
-
-    // 解析后的配置作为会话/事件参数（唯一事实源）：前端 store 播种与右键重连
-    // 均以此为准，避免空 params 回落到默认 Iperf2（会话参数恒镜像后端解析结果）
-    let resolved_params = {
-        let iperf_sc = side_channel
-            .as_any()
-            .downcast_ref::<iperf::IperfSideChannel>()
-            .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
-        serde_json::to_value(&iperf_sc.config).unwrap_or_else(|_| params.clone())
-    };
-
-    // 使用容器会话模式（无 I/O loop — iperf 无终端数据流）
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
         store.create_container_session(
@@ -4200,46 +3978,52 @@ async fn connect_session_iperf(
                 send_bar_enabled: false,
                 id_override: session_id,
             },
-            Some(side_channel.clone()),
-            None,
-            None,
+            ContainerSessionRuntime {
+                service: conn.service,
+                file_transfer: conn.file_transfer,
+                channel_factory: conn.channel_factory,
+                io: None,
+                attachment: conn.on_attached,
+                teardown_delay: conn.teardown_delay,
+            },
         )?
     };
-
-    log::info!("iperf 会话已创建（容器模式）: {}", sid);
-
-    // 自动启动服务端（对齐 TFTP 语义：连接 = 服务端生命周期开始）。
-    // 失败不得静默吞掉——emit 错误状态事件（前端已有该事件处理，展示错误
-    // 而非误以为服务端在运行）；成功状态由服务端线程绑定后权威 emit
-    //（不再用 200ms 延迟探测——与服务端线程事件重复且 bind 超时会先发
-    // 假 running:false 造成"先绿后红"）
-    if let Err(e) = iperf::try_start_server(&app, &side_channel, &sid).await {
-        log::warn!("[iperf] 服务端自动启动失败 (session={}): {}", sid, e);
+    let runtime = state
+        .iperf_adapter
+        .runtime(&sid)
+        .ok_or_else(|| "iperf runtime 注册失败".to_string())?;
+    if let Some(prev) = prev_params {
+        let current = runtime.get_params();
+        let merged = iperf::IperfDynamicParams {
+            version: current.version,
+            listen_ip: current.listen_ip,
+            listen_port: current.listen_port,
+            port: if prev.port == iperf::default_client_port(prev.version) {
+                current.listen_port
+            } else {
+                prev.port
+            },
+            ..prev
+        };
+        *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = merged;
+    }
+    if let Err(error) = iperf::try_start_server(&app, &runtime, &sid).await {
+        log::warn!("[iperf] 服务端自动启动失败 (session={}): {}", sid, error);
         let _ = app.emit(
             "iperf-server-status",
             serde_json::json!({
-                "session_id": sid,
-                "running": false,
-                "error": e,
+                "session_id": sid, "running": false, "error": error,
             }),
         );
     }
-
     let _ = app.emit(
         "session-connected",
         serde_json::json!({
-            "session_id": sid,
-            "plugin_id": "iperf",
-            "content_type": "custom",
-            "endpoint": endpoint,
-            "name": session_name,
-            "connection_type": "iperf",
-            "params": resolved_params,
-            "send_bar_enabled": false,
-            "transfer_enabled": false,
+            "session_id": sid, "plugin_id": "iperf", "content_type": "custom",
+            "endpoint": endpoint, "name": session_name, "connection_type": "iperf",
+            "params": resolved_params, "send_bar_enabled": false, "transfer_enabled": false,
         }),
     );
-
     Ok(sid)
 }
 
@@ -4254,14 +4038,11 @@ pub async fn iperf_server_start(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let sc_arc = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store
-            .get_side_channel(&session_id)
-            .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?
-    };
-
-    iperf::try_start_server(&app, &sc_arc, &session_id).await?;
+    let runtime = state
+        .iperf_adapter
+        .runtime(&session_id)
+        .ok_or_else(|| format!("会话 {} 不包含 iperf runtime", session_id))?;
+    iperf::try_start_server(&app, &runtime, &session_id).await?;
 
     Ok(())
 }
@@ -4273,19 +4054,10 @@ pub async fn iperf_server_stop(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 全局锁只用于取 Arc（对齐 disconnect_session 先例：emit 期间不得持有
-    // session_store 锁，webview 卡顿时会阻塞全部会话命令）
-    let sc_arc = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store
-            .get_side_channel(&session_id)
-            .ok_or_else(|| format!("会话 {} 不包含侧通道", session_id))?
-    };
-
-    let iperf_sc = sc_arc
-        .as_any()
-        .downcast_ref::<iperf::IperfSideChannel>()
-        .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
+    let iperf_sc = state
+        .iperf_adapter
+        .runtime(&session_id)
+        .ok_or_else(|| format!("会话 {} 不包含 iperf runtime", session_id))?;
 
     // 与 try_start_server 互斥：Stop 不会落在 start 的 join/复位窗口内被
     // 覆盖（start 先完成则线程循环感知 abort；stop 先完成则 start 入口检查放弃）
@@ -4327,21 +4099,15 @@ pub async fn iperf_client_run(
     sanitize_iperf_params(&mut params);
 
     // 客户端自给自足（对齐 TFTP）：侧通道存在时复用其状态（停止按钮可中断）；
-    // 会话未连接（无 side_channel）时命令内自建一次性状态，测速照常可用。
+    // 会话未连接（无已连接 runtime）时命令内自建一次性状态，测速照常可用。
     // 注意：客户端中止标志独立于服务端监听标志（client_abort_flag vs
     // server_abort_flag）——客户端测速结束/被停止不得杀死会话内的服务端。
     let (client_abort_flag, client_test_running, last_summary) = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        match store.get_side_channel(&session_id) {
-            Some(sc_arc) => {
-                // 已连接：注册表条目（若有）失效，侧通道状态接管
+        match state.iperf_adapter.runtime(&session_id) {
+            Some(iperf_sc) => {
                 if let Ok(mut reg) = IPERF_CLIENT_REGISTRY.lock() {
                     reg.remove(&session_id);
                 }
-                let iperf_sc = sc_arc
-                    .as_any()
-                    .downcast_ref::<iperf::IperfSideChannel>()
-                    .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
                 (
                     iperf_sc.client_abort_flag.clone(),
                     iperf_sc.client_test_running.clone(),
@@ -4408,7 +4174,7 @@ pub async fn iperf_client_run(
     client_abort_flag.store(false, Ordering::Relaxed);
     client_test_running.store(true, Ordering::Relaxed);
 
-    // 同步动态参数到 side_channel（服务端与客户端共享，含版本与监听参数）；
+    // 同步动态参数到 typed runtime（服务端与客户端共享，含版本与监听参数）；
     // 会话未连接时静默跳过（sync_iperf_params 已容忍）
     sync_iperf_params(&state, &session_id, &params);
 
@@ -4443,59 +4209,39 @@ fn sanitize_iperf_params(params: &mut IperfDynamicParams) {
     params.report_interval_secs = params.report_interval_secs.clamp(1, 60);
 }
 
-/// 同步 iperf 动态参数到 side_channel（客户端测速前调用）。
-/// 若 side_channel 不存在（会话未连接），静默跳过。
+/// 同步 iperf 动态参数到 typed runtime（客户端测速前调用）。
+/// 若 runtime 不存在（会话未连接），静默跳过。
 fn sync_iperf_params(state: &AppState, session_id: &str, params: &IperfDynamicParams) {
-    if let Ok(store) = state.session_store.lock() {
-        if let Some(sc_arc) = store.get_side_channel(session_id) {
-            if let Some(iperf_sc) = sc_arc.as_any().downcast_ref::<iperf::IperfSideChannel>() {
-                let mut p = iperf::lock_or_recover(&iperf_sc.dynamic_params, "dynamic_params");
-                *p = params.clone();
-                log::info!(
-                    "[iperf] 动态参数已同步 (session={}, duration={}s, port={})",
-                    session_id,
-                    params.duration_secs,
-                    params.port
-                );
-            }
-        }
+    if let Some(runtime) = state.iperf_adapter.runtime(session_id) {
+        *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = params.clone();
+        log::info!(
+            "[iperf] 动态参数已同步 (session={}, duration={}s, port={})",
+            session_id,
+            params.duration_secs,
+            params.port
+        );
     }
 }
 
 /// 中止进行中的客户端测速
 ///
 /// 会话已连接时置位侧通道中止标志；会话未连接时查任务注册表
-///（`iperf_client_run` 无 side_channel 时注册的一次性任务）。
+///（`iperf_client_run` 无已连接 runtime 时注册的一次性任务）。
 /// 两者皆无则静默返回——任务已完成或从未启动。
 #[tauri::command]
 pub async fn iperf_client_stop(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    let Some(sc_arc) = store.get_side_channel(&session_id) else {
-        // 断开状态：查任务注册表（条目跨 run 存续，中止标志可随时置位）
-        if let Ok(reg) = IPERF_CLIENT_REGISTRY.lock() {
-            if let Some(entry) = reg.get(&session_id) {
-                entry.abort.store(true, Ordering::Relaxed);
-                log::info!(
-                    "[iperf] 已通过任务注册表中止客户端测速 (session={})",
-                    session_id
-                );
-                return Ok(());
-            }
-        }
-        log::debug!("[iperf] 停止跳过：会话 {} 未连接且无注册任务", session_id);
+    if let Some(runtime) = state.iperf_adapter.runtime(&session_id) {
+        runtime.client_abort_flag.store(true, Ordering::Relaxed);
         return Ok(());
-    };
-
-    let iperf_sc = sc_arc
-        .as_any()
-        .downcast_ref::<iperf::IperfSideChannel>()
-        .ok_or_else(|| "侧通道不是 iperf 类型".to_string())?;
-
-    iperf_sc.client_abort_flag.store(true, Ordering::Relaxed);
-    log::info!("[iperf] 已请求中止客户端测速 (session={})", session_id);
+    }
+    if let Ok(reg) = IPERF_CLIENT_REGISTRY.lock() {
+        if let Some(entry) = reg.get(&session_id) {
+            entry.abort.store(true, Ordering::Relaxed);
+        }
+    }
     Ok(())
 }
 
@@ -4509,26 +4255,15 @@ pub async fn iperf_update_params(
     let mut new_params: IperfDynamicParams =
         serde_json::from_value(params).map_err(|e| format!("参数解析失败: {}", e))?;
     sanitize_iperf_params(&mut new_params);
-
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    if let Some(sc_arc) = store.get_side_channel(&session_id) {
-        if let Some(iperf_sc) = sc_arc.as_any().downcast_ref::<iperf::IperfSideChannel>() {
-            let mut p = iperf::lock_or_recover(&iperf_sc.dynamic_params, "dynamic_params");
-            *p = new_params;
-            log::info!("iperf 参数已更新 (session={})", session_id);
-        }
-    } else {
-        log::warn!(
-            "iperf 参数更新跳过：会话 {} 未连接（无 side_channel）",
-            session_id
-        );
+    if let Some(runtime) = state.iperf_adapter.runtime(&session_id) {
+        *iperf::lock_or_recover(&runtime.dynamic_params, "dynamic_params") = new_params;
     }
     Ok(())
 }
 
 /// 获取 iperf 状态
 ///
-/// 若会话已连接（side_channel 存在），从侧通道读取实时状态。
+/// 若会话已连接（runtime 已注册），从 typed runtime 读取实时状态。
 /// 若会话未连接，返回默认值。
 #[tauri::command]
 pub async fn iperf_get_status(
@@ -4537,44 +4272,36 @@ pub async fn iperf_get_status(
 ) -> Result<IperfStatus, String> {
     // 全局锁只用于取 Arc：dynamic_params/last_summary 在侧通道自有锁下克隆，
     // 长摘要克隆不占用 session_store 锁（其他会话命令无谓排队）
-    let sc_arc = {
-        let store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.get_side_channel(&session_id)
-    };
-
-    if let Some(sc_arc) = sc_arc {
-        if let Some(iperf_sc) = sc_arc.as_any().downcast_ref::<iperf::IperfSideChannel>() {
-            let server_running = iperf_sc
-                .server_running
-                .load(std::sync::atomic::Ordering::Relaxed);
-            let test_running = iperf_sc
-                .test_running
-                .load(std::sync::atomic::Ordering::Relaxed);
-            let client_test_running = iperf_sc
-                .client_test_running
-                .load(std::sync::atomic::Ordering::Relaxed);
-            // 动态参数为准：版本/监听可在会话内实时修改（config 为创建时不可变快照，
-            // 读取它会导致状态报告与用户当前选择不一致）
-            let dynamic_params = iperf_sc.get_params();
-            let listen_addr = Some(dynamic_params.listen_ip.clone());
-            let listen_port = Some(dynamic_params.listen_port);
-            let version = dynamic_params.version;
-            let last_summary =
-                iperf::lock_or_recover(&iperf_sc.last_summary, "last_summary").clone();
-            return Ok(IperfStatus {
-                server_running,
-                test_running,
-                client_test_running,
-                listen_addr,
-                listen_port,
-                version,
-                dynamic_params,
-                last_summary,
-            });
-        }
+    if let Some(iperf_sc) = state.iperf_adapter.runtime(&session_id) {
+        let server_running = iperf_sc
+            .server_running
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let test_running = iperf_sc
+            .test_running
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let client_test_running = iperf_sc
+            .client_test_running
+            .load(std::sync::atomic::Ordering::Relaxed);
+        // 动态参数为准：版本/监听可在会话内实时修改（config 为创建时不可变快照，
+        // 读取它会导致状态报告与用户当前选择不一致）
+        let dynamic_params = iperf_sc.get_params();
+        let listen_addr = Some(dynamic_params.listen_ip.clone());
+        let listen_port = Some(dynamic_params.listen_port);
+        let version = dynamic_params.version;
+        let last_summary = iperf::lock_or_recover(&iperf_sc.last_summary, "last_summary").clone();
+        return Ok(IperfStatus {
+            server_running,
+            test_running,
+            client_test_running,
+            listen_addr,
+            listen_port,
+            version,
+            dynamic_params,
+            last_summary,
+        });
     }
 
-    // 会话未连接（无 side_channel），返回默认值
+    // 会话未连接（无已连接 runtime），返回默认值
     log::debug!("iperf get_status: 会话 {} 未连接，返回默认状态", session_id);
     Ok(IperfStatus {
         server_running: false,

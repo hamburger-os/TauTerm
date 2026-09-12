@@ -1,17 +1,15 @@
-//! 串口协议插件
+//! 串口协议插件。
 //!
-//! 实现 `ProtocolAdapter` trait，提供串口终端会话。
+//! 插件只描述 Raw Serial 会话语义；端口发现/打开和实际字节 I/O 由 transport 层负责。
 
-use crate::channel::error::SessionError;
-use crate::channel::serial_channel::SerialChannel;
-use crate::channel::{ContentType, IoStrategy};
 use crate::kernel::plugin_adapter::{
-    EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
+    ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
 };
+use crate::session::SessionError;
+use crate::transport::serial::{open_serial, SerialTransportConfig};
+use crate::transport::DataPlaneRuntime;
 use crate::virtual_port::backend::is_internal_endpoint_path;
 use serde::{Deserialize, Serialize};
-
-// ── 串口配置 ────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerialConfig {
@@ -34,7 +32,7 @@ pub struct SerialConfig {
 }
 
 fn default_baud_rate() -> u32 {
-    115200
+    115_200
 }
 fn default_data_bits() -> u8 {
     8
@@ -61,19 +59,30 @@ fn default_virtual_port_count() -> u32 {
 impl Default for SerialConfig {
     fn default() -> Self {
         Self {
-            baud_rate: 115200,
-            data_bits: 8,
-            parity: "none".into(),
-            stop_bits: "1".into(),
-            flow_control: "none".into(),
-            data_mode: "text".into(),
+            baud_rate: default_baud_rate(),
+            data_bits: default_data_bits(),
+            parity: default_parity(),
+            stop_bits: default_stop_bits(),
+            flow_control: default_flow_control(),
+            data_mode: default_data_mode(),
             virtual_port_enabled: false,
             virtual_port_count: 0,
         }
     }
 }
 
-// ── 串口适配器 ──────────────────────────────────────
+impl SerialConfig {
+    fn transport(&self) -> SerialTransportConfig {
+        SerialTransportConfig {
+            baud_rate: self.baud_rate,
+            data_bits: self.data_bits,
+            parity: self.parity.clone(),
+            stop_bits: self.stop_bits.clone(),
+            flow_control: self.flow_control.clone(),
+            read_timeout_ms: 20,
+        }
+    }
+}
 
 pub struct SerialAdapter;
 
@@ -84,57 +93,6 @@ impl SerialAdapter {
 
     fn parse_params(params: &serde_json::Value) -> SerialConfig {
         serde_json::from_value(params.clone()).unwrap_or_default()
-    }
-
-    fn open_port(
-        endpoint: &str,
-        config: &SerialConfig,
-    ) -> Result<Box<dyn serialport::SerialPort>, SessionError> {
-        let data_bits = match config.data_bits {
-            5 => serialport::DataBits::Five,
-            6 => serialport::DataBits::Six,
-            7 => serialport::DataBits::Seven,
-            _ => serialport::DataBits::Eight,
-        };
-        let parity = match config.parity.as_str() {
-            "even" => serialport::Parity::Even,
-            "odd" => serialport::Parity::Odd,
-            _ => serialport::Parity::None,
-        };
-        let stop_bits = match config.stop_bits.as_str() {
-            "2" => serialport::StopBits::Two,
-            _ => serialport::StopBits::One,
-        };
-        let flow_control = match config.flow_control.as_str() {
-            "rts_cts" => serialport::FlowControl::Hardware,
-            "xon_xoff" => serialport::FlowControl::Software,
-            _ => serialport::FlowControl::None,
-        };
-
-        let mut last_error = String::new();
-        for attempt in 0..3 {
-            if attempt > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            match serialport::new(endpoint, config.baud_rate)
-                .data_bits(data_bits)
-                .parity(parity)
-                .stop_bits(stop_bits)
-                .flow_control(flow_control)
-                .timeout(std::time::Duration::from_millis(50))
-                .open()
-            {
-                Ok(port) => {
-                    let _ = port.clear(serialport::ClearBuffer::All);
-                    std::thread::sleep(std::time::Duration::from_millis(30));
-                    return Ok(port);
-                }
-                Err(error) => {
-                    last_error = format!("无法打开端口 {endpoint}: {error}");
-                }
-            }
-        }
-        Err(SessionError::ConnectionFailed { reason: last_error })
     }
 }
 
@@ -166,15 +124,13 @@ impl ProtocolAdapter for SerialAdapter {
         params: &serde_json::Value,
     ) -> Result<ProtocolConnection, SessionError> {
         let config = Self::parse_params(params);
-        let port = Self::open_port(endpoint, &config)?;
-        let channel = SerialChannel::new(port);
+        let driver = open_serial(endpoint, &config.transport())?;
         Ok(ProtocolConnection {
-            channel: Some(crate::kernel::plugin_adapter::ChannelKind::Sync(Box::new(
-                channel,
-            ))),
-            comm_handle: None,
-            side_channel: None,
+            data_plane: Some(DataPlaneRuntime::spawn(Box::new(driver))),
+            service: None,
+            file_transfer: None,
             channel_factory: None,
+            on_attached: None,
             teardown_delay: self.teardown_delay(),
         })
     }
@@ -187,8 +143,6 @@ impl ProtocolAdapter for SerialAdapter {
 
         Ok(ports
             .into_iter()
-            // Windows 虚拟串口的 bridge 端只供 TauTerm 内部桥接线程打开，不能作为
-            // 用户可选串口再次暴露；external 端则仍正常出现在列表中。
             .filter(|port| !is_internal_endpoint_path(&port.port_name))
             .map(|port| {
                 let port_name = port.port_name.clone();
@@ -225,33 +179,21 @@ impl ProtocolAdapter for SerialAdapter {
                     }
                     serialport::SerialPortType::BluetoothPort => (
                         "Bluetooth Serial".to_string(),
-                        serde_json::json!({
-                            "kind": "bluetooth",
-                            "system_port": port_name.clone(),
-                        }),
+                        serde_json::json!({"kind": "bluetooth", "system_port": port_name.clone()}),
                     ),
                     serialport::SerialPortType::PciPort => (
                         "PCI Serial".to_string(),
-                        serde_json::json!({
-                            "kind": "pci",
-                            "system_port": port_name.clone(),
-                        }),
+                        serde_json::json!({"kind": "pci", "system_port": port_name.clone()}),
                     ),
                     serialport::SerialPortType::Unknown => (
                         port_name.clone(),
-                        serde_json::json!({
-                            "kind": "unknown",
-                            "system_port": port_name.clone(),
-                        }),
+                        serde_json::json!({"kind": "unknown", "system_port": port_name.clone()}),
                     ),
                 };
-
                 EndpointInfo {
                     name: port_name,
                     description,
-                    params: Some(serde_json::json!({
-                        "device_identity": identity,
-                    })),
+                    params: Some(serde_json::json!({"device_identity": identity})),
                 }
             })
             .collect())
@@ -267,10 +209,6 @@ impl ProtocolAdapter for SerialAdapter {
             TransferProtocolType::xmodem(),
             TransferProtocolType::zmodem(),
         ]
-    }
-
-    fn io_strategy(&self) -> IoStrategy {
-        IoStrategy::Sync
     }
 
     fn teardown_delay(&self) -> std::time::Duration {
@@ -292,7 +230,7 @@ mod tests {
     #[test]
     fn serial_config_defaults_are_stable() {
         let config = SerialAdapter::parse_params(&serde_json::json!({}));
-        assert_eq!(config.baud_rate, 115200);
+        assert_eq!(config.baud_rate, 115_200);
         assert_eq!(config.data_bits, 8);
         assert_eq!(config.parity, "none");
         assert_eq!(config.stop_bits, "1");
@@ -340,7 +278,6 @@ mod tests {
     #[test]
     fn serial_adapter_contract_exposes_expected_shared_capabilities() {
         let adapter = SerialAdapter::new();
-        assert_eq!(adapter.io_strategy(), IoStrategy::Sync);
         let protocols = adapter
             .transfer_protocols()
             .into_iter()

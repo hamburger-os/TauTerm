@@ -4,8 +4,7 @@
 //! 向通用同步 I/O loop 暴露可超时的 `Read`。这样 PTY 无输出时仍能及时
 //! 处理键盘写入、窗口 resize 与 Shutdown。
 
-use crate::channel::error::ChannelError;
-use crate::channel::{Channel, DisconnectInfo};
+use crate::transport::{ReadStatus, StreamCloseMetadata, TransportError};
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -37,7 +36,7 @@ enum ReaderEvent {
 }
 
 /// 本地 Shell 的同步 PTY 通道。
-pub struct LocalShellChannel {
+pub struct LocalShellDriver {
     master: Box<dyn MasterPty + Send>,
     writer: Option<Box<dyn Write + Send>>,
     reader_rx: mpsc::Receiver<ReaderEvent>,
@@ -62,13 +61,13 @@ pub struct LocalShellChannel {
     job: Option<WindowsJob>,
 }
 
-impl LocalShellChannel {
+impl LocalShellDriver {
     /// 创建 PTY 并在其中启动一个独立 argv 的本地进程。
     pub fn spawn(
         executable: &str,
         args: &[String],
         cwd: &std::path::Path,
-    ) -> Result<Self, ChannelError> {
+    ) -> std::io::Result<Self> {
         let pty_system = portable_pty::native_pty_system();
         let pair = pty_system
             .openpty(PtySize::default())
@@ -110,8 +109,7 @@ impl LocalShellChannel {
         let (reader_tx, reader_rx) = mpsc::sync_channel(64);
         std::thread::Builder::new()
             .name("local-shell-reader".into())
-            .spawn(move || read_pty(reader, reader_tx))
-            .map_err(ChannelError::Io)?;
+            .spawn(move || read_pty(reader, reader_tx))?;
 
         let running = Arc::new(AtomicBool::new(true));
         let running_wait = running.clone();
@@ -139,8 +137,7 @@ impl LocalShellChannel {
                     *slot = Some(snapshot);
                 }
                 running_wait.store(false, Ordering::SeqCst);
-            })
-            .map_err(ChannelError::Io)?;
+            })?;
 
         #[cfg(unix)]
         let process_group = pair.master.process_group_leader();
@@ -314,7 +311,7 @@ impl LocalShellChannel {
     }
 }
 
-impl Read for LocalShellChannel {
+impl Read for LocalShellDriver {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -360,7 +357,7 @@ impl Read for LocalShellChannel {
     }
 }
 
-impl Write for LocalShellChannel {
+impl Write for LocalShellDriver {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self.writer.as_mut() {
             Some(writer) => writer.write(buf),
@@ -379,16 +376,45 @@ impl Write for LocalShellChannel {
     }
 }
 
-impl Channel for LocalShellChannel {
-    fn is_connected(&self) -> bool {
-        self.running.load(Ordering::SeqCst) && self.writer.is_some()
+impl crate::transport::BlockingByteStream for LocalShellDriver {
+    fn read(&mut self, buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+        match Read::read(self, buf) {
+            Ok(n) if n > 0 => Ok(ReadStatus::Data(n)),
+            Ok(_) => Ok(ReadStatus::Idle),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                Ok(ReadStatus::Idle)
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof
+                ) =>
+            {
+                Ok(ReadStatus::Eof)
+            }
+            Err(error) => Err(TransportError::io("local_shell_read", error)),
+        }
     }
 
-    fn set_timeout(&mut self, _dur: Duration) -> Result<(), ChannelError> {
+    fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
+        Write::write_all(self, data).map_err(|error| TransportError::io("local_shell_write", error))
+    }
+
+    fn flush(&mut self) -> Result<(), TransportError> {
+        Write::flush(self).map_err(|error| TransportError::io("local_shell_flush", error))
+    }
+
+    fn shutdown(&mut self) -> Result<(), TransportError> {
+        self.shutdown_process();
         Ok(())
     }
 
-    fn resize_pty(&mut self, cols: u32, rows: u32) -> Result<(), ChannelError> {
+    fn resize_terminal(&mut self, cols: u32, rows: u32) -> Result<(), TransportError> {
         self.master
             .resize(PtySize {
                 rows: rows.clamp(1, u16::MAX as u32) as u16,
@@ -396,22 +422,29 @@ impl Channel for LocalShellChannel {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| ChannelError::Io(io_other(format!("PTY resize failed: {e}"))))
+            .map_err(|error| {
+                TransportError::io(
+                    "local_shell_resize",
+                    io_other(format!("PTY resize failed: {error}")),
+                )
+            })
     }
 
-    fn shutdown(&mut self) -> Result<(), ChannelError> {
-        self.shutdown_process();
-        Ok(())
+    fn supports_terminal_control(&self) -> bool {
+        true
     }
 
-    fn disconnect_info(&self, fallback: DisconnectInfo) -> DisconnectInfo {
+    fn close_metadata(&self) -> StreamCloseMetadata {
         self.exit_snapshot()
-            .map(|exit| DisconnectInfo::process_exited(exit.code, exit.signal.as_deref()))
-            .unwrap_or(fallback)
+            .map(|exit| StreamCloseMetadata {
+                exit_code: Some(exit.code),
+                signal: exit.signal,
+            })
+            .unwrap_or_default()
     }
 }
 
-impl Drop for LocalShellChannel {
+impl Drop for LocalShellDriver {
     fn drop(&mut self) {
         self.shutdown_process();
     }
@@ -568,8 +601,9 @@ mod tests {
         let script = "printf 'TAUTERM_LOCAL_SHELL_TEST\\n'; exit 7";
         let (shell, args) = scripted_shell(script);
         let cwd = std::env::current_dir().expect("current directory");
-        let mut channel = LocalShellChannel::spawn(&shell, &args, &cwd).expect("spawn shell");
-        channel.resize_pty(132, 43).expect("resize PTY");
+        let mut channel = LocalShellDriver::spawn(&shell, &args, &cwd).expect("spawn shell");
+        crate::transport::BlockingByteStream::resize_terminal(&mut channel, 132, 43)
+            .expect("resize PTY");
 
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut output = Vec::new();
@@ -591,12 +625,11 @@ mod tests {
             !output
                 .windows(CONPTY_STARTUP_CPR_QUERY.len())
                 .any(|bytes| bytes == CONPTY_STARTUP_CPR_QUERY),
-            "ConPTY startup CPR query should be consumed by LocalShellChannel"
+            "ConPTY startup CPR query should be consumed by LocalShellDriver"
         );
 
-        let info = channel.disconnect_info(DisconnectInfo::io_error("fallback"));
+        let info = crate::transport::BlockingByteStream::close_metadata(&channel);
         assert_eq!(info.exit_code, Some(7));
-        assert!(info.retain_terminal);
     }
 
     #[test]
@@ -606,9 +639,9 @@ mod tests {
         #[cfg(unix)]
         let (shell, args) = scripted_shell("sleep 30");
         let cwd = std::env::current_dir().expect("current directory");
-        let mut channel = LocalShellChannel::spawn(&shell, &args, &cwd).expect("spawn shell");
-        assert!(channel.is_connected());
-        channel.shutdown().expect("shutdown shell");
+        let mut channel = LocalShellDriver::spawn(&shell, &args, &cwd).expect("spawn shell");
+        assert!(channel.running.load(Ordering::SeqCst));
+        crate::transport::BlockingByteStream::shutdown(&mut channel).expect("shutdown shell");
         assert!(channel.wait_until_stopped(Duration::from_secs(2)));
     }
 }

@@ -11,6 +11,7 @@ import "./plugins/tftp";
 import "./plugins/iperf";
 import "./plugins/network";
 import "./plugins/trdp";
+import "./plugins/modbus";
 import { installFrontendRuntimeDiagnostics } from "./utils/runtimeDiagnostics";
 import "./styles/global.css";
 

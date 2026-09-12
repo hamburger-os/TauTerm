@@ -36,7 +36,7 @@ pub struct SshHandler {
 
 impl SshHandler {
     /// 创建一个新的 Handler，绑定到指定的验证请求通道。
-    pub fn new(verifier_tx: tokio::sync::mpsc::Sender<HostKeyVerification>) -> Self {
+    pub(crate) fn new(verifier_tx: tokio::sync::mpsc::Sender<HostKeyVerification>) -> Self {
         Self {
             verifier_tx: Some(verifier_tx),
         }
