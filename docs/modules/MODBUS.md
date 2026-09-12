@@ -142,15 +142,23 @@ TCP Server 支持多 client。已结束 peer worker 的 JoinHandle 会在运行�
 
 Raw PDU 由 TauTerm 添加所选 transport envelope；exact Raw ADU 按用户字节原样发送，不修正 CRC/LRC/MBAP/TID/byte-count，并明确标记 response 为未验证 raw data。
 
+## 会话创建与标识
+
+Modbus 连接表单通过插件契约 `PluginRegistration.isConnectionConfigValid` 声明最低可保存条件。RTU/ASCII 必须先选择实际串口；TCP 必须有非空主机和合法端口。统一连接对话框在配置无效时直接禁用“确认”，并在创建入口再次校验，因此不会先生成无效离线会话再等到连接阶段报错。
+
+系统生成的 Modbus 名称只在会话首次创建时确定。后续修改传输模式、角色、串口、主机或端口时，只更新 endpoint/配置摘要，不自动改写第一行会话名称；用户自定义名称同样保持不变。这样左侧会话卡片第一行始终是稳定身份，第二行才承担当前链路信息。
+
 ## UI 与底边状态栏
 
-Modbus 使用独立 `customView`，不显示全局 SendBar。主工作区遵循“一张 Workspace Content + 内部分区”，不再额外包一层大 `liquid-glass-card`；Read/Write、Monitor、Transactions、Advanced、Server 通过 selector 与 section divider 共享同一工作台表面。
+Modbus 使用独立 `customView`，不显示全局 SendBar。主工作区遵循“一张 Workspace Content + 内部分区”，不再额外包一层大 `liquid-glass-card`；Read/Write、Monitor、Transactions、Advanced、Server 通过统一主题按钮与 section divider 共享同一工作台表面。
 
-Client Header 持续显示当前 transaction target Unit，可在连接保持不变时快速切换。连接页的 Unit 字段明确叫“默认 Unit ID”，表示新事务/Watch 的初始目标。
+Modbus 工作区不再重复显示会话标题、endpoint 和连接状态头部；这些信息已有会话树与全局状态栏 owner。Client 的 transaction target Unit 放在“读写/请求”矩阵内，与功能、地址、数量属于同一操作上下文。连接页的 Unit 字段明确叫“默认 Unit ID”，表示新事务/Watch 的初始目标。
+
+连接页和工作区控件遵循 UI Foundation 的统一几何：输入框/下拉框使用 `--select-height` 与 `--select-padding`；顶部页签采用与 TRDP 相同的 36px 等高等宽主题按钮；常规动作按钮采用 30px 紧凑高度。矩阵在宽 Pane 中按列对齐，在窄 Pane 中通过 container query 降为两列/单列，不用协议私有硬编码颜色覆盖主题。
 
 底边 StatusBar 由全局 UI Foundation 拥有，Modbus 只通过插件 `statusBarItems` 贡献轻量运行态：协议模式/角色、最近事务 Unit、Watch 运行计数、最近结果与 latency。Endpoint/连接状态由全局栏已有 owner 展示，Modbus 不重复标题或完整配置。Custom Modbus Session 不继承 Text/UTF-8/TX/RX stream 状态。
 
-Modbus 插件专属中英文文案由 `src/plugins/modbus/locales.ts` 所有，经 `PluginRegistration.locales` 注入全局 i18n；协议专属文案不复制到公共 locale。
+Modbus 插件专属中英文文案由 `src/plugins/modbus/locales.ts` 所有，经 `PluginRegistration.locales` 注入全局 i18n；协议专属文案不复制到公共 locale。用户界面文案描述协议操作、结果和风险，不暴露 Rust/React、增量游标、重复解析等实现细节。
 
 ## 持久化边界
 
@@ -174,7 +182,7 @@ TauTerm 处于预稳定阶段。本模块 schema 直接以当前模型为唯一�
 - Server 管理定义与协议写入分离；协议写只能修改已定义地址，多地址修改原子。
 - Server transport delivery failure 与 request execution result 不混淆。
 - exact Raw ADU 不做协议修正，也不能冒充已验证 transaction。
-- Modbus 专属状态和 locale 通过 plugin contracts 注入 UI Foundation，不继续增加全局协议分支。
+- Modbus 专属状态、locale 与连接配置合法性通过 plugin contracts 注入 UI Foundation，不继续增加全局协议分支。
 
 ## 代码锚点
 
@@ -184,8 +192,9 @@ TauTerm 处于预稳定阶段。本模块 schema 直接以当前模型为唯一�
 - `src/plugins/modbus/`
 - `src/plugin-manifests/modbus.json`
 - `src/components/Layout/StatusBar.tsx`
+- `src/components/Layout/ConnectDialog.tsx`
 - `src/core/plugin-registry.ts`
 
 ## 何时更新本文
 
-修改 runtime config/target model、request/response schema、功能 capability、framing/validation、retry/broadcast/TID、Watch 生命周期或值布局、transaction history transport、Server Address Space/fault/delivery semantics、Raw 模式、持久化边界、Modbus HMI、StatusBar 贡献或 Modbus 与 Transport/Session/UI Foundation 的职责关系时，必须同步更新本文。
+修改 runtime config/target model、request/response schema、功能 capability、framing/validation、retry/broadcast/TID、Watch 生命周期或值布局、transaction history transport、Server Address Space/fault/delivery semantics、Raw 模式、持久化边界、Modbus HMI、连接表单合法性、StatusBar 贡献或 Modbus 与 Transport/Session/UI Foundation 的职责关系时，必须同步更新本文。
