@@ -128,11 +128,7 @@ impl SessionIo {
             .map_err(Into::into)
     }
 
-    pub async fn resize_terminal_async(
-        &self,
-        cols: u32,
-        rows: u32,
-    ) -> Result<(), SessionIoError> {
+    pub async fn resize_terminal_async(&self, cols: u32, rows: u32) -> Result<(), SessionIoError> {
         self.primary
             .as_ref()
             .ok_or(SessionIoError::NoPrimaryDataPlane)?
