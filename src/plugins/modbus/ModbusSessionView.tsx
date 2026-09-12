@@ -10,7 +10,7 @@ import {
   type ServerFaultConfig,
   type TransactionResult,
 } from "./model";
-import { modbusConnectionSubtitle, modbusSessionTitle } from "./presentation";
+import { modbusConnectionSubtitle, modbusEndpointLabel, modbusSessionTitle } from "./presentation";
 import AdvancedPanel from "./components/AdvancedPanel";
 import MonitorPanel from "./components/MonitorPanel";
 import ReadWritePanel from "./components/ReadWritePanel";
@@ -27,7 +27,7 @@ const statusPresentation: Record<string, { icon: IconName; label: string }> = {
 };
 
 export default function ModbusSessionView({ sessionId }: { sessionId: string }) {
-  const { state, renameTab } = useSession();
+  const { state, reconfigureSession } = useSession();
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = useMemo(() => normalizeModbusSessionParams(tab?.params ?? {}), [tab?.params]);
   const role = params.role;
@@ -35,7 +35,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   const connected = tab?.state === "connected" || tab?.state === "transferring";
   const [page, setPage] = useState<Page>(role === "server" ? "server" : "readwrite");
   const [history, setHistory] = useState<TransactionResult[]>([]);
-  const autoRenameAttempted = useRef<Set<string>>(new Set());
+  const identityNormalized = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setPage(role === "server" ? "server" : "readwrite");
@@ -43,14 +43,24 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
   }, [role, sessionId]);
 
   const generatedTitle = modbusSessionTitle(params);
+  const generatedEndpoint = modbusEndpointLabel(params);
   useEffect(() => {
-    if (!tab || autoRenameAttempted.current.has(sessionId)) return;
-    const isGeneratedLegacyName = tab.name === "Modbus @ modbus"
+    if (!tab || tab.state !== "disconnected" || identityNormalized.current.has(sessionId)) return;
+    const generatedLegacyName = tab.name === "Modbus @ modbus"
       || /^Modbus (RTU|ASCII|TCP) (Master|Slave|Client|Server)( @ .+)?$/.test(tab.name);
-    if (!isGeneratedLegacyName) return;
-    autoRenameAttempted.current.add(sessionId);
-    void renameTab(sessionId, generatedTitle);
-  }, [generatedTitle, renameTab, sessionId, tab]);
+    const needsEndpoint = tab.endpoint === "modbus" || tab.endpoint !== generatedEndpoint;
+    if (!generatedLegacyName && !needsEndpoint) return;
+    identityNormalized.current.add(sessionId);
+    void reconfigureSession(
+      sessionId,
+      generatedEndpoint,
+      params,
+      generatedLegacyName ? generatedTitle : tab.name,
+      false,
+      undefined,
+      false,
+    );
+  }, [generatedEndpoint, generatedTitle, params, reconfigureSession, sessionId, tab]);
 
   const execute = async (request: ModbusOperation) => {
     if (!connected) throw new Error("Modbus 会话尚未连接");
