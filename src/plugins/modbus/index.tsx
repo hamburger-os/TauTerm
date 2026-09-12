@@ -4,10 +4,18 @@ import ModbusConnectForm from "./ModbusConnectForm";
 import ModbusSessionView from "./ModbusSessionView";
 import ModbusStatusBarItem from "./ModbusStatusBarItem";
 import { modbusLocales } from "./locales";
+import { normalizeModbusSessionParams } from "./model";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: ModbusConnectForm,
+  isConnectionConfigValid: params => {
+    const config = normalizeModbusSessionParams(params);
+    if (config.mode === "tcp") {
+      return config.host.trim().length > 0 && config.port >= 1 && config.port <= 65535;
+    }
+    return config.serial_port.trim().length > 0;
+  },
   customView: ModbusSessionView,
   locales: modbusLocales,
   statusBarItems: [
