@@ -18,16 +18,17 @@ interface Props {
   mode: ModbusMode;
   role: "client" | "server";
   initialFault?: ServerFaultConfig | null;
+  connected: boolean;
 }
 
 type Operation = "status" | "diagnostics" | "counter" | "event_log" | "server_id" | "read_file" | "write_file" | "fifo" | "device_id" | "canopen" | "raw_pdu" | "raw_adu";
 
-export default function AdvancedPanel({ sessionId, execute, mode, role, initialFault }: Props) {
-  if (role === "server") return <ServerFaultPanel sessionId={sessionId} initial={initialFault} />;
-  return <ClientAdvancedPanel execute={execute} mode={mode} />;
+export default function AdvancedPanel({ sessionId, execute, mode, role, initialFault, connected }: Props) {
+  if (role === "server") return <ServerFaultPanel sessionId={sessionId} initial={initialFault} connected={connected} />;
+  return <ClientAdvancedPanel execute={execute} mode={mode} connected={connected} />;
 }
 
-function ClientAdvancedPanel({ execute, mode }: { execute: Props["execute"]; mode: ModbusMode }) {
+function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["execute"]; mode: ModbusMode; connected: boolean }) {
   const serialOperations: { value: Operation; label: string }[] = useMemo(() => mode === "tcp" ? [] : [
     { value: "status", label: "07 · Read Exception Status" },
     { value: "diagnostics", label: "08 · Diagnostics" },
@@ -63,6 +64,7 @@ function ClientAdvancedPanel({ execute, mode }: { execute: Props["execute"]; mod
   const [busy, setBusy] = useState(false);
 
   const run = async () => {
+    if (!connected) return;
     setBusy(true);
     setError("");
     try {
@@ -101,16 +103,17 @@ function ClientAdvancedPanel({ execute, mode }: { execute: Props["execute"]; mod
     {(operation === "device_id" || operation === "canopen") && <Field label={operation === "device_id" ? "Read Device ID Code + Object ID (hex)" : "MEI 0x0D Data (hex)"}><input className="liquid-glass-input" value={meiData} onChange={event => setMeiData(event.target.value)} placeholder={operation === "device_id" ? "01 00" : "00"} /></Field>}
     {operation === "raw_pdu" && <><div className={styles.notice}>Raw PDU 仅由 TauTerm 自动添加 {mode === "tcp" ? "MBAP + Unit ID" : mode === "rtu" ? "Unit ID + CRC" : "Unit ID + LRC + ASCII delimiters"}；输入内容本身不会被解释为完整 ADU。</div><div className={styles.twoColumns}><Field label="Function Code (hex)"><input className="liquid-glass-input" value={functionCode} onChange={event => setFunctionCode(event.target.value)} /></Field><Field label="PDU Data (hex)"><input className="liquid-glass-input" value={rawData} onChange={event => setRawData(event.target.value)} /></Field></div></>}
     {operation === "raw_adu" && <><div className={`${styles.notice} ${styles.warning}`}>Raw ADU 会逐字节原样发送，不自动修正 CRC/LRC、MBAP Length、Transaction ID、Byte Count 或任何协议字段，可用于故意发送畸形帧。</div><Field label="完整 ADU (hex)"><textarea className={`${styles.textarea} liquid-glass-input`} value={rawAdu} onChange={event => setRawAdu(event.target.value)} /></Field><div className={styles.twoColumns}><label className="liquid-glass-toggle"><input type="checkbox" checked={waitResponse} onChange={event => setWaitResponse(event.target.checked)} /><div/><span>等待原始响应</span></label><Field label="响应静默边界 (ms)"><NumberInput value={quietPeriod} set={setQuietPeriod} min={1} max={1000} /></Field></div></>}
-    <div className={styles.actions}><button className="liquid-glass-button" disabled={busy} onClick={() => void run()}>{busy ? "执行中…" : "执行"}</button>{error && <span className={styles.error}>{error}</span>}</div>
+    <div className={styles.actions}><button className="liquid-glass-button" disabled={busy || !connected} onClick={() => void run()}>{busy ? "执行中…" : "执行"}</button>{!connected && <span className={styles.hint}>连接会话后才能执行高级事务。</span>}{error && <span className={styles.error}>{error}</span>}</div>
     {result && <ResultCard result={result} />}
   </div>;
 }
 
-function ServerFaultPanel({ sessionId, initial }: { sessionId: string; initial?: ServerFaultConfig | null }) {
+function ServerFaultPanel({ sessionId, initial, connected }: { sessionId: string; initial?: ServerFaultConfig | null; connected: boolean }) {
   const [fault, setFault] = useState<ServerFaultConfig>(initial ?? { no_response: false, delay_ms: 0, exception_code: null });
   const [saved, setSaved] = useState("");
   const [error, setError] = useState("");
   const apply = async () => {
+    if (!connected) return;
     setSaved(""); setError("");
     try {
       await invoke("modbus_server_set_value", { sessionId, fault });
@@ -125,7 +128,7 @@ function ServerFaultPanel({ sessionId, initial }: { sessionId: string; initial?:
       <Field label="响应延迟 (ms)"><NumberInput value={fault.delay_ms} set={value => setFault(current => ({ ...current, delay_ms: value }))} min={0} max={60000} /></Field>
       <Field label="强制异常"><select className="liquid-glass-input liquid-glass-select" value={fault.exception_code ?? ""} onChange={event => setFault(current => ({ ...current, exception_code: event.target.value ? Number(event.target.value) : null }))}><option value="">正常处理</option>{Object.entries(STANDARD_EXCEPTIONS).map(([code, label]) => <option key={code} value={code}>{code} · {label}</option>)}</select></Field>
     </div>
-    <div className={styles.actions}><button className="liquid-glass-button" onClick={() => void apply()}>应用故障配置</button>{saved && <span className={styles.success}>{saved}</span>}{error && <span className={styles.error}>{error}</span>}</div>
+    <div className={styles.actions}><button className="liquid-glass-button" disabled={!connected} onClick={() => void apply()}>应用故障配置</button>{!connected && <span className={styles.hint}>连接 Server 会话后才能应用运行时故障配置。</span>}{saved && <span className={styles.success}>{saved}</span>}{error && <span className={styles.error}>{error}</span>}</div>
   </div>;
 }
 

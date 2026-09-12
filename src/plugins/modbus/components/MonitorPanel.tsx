@@ -35,18 +35,26 @@ function defaultWatchRow(): WatchRow {
   };
 }
 
-export default function MonitorPanel({ sessionId }: { sessionId: string }) {
+export default function MonitorPanel({ sessionId, connected }: { sessionId: string; connected: boolean }) {
   const [rows, setRows] = useState<WatchRow[]>(() => [defaultWatchRow()]);
   const [values, setValues] = useState<Record<string, WatchValue>>({});
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    let mounted = true;
     setRows([defaultWatchRow()]);
     setValues({});
     setRunning(false);
     setError("");
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!connected) {
+      setRunning(false);
+      setError("");
+      return;
+    }
+    let mounted = true;
     void invoke<ModbusStatus>("modbus_status", { sessionId })
       .then(status => {
         if (mounted && status.watch_rows.length > 0) setRows(status.watch_rows);
@@ -55,17 +63,17 @@ export default function MonitorPanel({ sessionId }: { sessionId: string }) {
         if (mounted) setError(String(cause));
       });
     return () => { mounted = false; };
-  }, [sessionId]);
+  }, [connected, sessionId]);
 
   useEffect(() => {
-    if (!running) return;
+    if (!running || !connected) return;
     const timer = window.setInterval(() => {
       void invoke<WatchValue[]>("modbus_watch_values", { sessionId })
         .then(items => setValues(Object.fromEntries(items.map(item => [item.row_id, item]))))
         .catch(() => undefined);
     }, 300);
     return () => window.clearInterval(timer);
-  }, [running, sessionId]);
+  }, [connected, running, sessionId]);
 
   useEffect(() => () => { void invoke("modbus_watch_stop", { sessionId }).catch(() => undefined); }, [sessionId]);
 
@@ -85,6 +93,7 @@ export default function MonitorPanel({ sessionId }: { sessionId: string }) {
     format: DEFAULT_FORMAT,
   }]);
   const apply = async (start: boolean) => {
+    if (!connected) return;
     setError("");
     try {
       await invoke("modbus_watch_set", { sessionId, rows });
@@ -99,8 +108,8 @@ export default function MonitorPanel({ sessionId }: { sessionId: string }) {
     <div className={`${styles.card} liquid-glass-card`}>
       <div className={styles.actions}>
         <button className="liquid-glass-button" onClick={add}>添加监控项</button>
-        <button className="liquid-glass-button" onClick={() => void apply(!running)}>{running ? "停止轮询" : "开始轮询"}</button>
-        <span className={styles.hint}>慢请求完成后再安排下一周期，不积压、不重入。</span>
+        <button className="liquid-glass-button" disabled={!connected} onClick={() => void apply(!running)}>{running ? "停止轮询" : "开始轮询"}</button>
+        <span className={styles.hint}>{connected ? "慢请求完成后再安排下一周期，不积压、不重入。" : "连接会话后可保存监控表并开始轮询。"}</span>
         {error && <span className={styles.error}>{error}</span>}
       </div>
       <div className={styles.tableWrap}>
