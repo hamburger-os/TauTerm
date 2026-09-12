@@ -6,7 +6,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::plugins::modbus::client::{ModbusClient, TransactionResult, TransactionStatus};
-use crate::plugins::modbus::codec::{ModbusRequest, RegisterReadArea};
+use crate::plugins::modbus::codec::ModbusRequest;
 use crate::plugins::modbus::value::{decode_register_bytes, required_registers, ValueFormat};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

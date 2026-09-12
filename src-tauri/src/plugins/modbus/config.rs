@@ -173,9 +173,7 @@ impl ValidatedModbusConfig {
 
     pub fn rtu_frame_gap(&self) -> Duration {
         match &self.endpoint {
-            ModbusEndpointConfig::Serial { transport, .. } => {
-                serial_gap(transport, 3.5, 1_750)
-            }
+            ModbusEndpointConfig::Serial { transport, .. } => serial_gap(transport, 3.5, 1_750),
             ModbusEndpointConfig::Tcp { .. } => Duration::ZERO,
         }
     }

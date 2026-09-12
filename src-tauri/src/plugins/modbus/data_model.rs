@@ -53,7 +53,10 @@ impl<T: Copy> AddressBlock<T> {
     }
 
     fn snapshot(&self) -> Vec<(u16, T)> {
-        self.values.iter().map(|(address, value)| (*address, *value)).collect()
+        self.values
+            .iter()
+            .map(|(address, value)| (*address, *value))
+            .collect()
     }
 
     fn can_read_after_write(
@@ -68,7 +71,8 @@ impl<T: Copy> AddressBlock<T> {
         let write_end = write_address + (write_len - 1) as u16;
         for offset in 0..read_quantity {
             let target = read_address + offset;
-            if !self.values.contains_key(&target) && !(write_address..=write_end).contains(&target) {
+            if !self.values.contains_key(&target) && !(write_address..=write_end).contains(&target)
+            {
                 return Err(EX_ILLEGAL_DATA_ADDRESS);
             }
         }
@@ -184,9 +188,10 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
         } => {
             let values = match area {
                 BitReadArea::Coils => inner.address_space.coils.read(*address, *quantity)?,
-                BitReadArea::DiscreteInputs => {
-                    inner.address_space.discrete_inputs.read(*address, *quantity)?
-                }
+                BitReadArea::DiscreteInputs => inner
+                    .address_space
+                    .discrete_inputs
+                    .read(*address, *quantity)?,
             };
             let packed = pack_bits(&values);
             out.push(packed.len() as u8);
@@ -251,7 +256,10 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             out.extend_from_slice(&(values.len() as u16).to_be_bytes());
         }
         ModbusRequest::WriteMultipleRegisters { address, values } => {
-            inner.address_space.holding_registers.write(*address, values)?;
+            inner
+                .address_space
+                .holding_registers
+                .write(*address, values)?;
             out.extend_from_slice(&address.to_be_bytes());
             out.extend_from_slice(&(values.len() as u16).to_be_bytes());
         }
@@ -344,7 +352,9 @@ fn encode_mei_response(
     let read_code = data[0];
     let start = data[1];
     let selected: Vec<_> = if read_code == 0x04 {
-        vec![objects.get_key_value(&start).ok_or(EX_ILLEGAL_DATA_ADDRESS)?]
+        vec![objects
+            .get_key_value(&start)
+            .ok_or(EX_ILLEGAL_DATA_ADDRESS)?]
     } else {
         objects.range(start..).take(17).collect()
     };

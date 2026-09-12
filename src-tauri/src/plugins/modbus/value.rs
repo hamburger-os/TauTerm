@@ -212,7 +212,9 @@ fn ordered_register_bytes(
         return Err("register value requires an even, non-zero byte count".into());
     }
     let mut words: Vec<[u8; 2]> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| match byte_order {
             ByteOrder::Big => [chunk[0], chunk[1]],
             ByteOrder::Little => [chunk[1], chunk[0]],

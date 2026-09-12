@@ -285,10 +285,10 @@ pub fn encode_request(request: &ModbusRequest) -> Result<Vec<u8>, String> {
         }
         ModbusRequest::ReadFifoQueue { address } => push_u16(&mut pdu, *address),
         ModbusRequest::Mei { mei_type, data } => {
-            if *mei_type == 0x0E {
-                if data.len() != 2 || !(1..=4).contains(&data[0]) {
-                    return Err("Read Device Identification requires read code 1..=4 and object id".into());
-                }
+            if *mei_type == 0x0E && (data.len() != 2 || !(1..=4).contains(&data[0])) {
+                return Err(
+                    "Read Device Identification requires read code 1..=4 and object id".into(),
+                );
             }
             pdu.push(*mei_type);
             pdu.extend_from_slice(data);
@@ -550,17 +550,20 @@ pub fn validate_response(request: &ModbusRequest, pdu: &[u8]) -> Result<ModbusRe
             if data.len() < 2 || u16_at(data, 0)? != *sub_function {
                 return Err("diagnostics sub-function mismatch".into());
             }
-            if matches!(*sub_function, 0x0000 | 0x000A) {
-                if data.len() != 2 + request_data.len() || data[2..] != request_data[..] {
-                    return Err("diagnostics response does not echo the implemented request".into());
-                }
+            if matches!(*sub_function, 0x0000 | 0x000A)
+                && (data.len() != 2 + request_data.len() || data[2..] != request_data[..])
+            {
+                return Err("diagnostics response does not echo the implemented request".into());
             }
         }
         ModbusRequest::GetCommEventCounter => validate_comm_event_counter(data)?,
         ModbusRequest::GetCommEventLog => validate_comm_event_log(data)?,
         ModbusRequest::ReportServerId => validate_report_server_id(data)?,
         ModbusRequest::ReadFifoQueue { .. } => validate_fifo_response(data)?,
-        ModbusRequest::Mei { mei_type, data: request_data } => {
+        ModbusRequest::Mei {
+            mei_type,
+            data: request_data,
+        } => {
             validate_mei_response(data, *mei_type, request_data)?;
         }
         ModbusRequest::Raw { .. } => {}
@@ -724,7 +727,9 @@ fn validate_mei_response(data: &[u8], mei_type: u8, request_data: &[u8]) -> Resu
         return Err("unexpected trailing Read Device Identification data".into());
     }
     if request_data[0] == 0x04 && object_count > 0 && previous_id != Some(request_data[1]) {
-        return Err("specific Read Device Identification response returned a different object".into());
+        return Err(
+            "specific Read Device Identification response returned a different object".into(),
+        );
     }
     Ok(())
 }
@@ -927,8 +932,9 @@ mod tests {
                 record_length: 2,
             }],
         };
-        assert!(validate_response(&request, &[0x14, 0x06, 0x05, 0x06, 0x12, 0x34, 0x56, 0x78])
-            .is_ok());
+        assert!(
+            validate_response(&request, &[0x14, 0x06, 0x05, 0x06, 0x12, 0x34, 0x56, 0x78]).is_ok()
+        );
         assert!(validate_response(&request, &[0x14, 0x04, 0x03, 0x06, 0x12, 0x34]).is_err());
     }
 
