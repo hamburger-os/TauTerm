@@ -8,7 +8,7 @@ export default function TransactionsPanel({ sessionId, fallback, connected }: { 
 
   useEffect(() => {
     setItems(fallback);
-  }, [sessionId]);
+  }, [fallback, sessionId]);
 
   useEffect(() => {
     if (!connected) return;
@@ -20,8 +20,6 @@ export default function TransactionsPanel({ sessionId, fallback, connected }: { 
     const timer = window.setInterval(refresh, 500);
     return () => { mounted = false; window.clearInterval(timer); };
   }, [connected, sessionId]);
-
-  useEffect(() => { if (fallback.length > 0) setItems(fallback); }, [fallback]);
 
   const copy = (bytes: number[]) => void navigator.clipboard?.writeText(hex(bytes));
 
