@@ -111,6 +111,8 @@ export type LocaleMap = Record<string, Record<string, string>>;
 export interface PluginRegistration {
   manifest: PluginManifest;
   connectForm?: ComponentType<ConnectFormProps>;
+  /** 插件连接表单是否满足创建/保存会话的最低要求。 */
+  isConnectionConfigValid?: (params: Record<string, unknown>) => boolean;
   toolbarItems?: ToolbarItem[];
   contextMenuItems?: ContextMenuItem[];
   bottomPanels?: BottomPanelDef[];
