@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "../Modbus.module.css";
-import type { ModbusRequest, ModbusStatus, ValueFormat, WatchRow, WatchValue } from "../model";
+import { unitIdMax, type ModbusMode, type ModbusRequest, type ModbusStatus, type ValueFormat, type WatchRow, type WatchValue } from "../model";
 
 const DEFAULT_FORMAT: ValueFormat = {
   value_type: "uint16",
@@ -54,11 +54,12 @@ function requestFields(request: ModbusRequest): { functionCode: number; address:
   return { functionCode: 3, address: 0, quantity: 1 };
 }
 
-function defaultWatchRow(): WatchRow {
+function defaultWatchRow(defaultUnitId: number): WatchRow {
   return {
     id: crypto.randomUUID(),
     enabled: true,
     name: "Holding 0",
+    unit_id: defaultUnitId,
     request: { kind: "read_registers", area: "holding_registers", address: 0, quantity: 1 },
     period_ms: 1000,
     format: DEFAULT_FORMAT,
@@ -72,29 +73,56 @@ function displayValue(value: unknown): string {
   return value == null ? "—" : String(value);
 }
 
-export default function MonitorPanel({ sessionId, connected }: { sessionId: string; connected: boolean }) {
-  const [rows, setRows] = useState<WatchRow[]>(() => [defaultWatchRow()]);
+function areaLabel(functionCode: number): string {
+  return functionCode === 1 ? "Coils" : functionCode === 2 ? "Discrete" : functionCode === 4 ? "Input Reg" : "Holding";
+}
+
+export default function MonitorPanel({
+  sessionId,
+  connected,
+  mode,
+  defaultUnitId,
+}: {
+  sessionId: string;
+  connected: boolean;
+  mode: ModbusMode;
+  defaultUnitId: number;
+}) {
+  const [rows, setRows] = useState<WatchRow[]>(() => [defaultWatchRow(defaultUnitId)]);
   const [values, setValues] = useState<Record<string, WatchValue>>({});
   const [running, setRunning] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    setRows([defaultWatchRow()]);
+    const initial = defaultWatchRow(defaultUnitId);
+    setRows([initial]);
+    setSelectedId(initial.id);
     setValues({});
     setRunning(false);
     setError("");
-  }, [sessionId]);
+  }, [defaultUnitId, sessionId]);
 
   useEffect(() => {
     if (!connected) {
       setRunning(false);
+      setValues({});
       setError("");
       return;
     }
     let mounted = true;
-    void invoke<ModbusStatus>("modbus_status", { sessionId })
+    void invoke<ModbusStatus>("modbus_status", {
+      sessionId,
+      afterSequence: null,
+      transactionLimit: null,
+    })
       .then(status => {
-        if (mounted && status.watch_rows.length > 0) setRows(status.watch_rows);
+        if (!mounted) return;
+        if (status.watch_rows.length > 0) {
+          setRows(status.watch_rows);
+          setSelectedId(current => status.watch_rows.some(row => row.id === current) ? current : status.watch_rows[0].id);
+        }
+        setRunning(status.watch_running);
       })
       .catch(cause => {
         if (mounted) setError(String(cause));
@@ -104,15 +132,15 @@ export default function MonitorPanel({ sessionId, connected }: { sessionId: stri
 
   useEffect(() => {
     if (!running || !connected) return;
-    const timer = window.setInterval(() => {
+    const refresh = () => {
       void invoke<WatchValue[]>("modbus_watch_values", { sessionId })
         .then(items => setValues(Object.fromEntries(items.map(item => [item.row_id, item]))))
         .catch(() => undefined);
-    }, 300);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 300);
     return () => window.clearInterval(timer);
   }, [connected, running, sessionId]);
-
-  useEffect(() => () => { void invoke("modbus_watch_stop", { sessionId }).catch(() => undefined); }, [sessionId]);
 
   const patchRow = (id: string, patch: Partial<WatchRow>) => setRows(current => current.map(row => row.id === id ? { ...row, ...patch } : row));
   const patchFormat = (row: WatchRow, patch: Partial<ValueFormat>) => {
@@ -142,14 +170,19 @@ export default function MonitorPanel({ sessionId, connected }: { sessionId: stri
       format,
     });
   };
-  const add = () => setRows(current => [...current, {
-    id: crypto.randomUUID(),
-    enabled: true,
-    name: `Watch ${current.length + 1}`,
-    request: { kind: "read_registers", area: "holding_registers", address: 0, quantity: 1 },
-    period_ms: 1000,
-    format: DEFAULT_FORMAT,
-  }]);
+  const add = () => {
+    const next = defaultWatchRow(defaultUnitId);
+    next.name = `Watch ${rows.length + 1}`;
+    setRows(current => [...current, next]);
+    setSelectedId(next.id);
+  };
+  const remove = (id: string) => {
+    setRows(current => {
+      const next = current.filter(item => item.id !== id);
+      if (selectedId === id) setSelectedId(next[0]?.id ?? null);
+      return next;
+    });
+  };
   const apply = async (start: boolean) => {
     if (!connected) return;
     setError("");
@@ -157,17 +190,30 @@ export default function MonitorPanel({ sessionId, connected }: { sessionId: stri
       await invoke("modbus_watch_set", { sessionId, rows });
       await invoke(start ? "modbus_watch_start" : "modbus_watch_stop", { sessionId });
       setRunning(start);
+      if (!start) setValues({});
     } catch (cause) {
       setError(String(cause));
     }
   };
 
+  const selected = rows.find(row => row.id === selectedId) ?? rows[0] ?? null;
+  const selectedRequest = selected ? requestFields(selected.request) : null;
+  const selectedIsBits = selectedRequest ? selectedRequest.functionCode <= 2 : false;
+  const selectedFormat = selected ? { ...DEFAULT_FORMAT, ...selected.format } : DEFAULT_FORMAT;
+  const selectedWidth = selected && !selectedIsBits ? fixedRegisterWidth(selectedFormat) : null;
+  const selectedExact64 = isExactInteger64(selectedFormat);
+  const enabledCount = useMemo(() => rows.filter(row => row.enabled).length, [rows]);
+
   return (
     <div className={styles.panelPage}>
       <section className={styles.workbenchSection}>
         <div className={styles.panelHeading}>
-          <div><strong>轮询监控</strong><span className={styles.hint}>Bit 区按位值直接显示；寄存器区按独立的字节序、字序和值类型解释。固定宽度类型会自动约束读取寄存器数量。</span></div>
+          <div>
+            <strong>轮询监控</strong>
+            <span className={styles.hint}>轮询属于会话运行时；切换到读写、事务或高级页面不会停止。每一行可以独立指定 Unit。</span>
+          </div>
           <div className={styles.actions}>
+            <span className={`${styles.runtimeState} ${running ? styles.runtimeStateActive : ""}`}>{running ? `运行中 ${enabledCount}/${rows.length}` : "已停止"}</span>
             <button className="liquid-glass-button" onClick={add}>添加监控项</button>
             <button className="liquid-glass-button" disabled={!connected} onClick={() => void apply(!running)}>{running ? "停止轮询" : "开始轮询"}</button>
           </div>
@@ -175,38 +221,48 @@ export default function MonitorPanel({ sessionId, connected }: { sessionId: stri
         {!connected && <span className={styles.hint}>连接会话后可保存监控表并开始轮询。</span>}
         {error && <span className={styles.error}>{error}</span>}
       </section>
-      <section className={styles.workbenchSection}>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead><tr><th>启用</th><th>名称</th><th>区域</th><th>地址</th><th>数量</th><th>类型</th><th>字节序</th><th>字序</th><th>Scale</th><th>Offset</th><th>Unit</th><th>Bit</th><th>周期 ms</th><th>当前值</th><th>状态</th><th /></tr></thead>
-            <tbody>{rows.map(row => {
-              const request = requestFields(row.request);
-              const isBits = request.functionCode <= 2;
-              const format = { ...DEFAULT_FORMAT, ...row.format };
-              const width = isBits ? null : fixedRegisterWidth(format);
-              const current = values[row.id];
-              const exact64 = isExactInteger64(format);
-              return <tr key={row.id}>
-                <td><input type="checkbox" checked={row.enabled} onChange={event => patchRow(row.id, { enabled: event.target.checked })} /></td>
-                <td><input className="liquid-glass-input" value={row.name} onChange={event => patchRow(row.id, { name: event.target.value })} /></td>
-                <td><select className="liquid-glass-input liquid-glass-select" value={request.functionCode} onChange={event => setReadField(row, { functionCode: Number(event.target.value), quantity: 1 })}><option value={1}>Coils</option><option value={2}>Discrete Inputs</option><option value={3}>Holding Registers</option><option value={4}>Input Registers</option></select></td>
-                <td><input className="liquid-glass-input" type="number" min={0} max={65535} value={request.address} onChange={event => setReadField(row, { address: Number(event.target.value) })} /></td>
-                <td><input className="liquid-glass-input" type="number" min={1} disabled={!isBits && width != null} value={request.quantity} onChange={event => setReadField(row, { quantity: Number(event.target.value) })} /></td>
-                <td><select className="liquid-glass-input liquid-glass-select" value={format.value_type} disabled={isBits} onChange={event => patchFormat(row, { value_type: event.target.value as ValueFormat["value_type"], bit: null })}>{REGISTER_TYPES.map(item => <option key={item}>{item}</option>)}</select></td>
-                <td><select className="liquid-glass-input liquid-glass-select" value={format.byte_order} disabled={isBits} onChange={event => patchFormat(row, { byte_order: event.target.value as ValueFormat["byte_order"] })}><option value="big">Big</option><option value="little">Little</option></select></td>
-                <td><select className="liquid-glass-input liquid-glass-select" value={format.word_order} disabled={isBits || request.quantity <= 1} onChange={event => patchFormat(row, { word_order: event.target.value as ValueFormat["word_order"] })}><option value="normal">Normal</option><option value="reverse">Reverse</option></select></td>
-                <td><input className="liquid-glass-input" type="number" step="any" value={format.scale} disabled={isBits || exact64} onChange={event => patchFormat(row, { scale: Number(event.target.value) })} /></td>
-                <td><input className="liquid-glass-input" type="number" step="any" value={format.offset} disabled={isBits || exact64} onChange={event => patchFormat(row, { offset: Number(event.target.value) })} /></td>
-                <td><input className="liquid-glass-input" value={format.unit} disabled={isBits} onChange={event => patchFormat(row, { unit: event.target.value })} /></td>
-                <td><input className="liquid-glass-input" type="number" min={0} max={15} value={format.bit ?? ""} disabled={isBits} onChange={event => patchFormat(row, { bit: event.target.value === "" ? null : Number(event.target.value) })} /></td>
-                <td><input className="liquid-glass-input" type="number" min={20} max={86400000} value={row.period_ms} onChange={event => patchRow(row.id, { period_ms: Number(event.target.value) })} /></td>
-                <td className={styles.mono}>{displayValue(current?.value)}{!isBits && current?.value != null && format.unit ? ` ${format.unit}` : ""}</td>
-                <td title={current?.message ?? ""}>{current?.status ?? "—"}</td>
-                <td><button className="liquid-glass-button" onClick={() => setRows(list => list.filter(item => item.id !== row.id))}>×</button></td>
-              </tr>;
-            })}</tbody>
-          </table>
+
+      <section className={`${styles.workbenchSection} ${styles.monitorLayout}`}>
+        <div className={styles.monitorTablePane}>
+          <div className={styles.tableWrap}>
+            <table className={`${styles.table} ${styles.monitorTable}`}>
+              <thead><tr><th>启用</th><th>名称</th><th>Unit</th><th>区域</th><th>地址</th><th>类型</th><th>当前值</th><th>状态</th><th /></tr></thead>
+              <tbody>{rows.length === 0 ? <tr><td colSpan={9} className={styles.empty}>尚无监控项</td></tr> : rows.map(row => {
+                const request = requestFields(row.request);
+                const isBits = request.functionCode <= 2;
+                const format = { ...DEFAULT_FORMAT, ...row.format };
+                const current = values[row.id];
+                return <tr key={row.id} className={row.id === selected?.id ? styles.rowSelected : ""} onClick={() => setSelectedId(row.id)}>
+                  <td><input type="checkbox" checked={row.enabled} onChange={event => { event.stopPropagation(); patchRow(row.id, { enabled: event.target.checked }); }} /></td>
+                  <td><input className="liquid-glass-input" value={row.name} onClick={event => event.stopPropagation()} onChange={event => patchRow(row.id, { name: event.target.value })} /></td>
+                  <td><input className="liquid-glass-input" type="number" min={0} max={unitIdMax(mode)} value={row.unit_id} onClick={event => event.stopPropagation()} onChange={event => patchRow(row.id, { unit_id: Number(event.target.value) })} /></td>
+                  <td><select className="liquid-glass-input liquid-glass-select" value={request.functionCode} onClick={event => event.stopPropagation()} onChange={event => setReadField(row, { functionCode: Number(event.target.value), quantity: 1 })}><option value={1}>Coils</option><option value={2}>Discrete</option><option value={3}>Holding</option><option value={4}>Input Reg</option></select></td>
+                  <td><input className="liquid-glass-input" type="number" min={0} max={65535} value={request.address} onClick={event => event.stopPropagation()} onChange={event => setReadField(row, { address: Number(event.target.value) })} /></td>
+                  <td>{isBits ? "Bit" : <select className="liquid-glass-input liquid-glass-select" value={format.value_type} onClick={event => event.stopPropagation()} onChange={event => patchFormat(row, { value_type: event.target.value as ValueFormat["value_type"], bit: null })}>{REGISTER_TYPES.map(item => <option key={item}>{item}</option>)}</select>}</td>
+                  <td className={styles.mono}>{displayValue(current?.value)}{!isBits && current?.value != null && format.unit ? ` ${format.unit}` : ""}</td>
+                  <td title={current?.message ?? ""} className={current?.status === "success" ? styles.success : current ? styles.warning : ""}>{current?.status ?? "—"}</td>
+                  <td><button className="liquid-glass-button" onClick={event => { event.stopPropagation(); remove(row.id); }} aria-label={`删除 ${row.name}`}>×</button></td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
         </div>
+
+        <aside className={styles.monitorInspector}>
+          <div className={styles.subHeading}><strong>监控项设置</strong><span className={styles.hint}>{selected ? `${selected.name} · Unit ${selected.unit_id} · ${areaLabel(selectedRequest?.functionCode ?? 3)}` : "选择一个监控项"}</span></div>
+          {selected && selectedRequest ? <div className={styles.inspectorGrid}>
+            <label className={styles.field}><span className={styles.label}>数量</span><input className="liquid-glass-input" type="number" min={1} disabled={!selectedIsBits && selectedWidth != null} value={selectedRequest.quantity} onChange={event => setReadField(selected, { quantity: Number(event.target.value) })} /></label>
+            <label className={styles.field}><span className={styles.label}>周期 (ms)</span><input className="liquid-glass-input" type="number" min={20} max={86400000} value={selected.period_ms} onChange={event => patchRow(selected.id, { period_ms: Number(event.target.value) })} /></label>
+            {!selectedIsBits && <>
+              <label className={styles.field}><span className={styles.label}>字节序</span><select className="liquid-glass-input liquid-glass-select" value={selectedFormat.byte_order} onChange={event => patchFormat(selected, { byte_order: event.target.value as ValueFormat["byte_order"] })}><option value="big">Big</option><option value="little">Little</option></select></label>
+              <label className={styles.field}><span className={styles.label}>字序</span><select className="liquid-glass-input liquid-glass-select" value={selectedFormat.word_order} disabled={selectedRequest.quantity <= 1} onChange={event => patchFormat(selected, { word_order: event.target.value as ValueFormat["word_order"] })}><option value="normal">Normal</option><option value="reverse">Reverse</option></select></label>
+              <label className={styles.field}><span className={styles.label}>Scale</span><input className="liquid-glass-input" type="number" step="any" value={selectedFormat.scale} disabled={selectedExact64} onChange={event => patchFormat(selected, { scale: Number(event.target.value) })} /></label>
+              <label className={styles.field}><span className={styles.label}>Offset</span><input className="liquid-glass-input" type="number" step="any" value={selectedFormat.offset} disabled={selectedExact64} onChange={event => patchFormat(selected, { offset: Number(event.target.value) })} /></label>
+              <label className={styles.field}><span className={styles.label}>Unit</span><input className="liquid-glass-input" value={selectedFormat.unit} onChange={event => patchFormat(selected, { unit: event.target.value })} /></label>
+              <label className={styles.field}><span className={styles.label}>Bit</span><input className="liquid-glass-input" type="number" min={0} max={15} value={selectedFormat.bit ?? ""} onChange={event => patchFormat(selected, { bit: event.target.value === "" ? null : Number(event.target.value) })} /></label>
+            </>}
+          </div> : <div className={styles.emptyState}>添加或选择监控项后可编辑详细解释参数。</div>}
+        </aside>
       </section>
     </div>
   );
