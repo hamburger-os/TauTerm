@@ -46,6 +46,7 @@ export default function TransactionsPanel({ sessionId, connected }: { sessionId:
           sessionId,
           afterSequence: cursorRef.current,
           transactionLimit: 250,
+          includeWatchRows: false,
         });
         if (!mounted) return;
         const incoming = status.transactions.records;
