@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use crate::transport::error::{TransportError, TransportErrorKind};
 
+const ASYNC_BRIDGE_READ_SLICE: Duration = Duration::from_millis(20);
+
 /// A read operation must distinguish temporary idleness from a real stream EOF.
 /// This removes the old sync/async ambiguity around `Ok(0)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +106,9 @@ impl AsyncBridgeDriver {
         Ok(Self {
             runtime,
             inner,
-            read_slice: Duration::from_millis(50),
+            // Keep idle SSH command latency aligned with the blocking TCP/serial actor cadence.
+            // The timer is created only after entering this owned runtime (see read()).
+            read_slice: ASYNC_BRIDGE_READ_SLICE,
         })
     }
 }
