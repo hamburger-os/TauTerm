@@ -130,7 +130,7 @@ Raw PDU 仍由 TauTerm 添加所选模式的 envelope；exact Raw ADU 则按用�
 
 Watch row 保存稳定定义：请求、周期、值格式和显示名称。Scheduler 对每行按完成时刻重新安排下一次执行，不补偿错过的 tick，因此不会因慢设备产生 backlog/reentry。停止会话或显式 Stop 会终止轮询；运行态 value、latency、timestamp 不作为持久化配置。
 
-Bit 区 Watch 不保存寄存器 ValueFormat。寄存器区必须具有明确 ValueFormat；固定宽度格式与 quantity 不一致时拒绝保存，而不是静默截断。
+Bit 区 Watch 不保存寄存器 ValueFormat。寄存器区必须具有明确 ValueFormat；固定宽度格式与 quantity 不一致时拒绝保存，而不是静默截断。Watch 保存校验直接复用 Rust protocol core 的请求编码/范围校验，因此数量上限等标准规则不在 Monitor UI 或 Scheduler 中复制第二份。
 
 当前 Scheduler 仍保持单 Client 顺序事务语义，这是调试器默认行为。若未来增加大点表优化，应把“用户定义的事务”与“可选的连续地址合并 Planner”分开，默认 Exact Polling 不应偷偷改变请求边界。
 

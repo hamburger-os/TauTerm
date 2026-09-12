@@ -70,6 +70,8 @@ impl WatchScheduler {
                     row.id
                 ));
             }
+            crate::plugins::modbus::codec::encode_request(&row.request)
+                .map_err(|error| format!("watch row {} invalid request: {error}", row.id))?;
             match &row.request {
                 ModbusRequest::ReadBits { .. } => {
                     if row.format.is_some() {
@@ -287,6 +289,27 @@ mod tests {
             value: 1,
         };
         assert!(WatchScheduler::validate_rows(&[invalid]).is_err());
+    }
+
+    #[test]
+    fn watch_rows_reuse_protocol_quantity_validation() {
+        let mut bits = row("bits", 1000);
+        bits.request = ModbusRequest::ReadBits {
+            area: BitReadArea::Coils,
+            address: 0,
+            quantity: 2001,
+        };
+        bits.format = None;
+        assert!(WatchScheduler::validate_rows(&[bits]).is_err());
+
+        let mut registers = row("registers", 1000);
+        registers.request = ModbusRequest::ReadRegisters {
+            area: RegisterReadArea::HoldingRegisters,
+            address: 0,
+            quantity: 126,
+        };
+        registers.format = Some(register_format(ValueType::Hex));
+        assert!(WatchScheduler::validate_rows(&[registers]).is_err());
     }
 
     #[test]
