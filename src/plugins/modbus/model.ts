@@ -125,15 +125,19 @@ export function normalizeModbusSessionParams(params: Record<string, unknown>): M
   };
 }
 
+export type BitReadArea = "coils" | "discrete_inputs";
+export type RegisterReadArea = "holding_registers" | "input_registers";
+
 export type ModbusRequest =
-  | { kind: "read_bits"; function: 1 | 2; address: number; quantity: number }
-  | { kind: "read_registers"; function: 3 | 4; address: number; quantity: number }
-  | { kind: "write_single"; function: 5 | 6; address: number; value: number }
+  | { kind: "read_bits"; area: BitReadArea; address: number; quantity: number }
+  | { kind: "read_registers"; area: RegisterReadArea; address: number; quantity: number }
+  | { kind: "write_single_coil"; address: number; value: boolean }
+  | { kind: "write_single_register"; address: number; value: number }
   | { kind: "read_exception_status" }
   | { kind: "diagnostics"; sub_function: number; data: number[] }
   | { kind: "get_comm_event_counter" }
   | { kind: "get_comm_event_log" }
-  | { kind: "write_multiple_coils"; address: number; quantity: number; values: number[] }
+  | { kind: "write_multiple_coils"; address: number; values: boolean[] }
   | { kind: "write_multiple_registers"; address: number; values: number[] }
   | { kind: "report_server_id" }
   | { kind: "read_file_record"; records: { file_number: number; record_number: number; record_length: number }[] }
@@ -219,6 +223,7 @@ export interface ServerSnapshot {
   input_registers: [number, number][];
 }
 
+// Presentation labels only. Protocol legality and quantity limits live in the Rust protocol core.
 export const FUNCTION_LABELS: Record<number, string> = {
   0x01: "01 · Read Coils",
   0x02: "02 · Read Discrete Inputs",
@@ -279,18 +284,15 @@ export function parseU16List(text: string): number[] {
   return values;
 }
 
-export function packCoils(text: string): { quantity: number; values: number[] } {
+export function parseCoils(text: string): boolean[] {
   const tokens = text.split(/[\s,;]+/).filter(Boolean);
-  if (tokens.length === 0 || tokens.length > 1968) throw new Error("线圈数量必须是 1..1968");
-  const bits = tokens.map(token => {
+  if (tokens.length === 0) throw new Error("至少需要一个线圈值");
+  return tokens.map(token => {
     const normalized = token.toLowerCase();
     if (normalized === "1" || normalized === "true") return true;
     if (normalized === "0" || normalized === "false") return false;
     throw new Error(`无效线圈值：${token}；仅支持 0/1/true/false`);
   });
-  const values = new Array(Math.ceil(bits.length / 8)).fill(0) as number[];
-  bits.forEach((bit, index) => { if (bit) values[Math.floor(index / 8)] |= 1 << (index % 8); });
-  return { quantity: bits.length, values };
 }
 
 export function traditionalAddress(functionCode: number, protocolAddress: number): string {
