@@ -136,8 +136,9 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
       <div className={styles.connectGroup}>
         <div className={styles.connectGroupTitle}>协议参数</div>
         <div className={styles.twoColumns}>
-          <Field label="Unit ID">
+          <Field label={role === "client" ? "默认 Unit ID" : "Unit ID"}>
             <input className="liquid-glass-input" type="number" min={unitIdMin} max={mode === "tcp" ? 255 : 247} value={normalized.unit_id} onChange={event => patch({ unit_id: Number(event.target.value) })} />
+            {role === "client" && <span className={styles.hint}>这是新事务和新监控项的默认目标；连接后可直接切换 Unit，同一链路无需重复创建会话。</span>}
             {mode !== "tcp" && role === "client" && normalized.unit_id === 0 && <span className={styles.hint}>地址 0 为广播，仅允许写入且不等待响应。</span>}
           </Field>
           {role === "client" ? (
@@ -162,7 +163,7 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
         </details>
       )}
 
-      {role === "server" && <span className={styles.connectFootnote}>数据模型与故障注入在会话工作区中动态调整。</span>}
+      {role === "server" && <span className={styles.connectFootnote}>地址空间与故障注入在会话工作区中动态调整。</span>}
     </div>
   );
 }
