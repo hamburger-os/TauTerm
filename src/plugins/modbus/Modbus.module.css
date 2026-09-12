@@ -305,15 +305,15 @@
 }
 
 .success {
-  color: var(--status-success);
+  color: var(--color-success);
 }
 
 .error {
-  color: var(--status-error);
+  color: var(--color-error);
 }
 
 .warning {
-  color: var(--status-warning);
+  color: var(--color-warning);
 }
 
 .notice {
