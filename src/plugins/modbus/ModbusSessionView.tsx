@@ -10,7 +10,12 @@ import {
   type ServerFaultConfig,
   type TransactionResult,
 } from "./model";
-import { modbusConnectionSubtitle, modbusEndpointLabel, modbusSessionTitle } from "./presentation";
+import {
+  isGeneratedModbusSessionTitle,
+  modbusConnectionSubtitle,
+  modbusEndpointLabel,
+  modbusSessionTitle,
+} from "./presentation";
 import AdvancedPanel from "./components/AdvancedPanel";
 import MonitorPanel from "./components/MonitorPanel";
 import ReadWritePanel from "./components/ReadWritePanel";
@@ -52,18 +57,25 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
       return;
     }
 
-    const normalizationKey = `${sessionId}\u0000${tab.name}\u0000${tab.endpoint}\u0000${generatedTitle}\u0000${generatedEndpoint}`;
+    const nextName = tab.name === "Modbus @ modbus" || isGeneratedModbusSessionTitle(tab.name)
+      ? generatedTitle
+      : tab.name;
+    const normalizationKey = `${sessionId}\u0000${tab.name}\u0000${tab.endpoint}\u0000${nextName}\u0000${generatedEndpoint}`;
     if (identityNormalizationKey.current === normalizationKey) return;
     identityNormalizationKey.current = normalizationKey;
     void reconfigureSession(
       sessionId,
       generatedEndpoint,
       params,
-      tab.name === "Modbus @ modbus" ? generatedTitle : tab.name,
+      nextName,
       false,
       undefined,
       false,
-    );
+    ).catch(() => {
+      if (identityNormalizationKey.current === normalizationKey) {
+        identityNormalizationKey.current = null;
+      }
+    });
   }, [generatedEndpoint, generatedTitle, params, reconfigureSession, sessionId, tab]);
 
   const execute = async (request: ModbusOperation) => {
