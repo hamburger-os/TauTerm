@@ -601,8 +601,6 @@ impl SessionStore {
             }
         }
         handle.transfer_scheduler.cancel_for_shutdown();
-        crate::plugins::ssh::journald::stop_journald_stream(session_id);
-        crate::plugins::ssh::journald::stop_journald_export(session_id);
         if let Some(flag) = &handle.script_shutdown {
             flag.store(true, Ordering::SeqCst);
         }

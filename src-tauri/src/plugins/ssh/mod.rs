@@ -260,6 +260,10 @@ impl SessionAttach for RuntimeAttach {
         }
     }
     fn on_detached(&self, session_id: &str) {
+        // SSH-owned background operations are keyed by the final Session id, so their
+        // lifecycle cleanup belongs in the SSH attachment hook rather than SessionStore.
+        journald::stop_journald_stream(session_id);
+        journald::stop_journald_export(session_id);
         if let Ok(mut map) = runtime_registry().lock() {
             map.remove(session_id);
         }
