@@ -15,6 +15,13 @@ interface Props {
   connected: boolean;
 }
 
+interface ResultView {
+  result: TransactionResult;
+  functionCode: number;
+  address: number;
+  quantity: number;
+}
+
 const COMMON_FUNCTIONS = [1, 2, 3, 4, 5, 6, 15, 16, 22, 23] as const;
 
 export default function ReadWritePanel({ execute, connected }: Props) {
@@ -26,7 +33,7 @@ export default function ReadWritePanel({ execute, connected }: Props) {
   const [orMask, setOrMask] = useState(0);
   const [readAddress, setReadAddress] = useState(0);
   const [readQuantity, setReadQuantity] = useState(1);
-  const [result, setResult] = useState<TransactionResult | null>(null);
+  const [resultView, setResultView] = useState<ResultView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -68,7 +75,13 @@ export default function ReadWritePanel({ execute, connected }: Props) {
           values: parseU16List(value),
         };
       }
-      setResult(await execute(request));
+      const result = await execute(request);
+      setResultView({
+        result,
+        functionCode: fc,
+        address: fc === 23 ? readAddress : address,
+        quantity: fc === 23 ? readQuantity : quantity,
+      });
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -134,9 +147,9 @@ export default function ReadWritePanel({ execute, connected }: Props) {
             <span className={styles.hint}>读取结果优先按地址和值呈现；原始 TX / RX / PDU 保留用于协议诊断。</span>
           </div>
         </div>
-        {result ? <>
-          <ReadValues result={result} functionCode={fc} address={isReadWrite ? readAddress : address} quantity={isReadWrite ? readQuantity : quantity} />
-          <ResultCard result={result} />
+        {resultView ? <>
+          <ReadValues result={resultView.result} functionCode={resultView.functionCode} address={resultView.address} quantity={resultView.quantity} />
+          <ResultCard result={resultView.result} />
         </> : <div className={styles.emptyState}>尚未执行请求。完成一次事务后，结果会显示在这里。</div>}
       </section>
     </div>
