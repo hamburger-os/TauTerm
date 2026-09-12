@@ -6,7 +6,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::plugins::modbus::client::{ModbusClient, TransactionResult, TransactionStatus};
-use crate::plugins::modbus::codec::ModbusRequest;
+use crate::plugins::modbus::codec::{ModbusRequest, RegisterReadArea};
 use crate::plugins::modbus::value::{decode_register_bytes, required_registers, ValueFormat};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -71,10 +71,7 @@ impl WatchScheduler {
                 ));
             }
             match &row.request {
-                ModbusRequest::ReadBits {
-                    function: 0x01 | 0x02,
-                    ..
-                } => {
+                ModbusRequest::ReadBits { .. } => {
                     if row.format.is_some() {
                         return Err(format!(
                             "watch row {} bit area must not use register value format",
@@ -82,11 +79,7 @@ impl WatchScheduler {
                         ));
                     }
                 }
-                ModbusRequest::ReadRegisters {
-                    function: 0x03 | 0x04,
-                    quantity,
-                    ..
-                } => {
+                ModbusRequest::ReadRegisters { quantity, .. } => {
                     let format = row.format.as_ref().ok_or_else(|| {
                         format!("watch row {} register area requires a value format", row.id)
                     })?;
@@ -101,7 +94,7 @@ impl WatchScheduler {
                 }
                 _ => {
                     return Err(format!(
-                        "watch row {} must use read function 01/02/03/04",
+                        "watch row {} must use a standard read area",
                         row.id
                     ));
                 }
@@ -165,7 +158,6 @@ impl WatchScheduler {
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .insert(row.id.clone(), value);
-                    // Schedule from completion/current time. Missed ticks are never accumulated.
                     next.insert(
                         row.id.clone(),
                         Instant::now() + Duration::from_millis(row.period_ms),
@@ -250,6 +242,7 @@ fn extract_data(pdu: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::modbus::codec::{BitReadArea, RegisterReadArea};
     use crate::plugins::modbus::value::{ByteOrder, ValueType, WordOrder};
 
     fn register_format(value_type: ValueType) -> ValueFormat {
@@ -270,7 +263,7 @@ mod tests {
             enabled: true,
             name: id.into(),
             request: ModbusRequest::ReadRegisters {
-                function: 3,
+                area: RegisterReadArea::HoldingRegisters,
                 address: 0,
                 quantity: 1,
             },
@@ -289,8 +282,7 @@ mod tests {
     #[test]
     fn watch_rows_reject_write_requests() {
         let mut invalid = row("write", 1000);
-        invalid.request = ModbusRequest::WriteSingle {
-            function: 6,
+        invalid.request = ModbusRequest::WriteSingleRegister {
             address: 0,
             value: 1,
         };
@@ -301,7 +293,7 @@ mod tests {
     fn bit_rows_do_not_accept_register_value_format() {
         let mut invalid = row("bit", 1000);
         invalid.request = ModbusRequest::ReadBits {
-            function: 1,
+            area: BitReadArea::Coils,
             address: 0,
             quantity: 1,
         };
@@ -316,7 +308,7 @@ mod tests {
         invalid.format = Some(register_format(ValueType::Float32));
         assert!(WatchScheduler::validate_rows(&[invalid.clone()]).is_err());
         invalid.request = ModbusRequest::ReadRegisters {
-            function: 3,
+            area: RegisterReadArea::HoldingRegisters,
             address: 0,
             quantity: 2,
         };
