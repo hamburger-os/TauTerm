@@ -37,6 +37,7 @@ export default function ServerPanel({ sessionId, connected }: { sessionId: strin
           sessionId,
           afterSequence: cursorRef.current,
           transactionLimit: 100,
+          includeWatchRows: false,
         });
         if (!mounted) return;
         const records = status.transactions.records;
