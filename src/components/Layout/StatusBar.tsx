@@ -4,7 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useSession } from "../../context/SessionContext";
 import { useCom0comStatus } from "../../hooks/useCom0comStatus";
 import { pluginRegistry, type StatusBarContext, type StatusBarItem } from "../../core/plugin-registry";
-import { charsetLabel, DEFAULT_ENCODING } from "../../utils/charsets";
+import { charsetLabel } from "../../utils/charsets";
 import { formatBytes, formatUptime, formatPortParams, formatRate } from "../../utils/format";
 import type { UpdatePhase } from "../../types/updater";
 import Icon from "../common/Icon";
@@ -43,7 +43,8 @@ export default function StatusBar({
 }: StatusBarProps) {
   const { t } = useTranslation();
   const { state, loggingSessions, logStatuses } = useSession();
-  const activeTab = state.tabs.find(t => t.id === state.activeTabId);
+  const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
+  const activePlugin = activeTab ? pluginRegistry.get(activeTab.pluginId) : undefined;
 
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => {
@@ -63,11 +64,15 @@ export default function StatusBar({
   const isSerial = activeTab?.pluginId === "serial";
   const isSsh = activeTab?.pluginId === "ssh";
   const params = activeTab?.params as Record<string, unknown> | undefined;
+  const supportsStreamStatus = activePlugin?.manifest.content_type === "terminal" || activePlugin?.manifest.send_bar === true;
   const dataMode = params?.data_mode === "hex"
     ? t("serial.dataModeHex")
     : params?.data_mode === "dual"
       ? t("serial.dataModeDual")
-      : t("serial.dataModeText");
+      : params?.data_mode === "text"
+        ? t("serial.dataModeText")
+        : null;
+  const encoding = typeof params?.encoding === "string" ? charsetLabel(params.encoding) : null;
 
   const [uptime, setUptime] = useState(0);
   useEffect(() => {
@@ -90,7 +95,7 @@ export default function StatusBar({
   statsRef.current = { tx: activeTab?.stats.txBytes ?? 0, rx: activeTab?.stats.rxBytes ?? 0 };
 
   useEffect(() => {
-    if (!activeTab || !isConnected) {
+    if (!activeTab || !isConnected || !supportsStreamStatus) {
       lastSampleRef.current = null;
       windowRef.current = [];
       setRate({ tx: 0, rx: 0 });
@@ -119,11 +124,9 @@ export default function StatusBar({
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [activeTab?.id, isConnected]);
+  }, [activeTab?.id, isConnected, supportsStreamStatus]);
 
-  const pluginItems: StatusBarItem[] = activeTab
-    ? pluginRegistry.get(activeTab.pluginId)?.statusBarItems ?? []
-    : [];
+  const pluginItems: StatusBarItem[] = activePlugin?.statusBarItems ?? [];
   const statusBarContext: StatusBarContext = {
     sessionId: activeTab?.id ?? "",
     activeTab: activeTab ?? null,
@@ -216,27 +219,25 @@ export default function StatusBar({
           node: <div className={styles.segment}><span className={styles.uptimeText}><Icon name="stopwatch" size="sm" /> {formatUptime(uptime)}</span></div>,
         }
       : null,
-    isConnected && params
+    isConnected && supportsStreamStatus && dataMode
       ? {
           key: "dataMode",
           priority: PRI.dataMode,
           node: <div className={styles.segment}><span className={styles.modeBadge}>{dataMode}</span></div>,
         }
       : null,
-    isConnected && params
+    isConnected && supportsStreamStatus && encoding
       ? {
           key: "encoding",
           priority: PRI.encoding,
           node: (
             <div className={styles.segment}>
-              <span className={styles.paramText}>
-                {charsetLabel(typeof params.encoding === "string" ? params.encoding : DEFAULT_ENCODING)}
-              </span>
+              <span className={styles.paramText}>{encoding}</span>
             </div>
           ),
         }
       : null,
-    activeTab && isConnected
+    activeTab && isConnected && supportsStreamStatus
       ? {
           key: "stats",
           priority: PRI.stats,
