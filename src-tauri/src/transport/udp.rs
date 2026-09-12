@@ -36,6 +36,18 @@ impl UdpTransport {
             .map_err(|error| TransportError::io("udp_join_multicast", error))
     }
 
+    pub fn set_multicast_ttl_v4(&self, ttl: u32) -> Result<(), TransportError> {
+        self.socket
+            .set_multicast_ttl_v4(ttl)
+            .map_err(|error| TransportError::io("udp_set_multicast_ttl", error))
+    }
+
+    pub fn set_multicast_loop_v4(&self, enabled: bool) -> Result<(), TransportError> {
+        self.socket
+            .set_multicast_loop_v4(enabled)
+            .map_err(|error| TransportError::io("udp_set_multicast_loop", error))
+    }
+
     pub fn recv_from(&self, buf: &mut [u8]) -> Result<Option<(usize, SocketAddr)>, TransportError> {
         match self.socket.recv_from(buf) {
             Ok(result) => Ok(Some(result)),
