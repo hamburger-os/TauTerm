@@ -445,8 +445,8 @@ fn run_helper(pipe_base: &str) -> std::io::Result<()> {
         while let Ok((kind, payload)) = command_rx.try_recv() {
             match kind {
                 FRAME_WRITE => {
-                    shell.write_all(&payload)?;
-                    shell.flush()?;
+                    std::io::Write::write_all(&mut shell, &payload)?;
+                    std::io::Write::flush(&mut shell)?;
                 }
                 FRAME_RESIZE => {
                     let resize: ResizeRequest = serde_json::from_slice(&payload)
@@ -462,7 +462,7 @@ fn run_helper(pipe_base: &str) -> std::io::Result<()> {
             }
         }
 
-        match shell.read(&mut buffer) {
+        match std::io::Read::read(&mut shell, &mut buffer) {
             Ok(0) => {}
             Ok(count) => write_frame(&mut event_pipe, FRAME_DATA, &buffer[..count])?,
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
