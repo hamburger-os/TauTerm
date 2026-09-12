@@ -461,7 +461,7 @@ impl ModbusClient {
                         raw_tx: tx,
                         raw_rx: Vec::new(),
                         message: error.to_string(),
-                        write_outcome_unknown: request.is_write(),
+                        write_outcome_unknown: false,
                         attempt,
                     });
                 }
@@ -509,12 +509,7 @@ impl ModbusClient {
             .response_timeout_ms;
         let deadline = Instant::now() + Duration::from_millis(response_timeout_ms);
         let received = match current_mode {
-            ModbusMode::Tcp => receive_tcp(
-                events,
-                deadline,
-                transaction_id.unwrap_or(0),
-                unit_id,
-            ),
+            ModbusMode::Tcp => receive_tcp(events, deadline, transaction_id.unwrap_or(0), unit_id),
             ModbusMode::Ascii => receive_ascii(events, deadline, unit_id),
             ModbusMode::Rtu => receive_rtu(
                 events,
@@ -655,7 +650,9 @@ impl ModbusClient {
             .history
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        let latest_sequence = history.back().map_or(after_sequence, |record| record.sequence);
+        let latest_sequence = history
+            .back()
+            .map_or(after_sequence, |record| record.sequence);
         let limit = limit.clamp(1, HISTORY_QUERY_LIMIT);
         let records = if after_sequence == 0 {
             let mut recent: Vec<_> = history.iter().rev().take(limit).cloned().collect();
