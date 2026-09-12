@@ -191,7 +191,7 @@ fn execute_request(inner: &mut ModelInner, request: &ModbusRequest) -> Result<Ve
             ensure_span(*address, *quantity as usize)?;
             for offset in 0..*quantity {
                 let bit = (values[offset as usize / 8] >> (offset % 8)) & 1 != 0;
-                inner.coils.insert(address + offset, bit);
+                inner.coils.insert(*address + offset, bit);
             }
             out.extend_from_slice(&address.to_be_bytes());
             out.extend_from_slice(&quantity.to_be_bytes());
@@ -312,21 +312,41 @@ fn ensure_span(address: u16, len: usize) -> Result<(), u8> {
     Ok(())
 }
 
-fn read_bool_range(map: &HashMap<u16, bool>, address: u16, quantity: u16) -> Result<Vec<bool>, u8> {
+fn read_bool_range(
+    map: &HashMap<u16, bool>,
+    address: u16,
+    quantity: u16,
+) -> Result<Vec<bool>, u8> {
     ensure_span(address, quantity as usize)?;
     (0..quantity)
-        .map(|offset| map.get(&(address + offset)).copied().ok_or(EX_ILLEGAL_DATA_ADDRESS))
+        .map(|offset| {
+            map.get(&(address + offset))
+                .copied()
+                .ok_or(EX_ILLEGAL_DATA_ADDRESS)
+        })
         .collect()
 }
 
-fn read_u16_range(map: &HashMap<u16, u16>, address: u16, quantity: u16) -> Result<Vec<u16>, u8> {
+fn read_u16_range(
+    map: &HashMap<u16, u16>,
+    address: u16,
+    quantity: u16,
+) -> Result<Vec<u16>, u8> {
     ensure_span(address, quantity as usize)?;
     (0..quantity)
-        .map(|offset| map.get(&(address + offset)).copied().ok_or(EX_ILLEGAL_DATA_ADDRESS))
+        .map(|offset| {
+            map.get(&(address + offset))
+                .copied()
+                .ok_or(EX_ILLEGAL_DATA_ADDRESS)
+        })
         .collect()
 }
 
-fn write_u16_range(map: &mut HashMap<u16, u16>, address: u16, values: &[u16]) -> Result<(), u8> {
+fn write_u16_range(
+    map: &mut HashMap<u16, u16>,
+    address: u16,
+    values: &[u16],
+) -> Result<(), u8> {
     ensure_span(address, values.len())?;
     for (index, value) in values.iter().enumerate() {
         map.insert(address + index as u16, *value);
@@ -420,7 +440,10 @@ fn validate_file_writes(requests: &[FileRecordWrite]) -> Result<(), u8> {
 fn apply_file_writes(records: &mut HashMap<(u16, u16), u16>, requests: &[FileRecordWrite]) {
     for request in requests {
         for (offset, value) in request.values.iter().enumerate() {
-            records.insert((request.file_number, request.record_number + offset as u16), *value);
+            records.insert(
+                (request.file_number, request.record_number + offset as u16),
+                *value,
+            );
         }
     }
 }
