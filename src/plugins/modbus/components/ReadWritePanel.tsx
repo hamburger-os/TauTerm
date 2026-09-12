@@ -12,11 +12,12 @@ import ResultCard from "./ResultCard";
 
 interface Props {
   execute: (request: ModbusOperation) => Promise<TransactionResult>;
+  connected: boolean;
 }
 
 const COMMON_FUNCTIONS = [1, 2, 3, 4, 5, 6, 15, 16, 22, 23] as const;
 
-export default function ReadWritePanel({ execute }: Props) {
+export default function ReadWritePanel({ execute, connected }: Props) {
   const [fc, setFc] = useState<number>(3);
   const [address, setAddress] = useState(0);
   const [quantity, setQuantity] = useState(1);
@@ -35,6 +36,7 @@ export default function ReadWritePanel({ execute }: Props) {
   const isReadWrite = fc === 23;
 
   const run = async () => {
+    if (!connected) return;
     setBusy(true);
     setError("");
     try {
@@ -119,7 +121,8 @@ export default function ReadWritePanel({ execute }: Props) {
         </label>}
 
         <div className={styles.actions}>
-          <button className={`${styles.button} liquid-glass-button`} disabled={busy} onClick={() => void run()} data-testid="tauterm-modbus-execute">{busy ? "执行中…" : "执行"}</button>
+          <button className={`${styles.button} liquid-glass-button`} disabled={busy || !connected} onClick={() => void run()} data-testid="tauterm-modbus-execute">{busy ? "执行中…" : "执行"}</button>
+          {!connected && <span className={styles.hint}>连接会话后才能执行请求。</span>}
           {error && <span className={styles.error}>{error}</span>}
         </div>
       </section>
