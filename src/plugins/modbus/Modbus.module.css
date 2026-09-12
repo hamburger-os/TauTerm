@@ -29,7 +29,13 @@
   gap: var(--space-3);
 }
 
-.sectionHeading,
+.sectionHeading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-primary);
+}
+
 .panelHeading {
   display: flex;
   align-items: flex-start;
@@ -38,7 +44,6 @@
   color: var(--text-primary);
 }
 
-.sectionHeading > span,
 .panelHeading > div {
   display: flex;
   flex-direction: column;
@@ -79,10 +84,27 @@
   padding: var(--space-2) var(--space-3);
 }
 
-.details summary {
+.detailsSummary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  list-style: none;
   cursor: pointer;
+  user-select: none;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
+}
+
+.detailsSummary::-webkit-details-marker {
+  display: none;
+}
+
+.detailsChevron {
+  transition: transform 120ms ease;
+}
+
+.details[open] .detailsChevron {
+  transform: rotate(90deg);
 }
 
 .detailsBody {
@@ -404,10 +426,6 @@
 
   .connectRoot .serialGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .connectRoot .sectionHeading {
-    align-items: flex-start;
   }
 }
 
