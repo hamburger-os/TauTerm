@@ -192,6 +192,13 @@ impl WatchScheduler {
 impl Drop for WatchScheduler {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Release);
+        let worker = match self.worker.get_mut() {
+            Ok(worker) => worker.take(),
+            Err(poisoned) => poisoned.into_inner().take(),
+        };
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
     }
 }
 
@@ -212,10 +219,7 @@ fn watch_value(row: &WatchRow, result: &TransactionResult) -> WatchValue {
                             .collect(),
                     ))
                 };
-                (
-                    values.iter().map(|value| u8::from(*value)).collect(),
-                    value,
-                )
+                (values.iter().map(|value| u8::from(*value)).collect(), value)
             }
             Some(SemanticResponse::Registers { values }) => {
                 let raw = values
@@ -280,11 +284,10 @@ mod tests {
     #[test]
     fn watch_rows_reject_duplicate_ids_and_invalid_periods() {
         assert!(WatchScheduler::validate_rows(&[row("a", 19)], ModbusMode::Rtu).is_err());
-        assert!(WatchScheduler::validate_rows(
-            &[row("a", 1000), row("a", 1000)],
-            ModbusMode::Rtu
-        )
-        .is_err());
+        assert!(
+            WatchScheduler::validate_rows(&[row("a", 1000), row("a", 1000)], ModbusMode::Rtu)
+                .is_err()
+        );
         assert!(WatchScheduler::validate_rows(&[row("a", 1000)], ModbusMode::Rtu).is_ok());
     }
 
