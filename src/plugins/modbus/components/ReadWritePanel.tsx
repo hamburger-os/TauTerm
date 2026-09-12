@@ -2,10 +2,12 @@ import { useMemo, useState } from "react";
 import styles from "../Modbus.module.css";
 import {
   FUNCTION_LABELS,
-  packCoils,
+  parseCoils,
   parseU16List,
   traditionalAddress,
+  type BitReadArea,
   type ModbusOperation,
+  type RegisterReadArea,
   type TransactionResult,
 } from "../model";
 import ResultCard from "./ResultCard";
@@ -30,10 +32,18 @@ function singleRegister(text: string): number {
   return values[0];
 }
 
-function singleCoil(text: string): number {
-  const packed = packCoils(text);
-  if (packed.quantity !== 1) throw new Error("单线圈写入必须提供且只能提供一个 0/1/true/false 值");
-  return packed.values[0] & 1 ? 0xff00 : 0x0000;
+function singleCoil(text: string): boolean {
+  const values = parseCoils(text);
+  if (values.length !== 1) throw new Error("单线圈写入必须提供且只能提供一个 0/1/true/false 值");
+  return values[0];
+}
+
+function bitArea(fc: 1 | 2): BitReadArea {
+  return fc === 1 ? "coils" : "discrete_inputs";
+}
+
+function registerArea(fc: 3 | 4): RegisterReadArea {
+  return fc === 3 ? "holding_registers" : "input_registers";
 }
 
 export default function ReadWritePanel({ execute, connected }: Props) {
@@ -61,19 +71,15 @@ export default function ReadWritePanel({ execute, connected }: Props) {
     try {
       let request: ModbusOperation;
       if (fc === 1 || fc === 2) {
-        request = { kind: "read_bits", function: fc, address, quantity };
+        request = { kind: "read_bits", area: bitArea(fc), address, quantity };
       } else if (fc === 3 || fc === 4) {
-        request = { kind: "read_registers", function: fc, address, quantity };
-      } else if (fc === 5 || fc === 6) {
-        request = {
-          kind: "write_single",
-          function: fc,
-          address,
-          value: fc === 5 ? singleCoil(value) : singleRegister(value),
-        };
+        request = { kind: "read_registers", area: registerArea(fc), address, quantity };
+      } else if (fc === 5) {
+        request = { kind: "write_single_coil", address, value: singleCoil(value) };
+      } else if (fc === 6) {
+        request = { kind: "write_single_register", address, value: singleRegister(value) };
       } else if (fc === 15) {
-        const coils = packCoils(value);
-        request = { kind: "write_multiple_coils", address, ...coils };
+        request = { kind: "write_multiple_coils", address, values: parseCoils(value) };
       } else if (fc === 16) {
         const values = parseU16List(value);
         if (values.length === 0) throw new Error("多寄存器写入至少需要一个值");
@@ -111,7 +117,7 @@ export default function ReadWritePanel({ execute, connected }: Props) {
         <div className={styles.panelHeading}>
           <div>
             <strong>请求</strong>
-            <span className={styles.hint}>按功能码、协议地址和数量组织一次事务；协议地址统一使用 0-based。</span>
+            <span className={styles.hint}>按功能、协议地址和数量组织一次事务；协议地址统一使用 0-based。协议范围由后端标准核心统一校验。</span>
           </div>
         </div>
 
@@ -129,13 +135,13 @@ export default function ReadWritePanel({ execute, connected }: Props) {
           </label>}
           {isRead && <label className={styles.field}>
             <span className={styles.label}>数量</span>
-            <input className="liquid-glass-input" type="number" min={1} max={fc <= 2 ? 2000 : 125} value={quantity} onChange={event => setQuantity(Number(event.target.value))} />
+            <input className="liquid-glass-input" type="number" min={1} value={quantity} onChange={event => setQuantity(Number(event.target.value))} />
           </label>}
         </div>
 
         {isReadWrite && <div className={styles.grid}>
           <label className={styles.field}><span className={styles.label}>读取地址</span><input className="liquid-glass-input" type="number" min={0} max={65535} value={readAddress} onChange={event => setReadAddress(Number(event.target.value))} /></label>
-          <label className={styles.field}><span className={styles.label}>读取数量</span><input className="liquid-glass-input" type="number" min={1} max={125} value={readQuantity} onChange={event => setReadQuantity(Number(event.target.value))} /></label>
+          <label className={styles.field}><span className={styles.label}>读取数量</span><input className="liquid-glass-input" type="number" min={1} value={readQuantity} onChange={event => setReadQuantity(Number(event.target.value))} /></label>
           <label className={styles.field}><span className={styles.label}>写入地址</span><input className="liquid-glass-input" type="number" min={0} max={65535} value={address} onChange={event => setAddress(Number(event.target.value))} /></label>
         </div>}
 
