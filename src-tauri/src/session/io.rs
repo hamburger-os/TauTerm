@@ -61,13 +61,25 @@ impl SessionIo {
             .map_err(Into::into)
     }
 
-    /// Queue shared-mode bytes to the transport actor. Acceptance means the actor owns the bytes;
-    /// physical driver failures are delivered through the Session disconnect event path.
+    /// Confirm shared-mode bytes synchronously. This is intended for worker/internal callers that
+    /// may block until the transport actor finishes the physical write. Tauri/WebView commands must
+    /// use [`SessionIo::send_async`] instead.
     pub fn send(&self, data: &[u8]) -> Result<(), SessionIoError> {
         self.primary
             .as_ref()
             .ok_or(SessionIoError::NoPrimaryDataPlane)?
             .write(data)
+            .map_err(Into::into)
+    }
+
+    /// Confirm shared-mode bytes asynchronously. The returned future resolves only after the
+    /// transport actor has executed the physical write, without blocking the Tauri command thread.
+    pub async fn send_async(&self, data: Vec<u8>) -> Result<(), SessionIoError> {
+        self.primary
+            .as_ref()
+            .ok_or(SessionIoError::NoPrimaryDataPlane)?
+            .write_async(data)
+            .await
             .map_err(Into::into)
     }
 
@@ -79,10 +91,19 @@ impl SessionIo {
         }
     }
 
-    /// Encode UTF-8 application text using the session encoding and return the exact queued bytes.
+    /// Encode UTF-8 application text using the session encoding and return the exact bytes after a
+    /// confirmed synchronous write.
     pub fn send_text(&self, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
         let out = self.encode_text(data);
         self.send(&out)?;
+        Ok(out)
+    }
+
+    /// Encode UTF-8 application text and asynchronously await the confirmed physical write. The
+    /// exact encoded bytes are returned so frontend TX rendering/logging matches the wire payload.
+    pub async fn send_text_async(&self, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
+        let out = self.encode_text(data);
+        self.send_async(out.clone()).await?;
         Ok(out)
     }
 
@@ -104,6 +125,19 @@ impl SessionIo {
             .as_ref()
             .ok_or(SessionIoError::NoPrimaryDataPlane)?
             .resize_terminal(cols, rows)
+            .map_err(Into::into)
+    }
+
+    pub async fn resize_terminal_async(
+        &self,
+        cols: u32,
+        rows: u32,
+    ) -> Result<(), SessionIoError> {
+        self.primary
+            .as_ref()
+            .ok_or(SessionIoError::NoPrimaryDataPlane)?
+            .resize_terminal_async(cols, rows)
+            .await
             .map_err(Into::into)
     }
 
