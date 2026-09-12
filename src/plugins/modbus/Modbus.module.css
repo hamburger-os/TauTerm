@@ -152,31 +152,10 @@
 }
 
 .tabs {
-  display: flex;
-  gap: var(--space-1);
+  align-self: flex-start;
+  max-width: 100%;
   overflow-x: auto;
   scrollbar-width: thin;
-  padding: 0 var(--space-1);
-}
-
-.tab {
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.tab:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.tabActive {
-  background: var(--surface-active);
-  color: var(--text-primary);
 }
 
 .body {
@@ -323,30 +302,30 @@
   white-space: nowrap;
 }
 
-@media (max-width: 900px) {
-  .serialGrid,
-  .grid {
+@container session-pane (max-width: 900px) {
+  .root .grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .split {
-    grid-template-columns: 1fr;
-  }
-
-  .workspaceHeader {
+  .root .workspaceHeader {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .statusRow {
+  .root .statusRow {
     justify-content: flex-start;
   }
 }
 
-@media (max-width: 560px) {
-  .twoColumns,
-  .serialGrid,
-  .grid {
+@container session-pane (max-width: 680px) {
+  .root .split {
+    grid-template-columns: 1fr;
+  }
+}
+
+@container session-pane (max-width: 520px) {
+  .root .twoColumns,
+  .root .grid {
     grid-template-columns: 1fr;
   }
 
@@ -354,13 +333,59 @@
     padding: var(--space-2);
   }
 
-  .header,
-  .sectionHeading,
-  .panelHeading {
+  .root .header,
+  .root .panelHeading {
     align-items: flex-start;
   }
 
-  .table {
+  .root .table {
     min-width: 38rem;
+  }
+}
+
+@container session-pane (max-height: 520px) {
+  .root {
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+
+  .root .workspaceHeader,
+  .root .card {
+    gap: var(--space-2);
+    padding: var(--space-2);
+  }
+
+  .root .stack,
+  .root .split {
+    gap: var(--space-2);
+  }
+
+  .root .empty,
+  .root .emptyState {
+    padding: var(--space-3);
+  }
+
+  .root .textarea {
+    min-height: 4rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .connectRoot .twoColumns {
+    grid-template-columns: 1fr;
+  }
+
+  .connectRoot .serialGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .connectRoot .sectionHeading {
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 500px) {
+  .connectRoot .serialGrid {
+    grid-template-columns: 1fr;
   }
 }
