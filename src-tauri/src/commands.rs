@@ -2202,11 +2202,12 @@ pub async fn connect_session_network(
         .connect(&endpoint, &params)
         .await
         .map_err(|e| e.to_string())?;
+    let network_side = conn.side_channel.clone();
 
     let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.create_container_session(
-            ContainerSessionCreateOptions {
+        store.create_session(
+            SessionCreateOptions {
                 name: name.unwrap_or_else(|| "网络调试".to_string()),
                 plugin_id: "network".into(),
                 endpoint: endpoint.clone(),
@@ -2216,14 +2217,15 @@ pub async fn connect_session_network(
                 send_bar_enabled: send_bar_enabled.unwrap_or(true),
                 id_override: session_id,
             },
-            conn.side_channel.clone(),
-            None,
-            None,
+            conn,
+            Box::new(|_, _| {}),
+            Box::new(|_, _| {}),
+            app.clone(),
         )?
     };
 
     // 启动监听 / 接收线程（TCP Client 注册对端、TCP Server accept、UDP recv 路由）
-    if let Some(sc) = &conn.side_channel {
+    if let Some(sc) = &network_side {
         if let Some(net) = sc
             .as_any()
             .downcast_ref::<crate::plugins::network::NetworkSideChannel>()
@@ -2242,8 +2244,7 @@ pub async fn connect_session_network(
         (handle.name.clone(), handle.connected_at)
     };
     // UDP Client 本地绑定地址（前端展示本机 ip:port 用；其它角色为 null）
-    let udp_local_addr = conn
-        .side_channel
+    let udp_local_addr = network_side
         .as_ref()
         .and_then(|sc| {
             sc.as_any()

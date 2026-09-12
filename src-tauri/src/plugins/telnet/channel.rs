@@ -52,6 +52,10 @@ impl TelnetDriver {
         }
     }
 
+    pub(crate) fn is_connected(&self) -> bool {
+        self.connected
+    }
+
     /// 协商策略表（RFC 854/856/857/858/1073）
     ///
     /// `telnet` crate 不自动响应协商，这里定义客户端策略：

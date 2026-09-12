@@ -251,7 +251,7 @@ pub fn exposure_warning(config: &TftpConfig) -> Option<&'static str> {
 fn bind_error(listen_addr: SocketAddr, error: std::io::Error) -> SessionError {
     #[cfg(target_os = "linux")]
     if error.kind() == std::io::ErrorKind::PermissionDenied && listen_addr.port() < 1024 {
-        return SessionError::IoError(std::io::Error::new(
+        return SessionError::Io(std::io::Error::new(
             error.kind(),
             format!(
                 "cannot bind privileged TFTP port {} as a normal Linux user: {}. Choose a port >= 1024 or grant only the required bind capability; do not run the whole application as root",
@@ -260,7 +260,7 @@ fn bind_error(listen_addr: SocketAddr, error: std::io::Error) -> SessionError {
         ));
     }
 
-    SessionError::IoError(std::io::Error::new(
+    SessionError::Io(std::io::Error::new(
         error.kind(),
         format!("cannot bind TFTP address {}: {}", listen_addr, error),
     ))

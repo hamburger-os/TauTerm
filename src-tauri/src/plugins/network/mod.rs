@@ -163,11 +163,7 @@ struct NetworkMuxDriver {
 }
 
 impl NetworkMuxDriver {
-    fn new(
-        rx: mpsc::Receiver<Vec<u8>>,
-        core: Arc<NetworkCore>,
-        running: Arc<AtomicBool>,
-    ) -> Self {
+    fn new(rx: mpsc::Receiver<Vec<u8>>, core: Arc<NetworkCore>, running: Arc<AtomicBool>) -> Self {
         Self {
             rx,
             pending: VecDeque::new(),
@@ -384,7 +380,10 @@ impl NetworkSideChannel {
     }
 
     pub fn udp_client_local_addr(&self) -> Option<SocketAddr> {
-        self.udp_client_local_addr.lock().ok().and_then(|slot| *slot)
+        self.udp_client_local_addr
+            .lock()
+            .ok()
+            .and_then(|slot| *slot)
     }
 
     pub fn set_send_target(&self, target: Option<String>) {
@@ -468,14 +467,16 @@ fn emit_udp_datagram(
         }),
     );
     if let Ok(engine) = app.state::<crate::AppState>().log_engine.lock() {
-        let _ = engine.sender().try_send(LogEntry::SessionData(DataLogEntry {
-            session_id: session_id.to_string(),
-            direction: DataDirection::RX,
-            data_mode: data_mode.to_string(),
-            encoding: encoding.to_string(),
-            payload: datagram.to_vec(),
-            timestamp: chrono::Local::now(),
-        }));
+        let _ = engine
+            .sender()
+            .try_send(LogEntry::SessionData(DataLogEntry {
+                session_id: session_id.to_string(),
+                direction: DataDirection::RX,
+                data_mode: data_mode.to_string(),
+                encoding: encoding.to_string(),
+                payload: datagram.to_vec(),
+                timestamp: chrono::Local::now(),
+            }));
     }
 }
 
@@ -639,9 +640,7 @@ impl ProtocolAdapter for NetworkAdapter {
                             .unwrap_or("0.0.0.0")
                             .parse()
                             .map_err(|error| {
-                                SessionError::InvalidParameter(format!(
-                                    "无效的组播接口: {error}"
-                                ))
+                                SessionError::InvalidParameter(format!("无效的组播接口: {error}"))
                             })?;
                         socket.join_multicast_v4(group, interface)?;
                         socket.set_multicast_ttl_v4(
@@ -672,9 +671,7 @@ impl ProtocolAdapter for NetworkAdapter {
             core,
             side.running.clone(),
         )));
-        log::info!(
-            "网络调试会话已初始化: transport={transport} role={role} endpoint={endpoint}"
-        );
+        log::info!("网络调试会话已初始化: transport={transport} role={role} endpoint={endpoint}");
         Ok(ProtocolConnection {
             data_plane: Some(runtime),
             side_channel: Some(side),
@@ -709,7 +706,10 @@ mod tests {
         let mut buf = [0u8; 8];
         assert!(matches!(driver.read(&mut buf).unwrap(), ReadStatus::Idle));
         tx.send(vec![1, 2, 3]).unwrap();
-        assert!(matches!(driver.read(&mut buf).unwrap(), ReadStatus::Data(3)));
+        assert!(matches!(
+            driver.read(&mut buf).unwrap(),
+            ReadStatus::Data(3)
+        ));
         assert_eq!(&buf[..3], &[1, 2, 3]);
     }
 

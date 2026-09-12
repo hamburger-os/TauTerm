@@ -107,8 +107,21 @@ pub async fn export_diagnostics(
                 SessionState::Disconnected => aggregate.disconnected += 1,
             }
             aggregate.child_connections += session.sub_connections.len() as u64;
-            aggregate.tx_bytes += session.tx_bytes.load(std::sync::atomic::Ordering::Relaxed);
-            aggregate.rx_bytes += session.rx_bytes.load(std::sync::atomic::Ordering::Relaxed);
+            if let Some(io) = session.io.as_ref() {
+                aggregate.tx_bytes += io.tx_bytes();
+                aggregate.rx_bytes += io.rx_bytes();
+            } else {
+                aggregate.tx_bytes += session
+                    .sub_connections
+                    .iter()
+                    .map(|child| child.io.tx_bytes())
+                    .sum::<u64>();
+                aggregate.rx_bytes += session
+                    .sub_connections
+                    .iter()
+                    .map(|child| child.io.rx_bytes())
+                    .sum::<u64>();
+            }
         }
         aggregates
     };

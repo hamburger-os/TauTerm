@@ -4,8 +4,8 @@ pub mod rtu;
 pub mod tcp;
 
 pub use pdu::{
-    decode_request, encode_request, validate_response, DecodedRequest, FileRecordRead,
-    FileRecordWrite, ModbusRequest, ModbusResponse,
+    decode_request, encode_request, validate_response, FileRecordRead, FileRecordWrite,
+    ModbusRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

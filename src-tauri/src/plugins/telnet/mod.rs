@@ -446,7 +446,8 @@ mod tests {
         let (peer_handle, addr) = spawn_peer();
         let (mut channel, mut peer, _rx) = connect_channel(peer_handle, addr);
         consume_initial_negotiation(&mut peer);
-        channel.resize_pty(132, 43).expect("NAWS 发送失败");
+        crate::transport::BlockingByteStream::resize_terminal(&mut channel, 132, 43)
+            .expect("NAWS 发送失败");
         let received = read_exact(&mut peer, 9);
         assert_eq!(
             received,

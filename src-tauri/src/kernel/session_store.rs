@@ -292,6 +292,7 @@ pub struct PeerChannelRegistration {
     pub encoding: String,
     pub data_mode: String,
     pub peer_handles: Arc<Mutex<HashMap<String, DataPlaneHandle>>>,
+    pub mirror_tx: Option<mpsc::Sender<Vec<u8>>>,
 }
 
 impl SessionStore {
@@ -708,6 +709,7 @@ impl SessionStore {
             encoding,
             data_mode,
             peer_handles,
+            mirror_tx,
         } = registration;
         let not_found = self.session_not_found(&parent_id);
         if !self
@@ -741,7 +743,11 @@ impl SessionStore {
         let data_mode_log = data_mode.clone();
         let on_data: Box<dyn Fn(String, Vec<u8>) + Send> = Box::new(move |session_id, data| {
             let payload = data.clone();
+            let mirror_payload = mirror_tx.as_ref().map(|_| data.clone());
             batcher.push(session_id.clone(), data);
+            if let (Some(tx), Some(payload)) = (mirror_tx.as_ref(), mirror_payload) {
+                let _ = tx.send(payload);
+            }
             let _ = log_tx.try_send(LogEntry::SessionData(DataLogEntry {
                 session_id,
                 direction: DataDirection::RX,
