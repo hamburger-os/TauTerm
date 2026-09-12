@@ -8,6 +8,12 @@ import {
   touchLastCheck,
   shouldAutoCheck,
 } from "../utils/updater-store";
+import { reportFrontendError } from "../utils/runtimeDiagnostics";
+import {
+  classifyUpdaterError,
+  isRetryableUpdaterError,
+  type UpdaterFailureStage,
+} from "../utils/updaterError";
 
 interface UseUpdaterReturn {
   updateInfo: UpdateInfo;
@@ -23,13 +29,24 @@ interface UseUpdaterReturn {
   setSettingsInitialCategory: (cat: string | null) => void;
 }
 
+const MANUAL_CHECK_TIMEOUT_MS = 30_000;
+const AUTO_CHECK_TIMEOUT_MS = 15_000;
+const MANUAL_RETRY_DELAY_MS = 750;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 /**
  * 更新器状态管理 Hook
  *
  * 封装 Tauri updater 的完整生命周期：检查 → 下载 → 安装 → 重启，
  * 以及 localStorage 持久化的检查频率管理。
  *
- * @param tr — i18n translate 函数，用于设置 `resultMessage` 本地化文本
+ * 原始 updater 错误只进入统一运行时诊断日志；UI 仅展示稳定、可操作的
+ * 本地化错误类别，避免把 reqwest/TLS 内部错误直接暴露给用户。
+ *
+ * @param tr — i18n translate 函数，用于设置本地化状态文本
  */
 export function useUpdater(
   tr: (key: string, options?: Record<string, unknown>) => string,
@@ -45,45 +62,82 @@ export function useUpdater(
   /** 保存 check() 返回的 Update 对象，用于后续 downloadAndInstall() */
   const updateObjRef = useRef<Update | null>(null);
 
+  const recordFailure = useCallback((
+    stage: UpdaterFailureStage,
+    error: unknown,
+    context?: string,
+  ) => {
+    const failure = classifyUpdaterError(error, stage);
+    const details = [`stage=${stage}`, `kind=${failure.kind}`];
+    if (context) details.push(context);
+    reportFrontendError(`updater.${stage}`, error, details.join("; "));
+    return failure;
+  }, []);
+
   // ── 检查更新 ──
   const handleCheckUpdate = useCallback(async (isManual = false) => {
     setUpdateInfo({ phase: "checking" });
-    try {
-      const update = await check({ timeout: isManual ? 15000 : 10000 });
-      // 只有真正从 updater endpoint 得到有效响应后才记录检查时间。
-      // 网络/manifest/签名配置错误不能吞掉未来 24h 的自动重试机会。
-      touchLastCheck();
+    const maxAttempts = isManual ? 2 : 1;
+    const timeout = isManual ? MANUAL_CHECK_TIMEOUT_MS : AUTO_CHECK_TIMEOUT_MS;
 
-      if (update) {
-        updateObjRef.current = update;
-        setUpdateInfo({
-          phase: "available",
-          latestVersion: update.version,
-          releaseNotes: update.body ?? "",
-        });
-      } else {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const update = await check({ timeout });
+        // 只有真正从 updater endpoint 得到有效响应后才记录检查时间。
+        // 网络/manifest/签名配置错误不能吞掉未来的自动重试机会。
+        touchLastCheck();
+
+        if (update) {
+          updateObjRef.current = update;
+          setUpdateInfo({
+            phase: "available",
+            latestVersion: update.version,
+            releaseNotes: update.body ?? "",
+          });
+        } else {
+          updateObjRef.current = null;
+          setUpdateInfo({
+            phase: "idle",
+            resultMessage: isManual ? tr("updater.alreadyLatest") : undefined,
+          });
+        }
+        return;
+      } catch (error) {
+        const failure = recordFailure(
+          "check",
+          error,
+          `manual=${isManual}; attempt=${attempt}/${maxAttempts}`,
+        );
         updateObjRef.current = null;
-        setUpdateInfo({
-          phase: "idle",
-          resultMessage: isManual ? tr("updater.alreadyLatest") : undefined,
-        });
-      }
-    } catch (e) {
-      console.error("[updater] check failed:", e);
-      updateObjRef.current = null;
-      if (isManual) {
-        setUpdateInfo({ phase: "error", error: String(e) });
-      } else {
-        setUpdateInfo({ phase: "idle" }); // 自动检查静默失败，下次启动仍可重试
+
+        if (
+          isManual &&
+          attempt < maxAttempts &&
+          isRetryableUpdaterError(failure.kind)
+        ) {
+          await sleep(MANUAL_RETRY_DELAY_MS);
+          continue;
+        }
+
+        if (isManual) {
+          setUpdateInfo({
+            phase: "error",
+            error: tr(`updaterError.${failure.kind}`),
+          });
+        } else {
+          // 自动检查静默失败；不更新 last-check，后续启动仍可重试。
+          setUpdateInfo({ phase: "idle" });
+        }
+        return;
       }
     }
-  }, [tr]);
+  }, [recordFailure, tr]);
 
-  // ── 下载更新 ──
+  // ── 下载并安装更新 ──
   const handleDownloadUpdate = useCallback(async () => {
     let update = updateObjRef.current;
     if (!update) {
-      // 重新检查以获取 Update 对象，然后继续下载
+      // 重新检查以获取 Update 对象，然后继续下载。
       await handleCheckUpdate(false);
       update = updateObjRef.current;
     }
@@ -115,26 +169,31 @@ export function useUpdater(
             break;
         }
       });
-      // 某些平台启动系统安装器后应用会直接退出；
-      // 其它平台会返回到这里，等待用户重启进入新版本。
+      // Windows 上系统安装器接管后应用可能直接退出；其它平台会返回到这里。
       setUpdateInfo(prev => ({ ...prev, phase: "ready" }));
-    } catch (e) {
+    } catch (error) {
+      const failure = recordFailure("download-install", error);
       setUpdateInfo(prev => ({
         ...prev,
         phase: "error",
-        error: String(e),
+        error: tr(`updaterError.${failure.kind}`),
       }));
     }
-  }, [handleCheckUpdate]);
+  }, [handleCheckUpdate, recordFailure, tr]);
 
   // ── 安装完成后重启；若系统安装器已接管流程，应用会在此前退出 ──
   const handleInstallUpdate = useCallback(async () => {
     try {
       await relaunch();
-    } catch (e) {
-      console.error("relaunch failed:", e);
+    } catch (error) {
+      const failure = recordFailure("relaunch", error);
+      setUpdateInfo(prev => ({
+        ...prev,
+        phase: "error",
+        error: tr(`updaterError.${failure.kind}`),
+      }));
     }
-  }, []);
+  }, [recordFailure, tr]);
 
   // ── 频率变更 ──
   const handleCheckFrequencyChange = useCallback((freq: CheckFrequency) => {
@@ -152,8 +211,9 @@ export function useUpdater(
   useEffect(() => {
     if (shouldAutoCheck()) {
       const timer = setTimeout(() => {
-        handleCheckUpdate(false).catch(() => {
-          /* 静默失败 */
+        handleCheckUpdate(false).catch(error => {
+          // handleCheckUpdate 已处理预期 updater 错误；这里只兜底 Hook 外异常。
+          reportFrontendError("updater.autocheck", error);
         });
       }, 3000);
       return () => clearTimeout(timer);
