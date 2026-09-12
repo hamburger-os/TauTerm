@@ -1,0 +1,237 @@
+name: Typed Runtime Migration
+
+on:
+  push:
+    branches: [feat/transport-runtime-modbus]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+          fetch-depth: 0
+      - name: Apply typed runtime migration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def load(path): return Path(path).read_text()
+          def save(path, text): Path(path).write_text(text)
+          def rep(path, old, new, count=1, required=True):
+              text=load(path)
+              if old not in text:
+                  if required: raise SystemExit(f'anchor missing: {path}: {old[:100]!r}')
+                  return
+              save(path,text.replace(old,new,count))
+          def regsub(path, pattern, repl, count=0, required=True):
+              text=load(path); new,n=re.subn(pattern,repl,text,count=count,flags=re.S)
+              if required and n==0: raise SystemExit(f'regex missing: {path}: {pattern[:100]}')
+              save(path,new)
+
+          # ProtocolConnection constructors with no auxiliary runtime.
+          for p in ['src-tauri/src/plugins/serial/mod.rs','src-tauri/src/plugins/telnet/mod.rs','src-tauri/src/plugins/local_shell/mod.rs']:
+              text=load(p).replace('side_channel: None,','service: None,\n            file_transfer: None,')
+              save(p,text)
+
+          # SessionStore: explicit lifecycle service, file-transfer capability, and attach hook.
+          p='src-tauri/src/kernel/session_store.rs'; t=load(p)
+          t=t.replace('use crate::kernel::plugin_adapter::{ProtocolConnection, SessionChannelFactory, SideChannel};',
+                      'use crate::kernel::file_transfer::FileTransfer;\nuse crate::kernel::plugin_adapter::{ProtocolConnection, SessionAttach, SessionChannelFactory, SessionService};')
+          t=t.replace('    pub side_channel: Option<Arc<dyn SideChannel>>,\n    pub channel_factory:',
+                      '    pub service: Option<Arc<dyn SessionService>>,\n    pub file_transfer: Option<Arc<dyn FileTransfer>>,\n    pub attachment: Option<Arc<dyn SessionAttach>>,\n    pub channel_factory:')
+          t=t.replace('            side_channel: conn.side_channel,\n            channel_factory: conn.channel_factory,',
+                      '            service: conn.service,\n            file_transfer: conn.file_transfer,\n            attachment: conn.on_attached,\n            channel_factory: conn.channel_factory,')
+          # attach only after all fallible DataPlane setup has succeeded
+          t=t.replace('        if let Some(attach) = conn.on_attached.take() {\n            attach.on_attached(&id);\n        }\n','')
+          t=t.replace('        let handle = ActiveSessionHandle {',
+                      '        if let Some(attach) = conn.on_attached.as_ref() {\n            attach.on_attached(&id);\n        }\n        let handle = ActiveSessionHandle {',1)
+          # Container runtime bundle avoids positional capability soup.
+          marker='pub struct ContainerSessionCreateOptions {'
+          idx=t.index(marker)
+          insert='''pub struct ContainerSessionRuntime {\n    pub service: Option<Arc<dyn SessionService>>,\n    pub file_transfer: Option<Arc<dyn FileTransfer>>,\n    pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,\n    pub io: Option<Arc<SessionIo>>,\n    pub attachment: Option<Arc<dyn SessionAttach>>,\n}\n\nimpl Default for ContainerSessionRuntime {\n    fn default() -> Self {\n        Self { service: None, file_transfer: None, channel_factory: None, io: None, attachment: None }\n    }\n}\n\n'''
+          t=t[:idx]+insert+t[idx:]
+          t=t.replace('''        side_channel: Option<Arc<dyn SideChannel>>,\n        channel_factory: Option<Arc<dyn SessionChannelFactory>>,\n        io: Option<Arc<SessionIo>>,\n''','''        runtime: ContainerSessionRuntime,\n''')
+          t=t.replace('''        let ContainerSessionCreateOptions {\n''','''        let ContainerSessionRuntime { service, file_transfer, channel_factory, io, attachment } = runtime;\n        let ContainerSessionCreateOptions {\n''',1)
+          t=t.replace('''            side_channel,\n            channel_factory,\n''','''            service,\n            file_transfer,\n            attachment: attachment.clone(),\n            channel_factory,\n''',1)
+          # Attach container only immediately before registration.
+          t=t.replace('''        self.sessions.insert(id.clone(), handle);\n        self.tab_order.retain''','''        if let Some(attach) = attachment.as_ref() {\n            attach.on_attached(&id);\n        }\n        self.sessions.insert(id.clone(), handle);\n        self.tab_order.retain''',1)
+          # shutdown + detach; remove generic typed accessors
+          t=t.replace('''        if let Some(sc) = &handle.side_channel {\n            sc.shutdown();\n        }\n        handle.side_channel = None;\n''','''        if let Some(service) = &handle.service {\n            service.shutdown();\n        }\n        if let Some(attachment) = &handle.attachment {\n            attachment.on_detached(session_id);\n        }\n        handle.service = None;\n        handle.file_transfer = None;\n        handle.attachment = None;\n''')
+          t=re.sub(r'\n    /// 获取会话的 side_channel（用于 SSH 多连接复用）[\s\S]*?\n    /// 解析 session_id，返回实际的顶层会话 ID。',
+                   '\n    /// 解析 session_id，返回实际的顶层会话 ID。',t,count=1)
+          t=re.sub(r'\n    /// 获取 side_channel（支持子连接路由）。[\s\S]*?\n    /// 查找子连接所属的父会话 ID',
+                   '\n    /// 查找子连接所属的父会话 ID',t,count=1)
+          save(p,t)
+
+          # FileTransfer no longer has Any escape hatch.
+          p='src-tauri/src/kernel/file_transfer.rs'; t=load(p)
+          t=t.replace('use std::any::Any;\n','').replace('    fn as_any(&self) -> &dyn Any;\n\n','')
+          save(p,t)
+          for p in ['src-tauri/src/transfer/serial_transfer.rs','src-tauri/src/transfer/sftp_transfer.rs']:
+              t=load(p)
+              t=re.sub(r'\n\s*fn as_any\(&self\) -> &dyn std::any::Any \{\n\s*self\n\s*\}\n','\n',t)
+              save(p,t)
+
+          # Transfer orchestrator consumes the explicit capability.
+          p='src-tauri/src/transfer/orchestrator.rs'; t=load(p)
+          t=t.replace('.side_channel\n                .as_ref()\n                .and_then(|side_channel| side_channel.create_file_transfer())', '.file_transfer.clone()')
+          t=t.replace('protocol_type.is_side_channel()', 'protocol_type.is_auxiliary_transfer()')
+          save(p,t)
+
+          # Helper to add a plugin-owned typed registry using SessionAttach.
+          def plugin_registry(path, runtime_type, anchor):
+              t=load(path)
+              code=f'''\nfn runtime_registry() -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<{runtime_type}>>> {{\n    static REGISTRY: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Arc<{runtime_type}>>>> = std::sync::OnceLock::new();\n    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))\n}}\n\npub fn runtime(session_id: &str) -> Option<Arc<{runtime_type}>> {{\n    runtime_registry().lock().ok()?.get(session_id).cloned()\n}}\n\nstruct RuntimeAttach {{ runtime: Arc<{runtime_type}> }}\nimpl SessionAttach for RuntimeAttach {{\n    fn on_attached(&self, session_id: &str) {{\n        if let Ok(mut map) = runtime_registry().lock() {{ map.insert(session_id.to_string(), self.runtime.clone()); }}\n    }}\n    fn on_detached(&self, session_id: &str) {{\n        if let Ok(mut map) = runtime_registry().lock() {{ map.remove(session_id); }}\n    }}\n}}\n'''
+              if anchor not in t: raise SystemExit(f'registry anchor missing {path}')
+              t=t.replace(anchor,code+'\n'+anchor,1)
+              save(path,t)
+
+          # SSH
+          p='src-tauri/src/plugins/ssh/mod.rs'; t=load(p)
+          t=t.replace('SideChannel, TransferProtocolType,','SessionAttach, SessionService, TransferProtocolType,')
+          t=t.replace('impl SideChannel for SshSideChannel {\n    fn as_any(&self) -> &dyn std::any::Any {\n        self\n    }\n\n    fn create_file_transfer(&self) -> Option<Arc<dyn FileTransfer>> {\n        Some(Arc::new(\n            crate::transfer::sftp_transfer::SftpFileTransfer::new(\n                self.session.clone(),\n                self.sftp.clone(),\n            ),\n        ))\n    }\n}', 'impl SessionService for SshSideChannel {}')
+          t=t.replace('use crate::kernel::file_transfer::FileTransfer;\n','')
+          save(p,t)
+          plugin_registry(p,'SshSideChannel','impl SshSideChannel {')
+          t=load(p)
+          old='''        Ok(ProtocolConnection {\n            data_plane: Some(DataPlaneRuntime::spawn(Box::new(bridge))),\n            side_channel: Some(shared.clone()),\n            channel_factory: Some(shared),\n            on_attached: None,\n            teardown_delay: self.teardown_delay(),\n        })'''
+          new='''        let file_transfer = Arc::new(crate::transfer::sftp_transfer::SftpFileTransfer::new(\n            shared.session.clone(), shared.sftp.clone(),\n        ));\n        Ok(ProtocolConnection {\n            data_plane: Some(DataPlaneRuntime::spawn(Box::new(bridge))),\n            service: Some(shared.clone()),\n            file_transfer: Some(file_transfer),\n            channel_factory: Some(shared.clone()),\n            on_attached: Some(Arc::new(RuntimeAttach { runtime: shared })),\n            teardown_delay: self.teardown_delay(),\n        })'''
+          if old not in t: raise SystemExit('ssh connection anchor missing')
+          save(p,t.replace(old,new,1))
+
+          # Generic plugin migration helper for runtime service + registry.
+          specs=[
+            ('src-tauri/src/plugins/network/mod.rs','NetworkSideChannel'),
+            ('src-tauri/src/plugins/tftp/mod.rs','TftpSideChannel'),
+            ('src-tauri/src/plugins/iperf/mod.rs','IperfSideChannel'),
+            ('src-tauri/src/plugins/modbus/mod.rs','ModbusSideChannel'),
+          ]
+          for p,typ in specs:
+              t=load(p)
+              t=t.replace('use std::any::Any;\n','')
+              t=t.replace('ProtocolAdapter, ProtocolConnection, SideChannel,', 'ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,')
+              t=t.replace('ProtocolAdapter, ProtocolConnection, SideChannel};', 'ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService};')
+              # Convert impl header and strip as_any method only.
+              t=t.replace(f'impl SideChannel for {typ} {{',f'impl SessionService for {typ} {{')
+              t=re.sub(r'(impl SessionService for '+re.escape(typ)+r' \{)\n\s*fn as_any\(&self\) -> &dyn Any \{\n\s*self\n\s*\}\n',r'\1\n',t)
+              save(p,t)
+              plugin_registry(p,typ,f'impl {typ} {{')
+              t=load(p)
+              # connection fields
+              t=t.replace('side_channel: Some(side_channel),','service: Some(side_channel.clone()),\n            file_transfer: None,')
+              t=t.replace('side_channel: Some(side),','service: Some(side.clone()),\n            file_transfer: None,')
+              # attach if constructor variable is side_channel or side
+              t=t.replace('on_attached: None,\n            teardown_delay:', 'on_attached: Some(Arc::new(RuntimeAttach { runtime: side_channel })),\n            teardown_delay:',1) if 'side_channel: Some(side_channel)' not in t else t
+              # After replacements above infer the service variable from nearby text.
+              t=t.replace('service: Some(side_channel.clone()),\n            file_transfer: None,\n            channel_factory: None,\n            on_attached: None,',
+                          'service: Some(side_channel.clone()),\n            file_transfer: None,\n            channel_factory: None,\n            on_attached: Some(Arc::new(RuntimeAttach { runtime: side_channel })),')
+              t=t.replace('service: Some(side.clone()),\n            file_transfer: None,\n            channel_factory: None,\n            on_attached: None,',
+                          'service: Some(side.clone()),\n            file_transfer: None,\n            channel_factory: None,\n            on_attached: Some(Arc::new(RuntimeAttach { runtime: side })),')
+              save(p,t)
+
+          # Modbus typed lookup instead of SessionStore downcast; container consumes explicit runtime bundle.
+          p='src-tauri/src/plugins/modbus/mod.rs'; t=load(p)
+          t=re.sub(r'fn runtime\(state: &State<[^\n]+\n[\s\S]*?\n}\n\nfn with_modbus<T>\(', 'fn with_modbus<T>(', t, count=1)
+          t=t.replace('''    let side = runtime(state, session_id)?;\n    let modbus = side\n        .as_any()\n        .downcast_ref::<ModbusSideChannel>()\n        .ok_or("会话不是 Modbus")?;\n    function(modbus)''','''    let modbus = runtime(session_id).ok_or_else(|| format!("Modbus 会话 {session_id} 未连接"))?;\n    function(&modbus)''')
+          # connect_session: no downcast; preserve runtime capability fields
+          t=re.sub(r'''    let side = conn\n        \.side_channel\n        \.ok_or\("Modbus adapter returned no runtime"\)\?;\n    let config = side\n        \.as_any\(\)\n        \.downcast_ref::<ModbusSideChannel>\(\)\n        \.ok_or\("Modbus runtime type mismatch"\)\?\n        \.config\n        \.clone\(\);''','''    let config: ModbusConfig = serde_json::from_value(params.clone())\n        .map_err(|error| format!("Modbus 配置解析失败: {error}"))?;''',t,count=1)
+          t=t.replace('''            Some(side),\n            None,\n            None,\n        )?''','''            crate::kernel::session_store::ContainerSessionRuntime {\n                service: conn.service, file_transfer: conn.file_transfer, channel_factory: conn.channel_factory,\n                io: None, attachment: conn.on_attached,\n            },\n        )?''',1)
+          save(p,t)
+
+          # Network commands use typed plugin registry.
+          p='src-tauri/src/commands.rs'; t=load(p)
+          # SSH: move fingerprint lookup until after parent registration and pass capabilities bundle.
+          t=re.sub(r'''    // 提取主机密钥指纹（供前端展示确认）[\s\S]*?    if let Some\(ref fp\) = host_key_fingerprint \{\n        log::info!\("SSH 主机密钥指纹: \{\}", fp\);\n    \}\n\n''','',t,count=1)
+          t=t.replace('''    // 分离 side_channel（SSH Handle，供后续子连接复用）\n    let side_channel = conn.side_channel;\n    let channel_factory = conn.channel_factory;\n''','''    let service = conn.service;\n    let file_transfer = conn.file_transfer;\n    let channel_factory = conn.channel_factory;\n    let attachment = conn.on_attached;\n''')
+          t=t.replace('''            side_channel,\n            channel_factory,\n            None,\n        )?''','''            ContainerSessionRuntime { service, file_transfer, channel_factory, io: None, attachment },\n        )?''',1)
+          # Local shell bundle.
+          t=t.replace('''            None,\n            Some(factory),\n            None,\n        )?''','''            ContainerSessionRuntime { service: None, file_transfer: None, channel_factory: Some(factory), io: None, attachment: None },\n        )?''',1)
+          # fingerprint after attach
+          needle='''    // 2. 通过共享逻辑创建通道 0（名称由 create_ssh_sub_channel 按 channel_index 自动生成）\n'''
+          t=t.replace(needle,'''    let host_key_fingerprint = state.ssh_adapter.runtime(&parent_id)\n        .and_then(|runtime| runtime.host_key_fingerprint.clone());\n    if let Some(ref fp) = host_key_fingerprint { log::info!("SSH 主机密钥指纹: {}", fp); }\n\n'''+needle,1)
+          # Network downcasts -> adapter registry; preserve config reads from SessionStore.
+          t=re.sub(r'''    let udp_local_addr = network_side[\s\S]*?\.map\(\|a\| a\.to_string\(\)\);''','''    let udp_local_addr = state.network_adapter.runtime(&sid)\n        .and_then(|net| net.udp_client_local_addr())\n        .map(|a| a.to_string());''',t,count=1)
+          t=re.sub(r'''    let \(net, encoding, data_mode\) = \{[\s\S]*?        \(sc\.clone\(\), encoding, data_mode\)\n    \};\n    let net = net[\s\S]*?\.ok_or\("会话不是网络调试会话"\.to_string\(\)\)\?;''','''    let (encoding, data_mode) = {\n        let store = state.session_store.lock().map_err(|e| e.to_string())?;\n        let handle = store.get_session(&session_id);\n        let encoding = handle.and_then(|h| h.params.get("encoding")).and_then(|v| v.as_str()).unwrap_or("utf-8").to_string();\n        let data_mode = handle.and_then(|h| h.params.get("data_mode")).and_then(|v| v.as_str()).unwrap_or("dual").to_string();\n        (encoding, data_mode)\n    };\n    let net = state.network_adapter.runtime(&session_id).ok_or("会话不是网络调试会话".to_string())?;''',t,count=1)
+          t=re.sub(r'''    let sc = \{\n        let store = state\.session_store\.lock\(\)\.map_err\(\|e\| e\.to_string\(\)\)\?;\n        store[\s\S]*?    net\.set_send_target\(target\);''','''    let net = state.network_adapter.runtime(&session_id)\n        .ok_or("会话不是网络调试会话".to_string())?;\n    net.set_send_target(target);''',t,count=1)
+          save(p,t)
+
+          # Add runtime() methods to unit adapters by delegating plugin static registry; no stored protocol values in core.
+          for p,adapter in [
+              ('src-tauri/src/plugins/ssh/mod.rs','SshAdapter'),('src-tauri/src/plugins/network/mod.rs','NetworkAdapter'),
+              ('src-tauri/src/plugins/tftp/mod.rs','TftpAdapter'),('src-tauri/src/plugins/iperf/mod.rs','IperfAdapter'),
+              ('src-tauri/src/plugins/modbus/mod.rs','ModbusAdapter')]:
+              t=load(p)
+              # insert method into first impl Adapter after new() block by regex
+              typ={'SshAdapter':'SshSideChannel','NetworkAdapter':'NetworkSideChannel','TftpAdapter':'TftpSideChannel','IperfAdapter':'IperfSideChannel','ModbusAdapter':'ModbusSideChannel'}[adapter]
+              pattern=rf'(impl {adapter} \{{\n    pub fn new\(\) -> Self \{{\n        Self\n    \}})'
+              repl=rf'''\1\n\n    pub fn runtime(&self, session_id: &str) -> Option<Arc<{typ}>> {{\n        runtime(session_id)\n    }}'''
+              t,n=re.subn(pattern,repl,t,count=1)
+              if n==0: raise SystemExit(f'adapter impl anchor missing {p}')
+              save(p,t)
+
+          # TFTP / iperf helper functions accept typed runtimes; callers can use adapter registry.
+          for p,typ in [('src-tauri/src/plugins/tftp/mod.rs','TftpSideChannel'),('src-tauri/src/plugins/iperf/mod.rs','IperfSideChannel')]:
+              t=load(p)
+              t=re.sub(r'([a-z_]+): &Arc<dyn crate::kernel::plugin_adapter::SideChannel>,',rf'\1: &Arc<{typ}>,',t)
+              t=re.sub(r'''    let [a-z_]+ = [a-z_]+\n        \.as_any\(\)\n        \.downcast_ref::<'''+typ+r'''>\(\)\n        \.ok_or_else\([^\n]+\)\?;\n''','',t)
+              save(p,t)
+
+          # ProtocolConnection field leftovers: force explicit fields where no service exists.
+          for p in Path('src-tauri/src').rglob('*.rs'):
+              t=p.read_text()
+              if 'ProtocolConnection {' in t:
+                  t=t.replace('side_channel: None,','service: None,\n            file_transfer: None,')
+                  p.write_text(t)
+
+          # TRDP: typed module registry + service + container runtime.
+          p='src-tauri/src/plugins/trdp.rs'; t=load(p)
+          t=t.replace('use crate::kernel::plugin_adapter::SideChannel;','use crate::kernel::plugin_adapter::{SessionAttach, SessionService};')
+          t=t.replace('use std::any::Any;\n','')
+          t=t.replace('impl SideChannel for TrdpSideChannel {','impl SessionService for TrdpSideChannel {')
+          t=re.sub(r'(impl SessionService for TrdpSideChannel \{)\n\s*fn as_any\(&self\) -> &dyn Any \{\n\s*self\n\s*\}\n',r'\1\n',t)
+          save(p,t)
+          plugin_registry(p,'TrdpSideChannel','impl TrdpSideChannel {')
+          t=load(p)
+          t=re.sub(r'''fn side_channel\([\s\S]*?\n}\n\n''','',t,count=1)
+          t=t.replace('''    let side_channel = side_channel(&state, &session_id)?;\n    let trdp = side_channel\n        .as_any()\n        .downcast_ref::<TrdpSideChannel>()\n        .ok_or("会话不是 TRDP")?;''','''    let trdp = runtime(&session_id).ok_or("会话不是 TRDP")?;''')
+          # Generic occurrences from formatting variations
+          t=re.sub(r'''    let side_channel = side_channel\(&state, &session_id\)\?;\n    let trdp = side_channel[\s\S]*?\.ok_or\("会话不是 TRDP"\)\?;''','''    let trdp = runtime(&session_id).ok_or("会话不是 TRDP")?;''',t)
+          # container call side channel argument
+          t=t.replace('''            Some(side_channel.clone()),\n            None,\n            None,\n        )?''','''            crate::kernel::session_store::ContainerSessionRuntime {\n                service: Some(side_channel.clone()), file_transfer: None, channel_factory: None, io: None,\n                attachment: Some(Arc::new(RuntimeAttach { runtime: side_channel.clone() })),\n            },\n        )?''',1)
+          save(p,t)
+
+          # Network/TFTP/iperf container/root callsites and connection field naming are finalized by compile-guided pass below.
+          # SessionStore file-transfer accessors in orchestrator now use explicit field.
+
+          # Imports for ContainerSessionRuntime in commands.
+          p='src-tauri/src/commands.rs'; t=load(p)
+          t=t.replace('ContainerSessionCreateOptions,', 'ContainerSessionCreateOptions, ContainerSessionRuntime,')
+          save(p,t)
+
+          # Remove stale Any import in SFTP file and update comments.
+          for p in Path('src-tauri/src').rglob('*.rs'):
+              t=p.read_text()
+              t=t.replace('SshSideChannel::create_file_transfer()', 'explicit SSH file-transfer capability')
+              p.write_text(t)
+          PY
+      - name: Format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Check
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m '[typed-runtime-bot] remove SideChannel and Any downcasts'
+          git push origin HEAD:feat/transport-runtime-modbus
