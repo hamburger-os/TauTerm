@@ -7,24 +7,23 @@ use crate::kernel::file_transfer::FileTransfer;
 use crate::session::SessionError;
 use crate::transport::DataPlaneRuntime;
 use serde::{Deserialize, Serialize};
-use std::any::Any;
 use std::sync::Arc;
 
-/// Protocol-owned auxiliary service. This remains only for protocol-native operations while the
-/// generic byte I/O path is exclusively DataPlane. Generic file-transfer capability is exposed
-/// directly through `create_file_transfer`; plugin-specific command registries are migrated away
-/// from `as_any` separately.
+/// 协议运行时与最终 Session id 的绑定钩子。
+///
+/// 插件用它维护自己的类型化 runtime registry；Session 核心只负责在注册成功后 attach，
+/// 在关闭时 detach，不保存或解析任何协议具体类型。
 pub trait SessionAttach: Send + Sync {
     fn on_attached(&self, session_id: &str);
+
+    fn on_detached(&self, _session_id: &str) {}
 }
 
-pub trait SideChannel: Send + Sync {
-    fn as_any(&self) -> &dyn Any;
-
-    fn create_file_transfer(&self) -> Option<Arc<dyn FileTransfer>> {
-        None
-    }
-
+/// 协议拥有的通用生命周期服务。
+///
+/// 这里只暴露 shutdown。协议特定命令必须从插件自己的类型化 registry 获取 runtime，
+/// 不能通过 SessionStore 做 `Any` downcast。文件传输也作为独立 capability 显式暴露。
+pub trait SessionService: Send + Sync {
     fn shutdown(&self) {}
 }
 
@@ -37,7 +36,7 @@ pub struct EndpointInfo {
 }
 
 /// Backend rendering class. Frontend routing still uses the canonical manifest string; this enum
-/// exists for adapter-level behavior without importing the deleted channel layer.
+/// exists for adapter-level behavior without importing a transport implementation detail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentType {
     Terminal,
@@ -63,10 +62,11 @@ pub trait SessionChannelFactory: Send + Sync {
 }
 
 /// Adapter connection product. A terminal session has a DataPlane; a headless/container protocol
-/// can omit it and expose only protocol-native services/factories.
+/// can omit it and expose explicit lifecycle/file-transfer/factory capabilities instead.
 pub struct ProtocolConnection {
     pub data_plane: Option<DataPlaneRuntime>,
-    pub side_channel: Option<Arc<dyn SideChannel>>,
+    pub service: Option<Arc<dyn SessionService>>,
+    pub file_transfer: Option<Arc<dyn FileTransfer>>,
     pub channel_factory: Option<Arc<dyn SessionChannelFactory>>,
     pub on_attached: Option<Arc<dyn SessionAttach>>,
     pub teardown_delay: std::time::Duration,
@@ -104,7 +104,7 @@ impl TransferProtocolType {
         matches!(self.0.as_str(), "ymodem" | "xmodem" | "zmodem")
     }
 
-    pub fn is_side_channel(&self) -> bool {
+    pub fn is_auxiliary_transfer(&self) -> bool {
         self.0 == "sftp"
     }
 
@@ -179,9 +179,6 @@ pub trait ProtocolAdapter: Send + Sync {
         &self,
         connection: &ProtocolConnection,
     ) -> Option<Arc<dyn FileTransfer>> {
-        connection
-            .side_channel
-            .as_ref()
-            .and_then(|service| service.create_file_transfer())
+        connection.file_transfer.clone()
     }
 }
