@@ -87,7 +87,6 @@ export default function AboutSettings({
           </div>
         )}
 
-
         {/* 更新按钮 */}
         {updateInfo.phase === "idle" && (
           <>
@@ -148,9 +147,7 @@ export default function AboutSettings({
         {updateInfo.phase === "error" && (
           <div className={styles.updateError}>
             <p className={styles.updateErrorText}>
-              {updateInfo.error
-                ? t("updater.checkFailed", { error: updateInfo.error })
-                : t("updater.checkFailed", { error: "" })}
+              {updateInfo.error ?? t("updaterError.unknown")}
             </p>
             <button className={`${styles.actionBtn} liquid-glass-button`} onClick={onCheckUpdate}>
               {t("updater.retry")}
