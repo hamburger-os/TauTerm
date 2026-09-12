@@ -3,8 +3,8 @@
   "name": "Modbus",
   "version": "1.0.0",
   "category": "industrial_protocol",
-  "description": "Modbus RTU · ASCII · TCP client/server debugger",
-  "icon": "activity",
+  "description": "Modbus 调试助手 · RTU / ASCII / TCP",
+  "icon": "connection",
   "content_type": "custom",
   "send_bar": false,
   "capabilities": [

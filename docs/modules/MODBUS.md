@@ -118,6 +118,23 @@ Modbus 使用独立 `customView`，不显示全局 SendBar。主要页面：
 
 Client/Server 角色只显示适用功能；exact Raw ADU 属于 Advanced 的显式高风险调试入口，不与普通请求混在一起。
 
+连接配置页按“会话模式 / 连接参数 / 协议参数 / 高级”分区。TCP Client 使用远端主机语义，TCP Server 使用监听地址语义；RTU/ASCII 只显示串口相关字段。Client 专属的响应超时、重试和 TCP 连接超时不会出现在 Server 的主配置路径中。串口列表显示遵循 `端口 — 描述`，当描述与端口名相同则只显示一次，避免 `COM5 — COM5` 之类重复文本。
+
+工作区采用“会话概览 / 功能页签 / 操作与结果内容”的层级。读写页将请求编辑器与执行结果分开，未执行事务时显示明确空状态；Server 以数据模型为主入口，而不是复用 Client 的请求表单。
+
+### 会话身份
+
+Modbus 的模式与角色必须在任何主要视图中可直接辨认：
+
+- TCP Client：`Modbus TCP Client`
+- TCP Server：`Modbus TCP Server`
+- RTU Master：`Modbus RTU Master`
+- RTU Slave Simulator：`Modbus RTU Slave`
+- ASCII Master：`Modbus ASCII Master`
+- ASCII Slave Simulator：`Modbus ASCII Slave`
+
+默认会话名进一步附带端点，例如 `Modbus TCP Client @ 192.168.1.10:502` 或 `Modbus RTU Master @ COM5`。工作区摘要额外显示 Unit ID；串口模式还显示波特率与帧格式（例如 `9600 8N1`）。用户自定义名称始终优先，不应被自动命名覆盖。
+
 ## 设计边界
 
 - Modbus codec/校验不进入 Transport 或 Session Runtime。
@@ -127,6 +144,7 @@ Client/Server 角色只显示适用功能；exact Raw ADU 属于 Advanced 的显
 - 写超时必须保留 outcome unknown 语义。
 - Server model 与 fault injection 属于 Modbus 模块，不做通用 Session capability。
 - exact Raw ADU 不自动修正 CRC/LRC/MBAP，也不能冒充“已通过协议校验”的普通 transaction。
+- 会话命名、模式/角色标签和连接摘要由 `src/plugins/modbus/model.ts` 的纯函数集中生成，避免不同页面自行拼接产生漂移。
 
 ## 代码锚点
 
@@ -139,10 +157,12 @@ Client/Server 角色只显示适用功能；exact Raw ADU 属于 Advanced 的显
 - `src-tauri/src/plugins/modbus/codec/mod.rs`
 - `src-tauri/src/transport/serial.rs`
 - `src-tauri/src/transport/tcp.rs`
+- `src/plugins/modbus/ModbusConnectForm.tsx`
 - `src/plugins/modbus/ModbusSessionView.tsx`
+- `src/plugins/modbus/Modbus.module.css`
 - `src/plugins/modbus/model.ts`
 - `src/plugin-manifests/modbus.json`
 
 ## 何时更新本文
 
-修改功能码覆盖、framing/validation、重试或 broadcast 语义、Watch 调度、Server Simulator、Raw 模式、持久化边界或 Modbus 与 Transport/Session Runtime 的职责关系时，必须同步更新本文。
+修改功能码覆盖、framing/validation、重试或 broadcast 语义、Watch 调度、Server Simulator、Raw 模式、持久化边界、Modbus UI 信息架构、默认会话身份或 Modbus 与 Transport/Session Runtime 的职责关系时，必须同步更新本文。
