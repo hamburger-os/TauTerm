@@ -641,9 +641,6 @@ fn receive_tcp(
                     let (tid, unit, pdu) = codec::tcp::decode(&frame)
                         .map_err(|error| ReceiveError::Malformed(error, frame.clone()))?;
                     if tid != transaction_id {
-                        // A timed-out attempt may reply after its successor has already been sent.
-                        // Under the single-outstanding contract it is stale, not an error in the
-                        // current transaction. Keep waiting for the current TID.
                         continue;
                     }
                     if unit != unit_id {
@@ -919,8 +916,7 @@ mod tests {
         let mut chunk = stale;
         chunk.extend_from_slice(&current);
         tx.send(DataPlaneEvent::Data(chunk)).unwrap();
-        let (raw, pdu) =
-            receive_tcp(&rx, Instant::now() + Duration::from_secs(1), 8, 1).unwrap();
+        let (raw, pdu) = receive_tcp(&rx, Instant::now() + Duration::from_secs(1), 8, 1).unwrap();
         assert_eq!(raw, current);
         assert_eq!(pdu, vec![0x03, 2, 0, 2]);
     }
