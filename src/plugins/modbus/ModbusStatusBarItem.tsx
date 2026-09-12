@@ -32,6 +32,7 @@ export default function ModbusStatusBarItem({ context }: { context: StatusBarCon
         sessionId: context.sessionId,
         afterSequence: null,
         transactionLimit: null,
+        includeWatchRows: false,
       })
         .then(next => { if (mounted) setStatus(next); })
         .catch(() => { if (mounted) setStatus(null); });
