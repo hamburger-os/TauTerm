@@ -9,7 +9,9 @@ pub enum SessionIoError {
     NoPrimaryDataPlane,
     #[error("当前会话不支持按目标地址发送")]
     TargetedSendUnsupported,
-    #[error("发送失败: {0}")]
+    // The frontend owns the user-facing "发送失败" context. Keep the transport detail raw here
+    // so IPC errors do not render as "发送失败: 发送失败: ...".
+    #[error("{0}")]
     Send(String),
 }
 
@@ -127,5 +129,24 @@ impl SessionIo {
         self.primary
             .as_ref()
             .is_some_and(DataPlaneHandle::is_connected)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{TransportError, TransportErrorKind};
+
+    #[test]
+    fn transport_send_error_does_not_duplicate_frontend_context() {
+        let error: SessionIoError = TransportError::new(
+            TransportErrorKind::RemoteClosed,
+            "write",
+            "transport runtime is closed",
+        )
+        .into();
+
+        assert_eq!(error.to_string(), "write: transport runtime is closed");
+        assert!(!error.to_string().starts_with("发送失败:"));
     }
 }

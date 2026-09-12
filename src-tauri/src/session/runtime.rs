@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::session::DisconnectInfo;
 use crate::transport::{DataPlaneEvent, DataPlaneHandle, DataPlaneRuntime, TransportError};
 
@@ -9,6 +11,7 @@ pub struct SessionDataPlane {
     runtime: Option<DataPlaneRuntime>,
     handle: DataPlaneHandle,
     event_thread: Option<std::thread::JoinHandle<()>>,
+    shutdown_requested: AtomicBool,
 }
 
 impl SessionDataPlane {
@@ -19,6 +22,7 @@ impl SessionDataPlane {
         on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send + 'static>,
     ) -> Result<Self, TransportError> {
         let handle = runtime.handle.clone();
+        let event_handle = handle.clone();
         let subscription = handle.subscribe()?;
         let event_thread = std::thread::Builder::new()
             .name(format!("session-data-{session_id}"))
@@ -29,7 +33,20 @@ impl SessionDataPlane {
                         on_disconnect(session_id.clone(), info.into());
                         break;
                     }
-                    Err(_) => break,
+                    Err(_) => {
+                        // A normal requested shutdown marks the DataPlane disconnected before its
+                        // subscriber senders disappear. If the subscription disappears while the
+                        // handle still reports connected, the transport actor terminated
+                        // unexpectedly (for example because a driver panicked). Surface that as a
+                        // real disconnect instead of leaving the UI in a stale connected state.
+                        if event_handle.is_connected() {
+                            on_disconnect(
+                                session_id.clone(),
+                                DisconnectInfo::io_error("transport runtime stopped unexpectedly"),
+                            );
+                        }
+                        break;
+                    }
                 }
             })
             .map_err(|error| TransportError::io("session_data_pump", error))?;
@@ -37,6 +54,7 @@ impl SessionDataPlane {
             runtime: Some(runtime),
             handle,
             event_thread: Some(event_thread),
+            shutdown_requested: AtomicBool::new(false),
         })
     }
 
@@ -44,19 +62,30 @@ impl SessionDataPlane {
         &self.handle
     }
 
-    /// Request resource shutdown without joining callback threads. SessionStore uses this while its
-    /// mutex is held so a disconnect callback can never deadlock waiting for the same store lock.
+    /// Request resource shutdown without joining the receive callback thread. The request is
+    /// idempotent so cleanup paths cannot repeatedly enqueue shutdown while the actor is already
+    /// exiting.
     pub fn request_shutdown(&self) {
+        if self.shutdown_requested.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let _ = self.handle.shutdown();
+    }
+
+    fn join_runtime_actor(&mut self) {
+        if let Some(mut runtime) = self.runtime.take() {
+            if let Some(thread) = runtime.take_thread() {
+                if thread.thread().id() != std::thread::current().id() {
+                    let _ = thread.join();
+                }
+            }
+        }
     }
 
     /// Deterministic cleanup for callers that are outside the SessionStore lock.
     pub fn shutdown(&mut self) {
-        if let Some(runtime) = self.runtime.take() {
-            runtime.join();
-        } else {
-            let _ = self.handle.shutdown();
-        }
+        self.request_shutdown();
+        self.join_runtime_actor();
         if let Some(thread) = self.event_thread.take() {
             if thread.thread().id() != std::thread::current().id() {
                 let _ = thread.join();
@@ -67,8 +96,71 @@ impl SessionDataPlane {
 
 impl Drop for SessionDataPlane {
     fn drop(&mut self) {
-        // Drop must never block: ActiveSessionHandle is commonly dropped while SessionStore is
-        // locked, and the event pump may be inside a callback that needs that same lock.
+        // SessionDataPlane is commonly dropped while SessionStore is locked. Never wait for the
+        // event/callback thread here because that callback may need the same lock. The transport
+        // actor itself does not call SessionStore, so waiting for that owner thread is safe and
+        // ensures the physical driver has actually left its runtime before resources are discarded.
         self.request_shutdown();
+        self.join_runtime_actor();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::{BlockingByteStream, ReadStatus};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    struct PanicAfterGate {
+        panic_now: std::sync::Arc<AtomicBool>,
+    }
+
+    impl BlockingByteStream for PanicAfterGate {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+            if self.panic_now.load(Ordering::Acquire) {
+                panic!("intentional transport actor panic");
+            }
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(ReadStatus::Idle)
+        }
+
+        fn write_all(&mut self, _data: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn unexpected_transport_actor_exit_surfaces_disconnect() {
+        let panic_now = std::sync::Arc::new(AtomicBool::new(false));
+        let runtime = DataPlaneRuntime::spawn(Box::new(PanicAfterGate {
+            panic_now: panic_now.clone(),
+        }));
+        let (disconnect_tx, disconnect_rx) = mpsc::channel();
+        let mut owner = SessionDataPlane::attach(
+            runtime,
+            "test-session".into(),
+            Box::new(|_, _| {}),
+            Box::new(move |_, info| {
+                let _ = disconnect_tx.send(info);
+            }),
+        )
+        .unwrap();
+
+        panic_now.store(true, Ordering::Release);
+        let info = disconnect_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("unexpected actor exit should become a disconnect");
+        assert_eq!(info.reason, "transport runtime stopped unexpectedly");
+
+        owner.shutdown();
     }
 }
