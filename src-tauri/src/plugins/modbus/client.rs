@@ -139,7 +139,10 @@ impl ModbusClient {
                 }
             }
         };
-        let mut events_guard = self.events.lock().unwrap_or_else(|error| error.into_inner());
+        let mut events_guard = self
+            .events
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if events_guard.is_none() {
             match handle.subscribe() {
                 Ok(events) => *events_guard = Some(events),
@@ -297,7 +300,9 @@ impl ModbusClient {
                 started,
                 raw_tx: Vec::new(),
                 raw_rx: Vec::new(),
-                message: "function is defined for Modbus serial line and is not available on Modbus TCP".into(),
+                message:
+                    "function is defined for Modbus serial line and is not available on Modbus TCP"
+                        .into(),
                 write_outcome_unknown: false,
                 attempt,
             });
@@ -375,7 +380,10 @@ impl ModbusClient {
                 }
             }
         };
-        let mut events_guard = self.events.lock().unwrap_or_else(|error| error.into_inner());
+        let mut events_guard = self
+            .events
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if events_guard.is_none() {
             match handle.subscribe() {
                 Ok(receiver) => *events_guard = Some(receiver),
@@ -911,7 +919,8 @@ mod tests {
         let mut chunk = stale;
         chunk.extend_from_slice(&current);
         tx.send(DataPlaneEvent::Data(chunk)).unwrap();
-        let (raw, pdu) = receive_tcp(&rx, Instant::now() + Duration::from_secs(1), 8, 1).unwrap();
+        let (raw, pdu) =
+            receive_tcp(&rx, Instant::now() + Duration::from_secs(1), 8, 1).unwrap();
         assert_eq!(raw, current);
         assert_eq!(pdu, vec![0x03, 2, 0, 2]);
     }
