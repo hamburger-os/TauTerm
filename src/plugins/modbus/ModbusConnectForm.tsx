@@ -22,7 +22,7 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
 
   useEffect(() => {
     if (Object.keys(params).length !== 0) return;
-    onChange({ ...defaultModbusSessionParams(), mode: "rtu" });
+    onChange(defaultModbusSessionParams());
   }, [onChange, params]);
 
   useEffect(() => {
