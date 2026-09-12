@@ -80,8 +80,8 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
       </div>
     </section>
 
-    <nav className={styles.tabs} aria-label="Modbus workspace tabs">
-      {pages.map(([id, label]) => <button key={id} type="button" className={`${styles.tab} ${page === id ? styles.tabActive : ""}`} onClick={() => setPage(id)}>{label}</button>)}
+    <nav className={`${styles.tabs} liquid-selector-strip`} aria-label="Modbus workspace tabs">
+      {pages.map(([id, label]) => <button key={id} type="button" className={`liquid-selector-button ${page === id ? "liquid-theme-selected" : ""}`} aria-pressed={page === id} onClick={() => setPage(id)}>{label}</button>)}
     </nav>
 
     <div className={styles.body}>
