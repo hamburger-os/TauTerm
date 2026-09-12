@@ -1,7 +1,7 @@
 from pathlib import Path
 
 path = Path('src-tauri/src/plugins/local_shell/elevated.rs')
-text = path.read_text()
+text = path.read_text(encoding='utf-8')
 replacements = [
     ('                    shell.write_all(&payload)?;', '                    std::io::Write::write_all(&mut shell, &payload)?;'),
     ('                    shell.flush()?;', '                    std::io::Write::flush(&mut shell)?;'),
@@ -11,4 +11,4 @@ for old, new in replacements:
     if old not in text:
         raise SystemExit(f'missing anchor: {old!r}')
     text = text.replace(old, new, 1)
-path.write_text(text)
+path.write_text(text, encoding='utf-8')
