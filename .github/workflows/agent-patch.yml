@@ -1,0 +1,13 @@
+name: Agent Patch
+
+on:
+  push:
+    branches:
+      - fix/ssh-session-card-identity
+
+jobs:
+  smoke:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Smoke
+        run: echo workflow-ok
