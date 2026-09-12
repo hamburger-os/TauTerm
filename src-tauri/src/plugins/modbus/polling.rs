@@ -87,10 +87,9 @@ impl WatchScheduler {
                     quantity,
                     ..
                 } => {
-                    let format = row
-                        .format
-                        .as_ref()
-                        .ok_or_else(|| format!("watch row {} register area requires a value format", row.id))?;
+                    let format = row.format.as_ref().ok_or_else(|| {
+                        format!("watch row {} register area requires a value format", row.id)
+                    })?;
                     if let Some(required) = required_registers(format) {
                         if *quantity != required {
                             return Err(format!(
@@ -193,12 +192,12 @@ impl Drop for WatchScheduler {
 }
 
 fn watch_value(row: &WatchRow, result: &TransactionResult) -> WatchValue {
-    let raw = if matches!(result.status, TransactionStatus::Success) && !result.response_pdu.is_empty()
-    {
-        extract_data(&result.response_pdu)
-    } else {
-        Vec::new()
-    };
+    let raw =
+        if matches!(result.status, TransactionStatus::Success) && !result.response_pdu.is_empty() {
+            extract_data(&result.response_pdu)
+        } else {
+            Vec::new()
+        };
 
     let value = if !matches!(result.status, TransactionStatus::Success) {
         None
@@ -306,7 +305,7 @@ mod tests {
             address: 0,
             quantity: 1,
         };
-        assert!(WatchScheduler::validate_rows(&[invalid]).is_err());
+        assert!(WatchScheduler::validate_rows(&[invalid.clone()]).is_err());
         invalid.format = None;
         assert!(WatchScheduler::validate_rows(&[invalid]).is_ok());
     }
