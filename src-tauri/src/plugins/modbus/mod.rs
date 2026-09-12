@@ -26,9 +26,7 @@ use crate::transport::serial::open_serial;
 use crate::transport::tcp::connect_tcp;
 use crate::AppState;
 
-use client::{
-    ModbusClient, TransactionHistoryBatch, TransactionResult, TransactionStatus,
-};
+use client::{ModbusClient, TransactionHistoryBatch, TransactionResult, TransactionStatus};
 use codec::ModbusRequest;
 use config::{
     ModbusConfig, ModbusEndpointConfig, ModbusMode, ModbusRole, ServerFaultConfig,
@@ -378,8 +376,14 @@ pub struct ModbusStatus {
     pub mode: ModbusMode,
     pub running: bool,
     pub default_unit_id: u8,
+    pub transactions: TransactionHistoryBatch,
     pub watch_rows: Vec<WatchRow>,
     pub watch_running: bool,
+    pub watch_enabled: usize,
+    pub watch_total: usize,
+    pub last_status: Option<TransactionStatus>,
+    pub last_unit_id: Option<u8>,
+    pub last_latency_ms: Option<u128>,
     pub server_fault: Option<ServerFaultConfig>,
 }
 
@@ -387,8 +391,29 @@ pub struct ModbusStatus {
 pub fn modbus_status(
     state: State<'_, AppState>,
     session_id: String,
+    after_sequence: Option<u64>,
+    transaction_limit: Option<usize>,
 ) -> Result<ModbusStatus, String> {
     with_modbus(&state, &session_id, |side| {
+        let rows = side
+            .watch
+            .as_ref()
+            .map_or_else(Vec::new, |watch| watch.rows());
+        let cursor = after_sequence.unwrap_or(0);
+        let limit = transaction_limit.unwrap_or(if after_sequence.is_some() { 250 } else { 1 });
+        let transactions = if let Some(client) = &side.client {
+            client.history_since(cursor, limit)
+        } else {
+            side.server
+                .as_ref()
+                .ok_or("Modbus runtime has no client or server")?
+                .history_since(cursor, limit)
+        };
+        let last = if let Some(client) = &side.client {
+            client.last_result()
+        } else {
+            side.server.as_ref().and_then(|server| server.last_result())
+        };
         Ok(ModbusStatus {
             role: side.config.role(),
             mode: side.config.mode(),
@@ -398,82 +423,16 @@ pub fn modbus_status(
                     .as_ref()
                     .is_some_and(|server| server.is_running()),
             default_unit_id: side.config.unit_id,
-            watch_rows: side
-                .watch
-                .as_ref()
-                .map_or_else(Vec::new, |watch| watch.rows()),
-            watch_running: side.watch.as_ref().is_some_and(|watch| watch.is_running()),
-            server_fault: side.server.as_ref().map(|server| server.fault()),
-        })
-    })
-}
-
-#[derive(Serialize)]
-pub struct ModbusSummary {
-    pub role: ModbusRole,
-    pub mode: ModbusMode,
-    pub running: bool,
-    pub default_unit_id: u8,
-    pub watch_running: bool,
-    pub watch_enabled: usize,
-    pub watch_total: usize,
-    pub last_status: Option<TransactionStatus>,
-    pub last_unit_id: Option<u8>,
-    pub last_latency_ms: Option<u128>,
-}
-
-#[tauri::command]
-pub fn modbus_summary(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<ModbusSummary, String> {
-    with_modbus(&state, &session_id, |side| {
-        let rows = side
-            .watch
-            .as_ref()
-            .map_or_else(Vec::new, |watch| watch.rows());
-        let last = if let Some(client) = &side.client {
-            client.last_result()
-        } else {
-            side.server.as_ref().and_then(|server| server.last_result())
-        };
-        Ok(ModbusSummary {
-            role: side.config.role(),
-            mode: side.config.mode(),
-            running: side.client.is_some()
-                || side
-                    .server
-                    .as_ref()
-                    .is_some_and(|server| server.is_running()),
-            default_unit_id: side.config.unit_id,
+            transactions,
+            watch_rows: rows.clone(),
             watch_running: side.watch.as_ref().is_some_and(|watch| watch.is_running()),
             watch_enabled: rows.iter().filter(|row| row.enabled).count(),
             watch_total: rows.len(),
             last_status: last.as_ref().map(|result| result.status),
             last_unit_id: last.as_ref().map(|result| result.unit_id),
             last_latency_ms: last.as_ref().map(|result| result.latency_ms),
+            server_fault: side.server.as_ref().map(|server| server.fault()),
         })
-    })
-}
-
-#[tauri::command]
-pub fn modbus_transactions_since(
-    state: State<'_, AppState>,
-    session_id: String,
-    after_sequence: u64,
-    limit: Option<usize>,
-) -> Result<TransactionHistoryBatch, String> {
-    with_modbus(&state, &session_id, |side| {
-        let limit = limit.unwrap_or(250);
-        if let Some(client) = &side.client {
-            Ok(client.history_since(after_sequence, limit))
-        } else {
-            Ok(side
-                .server
-                .as_ref()
-                .ok_or("Modbus runtime has no client or server")?
-                .history_since(after_sequence, limit))
-        }
     })
 }
 
