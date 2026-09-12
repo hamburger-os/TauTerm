@@ -38,6 +38,8 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
     const next: Record<string, unknown> = { mode: nextMode };
     if (nextMode === "tcp") {
       next.host = normalized.host.trim() || (role === "server" ? "0.0.0.0" : "127.0.0.1");
+    } else if (role === "server" && normalized.unit_id === 0) {
+      next.unit_id = 1;
     }
     patch(next);
   };
@@ -48,9 +50,13 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
       const previousDefault = role === "server" ? "0.0.0.0" : "127.0.0.1";
       const nextDefault = nextRole === "server" ? "0.0.0.0" : "127.0.0.1";
       if (!normalized.host.trim() || normalized.host === previousDefault) next.host = nextDefault;
+    } else if (nextRole === "server" && normalized.unit_id === 0) {
+      next.unit_id = 1;
     }
     patch(next);
   };
+
+  const unitIdMin = mode !== "tcp" && role === "server" ? 1 : 0;
 
   return (
     <div className={styles.connectRoot} data-testid="tauterm-modbus-connect-form">
@@ -135,13 +141,16 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
         </div>
         <div className={styles.twoColumns}>
           <Field label="Unit ID">
-            <input className="liquid-glass-input" type="number" min={0} max={mode === "tcp" ? 255 : 247} value={normalized.unit_id} onChange={event => patch({ unit_id: Number(event.target.value) })} />
-            {mode !== "tcp" && normalized.unit_id === 0 && <span className={styles.hint}>地址 0 为广播：仅允许写入且不会等待响应。</span>}
+            <input className="liquid-glass-input" type="number" min={unitIdMin} max={mode === "tcp" ? 255 : 247} value={normalized.unit_id} onChange={event => patch({ unit_id: Number(event.target.value) })} />
+            {mode !== "tcp" && role === "client" && normalized.unit_id === 0 && <span className={styles.hint}>地址 0 为广播：仅允许写入且不会等待响应。</span>}
           </Field>
           {role === "client" ? (
             <Field label="响应超时 (ms)"><input className="liquid-glass-input" type="number" min={1} max={120000} value={normalized.response_timeout_ms} onChange={event => patch({ response_timeout_ms: Number(event.target.value) })} /></Field>
           ) : mode === "tcp" ? (
-            <Field label="最大客户端"><input className="liquid-glass-input" type="number" min={1} max={256} value={normalized.server_max_clients} onChange={event => patch({ server_max_clients: Number(event.target.value) })} /></Field>
+            <Field label="最大客户端">
+              <input className="liquid-glass-input" type="number" min={0} max={256} value={normalized.server_max_clients} onChange={event => patch({ server_max_clients: Number(event.target.value) })} />
+              <span className={styles.hint}>0 表示不限制；最大 256。</span>
+            </Field>
           ) : null}
         </div>
         {role === "server" && <span className={styles.hint}>Server Simulator 的数据模型和故障注入在会话工作区中动态调整。</span>}
