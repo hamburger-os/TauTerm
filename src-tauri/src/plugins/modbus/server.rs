@@ -84,41 +84,14 @@ impl ModbusServer {
         let model = self.model.clone();
         let fault = self.fault.clone();
         let history = self.history.clone();
-        let worker = std::thread::spawn(move || {
-            let mut buffer = Vec::new();
-            while running.load(Ordering::Acquire) {
-                let wait = if buffer.is_empty() {
-                    Duration::from_millis(50)
-                } else {
-                    match config.mode {
-                        ModbusMode::Rtu => config.rtu_frame_gap(),
-                        ModbusMode::Ascii => Duration::from_millis(50),
-                        ModbusMode::Tcp => unreachable!(),
-                    }
-                };
-                match events.recv_timeout(wait) {
-                    Ok(DataPlaneEvent::Closed(_)) => break,
-                    Ok(DataPlaneEvent::Data(data)) => {
-                        buffer.extend_from_slice(&data);
-                        if config.mode == ModbusMode::Ascii {
-                            while let Some(end) = buffer.windows(2).position(|w| w == b"\r\n") {
-                                let frame: Vec<u8> = buffer.drain(..end + 2).collect();
-                                process_serial_frame(
-                                    &handle, &config, &model, &fault, &history, &frame,
-                                );
-                            }
-                        }
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                        if !buffer.is_empty() && config.mode == ModbusMode::Rtu =>
-                    {
-                        let frame = std::mem::take(&mut buffer);
-                        process_serial_frame(&handle, &config, &model, &fault, &history, &frame);
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                }
-            }
+        let worker = std::thread::spawn(move || match config.mode {
+            ModbusMode::Rtu => run_rtu_server(
+                &handle, &events, &running, &config, &model, &fault, &history,
+            ),
+            ModbusMode::Ascii => run_ascii_server(
+                &handle, &events, &running, &config, &model, &fault, &history,
+            ),
+            ModbusMode::Tcp => unreachable!(),
         });
         self.workers.lock().map_err(|e| e.to_string())?.push(worker);
         Ok(())
@@ -229,6 +202,75 @@ impl ModbusServer {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+}
+
+fn run_ascii_server(
+    handle: &crate::transport::DataPlaneHandle,
+    events: &std::sync::mpsc::Receiver<DataPlaneEvent>,
+    running: &AtomicBool,
+    config: &ModbusConfig,
+    model: &ModbusDataModel,
+    fault: &RwLock<ServerFaultConfig>,
+    history: &Mutex<VecDeque<TransactionResult>>,
+) {
+    let mut buffer = Vec::new();
+    while running.load(Ordering::Acquire) {
+        match events.recv_timeout(Duration::from_millis(50)) {
+            Ok(DataPlaneEvent::Closed(_)) => break,
+            Ok(DataPlaneEvent::Data(data)) => {
+                buffer.extend_from_slice(&data);
+                while let Some(end) = buffer.windows(2).position(|w| w == b"\r\n") {
+                    let frame: Vec<u8> = buffer.drain(..end + 2).collect();
+                    process_serial_frame(handle, config, model, fault, history, &frame);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+}
+
+fn run_rtu_server(
+    handle: &crate::transport::DataPlaneHandle,
+    events: &std::sync::mpsc::Receiver<DataPlaneEvent>,
+    running: &AtomicBool,
+    config: &ModbusConfig,
+    model: &ModbusDataModel,
+    fault: &RwLock<ServerFaultConfig>,
+    history: &Mutex<VecDeque<TransactionResult>>,
+) {
+    let mut buffer = Vec::new();
+    let inter_char = config.rtu_inter_char_gap();
+    let frame_gap = config.rtu_frame_gap();
+    let frame_tail = frame_gap.saturating_sub(inter_char);
+    while running.load(Ordering::Acquire) {
+        let wait = if buffer.is_empty() {
+            Duration::from_millis(50)
+        } else {
+            inter_char
+        };
+        match events.recv_timeout(wait) {
+            Ok(DataPlaneEvent::Closed(_)) => break,
+            Ok(DataPlaneEvent::Data(data)) => buffer.extend_from_slice(&data),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) if buffer.is_empty() => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                match events.recv_timeout(frame_tail) {
+                    Ok(DataPlaneEvent::Data(data)) => {
+                        buffer.extend_from_slice(&data);
+                        log::debug!("Discarding malformed Modbus RTU frame after t1.5 gap");
+                        buffer.clear();
+                    }
+                    Ok(DataPlaneEvent::Closed(_)) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                        let frame = std::mem::take(&mut buffer);
+                        process_serial_frame(handle, config, model, fault, history, &frame);
+                    }
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        }
     }
 }
 
@@ -415,7 +457,16 @@ fn run_tcp_peer(
                             continue;
                         }
                     };
-                    let execution = execute_with_fault(&fault, &model, &request);
+                    let execution = if serial_only_request(&request) {
+                        ServerExecution {
+                            response: Some(exception_pdu(request.function(), 0x01)),
+                            status: TransactionStatus::ModbusException,
+                            exception_code: Some(0x01),
+                            message: Some("serial-line-only function is unavailable on Modbus TCP".into()),
+                        }
+                    } else {
+                        execute_with_fault(&fault, &model, &request)
+                    };
                     let (raw_tx, response_pdu) = match execution.response {
                         Some(response_pdu) => {
                             let raw_tx = codec::tcp::encode(tid, unit, &response_pdu)
@@ -469,6 +520,20 @@ fn execute_with_fault(
     if fault.delay_ms > 0 {
         std::thread::sleep(Duration::from_millis(fault.delay_ms.min(60_000)));
     }
+
+    if fault.no_response {
+        let execution = match model.execute(request) {
+            Ok(_) => (TransactionStatus::FaultInjected, None),
+            Err(code) => (TransactionStatus::FaultInjected, Some(code)),
+        };
+        return ServerExecution {
+            response: None,
+            status: execution.0,
+            exception_code: execution.1,
+            message: Some("response suppressed by server fault injection".into()),
+        };
+    }
+
     if let Some(code) = fault.exception_code {
         return ServerExecution {
             response: Some(exception_pdu(request.function(), code)),
@@ -486,22 +551,23 @@ fn execute_with_fault(
             Some(code),
         ),
     };
-    if fault.no_response {
-        // The request is still executed. Suppressing only the response makes write-timeout tests
-        // exercise the real "outcome unknown" condition seen by a client.
-        return ServerExecution {
-            response: None,
-            status: TransactionStatus::FaultInjected,
-            exception_code,
-            message: Some("response suppressed by server fault injection".into()),
-        };
-    }
     ServerExecution {
         response: Some(response),
         status,
         exception_code,
         message: None,
     }
+}
+
+fn serial_only_request(request: &codec::ModbusRequest) -> bool {
+    matches!(
+        request,
+        codec::ModbusRequest::ReadExceptionStatus
+            | codec::ModbusRequest::Diagnostics { .. }
+            | codec::ModbusRequest::GetCommEventCounter
+            | codec::ModbusRequest::GetCommEventLog
+            | codec::ModbusRequest::ReportServerId
+    )
 }
 
 fn record_server(history: &Mutex<VecDeque<TransactionResult>>, result: TransactionResult) {
@@ -552,6 +618,28 @@ mod tests {
     }
 
     #[test]
+    fn no_response_has_priority_over_forced_exception() {
+        let model = ModbusDataModel::default();
+        model.set_holding_register(7, 1);
+        let fault = RwLock::new(ServerFaultConfig {
+            no_response: true,
+            delay_ms: 0,
+            exception_code: Some(0x04),
+        });
+        let execution = execute_with_fault(
+            &fault,
+            &model,
+            &codec::ModbusRequest::WriteSingle {
+                function: 0x06,
+                address: 7,
+                value: 42,
+            },
+        );
+        assert!(execution.response.is_none());
+        assert_eq!(model.snapshot().holding_registers, vec![(7, 42)]);
+    }
+
+    #[test]
     fn forced_exception_does_not_apply_write() {
         let model = ModbusDataModel::default();
         model.set_holding_register(7, 1);
@@ -571,5 +659,15 @@ mod tests {
         );
         assert_eq!(execution.exception_code, Some(0x04));
         assert_eq!(model.snapshot().holding_registers, vec![(7, 1)]);
+    }
+
+    #[test]
+    fn tcp_server_rejects_serial_only_standard_functions() {
+        assert!(serial_only_request(&codec::ModbusRequest::GetCommEventLog));
+        assert!(!serial_only_request(&codec::ModbusRequest::ReadRegisters {
+            function: 3,
+            address: 0,
+            quantity: 1,
+        }));
     }
 }
