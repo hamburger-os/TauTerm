@@ -398,6 +398,17 @@ struct ExclusiveState {
     data_tx: mpsc::SyncSender<Vec<u8>>,
 }
 
+/// Fail-safe guard for the externally visible connection state. Normal runtime exit still clears
+/// the flag explicitly before driver shutdown; this Drop path additionally covers unwinding from a
+/// buggy driver so stale handles can never continue to report a live transport actor.
+struct ConnectedStateGuard(Arc<AtomicBool>);
+
+impl Drop for ConnectedStateGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
 fn run_blocking_runtime(
     mut driver: Box<dyn BlockingByteStream>,
     commands: mpsc::Receiver<RuntimeCommand>,
@@ -406,6 +417,9 @@ fn run_blocking_runtime(
     connected: Arc<AtomicBool>,
 ) {
     let mut subscribers: Vec<(u64, mpsc::Sender<DataPlaneEvent>)> = Vec::new();
+    // Declare after subscribers so panic unwinding clears connected before the subscriber senders
+    // are dropped and the Session receive pump observes channel closure.
+    let _connected_guard = ConnectedStateGuard(connected.clone());
     let mut startup_buffer: VecDeque<Vec<u8>> = VecDeque::new();
     let mut startup_buffer_bytes = 0usize;
     let mut exclusive: Option<ExclusiveState> = None;
