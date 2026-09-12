@@ -87,8 +87,8 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
               onChange={event => changeRole(event.target.value as ModbusRole)}
               data-testid="tauterm-modbus-role"
             >
-              <option value="client">{mode === "tcp" ? "Client / Master" : "Master"}</option>
-              <option value="server">{mode === "tcp" ? "Server / Slave Simulator" : "Slave Simulator"}</option>
+              <option value="client">{mode === "tcp" ? "Client" : "Master"}</option>
+              <option value="server">{mode === "tcp" ? "Server Simulator" : "Slave Simulator"}</option>
             </select>
           </Field>
         </div>
