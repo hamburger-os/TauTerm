@@ -1,4 +1,4 @@
-name: Typed Runtime Migration V6
+name: Typed Runtime Finalizer
 
 on:
   push:
@@ -16,17 +16,25 @@ jobs:
         with:
           ref: feat/transport-runtime-modbus
           fetch-depth: 0
-      - name: Apply guarded migration
+      - name: Apply typed runtime migration
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import textwrap
 
-          workflow = Path('.github/workflows/zz-typed-runtime-migration-v4.yml').read_text()
+          workflow = Path('.github/migrations/typed-runtime-v4.yml').read_text()
           body = workflow.split("python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
           script = textwrap.dedent(body)
+          script = script.replace(
+              "Path('.github/workflows/zz-typed-runtime-migration.yml')",
+              "Path('.github/migrations/typed-runtime-base.yml')",
+              1,
+          )
 
+          # V6 fixed the Modbus constructor semantics but its iPerf status rewrite
+          # left one closing brace behind. Apply the semantic fix, then repair that
+          # exact structural reduction before rustfmt parses the result.
           section_start = script.index('# Modbus constructs one typed runtime value')
           section_end = script.index('# Network constructor uses the actual `side` value', section_start)
           replacement_lines = [
@@ -58,7 +66,15 @@ jobs:
           ]
           replacement = "\n".join(replacement_lines) + "\n"
           script = script[:section_start] + replacement + script[section_end:]
-          exec(compile(script, 'typed_runtime_v6.py', 'exec'), {'__name__': '__main__'})
+          exec(compile(script, 'typed_runtime_final.py', 'exec'), {'__name__': '__main__'})
+
+          commands = Path('src-tauri/src/commands.rs')
+          text = commands.read_text()
+          old = "            });\n        }\n    }\n\n    // 会话未连接"
+          new = "            });\n    }\n\n    // 会话未连接"
+          if old not in text:
+              raise SystemExit('iPerf status closing-brace repair anchor missing')
+          commands.write_text(text.replace(old, new, 1))
           PY
       - name: Format
         run: cargo fmt --manifest-path src-tauri/Cargo.toml
@@ -72,12 +88,12 @@ jobs:
             libjavascriptcoregtk-4.1-dev libssl-dev libudev-dev
       - name: Check
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml
-      - name: Commit
+      - name: Commit migrated sources
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git diff --cached --check
-          git commit -m '[typed-runtime-bot] remove erased protocol runtimes'
+          git commit -m 'refactor: finish typed session runtime migration'
           git push origin HEAD:feat/transport-runtime-modbus
