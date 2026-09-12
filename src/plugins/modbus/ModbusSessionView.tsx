@@ -40,7 +40,8 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
 
   useEffect(() => {
     setPage(role === "server" ? "server" : "readwrite");
-  }, [role]);
+    setHistory([]);
+  }, [role, sessionId]);
 
   useEffect(() => {
     if (tab?.name !== "Modbus @ modbus") return;
