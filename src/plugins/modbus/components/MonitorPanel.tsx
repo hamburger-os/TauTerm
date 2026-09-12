@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import Icon from "../../../components/common/Icon";
 import styles from "../Modbus.module.css";
 import { unitIdMax, type ModbusMode, type ModbusRequest, type ModbusStatus, type TransactionStatus, type ValueFormat, type WatchRow, type WatchValue } from "../model";
 
@@ -255,7 +256,7 @@ export default function MonitorPanel({
                   <td>{isBits ? "Bit" : <select className="liquid-glass-input liquid-glass-select" value={format.value_type} onClick={event => event.stopPropagation()} onChange={event => patchFormat(row, { value_type: event.target.value as ValueFormat["value_type"], bit: null })}>{REGISTER_TYPES.map(item => <option key={item}>{item}</option>)}</select>}</td>
                   <td className={styles.mono}>{displayValue(current?.value)}{!isBits && current?.value != null && format.unit ? ` ${format.unit}` : ""}</td>
                   <td title={current?.message ?? ""} className={current?.status === "success" ? styles.success : current ? styles.warning : ""}>{statusLabel(current?.status)}</td>
-                  <td><button className="liquid-glass-button" onClick={event => { event.stopPropagation(); remove(row.id); }} aria-label={t("modbus.deleteNamed", { name: row.name })}>×</button></td>
+                  <td><button className="liquid-glass-button" onClick={event => { event.stopPropagation(); remove(row.id); }} aria-label={t("modbus.deleteNamed", { name: row.name })} title={t("modbus.deleteNamed", { name: row.name })}><Icon name="trash" size="xs" /></button></td>
                 </tr>;
               })}</tbody>
             </table>
