@@ -111,36 +111,39 @@ impl AsyncBridgeDriver {
 
 impl BlockingByteStream for AsyncBridgeDriver {
     fn read(&mut self, buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+        let read_slice = self.read_slice;
         let runtime = &self.runtime;
         let inner = &mut self.inner;
-        match runtime.block_on(tokio::time::timeout(self.read_slice, inner.read(buf))) {
-            Ok(result) => result,
-            Err(_) => Ok(ReadStatus::Idle),
-        }
+        runtime.block_on(async {
+            match tokio::time::timeout(read_slice, inner.read(buf)).await {
+                Ok(result) => result,
+                Err(_) => Ok(ReadStatus::Idle),
+            }
+        })
     }
 
     fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
         let runtime = &self.runtime;
         let inner = &mut self.inner;
-        runtime.block_on(inner.write_all(data))
+        runtime.block_on(async { inner.write_all(data).await })
     }
 
     fn flush(&mut self) -> Result<(), TransportError> {
         let runtime = &self.runtime;
         let inner = &mut self.inner;
-        runtime.block_on(inner.flush())
+        runtime.block_on(async { inner.flush().await })
     }
 
     fn shutdown(&mut self) -> Result<(), TransportError> {
         let runtime = &self.runtime;
         let inner = &mut self.inner;
-        runtime.block_on(inner.shutdown())
+        runtime.block_on(async { inner.shutdown().await })
     }
 
     fn resize_terminal(&mut self, cols: u32, rows: u32) -> Result<(), TransportError> {
         let runtime = &self.runtime;
         let inner = &mut self.inner;
-        runtime.block_on(inner.resize_terminal(cols, rows))
+        runtime.block_on(async { inner.resize_terminal(cols, rows).await })
     }
 
     fn supports_terminal_control(&self) -> bool {
@@ -149,5 +152,67 @@ impl BlockingByteStream for AsyncBridgeDriver {
 
     fn close_metadata(&self) -> StreamCloseMetadata {
         self.inner.close_metadata()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct PendingAsyncStream;
+
+    #[async_trait::async_trait]
+    impl AsyncByteStream for PendingAsyncStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+            std::future::pending::<()>().await;
+            Ok(ReadStatus::Idle)
+        }
+
+        async fn write_all(&mut self, _data: &[u8]) -> Result<(), TransportError> {
+            tokio::task::yield_now().await;
+            Ok(())
+        }
+
+        async fn flush(&mut self) -> Result<(), TransportError> {
+            tokio::task::yield_now().await;
+            Ok(())
+        }
+
+        async fn shutdown(&mut self) -> Result<(), TransportError> {
+            tokio::task::yield_now().await;
+            Ok(())
+        }
+
+        async fn resize_terminal(
+            &mut self,
+            _cols: u32,
+            _rows: u32,
+        ) -> Result<(), TransportError> {
+            tokio::task::yield_now().await;
+            Ok(())
+        }
+
+        fn supports_terminal_control(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn async_bridge_read_timeout_works_without_ambient_tokio_runtime() {
+        let mut bridge = AsyncBridgeDriver::new(Box::new(PendingAsyncStream)).unwrap();
+        bridge.read_slice = Duration::from_millis(1);
+        let mut buf = [0u8; 8];
+
+        assert_eq!(bridge.read(&mut buf).unwrap(), ReadStatus::Idle);
+    }
+
+    #[test]
+    fn async_bridge_runs_all_driver_futures_inside_owned_runtime() {
+        let mut bridge = AsyncBridgeDriver::new(Box::new(PendingAsyncStream)).unwrap();
+
+        bridge.write_all(b"hello").unwrap();
+        bridge.flush().unwrap();
+        bridge.resize_terminal(120, 40).unwrap();
+        bridge.shutdown().unwrap();
     }
 }
