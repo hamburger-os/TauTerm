@@ -1,6 +1,5 @@
 from pathlib import Path
 import shutil
-import re
 
 
 def replace_if_present(path: str, old: str, new: str) -> None:
@@ -17,17 +16,14 @@ replace_if_present(
 )
 
 # Canonical lifecycle contract: release ExclusiveIo and restore Session state before terminal event.
-p = Path("scripts/test-file-transfer-lifecycle.mjs")
-text = p.read_text()
-text = re.sub(
-    r'''assert\.match\(\n  orchestrator,\n  /return_port\[\\s\\S\]\*emit_transfer_finished/,\n  "Inline resources must be returned before terminal event is emitted",\n\);''',
-    '''assert.match(\n  orchestrator,\n  /drop\\(transfer\\\);[\\s\\S]*restore_session_state\\(&task_app, &task_sid, &task_transfer_id\\\);[\\s\\S]*emit_transfer_finished/,\n  "Inline ExclusiveIo must be released and Session state restored before terminal event is emitted",\n);\nfor (const legacyToken of ["HandoffPort", "channel_return_tx", "try_handoff", "return_port("]) {\n  if (orchestrator.includes(legacyToken)) {\n    throw new Error(`legacy inline-transfer handoff token must be removed: ${legacyToken}`);\n  }\n}''',
-    text,
-    count=1,
+replace_if_present(
+    "scripts/test-file-transfer-lifecycle.mjs",
+    '''assert.match(\n  orchestrator,\n  /return_port[\\s\\S]*emit_transfer_finished/,\n  "Inline resources must be returned before terminal event is emitted",\n);\n''',
+    '''assert.match(\n  orchestrator,\n  /drop\\(transfer\\);[\\s\\S]*restore_session_state\\(&task_app, &task_sid, &task_transfer_id\\);[\\s\\S]*emit_transfer_finished/,\n  "Inline ExclusiveIo must be released and Session state restored before terminal event is emitted",\n);\nfor (const legacyToken of ["HandoffPort", "channel_return_tx", "try_handoff", "return_port("]) {\n  if (orchestrator.includes(legacyToken)) {\n    throw new Error(`legacy inline-transfer handoff token must be removed: ${legacyToken}`);\n  }\n}\n''',
 )
-if "/return_port[\\s\\S]*emit_transfer_finished/" in text:
+contract = Path("scripts/test-file-transfer-lifecycle.mjs").read_text()
+if "/return_port[\\s\\S]*emit_transfer_finished/" in contract:
     raise SystemExit("legacy transfer contract still present")
-p.write_text(text)
 
 root = Path("src-tauri/src")
 excluded = {
