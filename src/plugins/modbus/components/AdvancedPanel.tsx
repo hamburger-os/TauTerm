@@ -119,7 +119,7 @@ function ServerFaultPanel({ sessionId, initial, connected }: { sessionId: string
     if (!connected) return;
     setSaved(""); setError("");
     try {
-      await invoke("modbus_server_set_fault", { sessionId, fault });
+      await invoke("modbus_server_set_value", { sessionId, fault });
       setSaved("故障注入已更新");
     } catch (cause) { setError(String(cause)); }
   };
