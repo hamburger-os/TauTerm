@@ -100,6 +100,15 @@ for path in Path("src-tauri/src").rglob("*.rs"):
     text = text.replace("侧通道资源", "类型化运行时资源")
     path.write_text(text)
 
+# SessionStore participates in transfer scheduling, so its scheduler-facing vocabulary is
+# Auxiliary even though protocol-owned objects elsewhere are typed Runtime values.
+store = store_path.read_text()
+store = store.replace("reserve_runtime", "reserve_auxiliary")
+store = store.replace("Inline / Runtime", "Inline / Auxiliary")
+store = store.replace("Runtime 传输", "Auxiliary 传输")
+store = store.replace("Runtime PanicGuard", "Auxiliary PanicGuard")
+store_path.write_text(store)
+
 # Lifecycle contract tests must use the same Auxiliary naming as implementation.
 lifecycle = Path("scripts/test-file-transfer-lifecycle.mjs")
 text = lifecycle.read_text().replace("SideChannel", "Auxiliary").replace("side_channel", "auxiliary")
