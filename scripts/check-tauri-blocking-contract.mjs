@@ -28,7 +28,6 @@ function commandBlocks(source) {
     if (attr < 0) break;
     const attrEnd = source.indexOf("]", attr);
     if (attrEnd < 0) break;
-    const attribute = source.slice(attr, attrEnd + 1);
     const tail = source.slice(attrEnd + 1);
     const signature = tail.match(/pub\s+(async\s+)?fn\s+([A-Za-z0-9_]+)/);
     if (!signature || signature.index == null) break;
@@ -47,7 +46,6 @@ function commandBlocks(source) {
     }
     blocks.push({
       name: signature[2],
-      attribute,
       isAsync: Boolean(signature[1]),
       body: source.slice(sigStart, end),
       offset: sigStart,
@@ -70,43 +68,37 @@ for (const file of rustFiles(root)) {
   }
 }
 
-// Confirmed transport writes/resizes and child teardown have stronger requirements than the generic
-// heuristic above. They are high-frequency or blocking operations, so the WebView invoke handler
-// must route them through the dedicated async IPC boundary rather than the synchronous command
-// implementations in commands.rs. The Rust identifiers stay unique because Tauri's command macros
-// generate crate-visible helper macros; command-level rename preserves the stable WebView API.
+// Confirmed transport writes/resizes and child teardown are high-frequency or blocking operations.
+// Their only WebView command definitions live in the dedicated async IPC boundary; commands.rs must
+// not grow a second synchronous/legacy implementation that can accidentally be registered again.
 const libSource = fs.readFileSync(path.join(root, "lib.rs"), "utf8");
-const ipcPath = path.join(root, "ipc_transport.rs");
-const ipcSource = fs.readFileSync(ipcPath, "utf8");
+const ipcSource = fs.readFileSync(path.join(root, "ipc_transport.rs"), "utf8");
+const commandsSource = fs.readFileSync(path.join(root, "commands.rs"), "utf8");
 const ipcCommands = new Map(commandBlocks(ipcSource).map(command => [command.name, command]));
-const transportIpcCommands = new Map([
-  ["write_data", "write_data_ipc"],
-  ["resize_pty", "resize_pty_ipc"],
-  ["close_channel", "close_channel_ipc"],
-]);
+const legacyCommands = new Set(commandBlocks(commandsSource).map(command => command.name));
+const transportIpcCommands = ["write_data", "resize_pty", "close_channel"];
 
-for (const [externalName, rustName] of transportIpcCommands) {
-  if (!libSource.includes(`ipc_transport::${rustName}`)) {
-    violations.push(`src-tauri/src/lib.rs: invoke handler must route ${externalName} through ipc_transport::${rustName}`);
+for (const name of transportIpcCommands) {
+  if (!libSource.includes(`ipc_transport::${name}`)) {
+    violations.push(`src-tauri/src/lib.rs: invoke handler must route ${name} through ipc_transport`);
   }
-  if (libSource.includes(`commands::${externalName},`)) {
-    violations.push(`src-tauri/src/lib.rs: blocking legacy handler commands::${externalName} must not be WebView-exposed`);
+  if (libSource.includes(`commands::${name},`)) {
+    violations.push(`src-tauri/src/lib.rs: ${name} must not be routed through commands`);
+  }
+  if (legacyCommands.has(name)) {
+    violations.push(`src-tauri/src/commands.rs: superseded command ${name} must not be reintroduced`);
   }
 
-  const command = ipcCommands.get(rustName);
+  const command = ipcCommands.get(name);
   if (!command) {
-    violations.push(`src-tauri/src/ipc_transport.rs: missing ${rustName}`);
+    violations.push(`src-tauri/src/ipc_transport.rs: missing ${name}`);
     continue;
   }
   if (!command.isAsync) {
-    violations.push(`src-tauri/src/ipc_transport.rs: ${rustName} must remain async`);
-  }
-  const renamePattern = new RegExp(`\\brename\\s*=\\s*["']${externalName}["']`);
-  if (!renamePattern.test(command.attribute)) {
-    violations.push(`src-tauri/src/ipc_transport.rs: ${rustName} must expose stable command name ${externalName}`);
+    violations.push(`src-tauri/src/ipc_transport.rs: ${name} must remain async`);
   }
   if (/\.join\(\)/.test(command.body) && !/\bspawn_blocking\b/.test(command.body)) {
-    violations.push(`src-tauri/src/ipc_transport.rs: ${rustName} joins a thread outside spawn_blocking`);
+    violations.push(`src-tauri/src/ipc_transport.rs: ${name} joins a thread outside spawn_blocking`);
   }
 }
 
