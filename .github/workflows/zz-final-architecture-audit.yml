@@ -1,0 +1,26 @@
+name: Final Architecture Audit
+
+on:
+  push:
+    branches: [feat/transport-runtime-modbus]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: feat/transport-runtime-modbus
+      - name: Side-channel and legacy inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== SIDE CHANNEL / ANY ==='
+          git grep -n -E 'SideChannel|side_channel|as_any|std::any::Any|get_side_channel' -- 'src-tauri/src/**/*.rs' || true
+          echo '=== LEGACY CHANNEL STACK ==='
+          git grep -n -E 'crate::channel|ChannelKind|IoLoopCmd|CommHandle|HandoffPort|StubChannel|try_handoff|channel_return|spawn_sync_io_loop|spawn_async_io_loop|IoStrategy' -- 'src-tauri/src/**/*.rs' || true
+          echo '=== TEMP FILES ==='
+          find .github -maxdepth 3 -type f -name 'zz-*' -print
