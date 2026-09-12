@@ -404,12 +404,16 @@ pub fn modbus_status(
     session_id: String,
     after_sequence: Option<u64>,
     transaction_limit: Option<usize>,
+    include_watch_rows: Option<bool>,
 ) -> Result<ModbusStatus, String> {
     with_modbus(&state, &session_id, |side| {
-        let rows = side
-            .watch
-            .as_ref()
-            .map_or_else(Vec::new, |watch| watch.rows());
+        let watch = side.watch.as_ref();
+        let (watch_enabled, watch_total) = watch.map_or((0, 0), |watch| watch.counts());
+        let rows = if include_watch_rows.unwrap_or(true) {
+            watch.map_or_else(Vec::new, |watch| watch.rows())
+        } else {
+            Vec::new()
+        };
         let cursor = after_sequence.unwrap_or(0);
         let limit = transaction_limit.unwrap_or(if after_sequence.is_some() { 250 } else { 1 });
         let transactions = if let Some(client) = &side.client {
@@ -435,10 +439,10 @@ pub fn modbus_status(
                     .is_some_and(|server| server.is_running()),
             default_unit_id: side.config.unit_id,
             transactions,
-            watch_rows: rows.clone(),
-            watch_running: side.watch.as_ref().is_some_and(|watch| watch.is_running()),
-            watch_enabled: rows.iter().filter(|row| row.enabled).count(),
-            watch_total: rows.len(),
+            watch_rows: rows,
+            watch_running: watch.is_some_and(|watch| watch.is_running()),
+            watch_enabled,
+            watch_total,
             last_status: last.as_ref().map(|result| result.status),
             last_unit_id: last.as_ref().map(|result| result.unit_id),
             last_latency_ms: last.as_ref().map(|result| result.latency_ms),
