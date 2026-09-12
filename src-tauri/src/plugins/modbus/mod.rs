@@ -78,23 +78,24 @@ impl ProtocolAdapter for ModbusAdapter {
 
         let (client, server, watch) = match config.role {
             ModbusRole::Client => {
-                let runtime = match config.mode {
-                    ModbusMode::Rtu | ModbusMode::Ascii => {
-                        let driver = open_serial(&config.serial_port, &config.serial).map_err(
-                            |error| SessionError::ConnectionFailed {
-                                reason: error.to_string(),
-                            },
-                        )?;
-                        DataPlaneRuntime::spawn(Box::new(driver))
-                    }
-                    ModbusMode::Tcp => {
-                        let driver = connect_tcp(&config.host, config.port, &config.tcp)
-                            .map_err(|error| SessionError::ConnectionFailed {
-                                reason: error.to_string(),
-                            })?;
-                        DataPlaneRuntime::spawn(Box::new(driver))
-                    }
-                };
+                let runtime =
+                    match config.mode {
+                        ModbusMode::Rtu | ModbusMode::Ascii => {
+                            let driver = open_serial(&config.serial_port, &config.serial).map_err(
+                                |error| SessionError::ConnectionFailed {
+                                    reason: error.to_string(),
+                                },
+                            )?;
+                            DataPlaneRuntime::spawn(Box::new(driver))
+                        }
+                        ModbusMode::Tcp => {
+                            let driver = connect_tcp(&config.host, config.port, &config.tcp)
+                                .map_err(|error| SessionError::ConnectionFailed {
+                                    reason: error.to_string(),
+                                })?;
+                            DataPlaneRuntime::spawn(Box::new(driver))
+                        }
+                    };
                 let client = Arc::new(ModbusClient::new(config.clone(), runtime));
                 let watch = Arc::new(WatchScheduler::new(client.clone()));
                 watch
@@ -138,8 +139,8 @@ fn parse_watch_rows(params: &Value) -> Result<Vec<WatchRow>, String> {
     let Some(value) = params.get("watch_rows") else {
         return Ok(Vec::new());
     };
-    let rows: Vec<WatchRow> =
-        serde_json::from_value(value.clone()).map_err(|error| format!("watch_rows 无效: {error}"))?;
+    let rows: Vec<WatchRow> = serde_json::from_value(value.clone())
+        .map_err(|error| format!("watch_rows 无效: {error}"))?;
     WatchScheduler::validate_rows(&rows)?;
     Ok(rows)
 }
@@ -275,13 +276,7 @@ fn persist_param_if_saved(
     if !saved.iter().any(|session| session.id == session_id) {
         return Ok(());
     }
-    SessionStore::set_config_param_on_disk_transactional(
-        app,
-        session_id,
-        key,
-        value,
-        || Ok(()),
-    )
+    SessionStore::set_config_param_on_disk_transactional(app, session_id, key, value, || Ok(()))
 }
 
 fn set_runtime_param(
@@ -294,9 +289,8 @@ fn set_runtime_param(
         .session_store
         .lock()
         .map_err(|error| error.to_string())?;
-    let handle = store
-        .get_session_mut(session_id)
-        .ok_or_else(|| store.session_not_found(session_id))?;
+    let not_found = store.session_not_found(session_id);
+    let handle = store.get_session_mut(session_id).ok_or(not_found)?;
     let params = handle
         .params
         .as_object_mut()

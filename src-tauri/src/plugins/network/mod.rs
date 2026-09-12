@@ -429,7 +429,7 @@ fn register_tcp_peer(
         .lock()
         .map_err(|error| error.to_string())?
         .sender();
-    app_state
+    let result = app_state
         .session_store
         .lock()
         .map_err(|error| error.to_string())?
@@ -447,7 +447,8 @@ fn register_tcp_peer(
                 peer_handles,
                 mirror_tx: Some(mirror_tx),
             },
-        )
+        );
+    result
 }
 
 fn emit_udp_datagram(

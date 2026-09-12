@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueType {
     Bool,
@@ -18,7 +18,7 @@ pub enum ValueType {
     Utf8,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ByteOrder {
     ABCD,
     BADC,
@@ -26,7 +26,7 @@ pub enum ByteOrder {
     DCBA,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValueFormat {
     pub value_type: ValueType,
     #[serde(default = "default_order")]
