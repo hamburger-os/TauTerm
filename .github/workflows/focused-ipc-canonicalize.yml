@@ -1,0 +1,50 @@
+name: Focused IPC canonicalize
+
+on:
+  push:
+    branches: [fix/transport-runtime-followup]
+
+permissions:
+  contents: write
+
+jobs:
+  canonicalize:
+    if: "${{ github.event.head_commit.message == 'run focused ipc canonicalize' }}"
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fix/transport-runtime-followup
+
+      - name: Canonicalize invoke handler names
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src-tauri/src/lib.rs')
+          text = path.read_text(encoding='utf-8')
+          replacements = {
+              'ipc_transport::write_data_ipc': 'ipc_transport::write_data',
+              'ipc_transport::close_channel_ipc': 'ipc_transport::close_channel',
+              'ipc_transport::resize_pty_ipc': 'ipc_transport::resize_pty',
+          }
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one {old!r}, found {count}')
+              text = text.replace(old, new)
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Remove one-shot workflow and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/focused-ipc-canonicalize.yml
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add src-tauri/src/lib.rs
+          git diff --cached --check
+          git commit -m "refactor: canonicalize async transport IPC commands"
+          git push origin HEAD:fix/transport-runtime-followup
