@@ -6,7 +6,6 @@ import { homeDir } from "@tauri-apps/api/path";
 import { useSession } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
 import { CHARSETS, DEFAULT_ENCODING } from "../../utils/charsets";
-import ConfirmDialog from "../common/ConfirmDialog";
 import Icon from "../common/Icon";
 import styles from "./ConnectDialog.module.css";
 
@@ -87,10 +86,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [tftpListenIp, setTftpListenIp] = useState("0.0.0.0");
   const [tftpListenPort, setTftpListenPort] = useState(69);
   const [tftpFileRoot, setTftpFileRoot] = useState("");
-  const [tftpWriteEnabled, setTftpWriteEnabled] = useState(true);
-  const [tftpOverwrite, setTftpOverwrite] = useState(true);
+  const [tftpWriteEnabled, setTftpWriteEnabled] = useState(false);
+  const [tftpOverwrite, setTftpOverwrite] = useState(false);
   const [tftpSinglePort, setTftpSinglePort] = useState(false);
-  const [tftpExposureConfirmOpen, setTftpExposureConfirmOpen] = useState(false);
   // Telnet 配置
   const [telnetHost, setTelnetHost] = useState("");
   const [telnetPort, setTelnetPort] = useState(23);
@@ -125,6 +123,13 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const isLocalShell = selectedMode === "local-shell";
   const selectedPlugin = pluginRegistry.get(selectedMode);
   const PluginConnectForm = selectedPlugin?.connectForm;
+  const tftpBind = tftpListenIp.trim().toLowerCase();
+  const tftpExposureRisk = isTftp
+    && tftpWriteEnabled
+    && tftpOverwrite
+    && tftpBind !== "localhost"
+    && tftpBind !== "::1"
+    && !tftpBind.startsWith("127.");
 
   // 保持最新的 tabs 引用，供 useEffect 在 editSessionId 变化时读取最新数据，
   // 避免将 state.tabs 放入依赖数组导致 session-stats 事件每秒重置表单
@@ -152,7 +157,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setSshPassword("");
       setSshPrivateKey("");
       setSshPassphrase("");
-      setTftpExposureConfirmOpen(false);
       setStep("mode");
       return;
     }
@@ -277,8 +281,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setTftpListenIp("0.0.0.0");
     setTftpListenPort(69);
     setTftpFileRoot("");
-    setTftpWriteEnabled(true);
-    setTftpOverwrite(true);
+    setTftpWriteEnabled(false);
+    setTftpOverwrite(false);
     setTftpSinglePort(false);
     // 重置 Telnet 字段
     setTelnetHost("");
@@ -364,7 +368,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setError(null);
   }, []);
 
-  const handleCreate = useCallback(async (tftpExposureConfirmed = false) => {
+  const handleCreate = useCallback(async () => {
     if (!port && isSerial) return;
     if (!sshHost && isSsh) return;
     if (!tftpFileRoot && isTftp) return;
@@ -384,16 +388,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       : (isTelnet ? telnetSendBarEnabled : sendBarEnabled);
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(selectedMode, requestedSendBarEnabled);
     const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isLocalShell || isTftp || isTelnet || isIperf || isNetwork ? false : transferEnabled);
-
-    if (isTftp && tftpWriteEnabled && tftpOverwrite && !tftpExposureConfirmed) {
-      const bind = tftpListenIp.trim().toLowerCase();
-      const loopback = bind === "127.0.0.1" || bind === "::1" || bind === "localhost";
-      if (!loopback) {
-        setConnecting(false);
-        setTftpExposureConfirmOpen(true);
-        return;
-      }
-    }
 
     let params: Record<string, unknown> = isSerial ? {
       baud_rate: parseInt(baudRate),
@@ -429,9 +423,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       listen_port: tftpListenPort,
       file_root: tftpFileRoot,
       write_enabled: tftpWriteEnabled,
-      overwrite: tftpOverwrite,
+      overwrite: tftpWriteEnabled && tftpOverwrite,
       single_port: tftpSinglePort,
-      exposure_confirmed: tftpExposureConfirmed,
     } : isTelnet ? {
       host: telnetHost,
       port: telnetPort,
@@ -563,13 +556,13 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   }, [onClose]);
 
   useEffect(() => {
-    if (!isOpen || tftpExposureConfirmOpen) return;
+    if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose, tftpExposureConfirmOpen]);
+  }, [isOpen, onClose]);
 
   return (
     <>
@@ -928,7 +921,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
                         {/* 文件服务协议固定为 SFTP（SCP 已移除） */}
 
-
                         {/* 启用发送栏开关 */}
                         <div className={styles.field}>
                           <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
@@ -1028,7 +1020,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                               value={tftpFileRoot}
                               onChange={e => setTftpFileRoot(e.target.value)}
                               disabled={connecting}
-                              placeholder="C:\tftp-root\"
+                              placeholder="C:\\tftp-root\\"
                             />
                             <button
                               className={`${styles.iconBtn} liquid-glass-button`}
@@ -1049,7 +1041,11 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                             <input
                               type="checkbox"
                               checked={tftpWriteEnabled}
-                              onChange={e => setTftpWriteEnabled(e.target.checked)}
+                              onChange={e => {
+                                const enabled = e.target.checked;
+                                setTftpWriteEnabled(enabled);
+                                if (!enabled) setTftpOverwrite(false);
+                              }}
                               disabled={connecting}
                             />
                             <div />
@@ -1061,14 +1057,21 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                           <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
                             <input
                               type="checkbox"
-                              checked={tftpOverwrite}
+                              checked={tftpWriteEnabled && tftpOverwrite}
                               onChange={e => setTftpOverwrite(e.target.checked)}
-                              disabled={connecting}
+                              disabled={connecting || !tftpWriteEnabled}
                             />
                             <div />
                             <span>{t("tftp.overwrite")}</span>
                           </label>
                         </div>
+
+                        {tftpExposureRisk && (
+                          <div className={styles.warning} role="status">
+                            <Icon name="warning" size="sm" />
+                            <span>{t("tftp.exposureWarning")}</span>
+                          </div>
+                        )}
 
                         <div className={styles.field}>
                           <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
@@ -1445,7 +1448,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       </button>
                       <button
                         className={`${styles.connectBtn} liquid-primary-button`}
-                        onClick={() => void handleCreate(false)}
+                        onClick={() => void handleCreate()}
                         disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || (isNetwork && netRole === "client" && !netRemoteHost) || connecting}
                       >
                         {connecting
@@ -1460,17 +1463,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           </motion.div>
         )}
       </AnimatePresence>
-
-      <ConfirmDialog
-        open={isOpen && tftpExposureConfirmOpen}
-        title={t("common.confirm")}
-        message={t("tftp.exposureWarning", { defaultValue: "This TFTP server will accept remote writes and allow overwriting files from a non-loopback interface. Continue only on a trusted network." })}
-        onConfirm={() => {
-          setTftpExposureConfirmOpen(false);
-          void handleCreate(true);
-        }}
-        onCancel={() => setTftpExposureConfirmOpen(false)}
-      />
     </>
   );
 }
