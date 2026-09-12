@@ -26,7 +26,10 @@ use crate::AppState;
 
 use client::{ModbusClient, TransactionResult};
 use codec::ModbusRequest;
-use config::{ModbusConfig, ModbusMode, ModbusRole, ServerFaultConfig};
+use config::{
+    ModbusConfig, ModbusEndpointConfig, ModbusMode, ModbusRole, ServerFaultConfig,
+    ValidatedModbusConfig,
+};
 use data_model::DataModelSnapshot;
 use polling::{WatchRow, WatchScheduler, WatchValue};
 use server::ModbusServer;
@@ -60,7 +63,7 @@ impl SessionAttach for RuntimeAttach {
 }
 
 pub struct ModbusRuntime {
-    pub config: ModbusConfig,
+    pub config: ValidatedModbusConfig,
     pub client: Option<Arc<ModbusClient>>,
     pub server: Option<Arc<ModbusServer>>,
     pub watch: Option<Arc<WatchScheduler>>,
@@ -99,33 +102,41 @@ impl ProtocolAdapter for ModbusAdapter {
         _endpoint: &str,
         params: &Value,
     ) -> Result<ProtocolConnection, SessionError> {
-        let config: ModbusConfig = serde_json::from_value(params.clone())
+        let wire_config: ModbusConfig = serde_json::from_value(params.clone())
             .map_err(|error| SessionError::Other(format!("Modbus 配置解析失败: {error}")))?;
-        config.validate().map_err(SessionError::Other)?;
+        let config = wire_config.validated().map_err(SessionError::Other)?;
         let initial_watch_rows = parse_watch_rows(params).map_err(SessionError::Other)?;
         let initial_server_model = parse_server_model(params).map_err(SessionError::Other)?;
 
-        let (client, server, watch) = match config.role {
+        let (client, server, watch) = match config.role() {
             ModbusRole::Client => {
-                let runtime =
-                    match config.mode {
-                        ModbusMode::Rtu | ModbusMode::Ascii => {
-                            let driver = open_serial(&config.serial_port, &config.serial).map_err(
-                                |error| SessionError::ConnectionFailed {
-                                    reason: error.to_string(),
-                                },
-                            )?;
-                            DataPlaneRuntime::spawn(Box::new(driver))
-                        }
-                        ModbusMode::Tcp => {
-                            let driver = connect_tcp(&config.host, config.port, &config.tcp)
-                                .map_err(|error| SessionError::ConnectionFailed {
-                                    reason: error.to_string(),
-                                })?;
-                            DataPlaneRuntime::spawn(Box::new(driver))
-                        }
-                    };
-                let client = Arc::new(ModbusClient::new(config.clone(), runtime));
+                let runtime = match &config.endpoint {
+                    ModbusEndpointConfig::Serial {
+                        port, transport, ..
+                    } => {
+                        let driver = open_serial(port, transport).map_err(|error| {
+                            SessionError::ConnectionFailed {
+                                reason: error.to_string(),
+                            }
+                        })?;
+                        DataPlaneRuntime::spawn(Box::new(driver))
+                    }
+                    ModbusEndpointConfig::Tcp {
+                        host,
+                        port,
+                        transport,
+                    } => {
+                        let driver = connect_tcp(host, *port, transport).map_err(|error| {
+                            SessionError::ConnectionFailed {
+                                reason: error.to_string(),
+                            }
+                        })?;
+                        DataPlaneRuntime::spawn(Box::new(driver))
+                    }
+                };
+                let client = Arc::new(
+                    ModbusClient::new(config.clone(), runtime).map_err(SessionError::Other)?,
+                );
                 let watch = Arc::new(WatchScheduler::new(client.clone()));
                 watch
                     .set_rows(initial_watch_rows)
@@ -217,15 +228,9 @@ pub async fn connect_session(
         .connect(&endpoint, &params)
         .await
         .map_err(|error| error.to_string())?;
-    let config: ModbusConfig = serde_json::from_value(params.clone())
-        .map_err(|error| format!("Modbus 配置解析失败: {error}"))?;
     let session_name = name
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| match config.mode {
-            ModbusMode::Tcp => format!("Modbus TCP {}:{}", config.host, config.port),
-            ModbusMode::Rtu => format!("Modbus RTU {}", config.serial_port),
-            ModbusMode::Ascii => format!("Modbus ASCII {}", config.serial_port),
-        });
+        .unwrap_or_else(|| "Modbus 调试助手".to_string());
 
     let session_id = {
         let mut store = state
@@ -371,8 +376,8 @@ pub fn modbus_status(
 ) -> Result<ModbusStatus, String> {
     with_modbus(&state, &session_id, |side| {
         Ok(ModbusStatus {
-            role: side.config.role,
-            mode: side.config.mode,
+            role: side.config.role(),
+            mode: side.config.mode(),
             running: side.client.is_some()
                 || side
                     .server

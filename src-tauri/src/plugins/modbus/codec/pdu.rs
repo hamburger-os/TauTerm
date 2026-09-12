@@ -2,21 +2,56 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_PDU_LEN: usize = 253;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BitReadArea {
+    Coils,
+    DiscreteInputs,
+}
+
+impl BitReadArea {
+    pub fn function(self) -> u8 {
+        match self {
+            Self::Coils => 0x01,
+            Self::DiscreteInputs => 0x02,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegisterReadArea {
+    HoldingRegisters,
+    InputRegisters,
+}
+
+impl RegisterReadArea {
+    pub fn function(self) -> u8 {
+        match self {
+            Self::HoldingRegisters => 0x03,
+            Self::InputRegisters => 0x04,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModbusRequest {
     ReadBits {
-        function: u8,
+        area: BitReadArea,
         address: u16,
         quantity: u16,
     },
     ReadRegisters {
-        function: u8,
+        area: RegisterReadArea,
         address: u16,
         quantity: u16,
     },
-    WriteSingle {
-        function: u8,
+    WriteSingleCoil {
+        address: u16,
+        value: bool,
+    },
+    WriteSingleRegister {
         address: u16,
         value: u16,
     },
@@ -29,8 +64,7 @@ pub enum ModbusRequest {
     GetCommEventLog,
     WriteMultipleCoils {
         address: u16,
-        quantity: u16,
-        values: Vec<u8>,
+        values: Vec<bool>,
     },
     WriteMultipleRegisters {
         address: u16,
@@ -97,10 +131,10 @@ pub struct ModbusResponse {
 impl ModbusRequest {
     pub fn function(&self) -> u8 {
         match self {
-            Self::ReadBits { function, .. }
-            | Self::ReadRegisters { function, .. }
-            | Self::WriteSingle { function, .. }
-            | Self::Raw { function, .. } => *function,
+            Self::ReadBits { area, .. } => area.function(),
+            Self::ReadRegisters { area, .. } => area.function(),
+            Self::WriteSingleCoil { .. } => 0x05,
+            Self::WriteSingleRegister { .. } => 0x06,
             Self::ReadExceptionStatus => 0x07,
             Self::Diagnostics { .. } => 0x08,
             Self::GetCommEventCounter => 0x0B,
@@ -114,13 +148,15 @@ impl ModbusRequest {
             Self::ReadWriteMultipleRegisters { .. } => 0x17,
             Self::ReadFifoQueue { .. } => 0x18,
             Self::Mei { .. } => 0x2B,
+            Self::Raw { function, .. } => *function,
         }
     }
 
     pub fn is_write(&self) -> bool {
         matches!(
             self,
-            Self::WriteSingle { .. }
+            Self::WriteSingleCoil { .. }
+                | Self::WriteSingleRegister { .. }
                 | Self::WriteMultipleCoils { .. }
                 | Self::WriteMultipleRegisters { .. }
                 | Self::WriteFileRecord { .. }
@@ -134,40 +170,24 @@ pub fn encode_request(request: &ModbusRequest) -> Result<Vec<u8>, String> {
     let mut pdu = vec![request.function()];
     match request {
         ModbusRequest::ReadBits {
-            function,
-            address,
-            quantity,
+            address, quantity, ..
         } => {
-            if !matches!(*function, 0x01 | 0x02) {
-                return Err("ReadBits function must be 0x01 or 0x02".into());
-            }
             ensure_range(*quantity, 1, 2000, "bit quantity")?;
             push_u16(&mut pdu, *address);
             push_u16(&mut pdu, *quantity);
         }
         ModbusRequest::ReadRegisters {
-            function,
-            address,
-            quantity,
+            address, quantity, ..
         } => {
-            if !matches!(*function, 0x03 | 0x04) {
-                return Err("ReadRegisters function must be 0x03 or 0x04".into());
-            }
             ensure_range(*quantity, 1, 125, "register quantity")?;
             push_u16(&mut pdu, *address);
             push_u16(&mut pdu, *quantity);
         }
-        ModbusRequest::WriteSingle {
-            function,
-            address,
-            value,
-        } => {
-            if !matches!(*function, 0x05 | 0x06) {
-                return Err("WriteSingle function must be 0x05 or 0x06".into());
-            }
-            if *function == 0x05 && !matches!(*value, 0x0000 | 0xFF00) {
-                return Err("coil value must be 0x0000 or 0xFF00".into());
-            }
+        ModbusRequest::WriteSingleCoil { address, value } => {
+            push_u16(&mut pdu, *address);
+            push_u16(&mut pdu, if *value { 0xFF00 } else { 0x0000 });
+        }
+        ModbusRequest::WriteSingleRegister { address, value } => {
             push_u16(&mut pdu, *address);
             push_u16(&mut pdu, *value);
         }
@@ -176,23 +196,19 @@ pub fn encode_request(request: &ModbusRequest) -> Result<Vec<u8>, String> {
         | ModbusRequest::GetCommEventLog
         | ModbusRequest::ReportServerId => {}
         ModbusRequest::Diagnostics { sub_function, data } => {
+            if *sub_function == 0x000A && data.as_slice() != [0x00, 0x00] {
+                return Err("Clear Counters and Diagnostic Register requires data 0x0000".into());
+            }
             push_u16(&mut pdu, *sub_function);
             pdu.extend_from_slice(data);
         }
-        ModbusRequest::WriteMultipleCoils {
-            address,
-            quantity,
-            values,
-        } => {
-            ensure_range(*quantity, 1, 1968, "coil quantity")?;
-            let expected = (*quantity as usize).div_ceil(8);
-            if values.len() != expected {
-                return Err(format!("coil byte count must be {expected}"));
-            }
+        ModbusRequest::WriteMultipleCoils { address, values } => {
+            ensure_range(values.len() as u16, 1, 1968, "coil quantity")?;
+            let packed = pack_bits(values);
             push_u16(&mut pdu, *address);
-            push_u16(&mut pdu, *quantity);
-            pdu.push(values.len() as u8);
-            pdu.extend_from_slice(values);
+            push_u16(&mut pdu, values.len() as u16);
+            pdu.push(packed.len() as u8);
+            pdu.extend_from_slice(&packed);
         }
         ModbusRequest::WriteMultipleRegisters { address, values } => {
             ensure_range(values.len() as u16, 1, 123, "register quantity")?;
@@ -272,6 +288,11 @@ pub fn encode_request(request: &ModbusRequest) -> Result<Vec<u8>, String> {
         }
         ModbusRequest::ReadFifoQueue { address } => push_u16(&mut pdu, *address),
         ModbusRequest::Mei { mei_type, data } => {
+            if *mei_type == 0x0E && (data.len() != 2 || !(1..=4).contains(&data[0])) {
+                return Err(
+                    "Read Device Identification requires read code 1..=4 and object id".into(),
+                );
+            }
             pdu.push(*mei_type);
             pdu.extend_from_slice(data);
         }
@@ -295,7 +316,11 @@ pub fn decode_request(pdu: &[u8]) -> Result<DecodedRequest, String> {
             let quantity = u16_at(data, 2)?;
             ensure_range(quantity, 1, 2000, "bit quantity")?;
             ModbusRequest::ReadBits {
-                function,
+                area: if function == 0x01 {
+                    BitReadArea::Coils
+                } else {
+                    BitReadArea::DiscreteInputs
+                },
                 address: u16_at(data, 0)?,
                 quantity,
             }
@@ -305,21 +330,33 @@ pub fn decode_request(pdu: &[u8]) -> Result<DecodedRequest, String> {
             let quantity = u16_at(data, 2)?;
             ensure_range(quantity, 1, 125, "register quantity")?;
             ModbusRequest::ReadRegisters {
-                function,
+                area: if function == 0x03 {
+                    RegisterReadArea::HoldingRegisters
+                } else {
+                    RegisterReadArea::InputRegisters
+                },
                 address: u16_at(data, 0)?,
                 quantity,
             }
         }
-        0x05 | 0x06 => {
+        0x05 => {
             require_len(data, 4)?;
-            let value = u16_at(data, 2)?;
-            if function == 0x05 && !matches!(value, 0x0000 | 0xFF00) {
-                return Err("invalid coil value".into());
-            }
-            ModbusRequest::WriteSingle {
-                function,
+            let raw = u16_at(data, 2)?;
+            let value = match raw {
+                0x0000 => false,
+                0xFF00 => true,
+                _ => return Err("invalid coil value".into()),
+            };
+            ModbusRequest::WriteSingleCoil {
                 address: u16_at(data, 0)?,
                 value,
+            }
+        }
+        0x06 => {
+            require_len(data, 4)?;
+            ModbusRequest::WriteSingleRegister {
+                address: u16_at(data, 0)?,
+                value: u16_at(data, 2)?,
             }
         }
         0x07 => {
@@ -356,8 +393,7 @@ pub fn decode_request(pdu: &[u8]) -> Result<DecodedRequest, String> {
             }
             ModbusRequest::WriteMultipleCoils {
                 address,
-                quantity,
-                values: data[5..].to_vec(),
+                values: unpack_bits(&data[5..], quantity),
             }
         }
         0x10 => {
@@ -467,16 +503,21 @@ pub fn validate_response(request: &ModbusRequest, pdu: &[u8]) -> Result<ModbusRe
         ModbusRequest::ReadRegisters { quantity, .. } => {
             validate_byte_count(data, *quantity as usize * 2)?;
         }
-        ModbusRequest::WriteSingle { address, value, .. } => {
+        ModbusRequest::WriteSingleCoil { address, value } => {
             require_len(data, 4)?;
-            if u16_at(data, 0)? != *address || u16_at(data, 2)? != *value {
-                return Err("write-single echo mismatch".into());
+            let expected = if *value { 0xFF00 } else { 0x0000 };
+            if u16_at(data, 0)? != *address || u16_at(data, 2)? != expected {
+                return Err("write-single-coil echo mismatch".into());
             }
         }
-        ModbusRequest::WriteMultipleCoils {
-            address, quantity, ..
-        } => {
-            validate_write_multiple_echo(data, *address, *quantity)?;
+        ModbusRequest::WriteSingleRegister { address, value } => {
+            require_len(data, 4)?;
+            if u16_at(data, 0)? != *address || u16_at(data, 2)? != *value {
+                return Err("write-single-register echo mismatch".into());
+            }
+        }
+        ModbusRequest::WriteMultipleCoils { address, values } => {
+            validate_write_multiple_echo(data, *address, values.len() as u16)?;
         }
         ModbusRequest::WriteMultipleRegisters { address, values } => {
             validate_write_multiple_echo(data, *address, values.len() as u16)?;
@@ -497,7 +538,7 @@ pub fn validate_response(request: &ModbusRequest, pdu: &[u8]) -> Result<ModbusRe
         ModbusRequest::ReadWriteMultipleRegisters { read_quantity, .. } => {
             validate_byte_count(data, *read_quantity as usize * 2)?;
         }
-        ModbusRequest::ReadFileRecord { .. } => validate_count_prefixed(data)?,
+        ModbusRequest::ReadFileRecord { records } => validate_file_read_response(data, records)?,
         ModbusRequest::WriteFileRecord { .. } => {
             let expected = &encode_request(request)?[1..];
             if data != expected {
@@ -512,19 +553,21 @@ pub fn validate_response(request: &ModbusRequest, pdu: &[u8]) -> Result<ModbusRe
             if data.len() < 2 || u16_at(data, 0)? != *sub_function {
                 return Err("diagnostics sub-function mismatch".into());
             }
-            if *sub_function == 0 && data[2..] != request_data[..] {
-                return Err("diagnostics loopback data mismatch".into());
+            if matches!(*sub_function, 0x0000 | 0x000A)
+                && (data.len() != 2 + request_data.len() || data[2..] != request_data[..])
+            {
+                return Err("diagnostics response does not echo the implemented request".into());
             }
         }
-        ModbusRequest::GetCommEventCounter => require_len(data, 4)?,
-        ModbusRequest::GetCommEventLog | ModbusRequest::ReportServerId => {
-            validate_count_prefixed(data)?;
-        }
+        ModbusRequest::GetCommEventCounter => validate_comm_event_counter(data)?,
+        ModbusRequest::GetCommEventLog => validate_comm_event_log(data)?,
+        ModbusRequest::ReportServerId => validate_report_server_id(data)?,
         ModbusRequest::ReadFifoQueue { .. } => validate_fifo_response(data)?,
-        ModbusRequest::Mei { mei_type, .. } => {
-            if data.first().copied() != Some(*mei_type) {
-                return Err("MEI type mismatch".into());
-            }
+        ModbusRequest::Mei {
+            mei_type,
+            data: request_data,
+        } => {
+            validate_mei_response(data, *mei_type, request_data)?;
         }
         ModbusRequest::Raw { .. } => {}
     }
@@ -570,6 +613,64 @@ fn validate_count_prefixed(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_file_read_response(data: &[u8], records: &[FileRecordRead]) -> Result<(), String> {
+    validate_count_prefixed(data)?;
+    let mut cursor = 1usize;
+    for record in records {
+        if cursor >= data.len() {
+            return Err("read-file response missing sub-response".into());
+        }
+        let sub_len = data[cursor] as usize;
+        let expected = 1 + record.record_length as usize * 2;
+        if sub_len != expected || cursor + 1 + sub_len > data.len() {
+            return Err("read-file sub-response length mismatch".into());
+        }
+        if data[cursor + 1] != 0x06 {
+            return Err("read-file reference type must be 0x06".into());
+        }
+        cursor += 1 + sub_len;
+    }
+    if cursor != data.len() {
+        return Err("read-file response contains unexpected sub-response data".into());
+    }
+    Ok(())
+}
+
+fn validate_comm_status(status: u16) -> Result<(), String> {
+    if matches!(status, 0x0000 | 0xFFFF) {
+        Ok(())
+    } else {
+        Err(format!("invalid communication status 0x{status:04X}"))
+    }
+}
+
+fn validate_comm_event_counter(data: &[u8]) -> Result<(), String> {
+    require_len(data, 4)?;
+    validate_comm_status(u16_at(data, 0)?)
+}
+
+fn validate_comm_event_log(data: &[u8]) -> Result<(), String> {
+    validate_count_prefixed(data)?;
+    if data[0] < 6 {
+        return Err("communication event log byte count must be at least 6".into());
+    }
+    validate_comm_status(u16_at(data, 1)?)?;
+    let _event_count = u16_at(data, 3)?;
+    let _message_count = u16_at(data, 5)?;
+    Ok(())
+}
+
+fn validate_report_server_id(data: &[u8]) -> Result<(), String> {
+    validate_count_prefixed(data)?;
+    if data[0] < 2 {
+        return Err("report-server-id response must contain server id and run status".into());
+    }
+    if !matches!(data[2], 0x00 | 0xFF) {
+        return Err("report-server-id run status must be 0x00 or 0xFF".into());
+    }
+    Ok(())
+}
+
 fn validate_fifo_response(data: &[u8]) -> Result<(), String> {
     if data.len() < 4 {
         return Err("FIFO response too short".into());
@@ -581,6 +682,78 @@ fn validate_fifo_response(data: &[u8]) -> Result<(), String> {
     let fifo_count = u16_at(data, 2)? as usize;
     if fifo_count > 31 || byte_count != 2 + fifo_count * 2 {
         return Err("FIFO count mismatch".into());
+    }
+    Ok(())
+}
+
+fn validate_mei_response(data: &[u8], mei_type: u8, request_data: &[u8]) -> Result<(), String> {
+    if data.first().copied() != Some(mei_type) {
+        return Err("MEI type mismatch".into());
+    }
+    if mei_type != 0x0E {
+        return Ok(());
+    }
+    if request_data.len() != 2 || data.len() < 7 {
+        return Err("Read Device Identification response is too short".into());
+    }
+    let read_code = data[1];
+    if read_code != request_data[0] {
+        return Err("Read Device Identification read-code mismatch".into());
+    }
+    let conformity = data[2];
+    if !matches!(conformity, 0x01..=0x03 | 0x81..=0x83) {
+        return Err("invalid Read Device Identification conformity level".into());
+    }
+    if !matches!(data[3], 0x00 | 0xFF) {
+        return Err("invalid Read Device Identification more-follows flag".into());
+    }
+    let more_follows = data[3];
+    let next_object = data[4];
+    let object_count = data[5] as usize;
+    if request_data[0] == 0x04 {
+        if conformity < 0x80 {
+            return Err(
+                "individual Read Device Identification requires individual-access conformity"
+                    .into(),
+            );
+        }
+        if more_follows != 0x00 || next_object != 0x00 || object_count != 1 {
+            return Err(
+                "individual Read Device Identification must return exactly one final object".into(),
+            );
+        }
+    } else if more_follows == 0x00 && next_object != 0x00 {
+        return Err("final Read Device Identification response must use next object id 0".into());
+    }
+
+    let mut cursor = 6usize;
+    let mut previous_id = None;
+    for _ in 0..object_count {
+        if cursor + 2 > data.len() {
+            return Err("truncated Read Device Identification object header".into());
+        }
+        let object_id = data[cursor];
+        let len = data[cursor + 1] as usize;
+        cursor += 2;
+        if cursor + len > data.len() {
+            return Err("truncated Read Device Identification object value".into());
+        }
+        if previous_id.is_some_and(|previous| object_id <= previous) {
+            return Err("Read Device Identification object ids must be strictly increasing".into());
+        }
+        previous_id = Some(object_id);
+        cursor += len;
+    }
+    if cursor != data.len() {
+        return Err("unexpected trailing Read Device Identification data".into());
+    }
+    if request_data[0] == 0x04 && previous_id != Some(request_data[1]) {
+        return Err(
+            "specific Read Device Identification response returned a different object".into(),
+        );
+    }
+    if more_follows == 0xFF && previous_id.is_some_and(|last| next_object <= last) {
+        return Err("next Read Device Identification object id must advance".into());
     }
     Ok(())
 }
@@ -637,6 +810,22 @@ fn decode_file_writes(data: &[u8]) -> Result<Vec<FileRecordWrite>, String> {
     Ok(out)
 }
 
+fn pack_bits(values: &[bool]) -> Vec<u8> {
+    let mut out = vec![0u8; values.len().div_ceil(8)];
+    for (index, value) in values.iter().enumerate() {
+        if *value {
+            out[index / 8] |= 1 << (index % 8);
+        }
+    }
+    out
+}
+
+fn unpack_bits(bytes: &[u8], quantity: u16) -> Vec<bool> {
+    (0..quantity as usize)
+        .map(|index| ((bytes[index / 8] >> (index % 8)) & 1) != 0)
+        .collect()
+}
+
 fn words(bytes: &[u8]) -> Result<Vec<u16>, String> {
     if !bytes.len().is_multiple_of(2) {
         return Err("register bytes must be even".into());
@@ -686,25 +875,25 @@ mod tests {
     #[test]
     fn common_quantity_limits_are_enforced() {
         assert!(encode_request(&ModbusRequest::ReadRegisters {
-            function: 0x03,
+            area: RegisterReadArea::HoldingRegisters,
             address: 0,
             quantity: 125,
         })
         .is_ok());
         assert!(encode_request(&ModbusRequest::ReadRegisters {
-            function: 0x03,
+            area: RegisterReadArea::HoldingRegisters,
             address: 0,
             quantity: 126,
         })
         .is_err());
         assert!(encode_request(&ModbusRequest::ReadBits {
-            function: 0x01,
+            area: BitReadArea::Coils,
             address: 0,
             quantity: 2000,
         })
         .is_ok());
         assert!(encode_request(&ModbusRequest::ReadBits {
-            function: 0x01,
+            area: BitReadArea::Coils,
             address: 0,
             quantity: 2001,
         })
@@ -712,9 +901,29 @@ mod tests {
     }
 
     #[test]
+    fn standard_request_types_determine_their_function_code() {
+        assert_eq!(
+            ModbusRequest::ReadBits {
+                area: BitReadArea::DiscreteInputs,
+                address: 0,
+                quantity: 1,
+            }
+            .function(),
+            0x02
+        );
+        assert_eq!(
+            ModbusRequest::WriteSingleCoil {
+                address: 0,
+                value: true,
+            }
+            .function(),
+            0x05
+        );
+    }
+
+    #[test]
     fn write_response_echo_is_strict() {
-        let request = ModbusRequest::WriteSingle {
-            function: 0x06,
+        let request = ModbusRequest::WriteSingleRegister {
             address: 0x0010,
             value: 0x1234,
         };
@@ -733,10 +942,90 @@ mod tests {
 
         let coils = ModbusRequest::WriteMultipleCoils {
             address: 0x0020,
-            quantity: 9,
-            values: vec![0xAA, 0x01],
+            values: vec![false; 9],
         };
         assert!(validate_response(&coils, &[0x0F, 0x00, 0x20, 0x00, 0x09]).is_ok());
+    }
+
+    #[test]
+    fn read_file_record_response_matches_requested_shape() {
+        let request = ModbusRequest::ReadFileRecord {
+            records: vec![FileRecordRead {
+                file_number: 1,
+                record_number: 2,
+                record_length: 2,
+            }],
+        };
+        assert!(
+            validate_response(&request, &[0x14, 0x06, 0x05, 0x06, 0x12, 0x34, 0x56, 0x78]).is_ok()
+        );
+        assert!(validate_response(&request, &[0x14, 0x04, 0x03, 0x06, 0x12, 0x34]).is_err());
+    }
+
+    #[test]
+    fn clear_counters_request_requires_standard_zero_data() {
+        assert!(encode_request(&ModbusRequest::Diagnostics {
+            sub_function: 0x000A,
+            data: Vec::new(),
+        })
+        .is_err());
+        assert_eq!(
+            encode_request(&ModbusRequest::Diagnostics {
+                sub_function: 0x000A,
+                data: vec![0x00, 0x00],
+            })
+            .unwrap(),
+            vec![0x08, 0x00, 0x0A, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn individual_device_identification_requires_individual_access_shape() {
+        let request = ModbusRequest::Mei {
+            mei_type: 0x0E,
+            data: vec![0x04, 0x01],
+        };
+        let good = [0x2B, 0x0E, 0x04, 0x81, 0x00, 0x00, 0x01, 0x01, 0x01, b'X'];
+        assert!(validate_response(&request, &good).is_ok());
+        let mut bad = good;
+        bad[3] = 0x01;
+        assert!(validate_response(&request, &bad).is_err());
+    }
+
+    #[test]
+    fn event_status_fields_are_semantically_validated() {
+        assert!(validate_response(
+            &ModbusRequest::GetCommEventCounter,
+            &[0x0B, 0x00, 0x00, 0x00, 0x01]
+        )
+        .is_ok());
+        assert!(validate_response(
+            &ModbusRequest::GetCommEventCounter,
+            &[0x0B, 0x12, 0x34, 0x00, 0x01]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn report_server_id_validates_run_indicator() {
+        let request = ModbusRequest::ReportServerId;
+        assert!(validate_response(&request, &[0x11, 0x02, 0x01, 0xFF]).is_ok());
+        assert!(validate_response(&request, &[0x11, 0x02, 0x01, 0x01]).is_err());
+    }
+
+    #[test]
+    fn device_identification_response_is_structurally_validated() {
+        let request = ModbusRequest::Mei {
+            mei_type: 0x0E,
+            data: vec![0x01, 0x00],
+        };
+        let good = [
+            0x2B, 0x0E, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x03, b'A', b'B', b'C',
+        ];
+        assert!(validate_response(&request, &good).is_ok());
+        let mut bad = good;
+        bad[4] = 0x01;
+        assert!(validate_response(&request, &bad).is_err());
     }
 
     #[test]

@@ -125,15 +125,19 @@ export function normalizeModbusSessionParams(params: Record<string, unknown>): M
   };
 }
 
+export type BitReadArea = "coils" | "discrete_inputs";
+export type RegisterReadArea = "holding_registers" | "input_registers";
+
 export type ModbusRequest =
-  | { kind: "read_bits"; function: 1 | 2; address: number; quantity: number }
-  | { kind: "read_registers"; function: 3 | 4; address: number; quantity: number }
-  | { kind: "write_single"; function: 5 | 6; address: number; value: number }
+  | { kind: "read_bits"; area: BitReadArea; address: number; quantity: number }
+  | { kind: "read_registers"; area: RegisterReadArea; address: number; quantity: number }
+  | { kind: "write_single_coil"; address: number; value: boolean }
+  | { kind: "write_single_register"; address: number; value: number }
   | { kind: "read_exception_status" }
   | { kind: "diagnostics"; sub_function: number; data: number[] }
   | { kind: "get_comm_event_counter" }
   | { kind: "get_comm_event_log" }
-  | { kind: "write_multiple_coils"; address: number; quantity: number; values: number[] }
+  | { kind: "write_multiple_coils"; address: number; values: boolean[] }
   | { kind: "write_multiple_registers"; address: number; values: number[] }
   | { kind: "report_server_id" }
   | { kind: "read_file_record"; records: { file_number: number; record_number: number; record_length: number }[] }
@@ -204,7 +208,8 @@ export interface WatchValue {
 
 export interface ValueFormat {
   value_type: "bool" | "uint16" | "int16" | "uint32" | "int32" | "float32" | "uint64" | "int64" | "float64" | "hex" | "binary" | "ascii" | "utf8";
-  byte_order: "ABCD" | "BADC" | "CDAB" | "DCBA";
+  byte_order: "big" | "little";
+  word_order: "normal" | "reverse";
   scale: number;
   offset: number;
   unit: string;
@@ -218,6 +223,7 @@ export interface ServerSnapshot {
   input_registers: [number, number][];
 }
 
+// Presentation labels only. Protocol legality and quantity limits live in the Rust protocol core.
 export const FUNCTION_LABELS: Record<number, string> = {
   0x01: "01 · Read Coils",
   0x02: "02 · Read Discrete Inputs",
@@ -259,9 +265,16 @@ export function hex(bytes: number[]): string {
 export function parseHex(text: string): number[] {
   const normalized = text.replace(/0x/gi, " ").replace(/[,;:_-]/g, " ").trim();
   if (!normalized) return [];
-  const compact = normalized.includes(" ") ? normalized.split(/\s+/) : normalized.match(/.{1,2}/g) ?? [];
-  const bytes = compact.map(token => Number.parseInt(token, 16));
-  if (bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error("无效十六进制字节");
+  const tokens = normalized.split(/\s+/).flatMap(token => {
+    if (!/^[0-9a-fA-F]+$/.test(token) || token.length % 2 !== 0) {
+      throw new Error("十六进制输入必须由完整的两位字节组成");
+    }
+    return token.match(/.{2}/g) ?? [];
+  });
+  const bytes = tokens.map(token => Number.parseInt(token, 16));
+  if (bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    throw new Error("无效十六进制字节");
+  }
   return bytes;
 }
 
@@ -271,12 +284,15 @@ export function parseU16List(text: string): number[] {
   return values;
 }
 
-export function packCoils(text: string): { quantity: number; values: number[] } {
-  const bits = text.split(/[\s,;]+/).filter(Boolean).map(token => token === "1" || token.toLowerCase() === "true");
-  if (bits.length === 0 || bits.length > 1968) throw new Error("线圈数量必须是 1..1968");
-  const values = new Array(Math.ceil(bits.length / 8)).fill(0) as number[];
-  bits.forEach((bit, index) => { if (bit) values[Math.floor(index / 8)] |= 1 << (index % 8); });
-  return { quantity: bits.length, values };
+export function parseCoils(text: string): boolean[] {
+  const tokens = text.split(/[\s,;]+/).filter(Boolean);
+  if (tokens.length === 0) throw new Error("至少需要一个线圈值");
+  return tokens.map(token => {
+    const normalized = token.toLowerCase();
+    if (normalized === "1" || normalized === "true") return true;
+    if (normalized === "0" || normalized === "false") return false;
+    throw new Error(`无效线圈值：${token}；仅支持 0/1/true/false`);
+  });
 }
 
 export function traditionalAddress(functionCode: number, protocolAddress: number): string {
