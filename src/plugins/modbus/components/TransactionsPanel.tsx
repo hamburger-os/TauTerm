@@ -3,24 +3,30 @@ import { invoke } from "@tauri-apps/api/core";
 import styles from "../Modbus.module.css";
 import { hex, STANDARD_EXCEPTIONS, type ModbusStatus, type TransactionResult } from "../model";
 
-export default function TransactionsPanel({ sessionId, fallback }: { sessionId: string; fallback: TransactionResult[] }) {
+export default function TransactionsPanel({ sessionId, fallback, connected }: { sessionId: string; fallback: TransactionResult[]; connected: boolean }) {
   const [items, setItems] = useState<TransactionResult[]>(fallback);
 
   useEffect(() => {
+    setItems(fallback);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!connected) return;
     let mounted = true;
     const refresh = () => void invoke<ModbusStatus>("modbus_status", { sessionId })
-      .then(status => { if (mounted && status.transactions.length > 0) setItems(status.transactions); })
+      .then(status => { if (mounted) setItems(status.transactions); })
       .catch(() => undefined);
     refresh();
     const timer = window.setInterval(refresh, 500);
     return () => { mounted = false; window.clearInterval(timer); };
-  }, [sessionId]);
+  }, [connected, sessionId]);
 
   useEffect(() => { if (fallback.length > 0) setItems(fallback); }, [fallback]);
 
   const copy = (bytes: number[]) => void navigator.clipboard?.writeText(hex(bytes));
 
   return <div className={`${styles.card} liquid-glass-card`}>
+    {!connected && <div className={styles.emptyState}>会话未连接。连接后将实时显示事务历史。</div>}
     <div className={styles.tableWrap}>
       <table className={styles.table}>
         <thead><tr><th>时间</th><th>结果</th><th>Unit</th><th>功能</th><th>TID</th><th>耗时</th><th>尝试</th><th>帧</th></tr></thead>
