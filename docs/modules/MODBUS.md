@@ -11,12 +11,19 @@ Modbus 是独立 custom Session，提供标准 Modbus RTU、ASCII、TCP 的 Clie
 ```text
 Modbus Session View
   ↓ Tauri commands
+Boundary DTO / session persistence
+  ↓ validated()
+Validated Modbus runtime domain
+  ├─ endpoint = Serial(RTU/ASCII) | TCP
+  └─ role = Client | Server
+  ↓
 Modbus runtime
   ├─ Client transaction engine
   ├─ Watch scheduler
   └─ Server simulator
   ↓
 Protocol core
+  ├─ semantic request model
   ├─ request / response validation
   ├─ typed value interpretation
   └─ RTU / ASCII / TCP ADU framing
@@ -28,9 +35,26 @@ Transport Runtime
 
 Transport 不知道 Unit ID、功能码、CRC/LRC、MBAP、异常码或寄存器模型；这些全部属于 Modbus 模块。UI 只负责编辑和展示，不负责决定某个标准功能在特定传输上是否合法。
 
+Session JSON 中的 `ModbusConfig` 只是边界 DTO。连接开始后必须立即通过 `validated()` 转换为 tagged runtime domain：endpoint 明确为 Serial 或 TCP，role 明确为 Client 或 Server；Client timeout/retry 与 Server max-clients/fault 分别只存在于对应运行角色语义中。运行时不继续携带一组“所有模式都可见、但大部分字段无效”的平铺配置作为核心状态。
+
+## 标准请求模型
+
+标准 Modbus 请求使用语义化 variant，而不是“请求类型 + 任意 `function: u8`”组合。例如：
+
+- `ReadBits { area = Coils | DiscreteInputs }`；
+- `ReadRegisters { area = HoldingRegisters | InputRegisters }`；
+- `WriteSingleCoil { value: bool }`；
+- `WriteSingleRegister { value: u16 }`；
+- `WriteMultipleCoils { values: Vec<bool> }`；
+- 其它标准功能也分别拥有明确 variant。
+
+功能码由 variant 推导，因此标准 API 在类型层不能构造“Read Registers 但 function=0x01”这类非法组合。只有 Raw PDU / exact Raw ADU 继续允许调用者显式指定任意字节，因为 Raw 的职责就是协议逃生舱和畸形帧测试。
+
+前端 TypeScript 类型镜像该 IPC schema，但协议合法性、数量上限、功能 capability、响应语义的唯一裁决点在 Rust protocol core。前端显示 label、提示和输入 datatype 边界，不复制一套决定请求是否符合 Modbus 标准的验证器。
+
 ## Client
 
-Client 会话在连接时建立一个 `DataPlaneRuntime`，事务引擎对它保持唯一 request/response 所有权，并保持一个会话级事件订阅。当前同一 Client 一次只允许一个 outstanding transaction：RTU/ASCII 由协议顺序性要求如此，TCP 调试器也保持默认 1 outstanding，以避免调试上下文被并发响应打散。
+Client 会话在连接时建立一个 `DataPlaneRuntime`，事务引擎对它保持唯一 request/response 所有权，并保持一个会话级 `DataPlaneSubscription`。当前同一 Client 一次只允许一个 outstanding transaction：RTU/ASCII 由协议顺序性要求如此，TCP 调试器也保持默认 1 outstanding，以避免调试上下文被并发响应打散。
 
 标准执行流程：
 
@@ -38,7 +62,7 @@ Client 会话在连接时建立一个 `DataPlaneRuntime`，事务引擎对它保
 2. 根据 RTU/ASCII/TCP 添加 ADU envelope；
 3. 写入公共 DataPlane；
 4. 按 transport/framing 规则组帧；
-5. 严格校验 Unit/TID/PID/MBAP length/function/byte-count/echo/CRC/LRC；
+5. 严格校验 Unit/TID/PID/MBAP length/function/byte-count/echo/CRC/LRC，以及功能特定响应结构；
 6. 输出结构化事务结果并加入有界历史。
 
 事务状态明确区分 success、broadcast、Modbus exception、protocol error、malformed response、timeout、transport error 和 cancelled。写请求超时或 transport failure 时保留 outcome unknown 语义，不能把“未收到响应”解释为“设备一定没有执行写入”。
@@ -46,6 +70,8 @@ Client 会话在连接时建立一个 `DataPlaneRuntime`，事务引擎对它保
 读取请求可以按配置重试；写请求默认不重试，只有显式启用时才复用 retry 次数。串口 Unit 0 只允许 write broadcast，发送后不等待响应。
 
 TCP Transaction Identifier 在 Client 内由事务引擎拥有。重试后迟到的旧 TID 响应属于 stale response：在当前单 outstanding 模型下跳过并继续等待当前 TID，不能把旧响应误判为当前事务协议错误。未来若开放 TCP 并发，必须把 framing 和 TID→request dispatch 升级为显式连接级 Transaction Manager，而不是让 UI 并发 invoke 猜响应归属。
+
+Subscription 生命周期与 DataPlaneRuntime 生命周期绑定：Client shutdown 时先释放 subscription，再 join runtime；不能反复 subscribe 丢失接收所有权，也不能让 subscription guard 在 runtime join 之后继续存活。
 
 ## ADU framing
 
@@ -67,7 +93,7 @@ TCP 使用持续增量缓冲，根据 MBAP Length 拆分完整 ADU，支持半�
 
 Advanced 入口覆盖串口诊断和高级功能：07、08、0B、0C、11、14、15、18、2B/0D、2B/0E，以及 Raw PDU / exact Raw ADU。
 
-07、08、0B、0C、11 属串行线标准功能。UI 会在 TCP 下隐藏这些入口，但最终 capability gate 在 Rust 协议核心：TCP Client 不发送这些标准请求，TCP Server 收到后返回 Illegal Function。Raw PDU / Raw ADU 不受此标准功能 capability 限制，因为其用途就是显式构造非标准或畸形报文。
+07、08、0B、0C、11 属串行线标准功能。UI 只把这些入口标记为“串行线专用”，不自行维护一套 TCP capability gate；最终裁决在 Rust 协议核心：TCP Client 不发送这些标准请求，TCP Server 收到后返回 Illegal Function。Raw PDU / Raw ADU 不受此标准功能 capability 限制，因为其用途就是显式构造非标准或畸形报文。
 
 Diagnostics 当前明确支持：
 
@@ -75,6 +101,14 @@ Diagnostics 当前明确支持：
 - `0x000A` Clear Counters and Diagnostic Register。
 
 其它 Diagnostics sub-function 在未实现完整语义前不得做“透明成功回显”，而应返回标准非法数据值。通信事件计数器只在成功处理且标准语义要求计数的消息后增加；读取事件计数器本身和清零诊断不自增。
+
+Response validator 不只检查“功能码相同/长度大致正确”。当前高级语义还包括：
+
+- FC14 Read File Record：每个 sub-response 必须与对应请求 record length 和 reference type 对齐；
+- FC0B/0C：communication status 必须是标准状态值，event log byte count 必须自洽；
+- FC11：Server ID payload 必须至少包含 server id 与合法 run indicator；
+- FC18：FIFO byte-count 与 FIFO-count 必须互相一致且数量不超过标准上限；
+- FC2B/0E：read code、conformity、more-follows、对象数量、对象边界、对象 ID 顺序和 specific-object 响应都进行结构/语义校验。
 
 Raw PDU 仍由 TauTerm 添加所选模式的 envelope；exact Raw ADU 则按用户提供字节原样发送，不做协议修正，并明确标记响应为未验证 raw 数据。
 
@@ -106,9 +140,18 @@ Client/Server 历史都是有界运行态记录，保存时间戳、Unit、FC、
 
 ## Server Simulator
 
-Server 维护 Coils、Discrete Inputs、Holding Registers、Input Registers，以及高级功能需要的 File Record、FIFO、Device Identification 和诊断状态。
+Server 的四个标准地址域由统一 `AddressSpace` 管理，每个区使用 `AddressBlock<T>`：
+
+- Coils；
+- Discrete Inputs；
+- Holding Registers；
+- Input Registers。
+
+`AddressBlock` 统一负责 set/get/read/write/snapshot/range validation，避免四套 Map helper 漂移。File Record、FIFO、Device Identification 和诊断状态属于各自高级对象模型，不硬塞进标准四区。
 
 所有可能跨多个地址的写操作必须先验证完整目标范围，再提交修改；如果请求最终返回异常，不能留下“前半段已经写入”的部分状态。FC17 在读写范围重叠时仍保持标准的 write-before-read 结果，但在提交写入前先确认最终读范围可满足，因此错误响应不会伴随部分写入。
+
+Device Identification 的 individual access 只返回所请求对象；不存在的对象返回 Illegal Data Address。常规对象读取按对象 ID 有序返回，并正确生成 more-follows / next-object 元数据，而不是把所有情况都伪装成“没有后续对象”。
 
 Server fault injection 可动态设置：
 
@@ -116,7 +159,7 @@ Server fault injection 可动态设置：
 - no response；
 - forced Modbus exception。
 
-优先级固定为：先应用 delay；若启用 no response，则执行真实请求但抑制响应，以模拟客户端无法确认写结果的真实故障；只有未启用 no response 时才应用 forced exception，且 forced exception 不执行真实写入。
+优先级固定为：先应用 delay；若启用 no response，则执行真实请求但抑制响应，以模拟客户端无法确认写结果的真实故障；只有未启用 no response 时才应用 forced exception，且 forced exception 不执行真实写入。Fault exception code 只接受标准 Modbus exception 集合，不接受保留值。
 
 TCP Server 支持多 client；串口 Server 按 RTU/ASCII framing 顺序处理请求。串口广播执行合法写操作但绝不发送响应。
 
@@ -124,13 +167,13 @@ TCP Server 支持多 client；串口 Server 按 RTU/ASCII framing 顺序处理�
 
 Saved Session 只保存可重建的稳定配置，例如 mode/role、endpoint、Unit ID、timeout/retry、Server 限制与默认 fault、Watch 定义和值格式、Server model 初值。
 
-不能持久化 DataPlane、事件 receiver、TID 计数器、running flag、poll timer、transaction history、当前请求、socket/serial handle 等运行态。
+不能持久化 DataPlane、subscription/receiver、TID 计数器、running flag、poll timer、transaction history、当前请求、socket/serial handle 等运行态。
 
-TauTerm 当前处于预稳定阶段。本模块内部 schema 直接以当前模型为唯一事实，不维护旧 ValueFormat 或旧 Watch schema 的兼容映射；旧开发期保存配置在模型变化后需要重新保存/重建。
+TauTerm 当前处于预稳定阶段。本模块内部 schema 直接以当前模型为唯一事实，不维护旧 ModbusRequest、ValueFormat 或 Watch schema 的兼容映射；旧开发期保存配置在模型变化后需要重新保存/重建。
 
 ## UI
 
-Modbus 使用独立 `customView`，不显示全局 SendBar。新建会话入口统一显示 `Modbus 调试助手`，默认传输模式为 RTU。
+Modbus 使用独立 `customView`，不显示全局 SendBar。新建会话入口统一显示 `Modbus 调试助手`，默认传输模式为 RTU；后端在缺少自定义名称时同样使用这一名称作为兜底，避免不同连接路径生成不同默认名。
 
 工作区采用“一张主工作台 + 内部分区”的信息架构，不把请求、结果、数据模型等区域各自包装成独立悬浮玻璃卡片：
 
@@ -144,21 +187,24 @@ Modbus 使用独立 `customView`，不显示全局 SendBar。新建会话入口�
 
 ### 会话身份
 
-默认会话卡片采用两层信息：第一行是 `Modbus @ RTU Master` / `ASCII Slave` / `TCP Client` / `TCP Server`；第二行是串口或 IP:Port。用户显式输入的自定义会话名始终优先。
+会话卡片的协议身份采用两层信息：第一行是 `Modbus @ RTU Master` / `ASCII Slave` / `TCP Client` / `TCP Server`；第二行是串口或 IP:Port。用户显式输入的自定义会话名始终优先。
 
 会话展示字符串集中在 `src/plugins/modbus/presentation.ts`，协议模型与 UI 文案分离。
 
 ## 设计边界
 
+- Boundary DTO 只存在于配置/持久化边界；运行时只使用 validated tagged config。
+- 标准请求由语义 variant 推导功能码，不允许裸 `function: u8` 与请求类型组成非法状态。
 - Codec/validation 不进入 Transport 或 Session Runtime。
 - Transport 错误保留结构化来源，再由 transaction engine 映射为协议状态。
-- 标准 capability 由后端协议核心最终裁决，不能只靠 UI 隐藏。
+- 标准 capability 和协议范围由 Rust 协议核心最终裁决，前端不维护第二套 correctness validator。
 - Client 单事务串行化是当前默认契约；TCP stale TID 不能污染当前事务。
 - RTU framing 同时遵守 t1.5 与 t3.5。
 - Polling 不积压、不重入。
 - 写超时必须保留 outcome unknown。
-- Server 多地址修改必须是事务原子的。
+- Server 标准地址域由统一 AddressSpace/AddressBlock 抽象管理，多地址修改必须是事务原子的。
 - Bit area 与 register value codec 必须分离。
+- advanced response 不只做表层长度检查，必须按各功能语义校验嵌套结构。
 - exact Raw ADU 不自动修正 CRC/LRC/MBAP，也不能冒充“已通过协议校验”的普通 transaction。
 - UI 展示身份由 presentation 层生成，不允许多个组件各自拼接不同格式。
 
@@ -172,4 +218,4 @@ Modbus 使用独立 `customView`，不显示全局 SendBar。新建会话入口�
 
 ## 何时更新本文
 
-修改功能码覆盖、framing/validation、重试/broadcast/TID 语义、Watch 调度或值布局、Server Simulator、Raw 模式、持久化边界、Modbus UI 信息架构、默认会话身份或 Modbus 与 Transport/Session Runtime 的职责关系时，必须同步更新本文。
+修改运行时配置域模型、标准请求 schema、功能码覆盖、framing/validation、重试/broadcast/TID 语义、Watch 调度或值布局、Server Simulator、Raw 模式、持久化边界、Modbus UI 信息架构、默认会话身份或 Modbus 与 Transport/Session Runtime 的职责关系时，必须同步更新本文。
