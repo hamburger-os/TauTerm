@@ -124,26 +124,31 @@ impl ModbusConfig {
         Ok(())
     }
 
+    pub fn rtu_inter_char_gap(&self) -> std::time::Duration {
+        if self.serial.baud_rate > 19_200 {
+            std::time::Duration::from_micros(750)
+        } else {
+            self.serial_chars_duration(1.5)
+        }
+    }
+
     pub fn rtu_frame_gap(&self) -> std::time::Duration {
         if self.serial.baud_rate > 19_200 {
             std::time::Duration::from_micros(1_750)
         } else {
-            let data_bits = self.serial.data_bits as f64;
-            let parity_bits = if self.serial.parity == "none" {
-                0.0
-            } else {
-                1.0
-            };
-            let stop_bits = if self.serial.stop_bits == "2" {
-                2.0
-            } else {
-                1.0
-            };
-            let bits_per_char = 1.0 + data_bits + parity_bits + stop_bits;
-            let micros = (3.5 * bits_per_char * 1_000_000.0 / self.serial.baud_rate.max(1) as f64)
-                .ceil() as u64;
-            std::time::Duration::from_micros(micros.max(1))
+            self.serial_chars_duration(3.5)
         }
+    }
+
+    fn serial_chars_duration(&self, chars: f64) -> std::time::Duration {
+        let data_bits = self.serial.data_bits as f64;
+        let parity_bits = if self.serial.parity == "none" { 0.0 } else { 1.0 };
+        let stop_bits = if self.serial.stop_bits == "2" { 2.0 } else { 1.0 };
+        let bits_per_char = 1.0 + data_bits + parity_bits + stop_bits;
+        let micros = (chars * bits_per_char * 1_000_000.0
+            / self.serial.baud_rate.max(1) as f64)
+            .ceil() as u64;
+        std::time::Duration::from_micros(micros.max(1))
     }
 }
 
@@ -164,5 +169,29 @@ impl Default for ModbusConfig {
             server_max_clients: default_server_max_clients(),
             server_fault: ServerFaultConfig::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn high_speed_rtu_uses_standard_fixed_timing() {
+        let mut config = ModbusConfig::default();
+        config.serial.baud_rate = 115_200;
+        assert_eq!(config.rtu_inter_char_gap().as_micros(), 750);
+        assert_eq!(config.rtu_frame_gap().as_micros(), 1_750);
+    }
+
+    #[test]
+    fn low_speed_rtu_timing_tracks_character_width() {
+        let mut config = ModbusConfig::default();
+        config.serial.baud_rate = 9_600;
+        config.serial.data_bits = 8;
+        config.serial.parity = "none".into();
+        config.serial.stop_bits = "1".into();
+        assert_eq!(config.rtu_inter_char_gap().as_micros(), 1_563);
+        assert_eq!(config.rtu_frame_gap().as_micros(), 3_646);
     }
 }
