@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Icon from "../../components/common/Icon";
 import type { ConnectFormProps } from "../../core/plugin-registry";
 import {
   defaultModbusSessionParams,
@@ -158,7 +159,7 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
 
       {role === "client" && (
         <details className={`${styles.details} liquid-glass-card`}>
-          <summary>高级</summary>
+          <summary className={styles.detailsSummary}><Icon name="chevron-right" size="xs" className={styles.detailsChevron} />高级</summary>
           <div className={styles.detailsBody}>
             <Field label="读取重试次数"><input className="liquid-glass-input" type="number" min={0} max={10} value={normalized.read_retries} onChange={event => patch({ read_retries: Number(event.target.value) })} /></Field>
             <label className="liquid-glass-toggle"><input type="checkbox" checked={normalized.retry_writes} onChange={event => patch({ retry_writes: event.target.checked })} /><div /><span>允许写请求超时后重试（可能重复写入）</span></label>
