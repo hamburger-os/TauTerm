@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "../Modbus.module.css";
-import { unitIdMax, type ModbusMode, type ModbusRequest, type ModbusStatus, type ValueFormat, type WatchRow, type WatchValue } from "../model";
+import { unitIdMax, type ModbusMode, type ModbusRequest, type ModbusStatus, type TransactionStatus, type ValueFormat, type WatchRow, type WatchValue } from "../model";
 
 const DEFAULT_FORMAT: ValueFormat = {
   value_type: "uint16",
@@ -16,6 +17,17 @@ const DEFAULT_FORMAT: ValueFormat = {
 const REGISTER_TYPES: ValueFormat["value_type"][] = [
   "bool", "uint16", "int16", "uint32", "int32", "float32", "uint64", "int64", "float64", "hex", "binary", "ascii", "utf8",
 ];
+
+const STATUS_KEY: Partial<Record<TransactionStatus, string>> = {
+  broadcast: "modbus.statusBroadcast",
+  modbus_exception: "modbus.statusException",
+  protocol_error: "modbus.statusProtocol",
+  malformed_response: "modbus.statusMalformed",
+  timeout: "modbus.statusTimeout",
+  transport_error: "modbus.statusTransport",
+  cancelled: "modbus.statusCancelled",
+  fault_injected: "modbus.statusFault",
+};
 
 const fixedRegisterWidth = (format: ValueFormat): number | null => {
   if (format.bit != null) return 1;
@@ -88,6 +100,7 @@ export default function MonitorPanel({
   mode: ModbusMode;
   defaultUnitId: number;
 }) {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<WatchRow[]>(() => [defaultWatchRow(defaultUnitId)]);
   const [values, setValues] = useState<Record<string, WatchValue>>({});
   const [running, setRunning] = useState(false);
@@ -203,22 +216,23 @@ export default function MonitorPanel({
   const selectedWidth = selected && !selectedIsBits ? fixedRegisterWidth(selectedFormat) : null;
   const selectedExact64 = isExactInteger64(selectedFormat);
   const enabledCount = useMemo(() => rows.filter(row => row.enabled).length, [rows]);
+  const statusLabel = (status?: TransactionStatus) => status === "success" ? "OK" : status ? t(STATUS_KEY[status] ?? "modbus.statusProtocol") : "—";
 
   return (
     <div className={styles.panelPage}>
       <section className={styles.workbenchSection}>
         <div className={styles.panelHeading}>
           <div>
-            <strong>轮询监控</strong>
-            <span className={styles.hint}>轮询属于会话运行时；切换到读写、事务或高级页面不会停止。每一行可以独立指定 Unit。</span>
+            <strong>{t("modbus.monitorTitle")}</strong>
+            <span className={styles.hint}>{t("modbus.monitorHint")}</span>
           </div>
           <div className={styles.actions}>
-            <span className={`${styles.runtimeState} ${running ? styles.runtimeStateActive : ""}`}>{running ? `运行中 ${enabledCount}/${rows.length}` : "已停止"}</span>
-            <button className="liquid-glass-button" onClick={add}>添加监控项</button>
-            <button className="liquid-glass-button" disabled={!connected} onClick={() => void apply(!running)}>{running ? "停止轮询" : "开始轮询"}</button>
+            <span className={`${styles.runtimeState} ${running ? styles.runtimeStateActive : ""}`}>{running ? t("modbus.monitorRunning", { enabled: enabledCount, total: rows.length }) : t("modbus.monitorStopped")}</span>
+            <button className="liquid-glass-button" onClick={add}>{t("modbus.monitorAdd")}</button>
+            <button className="liquid-glass-button" disabled={!connected} onClick={() => void apply(!running)}>{running ? t("modbus.monitorStop") : t("modbus.monitorStart")}</button>
           </div>
         </div>
-        {!connected && <span className={styles.hint}>连接会话后可保存监控表并开始轮询。</span>}
+        {!connected && <span className={styles.hint}>{t("modbus.monitorConnectHint")}</span>}
         {error && <span className={styles.error}>{error}</span>}
       </section>
 
@@ -226,8 +240,8 @@ export default function MonitorPanel({
         <div className={styles.monitorTablePane}>
           <div className={styles.tableWrap}>
             <table className={`${styles.table} ${styles.monitorTable}`}>
-              <thead><tr><th>启用</th><th>名称</th><th>Unit</th><th>区域</th><th>地址</th><th>类型</th><th>当前值</th><th>状态</th><th /></tr></thead>
-              <tbody>{rows.length === 0 ? <tr><td colSpan={9} className={styles.empty}>尚无监控项</td></tr> : rows.map(row => {
+              <thead><tr><th>{t("modbus.columnEnabled")}</th><th>{t("modbus.columnName")}</th><th>{t("modbus.columnUnit")}</th><th>{t("modbus.columnArea")}</th><th>{t("modbus.columnAddress")}</th><th>{t("modbus.columnType")}</th><th>{t("modbus.columnCurrentValue")}</th><th>{t("modbus.columnStatus")}</th><th /></tr></thead>
+              <tbody>{rows.length === 0 ? <tr><td colSpan={9} className={styles.empty}>{t("modbus.monitorNoRows")}</td></tr> : rows.map(row => {
                 const request = requestFields(row.request);
                 const isBits = request.functionCode <= 2;
                 const format = { ...DEFAULT_FORMAT, ...row.format };
@@ -240,8 +254,8 @@ export default function MonitorPanel({
                   <td><input className="liquid-glass-input" type="number" min={0} max={65535} value={request.address} onClick={event => event.stopPropagation()} onChange={event => setReadField(row, { address: Number(event.target.value) })} /></td>
                   <td>{isBits ? "Bit" : <select className="liquid-glass-input liquid-glass-select" value={format.value_type} onClick={event => event.stopPropagation()} onChange={event => patchFormat(row, { value_type: event.target.value as ValueFormat["value_type"], bit: null })}>{REGISTER_TYPES.map(item => <option key={item}>{item}</option>)}</select>}</td>
                   <td className={styles.mono}>{displayValue(current?.value)}{!isBits && current?.value != null && format.unit ? ` ${format.unit}` : ""}</td>
-                  <td title={current?.message ?? ""} className={current?.status === "success" ? styles.success : current ? styles.warning : ""}>{current?.status ?? "—"}</td>
-                  <td><button className="liquid-glass-button" onClick={event => { event.stopPropagation(); remove(row.id); }} aria-label={`删除 ${row.name}`}>×</button></td>
+                  <td title={current?.message ?? ""} className={current?.status === "success" ? styles.success : current ? styles.warning : ""}>{statusLabel(current?.status)}</td>
+                  <td><button className="liquid-glass-button" onClick={event => { event.stopPropagation(); remove(row.id); }} aria-label={t("modbus.deleteNamed", { name: row.name })}>×</button></td>
                 </tr>;
               })}</tbody>
             </table>
@@ -249,19 +263,19 @@ export default function MonitorPanel({
         </div>
 
         <aside className={styles.monitorInspector}>
-          <div className={styles.subHeading}><strong>监控项设置</strong><span className={styles.hint}>{selected ? `${selected.name} · Unit ${selected.unit_id} · ${areaLabel(selectedRequest?.functionCode ?? 3)}` : "选择一个监控项"}</span></div>
+          <div className={styles.subHeading}><strong>{t("modbus.monitorInspector")}</strong><span className={styles.hint}>{selected ? `${selected.name} · Unit ${selected.unit_id} · ${areaLabel(selectedRequest?.functionCode ?? 3)}` : t("modbus.monitorSelectRow")}</span></div>
           {selected && selectedRequest ? <div className={styles.inspectorGrid}>
-            <label className={styles.field}><span className={styles.label}>数量</span><input className="liquid-glass-input" type="number" min={1} disabled={!selectedIsBits && selectedWidth != null} value={selectedRequest.quantity} onChange={event => setReadField(selected, { quantity: Number(event.target.value) })} /></label>
-            <label className={styles.field}><span className={styles.label}>周期 (ms)</span><input className="liquid-glass-input" type="number" min={20} max={86400000} value={selected.period_ms} onChange={event => patchRow(selected.id, { period_ms: Number(event.target.value) })} /></label>
+            <label className={styles.field}><span className={styles.label}>{t("modbus.rwQuantity")}</span><input className="liquid-glass-input" type="number" min={1} disabled={!selectedIsBits && selectedWidth != null} value={selectedRequest.quantity} onChange={event => setReadField(selected, { quantity: Number(event.target.value) })} /></label>
+            <label className={styles.field}><span className={styles.label}>{t("modbus.monitorPeriod")}</span><input className="liquid-glass-input" type="number" min={20} max={86400000} value={selected.period_ms} onChange={event => patchRow(selected.id, { period_ms: Number(event.target.value) })} /></label>
             {!selectedIsBits && <>
-              <label className={styles.field}><span className={styles.label}>字节序</span><select className="liquid-glass-input liquid-glass-select" value={selectedFormat.byte_order} onChange={event => patchFormat(selected, { byte_order: event.target.value as ValueFormat["byte_order"] })}><option value="big">Big</option><option value="little">Little</option></select></label>
-              <label className={styles.field}><span className={styles.label}>字序</span><select className="liquid-glass-input liquid-glass-select" value={selectedFormat.word_order} disabled={selectedRequest.quantity <= 1} onChange={event => patchFormat(selected, { word_order: event.target.value as ValueFormat["word_order"] })}><option value="normal">Normal</option><option value="reverse">Reverse</option></select></label>
+              <label className={styles.field}><span className={styles.label}>{t("modbus.monitorByteOrder")}</span><select className="liquid-glass-input liquid-glass-select" value={selectedFormat.byte_order} onChange={event => patchFormat(selected, { byte_order: event.target.value as ValueFormat["byte_order"] })}><option value="big">Big</option><option value="little">Little</option></select></label>
+              <label className={styles.field}><span className={styles.label}>{t("modbus.monitorWordOrder")}</span><select className="liquid-glass-input liquid-glass-select" value={selectedFormat.word_order} disabled={selectedRequest.quantity <= 1} onChange={event => patchFormat(selected, { word_order: event.target.value as ValueFormat["word_order"] })}><option value="normal">Normal</option><option value="reverse">Reverse</option></select></label>
               <label className={styles.field}><span className={styles.label}>Scale</span><input className="liquid-glass-input" type="number" step="any" value={selectedFormat.scale} disabled={selectedExact64} onChange={event => patchFormat(selected, { scale: Number(event.target.value) })} /></label>
               <label className={styles.field}><span className={styles.label}>Offset</span><input className="liquid-glass-input" type="number" step="any" value={selectedFormat.offset} disabled={selectedExact64} onChange={event => patchFormat(selected, { offset: Number(event.target.value) })} /></label>
               <label className={styles.field}><span className={styles.label}>Unit</span><input className="liquid-glass-input" value={selectedFormat.unit} onChange={event => patchFormat(selected, { unit: event.target.value })} /></label>
               <label className={styles.field}><span className={styles.label}>Bit</span><input className="liquid-glass-input" type="number" min={0} max={15} value={selectedFormat.bit ?? ""} onChange={event => patchFormat(selected, { bit: event.target.value === "" ? null : Number(event.target.value) })} /></label>
             </>}
-          </div> : <div className={styles.emptyState}>添加或选择监控项后可编辑详细解释参数。</div>}
+          </div> : <div className={styles.emptyState}>{t("modbus.monitorEmptyInspector")}</div>}
         </aside>
       </section>
     </div>
