@@ -12,6 +12,9 @@ import styles from "./Modbus.module.css";
 
 type Endpoint = { name: string; description: string; connection_type: string };
 
+const defaultTcpHost = (role: ModbusRole) => role === "server" ? "0.0.0.0" : "127.0.0.1";
+const isRoleDefaultTcpHost = (host: string) => !host || host === "127.0.0.1" || host === "0.0.0.0";
+
 export default function ModbusConnectForm({ params, onChange }: ConnectFormProps) {
   const [ports, setPorts] = useState<Endpoint[]>([]);
   const normalized = useMemo(() => normalizeModbusSessionParams(params), [params]);
@@ -38,7 +41,8 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
   const changeMode = (nextMode: ModbusMode) => {
     const next: Record<string, unknown> = { mode: nextMode };
     if (nextMode === "tcp") {
-      next.host = normalized.host.trim() || (role === "server" ? "0.0.0.0" : "127.0.0.1");
+      const host = normalized.host.trim();
+      if (isRoleDefaultTcpHost(host)) next.host = defaultTcpHost(role);
     } else if (role === "server" && normalized.unit_id === 0) {
       next.unit_id = 1;
     }
@@ -48,9 +52,8 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
   const changeRole = (nextRole: ModbusRole) => {
     const next: Record<string, unknown> = { role: nextRole };
     if (mode === "tcp") {
-      const previousDefault = role === "server" ? "0.0.0.0" : "127.0.0.1";
-      const nextDefault = nextRole === "server" ? "0.0.0.0" : "127.0.0.1";
-      if (!normalized.host.trim() || normalized.host === previousDefault) next.host = nextDefault;
+      const host = normalized.host.trim();
+      if (isRoleDefaultTcpHost(host)) next.host = defaultTcpHost(nextRole);
     } else if (nextRole === "server" && normalized.unit_id === 0) {
       next.unit_id = 1;
     }
