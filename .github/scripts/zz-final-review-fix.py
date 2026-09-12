@@ -84,36 +84,28 @@ new = '''        match self.sessions.get(&id).map(|handle| handle.state.clone())
 if old not in store:
     raise SystemExit("create_container_session id guard anchor missing")
 store = store.replace(old, new, 1)
-store = store.replace("reserve_side_channel", "reserve_auxiliary")
-store = store.replace("SideChannel", "Auxiliary")
 store_path.write_text(store)
 
-# Transfer strategy terminology: this is an auxiliary file-transfer capability, not the removed
-# kernel SideChannel runtime architecture.
-for rel in [
-    "src-tauri/src/transfer/scheduler.rs",
-    "src-tauri/src/transfer/orchestrator.rs",
-    "scripts/test-file-transfer-lifecycle.mjs",
-]:
-    p = Path(rel)
-    text = p.read_text()
-    text = text.replace("SideChannelTransferOrchestrator", "AuxiliaryTransferOrchestrator")
-    text = text.replace("SideChannel", "Auxiliary")
-    text = text.replace("side_channel", "auxiliary")
-    p.write_text(text)
-
-# Remaining protocol-source mentions are stale names/comments from the removed kernel runtime
-# architecture. Protocol-specific runtimes are now obtained only from typed registries.
-for path in Path("src-tauri/src/plugins").rglob("*.rs"):
+# Eliminate the old kernel SideChannel vocabulary. In the file-transfer subsystem the replacement
+# term is Auxiliary; everywhere else protocol-specific objects are typed runtimes.
+for path in Path("src-tauri/src").rglob("*.rs"):
     text = path.read_text()
-    text = text.replace("SideChannel", "Runtime")
-    text = text.replace("side_channel", "runtime")
+    if "src-tauri/src/transfer/" in path.as_posix():
+        text = text.replace("SideChannelTransferOrchestrator", "AuxiliaryTransferOrchestrator")
+        text = text.replace("SideChannel", "Auxiliary")
+        text = text.replace("side_channel", "auxiliary")
+    else:
+        text = text.replace("SideChannel", "Runtime")
+        text = text.replace("side_channel", "runtime")
     text = text.replace("侧通道资源", "类型化运行时资源")
-    text = text.replace("侧通道", "独立协议能力")
-    text = text.replace("`ProtocolConnection::runtime` 传递给 `SessionStore`", "由插件 typed runtime registry 按 session_id 管理")
     path.write_text(text)
 
-# SSH comments must explicitly describe the typed runtime registry and FileTransfer capability.
+# Lifecycle contract tests must use the same Auxiliary naming as implementation.
+lifecycle = Path("scripts/test-file-transfer-lifecycle.mjs")
+text = lifecycle.read_text().replace("SideChannel", "Auxiliary").replace("side_channel", "auxiliary")
+lifecycle.write_text(text)
+
+# Fix stale SSH/iPerf prose left from the old erased runtime model.
 ssh = Path("src-tauri/src/plugins/ssh/mod.rs")
 text = ssh.read_text()
 text = text.replace(
@@ -130,7 +122,15 @@ text = text.replace(
 )
 ssh.write_text(text)
 
-# Current architecture docs must use the new capability contract, not historical SideChannel terms.
+iperf = Path("src-tauri/src/plugins/iperf/mod.rs")
+text = iperf.read_text()
+text = text.replace("//! 采用 Runtime 模式（对齐 TFTP），会话为容器模式（无终端 I/O 循环）。", "//! 采用容器 Session + typed runtime registry，不创建终端 DataPlane。")
+text = text.replace("/// iperf 独立协议能力资源", "/// iperf 类型化运行时")
+text = text.replace("/// 创建新的 iperf 独立协议能力", "/// 创建新的 iperf runtime")
+text = text.replace("/// 通过 `ProtocolConnection::runtime` 传递给 `SessionStore`。", "/// SessionStore 只持有 SessionService；协议命令从插件 typed registry 获取本 runtime。")
+iperf.write_text(text)
+
+# Current architecture docs must use the new capability contract.
 core = Path("docs/modules/CORE.md")
 text = core.read_text()
 text = text.replace(
@@ -151,9 +151,7 @@ text = text.replace("lease/side resource", "lease/auxiliary resource")
 transfer.write_text(text)
 
 for path in Path("docs/modules").rglob("*.md"):
-    text = path.read_text()
-    text = text.replace("SideChannel", "auxiliary capability")
-    text = text.replace("side_channel", "runtime")
+    text = path.read_text().replace("SideChannel", "auxiliary capability").replace("side_channel", "runtime")
     path.write_text(text)
 
 # No erased protocol-runtime architecture may remain. Generic downcasts elsewhere are not banned;
