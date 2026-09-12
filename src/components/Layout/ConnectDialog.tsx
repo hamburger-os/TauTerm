@@ -123,6 +123,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const isLocalShell = selectedMode === "local-shell";
   const selectedPlugin = pluginRegistry.get(selectedMode);
   const PluginConnectForm = selectedPlugin?.connectForm;
+  const pluginConnectionConfigValid = selectedPlugin?.isConnectionConfigValid?.(pluginParams) !== false;
   const tftpBind = tftpListenIp.trim().toLowerCase();
   const tftpExposureRisk = isTftp
     && tftpWriteEnabled
@@ -373,6 +374,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     if (!sshHost && isSsh) return;
     if (!tftpFileRoot && isTftp) return;
     if (!telnetHost && isTelnet) return;
+    if (!pluginConnectionConfigValid) return;
     if (isLocalShell && pluginParams.shell_mode === "custom" && !String(pluginParams.executable ?? "").trim()) {
       setError(t("localShell.executableRequired"));
       return;
@@ -534,7 +536,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive, isTrdp]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginConnectionConfigValid, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive, isTrdp]);
 
   // 数据字符编码下拉（终端类协议共用：serial / ssh / telnet）
   const encodingField = (
@@ -1449,7 +1451,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       <button
                         className={`${styles.connectBtn} liquid-primary-button`}
                         onClick={() => void handleCreate()}
-                        disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || (isNetwork && netRole === "client" && !netRemoteHost) || connecting}
+                        disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || (isNetwork && netRole === "client" && !netRemoteHost) || !pluginConnectionConfigValid || connecting}
                       >
                         {connecting
                           ? t("serial.confirming")
