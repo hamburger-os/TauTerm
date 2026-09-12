@@ -56,6 +56,7 @@ struct TransactionFailure {
 pub struct ModbusClient {
     config: ModbusConfig,
     runtime: Mutex<Option<DataPlaneRuntime>>,
+    events: Mutex<Option<mpsc::Receiver<DataPlaneEvent>>>,
     transaction_guard: Mutex<()>,
     next_transaction_id: AtomicU16,
     history: Mutex<VecDeque<TransactionResult>>,
@@ -66,6 +67,7 @@ impl ModbusClient {
         Self {
             config,
             runtime: Mutex::new(Some(runtime)),
+            events: Mutex::new(None),
             transaction_guard: Mutex::new(()),
             next_transaction_id: AtomicU16::new(1),
             history: Mutex::new(VecDeque::with_capacity(HISTORY_LIMIT)),
@@ -137,24 +139,28 @@ impl ModbusClient {
                 }
             }
         };
-        let events = match handle.subscribe() {
-            Ok(events) => events,
-            Err(error) => {
-                let result = self.failure(TransactionFailure {
-                    status: TransactionStatus::TransportError,
-                    function: 0,
-                    transaction_id: None,
-                    started,
-                    raw_tx: data,
-                    raw_rx: Vec::new(),
-                    message: error.to_string(),
-                    write_outcome_unknown: false,
-                    attempt: 0,
-                });
-                self.record(result.clone());
-                return result;
+        let mut events_guard = self.events.lock().unwrap_or_else(|error| error.into_inner());
+        if events_guard.is_none() {
+            match handle.subscribe() {
+                Ok(events) => *events_guard = Some(events),
+                Err(error) => {
+                    let result = self.failure(TransactionFailure {
+                        status: TransactionStatus::TransportError,
+                        function: 0,
+                        transaction_id: None,
+                        started,
+                        raw_tx: data,
+                        raw_rx: Vec::new(),
+                        message: error.to_string(),
+                        write_outcome_unknown: false,
+                        attempt: 0,
+                    });
+                    self.record(result.clone());
+                    return result;
+                }
             }
-        };
+        }
+        let events = events_guard.as_ref().expect("receiver initialized");
         if let Err(error) = handle.write(&data) {
             let result = self.failure(TransactionFailure {
                 status: TransactionStatus::TransportError,
@@ -283,6 +289,19 @@ impl ModbusClient {
         } else {
             None
         };
+        if !request_supported_on_mode(self.config.mode, request) {
+            return self.failure(TransactionFailure {
+                status: TransactionStatus::ProtocolError,
+                function,
+                transaction_id,
+                started,
+                raw_tx: Vec::new(),
+                raw_rx: Vec::new(),
+                message: "function is defined for Modbus serial line and is not available on Modbus TCP".into(),
+                write_outcome_unknown: false,
+                attempt,
+            });
+        }
         let pdu = match codec::encode_request(request) {
             Ok(pdu) => pdu,
             Err(message) => {
@@ -356,22 +375,26 @@ impl ModbusClient {
                 }
             }
         };
-        let events = match handle.subscribe() {
-            Ok(receiver) => receiver,
-            Err(error) => {
-                return self.failure(TransactionFailure {
-                    status: TransactionStatus::TransportError,
-                    function,
-                    transaction_id,
-                    started,
-                    raw_tx: tx,
-                    raw_rx: Vec::new(),
-                    message: error.to_string(),
-                    write_outcome_unknown: request.is_write(),
-                    attempt,
-                });
+        let mut events_guard = self.events.lock().unwrap_or_else(|error| error.into_inner());
+        if events_guard.is_none() {
+            match handle.subscribe() {
+                Ok(receiver) => *events_guard = Some(receiver),
+                Err(error) => {
+                    return self.failure(TransactionFailure {
+                        status: TransactionStatus::TransportError,
+                        function,
+                        transaction_id,
+                        started,
+                        raw_tx: tx,
+                        raw_rx: Vec::new(),
+                        message: error.to_string(),
+                        write_outcome_unknown: request.is_write(),
+                        attempt,
+                    });
+                }
             }
-        };
+        }
+        let events = events_guard.as_ref().expect("receiver initialized");
         if let Err(error) = handle.write(&tx) {
             return self.failure(TransactionFailure {
                 status: TransactionStatus::TransportError,
@@ -407,15 +430,16 @@ impl ModbusClient {
         let deadline = Instant::now() + Duration::from_millis(self.config.response_timeout_ms);
         let received = match self.config.mode {
             ModbusMode::Tcp => receive_tcp(
-                &events,
+                events,
                 deadline,
                 transaction_id.unwrap_or(0),
                 self.config.unit_id,
             ),
-            ModbusMode::Ascii => receive_ascii(&events, deadline, self.config.unit_id),
+            ModbusMode::Ascii => receive_ascii(events, deadline, self.config.unit_id),
             ModbusMode::Rtu => receive_rtu(
-                &events,
+                events,
                 deadline,
+                self.config.rtu_inter_char_gap(),
                 self.config.rtu_frame_gap(),
                 self.config.unit_id,
             ),
@@ -605,16 +629,14 @@ fn receive_tcp(
                 let frames = framer
                     .push(&data)
                     .map_err(|error| ReceiveError::Malformed(error, data.clone()))?;
-                if let Some(frame) = frames.into_iter().next() {
+                for frame in frames {
                     let (tid, unit, pdu) = codec::tcp::decode(&frame)
                         .map_err(|error| ReceiveError::Malformed(error, frame.clone()))?;
                     if tid != transaction_id {
-                        return Err(ReceiveError::Protocol(
-                            format!(
-                                "transaction id mismatch: expected {transaction_id}, got {tid}"
-                            ),
-                            frame,
-                        ));
+                        // A timed-out attempt may reply after its successor has already been sent.
+                        // Under the single-outstanding contract it is stale, not an error in the
+                        // current transaction. Keep waiting for the current TID.
+                        continue;
                     }
                     if unit != unit_id {
                         return Err(ReceiveError::Protocol(
@@ -660,7 +682,8 @@ fn receive_ascii(
 fn receive_rtu(
     events: &mpsc::Receiver<DataPlaneEvent>,
     deadline: Instant,
-    gap: Duration,
+    inter_char_gap: Duration,
+    frame_gap: Duration,
     unit_id: u8,
 ) -> Result<(Vec<u8>, Vec<u8>), ReceiveError> {
     let mut raw = Vec::new();
@@ -672,7 +695,7 @@ fn receive_rtu(
         let wait = if raw.is_empty() {
             remaining
         } else {
-            remaining.min(gap)
+            remaining.min(inter_char_gap)
         };
         match events.recv_timeout(wait) {
             Ok(DataPlaneEvent::Closed(info)) => return Err(ReceiveError::Transport(info.reason)),
@@ -681,15 +704,44 @@ fn receive_rtu(
                 return Err(ReceiveError::Timeout)
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                let (unit, pdu) = codec::rtu::decode(&raw)
-                    .map_err(|error| ReceiveError::Malformed(error, raw.clone()))?;
-                if unit != unit_id {
-                    return Err(ReceiveError::Protocol(
-                        format!("unit id mismatch: expected {unit_id}, got {unit}"),
+                let tail = frame_gap.saturating_sub(inter_char_gap);
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining < tail {
+                    return Err(ReceiveError::Malformed(
+                        "RTU response did not reach the required t3.5 frame boundary before timeout"
+                            .into(),
                         raw,
                     ));
                 }
-                return Ok((raw, pdu));
+                match events.recv_timeout(tail) {
+                    Ok(DataPlaneEvent::Data(data)) => {
+                        raw.extend_from_slice(&data);
+                        return Err(ReceiveError::Malformed(
+                            "RTU inter-character silence exceeded t1.5 before frame completion"
+                                .into(),
+                            raw,
+                        ));
+                    }
+                    Ok(DataPlaneEvent::Closed(info)) => {
+                        return Err(ReceiveError::Transport(info.reason))
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(ReceiveError::Transport(
+                            "transport event stream closed".into(),
+                        ))
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        let (unit, pdu) = codec::rtu::decode(&raw)
+                            .map_err(|error| ReceiveError::Malformed(error, raw.clone()))?;
+                        if unit != unit_id {
+                            return Err(ReceiveError::Protocol(
+                                format!("unit id mismatch: expected {unit_id}, got {unit}"),
+                                raw,
+                            ));
+                        }
+                        return Ok((raw, pdu));
+                    }
+                }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 return Err(ReceiveError::Transport(
@@ -714,6 +766,20 @@ fn recv_until(
             ReceiveError::Transport("transport event stream closed".into())
         }
     })
+}
+
+fn request_supported_on_mode(mode: ModbusMode, request: &ModbusRequest) -> bool {
+    if mode != ModbusMode::Tcp {
+        return true;
+    }
+    !matches!(
+        request,
+        ModbusRequest::ReadExceptionStatus
+            | ModbusRequest::Diagnostics { .. }
+            | ModbusRequest::GetCommEventCounter
+            | ModbusRequest::GetCommEventLog
+            | ModbusRequest::ReportServerId
+    )
 }
 
 fn mode(value: ModbusMode) -> AduMode {
@@ -835,5 +901,34 @@ mod tests {
         assert!(matches!(read.status, TransactionStatus::ProtocolError));
         assert_eq!(writes.load(Ordering::Relaxed), 1);
         client.shutdown();
+    }
+
+    #[test]
+    fn tcp_skips_stale_tid_and_accepts_current_frame_from_same_chunk() {
+        let (tx, rx) = mpsc::channel();
+        let stale = codec::tcp::encode(7, 1, &[0x03, 2, 0, 1]).unwrap();
+        let current = codec::tcp::encode(8, 1, &[0x03, 2, 0, 2]).unwrap();
+        let mut chunk = stale;
+        chunk.extend_from_slice(&current);
+        tx.send(DataPlaneEvent::Data(chunk)).unwrap();
+        let (raw, pdu) = receive_tcp(&rx, Instant::now() + Duration::from_secs(1), 8, 1).unwrap();
+        assert_eq!(raw, current);
+        assert_eq!(pdu, vec![0x03, 2, 0, 2]);
+    }
+
+    #[test]
+    fn serial_only_functions_are_rejected_for_tcp_core() {
+        assert!(!request_supported_on_mode(
+            ModbusMode::Tcp,
+            &ModbusRequest::GetCommEventCounter
+        ));
+        assert!(request_supported_on_mode(
+            ModbusMode::Tcp,
+            &ModbusRequest::ReadRegisters {
+                function: 3,
+                address: 0,
+                quantity: 1,
+            }
+        ));
     }
 }
