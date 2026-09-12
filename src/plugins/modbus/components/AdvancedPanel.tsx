@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "../Modbus.module.css";
 import {
@@ -62,6 +62,14 @@ function ClientAdvancedPanel({ execute, mode, connected }: { execute: Props["exe
   const [result, setResult] = useState<TransactionResult | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!options.some(option => option.value === operation)) {
+      setOperation(options[0]?.value ?? "read_file");
+      setResult(null);
+      setError("");
+    }
+  }, [mode, operation]);
 
   const run = async () => {
     if (!connected) return;
