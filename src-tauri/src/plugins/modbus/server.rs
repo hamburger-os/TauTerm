@@ -462,7 +462,9 @@ fn run_tcp_peer(
                             response: Some(exception_pdu(request.function(), 0x01)),
                             status: TransactionStatus::ModbusException,
                             exception_code: Some(0x01),
-                            message: Some("serial-line-only function is unavailable on Modbus TCP".into()),
+                            message: Some(
+                                "serial-line-only function is unavailable on Modbus TCP".into(),
+                            ),
                         }
                     } else {
                         execute_with_fault(&fault, &model, &request)
