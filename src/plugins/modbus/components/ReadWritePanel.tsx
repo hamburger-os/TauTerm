@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import styles from "../Modbus.module.css";
 import {
   FUNCTION_LABELS,
@@ -77,12 +77,12 @@ export default function ReadWritePanel({ execute, connected }: Props) {
   };
 
   return (
-    <div className={styles.stack}>
-      <section className={`${styles.card} liquid-glass-card`}>
+    <div className={styles.panelPage}>
+      <section className={styles.workbenchSection}>
         <div className={styles.panelHeading}>
           <div>
             <strong>请求</strong>
-            <span className={styles.hint}>选择功能码并编辑本次事务参数。协议地址统一为 0-based。</span>
+            <span className={styles.hint}>按功能码、协议地址和数量组织一次事务；协议地址统一使用 0-based。</span>
           </div>
         </div>
 
@@ -127,15 +127,49 @@ export default function ReadWritePanel({ execute, connected }: Props) {
         </div>
       </section>
 
-      <section className={`${styles.card} liquid-glass-card`}>
+      <section className={styles.workbenchSection}>
         <div className={styles.panelHeading}>
           <div>
-            <strong>执行结果</strong>
-            <span className={styles.hint}>显示当前请求的状态、延迟以及 TX / RX / PDU 原始数据。</span>
+            <strong>结果</strong>
+            <span className={styles.hint}>读取结果优先按地址和值呈现；原始 TX / RX / PDU 保留用于协议诊断。</span>
           </div>
         </div>
-        {result ? <ResultCard result={result} /> : <div className={styles.emptyState}>尚未执行请求。完成一次事务后，结果会显示在这里。</div>}
+        {result ? <>
+          <ReadValues result={result} functionCode={fc} address={isReadWrite ? readAddress : address} quantity={isReadWrite ? readQuantity : quantity} />
+          <ResultCard result={result} />
+        </> : <div className={styles.emptyState}>尚未执行请求。完成一次事务后，结果会显示在这里。</div>}
       </section>
     </div>
   );
+}
+
+function ReadValues({ result, functionCode, address, quantity }: { result: TransactionResult; functionCode: number; address: number; quantity: number }) {
+  const rows = useMemo(() => {
+    if (result.status !== "success" || result.response_pdu.length < 2) return [] as { address: number; value: string; hex: string }[];
+    const pdu = result.response_pdu;
+    const responseFunction = pdu[0];
+    if (responseFunction !== functionCode || ![1, 2, 3, 4, 23].includes(responseFunction)) return [];
+    const data = pdu.slice(2);
+    if (responseFunction === 1 || responseFunction === 2) {
+      return Array.from({ length: quantity }, (_, index) => {
+        const bit = ((data[Math.floor(index / 8)] ?? 0) >> (index % 8)) & 1;
+        return { address: address + index, value: String(bit), hex: bit ? "01" : "00" };
+      });
+    }
+    const registerCount = Math.min(quantity, Math.floor(data.length / 2));
+    return Array.from({ length: registerCount }, (_, index) => {
+      const high = data[index * 2] ?? 0;
+      const low = data[index * 2 + 1] ?? 0;
+      const value = (high << 8) | low;
+      return { address: address + index, value: String(value), hex: `0x${value.toString(16).padStart(4, "0").toUpperCase()}` };
+    });
+  }, [address, functionCode, quantity, result]);
+
+  if (rows.length === 0) return null;
+  return <div className={styles.tableWrap}>
+    <table className={styles.table}>
+      <thead><tr><th>协议地址</th><th>传统引用</th><th>值</th><th>Hex</th></tr></thead>
+      <tbody>{rows.map(row => <tr key={row.address}><td>{row.address}</td><td>{traditionalAddress(functionCode === 23 ? 3 : functionCode, row.address)}</td><td className={styles.mono}>{row.value}</td><td className={styles.mono}>{row.hex}</td></tr>)}</tbody>
+    </table>
+  </div>;
 }
