@@ -323,7 +323,9 @@ fn run_rtu_server(
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         let frame = std::mem::take(&mut buffer);
-                        process_serial_frame(handle, config, model, fault, history, sequence, &frame);
+                        process_serial_frame(
+                            handle, config, model, fault, history, sequence, &frame,
+                        );
                     }
                 }
             }
