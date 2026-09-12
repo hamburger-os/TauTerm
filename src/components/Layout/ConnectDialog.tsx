@@ -370,7 +370,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
   const handleCreate = useCallback(async () => {
     if (!port && isSerial) return;
-    if (!sshHost && isSsh) return;
+    if (isSsh && (!sshHost.trim() || !sshUsername.trim())) return;
     if (!tftpFileRoot && isTftp) return;
     if (!telnetHost && isTelnet) return;
     if (isLocalShell && pluginParams.shell_mode === "custom" && !String(pluginParams.executable ?? "").trim()) {
@@ -404,9 +404,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       virtual_port_enabled: virtualPortEnabled,
       virtual_port_count: virtualPortCount,
     } : isSsh ? {
-      host: sshHost,
+      host: sshHost.trim(),
       port: sshPort,
-      username: sshUsername,
+      username: sshUsername.trim(),
       auth_method: sshAuthMethod,
       password: sshAuthMethod === "password" ? sshPassword : undefined,
       private_key: sshAuthMethod === "key" ? sshPrivateKey : undefined,
@@ -477,11 +477,13 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     // endpoint 保持内部字面量；侧栏第二行单独显示监听地址，首次创建的默认名携带版本。
     // 网络调试：所有角色的 endpoint 统一带传输层前缀（tcp:// / udp://），
     // 使侧栏/状态栏/详情页自描述（网络会话状态栏无类型徽标，前缀即传输层标识）
-    const endpoint = isSerial ? port : (isSsh ? sshHost : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isIperf ? "iperf" : (isTelnet ? telnetHost : (isLocalShell ? String(params.cwd) : (isNetwork
+    const endpoint = isSerial ? port : (isSsh ? sshHost.trim() : (isTftp ? `${tftpListenIp}:${tftpListenPort}` : (isIperf ? "iperf" : (isTelnet ? telnetHost : (isLocalShell ? String(params.cwd) : (isNetwork
       ? `${netTransport}://${netRole === "client"
           ? `${netRemoteHost}:${netRemotePort}`
           : `${netLocalHost || "0.0.0.0"}:${netLocalPort}`}`
       : selectedMode))))));
+    // SSH 默认会话名表达登录身份；网络目标由侧栏第二行显示。
+    const sshDefaultName = `${pluginRegistry.get("ssh")?.manifest.name || "SSH"} @ ${sshUsername.trim()}`;
     // 网络调试默认会话名：带传输层与角色（"Network Debug @ TCP Client"），
     // 避免多个网络调试会话在左侧树里无法区分 server/client
     const networkDefaultName = `${pluginRegistry.get("network")?.manifest.name || "Network Debug"} @ ${netTransport.toUpperCase()} ${netRole === "server" ? "Server" : "Client"}`;
@@ -510,15 +512,17 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         onClose();
       } else {
         // 新建模式：仅保存配置，不连接（连接由右键菜单触发）
-        const initialSessionName = isNetwork
-          ? (sessionName || networkDefaultName)
-          : isTftp
-            ? (sessionName || tftpDefaultName)
-            : isIperf
-              ? (sessionName || iperfDefaultName)
-              : isTrdp
-                ? (sessionName || trdpDefaultName)
-                : effectiveSessionName;
+        const initialSessionName = isSsh
+          ? (sessionName || sshDefaultName)
+          : isNetwork
+            ? (sessionName || networkDefaultName)
+            : isTftp
+              ? (sessionName || tftpDefaultName)
+              : isIperf
+                ? (sessionName || iperfDefaultName)
+                : isTrdp
+                  ? (sessionName || trdpDefaultName)
+                  : effectiveSessionName;
         const sid = await createOfflineSession(
           endpoint, params,
           initialSessionName, pluginId,
@@ -1449,7 +1453,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                       <button
                         className={`${styles.connectBtn} liquid-primary-button`}
                         onClick={() => void handleCreate()}
-                        disabled={(!port && isSerial) || (!sshHost && isSsh) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || (isNetwork && netRole === "client" && !netRemoteHost) || connecting}
+                        disabled={(!port && isSerial) || (isSsh && (!sshHost.trim() || !sshUsername.trim())) || (!tftpFileRoot && isTftp) || (!telnetHost && isTelnet) || (isNetwork && netRole === "client" && !netRemoteHost) || connecting}
                       >
                         {connecting
                           ? t("serial.confirming")

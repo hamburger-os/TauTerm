@@ -27,6 +27,15 @@ interface SessionSidebarProps {
   onNewSession?: () => void;
 }
 
+function formatHostPort(host: string, port: number): string {
+  const trimmedHost = host.trim();
+  const displayHost = trimmedHost.includes(":")
+    && !(trimmedHost.startsWith("[") && trimmedHost.endsWith("]"))
+    ? `[${trimmedHost}]`
+    : trimmedHost;
+  return `${displayHost}:${port}`;
+}
+
 /**
  * 左侧会话列表侧边栏（树形结构，支持协议能力驱动的多终端）。
  *
@@ -144,6 +153,16 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
 
   const getSessionSubtitle = useCallback((tab: TabInfo): string => {
     const params = (tab.params ?? {}) as Record<string, unknown>;
+    if (tab.pluginId === "ssh") {
+      const host = typeof params.host === "string" && params.host.trim()
+        ? params.host.trim()
+        : tab.endpoint;
+      const port = typeof params.port === "number" && Number.isInteger(params.port)
+        && params.port > 0 && params.port <= 65535
+        ? params.port
+        : 22;
+      return formatHostPort(host, port);
+    }
     if (tab.pluginId === "iperf") {
       const listenIp = typeof params.listen_ip === "string" && params.listen_ip.trim()
         ? params.listen_ip.trim()
