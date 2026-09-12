@@ -6,7 +6,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::plugins::modbus::client::{TransactionResult, TransactionStatus};
 use crate::plugins::modbus::codec;
-use crate::plugins::modbus::config::{ModbusConfig, ModbusMode, ServerFaultConfig};
+use crate::plugins::modbus::config::{
+    validate_fault, ModbusEndpointConfig, ModbusMode, ServerFaultConfig, ValidatedModbusConfig,
+};
 use crate::plugins::modbus::data_model::ModbusDataModel;
 use crate::transport::runtime::DataPlaneEvent;
 use crate::transport::serial::open_serial;
@@ -16,7 +18,7 @@ use crate::transport::DataPlaneRuntime;
 const SERVER_HISTORY_LIMIT: usize = 1000;
 
 pub struct ModbusServer {
-    config: ModbusConfig,
+    config: ValidatedModbusConfig,
     pub model: Arc<ModbusDataModel>,
     fault: Arc<RwLock<ServerFaultConfig>>,
     history: Arc<Mutex<VecDeque<TransactionResult>>>,
@@ -27,22 +29,28 @@ pub struct ModbusServer {
 }
 
 impl ModbusServer {
-    pub fn new(config: ModbusConfig) -> Result<Self, String> {
-        config.validate()?;
-        let (serial_runtime, listener) = match config.mode {
-            ModbusMode::Rtu | ModbusMode::Ascii => {
-                let driver =
-                    open_serial(&config.serial_port, &config.serial).map_err(|e| e.to_string())?;
+    pub fn new(config: ValidatedModbusConfig) -> Result<Self, String> {
+        let server = config
+            .server()
+            .ok_or("ModbusServer requires server runtime configuration")?;
+        let fault = Arc::new(RwLock::new(server.fault.clone()));
+        let (serial_runtime, listener) = match &config.endpoint {
+            ModbusEndpointConfig::Serial {
+                port, transport, ..
+            } => {
+                let driver = open_serial(port, transport).map_err(|e| e.to_string())?;
                 (Some(DataPlaneRuntime::spawn(Box::new(driver))), None)
             }
-            ModbusMode::Tcp => {
-                let listener =
-                    TcpListenerTransport::bind(&config.host, config.port, config.tcp.clone())
-                        .map_err(|e| e.to_string())?;
+            ModbusEndpointConfig::Tcp {
+                host,
+                port,
+                transport,
+            } => {
+                let listener = TcpListenerTransport::bind(host, *port, transport.clone())
+                    .map_err(|e| e.to_string())?;
                 (None, Some(listener))
             }
         };
-        let fault = Arc::new(RwLock::new(config.server_fault.clone()));
         Ok(Self {
             config,
             model: Arc::new(ModbusDataModel::default()),
@@ -59,7 +67,7 @@ impl ModbusServer {
         if self.running.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        let result = match self.config.mode {
+        let result = match self.config.mode() {
             ModbusMode::Rtu | ModbusMode::Ascii => self.start_serial(),
             ModbusMode::Tcp => self.start_tcp(),
         };
@@ -84,7 +92,7 @@ impl ModbusServer {
         let model = self.model.clone();
         let fault = self.fault.clone();
         let history = self.history.clone();
-        let worker = std::thread::spawn(move || match config.mode {
+        let worker = std::thread::spawn(move || match config.mode() {
             ModbusMode::Rtu => run_rtu_server(
                 &handle, &events, &running, &config, &model, &fault, &history,
             ),
@@ -110,13 +118,17 @@ impl ModbusServer {
         let fault = self.fault.clone();
         let history = self.history.clone();
         let config = self.config.clone();
+        let max_clients = self
+            .config
+            .server()
+            .expect("server role checked by constructor")
+            .max_clients;
         let active = Arc::new(AtomicUsize::new(0));
         let listener_worker = std::thread::spawn(move || {
             while running.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok(Some((driver, _peer))) => {
-                        let max = config.server_max_clients;
-                        if max > 0 && active.load(Ordering::Acquire) >= max {
+                        if max_clients > 0 && active.load(Ordering::Acquire) >= max_clients {
                             continue;
                         }
                         active.fetch_add(1, Ordering::AcqRel);
@@ -157,14 +169,7 @@ impl ModbusServer {
     }
 
     pub fn set_fault(&self, fault: ServerFaultConfig) -> Result<(), String> {
-        if fault.delay_ms > 60_000 {
-            return Err("fault delay_ms must be <= 60000".into());
-        }
-        if let Some(code) = fault.exception_code {
-            if !(1..=11).contains(&code) {
-                return Err("fault exception_code must be 1..=11".into());
-            }
-        }
+        validate_fault(&fault)?;
         *self.fault.write().map_err(|e| e.to_string())? = fault;
         Ok(())
     }
@@ -209,7 +214,7 @@ fn run_ascii_server(
     handle: &crate::transport::DataPlaneHandle,
     events: &std::sync::mpsc::Receiver<DataPlaneEvent>,
     running: &AtomicBool,
-    config: &ModbusConfig,
+    config: &ValidatedModbusConfig,
     model: &ModbusDataModel,
     fault: &RwLock<ServerFaultConfig>,
     history: &Mutex<VecDeque<TransactionResult>>,
@@ -235,7 +240,7 @@ fn run_rtu_server(
     handle: &crate::transport::DataPlaneHandle,
     events: &std::sync::mpsc::Receiver<DataPlaneEvent>,
     running: &AtomicBool,
-    config: &ModbusConfig,
+    config: &ValidatedModbusConfig,
     model: &ModbusDataModel,
     fault: &RwLock<ServerFaultConfig>,
     history: &Mutex<VecDeque<TransactionResult>>,
@@ -276,14 +281,14 @@ fn run_rtu_server(
 
 fn process_serial_frame(
     handle: &crate::transport::DataPlaneHandle,
-    config: &ModbusConfig,
+    config: &ValidatedModbusConfig,
     model: &ModbusDataModel,
     fault: &RwLock<ServerFaultConfig>,
     history: &Mutex<VecDeque<TransactionResult>>,
     frame: &[u8],
 ) {
     let started = Instant::now();
-    let decoded = match config.mode {
+    let decoded = match config.mode() {
         ModbusMode::Rtu => codec::rtu::decode(frame),
         ModbusMode::Ascii => codec::ascii::decode(frame),
         ModbusMode::Tcp => return,
@@ -384,8 +389,8 @@ fn process_serial_frame(
     );
 }
 
-fn encode_serial(config: &ModbusConfig, unit: u8, pdu: &[u8]) -> Option<Vec<u8>> {
-    match config.mode {
+fn encode_serial(config: &ValidatedModbusConfig, unit: u8, pdu: &[u8]) -> Option<Vec<u8>> {
+    match config.mode() {
         ModbusMode::Rtu => codec::rtu::encode(unit, pdu).ok(),
         ModbusMode::Ascii => codec::ascii::encode(unit, pdu).ok(),
         ModbusMode::Tcp => None,
@@ -398,7 +403,7 @@ fn run_tcp_peer(
     model: Arc<ModbusDataModel>,
     fault: Arc<RwLock<ServerFaultConfig>>,
     history: Arc<Mutex<VecDeque<TransactionResult>>>,
-    config: ModbusConfig,
+    config: ValidatedModbusConfig,
 ) {
     let runtime = DataPlaneRuntime::spawn(Box::new(driver));
     let handle = runtime.handle.clone();
@@ -503,6 +508,7 @@ fn run_tcp_peer(
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
+    drop(events);
     runtime.join();
 }
 
@@ -520,18 +526,15 @@ fn execute_with_fault(
 ) -> ServerExecution {
     let fault = fault.read().unwrap_or_else(|e| e.into_inner()).clone();
     if fault.delay_ms > 0 {
-        std::thread::sleep(Duration::from_millis(fault.delay_ms.min(60_000)));
+        std::thread::sleep(Duration::from_millis(fault.delay_ms));
     }
 
     if fault.no_response {
-        let execution = match model.execute(request) {
-            Ok(_) => (TransactionStatus::FaultInjected, None),
-            Err(code) => (TransactionStatus::FaultInjected, Some(code)),
-        };
+        let exception_code = model.execute(request).err();
         return ServerExecution {
             response: None,
-            status: execution.0,
-            exception_code: execution.1,
+            status: TransactionStatus::FaultInjected,
+            exception_code,
             message: Some("response suppressed by server fault injection".into()),
         };
     }
@@ -594,6 +597,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::modbus::codec::RegisterReadArea;
 
     #[test]
     fn no_response_fault_executes_write_but_suppresses_response() {
@@ -607,16 +611,14 @@ mod tests {
         let execution = execute_with_fault(
             &fault,
             &model,
-            &codec::ModbusRequest::WriteSingle {
-                function: 0x06,
+            &codec::ModbusRequest::WriteSingleRegister {
                 address: 7,
                 value: 42,
             },
         );
         assert!(execution.response.is_none());
         assert!(matches!(execution.status, TransactionStatus::FaultInjected));
-        let snapshot = model.snapshot();
-        assert_eq!(snapshot.holding_registers, vec![(7, 42)]);
+        assert_eq!(model.snapshot().holding_registers, vec![(7, 42)]);
     }
 
     #[test]
@@ -631,8 +633,7 @@ mod tests {
         let execution = execute_with_fault(
             &fault,
             &model,
-            &codec::ModbusRequest::WriteSingle {
-                function: 0x06,
+            &codec::ModbusRequest::WriteSingleRegister {
                 address: 7,
                 value: 42,
             },
@@ -653,8 +654,7 @@ mod tests {
         let execution = execute_with_fault(
             &fault,
             &model,
-            &codec::ModbusRequest::WriteSingle {
-                function: 0x06,
+            &codec::ModbusRequest::WriteSingleRegister {
                 address: 7,
                 value: 42,
             },
@@ -667,7 +667,7 @@ mod tests {
     fn tcp_server_rejects_serial_only_standard_functions() {
         assert!(serial_only_request(&codec::ModbusRequest::GetCommEventLog));
         assert!(!serial_only_request(&codec::ModbusRequest::ReadRegisters {
-            function: 3,
+            area: RegisterReadArea::HoldingRegisters,
             address: 0,
             quantity: 1,
         }));
