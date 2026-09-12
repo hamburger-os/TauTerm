@@ -204,7 +204,8 @@ export interface WatchValue {
 
 export interface ValueFormat {
   value_type: "bool" | "uint16" | "int16" | "uint32" | "int32" | "float32" | "uint64" | "int64" | "float64" | "hex" | "binary" | "ascii" | "utf8";
-  byte_order: "ABCD" | "BADC" | "CDAB" | "DCBA";
+  byte_order: "big" | "little";
+  word_order: "normal" | "reverse";
   scale: number;
   offset: number;
   unit: string;
@@ -259,9 +260,16 @@ export function hex(bytes: number[]): string {
 export function parseHex(text: string): number[] {
   const normalized = text.replace(/0x/gi, " ").replace(/[,;:_-]/g, " ").trim();
   if (!normalized) return [];
-  const compact = normalized.includes(" ") ? normalized.split(/\s+/) : normalized.match(/.{1,2}/g) ?? [];
-  const bytes = compact.map(token => Number.parseInt(token, 16));
-  if (bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new Error("无效十六进制字节");
+  const tokens = normalized.split(/\s+/).flatMap(token => {
+    if (!/^[0-9a-fA-F]+$/.test(token) || token.length % 2 !== 0) {
+      throw new Error("十六进制输入必须由完整的两位字节组成");
+    }
+    return token.match(/.{2}/g) ?? [];
+  });
+  const bytes = tokens.map(token => Number.parseInt(token, 16));
+  if (bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    throw new Error("无效十六进制字节");
+  }
   return bytes;
 }
 
@@ -272,8 +280,14 @@ export function parseU16List(text: string): number[] {
 }
 
 export function packCoils(text: string): { quantity: number; values: number[] } {
-  const bits = text.split(/[\s,;]+/).filter(Boolean).map(token => token === "1" || token.toLowerCase() === "true");
-  if (bits.length === 0 || bits.length > 1968) throw new Error("线圈数量必须是 1..1968");
+  const tokens = text.split(/[\s,;]+/).filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 1968) throw new Error("线圈数量必须是 1..1968");
+  const bits = tokens.map(token => {
+    const normalized = token.toLowerCase();
+    if (normalized === "1" || normalized === "true") return true;
+    if (normalized === "0" || normalized === "false") return false;
+    throw new Error(`无效线圈值：${token}；仅支持 0/1/true/false`);
+  });
   const values = new Array(Math.ceil(bits.length / 8)).fill(0) as number[];
   bits.forEach((bit, index) => { if (bit) values[Math.floor(index / 8)] |= 1 << (index % 8); });
   return { quantity: bits.length, values };
