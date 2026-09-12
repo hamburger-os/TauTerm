@@ -69,14 +69,37 @@ impl SessionIo {
             .map_err(Into::into)
     }
 
-    /// Encode UTF-8 application text using the session encoding and return the exact bytes written.
-    pub fn send_text(&self, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
-        let out = if self.encoding.eq_ignore_ascii_case("utf-8") {
+    /// Async command path for Tauri/frontend callers. It preserves DataPlane enqueue ordering while
+    /// awaiting the actor acknowledgement without blocking a synchronous command handler.
+    pub async fn send_async(&self, data: Vec<u8>) -> Result<(), SessionIoError> {
+        self.primary
+            .as_ref()
+            .ok_or(SessionIoError::NoPrimaryDataPlane)?
+            .write_async(data)
+            .await
+            .map_err(Into::into)
+    }
+
+    fn encode_text(&self, data: &[u8]) -> Vec<u8> {
+        if self.encoding.eq_ignore_ascii_case("utf-8") {
             data.to_vec()
         } else {
             transcode_utf8_to_encoding(data, &self.encoding).unwrap_or_else(|| data.to_vec())
-        };
+        }
+    }
+
+    /// Encode UTF-8 application text using the session encoding and return the exact bytes written.
+    pub fn send_text(&self, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
+        let out = self.encode_text(data);
         self.send(&out)?;
+        Ok(out)
+    }
+
+    /// Async counterpart used by frontend IPC so terminal input never waits for transport actor I/O
+    /// on the Tauri main thread.
+    pub async fn send_text_async(&self, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
+        let out = self.encode_text(data);
+        self.send_async(out.clone()).await?;
         Ok(out)
     }
 
@@ -88,11 +111,7 @@ impl SessionIo {
     }
 
     pub fn send_to_text(&self, target: &str, data: &[u8]) -> Result<Vec<u8>, SessionIoError> {
-        let out = if self.encoding.eq_ignore_ascii_case("utf-8") {
-            data.to_vec()
-        } else {
-            transcode_utf8_to_encoding(data, &self.encoding).unwrap_or_else(|| data.to_vec())
-        };
+        let out = self.encode_text(data);
         self.send_to(target, &out)?;
         Ok(out)
     }
@@ -102,6 +121,19 @@ impl SessionIo {
             .as_ref()
             .ok_or(SessionIoError::NoPrimaryDataPlane)?
             .resize_terminal(cols, rows)
+            .map_err(Into::into)
+    }
+
+    pub async fn resize_terminal_async(
+        &self,
+        cols: u32,
+        rows: u32,
+    ) -> Result<(), SessionIoError> {
+        self.primary
+            .as_ref()
+            .ok_or(SessionIoError::NoPrimaryDataPlane)?
+            .resize_terminal_async(cols, rows)
+            .await
             .map_err(Into::into)
     }
 
