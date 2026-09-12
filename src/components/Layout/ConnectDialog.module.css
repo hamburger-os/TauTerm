@@ -162,6 +162,25 @@
   margin-top: 4px;
 }
 
+.warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: -2px 0 12px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 32%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+  color: var(--color-warning);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.warning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
 .input, .numberInput {
   width: 100%;
   padding: 6px 10px;
