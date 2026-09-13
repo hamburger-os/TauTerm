@@ -71,7 +71,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 - `SplitView.paneSurface` 是命名 size container（`session-pane`）；
 - custom view 的 Pane surface 本身 `overflow: hidden`，滚动由 TFTP/iperf/TRDP/Network 等内容视图拥有，避免同轴双滚动；
 - Pane Header 的 24px 内容 inset 与实际 header 几何保持一致；
-- Pane Header 在紧凑的单行高度内显示“会话名称 · 端点摘要”，名称仍是主身份，端点用于和左侧会话卡片第二行建立快速对应；空间不足时整体省略，不增加 Header 高度；
+- Pane Header 在紧凑的单行高度内显示“会话名称 · 会话摘要”，名称仍是主身份；摘要与左侧同一 Session 卡片第二行共用一套派生规则（SSH host:port、TRDP 链路/抓包接口、Network client 本端地址等都保持一致），空间不足时整体省略，不增加 Header 高度；
 - Pane Header 的 `…` 与右键菜单复用公共 `ContextMenu`，边界定位、键盘导航、焦点恢复和主题材质只维护一份实现；
 - TRDP 顶部 tab strip 高度固定，hover/selected 不改变兄弟按钮几何；
 - TRDP Analysis 在窄 Pane 下从双列折叠为单列；
