@@ -16,6 +16,9 @@ import ResultCard from "./ResultCard";
 interface Props {
   execute: (request: ModbusRequest) => Promise<TransactionResult>;
   connected: boolean;
+  targetUnit: number;
+  maxUnitId: number;
+  onTargetUnitChange: (value: number) => void;
 }
 
 interface ResultView {
@@ -35,7 +38,7 @@ function registerArea(fc: 3 | 4): RegisterReadArea {
   return fc === 3 ? "holding_registers" : "input_registers";
 }
 
-export default function ReadWritePanel({ execute, connected }: Props) {
+export default function ReadWritePanel({ execute, connected, targetUnit, maxUnitId, onTargetUnitChange }: Props) {
   const { t } = useTranslation();
   const [fc, setFc] = useState<number>(3);
   const [address, setAddress] = useState(0);
@@ -115,12 +118,16 @@ export default function ReadWritePanel({ execute, connected }: Props) {
           </div>
         </div>
 
-        <div className={styles.grid}>
+        <div className={`${styles.grid} ${styles.requestGrid}`}>
           <label className={styles.field}>
             <span className={styles.label}>{t("modbus.rwFunction")}</span>
             <select className="liquid-glass-input liquid-glass-select" value={fc} onChange={event => setFc(Number(event.target.value))} data-testid="tauterm-modbus-function">
               {COMMON_FUNCTIONS.map(code => <option key={code} value={code}>{FUNCTION_LABELS[code]}</option>)}
             </select>
+          </label>
+          <label className={styles.field}>
+            <span className={styles.label}>{t("modbus.targetUnit")}</span>
+            <input className="liquid-glass-input" type="number" min={0} max={maxUnitId} value={targetUnit} onChange={event => onTargetUnitChange(Number(event.target.value))} aria-label="Modbus target Unit ID" />
           </label>
           {!isReadWrite && <label className={styles.field}>
             <span className={styles.label}>{t("modbus.rwProtocolAddress")}</span>
