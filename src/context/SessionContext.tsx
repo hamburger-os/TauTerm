@@ -252,6 +252,7 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
     case "SET_TABS":
       return { ...state, tabs: action.tabs };
     case "ADD_TAB": {
+      // 始终追加新标签页（即使是同一端口），用户可通过右键菜单删除旧标签页
       return {
         ...state,
         tabs: [...state.tabs, action.tab],
@@ -262,11 +263,13 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       };
     }
     case "REMOVE_TAB": {
+      // 级联删除所有子 channel
       const childIds = state.tabs
         .filter(t => t.parentId === action.id)
         .map(t => t.id);
       const allRemoved = new Set([action.id, ...childIds]);
       const remaining = state.tabs.filter(t => !allRemoved.has(t.id));
+      // 选择下一活跃 tab：优先相邻根节点
       let nextActive = state.activeTabId;
       if (nextActive && allRemoved.has(nextActive)) {
         nextActive = remaining.find(t => !t.parentId)?.id ?? null;
@@ -384,9 +387,11 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       const remaining = state.tabs.filter(t => t.id !== action.id);
       let nextActive = state.activeTabId;
       if (nextActive === action.id) {
+        // 优先切换到同一父会话的其他子 channel，否则切换到父会话
         const siblings = remaining.filter(t => t.parentId === action.parentId);
         nextActive = siblings[0]?.id ?? action.parentId ?? remaining.find(t => !t.parentId)?.id ?? null;
       }
+      // 如果删除后父会话没有子 channel 了，断开父会话
       const hasOtherChildren = remaining.some(t => t.parentId === action.parentId);
       if (!hasOtherChildren) {
         const parentTab = remaining.find(t => t.id === action.parentId);
@@ -409,6 +414,8 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       return {
         ...state,
         tabs: state.tabs.filter(t => t.parentId !== action.parentId),
+        // 断开父容器会话时，子终端会被销毁，但父会话配置仍然存在。
+        // 若当前活跃的是被销毁的子终端，回到父会话，而不是留下一个失效的 activeTabId。
         activeTabId: state.activeTabId && childIds.has(state.activeTabId)
           ? action.parentId
           : state.activeTabId,
@@ -513,34 +520,56 @@ interface SessionContextValue {
   connect: (opts: ConnectOptions) => Promise<string | null>;
   reconnectSession: (sessionId: string, initialElevated?: boolean) => Promise<string | null>;
   createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;
-  disconnect: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
+  disconnect: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string, skipDisconnect?: boolean) => Promise<void>;
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
   switchTab: (sessionId: string | null) => Promise<void>;
   renameTab: (sessionId: string, name: string) => Promise<void>;
   reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string, journaldEnabled?: boolean) => Promise<void>;
+  /** 在已有 SSH 会话上打开新 channel */
   openChannel: (parentSessionId: string, elevated?: boolean) => Promise<string | null>;
+  /** 关闭单个子 channel */
   closeChannel: (channelId: string, parentId: string) => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
+  /** 订阅 TX 通知（多监听者；网络调试对端 TX 显示用），返回取消订阅函数 */
   subscribeDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => () => void;
+  /** 判定会话或对端是否处于连接态（SendBar 面板共用；对端经 peerSessions 注册） */
   isSessionConnected: (sessionId: string) => boolean;
+  /** 网络调试：选中容器会话的对端（null = 取消选中；client 模式自动选中唯一对端） */
   selectNetworkPeer: (containerId: string, peerId: string | null) => void;
+  /** 网络调试：读取容器会话的当前对端列表（读 stateRef，非活跃会话也始终新鲜；数据监听路由用） */
   getNetworkPeers: (containerId: string) => NetworkPeerEntry[];
+  /** 网络调试：断开指定对端（后端 close_network_peer + 乐观置灰） */
   disconnectNetworkPeer: (containerId: string, peerId: string) => Promise<void>;
+  /** 网络调试：移除已关闭对端墓碑（后端真实释放 + 前端清列表） */
   clearNetworkPeer: (containerId: string, peerId: string) => Promise<void>;
+  /** 网络调试：按后端快照合并对端列表（getStatus 兜底，保留既有统计） */
   mergeNetworkPeers: (containerId: string, entries: NetworkPeerEntry[]) => void;
+  /** 网络调试：设置 UDP 手动目标地址（目标栏手动目标覆盖输入） */
   setNetworkManualTarget: (containerId: string, target: string) => void;
+  /** 网络调试：记录一个 UDP RX 来源地址（发送栏快捷回发用，去重 + 上限） */
   registerNetworkUdpSource: (containerId: string, addr: string) => void;
+  /** 订阅 UDP 手动目标发送（报文网格 TX 行用），返回取消订阅函数 */
   subscribeNetworkManualSent: (callback: (containerId: string, target: string, bytes: Uint8Array) => void) => () => void;
+  /** 网络调试：切换容器会话的「全部客户端」群发目标 */
   setNetworkBroadcast: (containerId: string, on: boolean) => void;
+  /**
+   * 统一发送路由：网络容器按「当前目标」（选中对端 / 全部 / 手动地址）路由，
+   * 非网络会话走默认 sendData(sessionId)。基本发送与指令面板共用此入口。
+   */
   sendToTarget: (containerId: string, data: string | Uint8Array) => Promise<void>;
+  /** 更新指定会话的 I/O 统计（网络调试容器汇总对端统计到状态栏用） */
   updateSessionStats: (sessionId: string, txBytes: number, rxBytes: number, rxPackets?: number, txPackets?: number) => void;
   onSessionDisconnect: (callback: (sessionId: string, reason?: string) => void) => void;
   clearError: () => void;
+  /** 日志：启动会话数据日志记录 */
   startSessionLog: (sessionId: string) => Promise<string>;
+  /** 日志：停止会话数据日志记录 */
   stopSessionLog: (sessionId: string) => Promise<void>;
+  /** 日志：当前正在记录的会话 ID 集合 */
   loggingSessions: Set<string>;
+  /** 日志：活跃日志状态 (sessionId → { fileName, bytesWritten }) */
   logStatuses: Map<string, { fileName: string; bytesWritten: number }>;
 }
 
@@ -550,20 +579,33 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(sessionReducer, initialState);
   const dataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
   const sentDataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
+  /** 多监听者 TX 通知（网络调试对端视图订阅；单槽 sentDataCallbackRef 保留给终端） */
   const sentDataSubscribersRef = useRef<Set<(sessionId: string, data: Uint8Array) => void>>(new Set());
+  /** 对端注册表 Ref 镜像（sendData 闭包读取；state.peerSessions 提供响应式渲染） */
   const peerSessionsRef = useRef<Record<string, boolean>>({});
+  /** 对端 → 所属容器会话的反向映射（session-stats 路由用；netdbg 事件维护） */
   const networkPeerContainerRef = useRef<Record<string, string>>({});
+  /** UDP 手动目标发送订阅者（网络调试报文网格 TX 行用） */
   const networkManualSentSubscribersRef = useRef<Set<(containerId: string, target: string, bytes: Uint8Array) => void>>(new Set());
   const disconnectCallbackRef = useRef<((sessionId: string, reason?: string) => void) | null>(null);
+  // 保持最新的 tabs 引用，供事件监听器（闭包中 state 可能过期）使用
   const tabsRef = useRef(state.tabs);
   tabsRef.current = state.tabs;
+  // 完整 state 镜像（网络对端清理等全局监听器需读取最新 networkPeers）
   const stateRef = useRef(state);
   stateRef.current = state;
+  // 多终端父会话 → 最近一次活动的子 Channel。仅当前进程内有效。
   const lastActiveChildRef = useRef<Map<string, string>>(new Map());
+  // Telnet 回显状态暂存：telnet-echo-state 早于 session-connected 到达
+  // （tab 尚未创建）时暂存于此，session-connected 创建/更新 tab 时取出
+  // 初始化 localEcho，避免事件被静默丢弃导致输入不可见
   const pendingEchoRef = useRef<Map<string, boolean>>(new Map());
+  // 端点发现是硬件/平台 I/O：按插件缓存并合并并发请求，避免重复触发
+  // Windows SetupAPI / WSL 探测导致配置页卡顿。
   const endpointRefreshesRef = useRef<Map<string, Promise<EndpointInfo[]>>>(new Map());
   const endpointRefreshCompletedAtRef = useRef<Map<string, number>>(new Map());
 
+  // ADD_TAB / session-switched 等不一定经过 switchTab；统一从 activeTabId 回填最近子 Channel。
   useEffect(() => {
     const activeId = state.activeTabId;
     if (!activeId) return;
@@ -573,6 +615,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [state.activeTabId, state.tabs]);
 
+  // ── Logging state ────────────────────────────────
+
   const [loggingSessions, setLoggingSessions] = useState<Set<string>>(new Set());
   const [logStatuses, setLogStatuses] = useState<Map<string, { fileName: string; bytesWritten: number }>>(new Map());
 
@@ -580,6 +624,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       await invoke<string>("start_session_log", { sessionId });
       setLoggingSessions(prev => new Set(prev).add(sessionId));
+      // 立即查询状态获取文件名
       const statuses: Array<{ session_id: string; file_name: string; bytes_written: number }> =
         await invoke("get_log_status");
       setLogStatuses(new Map(statuses.map(s => [s.session_id, { fileName: s.file_name, bytesWritten: s.bytes_written }])));
@@ -607,6 +652,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_ERROR", error: `停止日志失败: ${e}` });
     }
   }, []);
+
+  // ── Actions ─────────────────────────────────────
 
   const fetchConnectionTypes = useCallback(async () => {
     try {
@@ -644,6 +691,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           endpoints,
         });
       } catch (e) {
+        // 端点发现失败不应把整个 SessionContext 置为错误；保留上一次缓存，
+        // 让配置表单继续可用，用户可通过刷新按钮重试。
         console.warn(`Endpoint discovery failed for ${currentPluginId}:`, e);
       } finally {
         if (endpointRefreshesRef.current.get(currentPluginId) === pending) {
@@ -658,10 +707,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const effectivePluginId = pluginId || "serial";
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
     dispatch({ type: "SET_ERROR", error: null });
+    // 如果已知 sessionId（已创建离线配置），立即将 tab 状态设为 connecting
     if (sessionId) {
       dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connecting" });
     }
     try {
+      // 不使用前端 Promise.race 超时 —— 后端已有 TCP connect_timeout(10s) +
+      // SSH handshake timeout(10s) 等多层超时保护。前端超时会导致后端 invoke
+      // 继续运行，连接成功后 emit session-connected 造成前后端状态不一致。
       const sid = await invoke<string>("connect_session", {
         request: {
         endpoint, params, name,
@@ -677,6 +730,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return sid;
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `${i18n.t("localShell.connectFailed")}: ${localizeSessionError(e)}` });
+      // 连接失败时恢复为 disconnected 状态
       if (sessionId) {
         dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
       }
@@ -684,6 +738,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /**
+   * Reconnect a saved/disconnected session through the same public connect path
+   * used by every protocol. Protocol-specific preflight belongs here instead of
+   * being duplicated by Sidebar and Pane context menus.
+   */
   const reconnectSession = useCallback(async (
     sessionId: string,
     initialElevated = false,
@@ -701,6 +760,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         && params.overwrite === true
         && params.exposure_confirmed !== true
       ) {
+        // SessionContext 不拥有 UI。需要用户确认的 TFTP 配置必须先在连接对话框中
+        // 使用统一 ConfirmDialog 明确确认；此处保持 fail-closed，绝不回退到原生 confirm()。
         dispatch({
           type: "SET_ERROR",
           error: i18n.t("tftp.exposureWarning", {
@@ -732,12 +793,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const pid = pluginId || "serial";
       const plugin = pluginRegistry.get(pid);
       const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(pid, sendBarEnabled);
+      // 默认会话名只在创建时计算一次；后续配置变化只更新动态摘要，不改会话身份。
       const pluginName = plugin?.manifest.name || pid.toUpperCase();
       const requestedName = name?.trim();
-      const defaultName = plugin?.sessionPresentation?.defaultName?.(params, endpoint)?.trim();
+      const presentationName = plugin?.sessionPresentation?.defaultName?.(params, endpoint)?.trim();
       const effectiveName = requestedName || (pid === "local-shell"
         ? await invoke<string>("resolve_local_shell_session_name", { params })
-        : defaultName || `${pluginName} @ ${endpoint}`);
+        : presentationName || `${pluginName} @ ${endpoint}`);
       const sessionId = await invoke<string>("save_session_config", {
         request: {
         endpoint, params,
@@ -779,14 +841,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const disconnect = useCallback(async (sessionId: string) => {
+    // 已断开的会话保留在侧栏中，不做任何操作
     const tab = state.tabs.find(t => t.id === sessionId);
     if (tab?.state === "disconnected") {
       return;
     }
+    // 先更新前端状态为 disconnected，让 React 同步停止周期发送定时器，
+    // 避免后端 close_session() 之后定时器还在触发 write_data 导致"会话不存在"错误
     dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
     try {
       await invoke("disconnect_session", { sessionId });
     } catch (e) {
+      // 后端调用失败，恢复连接状态以便用户重试
       dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connected" });
       dispatch({ type: "SET_ERROR", error: `断开失败: ${e}` });
     }
@@ -794,16 +860,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const deleteSession = useCallback(async (sessionId: string, skipDisconnect = false) => {
     const tab = state.tabs.find(t => t.id === sessionId);
+    // 如果会话已连接，先断开后端连接（除非调用方已提前断连）
     if (!skipDisconnect && (tab?.state === "connected" || tab?.state === "connecting" || tab?.state === "transferring")) {
+      // 先更新前端状态，让 React 同步停止周期发送定时器
       dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
       try {
         await invoke("disconnect_session", { sessionId });
       } catch (_e) {
+        // 断开失败，恢复连接状态并停止删除流程以避免后端资源泄漏
         dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "connected" });
         dispatch({ type: "SET_ERROR", error: "Cannot delete active session — disconnect failed" });
         return;
       }
     }
+    // 从磁盘中删除会话配置（仅当会话已断开或从未连接时）
     try {
       await invoke("delete_session_config", { sessionId });
     } catch (e) {
@@ -817,18 +887,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     dispatch({ type: "REMOVE_TAB", id: sessionId });
+    // 释放插件会话 store 的全部资源（keepAlive 会话的 Tauri 监听器与
+    // Map 条目按设计常驻，会话删除后不再有存续意义——不清理则永久泄漏）
     releaseSessionStore(sessionId);
   }, [state.tabs]);
 
+  /**
+   * 统一发送：将数据写入指定会话（文本按会话编码转码，字节原样透传）。
+   */
   const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
+    // 保护：连接已断开时不发送，避免触发后端 "sending on a closed channel" 错误。
+    // 网络调试对端不在 tabs 中，通过 peerSessions 注册表判定连接态并放行。
     const tab = tabsRef.current.find(t => t.id === sessionId);
     const isPeer = peerSessionsRef.current[sessionId] === true;
     if ((!tab || tab.state === "disconnected") && !isPeer) return;
     try {
+      // 文本路径（键盘 / SendBar 文本 / 脚本字符串）：UTF-8 字节交给后端按会话编码转码；
+      // 字节路径（HEX 发送 / 脚本原始字节）：原样透传，不做字符转码
       const isText = typeof data === "string";
       const bytes = isText ? new TextEncoder().encode(data) : data;
+      // 返回值为实际写入设备的字节：文本路径按会话编码转码（如 GBK），
+      // 用作 TX 通知/日志时保证面板显示与线上字节一致
       const written = await invoke<number[]>("write_data", { sessionId, data: Array.from(bytes), transcode: isText });
+      // 通知 Dual 模式终端：数据已发送
       sentDataCallbackRef.current?.(sessionId, new Uint8Array(written));
+      // 多监听者 TX 通知（网络调试对端视图）
       sentDataSubscribersRef.current.forEach(cb => cb(sessionId, new Uint8Array(written)));
     } catch (e) {
       dispatch({ type: "SET_ERROR", error: `发送失败: ${e}` });
@@ -837,6 +920,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const switchTab = useCallback(async (sessionId: string | null) => {
     if (sessionId === null) {
+      // Workspace 可以存在选中的空 Pane。空选择只属于前端 UI 上下文；后端切换命令
+      // 只接收真实运行时 Session，因此这里不发送伪 ID 或空字符串。
       dispatch({ type: "SET_ACTIVE", id: null });
       return;
     }
@@ -846,6 +931,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     let resolvedSessionId = sessionId;
 
     if (targetTab?.parentId) {
+      // 直接切到子 Channel 时同步更新父会话的最近活动记录。
       lastActiveChildRef.current.set(targetTab.parentId, targetTab.id);
     } else if (targetTab) {
       const supportsMultiple = pluginRegistry
@@ -867,6 +953,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       await invoke("switch_active_session", { sessionId: resolvedSessionId });
     } catch (_e) {
+      // 恢复的会话在后端不存在，静默忽略
     }
   }, []);
 
@@ -903,7 +990,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const tab = state.tabs.find(t => t.id === sessionId);
     const wasConnected = tab?.state === "connected" || tab?.state === "transferring";
 
+    // 1. 如果已连接，先清理子通道再断连
     if (wasConnected) {
+      // 先清除前端子通道 UI 状态
       dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sessionId });
       try {
         await invoke("disconnect_session", { sessionId });
@@ -914,11 +1003,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // 2. 更新磁盘配置（保持相同 UUID）
+    // pluginId 优先生效：调用方传入 > tab 已记录的 > 报错（不应回退到默认值）
     const effectivePluginId = pluginId || tab?.pluginId;
     if (!effectivePluginId) {
       dispatch({ type: "SET_ERROR", error: "无法确定会话的协议类型 (pluginId)" });
       return;
     }
+    // 配置更新默认保留创建时的会话身份；只有用户显式修改名称字段时才改变第一行。
     const effectiveName = name?.trim() || tab?.name;
     if (!effectiveName) {
       dispatch({ type: "SET_ERROR", error: "无法确定会话名称" });
@@ -930,13 +1022,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         request: {
         endpoint,
         params,
-        // 配置更新默认保留创建时名称；只有用户显式修改名称字段时才会变化。
         name: effectiveName,
         pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
         sendBarEnabled: effectiveSendBarEnabled,
-        sessionId,
+        sessionId, // 复用已有 UUID
 
         },});
     } catch (e) {
@@ -946,6 +1037,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     const persistedParams = persistedSessionParams(effectivePluginId, sessionId, params);
 
+    // 3. 更新前端 tab 状态
     dispatch({
       type: "UPDATE_TAB_CONFIG",
       id: sessionId,
@@ -961,6 +1053,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       fileServiceProtocol: (params?.file_service_protocol as string) ?? tab?.fileServiceProtocol,
     });
 
+    // 4. 如果之前是连接状态，重新连接
     if (wasConnected) {
       try {
         const newSessionId = await invoke<string>("connect_session", {
@@ -973,9 +1066,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferProtocol: transferProtocol || "ymodem",
           sendBarEnabled: effectiveSendBarEnabled,
           journaldEnabled: (persistedParams?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
-          sessionId,
+          sessionId, // 保持 UUID 连续性
 
         },});
+        // connect_session 后端会 emit session-connected 事件，前端监听器会更新状态为 connected
+        // 但我们也需要同步更新（事件可能异步到达）
         dispatch({ type: "SET_TAB_STATE", id: newSessionId, state: "connected" });
       } catch (e) {
         dispatch({ type: "SET_ERROR", error: `重连失败: ${e}` });
@@ -999,6 +1094,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const closeChannel = useCallback(async (channelId: string, parentId: string) => {
     const resetCounter = !tabsRef.current.some(tab => tab.parentId === parentId && tab.id !== channelId);
     try {
+      // 不再乐观删除 child：若后端关闭失败，保留完整 Tab/Pane 状态供用户重试。
+      // 后端成功时通常会先 emit channel-closed；这里再做一次幂等 REMOVE_CHILD，
+      // 覆盖“后端已清理但没有再次 emit”的关闭/历史终端路径。
       await invoke("close_channel", { sessionId: channelId, parentId, resetCounter });
       dispatch({ type: "REMOVE_CHILD", id: channelId, parentId });
     } catch (e) {
@@ -1096,6 +1194,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.error("网络调试: 断开对端失败:", e);
     }
+    // 乐观置灰：后端 I/O loop 断开后仍会发 netdbg-peer-left（带最终统计），此处先行避免闪烁
     dispatch({ type: "SET_NETWORK_PEER_STATE", containerId, peerId, state: "disconnected" });
     peerSessionsRef.current[peerId] = false;
     dispatch({ type: "SET_PEER_CONNECTED", id: peerId, connected: false });
@@ -1104,8 +1203,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const clearNetworkPeer = useCallback(async (containerId: string, peerId: string) => {
     try {
       await invoke("close_network_peer", { sessionId: peerId }).catch(() => {
+        // 后端可能已清理（如容器断开级联），忽略
       });
-    } catch (_e) { }
+    } catch (_e) { /* 忽略 */ }
     delete peerSessionsRef.current[peerId];
     if (networkPeerContainerRef.current[peerId] === containerId) {
       delete networkPeerContainerRef.current[peerId];
@@ -1115,6 +1215,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const mergeNetworkPeers = useCallback((containerId: string, entries: NetworkPeerEntry[]) => {
+    // 与实时事件去重合并：后端快照可能早于/晚于 joined 事件，按 peerId 取并集，
+    // 已存在条目保留既有统计（后端快照的 0 值不覆盖运行中的累计值）
     dispatch({ type: "SET_NETWORK_PEERS_BATCH", containerId, entries });
   }, []);
 
@@ -1137,6 +1239,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "SET_NETWORK_BROADCAST", containerId, on });
   }, []);
 
+  /**
+   * 统一发送路由。
+   *
+   * 网络容器按「当前目标」路由：TCP server → 选中对端 / 全部扇出；
+   * UDP server → 手动目标地址；UDP client → 固定远端。非网络会话回退
+   * 到 sendData(sessionId)。基本发送与指令面板共用此入口。
+   */
   const sendToTarget = useCallback(async (containerId: string, data: string | Uint8Array) => {
     const tab = tabsRef.current.find(t => t.id === containerId);
     const params = (tab?.params ?? {}) as Record<string, unknown>;
@@ -1170,6 +1279,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // TCP：按当前目标路由（群发为容器级「全部客户端」）
     const peers = (stateRef.current.networkPeers[containerId] ?? [])
       .filter(p => p.state === "connected");
     if (stateRef.current.networkBroadcast[containerId] === true) {
@@ -1203,12 +1313,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     disconnectCallbackRef.current = callback;
   }, []);
 
+  // ── Event Listeners ──────────────────────────────
+
   useEffect(() => {
     let cancelled = false;
     const unlisteners: UnlistenFn[] = [];
 
     (async () => {
       const u1 = await listen<{ session_id: string; data_b64?: string; data?: number[] }>("session-data", (event) => {
+        // 支持两种数据格式：
+        // - data_b64: Base64 字符串（新格式，后端批处理后）— 用 atob 解码，性能远优于 JSON 数字数组
+        // - data: number[]（旧格式，向后兼容）
         const data = event.payload.data_b64
           ? decodeBase64(event.payload.data_b64)
           : new Uint8Array(event.payload.data ?? []);
@@ -1217,10 +1332,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
+      // Telnet 回显状态（服务器 ECHO 协商结果 → 本地回显开关）
       const u1b = await listen<{ session_id: string; local_echo: boolean }>(
         "telnet-echo-state",
         (event) => {
           const sid = event.payload.session_id;
+          // tab 尚未创建（事件早于 session-connected 到达）时暂存，
+          // 由 session-connected 处理路径取出初始化 localEcho
           if (!tabsRef.current.some(t => t.id === sid)) {
             pendingEchoRef.current.set(sid, event.payload.local_echo);
             return;
@@ -1244,18 +1362,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           const vPairs = event.payload.virtual_endpoints;
           const parentId = event.payload.parent_id ?? null;
           const isContainer = event.payload.is_container ?? false;
+          // UDP client 本端地址（连接后本机 ip:port）→ 独立状态，供侧栏端点行展示
           if (typeof event.payload.local_addr === "string") {
             dispatch({ type: "SET_NETWORK_LOCAL_ADDR", containerId: sid, addr: event.payload.local_addr });
           }
+          // 检查是否已存在同 ID 的 tab。运行时连接事件只刷新配置/状态，不能改写已保存会话名称。
           const existingTab = tabsRef.current.find(t => t.id === sid);
           if (existingTab) {
+            // 已存在：更新状态和配置，不新增 tab
             dispatch({ type: "SET_TAB_STATE", id: sid, state: "connected" });
             dispatch({
               type: "UPDATE_TAB_CONFIG",
               id: sid,
               endpoint: event.payload.endpoint,
               params: event.payload.params,
-              // 运行时连接事件只刷新配置/状态，绝不重新生成已保存会话的身份名称。
               name: existingTab.name,
               transferEnabled: event.payload.transfer_enabled,
               transferProtocol: event.payload.transfer_protocol,
@@ -1266,6 +1386,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean),
               fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
             });
+            // 若回显状态事件曾早于本事件暂存，补发（tab 已存在则正常路径已直达）
             const pendingEcho = pendingEchoRef.current.get(sid);
             if (pendingEcho !== undefined) {
               pendingEchoRef.current.delete(sid);
@@ -1275,6 +1396,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: vPairs });
             }
           } else if (parentId) {
+            // 子 channel 连接成功（connect_session_ssh 的 channel-0 或 open_channel）
+            // tab 不存在时直接 ADD_TAB，避免 SET_TAB_STATE 对不存在的 ID 无操作
             const chName = event.payload.name;
             dispatch({ type: "SET_TAB_STATE", id: parentId, state: "connected" });
             dispatch({
@@ -1323,6 +1446,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               },
             });
           } else {
+            // 真正的新根会话：添加 tab
             const pendingEcho = pendingEchoRef.current.get(sid);
             if (pendingEcho !== undefined) {
               pendingEchoRef.current.delete(sid);
@@ -1336,6 +1460,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 endpoint: event.payload.endpoint,
                 state: "connected",
                 pluginId: eventPluginId,
+                // 早于本事件到达的回显状态（telnet-echo-state 暂存）；非 telnet 会话为 undefined
                 localEcho: pendingEcho,
                 params: event.payload.params,
                 stats: { txBytes: 0, rxBytes: 0 },
@@ -1385,6 +1510,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2c(); return; }
       unlisteners.push(u2c);
 
+      // 驱动安装成功时清除所有标签页的 VPort 错误状态
       const u2d = await listen("virtual-port-driver-ready", () => {
         tabsRef.current.forEach((tab: { id: string; virtualPortError?: string }) => {
           if (tab.virtualPortError) {
@@ -1395,6 +1521,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2d(); return; }
       unlisteners.push(u2d);
 
+      // 子通道关闭事件（后端 on_disconnect 或 close_channel 命令触发）
       const u2e = await listen<{ channel_id: string; parent_id: string; disconnect_info?: DisconnectInfo }>("channel-closed", (event) => {
         if (event.payload.disconnect_info?.retain_terminal) {
           dispatch({ type: "SET_TAB_DISCONNECTED", id: event.payload.channel_id, info: event.payload.disconnect_info });
@@ -1405,6 +1532,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2e(); return; }
       unlisteners.push(u2e);
 
+      // 网络调试对端加入（后端 register_peer_channel 成功后广播）
       const u2f = await listen<{ session_id: string; peer_id: string; peer_name: string; peer_addr: string; local_addr?: string }>(
         "netdbg-peer-joined",
         (event) => {
@@ -1422,15 +1550,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2f(); return; }
       unlisteners.push(u2f);
 
+      // 网络调试对端断开（后端 on_disconnect 广播，附带最终统计）
       const u2g = await listen<{ session_id: string; peer_id: string; tx_bytes?: number | null; rx_bytes?: number | null }>(
         "netdbg-peer-left",
         (event) => {
           const { session_id: cid, peer_id, tx_bytes, rx_bytes } = event.payload;
+          // client 单连接语义：唯一对端断开 → 会话整体断开（无监听器可继续等待）。
+          // 容器级清理由 session-disconnected 事件路径完成（CLEAR_NETWORK_PEERS）。
           const containerTab = tabsRef.current.find(t => t.id === cid);
           const isNetClient = containerTab?.pluginId === "network"
             && ((containerTab.params as Record<string, unknown> | undefined)?.role ?? "client") === "client";
           if (isNetClient) {
-            invoke("disconnect_session", { sessionId: cid }).catch(() => { });
+            invoke("disconnect_session", { sessionId: cid }).catch(() => { /* 后端可能已自行清理 */ });
             dispatch({ type: "SET_TAB_STATE", id: cid, state: "disconnected" });
             return;
           }
@@ -1453,6 +1584,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const reason = event.payload.reason;
         const sid = event.payload.session_id;
         dispatch({ type: "SET_TAB_DISCONNECTED", id: sid, info: event.payload.disconnect_info });
+        // 网络调试容器断开：级联清理对端注册（后端通道已随容器关闭）
         const peers = stateRef.current.networkPeers[sid];
         if (peers) {
           for (const p of peers) {
@@ -1464,16 +1596,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           }
           dispatch({ type: "CLEAR_NETWORK_PEERS", containerId: sid });
         }
+        // 重置 Telnet 回显状态（重连时重新协商）
         dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: false });
+        // 父 session 断开时级联移除所有子 channel
         if (!event.payload.disconnect_info?.retain_terminal) {
           dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sid });
         }
+        // 清除虚拟端口对信息（端口已在后端销毁）
         dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: [] });
         disconnectCallbackRef.current?.(sid, reason);
+        // 自动停止该会话的日志记录
         setLoggingSessions(prev => {
           if (!prev.has(sid)) return prev;
           const next = new Set(prev);
           next.delete(sid);
+          // 异步通知后端停止日志（不等待结果）
           invoke("stop_session_log", { sessionId: sid }).catch(() => {});
           return next;
         });
@@ -1487,12 +1624,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       unlisteners.push(u3);
 
       const u4 = await listen<{ session_id: string }>("file-transfer:started", (event) => {
+        // 传输开始，标记为 transferring（不断开！）
         dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "transferring" });
       });
       if (cancelled) { u4(); return; }
       unlisteners.push(u4);
 
       const u5 = await listen<{ session_id: string; success: boolean }>("file-transfer:finished", (event) => {
+        // 传输完成（含成功/失败/取消），恢复连接状态
         dispatch({ type: "SET_TAB_STATE", id: event.payload.session_id, state: "connected" });
       });
       if (cancelled) { u5(); return; }
@@ -1515,6 +1654,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         (event) => {
           const cid = networkPeerContainerRef.current[event.payload.tab_id];
           if (cid) {
+            // 对端统计 → 网络调试容器对端条目
             dispatch({
               type: "SET_NETWORK_PEER_STATS",
               containerId: cid,
@@ -1544,6 +1684,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Presentation Path overflow is explicitly observable. A display drop does not
+  // imply Recorder loss, but the user must know the terminal view is incomplete.
   useEffect(() => {
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
@@ -1573,10 +1715,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // ── Periodic log status polling ──────────────────
+
   const hasActiveLogs = loggingSessions.size > 0;
 
   useEffect(() => {
-    if (!hasActiveLogs) return;
+    if (!hasActiveLogs) return; // 无活跃日志时清除定时器，节省资源
     const interval = setInterval(async () => {
       try {
         const statuses: Array<{ session_id: string; file_name: string; bytes_written: number }> =
@@ -1584,11 +1728,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setLogStatuses(new Map(statuses.map(s => [s.session_id, { fileName: s.file_name, bytesWritten: s.bytes_written }])));
         setLoggingSessions(new Set(statuses.map(s => s.session_id)));
       } catch (_e) {
+        // 静默忽略
       }
-    }, 5000);
+    }, 5000); // 5s 轮询降低 IPC 开销，日志状态不需要秒级实时性
     return () => clearInterval(interval);
   }, [hasActiveLogs]);
 
+  // Init
   useEffect(() => {
     fetchConnectionTypes();
     loadSavedSessions();
