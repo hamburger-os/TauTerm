@@ -52,7 +52,7 @@ export function getSessionSubtitle(
     .get(tab.pluginId)
     ?.sessionPresentation
     ?.subtitle?.(params, tab.endpoint)
-    .trim();
+    ?.trim();
   let subtitle: string;
 
   if (pluginSubtitle) {
