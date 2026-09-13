@@ -1,4 +1,5 @@
 import type { NetworkPeerEntry, TabInfo } from "../../context/SessionContext";
+import { pluginRegistry } from "../../core/plugin-registry";
 
 export interface SessionPresentationLabels {
   trdpCapture: string;
@@ -35,6 +36,8 @@ function getNetworkClientLocalAddr(
 
 /**
  * Canonical second-line identity used by Session cards and Pane headers.
+ * Root sessions prefer the plugin-owned dynamic summary; built-in special cases remain for
+ * runtime-aware presentations (SSH IPv6 formatting, TRDP localized labels, network local addr).
  * Child terminal rows intentionally keep their runtime endpoint, matching the Sidebar child row.
  */
 export function getSessionSubtitle(
@@ -45,9 +48,16 @@ export function getSessionSubtitle(
   if (tab.parentId) return tab.endpoint;
 
   const params = (tab.params ?? {}) as Record<string, unknown>;
+  const pluginSubtitle = pluginRegistry
+    .get(tab.pluginId)
+    ?.sessionPresentation
+    ?.subtitle?.(params, tab.endpoint)
+    .trim();
   let subtitle: string;
 
-  if (tab.pluginId === "ssh") {
+  if (pluginSubtitle) {
+    subtitle = pluginSubtitle;
+  } else if (tab.pluginId === "ssh") {
     const host = typeof params.host === "string" && params.host.trim()
       ? params.host.trim()
       : tab.endpoint;
