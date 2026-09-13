@@ -12,7 +12,10 @@ registerPlugin({
   isConnectionConfigValid: params => {
     const config = normalizeModbusSessionParams(params);
     if (config.mode === "tcp") {
-      return config.host.trim().length > 0 && config.port >= 1 && config.port <= 65535;
+      return config.host.trim().length > 0
+        && Number.isInteger(config.port)
+        && config.port >= 1
+        && config.port <= 65535;
     }
     return config.serial_port.trim().length > 0;
   },
