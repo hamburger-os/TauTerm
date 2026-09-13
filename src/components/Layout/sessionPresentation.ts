@@ -1,5 +1,5 @@
 import type { NetworkPeerEntry, TabInfo } from "../../context/SessionContext";
-import { pluginRegistry } from "../../core/plugin-registry";
+import { getSessionPresentation } from "../../core/session-presentation-registry.ts";
 
 export interface SessionPresentationLabels {
   trdpCapture: string;
@@ -48,9 +48,7 @@ export function getSessionSubtitle(
   if (tab.parentId) return tab.endpoint;
 
   const params = (tab.params ?? {}) as Record<string, unknown>;
-  const pluginSubtitle = pluginRegistry
-    .get(tab.pluginId)
-    ?.sessionPresentation
+  const pluginSubtitle = getSessionPresentation(tab.pluginId)
     ?.subtitle?.(params, tab.endpoint)
     ?.trim();
   let subtitle: string;
