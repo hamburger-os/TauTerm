@@ -522,10 +522,9 @@
     "startLogging": "Start Logging",
     "stopLogging": "Stop Logging",
     "openChannel": "Open Channel",
-    "newTerminal": "New",
     "closeChannel": "Disconnect",
     "closeAll": "Disconnect All",
-    "connectAsAdministrator": "New (as Administrator)"
+    "connectAsAdministrator": "Connect (as Administrator)"
   },
   "bottomPanel": {
     "noSession": "No active session",

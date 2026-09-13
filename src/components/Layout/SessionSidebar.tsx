@@ -273,7 +273,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       const supportsLogging = capabilities.includes("session_logging");
       const items: ContextMenuItem[] = [];
       if (supportsMultiple) {
-        items.push({ id: "connect", label: t("contextMenu.newTerminal") || "New Terminal", icon: "connection" });
+        items.push({ id: "connect", label: t("contextMenu.connect") || "Connect", icon: "connection" });
       }
       if (supportsElevation) {
         items.push({ id: "connect_elevated", label: t("contextMenu.connectAsAdministrator"), icon: "shield" });
