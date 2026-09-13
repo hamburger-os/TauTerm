@@ -14,6 +14,7 @@ import "./plugins/trdp";
 import "./plugins/modbus";
 import { installFrontendRuntimeDiagnostics } from "./utils/runtimeDiagnostics";
 import "./styles/global.css";
+import "./styles/selection-controls.css";
 
 installFrontendRuntimeDiagnostics();
 
