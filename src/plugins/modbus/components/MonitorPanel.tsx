@@ -4,16 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import Icon from "../../../components/common/Icon";
 import styles from "../Modbus.module.css";
 import { unitIdMax, type ModbusMode, type ModbusRequest, type ModbusStatus, type TransactionStatus, type ValueFormat, type WatchRow, type WatchValue } from "../model";
-
-const DEFAULT_FORMAT: ValueFormat = {
-  value_type: "uint16",
-  byte_order: "big",
-  word_order: "normal",
-  scale: 1,
-  offset: 0,
-  unit: "",
-  bit: null,
-};
+import { createDefaultRegisterFormat, createDefaultWatchRequest, MODBUS_WORKBENCH_DEFAULTS } from "../workbenchDefaults";
 
 const REGISTER_TYPES: ValueFormat["value_type"][] = [
   "bool", "uint16", "int16", "uint32", "int32", "float32", "uint64", "int64", "float64", "hex", "binary", "ascii", "utf8",
@@ -64,7 +55,11 @@ function requestFields(request: ModbusRequest): { functionCode: number; address:
   if (request.kind === "read_registers") {
     return { functionCode: request.area === "holding_registers" ? 3 : 4, address: request.address, quantity: request.quantity };
   }
-  return { functionCode: 3, address: 0, quantity: 1 };
+  return {
+    functionCode: MODBUS_WORKBENCH_DEFAULTS.readFunctionCode,
+    address: MODBUS_WORKBENCH_DEFAULTS.watchRequest.address,
+    quantity: MODBUS_WORKBENCH_DEFAULTS.watchRequest.quantity,
+  };
 }
 
 function defaultWatchRow(defaultUnitId: number): WatchRow {
@@ -73,9 +68,9 @@ function defaultWatchRow(defaultUnitId: number): WatchRow {
     enabled: true,
     name: "Holding 0",
     unit_id: defaultUnitId,
-    request: { kind: "read_registers", area: "holding_registers", address: 0, quantity: 1 },
-    period_ms: 1000,
-    format: DEFAULT_FORMAT,
+    request: createDefaultWatchRequest(),
+    period_ms: MODBUS_WORKBENCH_DEFAULTS.watchPeriodMs,
+    format: createDefaultRegisterFormat(),
   };
 }
 
@@ -158,7 +153,7 @@ export default function MonitorPanel({
 
   const patchRow = (id: string, patch: Partial<WatchRow>) => setRows(current => current.map(row => row.id === id ? { ...row, ...patch } : row));
   const patchFormat = (row: WatchRow, patch: Partial<ValueFormat>) => {
-    const next = { ...DEFAULT_FORMAT, ...row.format, ...patch };
+    const next = { ...MODBUS_WORKBENCH_DEFAULTS.registerFormat, ...row.format, ...patch };
     if (isExactInteger64(next)) {
       next.scale = 1;
       next.offset = 0;
@@ -176,7 +171,7 @@ export default function MonitorPanel({
     const current = requestFields(row.request);
     const next = { ...current, ...patch };
     const switchingToBits = next.functionCode <= 2;
-    const format = switchingToBits ? undefined : (row.format ?? DEFAULT_FORMAT);
+    const format = switchingToBits ? undefined : { ...MODBUS_WORKBENCH_DEFAULTS.registerFormat, ...row.format };
     const width = format ? fixedRegisterWidth(format) : null;
     if (!switchingToBits && width != null) next.quantity = width;
     patchRow(row.id, {
@@ -213,7 +208,7 @@ export default function MonitorPanel({
   const selected = rows.find(row => row.id === selectedId) ?? rows[0] ?? null;
   const selectedRequest = selected ? requestFields(selected.request) : null;
   const selectedIsBits = selectedRequest ? selectedRequest.functionCode <= 2 : false;
-  const selectedFormat = selected ? { ...DEFAULT_FORMAT, ...selected.format } : DEFAULT_FORMAT;
+  const selectedFormat = selected ? { ...MODBUS_WORKBENCH_DEFAULTS.registerFormat, ...selected.format } : createDefaultRegisterFormat();
   const selectedWidth = selected && !selectedIsBits ? fixedRegisterWidth(selectedFormat) : null;
   const selectedExact64 = isExactInteger64(selectedFormat);
   const enabledCount = useMemo(() => rows.filter(row => row.enabled).length, [rows]);
@@ -245,7 +240,7 @@ export default function MonitorPanel({
               <tbody>{rows.length === 0 ? <tr><td colSpan={9} className={styles.empty}>{t("modbus.monitorNoRows")}</td></tr> : rows.map(row => {
                 const request = requestFields(row.request);
                 const isBits = request.functionCode <= 2;
-                const format = { ...DEFAULT_FORMAT, ...row.format };
+                const format = { ...MODBUS_WORKBENCH_DEFAULTS.registerFormat, ...row.format };
                 const current = values[row.id];
                 return <tr key={row.id} className={row.id === selected?.id ? styles.rowSelected : ""} onClick={() => setSelectedId(row.id)}>
                   <td><input type="checkbox" checked={row.enabled} onChange={event => { event.stopPropagation(); patchRow(row.id, { enabled: event.target.checked }); }} /></td>
@@ -264,7 +259,7 @@ export default function MonitorPanel({
         </div>
 
         <aside className={styles.monitorInspector}>
-          <div className={styles.subHeading}><strong>{t("modbus.monitorInspector")}</strong><span className={styles.hint}>{selected ? `${selected.name} · Unit ${selected.unit_id} · ${areaLabel(selectedRequest?.functionCode ?? 3)}` : t("modbus.monitorSelectRow")}</span></div>
+          <div className={styles.subHeading}><strong>{t("modbus.monitorInspector")}</strong><span className={styles.hint}>{selected ? `${selected.name} · Unit ${selected.unit_id} · ${areaLabel(selectedRequest?.functionCode ?? MODBUS_WORKBENCH_DEFAULTS.readFunctionCode)}` : t("modbus.monitorSelectRow")}</span></div>
           {selected && selectedRequest ? <div className={styles.inspectorGrid}>
             <label className={styles.field}><span className={styles.label}>{t("modbus.rwQuantity")}</span><input className="liquid-glass-input" type="number" min={1} disabled={!selectedIsBits && selectedWidth != null} value={selectedRequest.quantity} onChange={event => setReadField(selected, { quantity: Number(event.target.value) })} /></label>
             <label className={styles.field}><span className={styles.label}>{t("modbus.monitorPeriod")}</span><input className="liquid-glass-input" type="number" min={20} max={86400000} value={selected.period_ms} onChange={event => patchRow(selected.id, { period_ms: Number(event.target.value) })} /></label>
