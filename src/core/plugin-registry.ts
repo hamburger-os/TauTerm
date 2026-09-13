@@ -36,6 +36,17 @@ export interface ConnectFormProps {
   endpoints?: EndpointInfo[];
 }
 
+/**
+ * 会话卡片/Pane 的协议级展示契约。
+ *
+ * `defaultName` 只在创建会话且用户未填写名称时计算一次；创建后名称是持久化身份，
+ * 不应随着配置变化重新生成。`subtitle` 则是当前配置摘要，可随配置实时变化。
+ */
+export interface SessionPresentation {
+  defaultName?: (params: Record<string, unknown>, endpoint: string) => string;
+  subtitle?: (params: Record<string, unknown>, endpoint: string) => string;
+}
+
 /** 端点信息 */
 export interface EndpointInfo {
   name: string;
@@ -113,6 +124,8 @@ export interface PluginRegistration {
   connectForm?: ComponentType<ConnectFormProps>;
   /** 插件连接表单是否满足创建/保存会话的最低要求。 */
   isConnectionConfigValid?: (params: Record<string, unknown>) => boolean;
+  /** 默认名称（创建时一次性生成）与动态配置摘要。 */
+  sessionPresentation?: SessionPresentation;
   toolbarItems?: ToolbarItem[];
   contextMenuItems?: ContextMenuItem[];
   bottomPanels?: BottomPanelDef[];
