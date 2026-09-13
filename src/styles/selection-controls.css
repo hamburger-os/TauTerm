@@ -1,0 +1,47 @@
+/* Shared native selection-control geometry.
+   Theme/material ownership remains in global.css + tokens.css; this file only
+   isolates checkbox/radio sizing from generic input/select layout rules. */
+
+html input[type="checkbox"],
+html input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  max-width: 16px;
+  max-height: 16px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 16px;
+  vertical-align: middle;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
+html input[type="checkbox"] {
+  border-radius: var(--radius-xs);
+}
+
+html input[type="radio"] {
+  border-radius: var(--radius-full);
+}
+
+html input[type="checkbox"]:disabled,
+html input[type="radio"]:disabled {
+  accent-color: var(--control-disabled-icon);
+  cursor: not-allowed;
+}
+
+/* .liquid-glass-toggle keeps a visually hidden checkbox as its state owner.
+   Reset every geometry constraint here so the shared native-control contract
+   can never make the hidden switch input consume layout space. */
+html .liquid-glass-toggle > input[type="checkbox"] {
+  width: 0;
+  height: 0;
+  min-width: 0;
+  min-height: 0;
+  max-width: 0;
+  max-height: 0;
+  margin: 0;
+  padding: 0;
+}

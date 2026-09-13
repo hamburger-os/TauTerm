@@ -298,7 +298,7 @@
   background: var(--glass-bg-hover);
 }
 
-.table input,
+.table input:not([type="checkbox"]):not([type="radio"]),
 .table select {
   min-width: 76px;
   height: var(--select-height);

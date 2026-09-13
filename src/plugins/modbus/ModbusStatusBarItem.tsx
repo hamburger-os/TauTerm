@@ -17,6 +17,10 @@ const STATUS_KEY: Partial<Record<TransactionStatus, string>> = {
   fault_injected: "modbus.statusFault",
 };
 
+function formatLatency(latencyMs: number): string {
+  return latencyMs < 1 ? "<1 ms" : `${latencyMs} ms`;
+}
+
 export default function ModbusStatusBarItem({ context }: { context: StatusBarContext }) {
   const { t } = useTranslation();
   const params = useMemo(
@@ -43,14 +47,24 @@ export default function ModbusStatusBarItem({ context }: { context: StatusBarCon
   }, [context.sessionId]);
 
   const type = modbusTypeLabel(params);
+  const role = status?.role ?? params.role;
+  const isClient = role === "client";
   const unit = status?.last_unit_id ?? status?.default_unit_id ?? params.unit_id;
+  const transactionCount = status?.transactions.latest_sequence ?? 0;
   const last = status?.last_status;
-  const lastLabel = last === "success" ? "OK" : last ? t(STATUS_KEY[last] ?? "modbus.statusProtocol") : null;
+  const lastLabel = last && last !== "success"
+    ? t(STATUS_KEY[last] ?? "modbus.statusProtocol")
+    : null;
+  const latency = status?.last_latency_ms != null ? formatLatency(status.last_latency_ms) : null;
+  const latencyPrefix = last === "success" ? (isClient ? "RTT" : "Proc") : "Time";
 
   return <div className={styles.statusBarPlugin}>
     <span className={styles.statusBarType}>{type}</span>
     <span>Unit {unit}</span>
-    {status?.watch_total ? <span className={status.watch_running ? styles.statusBarActive : ""}>{t("modbus.statusWatch", { enabled: status.watch_enabled, total: status.watch_total })}{status.watch_running ? " ▶" : ""}</span> : null}
-    {last && lastLabel ? <span className={last === "success" || last === "broadcast" ? styles.statusBarSuccess : styles.statusBarWarning}>{lastLabel}{status?.last_latency_ms != null ? ` ${status.last_latency_ms} ms` : ""}</span> : null}
+    {isClient && status?.watch_total ? <span className={status.watch_running ? styles.statusBarActive : ""}>{t("modbus.statusWatch", { enabled: status.watch_enabled, total: status.watch_total })}{status.watch_running ? " ▶" : ""}</span> : null}
+    {transactionCount > 0 ? <span>Txn {transactionCount}</span> : null}
+    {lastLabel ? <span className={last === "broadcast" ? styles.statusBarSuccess : styles.statusBarWarning}>{lastLabel}</span> : null}
+    {last === "success" && latency ? <span className={styles.statusBarSuccess}>{latencyPrefix} {latency}</span> : null}
+    {last && last !== "success" && last !== "broadcast" && latency ? <span>{latencyPrefix} {latency}</span> : null}
   </div>;
 }
