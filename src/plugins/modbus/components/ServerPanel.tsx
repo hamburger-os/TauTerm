@@ -3,13 +3,12 @@ import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import styles from "../Modbus.module.css";
 import type { ModbusStatus, ServerSnapshot } from "../model";
-
-type Area = "coil" | "discrete_input" | "holding_register" | "input_register";
+import { MODBUS_WORKBENCH_DEFAULTS, type ModbusServerArea } from "../workbenchDefaults";
 
 export default function ServerPanel({ sessionId, connected }: { sessionId: string; connected: boolean }) {
   const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<ServerSnapshot | null>(null);
-  const [area, setArea] = useState<Area>("holding_register");
+  const [area, setArea] = useState<ModbusServerArea>(MODBUS_WORKBENCH_DEFAULTS.serverArea);
   const [address, setAddress] = useState(0);
   const [value, setValue] = useState(0);
   const [error, setError] = useState("");
@@ -80,7 +79,7 @@ export default function ServerPanel({ sessionId, connected }: { sessionId: strin
 
       <div className={styles.subHeading}><strong>{t("modbus.serverDefinePoint")}</strong><span className={styles.hint}>{t("modbus.serverDefineHint")}</span></div>
       <div className={styles.grid}>
-        <label className={styles.field}><span className={styles.label}>{t("modbus.columnArea")}</span><select className="liquid-glass-input liquid-glass-select" value={area} onChange={event => setArea(event.target.value as Area)}><option value="coil">Coils</option><option value="discrete_input">Discrete Inputs</option><option value="holding_register">Holding Registers</option><option value="input_register">Input Registers</option></select></label>
+        <label className={styles.field}><span className={styles.label}>{t("modbus.columnArea")}</span><select className="liquid-glass-input liquid-glass-select" value={area} onChange={event => setArea(event.target.value as ModbusServerArea)}><option value="coil">Coils</option><option value="discrete_input">Discrete Inputs</option><option value="holding_register">Holding Registers</option><option value="input_register">Input Registers</option></select></label>
         <label className={styles.field}><span className={styles.label}>{t("modbus.columnProtocolAddress")}</span><input className="liquid-glass-input" type="number" min={0} max={65535} value={address} onChange={event => setAddress(Number(event.target.value))} /></label>
         <label className={styles.field}><span className={styles.label}>{t("modbus.serverInitialCurrentValue")}</span><input className="liquid-glass-input" type="number" min={0} max={area === "coil" || area === "discrete_input" ? 1 : 65535} value={value} onChange={event => setValue(Number(event.target.value))} /></label>
       </div>
@@ -99,7 +98,7 @@ export default function ServerPanel({ sessionId, connected }: { sessionId: strin
   </div>;
 }
 
-function reference(area: Area, address: number): string {
+function reference(area: ModbusServerArea, address: number): string {
   const base = area === "coil" ? 1 : area === "discrete_input" ? 10001 : area === "input_register" ? 30001 : 40001;
   return String(base + address).padStart(5, "0");
 }
