@@ -8,6 +8,12 @@ import manifestJson from "../../plugin-manifests/serial.json";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  sessionPresentation: {
+    defaultName: params => {
+      const mode = params.data_mode === "hex" ? "HEX" : params.data_mode === "dual" ? "Dual" : "Text";
+      return `Serial @ ${mode}`;
+    },
+  },
   toolbarItems: [],
   locales: {
     "zh-CN": {

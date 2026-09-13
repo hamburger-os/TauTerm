@@ -5,6 +5,7 @@ import {
   getPaneDisplayLabel,
   getSessionSubtitle,
 } from "../src/components/Layout/sessionPresentation.ts";
+import { setSessionPresentation } from "../src/core/session-presentation-registry.ts";
 
 const ROOT = process.cwd();
 const splitView = await readFile(
@@ -54,6 +55,25 @@ assert.equal(
   getPaneDisplayLabel(baseTab, new Map([[baseTab.id, baseTab]]), labels),
   "Serial @ Text · COM1",
 );
+
+const pluginTab = {
+  ...baseTab,
+  id: "plugin-a",
+  name: "Protocol @ Role",
+  pluginId: "presentation-contract-test",
+  connection_type: "presentation-contract-test",
+  endpoint: "internal-endpoint",
+  params: { target: "192.0.2.10:1234" },
+};
+setSessionPresentation(pluginTab.pluginId, {
+  subtitle: params => String(params.target ?? ""),
+});
+assert.equal(
+  getSessionSubtitle(pluginTab, labels),
+  "192.0.2.10:1234",
+  "Plugin-owned dynamic subtitle must override the internal endpoint",
+);
+setSessionPresentation(pluginTab.pluginId);
 
 const sshTab = {
   ...baseTab,

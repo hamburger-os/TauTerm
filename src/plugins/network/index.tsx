@@ -106,6 +106,13 @@ const statusBarItems: StatusBarItem[] = [
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  sessionPresentation: {
+    defaultName: params => {
+      const transport = params.transport === "udp" ? "UDP" : "TCP";
+      const role = params.role === "server" ? "Server" : "Client";
+      return `Network Debug @ ${transport} ${role}`;
+    },
+  },
   customView: NetworkDebugSessionView,
   statusBarItems,
 });

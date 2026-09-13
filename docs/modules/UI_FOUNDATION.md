@@ -13,6 +13,7 @@ React 应用由全局上下文和通用组件组成：
 - `App.tsx` 负责桌面应用壳与顶层组合；
 - `TabContentDispatcher` / Workspace 将 Session 映射到 Pane；
 - renderer 层统一承载 Terminal、Custom、文件浏览和统计类内容；
+- Session 列表与 Pane Header 采用统一的双层身份模型：第一行 `Session.name` 是稳定、可显式重命名的会话身份，默认名称仅在创建时计算一次；第二行是当前配置摘要，允许随 host/port/串口/角色等参数变化。协议默认名与摘要优先由 `PluginRegistration.sessionPresentation` 声明，应用壳不重复维护协议格式；
 - Settings 集中管理外观、语言、日志、安全、快捷键和版本信息；
 - i18next 维护 `en-US` / `zh-CN` 两套公共资源；协议插件可通过 `PluginRegistration.locales` 注册自己的双语资源，Plugin Registry 在注册时把资源注入同一个 i18n 实例，协议专属文案因此不需要堆进全局 locale；
 - Shortcut Registry 和 Command Palette 共享稳定 action id；
@@ -66,6 +67,7 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 ## 设计边界
 
 - 协议模块声明内容与能力，不直接拥有整个应用导航。
+- 会话配置更新、连接/重连事件只能刷新动态参数与运行态，不得重新生成已存在根会话的 `Session.name`；名称变化必须来自显式重命名或编辑名称字段。协议若需要不同的默认身份或第二行摘要，应扩展自己的 `sessionPresentation`，而不是在 `SessionSidebar` 中增加协议分支。
 - 用户语言、快捷键和设置项必须通过公共 registry/context 管理。
 - 插件专属翻译资源由 `PluginRegistration.locales` 与插件代码共同所有；`en-US` / `zh-CN` 必须同时提供同一组 key。全局公共文案继续只属于 `src/i18n/locales/`，不得把协议专属大块文案反向塞回公共资源。
 - 二元确认框的组件所有权属于 `components/common/ConfirmDialog`；调用方只声明 title / message / children / intent，不允许覆盖“取消 / 确认”按钮文案，也不允许回退到浏览器原生 `alert()/confirm()/prompt()`。非阻塞结果反馈统一使用全局 Toast。
@@ -84,6 +86,7 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 - `src/App.tsx`
 - `src/components/TabContentDispatcher.tsx`
 - `src/components/Layout/StatusBar.tsx`
+- `src/components/Layout/sessionPresentation.ts`
 - `src/core/plugin-registry.ts`
 - `src/components/Settings/`
 - `src/components/CommandPalette/`
@@ -95,4 +98,4 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 
 ## 何时更新本文
 
-修改应用壳、内容适配模型、renderer 类型、设置架构、i18n 组织、共享选择控件、插件 locale/status-bar 扩展、底边状态栏信息职责、快捷键/命令注册或公共 UI 所有权时，必须同步更新本文。
+修改应用壳、内容适配模型、renderer 类型、设置架构、i18n 组织、共享选择控件、插件 locale/status-bar/session-presentation 扩展、底边状态栏信息职责、快捷键/命令注册或公共 UI 所有权时，必须同步更新本文。

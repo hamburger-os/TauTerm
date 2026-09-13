@@ -546,7 +546,7 @@ interface SessionContextValue {
   clearNetworkPeer: (containerId: string, peerId: string) => Promise<void>;
   /** 网络调试：按后端快照合并对端列表（getStatus 兜底，保留既有统计） */
   mergeNetworkPeers: (containerId: string, entries: NetworkPeerEntry[]) => void;
-  /** 网络调试：设置 UDP 手动目标地址（目标栏手动目标输入） */
+  /** 网络调试：设置 UDP 手动目标地址（目标栏手动目标覆盖输入） */
   setNetworkManualTarget: (containerId: string, target: string) => void;
   /** 网络调试：记录一个 UDP RX 来源地址（发送栏快捷回发用，去重 + 上限） */
   registerNetworkUdpSource: (containerId: string, addr: string) => void;
@@ -791,23 +791,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     dispatch({ type: "SET_ERROR", error: null });
     try {
       const pid = pluginId || "serial";
+      const plugin = pluginRegistry.get(pid);
       const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(pid, sendBarEnabled);
-      // 协议无关的默认名：从 plugin-registry 查询 manifest.name，避免硬编码 "Serial @ ..."
-      // 导致未来 telnet/tftp 等会话误显示为 "Serial"。回退为大写的 pluginId。
-      const pluginName = (pluginRegistry.get(pid)?.manifest.name) || pid.toUpperCase();
-      // Bug fix: 始终将计算后的 effectiveName 传给后端，避免前后端大小写不一致
-      // 前端用 manifest.name ("SSH")，后端 fallback 用 pid ("ssh")，不传递会导致闪烁
-      const effectiveName = name || (pid === "local-shell"
+      // 默认会话名只在创建时计算一次；后续配置变化只更新动态摘要，不改会话身份。
+      const pluginName = plugin?.manifest.name || pid.toUpperCase();
+      const requestedName = name?.trim();
+      const presentationName = plugin?.sessionPresentation?.defaultName?.(params, endpoint)?.trim();
+      const effectiveName = requestedName || (pid === "local-shell"
         ? await invoke<string>("resolve_local_shell_session_name", { params })
-        : pid === "serial"
-          ? `${pluginName} @ ${params.data_mode === "hex" ? "HEX" : params.data_mode === "dual" ? "Dual" : "Text"}`
-          : pid === "trdp"
-            ? `TRDP @ ${params.mode === "monitor" ? "Monitor" : "Node"}`
-            : pid === "iperf"
-              ? `iperf @ ${params.version === "iperf3" ? "iperf3" : "iperf2"}`
-              : pid === "tftp"
-                ? `TFTP @ ${typeof params.file_root === "string" && params.file_root ? params.file_root : endpoint}`
-                : `${pluginName} @ ${endpoint}`);
+        : presentationName || `${pluginName} @ ${endpoint}`);
       const sessionId = await invoke<string>("save_session_config", {
         request: {
         endpoint, params,
@@ -1018,13 +1010,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_ERROR", error: "无法确定会话的协议类型 (pluginId)" });
       return;
     }
+    // 配置更新默认保留创建时的会话身份；只有用户显式修改名称字段时才改变第一行。
+    const effectiveName = name?.trim() || tab?.name;
+    if (!effectiveName) {
+      dispatch({ type: "SET_ERROR", error: "无法确定会话名称" });
+      return;
+    }
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
     try {
       await invoke("save_session_config", {
         request: {
         endpoint,
         params,
-        name: name || undefined,
+        name: effectiveName,
         pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
@@ -1045,7 +1043,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       id: sessionId,
       endpoint,
       params: persistedParams,
-      name: name || tab?.name || `${(tab?.pluginId && pluginRegistry.get(tab.pluginId)?.manifest.name) || tab?.pluginId?.toUpperCase() || "Serial"} @ ${endpoint}`,
+      name: effectiveName,
       transferEnabled,
       transferProtocol,
       sendBarEnabled: effectiveSendBarEnabled,
@@ -1062,7 +1060,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         request: {
           endpoint,
           params: persistedParams,
-          name: name || tab?.name || undefined,
+          name: effectiveName,
           pluginId: effectivePluginId,
           transferEnabled: transferEnabled ?? true,
           transferProtocol: transferProtocol || "ymodem",
@@ -1368,9 +1366,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           if (typeof event.payload.local_addr === "string") {
             dispatch({ type: "SET_NETWORK_LOCAL_ADDR", containerId: sid, addr: event.payload.local_addr });
           }
-          // 检查是否已存在同 ID 的 tab
-          const exists = tabsRef.current.some(t => t.id === sid);
-          if (exists) {
+          // 检查是否已存在同 ID 的 tab。运行时连接事件只刷新配置/状态，不能改写已保存会话名称。
+          const existingTab = tabsRef.current.find(t => t.id === sid);
+          if (existingTab) {
             // 已存在：更新状态和配置，不新增 tab
             dispatch({ type: "SET_TAB_STATE", id: sid, state: "connected" });
             dispatch({
@@ -1378,7 +1376,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               id: sid,
               endpoint: event.payload.endpoint,
               params: event.payload.params,
-              name: event.payload.name || `${(event.payload.plugin_id && pluginRegistry.get(event.payload.plugin_id)?.manifest.name) || event.payload.plugin_id?.toUpperCase() || "Serial"} @ ${event.payload.endpoint}`,
+              name: existingTab.name,
               transferEnabled: event.payload.transfer_enabled,
               transferProtocol: event.payload.transfer_protocol,
               sendBarEnabled: eventSendBarEnabled,

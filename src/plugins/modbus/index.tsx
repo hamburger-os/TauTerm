@@ -5,6 +5,7 @@ import ModbusSessionView from "./ModbusSessionView";
 import ModbusStatusBarItem from "./ModbusStatusBarItem";
 import { modbusLocales } from "./locales";
 import { normalizeModbusSessionParams } from "./model";
+import { modbusEndpointLabel, modbusSessionTitle } from "./presentation";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
@@ -18,6 +19,10 @@ registerPlugin({
         && config.port <= 65535;
     }
     return config.serial_port.trim().length > 0;
+  },
+  sessionPresentation: {
+    defaultName: params => modbusSessionTitle(params),
+    subtitle: params => modbusEndpointLabel(params),
   },
   customView: ModbusSessionView,
   locales: modbusLocales,

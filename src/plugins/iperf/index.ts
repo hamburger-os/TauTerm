@@ -7,6 +7,9 @@ import IperfSessionView from "../../components/Iperf/IperfSessionView";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  sessionPresentation: {
+    defaultName: params => `iperf @ ${params.version === "iperf3" ? "iperf3" : "iperf2"}`,
+  },
   customView: IperfSessionView,
 });
 
