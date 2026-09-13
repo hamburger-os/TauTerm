@@ -22,6 +22,7 @@ React 应用由全局上下文和通用组件组成：
 - 可理解且可撤销的专业配置风险优先使用就地非阻塞提示；例如 TFTP 的“非回环监听 + 允许写入 + 允许覆盖”只显示行内 warning，不占用 `ConfirmDialog`；
 - 多项互斥业务决策（例如文件冲突 Replace / Keep Both / Skip Existing）仍使用自己的业务选项标签与独立 Cancel，不伪装成二元确认；
 - 通用组件与图标系统供协议模块复用；互斥 Tab / 模式 / 筛选器只消费主题 SSOT 定义的共享 selector 类，业务组件不再各自维护按钮高度、padding 与切换位移动画；
+- 原生 checkbox / radio 的可视几何由 `src/styles/selection-controls.css` 全局统一，避免被表格或表单的通用 `input` 尺寸规则放大；协议页面只负责其布局位置，开关型布尔值继续复用全局 `.liquid-glass-toggle`，不在业务 CSS 中再造另一套选择控件；
 - 右侧可折叠工具面板使用 CSS 布局状态完成展开/收起，不为装饰性高度动画持续挂载 ResizeObserver；
 - ErrorBoundary、`window.error` 与 `unhandledrejection` 通过统一诊断桥进入 Rust System Log，并进行重复错误节流；公共错误页只消费 i18n key；
 - Windows/Linux 的真实 TauTerm WebView 使用稳定 `data-testid` 合同通过外部 `tauri-driver` 执行最小运行时 smoke，测试自动化不进入生产运行时插件边界；
@@ -70,6 +71,7 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 - 二元确认框的组件所有权属于 `components/common/ConfirmDialog`；调用方只声明 title / message / children / intent，不允许覆盖“取消 / 确认”按钮文案，也不允许回退到浏览器原生 `alert()/confirm()/prompt()`。非阻塞结果反馈统一使用全局 Toast。
 - Terminal 的控制键语义与应用快捷键必须显式分层：普通 `Ctrl+C / Ctrl+V` 不应被通用 WebView 剪贴板逻辑隐式劫持；应用级复制/粘贴必须由 TauTerm 宿主明确路由。设置页不得把 `Ctrl+C`、`Ctrl+V`、`Ctrl+Insert`、`Shift+Insert` 重新绑定给其它动作。
 - 终端粘贴不能绕过 xterm 直接调用 Session `onData`；换行风险在 Bracketed Paste Mode 开启时可免提示，但超过 5 KiB 的大粘贴始终需要确认，以降低误粘贴导致远端/串口被大量灌入数据或 UI 短时阻塞的风险。打开右键菜单不得预读系统剪贴板，只有用户明确执行 Paste 动作后才允许读取；待确认内容只属于当时的 active Terminal，切换 Pane/Session 或断开连接必须取消。
+- checkbox / radio 属于选择控件，不参与文本输入框和下拉框的统一高度规则；组件局部 CSS 可以调整对齐和间距，但不得重写其可视宽高、disabled/focus 语义或建立协议私有皮肤。
 - 中英文翻译 key 必须保持结构一致，不能让某个插件只在一个语言资源中增加 key；全局错误兜底不得退回硬编码单语文案。
 - renderer 只负责表现稳定的内容类型，不应吞并协议生命周期。
 - StatusBar 全局组件只理解应用壳和通用内容能力，不继续增加 `if pluginId === ...` 式协议分支；具体协议的状态语义属于插件贡献。
@@ -88,8 +90,9 @@ StatusBar 是辅助观察面，不是第二个工具栏或缩小版配置页。
 - `src/renderers/`
 - `src/i18n/`
 - `src/shortcuts/`
+- `src/styles/selection-controls.css`
 - `src/components/common/`
 
 ## 何时更新本文
 
-修改应用壳、内容适配模型、renderer 类型、设置架构、i18n 组织、插件 locale/status-bar 扩展、底边状态栏信息职责、快捷键/命令注册或公共 UI 所有权时，必须同步更新本文。
+修改应用壳、内容适配模型、renderer 类型、设置架构、i18n 组织、共享选择控件、插件 locale/status-bar 扩展、底边状态栏信息职责、快捷键/命令注册或公共 UI 所有权时，必须同步更新本文。
