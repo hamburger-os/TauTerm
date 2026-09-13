@@ -6,6 +6,9 @@ import TrdpSessionView from "./TrdpSessionView";
 registerPlugin({
   manifest: manifestJson as PluginManifest,
   connectForm: TrdpConnectForm,
+  sessionPresentation: {
+    defaultName: params => `TRDP @ ${params.mode === "monitor" ? "Monitor" : "Node"}`,
+  },
   customView: TrdpSessionView,
 });
 

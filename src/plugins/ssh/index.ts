@@ -9,6 +9,14 @@ import manifestJson from "../../plugin-manifests/ssh.json";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  sessionPresentation: {
+    defaultName: params => {
+      const username = typeof params.username === "string" && params.username.trim()
+        ? params.username.trim()
+        : "root";
+      return `SSH @ ${username}`;
+    },
+  },
   locales: {
     "zh-CN": {
       "host": "主机地址",

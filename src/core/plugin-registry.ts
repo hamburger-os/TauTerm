@@ -8,6 +8,12 @@
 import type { ComponentType, ReactNode } from "react";
 import type { IconName } from "../components/common/Icon";
 import i18n from "../i18n";
+import {
+  setSessionPresentation,
+  type SessionPresentation,
+} from "./session-presentation-registry.ts";
+
+export type { SessionPresentation } from "./session-presentation-registry.ts";
 
 // ── Types ───────────────────────────────────────────
 
@@ -113,6 +119,8 @@ export interface PluginRegistration {
   connectForm?: ComponentType<ConnectFormProps>;
   /** 插件连接表单是否满足创建/保存会话的最低要求。 */
   isConnectionConfigValid?: (params: Record<string, unknown>) => boolean;
+  /** 默认名称（创建时一次性生成）与动态配置摘要。 */
+  sessionPresentation?: SessionPresentation;
   toolbarItems?: ToolbarItem[];
   contextMenuItems?: ContextMenuItem[];
   bottomPanels?: BottomPanelDef[];
@@ -134,6 +142,7 @@ class PluginRegistry {
       console.warn(`[PluginRegistry] 插件 "${id}" 已注册，将被覆盖`);
     }
     this.plugins.set(id, registration);
+    setSessionPresentation(id, registration.sessionPresentation);
 
     for (const [language, resources] of Object.entries(registration.locales ?? {})) {
       i18n.addResourceBundle(
@@ -149,6 +158,7 @@ class PluginRegistry {
   /** 注销插件 */
   unregister(pluginId: string): void {
     this.plugins.delete(pluginId);
+    setSessionPresentation(pluginId);
   }
 
   /** 获取插件 */

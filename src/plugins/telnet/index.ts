@@ -6,9 +6,14 @@
  */
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/telnet.json";
+import { telnetEndpointLabel, telnetSessionTitle } from "./presentation";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  sessionPresentation: {
+    defaultName: () => telnetSessionTitle(),
+    subtitle: (params, endpoint) => telnetEndpointLabel(params, endpoint),
+  },
   toolbarItems: [],
   locales: {
     "zh-CN": {
