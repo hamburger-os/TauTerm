@@ -7,6 +7,14 @@ import TftpSessionView from "../../components/Tftp/TftpSessionView";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  sessionPresentation: {
+    defaultName: (params, endpoint) => {
+      const root = typeof params.file_root === "string" && params.file_root.trim()
+        ? params.file_root.trim()
+        : endpoint;
+      return `TFTP @ ${root}`;
+    },
+  },
   customView: TftpSessionView,
 });
 
