@@ -97,6 +97,12 @@ function getPaneDisplayTitle(tab: TabInfo, tabsById: Map<string, TabInfo>): stri
   return `${parent.name} › ${tab.name}`;
 }
 
+function getPaneDisplayLabel(tab: TabInfo, tabsById: Map<string, TabInfo>): string {
+  const title = getPaneDisplayTitle(tab, tabsById);
+  const endpoint = tab.endpoint.trim();
+  return endpoint ? `${title} · ${endpoint}` : title;
+}
+
 function getConnectionStateFallback(state: TabInfo["state"]): string {
   switch (state) {
     case "connecting":
@@ -382,7 +388,6 @@ export default function SplitView({
     <div
       ref={viewRef}
       className={`${styles.view} liquid-glass-content`}
-      onMouseDown={closeDisconnectedSessionMenu}
     >
       {/* 非终端内容层与空 Pane。终端由下面唯一的 TerminalView 实例池覆盖投放。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
@@ -448,7 +453,7 @@ export default function SplitView({
         const selected = paneId === layout.selectedPaneId;
         const showSelection = paneCount > 1 && selected;
         const blocked = blockedEdges[paneId] ?? new Set<SplitEdge>();
-        const paneTitle = tab ? getPaneDisplayTitle(tab, tabsById) : t("split.emptyPane", "空分屏");
+        const paneTitle = tab ? getPaneDisplayLabel(tab, tabsById) : t("split.emptyPane", "空分屏");
         const paneTitleTooltip = tab?.elevated
           ? `${paneTitle} · ${t("localShell.administrator", "管理员")}`
           : paneTitle;
