@@ -114,7 +114,7 @@ HMI 使用“紧凑观察表 + 选中行 Inspector”，而不是把 16 个低/�
 
 Client/Server history 都是有界运行态 sequence log，保存 timestamp、Unit、FC、TID、attempt、latency、TX/RX/PDU、status、exception 与 outcome-unknown。历史不写入 Saved Session。
 
-UI 不再高频读取完整 history。`modbus_status` 接受 optional sequence cursor/limit：Transactions 首次读取最近窗口，此后只取新记录；StatusBar 不带 cursor 时只取轻量最新状态。前端 Pause 只冻结事务视图，不停止协议运行时或 Watch。
+UI 不再高频读取完整 history。`modbus_status` 接受 optional sequence cursor/limit：Transactions 首次读取最近窗口，此后只取新记录；StatusBar 不带 cursor 时只取轻量最新状态，并复用 `latest_sequence` 作为当前 Session 的事务计数，不为底栏另建统计通道。前端 Pause 只冻结事务视图，不停止协议运行时或 Watch。
 
 ## Server Simulator
 
@@ -158,11 +158,11 @@ Pane 尺寸变化不能改变任务顺序。布局适配统一基于 SplitView �
 
 Modbus 工作区不再重复显示会话标题、endpoint 和连接状态头部；这些信息已有会话树与全局状态栏 owner。Client 的 transaction target Unit 放在“读写/请求”矩阵内，与功能、地址、数量属于同一操作上下文。连接页的 Unit 字段明确叫“默认 Unit ID”，表示新事务/Watch 的初始目标。
 
-连接页和工作区控件遵循 UI Foundation 的统一几何：输入框/下拉框使用 `--select-height` 与 `--select-padding`；顶部页签采用与 TRDP 相同的 36px 等高等宽主题按钮；常规动作按钮采用 30px 紧凑高度。矩阵在宽 Pane 中按列对齐，在窄 Pane 中通过 container query 降为两列/单列，不用协议私有硬编码颜色覆盖主题。
+连接页和工作区控件遵循 UI Foundation 的统一几何：输入框/下拉框使用 `--select-height` 与 `--select-padding`；顶部页签采用与 TRDP 相同的 36px 等高等宽主题按钮；常规动作按钮采用 30px 紧凑高度。矩阵在宽 Pane 中按列对齐，在窄 Pane 中通过 container query 降为两列/单列，不用协议私有硬编码颜色覆盖主题。Monitor 的 enabled checkbox 直接消费 UI Foundation 的共享选择控件样式，不再受表格文本输入框尺寸规则影响，也不维护 Modbus 私有 checkbox 皮肤。
 
 下拉框的**选项顺序**与**默认选中项**是两套独立语义：选项保持 Modbus 功能码、数据区或数值的自然顺序；默认项表达 TauTerm 推荐的起始调试工作流，不要求等于第一项。工作区推荐默认值统一由 `src/plugins/modbus/workbenchDefaults.ts` 提供：Read/Write 与 Monitor 默认从 FC03 / Holding Registers 开始，寄存器解释默认为 UInt16 + Big byte order + Normal word order，Server 数据模型默认定位 Holding Registers。组件不得各自内联复制这些值。连接表单的 RTU、8 data bits、None parity 等会话级默认值仍由 `defaultModbusSessionParams()` 统一拥有。
 
-底边 StatusBar 由全局 UI Foundation 拥有，Modbus 只通过插件 `statusBarItems` 贡献轻量运行态：协议模式/角色、最近事务 Unit、Watch 运行计数、最近结果与 latency。Endpoint/连接状态由全局栏已有 owner 展示，Modbus 不重复标题或完整配置。Custom Modbus Session 不继承 Text/UTF-8/TX/RX stream 状态。
+底边 StatusBar 由全局 UI Foundation 拥有，Modbus 只通过插件 `statusBarItems` 贡献轻量运行态：协议模式/角色、当前有效 Unit、Client Watch 运行计数、事务计数、最近异常结果与耗时；正常 Client 事务显示 RTT，Server 显示处理耗时，亚毫秒结果统一显示为 `<1 ms`。结果状态和耗时保持独立区段，避免把 `Protocol 0 ms` 之类错误类别与时延混成一个字段。Endpoint/连接状态由全局栏已有 owner 展示，Modbus 不重复标题或完整配置，也不为 Server 虚构 Client 专属 Watch 状态。Custom Modbus Session 不继承 Text/UTF-8/TX/RX stream 状态。
 
 Modbus 插件专属中英文文案由 `src/plugins/modbus/locales.ts` 所有，经 `PluginRegistration.locales` 注入全局 i18n；协议专属文案不复制到公共 locale。用户界面文案描述协议操作、结果和风险，不暴露 Rust/React、增量游标、重复解析等实现细节。
 
