@@ -46,7 +46,7 @@ export default function ModbusSessionView({ sessionId }: { sessionId: string }) 
     setTargetUnit(params.unit_id);
   }, [params.unit_id, sessionId]);
 
-  const generatedTitle = modbusSessionTitle();
+  const generatedTitle = modbusSessionTitle(params);
   const generatedEndpoint = modbusEndpointLabel(params);
   useEffect(() => {
     if (!tab || tab.state !== "disconnected") return;
