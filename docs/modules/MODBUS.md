@@ -160,6 +160,8 @@ Modbus 工作区不再重复显示会话标题、endpoint 和连接状态头部�
 
 连接页和工作区控件遵循 UI Foundation 的统一几何：输入框/下拉框使用 `--select-height` 与 `--select-padding`；顶部页签采用与 TRDP 相同的 36px 等高等宽主题按钮；常规动作按钮采用 30px 紧凑高度。矩阵在宽 Pane 中按列对齐，在窄 Pane 中通过 container query 降为两列/单列，不用协议私有硬编码颜色覆盖主题。
 
+下拉框的**选项顺序**与**默认选中项**是两套独立语义：选项保持 Modbus 功能码、数据区或数值的自然顺序；默认项表达 TauTerm 推荐的起始调试工作流，不要求等于第一项。工作区推荐默认值统一由 `src/plugins/modbus/workbenchDefaults.ts` 提供：Read/Write 与 Monitor 默认从 FC03 / Holding Registers 开始，寄存器解释默认为 UInt16 + Big byte order + Normal word order，Server 数据模型默认定位 Holding Registers。组件不得各自内联复制这些值。连接表单的 RTU、8 data bits、None parity 等会话级默认值仍由 `defaultModbusSessionParams()` 统一拥有。
+
 底边 StatusBar 由全局 UI Foundation 拥有，Modbus 只通过插件 `statusBarItems` 贡献轻量运行态：协议模式/角色、最近事务 Unit、Watch 运行计数、最近结果与 latency。Endpoint/连接状态由全局栏已有 owner 展示，Modbus 不重复标题或完整配置。Custom Modbus Session 不继承 Text/UTF-8/TX/RX stream 状态。
 
 Modbus 插件专属中英文文案由 `src/plugins/modbus/locales.ts` 所有，经 `PluginRegistration.locales` 注入全局 i18n；协议专属文案不复制到公共 locale。用户界面文案描述协议操作、结果和风险，不暴露 Rust/React、增量游标、重复解析等实现细节。
@@ -194,6 +196,7 @@ TauTerm 处于预稳定阶段。本模块 schema 直接以当前模型为唯一�
 - `src-tauri/src/transport/serial.rs`
 - `src-tauri/src/transport/tcp.rs`
 - `src/plugins/modbus/`
+- `src/plugins/modbus/workbenchDefaults.ts`
 - `src/plugin-manifests/modbus.json`
 - `src/components/Layout/StatusBar.tsx`
 - `src/components/Layout/ConnectDialog.tsx`

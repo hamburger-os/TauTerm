@@ -11,6 +11,7 @@ import {
   type RegisterReadArea,
   type TransactionResult,
 } from "../model";
+import { MODBUS_WORKBENCH_DEFAULTS } from "../workbenchDefaults";
 import ResultCard from "./ResultCard";
 
 interface Props {
@@ -40,7 +41,7 @@ function registerArea(fc: 3 | 4): RegisterReadArea {
 
 export default function ReadWritePanel({ execute, connected, targetUnit, maxUnitId, onTargetUnitChange }: Props) {
   const { t } = useTranslation();
-  const [fc, setFc] = useState<number>(3);
+  const [fc, setFc] = useState<number>(MODBUS_WORKBENCH_DEFAULTS.readFunctionCode);
   const [address, setAddress] = useState(0);
   const [quantity, setQuantity] = useState(1);
   const [value, setValue] = useState("0");
