@@ -31,7 +31,7 @@ TauWorkspace
 
 安全凭据永远不进入 Workspace；这里只能保存 credential reference。
 
-Pane Header 是 Pane 级操作的正式边界；会话内容区的右键行为属于 Session。未连接的不同会话类型应提供一致的连接/配置/删除直觉，不能因为是 custom view 就失去公共会话操作。
+Pane Header 是 Pane 级操作的正式边界；会话内容区的右键行为属于 Session。未连接的不同会话类型应提供一致的连接/配置/删除直觉，不能因为是 custom view 就失去公共会话操作。未连接会话的内容区菜单复用公共 `ContextMenu` 的外部点击关闭机制；由于菜单通过 React Portal 渲染，Workspace 祖先节点不得再用冒泡 `mousedown` 提前关闭该菜单，否则会在菜单项 `click` 执行前打断操作。
 
 在多 Pane Workspace 中，Pane Header 通过可见的 `…` 按钮和右键打开同一套公共 `ContextMenu`，提供以下结构操作：
 
@@ -71,6 +71,7 @@ CI 的 `check:split-layout` 与 `check:product-integrity` 共同守住结构级�
 - `SplitView.paneSurface` 是命名 size container（`session-pane`）；
 - custom view 的 Pane surface 本身 `overflow: hidden`，滚动由 TFTP/iperf/TRDP/Network 等内容视图拥有，避免同轴双滚动；
 - Pane Header 的 24px 内容 inset 与实际 header 几何保持一致；
+- Pane Header 在紧凑的单行高度内显示“会话名称 · 会话摘要”，名称仍是主身份；摘要与左侧同一 Session 卡片第二行共用一套派生规则（SSH host:port、TRDP 链路/抓包接口、Network client 本端地址等都保持一致），空间不足时整体省略，不增加 Header 高度；
 - Pane Header 的 `…` 与右键菜单复用公共 `ContextMenu`，边界定位、键盘导航、焦点恢复和主题材质只维护一份实现；
 - TRDP 顶部 tab strip 高度固定，hover/selected 不改变兄弟按钮几何；
 - TRDP Analysis 在窄 Pane 下从双列折叠为单列；

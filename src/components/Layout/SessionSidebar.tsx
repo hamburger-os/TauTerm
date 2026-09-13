@@ -8,6 +8,11 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import ContextMenu from "../common/ContextMenu";
 import Icon from "../common/Icon";
 import PaneMiniMap from "./PaneMiniMap";
+import {
+  getSessionSubtitle,
+  type SessionPresentationLabels,
+  type SessionPresentationNetworkState,
+} from "./sessionPresentation";
 import type { ContextMenuItem } from "../common/ContextMenu";
 import type { TabInfo } from "../../context/SessionContext";
 import { pluginRegistry } from "../../core/plugin-registry";
@@ -25,15 +30,6 @@ interface SessionSidebarProps {
   onEditSession?: (id: string) => void;
   onSettingsClick?: () => void;
   onNewSession?: () => void;
-}
-
-function formatHostPort(host: string, port: number): string {
-  const trimmedHost = host.trim();
-  const displayHost = trimmedHost.includes(":")
-    && !(trimmedHost.startsWith("[") && trimmedHost.endsWith("]"))
-    ? `[${trimmedHost}]`
-    : trimmedHost;
-  return `${displayHost}:${port}`;
 }
 
 /**
@@ -55,6 +51,15 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
   /** 右键菜单打开前的 Pane。新建子终端时用它作为落点，避免右键导航抢走空 Pane。 */
   const contextMenuOriginPaneRef = useRef(splitLayout.selectedPaneId);
+  const presentationLabels = useMemo<SessionPresentationLabels>(() => ({
+    trdpCapture: t("trdpSidebar.capture"),
+    trdpUnconfigured: t("trdpSidebar.unconfigured"),
+    trdpDisabled: t("trdpSidebar.disabled"),
+  }), [t]);
+  const presentationNetworkState = useMemo<SessionPresentationNetworkState>(() => ({
+    networkPeers: state.networkPeers,
+    networkLocalAddrs: state.networkLocalAddrs,
+  }), [state.networkLocalAddrs, state.networkPeers]);
 
   // 构建树形结构（排序：connection_type → [网络会话: 传输层→角色] → endpoint → name）
   const tree = useMemo<TreeNode[]>(() => {
@@ -151,60 +156,13 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
     prevPeerIdsRef.current = currentIds;
   }, [state.networkPeers, state.tabs]);
 
-  const getSessionSubtitle = useCallback((tab: TabInfo): string => {
-    const params = (tab.params ?? {}) as Record<string, unknown>;
-    if (tab.pluginId === "ssh") {
-      const host = typeof params.host === "string" && params.host.trim()
-        ? params.host.trim()
-        : tab.endpoint;
-      const port = typeof params.port === "number" && Number.isInteger(params.port)
-        && params.port > 0 && params.port <= 65535
-        ? params.port
-        : 22;
-      return formatHostPort(host, port);
-    }
-    if (tab.pluginId === "iperf") {
-      const listenIp = typeof params.listen_ip === "string" && params.listen_ip.trim()
-        ? params.listen_ip.trim()
-        : "0.0.0.0";
-      const listenPort = typeof params.listen_port === "number" && Number.isFinite(params.listen_port)
-        ? params.listen_port
-        : (params.version === "iperf3" ? 5201 : 5001);
-      return `${listenIp}:${listenPort}`;
-    }
-    if (tab.pluginId !== "trdp") return tab.endpoint;
-
-    const mode = params.mode === "monitor" ? "monitor" : "node";
-    if (mode === "monitor") {
-      const interfaceA = typeof params.capture_interface === "string"
-        ? params.capture_interface.trim()
-        : "";
-      const interfaceB = typeof params.capture_interface_b === "string"
-        ? params.capture_interface_b.trim()
-        : "";
-      const unconfigured = t("trdpSidebar.unconfigured");
-      if (params.capture_interface_b_enabled === true) {
-        return `A: ${interfaceA || unconfigured} · B: ${interfaceB || unconfigured}`;
-      }
-      return `${t("trdpSidebar.capture")}: ${interfaceA || unconfigured}`;
-    }
-
-    const linkA = typeof params.link_a_ip === "string" && params.link_a_ip.trim()
-      ? params.link_a_ip.trim()
-      : "0.0.0.0";
-    const linkB = typeof params.link_b_ip === "string" && params.link_b_ip.trim()
-      ? params.link_b_ip.trim()
-      : "0.0.0.0";
-    return `A: ${linkA} · B: ${params.link_b_enabled === true ? linkB : t("trdpSidebar.disabled")}`;
-  }, [t]);
-
   // 按搜索过滤后的扁平列表（仅用于搜索匹配，树形结构渲染时过滤）
   const searchLower = search.toLowerCase();
   const filteredTree = useMemo(() => {
     if (!search) return tree;
     return tree.filter(node => {
       const parentMatch = node.tab.name.toLowerCase().includes(searchLower)
-        || getSessionSubtitle(node.tab).toLowerCase().includes(searchLower)
+        || getSessionSubtitle(node.tab, presentationLabels, presentationNetworkState).toLowerCase().includes(searchLower)
         || node.tab.endpoint.toLowerCase().includes(searchLower);
       const childMatch = node.children.some(c =>
         c.name.toLowerCase().includes(searchLower)
@@ -216,7 +174,7 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
       );
       return parentMatch || childMatch || peerMatch;
     });
-  }, [tree, search, getSessionSubtitle]);
+  }, [tree, search, presentationLabels, presentationNetworkState]);
 
   // 展开/折叠切换
   const toggleExpand = useCallback((id: string, e: React.MouseEvent) => {
@@ -468,20 +426,11 @@ export default function SessionSidebar({ onSelectSession, onEditSession, onSetti
             const supportsMultiple = pluginRegistry
               .get(node.tab.pluginId)?.manifest.capabilities.includes("multi_session") ?? false;
             const canExpand = hasChildren && (supportsMultiple || isNetwork);
-            // 网络 client 是单会话：本端地址并入端点行（连接后本机 ip:port，与服务端
-            // 对端条目对应），保持与其余会话卡片一致的单行高度。
-            // TCP client 本端地址来自对端条目；UDP client 无对端，来自 networkLocalAddrs。
-            const netParams = (node.tab.params ?? {}) as Record<string, unknown>;
-            const isNetClient = isNetwork && ((netParams.role ?? "client") as string) === "client";
-            const clientLocalAddr = isNetClient
-              ? ((netParams.transport as string) === "udp"
-                  ? state.networkLocalAddrs[node.tab.id]
-                  : state.networkPeers[node.tab.id]?.[0]?.localAddr)
-              : undefined;
-            const baseSubtitle = getSessionSubtitle(node.tab);
-            const parentEndpoint = clientLocalAddr
-              ? `${baseSubtitle} · ${clientLocalAddr}`
-              : baseSubtitle;
+            const parentEndpoint = getSessionSubtitle(
+              node.tab,
+              presentationLabels,
+              presentationNetworkState,
+            );
             const parentPaneId = sessionToPane[node.tab.id];
 
             return (

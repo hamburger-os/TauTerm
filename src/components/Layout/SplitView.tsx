@@ -18,6 +18,11 @@ import FileBrowserRenderer from "../../renderers/FileBrowserRenderer";
 import StatsDashboardRenderer from "../../renderers/StatsDashboardRenderer";
 import CustomRenderer from "../../renderers/CustomRenderer";
 import DisconnectedSessionContextMenu from "./DisconnectedSessionContextMenu";
+import {
+  getPaneDisplayLabel,
+  type SessionPresentationLabels,
+  type SessionPresentationNetworkState,
+} from "./sessionPresentation";
 import styles from "./SplitView.module.css";
 
 const MIN_PANE_PX = 160;
@@ -83,18 +88,6 @@ function terminalHasRuntime(tab: TabInfo): boolean {
   return tab.state === "connected"
     || tab.state === "transferring"
     || Boolean(tab.disconnectInfo?.retain_terminal);
-}
-
-/**
- * Pane 标题必须在脱离侧栏树的上下文后仍能唯一识别会话。
- * 子会话（SSH channel / Local Shell PTY / 未来其它 tabbed sub-session）
- * 统一带上父会话名称，避免所有分屏只看到 "Shell 1" / "Channel 1"。
- */
-function getPaneDisplayTitle(tab: TabInfo, tabsById: Map<string, TabInfo>): string {
-  if (!tab.parentId) return tab.name;
-  const parent = tabsById.get(tab.parentId);
-  if (!parent?.name) return tab.name;
-  return `${parent.name} › ${tab.name}`;
 }
 
 function getConnectionStateFallback(state: TabInfo["state"]): string {
@@ -187,6 +180,17 @@ export default function SplitView({
     for (const tab of sessionState.tabs) map.set(tab.id, tab);
     return map;
   }, [sessionState.tabs]);
+
+  const presentationLabels = useMemo<SessionPresentationLabels>(() => ({
+    trdpCapture: t("trdpSidebar.capture"),
+    trdpUnconfigured: t("trdpSidebar.unconfigured"),
+    trdpDisabled: t("trdpSidebar.disabled"),
+  }), [t]);
+
+  const presentationNetworkState = useMemo<SessionPresentationNetworkState>(() => ({
+    networkPeers: sessionState.networkPeers,
+    networkLocalAddrs: sessionState.networkLocalAddrs,
+  }), [sessionState.networkLocalAddrs, sessionState.networkPeers]);
 
   const terminalPlacements = useMemo(() => {
     const result: Record<string, PaneRect> = {};
@@ -382,7 +386,6 @@ export default function SplitView({
     <div
       ref={viewRef}
       className={`${styles.view} liquid-glass-content`}
-      onMouseDown={closeDisconnectedSessionMenu}
     >
       {/* 非终端内容层与空 Pane。终端由下面唯一的 TerminalView 实例池覆盖投放。 */}
       {Object.entries(paneRects).map(([paneId, rect]) => {
@@ -448,7 +451,9 @@ export default function SplitView({
         const selected = paneId === layout.selectedPaneId;
         const showSelection = paneCount > 1 && selected;
         const blocked = blockedEdges[paneId] ?? new Set<SplitEdge>();
-        const paneTitle = tab ? getPaneDisplayTitle(tab, tabsById) : t("split.emptyPane", "空分屏");
+        const paneTitle = tab
+          ? getPaneDisplayLabel(tab, tabsById, presentationLabels, presentationNetworkState)
+          : t("split.emptyPane", "空分屏");
         const paneTitleTooltip = tab?.elevated
           ? `${paneTitle} · ${t("localShell.administrator", "管理员")}`
           : paneTitle;
