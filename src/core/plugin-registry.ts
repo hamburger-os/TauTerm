@@ -8,6 +8,12 @@
 import type { ComponentType, ReactNode } from "react";
 import type { IconName } from "../components/common/Icon";
 import i18n from "../i18n";
+import {
+  setSessionPresentation,
+  type SessionPresentation,
+} from "./session-presentation-registry.ts";
+
+export type { SessionPresentation } from "./session-presentation-registry.ts";
 
 // ── Types ───────────────────────────────────────────
 
@@ -34,17 +40,6 @@ export interface ConnectFormProps {
   params: Record<string, unknown>;
   onChange: (params: Record<string, unknown>) => void;
   endpoints?: EndpointInfo[];
-}
-
-/**
- * 会话卡片/Pane 的协议级展示契约。
- *
- * `defaultName` 只在创建会话且用户未填写名称时计算一次；创建后名称是持久化身份，
- * 不应随着配置变化重新生成。`subtitle` 则是当前配置摘要，可随配置实时变化。
- */
-export interface SessionPresentation {
-  defaultName?: (params: Record<string, unknown>, endpoint: string) => string;
-  subtitle?: (params: Record<string, unknown>, endpoint: string) => string;
 }
 
 /** 端点信息 */
@@ -147,6 +142,7 @@ class PluginRegistry {
       console.warn(`[PluginRegistry] 插件 "${id}" 已注册，将被覆盖`);
     }
     this.plugins.set(id, registration);
+    setSessionPresentation(id, registration.sessionPresentation);
 
     for (const [language, resources] of Object.entries(registration.locales ?? {})) {
       i18n.addResourceBundle(
@@ -162,6 +158,7 @@ class PluginRegistry {
   /** 注销插件 */
   unregister(pluginId: string): void {
     this.plugins.delete(pluginId);
+    setSessionPresentation(pluginId);
   }
 
   /** 获取插件 */
