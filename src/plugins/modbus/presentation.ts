@@ -9,8 +9,8 @@ export function modbusTypeLabel(params: Record<string, unknown>): string {
   return `${mode} ${role}`;
 }
 
-export function modbusSessionTitle(): string {
-  return "Modbus 调试助手";
+export function modbusSessionTitle(params: Record<string, unknown>): string {
+  return `Modbus @ ${modbusTypeLabel(params)}`;
 }
 
 export function modbusEndpointLabel(params: Record<string, unknown>): string {
