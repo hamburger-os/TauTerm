@@ -77,24 +77,24 @@ export default function ServerPanel({ sessionId, connected }: { sessionId: strin
       <div className={styles.panelHeading}>
         <div><strong>{t("modbus.serverAddressSpace")}</strong><span className={styles.hint}>{t("modbus.serverAddressSpaceHint")}</span></div>
       </div>
-    </section>
-    <section className={`${styles.workbenchSection} ${styles.serverSplit}`}>
-      <div className={styles.serverEditor}>
-        <div className={styles.subHeading}><strong>{t("modbus.serverDefinePoint")}</strong><span className={styles.hint}>{t("modbus.serverDefineHint")}</span></div>
+
+      <div className={styles.subHeading}><strong>{t("modbus.serverDefinePoint")}</strong><span className={styles.hint}>{t("modbus.serverDefineHint")}</span></div>
+      <div className={styles.grid}>
         <label className={styles.field}><span className={styles.label}>{t("modbus.columnArea")}</span><select className="liquid-glass-input liquid-glass-select" value={area} onChange={event => setArea(event.target.value as Area)}><option value="coil">Coils</option><option value="discrete_input">Discrete Inputs</option><option value="holding_register">Holding Registers</option><option value="input_register">Input Registers</option></select></label>
         <label className={styles.field}><span className={styles.label}>{t("modbus.columnProtocolAddress")}</span><input className="liquid-glass-input" type="number" min={0} max={65535} value={address} onChange={event => setAddress(Number(event.target.value))} /></label>
         <label className={styles.field}><span className={styles.label}>{t("modbus.serverInitialCurrentValue")}</span><input className="liquid-glass-input" type="number" min={0} max={area === "coil" || area === "discrete_input" ? 1 : 65535} value={value} onChange={event => setValue(Number(event.target.value))} /></label>
-        <div className={styles.actions}>
-          <button className="liquid-glass-button" disabled={!connected} onClick={() => void definePoint()}>{t("modbus.serverApplyPoint")}</button>
-          <button className="liquid-glass-button" disabled={!connected} onClick={refreshSnapshot}>{t("modbus.refresh")}</button>
-        </div>
-        {!connected && <span className={styles.hint}>{t("modbus.serverConnectHint")}</span>}
-        {error && <span className={styles.error}>{error}</span>}
       </div>
-      <div className={styles.serverTablePane}>
-        <div className={styles.subHeading}><strong>{t("modbus.serverCurrentArea")}</strong><span className={styles.hint}>{t("modbus.serverRefreshHint")}</span></div>
-        {!connected ? <div className={styles.emptyState}>{t("modbus.serverDisconnected")}</div> : <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>{t("modbus.columnProtocolAddress")}</th><th>{t("modbus.columnTraditionalReference")}</th><th>{t("modbus.columnValue")}</th></tr></thead><tbody>{entries.length === 0 ? <tr><td colSpan={3} className={styles.empty}>{t("modbus.serverNoPoints")}</td></tr> : entries.map(([entryAddress, entryValue]) => <tr key={entryAddress}><td>{entryAddress}</td><td>{reference(area, entryAddress)}</td><td className={styles.mono}>{String(entryValue)}</td></tr>)}</tbody></table></div>}
+      <div className={styles.actions}>
+        <button className="liquid-glass-button" disabled={!connected} onClick={() => void definePoint()}>{t("modbus.serverApplyPoint")}</button>
+        <button className="liquid-glass-button" disabled={!connected} onClick={refreshSnapshot}>{t("modbus.refresh")}</button>
       </div>
+      {!connected && <span className={styles.hint}>{t("modbus.serverConnectHint")}</span>}
+      {error && <span className={styles.error}>{error}</span>}
+    </section>
+
+    <section className={styles.workbenchSection}>
+      <div className={styles.subHeading}><strong>{t("modbus.serverCurrentArea")}</strong><span className={styles.hint}>{t("modbus.serverRefreshHint")}</span></div>
+      {!connected ? <div className={styles.emptyState}>{t("modbus.serverDisconnected")}</div> : <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>{t("modbus.columnProtocolAddress")}</th><th>{t("modbus.columnTraditionalReference")}</th><th>{t("modbus.columnValue")}</th></tr></thead><tbody>{entries.length === 0 ? <tr><td colSpan={3} className={styles.empty}>{t("modbus.serverNoPoints")}</td></tr> : entries.map(([entryAddress, entryValue]) => <tr key={entryAddress}><td>{entryAddress}</td><td>{reference(area, entryAddress)}</td><td className={styles.mono}>{String(entryValue)}</td></tr>)}</tbody></table></div>}
     </section>
   </div>;
 }

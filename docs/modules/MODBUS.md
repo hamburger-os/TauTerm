@@ -108,7 +108,7 @@ Scheduler 按每行完成时刻重新安排下一次执行，不补偿错过 tic
 
 Bit 区不保存 register ValueFormat；寄存器区必须有明确 ValueFormat。固定宽度与 quantity 不一致时拒绝保存。Watch 校验直接复用 Rust request encoder 和 target Unit 规则。
 
-HMI 使用“紧凑观察表 + 选中行 Inspector”，而不是把 16 个低/高频字段全部永久铺在一张超宽表中。表格优先展示 enabled、name、Unit、area、address、type、current value、status；quantity、byte/word order、scale、offset、engineering unit、bit、period 在 Inspector 编辑，适配 TauTerm 多分屏窄 Pane。
+HMI 使用“紧凑观察表 + 选中行 Inspector”，而不是把 16 个低/高频字段全部永久铺在一张超宽表中。表格优先展示 enabled、name、Unit、area、address、type、current value、status；quantity、byte/word order、scale、offset、engineering unit、bit、period 在 Inspector 编辑。宽 Pane 中两者是同一任务的 master-detail，可并排但只用标题与留白建立关系，不画贯穿式分隔墙；窄 Pane 通过 `session-pane` container query 将 Inspector 顺序堆叠到表格下方。
 
 ## Transaction History / Runtime Summary
 
@@ -150,7 +150,11 @@ Modbus 连接表单通过插件契约 `PluginRegistration.isConnectionConfigVali
 
 ## UI 与底边状态栏
 
-Modbus 使用独立 `customView`，不显示全局 SendBar。主工作区遵循“一张 Workspace Content + 内部分区”，不再额外包一层大 `liquid-glass-card`；Read/Write、Monitor、Transactions、Advanced、Server 通过统一主题按钮与 section divider 共享同一工作台表面。
+Modbus 使用独立 `customView`，不显示全局 SendBar。主工作区遵循“一张 Workspace Content + 连续页面”的信息架构：页面内部主要由标题、说明、自然留白和操作顺序建立层级，只有表格、输入控件、空状态等真实数据/交互对象拥有自己的边界，不使用贯穿工作区的横向 section divider 或纵向分隔墙来切割功能。
+
+Read/Write 始终保持“请求 → 结果”的纵向工作流；Server Simulator 的数据模型始终保持“定义/更新数据点 → 当前区域”的纵向工作流，宽 Pane 只把同一操作组内的字段展开成多列，不把先后任务拆成左右两个固定区域。Transactions 以单一全宽事务表为主体；Advanced 按语义操作顺序组织参数和结果。Monitor 是唯一保留 master-detail 并排关系的工作页，但并排状态只通过标题与间距表达，窄 Pane 会把 Inspector 堆叠到表格下方。
+
+Pane 尺寸变化不能改变任务顺序。布局适配统一基于 SplitView 提供的 `session-pane` CSS container：宽 Pane 提高同一操作组内部的信息密度，窄 Pane 降为两列/单列，短 Pane 收紧 padding 和空状态高度；不为视觉响应引入 ResizeObserver 或窗口级断点逻辑。这样 1 / 2 / 4 Pane 与拖动后的短 Pane 共用同一信息架构，只改变密度，不改变功能位置与操作路径。
 
 Modbus 工作区不再重复显示会话标题、endpoint 和连接状态头部；这些信息已有会话树与全局状态栏 owner。Client 的 transaction target Unit 放在“读写/请求”矩阵内，与功能、地址、数量属于同一操作上下文。连接页的 Unit 字段明确叫“默认 Unit ID”，表示新事务/Watch 的初始目标。
 

@@ -184,10 +184,7 @@
   padding: 12px;
   display: grid;
   gap: 12px;
-}
-
-.workbenchSection + .workbenchSection {
-  border-top: 1px solid var(--glass-border-default);
+  align-content: start;
 }
 
 .panelHeading {
@@ -329,23 +326,20 @@
 }
 
 .monitorLayout {
-  grid-template-columns: minmax(0, 1.7fr) minmax(230px, 0.65fr);
-  gap: 0;
-  padding: 0;
+  grid-template-columns: minmax(0, 1.7fr) minmax(250px, 0.65fr);
+  gap: 18px;
+  align-items: start;
 }
 
 .monitorTablePane,
 .monitorInspector {
   min-width: 0;
-  padding: 12px;
 }
 
 .monitorInspector {
   display: grid;
   align-content: start;
   gap: 12px;
-  border-left: 1px solid var(--glass-border-default);
-  background: color-mix(in srgb, var(--glass-input-bg) 22%, transparent);
 }
 
 .monitorTable {
@@ -458,25 +452,6 @@
   background: color-mix(in srgb, var(--glass-input-bg) 72%, transparent);
 }
 
-.serverSplit {
-  grid-template-columns: minmax(220px, 0.7fr) minmax(320px, 1.6fr);
-  gap: 0;
-  padding: 0;
-}
-
-.serverEditor,
-.serverTablePane {
-  min-width: 0;
-  padding: 12px;
-  display: grid;
-  align-content: start;
-  gap: 10px;
-}
-
-.serverTablePane {
-  border-left: 1px solid var(--glass-border-default);
-}
-
 .subHeading {
   display: grid;
   gap: 3px;
@@ -513,30 +488,16 @@
   color: var(--color-warning);
 }
 
+@container session-pane (max-width: 1080px) {
+  .root .monitorLayout {
+    grid-template-columns: 1fr;
+  }
+}
+
 @container session-pane (max-width: 900px) {
   .root .grid,
   .root .requestGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .root .monitorLayout {
-    grid-template-columns: 1fr;
-  }
-
-  .root .monitorInspector {
-    border-left: 0;
-    border-top: 1px solid var(--glass-border-default);
-  }
-}
-
-@container session-pane (max-width: 680px) {
-  .root .serverSplit {
-    grid-template-columns: 1fr;
-  }
-
-  .root .serverTablePane {
-    border-left: 0;
-    border-top: 1px solid var(--glass-border-default);
   }
 }
 
@@ -566,12 +527,16 @@
     padding-top: 8px;
   }
 
-  .workbenchSection,
-  .serverEditor,
-  .serverTablePane,
-  .monitorTablePane,
-  .monitorInspector {
+  .workbenchSection {
     padding: 9px;
+    gap: 8px;
+  }
+
+  .monitorLayout {
+    gap: 12px;
+  }
+
+  .monitorInspector {
     gap: 8px;
   }
 
