@@ -799,13 +799,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // 前端用 manifest.name ("SSH")，后端 fallback 用 pid ("ssh")，不传递会导致闪烁
       const effectiveName = name || (pid === "local-shell"
         ? await invoke<string>("resolve_local_shell_session_name", { params })
-        : pid === "trdp"
-          ? `TRDP @ ${params.mode === "monitor" ? "Monitor" : "Node"}`
-          : pid === "iperf"
-            ? `iperf @ ${params.version === "iperf3" ? "iperf3" : "iperf2"}`
-            : pid === "tftp"
-              ? `TFTP @ ${typeof params.file_root === "string" && params.file_root ? params.file_root : endpoint}`
-              : `${pluginName} @ ${endpoint}`);
+        : pid === "serial"
+          ? `${pluginName} @ ${params.data_mode === "hex" ? "HEX" : params.data_mode === "dual" ? "Dual" : "Text"}`
+          : pid === "trdp"
+            ? `TRDP @ ${params.mode === "monitor" ? "Monitor" : "Node"}`
+            : pid === "iperf"
+              ? `iperf @ ${params.version === "iperf3" ? "iperf3" : "iperf2"}`
+              : pid === "tftp"
+                ? `TFTP @ ${typeof params.file_root === "string" && params.file_root ? params.file_root : endpoint}`
+                : `${pluginName} @ ${endpoint}`);
       const sessionId = await invoke<string>("save_session_config", {
         request: {
         endpoint, params,
