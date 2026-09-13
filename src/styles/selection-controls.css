@@ -18,9 +18,17 @@ html input[type="radio"] {
   cursor: pointer;
 }
 
+html input[type="checkbox"] {
+  border-radius: var(--radius-xs);
+}
+
+html input[type="radio"] {
+  border-radius: var(--radius-full);
+}
+
 html input[type="checkbox"]:disabled,
 html input[type="radio"]:disabled {
-  opacity: 0.62;
+  accent-color: var(--control-disabled-icon);
   cursor: not-allowed;
 }
 
