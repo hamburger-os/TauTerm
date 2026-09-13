@@ -82,9 +82,7 @@ export default function TransactionsPanel({ sessionId, connected }: { sessionId:
           <button className="liquid-glass-button" disabled={records.length === 0} onClick={() => setRecords([])}>{t("modbus.transactionsClear")}</button>
         </div>
       </div>
-      {!connected && <div className={styles.emptyState}>{t("modbus.transactionsDisconnected")}</div>}
-    </section>
-    <section className={styles.workbenchSection}>
+      {!connected && <span className={styles.hint}>{t("modbus.transactionsDisconnected")}</span>}
       <div className={styles.tableWrap}>
         <table className={styles.table}>
           <thead><tr><th>{t("modbus.columnTime")}</th><th>{t("modbus.columnResult")}</th><th>{t("modbus.columnUnit")}</th><th>{t("modbus.columnFunction")}</th><th>TID</th><th>{t("modbus.columnLatency")}</th><th>{t("modbus.columnAttempt")}</th><th>{t("modbus.columnFrames")}</th></tr></thead>
