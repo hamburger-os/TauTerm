@@ -24,18 +24,21 @@ TauTerm 串口会话集成测试假服务器 — 模拟 RT-Thread 设备
   4. X / Y / ZModem 文件传输 —— sx/sy/sz(发送给上位机) 与 rx/ry/rz(从上位机接收)
   5. 自动应答 / Lua 脚本 —— --respond 加载规则文件，对收到的行做模式匹配并应答
 
-依赖（按需，缺失时对应功能会给出安装提示，Shell 仍可用）：
-  · pyserial        —— 必须（通常 Anaconda 已自带）
+依赖（按需，缺失时对应功能会给出安装提示）：
+  · pyserial        —— 启动设备仿真时必须；--dry-run/清理命令不依赖它
   · xmodem          —— 可选，XModem 传输，pip install xmodem
   · ymodem          —— 可选，YModem 传输，pip install ymodem
   · zmodem 库在 PyPI 无稳定包 —— ZModem 传输使用内置标准实现（单文件 rz/sz，独立于 TauTerm）
 
 用法示例：
-  # 只清理预留段内残留的 com0com 端口对（需管理员；不影响产品端口对）
+  # 只清理预留段内残留的 com0com 端口对；需要时会自动请求 UAC
   python scripts/test-serial-session.py --teardown-all
 
-  # 自动创建端口对 COM200/COM201（需管理员）并以高仿真模式启动
+  # 自动准备驱动、清理旧测试端口对并创建 COM200/COM201；需要时会自动请求 UAC
   python scripts/test-serial-session.py --setup --near COM200 --far COM201
+
+  # 连续人工测试时保留本次创建的端口对
+  python scripts/test-serial-session.py --setup --keep-pair
 
   # 端口对已手动创建好，直接连接近端启动（无需管理员）
   python scripts/test-serial-session.py --near COM200
@@ -53,12 +56,12 @@ TauTerm 串口会话集成测试假服务器 — 模拟 RT-Thread 设备
 即可看到 RT-Thread 启动横幅与 `msh />` 提示符。
 
 注意：
-  · com0com 端口对的创建/删除需要管理员权限；仅打开已存在的端口不需要。
+  · com0com 写操作需要管理员权限；--setup/清理命令在 Windows 上会自动请求 UAC。
   · 本脚本固定使用预留端口段 COM200-COM255 与预留 bus 段 200-255，产品/TauTermService
     会主动避开该段，两者可同时运行而不互删、不互占。
-  · 本脚本退出时会自动清理它在预留段创建的端口对（若以 --setup 创建）。
-  · 若上次清理失败（如对端仍被 TauTerm 占用），可能残留"僵尸"端口对或导致内核驱动
-    停止；--setup 会在创建前自动修复（启动已停止的驱动、清理未绑定端口名的残留对）。
+  · --setup 检测到驱动不存在时会自动安装；检测到目标端口属于旧测试预留端口对时会先清理再继续。
+  · 如果 COM200/COM201 被非测试资源占用，脚本会拒绝强制清理，避免误删第三方/真实设备。
+  · 本脚本退出时默认清理它以 --setup 创建的端口对；--keep-pair 可保留端口对供后续复用。
   · Windows 上本脚本依赖 com0com 虚拟串口驱动；非 Windows 平台请改用 socat / tty0tty 等其他方案。
 """
 import argparse
@@ -76,11 +79,22 @@ from collections import deque
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(line_buffering=True)
 
-try:
-    import serial  # pyserial
-except ImportError:  # pragma: no cover
-    print("[错误] 缺少 pyserial，请先安装：pip install pyserial")
-    sys.exit(1)
+serial = None
+
+
+def require_pyserial():
+    """按需加载 pyserial，使 --dry-run/清理命令不被 Python 串口依赖阻断。"""
+    global serial
+    if serial is not None:
+        return True
+    try:
+        import serial as pyserial  # type: ignore
+    except ImportError:  # pragma: no cover
+        print("[错误] 缺少 pyserial，请先安装：pip install pyserial")
+        return False
+    serial = pyserial
+    return True
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 路径与常量
@@ -91,6 +105,10 @@ REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 # com0com 配套文件（setupc.exe 与其 6 个配套文件）所在目录
 COM0COM_DIR = os.path.join(REPO_ROOT, "resources", "com0com", "x64")
 SETUPC = os.path.join(COM0COM_DIR, "setupc.exe")
+COM0COM_REQUIRED_FILES = (
+    "setupc.exe", "setup.dll", "com0com.sys", "com0com.inf",
+    "com0com.cat", "cncport.inf", "comport.inf",
+)
 
 DEFAULT_BAUD = 115200
 FINSH_VERSION = "5.2.2"
@@ -124,6 +142,30 @@ def is_admin():
     return True
 
 
+def _powershell_quote(value):
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def relaunch_as_admin(argv):
+    """通过 UAC 以管理员身份重新运行当前脚本，并等待提权进程退出。"""
+    command_line = subprocess.list2cmdline([os.path.abspath(__file__), *argv])
+    ps_command = (
+        f"$p = Start-Process -FilePath {_powershell_quote(sys.executable)} "
+        f"-ArgumentList {_powershell_quote(command_line)} -Verb RunAs -Wait -PassThru; "
+        "exit $p.ExitCode"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps_command,
+            ],
+            timeout=None,
+        )
+    except OSError as e:
+        print(f"[错误] 无法发起 UAC 提权: {e}")
+        return 1
+    return proc.returncode
+
+
 def _setupc(args, timeout=10):
     """在 com0com 配套目录中执行 setupc.exe，返回 (exitcode, stdout, stderr)。
 
@@ -145,6 +187,52 @@ def _setupc(args, timeout=10):
         return -1, "", "setupc.exe 执行超时（可先 taskkill /F /IM setupc.exe 再重试）"
     except OSError as e:
         return -1, "", f"setupc.exe 调用失败: {e}"
+
+
+def com_missing_files():
+    return [name for name in COM0COM_REQUIRED_FILES
+            if not os.path.isfile(os.path.join(COM0COM_DIR, name))]
+
+
+def _normalize_port(port):
+    return str(port or "").strip().upper()
+
+
+def _reserved_port_number(port):
+    m = re.fullmatch(r"COM(\d+)", _normalize_port(port))
+    return int(m.group(1)) if m else None
+
+
+def _is_reserved_port(port):
+    number = _reserved_port_number(port)
+    return number is not None and RESERVED_PORT_BASE <= number <= RESERVED_PORT_END
+
+
+def _is_reserved_bus(bus):
+    return RESERVED_BUS_BASE <= int(bus) <= RESERVED_BUS_END
+
+
+def _validate_managed_ports(near, far):
+    near = _normalize_port(near)
+    far = _normalize_port(far)
+    if near == far:
+        return None, None, "近端和远端不能使用同一个 COM 端口"
+    invalid = [port for port in (near, far) if not _is_reserved_port(port)]
+    if invalid:
+        return None, None, (
+            f"自动管理只允许测试预留端口 COM{RESERVED_PORT_BASE}-COM{RESERVED_PORT_END}，"
+            f"拒绝操作: {', '.join(invalid)}"
+        )
+    return near, far, None
+
+
+def _wait_until(predicate, timeout=6.0, interval=0.2):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return bool(predicate())
 
 
 def com_list_pairs():
@@ -173,50 +261,95 @@ def com_list_pairs():
     return pairs
 
 
+def com_find_pair_for_port(port):
+    """根据端口名查找端口对；未找到返回 None。"""
+    target = _normalize_port(port)
+    for pair in com_list_pairs():
+        if target in (_normalize_port(pair["port_a"]), _normalize_port(pair["port_b"])):
+            return pair
+    return None
+
+
 def com_find_bus_for_port(port):
     """根据端口名查找其所在 bus 号；未找到返回 None。"""
-    for p in com_list_pairs():
-        if port and (p["port_a"] == port.upper() or p["port_b"] == port.upper()):
-            return p["bus"]
-    return None
+    pair = com_find_pair_for_port(port)
+    return pair["bus"] if pair else None
 
 
 def com_busy_ports():
     code, out, err = _setupc(["busynames", "COM*"])
     if code != 0:
-        return set()
-    return {tok for tok in re.split(r"[\s,]+", out) if re.fullmatch(r"COM\d+", tok.strip())}
+        return None
+    return {_normalize_port(tok) for tok in re.split(r"[\s,]+", out)
+            if re.fullmatch(r"COM\d+", _normalize_port(tok))}
 
 
 def _ensure_admin_hint(action):
     print(f"[错误] 需要管理员权限才能{action} com0com 端口对。")
-    print("  请以管理员身份运行本脚本，或使用下面的 PowerShell 提权命令：")
-    cmd = ("Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden "
-           "-ArgumentList '-NoProfile','-Command',"
-           f"'cd \\\"{COM0COM_DIR}\\\"; & \\\".\\\\setupc.exe\\\" {action}'")
-    print(f"  PS> {cmd}")
+    print("  请以管理员身份运行本脚本；--setup/清理命令会自动请求 UAC。")
     print("  提示：os error 740 = 权限不足（ELEVATION_REQUIRED）。")
 
 
-def com_create_pair(near, far):
-    """创建端口对，返回 (bus, 错误信息或 None)。
+def _wait_ports_released(ports, timeout=6.0):
+    targets = {_normalize_port(port) for port in ports}
 
-    若指定端口号被占用，会尝试跳过。setupc remove 在端口对已不存在时返回 exit code 1，
-    属正常语义，不作为错误。
-    """
+    def released():
+        busy = com_busy_ports()
+        return busy is not None and not (targets & busy)
+
+    return _wait_until(released, timeout=timeout, interval=0.25)
+
+
+def com_create_pair(near, far):
+    """创建测试端口对；目标端口属于旧测试预留对时自动清理后重建。"""
     if not is_admin():
         _ensure_admin_hint("install")
         return None, "需要管理员权限"
 
-    busy = com_busy_ports()
-    used_near = near.upper() in busy or com_find_bus_for_port(near) is not None
-    used_far = far.upper() in busy or com_find_bus_for_port(far) is not None
-    if used_near or used_far:
-        return None, f"端口被占用: {near}({'占用' if used_near else '空闲'}) {far}({'占用' if used_far else '空闲'})"
+    near, far, validation_error = _validate_managed_ports(near, far)
+    if validation_error:
+        return None, validation_error
 
-    # 测试脚本固定使用预留 bus 段，且只占用该段内的 bus —— 与产品（其 bus 始终
-    # 低于预留段）天然隔离，杜绝与产品并发抢占同一 bus。若指定端口已被占用，
-    # 前面的 used_near/used_far 已提前返回错误。
+    # 只允许自动回收测试预留 bus 上的冲突。非预留 bus 可能属于产品/第三方，
+    # 即使端口号碰巧是 COM200/COM201 也不能因名字冲突就删除。
+    conflicting_buses = []
+    for port in (near, far):
+        pair = com_find_pair_for_port(port)
+        if pair is None:
+            continue
+        if not _is_reserved_bus(pair["bus"]):
+            return None, (
+                f"{port} 已属于非测试预留 com0com bus {pair['bus']}，"
+                "为避免误删已停止自动清理"
+            )
+        if pair["bus"] not in conflicting_buses:
+            conflicting_buses.append(pair["bus"])
+
+    if conflicting_buses:
+        print(f"[信息] 检测到 {near}/{far} 被旧测试端口对占用，正在清理 bus: {conflicting_buses}")
+        for bus in conflicting_buses:
+            if not _remove_bus(bus):
+                return None, f"旧测试端口对 bus {bus} 清理失败"
+        if not _wait_ports_released((near, far)):
+            busy = com_busy_ports() or set()
+            return None, (
+                f"旧测试端口对已删除，但端口名仍未释放: "
+                f"{near}({'占用' if near in busy else '空闲'}) "
+                f"{far}({'占用' if far in busy else '空闲'})"
+            )
+
+    busy = com_busy_ports()
+    if busy is None:
+        return None, "无法查询 Windows COM 名占用状态"
+    used_near = near in busy
+    used_far = far in busy
+    if used_near or used_far:
+        return None, (
+            "端口被系统占用且不属于可安全回收的测试预留端口对: "
+            f"{near}({'占用' if used_near else '空闲'}) "
+            f"{far}({'占用' if used_far else '空闲'})"
+        )
+
     used_buses = {p["bus"] for p in com_list_pairs()}
     bus = next((b for b in range(RESERVED_BUS_BASE, RESERVED_BUS_END + 1)
                 if b not in used_buses), None)
@@ -225,36 +358,57 @@ def com_create_pair(near, far):
 
     a_param = f"PortName={near}"
     b_param = f"PortName={far},PlugInMode=yes"
-    code, out, err = _setupc(["install", str(bus), a_param, b_param])
+    code, out, err = _setupc(
+        ["--wait", "10", "--silent", "install", str(bus), a_param, b_param],
+        timeout=30,
+    )
     if code != 0:
-        # 兜底：可能是瞬时占用冲突，稍后重试低一位
         return None, (err or out).strip() or f"exit code {code}"
+
+    def pair_ready():
+        pair = next((p for p in com_list_pairs() if p["bus"] == bus), None)
+        return bool(
+            pair
+            and _normalize_port(pair["port_a"]) == near
+            and _normalize_port(pair["port_b"]) == far
+        )
+
+    if not _wait_until(pair_ready, timeout=8.0, interval=0.25):
+        _remove_bus(bus)
+        return None, "端口对创建命令成功，但 PnP 注册未在超时内完成"
     return bus, None
 
 
 def com_remove_port(port):
-    """删除包含指定端口名的端口对（两阶段清理）。"""
+    """删除包含指定测试预留端口名的端口对（两阶段清理）。"""
     if not is_admin():
         _ensure_admin_hint("remove")
         return False
-    bus = com_find_bus_for_port(port)
-    if bus is None:
-        print(f"[信息] 端口 {port} 未注册为 com0com 端口对，无需删除。")
+    pair = com_find_pair_for_port(port)
+    if pair is None:
+        print(f"[信息] 端口 {_normalize_port(port)} 未注册为 com0com 端口对，无需删除。")
         return True
-    return _remove_bus(bus)
+    if not _is_reserved_bus(pair["bus"]):
+        print(f"[错误] 端口 {_normalize_port(port)} 属于非测试预留 bus {pair['bus']}，拒绝删除。")
+        return False
+    return _remove_bus(pair["bus"])
 
 
 def _remove_bus(bus):
+    if not _is_reserved_bus(bus):
+        print(f"[错误] 安全边界拒绝删除非测试预留 bus {bus}。")
+        return False
+
     # 阶段一：直接删除
-    code, out, err = _setupc(["remove", str(bus)])
-    if code == 0:
+    code, out, err = _setupc(["--silent", "remove", str(bus)], timeout=20)
+    if code == 0 or not any(p["bus"] == bus for p in com_list_pairs()):
         return True
     # 阶段二：先解绑端口名再删除（端口可能被外部工具占用）
-    _setupc(["change", f"CNCA{bus}", "PortName=-"])
-    _setupc(["change", f"CNCB{bus}", "PortName=-"])
+    _setupc(["--silent", "change", f"CNCA{bus}", "PortName=-"], timeout=20)
+    _setupc(["--silent", "change", f"CNCB{bus}", "PortName=-"], timeout=20)
     time.sleep(0.3)
-    code, out, err = _setupc(["remove", str(bus)])
-    if code != 0:
+    code, out, err = _setupc(["--silent", "remove", str(bus)], timeout=20)
+    if code != 0 and any(p["bus"] == bus for p in com_list_pairs()):
         detail = (err or out).strip()
         if detail:
             print(f"[警告] 删除 bus {bus} 失败: {detail}")
@@ -273,10 +427,13 @@ def com_teardown_all():
                if RESERVED_BUS_BASE <= p["bus"] <= RESERVED_BUS_END]
     if not targets:
         print(f"[信息] 预留段 ({RESERVED_BUS_BASE}-{RESERVED_BUS_END}) 内没有 com0com 端口对，无需清理。")
-        return
-    for bus in targets:
-        _remove_bus(bus)
+        return True
+    failed = [bus for bus in targets if not _remove_bus(bus)]
+    if failed:
+        print(f"[警告] 以下测试预留 bus 清理失败: {failed}")
+        return False
     print(f"[信息] 已清理预留段 com0com 端口对: {targets}。产品端口对未受影响。")
+    return True
 
 
 def com_driver_state():
@@ -290,6 +447,14 @@ def com_driver_state():
     except Exception:
         return "UNKNOWN"
     out = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    # 优先读稳定的数值 STATE，避免依赖不同 Windows 语言包的状态文本。
+    state_match = re.search(r"\bSTATE\s*:\s*(\d+)", out, re.IGNORECASE)
+    if state_match:
+        state_code = int(state_match.group(1))
+        if state_code == 4:
+            return "RUNNING"
+        if state_code == 1:
+            return "STOPPED"
     if "RUNNING" in out:
         return "RUNNING"
     if "STOPPED" in out:
@@ -310,11 +475,46 @@ def com_start_driver():
     except Exception as e:
         return False, str(e)
     detail = (proc.stdout or "").strip() or (proc.stderr or "").strip()
-    return proc.returncode == 0, detail
+    if proc.returncode == 0:
+        _wait_until(lambda: com_driver_state() == "RUNNING", timeout=4.0)
+        return True, detail
+    # 另一个动作可能已在 sc start 的竞态窗口中启动驱动。
+    return com_driver_state() == "RUNNING", detail
+
+
+def com_install_driver():
+    """创建临时测试预留端口对触发 com0com 驱动安装，随后立即删除临时对。"""
+    missing = com_missing_files()
+    if missing:
+        return False, f"com0com 配套文件不完整，缺少: {', '.join(missing)}"
+
+    used_buses = {p["bus"] for p in com_list_pairs()}
+    bus = next((b for b in range(RESERVED_BUS_END, RESERVED_BUS_BASE - 1, -1)
+                if b not in used_buses), None)
+    if bus is None:
+        return False, f"预留 bus 段 ({RESERVED_BUS_BASE}-{RESERVED_BUS_END}) 已用尽"
+
+    print(f"[信息] com0com 驱动未安装，正在自动安装（临时 bus {bus}）...")
+    code, out, err = _setupc(
+        ["--wait", "10", "--silent", "install", str(bus), "-", "-"],
+        timeout=30,
+    )
+    ready = _wait_until(
+        lambda: com_driver_state() in ("RUNNING", "STOPPED"),
+        timeout=10.0,
+        interval=0.3,
+    )
+    if not ready:
+        return False, (err or out).strip() or f"setupc exit code {code}"
+
+    if any(p["bus"] == bus for p in com_list_pairs()) and not _remove_bus(bus):
+        return False, f"驱动已安装，但临时 bus {bus} 清理失败"
+    print("[信息] com0com 驱动安装完成。")
+    return True, ""
 
 
 def com_repair():
-    """修复 com0com 环境：启动已停止的驱动、清理僵尸（未绑定端口名）端口对。
+    """修复 com0com 环境：安装/启动驱动，并清理测试预留区内的僵尸端口对。
 
     返回 True 表示环境就绪；False 表示仍存在问题（原因已打印）。
     """
@@ -323,6 +523,13 @@ def com_repair():
         return False
 
     state = com_driver_state()
+    if state == "NOT_INSTALLED":
+        ok, detail = com_install_driver()
+        if not ok:
+            print(f"[错误] com0com 驱动自动安装失败: {detail or '未知错误'}")
+            return False
+        state = com_driver_state()
+
     if state == "STOPPED":
         print("[信息] 检测到 com0com 内核驱动已停止，正在尝试启动...")
         ok, detail = com_start_driver()
@@ -331,33 +538,39 @@ def com_repair():
             print("  可尝试重启系统后重试，或手动执行 `sc start com0com`。")
             return False
         print("[信息] com0com 内核驱动已启动。")
-    elif state == "NOT_INSTALLED":
-        print("[错误] com0com 内核驱动未安装。")
-        print("  请先安装驱动（用 setupc install 创建临时端口对可触发驱动安装）。")
-        return False
+    elif state == "UNKNOWN":
+        code, out, err = _setupc(["list"])
+        if code != 0 and not out:
+            print(f"[错误] 无法确认 com0com 驱动状态: {(err or 'setupc list 失败').strip()}")
+            return False
 
-    # 清理僵尸端口对：端口名未绑定为 COMx（上次清理失败留下的 CNCAx/CNCBx）
+    # 只清理测试预留 bus 段内的僵尸端口对。未知/第三方 bus 绝不能仅凭枚举结果删除。
+    success = True
     for p in com_list_pairs():
+        if not _is_reserved_bus(p["bus"]):
+            continue
         a = p["port_a"] or ""
         b = p["port_b"] or ""
         if not re.fullmatch(r"COM\d+", a) or not re.fullmatch(r"COM\d+", b):
-            print(f"[信息] 清理僵尸端口对 (bus {p['bus']}): {a or '(空)'} <-> {b or '(空)'}")
-            _remove_bus(p["bus"])
-    return True
+            print(f"[信息] 清理测试预留僵尸端口对 (bus {p['bus']}): {a or '(空)'} <-> {b or '(空)'}")
+            success = _remove_bus(p["bus"]) and success
+    return success
 
 
 def com_dump_plan(near, far):
     """打印将要执行的 setupc 命令（--dry-run）。"""
     print(f"# 确认 com0com 配套文件目录存在: {COM0COM_DIR}")
-    for f in ["setupc.exe", "setup.dll", "com0com.sys", "com0com.inf",
-              "com0com.cat", "cncport.inf", "comport.inf"]:
+    for f in COM0COM_REQUIRED_FILES:
         ok = os.path.isfile(os.path.join(COM0COM_DIR, f))
         print(f"#   [{'√' if ok else '×'}] {f}")
+    print("# 若驱动不存在：在测试预留 bus 上创建临时端口对触发驱动安装，再删除临时对")
+    print(f'  cd {COM0COM_DIR} && .\\setupc.exe --wait 10 --silent install {RESERVED_BUS_END} - -')
+    print(f'  cd {COM0COM_DIR} && .\\setupc.exe --silent remove {RESERVED_BUS_END}')
     a_param = f"PortName={near}"
     b_param = f"PortName={far},PlugInMode=yes"
     # --dry-run 仅示意：实际创建时在预留 bus 段内取一个空闲 bus（见 com_create_pair）
     print(f"# 创建端口对（bus 取预留段 {RESERVED_BUS_BASE}-{RESERVED_BUS_END} 内空闲值，示例用 {RESERVED_BUS_BASE}）:")
-    print(f'  cd {COM0COM_DIR} && .\\setupc.exe install {RESERVED_BUS_BASE} {a_param} "{b_param}"')
+    print(f'  cd {COM0COM_DIR} && .\\setupc.exe --wait 10 --silent install {RESERVED_BUS_BASE} {a_param} "{b_param}"')
     print(f"# 查询/占用检查:")
     print(f"  cd {COM0COM_DIR} && .\\setupc.exe busynames COM*")
     print(f"  cd {COM0COM_DIR} && .\\setupc.exe list")
@@ -1306,9 +1519,7 @@ class RTTDevice:
             buf += data
             buf = self._process_bytes(buf)
 
-        self.cleanup()
-
-    # ── 行编辑器（对应 FinSH shell.c 的逐字符处理） ───────────────────
+    # ── 行编辑器（对应 FinSH shell.c 的逐字符处理状态机） ───────────────────
     def _parse_escape(self, buf, i):
         """解析 buf[i] 处的转义序列，返回 (动作, 消费长度)；序列不完整返回 (None, 0)。"""
         n = len(buf)
@@ -1664,8 +1875,11 @@ def parse_args(argv):
     p.add_argument("--near", default=NEAR_PORT, help=f"本脚本连接的近端端口（默认 {NEAR_PORT}）")
     p.add_argument("--far", default=FAR_PORT, help=f"TauTerm 连接的远端端口（默认 {FAR_PORT}）")
     p.add_argument("--baud", type=int, default=DEFAULT_BAUD, help="波特率（默认 115200）")
-    p.add_argument("--setup", action="store_true", help="启动前先创建 com0com 端口对（需管理员）")
-    p.add_argument("--teardown-port", metavar="PORT", help="删除指定端点所在端口对并退出")
+    p.add_argument("--setup", action="store_true",
+                   help="启动前自动准备 com0com 驱动、清理旧测试冲突并创建端口对")
+    p.add_argument("--keep-pair", action="store_true",
+                   help="退出时保留本次 --setup 创建的测试端口对，便于连续调试")
+    p.add_argument("--teardown-port", metavar="PORT", help="删除指定测试预留端点所在端口对并退出")
     p.add_argument("--teardown-all", action="store_true",
                    help=f"删除预留段 ({RESERVED_BUS_BASE}-{RESERVED_BUS_END}) 内的 com0com "
                         "端口对并退出（不影响产品端口对）")
@@ -1678,32 +1892,45 @@ def parse_args(argv):
 
 
 def main(argv=None):
-    args = parse_args(argv if argv is not None else sys.argv[1:])
+    raw_argv = list(argv if argv is not None else sys.argv[1:])
+    args = parse_args(raw_argv)
 
     if args.dry_run:
         com_dump_plan(args.near, args.far)
         return 0
 
+    privileged_action = bool(args.setup or args.teardown_all or args.teardown_port)
+    if privileged_action and sys.platform != "win32":
+        print("[错误] com0com 管理操作仅支持 Windows。")
+        return 1
+    if privileged_action and not is_admin():
+        print("[信息] 当前操作需要管理员权限，正在请求 Windows UAC 提权...")
+        return relaunch_as_admin(raw_argv)
+
     if args.teardown_all:
-        if not is_admin():
-            _ensure_admin_hint("remove all")
-            return 1
-        com_teardown_all()
-        return 0
+        return 0 if com_teardown_all() else 1
 
     if args.teardown_port:
-        if not is_admin():
-            _ensure_admin_hint("remove")
+        port = _normalize_port(args.teardown_port)
+        if not _is_reserved_port(port):
+            print(f"[错误] --teardown-port 只允许测试预留端口 COM{RESERVED_PORT_BASE}-COM{RESERVED_PORT_END}。")
             return 1
-        ok = com_remove_port(args.teardown_port)
+        ok = com_remove_port(port)
         return 0 if ok else 1
 
     # 创建端口对
     app_created_pair = False
     if args.setup:
-        if not os.path.isfile(SETUPC):
-            print(f"[错误] 未找到 com0com 配套文件目录: {COM0COM_DIR}")
+        missing = com_missing_files()
+        if missing:
+            print(f"[错误] com0com 配套文件不完整: {COM0COM_DIR}")
+            print("  缺少: " + ", ".join(missing))
             return 1
+        near, far, validation_error = _validate_managed_ports(args.near, args.far)
+        if validation_error:
+            print(f"[错误] {validation_error}")
+            return 1
+        args.near, args.far = near, far
         if not com_repair():
             print("[错误] com0com 环境修复失败，无法继续。")
             return 1
@@ -1712,12 +1939,18 @@ def main(argv=None):
             print(f"[错误] 创建端口对失败: {err}")
             return 1
         print(f"[信息] 已创建 com0com 端口对 (bus {bus}): {args.near} <-> {args.far}")
+        print(f"[信息] TauTerm 串口会话请选择远端 {args.far} @ {args.baud}")
         app_created_pair = True
 
-    # 打开近端端口（PnP 注册端口名可能有短暂延迟，失败时重试几次）
+    if not require_pyserial():
+        if app_created_pair and not args.keep_pair:
+            com_remove_port(args.near)
+        return 1
+
+    # 打开近端端口（PnP 注册端口名可能有短暂延迟，失败时重试）
     device = None
     last_err = None
-    for _ in range(5):
+    for _ in range(12):
         try:
             device = RTTDevice(
                 args.near, args.baud,
@@ -1733,10 +1966,10 @@ def main(argv=None):
     if device is None:
         print(f"[错误] 无法打开端口 {args.near}: {last_err}")
         print("  请确认：\n"
-              "  1) 端口对已创建（可先 --setup 或 --dry-run 查看命令）\n"
-              "  2) TauTerm 未占用该近端端口\n"
+              "  1) 端口对已创建（需要自动准备时使用 --setup）\n"
+              "  2) TauTerm/其他程序未占用该近端端口\n"
               f"  3) 远端端口应为 {args.far}，请检查 TauTerm 串口会话配置")
-        if app_created_pair:
+        if app_created_pair and not args.keep_pair:
             com_remove_port(args.near)
         return 1
 
@@ -1747,8 +1980,12 @@ def main(argv=None):
     finally:
         device.cleanup()
         if app_created_pair:
-            print(f"[信息] 清理 com0com 端口对: {args.near} <-> {args.far}")
-            com_remove_port(args.near)
+            if args.keep_pair:
+                print(f"[信息] 已保留测试端口对: {args.near} <-> {args.far}")
+            else:
+                print(f"[信息] 清理 com0com 端口对: {args.near} <-> {args.far}")
+                if not com_remove_port(args.near):
+                    print("[警告] 测试端口对未完全清理；关闭 TauTerm 对端会话后可运行 --teardown-all。")
     return 0
 
 
