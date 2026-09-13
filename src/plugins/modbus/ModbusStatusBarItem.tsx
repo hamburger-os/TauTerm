@@ -56,7 +56,7 @@ export default function ModbusStatusBarItem({ context }: { context: StatusBarCon
     ? t(STATUS_KEY[last] ?? "modbus.statusProtocol")
     : null;
   const latency = status?.last_latency_ms != null ? formatLatency(status.last_latency_ms) : null;
-  const latencyPrefix = isClient ? "RTT" : "Proc";
+  const latencyPrefix = last === "success" ? (isClient ? "RTT" : "Proc") : "Time";
 
   return <div className={styles.statusBarPlugin}>
     <span className={styles.statusBarType}>{type}</span>
