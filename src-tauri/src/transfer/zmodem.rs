@@ -20,6 +20,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 
+use crate::transfer::config::{ZModemCrcPolicy, ZModemReceiveCrcCapability};
 use crate::transfer::crc::{crc16_ccitt, crc32_verify, crc32_zmodem};
 use crate::transfer::io::{self, read_byte_with_timeout, CAN};
 use crate::transfer::protocol::SerialTransferProtocol;
@@ -1198,6 +1199,7 @@ fn zmodem_receive(
     cancel: &mut dyn FnMut() -> bool,
 ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
     fs::create_dir_all(download_dir)?;
+    let use_crc32 = matches!(crc_capability, ZModemReceiveCrcCapability::Auto);
 
     let mut current_file: Option<(String, fs::File, u64, u64)> = None; // (name, file, total, written)
     let mut file_index: u32 = 0;
@@ -1621,10 +1623,25 @@ mod tests {
     }
 
     #[test]
-    fn test_zmodem_default() {
-        let z = ZModem::default();
-        assert!(z.use_crc32);
-        assert_eq!(z.max_block_size, 8192);
-        assert_eq!(z.window_size, 1);
+    fn sender_role_keeps_crc_policy_and_block_limit() {
+        let z = ZModem::sender(ZModemCrcPolicy::Crc32Required, 4096);
+        assert!(matches!(
+            z.role,
+            ZModemRole::Sender {
+                crc_policy: ZModemCrcPolicy::Crc32Required,
+                max_block_size: 4096
+            }
+        ));
+    }
+
+    #[test]
+    fn receiver_role_keeps_crc_capability() {
+        let z = ZModem::receiver(ZModemReceiveCrcCapability::Crc16Only);
+        assert!(matches!(
+            z.role,
+            ZModemRole::Receiver {
+                crc_capability: ZModemReceiveCrcCapability::Crc16Only
+            }
+        ));
     }
 }

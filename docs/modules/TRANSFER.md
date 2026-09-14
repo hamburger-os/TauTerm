@@ -106,3 +106,14 @@ flowchart LR
 ## 何时更新本文
 
 修改传输策略、协议 capability descriptor、ExclusiveIo 所有权、统一进度/取消、批量传输、SFTP/串口编排或传输状态与 Session 生命周期的关系时，必须同步更新本文。
+
+
+## Role-aware modem configuration
+
+The transfer command boundary uses a tagged `protocolOptions` object rather than flattened modem fields. Sending and receiving are separate Rust/TypeScript unions so a setting owned by one local role cannot silently affect the opposite role. There is no compatibility parser for the removed `blockSize`/checksum/streaming top-level request shape.
+
+- **YMODEM**: the sender may choose 128/1024-byte data blocks; the receiver follows the protocol handshake and does not reuse that sender preference.
+- **XMODEM**: sender block size (SOH=128, STX=1024) is independent of checksum negotiation. The receiver controls whether it requests CRC16 with `C`, checksum with `NAK`, or starts in automatic CRC16-with-fallback mode. `G` is not an XMODEM-1K selector.
+- **ZMODEM**: the receiver advertises CRC32 capability with `ZRINIT.CANFC32`. Sender `auto` uses CRC32 only when advertised, `crc16` stays on CRC16, and `crc32-required` fails when the peer cannot provide CRC32. Maximum sender data block size is a sender-side limit.
+
+Inline transfer cancellation has one owner: `TransferScheduler` creates and stores the same `Arc<AtomicBool>` token consumed by the running transfer. The obsolete oneshot cancellation compatibility parameter is removed; oneshot channels that remain in the orchestrator are lifecycle start gates, not cancellation state.

@@ -7,29 +7,23 @@ interface YmodemConfigFormProps {
   onChange: (config: YmodemTransferConfig) => void;
 }
 
-/** YModem 只暴露真正由本端控制的发送块大小；校验/流模式由握手自动协商。 */
-export default function YmodemConfigForm({
-  config,
-  onChange,
-}: YmodemConfigFormProps) {
+/** YMODEM 仅暴露发送方可控制的数据块大小；接收方固定按标准 CRC16 流程工作。 */
+export default function YmodemConfigForm({ config, onChange }: YmodemConfigFormProps) {
   const { t } = useTranslation();
-
   return (
     <div className={styles.form}>
       <div className={styles.group}>
         <label className={styles.groupLabel}>
-          {t("transfer.configBlockSize")}
+          {t("transfer.configSendSettings")} · {t("transfer.configBlockSize")}
         </label>
         <div className={styles.btnRow}>
           {([1024, 128] as const).map((blockSize) => (
             <button
               key={blockSize}
-              className={`${styles.optionBtn} liquid-glass-button ${config.blockSize === blockSize ? "active" : ""}`}
-              onClick={() => onChange({ ...config, blockSize })}
+              className={`${styles.optionBtn} liquid-glass-button ${config.send.blockSize === blockSize ? "active" : ""}`}
+              onClick={() => onChange({ ...config, send: { blockSize } })}
             >
-              {blockSize === 1024
-                ? t("transfer.configBlockSize1K")
-                : t("transfer.configBlockSize128")}
+              {blockSize === 1024 ? t("transfer.configBlockSize1K") : t("transfer.configBlockSize128")}
             </button>
           ))}
         </div>
