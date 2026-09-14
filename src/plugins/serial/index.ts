@@ -1,10 +1,22 @@
 /**
  * Serial 插件前端注册
  *
- * 向内核注册串口协议插件的 UI 组件、工具栏项、状态栏项和翻译资源。
+ * 串口专属配置、校验、会话展示和状态栏项均由插件拥有；通用 Session UI
+ * 只负责承载这些声明式能力。
  */
+import { createElement } from "react";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/serial.json";
+import SerialConnectForm, {
+  DEFAULT_SERIAL_PARAMS,
+  isSerialConnectionConfigValid,
+  normalizeSerialParams,
+} from "./SerialConnectForm";
+import {
+  SerialLinkStatus,
+  SerialTypeStatus,
+  SerialVirtualPortStatus,
+} from "./SerialStatusItems";
 
 function serialSubtitle(params: Record<string, unknown>, endpoint: string): string {
   const baudRate = typeof params.baud_rate === "number" && Number.isFinite(params.baud_rate)
@@ -25,8 +37,15 @@ function serialSubtitle(params: Record<string, unknown>, endpoint: string): stri
   return [endpoint.trim(), baudRate, frame, flowControl].filter(Boolean).join(" · ");
 }
 
+const connected = ({ activeTab }: { activeTab: { state: string } | null }) =>
+  activeTab?.state === "connected" || activeTab?.state === "transferring";
+
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  connectForm: SerialConnectForm,
+  defaultConnectionParams: () => ({ ...DEFAULT_SERIAL_PARAMS }),
+  normalizeConnectionParams: normalizeSerialParams,
+  isConnectionConfigValid: isSerialConnectionConfigValid,
   sessionPresentation: {
     // 会话名只在创建时生成一次，表达稳定身份；Text/HEX/Dual 属于可变显示方式，不能进入名称。
     defaultName: (_params, endpoint) => `Serial @ ${endpoint}`,
@@ -34,6 +53,28 @@ registerPlugin({
     subtitle: serialSubtitle,
   },
   toolbarItems: [],
+  statusBarItems: [
+    {
+      id: "serial-link",
+      align: "left",
+      priority: 880,
+      when: connected,
+      render: context => createElement(SerialLinkStatus, context),
+    },
+    {
+      id: "serial-type",
+      align: "left",
+      priority: 860,
+      when: connected,
+      render: context => createElement(SerialTypeStatus, context),
+    },
+    {
+      id: "serial-virtual-port",
+      align: "left",
+      priority: 300,
+      render: context => createElement(SerialVirtualPortStatus, context),
+    },
+  ],
   locales: {
     "zh-CN": {
       "port": "端口",
