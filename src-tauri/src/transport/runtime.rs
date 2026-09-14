@@ -621,19 +621,16 @@ fn publish_shared_data(state: &mut RuntimeLoopState, data: Vec<u8>) {
         state.startup_buffer.push_back(data);
         while state.startup_buffer_bytes > STARTUP_BUFFER_LIMIT {
             if let Some(dropped) = state.startup_buffer.pop_front() {
-                state.startup_buffer_bytes = state
-                    .startup_buffer_bytes
-                    .saturating_sub(dropped.len());
+                state.startup_buffer_bytes =
+                    state.startup_buffer_bytes.saturating_sub(dropped.len());
             } else {
                 break;
             }
         }
     } else {
-        state.subscribers.retain(|(_, subscriber)| {
-            subscriber
-                .send(DataPlaneEvent::Data(data.clone()))
-                .is_ok()
-        });
+        state
+            .subscribers
+            .retain(|(_, subscriber)| subscriber.send(DataPlaneEvent::Data(data.clone())).is_ok());
     }
 }
 
