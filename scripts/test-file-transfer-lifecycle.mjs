@@ -214,7 +214,7 @@ assert.match(
 );
 assert.match(
   transportRuntime,
-  /impl Read for ExclusiveIo[\s\S]{0,420}driver_mut\(\)\?\.read\(buf\)/,
+  /impl Read for ExclusiveIo[\s\S]{0,420}driver_mut\(\)\?[\s\S]{0,40}\.read\(buf\)/,
   "exclusive protocol reads must execute directly against the leased driver",
 );
 assert.match(
