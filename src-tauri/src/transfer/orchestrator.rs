@@ -302,11 +302,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: SendContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
-        self.validate_options(
-            ctx.block_size,
-            ctx.checksum_mode.as_deref(),
-            ctx.streaming,
-        )?;
+        self.validate_options(ctx.block_size, ctx.checksum_mode.as_deref(), ctx.streaming)?;
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_protocol_handler(ctx.block_size) {
@@ -383,11 +379,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: ReceiveContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
-        self.validate_options(
-            ctx.block_size,
-            ctx.checksum_mode.as_deref(),
-            ctx.streaming,
-        )?;
+        self.validate_options(ctx.block_size, ctx.checksum_mode.as_deref(), ctx.streaming)?;
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_protocol_handler(ctx.block_size) {
