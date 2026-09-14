@@ -314,8 +314,7 @@ impl HostKeyVerifier {
     }
 
     fn touch_known_host(&self, host: &str, port: u16, algorithm: &str, fingerprint: &str) {
-        self.known_hosts
-            .touch(host, port, algorithm, fingerprint);
+        self.known_hosts.touch(host, port, algorithm, fingerprint);
     }
 
     /// 注册一次明确的主机验证请求。request_id 而不是 fingerprint 作为键，
@@ -503,11 +502,8 @@ async fn build_connection_with_config(
 
     let handler = SshHandler::new(verifier_tx);
     let config_clone = russh_config.clone();
-    let connect_future = russh::client::connect(
-        config_clone,
-        (connect_host.as_str(), config.port),
-        handler,
-    );
+    let connect_future =
+        russh::client::connect(config_clone, (connect_host.as_str(), config.port), handler);
     tokio::pin!(connect_future);
 
     let network_deadline = tokio::time::sleep(SSH_NETWORK_PHASE_TIMEOUT);
