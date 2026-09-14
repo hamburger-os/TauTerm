@@ -17,6 +17,7 @@ pub struct SshDriver {
     pending: VecDeque<u8>,
     exit_status: Option<u32>,
     exit_signal: Option<String>,
+    closed: bool,
 }
 
 impl SshDriver {
@@ -30,6 +31,7 @@ impl SshDriver {
             pending: VecDeque::new(),
             exit_status: None,
             exit_signal: None,
+            closed: false,
         }
     }
 
@@ -47,6 +49,11 @@ impl SshDriver {
         self.pending.extend(&chunk[n..]);
         ReadStatus::Data(n)
     }
+
+    fn mark_remote_closed(&mut self) -> ReadStatus {
+        self.closed = true;
+        ReadStatus::Eof
+    }
 }
 
 #[async_trait::async_trait]
@@ -57,6 +64,9 @@ impl AsyncByteStream for SshDriver {
         }
         if !self.pending.is_empty() {
             return Ok(ReadStatus::Data(self.drain_pending(buf)));
+        }
+        if self.closed {
+            return Ok(ReadStatus::Eof);
         }
 
         loop {
@@ -75,7 +85,7 @@ impl AsyncByteStream for SshDriver {
                     self.exit_signal = Some(format!("{signal_name:?}"));
                 }
                 Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {
-                    return Ok(ReadStatus::Eof);
+                    return Ok(self.mark_remote_closed());
                 }
                 Some(_) => {}
             }
@@ -83,6 +93,13 @@ impl AsyncByteStream for SshDriver {
     }
 
     async fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
+        if self.closed {
+            return Err(TransportError::new(
+                TransportErrorKind::RemoteClosed,
+                "ssh_write",
+                "SSH channel is already closed",
+            ));
+        }
         self.channel.data(data).await.map_err(|error| {
             TransportError::new(TransportErrorKind::Io, "ssh_write", error.to_string())
         })
@@ -93,10 +110,29 @@ impl AsyncByteStream for SshDriver {
     }
 
     async fn shutdown(&mut self) -> Result<(), TransportError> {
-        Ok(())
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
+
+        // SSH channels have an explicit half-close and close handshake. Sending EOF before Close
+        // lets the remote side finish consuming pending stdin instead of relying on handle drop.
+        if let Err(error) = self.channel.eof().await {
+            log::debug!("SSH channel EOF during shutdown failed: {error}");
+        }
+        self.channel.close().await.map_err(|error| {
+            TransportError::new(TransportErrorKind::Io, "ssh_close", error.to_string())
+        })
     }
 
     async fn resize_terminal(&mut self, cols: u32, rows: u32) -> Result<(), TransportError> {
+        if self.closed {
+            return Err(TransportError::new(
+                TransportErrorKind::RemoteClosed,
+                "ssh_resize_terminal",
+                "SSH channel is already closed",
+            ));
+        }
         self.channel
             .window_change(cols, rows, 0, 0)
             .await
