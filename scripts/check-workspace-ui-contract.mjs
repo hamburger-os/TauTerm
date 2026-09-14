@@ -16,6 +16,10 @@ const sidebar = await readFile(
   path.join(ROOT, "src", "components", "Layout", "SessionSidebar.tsx"),
   "utf8",
 );
+const customRenderer = await readFile(
+  path.join(ROOT, "src", "renderers", "CustomRenderer.tsx"),
+  "utf8",
+);
 
 assert.doesNotMatch(
   splitView,
@@ -31,6 +35,11 @@ assert.match(
   sidebar,
   /getSessionSubtitle/,
   "Session cards must use the shared Session presentation contract",
+);
+assert.match(
+  customRenderer,
+  /key=\{`\$\{tab\.pluginId\}:\$\{tab\.id\}`\}/,
+  "Custom renderer views must be keyed by plugin and Session identity so Pane reuse cannot leak component-local state across Sessions",
 );
 
 const labels = {
@@ -158,4 +167,4 @@ assert.equal(
   "Shell @ Windows PowerShell › Shell 1 · Windows PowerShell",
 );
 
-console.log("workspace-ui: context-menu and Session presentation contracts preserved");
+console.log("workspace-ui: context-menu, Session presentation and custom-view identity contracts preserved");
