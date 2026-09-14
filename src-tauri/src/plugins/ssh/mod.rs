@@ -279,6 +279,7 @@ struct PendingHostKeyVerification {
     response: tokio::sync::oneshot::Sender<bool>,
     host: String,
     port: u16,
+    algorithm: String,
     fingerprint: String,
 }
 
@@ -301,12 +302,20 @@ impl HostKeyVerifier {
         self.known_hosts.configure(path)
     }
 
-    fn evaluate(&self, host: &str, port: u16, fingerprint: &str) -> HostTrustDecision {
-        self.known_hosts.evaluate(host, port, fingerprint)
+    fn evaluate(
+        &self,
+        host: &str,
+        port: u16,
+        algorithm: &str,
+        fingerprint: &str,
+    ) -> HostTrustDecision {
+        self.known_hosts
+            .evaluate(host, port, algorithm, fingerprint)
     }
 
-    fn touch_known_host(&self, host: &str, port: u16) {
-        self.known_hosts.touch(host, port);
+    fn touch_known_host(&self, host: &str, port: u16, algorithm: &str, fingerprint: &str) {
+        self.known_hosts
+            .touch(host, port, algorithm, fingerprint);
     }
 
     /// 注册一次明确的主机验证请求。request_id 而不是 fingerprint 作为键，
@@ -315,6 +324,7 @@ impl HostKeyVerifier {
         &self,
         host: &str,
         port: u16,
+        algorithm: &str,
         fingerprint: &str,
     ) -> (String, tokio::sync::oneshot::Receiver<bool>) {
         let request_id = uuid::Uuid::new_v4().to_string();
@@ -325,6 +335,7 @@ impl HostKeyVerifier {
                 response: tx,
                 host: host.to_string(),
                 port,
+                algorithm: algorithm.to_string(),
                 fingerprint: fingerprint.to_string(),
             },
         );
@@ -343,10 +354,12 @@ impl HostKeyVerifier {
         };
 
         if accept {
-            if let Err(error) =
-                self.known_hosts
-                    .trust(&pending.host, pending.port, &pending.fingerprint)
-            {
+            if let Err(error) = self.known_hosts.trust(
+                &pending.host,
+                pending.port,
+                &pending.algorithm,
+                &pending.fingerprint,
+            ) {
                 let _ = pending.response.send(false);
                 return Err(error);
             }
@@ -490,14 +503,13 @@ async fn build_connection_with_config(
 
     let handler = SshHandler::new(verifier_tx);
     let config_clone = russh_config.clone();
-    let target_host = connect_host.clone();
-    let target_port = config.port;
+    let connect_future = russh::client::connect(
+        config_clone,
+        (connect_host.as_str(), config.port),
+        handler,
+    );
+    tokio::pin!(connect_future);
 
-    // connect() 本身会跨越 check_server_key。不能用一个固定 timeout 包住整个 Future，
-    // 否则用户阅读并确认 Host Key 的时间也会被算进网络超时。
-    let mut connect_task = tokio::spawn(async move {
-        russh::client::connect(config_clone, (target_host.as_str(), target_port), handler).await
-    });
     let network_deadline = tokio::time::sleep(SSH_NETWORK_PHASE_TIMEOUT);
     tokio::pin!(network_deadline);
     let mut verifier_open = true;
@@ -507,18 +519,12 @@ async fn build_connection_with_config(
 
     let mut handle = loop {
         tokio::select! {
-            result = &mut connect_task => {
-                break result
-                    .map_err(|e| SessionError::ConnectionFailed {
-                        reason: format!("SSH 连接 task 失败: {e}"),
-                    })?
-                    .map_err(|e| SessionError::ConnectionFailed {
-                        reason: format!("SSH 连接失败 '{addr}': {e}"),
-                    })?;
+            result = &mut connect_future => {
+                break result.map_err(|e| SessionError::ConnectionFailed {
+                    reason: format!("SSH 连接失败 '{addr}': {e}"),
+                })?;
             }
             _ = &mut network_deadline => {
-                connect_task.abort();
-                let _ = connect_task.await;
                 return Err(SessionError::ConnectionFailed {
                     reason: format!(
                         "SSH 网络阶段超时（{}s）: {addr}",
@@ -533,29 +539,46 @@ async fn build_connection_with_config(
                 };
 
                 host_key_fingerprint = Some(verification.fingerprint.clone());
-                log::info!("SSH 主机密钥指纹: {}", verification.fingerprint);
+                log::info!(
+                    "SSH 主机密钥: algorithm={}, fingerprint={}",
+                    verification.algorithm,
+                    verification.fingerprint
+                );
 
                 let accepted = match verifier.evaluate(
                     &connect_host,
                     config.port,
+                    &verification.algorithm,
                     &verification.fingerprint,
                 ) {
                     HostTrustDecision::Trusted => {
-                        verifier.touch_known_host(&connect_host, config.port);
+                        verifier.touch_known_host(
+                            &connect_host,
+                            config.port,
+                            &verification.algorithm,
+                            &verification.fingerprint,
+                        );
                         log::info!(
-                            "SSH known-host 匹配，自动信任 {}",
-                            format_ssh_endpoint(&connect_host, config.port)
+                            "SSH known-host 匹配，自动信任 {} ({})",
+                            format_ssh_endpoint(&connect_host, config.port),
+                            verification.algorithm
                         );
                         true
                     }
                     HostTrustDecision::Unknown => {
                         let (request_id, wait_rx) = verifier
-                            .register(&connect_host, config.port, &verification.fingerprint)
+                            .register(
+                                &connect_host,
+                                config.port,
+                                &verification.algorithm,
+                                &verification.fingerprint,
+                            )
                             .await;
                         let emitted = app_handle.emit("ssh-host-key-verify", serde_json::json!({
                             "request_id": request_id,
                             "host": connect_host.as_str(),
                             "port": config.port,
+                            "algorithm": verification.algorithm,
                             "fingerprint": verification.fingerprint,
                         }));
                         if let Err(error) = emitted {
@@ -586,17 +609,22 @@ async fn build_connection_with_config(
                         false
                     }
                     HostTrustDecision::Changed {
-                        expected_fingerprint,
+                        algorithm,
+                        expected_fingerprints,
                     } => {
+                        let expected_fingerprint = expected_fingerprints.first().cloned();
                         let _ = app_handle.emit("ssh-host-key-changed", serde_json::json!({
                             "host": connect_host.as_str(),
                             "port": config.port,
+                            "algorithm": algorithm,
                             "expected_fingerprint": expected_fingerprint,
+                            "expected_fingerprints": expected_fingerprints,
                             "actual_fingerprint": verification.fingerprint,
                         }));
                         log::error!(
-                            "SSH HOST KEY CHANGED: {}，默认拒绝连接",
-                            format_ssh_endpoint(&connect_host, config.port)
+                            "SSH HOST KEY CHANGED: {} ({})，默认拒绝连接",
+                            format_ssh_endpoint(&connect_host, config.port),
+                            verification.algorithm
                         );
                         false
                     }
@@ -604,8 +632,6 @@ async fn build_connection_with_config(
 
                 let _ = verification.response.send(accepted);
                 if !accepted {
-                    connect_task.abort();
-                    let _ = connect_task.await;
                     return Err(SessionError::ConnectionFailed {
                         reason: "SSH 主机密钥未受信任、验证不可用或已发生变化".into(),
                     });
