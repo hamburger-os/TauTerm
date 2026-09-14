@@ -87,6 +87,7 @@ registerPlugin({
       "disconnect": "断开",
       "noPorts": "未检测到串口",
       "refresh": "刷新端口列表",
+      "virtualPortBridgeFailed": "虚拟串口桥接已停止，请查看日志详情",
     },
     "en-US": {
       "port": "Port",
@@ -99,6 +100,7 @@ registerPlugin({
       "disconnect": "Disconnect",
       "noPorts": "No serial ports detected",
       "refresh": "Refresh port list",
+      "virtualPortBridgeFailed": "Virtual-port bridge stopped; see logs for details",
     },
   },
 });
