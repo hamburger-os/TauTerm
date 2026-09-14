@@ -25,7 +25,11 @@ const CustomRenderer: FC<CustomRendererProps> = ({ tab }) => {
   }
 
   const CustomView = plugin.customView;
-  return <CustomView sessionId={tab.id} />;
+  // Pane identity is intentionally independent from Session identity. A Pane can
+  // be reassigned from one custom Session to another, so the view itself must be
+  // keyed by the Session or React would retain component-local state across
+  // unrelated Sessions that happen to use the same plugin component type.
+  return <CustomView key={`${tab.pluginId}:${tab.id}`} sessionId={tab.id} />;
 };
 
 const styles: Record<string, React.CSSProperties> = {

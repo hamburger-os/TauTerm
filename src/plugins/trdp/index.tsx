@@ -1,7 +1,7 @@
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/trdp.json";
 import TrdpConnectForm from "./TrdpConnectForm";
-import TrdpSessionView from "./TrdpSessionView";
+import TrdpSessionRouter from "./TrdpSessionRouter";
 
 registerPlugin({
   manifest: manifestJson as PluginManifest,
@@ -9,7 +9,7 @@ registerPlugin({
   sessionPresentation: {
     defaultName: params => `TRDP @ ${params.mode === "monitor" ? "Monitor" : "Node"}`,
   },
-  customView: TrdpSessionView,
+  customView: TrdpSessionRouter,
 });
 
 console.log("[Plugin] TRDP plugin registered");
