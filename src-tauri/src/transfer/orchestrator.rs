@@ -202,8 +202,9 @@ pub struct InlineTransferOrchestrator {
 }
 
 impl InlineTransferOrchestrator {
-    fn validate_negotiated_options(
+    fn validate_options(
         &self,
+        block_size: Option<usize>,
         checksum_mode: Option<&str>,
         streaming: Option<bool>,
     ) -> Result<(), String> {
@@ -213,7 +214,15 @@ impl InlineTransferOrchestrator {
                 self.pt
             ));
         }
-        Ok(())
+
+        match (self.pt.as_str(), block_size) {
+            ("ymodem", Some(128 | 1024)) | ("ymodem", None) => Ok(()),
+            ("ymodem", Some(value)) => Err(format!(
+                "YModem block_size 仅支持 128 或 1024，收到 {value}"
+            )),
+            (_, Some(_)) => Err(format!("{} 不接受显式 block_size 配置", self.pt)),
+            (_, None) => Ok(()),
+        }
     }
 
     fn create_protocol_handler(
@@ -221,8 +230,9 @@ impl InlineTransferOrchestrator {
         block_size: Option<usize>,
     ) -> Result<Box<dyn SerialTransferProtocol>, String> {
         if self.pt.as_str() == "ymodem" {
-            let block_size = block_size.unwrap_or(1024).clamp(128, 1024);
-            Ok(Box::new(crate::transfer::ymodem::YModem { block_size }))
+            Ok(Box::new(crate::transfer::ymodem::YModem {
+                block_size: block_size.unwrap_or(1024),
+            }))
         } else {
             crate::transfer::protocol::create_protocol(&self.pt)
                 .ok_or_else(|| format!("{} 协议未实现", self.pt))
@@ -292,7 +302,11 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: SendContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
-        self.validate_negotiated_options(ctx.checksum_mode.as_deref(), ctx.streaming)?;
+        self.validate_options(
+            ctx.block_size,
+            ctx.checksum_mode.as_deref(),
+            ctx.streaming,
+        )?;
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_protocol_handler(ctx.block_size) {
@@ -369,7 +383,11 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: ReceiveContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
-        self.validate_negotiated_options(ctx.checksum_mode.as_deref(), ctx.streaming)?;
+        self.validate_options(
+            ctx.block_size,
+            ctx.checksum_mode.as_deref(),
+            ctx.streaming,
+        )?;
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_protocol_handler(ctx.block_size) {
