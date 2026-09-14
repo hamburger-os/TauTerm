@@ -15,15 +15,26 @@ SSH 使用版本化的本地 `known_hosts.json` 作为主机身份信任源：
 - 已知主机 fingerprint 变化：默认拒绝，不允许普通“继续”确认静默覆盖旧信任；
 - known-host 文件损坏、版本不支持或存储未初始化：备份原文件后保持 fail-closed，不把已有信任状态降级成新的 TOFU；
 - 并发验证以独立 `request_id` 关联，不再用 fingerprint 作为 pending key；
-- 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走受信路径。
+- 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走受信路径；
+- TCP/KEX 网络阶段与用户 Host Key 确认分别计时。用户阅读和确认指纹的时间不占用网络阶段超时预算，确认完成后网络阶段重新获得完整 deadline；确认事件无法送达、确认超时或信任存储不可用都 fail-closed。
 
 `known_hosts.json` 只保存公开主机身份信息，不保存密码、私钥或 passphrase。
+
+### 认证与连接建立
+
+SSH 运行时认证配置使用类型化认证方式，当前产品只开放密码和私钥两种方式，不允许任意字符串穿透到协议核心。认证失败时保留 russh 返回的 `partial_success` 与可继续认证方法信息用于诊断，不能把多阶段认证要求误报成普通密码错误。
+
+RSA 私钥签名算法属于 SSH 协商结果而不是固定配置。服务端提供 `server-sig-algs` 时按协商结果选择 `rsa-sha2-*`；未提供 EXT_INFO 时以 `rsa-sha2-512` 做现代算法 best-effort。服务端若明确只接受旧式 `ssh-rsa`/SHA-1，TauTerm 默认拒绝静默降级。
+
+连接目标始终以独立的 host + port 传给 socket resolver，不通过字符串拼接构造网络地址；错误消息和界面展示再单独格式化 endpoint。IPv6 因此使用 `[host]:port` 展示，但 resolver 接收不带方括号的原始 IPv6 host。
+
+认证秘密只存在于瞬时连接配置和平台安全凭据存储中。运行时 SSH 配置的 Debug 输出会主动隐藏密码、私钥和 passphrase，并在对象销毁时清零这些字符串缓冲区；Session/Workspace 仍然只保存凭据引用。
 
 ### 会话身份展示
 
 新建 SSH 父会话在未填写自定义名称时，把登录身份固化为默认会话名 `SSH @ <username>`；侧栏第一行始终显示持久化会话名，第二行显示网络目标 `<host>:<port>`。默认会话名只在创建时生成，之后修改主机、端口或用户名不会隐式重写会话名；用户自定义名称同样保持不变。IPv6 目标采用 `[host]:port` 形式，避免地址与端口边界含糊。
 
-一个保存的 SSH 配置先建立认证连接，再由父 Session 暴露可创建多个远端 PTY 的通道工厂。公共 Session 核心管理 child terminal 的生命周期和编号，SSH 插件只负责在同一认证上下文中创建远端通道。
+一个保存的 SSH 配置先建立认证连接，再由父 Session 暴露可创建多个远端 PTY 的通道工厂。公共 Session 核心管理 child terminal 的生命周期和编号，SSH 插件只负责在同一认证上下文中创建远端通道。终端通道关闭时显式发送 SSH EOF/Close；远端已关闭后拒绝继续写入或 resize，不依赖 Rust 对象析构隐式结束协议通道。
 
 SFTP 和 journald 属于 SSH 的侧通道工作流：它们复用已建立的 SSH 身份/连接资源，通过独立的文件或 exec 能力工作，不把文件管理或日志读取伪装成终端字节流。SFTP 文件管理器由启动命令直接取得 `transfer_id`，再用公共传输事件跟踪单次上传/下载，并把“字节已到 100%”与“flush/提交后真正 finished”区分开。文件覆盖使用同目录临时文件 + commit/rollback，目录复制保留空目录，符号链接默认不跟随；具体事件顺序、冲突策略和状态机由 [TRANSFER.md](TRANSFER.md) 统一定义。
 
@@ -60,7 +71,10 @@ flowchart TB
 ## 设计边界
 
 - 身份认证与 host-key 校验属于 SSH 连接边界，不能由前端绕过。
-- 多终端共享认证连接，但每个 child terminal 有独立 PTY/I/O 生命周期。
+- 用户交互等待和网络阶段 timeout 必须是不同生命周期，不能重新把 Host Key 对话框等待时间包进 TCP/KEX 固定超时。
+- host 与 port 是结构化网络目标；IPv6 连接不能依赖 `host + ":" + port` 拼接。
+- RSA 签名算法优先遵循服务器 `server-sig-algs`，默认不允许静默退回 `ssh-rsa`/SHA-1。
+- 多终端共享认证连接，但每个 child terminal 有独立 PTY/I/O 生命周期；关闭通道必须显式完成 EOF/Close。
 - 文件传输和远端日志通过 side-channel/专用服务实现，不侵入终端流。
 - journald 的 cursor、排序方向、stderr/exit status 与 command-line 参数属于后端数据源实现细节；React 只消费规范化页面/批量事件。
 - journald 实时任务的停止必须等后端 operation 完成后才允许同一 Session 重新启动；不要恢复基于固定间隔 polling 或“已在运行中”字符串补偿的旧模型。
@@ -71,7 +85,7 @@ flowchart TB
 - 从 SFTP 远端名称派生本地下载路径时，后端逐组件执行跨平台安全验证；Linux 远端合法的反斜杠文件名不能在 Windows 客户端被重新解释成目录分隔符。
 - 文件预览只从后端取得有上限的原始字节；UI 可切换 Text/HEX，并允许用户选择 UTF-8、UTF-16、GB18030、Big5、Shift-JIS、EUC-JP/KR、Windows-1252 等工程常用编码。无法严格判定区域编码时不伪造“自动识别”结论。
 - 父配置可以持久化；临时 child terminal 的运行状态不能作为 Workspace 可恢复资源。
-- 凭据存储策略由平台安全模块统一负责，SSH 只消费安全凭据接口。
+- 凭据存储策略由平台安全模块统一负责，SSH 只消费安全凭据接口；运行时配置不能通过 Debug 输出秘密，生命周期结束应主动清理秘密缓冲区。
 - Session Library 与安全凭据虽然属于两个物理存储，但保存/删除流程必须通过显式提交与回滚边界保持可恢复一致性；不能先静默覆盖凭据再尝试保存 Session。
 
 ## 代码锚点
