@@ -17,6 +17,7 @@ pub struct SshDriver {
     pending: VecDeque<u8>,
     exit_status: Option<u32>,
     exit_signal: Option<String>,
+    remote_eof: bool,
     closed: bool,
 }
 
@@ -31,6 +32,7 @@ impl SshDriver {
             pending: VecDeque::new(),
             exit_status: None,
             exit_signal: None,
+            remote_eof: false,
             closed: false,
         }
     }
@@ -49,11 +51,6 @@ impl SshDriver {
         self.pending.extend(&chunk[n..]);
         ReadStatus::Data(n)
     }
-
-    fn mark_remote_closed(&mut self) -> ReadStatus {
-        self.closed = true;
-        ReadStatus::Eof
-    }
 }
 
 #[async_trait::async_trait]
@@ -65,7 +62,7 @@ impl AsyncByteStream for SshDriver {
         if !self.pending.is_empty() {
             return Ok(ReadStatus::Data(self.drain_pending(buf)));
         }
-        if self.closed {
+        if self.remote_eof || self.closed {
             return Ok(ReadStatus::Eof);
         }
 
@@ -84,8 +81,16 @@ impl AsyncByteStream for SshDriver {
                 Some(russh::ChannelMsg::ExitSignal { signal_name, .. }) => {
                     self.exit_signal = Some(format!("{signal_name:?}"));
                 }
-                Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {
-                    return Ok(self.mark_remote_closed());
+                Some(russh::ChannelMsg::Eof) => {
+                    // SSH EOF is directional: the peer has finished sending data but the channel
+                    // itself is not fully closed. Preserve that distinction so shutdown() can still
+                    // complete our EOF/Close side of the channel handshake.
+                    self.remote_eof = true;
+                    return Ok(ReadStatus::Eof);
+                }
+                Some(russh::ChannelMsg::Close) | None => {
+                    self.closed = true;
+                    return Ok(ReadStatus::Eof);
                 }
                 Some(_) => {}
             }
@@ -115,8 +120,9 @@ impl AsyncByteStream for SshDriver {
         }
         self.closed = true;
 
-        // SSH channels have an explicit half-close and close handshake. Sending EOF before Close
-        // lets the remote side finish consuming pending stdin instead of relying on handle drop.
+        // SSH channels have an explicit directional EOF followed by the channel close handshake.
+        // Even when the remote side has already sent EOF, we still need to finish our side rather
+        // than treating remote EOF as a fully closed channel.
         if let Err(error) = self.channel.eof().await {
             log::debug!("SSH channel EOF during shutdown failed: {error}");
         }
