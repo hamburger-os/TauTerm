@@ -32,11 +32,6 @@ pub trait BlockingByteStream: Send + 'static {
     fn flush(&mut self) -> Result<(), TransportError>;
     fn shutdown(&mut self) -> Result<(), TransportError>;
 
-    /// Optional input purge used before ownership-sensitive protocols such as X/Y/ZModem.
-    fn purge_input(&mut self) -> Result<(), TransportError> {
-        Ok(())
-    }
-
     /// Internal driver hook. The public capability is exposed separately by the session runtime.
     fn resize_terminal(&mut self, _cols: u32, _rows: u32) -> Result<(), TransportError> {
         Err(TransportError::unsupported(
