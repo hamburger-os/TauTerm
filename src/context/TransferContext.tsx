@@ -78,7 +78,11 @@ export interface TransferState {
 }
 
 type TransferAction =
-  | { type: "TASK_STARTED"; payload: TransferStartedPayload }
+  | {
+      type: "TASK_STARTED";
+      payload: TransferStartedPayload;
+      initialFiles?: BatchFileEntry[];
+    }
   | { type: "TASK_PROGRESS"; payload: UnifiedTransferProgressPayload }
   | { type: "TASK_FINISHED"; payload: TransferFinishedPayload }
   | { type: "TASK_CANCELLING"; sessionId: string; transferId: string }
@@ -139,6 +143,30 @@ function createTask(
     aggregateTotal: 0,
     files: [],
   };
+}
+
+function fileNameFromPath(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalized.split("/").pop() || path;
+}
+
+function selectedFileEntries(filePaths?: string[]): BatchFileEntry[] | undefined {
+  if (!filePaths || filePaths.length === 0) return undefined;
+  return filePaths.map((path) => ({
+    fileName: fileNameFromPath(path),
+    status: "pending" as const,
+    bytesTransferred: 0,
+    totalBytes: 0,
+  }));
+}
+
+function mergeInitialFiles(
+  current: BatchFileEntry[],
+  initialFiles: BatchFileEntry[] | undefined,
+): BatchFileEntry[] {
+  if (!initialFiles || initialFiles.length === 0) return current;
+  const length = Math.max(current.length, initialFiles.length);
+  return Array.from({ length }, (_, index) => current[index] ?? initialFiles[index]);
 }
 
 function addTaskToSessionIndex(
@@ -223,8 +251,22 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
   switch (action.type) {
     case "TASK_STARTED": {
       const payload = action.payload;
-      if (state.tasksById[payload.transfer_id]) {
-        return state;
+      const existing = state.tasksById[payload.transfer_id];
+      if (existing) {
+        const files = mergeInitialFiles(existing.files, action.initialFiles);
+        if (files === existing.files) return state;
+        return {
+          ...state,
+          tasksById: {
+            ...state.tasksById,
+            [payload.transfer_id]: {
+              ...existing,
+              fileName: existing.fileName || files[0]?.fileName || "",
+              totalFiles: Math.max(existing.totalFiles, files.length),
+              files,
+            },
+          },
+        };
       }
 
       const oldIds = state.taskIdsBySession[payload.session_id] ?? [];
@@ -236,12 +278,19 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
       for (const id of oldIds) {
         if (!retainedIds.includes(id)) delete tasksById[id];
       }
-      tasksById[payload.transfer_id] = createTask(
+      const task = createTask(
         payload.session_id,
         payload.transfer_id,
         payload.protocol,
         payload.direction,
       );
+      const files = mergeInitialFiles(task.files, action.initialFiles);
+      tasksById[payload.transfer_id] = {
+        ...task,
+        fileName: files[0]?.fileName || task.fileName,
+        totalFiles: files.length > 0 ? files.length : task.totalFiles,
+        files,
+      };
       const startErrorsBySession = { ...state.startErrorsBySession };
       delete startErrorsBySession[payload.session_id];
       return {
@@ -352,7 +401,7 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
         fileIndex: payload.is_batch_complete ? current.fileIndex : payload.file_index,
         totalFiles: payload.is_batch_complete
           ? current.totalFiles
-          : (payload.total_files || current.totalFiles),
+          : Math.max(payload.total_files || 0, current.totalFiles),
         aggregateBytes: payload.is_batch_complete
           ? current.aggregateBytes
           : payload.aggregate_bytes,
@@ -385,18 +434,21 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
         : payload.cancelled
           ? "cancelled"
           : "failed";
+      const error = payload.success ? null : (payload.error || current.error);
       const exactResults = resultProjection(payload);
       const files = exactResults ?? current.files.map((entry) => {
-        if (phase === "cancelled" && entry.status === "transferring") {
+        if (
+          phase !== "completed"
+          && (entry.status === "pending" || entry.status === "transferring")
+        ) {
           return {
             ...entry,
             status: "skipped" as const,
-            error: entry.error ?? "Transfer cancelled",
+            error: entry.error ?? error ?? undefined,
           };
         }
         return entry;
       });
-      const error = payload.success ? null : (payload.error || current.error);
       const nextTask: ManagedTransferTask = {
         ...current,
         phase,
@@ -607,6 +659,7 @@ export function TransferProvider({ children }: { children: ReactNode }) {
             protocol: config.protocol,
             direction,
           },
+          initialFiles: direction === "send" ? selectedFileEntries(filePaths) : undefined,
         });
         return ack;
       } catch (error) {

@@ -12,7 +12,7 @@
 - **Auxiliary**：复用 Session 的独立协议能力，例如 SSH/SFTP；
 - **SeparateConnection**：模型已保留，但当前通用编排器尚未实现该策略。
 
-Inline 传输不再移交真实串口或底层 handle。DataPlane Runtime 始终拥有资源，exclusive lease 只临时改变访问权：独占期间普通 Session write 被拒绝，RX 只交给传输 lease；任务结束、失败或取消后 drop lease 即恢复共享模式。X/Y/ZModem 算法只依赖 `TransferIo = Read + Write + Send`，不知道底层是 serialport 还是其它 byte stream。
+Inline 传输不再移交真实串口或底层 handle。DataPlane Runtime 始终拥有资源，exclusive lease 临时取得完整主字节流访问权：独占期间普通 Session write 被拒绝，后台共享 read-ahead 停止，协议通过 lease 的 `Read`/`Write` 请求驱动 actor 执行对应底层 I/O；任务结束、失败或取消后 drop lease 即恢复共享模式。X/Y/ZModem 算法只依赖 `TransferIo = Read + Write + Send`，不知道底层是 serialport 还是其它 byte stream。
 
 编排器负责 setup → execute → cleanup，并统一取消、进度广播、panic/error 清理和 Session 状态恢复。每个 Session 的活动任务准入、精确任务 ID 和取消信号由 `TransferScheduler` 单一拥有；默认 `max_active=1`。
 
@@ -22,7 +22,7 @@ Inline 传输不再移交真实串口或底层 handle。DataPlane Runtime 始终
 
 辅助传输命令只负责接受并注册后台任务，不能等待整个 SFTP 传输完成；调用方需要等待精确 `transfer_id` 的 `finished`。`session_id` 只标识资源归属，`transfer_id` 才标识一次具体传输。
 
-前端 `TransferContext` 是 started/progress/finished 的唯一监听者，并按 Session 保存 `ManagedTransferTask` 快照；Transmission/FileTransfer 与 SSH 文件管理器只消费这个统一任务存储。
+前端 `TransferContext` 是 started/progress/finished 的唯一监听者，并按 Session 保存 `ManagedTransferTask` 快照；Transmission/FileTransfer 与 SSH 文件管理器只消费这个统一任务存储。发送命令返回 `transfer_id` 后，`TransferContext` 立即把用户本次选择的完整文件清单种入任务为 `pending`，后续协议 progress 再逐项覆盖真实状态。批量 UI 因此不能依赖“协议已经走到第几个文件”来推断用户最初选择了多少文件；即使第一个文件在块 0 阶段失败，其余已选择文件仍必须可见并在终态被解释为未执行/跳过。
 
 ## 数据流
 
@@ -41,10 +41,12 @@ flowchart LR
 ## 设计边界
 
 - 主字节流同一时间只有一个明确 owner；Inline 传输必须通过 DataPlane exclusive lease 协调，禁止转移真实 transport handle。
+- Exclusive lease 必须同时拥有读写时序：共享模式后台读取在独占期间暂停，只有协议的 `Read` 请求才能触发底层读取；这样既保持 runtime 对真实资源的唯一所有权，又不把 actor read-ahead 引入 X/Y/ZModem 握手状态机。
 - Exclusive lease 的读必须保留可取消的短超时语义，协议远端无响应时不能无限阻塞任务取消。
 - Session 级传输准入必须经过 `TransferScheduler`；当前默认并发上限为 1，未来并发策略只能演进 Scheduler，不能在 SessionHandle 增加平行状态字段。
 - 辅助文件传输 capability 不应阻塞普通终端 I/O。
 - 进度、取消和完成事件使用统一模型，协议实现不创造第二套后端事件协议。
+- 发送批次在启动 ACK 后必须保留完整初始文件清单；progress 只更新清单状态，不负责定义清单本身。任务失败/取消且后端没有逐文件终态时，仍处于 `pending/transferring` 的条目必须收敛为可解释的 `skipped`，不能在终态 UI 中残留 `pending`。
 - **100% 是 payload 字节进度，不等价于完整生命周期结束。** 最后一个字节后仍可能存在 flush、metadata、协议收尾和资源释放；真正 `finished` 前 UI 显示 Finalizing。
 - SFTP 速率由真实 async I/O 层使用 `Instant` 采样并随进度事件发送；WebView 不以 IPC/React 事件到达时间反推吞吐。
 - 正常完成路径必须先排空进度广播队列，再释放传输资源并恢复 Session，最后 emit `finished`。用户收到完成事件时可以立即安全启动下一次传输。

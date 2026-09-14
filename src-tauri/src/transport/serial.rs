@@ -5,8 +5,7 @@ use std::time::Duration;
 use crate::transport::error::{TransportError, TransportErrorKind};
 use crate::transport::stream::{BlockingByteStream, ReadStatus};
 
-const SERIAL_WRITE_TIMEOUT_MARGIN_MS: u64 = 100;
-const SERIAL_WRITE_TIMEOUT_MAX_MS: u64 = 120_000;
+const MAX_INPUT_DRAIN_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerialTransportConfig {
@@ -53,7 +52,7 @@ fn default_flow_control() -> String {
     "none".into()
 }
 fn default_read_timeout_ms() -> u64 {
-    20
+    50
 }
 
 pub fn open_serial(
@@ -85,8 +84,6 @@ pub fn open_serial(
         "xon_xoff" => serialport::FlowControl::Software,
         _ => unreachable!("validated"),
     };
-    let read_timeout = Duration::from_millis(config.read_timeout_ms.clamp(1, 1000));
-    let frame_bits = serial_frame_bits(config);
 
     let mut last_error = None;
     for attempt in 0..3 {
@@ -98,18 +95,13 @@ pub fn open_serial(
             .parity(parity)
             .stop_bits(stop_bits)
             .flow_control(flow_control)
-            .timeout(read_timeout)
+            .timeout(Duration::from_millis(config.read_timeout_ms.clamp(1, 1000)))
             .open()
         {
             Ok(port) => {
                 let _ = port.clear(serialport::ClearBuffer::All);
                 std::thread::sleep(Duration::from_millis(30));
-                return Ok(SerialDriver {
-                    port,
-                    read_timeout,
-                    baud_rate: config.baud_rate,
-                    frame_bits,
-                });
+                return Ok(SerialDriver { port });
             }
             Err(error) => last_error = Some(error),
         }
@@ -149,71 +141,8 @@ fn validate_config(config: &SerialTransportConfig) -> Result<(), TransportError>
     }
 }
 
-fn serial_frame_bits(config: &SerialTransportConfig) -> u64 {
-    let parity_bits = u64::from(config.parity != "none");
-    let stop_bits = if config.stop_bits == "2" { 2 } else { 1 };
-    1 + u64::from(config.data_bits) + parity_bits + stop_bits
-}
-
-/// `serialport` maps one timeout value to both read and write deadlines on Windows. The transport
-/// actor deliberately uses a short read timeout so it can service commands promptly, but that read
-/// slice is far too short for protocol-sized writes (for example a 1 KiB YMODEM packet at 115200
-/// baud takes about 90 ms on an 8N1 wire). Derive a bounded write deadline from the physical frame
-/// time and restore the short read slice immediately after the write.
-fn serial_write_timeout_ms(
-    read_timeout_ms: u64,
-    baud_rate: u32,
-    frame_bits: u64,
-    byte_len: usize,
-) -> u64 {
-    if byte_len == 0 {
-        return read_timeout_ms;
-    }
-
-    let total_bits = (byte_len as u128).saturating_mul(frame_bits as u128);
-    let baud = u128::from(baud_rate.max(1));
-    let wire_ms = total_bits.saturating_mul(1000).saturating_add(baud - 1) / baud;
-    let wire_ms = wire_ms.min(u128::from(u64::MAX)) as u64;
-
-    // Very small interactive writes comfortably fit inside the normal read slice, so avoid a
-    // SetCommTimeouts round-trip for every key press. Larger writes get 2x wire time plus a fixed
-    // driver/USB scheduling margin. The cap keeps a wedged device from blocking the actor forever.
-    if wire_ms.saturating_mul(2) <= read_timeout_ms {
-        return read_timeout_ms;
-    }
-
-    wire_ms
-        .saturating_mul(2)
-        .saturating_add(SERIAL_WRITE_TIMEOUT_MARGIN_MS)
-        .clamp(read_timeout_ms, SERIAL_WRITE_TIMEOUT_MAX_MS)
-}
-
 pub struct SerialDriver {
     port: Box<dyn serialport::SerialPort>,
-    read_timeout: Duration,
-    baud_rate: u32,
-    frame_bits: u64,
-}
-
-impl SerialDriver {
-    fn write_timeout(&self, byte_len: usize) -> Duration {
-        Duration::from_millis(serial_write_timeout_ms(
-            self.read_timeout.as_millis().min(u128::from(u64::MAX)) as u64,
-            self.baud_rate,
-            self.frame_bits,
-            byte_len,
-        ))
-    }
-
-    fn set_port_timeout(
-        &mut self,
-        timeout: Duration,
-        operation: &'static str,
-    ) -> Result<(), TransportError> {
-        self.port.set_timeout(timeout).map_err(|error| {
-            TransportError::new(TransportErrorKind::Io, operation, error.to_string())
-        })
-    }
 }
 
 impl BlockingByteStream for SerialDriver {
@@ -232,28 +161,9 @@ impl BlockingByteStream for SerialDriver {
     }
 
     fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
-        let write_timeout = self.write_timeout(data.len());
-        let timeout_changed = write_timeout > self.read_timeout;
-        if timeout_changed {
-            self.set_port_timeout(write_timeout, "serial_set_write_timeout")?;
-        }
-
-        let write_result = self
-            .port
+        self.port
             .write_all(data)
-            .map_err(|error| TransportError::io("serial_write", error));
-
-        let restore_result = if timeout_changed {
-            self.set_port_timeout(self.read_timeout, "serial_restore_read_timeout")
-        } else {
-            Ok(())
-        };
-
-        match (write_result, restore_result) {
-            (Err(error), _) => Err(error),
-            (Ok(()), Err(error)) => Err(error),
-            (Ok(()), Ok(())) => Ok(()),
-        }
+            .map_err(|error| TransportError::io("serial_write", error))
     }
 
     fn flush(&mut self) -> Result<(), TransportError> {
@@ -267,15 +177,35 @@ impl BlockingByteStream for SerialDriver {
     }
 
     fn purge_input(&mut self) -> Result<(), TransportError> {
-        self.port
-            .clear(serialport::ClearBuffer::Input)
-            .map_err(|error| {
-                TransportError::new(
-                    TransportErrorKind::Io,
-                    "serial_purge_input",
-                    error.to_string(),
-                )
-            })
+        // Capture only the bytes already queued when exclusive ownership is acquired. Reading that
+        // snapshot preserves the old transfer handoff semantics without issuing a Windows
+        // PurgeComm/RXABORT-style operation while a USB CDC device is actively producing handshake
+        // bytes. The protocol layer performs its own bounded drain immediately afterwards.
+        let queued = self.port.bytes_to_read().map_err(|error| {
+            TransportError::new(
+                TransportErrorKind::Io,
+                "serial_probe_input",
+                error.to_string(),
+            )
+        })? as usize;
+        let mut remaining = queued.min(MAX_INPUT_DRAIN_BYTES);
+        let mut buffer = [0u8; 256];
+
+        while remaining > 0 {
+            let wanted = remaining.min(buffer.len());
+            match self.port.read(&mut buffer[..wanted]) {
+                Ok(0) => break,
+                Ok(n) => remaining = remaining.saturating_sub(n),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::TimedOut
+                        || error.kind() == std::io::ErrorKind::WouldBlock =>
+                {
+                    break;
+                }
+                Err(error) => return Err(TransportError::io("serial_drain_input", error)),
+            }
+        }
+        Ok(())
     }
 }
 
@@ -291,6 +221,7 @@ mod tests {
         assert_eq!(config.parity, "none");
         assert_eq!(config.stop_bits, "1");
         assert_eq!(config.flow_control, "none");
+        assert_eq!(config.read_timeout_ms, 50);
         assert!(validate_config(&config).is_ok());
     }
 
@@ -304,50 +235,5 @@ mod tests {
             validate_config(&config).unwrap_err().kind,
             TransportErrorKind::InvalidConfiguration
         );
-    }
-
-    #[test]
-    fn short_interactive_write_keeps_runtime_read_slice_timeout() {
-        let config = SerialTransportConfig::default();
-        let timeout = serial_write_timeout_ms(
-            config.read_timeout_ms,
-            config.baud_rate,
-            serial_frame_bits(&config),
-            8,
-        );
-        assert_eq!(timeout, config.read_timeout_ms);
-    }
-
-    #[test]
-    fn ymodem_1k_packet_gets_baud_aware_write_timeout() {
-        let config = SerialTransportConfig::default();
-        let timeout = serial_write_timeout_ms(
-            config.read_timeout_ms,
-            config.baud_rate,
-            serial_frame_bits(&config),
-            1029,
-        );
-
-        assert!(timeout > config.read_timeout_ms);
-        assert!(timeout >= 270);
-    }
-
-    #[test]
-    fn serial_write_timeout_scales_with_baud_rate() {
-        let config = SerialTransportConfig::default();
-        let fast = serial_write_timeout_ms(
-            config.read_timeout_ms,
-            115_200,
-            serial_frame_bits(&config),
-            1029,
-        );
-        let slow = serial_write_timeout_ms(
-            config.read_timeout_ms,
-            9_600,
-            serial_frame_bits(&config),
-            1029,
-        );
-
-        assert!(slow > fast);
     }
 }
