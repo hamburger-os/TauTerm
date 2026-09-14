@@ -27,7 +27,11 @@ jobs:
           new = '''    if count < 1:\n        raise RuntimeError(f"{path}: expected at least one occurrence, found {count}: {old[:80]!r}")\n    write(path, text.replace(old, new, 1))'''
           if text.count(old) != 1:
               raise SystemExit("replace_once helper shape changed")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          text = text.replace(old, new, 1)
+          start = text.index("# 5. YMODEM receive must preserve prefetched bytes")
+          end = text.index("# 6. XMODEM:", start)
+          text = text[:start] + "# 5. YMODEM startup flush was already removed on the base branch.\n\n" + text[end:]
+          path.write_text(text, encoding="utf-8")
           PY
       - name: Apply migration
         run: python scripts/finish_transfer_role_config.py
