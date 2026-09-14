@@ -28,6 +28,7 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
 
   if (!activeTab) return null;
   const connected = activeTab.state === "connected" || activeTab.state === "transferring";
+  const virtualPortEnabled = activeTab.params?.virtual_port_enabled === true;
   const endpoints = activeTab.virtualVirtualEndpoints ?? [];
   const error = connected ? activeTab.virtualPortError : undefined;
   const driverError = activeTab.virtualPortErrorKind === "files_missing"
@@ -52,7 +53,9 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
                 ? t("serial.virtualPort.permissionRequired")
                 : activeTab.virtualPortErrorKind === "driver_missing"
                   ? t("serial.virtualPort.notInstalled")
-                  : t("serial.virtualPort.createFailed")}
+                  : activeTab.virtualPortErrorKind === "bridge_failed"
+                    ? t("serial.virtualPortBridgeFailed")
+                    : t("serial.virtualPort.createFailed")}
           </span>
           {driverError && (
             <button
@@ -68,7 +71,7 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
         </>
       )}
 
-      {!error && driverMissing && (
+      {!error && virtualPortEnabled && driverMissing && (
         <>
           <span className={`${styles.param} ${styles.warning}`}>
             <Icon name="warning" size="xs" /> {t("serial.virtualPort.notInstalled")}
