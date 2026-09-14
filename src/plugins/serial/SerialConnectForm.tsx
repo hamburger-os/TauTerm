@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { ConnectFormProps, SessionConnectOptions } from "../../core/plugin-registry";
 import { CHARSETS, DEFAULT_ENCODING } from "../../utils/charsets";
@@ -179,7 +180,7 @@ export default function SerialConnectForm({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return <div className={styles.field}><label className={styles.label}>{label}</label>{children}</div>;
 }
 
