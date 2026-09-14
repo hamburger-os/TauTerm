@@ -1,31 +1,31 @@
-name: XModem invariant fixes
+name: ZModem dead-code cleanup
 
 on:
   push:
     branches:
       - fix/transfer-role-aware-protocol-config
     paths:
-      - scripts/apply_xmodem_invariant_fixes.py
-      - .github/workflows/xmodem-invariant-fixes.yml
+      - scripts/remove_zmodem_dead_const.py
+      - .github/workflows/zmodem-dead-code-cleanup.yml
 
 permissions:
   contents: write
 
 jobs:
-  apply:
+  cleanup:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply XModem invariant fixes
-        run: python scripts/apply_xmodem_invariant_fixes.py
+      - name: Remove obsolete constant
+        run: python scripts/remove_zmodem_dead_const.py
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml
-      - name: Commit product changes
+      - name: Commit product change
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src-tauri/src/transfer/xmodem.rs docs/modules/TRANSFER.md scripts/test-file-transfer-lifecycle.mjs
+          git add src-tauri/src/transfer/zmodem.rs
           git diff --cached --quiet && exit 0
-          git commit -m "fix(transfer): enforce standard XModem sequencing"
+          git commit -m "chore(transfer): remove obsolete ZModem constant"
           git push
