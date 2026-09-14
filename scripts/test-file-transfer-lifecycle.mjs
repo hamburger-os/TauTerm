@@ -28,7 +28,7 @@ assert.match(
 );
 assert.match(
   context,
-  /current\.phase === "cancelling"[\s\S]{0,180}phase = "cancelling"/,
+  /current\.phase === "cancelling"[\s\S]{0,220}phase = "cancelling"/,
   "late progress must not regress cancelling state",
 );
 assert.match(
@@ -46,6 +46,11 @@ assert.match(
   /const files = exactResults \?\? current\.files\.map/,
   "TASK_FINISHED must prefer exact backend results over provisional progress state",
 );
+assert.match(context, /payload\.kind === "file_start"/);
+assert.match(context, /payload\.kind === "file_complete"/);
+assert.match(context, /payload\.kind === "batch_complete"/);
+assert.doesNotMatch(context, /__batch_complete__/);
+assert.doesNotMatch(context, /payload\.is_file_start|payload\.is_file_complete|payload\.is_batch_complete/);
 assert.doesNotMatch(context, /tasksBySession/);
 assert.doesNotMatch(context, /activeProtocolRef|activeSessionIdRef|activeTransferIdRef/);
 assert.doesNotMatch(context, /backendStartedRef|lastAggregateBytesRef/);
@@ -54,6 +59,12 @@ assert.doesNotMatch(
   /const \[state, dispatch\][\s\S]*\bactiveProtocol:\s*|\bactiveSessionId:\s*/,
   "frontend must not keep a second global active-transfer owner",
 );
+
+const frontendTypes = await source("src/types/transfer.ts");
+assert.match(frontendTypes, /export type TransferProgressKind[\s\S]*"file_start"[\s\S]*"progress"[\s\S]*"file_complete"[\s\S]*"batch_complete"/);
+assert.match(frontendTypes, /interface UnifiedTransferProgressPayload[\s\S]*kind:\s*TransferProgressKind/);
+assert.match(frontendTypes, /interface TransferFinishedPayload[\s\S]*transfer_id:\s*string[\s\S]*protocol:\s*string[\s\S]*cancelled:\s*boolean[\s\S]*results:\s*BatchFileResult\[\] \| null/);
+assert.doesNotMatch(frontendTypes, /is_file_start|is_file_complete|is_batch_complete|__batch_complete__/);
 
 // ── Shared frontend command/wait service ────────────────────────────────────
 const transferService = await source("src/services/transferService.ts");
@@ -96,6 +107,7 @@ assert.match(hook, /completedAt:\s*task\.completedAt/);
 assert.match(hook, /Date\.now\(\) - sftpTask\.completedAt >= SUCCESS_AUTO_HIDE_MS/);
 assert.match(hook, /hoveredRef\.current/);
 assert.match(hook, /autoHideRemainingRef/);
+assert.doesNotMatch(hook, /__batch_complete__/);
 assert.doesNotMatch(hook, /listen<|file-transfer:started|file-transfer:progress|file-transfer:finished/);
 assert.doesNotMatch(hook, /invoke\(/);
 assert.doesNotMatch(hook, /performance\.now\(\)/);
@@ -113,9 +125,12 @@ assert.doesNotMatch(transmission, /state\.activeSessionId|state\.activeProtocol/
 const unified = await source("src-tauri/src/kernel/file_transfer.rs");
 assert.match(unified, /pub transfer_id:\s*String/);
 assert.match(unified, /pub bytes_per_second:\s*Option<f64>/);
+assert.match(unified, /pub enum TransferProgressKind[\s\S]*FileStart[\s\S]*Progress[\s\S]*FileComplete[\s\S]*BatchComplete/);
+assert.match(unified, /pub kind:\s*TransferProgressKind/);
 assert.match(unified, /pub enum OverwritePolicy[\s\S]*Replace[\s\S]*Skip[\s\S]*KeepBoth/);
 assert.match(unified, /pub struct FileTransferOptions[\s\S]*destination_paths:\s*Vec<String>/);
 assert.match(unified, /file_success:\s*Some\(files_failed == 0\)/);
+assert.doesNotMatch(unified, /is_file_start|is_file_complete|is_batch_complete|__batch_complete__/);
 assert.doesNotMatch(
   unified,
   /files_failed > 0 \|\| files_skipped > 0/,
@@ -199,32 +214,45 @@ assert.match(
 assert.doesNotMatch(orchestrator, /emit_transfer_failed/);
 assert.doesNotMatch(orchestrator, /active_transfer_id|cancel_transfer_tx/);
 
-// ── Inline transfers own the physical generic driver, not an actor I/O proxy ─
+// ── Inline transfers own the physical generic driver + unread bytes ─────────
 const transportRuntime = await source("src-tauri/src/transport/runtime.rs");
 assert.match(transportRuntime, /driver:\s*Option<Box<dyn BlockingByteStream>>/);
+assert.match(transportRuntime, /struct ExclusiveLeasePayload[\s\S]*driver:\s*Box<dyn BlockingByteStream>[\s\S]*prefetched:\s*VecDeque<u8>/);
 assert.match(
   transportRuntime,
-  /AcquireExclusive[\s\S]{0,220}driver_tx:\s*mpsc::SyncSender<Result<Box<dyn BlockingByteStream>, TransportError>>/,
-  "exclusive acquisition must move the generic physical driver out of the actor",
+  /AcquireExclusive[\s\S]{0,260}driver_tx:\s*mpsc::SyncSender<Result<ExclusiveLeasePayload, TransportError>>/,
+  "exclusive acquisition must move the generic physical driver and unread bytes out of the actor",
 );
 assert.match(
   transportRuntime,
-  /ReturnExclusive[\s\S]{0,180}driver:\s*Box<dyn BlockingByteStream>/,
-  "exclusive release must return the same generic driver to the actor",
+  /ReturnExclusive[\s\S]{0,220}driver:\s*Box<dyn BlockingByteStream>[\s\S]{0,80}prefetched:\s*VecDeque<u8>/,
+  "exclusive release must return the same generic driver and remaining unread bytes to the actor",
 );
+assert.match(transportRuntime, /handoff_buffer:\s*VecDeque<u8>/);
+assert.match(transportRuntime, /fn take_unconsumed_bytes/);
+assert.match(transportRuntime, /fn restore_unconsumed_bytes/);
 assert.match(
   transportRuntime,
-  /impl Read for ExclusiveIo[\s\S]{0,420}driver_mut\(\)\?[\s\S]{0,40}\.read\(buf\)/,
-  "exclusive protocol reads must execute directly against the leased driver",
+  /impl Read for ExclusiveIo[\s\S]{0,420}self\.prefetched[\s\S]{0,520}driver_mut\(\)\?[\s\S]{0,40}\.read\(buf\)/,
+  "exclusive protocol reads must consume prefetched handoff bytes before direct driver reads",
 );
 assert.match(
   transportRuntime,
   /impl Write for ExclusiveIo[\s\S]{0,300}driver_mut\(\)\?[\s\S]{0,80}\.write_all\(buf\)/,
   "exclusive protocol writes must execute directly against the leased driver",
 );
+assert.match(transportRuntime, /exclusive_handoff_preserves_bytes_read_during_acquisition/);
+assert.match(transportRuntime, /unread_handoff_bytes_return_to_shared_subscriber/);
 assert.match(transportRuntime, /exclusive_driver_runs_on_owner_thread_and_returns_to_actor_thread/);
 assert.match(transportRuntime, /exclusive_io_error_does_not_close_shared_runtime/);
 assert.doesNotMatch(transportRuntime, /ExclusiveRead|purge_input/);
+
+const serialTransfer = await source("src-tauri/src/transfer/serial_transfer.rs");
+assert.doesNotMatch(
+  serialTransfer,
+  /flush_port_buffer/,
+  "inline adapter must not purge handshake bytes after acquiring the exclusive lease",
+);
 
 const serialTransport = await source("src-tauri/src/transport/serial.rs");
 assert.doesNotMatch(serialTransport, /purge_input|bytes_to_read|serial_drain_input/);
