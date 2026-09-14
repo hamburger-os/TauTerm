@@ -199,6 +199,36 @@ assert.match(
 assert.doesNotMatch(orchestrator, /emit_transfer_failed/);
 assert.doesNotMatch(orchestrator, /active_transfer_id|cancel_transfer_tx/);
 
+// ── Inline transfers own the physical generic driver, not an actor I/O proxy ─
+const transportRuntime = await source("src-tauri/src/transport/runtime.rs");
+assert.match(transportRuntime, /driver:\s*Option<Box<dyn BlockingByteStream>>/);
+assert.match(
+  transportRuntime,
+  /AcquireExclusive[\s\S]{0,220}driver_tx:\s*mpsc::SyncSender<Result<Box<dyn BlockingByteStream>, TransportError>>/,
+  "exclusive acquisition must move the generic physical driver out of the actor",
+);
+assert.match(
+  transportRuntime,
+  /ReturnExclusive[\s\S]{0,180}driver:\s*Box<dyn BlockingByteStream>/,
+  "exclusive release must return the same generic driver to the actor",
+);
+assert.match(
+  transportRuntime,
+  /impl Read for ExclusiveIo[\s\S]{0,420}driver_mut\(\)\?[\s\S]{0,40}\.read\(buf\)/,
+  "exclusive protocol reads must execute directly against the leased driver",
+);
+assert.match(
+  transportRuntime,
+  /impl Write for ExclusiveIo[\s\S]{0,300}driver_mut\(\)\?[\s\S]{0,80}\.write_all\(buf\)/,
+  "exclusive protocol writes must execute directly against the leased driver",
+);
+assert.match(transportRuntime, /exclusive_driver_runs_on_owner_thread_and_returns_to_actor_thread/);
+assert.match(transportRuntime, /exclusive_io_error_does_not_close_shared_runtime/);
+assert.doesNotMatch(transportRuntime, /ExclusiveRead|purge_input/);
+
+const serialTransport = await source("src-tauri/src/transport/serial.rs");
+assert.doesNotMatch(serialTransport, /purge_input|bytes_to_read|serial_drain_input/);
+
 // ── Transactional SFTP commit and mid-transfer source mutation guard ─────────
 const service = await source("src-tauri/src/transfer/ssh_file_service.rs");
 assert.match(service, /enum SftpWriteOutcome/);

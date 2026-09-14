@@ -9,7 +9,6 @@ use crate::transport::error::{TransportError, TransportErrorKind};
 use crate::transport::stream::{BlockingByteStream, ReadStatus, StreamCloseMetadata};
 
 const COMMAND_CAPACITY: usize = 256;
-const EXCLUSIVE_COMMAND_WAIT: std::time::Duration = std::time::Duration::from_millis(20);
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 const STARTUP_BUFFER_LIMIT: usize = 64 * 1024;
 
@@ -88,7 +87,6 @@ impl DataPlaneHandle {
         let (ack_tx, ack_rx) = mpsc::sync_channel(1);
         self.command_tx
             .send(RuntimeCommand::Write {
-                owner: None,
                 data: data.to_vec(),
                 ack: CommandAck::Blocking(ack_tx),
             })
@@ -113,7 +111,6 @@ impl DataPlaneHandle {
             }
             self.try_send_async_command(
                 RuntimeCommand::Write {
-                    owner: None,
                     data,
                     ack: CommandAck::Async(ack_tx),
                 },
@@ -156,10 +153,14 @@ impl DataPlaneHandle {
         })
     }
 
+    /// Acquire the physical byte-stream driver for an ownership-sensitive inline protocol.
+    ///
+    /// The actor remains alive to serialize lifecycle/control commands, but it no longer proxies
+    /// protocol I/O while the lease is active. The returned lease executes reads/writes directly
+    /// against the same driver object and returns that object to the actor on release/drop.
     pub fn acquire_exclusive(
         &self,
         owner_name: impl Into<String>,
-        purge_input: bool,
     ) -> Result<ExclusiveIo, TransportError> {
         self.exclusive_active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -171,26 +172,29 @@ impl DataPlaneHandle {
             })?;
 
         let owner_id = next_owner_id();
-        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+        let (driver_tx, driver_rx) = mpsc::sync_channel(1);
         if self
             .command_tx
             .send(RuntimeCommand::AcquireExclusive {
                 owner_id,
                 owner_name: owner_name.into(),
-                purge_input,
-                ack: ack_tx,
+                driver_tx,
             })
             .is_err()
         {
             self.exclusive_active.store(false, Ordering::Release);
             return Err(runtime_closed("acquire_exclusive"));
         }
-        match ack_rx.recv() {
-            Ok(Ok(())) => Ok(ExclusiveIo {
+
+        match driver_rx.recv() {
+            Ok(Ok(driver)) => Ok(ExclusiveIo {
                 owner_id,
                 command_tx: self.command_tx.clone(),
+                driver: Some(driver),
                 released: false,
                 exclusive_active: self.exclusive_active.clone(),
+                tx_bytes: self.tx_bytes.clone(),
+                rx_bytes: self.rx_bytes.clone(),
             }),
             Ok(Err(error)) => {
                 self.exclusive_active.store(false, Ordering::Release);
@@ -208,6 +212,12 @@ impl DataPlaneHandle {
             return Err(TransportError::unsupported(
                 "resize_terminal",
                 "session has no terminal-control capability",
+            ));
+        }
+        if self.exclusive_active.load(Ordering::Acquire) {
+            return Err(TransportError::busy(
+                "resize_terminal",
+                "data plane is exclusively owned",
             ));
         }
         let (ack_tx, ack_rx) = mpsc::sync_channel(1);
@@ -233,6 +243,12 @@ impl DataPlaneHandle {
         let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
         {
             let _order = self.async_command_order.lock().await;
+            if self.exclusive_active.load(Ordering::Acquire) {
+                return Err(TransportError::busy(
+                    "resize_terminal",
+                    "data plane is exclusively owned",
+                ));
+            }
             self.try_send_async_command(
                 RuntimeCommand::ResizeTerminal {
                     cols,
@@ -290,6 +306,19 @@ fn runtime_closed_before_ack(operation: &'static str) -> TransportError {
         operation,
         "transport runtime closed before acknowledging command",
     )
+}
+
+fn transport_error_to_io(error: TransportError) -> std::io::Error {
+    let kind = match error.kind {
+        TransportErrorKind::Timeout => std::io::ErrorKind::TimedOut,
+        TransportErrorKind::PermissionDenied => std::io::ErrorKind::PermissionDenied,
+        TransportErrorKind::DeviceNotFound => std::io::ErrorKind::NotFound,
+        TransportErrorKind::RemoteClosed => std::io::ErrorKind::UnexpectedEof,
+        TransportErrorKind::ConnectionReset => std::io::ErrorKind::ConnectionReset,
+        TransportErrorKind::Busy => std::io::ErrorKind::WouldBlock,
+        _ => std::io::ErrorKind::Other,
+    };
+    std::io::Error::new(kind, error.to_string())
 }
 
 pub struct DataPlaneRuntime {
@@ -351,8 +380,11 @@ impl Drop for DataPlaneRuntime {
 pub struct ExclusiveIo {
     owner_id: u64,
     command_tx: mpsc::SyncSender<RuntimeCommand>,
+    driver: Option<Box<dyn BlockingByteStream>>,
     released: bool,
     exclusive_active: Arc<AtomicBool>,
+    tx_bytes: Arc<AtomicU64>,
+    rx_bytes: Arc<AtomicU64>,
 }
 
 impl ExclusiveIo {
@@ -360,17 +392,43 @@ impl ExclusiveIo {
         self.release_inner()
     }
 
+    fn driver_mut(&mut self) -> std::io::Result<&mut Box<dyn BlockingByteStream>> {
+        self.driver.as_mut().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "exclusive transport driver already released",
+            )
+        })
+    }
+
     fn release_inner(&mut self) -> Result<(), TransportError> {
         if self.released {
             return Ok(());
         }
         self.released = true;
-        let result = self
-            .command_tx
-            .send(RuntimeCommand::ReleaseExclusive {
-                owner_id: self.owner_id,
-            })
-            .map_err(|_| runtime_closed("release_exclusive"));
+
+        let Some(driver) = self.driver.take() else {
+            self.exclusive_active.store(false, Ordering::Release);
+            return Ok(());
+        };
+        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+        let command = RuntimeCommand::ReturnExclusive {
+            owner_id: self.owner_id,
+            driver,
+            ack: ack_tx,
+        };
+
+        if let Err(error) = self.command_tx.send(command) {
+            if let RuntimeCommand::ReturnExclusive { mut driver, .. } = error.0 {
+                let _ = driver.shutdown();
+            }
+            self.exclusive_active.store(false, Ordering::Release);
+            return Err(runtime_closed("return_exclusive"));
+        }
+
+        let result = ack_rx
+            .recv()
+            .map_err(|_| runtime_closed_before_ack("return_exclusive"))?;
         self.exclusive_active.store(false, Ordering::Release);
         result
     }
@@ -382,60 +440,39 @@ impl Read for ExclusiveIo {
             return Ok(0);
         }
 
-        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
-        self.command_tx
-            .send(RuntimeCommand::ExclusiveRead {
-                owner_id: self.owner_id,
-                max_len: buf.len().min(READ_BUFFER_SIZE),
-                ack: ack_tx,
-            })
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed"))?;
-
-        match ack_rx
-            .recv()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed"))?
-        {
-            Ok(ExclusiveReadResult::Data(data)) => {
-                let n = data.len().min(buf.len());
-                buf[..n].copy_from_slice(&data[..n]);
+        let result = self
+            .driver_mut()?
+            .read(buf)
+            .map_err(transport_error_to_io)?;
+        match result {
+            ReadStatus::Data(n) if n > 0 => {
+                let n = n.min(buf.len());
+                self.rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
                 Ok(n)
             }
-            Ok(ExclusiveReadResult::Idle) => Err(std::io::Error::new(
+            ReadStatus::Data(_) | ReadStatus::Idle => Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "exclusive data-plane read timed out",
             )),
-            Err(error) => {
-                let kind = match error.kind {
-                    TransportErrorKind::Timeout => std::io::ErrorKind::TimedOut,
-                    TransportErrorKind::RemoteClosed => std::io::ErrorKind::UnexpectedEof,
-                    TransportErrorKind::ConnectionReset => std::io::ErrorKind::ConnectionReset,
-                    _ => std::io::ErrorKind::Other,
-                };
-                Err(std::io::Error::new(kind, error.to_string()))
-            }
+            ReadStatus::Eof => Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "transport closed while exclusive lease was active",
+            )),
         }
     }
 }
 
 impl Write for ExclusiveIo {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
-        self.command_tx
-            .send(RuntimeCommand::Write {
-                owner: Some(self.owner_id),
-                data: buf.to_vec(),
-                ack: CommandAck::Blocking(ack_tx),
-            })
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed"))?;
-        ack_rx
-            .recv()
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed"))?
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        self.driver_mut()?
+            .write_all(buf)
+            .map_err(transport_error_to_io)?;
+        self.tx_bytes.fetch_add(buf.len() as u64, Ordering::Relaxed);
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+        self.driver_mut()?.flush().map_err(transport_error_to_io)
     }
 }
 
@@ -463,22 +500,10 @@ impl CommandAck {
     }
 }
 
-#[derive(Debug)]
-enum ExclusiveReadResult {
-    Data(Vec<u8>),
-    Idle,
-}
-
 enum RuntimeCommand {
     Write {
-        owner: Option<u64>,
         data: Vec<u8>,
         ack: CommandAck,
-    },
-    ExclusiveRead {
-        owner_id: u64,
-        max_len: usize,
-        ack: mpsc::SyncSender<Result<ExclusiveReadResult, TransportError>>,
     },
     Subscribe {
         id: u64,
@@ -490,11 +515,12 @@ enum RuntimeCommand {
     AcquireExclusive {
         owner_id: u64,
         owner_name: String,
-        purge_input: bool,
-        ack: mpsc::SyncSender<Result<(), TransportError>>,
+        driver_tx: mpsc::SyncSender<Result<Box<dyn BlockingByteStream>, TransportError>>,
     },
-    ReleaseExclusive {
+    ReturnExclusive {
         owner_id: u64,
+        driver: Box<dyn BlockingByteStream>,
+        ack: mpsc::SyncSender<Result<(), TransportError>>,
     },
     ResizeTerminal {
         cols: u32,
@@ -516,8 +542,10 @@ struct RuntimeLoopState {
     startup_buffer: VecDeque<Vec<u8>>,
     startup_buffer_bytes: usize,
     exclusive: Option<ExclusiveState>,
+    shutdown_pending: bool,
     tx_bytes: Arc<AtomicU64>,
     rx_bytes: Arc<AtomicU64>,
+    exclusive_active: Arc<AtomicBool>,
 }
 
 enum CommandOutcome {
@@ -560,20 +588,23 @@ fn apply_command_outcome(
 }
 
 fn run_blocking_runtime(
-    mut driver: Box<dyn BlockingByteStream>,
+    driver: Box<dyn BlockingByteStream>,
     commands: mpsc::Receiver<RuntimeCommand>,
     tx_bytes: Arc<AtomicU64>,
     rx_bytes: Arc<AtomicU64>,
     connected: Arc<AtomicBool>,
     exclusive_active: Arc<AtomicBool>,
 ) {
+    let mut driver = Some(driver);
     let mut state = RuntimeLoopState {
         subscribers: Vec::new(),
         startup_buffer: VecDeque::new(),
         startup_buffer_bytes: 0,
         exclusive: None,
+        shutdown_pending: false,
         tx_bytes,
         rx_bytes,
+        exclusive_active: exclusive_active.clone(),
     };
     // Declare after state so panic unwinding clears externally visible state before subscriber
     // senders are dropped and the Session receive pump observes channel closure.
@@ -586,13 +617,12 @@ fn run_blocking_runtime(
     let mut driver_shutdown = false;
 
     while !closing {
-        // Exclusive protocols must own not only writes but also read cadence. In exclusive mode the
-        // actor therefore waits for owner commands instead of continuously issuing background
-        // driver reads and queueing data ahead of the X/Y/ZModem state machine.
+        // A physical driver lease means the actor owns no byte stream at all. It stays alive only
+        // for lifecycle/subscription commands until the lease returns the same driver object.
         if state.exclusive.is_some() {
-            match commands.recv_timeout(EXCLUSIVE_COMMAND_WAIT) {
+            match commands.recv() {
                 Ok(command) => {
-                    let outcome = handle_command(command, &mut *driver, &mut state);
+                    let outcome = handle_command(command, &mut driver, &mut state);
                     apply_command_outcome(
                         outcome,
                         &mut state.subscribers,
@@ -600,8 +630,7 @@ fn run_blocking_runtime(
                         &mut driver_shutdown,
                     );
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => closing = true,
+                Err(_) => closing = true,
             }
             continue;
         }
@@ -609,7 +638,7 @@ fn run_blocking_runtime(
         loop {
             match commands.try_recv() {
                 Ok(command) => {
-                    let outcome = handle_command(command, &mut *driver, &mut state);
+                    let outcome = handle_command(command, &mut driver, &mut state);
                     apply_command_outcome(
                         outcome,
                         &mut state.subscribers,
@@ -634,7 +663,19 @@ fn run_blocking_runtime(
             continue;
         }
 
-        match driver.read(&mut read_buf) {
+        let Some(active_driver) = driver.as_mut() else {
+            broadcast_close(
+                &mut state.subscribers,
+                TransportCloseInfo::from_driver(
+                    TransportErrorKind::Io,
+                    "transport actor lost its driver without an active exclusive lease",
+                    StreamCloseMetadata::default(),
+                ),
+            );
+            break;
+        };
+
+        match active_driver.read(&mut read_buf) {
             Ok(ReadStatus::Data(n)) if n > 0 => {
                 state.rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
                 let data = read_buf[..n].to_vec();
@@ -662,7 +703,7 @@ fn run_blocking_runtime(
                     TransportCloseInfo::from_driver(
                         TransportErrorKind::RemoteClosed,
                         "remote endpoint closed the stream",
-                        driver.close_metadata(),
+                        active_driver.close_metadata(),
                     ),
                 );
                 break;
@@ -673,7 +714,7 @@ fn run_blocking_runtime(
                     TransportCloseInfo::from_driver(
                         error.kind,
                         error.to_string(),
-                        driver.close_metadata(),
+                        active_driver.close_metadata(),
                     ),
                 );
                 break;
@@ -684,95 +725,51 @@ fn run_blocking_runtime(
     exclusive_active.store(false, Ordering::Release);
     connected.store(false, Ordering::Release);
     if !driver_shutdown {
-        let _ = driver.shutdown();
+        if let Some(active_driver) = driver.as_mut() {
+            let _ = active_driver.shutdown();
+        }
     }
 }
 
 fn handle_command(
     command: RuntimeCommand,
-    driver: &mut dyn BlockingByteStream,
+    driver: &mut Option<Box<dyn BlockingByteStream>>,
     state: &mut RuntimeLoopState,
 ) -> CommandOutcome {
     match command {
-        RuntimeCommand::Write { owner, data, ack } => {
-            let allowed = match state.exclusive.as_ref() {
-                None => owner.is_none(),
-                Some(lease) => owner == Some(lease.owner_id),
-            };
-            let result = if !allowed {
-                Err(TransportError::busy(
+        RuntimeCommand::Write { data, ack } => {
+            if let Some(active) = state.exclusive.as_ref() {
+                ack.send(Err(TransportError::busy(
                     "write",
-                    state
-                        .exclusive
-                        .as_ref()
-                        .map(|lease| {
-                            format!("data plane is exclusively owned by {}", lease.owner_name)
-                        })
-                        .unwrap_or_else(|| "write owner mismatch".into()),
-                ))
-            } else {
-                let result = driver.write_all(&data).and_then(|_| driver.flush());
-                if result.is_ok() {
-                    state
-                        .tx_bytes
-                        .fetch_add(data.len() as u64, Ordering::Relaxed);
-                }
-                result
-            };
-            let close_info = result.as_ref().err().and_then(|error| {
-                (error.kind != TransportErrorKind::Busy).then(|| {
-                    TransportCloseInfo::from_driver(
-                        error.kind,
-                        error.to_string(),
-                        driver.close_metadata(),
-                    )
-                })
-            });
-            ack.send(result);
-            close_info.map_or(CommandOutcome::Continue, CommandOutcome::Close)
-        }
-        RuntimeCommand::ExclusiveRead {
-            owner_id,
-            max_len,
-            ack,
-        } => {
-            let owner_matches = state
-                .exclusive
-                .as_ref()
-                .is_some_and(|lease| lease.owner_id == owner_id);
-            if !owner_matches {
-                let error = TransportError::busy("exclusive_read", "exclusive read owner mismatch");
-                let _ = ack.send(Err(error));
+                    format!("data plane is exclusively owned by {}", active.owner_name),
+                )));
                 return CommandOutcome::Continue;
             }
 
-            let mut buffer = vec![0u8; max_len.clamp(1, READ_BUFFER_SIZE)];
-            let result = match driver.read(&mut buffer) {
-                Ok(ReadStatus::Data(n)) if n > 0 => {
-                    state.rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
-                    buffer.truncate(n);
-                    Ok(ExclusiveReadResult::Data(buffer))
-                }
-                Ok(ReadStatus::Data(_)) | Ok(ReadStatus::Idle) => Ok(ExclusiveReadResult::Idle),
-                Ok(ReadStatus::Eof) => Err(TransportError::new(
-                    TransportErrorKind::RemoteClosed,
-                    "exclusive_read",
-                    "remote endpoint closed the stream",
-                )),
-                Err(error) => Err(error),
+            let Some(active_driver) = driver.as_mut() else {
+                ack.send(Err(TransportError::new(
+                    TransportErrorKind::Io,
+                    "write",
+                    "transport actor has no active driver",
+                )));
+                return CommandOutcome::Continue;
             };
-            let close_info = result.as_ref().err().and_then(|error| {
-                (error.kind != TransportErrorKind::Busy
-                    && error.kind != TransportErrorKind::Timeout)
-                    .then(|| {
-                        TransportCloseInfo::from_driver(
-                            error.kind,
-                            error.to_string(),
-                            driver.close_metadata(),
-                        )
-                    })
+            let result = active_driver
+                .write_all(&data)
+                .and_then(|_| active_driver.flush());
+            if result.is_ok() {
+                state
+                    .tx_bytes
+                    .fetch_add(data.len() as u64, Ordering::Relaxed);
+            }
+            let close_info = result.as_ref().err().map(|error| {
+                TransportCloseInfo::from_driver(
+                    error.kind,
+                    error.to_string(),
+                    active_driver.close_metadata(),
+                )
             });
-            let _ = ack.send(result);
+            ack.send(result);
             close_info.map_or(CommandOutcome::Continue, CommandOutcome::Close)
         }
         RuntimeCommand::Subscribe { id, subscriber } => {
@@ -801,54 +798,121 @@ fn handle_command(
         RuntimeCommand::AcquireExclusive {
             owner_id,
             owner_name,
-            purge_input,
-            ack,
+            driver_tx,
         } => {
-            let result = if let Some(active) = state.exclusive.as_ref() {
-                Err(TransportError::busy(
+            if let Some(active) = state.exclusive.as_ref() {
+                let _ = driver_tx.send(Err(TransportError::busy(
                     "acquire_exclusive",
                     format!("data plane is already owned by {}", active.owner_name),
-                ))
-            } else {
-                let purge_result = if purge_input {
-                    driver.purge_input()
-                } else {
-                    Ok(())
-                };
-                purge_result.map(|()| {
-                    state.exclusive = Some(ExclusiveState {
-                        owner_id,
-                        owner_name,
-                    });
-                })
+                )));
+                state.exclusive_active.store(false, Ordering::Release);
+                return CommandOutcome::Continue;
+            }
+
+            let Some(leased_driver) = driver.take() else {
+                let _ = driver_tx.send(Err(TransportError::new(
+                    TransportErrorKind::Io,
+                    "acquire_exclusive",
+                    "transport actor has no driver to lease",
+                )));
+                state.exclusive_active.store(false, Ordering::Release);
+                return CommandOutcome::Continue;
             };
-            let _ = ack.send(result);
-            CommandOutcome::Continue
-        }
-        RuntimeCommand::ReleaseExclusive { owner_id } => {
-            if state
-                .exclusive
-                .as_ref()
-                .is_some_and(|lease| lease.owner_id == owner_id)
-            {
+
+            state.exclusive = Some(ExclusiveState {
+                owner_id,
+                owner_name,
+            });
+            if let Err(error) = driver_tx.send(Ok(leased_driver)) {
+                if let Ok(returned_driver) = error.0 {
+                    *driver = Some(returned_driver);
+                }
                 state.exclusive = None;
+                state.exclusive_active.store(false, Ordering::Release);
             }
             CommandOutcome::Continue
         }
+        RuntimeCommand::ReturnExclusive {
+            owner_id,
+            driver: mut returned_driver,
+            ack,
+        } => {
+            let owner_matches = state
+                .exclusive
+                .as_ref()
+                .is_some_and(|lease| lease.owner_id == owner_id);
+            if !owner_matches {
+                let _ = returned_driver.shutdown();
+                let _ = ack.send(Err(TransportError::busy(
+                    "return_exclusive",
+                    "exclusive driver owner mismatch",
+                )));
+                return CommandOutcome::Continue;
+            }
+            if driver.is_some() {
+                let _ = returned_driver.shutdown();
+                let _ = ack.send(Err(TransportError::new(
+                    TransportErrorKind::Io,
+                    "return_exclusive",
+                    "transport actor already owns a driver",
+                )));
+                return CommandOutcome::Continue;
+            }
+
+            *driver = Some(returned_driver);
+            state.exclusive = None;
+            state.exclusive_active.store(false, Ordering::Release);
+
+            if state.shutdown_pending {
+                let result = driver
+                    .as_mut()
+                    .expect("returned driver just installed")
+                    .shutdown();
+                let ack_result = result.clone();
+                let _ = ack.send(ack_result);
+                CommandOutcome::Shutdown
+            } else {
+                let _ = ack.send(Ok(()));
+                CommandOutcome::Continue
+            }
+        }
         RuntimeCommand::ResizeTerminal { cols, rows, ack } => {
-            let result = driver.resize_terminal(cols, rows);
+            if let Some(active) = state.exclusive.as_ref() {
+                ack.send(Err(TransportError::busy(
+                    "resize_terminal",
+                    format!("data plane is exclusively owned by {}", active.owner_name),
+                )));
+                return CommandOutcome::Continue;
+            }
+            let Some(active_driver) = driver.as_mut() else {
+                ack.send(Err(TransportError::new(
+                    TransportErrorKind::Io,
+                    "resize_terminal",
+                    "transport actor has no active driver",
+                )));
+                return CommandOutcome::Continue;
+            };
+            let result = active_driver.resize_terminal(cols, rows);
             let close_info = result.as_ref().err().map(|error| {
                 TransportCloseInfo::from_driver(
                     error.kind,
                     error.to_string(),
-                    driver.close_metadata(),
+                    active_driver.close_metadata(),
                 )
             });
             ack.send(result);
             close_info.map_or(CommandOutcome::Continue, CommandOutcome::Close)
         }
         RuntimeCommand::Shutdown { ack } => {
-            let result = driver.shutdown();
+            if state.exclusive.is_some() {
+                state.shutdown_pending = true;
+                let _ = ack.send(Ok(()));
+                return CommandOutcome::Continue;
+            }
+
+            let result = driver
+                .as_mut()
+                .map_or(Ok(()), |active_driver| active_driver.shutdown());
             let _ = ack.send(result);
             CommandOutcome::Shutdown
         }
@@ -880,6 +944,7 @@ fn next_subscription_id() -> u64 {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    use std::thread::ThreadId;
     use std::time::Duration;
 
     struct MockStream {
@@ -975,6 +1040,66 @@ mod tests {
         }
     }
 
+    struct ThreadRecordingStream {
+        write_threads: Arc<Mutex<Vec<ThreadId>>>,
+    }
+
+    impl BlockingByteStream for ThreadRecordingStream {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(ReadStatus::Idle)
+        }
+
+        fn write_all(&mut self, _data: &[u8]) -> Result<(), TransportError> {
+            self.write_threads
+                .lock()
+                .unwrap()
+                .push(std::thread::current().id());
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
+
+    struct FailOnceStream {
+        failed: bool,
+        writes: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl BlockingByteStream for FailOnceStream {
+        fn read(&mut self, _buf: &mut [u8]) -> Result<ReadStatus, TransportError> {
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(ReadStatus::Idle)
+        }
+
+        fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
+            if !self.failed {
+                self.failed = true;
+                return Err(TransportError::new(
+                    TransportErrorKind::Io,
+                    "test_exclusive_write",
+                    "injected exclusive write failure",
+                ));
+            }
+            self.writes.lock().unwrap().push(data.to_vec());
+            Ok(())
+        }
+
+        fn flush(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn shutdown(&mut self) -> Result<(), TransportError> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn exclusive_lease_blocks_normal_writes_and_restores_shared_mode() {
         let writes = Arc::new(Mutex::new(Vec::new()));
@@ -982,12 +1107,13 @@ mod tests {
             reads: VecDeque::new(),
             writes: writes.clone(),
         }));
-        let mut lease = runtime.handle.acquire_exclusive("test", false).unwrap();
+        let mut lease = runtime.handle.acquire_exclusive("test").unwrap();
         assert_eq!(
             runtime.handle.write(b"blocked").unwrap_err().kind,
             TransportErrorKind::Busy
         );
         lease.write_all(b"owned").unwrap();
+        lease.flush().unwrap();
         lease.release().unwrap();
         runtime.handle.write(b"shared").unwrap();
         assert_eq!(
@@ -1004,10 +1130,7 @@ mod tests {
             reads: VecDeque::new(),
             writes,
         }));
-        let mut lease = runtime
-            .handle
-            .acquire_exclusive("test-timeout", false)
-            .unwrap();
+        let mut lease = runtime.handle.acquire_exclusive("test-timeout").unwrap();
         let mut buf = [0u8; 8];
         let error = lease.read(&mut buf).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
@@ -1025,7 +1148,7 @@ mod tests {
         }));
         let mut lease = runtime
             .handle
-            .acquire_exclusive("owner-driven-read", false)
+            .acquire_exclusive("physical-driver-lease")
             .unwrap();
         let after_acquire = reads.load(Ordering::SeqCst);
         std::thread::sleep(Duration::from_millis(50));
@@ -1035,6 +1158,76 @@ mod tests {
         let error = lease.read(&mut buf).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert_eq!(reads.load(Ordering::SeqCst), after_acquire + 1);
+        drop(lease);
+        runtime.join();
+    }
+
+    #[test]
+    fn exclusive_driver_runs_on_owner_thread_and_returns_to_actor_thread() {
+        let write_threads = Arc::new(Mutex::new(Vec::new()));
+        let runtime = DataPlaneRuntime::spawn(Box::new(ThreadRecordingStream {
+            write_threads: write_threads.clone(),
+        }));
+
+        runtime.handle.write(b"shared-before").unwrap();
+        let actor_thread = write_threads.lock().unwrap()[0];
+        let owner_thread = std::thread::current().id();
+        assert_ne!(actor_thread, owner_thread);
+
+        let mut lease = runtime.handle.acquire_exclusive("owner-thread").unwrap();
+        lease.write_all(b"exclusive").unwrap();
+        lease.flush().unwrap();
+        lease.release().unwrap();
+        runtime.handle.write(b"shared-after").unwrap();
+
+        let threads = write_threads.lock().unwrap().clone();
+        assert_eq!(threads.len(), 3);
+        assert_eq!(threads[0], actor_thread);
+        assert_eq!(threads[1], owner_thread);
+        assert_eq!(threads[2], actor_thread);
+        runtime.join();
+    }
+
+    #[test]
+    fn exclusive_io_error_does_not_close_shared_runtime() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let runtime = DataPlaneRuntime::spawn(Box::new(FailOnceStream {
+            failed: false,
+            writes: writes.clone(),
+        }));
+
+        let mut lease = runtime
+            .handle
+            .acquire_exclusive("recover-after-error")
+            .unwrap();
+        assert!(lease.write_all(b"fail-once").is_err());
+        lease.release().unwrap();
+
+        assert!(runtime.handle.is_connected());
+        runtime.handle.write(b"shared-recovers").unwrap();
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            &[b"shared-recovers".to_vec()]
+        );
+        runtime.join();
+    }
+
+    #[test]
+    fn shutdown_waits_for_exclusive_driver_return_without_deadlocking_request() {
+        let runtime = DataPlaneRuntime::spawn(Box::new(MockStream {
+            reads: VecDeque::new(),
+            writes: Arc::new(Mutex::new(Vec::new())),
+        }));
+        let lease = runtime.handle.acquire_exclusive("shutdown-test").unwrap();
+        let handle = runtime.handle.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done_tx.send(handle.shutdown());
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("shutdown request must be acknowledged while driver is leased")
+            .unwrap();
         drop(lease);
         runtime.join();
     }

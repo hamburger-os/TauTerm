@@ -5,8 +5,6 @@ use std::time::Duration;
 use crate::transport::error::{TransportError, TransportErrorKind};
 use crate::transport::stream::{BlockingByteStream, ReadStatus};
 
-const MAX_INPUT_DRAIN_BYTES: usize = 64 * 1024;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerialTransportConfig {
     #[serde(default = "default_baud_rate")]
@@ -173,38 +171,6 @@ impl BlockingByteStream for SerialDriver {
     }
 
     fn shutdown(&mut self) -> Result<(), TransportError> {
-        Ok(())
-    }
-
-    fn purge_input(&mut self) -> Result<(), TransportError> {
-        // Capture only the bytes already queued when exclusive ownership is acquired. Reading that
-        // snapshot preserves the old transfer handoff semantics without issuing a Windows
-        // PurgeComm/RXABORT-style operation while a USB CDC device is actively producing handshake
-        // bytes. The protocol layer performs its own bounded drain immediately afterwards.
-        let queued = self.port.bytes_to_read().map_err(|error| {
-            TransportError::new(
-                TransportErrorKind::Io,
-                "serial_probe_input",
-                error.to_string(),
-            )
-        })? as usize;
-        let mut remaining = queued.min(MAX_INPUT_DRAIN_BYTES);
-        let mut buffer = [0u8; 256];
-
-        while remaining > 0 {
-            let wanted = remaining.min(buffer.len());
-            match self.port.read(&mut buffer[..wanted]) {
-                Ok(0) => break,
-                Ok(n) => remaining = remaining.saturating_sub(n),
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::TimedOut
-                        || error.kind() == std::io::ErrorKind::WouldBlock =>
-                {
-                    break;
-                }
-                Err(error) => return Err(TransportError::io("serial_drain_input", error)),
-            }
-        }
         Ok(())
     }
 }
