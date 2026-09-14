@@ -22,8 +22,11 @@ Network Debug 的 TCP 是可靠字节流；UDP 是保留 datagram 边界的无�
 - SSH Authentication — RFC 4252: https://www.rfc-editor.org/rfc/rfc4252
 - SSH Transport Layer — RFC 4253: https://www.rfc-editor.org/rfc/rfc4253
 - SSH Connection Protocol — RFC 4254: https://www.rfc-editor.org/rfc/rfc4254
+- SSH Extension Negotiation / `server-sig-algs` — RFC 8308: https://www.rfc-editor.org/rfc/rfc8308
+- RSA SHA-2 Signature Algorithms — RFC 8332: https://www.rfc-editor.org/rfc/rfc8332
+- `russh` client API / negotiated RSA hash behavior: https://docs.rs/russh/
 
-TauTerm 的多终端 child channel 语义应以 SSH Connection Protocol 的 channel 模型和当前 `russh` 行为共同校验。
+TauTerm 的多终端 child channel 语义应以 SSH Connection Protocol 的 channel 模型和当前 `russh` 行为共同校验。RSA 用户认证不能把 SHA-2 算法硬编码成与服务器能力无关的常量；服务端提供 `server-sig-algs` 时按协商结果选择，且默认不静默降级到旧式 `ssh-rsa`/SHA-1。SSH 用户认证还必须保留 RFC 4252 的 `partial success` 与“可继续认证方法”语义，不能把多阶段认证统一压平成普通认证失败。
 
 ## SFTP
 

@@ -17,6 +17,8 @@ pub struct SshDriver {
     pending: VecDeque<u8>,
     exit_status: Option<u32>,
     exit_signal: Option<String>,
+    remote_eof: bool,
+    closed: bool,
 }
 
 impl SshDriver {
@@ -30,6 +32,8 @@ impl SshDriver {
             pending: VecDeque::new(),
             exit_status: None,
             exit_signal: None,
+            remote_eof: false,
+            closed: false,
         }
     }
 
@@ -58,6 +62,9 @@ impl AsyncByteStream for SshDriver {
         if !self.pending.is_empty() {
             return Ok(ReadStatus::Data(self.drain_pending(buf)));
         }
+        if self.remote_eof || self.closed {
+            return Ok(ReadStatus::Eof);
+        }
 
         loop {
             match self.channel.wait().await {
@@ -74,7 +81,15 @@ impl AsyncByteStream for SshDriver {
                 Some(russh::ChannelMsg::ExitSignal { signal_name, .. }) => {
                     self.exit_signal = Some(format!("{signal_name:?}"));
                 }
-                Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {
+                Some(russh::ChannelMsg::Eof) => {
+                    // SSH EOF is directional: the peer has finished sending data but the channel
+                    // itself is not fully closed. Preserve that distinction so shutdown() can still
+                    // complete our EOF/Close side of the channel handshake.
+                    self.remote_eof = true;
+                    return Ok(ReadStatus::Eof);
+                }
+                Some(russh::ChannelMsg::Close) | None => {
+                    self.closed = true;
                     return Ok(ReadStatus::Eof);
                 }
                 Some(_) => {}
@@ -83,6 +98,13 @@ impl AsyncByteStream for SshDriver {
     }
 
     async fn write_all(&mut self, data: &[u8]) -> Result<(), TransportError> {
+        if self.closed {
+            return Err(TransportError::new(
+                TransportErrorKind::RemoteClosed,
+                "ssh_write",
+                "SSH channel is already closed",
+            ));
+        }
         self.channel.data(data).await.map_err(|error| {
             TransportError::new(TransportErrorKind::Io, "ssh_write", error.to_string())
         })
@@ -93,10 +115,30 @@ impl AsyncByteStream for SshDriver {
     }
 
     async fn shutdown(&mut self) -> Result<(), TransportError> {
-        Ok(())
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
+
+        // SSH channels have an explicit directional EOF followed by the channel close handshake.
+        // Even when the remote side has already sent EOF, we still need to finish our side rather
+        // than treating remote EOF as a fully closed channel.
+        if let Err(error) = self.channel.eof().await {
+            log::debug!("SSH channel EOF during shutdown failed: {error}");
+        }
+        self.channel.close().await.map_err(|error| {
+            TransportError::new(TransportErrorKind::Io, "ssh_close", error.to_string())
+        })
     }
 
     async fn resize_terminal(&mut self, cols: u32, rows: u32) -> Result<(), TransportError> {
+        if self.closed {
+            return Err(TransportError::new(
+                TransportErrorKind::RemoteClosed,
+                "ssh_resize_terminal",
+                "SSH channel is already closed",
+            ));
+        }
         self.channel
             .window_change(cols, rows, 0, 0)
             .await

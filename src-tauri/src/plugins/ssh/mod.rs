@@ -10,11 +10,13 @@ pub mod handler;
 pub mod journald;
 mod known_hosts;
 
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use serde::Deserialize;
+use std::fmt;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tauri::Emitter;
 use tokio::sync::Mutex;
+use zeroize::Zeroize;
 
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
@@ -27,11 +29,33 @@ use driver::SshDriver;
 use handler::SshHandler;
 use known_hosts::{HostTrustDecision, KnownHostStore};
 
-/// SSH 连接配置
+const SSH_NETWORK_PHASE_TIMEOUT: Duration = Duration::from_secs(15);
+const HOST_KEY_VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
+const SSH_HOME_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+const SSH_HOME_MAX_BYTES: usize = 4096;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshAuthMethod {
+    #[default]
+    Password,
+    Key,
+}
+
+impl SshAuthMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Password => "password",
+            Self::Key => "key",
+        }
+    }
+}
+
+/// SSH 连接配置。
 ///
-/// 由前端 ConnectDialog 构造并通过 Tauri invoke 传递。
-/// 所有字段通过 `serde_json::Value` 解析。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 这是运行时配置，不是持久化模型。认证秘密只在连接期间存在于该对象中，Drop 时会
+/// 主动清零；Session Library 只持久化 credential reference。
+#[derive(Clone, Deserialize)]
 pub struct SshConfig {
     /// 远程主机地址（IP 或域名）
     pub host: String,
@@ -40,12 +64,12 @@ pub struct SshConfig {
     pub port: u16,
     /// 登录用户名
     pub username: String,
-    /// 认证方式: "password" | "key"
-    #[serde(default = "default_auth_method")]
-    pub auth_method: String,
-    /// 密码（auth_method == "password" 时使用）
+    /// 认证方式
+    #[serde(default)]
+    pub auth_method: SshAuthMethod,
+    /// 密码（password 认证时使用）
     pub password: Option<String>,
-    /// SSH 私钥内容（auth_method == "key" 时，前端直接传入私钥文本）
+    /// SSH 私钥内容（key 认证时使用）
     pub private_key: Option<String>,
     /// 私钥密码短语（可选）
     pub passphrase: Option<String>,
@@ -60,17 +84,205 @@ pub struct SshConfig {
     pub file_service_protocol: String,
 }
 
+impl fmt::Debug for SshConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SshConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("auth_method", &self.auth_method)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field(
+                "private_key",
+                &self.private_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "passphrase",
+                &self.passphrase.as_ref().map(|_| "<redacted>"),
+            )
+            .field("data_mode", &self.data_mode)
+            .field("file_service_enabled", &self.file_service_enabled)
+            .field("file_service_protocol", &self.file_service_protocol)
+            .finish()
+    }
+}
+
+impl Drop for SshConfig {
+    fn drop(&mut self) {
+        if let Some(password) = self.password.as_mut() {
+            password.zeroize();
+        }
+        if let Some(private_key) = self.private_key.as_mut() {
+            private_key.zeroize();
+        }
+        if let Some(passphrase) = self.passphrase.as_mut() {
+            passphrase.zeroize();
+        }
+    }
+}
+
+impl SshConfig {
+    fn validate(&self) -> Result<(), SessionError> {
+        if normalize_ssh_host(&self.host).is_empty() {
+            return Err(SessionError::InvalidParameter(
+                "SSH 主机地址不能为空".into(),
+            ));
+        }
+        if self.port == 0 {
+            return Err(SessionError::InvalidParameter(
+                "SSH 端口必须在 1..=65535 范围内".into(),
+            ));
+        }
+        if self.username.trim().is_empty() {
+            return Err(SessionError::InvalidParameter("SSH 用户名不能为空".into()));
+        }
+        match self.auth_method {
+            SshAuthMethod::Password if self.password.as_deref().unwrap_or_default().is_empty() => {
+                return Err(SessionError::InvalidParameter(
+                    "SSH 密码认证缺少密码凭据".into(),
+                ));
+            }
+            SshAuthMethod::Key
+                if self
+                    .private_key
+                    .as_deref()
+                    .is_none_or(|key| key.trim().is_empty()) =>
+            {
+                return Err(SessionError::InvalidParameter(
+                    "SSH 密钥认证缺少私钥凭据".into(),
+                ));
+            }
+            _ => {}
+        }
+        if self.file_service_enabled && self.file_service_protocol != "sftp" {
+            return Err(SessionError::InvalidParameter(format!(
+                "不支持的 SSH 文件服务协议: {}",
+                self.file_service_protocol
+            )));
+        }
+        Ok(())
+    }
+}
+
 fn default_ssh_port() -> u16 {
     22
-}
-fn default_auth_method() -> String {
-    "password".into()
 }
 fn default_data_mode() -> String {
     "text".into()
 }
 fn default_file_service_protocol() -> String {
     "sftp".into()
+}
+
+fn normalize_ssh_host(host: &str) -> &str {
+    let trimmed = host.trim();
+    trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(trimmed)
+}
+
+fn format_ssh_endpoint(host: &str, port: u16) -> String {
+    let host = normalize_ssh_host(host);
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+fn auth_failure_reason(result: &russh::client::AuthResult, method: SshAuthMethod) -> String {
+    match result {
+        russh::client::AuthResult::Success => "SSH 认证成功".into(),
+        russh::client::AuthResult::Failure {
+            remaining_methods,
+            partial_success,
+        } => {
+            if *partial_success {
+                format!(
+                    "{} 认证已部分通过，但服务器要求继续认证；remaining_methods={remaining_methods:?}",
+                    method.as_str()
+                )
+            } else {
+                format!(
+                    "{} 认证被服务器拒绝；remaining_methods={remaining_methods:?}",
+                    method.as_str()
+                )
+            }
+        }
+    }
+}
+
+/// russh `connect_stream` 会在初始 KEX 完成前启动内部 session task。
+/// 仅丢弃 connect future 不能保证该 task 立刻停止，因此保留一个底层 socket duplicate：
+/// 连接建立失败、超时或调用 future 被取消时，Drop 主动 shutdown 底层 socket；成功后 disarm。
+struct SocketAbortGuard {
+    socket: Option<std::net::TcpStream>,
+}
+
+impl SocketAbortGuard {
+    fn new(socket: std::net::TcpStream) -> Self {
+        Self {
+            socket: Some(socket),
+        }
+    }
+
+    fn disarm(&mut self) {
+        drop(self.socket.take());
+    }
+}
+
+impl Drop for SocketAbortGuard {
+    fn drop(&mut self) {
+        if let Some(socket) = self.socket.take() {
+            let _ = socket.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+async fn connect_ssh_socket(
+    host: &str,
+    port: u16,
+) -> Result<(tokio::net::TcpStream, SocketAbortGuard), SessionError> {
+    let endpoint = format_ssh_endpoint(host, port);
+    let socket = tokio::time::timeout(
+        SSH_NETWORK_PHASE_TIMEOUT,
+        tokio::net::TcpStream::connect((host, port)),
+    )
+    .await
+    .map_err(|_| SessionError::ConnectionFailed {
+        reason: format!(
+            "SSH TCP 连接超时（{}s）: {endpoint}",
+            SSH_NETWORK_PHASE_TIMEOUT.as_secs()
+        ),
+    })?
+    .map_err(|error| SessionError::ConnectionFailed {
+        reason: format!("SSH TCP 连接失败 '{endpoint}': {error}"),
+    })?;
+
+    socket
+        .set_nodelay(true)
+        .map_err(|error| SessionError::ConnectionFailed {
+            reason: format!("SSH TCP_NODELAY 配置失败 '{endpoint}': {error}"),
+        })?;
+
+    let std_socket = socket
+        .into_std()
+        .map_err(|error| SessionError::ConnectionFailed {
+            reason: format!("SSH TCP socket 转换失败 '{endpoint}': {error}"),
+        })?;
+    let abort_socket = std_socket
+        .try_clone()
+        .map_err(|error| SessionError::ConnectionFailed {
+            reason: format!("SSH TCP socket guard 创建失败 '{endpoint}': {error}"),
+        })?;
+    let socket = tokio::net::TcpStream::from_std(std_socket).map_err(|error| {
+        SessionError::ConnectionFailed {
+            reason: format!("SSH async socket 恢复失败 '{endpoint}': {error}"),
+        }
+    })?;
+
+    Ok((socket, SocketAbortGuard::new(abort_socket)))
 }
 
 /// SSH 协议适配器
@@ -99,13 +311,14 @@ impl SshAdapter {
     /// `app_handle` 和 `verifier` 用于主机密钥用户确认流程：
     /// - 连接时 emit `ssh-host-key-verify` 事件到前端
     /// - 前端调用 `confirm_host_key` 命令回传用户决策
-    /// - verifier 在 async 上下文中阻塞等待用户响应
+    /// - verifier 在 async 上下文中等待用户响应
     pub async fn connect_with_config(
         &self,
         config: SshConfig,
         app_handle: tauri::AppHandle,
         verifier: &HostKeyVerifier,
     ) -> Result<ProtocolConnection, SessionError> {
+        config.validate()?;
         let result = build_connection_with_config(config, app_handle, verifier).await?;
         let shared = Arc::new(SshRuntime::new(
             result.session,
@@ -133,27 +346,25 @@ impl SshAdapter {
 /// 管理 SSH 连接过程中待用户确认的主机密钥验证请求。
 /// 由 AppState 持有，供 `build_connection_with_config`（写入待确认项）
 /// 和 `confirm_host_key` Tauri 命令（读取并回传用户决定）双方并发访问。
-///
-/// 使用 `tokio::sync::Mutex` 而非 `std::sync::Mutex`，
-/// 因为 `build_connection_with_config` 在 async 上下文中持有锁时需 `.await`。
+/// pending map 使用同步 Mutex，因为临界区只执行短小的 HashMap 操作且绝不跨 await；
+/// 这样取消 guard 可以在 Drop 中同步撤销待确认项，避免迟到响应写入失效连接的信任。
 struct PendingHostKeyVerification {
     response: tokio::sync::oneshot::Sender<bool>,
     host: String,
     port: u16,
+    algorithm: String,
     fingerprint: String,
 }
 
 pub struct HostKeyVerifier {
-    pending: std::sync::Arc<
-        tokio::sync::Mutex<std::collections::HashMap<String, PendingHostKeyVerification>>,
-    >,
+    pending: std::sync::Mutex<std::collections::HashMap<String, PendingHostKeyVerification>>,
     known_hosts: KnownHostStore,
 }
 
 impl HostKeyVerifier {
     pub fn new() -> Self {
         Self {
-            pending: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            pending: std::sync::Mutex::new(std::collections::HashMap::new()),
             known_hosts: KnownHostStore::new(),
         }
     }
@@ -162,12 +373,19 @@ impl HostKeyVerifier {
         self.known_hosts.configure(path)
     }
 
-    fn evaluate(&self, host: &str, port: u16, fingerprint: &str) -> HostTrustDecision {
-        self.known_hosts.evaluate(host, port, fingerprint)
+    fn evaluate(
+        &self,
+        host: &str,
+        port: u16,
+        algorithm: &str,
+        fingerprint: &str,
+    ) -> HostTrustDecision {
+        self.known_hosts
+            .evaluate(host, port, algorithm, fingerprint)
     }
 
-    fn touch_known_host(&self, host: &str, port: u16) {
-        self.known_hosts.touch(host, port);
+    fn touch_known_host(&self, host: &str, port: u16, algorithm: &str, fingerprint: &str) {
+        self.known_hosts.touch(host, port, algorithm, fingerprint);
     }
 
     /// 注册一次明确的主机验证请求。request_id 而不是 fingerprint 作为键，
@@ -176,38 +394,57 @@ impl HostKeyVerifier {
         &self,
         host: &str,
         port: u16,
+        algorithm: &str,
         fingerprint: &str,
     ) -> (String, tokio::sync::oneshot::Receiver<bool>) {
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending.lock().await.insert(
-            request_id.clone(),
-            PendingHostKeyVerification {
-                response: tx,
-                host: host.to_string(),
-                port,
-                fingerprint: fingerprint.to_string(),
-            },
-        );
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                request_id.clone(),
+                PendingHostKeyVerification {
+                    response: tx,
+                    host: host.to_string(),
+                    port,
+                    algorithm: algorithm.to_string(),
+                    fingerprint: fingerprint.to_string(),
+                },
+            );
         (request_id, rx)
     }
 
+    fn cancel_now(&self, request_id: &str) {
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(request_id);
+    }
+
     pub async fn cancel(&self, request_id: &str) {
-        self.pending.lock().await.remove(request_id);
+        self.cancel_now(request_id);
     }
 
     /// 用户确认或拒绝 SSH 主机密钥。接受时先持久化 trust，再放行连接；
     /// 如果 known-host 写入失败则 fail-closed。
     pub async fn respond(&self, request_id: &str, accept: bool) -> Result<bool, String> {
-        let Some(pending) = self.pending.lock().await.remove(request_id) else {
+        let pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(request_id);
+        let Some(pending) = pending else {
             return Ok(false);
         };
 
         if accept {
-            if let Err(error) =
-                self.known_hosts
-                    .trust(&pending.host, pending.port, &pending.fingerprint)
-            {
+            if let Err(error) = self.known_hosts.trust(
+                &pending.host,
+                pending.port,
+                &pending.algorithm,
+                &pending.fingerprint,
+            ) {
                 let _ = pending.response.send(false);
                 return Err(error);
             }
@@ -218,10 +455,30 @@ impl HostKeyVerifier {
     }
 }
 
+struct PendingRequestGuard<'a> {
+    verifier: &'a HostKeyVerifier,
+    request_id: String,
+}
+
+impl<'a> PendingRequestGuard<'a> {
+    fn new(verifier: &'a HostKeyVerifier, request_id: &str) -> Self {
+        Self {
+            verifier,
+            request_id: request_id.to_string(),
+        }
+    }
+}
+
+impl Drop for PendingRequestGuard<'_> {
+    fn drop(&mut self) {
+        self.verifier.cancel_now(&self.request_id);
+    }
+}
+
 /// 供 SFTP 文件服务使用的类型化运行时资源。
 ///
-/// 持有 SSH 会话引用和缓存的 SFTP 对象。SessionStore 只持有协议无关生命周期
-/// capability；SSH 命令通过插件自己的 typed runtime registry 按 session_id 获取本对象。
+/// SessionStore 的 service/file-transfer/channel-factory capability 持有强引用并负责资源
+/// 生命周期；按 session_id 的 SSH registry 只保存 Weak 索引，不能额外延长连接生命。
 ///
 /// - `session` — russh Handle（内部线程安全，与 SshChannel 共享同一 Arc）
 /// - `sftp` — 缓存的 SFTP 子系统通道，避免每次操作重新协商
@@ -239,15 +496,21 @@ pub struct SshRuntime {
 }
 
 fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<SshRuntime>>> {
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Weak<SshRuntime>>> {
     static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<SshRuntime>>>,
+        std::sync::Mutex<std::collections::HashMap<String, Weak<SshRuntime>>>,
     > = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
 pub fn runtime(session_id: &str) -> Option<Arc<SshRuntime>> {
-    runtime_registry().lock().ok()?.get(session_id).cloned()
+    let runtime = runtime_registry().lock().ok()?.get(session_id)?.upgrade();
+    if runtime.is_none() {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+    runtime
 }
 
 struct RuntimeAttach {
@@ -256,7 +519,7 @@ struct RuntimeAttach {
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
         if let Ok(mut map) = runtime_registry().lock() {
-            map.insert(session_id.to_string(), self.runtime.clone());
+            map.insert(session_id.to_string(), Arc::downgrade(&self.runtime));
         }
     }
     fn on_detached(&self, session_id: &str) {
@@ -322,175 +585,188 @@ struct BuildConnectionResult {
 
 /// 建立连接的核心逻辑（async）— 直接接收类型化 `SshConfig`。
 ///
-/// 由 `connect_with_config()` 调用（`connect_session_ssh` 路径），
-/// 避免 `connect_session_ssh` 解析一次后 `build_connection` 再重复解析。
-///
-/// 主机信任必须经过持久 known-host policy；没有 verifier 的生产连接路径不存在。
+/// TCP 和初始 KEX 分别使用网络阶段 deadline；等待用户确认 Host Key 时不消耗用户
+/// 交互之外的网络预算。SocketAbortGuard 确保 timeout / rejection / future cancellation
+/// 都会关闭 russh 内部 session task 使用的底层 socket。
 async fn build_connection_with_config(
     config: SshConfig,
     app_handle: tauri::AppHandle,
     verifier: &HostKeyVerifier,
 ) -> Result<BuildConnectionResult, SessionError> {
-    // 1. SSH 连接（russh 内部处理 TCP + 握手）
-    let addr = format!("{}:{}", config.host, config.port);
+    let connect_host = normalize_ssh_host(&config.host).to_string();
+    let addr = format_ssh_endpoint(&connect_host, config.port);
+    let (socket, mut socket_abort) = connect_ssh_socket(&connect_host, config.port).await?;
     let russh_config = Arc::new(russh::client::Config {
         keepalive_interval: Some(Duration::from_secs(30)),
         inactivity_timeout: Some(Duration::from_secs(300)),
         nodelay: true,
         ..Default::default()
     });
-    /// TCP 连接 + SSH 握手超时（秒），不含用户主机密钥确认时间
-    const SSH_CONNECT_TIMEOUT_SECS: u64 = 15;
-    /// 主机密钥用户确认超时（秒）。前端弹出确认对话框后，用户需在此时间内响应。
-    const HOST_KEY_VERIFY_TIMEOUT_SECS: u64 = 30;
 
-    // 创建主机密钥验证通道
-    // mpsc 容量为 1：一次连接最多触发一次 check_server_key
+    // 初始 KEX 的 server key 通过 Handler 交给当前连接建立协程验证。russh 在后续
+    // re-key 中沿用已建立的 server identity，不重新触发 TOFU 用户确认。
     let (verifier_tx, mut verifier_rx) =
         tokio::sync::mpsc::channel::<handler::HostKeyVerification>(1);
 
     let handler = SshHandler::new(verifier_tx);
-    let config_clone = russh_config.clone();
-    let addr_clone = addr.clone();
+    let connect_future = russh::client::connect_stream(russh_config, socket, handler);
+    tokio::pin!(connect_future);
 
-    // 在独立 task 中执行 connect，以便并发处理主机密钥验证
-    // 外层 timeout 防止 TCP 连接/握手无限期阻塞
-    let mut connect_task = tokio::spawn(async move {
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(SSH_CONNECT_TIMEOUT_SECS),
-            russh::client::connect(config_clone, addr_clone.as_str(), handler),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_elapsed) => {
-                log::warn!("SSH TCP 连接/握手超时 ({}s)", SSH_CONNECT_TIMEOUT_SECS);
-                Err(russh::Error::Disconnect)
-            }
-        }
-    });
+    let network_deadline = tokio::time::sleep(SSH_NETWORK_PHASE_TIMEOUT);
+    tokio::pin!(network_deadline);
+    let mut verifier_open = true;
 
     // 收集主机密钥指纹（如有）
     let mut host_key_fingerprint: Option<String> = None;
 
-    // select! 并发等待 connect 完成 或 主机密钥验证请求
     let mut handle = loop {
         tokio::select! {
-            result = &mut connect_task => {
-                // connect task 完成
-                break result
-                    .map_err(|e| SessionError::ConnectionFailed {
-                        reason: format!("SSH 连接 task 失败: {}", e),
-                    })?
-                    .map_err(|e| SessionError::ConnectionFailed {
-                        reason: format!("SSH 连接失败 '{}': {}", addr, e),
-                    })?;
+            result = &mut connect_future => {
+                let connected = result.map_err(|e| SessionError::ConnectionFailed {
+                    reason: format!("SSH KEX 失败 '{addr}': {e}"),
+                })?;
+                socket_abort.disarm();
+                break connected;
             }
-            Some(verification) = verifier_rx.recv() => {
-                // 收到主机密钥验证请求
+            _ = &mut network_deadline => {
+                return Err(SessionError::ConnectionFailed {
+                    reason: format!(
+                        "SSH KEX 超时（{}s）: {addr}",
+                        SSH_NETWORK_PHASE_TIMEOUT.as_secs()
+                    ),
+                });
+            }
+            verification = verifier_rx.recv(), if verifier_open => {
+                let Some(verification) = verification else {
+                    verifier_open = false;
+                    continue;
+                };
+
                 host_key_fingerprint = Some(verification.fingerprint.clone());
-                log::info!("SSH 主机密钥指纹: {}", verification.fingerprint);
+                log::info!(
+                    "SSH 主机密钥: algorithm={}, fingerprint={}",
+                    verification.algorithm,
+                    verification.fingerprint
+                );
 
                 let accepted = match verifier.evaluate(
-                    &config.host,
+                    &connect_host,
                     config.port,
+                    &verification.algorithm,
                     &verification.fingerprint,
                 ) {
                     HostTrustDecision::Trusted => {
-                        verifier.touch_known_host(&config.host, config.port);
+                        verifier.touch_known_host(
+                            &connect_host,
+                            config.port,
+                            &verification.algorithm,
+                            &verification.fingerprint,
+                        );
                         log::info!(
-                            "SSH known-host 匹配，自动信任 {}:{}",
-                            config.host,
-                            config.port
+                            "SSH known-host 匹配，自动信任 {} ({})",
+                            format_ssh_endpoint(&connect_host, config.port),
+                            verification.algorithm
                         );
                         true
                     }
                     HostTrustDecision::Unknown => {
                         let (request_id, wait_rx) = verifier
-                            .register(&config.host, config.port, &verification.fingerprint)
+                            .register(
+                                &connect_host,
+                                config.port,
+                                &verification.algorithm,
+                                &verification.fingerprint,
+                            )
                             .await;
-                        let _ = app_handle.emit("ssh-host-key-verify", serde_json::json!({
+                        let _pending_guard = PendingRequestGuard::new(verifier, &request_id);
+                        let emitted = app_handle.emit("ssh-host-key-verify", serde_json::json!({
                             "request_id": request_id,
-                            "host": config.host,
+                            "host": connect_host.as_str(),
                             "port": config.port,
+                            "algorithm": verification.algorithm,
                             "fingerprint": verification.fingerprint,
                         }));
-                        log::info!("等待用户确认新的 SSH 主机密钥...");
-                        match tokio::time::timeout(
-                            std::time::Duration::from_secs(HOST_KEY_VERIFY_TIMEOUT_SECS),
-                            wait_rx,
-                        )
-                        .await
-                        {
-                            Ok(result) => result.unwrap_or(false),
-                            Err(_elapsed) => {
-                                verifier.cancel(&request_id).await;
-                                log::warn!(
-                                    "主机密钥验证超时 ({}s)，自动拒绝",
-                                    HOST_KEY_VERIFY_TIMEOUT_SECS
-                                );
-                                false
+                        if let Err(error) = emitted {
+                            log::error!("发送 SSH Host Key 确认事件失败: {error}");
+                            false
+                        } else {
+                            log::info!("等待用户确认新的 SSH 主机密钥...");
+                            match tokio::time::timeout(HOST_KEY_VERIFY_TIMEOUT, wait_rx).await {
+                                Ok(result) => result.unwrap_or(false),
+                                Err(_elapsed) => {
+                                    log::warn!(
+                                        "主机密钥验证超时 ({}s)，自动拒绝",
+                                        HOST_KEY_VERIFY_TIMEOUT.as_secs()
+                                    );
+                                    false
+                                }
                             }
                         }
                     }
                     HostTrustDecision::Unavailable { reason } => {
                         log::error!(
-                            "SSH known-host 存储不可用，拒绝连接 {}:{}: {}",
-                            config.host,
-                            config.port,
+                            "SSH known-host 存储不可用，拒绝连接 {}: {}",
+                            format_ssh_endpoint(&connect_host, config.port),
                             reason
                         );
                         false
                     }
                     HostTrustDecision::Changed {
-                        expected_fingerprint,
+                        algorithm,
+                        expected_fingerprints,
                     } => {
+                        let expected_fingerprint = expected_fingerprints.first().cloned();
                         let _ = app_handle.emit("ssh-host-key-changed", serde_json::json!({
-                            "host": config.host,
+                            "host": connect_host.as_str(),
                             "port": config.port,
+                            "algorithm": algorithm,
                             "expected_fingerprint": expected_fingerprint,
+                            "expected_fingerprints": expected_fingerprints,
                             "actual_fingerprint": verification.fingerprint,
                         }));
                         log::error!(
-                            "SSH HOST KEY CHANGED: {}:{}，默认拒绝连接",
-                            config.host,
-                            config.port
+                            "SSH HOST KEY CHANGED: {} ({})，默认拒绝连接",
+                            format_ssh_endpoint(&connect_host, config.port),
+                            verification.algorithm
                         );
                         false
                     }
                 };
+
                 let _ = verification.response.send(accepted);
                 if !accepted {
                     return Err(SessionError::ConnectionFailed {
-                        reason: "SSH 主机密钥未受信任或已发生变化".into(),
+                        reason: "SSH 主机密钥未受信任、验证不可用或已发生变化".into(),
                     });
                 }
+
+                // 用户确认时间不属于网络超时；KEX 在得到答复后重新获得完整网络预算。
+                network_deadline
+                    .as_mut()
+                    .reset(tokio::time::Instant::now() + SSH_NETWORK_PHASE_TIMEOUT);
             }
         }
     };
 
     // 2. 认证
-    let authed = match config.auth_method.as_str() {
-        "password" => {
+    let auth_result = match config.auth_method {
+        SshAuthMethod::Password => {
             let password = config.password.as_deref().unwrap_or("");
             handle
                 .authenticate_password(&config.username, password)
                 .await
                 .map_err(|e| SessionError::AuthFailed {
-                    reason: format!("密码认证失败: {}", e),
+                    reason: format!("密码认证协议失败: {e}"),
                 })?
         }
-        "key" => {
+        SshAuthMethod::Key => {
             let private_key_str = config.private_key.as_deref().unwrap_or("");
-            // russh::keys::PrivateKey 与 russh 0.62 内部的 ssh-key 版本一致，
-            // 使用 russh::keys::PrivateKey（与 russh 0.62 同一 ssh-key 版本树），避免版本不匹配
             let mut key_pair =
                 russh::keys::PrivateKey::from_openssh(private_key_str).map_err(|e| {
                     SessionError::AuthFailed {
-                        reason: format!("私钥解析失败: {}", e),
+                        reason: format!("私钥解析失败: {e}"),
                     }
                 })?;
-            // 若密钥已加密，使用 passphrase 尝试解密
             if key_pair.is_encrypted() {
                 let pass = config.passphrase.as_deref().unwrap_or("");
                 if pass.is_empty() {
@@ -501,45 +777,70 @@ async fn build_connection_with_config(
                 key_pair = key_pair
                     .decrypt(pass)
                     .map_err(|e| SessionError::AuthFailed {
-                        reason: format!("私钥解密失败（密码短语错误或密钥损坏）: {}", e),
+                        reason: format!("私钥解密失败（密码短语错误或密钥损坏）: {e}"),
                     })?;
             }
-            let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
-                Arc::new(key_pair),
-                Some(russh::keys::HashAlg::Sha512),
-            );
+
+            // RSA 的签名算法属于协议协商结果，不属于私钥本身。优先使用 server-sig-algs；
+            // 对未发送 EXT_INFO 的服务器保持现代 rsa-sha2-512 best-effort，不静默降级到
+            // 已废弃的 ssh-rsa/SHA-1。
+            let hash_alg = if key_pair.algorithm().is_rsa() {
+                match handle.best_supported_rsa_hash().await.map_err(|e| {
+                    SessionError::AuthFailed {
+                        reason: format!("协商 RSA 签名算法失败: {e}"),
+                    }
+                })? {
+                    Some(Some(hash_alg)) => Some(hash_alg),
+                    Some(None) => {
+                        return Err(SessionError::AuthFailed {
+                            reason: "服务器仅接受旧式 ssh-rsa/SHA-1，TauTerm 默认拒绝不安全降级"
+                                .into(),
+                        });
+                    }
+                    None => Some(russh::keys::HashAlg::Sha512),
+                }
+            } else {
+                None
+            };
+
+            let key_with_hash =
+                russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg);
             handle
                 .authenticate_publickey(&config.username, key_with_hash)
                 .await
                 .map_err(|e| SessionError::AuthFailed {
-                    reason: format!("密钥认证失败: {}", e),
+                    reason: format!("密钥认证协议失败: {e}"),
                 })?
-        }
-        other => {
-            return Err(SessionError::ConnectionFailed {
-                reason: format!("不支持的认证方式: {}", other),
-            });
         }
     };
 
-    if !authed.success() {
+    if !auth_result.success() {
         return Err(SessionError::AuthFailed {
-            reason: "SSH 认证未通过".into(),
+            reason: auth_failure_reason(&auth_result, config.auth_method),
         });
     }
 
-    // 2.5 — 解析远程 home 目录（通过 exec 通道执行 echo $HOME）
-    // 超时 5s 防止远程主机无响应时阻塞整个连接建立流程
-    let home_dir = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    // 2.5 — 解析远程 home 目录（通过 exec 通道执行 echo $HOME）。这是辅助元数据，
+    // 因此设置严格的时间和输出上限；失败只回退到默认路径，不阻断已认证会话。
+    let home_dir = tokio::time::timeout(SSH_HOME_QUERY_TIMEOUT, async {
         match handle.channel_open_session().await {
             Ok(mut exec_chan) => {
                 if exec_chan.exec(true, "echo $HOME").await.is_err() {
+                    let _ = exec_chan.close().await;
                     return None;
                 }
                 let mut output = Vec::new();
                 loop {
                     match exec_chan.wait().await {
                         Some(russh::ChannelMsg::Data { data }) => {
+                            if output.len().saturating_add(data.len()) > SSH_HOME_MAX_BYTES {
+                                log::warn!(
+                                    "SSH home_dir 输出超过 {} bytes，放弃解析",
+                                    SSH_HOME_MAX_BYTES
+                                );
+                                let _ = exec_chan.close().await;
+                                return None;
+                            }
                             output.extend_from_slice(data.as_ref());
                         }
                         Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {
@@ -548,20 +849,24 @@ async fn build_connection_with_config(
                         _ => continue,
                     }
                 }
+                let _ = exec_chan.close().await;
                 String::from_utf8(output)
                     .ok()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
             }
             Err(e) => {
-                log::warn!("打开 SSH exec 通道失败 (home dir): {}", e);
+                log::warn!("打开 SSH exec 通道失败 (home dir): {e}");
                 None
             }
         }
     })
     .await
     .unwrap_or_else(|_elapsed| {
-        log::warn!("SSH home_dir exec 超时（5s），回退到默认路径");
+        log::warn!(
+            "SSH home_dir exec 超时（{}s），回退到默认路径",
+            SSH_HOME_QUERY_TIMEOUT.as_secs()
+        );
         None
     });
 
@@ -590,7 +895,7 @@ pub async fn open_pty_shell_channel(
             .channel_open_session()
             .await
             .map_err(|e| SessionError::ConnectionFailed {
-                reason: format!("打开 SSH 通道失败: {}", e),
+                reason: format!("打开 SSH 通道失败: {e}"),
             })?;
 
     // 2. 请求 PTY（终端）
@@ -598,7 +903,7 @@ pub async fn open_pty_shell_channel(
         .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
         .await
         .map_err(|e| SessionError::ConnectionFailed {
-            reason: format!("请求 PTY 失败: {}", e),
+            reason: format!("请求 PTY 失败: {e}"),
         })?;
 
     // 3. 启动 shell
@@ -606,7 +911,7 @@ pub async fn open_pty_shell_channel(
         .request_shell(true)
         .await
         .map_err(|e| SessionError::ConnectionFailed {
-            reason: format!("启动 shell 失败: {}", e),
+            reason: format!("启动 shell 失败: {e}"),
         })?;
 
     Ok(SshDriver::new(channel, handle))
@@ -637,5 +942,76 @@ impl ProtocolAdapter for SshAdapter {
     /// SSH 无硬件端点枚举 — 返回空列表
     fn discover_endpoints(&self) -> Result<Vec<EndpointInfo>, SessionError> {
         Ok(Vec::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(auth_method: SshAuthMethod) -> SshConfig {
+        SshConfig {
+            host: "example.test".into(),
+            port: 22,
+            username: "root".into(),
+            auth_method,
+            password: Some("secret".into()),
+            private_key: Some("key".into()),
+            passphrase: None,
+            data_mode: "text".into(),
+            file_service_enabled: true,
+            file_service_protocol: "sftp".into(),
+        }
+    }
+
+    #[test]
+    fn ssh_auth_method_is_typed_at_deserialization_boundary() {
+        let password: SshAuthMethod = serde_json::from_str("\"password\"").unwrap();
+        let key: SshAuthMethod = serde_json::from_str("\"key\"").unwrap();
+        assert_eq!(password, SshAuthMethod::Password);
+        assert_eq!(key, SshAuthMethod::Key);
+        assert!(serde_json::from_str::<SshAuthMethod>("\"agent\"").is_err());
+    }
+
+    #[test]
+    fn ipv6_endpoint_is_normalized_without_string_address_ambiguity() {
+        assert_eq!(normalize_ssh_host("[2001:db8::1]"), "2001:db8::1");
+        assert_eq!(
+            format_ssh_endpoint("2001:db8::1", 2222),
+            "[2001:db8::1]:2222"
+        );
+        assert_eq!(format_ssh_endpoint("example.test", 22), "example.test:22");
+    }
+
+    #[test]
+    fn config_validation_rejects_missing_credentials_and_invalid_port() {
+        let mut password = config(SshAuthMethod::Password);
+        password.password = None;
+        assert!(matches!(
+            password.validate(),
+            Err(SessionError::InvalidParameter(_))
+        ));
+
+        let mut key = config(SshAuthMethod::Key);
+        key.private_key = None;
+        assert!(matches!(
+            key.validate(),
+            Err(SessionError::InvalidParameter(_))
+        ));
+
+        let mut port = config(SshAuthMethod::Password);
+        port.port = 0;
+        assert!(matches!(
+            port.validate(),
+            Err(SessionError::InvalidParameter(_))
+        ));
+    }
+
+    #[test]
+    fn debug_output_never_contains_ssh_secrets() {
+        let config = config(SshAuthMethod::Password);
+        let debug = format!("{config:?}");
+        assert!(!debug.contains("secret"));
+        assert_eq!(debug.matches("<redacted>").count(), 2);
     }
 }
