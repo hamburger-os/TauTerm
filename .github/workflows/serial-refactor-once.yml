@@ -25,11 +25,25 @@ jobs:
           from pathlib import Path
           path = Path('scripts/_serial_refactor_backend.py')
           text = path.read_text(encoding='utf-8')
-          old = 'exact(p, "    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,\\n", "    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,\\n")'
-          new = 'exact(p, "    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,\\n", "    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,\\n", count=2)'
-          if old not in text:
-              raise SystemExit('backend refactor guard target not found')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          patches = [
+              (
+                  'exact(p, "    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,\\n", "    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,\\n")',
+                  'exact(p, "    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,\\n", "    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,\\n", count=2)',
+              ),
+              (
+                  "pattern = r'''        if !pairs\\.is_empty\\(\\) \\{.*?        \\} else \\{\\n            // 使用真实失败原因'''",
+                  "pattern = r'''        // 序列化 pairs 供 session-connected 事件使用.*?        if !pairs\\.is_empty\\(\\) \\{.*?        \\} else \\{\\n            // 使用真实失败原因'''",
+              ),
+              (
+                  "replacement = r'''        if !pairs.is_empty() {",
+                  "replacement = r'''        // 序列化 pairs 供 session-connected 事件使用\n        vport_endpoints_json = pairs\n            .iter()\n            .map(|p| {\n                serde_json::json!({\n                    \"external_path\": p.external_path,\n                })\n            })\n            .collect();\n\n        if !pairs.is_empty() {",
+              ),
+          ]
+          for old, new in patches:
+              if old not in text:
+                  raise SystemExit(f'backend refactor patch target not found: {old[:80]}')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
           PY
           python3 scripts/_serial_refactor_backend.py
       - name: Format Rust
