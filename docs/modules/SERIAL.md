@@ -55,11 +55,13 @@ COM/tty 名称是瞬时属性，不能把它当成未来 same-device reconnect �
                                   SessionIo confirmed write
 ```
 
-桥接不再挂在 UI `on_data` 回调，也不再使用两级 `try_send` 写回队列。物理 → 虚拟方向使用独立的**有界 DataPlane subscription**；虚拟 → 物理方向直接通过 `Arc<SessionIo>` 做确认式写入。订阅者若持续落后导致有界 backlog 满，DataPlane 会摘除该消费者，Bridge 把订阅断开作为明确失败上报；禁止为了“继续运行”而静默丢弃透明字节流。
+桥接不再挂在 UI `on_data` 回调，也不再使用两级 `try_send` 写回队列。物理 → 虚拟方向使用独立的**有界 DataPlane subscription**；虚拟 → 物理方向直接通过 `Arc<SessionIo>` 做确认式写入。订阅者若持续落后导致有界 backlog 满，DataPlane 会摘除该消费者，Bridge 把订阅断开作为明确失败上报；禁止为了“继续运行”而静默丢弃已连接透明流中的 chunk。
 
 多个请求的虚拟端点采用原子启动：所有内部 endpoint 必须在 Bridge 注册到 SessionStore 之前同步打开成功，任何一个失败都会判定本次 VPort 启动失败并回滚刚创建的 endpoint 资源。VPort 是可选能力，启动失败只报告 `virtual-port-failed`，不能把已经有效建立的物理 Serial Session 伪装成连接失败。
 
-X/Y/ZModem 获得 Exclusive lease 时 Bridge 不再读取 external endpoint 的新字节，避免消费随后无法写入物理端口的数据；lease 释放后恢复共享桥接。物理 → 虚拟或虚拟 → 物理出现不可恢复 I/O 错误时 Bridge fail-closed 并向 UI 暴露错误，而不是继续处于可能损坏数据的半连接状态。
+X/Y/ZModem 获得 Exclusive lease 时 Bridge 不再读取 external endpoint 的新字节，避免消费随后无法写入物理端口的数据；lease 释放后恢复共享桥接。DataPlane subscription 溢出/断开或 virtual → physical 的确认写失败意味着已连接流无法继续保证完整性，Bridge 必须 fail-closed 并暴露错误。
+
+external peer 的存在则是独立生命周期：Unix PTY master 在 slave 尚未被外部工具打开、或外部工具关闭时可能返回 EIO，Windows 虚拟端点也允许对端应用稍后打开或重新连接。此类“当前没有外部 peer”的端点读写错误不会关闭 Bridge；Bridge 保持内部 endpoint 存活并等待外部工具再次连接。没有实际 peer 时当然不存在可保证投递的外部消费者，这与“已连接消费者因内部队列过载而静默丢字节”是不同语义。
 
 桥接只保证字节流转发，不模拟真实 UART 电气特性、调制解调器控制线或所有波特率行为。当前没有 actor-owned 的 DTR/RTS/CTS/DSR 能力，因此状态栏不得显示虚假的 `--` 占位；未来只有在 DataPlane/driver 提供真实控制线 capability 后才能暴露这些状态与控制。
 
@@ -116,6 +118,7 @@ flowchart LR
 - 串口链路配置错误必须 fail-fast，禁止以默认值掩盖损坏配置。
 - Transport open 不承担自动重试和清空输入缓冲等 Session 策略；设备 open 后产生的字节必须进入统一接收链路。
 - DataPlane subscriber 必须有界；透明桥接消费者一旦无法跟上必须明确失败，禁止静默丢字节或无界增长内存。
+- external virtual peer 可以独立连接/断开/重连；peer 缺席本身不关闭物理 Session 或 Bridge。
 - 虚拟串口创建/桥接启动失败不能让主串口连接的状态变成错误真相，并必须回滚本次不可用端点资源。
 - 平台提权逻辑不得进入普通 Serial UI/协议语义。
 - 自动化发送、编码与日志复用公共 Session 能力，不建立串口专属第二套实现。
