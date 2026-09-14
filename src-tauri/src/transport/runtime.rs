@@ -511,6 +511,15 @@ struct ExclusiveState {
     owner_name: String,
 }
 
+struct RuntimeLoopState {
+    subscribers: Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,
+    startup_buffer: VecDeque<Vec<u8>>,
+    startup_buffer_bytes: usize,
+    exclusive: Option<ExclusiveState>,
+    tx_bytes: Arc<AtomicU64>,
+    rx_bytes: Arc<AtomicU64>,
+}
+
 enum CommandOutcome {
     Continue,
     Shutdown,
@@ -558,16 +567,20 @@ fn run_blocking_runtime(
     connected: Arc<AtomicBool>,
     exclusive_active: Arc<AtomicBool>,
 ) {
-    let mut subscribers: Vec<(u64, mpsc::Sender<DataPlaneEvent>)> = Vec::new();
-    // Declare after subscribers so panic unwinding clears state before subscriber senders are
-    // dropped and the Session receive pump observes channel closure.
+    let mut state = RuntimeLoopState {
+        subscribers: Vec::new(),
+        startup_buffer: VecDeque::new(),
+        startup_buffer_bytes: 0,
+        exclusive: None,
+        tx_bytes,
+        rx_bytes,
+    };
+    // Declare after state so panic unwinding clears externally visible state before subscriber
+    // senders are dropped and the Session receive pump observes channel closure.
     let _state_guard = RuntimeStateGuard {
         connected: connected.clone(),
         exclusive_active: exclusive_active.clone(),
     };
-    let mut startup_buffer: VecDeque<Vec<u8>> = VecDeque::new();
-    let mut startup_buffer_bytes = 0usize;
-    let mut exclusive: Option<ExclusiveState> = None;
     let mut read_buf = [0u8; READ_BUFFER_SIZE];
     let mut closing = false;
     let mut driver_shutdown = false;
@@ -576,22 +589,13 @@ fn run_blocking_runtime(
         // Exclusive protocols must own not only writes but also read cadence. In exclusive mode the
         // actor therefore waits for owner commands instead of continuously issuing background
         // driver reads and queueing data ahead of the X/Y/ZModem state machine.
-        if exclusive.is_some() {
+        if state.exclusive.is_some() {
             match commands.recv_timeout(EXCLUSIVE_COMMAND_WAIT) {
                 Ok(command) => {
-                    let outcome = handle_command(
-                        command,
-                        &mut *driver,
-                        &mut subscribers,
-                        &mut startup_buffer,
-                        &mut startup_buffer_bytes,
-                        &mut exclusive,
-                        &tx_bytes,
-                        &rx_bytes,
-                    );
+                    let outcome = handle_command(command, &mut *driver, &mut state);
                     apply_command_outcome(
                         outcome,
-                        &mut subscribers,
+                        &mut state.subscribers,
                         &mut closing,
                         &mut driver_shutdown,
                     );
@@ -605,23 +609,14 @@ fn run_blocking_runtime(
         loop {
             match commands.try_recv() {
                 Ok(command) => {
-                    let outcome = handle_command(
-                        command,
-                        &mut *driver,
-                        &mut subscribers,
-                        &mut startup_buffer,
-                        &mut startup_buffer_bytes,
-                        &mut exclusive,
-                        &tx_bytes,
-                        &rx_bytes,
-                    );
+                    let outcome = handle_command(command, &mut *driver, &mut state);
                     apply_command_outcome(
                         outcome,
-                        &mut subscribers,
+                        &mut state.subscribers,
                         &mut closing,
                         &mut driver_shutdown,
                     );
-                    if closing || exclusive.is_some() {
+                    if closing || state.exclusive.is_some() {
                         break;
                     }
                 }
@@ -635,27 +630,27 @@ fn run_blocking_runtime(
         if closing {
             break;
         }
-        if exclusive.is_some() {
+        if state.exclusive.is_some() {
             continue;
         }
 
         match driver.read(&mut read_buf) {
             Ok(ReadStatus::Data(n)) if n > 0 => {
-                rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
+                state.rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
                 let data = read_buf[..n].to_vec();
-                if subscribers.is_empty() {
-                    startup_buffer_bytes += data.len();
-                    startup_buffer.push_back(data);
-                    while startup_buffer_bytes > STARTUP_BUFFER_LIMIT {
-                        if let Some(dropped) = startup_buffer.pop_front() {
-                            startup_buffer_bytes =
-                                startup_buffer_bytes.saturating_sub(dropped.len());
+                if state.subscribers.is_empty() {
+                    state.startup_buffer_bytes += data.len();
+                    state.startup_buffer.push_back(data);
+                    while state.startup_buffer_bytes > STARTUP_BUFFER_LIMIT {
+                        if let Some(dropped) = state.startup_buffer.pop_front() {
+                            state.startup_buffer_bytes =
+                                state.startup_buffer_bytes.saturating_sub(dropped.len());
                         } else {
                             break;
                         }
                     }
                 } else {
-                    subscribers.retain(|(_, subscriber)| {
+                    state.subscribers.retain(|(_, subscriber)| {
                         subscriber.send(DataPlaneEvent::Data(data.clone())).is_ok()
                     });
                 }
@@ -663,7 +658,7 @@ fn run_blocking_runtime(
             Ok(ReadStatus::Data(_)) | Ok(ReadStatus::Idle) => {}
             Ok(ReadStatus::Eof) => {
                 broadcast_close(
-                    &mut subscribers,
+                    &mut state.subscribers,
                     TransportCloseInfo::from_driver(
                         TransportErrorKind::RemoteClosed,
                         "remote endpoint closed the stream",
@@ -674,7 +669,7 @@ fn run_blocking_runtime(
             }
             Err(error) => {
                 broadcast_close(
-                    &mut subscribers,
+                    &mut state.subscribers,
                     TransportCloseInfo::from_driver(
                         error.kind,
                         error.to_string(),
@@ -696,23 +691,19 @@ fn run_blocking_runtime(
 fn handle_command(
     command: RuntimeCommand,
     driver: &mut dyn BlockingByteStream,
-    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,
-    startup_buffer: &mut VecDeque<Vec<u8>>,
-    startup_buffer_bytes: &mut usize,
-    exclusive: &mut Option<ExclusiveState>,
-    tx_bytes: &Arc<AtomicU64>,
-    rx_bytes: &Arc<AtomicU64>,
+    state: &mut RuntimeLoopState,
 ) -> CommandOutcome {
     match command {
         RuntimeCommand::Write { owner, data, ack } => {
-            let allowed = match exclusive.as_ref() {
+            let allowed = match state.exclusive.as_ref() {
                 None => owner.is_none(),
                 Some(lease) => owner == Some(lease.owner_id),
             };
             let result = if !allowed {
                 Err(TransportError::busy(
                     "write",
-                    exclusive
+                    state
+                        .exclusive
                         .as_ref()
                         .map(|lease| {
                             format!("data plane is exclusively owned by {}", lease.owner_name)
@@ -722,7 +713,7 @@ fn handle_command(
             } else {
                 let result = driver.write_all(&data).and_then(|_| driver.flush());
                 if result.is_ok() {
-                    tx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
+                    state.tx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
                 }
                 result
             };
@@ -743,7 +734,8 @@ fn handle_command(
             max_len,
             ack,
         } => {
-            let owner_matches = exclusive
+            let owner_matches = state
+                .exclusive
                 .as_ref()
                 .is_some_and(|lease| lease.owner_id == owner_id);
             if !owner_matches {
@@ -755,7 +747,7 @@ fn handle_command(
             let mut buffer = vec![0u8; max_len.clamp(1, READ_BUFFER_SIZE)];
             let result = match driver.read(&mut buffer) {
                 Ok(ReadStatus::Data(n)) if n > 0 => {
-                    rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
+                    state.rx_bytes.fetch_add(n as u64, Ordering::Relaxed);
                     buffer.truncate(n);
                     Ok(ExclusiveReadResult::Data(buffer))
                 }
@@ -783,23 +775,25 @@ fn handle_command(
         }
         RuntimeCommand::Subscribe { id, subscriber } => {
             let mut alive = true;
-            while let Some(data) = startup_buffer.pop_front() {
-                *startup_buffer_bytes = startup_buffer_bytes.saturating_sub(data.len());
+            while let Some(data) = state.startup_buffer.pop_front() {
+                state.startup_buffer_bytes = state.startup_buffer_bytes.saturating_sub(data.len());
                 if subscriber.send(DataPlaneEvent::Data(data)).is_err() {
                     alive = false;
                     break;
                 }
             }
             if alive {
-                subscribers.push((id, subscriber));
+                state.subscribers.push((id, subscriber));
             } else {
-                startup_buffer.clear();
-                *startup_buffer_bytes = 0;
+                state.startup_buffer.clear();
+                state.startup_buffer_bytes = 0;
             }
             CommandOutcome::Continue
         }
         RuntimeCommand::Unsubscribe { id } => {
-            subscribers.retain(|(subscriber_id, _)| *subscriber_id != id);
+            state
+                .subscribers
+                .retain(|(subscriber_id, _)| *subscriber_id != id);
             CommandOutcome::Continue
         }
         RuntimeCommand::AcquireExclusive {
@@ -808,7 +802,7 @@ fn handle_command(
             purge_input,
             ack,
         } => {
-            let result = if let Some(active) = exclusive.as_ref() {
+            let result = if let Some(active) = state.exclusive.as_ref() {
                 Err(TransportError::busy(
                     "acquire_exclusive",
                     format!("data plane is already owned by {}", active.owner_name),
@@ -820,7 +814,7 @@ fn handle_command(
                     Ok(())
                 };
                 purge_result.map(|()| {
-                    *exclusive = Some(ExclusiveState {
+                    state.exclusive = Some(ExclusiveState {
                         owner_id,
                         owner_name,
                     });
@@ -830,11 +824,12 @@ fn handle_command(
             CommandOutcome::Continue
         }
         RuntimeCommand::ReleaseExclusive { owner_id } => {
-            if exclusive
+            if state
+                .exclusive
                 .as_ref()
                 .is_some_and(|lease| lease.owner_id == owner_id)
             {
-                *exclusive = None;
+                state.exclusive = None;
             }
             CommandOutcome::Continue
         }
