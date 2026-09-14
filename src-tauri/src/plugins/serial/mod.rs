@@ -79,7 +79,7 @@ impl SerialConfig {
             parity: self.parity.clone(),
             stop_bits: self.stop_bits.clone(),
             flow_control: self.flow_control.clone(),
-            read_timeout_ms: 20,
+            read_timeout_ms: 50,
         }
     }
 }
