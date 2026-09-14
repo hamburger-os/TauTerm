@@ -5,7 +5,7 @@
 //! `file-transfer:finished` 表达；因此前端不会再因 Inline/Auxiliary 的 invoke
 //! 返回时机不同而维护第二套状态机。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -109,8 +109,6 @@ pub fn create_orchestrator(
             protocol_type
         ))
     } else {
-        // TransferProtocolType 是开放集合；未声明执行能力的标识必须显式拒绝，
-        // 绝不静默回退到 Auxiliary。
         Err(format!("不支持的传输协议: '{}'", protocol_type))
     }
 }
@@ -261,12 +259,15 @@ impl InlineTransferOrchestrator {
     ) -> Result<
         (
             Box<dyn crate::transfer::protocol::TransferIo>,
-            tokio::sync::oneshot::Receiver<()>,
+            Arc<AtomicBool>,
         ),
         String,
     > {
-        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-        let io = {
+        // SessionStore 的包装签名仍接收一次性 sender，但 Scheduler 的真实取消状态已经
+        // 统一为共享 AtomicBool。receiver 不参与取消链路，避免每个 Inline 任务再启动
+        // 一个阻塞 OS 线程做信号桥接。
+        let (legacy_cancel_tx, _legacy_cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let (io, cancel) = {
             let app_state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
             let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(session_id);
@@ -281,30 +282,24 @@ impl InlineTransferOrchestrator {
                     .cloned()
                     .ok_or("当前会话没有可独占的数据面")?
             };
-            store.reserve_inline_transfer(session_id, transfer_id, cancel_tx)?;
+            store.reserve_inline_transfer(session_id, transfer_id, legacy_cancel_tx)?;
             let not_found = store.session_not_found(session_id);
             let handle = store.get_session_mut(session_id).ok_or(not_found)?;
+            let cancel = handle
+                .transfer_scheduler
+                .cancel_flag(transfer_id)
+                .ok_or("文件传输取消令牌注册失败")?;
             handle.state = SessionState::Transferring;
-            io
+            (io, cancel)
         };
 
         match io.acquire_exclusive(format!("file-transfer:{transfer_id}")) {
-            Ok(lease) => Ok((Box::new(lease), cancel_rx)),
+            Ok(lease) => Ok((Box::new(lease), cancel)),
             Err(error) => {
                 restore_session_state(app, session_id, transfer_id);
                 Err(format!("无法获取文件传输独占 I/O: {error}"))
             }
         }
-    }
-
-    fn spawn_cancel_bridge(cancel_rx: tokio::sync::oneshot::Receiver<()>) -> Arc<AtomicBool> {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let signal = cancel.clone();
-        std::thread::spawn(move || {
-            let _ = cancel_rx.blocking_recv();
-            signal.store(true, Ordering::SeqCst);
-        });
-        cancel
     }
 }
 
@@ -321,7 +316,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         client_id: String,
     ) -> Result<TransferStartAck, String> {
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (io, cancel_rx) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
+        let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_protocol_handler(
             ctx.block_size,
             ctx.checksum_mode.clone(),
@@ -345,7 +340,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             client_id.clone(),
             transfer_id.clone(),
         );
-        let cancel = Self::spawn_cancel_bridge(cancel_rx);
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
         let task_app = app.clone();
@@ -406,7 +400,7 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         client_id: String,
     ) -> Result<TransferStartAck, String> {
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (io, cancel_rx) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
+        let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_protocol_handler(
             ctx.block_size,
             ctx.checksum_mode.clone(),
@@ -430,7 +424,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             client_id.clone(),
             transfer_id.clone(),
         );
-        let cancel = Self::spawn_cancel_bridge(cancel_rx);
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
         let task_app = app.clone();
@@ -479,7 +472,13 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             store.register_transfer_task(&ctx.session_id, handle)?;
         }
-        emit_transfer_started(&app, &client_id, &transfer_id, self.pt.as_str(), "receive");
+        emit_transfer_started(
+            &app,
+            &client_id,
+            &transfer_id,
+            self.pt.as_str(),
+            "receive",
+        );
         let _ = start_tx.send(());
         Ok(ack)
     }
@@ -554,8 +553,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
         let progress_tx = ctx.progress_tx;
 
         let handle = tokio::spawn(async move {
-            // Guard 在 gate 之前建立：如果 Session 在 task 注册阶段消失，start_tx 会被
-            // drop，Guard 仍会精确释放 Scheduler 占用，避免永久 busy。
             let mut guard = PanicGuard::new(
                 task_app.clone(),
                 task_internal_id,
