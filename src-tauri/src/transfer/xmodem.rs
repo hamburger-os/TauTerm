@@ -514,7 +514,12 @@ fn xmodem_receive(
                     frame_started = true;
                     // 已看到帧头后必须完整消费该帧，再判断序号/校验是否有效；
                     // 否则损坏帧的 payload 会污染下一轮帧头同步。
-                    let (bnum, bnum_neg, data, valid) = read_data_block(port, header, check_mode)?;
+                    let ReceivedBlock {
+                        number: bnum,
+                        number_complement: bnum_neg,
+                        data,
+                        valid,
+                    } = read_data_block(port, header, check_mode)?;
                     if bnum != !bnum_neg || bnum != 1 {
                         log::debug!(
                         "XModem RX: invalid first block number {} (expected 1), requesting retry",
@@ -684,7 +689,12 @@ fn xmodem_receive(
         // ── 数据块处理 ──
         // 帧头一旦确认，就先完整读取 payload + trailer，再判断序号和校验。
         // 这样损坏帧不会把未消费数据遗留给下一轮帧头解析。
-        let (bnum, bnum_neg, data, valid) = read_data_block(port, header, check_mode)?;
+        let ReceivedBlock {
+            number: bnum,
+            number_complement: bnum_neg,
+            data,
+            valid,
+        } = read_data_block(port, header, check_mode)?;
 
         if bnum != !bnum_neg {
             log::warn!(
@@ -753,11 +763,18 @@ fn xmodem_receive(
     Ok(batch_results)
 }
 
+struct ReceivedBlock {
+    number: u8,
+    number_complement: u8,
+    data: Vec<u8>,
+    valid: bool,
+}
+
 fn read_data_block(
     port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     header: u8,
     check_mode: XModemCheckMode,
-) -> Result<(u8, u8, Vec<u8>, bool), Box<dyn std::error::Error>> {
+) -> Result<ReceivedBlock, Box<dyn std::error::Error>> {
     let block_size = match header {
         SOH => BLOCK_SIZE_128,
         STX => BLOCK_SIZE_1K,
@@ -770,7 +787,12 @@ fn read_data_block(
         *byte = read_or_fail(port)?;
     }
     let valid = verify_block(port, &data, check_mode)?;
-    Ok((bnum, bnum_neg, data, valid))
+    Ok(ReceivedBlock {
+        number: bnum,
+        number_complement: bnum_neg,
+        data,
+        valid,
+    })
 }
 
 fn verify_block(
