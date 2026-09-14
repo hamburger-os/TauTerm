@@ -74,9 +74,6 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
   useEffect(() => {
     if (mode !== "monitor") return;
     void refreshCaptureInterfaces();
-    // Interface enumeration is a side-effect of entering Monitor configuration;
-    // explicit refresh remains available for hot-plug/runtime changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
   async function chooseXml() {
@@ -99,6 +96,8 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
     str(params, "capture_filter", STANDARD_CAPTURE_FILTER) === STANDARD_CAPTURE_FILTER,
   );
   const captureFilter = str(params, "capture_filter", STANDARD_CAPTURE_FILTER);
+  const captureInterfaceAKnown = captureInterfaces.some(item => item.name === captureInterfaceA);
+  const captureInterfaceBKnown = captureInterfaces.some(item => item.name === captureInterfaceB);
 
   const portFields = (
     <div className={styles.ports}>
@@ -237,6 +236,9 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
                 disabled={captureInterfacesLoading}
               >
                 <option value="">{captureInterfacesLoading ? t("trdp.captureInterfaces.loading") : t("trdp.captureInterfaces.choose")}</option>
+                {captureInterfaceA && !captureInterfaceAKnown && (
+                  <option value={captureInterfaceA}>{captureInterfaceA}</option>
+                )}
                 {captureInterfaces.map(item => (
                   <option key={item.name} value={item.name}>
                     {item.description ? `${item.description} — ${item.name}` : item.name}
@@ -277,6 +279,9 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
                 disabled={captureInterfacesLoading}
               >
                 <option value="">{t("trdp.captureInterfaces.choose")}</option>
+                {captureInterfaceB && !captureInterfaceBKnown && captureInterfaceB !== captureInterfaceA && (
+                  <option value={captureInterfaceB}>{captureInterfaceB}</option>
+                )}
                 {captureInterfaces
                   .filter(item => item.name !== captureInterfaceA)
                   .map(item => (
