@@ -1,0 +1,36 @@
+name: Serial backend refactor one-shot
+
+on:
+  push:
+    branches:
+      - agent/serial-session-design-cleanup
+    paths:
+      - .github/workflows/serial-refactor-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/serial-session-design-cleanup
+          fetch-depth: 0
+      - name: Apply backend refactor
+        run: python3 scripts/_serial_refactor_backend.py
+      - name: Format Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
+      - name: Commit generated changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes generated"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri
+          git commit -m "refactor(serial): make virtual bridge lossless and typed"
+          git push origin HEAD:agent/serial-session-design-cleanup
