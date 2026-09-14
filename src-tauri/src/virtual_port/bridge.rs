@@ -101,15 +101,19 @@ fn open_bridge_endpoint(name: &str, baud_rate: u32) -> Result<Box<dyn SerialPort
         .map_err(|e| format!("failed to open virtual endpoint {name}: {e}"))
 }
 
-fn write_to_virtual_ports(virtual_ports: &mut [Box<dyn SerialPort>], data: &[u8]) {
-    for vport in virtual_ports.iter_mut() {
-        if vport.write_all(data).is_err() {
-            log::trace!("Write to virtual endpoint failed (peer closed)");
-        }
+fn write_to_virtual_ports(
+    virtual_ports: &mut [Box<dyn SerialPort>],
+    data: &[u8],
+) -> Result<(), String> {
+    for (index, vport) in virtual_ports.iter_mut().enumerate() {
+        vport
+            .write_all(data)
+            .map_err(|error| format!("virtual endpoint {index} write failed: {error}"))?;
+        vport
+            .flush()
+            .map_err(|error| format!("virtual endpoint {index} flush failed: {error}"))?;
     }
-    for vport in virtual_ports.iter_mut() {
-        let _ = vport.flush();
-    }
+    Ok(())
 }
 
 fn bridge_loop(
@@ -139,10 +143,13 @@ fn bridge_loop(
 
     while !cancel.load(Ordering::SeqCst) {
         // Drain a bounded amount of physical data each turn so virtual -> physical traffic is not
-        // starved by a continuously busy device.
+        // starved by a continuously busy device. A detached subscription is a bridge failure, not
+        // a best-effort display condition: continuing would silently corrupt a transparent stream.
         for _ in 0..32 {
             match subscription.try_recv() {
-                Ok(DataPlaneEvent::Data(data)) => write_to_virtual_ports(&mut virtual_ports, &data),
+                Ok(DataPlaneEvent::Data(data)) => {
+                    write_to_virtual_ports(&mut virtual_ports, &data)?;
+                }
                 Ok(DataPlaneEvent::Closed(_)) => return Ok(()),
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -170,7 +177,7 @@ fn bridge_loop(
             }
         }
 
-        for vport in &mut virtual_ports {
+        for (index, vport) in virtual_ports.iter_mut().enumerate() {
             match vport.read(&mut read_buf) {
                 Ok(n) if n > 0 => {
                     let data = read_buf[..n].to_vec();
@@ -189,8 +196,8 @@ fn bridge_loop(
                 Err(ref e)
                     if e.kind() == std::io::ErrorKind::TimedOut
                         || e.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(_) => {
-                    // External applications can disconnect/reconnect independently.
+                Err(error) => {
+                    return Err(format!("virtual endpoint {index} read failed: {error}"));
                 }
             }
         }
