@@ -1,4 +1,4 @@
-name: Serial review fixes one-shot
+name: Serial final fixes one-shot
 
 on:
   push:
@@ -19,20 +19,20 @@ jobs:
         with:
           ref: agent/serial-session-design-cleanup
           fetch-depth: 0
-      - name: Apply review fixes
-        run: python3 scripts/_serial_review_fixes.py
+      - name: Apply final lifecycle fixes
+        run: python3 scripts/_serial_final_fixes.py
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
       - name: Commit generated changes
         run: |
-          if git diff --quiet src src-tauri; then
+          if git diff --quiet src-tauri; then
             echo "No product changes generated"
             exit 1
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src src-tauri
-          git commit -m "fix(serial): close review gaps in data and config paths"
+          git add src-tauri
+          git commit -m "fix(serial): make virtual bridge startup atomic"
           git push origin HEAD:agent/serial-session-design-cleanup
       - name: Confirm product commit
         run: git log -1 --oneline
