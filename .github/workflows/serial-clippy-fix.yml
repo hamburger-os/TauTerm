@@ -68,16 +68,33 @@ jobs:
               'config.serial.stop_bits = "1".into();',
               'config.serial.stop_bits = SerialStopBits::One;'
           )
+
+          replace(
+              'src-tauri/src/transport/runtime.rs',
+              '''        RuntimeCommand::Subscribe { id, subscriber } => {\n            let mut alive = true;\n            while let Some(data) = state.startup_buffer.pop_front() {\n                state.startup_buffer_bytes = state.startup_buffer_bytes.saturating_sub(data.len());\n                if subscriber.try_send(DataPlaneEvent::Data(data)).is_err() {\n                    alive = false;\n                    break;\n                }\n            }\n            if alive {\n                state.subscribers.push((id, subscriber));\n            } else {\n                state.startup_buffer.clear();\n                state.startup_buffer_bytes = 0;\n            }\n            CommandOutcome::Continue\n        }''',
+              '''        RuntimeCommand::Subscribe { id, subscriber } => {\n            // A new subscription has an empty bounded queue. Coalesce the bounded startup backlog\n            // into one event so many tiny pre-subscribe reads cannot exhaust queue slots before the\n            // consumer thread starts. The startup byte limit remains the memory bound.\n            let startup = if state.startup_buffer.is_empty() {\n                None\n            } else {\n                let mut data = Vec::with_capacity(state.startup_buffer_bytes);\n                while let Some(chunk) = state.startup_buffer.pop_front() {\n                    data.extend_from_slice(&chunk);\n                }\n                state.startup_buffer_bytes = 0;\n                Some(data)\n            };\n            let alive = startup.is_none_or(|data| {\n                subscriber.try_send(DataPlaneEvent::Data(data)).is_ok()\n            });\n            if alive {\n                state.subscribers.push((id, subscriber));\n            }\n            CommandOutcome::Continue\n        }'''
+          )
           PY
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libssl-dev \
+            libudev-dev
       - name: Format and check
         run: |
           cargo fmt --manifest-path src-tauri/Cargo.toml --all
           cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
       - name: Commit product changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src-tauri
           git diff --cached --quiet && { echo "No product changes"; exit 1; }
-          git commit -m "fix(serial): integrate typed link config with modbus"
+          git commit -m "fix(serial): complete typed link config integration"
           git push origin HEAD:agent/serial-session-design-cleanup
