@@ -210,21 +210,16 @@ function updateFileProjection(
   current: ManagedTransferTask,
   payload: UnifiedTransferProgressPayload,
 ): BatchFileEntry[] {
-  if (
-    payload.is_batch_complete
-    || !payload.file_name
-    || payload.file_name === "__batch_complete__"
-  ) {
+  if (payload.kind === "batch_complete" || !payload.file_name) {
     return current.files;
   }
 
   const index = Math.max(0, payload.file_index);
   const next = [...current.files];
   const existing = next[index];
-  let status: FileTransferState = "transferring";
-  if (payload.is_file_complete) {
-    status = payload.file_success === false ? "failed" : "completed";
-  }
+  const status: FileTransferState = payload.kind === "file_complete"
+    ? (payload.file_success === false ? "failed" : "completed")
+    : "transferring";
 
   next[index] = {
     fileName: payload.file_name,
@@ -335,6 +330,9 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
         return state;
       }
 
+      const isFileStart = payload.kind === "file_start";
+      const isFileComplete = payload.kind === "file_complete";
+      const isBatchComplete = payload.kind === "batch_complete";
       const knownTotal = payload.bytes_total > 0;
       const isLastFile =
         payload.total_files <= 1 || payload.file_index + 1 >= payload.total_files;
@@ -350,9 +348,9 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
       let phase: ManagedTransferPhase;
       if (current.phase === "cancelling") {
         phase = "cancelling";
-      } else if (payload.is_batch_complete) {
+      } else if (isBatchComplete) {
         phase = "finalizing";
-      } else if (payload.is_file_complete) {
+      } else if (isFileComplete) {
         phase = isLastFile ? "finalizing" : "transferring";
       } else {
         phase = "transferring";
@@ -369,43 +367,39 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
         ? payload.aggregate_bytes / elapsedSeconds
         : null;
       const nextSpeed = measuredSpeed
-        ?? (payload.is_file_start ? null : current.speed ?? fallbackSpeed);
+        ?? (isFileStart ? null : current.speed ?? fallbackSpeed);
       const preserveFailedProgress =
-        payload.is_file_complete && payload.file_success === false && !knownTotal;
+        isFileComplete && payload.file_success === false && !knownTotal;
 
       const nextTask: ManagedTransferTask = {
         ...current,
         direction: payload.direction,
         phase,
-        fileName: payload.is_batch_complete
-          ? current.fileName
-          : payload.file_name === "__batch_complete__"
-            ? current.fileName
-            : payload.file_name,
+        fileName: isBatchComplete ? current.fileName : payload.file_name,
         bytesDone:
-          payload.is_batch_complete || preserveFailedProgress
+          isBatchComplete || preserveFailedProgress
             ? current.bytesDone
             : payload.bytes_done,
         bytesTotal:
-          payload.is_batch_complete || preserveFailedProgress
+          isBatchComplete || preserveFailedProgress
             ? current.bytesTotal
             : payload.bytes_total,
         percent:
-          payload.is_batch_complete || preserveFailedProgress
+          isBatchComplete || preserveFailedProgress
             ? current.percent
             : percent,
         speed: nextSpeed,
         error: payload.file_success === false
           ? (payload.file_error || current.error)
           : current.error,
-        fileIndex: payload.is_batch_complete ? current.fileIndex : payload.file_index,
-        totalFiles: payload.is_batch_complete
+        fileIndex: isBatchComplete ? current.fileIndex : payload.file_index,
+        totalFiles: isBatchComplete
           ? current.totalFiles
           : Math.max(payload.total_files || 0, current.totalFiles),
-        aggregateBytes: payload.is_batch_complete
+        aggregateBytes: isBatchComplete
           ? current.aggregateBytes
           : payload.aggregate_bytes,
-        aggregateTotal: payload.is_batch_complete
+        aggregateTotal: isBatchComplete
           ? current.aggregateTotal
           : (payload.aggregate_total || current.aggregateTotal),
         files: updateFileProjection(current, payload),
@@ -423,10 +417,9 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
 
     case "TASK_FINISHED": {
       const payload = action.payload;
-      if (!payload.transfer_id) return state;
       const current = state.tasksById[payload.transfer_id];
       if (!current || current.sessionId !== payload.session_id) return state;
-      if (payload.protocol && current.protocol !== payload.protocol) return state;
+      if (current.protocol !== payload.protocol) return state;
       if (isManagedTransferTerminalPhase(current.phase)) return state;
 
       const phase: ManagedTransferPhase = payload.success
