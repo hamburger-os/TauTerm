@@ -83,40 +83,40 @@ pub fn open_serial(
         _ => unreachable!("validated"),
     };
 
-    let mut last_error = None;
-    for attempt in 0..3 {
-        if attempt > 0 {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        match serialport::new(endpoint, config.baud_rate)
-            .data_bits(data_bits)
-            .parity(parity)
-            .stop_bits(stop_bits)
-            .flow_control(flow_control)
-            .timeout(Duration::from_millis(config.read_timeout_ms.clamp(1, 1000)))
-            .open()
-        {
-            Ok(port) => {
-                let _ = port.clear(serialport::ClearBuffer::All);
-                std::thread::sleep(Duration::from_millis(30));
-                return Ok(SerialDriver { port });
-            }
-            Err(error) => last_error = Some(error),
-        }
-    }
+    // Transport adapter performs exactly one physical open. Reconnect/retry policy belongs to the
+    // Session layer, which already owns teardown timing. Hidden sleeps/retries here make one connect
+    // request nondeterministic and can mask the original failure class.
+    let port = serialport::new(endpoint, config.baud_rate)
+        .data_bits(data_bits)
+        .parity(parity)
+        .stop_bits(stop_bits)
+        .flow_control(flow_control)
+        .timeout(Duration::from_millis(config.read_timeout_ms.clamp(1, 1000)))
+        .open()
+        .map_err(map_open_error)?;
 
-    let error = last_error.expect("three open attempts");
-    let lower = error.to_string().to_ascii_lowercase();
-    let kind = if lower.contains("access") || lower.contains("permission") {
-        TransportErrorKind::PermissionDenied
-    } else if lower.contains("busy") || lower.contains("in use") {
-        TransportErrorKind::DeviceBusy
-    } else if lower.contains("not found") || lower.contains("no such") {
-        TransportErrorKind::DeviceNotFound
-    } else {
-        TransportErrorKind::Connect
+    // Do not purge RX/TX after opening. Bytes produced immediately after open (including boot/reset
+    // output from embedded devices) are valid input and must enter the DataPlane startup buffer.
+    Ok(SerialDriver { port })
+}
+
+fn map_open_error(error: serialport::Error) -> TransportError {
+    let kind = match error.kind() {
+        serialport::ErrorKind::NoDevice => TransportErrorKind::DeviceNotFound,
+        serialport::ErrorKind::InvalidInput => TransportErrorKind::InvalidConfiguration,
+        serialport::ErrorKind::Unknown => TransportErrorKind::Connect,
+        serialport::ErrorKind::Io(io_kind) => match io_kind {
+            std::io::ErrorKind::PermissionDenied => TransportErrorKind::PermissionDenied,
+            std::io::ErrorKind::NotFound => TransportErrorKind::DeviceNotFound,
+            std::io::ErrorKind::TimedOut => TransportErrorKind::Timeout,
+            std::io::ErrorKind::WouldBlock => TransportErrorKind::DeviceBusy,
+            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe => {
+                TransportErrorKind::ConnectionReset
+            }
+            _ => TransportErrorKind::Connect,
+        },
     };
-    Err(TransportError::new(kind, "serial_open", error.to_string()))
+    TransportError::new(kind, "serial_open", error.to_string())
 }
 
 fn validate_config(config: &SerialTransportConfig) -> Result<(), TransportError> {
@@ -201,5 +201,20 @@ mod tests {
             validate_config(&config).unwrap_err().kind,
             TransportErrorKind::InvalidConfiguration
         );
+    }
+
+    #[test]
+    fn serialport_error_kind_is_mapped_without_parsing_localized_text() {
+        let permission = map_open_error(serialport::Error::new(
+            serialport::ErrorKind::Io(std::io::ErrorKind::PermissionDenied),
+            "localized message",
+        ));
+        assert_eq!(permission.kind, TransportErrorKind::PermissionDenied);
+
+        let invalid = map_open_error(serialport::Error::new(
+            serialport::ErrorKind::InvalidInput,
+            "localized message",
+        ));
+        assert_eq!(invalid.kind, TransportErrorKind::InvalidConfiguration);
     }
 }
