@@ -12,6 +12,14 @@ X/Y/ZModem 不再把物理串口从运行时取出再归还。传输启动时通
 
 物理串口列表只在进入 Serial 配置页时按需刷新，并保留最近一次发现结果供表单立即显示。Windows 端口枚举可能受 SetupAPI、蓝牙设备或第三方驱动影响而变慢，因此枚举必须在后台 blocking worker 中运行，不能阻塞配置 UI。
 
+### 配置职责与连接语义
+
+串口链路只有一份后端 transport 配置事实：波特率、数据位、校验位、停止位和流控由 `SerialTransportConfig` 解析与校验。Serial 插件不维护第二套 DTO；Session 参数里同时存在的终端显示方式、字符集、文件传输开关和虚拟串口策略不是 transport 配置，底层串口适配器不得解释这些字段。
+
+参数边界采用 fail-fast：已声明的串口链路字段一旦类型错误或组合非法，连接必须返回配置错误，禁止静默回退到 115200/8N1 后继续打开设备。默认值只用于创建完整的新配置或协议自身明确需要的默认 transport 配置，展示层不得自行猜测缺失参数。
+
+一次 Session connect 对应一次物理端口 open。底层 transport 不做隐藏重试、固定等待或连接成功后的无条件 RX/TX purge；重新连接与 teardown 等待属于 Session 生命周期策略。设备在 open 后立即产生的启动/复位输出属于有效输入，应直接进入 DataPlane startup buffer，而不是被适配器丢弃。
+
 ### 串口端点数据契约
 
 `EndpointInfo.name` 是真正用于连接的系统端点名，例如 `COM5`；`description` 只提供补充说明，不重复 `name`。USB 串口至少携带 VID/PID、serial number、manufacturer、product，并在 serial number 可用时生成稳定 device identity。驱动友好名若仅在末尾重复当前端口号，展示层会规范化掉重复后缀，但结构化 identity 中仍保留驱动原始字段。
@@ -84,6 +92,9 @@ flowchart LR
 ## 设计边界
 
 - 一个物理串口只有一个 Transport/DataPlane owner；Inline 文件传输通过 exclusive lease 临时获得访问权，不转移底层 handle。
+- Serial 插件只解析 transport 真正消费的链路字段；终端展示、传输开关和虚拟端口策略不得重新进入串口 driver 配置。
+- 串口链路配置错误必须 fail-fast，禁止以默认值掩盖损坏配置。
+- Transport open 不承担自动重试和清空输入缓冲等 Session 策略；设备 open 后产生的字节必须进入统一接收链路。
 - 虚拟串口创建失败不能让主串口连接的状态变成错误真相。
 - 平台提权逻辑不得进入普通 Serial UI/协议语义。
 - 自动化发送、编码与日志复用公共 Session 能力，不建立串口专属第二套实现。
