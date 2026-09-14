@@ -20,13 +20,24 @@ jobs:
           ref: agent/serial-session-design-cleanup
           fetch-depth: 0
       - name: Apply backend refactor
-        run: python3 scripts/_serial_refactor_backend.py
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/_serial_refactor_backend.py')
+          text = path.read_text(encoding='utf-8')
+          old = 'exact(p, "    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,\\n", "    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,\\n")'
+          new = 'exact(p, "    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,\\n", "    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,\\n", count=2)'
+          if old not in text:
+              raise SystemExit('backend refactor guard target not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          python3 scripts/_serial_refactor_backend.py
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all
       - name: Commit generated changes
         run: |
-          if git diff --quiet; then
-            echo "No changes generated"
+          if git diff --quiet src-tauri; then
+            echo "No product changes generated"
             exit 1
           fi
           git config user.name "github-actions[bot]"
