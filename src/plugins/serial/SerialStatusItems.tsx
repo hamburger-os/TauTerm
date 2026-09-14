@@ -30,6 +30,9 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
   const connected = activeTab.state === "connected" || activeTab.state === "transferring";
   const endpoints = activeTab.virtualVirtualEndpoints ?? [];
   const error = connected ? activeTab.virtualPortError : undefined;
+  const driverError = activeTab.virtualPortErrorKind === "files_missing"
+    || activeTab.virtualPortErrorKind === "permission"
+    || activeTab.virtualPortErrorKind === "driver_missing";
 
   return (
     <span className={styles.group}>
@@ -51,15 +54,17 @@ export function SerialVirtualPortStatus({ activeTab }: StatusBarContext) {
                   ? t("serial.virtualPort.notInstalled")
                   : t("serial.virtualPort.createFailed")}
           </span>
-          <button
-            type="button"
-            className={styles.action}
-            onClick={() => void handleRetryVPort()}
-            disabled={driverInstalling}
-            title={t("serial.virtualPort.retryHint")}
-          >
-            [{driverInstalling ? t("serial.virtualPort.installing") : t("serial.virtualPort.retry")}]
-          </button>
+          {driverError && (
+            <button
+              type="button"
+              className={styles.action}
+              onClick={() => void handleRetryVPort()}
+              disabled={driverInstalling}
+              title={t("serial.virtualPort.retryHint")}
+            >
+              [{driverInstalling ? t("serial.virtualPort.installing") : t("serial.virtualPort.retry")}]
+            </button>
+          )}
         </>
       )}
 
