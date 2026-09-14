@@ -11,6 +11,7 @@ use crate::transport::stream::{BlockingByteStream, ReadStatus, StreamCloseMetada
 const COMMAND_CAPACITY: usize = 256;
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 const STARTUP_BUFFER_LIMIT: usize = 64 * 1024;
+const SUBSCRIPTION_CAPACITY: usize = 256;
 
 #[derive(Debug, Clone)]
 pub enum DataPlaneEvent {
@@ -139,7 +140,7 @@ impl DataPlaneHandle {
 
     pub fn subscribe(&self) -> Result<DataPlaneSubscription, TransportError> {
         let id = next_subscription_id();
-        let (event_tx, event_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::sync_channel(SUBSCRIPTION_CAPACITY);
         self.command_tx
             .send(RuntimeCommand::Subscribe {
                 id,
@@ -279,6 +280,10 @@ impl DataPlaneHandle {
 
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Acquire)
+    }
+
+    pub fn is_exclusive(&self) -> bool {
+        self.exclusive_active.load(Ordering::Acquire)
     }
 
     pub fn tx_bytes(&self) -> u64 {
@@ -528,7 +533,7 @@ enum RuntimeCommand {
     },
     Subscribe {
         id: u64,
-        subscriber: mpsc::Sender<DataPlaneEvent>,
+        subscriber: mpsc::SyncSender<DataPlaneEvent>,
     },
     Unsubscribe {
         id: u64,
@@ -560,7 +565,7 @@ struct ExclusiveState {
 }
 
 struct RuntimeLoopState {
-    subscribers: Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,
+    subscribers: Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,
     startup_buffer: VecDeque<Vec<u8>>,
     startup_buffer_bytes: usize,
     /// Bytes physically read while an exclusive acquisition was already requested but before the
@@ -595,7 +600,7 @@ impl Drop for RuntimeStateGuard {
 
 fn apply_command_outcome(
     outcome: CommandOutcome,
-    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,
+    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,
     closing: &mut bool,
     driver_shutdown: &mut bool,
 ) {
@@ -628,9 +633,19 @@ fn publish_shared_data(state: &mut RuntimeLoopState, data: Vec<u8>) {
             }
         }
     } else {
-        state
-            .subscribers
-            .retain(|(_, subscriber)| subscriber.send(DataPlaneEvent::Data(data.clone())).is_ok());
+        state.subscribers.retain(|(id, subscriber)| {
+            match subscriber.try_send(DataPlaneEvent::Data(data.clone())) {
+                Ok(()) => true,
+                Err(mpsc::TrySendError::Full(_)) => {
+                    log::warn!(
+                        "DataPlane subscriber {} exceeded bounded backlog; detaching consumer",
+                        id
+                    );
+                    false
+                }
+                Err(mpsc::TrySendError::Disconnected(_)) => false,
+            }
+        });
     }
 }
 
@@ -855,19 +870,23 @@ fn handle_command(
             close_info.map_or(CommandOutcome::Continue, CommandOutcome::Close)
         }
         RuntimeCommand::Subscribe { id, subscriber } => {
-            let mut alive = true;
-            while let Some(data) = state.startup_buffer.pop_front() {
-                state.startup_buffer_bytes = state.startup_buffer_bytes.saturating_sub(data.len());
-                if subscriber.send(DataPlaneEvent::Data(data)).is_err() {
-                    alive = false;
-                    break;
+            // A new subscription has an empty bounded queue. Coalesce the bounded startup backlog
+            // into one event so many tiny pre-subscribe reads cannot exhaust queue slots before the
+            // consumer thread starts. The startup byte limit remains the memory bound.
+            let startup = if state.startup_buffer.is_empty() {
+                None
+            } else {
+                let mut data = Vec::with_capacity(state.startup_buffer_bytes);
+                while let Some(chunk) = state.startup_buffer.pop_front() {
+                    data.extend_from_slice(&chunk);
                 }
-            }
+                state.startup_buffer_bytes = 0;
+                Some(data)
+            };
+            let alive =
+                startup.is_none_or(|data| subscriber.try_send(DataPlaneEvent::Data(data)).is_ok());
             if alive {
                 state.subscribers.push((id, subscriber));
-            } else {
-                state.startup_buffer.clear();
-                state.startup_buffer_bytes = 0;
             }
             CommandOutcome::Continue
         }
@@ -1010,13 +1029,21 @@ fn handle_command(
 }
 
 fn broadcast_close(
-    subscribers: &mut Vec<(u64, mpsc::Sender<DataPlaneEvent>)>,
+    subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,
     info: TransportCloseInfo,
 ) {
-    subscribers.retain(|(_, subscriber)| {
-        subscriber
-            .send(DataPlaneEvent::Closed(info.clone()))
-            .is_ok()
+    subscribers.retain(|(id, subscriber)| {
+        match subscriber.try_send(DataPlaneEvent::Closed(info.clone())) {
+            Ok(()) => true,
+            Err(mpsc::TrySendError::Full(_)) => {
+                log::warn!(
+                    "DataPlane subscriber {} backlog was full while closing; detaching consumer",
+                    id
+                );
+                false
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => false,
+        }
     });
 }
 
@@ -1257,6 +1284,31 @@ mod tests {
             .expect("exclusive acquisition should finish")
             .expect("exclusive acquisition should succeed");
         (runtime, subscription, lease)
+    }
+
+    #[test]
+    fn slow_subscriber_is_detached_instead_of_blocking_or_growing_unbounded() {
+        let (subscriber_tx, subscriber_rx) = mpsc::sync_channel(1);
+        let mut state = RuntimeLoopState {
+            subscribers: vec![(42, subscriber_tx)],
+            startup_buffer: VecDeque::new(),
+            startup_buffer_bytes: 0,
+            handoff_buffer: VecDeque::new(),
+            exclusive: None,
+            shutdown_pending: false,
+            tx_bytes: Arc::new(AtomicU64::new(0)),
+            rx_bytes: Arc::new(AtomicU64::new(0)),
+            exclusive_active: Arc::new(AtomicBool::new(false)),
+        };
+
+        publish_shared_data(&mut state, vec![1]);
+        assert_eq!(state.subscribers.len(), 1);
+        publish_shared_data(&mut state, vec![2]);
+        assert!(state.subscribers.is_empty());
+        match subscriber_rx.try_recv().unwrap() {
+            DataPlaneEvent::Data(data) => assert_eq!(data, vec![1]),
+            DataPlaneEvent::Closed(info) => panic!("unexpected close: {}", info.reason),
+        }
     }
 
     #[test]

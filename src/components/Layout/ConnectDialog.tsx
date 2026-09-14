@@ -9,19 +9,6 @@ import { CHARSETS, DEFAULT_ENCODING } from "../../utils/charsets";
 import Icon from "../common/Icon";
 import styles from "./ConnectDialog.module.css";
 
-const BAUD_RATES = ["110","300","600","1200","2400","4800","9600","14400","19200","38400","57600","115200","230400","460800","921600"];
-const DATA_BITS = ["5","6","7","8"];
-const PARITY = [
-  { v: "none", l: "None" },
-  { v: "even", l: "Even" },
-  { v: "odd", l: "Odd" },
-];
-const STOP_BITS = ["1","2"];
-const FLOW_CONTROL = [
-  { v: "none", l: "None" },
-  { v: "rts_cts", l: "RTS/CTS" },
-  { v: "xon_xoff", l: "XON/XOFF" },
-];
 
 interface ConnectDialogProps {
   isOpen: boolean;
@@ -46,22 +33,14 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
   const [selectedMode, setSelectedMode] = useState("serial");
   const [pluginParams, setPluginParams] = useState<Record<string, unknown>>({});
 
-  // 串口配置
+  // 通用/共享终端配置。Serial 专属字段由 SerialConnectForm 自己拥有。
   const [port, setPort] = useState("");
-  const [baudRate, setBaudRate] = useState("115200");
-  const [dataBits, setDataBits] = useState("8");
-  const [parity, setParity] = useState("none");
-  const [stopBits, setStopBits] = useState("1");
-  const [flowControl, setFlowControl] = useState("none");
   const [dataMode, setDataMode] = useState("text");
   /** 数据字符编码（仅终端类协议：serial/ssh/telnet；连接后不可变，改需重连） */
   const [encoding, setEncoding] = useState(DEFAULT_ENCODING);
-  const [dualFrameTimeout, setDualFrameTimeout] = useState(50);
   const [transferEnabled, setTransferEnabled] = useState(true);
   const [transferProtocol, setTransferProtocol] = useState<"ymodem" | "xmodem" | "zmodem">("ymodem");
   const [sendBarEnabled, setSendBarEnabled] = useState(true);
-  const [virtualPortEnabled, setVirtualPortEnabled] = useState(false);
-  const [virtualPortCount, setVirtualPortCount] = useState(1);
   const [sessionName, setSessionName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [refreshingEndpoints, setRefreshingEndpoints] = useState(false);
@@ -173,15 +152,12 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         if (targetTab.endpoint) setPort(targetTab.endpoint);
         if (targetTab.params) {
           const p = targetTab.params;
-          if (pluginRegistry.get(targetTab.pluginId)?.connectForm) setPluginParams(p);
-          if (typeof p.baud_rate === "number") setBaudRate(String(p.baud_rate));
-          if (typeof p.data_bits === "number") setDataBits(String(p.data_bits));
-          if (typeof p.parity === "string") setParity(p.parity);
-          if (typeof p.stop_bits === "string") setStopBits(p.stop_bits);
-          if (typeof p.flow_control === "string") setFlowControl(p.flow_control);
+          const plugin = pluginRegistry.get(targetTab.pluginId);
+          if (plugin?.connectForm) {
+            setPluginParams(plugin.normalizeConnectionParams?.(p) ?? p);
+          }
           if (typeof p.data_mode === "string") setDataMode(p.data_mode);
           if (typeof p.encoding === "string") setEncoding(p.encoding);
-          if (typeof p.dual_frame_timeout_ms === "number") setDualFrameTimeout(p.dual_frame_timeout_ms);
           // SSH 字段回填
           if (targetTab.connection_type === "ssh" || targetTab.pluginId === "ssh") {
             // 已保存 SSH 凭据只以 credential_account 引用存在于 Session；
@@ -242,8 +218,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
         if (typeof targetTab.transferEnabled === "boolean") setTransferEnabled(targetTab.transferEnabled);
         if (typeof targetTab.transferProtocol === "string") setTransferProtocol(targetTab.transferProtocol as "ymodem" | "xmodem" | "zmodem");
         if (typeof targetTab.sendBarEnabled === "boolean") setSendBarEnabled(targetTab.sendBarEnabled);
-        if (typeof targetTab.virtualPortEnabled === "boolean") setVirtualPortEnabled(targetTab.virtualPortEnabled);
-        if (typeof targetTab.virtualPortCount === "number") setVirtualPortCount(targetTab.virtualPortCount);
         return;
       }
     }
@@ -252,19 +226,11 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     setSelectedMode("serial");
     setPluginParams({});
     setPort("");
-    setBaudRate("115200");
-    setDataBits("8");
-    setParity("none");
-    setStopBits("1");
-    setFlowControl("none");
     setDataMode("text");
     setEncoding(DEFAULT_ENCODING);
-    setDualFrameTimeout(50);
     setTransferEnabled(true);
     setTransferProtocol("ymodem");
     setSendBarEnabled(true);
-    setVirtualPortEnabled(false);
-    setVirtualPortCount(1);
     // 重置 SSH 字段
     setSshHost("");
     setSshPort(22);
@@ -346,7 +312,8 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
 
   const handleModeSelect = useCallback((modeId: string) => {
     setSelectedMode(modeId);
-    setPluginParams(modeId === "local-shell" ? {
+    const plugin = pluginRegistry.get(modeId);
+    setPluginParams(plugin?.defaultConnectionParams?.() ?? (modeId === "local-shell" ? {
       shell_mode: "auto",
       executable: "",
       args: [],
@@ -359,7 +326,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       data_mode: "text",
       encoding: "utf-8",
       send_bar_enabled: false,
-    } : {});
+    } : {}));
     setStep("config");
     setError(null);
   }, []);
@@ -391,21 +358,9 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(selectedMode, requestedSendBarEnabled);
     const effectiveTransferEnabled = isSsh ? sshTransferEnabled : (isLocalShell || isTftp || isTelnet || isIperf || isNetwork ? false : transferEnabled);
 
-    let params: Record<string, unknown> = isSerial ? {
-      baud_rate: parseInt(baudRate),
-      data_bits: parseInt(dataBits),
-      parity,
-      stop_bits: stopBits,
-      flow_control: flowControl,
-      data_mode: dataMode,
-      dual_frame_timeout_ms: dualFrameTimeout,
-      encoding,
-      transfer_enabled: transferEnabled,
-      transfer_protocol: transferProtocol,
-      send_bar_enabled: sendBarEnabled,
-      virtual_port_enabled: virtualPortEnabled,
-      virtual_port_count: virtualPortCount,
-    } : isSsh ? {
+    let params: Record<string, unknown> = isSerial
+      ? (pluginRegistry.get("serial")?.normalizeConnectionParams?.(pluginParams) ?? pluginParams)
+      : isSsh ? {
       host: sshHost.trim(),
       port: sshPort,
       username: sshUsername.trim(),
@@ -540,7 +495,7 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
       setError(String(e));
     }
     setConnecting(false);
-  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginConnectionConfigValid, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, baudRate, dataBits, parity, stopBits, flowControl, dataMode, encoding, dualFrameTimeout, transferEnabled, transferProtocol, sendBarEnabled, virtualPortEnabled, virtualPortCount, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive, isTrdp]);
+  }, [port, isSerial, isSsh, isTftp, isTelnet, isIperf, isNetwork, isLocalShell, PluginConnectForm, pluginConnectionConfigValid, pluginParams, t, telnetHost, telnetPort, telnetSendBarEnabled, sshHost, tftpFileRoot, tftpListenIp, tftpListenPort, tftpWriteEnabled, tftpOverwrite, tftpSinglePort, dataMode, encoding, transferEnabled, transferProtocol, sendBarEnabled, sessionName, selectedMode, editSessionId, createOfflineSession, reconfigureSession, switchTab, onClose, sshPort, sshUsername, sshAuthMethod, sshPassword, sshPrivateKey, sshPassphrase, sshSendBarEnabled, sshTransferEnabled, fileServiceEnabled, fileServiceProtocol, journaldEnabled, iperfVersion, iperfListenIp, iperfListenPort, netTransport, netRole, netRemoteHost, netRemotePort, netLocalHost, netLocalPort, netMaxClients, netConnectTimeoutMs, netNodelay, netBroadcast, netMulticastGroup, netTtl, netMulticastInterface, netSelfReceive, isTrdp]);
 
   // 数据字符编码下拉（终端类协议共用：serial / ssh / telnet）
   const encodingField = (
@@ -643,176 +598,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                         disabled={connecting}
                       />
                     </div>
-
-                    {/* ── 串口配置 ── */}
-                    {isSerial && (
-                      <>
-                        <div className={styles.field}>
-                          <label className={styles.label}>{t("serial.port")}</label>
-                          <div className={styles.row}>
-                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} style={{ flex: 1 }} value={port} onChange={e => setPort(e.target.value)} disabled={connecting}>
-                              {serialEndpoints.length === 0 && <option value="">{t("serial.noPorts")}</option>}
-                              {serialEndpoints.map(ep => (
-                                <option key={ep.name} value={ep.name}>{ep.name}{ep.description !== ep.name ? ` — ${ep.description}` : ""}</option>
-                              ))}
-                            </select>
-                            <button
-                              className={`${styles.iconBtn} liquid-glass-button`}
-                              onClick={() => void refreshModeEndpoints("serial", true)}
-                              title={t("serial.refresh")}
-                              disabled={connecting || refreshingEndpoints}
-                            >
-                              <Icon name="refresh" size="md" />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className={styles.row2}>
-                          <div className={styles.field}>
-                            <label className={styles.label}>{t("serial.baudRate")}</label>
-                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={baudRate} onChange={e => setBaudRate(e.target.value)} disabled={connecting}>
-                              {BAUD_RATES.map(b => <option key={b} value={b}>{b}</option>)}
-                            </select>
-                          </div>
-                          <div className={styles.field}>
-                            <label className={styles.label}>{t("serial.dataBits")}</label>
-                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataBits} onChange={e => setDataBits(e.target.value)} disabled={connecting}>
-                              {DATA_BITS.map(d => <option key={d} value={d}>{d}</option>)}
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className={styles.row2}>
-                          <div className={styles.field}>
-                            <label className={styles.label}>{t("serial.parity")}</label>
-                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={parity} onChange={e => setParity(e.target.value)} disabled={connecting}>
-                              {PARITY.map(p => <option key={p.v} value={p.v}>{p.l}</option>)}
-                            </select>
-                          </div>
-                          <div className={styles.field}>
-                            <label className={styles.label}>{t("serial.stopBits")}</label>
-                            <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={stopBits} onChange={e => setStopBits(e.target.value)} disabled={connecting}>
-                              {STOP_BITS.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className={styles.field}>
-                          <label className={styles.label}>{t("serial.flowControl")}</label>
-                          <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={flowControl} onChange={e => setFlowControl(e.target.value)} disabled={connecting}>
-                            {FLOW_CONTROL.map(f => <option key={f.v} value={f.v}>{f.l}</option>)}
-                          </select>
-                        </div>
-
-                        <div className={styles.field}>
-                          <label className={styles.label}>{t("serial.dataMode")}</label>
-                          <select className={`${styles.select} liquid-glass-input liquid-glass-select`} value={dataMode} onChange={e => setDataMode(e.target.value)} disabled={connecting}>
-                            <option value="text">{t("serial.dataModeText")}</option>
-                            <option value="hex">{t("serial.dataModeHex")}</option>
-                            <option value="dual">{t("serial.dataModeDual")}</option>
-                          </select>
-                        </div>
-
-                        {/* 数据字符编码（连接后不可变，改需重连） */}
-                        {encodingField}
-
-                        {/* Dual 模式分帧超时（仅 Dual 模式可见） */}
-                        {dataMode === "dual" && (
-                          <div className={styles.field}>
-                            <label className={styles.label}>{t("serial.dualFrameTimeout")}</label>
-                            <input
-                              type="number"
-                              className={`${styles.numberInput} liquid-glass-input`}
-                              value={dualFrameTimeout}
-                              min={5}
-                              max={500}
-                              step={5}
-                              onChange={e => setDualFrameTimeout(Number(e.target.value))}
-                              disabled={connecting}
-                            />
-                          </div>
-                        )}
-
-                        {/* 文件传输开关 */}
-                        <div className={styles.field}>
-                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                            <input
-                              type="checkbox"
-                              checked={transferEnabled}
-                              onChange={e => setTransferEnabled(e.target.checked)}
-                              disabled={connecting}
-                            />
-                            <div />
-                            <span>{t("serial.enableTransfer")}</span>
-                          </label>
-                        </div>
-
-                        {/* 传输协议选择（仅启用传输时可见） */}
-                        {transferEnabled && (
-                          <div className={styles.field}>
-                            <label className={styles.label}>{t("serial.transferProtocol")}</label>
-                            <select
-                              className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                              value={transferProtocol}
-                              onChange={e => setTransferProtocol(e.target.value as "ymodem" | "xmodem" | "zmodem")}
-                              disabled={connecting}
-                            >
-                              <option value="ymodem">YModem</option>
-                              <option value="xmodem">XModem</option>
-                              <option value="zmodem">ZModem</option>
-                            </select>
-                          </div>
-                        )}
-
-                        {/* 发送栏开关 */}
-                        <div className={styles.field}>
-                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                            <input
-                              type="checkbox"
-                              checked={sendBarEnabled}
-                              onChange={e => setSendBarEnabled(e.target.checked)}
-                              disabled={connecting}
-                            />
-                            <div />
-                            <span>{t("serial.enableSendBar") || "启用发送栏"}</span>
-                          </label>
-                        </div>
-
-                        {/* 虚拟串口开关 */}
-                        <div className={styles.field}>
-                          <label className={`liquid-glass-toggle ${styles.checkboxLabel}`}>
-                            <input
-                              type="checkbox"
-                              checked={virtualPortEnabled}
-                              onChange={e => setVirtualPortEnabled(e.target.checked)}
-                              disabled={connecting}
-                            />
-                            <div />
-                            <span>{t("serial.enableVirtualPort") || "启用虚拟串口"}</span>
-                          </label>
-                        </div>
-
-                        {/* 设备数量（仅启用虚拟串口时可见） */}
-                        {virtualPortEnabled && (
-                          <div className={styles.field}>
-                            <label className={styles.label}>
-                              {t("serial.virtualPortCount") || "设备数量"}
-                            </label>
-                            <select
-                              className={`${styles.select} liquid-glass-input liquid-glass-select`}
-                              value={virtualPortCount}
-                              onChange={e => setVirtualPortCount(Number(e.target.value))}
-                              disabled={connecting}
-                            >
-                              <option value={1}>1</option>
-                              <option value={2}>2</option>
-                              <option value={3}>3</option>
-                              <option value={4}>4</option>
-                            </select>
-                          </div>
-                        )}
-                      </>
-                    )}
 
                     {/* ── SSH 配置 ── */}
                     {isSsh && (
@@ -1436,6 +1221,19 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
                         params={pluginParams}
                         onChange={setPluginParams}
                         endpoints={state.endpoints.filter(endpoint => endpoint.connection_type === selectedMode)}
+                        endpoint={isSerial ? port : undefined}
+                        onEndpointChange={isSerial ? setPort : undefined}
+                        onRefreshEndpoints={selectedPlugin?.manifest.capabilities.includes("endpoint_discovery")
+                          ? () => void refreshModeEndpoints(selectedMode, true)
+                          : undefined}
+                        refreshingEndpoints={refreshingEndpoints}
+                        disabled={connecting}
+                        sessionOptions={{ transferEnabled, transferProtocol, sendBarEnabled }}
+                        onSessionOptionsChange={options => {
+                          setTransferEnabled(options.transferEnabled);
+                          setTransferProtocol((options.transferProtocol ?? "ymodem") as "ymodem" | "xmodem" | "zmodem");
+                          setSendBarEnabled(options.sendBarEnabled);
+                        }}
                       />
                     )}
 

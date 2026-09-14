@@ -2,10 +2,9 @@ import { useState, useEffect, useMemo, useRef, type ReactNode, Fragment } from "
 import { useTranslation } from "react-i18next";
 import { getVersion } from "@tauri-apps/api/app";
 import { useSession } from "../../context/SessionContext";
-import { useCom0comStatus } from "../../hooks/useCom0comStatus";
 import { pluginRegistry, type StatusBarContext, type StatusBarItem } from "../../core/plugin-registry";
 import { charsetLabel } from "../../utils/charsets";
-import { formatBytes, formatUptime, formatPortParams, formatRate } from "../../utils/format";
+import { formatBytes, formatUptime, formatRate } from "../../utils/format";
 import type { UpdatePhase } from "../../types/updater";
 import Icon from "../common/Icon";
 import styles from "./StatusBar.module.css";
@@ -13,14 +12,11 @@ import styles from "./StatusBar.module.css";
 /** 左区段优先级（数值越大越靠左，与 VS Code StatusBar 的 priority 语义一致） */
 const PRI = {
   indicator: 1000,
-  serialParams: 880,
-  signalLines: 870,
   typeBadge: 860,
   uptime: 700,
   dataMode: 600,
   encoding: 500,
   stats: 400,
-  vport: 300,
   log: 200,
 } as const;
 
@@ -51,17 +47,8 @@ export default function StatusBar({
     getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion(""));
   }, []);
 
-  const {
-    driverMissing,
-    driverInstalling,
-    cleaningPorts,
-    orphanCount,
-    handleRetryVPort,
-    handleCleanupVPorts,
-  } = useCom0comStatus();
 
   const isConnected = activeTab?.state === "connected" || activeTab?.state === "transferring";
-  const isSerial = activeTab?.pluginId === "serial";
   const isSsh = activeTab?.pluginId === "ssh";
   const params = activeTab?.params as Record<string, unknown> | undefined;
   const supportsStreamStatus = activePlugin?.manifest.content_type === "terminal" || activePlugin?.manifest.send_bar === true;
@@ -165,34 +152,6 @@ export default function StatusBar({
         </div>
       ),
     },
-    isConnected && isSerial && params
-      ? {
-          key: "serialParams",
-          priority: PRI.serialParams,
-          node: <div className={styles.segment}><span className={styles.paramText}>{formatPortParams(params)}</span></div>,
-        }
-      : null,
-    isConnected && isSerial
-      ? {
-          key: "signalLines",
-          priority: PRI.signalLines,
-          node: (
-            <div className={styles.segment}>
-              <span className={`${styles.signalDot} ${styles.signalUnknown}`} title="DTR — 等待后端 API">DTR --</span>
-              <span className={`${styles.signalDot} ${styles.signalUnknown}`} title="RTS — 等待后端 API">RTS --</span>
-              <span className={`${styles.signalDot} ${styles.signalUnknown}`} title="CTS — 等待后端 API">CTS --</span>
-              <span className={`${styles.signalDot} ${styles.signalUnknown}`} title="DSR — 等待后端 API">DSR --</span>
-            </div>
-          ),
-        }
-      : null,
-    isConnected && isSerial
-      ? {
-          key: "typeSerial",
-          priority: PRI.typeBadge,
-          node: <div className={styles.segment}><span className={styles.typeBadge}>{t("statusBar.typeSerial")}</span></div>,
-        }
-      : null,
     isConnected && isSsh
       ? {
           key: "typeSsh",
@@ -245,92 +204,6 @@ export default function StatusBar({
             <div className={styles.stats}>
               <span className={styles.statItem} title="TX"><Icon name="arrow-up" size="xs" /> {formatBytes(activeTab.stats.txBytes)} · {formatRate(rate.tx)}</span>
               <span className={styles.statItem} title="RX"><Icon name="arrow-down" size="xs" /> {formatBytes(activeTab.stats.rxBytes)} · {formatRate(rate.rx)}</span>
-            </div>
-          ),
-        }
-      : null,
-    activeTab && isConnected && isSerial && activeTab.virtualVirtualEndpoints && activeTab.virtualVirtualEndpoints.length > 0
-      ? {
-          key: "vport",
-          priority: PRI.vport,
-          node: (
-            <div className={styles.segment}>
-              <span className={styles.paramText}>
-                VPort: {activeTab.virtualVirtualEndpoints
-                  .map(endpoint => endpoint.external_path)
-                  .filter(Boolean)
-                  .join(", ")}
-              </span>
-            </div>
-          ),
-        }
-      : null,
-    activeTab && isConnected && isSerial && activeTab.virtualPortError
-      ? {
-          key: "vportError",
-          priority: PRI.vport,
-          node: (
-            <div className={styles.segment} title={activeTab.virtualPortError}>
-              <span className={`${styles.paramText} ${styles.vportWarning}`}>
-                <Icon name="warning" size="xs" />
-                {activeTab.virtualPortErrorKind === "files_missing"
-                  ? t("serial.virtualPort.filesMissing")
-                  : activeTab.virtualPortErrorKind === "permission"
-                    ? t("serial.virtualPort.permissionRequired")
-                    : activeTab.virtualPortErrorKind === "create_failed"
-                      ? t("serial.virtualPort.createFailed")
-                      : t("serial.virtualPort.notInstalled")}
-              </span>
-              <span
-                className={`${styles.paramText} ${styles.vportAction}`}
-                style={{ opacity: driverInstalling ? 0.5 : 1 }}
-                onClick={() => !driverInstalling && handleRetryVPort()}
-                title={t("serial.virtualPort.retryHint")}
-              >
-                [{driverInstalling ? t("serial.virtualPort.installing") : t("serial.virtualPort.retry")}]
-              </span>
-            </div>
-          ),
-        }
-      : null,
-    isSerial && driverMissing && !(activeTab && isConnected && activeTab.virtualPortError)
-      ? {
-          key: "driverMissing",
-          priority: PRI.vport,
-          node: (
-            <div className={styles.segment} title={t("serial.virtualPort.retryHint")}>
-              <span className={`${styles.paramText} ${styles.vportWarning}`}>
-                <Icon name="warning" size="xs" /> {t("serial.virtualPort.notInstalled")}
-              </span>
-              <span
-                className={`${styles.paramText} ${styles.vportAction}`}
-                style={{ opacity: driverInstalling ? 0.5 : 1 }}
-                onClick={() => !driverInstalling && handleRetryVPort()}
-                title={t("serial.virtualPort.retryHint")}
-              >
-                [{driverInstalling ? t("serial.virtualPort.installing") : t("serial.virtualPort.retry")}]
-              </span>
-            </div>
-          ),
-        }
-      : null,
-    isSerial && orphanCount > 0
-      ? {
-          key: "orphans",
-          priority: PRI.vport,
-          node: (
-            <div className={styles.segment} title={t("serial.virtualPort.cleanupHint")}>
-              <span className={`${styles.paramText} ${styles.vportWarning}`}>
-                <Icon name="warning" size="xs" /> VPort {orphanCount} {t("serial.virtualPort.orphansDetected")}
-              </span>
-              <span
-                className={`${styles.paramText} ${styles.vportAction}`}
-                style={{ opacity: cleaningPorts ? 0.5 : 1 }}
-                onClick={() => !cleaningPorts && handleCleanupVPorts()}
-                title={t("serial.virtualPort.cleanupHint")}
-              >
-                [{cleaningPorts ? (t("serial.virtualPort.cleaning") || "正在清理...") : (t("serial.virtualPort.cleanup") || "清理")}]
-              </span>
             </div>
           ),
         }

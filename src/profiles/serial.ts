@@ -2,20 +2,18 @@ import type { TabInfo } from "../context/SessionContext";
 import type { ProfileResolver, SessionProfile } from "./types";
 import type { IconName } from "../components/common/Icon";
 
+function displayParam(value: unknown): string {
+  return value === undefined || value === null || value === "" ? "—" : String(value);
+}
+
 /**
  * Serial 连接的 Profile 解析器
  *
  * 身份信息：名称、类型、端口、状态
- * 协议参数：波特率、数据位、校验位、停止位、流控
+ * 协议参数：只展示当前 Session 已保存的真实链路参数，不在展示层复制默认配置。
  */
 export const serialProfile: ProfileResolver = (tab: TabInfo): SessionProfile => {
   const p = tab.params ?? {};
-
-  const baudRate = p.baud_rate ?? "115200";
-  const dataBits = p.data_bits ?? "8";
-  const parity = p.parity ?? "none";
-  const stopBits = p.stop_bits ?? "1";
-  const flowControl = p.flow_control ?? "none";
 
   return {
     identity: [
@@ -29,11 +27,11 @@ export const serialProfile: ProfileResolver = (tab: TabInfo): SessionProfile => 
       },
     ],
     parameters: [
-      { label: "serial.baudRate", value: String(baudRate), monospace: true },
-      { label: "serial.dataBits", value: String(dataBits), monospace: true },
-      { label: "serial.parity", value: String(parity), monospace: true },
-      { label: "serial.stopBits", value: String(stopBits), monospace: true },
-      { label: "serial.flowControl", value: String(flowControl), monospace: true },
+      { label: "serial.baudRate", value: displayParam(p.baud_rate), monospace: true },
+      { label: "serial.dataBits", value: displayParam(p.data_bits), monospace: true },
+      { label: "serial.parity", value: displayParam(p.parity), monospace: true },
+      { label: "serial.stopBits", value: displayParam(p.stop_bits), monospace: true },
+      { label: "serial.flowControl", value: displayParam(p.flow_control), monospace: true },
     ],
   };
 };

@@ -35,13 +35,6 @@ use std::sync::{Arc, LazyLock, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
 
-// ── 可调参数常量 ──────────────────────────────────────
-
-/// 桥接数据 channel 容量（物理端口 → 虚拟端口广播）
-const BRIDGE_DATA_CHANNEL_CAPACITY: usize = 256;
-/// 写回 channel 容量（虚拟端口 → 物理端口写入线程）
-const BRIDGE_WRITEBACK_CHANNEL_CAPACITY: usize = 128;
-
 // ── 数据结构 ────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,8 +89,6 @@ pub struct SavedSessionInfo {
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: bool,
-    pub virtual_port_enabled: bool,
-    pub virtual_port_count: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -554,25 +545,16 @@ pub async fn connect_session(
     }
 }
 
-/// BridgeChannel = (tx, rx) 类型别名
-type BridgeChannel = (
-    std::sync::mpsc::SyncSender<Vec<u8>>,
-    std::sync::mpsc::Receiver<Vec<u8>>,
-);
-
-/// 创建 on_data 回调（含 DataBatcher + 日志记录 + 可选虚拟端口转发）。
+/// 创建共享 on_data 回调（DataBatcher + 日志记录）。
 ///
 /// DataBatcher 的所有权被移入回调闭包（通过 `batcher.push()` 消费数据），
 /// 因此只返回 `Box<dyn Fn>`；`DataBatcher::Drop` 在会话断开时自动 flush + 清理。
-///
-/// `bridge_tx` 为可选虚拟端口转发通道（仅串口会话提供）。
-/// 全部会话类型共用此函数，消除 ~60 行重复代码。
+/// 虚拟串口不经过 UI 回调旁路，而是直接订阅 DataPlane。
 fn create_on_data_callback(
     app: &AppHandle,
     log_tx: std::sync::mpsc::SyncSender<LogEntry>,
     data_mode: String,
     encoding: String,
-    bridge_tx: Option<std::sync::mpsc::SyncSender<Vec<u8>>>,
 ) -> Box<dyn Fn(String, Vec<u8>) + Send> {
     let app_clone = app.clone();
     let overflow_app = app.clone();
@@ -587,11 +569,8 @@ fn create_on_data_callback(
     });
 
     Box::new(move |session_id, data| {
-        // 日志和桥接需克隆数据；主路径（batcher）直接获取所有权，省去一次 clone
         let data_for_log = data.clone();
-        let data_for_bridge = bridge_tx.as_ref().map(|_| data.clone());
         if let Some(total_dropped) = batcher.push(session_id.clone(), data) {
-            // 只在 1 / 2 / 4 / 8 ... 次时通知 UI，避免过载时事件本身形成新的压力。
             if total_dropped == 1 || total_dropped.is_power_of_two() {
                 let _ = overflow_app.emit(
                     "session-display-overflow",
@@ -605,7 +584,7 @@ fn create_on_data_callback(
         try_send_session_log(
             &log_tx,
             DataLogEntry {
-                session_id: session_id.clone(),
+                session_id,
                 direction: DataDirection::RX,
                 data_mode: data_mode.clone(),
                 encoding: encoding.clone(),
@@ -613,9 +592,6 @@ fn create_on_data_callback(
                 timestamp: Local::now(),
             },
         );
-        if let (Some(tx), Some(d)) = (bridge_tx.as_ref(), data_for_bridge) {
-            let _ = tx.try_send(d);
-        }
     })
 }
 
@@ -679,31 +655,15 @@ async fn connect_session_serial(
         .unwrap_or("utf-8")
         .to_string();
 
-    // 桥接数据通道 (容量 256): 物理端口数据 → 虚拟端口桥接线程
-    // 仅在虚拟串口启用时创建，避免不必要的通道分配
-    let mut bridge: Option<BridgeChannel> = if virtual_enabled {
-        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(BRIDGE_DATA_CHANNEL_CAPACITY);
-        Some((tx, rx))
-    } else {
-        None
-    };
-    let bridge_tx = bridge.as_ref().map(|(tx, _)| tx.clone());
-
     let app_data = app.clone();
     let log_tx = {
         let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
         log_engine.sender()
     };
 
-    // 共享 on_data 回调：DataBatcher + 日志 + 虚拟端口转发
-    // 数据推送至脚本引擎由 SessionDataPlane subscription 统一扇出
-    let on_data = create_on_data_callback(
-        &app_data,
-        log_tx,
-        data_mode.clone(),
-        encoding_for_log,
-        bridge_tx,
-    );
+    // 共享 on_data 回调只负责 UI 批处理与日志；脚本/虚拟串口均通过
+    // DataPlane subscription 独立消费，避免耦合或静默丢字节。
+    let on_data = create_on_data_callback(&app_data, log_tx, data_mode.clone(), encoding_for_log);
 
     let app_disconnect = app.clone();
     let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
@@ -806,9 +766,7 @@ async fn connect_session_serial(
     // (even when virtual ports are disabled)
     let mut vport_endpoints_json: Vec<serde_json::Value> = Vec::new();
 
-    // ── Virtual port pair creation + bridge thread setup ──
-    // TODO: Extract into setup_virtual_external_pathridge() helper once the parameter
-    // surface stabilizes (currently touches vpm, session_store, app, bridge channel).
+    // ── Virtual port pair creation + direct DataPlane/SessionIo bridge ──
     if virtual_enabled && virtual_count > 0 {
         let config = VirtualPortConfig {
             enabled: true,
@@ -856,59 +814,77 @@ async fn connect_session_serial(
 
         if !pairs.is_empty() {
             let virtual_port_names: Vec<String> =
-                pairs.iter().map(|p| p.bridge_path.clone()).collect();
-            let (_bridge_tx, bridge_rx) = bridge
-                .take()
-                .expect("bridge must be Some when virtual_enabled is true");
-
-            // 桥接线程 → 物理端口写线程 channel（容量 128）
-            // 使用独立 channel 避免桥接循环内获取 SessionStore Mutex
-            let (write_tx, write_rx) =
-                std::sync::mpsc::sync_channel::<Vec<u8>>(BRIDGE_WRITEBACK_CHANNEL_CAPACITY);
-
-            // 独立写线程：消费桥接线程的虚拟端口数据，写入物理端口
-            // 只有此线程持有 SessionStore Mutex，阻塞不影响桥接循环
-            let app_for_write = app.clone();
-            let sid = session_id.clone();
-            std::thread::spawn(move || {
-                while let Ok(data) = write_rx.recv() {
-                    if let Ok(store) = app_for_write.state::<AppState>().session_store.lock() {
-                        let _ = store.write(&sid, &data);
-                    }
-                }
-                log::trace!("桥接写线程退出: session={}", sid);
-            });
-
-            // Extract baud rate from serial config for virtual port opening
-            let vexternal_pathaud_rate = params_clone
+                pairs.iter().map(|pair| pair.bridge_path.clone()).collect();
+            let virtual_baud_rate = params_clone
                 .get("baud_rate")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32)
-                .unwrap_or(115200);
-
-            let vexternal_pathridge = VirtualPortBridge::spawn(
+                .and_then(|value| value.as_u64())
+                .map(|value| value as u32)
+                .ok_or_else(|| "串口配置缺少有效 baud_rate".to_string())?;
+            let io = {
+                let store = state
+                    .session_store
+                    .lock()
+                    .map_err(|error| error.to_string())?;
+                store
+                    .get_io_for(&session_id)
+                    .ok_or_else(|| "串口会话缺少共享 I/O capability".to_string())?
+            };
+            let error_app = app.clone();
+            let error_session_id = session_id.clone();
+            match VirtualPortBridge::spawn(
                 virtual_port_names,
-                vexternal_pathaud_rate,
-                bridge_rx,
-                write_tx,
-            );
-
-            {
-                let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-                if let Some(handle) = store.get_session_mut(&session_id) {
-                    handle.virtual_external_pathridge = Some(vexternal_pathridge);
-                    handle.virtual_endpoints = pairs.clone();
+                virtual_baud_rate,
+                io,
+                Box::new(move |reason| {
+                    let _ = error_app.emit(
+                        "virtual-port-failed",
+                        serde_json::json!({
+                            "session_id": error_session_id,
+                            "kind": "bridge_failed",
+                            "reason": reason,
+                        }),
+                    );
+                }),
+            ) {
+                Ok(bridge) => {
+                    {
+                        let mut store = state
+                            .session_store
+                            .lock()
+                            .map_err(|error| error.to_string())?;
+                        if let Some(handle) = store.get_session_mut(&session_id) {
+                            handle.virtual_port_bridge = Some(bridge);
+                            handle.virtual_endpoints = pairs.clone();
+                        }
+                    }
+                    let _ = app.emit(
+                        "virtual-port-created",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "endpoints": &vport_endpoints_json,
+                        }),
+                    );
+                }
+                Err(reason) => {
+                    // VPort is an optional capability. Roll back only the endpoints that were just
+                    // created; the already-established physical Serial session remains valid.
+                    if let Ok(mut vpm) = state.virtual_port_manager.lock() {
+                        for pair in &pairs {
+                            let _ = vpm.destroy_endpoint(pair);
+                        }
+                    }
+                    vport_endpoints_json.clear();
+                    log::warn!("虚拟端口桥接启动失败 (session={}): {}", session_id, reason);
+                    let _ = app.emit(
+                        "virtual-port-failed",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "kind": "bridge_failed",
+                            "reason": reason,
+                        }),
+                    );
                 }
             }
-
-            // 保留独立事件供 reconnect 场景（tab 已存在时更新 VPort 信息）
-            let _ = app.emit(
-                "virtual-port-created",
-                serde_json::json!({
-                    "session_id": session_id,
-                    "endpoints": &vport_endpoints_json,
-                }),
-            );
         } else {
             // 使用真实失败原因，避免用一句写死的 "driver not installed" 掩盖
             // 端口耗尽 / UAC 被取消等真实问题。
@@ -938,10 +914,6 @@ async fn connect_session_serial(
             );
         }
     }
-    // virtual_enabled=true 时 bridge_rx 被 VirtualPortBridge::spawn() 消费，
-    // virtual_enabled=false 时 bridge Option 在此 drop（通道未创建）。
-    // bridge_tx 仅在 virtual_enabled=true 时存在，每个 on_data 回调检查并跳过 None 情况。
-
     let (actual_name, actual_params, connected_at) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         store
@@ -1149,7 +1121,7 @@ fn connect_simple_terminal_session(
         .and_then(Value::as_str)
         .unwrap_or("utf-8")
         .to_string();
-    let on_data = create_on_data_callback(&app, log_tx, data_mode, encoding, None);
+    let on_data = create_on_data_callback(&app, log_tx, data_mode, encoding);
 
     let app_disconnect = app.clone();
     let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
@@ -1737,7 +1709,7 @@ async fn create_terminal_sub_channel(
         .lock()
         .map_err(|e| e.to_string())?
         .sender();
-    let on_data = create_on_data_callback(app, log_tx, data_mode, encoding.clone(), None);
+    let on_data = create_on_data_callback(app, log_tx, data_mode, encoding.clone());
 
     let app_disconnect = app.clone();
     let pid = parent_id.to_string();
@@ -2268,8 +2240,6 @@ pub async fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, Stri
             transfer_enabled: s.transfer_enabled,
             transfer_protocol: s.transfer_protocol.clone(),
             send_bar_enabled: s.send_bar_enabled,
-            virtual_port_enabled: s.virtual_port_enabled,
-            virtual_port_count: s.virtual_port_count,
         })
         .collect())
 }
@@ -2358,15 +2328,6 @@ pub async fn save_session_config(
         transfer_enabled: transfer_enabled.unwrap_or(true),
         transfer_protocol: transfer_protocol.clone(),
         send_bar_enabled: send_bar_enabled.unwrap_or(true),
-        virtual_port_enabled: params
-            .get("virtual_port_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        virtual_port_count: params
-            .get("virtual_port_count")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32)
-            .unwrap_or(0),
     };
 
     if pid == "ssh" {
@@ -4163,8 +4124,6 @@ mod command_security_tests {
             transfer_enabled: false,
             transfer_protocol: None,
             send_bar_enabled: false,
-            virtual_port_enabled: false,
-            virtual_port_count: 0,
         }
     }
 

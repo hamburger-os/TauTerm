@@ -35,11 +35,25 @@ export interface PluginManifest {
   transfer_protocols: string[];
 }
 
-/** 连接表单组件 Props */
+/** Session 通用连接能力开关；不属于任何单个协议 params。 */
+export interface SessionConnectOptions {
+  transferEnabled: boolean;
+  transferProtocol?: string;
+  sendBarEnabled: boolean;
+}
+
+/** 连接表单组件 Props。协议表单只拥有协议配置，Session 外壳能力单独传递。 */
 export interface ConnectFormProps {
   params: Record<string, unknown>;
   onChange: (params: Record<string, unknown>) => void;
   endpoints?: EndpointInfo[];
+  endpoint?: string;
+  onEndpointChange?: (endpoint: string) => void;
+  onRefreshEndpoints?: () => void;
+  refreshingEndpoints?: boolean;
+  disabled?: boolean;
+  sessionOptions?: SessionConnectOptions;
+  onSessionOptionsChange?: (options: SessionConnectOptions) => void;
 }
 
 /** 端点信息 */
@@ -92,6 +106,9 @@ export interface StatusBarTab {
   state: string;
   endpoint: string;
   params?: Record<string, unknown>;
+  virtualVirtualEndpoints?: Array<{ external_path: string }>;
+  virtualPortError?: string;
+  virtualPortErrorKind?: string;
 }
 
 /** 状态栏项（声明式描述符） */
@@ -117,6 +134,10 @@ export type LocaleMap = Record<string, Record<string, string>>;
 export interface PluginRegistration {
   manifest: PluginManifest;
   connectForm?: ComponentType<ConnectFormProps>;
+  /** 新建配置时的唯一默认值来源。 */
+  defaultConnectionParams?: () => Record<string, unknown>;
+  /** 将持久化/编辑态参数收束到插件当前 schema；不承担旧版本兼容迁移。 */
+  normalizeConnectionParams?: (params: Record<string, unknown>) => Record<string, unknown>;
   /** 插件连接表单是否满足创建/保存会话的最低要求。 */
   isConnectionConfigValid?: (params: Record<string, unknown>) => boolean;
   /** 默认名称（创建时一次性生成）与动态配置摘要。 */
