@@ -127,7 +127,9 @@ impl Drop for SshConfig {
 impl SshConfig {
     fn validate(&self) -> Result<(), SessionError> {
         if normalize_ssh_host(&self.host).is_empty() {
-            return Err(SessionError::InvalidParameter("SSH 主机地址不能为空".into()));
+            return Err(SessionError::InvalidParameter(
+                "SSH 主机地址不能为空".into(),
+            ));
         }
         if self.port == 0 {
             return Err(SessionError::InvalidParameter(
@@ -493,12 +495,7 @@ async fn build_connection_with_config(
     // connect() 本身会跨越 check_server_key。不能用一个固定 timeout 包住整个 Future，
     // 否则用户阅读并确认 Host Key 的时间也会被算进网络超时。
     let mut connect_task = tokio::spawn(async move {
-        russh::client::connect(
-            config_clone,
-            (target_host.as_str(), target_port),
-            handler,
-        )
-        .await
+        russh::client::connect(config_clone, (target_host.as_str(), target_port), handler).await
     });
     let network_deadline = tokio::time::sleep(SSH_NETWORK_PHASE_TIMEOUT);
     tokio::pin!(network_deadline);
@@ -836,7 +833,10 @@ mod tests {
     #[test]
     fn ipv6_endpoint_is_normalized_without_string_address_ambiguity() {
         assert_eq!(normalize_ssh_host("[2001:db8::1]"), "2001:db8::1");
-        assert_eq!(format_ssh_endpoint("2001:db8::1", 2222), "[2001:db8::1]:2222");
+        assert_eq!(
+            format_ssh_endpoint("2001:db8::1", 2222),
+            "[2001:db8::1]:2222"
+        );
         assert_eq!(format_ssh_endpoint("example.test", 22), "example.test:22");
     }
 
