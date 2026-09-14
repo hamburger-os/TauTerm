@@ -1,0 +1,31 @@
+name: XModem invariant fixes
+
+on:
+  push:
+    branches:
+      - fix/transfer-role-aware-protocol-config
+    paths:
+      - scripts/apply_xmodem_invariant_fixes.py
+      - .github/workflows/xmodem-invariant-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply XModem invariant fixes
+        run: python scripts/apply_xmodem_invariant_fixes.py
+      - name: Format Rust
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml
+      - name: Commit product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/src/transfer/xmodem.rs docs/modules/TRANSFER.md scripts/test-file-transfer-lifecycle.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(transfer): enforce standard XModem sequencing"
+          git push
