@@ -144,10 +144,18 @@ export interface TransferStartedPayload {
   direction: TransferDirection;
 }
 
+/** 进度流中的显式事件类型；不使用互相冲突的布尔标记组合。 */
+export type TransferProgressKind =
+  | "file_start"
+  | "progress"
+  | "file_complete"
+  | "batch_complete";
+
 /** 后端 file-transfer:progress 统一事件。 */
 export interface UnifiedTransferProgressPayload {
   session_id: string;
   transfer_id: string;
+  kind: TransferProgressKind;
   protocol: string;
   file_name: string;
   bytes_done: number;
@@ -158,11 +166,8 @@ export interface UnifiedTransferProgressPayload {
   aggregate_bytes: number;
   aggregate_total: number;
   direction: TransferDirection;
-  is_file_start: boolean;
-  is_file_complete: boolean;
   file_success: boolean | null;
   file_error: string | null;
-  is_batch_complete: boolean;
 }
 
 /** 批次中单个文件的结果。 */
@@ -173,28 +178,15 @@ export interface BatchFileResult {
   error?: string | null;
 }
 
-/** 后端 file-transfer:finished 事件。results 在正常完成的协议执行中保留精确文件终态。 */
+/** 后端 file-transfer:finished 终态事件；每个字段都是任务终态协议的一部分。 */
 export interface TransferFinishedPayload {
   session_id: string;
-  transfer_id?: string;
-  protocol?: string;
+  transfer_id: string;
+  protocol: string;
   success: boolean;
-  cancelled?: boolean;
-  error?: string | null;
-  results?: BatchFileResult[];
-}
-
-/** 兼容通用进度组件的扁平进度信息。 */
-export interface TransferProgress {
-  file_name: string;
-  bytes_transferred: number;
-  total_bytes: number;
-  direction: TransferDirection;
-  file_index?: number;
-  total_files?: number;
-  aggregate_bytes_transferred?: number;
-  aggregate_total_bytes?: number;
-  bytes_per_second?: number;
+  cancelled: boolean;
+  error: string | null;
+  results: BatchFileResult[] | null;
 }
 
 // ── Frontend State Types ──────────────────────────────────
