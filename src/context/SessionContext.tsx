@@ -55,10 +55,6 @@ export interface TabInfo {
   sendBarEnabled?: boolean;
   /** Telnet: 本地回显状态（服务器 WONT ECHO 时客户端回显输入，由后端协商推送） */
   localEcho?: boolean;
-  /** 是否启用虚拟串口（默认 true） */
-  virtualPortEnabled?: boolean;
-  /** 虚拟端口对数量（默认 1） */
-  virtualPortCount?: number;
   /** 对外虚拟端点列表（连接成功时后端推送） */
   virtualVirtualEndpoints?: VirtualPortEndpoint[];
   /** 虚拟端口创建失败时的错误信息 */
@@ -347,8 +343,6 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
                 sendBarEnabled: action.sendBarEnabled ?? t.sendBarEnabled,
                 pluginId: action.pluginId ?? t.pluginId,
                 connectedAt: action.connectedAt !== undefined ? action.connectedAt : t.connectedAt,
-                virtualPortEnabled: (action.params?.virtual_port_enabled as boolean) ?? t.virtualPortEnabled,
-                virtualPortCount: (action.params?.virtual_port_count as number) ?? t.virtualPortCount,
                 fileServiceEnabled: action.fileServiceEnabled ?? (action.params?.file_service_enabled as boolean) ?? t.fileServiceEnabled,
                 fileServiceProtocol: action.fileServiceProtocol ?? (action.params?.file_service_protocol as string) ?? t.fileServiceProtocol,
                 journaldEnabled: action.journaldEnabled ?? (action.params?.journald_enabled as boolean) ?? t.journaldEnabled,
@@ -705,6 +699,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const connect = useCallback(async (opts: ConnectOptions) => {
     const { endpoint, params, name, pluginId, transferEnabled, transferProtocol, sendBarEnabled, journaldEnabled, sessionId, initialElevated } = opts;
     const effectivePluginId = pluginId || "serial";
+    const effectiveParams = pluginRegistry.get(effectivePluginId)?.normalizeConnectionParams?.(params) ?? params;
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
     dispatch({ type: "SET_ERROR", error: null });
     // 如果已知 sessionId（已创建离线配置），立即将 tab 状态设为 connecting
@@ -717,7 +712,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // 继续运行，连接成功后 emit session-connected 造成前后端状态不一致。
       const sid = await invoke<string>("connect_session", {
         request: {
-        endpoint, params, name,
+        endpoint, params: effectiveParams, name,
         pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
         transferProtocol: transferProtocol || "ymodem",
@@ -792,17 +787,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       const pid = pluginId || "serial";
       const plugin = pluginRegistry.get(pid);
+      const normalizedParams = plugin?.normalizeConnectionParams?.(params) ?? params;
       const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(pid, sendBarEnabled);
       // 默认会话名只在创建时计算一次；后续配置变化只更新动态摘要，不改会话身份。
       const pluginName = plugin?.manifest.name || pid.toUpperCase();
       const requestedName = name?.trim();
-      const presentationName = plugin?.sessionPresentation?.defaultName?.(params, endpoint)?.trim();
+      const presentationName = plugin?.sessionPresentation?.defaultName?.(normalizedParams, endpoint)?.trim();
       const effectiveName = requestedName || (pid === "local-shell"
         ? await invoke<string>("resolve_local_shell_session_name", { params })
         : presentationName || `${pluginName} @ ${endpoint}`);
       const sessionId = await invoke<string>("save_session_config", {
         request: {
-        endpoint, params,
+        endpoint, params: normalizedParams,
         name: effectiveName,
         pluginId: pid,
         transferEnabled: transferEnabled ?? true,
@@ -810,7 +806,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         sendBarEnabled: effectiveSendBarEnabled,
 
         },});
-      const persistedParams = persistedSessionParams(pid, sessionId, params);
+      const persistedParams = persistedSessionParams(pid, sessionId, normalizedParams);
       dispatch({
         type: "ADD_TAB",
         tab: {
@@ -826,8 +822,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferEnabled: transferEnabled ?? true,
           transferProtocol,
           sendBarEnabled: effectiveSendBarEnabled,
-          virtualPortEnabled: (params.virtual_port_enabled as boolean) ?? false,
-          virtualPortCount: (params.virtual_port_count as number) ?? 0,
           fileServiceEnabled: (params.file_service_enabled as boolean) ?? false,
           fileServiceProtocol: params.file_service_protocol as string | undefined,
           journaldEnabled: (params.journald_enabled as boolean) ?? false,
@@ -1016,12 +1010,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       dispatch({ type: "SET_ERROR", error: "无法确定会话名称" });
       return;
     }
+    const plugin = pluginRegistry.get(effectivePluginId);
+    const normalizedParams = plugin?.normalizeConnectionParams?.(params) ?? params;
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(effectivePluginId, sendBarEnabled);
     try {
       await invoke("save_session_config", {
         request: {
         endpoint,
-        params,
+        params: normalizedParams,
         name: effectiveName,
         pluginId: effectivePluginId,
         transferEnabled: transferEnabled ?? true,
@@ -1035,7 +1031,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const persistedParams = persistedSessionParams(effectivePluginId, sessionId, params);
+    const persistedParams = persistedSessionParams(effectivePluginId, sessionId, normalizedParams);
 
     // 3. 更新前端 tab 状态
     dispatch({
@@ -1119,12 +1115,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         transfer_enabled?: boolean;
         transfer_protocol?: string;
         send_bar_enabled?: boolean;
-        virtual_port_enabled?: boolean;
-        virtual_port_count?: number;
       }>>("load_sessions");
       if (saved && saved.length > 0) {
         const tabs: TabInfo[] = saved.map((s) => {
           const pluginId = s.plugin_id || "serial";
+          const params = pluginRegistry.get(pluginId)?.normalizeConnectionParams?.(s.params) ?? s.params;
           return {
             id: s.id,
             name: s.name,
@@ -1132,14 +1127,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             endpoint: s.endpoint,
             state: "disconnected" as ConnectionStatus,
             pluginId,
-            params: s.params,
+            params,
             stats: { txBytes: 0, rxBytes: 0 },
             connectedAt: null,
             transferEnabled: s.transfer_enabled ?? true,
             transferProtocol: s.transfer_protocol,
             sendBarEnabled: pluginRegistry.resolveSendBarEnabled(pluginId, s.send_bar_enabled),
-            virtualPortEnabled: s.virtual_port_enabled ?? false,
-            virtualPortCount: s.virtual_port_count ?? 0,
             fileServiceEnabled: (s.params?.file_service_enabled as boolean) ?? false,
             fileServiceProtocol: s.params?.file_service_protocol as string | undefined,
             journaldEnabled: (s.params?.journald_enabled as boolean) ?? false,
