@@ -13,6 +13,8 @@ import {
 } from "../services/transferService";
 import type {
   BatchFileEntry,
+  FileTransferReceiveRequest,
+  FileTransferSendRequest,
   FileTransferState,
   ProtocolType,
   TransferConfig,
@@ -23,7 +25,6 @@ import type {
   TransferStartAck,
   TransferStatus,
   UnifiedTransferProgressPayload,
-  YmodemTransferConfig,
 } from "../types/transfer";
 import { PROTOCOL_REGISTRY } from "../types/transfer";
 
@@ -625,25 +626,32 @@ export function TransferProvider({ children }: { children: ReactNode }) {
       downloadDir?: string,
     ): Promise<TransferStartAck> => {
       dispatch({ type: "TASK_CLEAR_ERROR", sessionId });
-      const request: Record<string, unknown> = {
-        sessionId,
-        protocol: config.protocol,
-      };
-      if (direction === "send" && filePaths) {
-        request.filePaths = filePaths;
-      }
-      if (direction === "receive") {
-        request.remotePaths = [];
-        if (downloadDir) request.downloadDir = downloadDir;
-      }
-      if (config.protocol === "ymodem" && "blockSize" in config) {
-        request.blockSize = config.blockSize;
-        request.checksumMode = config.checksumMode;
-        request.streaming = (config as YmodemTransferConfig).streaming ?? false;
-      }
 
       try {
-        const ack = await startFileTransfer(direction, request);
+        let ack: TransferStartAck;
+        if (direction === "send") {
+          const request: FileTransferSendRequest = {
+            sessionId,
+            protocol: config.protocol,
+            filePaths: filePaths ?? [],
+          };
+          if (config.protocol === "ymodem") {
+            request.blockSize = config.blockSize;
+          }
+          ack = await startFileTransfer("send", request);
+        } else {
+          const request: FileTransferReceiveRequest = {
+            sessionId,
+            protocol: config.protocol,
+            downloadDir: downloadDir ?? "",
+            remotePaths: [],
+          };
+          if (config.protocol === "ymodem") {
+            request.blockSize = config.blockSize;
+          }
+          ack = await startFileTransfer("receive", request);
+        }
+
         dispatch({
           type: "TASK_STARTED",
           payload: {
