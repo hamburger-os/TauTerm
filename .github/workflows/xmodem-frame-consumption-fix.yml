@@ -21,68 +21,12 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          def replace_once(path: str, old: str, new: str) -> None:
-              p = Path(path)
-              text = p.read_text(encoding="utf-8")
-              count = text.count(old)
-              if count != 1:
-                  raise RuntimeError(f"{path}: expected one match, found {count}")
-              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+          p = Path("src-tauri/src/transfer/xmodem.rs")
+          text = p.read_text(encoding="utf-8")
 
-          path = "src-tauri/src/transfer/xmodem.rs"
-          old = '''    'init: for &check_mode in check_modes {
-              for _ in 0..attempts_per_mode {
-                  if cancel() {
-                      io::send_cancel(port);
-                      return Err("传输已取消".into());
-                  }
-                  port.write_all(&[check_mode.init_byte()])?;
-                  port.flush()?;
-                  match read_byte_with_timeout(port, 1000)? {
-                      Some(header @ (SOH | STX)) => {
-                          let bnum = read_or_fail(port)?;
-                          let bnum_neg = read_or_fail(port)?;
-                          if bnum != !bnum_neg || bnum != 1 {
-                              log::debug!(
-                                  "XModem RX: invalid first block number {} (expected 1), requesting retry",
-                                  bnum
-                              );
-                              port.write_all(&[NAK])?;
-                              port.flush()?;
-                              continue;
-                          }
-                          let block_size = if header == STX {
-                              BLOCK_SIZE_1K
-                          } else {
-                              BLOCK_SIZE_128
-                          };
-                          let mut data = vec![0u8; block_size];
-                          for byte in &mut data {
-                              *byte = read_or_fail(port)?;
-                          }
-                          let valid = verify_block(port, &data, check_mode)?;
-                          if valid {
-                              port.write_all(&[ACK])?;
-                              port.flush()?;
-                              negotiated_check = Some(check_mode);
-                              first_block_data = Some((bnum, data));
-                              break 'init;
-                          }
-                          port.write_all(&[NAK])?;
-                          port.flush()?;
-                      }
-                      Some(CAN) => return Err("发送方取消了传输".into()),
-                      Some(other) => log::debug!(
-                          "XModem RX: received 0x{:02X} while requesting {:?}",
-                          other,
-                          check_mode
-                      ),
-                      None => {}
-                  }
-              }
-          }
-          '''
-          new = '''    'init: for &check_mode in check_modes {
+          start = text.index("    'init: for &check_mode in check_modes {")
+          end = text.index("    let check_mode = negotiated_check.ok_or(", start)
+          init_block = '''    'init: for &check_mode in check_modes {
               let mut frame_started = false;
               for _ in 0..attempts_per_mode {
                   if cancel() {
@@ -140,42 +84,13 @@ jobs:
                   return Err("XModem 首个数据块重试耗尽".into());
               }
           }
+
           '''
-          replace_once(path, old, new)
+          text = text[:start] + init_block + text[end:]
 
-          old = '''        // ── 数据块处理 ──
-                  // 根据实际收到的块头确定块大小（协议鲁棒性：防止变体与头字节不匹配）
-                  let actual_block_size = if header == STX {
-                      BLOCK_SIZE_1K
-                  } else {
-                      BLOCK_SIZE_128
-                  };
-
-                  // 读取块序号和反码
-                  let bnum = read_or_fail(port)?;
-                  let bnum_neg = read_or_fail(port)?;
-
-                  if bnum != !bnum_neg {
-                      log::warn!(
-                          "XModem RX: block num mismatch ({} vs ~{}), sending NAK",
-                          bnum,
-                          bnum_neg
-                      );
-                      port.write_all(&[NAK])?;
-                      port.flush()?;
-                      continue;
-                  }
-
-                  // 读取数据
-                  let mut data = vec![0u8; actual_block_size];
-                  for b in data.iter_mut() {
-                      *b = read_or_fail(port)?;
-                  }
-
-                  // 读取并验证接收方在握手阶段选择的校验方式。
-                  let valid = verify_block(port, &data, check_mode)?;
-          '''
-          new = '''        // ── 数据块处理 ──
+          start = text.index("        // ── 数据块处理 ──")
+          end = text.index("        if !valid {", start)
+          data_block = '''        // ── 数据块处理 ──
                   // 帧头一旦确认，就先完整读取 payload + trailer，再判断序号和校验。
                   // 这样损坏帧不会把未消费数据遗留给下一轮帧头解析。
                   let (bnum, bnum_neg, data, valid) =
@@ -191,16 +106,14 @@ jobs:
                       port.flush()?;
                       continue;
                   }
-          '''
-          replace_once(path, old, new)
 
-          old = '''fn verify_block(
-              port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
-              data: &[u8],
-              check_mode: XModemCheckMode,
-          ) -> Result<bool, Box<dyn std::error::Error>> {
           '''
-          new = '''fn read_data_block(
+          text = text[:start] + data_block + text[end:]
+
+          marker = "fn verify_block(\n"
+          if "fn read_data_block(" not in text:
+              idx = text.index(marker)
+              helper = '''fn read_data_block(
               port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
               header: u8,
               check_mode: XModemCheckMode,
@@ -220,24 +133,20 @@ jobs:
               Ok((bnum, bnum_neg, data, valid))
           }
 
-          fn verify_block(
-              port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
-              data: &[u8],
-              check_mode: XModemCheckMode,
-          ) -> Result<bool, Box<dyn std::error::Error>> {
           '''
-          replace_once(path, old, new)
+              text = text[:idx] + helper + text[idx:]
 
-          test_path = "scripts/test-file-transfer-lifecycle.mjs"
-          old = '''assert.match(xmodem, /bnum != !bnum_neg \\|\\| bnum != 1/);
-          assert.doesNotMatch(xmodem, /flush_port_buffer\\(port\\)/);
-          '''
-          new = '''assert.match(xmodem, /bnum != !bnum_neg \\|\\| bnum != 1/);
-          assert.match(xmodem, /read_data_block\\(port, header, check_mode\\)\\?[\\s\\S]{0,500}bnum != !bnum_neg/);
-          assert.match(xmodem, /let request = if frame_started[\\s\\S]{0,160}NAK[\\s\\S]{0,160}check_mode\\.init_byte\\(\\)/);
-          assert.doesNotMatch(xmodem, /flush_port_buffer\\(port\\)/);
-          '''
-          replace_once(test_path, old, new)
+          p.write_text(text, encoding="utf-8")
+
+          tp = Path("scripts/test-file-transfer-lifecycle.mjs")
+          tests = tp.read_text(encoding="utf-8")
+          marker = 'assert.match(xmodem, /bnum != !bnum_neg \\|\\| bnum != 1/);\n'
+          addition = marker + 'assert.match(xmodem, /read_data_block\\(port, header, check_mode\\)\\?[\\s\\S]{0,500}bnum != !bnum_neg/);\n' + 'assert.match(xmodem, /let request = if frame_started[\\s\\S]{0,160}NAK[\\s\\S]{0,160}check_mode\\.init_byte\\(\\)/);\n'
+          if "read_data_block\\(port, header, check_mode" not in tests:
+              if tests.count(marker) != 1:
+                  raise RuntimeError("lifecycle XModem marker mismatch")
+              tests = tests.replace(marker, addition, 1)
+          tp.write_text(tests, encoding="utf-8")
           PY
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml
