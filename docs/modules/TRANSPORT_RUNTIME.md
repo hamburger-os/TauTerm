@@ -61,13 +61,15 @@ X/Y/ZModem 等必须独占串行数据面的功能使用 lease，而不是把真
 Shared -> Exclusive(owner) -> Shared
 ```
 
-独占期间普通发送被拒绝，RX 只路由到 lease。资源所有权始终留在 transport runtime，因此不存在 `StubChannel`、端口 downcast 或归还失败导致端口丢失的问题。租约从申请开始即通过 DataPlane 的原子 admission 状态阻止新的共享写入，避免“Acquire 已入队但 ACK 尚未返回”窗口中混入普通终端数据。
+独占期间普通发送被拒绝，资源所有权始终留在 transport runtime，因此不存在 `StubChannel`、端口 downcast 或归还失败导致端口丢失的问题。租约从申请开始即通过 DataPlane 的原子 admission 状态阻止新的共享写入，避免“Acquire 已入队但 ACK 尚未返回”窗口中混入普通终端数据。
+
+Exclusive 不只是写权限，还包含**读取节奏所有权**。进入 Exclusive 后，transport actor 停止共享模式下的后台 read-ahead；只有 lease 的 `Read` 请求到达时才由 actor 执行一次底层 driver read，并把该次结果直接返回给 owner。这样 X/Y/ZModem 的“读握手 → 写块 → 等 ACK”时序与传统独占串口语义一致，同时底层 handle 仍然没有离开 transport runtime。不能在 Exclusive 模式继续后台读取后再通过队列转发给协议，否则会把 transport 调度策略混入协议握手时序，并可能破坏部分 Windows USB CDC 驱动的读写序列。
 
 ## 阻塞驱动
 
 “上层统一异步/事件化契约”不意味着强迫底层全部换成异步库。`serialport`、部分 PTY 等阻塞 API 可以由专用 worker 驱动；差异只存在于 transport 内部。
 
-串口 actor 为了及时处理 write、exclusive、resize 和 shutdown，需要保持较短的读取切片；但这个读取调度参数不能同时成为大块写入的物理超时。特别是在 Windows 上，`serialport` 的单一 timeout 会同时影响 COM 读写，因此 Serial transport 必须按 baud rate、帧格式和当前 payload 大小为较大的写入临时提升 deadline，并在写入后恢复短读取切片。X/Y/ZModem 的 128 B / 1 KiB block 不能继承用于 actor 调度的 20 ms read slice。
+Raw Serial 使用稳定的驱动 I/O timeout。共享模式下 actor 可以通过该 timeout 周期性回到命令循环；Exclusive 模式则由 owner-driven read 自然决定何时访问底层串口，不再通过不断修改 COM timeout 来区分协议大块写和普通终端读。Windows USB CDC 等驱动不应在每个 X/Y/ZModem block 前后反复切换 `SetCommTimeouts`；超时策略保持稳定，协议自己的握手/重试时限由协议层负责。
 
 协议原生 async 驱动（当前 SSH）由 `AsyncBridgeDriver` 自有 Tokio runtime 驱动。任何依赖 Tokio reactor 的 future/timer 都必须在该 runtime 的上下文中创建并 poll，不能在普通 DataPlane OS 线程上先构造 `tokio::time` future 再交给 `block_on`。空闲读取使用短 read slice 让 actor 周期性处理共享写入、resize 和 shutdown；该 slice 属于 transport 内部调度参数，不得泄漏到 Session/UI。
 
