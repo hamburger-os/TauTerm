@@ -59,7 +59,7 @@ export interface TabInfo {
   virtualVirtualEndpoints?: VirtualPortEndpoint[];
   /** 虚拟端口创建失败时的错误信息 */
   virtualPortError?: string;
-  /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed），供前端本地化 */
+  /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed | bridge_failed），供前端本地化 */
   virtualPortErrorKind?: string;
   /** SSH 文件服务是否启用（默认 true） */
   fileServiceEnabled?: boolean;
@@ -1351,6 +1351,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         (event) => {
           const sid = event.payload.session_id;
           const eventPluginId = event.payload.plugin_id || event.payload.connection_type || "serial";
+          const eventParams = pluginRegistry.get(eventPluginId)?.normalizeConnectionParams?.(event.payload.params) ?? event.payload.params;
           const eventSendBarEnabled = pluginRegistry.resolveSendBarEnabled(eventPluginId, event.payload.send_bar_enabled);
           const vPairs = event.payload.virtual_endpoints;
           const parentId = event.payload.parent_id ?? null;
@@ -1368,7 +1369,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               type: "UPDATE_TAB_CONFIG",
               id: sid,
               endpoint: event.payload.endpoint,
-              params: event.payload.params,
+              params: eventParams,
               name: existingTab.name,
               transferEnabled: event.payload.transfer_enabled,
               transferProtocol: event.payload.transfer_protocol,
@@ -1376,8 +1377,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               pluginId: eventPluginId,
               connectedAt: event.payload.connected_at ?? Date.now(),
               journaldEnabled: event.payload.journald_enabled ?? false,
-              fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean),
-              fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
+              fileServiceEnabled: event.payload.file_service_enabled ?? (eventParams?.file_service_enabled as boolean),
+              fileServiceProtocol: event.payload.file_service_protocol ?? (eventParams?.file_service_protocol as string),
             });
             // 若回显状态事件曾早于本事件暂存，补发（tab 已存在则正常路径已直达）
             const pendingEcho = pendingEchoRef.current.get(sid);
@@ -1402,7 +1403,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 endpoint: event.payload.endpoint,
                 state: "connected",
                 pluginId: eventPluginId,
-                params: event.payload.params,
+                params: eventParams,
                 stats: { txBytes: 0, rxBytes: 0 },
                 connectedAt: event.payload.connected_at ?? Date.now(),
                 transferEnabled: event.payload.transfer_enabled ?? false,
@@ -1411,9 +1412,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 parentId,
                 channelIndex: event.payload.channel_index,
                 elevated: event.payload.elevated ?? false,
-                fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean) ?? false,
-                fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
-                journaldEnabled: event.payload.journald_enabled ?? (event.payload.params?.journald_enabled as boolean) ?? false,
+                fileServiceEnabled: event.payload.file_service_enabled ?? (eventParams?.file_service_enabled as boolean) ?? false,
+                fileServiceProtocol: event.payload.file_service_protocol ?? (eventParams?.file_service_protocol as string),
+                journaldEnabled: event.payload.journald_enabled ?? (eventParams?.journald_enabled as boolean) ?? false,
               },
             });
           } else if (isContainer) {
@@ -1426,7 +1427,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 endpoint: event.payload.endpoint,
                 state: "connected",
                 pluginId: eventPluginId,
-                params: event.payload.params,
+                params: eventParams,
                 stats: { txBytes: 0, rxBytes: 0 },
                 connectedAt: event.payload.connected_at ?? Date.now(),
                 transferEnabled: event.payload.transfer_enabled ?? false,
@@ -1455,18 +1456,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
                 pluginId: eventPluginId,
                 // 早于本事件到达的回显状态（telnet-echo-state 暂存）；非 telnet 会话为 undefined
                 localEcho: pendingEcho,
-                params: event.payload.params,
+                params: eventParams,
                 stats: { txBytes: 0, rxBytes: 0 },
                 connectedAt: event.payload.connected_at ?? Date.now(),
                 transferEnabled: event.payload.transfer_enabled ?? true,
                 transferProtocol: event.payload.transfer_protocol,
                 sendBarEnabled: eventSendBarEnabled,
                 virtualVirtualEndpoints: vPairs,
-                virtualPortEnabled: (event.payload.params?.virtual_port_enabled as boolean) ?? false,
-                virtualPortCount: (event.payload.params?.virtual_port_count as number) ?? 0,
-                fileServiceEnabled: event.payload.file_service_enabled ?? (event.payload.params?.file_service_enabled as boolean) ?? false,
-                fileServiceProtocol: event.payload.file_service_protocol ?? (event.payload.params?.file_service_protocol as string),
-                journaldEnabled: event.payload.journald_enabled ?? (event.payload.params?.journald_enabled as boolean) ?? false,
+                fileServiceEnabled: event.payload.file_service_enabled ?? (eventParams?.file_service_enabled as boolean) ?? false,
+                fileServiceProtocol: event.payload.file_service_protocol ?? (eventParams?.file_service_protocol as string),
+                journaldEnabled: event.payload.journald_enabled ?? (eventParams?.journald_enabled as boolean) ?? false,
               },
             });
           }

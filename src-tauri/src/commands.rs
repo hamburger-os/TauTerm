@@ -545,13 +545,11 @@ pub async fn connect_session(
     }
 }
 
-/// 创建 on_data 回调（含 DataBatcher + 日志记录 + 可选虚拟端口转发）。
+/// 创建共享 on_data 回调（DataBatcher + 日志记录）。
 ///
 /// DataBatcher 的所有权被移入回调闭包（通过 `batcher.push()` 消费数据），
 /// 因此只返回 `Box<dyn Fn>`；`DataBatcher::Drop` 在会话断开时自动 flush + 清理。
-///
-/// `bridge_tx` 为可选虚拟端口转发通道（仅串口会话提供）。
-/// 全部会话类型共用此函数，消除 ~60 行重复代码。
+/// 虚拟串口不经过 UI 回调旁路，而是直接订阅 DataPlane。
 fn create_on_data_callback(
     app: &AppHandle,
     log_tx: std::sync::mpsc::SyncSender<LogEntry>,
@@ -663,8 +661,8 @@ async fn connect_session_serial(
         log_engine.sender()
     };
 
-    // 共享 on_data 回调：DataBatcher + 日志 + 虚拟端口转发
-    // 数据推送至脚本引擎由 SessionDataPlane subscription 统一扇出
+    // 共享 on_data 回调只负责 UI 批处理与日志；脚本/虚拟串口均通过
+    // DataPlane subscription 独立消费，避免耦合或静默丢字节。
     let on_data = create_on_data_callback(&app_data, log_tx, data_mode.clone(), encoding_for_log);
 
     let app_disconnect = app.clone();
@@ -768,9 +766,7 @@ async fn connect_session_serial(
     // (even when virtual ports are disabled)
     let mut vport_endpoints_json: Vec<serde_json::Value> = Vec::new();
 
-    // ── Virtual port pair creation + bridge thread setup ──
-    // TODO: Extract into setup_virtual_external_pathridge() helper once the parameter
-    // surface stabilizes (currently touches vpm, session_store, app, bridge channel).
+    // ── Virtual port pair creation + direct DataPlane/SessionIo bridge ──
     if virtual_enabled && virtual_count > 0 {
         let config = VirtualPortConfig {
             enabled: true,

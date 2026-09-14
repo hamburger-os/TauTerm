@@ -1028,10 +1028,18 @@ fn broadcast_close(
     subscribers: &mut Vec<(u64, mpsc::SyncSender<DataPlaneEvent>)>,
     info: TransportCloseInfo,
 ) {
-    subscribers.retain(|(_, subscriber)| {
-        subscriber
-            .send(DataPlaneEvent::Closed(info.clone()))
-            .is_ok()
+    subscribers.retain(|(id, subscriber)| {
+        match subscriber.try_send(DataPlaneEvent::Closed(info.clone())) {
+            Ok(()) => true,
+            Err(mpsc::TrySendError::Full(_)) => {
+                log::warn!(
+                    "DataPlane subscriber {} backlog was full while closing; detaching consumer",
+                    id
+                );
+                false
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => false,
+        }
     });
 }
 
