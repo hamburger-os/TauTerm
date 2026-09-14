@@ -31,6 +31,8 @@ use known_hosts::{HostTrustDecision, KnownHostStore};
 
 const SSH_NETWORK_PHASE_TIMEOUT: Duration = Duration::from_secs(15);
 const HOST_KEY_VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
+const SSH_HOME_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
+const SSH_HOME_MAX_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -211,6 +213,78 @@ fn auth_failure_reason(result: &russh::client::AuthResult, method: SshAuthMethod
     }
 }
 
+/// russh `connect_stream` 会在初始 KEX 完成前启动内部 session task。
+/// 仅丢弃 connect future 不能保证该 task 立刻停止，因此保留一个底层 socket duplicate：
+/// 连接建立失败、超时或调用 future 被取消时，Drop 主动 shutdown 底层 socket；成功后 disarm。
+struct SocketAbortGuard {
+    socket: Option<std::net::TcpStream>,
+}
+
+impl SocketAbortGuard {
+    fn new(socket: std::net::TcpStream) -> Self {
+        Self {
+            socket: Some(socket),
+        }
+    }
+
+    fn disarm(&mut self) {
+        drop(self.socket.take());
+    }
+}
+
+impl Drop for SocketAbortGuard {
+    fn drop(&mut self) {
+        if let Some(socket) = self.socket.take() {
+            let _ = socket.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+async fn connect_ssh_socket(
+    host: &str,
+    port: u16,
+) -> Result<(tokio::net::TcpStream, SocketAbortGuard), SessionError> {
+    let endpoint = format_ssh_endpoint(host, port);
+    let socket = tokio::time::timeout(
+        SSH_NETWORK_PHASE_TIMEOUT,
+        tokio::net::TcpStream::connect((host, port)),
+    )
+    .await
+    .map_err(|_| SessionError::ConnectionFailed {
+        reason: format!(
+            "SSH TCP 连接超时（{}s）: {endpoint}",
+            SSH_NETWORK_PHASE_TIMEOUT.as_secs()
+        ),
+    })?
+    .map_err(|error| SessionError::ConnectionFailed {
+        reason: format!("SSH TCP 连接失败 '{endpoint}': {error}"),
+    })?;
+
+    socket
+        .set_nodelay(true)
+        .map_err(|error| SessionError::ConnectionFailed {
+            reason: format!("SSH TCP_NODELAY 配置失败 '{endpoint}': {error}"),
+        })?;
+
+    let std_socket = socket
+        .into_std()
+        .map_err(|error| SessionError::ConnectionFailed {
+            reason: format!("SSH TCP socket 转换失败 '{endpoint}': {error}"),
+        })?;
+    let abort_socket = std_socket
+        .try_clone()
+        .map_err(|error| SessionError::ConnectionFailed {
+            reason: format!("SSH TCP socket guard 创建失败 '{endpoint}': {error}"),
+        })?;
+    let socket = tokio::net::TcpStream::from_std(std_socket).map_err(|error| {
+        SessionError::ConnectionFailed {
+            reason: format!("SSH async socket 恢复失败 '{endpoint}': {error}"),
+        }
+    })?;
+
+    Ok((socket, SocketAbortGuard::new(abort_socket)))
+}
+
 /// SSH 协议适配器
 ///
 /// 无状态结构体——每次 `connect()` 调用建立全新的 TCP 连接和 SSH 会话。
@@ -237,7 +311,7 @@ impl SshAdapter {
     /// `app_handle` 和 `verifier` 用于主机密钥用户确认流程：
     /// - 连接时 emit `ssh-host-key-verify` 事件到前端
     /// - 前端调用 `confirm_host_key` 命令回传用户决策
-    /// - verifier 在 async 上下文中阻塞等待用户响应
+    /// - verifier 在 async 上下文中等待用户响应
     pub async fn connect_with_config(
         &self,
         config: SshConfig,
@@ -272,9 +346,8 @@ impl SshAdapter {
 /// 管理 SSH 连接过程中待用户确认的主机密钥验证请求。
 /// 由 AppState 持有，供 `build_connection_with_config`（写入待确认项）
 /// 和 `confirm_host_key` Tauri 命令（读取并回传用户决定）双方并发访问。
-///
-/// 使用 `tokio::sync::Mutex` 而非 `std::sync::Mutex`，
-/// 因为 `build_connection_with_config` 在 async 上下文中持有锁时需 `.await`。
+/// pending map 使用同步 Mutex，因为临界区只执行短小的 HashMap 操作且绝不跨 await；
+/// 这样取消 guard 可以在 Drop 中同步撤销待确认项，避免迟到响应写入失效连接的信任。
 struct PendingHostKeyVerification {
     response: tokio::sync::oneshot::Sender<bool>,
     host: String,
@@ -284,8 +357,8 @@ struct PendingHostKeyVerification {
 }
 
 pub struct HostKeyVerifier {
-    pending: std::sync::Arc<
-        tokio::sync::Mutex<std::collections::HashMap<String, PendingHostKeyVerification>>,
+    pending: std::sync::Mutex<
+        std::collections::HashMap<String, PendingHostKeyVerification>,
     >,
     known_hosts: KnownHostStore,
 }
@@ -293,7 +366,7 @@ pub struct HostKeyVerifier {
 impl HostKeyVerifier {
     pub fn new() -> Self {
         Self {
-            pending: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            pending: std::sync::Mutex::new(std::collections::HashMap::new()),
             known_hosts: KnownHostStore::new(),
         }
     }
@@ -328,27 +401,42 @@ impl HostKeyVerifier {
     ) -> (String, tokio::sync::oneshot::Receiver<bool>) {
         let request_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending.lock().await.insert(
-            request_id.clone(),
-            PendingHostKeyVerification {
-                response: tx,
-                host: host.to_string(),
-                port,
-                algorithm: algorithm.to_string(),
-                fingerprint: fingerprint.to_string(),
-            },
-        );
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(
+                request_id.clone(),
+                PendingHostKeyVerification {
+                    response: tx,
+                    host: host.to_string(),
+                    port,
+                    algorithm: algorithm.to_string(),
+                    fingerprint: fingerprint.to_string(),
+                },
+            );
         (request_id, rx)
     }
 
+    fn cancel_now(&self, request_id: &str) {
+        self.pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(request_id);
+    }
+
     pub async fn cancel(&self, request_id: &str) {
-        self.pending.lock().await.remove(request_id);
+        self.cancel_now(request_id);
     }
 
     /// 用户确认或拒绝 SSH 主机密钥。接受时先持久化 trust，再放行连接；
     /// 如果 known-host 写入失败则 fail-closed。
     pub async fn respond(&self, request_id: &str, accept: bool) -> Result<bool, String> {
-        let Some(pending) = self.pending.lock().await.remove(request_id) else {
+        let pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(request_id);
+        let Some(pending) = pending else {
             return Ok(false);
         };
 
@@ -366,6 +454,26 @@ impl HostKeyVerifier {
 
         let _ = pending.response.send(accept);
         Ok(true)
+    }
+}
+
+struct PendingRequestGuard<'a> {
+    verifier: &'a HostKeyVerifier,
+    request_id: String,
+}
+
+impl<'a> PendingRequestGuard<'a> {
+    fn new(verifier: &'a HostKeyVerifier, request_id: &str) -> Self {
+        Self {
+            verifier,
+            request_id: request_id.to_string(),
+        }
+    }
+}
+
+impl Drop for PendingRequestGuard<'_> {
+    fn drop(&mut self) {
+        self.verifier.cancel_now(&self.request_id);
     }
 }
 
@@ -479,8 +587,9 @@ struct BuildConnectionResult {
 
 /// 建立连接的核心逻辑（async）— 直接接收类型化 `SshConfig`。
 ///
-/// 网络阶段使用独立 deadline；等待用户确认 Host Key 时暂停该 deadline，确认完成后重新
-/// 开始一个网络阶段。这样用户交互不会误占 TCP/KEX 的网络超时预算。
+/// TCP 和初始 KEX 分别使用网络阶段 deadline；等待用户确认 Host Key 时不消耗用户
+/// 交互之外的网络预算。SocketAbortGuard 确保 timeout / rejection / future cancellation
+/// 都会关闭 russh 内部 session task 使用的底层 socket。
 async fn build_connection_with_config(
     config: SshConfig,
     app_handle: tauri::AppHandle,
@@ -488,6 +597,7 @@ async fn build_connection_with_config(
 ) -> Result<BuildConnectionResult, SessionError> {
     let connect_host = normalize_ssh_host(&config.host).to_string();
     let addr = format_ssh_endpoint(&connect_host, config.port);
+    let (socket, mut socket_abort) = connect_ssh_socket(&connect_host, config.port).await?;
     let russh_config = Arc::new(russh::client::Config {
         keepalive_interval: Some(Duration::from_secs(30)),
         inactivity_timeout: Some(Duration::from_secs(300)),
@@ -495,15 +605,13 @@ async fn build_connection_with_config(
         ..Default::default()
     });
 
-    // 创建主机密钥验证通道。一次 KEX 最多有一个待确认 server key；后续 re-key 仍由
-    // russh Handler 走相同 fail-closed policy。
+    // 初始 KEX 的 server key 通过 Handler 交给当前连接建立协程验证。russh 在后续
+    // re-key 中沿用已建立的 server identity，不重新触发 TOFU 用户确认。
     let (verifier_tx, mut verifier_rx) =
         tokio::sync::mpsc::channel::<handler::HostKeyVerification>(1);
 
     let handler = SshHandler::new(verifier_tx);
-    let config_clone = russh_config.clone();
-    let connect_future =
-        russh::client::connect(config_clone, (connect_host.as_str(), config.port), handler);
+    let connect_future = russh::client::connect_stream(russh_config, socket, handler);
     tokio::pin!(connect_future);
 
     let network_deadline = tokio::time::sleep(SSH_NETWORK_PHASE_TIMEOUT);
@@ -516,14 +624,16 @@ async fn build_connection_with_config(
     let mut handle = loop {
         tokio::select! {
             result = &mut connect_future => {
-                break result.map_err(|e| SessionError::ConnectionFailed {
-                    reason: format!("SSH 连接失败 '{addr}': {e}"),
+                let connected = result.map_err(|e| SessionError::ConnectionFailed {
+                    reason: format!("SSH KEX 失败 '{addr}': {e}"),
                 })?;
+                socket_abort.disarm();
+                break connected;
             }
             _ = &mut network_deadline => {
                 return Err(SessionError::ConnectionFailed {
                     reason: format!(
-                        "SSH 网络阶段超时（{}s）: {addr}",
+                        "SSH KEX 超时（{}s）: {addr}",
                         SSH_NETWORK_PHASE_TIMEOUT.as_secs()
                     ),
                 });
@@ -570,6 +680,7 @@ async fn build_connection_with_config(
                                 &verification.fingerprint,
                             )
                             .await;
+                        let _pending_guard = PendingRequestGuard::new(verifier, &request_id);
                         let emitted = app_handle.emit("ssh-host-key-verify", serde_json::json!({
                             "request_id": request_id,
                             "host": connect_host.as_str(),
@@ -578,7 +689,6 @@ async fn build_connection_with_config(
                             "fingerprint": verification.fingerprint,
                         }));
                         if let Err(error) = emitted {
-                            verifier.cancel(&request_id).await;
                             log::error!("发送 SSH Host Key 确认事件失败: {error}");
                             false
                         } else {
@@ -586,7 +696,6 @@ async fn build_connection_with_config(
                             match tokio::time::timeout(HOST_KEY_VERIFY_TIMEOUT, wait_rx).await {
                                 Ok(result) => result.unwrap_or(false),
                                 Err(_elapsed) => {
-                                    verifier.cancel(&request_id).await;
                                     log::warn!(
                                         "主机密钥验证超时 ({}s)，自动拒绝",
                                         HOST_KEY_VERIFY_TIMEOUT.as_secs()
@@ -713,18 +822,27 @@ async fn build_connection_with_config(
         });
     }
 
-    // 2.5 — 解析远程 home 目录（通过 exec 通道执行 echo $HOME）
-    // 超时 5s 防止远程主机无响应时阻塞整个连接建立流程
-    let home_dir = tokio::time::timeout(Duration::from_secs(5), async {
+    // 2.5 — 解析远程 home 目录（通过 exec 通道执行 echo $HOME）。这是辅助元数据，
+    // 因此设置严格的时间和输出上限；失败只回退到默认路径，不阻断已认证会话。
+    let home_dir = tokio::time::timeout(SSH_HOME_QUERY_TIMEOUT, async {
         match handle.channel_open_session().await {
             Ok(mut exec_chan) => {
                 if exec_chan.exec(true, "echo $HOME").await.is_err() {
+                    let _ = exec_chan.close().await;
                     return None;
                 }
                 let mut output = Vec::new();
                 loop {
                     match exec_chan.wait().await {
                         Some(russh::ChannelMsg::Data { data }) => {
+                            if output.len().saturating_add(data.len()) > SSH_HOME_MAX_BYTES {
+                                log::warn!(
+                                    "SSH home_dir 输出超过 {} bytes，放弃解析",
+                                    SSH_HOME_MAX_BYTES
+                                );
+                                let _ = exec_chan.close().await;
+                                return None;
+                            }
                             output.extend_from_slice(data.as_ref());
                         }
                         Some(russh::ChannelMsg::Eof) | Some(russh::ChannelMsg::Close) | None => {
@@ -733,6 +851,7 @@ async fn build_connection_with_config(
                         _ => continue,
                     }
                 }
+                let _ = exec_chan.close().await;
                 String::from_utf8(output)
                     .ok()
                     .map(|s| s.trim().to_string())
@@ -746,7 +865,10 @@ async fn build_connection_with_config(
     })
     .await
     .unwrap_or_else(|_elapsed| {
-        log::warn!("SSH home_dir exec 超时（5s），回退到默认路径");
+        log::warn!(
+            "SSH home_dir exec 超时（{}s），回退到默认路径",
+            SSH_HOME_QUERY_TIMEOUT.as_secs()
+        );
         None
     });
 
