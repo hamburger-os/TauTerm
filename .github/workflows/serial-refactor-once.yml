@@ -34,3 +34,5 @@ jobs:
           git add src src-tauri
           git commit -m "fix(serial): close review gaps in data and config paths"
           git push origin HEAD:agent/serial-session-design-cleanup
+      - name: Confirm product commit
+        run: git log -1 --oneline
