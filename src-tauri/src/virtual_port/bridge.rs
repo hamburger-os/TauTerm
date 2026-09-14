@@ -16,6 +16,7 @@ use crate::session::SessionIo;
 use crate::transport::DataPlaneEvent;
 
 const VPORT_READ_TIMEOUT_MS: u64 = 5;
+const PEER_RETRY_DELAY_MS: u64 = 10;
 
 type BridgeErrorHandler = Box<dyn Fn(String) + Send + 'static>;
 
@@ -105,19 +106,26 @@ fn open_bridge_endpoint(name: &str, baud_rate: u32) -> Result<Box<dyn SerialPort
         .map_err(|e| format!("failed to open virtual endpoint {name}: {e}"))
 }
 
-fn write_to_virtual_ports(
-    virtual_ports: &mut [Box<dyn SerialPort>],
-    data: &[u8],
-) -> Result<(), String> {
+/// Fan out physical bytes to every virtual endpoint that currently has a peer.
+///
+/// A PTY/com0com peer may legitimately be absent before an external tool opens it, or disappear
+/// and reconnect later. That condition is not a bridge/runtime failure. Bytes cannot be delivered
+/// to a peer that does not exist, but other attached peers must continue receiving data and the
+/// endpoint must remain available for a later reconnect.
+fn write_to_virtual_ports(virtual_ports: &mut [Box<dyn SerialPort>], data: &[u8]) {
     for (index, vport) in virtual_ports.iter_mut().enumerate() {
-        vport
-            .write_all(data)
-            .map_err(|error| format!("virtual endpoint {index} write failed: {error}"))?;
-        vport
-            .flush()
-            .map_err(|error| format!("virtual endpoint {index} flush failed: {error}"))?;
+        if let Err(error) = vport.write_all(data) {
+            log::trace!(
+                "Virtual endpoint {} has no writable peer yet: {}",
+                index,
+                error
+            );
+            continue;
+        }
+        if let Err(error) = vport.flush() {
+            log::trace!("Virtual endpoint {} flush unavailable: {}", index, error);
+        }
     }
-    Ok(())
 }
 
 fn bridge_loop(
@@ -132,11 +140,11 @@ fn bridge_loop(
     while !cancel.load(Ordering::SeqCst) {
         // Drain a bounded amount of physical data each turn so virtual -> physical traffic is not
         // starved by a continuously busy device. A detached subscription is a bridge failure, not
-        // a best-effort display condition: continuing would silently corrupt a transparent stream.
+        // a best-effort display condition: continuing would silently corrupt a connected stream.
         for _ in 0..32 {
             match subscription.try_recv() {
                 Ok(DataPlaneEvent::Data(data)) => {
-                    write_to_virtual_ports(&mut virtual_ports, &data)?;
+                    write_to_virtual_ports(&mut virtual_ports, &data);
                 }
                 Ok(DataPlaneEvent::Closed(_)) => return Ok(()),
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -165,6 +173,7 @@ fn bridge_loop(
             }
         }
 
+        let mut peer_unavailable = false;
         for (index, vport) in virtual_ports.iter_mut().enumerate() {
             match vport.read(&mut read_buf) {
                 Ok(n) if n > 0 => {
@@ -185,9 +194,16 @@ fn bridge_loop(
                     if e.kind() == std::io::ErrorKind::TimedOut
                         || e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => {
-                    return Err(format!("virtual endpoint {index} read failed: {error}"));
+                    // Unix PTY masters commonly report EIO while no slave is open; Windows virtual
+                    // peers can similarly disappear while the internal endpoint remains valid.
+                    // Keep the bridge alive so external tools can connect/reconnect later.
+                    peer_unavailable = true;
+                    log::trace!("Virtual endpoint {} peer unavailable: {}", index, error);
                 }
             }
+        }
+        if peer_unavailable {
+            std::thread::sleep(Duration::from_millis(PEER_RETRY_DELAY_MS));
         }
     }
 
