@@ -357,9 +357,7 @@ struct PendingHostKeyVerification {
 }
 
 pub struct HostKeyVerifier {
-    pending: std::sync::Mutex<
-        std::collections::HashMap<String, PendingHostKeyVerification>,
-    >,
+    pending: std::sync::Mutex<std::collections::HashMap<String, PendingHostKeyVerification>>,
     known_hosts: KnownHostStore,
 }
 
