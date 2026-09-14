@@ -163,6 +163,9 @@ assert.doesNotMatch(xmodem, /\bg_mode\b|const G:\s*u8|XModemVariant|OneK/);
 assert.match(xmodem, /`G` 不代表 XMODEM-1K/);
 assert.match(xmodem, /XModemCheckMode::Checksum[\s\S]*packet\.push\(crc::checksum\(data\)\)/);
 assert.match(xmodem, /Some\(CAN\) => return Err\("发送方取消了传输"\.into\(\)\)/);
+assert.match(xmodem, /fn next_block_num\(current: u8\) -> u8 \{\s*current\.wrapping_add\(1\)\s*\}/);
+assert.match(xmodem, /bnum != !bnum_neg \|\| bnum != 1/);
+assert.doesNotMatch(xmodem, /flush_port_buffer\(port\)/);
 assert.match(xmodem, /Sender \{ block_size: usize \}/);
 assert.match(xmodem, /Receiver \{ check_mode: XModemReceiveMode \}/);
 

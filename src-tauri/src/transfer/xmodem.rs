@@ -259,11 +259,8 @@ fn xmodem_send(
             direction: TransferDirection::Send,
         });
 
-        // 块号 1..=255 循环（wrapping_add 处理回绕）
+        // XMODEM 块号为 8 位序号：1..255→0→1，自然回绕。
         block_num = block_num.wrapping_add(1);
-        if block_num == 0 {
-            block_num = 1;
-        }
     }
 
     // ── 阶段 3: 发送 EOT ──
@@ -506,7 +503,11 @@ fn xmodem_receive(
                 Some(header @ (SOH | STX)) => {
                     let bnum = read_or_fail(port)?;
                     let bnum_neg = read_or_fail(port)?;
-                    if bnum != !bnum_neg {
+                    if bnum != !bnum_neg || bnum != 1 {
+                        log::debug!(
+                            "XModem RX: invalid first block number {} (expected 1), requesting retry",
+                            bnum
+                        );
                         port.write_all(&[NAK])?;
                         port.flush()?;
                         continue;
@@ -590,10 +591,9 @@ fn xmodem_receive(
                 Some(CAN) => return Err("发送方取消了传输".into()),
                 Some(other) => {
                     log::debug!(
-                        "XModem RX: unexpected byte 0x{:02X} waiting for header",
+                        "XModem RX: ignoring noise byte 0x{:02X} while waiting for header",
                         other
                     );
-                    io::flush_port_buffer(port);
                 }
                 None => {
                     // 超时 — 发送 NAK 请求重传（对齐 lrzsz）
@@ -800,12 +800,19 @@ fn read_or_fail(
     }
 }
 
-/// 计算下一个预期的块号（1..=255 循环，跳过 0）
+/// 计算下一个预期块号。XMODEM 使用 8 位序号，255 后自然回绕到 0。
 fn next_block_num(current: u8) -> u8 {
-    let next = current.wrapping_add(1);
-    if next == 0 {
-        1
-    } else {
-        next
+    current.wrapping_add(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_numbers_wrap_through_zero() {
+        assert_eq!(next_block_num(254), 255);
+        assert_eq!(next_block_num(255), 0);
+        assert_eq!(next_block_num(0), 1);
     }
 }
