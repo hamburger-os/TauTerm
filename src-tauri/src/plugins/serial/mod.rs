@@ -6,9 +6,7 @@ use crate::kernel::plugin_adapter::{
     ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
 };
 use crate::session::SessionError;
-use crate::transport::serial::{
-    open_serial, SerialFlowControl, SerialParity, SerialStopBits, SerialTransportConfig,
-};
+use crate::transport::serial::{open_serial, SerialTransportConfig};
 use crate::transport::DataPlaneRuntime;
 use crate::virtual_port::backend::is_internal_endpoint_path;
 
@@ -163,6 +161,7 @@ impl ProtocolAdapter for SerialAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::serial::{SerialFlowControl, SerialParity, SerialStopBits};
 
     #[test]
     fn serial_adapter_parses_transport_fields_without_owning_session_ui_fields() {

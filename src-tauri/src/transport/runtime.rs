@@ -870,19 +870,23 @@ fn handle_command(
             close_info.map_or(CommandOutcome::Continue, CommandOutcome::Close)
         }
         RuntimeCommand::Subscribe { id, subscriber } => {
-            let mut alive = true;
-            while let Some(data) = state.startup_buffer.pop_front() {
-                state.startup_buffer_bytes = state.startup_buffer_bytes.saturating_sub(data.len());
-                if subscriber.try_send(DataPlaneEvent::Data(data)).is_err() {
-                    alive = false;
-                    break;
+            // A new subscription has an empty bounded queue. Coalesce the bounded startup backlog
+            // into one event so many tiny pre-subscribe reads cannot exhaust queue slots before the
+            // consumer thread starts. The startup byte limit remains the memory bound.
+            let startup = if state.startup_buffer.is_empty() {
+                None
+            } else {
+                let mut data = Vec::with_capacity(state.startup_buffer_bytes);
+                while let Some(chunk) = state.startup_buffer.pop_front() {
+                    data.extend_from_slice(&chunk);
                 }
-            }
+                state.startup_buffer_bytes = 0;
+                Some(data)
+            };
+            let alive =
+                startup.is_none_or(|data| subscriber.try_send(DataPlaneEvent::Data(data)).is_ok());
             if alive {
                 state.subscribers.push((id, subscriber));
-            } else {
-                state.startup_buffer.clear();
-                state.startup_buffer_bytes = 0;
             }
             CommandOutcome::Continue
         }

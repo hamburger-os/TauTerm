@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use crate::transport::serial::SerialTransportConfig;
+use crate::transport::serial::{SerialParity, SerialStopBits, SerialTransportConfig};
 use crate::transport::tcp::TcpConnectConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -290,8 +290,16 @@ fn serial_gap(config: &SerialTransportConfig, chars: f64, high_speed_micros: u64
         return Duration::from_micros(high_speed_micros);
     }
     let data_bits = config.data_bits as f64;
-    let parity_bits = if config.parity == "none" { 0.0 } else { 1.0 };
-    let stop_bits = if config.stop_bits == "2" { 2.0 } else { 1.0 };
+    let parity_bits = if config.parity == SerialParity::None {
+        0.0
+    } else {
+        1.0
+    };
+    let stop_bits = if config.stop_bits == SerialStopBits::Two {
+        2.0
+    } else {
+        1.0
+    };
     let bits_per_char = 1.0 + data_bits + parity_bits + stop_bits;
     let micros =
         (chars * bits_per_char * 1_000_000.0 / config.baud_rate.max(1) as f64).ceil() as u64;
@@ -385,8 +393,8 @@ mod tests {
         let mut config = serial_client();
         config.serial.baud_rate = 9_600;
         config.serial.data_bits = 8;
-        config.serial.parity = "none".into();
-        config.serial.stop_bits = "1".into();
+        config.serial.parity = SerialParity::None;
+        config.serial.stop_bits = SerialStopBits::One;
         let config = config.validated().unwrap();
         assert_eq!(config.rtu_inter_char_gap().as_micros(), 1_563);
         assert_eq!(config.rtu_frame_gap().as_micros(), 3_646);
