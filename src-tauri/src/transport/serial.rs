@@ -172,10 +172,7 @@ fn serial_write_timeout_ms(
 
     let total_bits = (byte_len as u128).saturating_mul(frame_bits as u128);
     let baud = u128::from(baud_rate.max(1));
-    let wire_ms = total_bits
-        .saturating_mul(1000)
-        .saturating_add(baud - 1)
-        / baud;
+    let wire_ms = total_bits.saturating_mul(1000).saturating_add(baud - 1) / baud;
     let wire_ms = wire_ms.min(u128::from(u64::MAX)) as u64;
 
     // Very small interactive writes comfortably fit inside the normal read slice, so avoid a
