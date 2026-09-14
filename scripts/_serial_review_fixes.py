@@ -75,15 +75,15 @@ edit(
 # Session-connected must respect the same current plugin schema as create/edit/load paths.
 p = ROOT / "src/context/SessionContext.tsx"
 text = p.read_text(encoding="utf-8")
-old = '''        const eventPluginId = event.payload.plugin_id || event.payload.connection_type || "serial";
-        const eventSendBarEnabled = pluginRegistry.resolveSendBarEnabled(eventPluginId, event.payload.send_bar_enabled);
+old = '''          const eventPluginId = event.payload.plugin_id || event.payload.connection_type || "serial";
+          const eventSendBarEnabled = pluginRegistry.resolveSendBarEnabled(eventPluginId, event.payload.send_bar_enabled);
 '''
-new = '''        const eventPluginId = event.payload.plugin_id || event.payload.connection_type || "serial";
-        const eventParams = pluginRegistry.get(eventPluginId)?.normalizeConnectionParams?.(event.payload.params) ?? event.payload.params;
-        const eventSendBarEnabled = pluginRegistry.resolveSendBarEnabled(eventPluginId, event.payload.send_bar_enabled);
+new = '''          const eventPluginId = event.payload.plugin_id || event.payload.connection_type || "serial";
+          const eventParams = pluginRegistry.get(eventPluginId)?.normalizeConnectionParams?.(event.payload.params) ?? event.payload.params;
+          const eventSendBarEnabled = pluginRegistry.resolveSendBarEnabled(eventPluginId, event.payload.send_bar_enabled);
 '''
-if old not in text:
-    raise SystemExit("SessionContext: event plugin anchor missing")
+if text.count(old) != 1:
+    raise SystemExit(f"SessionContext: expected one event plugin anchor, found {text.count(old)}")
 text = text.replace(old, new, 1)
 # Restrict replacements to the session-connected listener before virtual-port-created listener.
 start = text.index('const eventPluginId = event.payload.plugin_id')
@@ -96,8 +96,11 @@ segment = segment.replace('(event.payload.params?.journald_enabled as boolean)',
 segment = segment.replace('                virtualPortEnabled: (event.payload.params?.virtual_port_enabled as boolean) ?? false,\n', '')
 segment = segment.replace('                virtualPortCount: (event.payload.params?.virtual_port_count as number) ?? 0,\n', '')
 text = text[:start] + segment + text[end:]
+old_doc = '  /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed），供前端本地化 */'
+if text.count(old_doc) != 1:
+    raise SystemExit(f"SessionContext: expected one VPort error doc, found {text.count(old_doc)}")
 text = text.replace(
-    '  /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed），供前端本地化 */',
+    old_doc,
     '  /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed | bridge_failed），供前端本地化 */',
     1,
 )
