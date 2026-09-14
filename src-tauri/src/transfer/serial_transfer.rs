@@ -59,7 +59,6 @@ impl FileTransfer for SerialFileTransfer {
         let protocol = self.protocol.clone();
         let progress_clone = progress.clone();
 
-        // Bug #2 fix: 预计算聚合总字节并追踪已完成字节，避免文件边界重置为 0
         let aggregate_total: u64 = files.iter().map(|f| f.size).sum();
         let aggregate_completed = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
@@ -73,7 +72,6 @@ impl FileTransfer for SerialFileTransfer {
             let aggregate_total = aggregate_total;
             let aggregate_completed = aggregate_completed;
 
-            // 进度回调 — 在 spawn_blocking 内创建，生命周期覆盖 send_files 调用
             let on_progress = |p: TransferProgress| {
                 let _ = progress.send(UnifiedProgress::chunk(
                     &proto,
@@ -86,7 +84,7 @@ impl FileTransfer for SerialFileTransfer {
                         aggregate_bytes: p.aggregate_bytes_transferred,
                         aggregate_total: p.aggregate_total_bytes,
                     },
-                    TransferDirection::Send,
+                    p.direction,
                 ));
             };
 
@@ -159,7 +157,6 @@ impl FileTransfer for SerialFileTransfer {
         })
         .await;
 
-        // Bug #6 fix: 即使传输失败也发送 batch_complete，避免前端状态卡住
         let proto_str = self.protocol_type.to_string();
         match result {
             Ok(Ok(batch_results)) => {
@@ -232,8 +229,6 @@ impl FileTransfer for SerialFileTransfer {
         let protocol = self.protocol.clone();
         let progress_clone = progress.clone();
 
-        // Bug #2 fix: 追踪聚合已完成字节，避免文件边界重置为 0
-        // 接收端无法预知总字节，aggregate_total 保持 0（未知）
         let aggregate_completed = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
         log::info!(
@@ -262,7 +257,7 @@ impl FileTransfer for SerialFileTransfer {
                         aggregate_bytes: p.aggregate_bytes_transferred,
                         aggregate_total: p.aggregate_total_bytes,
                     },
-                    TransferDirection::Receive,
+                    p.direction,
                 ));
             };
 
@@ -270,56 +265,54 @@ impl FileTransfer for SerialFileTransfer {
             let proto2 = proto.clone();
             let ac_start = aggregate_completed.clone();
             let ac_complete = aggregate_completed.clone();
-            let on_file_event = move |e: FileTransferEvent| {
-                match e {
-                    FileTransferEvent::FileStart {
-                        file_name,
-                        file_index,
-                        total_files,
+            let on_file_event = move |e: FileTransferEvent| match e {
+                FileTransferEvent::FileStart {
+                    file_name,
+                    file_index,
+                    total_files,
+                    file_size,
+                } => {
+                    let ac = ac_start.load(Ordering::SeqCst);
+                    let _ = progress2.send(UnifiedProgress::file_start(
+                        &proto2,
+                        &file_name,
                         file_size,
-                    } => {
-                        let ac = ac_start.load(Ordering::SeqCst);
-                        let _ = progress2.send(UnifiedProgress::file_start(
-                            &proto2,
-                            &file_name,
-                            file_size,
-                            ProgressPosition {
-                                file_index: file_index as usize,
-                                total_files: total_files as usize,
-                                aggregate_bytes: ac,
-                                aggregate_total: 0,
-                            }, // 接收端 aggregate_total 未知
-                            TransferDirection::Receive,
-                        ));
+                        ProgressPosition {
+                            file_index: file_index as usize,
+                            total_files: total_files as usize,
+                            aggregate_bytes: ac,
+                            aggregate_total: 0,
+                        },
+                        TransferDirection::Receive,
+                    ));
+                }
+                FileTransferEvent::FileComplete {
+                    file_name,
+                    file_index,
+                    total_files,
+                    bytes_transferred,
+                    success,
+                    error,
+                } => {
+                    let ac = ac_complete.load(Ordering::SeqCst);
+                    let new_ac = ac + bytes_transferred;
+                    if success {
+                        ac_complete.store(new_ac, Ordering::SeqCst);
                     }
-                    FileTransferEvent::FileComplete {
-                        file_name,
-                        file_index,
-                        total_files,
+                    let _ = progress2.send(UnifiedProgress::file_complete(
+                        &proto2,
+                        &file_name,
                         bytes_transferred,
+                        ProgressPosition {
+                            file_index: file_index as usize,
+                            total_files: total_files as usize,
+                            aggregate_bytes: if success { new_ac } else { ac },
+                            aggregate_total: 0,
+                        },
+                        TransferDirection::Receive,
                         success,
                         error,
-                    } => {
-                        let ac = ac_complete.load(Ordering::SeqCst);
-                        let new_ac = ac + bytes_transferred;
-                        if success {
-                            ac_complete.store(new_ac, Ordering::SeqCst);
-                        }
-                        let _ = progress2.send(UnifiedProgress::file_complete(
-                            &proto2,
-                            &file_name,
-                            bytes_transferred,
-                            ProgressPosition {
-                                file_index: file_index as usize,
-                                total_files: total_files as usize,
-                                aggregate_bytes: if success { new_ac } else { ac },
-                                aggregate_total: 0,
-                            },
-                            TransferDirection::Receive,
-                            success,
-                            error,
-                        ));
-                    }
+                    ));
                 }
             };
 
@@ -337,7 +330,6 @@ impl FileTransfer for SerialFileTransfer {
         })
         .await;
 
-        // Bug #6 fix: 即使接收失败也发送 batch_complete
         let proto_str = self.protocol_type.to_string();
         match result {
             Ok(Ok(batch_results)) => {
