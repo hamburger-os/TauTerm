@@ -1283,6 +1283,31 @@ mod tests {
     }
 
     #[test]
+    fn slow_subscriber_is_detached_instead_of_blocking_or_growing_unbounded() {
+        let (subscriber_tx, subscriber_rx) = mpsc::sync_channel(1);
+        let mut state = RuntimeLoopState {
+            subscribers: vec![(42, subscriber_tx)],
+            startup_buffer: VecDeque::new(),
+            startup_buffer_bytes: 0,
+            handoff_buffer: VecDeque::new(),
+            exclusive: None,
+            shutdown_pending: false,
+            tx_bytes: Arc::new(AtomicU64::new(0)),
+            rx_bytes: Arc::new(AtomicU64::new(0)),
+            exclusive_active: Arc::new(AtomicBool::new(false)),
+        };
+
+        publish_shared_data(&mut state, vec![1]);
+        assert_eq!(state.subscribers.len(), 1);
+        publish_shared_data(&mut state, vec![2]);
+        assert!(state.subscribers.is_empty());
+        match subscriber_rx.try_recv().unwrap() {
+            DataPlaneEvent::Data(data) => assert_eq!(data, vec![1]),
+            DataPlaneEvent::Closed(info) => panic!("unexpected close: {}", info.reason),
+        }
+    }
+
+    #[test]
     fn exclusive_handoff_preserves_bytes_read_during_acquisition() {
         let (runtime, subscription, mut lease) = acquire_while_read_is_in_flight();
         let mut buf = [0u8; 2];

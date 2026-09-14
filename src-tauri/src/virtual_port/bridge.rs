@@ -32,17 +32,21 @@ impl VirtualPortBridge {
         on_error: BridgeErrorHandler,
     ) -> Result<Self, String> {
         let subscription = io.subscribe().map_err(|error| error.to_string())?;
+        let mut virtual_ports: Vec<Box<dyn SerialPort>> =
+            Vec::with_capacity(virtual_port_names.len());
+        for name in &virtual_port_names {
+            let port = open_bridge_endpoint(name, baud_rate)?;
+            log::info!("Virtual endpoint {} attached to bridge", name);
+            virtual_ports.push(port);
+        }
+        if virtual_ports.is_empty() {
+            return Err("no virtual endpoints were available for bridging".into());
+        }
+
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_clone = cancel_flag.clone();
-
         let bridge_thread = std::thread::spawn(move || {
-            if let Err(error) = bridge_loop(
-                virtual_port_names,
-                baud_rate,
-                subscription,
-                io,
-                &cancel_clone,
-            ) {
+            if let Err(error) = bridge_loop(virtual_ports, subscription, io, &cancel_clone) {
                 log::error!("Virtual port bridge failed: {}", error);
                 on_error(error);
             }
@@ -117,27 +121,11 @@ fn write_to_virtual_ports(
 }
 
 fn bridge_loop(
-    virtual_port_names: Vec<String>,
-    baud_rate: u32,
+    mut virtual_ports: Vec<Box<dyn SerialPort>>,
     subscription: crate::transport::DataPlaneSubscription,
     io: Arc<SessionIo>,
     cancel: &AtomicBool,
 ) -> Result<(), String> {
-    let mut virtual_ports: Vec<Box<dyn SerialPort>> = Vec::new();
-    for name in &virtual_port_names {
-        match open_bridge_endpoint(name, baud_rate) {
-            Ok(port) => {
-                virtual_ports.push(port);
-                log::info!("Virtual endpoint {} attached to bridge", name);
-            }
-            Err(error) => log::error!("{}", error),
-        }
-    }
-
-    if virtual_ports.is_empty() {
-        return Err("no virtual endpoints were available for bridging".into());
-    }
-
     let mut read_buf = [0u8; 4096];
     let mut pending_write: Option<Vec<u8>> = None;
 

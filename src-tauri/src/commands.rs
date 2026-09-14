@@ -831,7 +831,7 @@ async fn connect_session_serial(
             };
             let error_app = app.clone();
             let error_session_id = session_id.clone();
-            let bridge = VirtualPortBridge::spawn(
+            match VirtualPortBridge::spawn(
                 virtual_port_names,
                 virtual_baud_rate,
                 io,
@@ -845,26 +845,46 @@ async fn connect_session_serial(
                         }),
                     );
                 }),
-            )?;
-
-            {
-                let mut store = state
-                    .session_store
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                if let Some(handle) = store.get_session_mut(&session_id) {
-                    handle.virtual_port_bridge = Some(bridge);
-                    handle.virtual_endpoints = pairs.clone();
+            ) {
+                Ok(bridge) => {
+                    {
+                        let mut store = state
+                            .session_store
+                            .lock()
+                            .map_err(|error| error.to_string())?;
+                        if let Some(handle) = store.get_session_mut(&session_id) {
+                            handle.virtual_port_bridge = Some(bridge);
+                            handle.virtual_endpoints = pairs.clone();
+                        }
+                    }
+                    let _ = app.emit(
+                        "virtual-port-created",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "endpoints": &vport_endpoints_json,
+                        }),
+                    );
+                }
+                Err(reason) => {
+                    // VPort is an optional capability. Roll back only the endpoints that were just
+                    // created; the already-established physical Serial session remains valid.
+                    if let Ok(mut vpm) = state.virtual_port_manager.lock() {
+                        for pair in &pairs {
+                            let _ = vpm.destroy_endpoint(pair);
+                        }
+                    }
+                    vport_endpoints_json.clear();
+                    log::warn!("虚拟端口桥接启动失败 (session={}): {}", session_id, reason);
+                    let _ = app.emit(
+                        "virtual-port-failed",
+                        serde_json::json!({
+                            "session_id": session_id,
+                            "kind": "bridge_failed",
+                            "reason": reason,
+                        }),
+                    );
                 }
             }
-
-            let _ = app.emit(
-                "virtual-port-created",
-                serde_json::json!({
-                    "session_id": session_id,
-                    "endpoints": &vport_endpoints_json,
-                }),
-            );
         } else {
             // 使用真实失败原因，避免用一句写死的 "driver not installed" 掩盖
             // 端口耗尽 / UAC 被取消等真实问题。
