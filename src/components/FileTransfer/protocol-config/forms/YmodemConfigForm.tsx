@@ -7,7 +7,7 @@ interface YmodemConfigFormProps {
   onChange: (config: YmodemTransferConfig) => void;
 }
 
-/** YModem 协议参数：块大小 + 校验模式 */
+/** YModem 只暴露真正由本端控制的发送块大小；校验/流模式由握手自动协商。 */
 export default function YmodemConfigForm({
   config,
   onChange,
@@ -16,43 +16,20 @@ export default function YmodemConfigForm({
 
   return (
     <div className={styles.form}>
-      {/* Block Size */}
       <div className={styles.group}>
         <label className={styles.groupLabel}>
           {t("transfer.configBlockSize")}
         </label>
         <div className={styles.btnRow}>
-          {([1024, 128] as const).map((bs) => (
+          {([1024, 128] as const).map((blockSize) => (
             <button
-              key={bs}
-              className={`${styles.optionBtn} liquid-glass-button ${config.blockSize === bs ? "active" : ""}`}
-              onClick={() => onChange({ ...config, blockSize: bs })}
+              key={blockSize}
+              className={`${styles.optionBtn} liquid-glass-button ${config.blockSize === blockSize ? "active" : ""}`}
+              onClick={() => onChange({ ...config, blockSize })}
             >
-              {bs === 1024
+              {blockSize === 1024
                 ? t("transfer.configBlockSize1K")
                 : t("transfer.configBlockSize128")}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Checksum Mode */}
-      <div className={styles.group}>
-        <label className={styles.groupLabel}>
-          {t("transfer.configChecksumMode")}
-        </label>
-        <div className={styles.btnRow}>
-          {(["crc16", "checksum8"] as const).map((mode) => (
-            <button
-              key={mode}
-              className={`${styles.optionBtn} liquid-glass-button ${config.checksumMode === mode ? "active" : ""}`}
-              onClick={() =>
-                onChange({ ...config, checksumMode: mode })
-              }
-            >
-              {mode === "crc16"
-                ? t("transfer.configChecksumCRC16")
-                : t("transfer.configChecksumStandard")}
             </button>
           ))}
         </div>
