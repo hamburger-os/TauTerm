@@ -197,7 +197,7 @@ pub fn crc32_verify(data: &[u8], expected: u32) -> bool {
 /// 验证校验和匹配
 #[inline]
 pub fn checksum_verify(data: &[u8], expected: u8) -> bool {
-    checksum(data).wrapping_add(expected) == 0
+    checksum(data) == expected
 }
 
 #[cfg(test)]
@@ -230,6 +230,8 @@ mod tests {
         let data = [1u8, 2, 3, 4, 5];
         let sum = checksum(&data);
         assert_eq!(sum, 15); // 1+2+3+4+5 = 15
+        assert!(checksum_verify(&data, 15));
+        assert!(!checksum_verify(&data, (0u8).wrapping_sub(15)));
     }
 
     #[test]

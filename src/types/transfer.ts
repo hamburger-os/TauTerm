@@ -34,20 +34,33 @@ export type FileTransferState =
 
 // ── Protocol Config Interfaces ────────────────────────────
 
-/** YModem 当前唯一可由用户强制选择的参数是发送块大小；CRC/Checksum/G 由对端握手协商。 */
+export type XmodemReceiveCheckMode = "auto" | "crc16" | "checksum";
+export type ZmodemCrcPolicy = "auto" | "crc16" | "crc32-required";
+export type ZmodemReceiveCrcCapability = "auto" | "crc16-only";
+export type ModemBlockSize = 128 | 1024;
+export type ZmodemMaxBlockSize = 1024 | 2048 | 4096 | 8192;
+
+/** YMODEM 的块大小属于发送方；接收方按标准流程主动请求 CRC16。 */
 export interface YmodemTransferConfig {
   protocol: "ymodem";
-  blockSize: 128 | 1024;
+  send: { blockSize: ModemBlockSize };
 }
 
-/** XModem 变体、校验方式和启动字符由双方握手自动协商。 */
+/** XMODEM 将发送块大小与接收校验请求分开建模。 */
 export interface XmodemTransferConfig {
   protocol: "xmodem";
+  send: { blockSize: ModemBlockSize };
+  receive: { checkMode: XmodemReceiveCheckMode };
 }
 
-/** ZModem 能力由协议握手自动协商；当前不暴露不会实际生效的伪配置。 */
+/** ZMODEM 发送策略与接收方宣告的 CRC 能力分别建模。 */
 export interface ZmodemTransferConfig {
   protocol: "zmodem";
+  send: {
+    crcPolicy: ZmodemCrcPolicy;
+    maxBlockSize: ZmodemMaxBlockSize;
+  };
+  receive: { crcCapability: ZmodemReceiveCrcCapability };
 }
 
 /** SFTP 传输配置（文件管理器拥有真实远端目录状态）。 */
@@ -78,7 +91,7 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
     icon: "package",
     defaultConfig: {
       protocol: "ymodem",
-      blockSize: 1024,
+      send: { blockSize: 1024 },
     },
   },
   xmodem: {
@@ -87,6 +100,8 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
     icon: "package",
     defaultConfig: {
       protocol: "xmodem",
+      send: { blockSize: 128 },
+      receive: { checkMode: "auto" },
     },
   },
   zmodem: {
@@ -95,6 +110,8 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
     icon: "package",
     defaultConfig: {
       protocol: "zmodem",
+      send: { crcPolicy: "auto", maxBlockSize: 8192 },
+      receive: { crcCapability: "auto" },
     },
   },
   sftp: {
@@ -110,25 +127,35 @@ export const PROTOCOL_REGISTRY: Record<ProtocolType, ProtocolMeta> = {
 
 // ── Transfer Commands ─────────────────────────────────────
 
-/** 前端 → 后端发送命令的精确结构；协议专有参数只保留真实生效的 YModem blockSize。 */
+export type SendProtocolOptions =
+  | { protocol: "ymodem"; blockSize: ModemBlockSize }
+  | { protocol: "xmodem"; blockSize: ModemBlockSize }
+  | { protocol: "zmodem"; crcPolicy: ZmodemCrcPolicy; maxBlockSize: ZmodemMaxBlockSize }
+  | { protocol: "sftp" };
+
+export type ReceiveProtocolOptions =
+  | { protocol: "ymodem" }
+  | { protocol: "xmodem"; checkMode: XmodemReceiveCheckMode }
+  | { protocol: "zmodem"; crcCapability: ZmodemReceiveCrcCapability }
+  | { protocol: "sftp" };
+
+/** 前端 → 后端发送命令：协议专有设置只存在于 role-aware protocolOptions。 */
 export interface FileTransferSendRequest {
   sessionId: string;
-  protocol: string;
+  protocolOptions: SendProtocolOptions;
   filePaths: string[];
   remoteDir?: string;
   overwritePolicy?: OverwritePolicy;
-  blockSize?: 128 | 1024;
 }
 
-/** 前端 → 后端接收命令的精确结构。 */
+/** 前端 → 后端接收命令：不会复用发送方配置。 */
 export interface FileTransferReceiveRequest {
   sessionId: string;
-  protocol: string;
+  protocolOptions: ReceiveProtocolOptions;
   downloadDir: string;
   remotePaths: string[];
   destinationPaths?: string[];
   overwritePolicy?: OverwritePolicy;
-  blockSize?: 128 | 1024;
 }
 
 // ── Transfer Events ───────────────────────────────────────

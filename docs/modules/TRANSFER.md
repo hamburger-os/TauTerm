@@ -106,3 +106,14 @@ flowchart LR
 ## 何时更新本文
 
 修改传输策略、协议 capability descriptor、ExclusiveIo 所有权、统一进度/取消、批量传输、SFTP/串口编排或传输状态与 Session 生命周期的关系时，必须同步更新本文。
+
+
+## Modem 角色感知配置
+
+传输命令边界使用带 `protocol` 标签的 `protocolOptions`，不再把 Modem 参数平铺到请求顶层。发送与接收分别使用 Rust/TypeScript 联合类型，使只属于本机某一角色的设置无法误作用到另一角色。已经删除的顶层 `blockSize`、checksum、streaming 形态不保留兼容解析。
+
+- **YMODEM**：发送方可以选择 128/1024 字节数据块；接收方按协议握手运行，不复用发送方块大小偏好。
+- **XMODEM**：发送块大小（SOH=128、STX=1024）与校验协商相互独立。接收方用 `C` 请求 CRC16、用 `NAK` 请求 8 位 checksum，`auto` 则先请求 CRC16、超时后降级到 checksum；`G` 不是 XMODEM-1K 选择器。标准 checksum 在线路上传输数据字节算术和的低 8 位；块号为 8 位序号并按 `1..255→0→1` 自然回绕。等待块头时只逐字节忽略噪声，不清空可能已经包含合法帧头的 RX 缓冲。
+- **ZMODEM**：接收方通过 `ZRINIT.CANFC32` 声明 CRC32 能力。发送方 `auto` 仅在对端声明能力时使用 CRC32，`crc16` 固定使用 CRC16，`crc32-required` 在对端不支持时明确失败；最大发送块大小属于发送方策略。`crc16-only` 的含义是不向对端声明 CRC32 能力。
+
+Inline 传输取消只有一个所有者：`TransferScheduler` 创建并保存与协议循环共享的同一个 `Arc<AtomicBool>`。旧的 oneshot 取消兼容参数已经删除；编排器中仍存在的 oneshot 仅用于任务启动门闩，不代表取消状态。

@@ -216,7 +216,7 @@ export function useFileManager(
     ): Promise<TransferStartAck> => {
       return startFileTransfer('send', {
         sessionId,
-        protocol: 'sftp',
+        protocolOptions: { protocol: 'sftp' },
         filePaths: localPaths,
         remoteDir,
         overwritePolicy,
@@ -265,7 +265,7 @@ export function useFileManager(
           'receive',
           {
             sessionId,
-            protocol: 'sftp',
+            protocolOptions: { protocol: 'sftp' },
             downloadDir,
             remotePaths,
             destinationPaths,
@@ -288,7 +288,7 @@ export function useFileManager(
           'receive',
           {
             sessionId,
-            protocol: 'sftp',
+            protocolOptions: { protocol: 'sftp' },
             downloadDir: localDir,
             remotePaths: [remoteDir],
             overwritePolicy: 'keep-both',
@@ -316,7 +316,7 @@ export function useFileManager(
             'receive',
             {
               sessionId,
-              protocol: 'sftp',
+              protocolOptions: { protocol: 'sftp' },
               downloadDir: localRootDir,
               remotePaths: [entry.path],
               overwritePolicy: 'keep-both',

@@ -5,14 +5,13 @@
 //! Inline 会接管 Session 主 I/O 资源，因此无论并发上限如何始终保持独占。
 //!
 //! 所有任务统一使用同一种 `Arc<AtomicBool>` 取消令牌。Inline 与 Auxiliary 的差异
-//! 只属于资源准入策略，不再属于取消机制。
+//! 只属于资源准入策略，不属于取消机制。
 
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use tokio::sync::oneshot;
 
 pub const DEFAULT_MAX_ACTIVE_PER_SESSION: usize = 1;
 
@@ -69,13 +68,6 @@ impl TransferScheduler {
         self.active.keys().next().map(String::as_str)
     }
 
-    /// 返回已注册任务共享的取消令牌。
-    pub fn cancel_flag(&self, transfer_id: &str) -> Option<Arc<AtomicBool>> {
-        self.active
-            .get(transfer_id)
-            .map(|transfer| transfer.cancel.clone())
-    }
-
     fn ensure_new_id(&self, transfer_id: &str) -> Result<(), String> {
         if self.active.contains_key(transfer_id) {
             return Err("传输任务 ID 已存在".to_string());
@@ -102,15 +94,8 @@ impl TransferScheduler {
         Ok(())
     }
 
-    /// 为 Inline 任务预留独占槽。
-    ///
-    /// `_legacy_cancel_tx` 只保留到 SessionStore 的薄包装迁移完成；真实取消状态始终
-    /// 由本调度器创建并持有的共享原子令牌表达，调用方通过 `cancel_flag` 获取同一令牌。
-    pub fn reserve_inline(
-        &mut self,
-        transfer_id: &str,
-        _legacy_cancel_tx: oneshot::Sender<()>,
-    ) -> Result<(), String> {
+    /// 为 Inline 任务预留独占槽，并返回协议循环与用户取消共享的唯一令牌。
+    pub fn reserve_inline(&mut self, transfer_id: &str) -> Result<Arc<AtomicBool>, String> {
         self.ensure_new_id(transfer_id)?;
         if self.max_active == 0 {
             return Err("该会话已禁用文件传输任务".to_string());
@@ -118,14 +103,15 @@ impl TransferScheduler {
         if !self.active.is_empty() {
             return Err("串口传输需要独占会话 I/O，请等待其他传输完成或取消后再试".to_string());
         }
+        let flag = Arc::new(AtomicBool::new(false));
         self.active.insert(
             transfer_id.to_string(),
             ScheduledTransfer {
                 kind: TransferTaskKind::Inline,
-                cancel: Arc::new(AtomicBool::new(false)),
+                cancel: flag.clone(),
             },
         );
-        Ok(())
+        Ok(flag)
     }
 
     pub fn reserve_auxiliary(&mut self, transfer_id: &str) -> Result<Arc<AtomicBool>, String> {
@@ -194,12 +180,6 @@ impl TransferScheduler {
 mod tests {
     use super::*;
 
-    fn reserve_inline(scheduler: &mut TransferScheduler, id: &str) -> Arc<AtomicBool> {
-        let (tx, _rx) = oneshot::channel();
-        scheduler.reserve_inline(id, tx).expect("reserve inline");
-        scheduler.cancel_flag(id).expect("inline cancel flag")
-    }
-
     #[test]
     fn default_policy_is_single_active_transfer() {
         let scheduler = TransferScheduler::default();
@@ -212,7 +192,9 @@ mod tests {
     #[test]
     fn inline_reservation_uses_shared_cancel_flag() {
         let mut scheduler = TransferScheduler::default();
-        let flag = reserve_inline(&mut scheduler, "transfer-a");
+        let flag = scheduler
+            .reserve_inline("transfer-a")
+            .expect("reserve inline");
         assert_eq!(scheduler.active_id(), Some("transfer-a"));
         assert!(scheduler.cancel(Some("transfer-b")).is_err());
         scheduler
@@ -262,20 +244,18 @@ mod tests {
         scheduler
             .reserve_auxiliary("side-a")
             .expect("reserve side channel");
-        let (inline_tx, _inline_rx) = oneshot::channel();
-        assert!(scheduler.reserve_inline("inline-a", inline_tx).is_err());
+        assert!(scheduler.reserve_inline("inline-a").is_err());
         assert_eq!(scheduler.active_count(), 1);
     }
 
     #[test]
     fn auxiliary_cannot_start_while_inline_owns_session_io() {
         let mut scheduler = TransferScheduler::with_max_active(2);
-        let _inline = reserve_inline(&mut scheduler, "inline-a");
+        let _inline = scheduler
+            .reserve_inline("inline-a")
+            .expect("reserve inline");
         assert!(scheduler.reserve_auxiliary("side-a").is_err());
-        let (second_inline_tx, _second_inline_rx) = oneshot::channel();
-        assert!(scheduler
-            .reserve_inline("inline-b", second_inline_tx)
-            .is_err());
+        assert!(scheduler.reserve_inline("inline-b").is_err());
         assert_eq!(scheduler.active_count(), 1);
     }
 }

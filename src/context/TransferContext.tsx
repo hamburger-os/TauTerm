@@ -17,6 +17,8 @@ import type {
   FileTransferSendRequest,
   FileTransferState,
   ProtocolType,
+  ReceiveProtocolOptions,
+  SendProtocolOptions,
   TransferConfig,
   TransferDirection,
   TransferFinishedPayload,
@@ -592,6 +594,36 @@ function transferReducer(state: TransferState, action: TransferAction): Transfer
   }
 }
 
+function sendProtocolOptions(config: TransferConfig): SendProtocolOptions {
+  switch (config.protocol) {
+    case "ymodem":
+      return { protocol: "ymodem", blockSize: config.send.blockSize };
+    case "xmodem":
+      return { protocol: "xmodem", blockSize: config.send.blockSize };
+    case "zmodem":
+      return {
+        protocol: "zmodem",
+        crcPolicy: config.send.crcPolicy,
+        maxBlockSize: config.send.maxBlockSize,
+      };
+    case "sftp":
+      return { protocol: "sftp" };
+  }
+}
+
+function receiveProtocolOptions(config: TransferConfig): ReceiveProtocolOptions {
+  switch (config.protocol) {
+    case "ymodem":
+      return { protocol: "ymodem" };
+    case "xmodem":
+      return { protocol: "xmodem", checkMode: config.receive.checkMode };
+    case "zmodem":
+      return { protocol: "zmodem", crcCapability: config.receive.crcCapability };
+    case "sftp":
+      return { protocol: "sftp" };
+  }
+}
+
 interface TransferContextValue {
   state: TransferState;
   startTransfer: (
@@ -632,23 +664,18 @@ export function TransferProvider({ children }: { children: ReactNode }) {
         if (direction === "send") {
           const request: FileTransferSendRequest = {
             sessionId,
-            protocol: config.protocol,
+            protocolOptions: sendProtocolOptions(config),
             filePaths: filePaths ?? [],
           };
-          if (config.protocol === "ymodem") {
-            request.blockSize = config.blockSize;
-          }
+          if (config.protocol === "sftp") request.remoteDir = config.remotePath;
           ack = await startFileTransfer("send", request);
         } else {
           const request: FileTransferReceiveRequest = {
             sessionId,
-            protocol: config.protocol,
+            protocolOptions: receiveProtocolOptions(config),
             downloadDir: downloadDir ?? "",
             remotePaths: [],
           };
-          if (config.protocol === "ymodem") {
-            request.blockSize = config.blockSize;
-          }
           ack = await startFileTransfer("receive", request);
         }
 

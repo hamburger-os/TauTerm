@@ -610,6 +610,19 @@
         "name": "SFTP",
         "description": "SSH File Transfer Protocol, directory browsing & random access"
       }
+    },
+    "configSendSettings": "Send settings",
+    "configReceiveSettings": "Receive settings",
+    "configChecksumRequest": "Checksum request",
+    "configCrcPolicy": "CRC policy",
+    "configMaxBlockSize": "Maximum block size",
+    "configCrcCapability": "CRC capability",
+    "configMode": {
+      "auto": "Auto",
+      "crc16": "CRC16",
+      "checksum": "Checksum",
+      "crc32-required": "Require CRC32",
+      "crc16-only": "CRC16 only"
     }
   },
   "sidebar": {

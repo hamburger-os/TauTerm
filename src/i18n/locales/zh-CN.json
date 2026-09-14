@@ -610,6 +610,19 @@
         "name": "SFTP",
         "description": "SSH 文件传输协议，支持目录浏览与断点操作"
       }
+    },
+    "configSendSettings": "发送设置",
+    "configReceiveSettings": "接收设置",
+    "configChecksumRequest": "校验请求",
+    "configCrcPolicy": "CRC 策略",
+    "configMaxBlockSize": "最大块大小",
+    "configCrcCapability": "CRC 能力",
+    "configMode": {
+      "auto": "自动",
+      "crc16": "CRC16",
+      "checksum": "校验和",
+      "crc32-required": "要求 CRC32",
+      "crc16-only": "仅 CRC16"
     }
   },
   "sidebar": {

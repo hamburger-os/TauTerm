@@ -65,6 +65,12 @@ assert.match(frontendTypes, /export type TransferProgressKind[\s\S]*"file_start"
 assert.match(frontendTypes, /interface UnifiedTransferProgressPayload[\s\S]*kind:\s*TransferProgressKind/);
 assert.match(frontendTypes, /interface TransferFinishedPayload[\s\S]*transfer_id:\s*string[\s\S]*protocol:\s*string[\s\S]*cancelled:\s*boolean[\s\S]*results:\s*BatchFileResult\[\] \| null/);
 assert.doesNotMatch(frontendTypes, /is_file_start|is_file_complete|is_batch_complete|__batch_complete__/);
+assert.match(frontendTypes, /export type SendProtocolOptions[\s\S]*protocol: "ymodem"[\s\S]*protocol: "xmodem"[\s\S]*protocol: "zmodem"[\s\S]*protocol: "sftp"/);
+assert.match(frontendTypes, /export type ReceiveProtocolOptions[\s\S]*checkMode: XmodemReceiveCheckMode[\s\S]*crcCapability: ZmodemReceiveCrcCapability/);
+assert.match(frontendTypes, /interface FileTransferSendRequest[\s\S]*protocolOptions: SendProtocolOptions/);
+assert.match(frontendTypes, /interface FileTransferReceiveRequest[\s\S]*protocolOptions: ReceiveProtocolOptions/);
+assert.doesNotMatch(frontendTypes, /FileTransferSendRequest[\s\S]{0,260}\n  protocol: string/);
+assert.doesNotMatch(frontendTypes, /FileTransferReceiveRequest[\s\S]{0,300}\n  blockSize\?/);
 
 // ── Shared frontend command/wait service ────────────────────────────────────
 const transferService = await source("src/services/transferService.ts");
@@ -120,6 +126,10 @@ assert.match(transmission, /state\.startErrorsBySession\[sessionId\]/);
 assert.match(transmission, /clearError\(sessionId\)/);
 assert.match(transmission, /task\?\.files \?\? \[\]/);
 assert.doesNotMatch(transmission, /state\.activeSessionId|state\.activeProtocol/);
+assert.match(transmission, /<ProtocolConfigForm config=\{config\} onChange=\{setConfig\}/);
+assert.match(context, /protocolOptions: sendProtocolOptions\(config\)/);
+assert.match(context, /protocolOptions: receiveProtocolOptions\(config\)/);
+assert.doesNotMatch(context, /request\.blockSize/);
 
 // ── Task identity and protocol-independent backend contract ─────────────────
 const unified = await source("src-tauri/src/kernel/file_transfer.rs");
@@ -139,8 +149,33 @@ assert.doesNotMatch(
 
 const protocol = await source("src-tauri/src/transfer/protocol.rs");
 assert.match(protocol, /pub trait SerialTransferProtocol/);
-assert.match(protocol, /Option<Box<dyn SerialTransferProtocol>>/);
+assert.doesNotMatch(protocol, /create_protocol\(/, "role-aware construction must not regress to a generic protocol factory");
 assert.match(protocol, /真正跨传输方式的扩展点是 `kernel::file_transfer::FileTransfer`/);
+
+const roleConfig = await source("src-tauri/src/transfer/config.rs");
+assert.match(roleConfig, /pub enum SendProtocolOptions[\s\S]*Ymodem[\s\S]*Xmodem[\s\S]*Zmodem[\s\S]*Sftp/);
+assert.match(roleConfig, /pub enum ReceiveProtocolOptions[\s\S]*Ymodem[\s\S]*Xmodem[\s\S]*Zmodem[\s\S]*Sftp/);
+assert.match(roleConfig, /pub enum XModemReceiveMode[\s\S]*Auto[\s\S]*Crc16[\s\S]*Checksum/);
+assert.match(roleConfig, /pub enum ZModemCrcPolicy[\s\S]*Crc32Required/);
+
+const xmodem = await source("src-tauri/src/transfer/xmodem.rs");
+assert.doesNotMatch(xmodem, /\bg_mode\b|const G:\s*u8|XModemVariant|OneK/);
+assert.match(xmodem, /`G` 不代表 XMODEM-1K/);
+assert.match(xmodem, /XModemCheckMode::Checksum[\s\S]*packet\.push\(crc::checksum\(data\)\)/);
+assert.match(xmodem, /Some\(CAN\) => return Err\("发送方取消了传输"\.into\(\)\)/);
+assert.match(xmodem, /fn next_block_num\(current: u8\) -> u8 \{\s*current\.wrapping_add\(1\)\s*\}/);
+assert.match(xmodem, /bnum != !bnum_neg \|\| bnum != 1/);
+assert.match(xmodem, /read_data_block\(port, header, check_mode\)\?[\s\S]{0,500}bnum != !bnum_neg/);
+assert.match(xmodem, /let request = if frame_started[\s\S]{0,160}NAK[\s\S]{0,160}check_mode\.init_byte\(\)/);
+assert.doesNotMatch(xmodem, /flush_port_buffer\(port\)/);
+assert.match(xmodem, /Sender \{ block_size: usize \}/);
+assert.match(xmodem, /Receiver \{ check_mode: XModemReceiveMode \}/);
+
+const zmodem = await source("src-tauri/src/transfer/zmodem.rs");
+assert.match(zmodem, /ZModemRole[\s\S]*Sender[\s\S]*crc_policy: ZModemCrcPolicy[\s\S]*Receiver[\s\S]*crc_capability: ZModemReceiveCrcCapability/);
+assert.match(zmodem, /receiver_crc32[\s\S]*ZModemCrcPolicy::Auto => receiver_crc32/);
+assert.match(zmodem, /ZModemCrcPolicy::Crc32Required if receiver_crc32 => true/);
+assert.match(zmodem, /rinit_flags\[ZF0\] = if use_crc32 \{ CANFC32 \} else \{ 0 \}/);
 
 const transferMod = await source("src-tauri/src/transfer/mod.rs");
 assert.doesNotMatch(transferMod, /pub mod manager;/);
@@ -171,6 +206,8 @@ assert.match(sessionStore, /reserve_auxiliary/);
 assert.match(sessionStore, /cancel_scheduled_transfer/);
 assert.match(sessionStore, /register_transfer_task/);
 assert.doesNotMatch(sessionStore, /pub active_transfer_id:|pub transfer_cancel:|pub cancel_transfer_tx:/);
+assert.doesNotMatch(sessionStore, /reserve_inline_transfer[\s\S]{0,260}oneshot::Sender/);
+assert.match(sessionStore, /reserve_inline_transfer[\s\S]{0,260}Arc<std::sync::atomic::AtomicBool>/);
 
 // ── All strategies now use one start/ack/event lifecycle ───────────────────
 const orchestrator = await source("src-tauri/src/transfer/orchestrator.rs");
