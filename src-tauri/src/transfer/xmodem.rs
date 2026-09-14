@@ -492,36 +492,36 @@ fn xmodem_receive(
     let mut first_block_data: Option<(u8, Vec<u8>)> = None;
 
     'init: for &check_mode in check_modes {
+        let mut frame_started = false;
         for _ in 0..attempts_per_mode {
             if cancel() {
                 io::send_cancel(port);
                 return Err("传输已取消".into());
             }
-            port.write_all(&[check_mode.init_byte()])?;
+
+            // 启动阶段使用 C/NAK 选择校验方式；一旦发送方已经响应数据帧，
+            // 后续失败属于同一模式内的块重传，只能使用 NAK，不能重新协商。
+            let request = if frame_started {
+                NAK
+            } else {
+                check_mode.init_byte()
+            };
+            port.write_all(&[request])?;
             port.flush()?;
+
             match read_byte_with_timeout(port, 1000)? {
                 Some(header @ (SOH | STX)) => {
-                    let bnum = read_or_fail(port)?;
-                    let bnum_neg = read_or_fail(port)?;
+                    frame_started = true;
+                    // 已看到帧头后必须完整消费该帧，再判断序号/校验是否有效；
+                    // 否则损坏帧的 payload 会污染下一轮帧头同步。
+                    let (bnum, bnum_neg, data, valid) = read_data_block(port, header, check_mode)?;
                     if bnum != !bnum_neg || bnum != 1 {
                         log::debug!(
-                            "XModem RX: invalid first block number {} (expected 1), requesting retry",
-                            bnum
-                        );
-                        port.write_all(&[NAK])?;
-                        port.flush()?;
+                        "XModem RX: invalid first block number {} (expected 1), requesting retry",
+                        bnum
+                    );
                         continue;
                     }
-                    let block_size = if header == STX {
-                        BLOCK_SIZE_1K
-                    } else {
-                        BLOCK_SIZE_128
-                    };
-                    let mut data = vec![0u8; block_size];
-                    for byte in &mut data {
-                        *byte = read_or_fail(port)?;
-                    }
-                    let valid = verify_block(port, &data, check_mode)?;
                     if valid {
                         port.write_all(&[ACK])?;
                         port.flush()?;
@@ -529,8 +529,7 @@ fn xmodem_receive(
                         first_block_data = Some((bnum, data));
                         break 'init;
                     }
-                    port.write_all(&[NAK])?;
-                    port.flush()?;
+                    log::debug!("XModem RX: first block checksum/CRC failed, requesting retry");
                 }
                 Some(CAN) => return Err("发送方取消了传输".into()),
                 Some(other) => log::debug!(
@@ -540,6 +539,13 @@ fn xmodem_receive(
                 ),
                 None => {}
             }
+        }
+
+        // Auto 只有在对端从未开始发送数据帧时才允许从 CRC16 降级到 checksum。
+        // 已进入数据阶段却反复收到损坏帧时，切换校验模式会造成双方状态机失步。
+        if frame_started {
+            io::send_cancel(port);
+            return Err("XModem 首个数据块重试耗尽".into());
         }
     }
 
@@ -676,16 +682,9 @@ fn xmodem_receive(
         }
 
         // ── 数据块处理 ──
-        // 根据实际收到的块头确定块大小（协议鲁棒性：防止变体与头字节不匹配）
-        let actual_block_size = if header == STX {
-            BLOCK_SIZE_1K
-        } else {
-            BLOCK_SIZE_128
-        };
-
-        // 读取块序号和反码
-        let bnum = read_or_fail(port)?;
-        let bnum_neg = read_or_fail(port)?;
+        // 帧头一旦确认，就先完整读取 payload + trailer，再判断序号和校验。
+        // 这样损坏帧不会把未消费数据遗留给下一轮帧头解析。
+        let (bnum, bnum_neg, data, valid) = read_data_block(port, header, check_mode)?;
 
         if bnum != !bnum_neg {
             log::warn!(
@@ -697,15 +696,6 @@ fn xmodem_receive(
             port.flush()?;
             continue;
         }
-
-        // 读取数据
-        let mut data = vec![0u8; actual_block_size];
-        for b in data.iter_mut() {
-            *b = read_or_fail(port)?;
-        }
-
-        // 读取并验证接收方在握手阶段选择的校验方式。
-        let valid = verify_block(port, &data, check_mode)?;
 
         if !valid {
             log::debug!("XModem RX: block {} checksum/CRC failed, sending NAK", bnum);
@@ -761,6 +751,26 @@ fn xmodem_receive(
     }
 
     Ok(batch_results)
+}
+
+fn read_data_block(
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
+    header: u8,
+    check_mode: XModemCheckMode,
+) -> Result<(u8, u8, Vec<u8>, bool), Box<dyn std::error::Error>> {
+    let block_size = match header {
+        SOH => BLOCK_SIZE_128,
+        STX => BLOCK_SIZE_1K,
+        other => return Err(format!("无效的 XModem 数据帧头 0x{other:02X}").into()),
+    };
+    let bnum = read_or_fail(port)?;
+    let bnum_neg = read_or_fail(port)?;
+    let mut data = vec![0u8; block_size];
+    for byte in &mut data {
+        *byte = read_or_fail(port)?;
+    }
+    let valid = verify_block(port, &data, check_mode)?;
+    Ok((bnum, bnum_neg, data, valid))
 }
 
 fn verify_block(

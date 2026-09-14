@@ -165,6 +165,8 @@ assert.match(xmodem, /XModemCheckMode::Checksum[\s\S]*packet\.push\(crc::checksu
 assert.match(xmodem, /Some\(CAN\) => return Err\("发送方取消了传输"\.into\(\)\)/);
 assert.match(xmodem, /fn next_block_num\(current: u8\) -> u8 \{\s*current\.wrapping_add\(1\)\s*\}/);
 assert.match(xmodem, /bnum != !bnum_neg \|\| bnum != 1/);
+assert.match(xmodem, /read_data_block\(port, header, check_mode\)\?[\s\S]{0,500}bnum != !bnum_neg/);
+assert.match(xmodem, /let request = if frame_started[\s\S]{0,160}NAK[\s\S]{0,160}check_mode\.init_byte\(\)/);
 assert.doesNotMatch(xmodem, /flush_port_buffer\(port\)/);
 assert.match(xmodem, /Sender \{ block_size: usize \}/);
 assert.match(xmodem, /Receiver \{ check_mode: XModemReceiveMode \}/);
