@@ -6,13 +6,32 @@
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/serial.json";
 
+function serialSubtitle(params: Record<string, unknown>, endpoint: string): string {
+  const baudRate = typeof params.baud_rate === "number" && Number.isFinite(params.baud_rate)
+    ? String(params.baud_rate)
+    : "";
+  const dataBits = typeof params.data_bits === "number" && Number.isInteger(params.data_bits)
+    ? String(params.data_bits)
+    : "";
+  const parity = params.parity === "even" ? "E" : params.parity === "odd" ? "O" : params.parity === "none" ? "N" : "";
+  const stopBits = params.stop_bits === "1" || params.stop_bits === "2" ? params.stop_bits : "";
+  const frame = dataBits && parity && stopBits ? `${dataBits}${parity}${stopBits}` : "";
+  const flowControl = params.flow_control === "rts_cts"
+    ? "RTS/CTS"
+    : params.flow_control === "xon_xoff"
+      ? "XON/XOFF"
+      : "";
+
+  return [endpoint.trim(), baudRate, frame, flowControl].filter(Boolean).join(" · ");
+}
+
 registerPlugin({
   manifest: manifestJson as PluginManifest,
   sessionPresentation: {
-    defaultName: params => {
-      const mode = params.data_mode === "hex" ? "HEX" : params.data_mode === "dual" ? "Dual" : "Text";
-      return `Serial @ ${mode}`;
-    },
+    // 会话名只在创建时生成一次，表达稳定身份；Text/HEX/Dual 属于可变显示方式，不能进入名称。
+    defaultName: (_params, endpoint) => `Serial @ ${endpoint}`,
+    // 第二行始终由当前链路配置动态推导，配置变更后自然刷新。
+    subtitle: serialSubtitle,
   },
   toolbarItems: [],
   locales: {
