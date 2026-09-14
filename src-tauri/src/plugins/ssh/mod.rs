@@ -12,7 +12,7 @@ mod known_hosts;
 
 use serde::Deserialize;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tauri::Emitter;
 use tokio::sync::Mutex;
@@ -359,8 +359,8 @@ impl HostKeyVerifier {
 
 /// 供 SFTP 文件服务使用的类型化运行时资源。
 ///
-/// 持有 SSH 会话引用和缓存的 SFTP 对象。SessionStore 只持有协议无关生命周期
-/// capability；SSH 命令通过插件自己的 typed runtime registry 按 session_id 获取本对象。
+/// SessionStore 的 service/file-transfer/channel-factory capability 持有强引用并负责资源
+/// 生命周期；按 session_id 的 SSH registry 只保存 Weak 索引，不能额外延长连接生命。
 ///
 /// - `session` — russh Handle（内部线程安全，与 SshChannel 共享同一 Arc）
 /// - `sftp` — 缓存的 SFTP 子系统通道，避免每次操作重新协商
@@ -378,15 +378,21 @@ pub struct SshRuntime {
 }
 
 fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<SshRuntime>>> {
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, Weak<SshRuntime>>> {
     static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<SshRuntime>>>,
+        std::sync::Mutex<std::collections::HashMap<String, Weak<SshRuntime>>>,
     > = std::sync::OnceLock::new();
     REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
 pub fn runtime(session_id: &str) -> Option<Arc<SshRuntime>> {
-    runtime_registry().lock().ok()?.get(session_id).cloned()
+    let runtime = runtime_registry().lock().ok()?.get(session_id)?.upgrade();
+    if runtime.is_none() {
+        if let Ok(mut map) = runtime_registry().lock() {
+            map.remove(session_id);
+        }
+    }
+    runtime
 }
 
 struct RuntimeAttach {
@@ -395,7 +401,7 @@ struct RuntimeAttach {
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
         if let Ok(mut map) = runtime_registry().lock() {
-            map.insert(session_id.to_string(), self.runtime.clone());
+            map.insert(session_id.to_string(), Arc::downgrade(&self.runtime));
         }
     }
     fn on_detached(&self, session_id: &str) {
