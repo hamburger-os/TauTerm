@@ -713,7 +713,9 @@ fn handle_command(
             } else {
                 let result = driver.write_all(&data).and_then(|_| driver.flush());
                 if result.is_ok() {
-                    state.tx_bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
+                    state
+                        .tx_bytes
+                        .fetch_add(data.len() as u64, Ordering::Relaxed);
                 }
                 result
             };
