@@ -92,8 +92,6 @@ fn needs_escaping(byte: u8) -> bool {
 
 /// 默认块大小
 const DEFAULT_BLOCK_SIZE: usize = 1024;
-/// 最大块大小
-const MAX_BLOCK_SIZE: usize = 8192;
 /// 最大重试次数
 const MAX_RETRIES: u32 = 10;
 /// 帧接收超时（秒）
