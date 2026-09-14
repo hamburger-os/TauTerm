@@ -89,7 +89,7 @@ pub trait TransferOrchestrator: Send + Sync {
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String>;
 }
 
-// ── Factory ────────────────────────────────────────────────────────────────
+// ── Factory ──────────────────────────────────────────────────────────────────
 
 /// 协议能力到执行策略的唯一解析入口。
 pub fn create_orchestrator(
@@ -115,7 +115,7 @@ pub fn create_orchestrator(
     }
 }
 
-// ── Shared lifecycle helpers ───────────────────────────────────────────────
+// ── Shared lifecycle helpers ────────────────────────────────────────────────
 
 /// 将协议内部进度统一注入 session_id + transfer_id 后广播。
 pub fn spawn_progress_broadcaster(
@@ -226,7 +226,7 @@ fn emit_transfer_started(
 /// 串口内联协议（X/Y/ZModem）。
 ///
 /// 启动阶段同步获取 Session DataPlane 的 exclusive lease，确保返回 ack 时任务已拥有
-/// 唯一字节流访问权；协议算法放入后台 task，完成后通过 RAII 释放 lease。
+/// 唯一物理字节流驱动；协议算法放入后台 task，完成后通过 RAII 把驱动归还 runtime。
 pub struct InlineTransferOrchestrator {
     pt: TransferProtocolType,
 }
@@ -288,7 +288,7 @@ impl InlineTransferOrchestrator {
             io
         };
 
-        match io.acquire_exclusive(format!("file-transfer:{transfer_id}"), true) {
+        match io.acquire_exclusive(format!("file-transfer:{transfer_id}")) {
             Ok(lease) => Ok((Box::new(lease), cancel_rx)),
             Err(error) => {
                 restore_session_state(app, session_id, transfer_id);
