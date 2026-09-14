@@ -4,11 +4,14 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum ValueType {
     Bool,
+    #[serde(rename = "uint16")]
     UInt16,
     Int16,
+    #[serde(rename = "uint32")]
     UInt32,
     Int32,
     Float32,
+    #[serde(rename = "uint64")]
     UInt64,
     Int64,
     Float64,
@@ -239,6 +242,34 @@ mod tests {
             offset: 0.0,
             unit: String::new(),
             bit: None,
+        }
+    }
+
+    #[test]
+    fn value_type_wire_names_match_frontend_contract() {
+        let cases = [
+            (ValueType::Bool, "bool"),
+            (ValueType::UInt16, "uint16"),
+            (ValueType::Int16, "int16"),
+            (ValueType::UInt32, "uint32"),
+            (ValueType::Int32, "int32"),
+            (ValueType::Float32, "float32"),
+            (ValueType::UInt64, "uint64"),
+            (ValueType::Int64, "int64"),
+            (ValueType::Float64, "float64"),
+            (ValueType::Hex, "hex"),
+            (ValueType::Binary, "binary"),
+            (ValueType::Ascii, "ascii"),
+            (ValueType::Utf8, "utf8"),
+        ];
+
+        for (value_type, wire_name) in cases {
+            let encoded = serde_json::to_value(value_type).unwrap();
+            assert_eq!(encoded, serde_json::json!(wire_name));
+            assert_eq!(
+                serde_json::from_value::<ValueType>(serde_json::json!(wire_name)).unwrap(),
+                value_type
+            );
         }
     }
 
