@@ -747,10 +747,7 @@ fn handle_command(
                 .as_ref()
                 .is_some_and(|lease| lease.owner_id == owner_id);
             if !owner_matches {
-                let error = TransportError::busy(
-                    "exclusive_read",
-                    "exclusive read owner mismatch",
-                );
+                let error = TransportError::busy("exclusive_read", "exclusive read owner mismatch");
                 let _ = ack.send(Err(error));
                 return CommandOutcome::Continue;
             }
