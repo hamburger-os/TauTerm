@@ -20,6 +20,7 @@ export default function XmodemConfigForm({ config, onChange }: XmodemConfigFormP
         <div className={styles.btnRow}>
           {([128, 1024] as const).map((blockSize) => (
             <button
+              type="button"
               key={blockSize}
               className={`${styles.optionBtn} liquid-glass-button ${config.send.blockSize === blockSize ? "active" : ""}`}
               onClick={() => onChange({ ...config, send: { blockSize } })}
@@ -36,6 +37,7 @@ export default function XmodemConfigForm({ config, onChange }: XmodemConfigFormP
         <div className={styles.btnRow}>
           {receiveModes.map((checkMode) => (
             <button
+              type="button"
               key={checkMode}
               className={`${styles.optionBtn} liquid-glass-button ${config.receive.checkMode === checkMode ? "active" : ""}`}
               onClick={() => onChange({ ...config, receive: { checkMode } })}

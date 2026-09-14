@@ -371,8 +371,7 @@ fn send_block(
 
     match check_mode {
         XModemCheckMode::Checksum => {
-            let sum = crc::checksum(data);
-            packet.push((0u8).wrapping_sub(sum));
+            packet.push(crc::checksum(data));
         }
         XModemCheckMode::Crc16 => {
             let crc = crc16_ccitt_zero_pad(data);
@@ -588,6 +587,7 @@ fn xmodem_receive(
                 Some(SOH) => break 'read_header SOH,
                 Some(STX) => break 'read_header STX,
                 Some(EOT) => break 'read_header EOT,
+                Some(CAN) => return Err("发送方取消了传输".into()),
                 Some(other) => {
                     log::debug!(
                         "XModem RX: unexpected byte 0x{:02X} waiting for header",

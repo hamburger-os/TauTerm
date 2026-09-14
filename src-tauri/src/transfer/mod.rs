@@ -6,7 +6,7 @@
 //!
 //! - `config` — 发送方 / 接收方角色感知协议配置
 //! - `types` — 公共类型定义（TransferProgress, BatchFileResult, FileTransferEvent, FileInfo）
-//! - `protocol` — 串口 SerialTransferProtocol trait 和协议工厂
+//! - `protocol` — 串口 `SerialTransferProtocol` trait 与 `TransferIo` 契约
 //! - `crc` — CRC-16/CCITT, CRC-32, 校验和计算
 //! - `io` — 共享 I/O 工具（超时读取、协议同步、CAN 发送）
 //! - `xmodem` — XModem 协议实现（Checksum / CRC 与 128B / 1K 正交建模）

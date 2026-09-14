@@ -27,6 +27,7 @@ export default function ZmodemConfigForm({ config, onChange }: ZmodemConfigFormP
         <div className={styles.btnRow}>
           {crcPolicies.map((crcPolicy) => (
             <button
+              type="button"
               key={crcPolicy}
               className={`${styles.optionBtn} liquid-glass-button ${config.send.crcPolicy === crcPolicy ? "active" : ""}`}
               onClick={() => onChange({ ...config, send: { ...config.send, crcPolicy } })}
@@ -43,6 +44,7 @@ export default function ZmodemConfigForm({ config, onChange }: ZmodemConfigFormP
         <div className={styles.btnRow}>
           {maxBlockSizes.map((maxBlockSize) => (
             <button
+              type="button"
               key={maxBlockSize}
               className={`${styles.optionBtn} liquid-glass-button ${config.send.maxBlockSize === maxBlockSize ? "active" : ""}`}
               onClick={() => onChange({ ...config, send: { ...config.send, maxBlockSize } })}
@@ -59,6 +61,7 @@ export default function ZmodemConfigForm({ config, onChange }: ZmodemConfigFormP
         <div className={styles.btnRow}>
           {crcCapabilities.map((crcCapability) => (
             <button
+              type="button"
               key={crcCapability}
               className={`${styles.optionBtn} liquid-glass-button ${config.receive.crcCapability === crcCapability ? "active" : ""}`}
               onClick={() => onChange({ ...config, receive: { crcCapability } })}

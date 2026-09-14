@@ -19,6 +19,7 @@ export default function YmodemConfigForm({ config, onChange }: YmodemConfigFormP
         <div className={styles.btnRow}>
           {([1024, 128] as const).map((blockSize) => (
             <button
+              type="button"
               key={blockSize}
               className={`${styles.optionBtn} liquid-glass-button ${config.send.blockSize === blockSize ? "active" : ""}`}
               onClick={() => onChange({ ...config, send: { blockSize } })}
