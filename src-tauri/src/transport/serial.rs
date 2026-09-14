@@ -5,6 +5,32 @@ use std::time::Duration;
 use crate::transport::error::{TransportError, TransportErrorKind};
 use crate::transport::stream::{BlockingByteStream, ReadStatus};
 
+const SERIAL_READ_TIMEOUT: Duration = Duration::from_millis(50);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialParity {
+    None,
+    Even,
+    Odd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SerialStopBits {
+    #[serde(rename = "1")]
+    One,
+    #[serde(rename = "2")]
+    Two,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialFlowControl {
+    None,
+    RtsCts,
+    XonXoff,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerialTransportConfig {
     #[serde(default = "default_baud_rate")]
@@ -12,13 +38,11 @@ pub struct SerialTransportConfig {
     #[serde(default = "default_data_bits")]
     pub data_bits: u8,
     #[serde(default = "default_parity")]
-    pub parity: String,
+    pub parity: SerialParity,
     #[serde(default = "default_stop_bits")]
-    pub stop_bits: String,
+    pub stop_bits: SerialStopBits,
     #[serde(default = "default_flow_control")]
-    pub flow_control: String,
-    #[serde(default = "default_read_timeout_ms")]
-    pub read_timeout_ms: u64,
+    pub flow_control: SerialFlowControl,
 }
 
 impl Default for SerialTransportConfig {
@@ -29,7 +53,6 @@ impl Default for SerialTransportConfig {
             parity: default_parity(),
             stop_bits: default_stop_bits(),
             flow_control: default_flow_control(),
-            read_timeout_ms: default_read_timeout_ms(),
         }
     }
 }
@@ -40,17 +63,14 @@ fn default_baud_rate() -> u32 {
 fn default_data_bits() -> u8 {
     8
 }
-fn default_parity() -> String {
-    "none".into()
+fn default_parity() -> SerialParity {
+    SerialParity::None
 }
-fn default_stop_bits() -> String {
-    "1".into()
+fn default_stop_bits() -> SerialStopBits {
+    SerialStopBits::One
 }
-fn default_flow_control() -> String {
-    "none".into()
-}
-fn default_read_timeout_ms() -> u64 {
-    50
+fn default_flow_control() -> SerialFlowControl {
+    SerialFlowControl::None
 }
 
 pub fn open_serial(
@@ -65,38 +85,32 @@ pub fn open_serial(
         8 => serialport::DataBits::Eight,
         _ => unreachable!("validated"),
     };
-    let parity = match config.parity.as_str() {
-        "none" => serialport::Parity::None,
-        "even" => serialport::Parity::Even,
-        "odd" => serialport::Parity::Odd,
-        _ => unreachable!("validated"),
+    let parity = match config.parity {
+        SerialParity::None => serialport::Parity::None,
+        SerialParity::Even => serialport::Parity::Even,
+        SerialParity::Odd => serialport::Parity::Odd,
     };
-    let stop_bits = match config.stop_bits.as_str() {
-        "1" => serialport::StopBits::One,
-        "2" => serialport::StopBits::Two,
-        _ => unreachable!("validated"),
+    let stop_bits = match config.stop_bits {
+        SerialStopBits::One => serialport::StopBits::One,
+        SerialStopBits::Two => serialport::StopBits::Two,
     };
-    let flow_control = match config.flow_control.as_str() {
-        "none" => serialport::FlowControl::None,
-        "rts_cts" => serialport::FlowControl::Hardware,
-        "xon_xoff" => serialport::FlowControl::Software,
-        _ => unreachable!("validated"),
+    let flow_control = match config.flow_control {
+        SerialFlowControl::None => serialport::FlowControl::None,
+        SerialFlowControl::RtsCts => serialport::FlowControl::Hardware,
+        SerialFlowControl::XonXoff => serialport::FlowControl::Software,
     };
 
-    // Transport adapter performs exactly one physical open. Reconnect/retry policy belongs to the
-    // Session layer, which already owns teardown timing. Hidden sleeps/retries here make one connect
-    // request nondeterministic and can mask the original failure class.
+    // One connect request performs one physical open. Retry/reconnect belongs to the Session layer.
     let port = serialport::new(endpoint, config.baud_rate)
         .data_bits(data_bits)
         .parity(parity)
         .stop_bits(stop_bits)
         .flow_control(flow_control)
-        .timeout(Duration::from_millis(config.read_timeout_ms.clamp(1, 1000)))
+        .timeout(SERIAL_READ_TIMEOUT)
         .open()
         .map_err(map_open_error)?;
 
-    // Do not purge RX/TX after opening. Bytes produced immediately after open (including boot/reset
-    // output from embedded devices) are valid input and must enter the DataPlane startup buffer.
+    // Never purge immediately after open: startup/boot bytes are valid input.
     Ok(SerialDriver { port })
 }
 
@@ -120,15 +134,7 @@ fn map_open_error(error: serialport::Error) -> TransportError {
 }
 
 fn validate_config(config: &SerialTransportConfig) -> Result<(), TransportError> {
-    let valid = matches!(config.data_bits, 5..=8)
-        && matches!(config.parity.as_str(), "none" | "even" | "odd")
-        && matches!(config.stop_bits.as_str(), "1" | "2")
-        && matches!(
-            config.flow_control.as_str(),
-            "none" | "rts_cts" | "xon_xoff"
-        )
-        && config.baud_rate > 0;
-    if valid {
+    if matches!(config.data_bits, 5..=8) && config.baud_rate > 0 {
         Ok(())
     } else {
         Err(TransportError::new(
@@ -184,11 +190,25 @@ mod tests {
         let config = SerialTransportConfig::default();
         assert_eq!(config.baud_rate, 115_200);
         assert_eq!(config.data_bits, 8);
-        assert_eq!(config.parity, "none");
-        assert_eq!(config.stop_bits, "1");
-        assert_eq!(config.flow_control, "none");
-        assert_eq!(config.read_timeout_ms, 50);
+        assert_eq!(config.parity, SerialParity::None);
+        assert_eq!(config.stop_bits, SerialStopBits::One);
+        assert_eq!(config.flow_control, SerialFlowControl::None);
         assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn typed_link_fields_parse_from_wire_schema() {
+        let config: SerialTransportConfig = serde_json::from_value(serde_json::json!({
+            "baud_rate": 921600,
+            "data_bits": 7,
+            "parity": "even",
+            "stop_bits": "2",
+            "flow_control": "rts_cts"
+        }))
+        .unwrap();
+        assert_eq!(config.parity, SerialParity::Even);
+        assert_eq!(config.stop_bits, SerialStopBits::Two);
+        assert_eq!(config.flow_control, SerialFlowControl::RtsCts);
     }
 
     #[test]

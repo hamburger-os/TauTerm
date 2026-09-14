@@ -6,7 +6,9 @@ use crate::kernel::plugin_adapter::{
     ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
 };
 use crate::session::SessionError;
-use crate::transport::serial::{open_serial, SerialTransportConfig};
+use crate::transport::serial::{
+    open_serial, SerialFlowControl, SerialParity, SerialStopBits, SerialTransportConfig,
+};
 use crate::transport::DataPlaneRuntime;
 use crate::virtual_port::backend::is_internal_endpoint_path;
 
@@ -177,9 +179,9 @@ mod tests {
         .unwrap();
         assert_eq!(config.baud_rate, 921600);
         assert_eq!(config.data_bits, 7);
-        assert_eq!(config.parity, "even");
-        assert_eq!(config.stop_bits, "2");
-        assert_eq!(config.flow_control, "rts_cts");
+        assert_eq!(config.parity, SerialParity::Even);
+        assert_eq!(config.stop_bits, SerialStopBits::Two);
+        assert_eq!(config.flow_control, SerialFlowControl::RtsCts);
     }
 
     #[test]

@@ -161,6 +161,12 @@ impl SessionIo {
             .as_ref()
             .is_some_and(DataPlaneHandle::is_connected)
     }
+
+    pub fn is_exclusive(&self) -> bool {
+        self.primary
+            .as_ref()
+            .is_some_and(DataPlaneHandle::is_exclusive)
+    }
 }
 
 #[cfg(test)]

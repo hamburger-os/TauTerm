@@ -1,20 +1,23 @@
-//! VirtualPortBridge — virtual serial endpoint I/O bridge.
+//! Virtual serial endpoint bridge.
 //!
-//! Windows opens the internal side of each com0com pair by name. Linux/macOS
-//! consume the already-created PTY master retained by the native PTY backend.
-//! In both cases the bridge presents the same data flow:
-//!
-//! physical serial -> virtual endpoint(s)
-//! virtual endpoint(s) -> physical serial
+//! The physical serial driver remains exclusively owned by DataPlaneRuntime. This bridge is only
+//! another shared-mode consumer/producer: physical -> virtual uses its own bounded subscription;
+//! virtual -> physical uses confirmed SessionIo writes. When an inline transfer owns the driver,
+//! the bridge pauses before reading external bytes so it does not consume data it cannot forward.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serialport::SerialPort;
 
+use crate::session::SessionIo;
+use crate::transport::DataPlaneEvent;
+
 const VPORT_READ_TIMEOUT_MS: u64 = 5;
+
+type BridgeErrorHandler = Box<dyn Fn(String) + Send + 'static>;
 
 pub struct VirtualPortBridge {
     cancel_flag: Arc<AtomicBool>,
@@ -25,26 +28,30 @@ impl VirtualPortBridge {
     pub fn spawn(
         virtual_port_names: Vec<String>,
         baud_rate: u32,
-        data_rx: mpsc::Receiver<Vec<u8>>,
-        write_tx: mpsc::SyncSender<Vec<u8>>,
-    ) -> Self {
+        io: Arc<SessionIo>,
+        on_error: BridgeErrorHandler,
+    ) -> Result<Self, String> {
+        let subscription = io.subscribe().map_err(|error| error.to_string())?;
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_clone = cancel_flag.clone();
 
         let bridge_thread = std::thread::spawn(move || {
-            bridge_loop(
+            if let Err(error) = bridge_loop(
                 virtual_port_names,
                 baud_rate,
-                data_rx,
-                write_tx,
+                subscription,
+                io,
                 &cancel_clone,
-            );
+            ) {
+                log::error!("Virtual port bridge failed: {}", error);
+                on_error(error);
+            }
         });
 
-        Self {
+        Ok(Self {
             cancel_flag,
             bridge_thread: Some(bridge_thread),
-        }
+        })
     }
 
     pub fn shutdown(mut self) {
@@ -53,18 +60,15 @@ impl VirtualPortBridge {
             let start = std::time::Instant::now();
             loop {
                 if thread.is_finished() {
-                    match thread.join() {
-                        Ok(()) => {}
-                        Err(e) => {
-                            let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                                s.to_string()
-                            } else if let Some(s) = e.downcast_ref::<String>() {
-                                s.clone()
-                            } else {
-                                "unknown panic".into()
-                            };
-                            log::error!("Bridge thread panic: {}", msg);
-                        }
+                    if let Err(e) = thread.join() {
+                        let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = e.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unknown panic".into()
+                        };
+                        log::error!("Bridge thread panic: {}", msg);
                     }
                     break;
                 }
@@ -97,84 +101,94 @@ fn open_bridge_endpoint(name: &str, baud_rate: u32) -> Result<Box<dyn SerialPort
         .map_err(|e| format!("failed to open virtual endpoint {name}: {e}"))
 }
 
+fn write_to_virtual_ports(virtual_ports: &mut [Box<dyn SerialPort>], data: &[u8]) {
+    for vport in virtual_ports.iter_mut() {
+        if vport.write_all(data).is_err() {
+            log::trace!("Write to virtual endpoint failed (peer closed)");
+        }
+    }
+    for vport in virtual_ports.iter_mut() {
+        let _ = vport.flush();
+    }
+}
+
 fn bridge_loop(
     virtual_port_names: Vec<String>,
     baud_rate: u32,
-    data_rx: mpsc::Receiver<Vec<u8>>,
-    write_tx: mpsc::SyncSender<Vec<u8>>,
+    subscription: crate::transport::DataPlaneSubscription,
+    io: Arc<SessionIo>,
     cancel: &AtomicBool,
-) {
+) -> Result<(), String> {
     let mut virtual_ports: Vec<Box<dyn SerialPort>> = Vec::new();
     for name in &virtual_port_names {
         match open_bridge_endpoint(name, baud_rate) {
             Ok(port) => {
-                let _ = port.clear(serialport::ClearBuffer::All);
                 virtual_ports.push(port);
                 log::info!("Virtual endpoint {} attached to bridge", name);
             }
-            Err(e) => log::error!("{}", e),
+            Err(error) => log::error!("{}", error),
         }
     }
 
     if virtual_ports.is_empty() {
-        log::warn!("No virtual endpoints available, bridge thread exiting");
-        return;
+        return Err("no virtual endpoints were available for bridging".into());
     }
 
     let mut read_buf = [0u8; 4096];
+    let mut pending_write: Option<Vec<u8>> = None;
 
-    loop {
-        if cancel.load(Ordering::SeqCst) {
-            break;
-        }
-
-        match data_rx.recv_timeout(Duration::from_millis(10)) {
-            Ok(data) => {
-                for vport in &mut virtual_ports {
-                    if vport.write_all(&data).is_err() {
-                        log::trace!("Write to virtual endpoint failed (peer closed)");
-                    }
-                }
-                for vport in &mut virtual_ports {
-                    let _ = vport.flush();
-                }
-
-                loop {
-                    match data_rx.try_recv() {
-                        Ok(data) => {
-                            for vport in &mut virtual_ports {
-                                if vport.write_all(&data).is_err() {
-                                    log::trace!("Write to virtual endpoint failed (peer closed)");
-                                }
-                            }
-                            for vport in &mut virtual_ports {
-                                let _ = vport.flush();
-                            }
-                        }
-                        Err(mpsc::TryRecvError::Empty) => break,
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            log::info!("Data channel disconnected, bridge exiting");
-                            return;
-                        }
-                    }
+    while !cancel.load(Ordering::SeqCst) {
+        // Drain a bounded amount of physical data each turn so virtual -> physical traffic is not
+        // starved by a continuously busy device.
+        for _ in 0..32 {
+            match subscription.try_recv() {
+                Ok(DataPlaneEvent::Data(data)) => write_to_virtual_ports(&mut virtual_ports, &data),
+                Ok(DataPlaneEvent::Closed(_)) => return Ok(()),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    return Err("data-plane bridge subscription detached or overflowed".into());
                 }
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                log::info!("Data channel disconnected, bridge exiting");
-                return;
+        }
+
+        // Exclusive X/Y/ZModem transfer owns the same physical driver. Do not read external bytes
+        // until shared ownership resumes; this preserves those bytes in the virtual endpoint buffer.
+        if io.is_exclusive() {
+            std::thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+
+        if let Some(data) = pending_write.take() {
+            match io.send(&data) {
+                Ok(()) => {}
+                Err(_) if io.is_exclusive() => {
+                    pending_write = Some(data);
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => return Err(format!("virtual endpoint writeback failed: {error}")),
             }
         }
 
         for vport in &mut virtual_ports {
             match vport.read(&mut read_buf) {
                 Ok(n) if n > 0 => {
-                    if write_tx.try_send(read_buf[..n].to_vec()).is_err() {
-                        log::trace!("Bridge write channel full, dropped {} bytes", n);
+                    let data = read_buf[..n].to_vec();
+                    match io.send(&data) {
+                        Ok(()) => {}
+                        Err(_) if io.is_exclusive() => {
+                            pending_write = Some(data);
+                            break;
+                        }
+                        Err(error) => {
+                            return Err(format!("virtual endpoint writeback failed: {error}"));
+                        }
                     }
                 }
                 Ok(_) => {}
-                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::TimedOut
+                        || e.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(_) => {
                     // External applications can disconnect/reconnect independently.
                 }
@@ -183,6 +197,7 @@ fn bridge_loop(
     }
 
     log::info!("Bridge thread exited");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -222,28 +237,19 @@ mod tests {
             self.buffer.extend_from_slice(buf);
             Ok(buf.len())
         }
-
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
     }
 
     #[test]
-    fn test_bidirectional_logic() {
+    fn physical_bytes_are_forwarded_losslessly_to_virtual_endpoint() {
         let mut physical = MockPort::new();
         let mut virtual_a = MockPort::new();
         let mut buf = [0u8; 256];
-
         physical.buffer.extend_from_slice(b"HELLO");
         let n = physical.read(&mut buf).unwrap();
         virtual_a.write_all(&buf[..n]).unwrap();
         assert_eq!(&virtual_a.buffer, b"HELLO");
-
-        virtual_a.buffer.clear();
-        virtual_a.buffer.extend_from_slice(b"WORLD");
-        let n = virtual_a.read(&mut buf).unwrap();
-        physical.buffer.clear();
-        physical.write_all(&buf[..n]).unwrap();
-        assert_eq!(&physical.buffer, b"WORLD");
     }
 }

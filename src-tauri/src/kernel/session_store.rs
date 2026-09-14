@@ -118,7 +118,7 @@ pub struct ActiveSessionHandle {
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: bool,
-    pub virtual_external_pathridge: Option<VirtualPortBridge>,
+    pub virtual_port_bridge: Option<VirtualPortBridge>,
     pub virtual_endpoints: Vec<VirtualEndpoint>,
     pub script_tx: Option<mpsc::SyncSender<ScriptCmd>>,
     pub script_thread: Option<std::thread::JoinHandle<()>>,
@@ -182,7 +182,7 @@ impl ActiveSessionHandle {
 
 impl Drop for ActiveSessionHandle {
     fn drop(&mut self) {
-        if let Some(bridge) = self.virtual_external_pathridge.take() {
+        if let Some(bridge) = self.virtual_port_bridge.take() {
             log::warn!(
                 "ActiveSessionHandle '{}' dropped without proper close_session; shutting down bridge asynchronously",
                 self.id
@@ -254,8 +254,6 @@ pub struct SavedSession {
     pub transfer_enabled: bool,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: bool,
-    pub virtual_port_enabled: bool,
-    pub virtual_port_count: u32,
 }
 
 const SESSION_LIBRARY_VERSION: u32 = 1;
@@ -420,7 +418,7 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
-            virtual_external_pathridge: None,
+            virtual_port_bridge: None,
             virtual_endpoints: Vec::new(),
             script_tx: None,
             script_thread: None,
@@ -542,7 +540,7 @@ impl SessionStore {
             transfer_enabled,
             transfer_protocol,
             send_bar_enabled,
-            virtual_external_pathridge: None,
+            virtual_port_bridge: None,
             virtual_endpoints: Vec::new(),
             script_tx: None,
             script_thread: None,
@@ -610,7 +608,7 @@ impl SessionStore {
         if let Some(thread) = handle.script_thread.take() {
             let _ = thread.join();
         }
-        if let Some(bridge) = handle.virtual_external_pathridge.take() {
+        if let Some(bridge) = handle.virtual_port_bridge.take() {
             bridge.shutdown();
         }
         if let Some(flag) = &handle.stats_cancel_flag {
@@ -1317,7 +1315,7 @@ impl SessionStore {
             if let Some(flag) = &handle.stats_cancel_flag {
                 flag.store(true, Ordering::SeqCst);
             }
-            if let Some(bridge) = handle.virtual_external_pathridge.take() {
+            if let Some(bridge) = handle.virtual_port_bridge.take() {
                 bridge.shutdown();
             }
         }
