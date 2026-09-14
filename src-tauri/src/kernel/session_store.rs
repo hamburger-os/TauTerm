@@ -256,7 +256,7 @@ pub struct SavedSession {
     pub send_bar_enabled: bool,
 }
 
-const SESSION_LIBRARY_VERSION: u32 = 1;
+const SESSION_LIBRARY_VERSION: u32 = 2;
 const DEFAULT_MAX_ACTIVE_ROOT_SESSIONS: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1655,13 +1655,22 @@ mod persistence_tests {
             name: format!("session-{id}"),
             plugin_id: "serial".into(),
             endpoint: "loopback".into(),
-            params: serde_json::json!({"baud_rate": 115200}),
+            params: serde_json::json!({
+                "baud_rate": 115200,
+                "data_bits": 8,
+                "parity": "none",
+                "stop_bits": "1",
+                "flow_control": "none",
+                "data_mode": "text",
+                "dual_frame_timeout_ms": 50,
+                "encoding": "utf-8",
+                "virtual_port_enabled": false,
+                "virtual_port_count": 1
+            }),
             timestamp,
             transfer_enabled: true,
             transfer_protocol: Some("ymodem".into()),
             send_bar_enabled: true,
-            virtual_port_enabled: false,
-            virtual_port_count: 0,
         }
     }
 
@@ -1679,7 +1688,7 @@ mod persistence_tests {
         assert_eq!(loaded[1].id, "b");
         assert_eq!(loaded[0].params["baud_rate"], 115200);
         let raw = std::fs::read_to_string(path).unwrap();
-        assert!(raw.contains("\"version\": 1"));
+        assert!(raw.contains("\"version\": 2"));
         assert!(raw.contains("\"sessions\""));
     }
 

@@ -33,15 +33,10 @@ pub enum SerialFlowControl {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerialTransportConfig {
-    #[serde(default = "default_baud_rate")]
     pub baud_rate: u32,
-    #[serde(default = "default_data_bits")]
     pub data_bits: u8,
-    #[serde(default = "default_parity")]
     pub parity: SerialParity,
-    #[serde(default = "default_stop_bits")]
     pub stop_bits: SerialStopBits,
-    #[serde(default = "default_flow_control")]
     pub flow_control: SerialFlowControl,
 }
 

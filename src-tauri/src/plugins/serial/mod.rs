@@ -185,6 +185,18 @@ mod tests {
     }
 
     #[test]
+    fn missing_transport_field_is_rejected_instead_of_being_repaired() {
+        let error = SerialAdapter::parse_transport_params(&serde_json::json!({
+            "baud_rate": 115200,
+            "data_bits": 8,
+            "parity": "none",
+            "stop_bits": "1"
+        }))
+        .unwrap_err();
+        assert!(matches!(error, SessionError::Config(_)));
+    }
+
+    #[test]
     fn malformed_transport_field_is_rejected_instead_of_falling_back_to_defaults() {
         let error = SerialAdapter::parse_transport_params(&serde_json::json!({
             "baud_rate": "921600",

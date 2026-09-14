@@ -23,7 +23,7 @@ const DATA_BITS = [5, 6, 7, 8];
 const SERIAL_PARAM_KEYS = Object.keys(DEFAULT_SERIAL_PARAMS);
 
 export function normalizeSerialParams(params: Record<string, unknown>): Record<string, unknown> {
-  const normalized: Record<string, unknown> = { ...DEFAULT_SERIAL_PARAMS };
+  const normalized: Record<string, unknown> = {};
   for (const key of SERIAL_PARAM_KEYS) {
     if (params[key] !== undefined) normalized[key] = params[key];
   }
