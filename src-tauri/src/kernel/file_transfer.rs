@@ -27,8 +27,8 @@ pub enum TransferDirection {
 
 /// 进度流中的事件类型。
 ///
-/// 使用显式枚举代替 `is_file_start/is_file_complete/is_batch_complete` 布尔组合，
-/// 从数据模型上排除互相矛盾的状态，也不再依赖特殊文件名表达批次完成。
+/// 使用显式枚举表达文件开始、数据进度、文件完成和批次完成，
+/// 从数据模型上排除互相矛盾的阶段组合，也不再依赖特殊文件名表达控制事件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransferProgressKind {
