@@ -12,7 +12,7 @@
 - **Auxiliary**：复用 Session 的独立协议能力，例如 SSH/SFTP；
 - **SeparateConnection**：模型已保留，但当前通用编排器尚未实现该策略。
 
-Inline 传输不再移交真实串口或底层 handle。DataPlane Runtime 始终拥有资源，exclusive lease 临时取得完整主字节流访问权：独占期间普通 Session write 被拒绝，后台共享 read-ahead 停止，协议通过 lease 的 `Read`/`Write` 请求驱动 actor 执行对应底层 I/O；任务结束、失败或取消后 drop lease 即恢复共享模式。X/Y/ZModem 算法只依赖 `TransferIo = Read + Write + Send`，不知道底层是 serialport 还是其它 byte stream。
+Inline 传输不会取得具体 `serialport::SerialPort` 或做协议层 downcast。DataPlane 仍是底层资源的唯一生命周期 owner，但 Exclusive lease 会把当前通用 `Box<dyn BlockingByteStream>` 从共享 actor 临时移动到协议 worker：独占期间普通 Session write/resize 被拒绝，actor 不再持有或读取该 driver，X/Y/ZModem 通过 `TransferIo = Read + Write + Send` 直接执行同一个 driver 的 read/write/flush；任务结束、失败或取消后 drop lease 把 driver 归还 actor，再恢复共享模式。
 
 编排器负责 setup → execute → cleanup，并统一取消、进度广播、panic/error 清理和 Session 状态恢复。每个 Session 的活动任务准入、精确任务 ID 和取消信号由 `TransferScheduler` 单一拥有；默认 `max_active=1`。
 
@@ -34,15 +34,18 @@ flowchart LR
   Orchestrator --> Inline["SessionIo ExclusiveIo"]
   Orchestrator --> Side["Auxiliary FileTransfer"]
   Orchestrator --> Progress["UnifiedProgress"]
-  Inline --> DP["DataPlane Runtime"]
+  DP["DataPlane actor"] -- "lease driver" --> Inline
+  Inline -- "return driver" --> DP
   Progress --> Context
 ```
 
 ## 设计边界
 
-- 主字节流同一时间只有一个明确 owner；Inline 传输必须通过 DataPlane exclusive lease 协调，禁止转移真实 transport handle。
-- Exclusive lease 必须同时拥有读写时序：共享模式后台读取在独占期间暂停，只有协议的 `Read` 请求才能触发底层读取；这样既保持 runtime 对真实资源的唯一所有权，又不把 actor read-ahead 引入 X/Y/ZModem 握手状态机。
+- 主字节流同一时间只有一个明确 owner；Inline 传输必须通过 DataPlane exclusive lease 协调。允许 lease 在 Transport 抽象内部移动通用 `BlockingByteStream` 的所有权，但禁止协议层取得具体串口类型、重新打开端口或维护第二套底层资源 owner。
+- Exclusive lease 必须同时拥有**物理 driver 和读写时序**：独占期间 actor 不持有 driver，协议 worker 直接完成 read → write → flush → wait ACK；禁止退化为 actor 后台 read-ahead，也禁止把每次协议 read/write 重新包装成 actor IPC proxy。
+- Exclusive lease 释放时必须把同一个 driver 对象归还 DataPlane actor，并在归还确认后才能重新开放共享 admission。失败、取消、panic 与 Session shutdown 都必须有确定的 driver 回收路径。
 - Exclusive lease 的读必须保留可取消的短超时语义，协议远端无响应时不能无限阻塞任务取消。
+- Exclusive 协议 I/O 错误默认属于当前传输，不自动等同于整个 Session transport 断开；任务清理并归还 driver 后，共享模式由下一次真实 I/O 判断设备是否仍可用。
 - Session 级传输准入必须经过 `TransferScheduler`；当前默认并发上限为 1，未来并发策略只能演进 Scheduler，不能在 SessionHandle 增加平行状态字段。
 - 辅助文件传输 capability 不应阻塞普通终端 I/O。
 - 进度、取消和完成事件使用统一模型，协议实现不创造第二套后端事件协议。
