@@ -7,13 +7,23 @@
 
 .dialog {
   width: min(560px, calc(100vw - 32px));
-  max-height: 80vh;
+  max-height: min(80vh, calc(100dvh - 32px));
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border-radius: var(--radius-xl);
   padding: 20px;
   /* Chrome material is supplied by .liquid-glass. Keep this component
      free of custom compositing hints so the global performance tier can
      disable backdrop sampling in Compatibility mode. */
+}
+
+/* WebView 的原生滚动条不会可靠地服从滚动容器的圆角裁剪。
+   为滚动轨道保留内部 gutter，并让轨道避开 Frame 圆角区域，
+   防止滑块进入上下圆角后看起来越过弹窗边界。 */
+.dialog::-webkit-scrollbar-track {
+  margin-block: var(--spacing-md);
 }
 
 .title {
