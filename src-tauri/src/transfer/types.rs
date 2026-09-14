@@ -39,11 +39,59 @@ pub enum FileTransferEvent {
     },
 }
 
+/// 单文件在批次中的终态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BatchFileStatus {
+    Completed,
+    Failed,
+    Skipped,
+}
+
+impl BatchFileStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+        }
+    }
+}
+
+impl From<&str> for BatchFileStatus {
+    fn from(value: &str) -> Self {
+        match value {
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "skipped" => Self::Skipped,
+            other => panic!("invalid batch file status: {other}"),
+        }
+    }
+}
+
+impl From<String> for BatchFileStatus {
+    fn from(value: String) -> Self {
+        Self::from(value.as_str())
+    }
+}
+
+impl PartialEq<&str> for BatchFileStatus {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl std::fmt::Display for BatchFileStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// 批次传输结果。
 #[derive(Debug, Clone, Serialize)]
 pub struct BatchFileResult {
     pub file_name: String,
-    pub status: String, // "completed" | "failed" | "skipped"
+    pub status: BatchFileStatus,
     pub size: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
