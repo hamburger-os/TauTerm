@@ -1,0 +1,83 @@
+name: Serial typed-config integration fix
+
+on:
+  push:
+    branches:
+      - agent/serial-session-design-cleanup
+    paths:
+      - .github/workflows/serial-clippy-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/serial-session-design-cleanup
+          fetch-depth: 0
+      - name: Apply typed serial integration fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} matches, found {actual}: {old!r}')
+              p.write_text(text.replace(old, new, count), encoding='utf-8')
+
+          replace(
+              'src-tauri/src/plugins/serial/mod.rs',
+              '''use crate::transport::serial::{\n    open_serial, SerialFlowControl, SerialParity, SerialStopBits, SerialTransportConfig,\n};''',
+              '''use crate::transport::serial::{open_serial, SerialTransportConfig};'''
+          )
+          replace(
+              'src-tauri/src/plugins/serial/mod.rs',
+              '''mod tests {\n    use super::*;''',
+              '''mod tests {\n    use super::*;\n    use crate::transport::serial::{SerialFlowControl, SerialParity, SerialStopBits};'''
+          )
+
+          replace(
+              'src-tauri/src/plugins/modbus/config.rs',
+              'use crate::transport::serial::SerialTransportConfig;',
+              'use crate::transport::serial::{SerialParity, SerialStopBits, SerialTransportConfig};'
+          )
+          replace(
+              'src-tauri/src/plugins/modbus/config.rs',
+              'let parity_bits = if config.parity == "none" { 0.0 } else { 1.0 };',
+              'let parity_bits = if config.parity == SerialParity::None { 0.0 } else { 1.0 };'
+          )
+          replace(
+              'src-tauri/src/plugins/modbus/config.rs',
+              'let stop_bits = if config.stop_bits == "2" { 2.0 } else { 1.0 };',
+              'let stop_bits = if config.stop_bits == SerialStopBits::Two { 2.0 } else { 1.0 };'
+          )
+          replace(
+              'src-tauri/src/plugins/modbus/config.rs',
+              'config.serial.parity = "none".into();',
+              'config.serial.parity = SerialParity::None;'
+          )
+          replace(
+              'src-tauri/src/plugins/modbus/config.rs',
+              'config.serial.stop_bits = "1".into();',
+              'config.serial.stop_bits = SerialStopBits::One;'
+          )
+          PY
+      - name: Format and check
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          cargo clippy --locked --all-targets --no-deps --manifest-path src-tauri/Cargo.toml -- -D warnings
+      - name: Commit product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri
+          git diff --cached --quiet && { echo "No product changes"; exit 1; }
+          git commit -m "fix(serial): integrate typed link config with modbus"
+          git push origin HEAD:agent/serial-session-design-cleanup
