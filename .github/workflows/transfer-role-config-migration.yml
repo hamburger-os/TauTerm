@@ -17,23 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare migration matcher
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          path = Path("scripts/finish_transfer_role_config.py")
-          text = path.read_text(encoding="utf-8")
-          old = '''    if count != 1:\n        raise RuntimeError(f"{path}: expected exactly one occurrence, found {count}: {old[:80]!r}")\n    write(path, text.replace(old, new, 1))'''
-          new = '''    if count < 1:\n        raise RuntimeError(f"{path}: expected at least one occurrence, found {count}: {old[:80]!r}")\n    write(path, text.replace(old, new, 1))'''
-          if text.count(old) != 1:
-              raise SystemExit("replace_once helper shape changed")
-          text = text.replace(old, new, 1)
-          start = text.index("# 5. YMODEM receive must preserve prefetched bytes")
-          end = text.index("# 6. XMODEM:", start)
-          text = text[:start] + "# 5. YMODEM startup flush was already removed on the base branch.\n\n" + text[end:]
-          path.write_text(text, encoding="utf-8")
-          PY
-      - name: Apply migration
+      - name: Apply final migration
         run: python scripts/finish_transfer_role_config.py
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml
@@ -41,7 +25,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src-tauri/src
+          git add src src-tauri/src docs/modules/TRANSFER.md scripts/test-file-transfer-lifecycle.mjs
           git diff --cached --quiet && exit 0
-          git commit -m "refactor(transfer): finish role-aware protocol config"
+          git commit -m "refactor(transfer): complete role-aware protocol contract"
           git push
