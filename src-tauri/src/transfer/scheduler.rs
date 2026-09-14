@@ -3,6 +3,9 @@
 //! 默认每个 Session 只允许 1 个活动传输，但内部存储采用有界任务 Map，
 //! 从数据模型上不再把“单任务”写死。Auxiliary 可按策略提升有界并发；
 //! Inline 会接管 Session 主 I/O 资源，因此无论并发上限如何始终保持独占。
+//!
+//! 所有任务统一使用同一种 `Arc<AtomicBool>` 取消令牌。Inline 与 Auxiliary 的差异
+//! 只属于资源准入策略，不再属于取消机制。
 
 use std::collections::HashMap;
 use std::sync::{
@@ -13,15 +16,16 @@ use tokio::sync::oneshot;
 
 pub const DEFAULT_MAX_ACTIVE_PER_SESSION: usize = 1;
 
-#[derive(Debug)]
-enum TransferCancelSignal {
-    Inline(Option<oneshot::Sender<()>>),
-    Auxiliary(Arc<AtomicBool>),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransferTaskKind {
+    Inline,
+    Auxiliary,
 }
 
 #[derive(Debug)]
 struct ScheduledTransfer {
-    cancel: TransferCancelSignal,
+    kind: TransferTaskKind,
+    cancel: Arc<AtomicBool>,
 }
 
 #[derive(Debug)]
@@ -65,6 +69,13 @@ impl TransferScheduler {
         self.active.keys().next().map(String::as_str)
     }
 
+    /// 返回已注册任务共享的取消令牌。
+    pub fn cancel_flag(&self, transfer_id: &str) -> Option<Arc<AtomicBool>> {
+        self.active
+            .get(transfer_id)
+            .map(|transfer| transfer.cancel.clone())
+    }
+
     fn ensure_new_id(&self, transfer_id: &str) -> Result<(), String> {
         if self.active.contains_key(transfer_id) {
             return Err("传输任务 ID 已存在".to_string());
@@ -75,7 +86,7 @@ impl TransferScheduler {
     fn has_inline_transfer(&self) -> bool {
         self.active
             .values()
-            .any(|transfer| matches!(&transfer.cancel, TransferCancelSignal::Inline(_)))
+            .any(|transfer| transfer.kind == TransferTaskKind::Inline)
     }
 
     fn ensure_auxiliary_capacity(&self) -> Result<(), String> {
@@ -91,10 +102,14 @@ impl TransferScheduler {
         Ok(())
     }
 
+    /// 为 Inline 任务预留独占槽。
+    ///
+    /// `_legacy_cancel_tx` 只保留到 SessionStore 的薄包装迁移完成；真实取消状态始终
+    /// 由本调度器创建并持有的共享原子令牌表达，调用方通过 `cancel_flag` 获取同一令牌。
     pub fn reserve_inline(
         &mut self,
         transfer_id: &str,
-        cancel_tx: oneshot::Sender<()>,
+        _legacy_cancel_tx: oneshot::Sender<()>,
     ) -> Result<(), String> {
         self.ensure_new_id(transfer_id)?;
         if self.max_active == 0 {
@@ -106,7 +121,8 @@ impl TransferScheduler {
         self.active.insert(
             transfer_id.to_string(),
             ScheduledTransfer {
-                cancel: TransferCancelSignal::Inline(Some(cancel_tx)),
+                kind: TransferTaskKind::Inline,
+                cancel: Arc::new(AtomicBool::new(false)),
             },
         );
         Ok(())
@@ -119,7 +135,8 @@ impl TransferScheduler {
         self.active.insert(
             transfer_id.to_string(),
             ScheduledTransfer {
-                cancel: TransferCancelSignal::Auxiliary(flag.clone()),
+                kind: TransferTaskKind::Auxiliary,
+                cancel: flag.clone(),
             },
         );
         Ok(flag)
@@ -145,18 +162,9 @@ impl TransferScheduler {
 
         let transfer = self
             .active
-            .get_mut(&transfer_id)
+            .get(&transfer_id)
             .ok_or_else(|| "传输任务已变化，拒绝取消非当前任务".to_string())?;
-
-        match &mut transfer.cancel {
-            TransferCancelSignal::Inline(tx) => {
-                let tx = tx.take().ok_or_else(|| "取消请求已经发送".to_string())?;
-                let _ = tx.send(());
-            }
-            TransferCancelSignal::Auxiliary(flag) => {
-                flag.store(true, Ordering::SeqCst);
-            }
-        }
+        transfer.cancel.store(true, Ordering::SeqCst);
         Ok(())
     }
 
@@ -176,17 +184,8 @@ impl TransferScheduler {
     }
 
     pub fn cancel_for_shutdown(&mut self) {
-        for transfer in self.active.values_mut() {
-            match &mut transfer.cancel {
-                TransferCancelSignal::Inline(tx) => {
-                    if let Some(tx) = tx.take() {
-                        let _ = tx.send(());
-                    }
-                }
-                TransferCancelSignal::Auxiliary(flag) => {
-                    flag.store(true, Ordering::SeqCst);
-                }
-            }
+        for transfer in self.active.values() {
+            transfer.cancel.store(true, Ordering::SeqCst);
         }
     }
 }
@@ -194,6 +193,12 @@ impl TransferScheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn reserve_inline(scheduler: &mut TransferScheduler, id: &str) -> Arc<AtomicBool> {
+        let (tx, _rx) = oneshot::channel();
+        scheduler.reserve_inline(id, tx).expect("reserve inline");
+        scheduler.cancel_flag(id).expect("inline cancel flag")
+    }
 
     #[test]
     fn default_policy_is_single_active_transfer() {
@@ -204,19 +209,16 @@ mod tests {
         assert!(!scheduler.is_busy());
     }
 
-    #[tokio::test]
-    async fn inline_reservation_is_exactly_cancellable() {
-        let (tx, rx) = oneshot::channel();
+    #[test]
+    fn inline_reservation_uses_shared_cancel_flag() {
         let mut scheduler = TransferScheduler::default();
-        scheduler
-            .reserve_inline("transfer-a", tx)
-            .expect("reserve inline");
+        let flag = reserve_inline(&mut scheduler, "transfer-a");
         assert_eq!(scheduler.active_id(), Some("transfer-a"));
         assert!(scheduler.cancel(Some("transfer-b")).is_err());
         scheduler
             .cancel(Some("transfer-a"))
             .expect("cancel exact id");
-        rx.await.expect("cancel signal");
+        assert!(flag.load(Ordering::SeqCst));
         assert!(scheduler.finish(Some("transfer-a")));
         assert!(!scheduler.is_busy());
     }
@@ -268,10 +270,7 @@ mod tests {
     #[test]
     fn auxiliary_cannot_start_while_inline_owns_session_io() {
         let mut scheduler = TransferScheduler::with_max_active(2);
-        let (inline_tx, _inline_rx) = oneshot::channel();
-        scheduler
-            .reserve_inline("inline-a", inline_tx)
-            .expect("reserve inline");
+        let _inline = reserve_inline(&mut scheduler, "inline-a");
         assert!(scheduler.reserve_auxiliary("side-a").is_err());
         let (second_inline_tx, _second_inline_rx) = oneshot::channel();
         assert!(scheduler
