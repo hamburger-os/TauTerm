@@ -1,9 +1,15 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
 import type { ConnectFormProps } from "../../core/plugin-registry";
 import Icon from "../../components/common/Icon";
 import styles from "./TrdpConnectForm.module.css";
-import { STANDARD_CAPTURE_FILTER } from "./model";
+import {
+  STANDARD_CAPTURE_FILTER,
+  captureFilterForPorts,
+  type CaptureInterface,
+} from "./model";
 
 function str(params: Record<string, unknown>, key: string, fallback = "") {
   const value = params[key];
@@ -23,6 +29,10 @@ function num(params: Record<string, unknown>, key: string, fallback: number) {
 export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) {
   const { t } = useTranslation();
   const mode = str(params, "mode", "node") as "node" | "monitor";
+  const [captureInterfaces, setCaptureInterfaces] = useState<CaptureInterface[]>([]);
+  const [captureInterfacesLoading, setCaptureInterfacesLoading] = useState(false);
+  const [captureInterfacesError, setCaptureInterfacesError] = useState<string | null>(null);
+
   const patch = (next: Record<string, unknown>) => onChange({
     mode: "node",
     link_a_ip: "0.0.0.0",
@@ -44,6 +54,31 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
     ...next,
   });
 
+  async function refreshCaptureInterfaces() {
+    setCaptureInterfacesLoading(true);
+    setCaptureInterfacesError(null);
+    try {
+      const items = await invoke<CaptureInterface[]>("trdp_capture_interfaces");
+      setCaptureInterfaces(items);
+      if (items.length === 0) {
+        setCaptureInterfacesError(t("trdp.captureInterfaces.empty"));
+      }
+    } catch (cause) {
+      setCaptureInterfaces([]);
+      setCaptureInterfacesError(`${t("trdp.captureInterfaces.error")}: ${String(cause)}`);
+    } finally {
+      setCaptureInterfacesLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (mode !== "monitor") return;
+    void refreshCaptureInterfaces();
+    // Interface enumeration is a side-effect of entering Monitor configuration;
+    // explicit refresh remains available for hot-plug/runtime changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   async function chooseXml() {
     const path = await open({
       multiple: false,
@@ -51,6 +86,19 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
     });
     if (typeof path === "string") patch({ xml_path: path });
   }
+
+  const pdPort = num(params, "pd_port", 17224);
+  const mdUdpPort = num(params, "md_udp_port", 17225);
+  const mdTcpPort = num(params, "md_tcp_port", 17225);
+  const captureInterfaceA = str(params, "capture_interface");
+  const captureInterfaceBEnabled = bool(params, "capture_interface_b_enabled");
+  const captureInterfaceB = str(params, "capture_interface_b");
+  const captureFilterAuto = bool(
+    params,
+    "capture_filter_auto",
+    str(params, "capture_filter", STANDARD_CAPTURE_FILTER) === STANDARD_CAPTURE_FILTER,
+  );
+  const captureFilter = str(params, "capture_filter", STANDARD_CAPTURE_FILTER);
 
   const portFields = (
     <div className={styles.ports}>
@@ -61,7 +109,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           type="number"
           min={1}
           max={65535}
-          value={num(params, "pd_port", 17224)}
+          value={pdPort}
           onChange={e => patch({ pd_port: Number(e.target.value) })}
         />
       </div>
@@ -72,7 +120,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           type="number"
           min={1}
           max={65535}
-          value={num(params, "md_udp_port", 17225)}
+          value={mdUdpPort}
           onChange={e => patch({ md_udp_port: Number(e.target.value) })}
         />
       </div>
@@ -83,7 +131,7 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           type="number"
           min={1}
           max={65535}
-          value={num(params, "md_tcp_port", 17225)}
+          value={mdTcpPort}
           onChange={e => patch({ md_tcp_port: Number(e.target.value) })}
         />
       </div>
@@ -171,6 +219,96 @@ export default function TrdpConnectForm({ params, onChange }: ConnectFormProps) 
           <div className={`${styles.monitorIntro} liquid-glass-card`}>
             <strong>{t("trdp.form.monitorWorkspace")}</strong>
             <p>{t("trdp.form.monitorNote")}</p>
+          </div>
+
+          <div className={styles.field}>
+            <label className={styles.label}>{t("trdp.form.captureInterfaceA")}</label>
+            <div className={styles.pathRow}>
+              <select
+                className={`${styles.select} ${styles.pathInput} liquid-glass-input liquid-glass-select`}
+                value={captureInterfaceA}
+                onChange={event => {
+                  const next = event.target.value;
+                  patch({
+                    capture_interface: next,
+                    ...(next === captureInterfaceB ? { capture_interface_b: "" } : {}),
+                  });
+                }}
+                disabled={captureInterfacesLoading}
+              >
+                <option value="">{captureInterfacesLoading ? t("trdp.captureInterfaces.loading") : t("trdp.captureInterfaces.choose")}</option>
+                {captureInterfaces.map(item => (
+                  <option key={item.name} value={item.name}>
+                    {item.description ? `${item.description} — ${item.name}` : item.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className={`${styles.iconButton} liquid-glass-button`}
+                onClick={() => void refreshCaptureInterfaces()}
+                disabled={captureInterfacesLoading}
+                title={t("trdp.actions.refreshInterfaces")}
+                aria-label={t("trdp.actions.refreshInterfaces")}
+              >
+                <Icon name="refresh" size="md" />
+              </button>
+            </div>
+            {captureInterfacesError && <small className={styles.hint}>{captureInterfacesError}</small>}
+          </div>
+
+          <label className={`liquid-glass-toggle ${styles.toggle}`}>
+            <input
+              type="checkbox"
+              checked={captureInterfaceBEnabled}
+              onChange={event => patch({ capture_interface_b_enabled: event.target.checked })}
+            />
+            <div />
+            <span>{t("trdp.form.captureLinkB")}</span>
+          </label>
+
+          {captureInterfaceBEnabled && (
+            <div className={styles.field}>
+              <label className={styles.label}>{t("trdp.form.captureInterfaceB")}</label>
+              <select
+                className={`${styles.select} liquid-glass-input liquid-glass-select`}
+                value={captureInterfaceB}
+                onChange={event => patch({ capture_interface_b: event.target.value })}
+                disabled={captureInterfacesLoading}
+              >
+                <option value="">{t("trdp.captureInterfaces.choose")}</option>
+                {captureInterfaces
+                  .filter(item => item.name !== captureInterfaceA)
+                  .map(item => (
+                    <option key={item.name} value={item.name}>
+                      {item.description ? `${item.description} — ${item.name}` : item.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
+
+          <label className={`liquid-glass-toggle ${styles.toggle}`}>
+            <input
+              type="checkbox"
+              checked={captureFilterAuto}
+              onChange={event => patch({ capture_filter_auto: event.target.checked })}
+            />
+            <div />
+            <span>{t("trdp.form.autoFilter")}</span>
+          </label>
+
+          <div className={styles.field}>
+            <label className={styles.label}>{t("trdp.form.captureFilter")}</label>
+            {captureFilterAuto ? (
+              <code className={styles.filterPreview}>{captureFilterForPorts(pdPort, mdUdpPort, mdTcpPort)}</code>
+            ) : (
+              <input
+                className={`${styles.input} liquid-glass-input`}
+                value={captureFilter}
+                onChange={event => patch({ capture_filter: event.target.value })}
+              />
+            )}
           </div>
 
           <details className={`${styles.details} liquid-glass-card`}>
