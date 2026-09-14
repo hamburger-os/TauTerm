@@ -67,6 +67,8 @@ Shared -> Exclusive(owner) -> Shared
 
 “上层统一异步/事件化契约”不意味着强迫底层全部换成异步库。`serialport`、部分 PTY 等阻塞 API 可以由专用 worker 驱动；差异只存在于 transport 内部。
 
+串口 actor 为了及时处理 write、exclusive、resize 和 shutdown，需要保持较短的读取切片；但这个读取调度参数不能同时成为大块写入的物理超时。特别是在 Windows 上，`serialport` 的单一 timeout 会同时影响 COM 读写，因此 Serial transport 必须按 baud rate、帧格式和当前 payload 大小为较大的写入临时提升 deadline，并在写入后恢复短读取切片。X/Y/ZModem 的 128 B / 1 KiB block 不能继承用于 actor 调度的 20 ms read slice。
+
 协议原生 async 驱动（当前 SSH）由 `AsyncBridgeDriver` 自有 Tokio runtime 驱动。任何依赖 Tokio reactor 的 future/timer 都必须在该 runtime 的上下文中创建并 poll，不能在普通 DataPlane OS 线程上先构造 `tokio::time` future 再交给 `block_on`。空闲读取使用短 read slice 让 actor 周期性处理共享写入、resize 和 shutdown；该 slice 属于 transport 内部调度参数，不得泄漏到 Session/UI。
 
 ## 能力
