@@ -1,43 +1,55 @@
 //! Persistent SSH host trust store.
 //!
-//! Unknown hosts require explicit user confirmation. A stored host whose fingerprint changes is
-//! rejected fail-closed; the new key is never silently learned.
+//! Unknown host-key algorithms require explicit user confirmation. A stored endpoint whose key
+//! changes for an already trusted algorithm is rejected fail-closed; a newly negotiated algorithm
+//! can be trusted independently without invalidating the endpoint's other trusted host keys.
 
 use crate::kernel::persistence::atomic_write;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
 
-const KNOWN_HOSTS_VERSION: u32 = 1;
+const KNOWN_HOSTS_VERSION: u32 = 2;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KnownHostRecord {
-    pub host: String,
-    pub port: u16,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnownHostKeyRecord {
+    pub algorithm: String,
     pub fingerprint: String,
     pub first_seen_ms: u64,
     pub last_seen_ms: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnownHostRecord {
+    pub host: String,
+    pub port: u16,
+    pub keys: Vec<KnownHostKeyRecord>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct KnownHostsFile {
     version: u32,
-    hosts: HashMap<String, KnownHostRecord>,
+    hosts: BTreeMap<String, KnownHostRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostTrustDecision {
     Trusted,
     Unknown,
-    Changed { expected_fingerprint: String },
-    Unavailable { reason: String },
+    Changed {
+        algorithm: String,
+        expected_fingerprints: Vec<String>,
+    },
+    Unavailable {
+        reason: String,
+    },
 }
 
 pub struct KnownHostStore {
     path: RwLock<Option<PathBuf>>,
-    hosts: RwLock<HashMap<String, KnownHostRecord>>,
+    hosts: RwLock<BTreeMap<String, KnownHostRecord>>,
     mutation_lock: Mutex<()>,
     available: AtomicBool,
 }
@@ -46,7 +58,7 @@ impl KnownHostStore {
     pub fn new() -> Self {
         Self {
             path: RwLock::new(None),
-            hosts: RwLock::new(HashMap::new()),
+            hosts: RwLock::new(BTreeMap::new()),
             mutation_lock: Mutex::new(()),
             available: AtomicBool::new(false),
         }
@@ -74,14 +86,14 @@ impl KnownHostStore {
         Ok(())
     }
 
-    fn load(path: &Path) -> Result<HashMap<String, KnownHostRecord>, String> {
+    fn load(path: &Path) -> Result<BTreeMap<String, KnownHostRecord>, String> {
         if !path.exists() {
-            return Ok(HashMap::new());
+            return Ok(BTreeMap::new());
         }
         let raw = std::fs::read_to_string(path)
             .map_err(|e| format!("无法读取 SSH known-host 文件: {e}"))?;
         if raw.trim().is_empty() {
-            return Ok(HashMap::new());
+            return Ok(BTreeMap::new());
         }
         match serde_json::from_str::<KnownHostsFile>(&raw) {
             Ok(file) if file.version == KNOWN_HOSTS_VERSION => Ok(file.hosts),
@@ -108,8 +120,17 @@ impl KnownHostStore {
             .map_err(|e| format!("备份无效 SSH known-host 文件失败: {e}"))
     }
 
+    fn normalized_host(host: &str) -> String {
+        let trimmed = host.trim();
+        trimmed
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(trimmed)
+            .to_ascii_lowercase()
+    }
+
     fn key(host: &str, port: u16) -> String {
-        format!("{}:{}", host.trim().to_ascii_lowercase(), port)
+        format!("{}|{port}", Self::normalized_host(host))
     }
 
     fn now_ms() -> u64 {
@@ -119,7 +140,13 @@ impl KnownHostStore {
             .as_millis() as u64
     }
 
-    pub fn evaluate(&self, host: &str, port: u16, fingerprint: &str) -> HostTrustDecision {
+    pub fn evaluate(
+        &self,
+        host: &str,
+        port: u16,
+        algorithm: &str,
+        fingerprint: &str,
+    ) -> HostTrustDecision {
         if !self.available.load(Ordering::Acquire) {
             return HostTrustDecision::Unavailable {
                 reason: "SSH known-host 存储不可用或配置未完成".to_string(),
@@ -148,16 +175,35 @@ impl KnownHostStore {
                 };
             }
         };
-        match hosts.get(&key) {
-            None => HostTrustDecision::Unknown,
-            Some(record) if record.fingerprint == fingerprint => HostTrustDecision::Trusted,
-            Some(record) => HostTrustDecision::Changed {
-                expected_fingerprint: record.fingerprint.clone(),
-            },
+        let Some(record) = hosts.get(&key) else {
+            return HostTrustDecision::Unknown;
+        };
+
+        if record
+            .keys
+            .iter()
+            .any(|known| known.algorithm == algorithm && known.fingerprint == fingerprint)
+        {
+            return HostTrustDecision::Trusted;
+        }
+
+        let expected_fingerprints: Vec<String> = record
+            .keys
+            .iter()
+            .filter(|known| known.algorithm == algorithm)
+            .map(|known| known.fingerprint.clone())
+            .collect();
+        if expected_fingerprints.is_empty() {
+            HostTrustDecision::Unknown
+        } else {
+            HostTrustDecision::Changed {
+                algorithm: algorithm.to_string(),
+                expected_fingerprints,
+            }
         }
     }
 
-    pub fn touch(&self, host: &str, port: u16) {
+    pub fn touch(&self, host: &str, port: u16, algorithm: &str, fingerprint: &str) {
         if !self.available.load(Ordering::Acquire) {
             log::warn!("SSH known-host 存储不可用，拒绝更新 last_seen");
             return;
@@ -174,7 +220,14 @@ impl KnownHostStore {
         let Some(record) = next.get_mut(&key) else {
             return;
         };
-        record.last_seen_ms = Self::now_ms();
+        let Some(known) = record
+            .keys
+            .iter_mut()
+            .find(|known| known.algorithm == algorithm && known.fingerprint == fingerprint)
+        else {
+            return;
+        };
+        known.last_seen_ms = Self::now_ms();
 
         match self.persist_snapshot(&next) {
             Ok(()) => {
@@ -186,7 +239,13 @@ impl KnownHostStore {
         }
     }
 
-    pub fn trust(&self, host: &str, port: u16, fingerprint: &str) -> Result<(), String> {
+    pub fn trust(
+        &self,
+        host: &str,
+        port: u16,
+        algorithm: &str,
+        fingerprint: &str,
+    ) -> Result<(), String> {
         if !self.available.load(Ordering::Acquire) {
             return Err("SSH known-host 存储不可用，不能建立新的主机信任".to_string());
         }
@@ -201,20 +260,31 @@ impl KnownHostStore {
             .read()
             .map_err(|_| "SSH known-host 锁错误".to_string())?
             .clone();
-        let first_seen = next
-            .get(&key)
-            .map(|record| record.first_seen_ms)
-            .unwrap_or(now);
-        next.insert(
-            key,
-            KnownHostRecord {
-                host: host.to_string(),
-                port,
+        let record = next.entry(key).or_insert_with(|| KnownHostRecord {
+            host: Self::normalized_host(host),
+            port,
+            keys: Vec::new(),
+        });
+
+        if let Some(known) = record
+            .keys
+            .iter_mut()
+            .find(|known| known.algorithm == algorithm && known.fingerprint == fingerprint)
+        {
+            known.last_seen_ms = now;
+        } else {
+            record.keys.push(KnownHostKeyRecord {
+                algorithm: algorithm.to_string(),
                 fingerprint: fingerprint.to_string(),
-                first_seen_ms: first_seen,
+                first_seen_ms: now,
                 last_seen_ms: now,
-            },
-        );
+            });
+            record.keys.sort_by(|left, right| {
+                left.algorithm
+                    .cmp(&right.algorithm)
+                    .then_with(|| left.fingerprint.cmp(&right.fingerprint))
+            });
+        }
 
         self.persist_snapshot(&next)?;
         *self
@@ -224,7 +294,7 @@ impl KnownHostStore {
         Ok(())
     }
 
-    fn persist_snapshot(&self, hosts: &HashMap<String, KnownHostRecord>) -> Result<(), String> {
+    fn persist_snapshot(&self, hosts: &BTreeMap<String, KnownHostRecord>) -> Result<(), String> {
         if !self.available.load(Ordering::Acquire) {
             return Err("SSH known-host 存储不可用".to_string());
         }
@@ -269,9 +339,11 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
         std::fs::write(&dir, b"blocks-directory-recreation").unwrap();
 
-        assert!(store.trust("example.test", 22, "SHA256:first").is_err());
+        assert!(store
+            .trust("example.test", 22, "ssh-ed25519", "SHA256:first")
+            .is_err());
         assert_eq!(
-            store.evaluate("example.test", 22, "SHA256:first"),
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
             HostTrustDecision::Unknown
         );
 
@@ -287,16 +359,18 @@ mod tests {
 
         let store = KnownHostStore::new();
         store.configure(good_path).unwrap();
-        store.trust("example.test", 22, "SHA256:first").unwrap();
+        store
+            .trust("example.test", 22, "ssh-ed25519", "SHA256:first")
+            .unwrap();
         assert_eq!(
-            store.evaluate("example.test", 22, "SHA256:first"),
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
             HostTrustDecision::Trusted
         );
 
         std::fs::write(&bad_path, b"{not-json").unwrap();
         assert!(store.configure(bad_path).is_err());
         assert!(matches!(
-            store.evaluate("example.test", 22, "SHA256:first"),
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
             HostTrustDecision::Unavailable { .. }
         ));
 
@@ -314,7 +388,7 @@ mod tests {
         assert!(store.configure(path.clone()).is_err());
         assert!(path.with_extension("json.invalid.bak").exists());
         assert!(matches!(
-            store.evaluate("example.test", 22, "SHA256:first"),
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
             HostTrustDecision::Unavailable { .. }
         ));
 
@@ -322,36 +396,93 @@ mod tests {
     }
 
     #[test]
-    fn known_host_trust_persists_and_changed_key_fails_closed() {
+    fn known_host_allows_multiple_algorithms_but_rejects_changed_key_per_algorithm() {
         let dir = temp_path();
         let path = dir.join("known_hosts.json");
 
         let store = KnownHostStore::new();
         store.configure(path.clone()).unwrap();
         assert_eq!(
-            store.evaluate("example.test", 22, "SHA256:first"),
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:ed-first"),
             HostTrustDecision::Unknown
         );
 
-        store.trust("example.test", 22, "SHA256:first").unwrap();
+        store
+            .trust("example.test", 22, "ssh-ed25519", "SHA256:ed-first")
+            .unwrap();
         assert_eq!(
-            store.evaluate("example.test", 22, "SHA256:first"),
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:ed-first"),
             HostTrustDecision::Trusted
         );
+
+        // A newly negotiated host-key algorithm is independent trust, not a false key-change alarm.
         assert_eq!(
-            store.evaluate("example.test", 22, "SHA256:changed"),
+            store.evaluate(
+                "example.test",
+                22,
+                "ecdsa-sha2-nistp256",
+                "SHA256:ecdsa-first"
+            ),
+            HostTrustDecision::Unknown
+        );
+        store
+            .trust(
+                "example.test",
+                22,
+                "ecdsa-sha2-nistp256",
+                "SHA256:ecdsa-first",
+            )
+            .unwrap();
+        assert_eq!(
+            store.evaluate(
+                "example.test",
+                22,
+                "ecdsa-sha2-nistp256",
+                "SHA256:ecdsa-first"
+            ),
+            HostTrustDecision::Trusted
+        );
+
+        assert_eq!(
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:ed-changed"),
             HostTrustDecision::Changed {
-                expected_fingerprint: "SHA256:first".to_string(),
+                algorithm: "ssh-ed25519".to_string(),
+                expected_fingerprints: vec!["SHA256:ed-first".to_string()],
             }
         );
 
         let reopened = KnownHostStore::new();
         reopened.configure(path).unwrap();
         assert_eq!(
-            reopened.evaluate("example.test", 22, "SHA256:first"),
+            reopened.evaluate("example.test", 22, "ssh-ed25519", "SHA256:ed-first"),
+            HostTrustDecision::Trusted
+        );
+        assert_eq!(
+            reopened.evaluate(
+                "example.test",
+                22,
+                "ecdsa-sha2-nistp256",
+                "SHA256:ecdsa-first"
+            ),
             HostTrustDecision::Trusted
         );
 
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ipv6_endpoint_key_is_normalized() {
+        let store = KnownHostStore::new();
+        let dir = temp_path();
+        let path = dir.join("known_hosts.json");
+        store.configure(path).unwrap();
+        store
+            .trust("[2001:db8::1]", 2222, "ssh-ed25519", "SHA256:first")
+            .unwrap();
+        assert_eq!(
+            store.evaluate("2001:db8::1", 2222, "ssh-ed25519", "SHA256:first"),
+            HostTrustDecision::Trusted
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }
