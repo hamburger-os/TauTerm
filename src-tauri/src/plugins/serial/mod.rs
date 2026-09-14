@@ -9,80 +9,6 @@ use crate::session::SessionError;
 use crate::transport::serial::{open_serial, SerialTransportConfig};
 use crate::transport::DataPlaneRuntime;
 use crate::virtual_port::backend::is_internal_endpoint_path;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerialConfig {
-    #[serde(default = "default_baud_rate")]
-    pub baud_rate: u32,
-    #[serde(default = "default_data_bits")]
-    pub data_bits: u8,
-    #[serde(default = "default_parity")]
-    pub parity: String,
-    #[serde(default = "default_stop_bits")]
-    pub stop_bits: String,
-    #[serde(default = "default_flow_control")]
-    pub flow_control: String,
-    #[serde(default = "default_data_mode")]
-    pub data_mode: String,
-    #[serde(default = "default_virtual_port_enabled")]
-    pub virtual_port_enabled: bool,
-    #[serde(default = "default_virtual_port_count")]
-    pub virtual_port_count: u32,
-}
-
-fn default_baud_rate() -> u32 {
-    115_200
-}
-fn default_data_bits() -> u8 {
-    8
-}
-fn default_parity() -> String {
-    "none".into()
-}
-fn default_stop_bits() -> String {
-    "1".into()
-}
-fn default_flow_control() -> String {
-    "none".into()
-}
-fn default_data_mode() -> String {
-    "text".into()
-}
-fn default_virtual_port_enabled() -> bool {
-    false
-}
-fn default_virtual_port_count() -> u32 {
-    0
-}
-
-impl Default for SerialConfig {
-    fn default() -> Self {
-        Self {
-            baud_rate: default_baud_rate(),
-            data_bits: default_data_bits(),
-            parity: default_parity(),
-            stop_bits: default_stop_bits(),
-            flow_control: default_flow_control(),
-            data_mode: default_data_mode(),
-            virtual_port_enabled: false,
-            virtual_port_count: 0,
-        }
-    }
-}
-
-impl SerialConfig {
-    fn transport(&self) -> SerialTransportConfig {
-        SerialTransportConfig {
-            baud_rate: self.baud_rate,
-            data_bits: self.data_bits,
-            parity: self.parity.clone(),
-            stop_bits: self.stop_bits.clone(),
-            flow_control: self.flow_control.clone(),
-            read_timeout_ms: 50,
-        }
-    }
-}
 
 pub struct SerialAdapter;
 
@@ -91,8 +17,17 @@ impl SerialAdapter {
         Self
     }
 
-    fn parse_params(params: &serde_json::Value) -> SerialConfig {
-        serde_json::from_value(params.clone()).unwrap_or_default()
+    /// Serial 插件只解析 transport 真正消费的链路字段。
+    ///
+    /// params 还会携带终端显示、文件传输和虚拟串口等 Session/UI 配置；Serde 默认忽略
+    /// 未知字段，因此这里不复制第二套 Serial DTO。已声明链路字段一旦类型错误则明确失败，
+    /// 禁止静默退回 115200/8N1 后继续打开设备。
+    fn parse_transport_params(
+        params: &serde_json::Value,
+    ) -> Result<SerialTransportConfig, SessionError> {
+        serde_json::from_value(params.clone()).map_err(|error| {
+            SessionError::Config(format!("invalid serial transport configuration: {error}"))
+        })
     }
 }
 
@@ -123,8 +58,8 @@ impl ProtocolAdapter for SerialAdapter {
         endpoint: &str,
         params: &serde_json::Value,
     ) -> Result<ProtocolConnection, SessionError> {
-        let config = Self::parse_params(params);
-        let driver = open_serial(endpoint, &config.transport())?;
+        let config = Self::parse_transport_params(params)?;
+        let driver = open_serial(endpoint, &config)?;
         Ok(ProtocolConnection {
             data_plane: Some(DataPlaneRuntime::spawn(Box::new(driver))),
             service: None,
@@ -228,21 +163,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn serial_config_defaults_are_stable() {
-        let config = SerialAdapter::parse_params(&serde_json::json!({}));
-        assert_eq!(config.baud_rate, 115_200);
-        assert_eq!(config.data_bits, 8);
-        assert_eq!(config.parity, "none");
-        assert_eq!(config.stop_bits, "1");
-        assert_eq!(config.flow_control, "none");
-        assert_eq!(config.data_mode, "text");
-        assert!(!config.virtual_port_enabled);
-        assert_eq!(config.virtual_port_count, 0);
-    }
-
-    #[test]
-    fn serial_config_parses_explicit_transport_settings() {
-        let config = SerialAdapter::parse_params(&serde_json::json!({
+    fn serial_adapter_parses_transport_fields_without_owning_session_ui_fields() {
+        let config = SerialAdapter::parse_transport_params(&serde_json::json!({
             "baud_rate": 921600,
             "data_bits": 7,
             "parity": "even",
@@ -251,15 +173,26 @@ mod tests {
             "data_mode": "hex",
             "virtual_port_enabled": true,
             "virtual_port_count": 2
-        }));
+        }))
+        .unwrap();
         assert_eq!(config.baud_rate, 921600);
         assert_eq!(config.data_bits, 7);
         assert_eq!(config.parity, "even");
         assert_eq!(config.stop_bits, "2");
         assert_eq!(config.flow_control, "rts_cts");
-        assert_eq!(config.data_mode, "hex");
-        assert!(config.virtual_port_enabled);
-        assert_eq!(config.virtual_port_count, 2);
+    }
+
+    #[test]
+    fn malformed_transport_field_is_rejected_instead_of_falling_back_to_defaults() {
+        let error = SerialAdapter::parse_transport_params(&serde_json::json!({
+            "baud_rate": "921600",
+            "data_bits": 8,
+            "parity": "none",
+            "stop_bits": "1",
+            "flow_control": "none"
+        }))
+        .unwrap_err();
+        assert!(matches!(error, SessionError::Config(_)));
     }
 
     #[test]
