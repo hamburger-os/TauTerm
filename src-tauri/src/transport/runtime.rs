@@ -440,7 +440,10 @@ impl Read for ExclusiveIo {
             return Ok(0);
         }
 
-        let result = self.driver_mut()?.read(buf).map_err(transport_error_to_io)?;
+        let result = self
+            .driver_mut()?
+            .read(buf)
+            .map_err(transport_error_to_io)?;
         match result {
             ReadStatus::Data(n) if n > 0 => {
                 let n = n.min(buf.len());
@@ -907,7 +910,9 @@ fn handle_command(
                 return CommandOutcome::Continue;
             }
 
-            let result = driver.as_mut().map_or(Ok(()), |active_driver| active_driver.shutdown());
+            let result = driver
+                .as_mut()
+                .map_or(Ok(()), |active_driver| active_driver.shutdown());
             let _ = ack.send(result);
             CommandOutcome::Shutdown
         }
@@ -1191,7 +1196,10 @@ mod tests {
             writes: writes.clone(),
         }));
 
-        let mut lease = runtime.handle.acquire_exclusive("recover-after-error").unwrap();
+        let mut lease = runtime
+            .handle
+            .acquire_exclusive("recover-after-error")
+            .unwrap();
         assert!(lease.write_all(b"fail-once").is_err());
         lease.release().unwrap();
 
