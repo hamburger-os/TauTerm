@@ -25,6 +25,19 @@ pub enum TransferDirection {
     Receive,
 }
 
+/// 进度流中的事件类型。
+///
+/// 使用显式枚举代替 `is_file_start/is_file_complete/is_batch_complete` 布尔组合，
+/// 从数据模型上排除互相矛盾的状态，也不再依赖特殊文件名表达批次完成。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferProgressKind {
+    FileStart,
+    Progress,
+    FileComplete,
+    BatchComplete,
+}
+
 /// 统一进度事件。
 #[derive(Debug, Clone, Serialize)]
 pub struct UnifiedProgress {
@@ -34,6 +47,7 @@ pub struct UnifiedProgress {
     /// 单次传输唯一 ID（由 orchestrator/broadcaster 注入）
     #[serde(default)]
     pub transfer_id: String,
+    pub kind: TransferProgressKind,
     pub protocol: String,
     pub file_name: String,
     pub bytes_done: u64,
@@ -46,12 +60,8 @@ pub struct UnifiedProgress {
     pub aggregate_bytes: u64,
     pub aggregate_total: u64,
     pub direction: TransferDirection,
-    pub is_file_start: bool,
-    pub is_file_complete: bool,
     pub file_success: Option<bool>,
     pub file_error: Option<String>,
-    /// 协议层文件循环已经结束；它不是任务终态，最终仍以 finished 事件为准。
-    pub is_batch_complete: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -79,6 +89,7 @@ impl UnifiedProgress {
         Self {
             session_id: String::new(),
             transfer_id: String::new(),
+            kind: TransferProgressKind::FileStart,
             protocol: protocol.to_string(),
             file_name: file_name.to_string(),
             bytes_done: 0,
@@ -89,11 +100,8 @@ impl UnifiedProgress {
             aggregate_bytes,
             aggregate_total,
             direction,
-            is_file_start: true,
-            is_file_complete: false,
             file_success: None,
             file_error: None,
-            is_batch_complete: false,
         }
     }
 
@@ -114,6 +122,7 @@ impl UnifiedProgress {
         Self {
             session_id: String::new(),
             transfer_id: String::new(),
+            kind: TransferProgressKind::Progress,
             protocol: protocol.to_string(),
             file_name: file_name.to_string(),
             bytes_done,
@@ -124,11 +133,8 @@ impl UnifiedProgress {
             aggregate_bytes,
             aggregate_total,
             direction,
-            is_file_start: false,
-            is_file_complete: false,
             file_success: None,
             file_error: None,
-            is_batch_complete: false,
         }
     }
 
@@ -173,6 +179,7 @@ impl UnifiedProgress {
         Self {
             session_id: String::new(),
             transfer_id: String::new(),
+            kind: TransferProgressKind::FileComplete,
             protocol: protocol.to_string(),
             file_name: file_name.to_string(),
             bytes_done: bytes_transferred,
@@ -183,11 +190,8 @@ impl UnifiedProgress {
             aggregate_bytes,
             aggregate_total,
             direction,
-            is_file_start: false,
-            is_file_complete: true,
             file_success: Some(success),
             file_error: error,
-            is_batch_complete: false,
         }
     }
 
@@ -206,8 +210,9 @@ impl UnifiedProgress {
         Self {
             session_id: String::new(),
             transfer_id: String::new(),
+            kind: TransferProgressKind::BatchComplete,
             protocol: protocol.to_string(),
-            file_name: "__batch_complete__".to_string(),
+            file_name: String::new(),
             bytes_done: 0,
             bytes_total: 0,
             bytes_per_second: None,
@@ -216,11 +221,8 @@ impl UnifiedProgress {
             aggregate_bytes: 0,
             aggregate_total: 0,
             direction,
-            is_file_start: false,
-            is_file_complete: false,
             file_success: Some(files_failed == 0),
             file_error: None,
-            is_batch_complete: true,
         }
     }
 }
