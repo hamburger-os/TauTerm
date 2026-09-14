@@ -115,7 +115,6 @@ fn map_open_error(error: serialport::Error) -> TransportError {
             }
             _ => TransportErrorKind::Connect,
         },
-        _ => TransportErrorKind::Connect,
     };
     TransportError::new(kind, "serial_open", error.to_string())
 }
