@@ -32,9 +32,10 @@ use known_hosts::{HostTrustDecision, KnownHostStore};
 const SSH_NETWORK_PHASE_TIMEOUT: Duration = Duration::from_secs(15);
 const HOST_KEY_VERIFY_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SshAuthMethod {
+    #[default]
     Password,
     Key,
 }
@@ -45,12 +46,6 @@ impl SshAuthMethod {
             Self::Password => "password",
             Self::Key => "key",
         }
-    }
-}
-
-impl Default for SshAuthMethod {
-    fn default() -> Self {
-        Self::Password
     }
 }
 
