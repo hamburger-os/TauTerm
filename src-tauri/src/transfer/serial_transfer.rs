@@ -2,6 +2,9 @@
 //!
 //! 将现有的同步 `SerialTransferProtocol` trait 适配到统一的异步 `FileTransfer` trait。
 //! 通过 `tokio::task::spawn_blocking` 桥接同步协议引擎到 tokio 运行时。
+//!
+//! Inline 传输拿到的是 DataPlane 的同一物理 driver；接管边界的输入字节属于协议，
+//! 不能在适配层无条件清空，否则会丢失已经到达的 C/NAK/ZMODEM 握手字节。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -64,7 +67,6 @@ impl FileTransfer for SerialFileTransfer {
 
         let result = tokio::task::spawn_blocking(move || {
             let mut port_guard = port.lock().unwrap_or_else(|e| e.into_inner());
-            crate::transfer::io::flush_port_buffer(&mut port_guard);
 
             let progress = progress;
             let proto = proto;
@@ -242,7 +244,6 @@ impl FileTransfer for SerialFileTransfer {
 
         let result = tokio::task::spawn_blocking(move || {
             let mut port_guard = port.lock().unwrap_or_else(|e| e.into_inner());
-            crate::transfer::io::flush_port_buffer(&mut port_guard);
 
             let progress = progress;
             let proto = proto;
