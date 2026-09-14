@@ -140,12 +140,11 @@ impl SessionIo {
     pub fn acquire_exclusive(
         &self,
         owner_name: impl Into<String>,
-        purge_input: bool,
     ) -> Result<ExclusiveIo, SessionIoError> {
         self.primary
             .as_ref()
             .ok_or(SessionIoError::NoPrimaryDataPlane)?
-            .acquire_exclusive(owner_name, purge_input)
+            .acquire_exclusive(owner_name)
             .map_err(Into::into)
     }
 
