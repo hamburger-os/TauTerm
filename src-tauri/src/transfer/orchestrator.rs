@@ -17,6 +17,7 @@ use crate::kernel::file_transfer::{
 };
 use crate::kernel::plugin_adapter::{TransferExecutionMode, TransferProtocolType};
 use crate::kernel::session_store::SessionState;
+use crate::transfer::config::{ReceiveProtocolOptions, SendProtocolOptions};
 use crate::transfer::panic_guard::PanicGuard;
 use crate::transfer::protocol::SerialTransferProtocol;
 use crate::transfer::serial_transfer::SerialFileTransfer;
@@ -30,9 +31,7 @@ pub struct SendContext {
     pub options: FileTransferOptions,
     pub progress_tx: UnboundedSender<UnifiedProgress>,
     pub progress_rx: UnboundedReceiver<UnifiedProgress>,
-    pub block_size: Option<usize>,
-    pub checksum_mode: Option<String>,
-    pub streaming: Option<bool>,
+    pub protocol_options: SendProtocolOptions,
 }
 
 pub struct ReceiveContext {
@@ -42,9 +41,7 @@ pub struct ReceiveContext {
     pub options: FileTransferOptions,
     pub progress_tx: UnboundedSender<UnifiedProgress>,
     pub progress_rx: UnboundedReceiver<UnifiedProgress>,
-    pub block_size: Option<usize>,
-    pub checksum_mode: Option<String>,
-    pub streaming: Option<bool>,
+    pub protocol_options: ReceiveProtocolOptions,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -202,40 +199,45 @@ pub struct InlineTransferOrchestrator {
 }
 
 impl InlineTransferOrchestrator {
-    fn validate_options(
+    fn create_send_protocol_handler(
         &self,
-        block_size: Option<usize>,
-        checksum_mode: Option<&str>,
-        streaming: Option<bool>,
-    ) -> Result<(), String> {
-        if checksum_mode.is_some() || streaming.is_some() {
-            return Err(format!(
-                "{} 的校验/流模式由协议握手协商，不接受显式 checksum_mode/streaming 配置",
-                self.pt
-            ));
-        }
-
-        match (self.pt.as_str(), block_size) {
-            ("ymodem", Some(128 | 1024)) | ("ymodem", None) => Ok(()),
-            ("ymodem", Some(value)) => Err(format!(
-                "YModem block_size 仅支持 128 或 1024，收到 {value}"
+        options: &SendProtocolOptions,
+    ) -> Result<Box<dyn SerialTransferProtocol>, String> {
+        match options {
+            SendProtocolOptions::Ymodem { block_size } => {
+                Ok(Box::new(crate::transfer::ymodem::YModem {
+                    block_size: *block_size,
+                }))
+            }
+            SendProtocolOptions::Xmodem { block_size } => Ok(Box::new(
+                crate::transfer::xmodem::XModem::sender(*block_size),
             )),
-            (_, Some(_)) => Err(format!("{} 不接受显式 block_size 配置", self.pt)),
-            (_, None) => Ok(()),
+            SendProtocolOptions::Zmodem {
+                crc_policy,
+                max_block_size,
+            } => Ok(Box::new(crate::transfer::zmodem::ZModem::sender(
+                *crc_policy,
+                *max_block_size,
+            ))),
+            SendProtocolOptions::Sftp => Err("SFTP 不是内联串口协议".into()),
         }
     }
 
-    fn create_protocol_handler(
+    fn create_receive_protocol_handler(
         &self,
-        block_size: Option<usize>,
+        options: &ReceiveProtocolOptions,
     ) -> Result<Box<dyn SerialTransferProtocol>, String> {
-        if self.pt.as_str() == "ymodem" {
-            Ok(Box::new(crate::transfer::ymodem::YModem {
-                block_size: block_size.unwrap_or(1024),
-            }))
-        } else {
-            crate::transfer::protocol::create_protocol(&self.pt)
-                .ok_or_else(|| format!("{} 协议未实现", self.pt))
+        match options {
+            ReceiveProtocolOptions::Ymodem => {
+                Ok(Box::new(crate::transfer::ymodem::YModem::default()))
+            }
+            ReceiveProtocolOptions::Xmodem { check_mode } => Ok(Box::new(
+                crate::transfer::xmodem::XModem::receiver(*check_mode),
+            )),
+            ReceiveProtocolOptions::Zmodem { crc_capability } => Ok(Box::new(
+                crate::transfer::zmodem::ZModem::receiver(*crc_capability),
+            )),
+            ReceiveProtocolOptions::Sftp => Err("SFTP 不是内联串口协议".into()),
         }
     }
 
@@ -251,9 +253,6 @@ impl InlineTransferOrchestrator {
         ),
         String,
     > {
-        // SessionStore 的现有包装仍接收 sender；Scheduler 的真实取消状态统一由
-        // cancel_flag 返回的共享原子令牌表达，receiver 不参与协议取消链路。
-        let (cancel_tx, _cancel_rx) = tokio::sync::oneshot::channel::<()>();
         let (io, cancel) = {
             let app_state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
             let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
@@ -269,13 +268,9 @@ impl InlineTransferOrchestrator {
                     .cloned()
                     .ok_or("当前会话没有可独占的数据面")?
             };
-            store.reserve_inline_transfer(session_id, transfer_id, cancel_tx)?;
+            let cancel = store.reserve_inline_transfer(session_id, transfer_id)?;
             let not_found = store.session_not_found(session_id);
             let handle = store.get_session_mut(session_id).ok_or(not_found)?;
-            let cancel = handle
-                .transfer_scheduler
-                .cancel_flag(transfer_id)
-                .ok_or("文件传输取消令牌注册失败")?;
             handle.state = SessionState::Transferring;
             (io, cancel)
         };
@@ -302,10 +297,9 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: SendContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
-        self.validate_options(ctx.block_size, ctx.checksum_mode.as_deref(), ctx.streaming)?;
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
-        let protocol_handler = match self.create_protocol_handler(ctx.block_size) {
+        let protocol_handler = match self.create_send_protocol_handler(&ctx.protocol_options) {
             Ok(handler) => handler,
             Err(error) => {
                 drop(io);
@@ -379,10 +373,9 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: ReceiveContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
-        self.validate_options(ctx.block_size, ctx.checksum_mode.as_deref(), ctx.streaming)?;
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
-        let protocol_handler = match self.create_protocol_handler(ctx.block_size) {
+        let protocol_handler = match self.create_receive_protocol_handler(&ctx.protocol_options) {
             Ok(handler) => handler,
             Err(error) => {
                 drop(io);

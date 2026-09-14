@@ -124,24 +124,36 @@ enum ZFrame {
 //  ZMODEM 协议处理器
 // ═══════════════════════════════════════════════════════════════════
 
-/// ZMODEM 协议处理器
-#[derive(Debug, Clone)]
-pub struct ZModem {
-    /// 是否使用 32 位 CRC（ZBIN32 帧格式）
-    pub use_crc32: bool,
-    /// 最大数据块大小（字节）
-    pub max_block_size: usize,
-    /// 滑动窗口大小（帧数，保留字段）
-    #[allow(dead_code)]
-    pub window_size: usize,
+/// ZMODEM 实例在创建时绑定本机角色，发送策略与接收能力不会混用。
+#[derive(Debug, Clone, Copy)]
+enum ZModemRole {
+    Sender {
+        crc_policy: ZModemCrcPolicy,
+        max_block_size: usize,
+    },
+    Receiver {
+        crc_capability: ZModemReceiveCrcCapability,
+    },
 }
 
-impl Default for ZModem {
-    fn default() -> Self {
-        ZModem {
-            use_crc32: true,
-            max_block_size: MAX_BLOCK_SIZE,
-            window_size: 1,
+#[derive(Debug, Clone, Copy)]
+pub struct ZModem {
+    role: ZModemRole,
+}
+
+impl ZModem {
+    pub fn sender(crc_policy: ZModemCrcPolicy, max_block_size: usize) -> Self {
+        Self {
+            role: ZModemRole::Sender {
+                crc_policy,
+                max_block_size,
+            },
+        }
+    }
+
+    pub fn receiver(crc_capability: ZModemReceiveCrcCapability) -> Self {
+        Self {
+            role: ZModemRole::Receiver { crc_capability },
         }
     }
 }
@@ -155,11 +167,18 @@ impl SerialTransferProtocol for ZModem {
         on_file_event: &dyn Fn(FileTransferEvent),
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
+        let ZModemRole::Sender {
+            crc_policy,
+            max_block_size,
+        } = self.role
+        else {
+            return Err("ZModem 接收器不能执行发送".into());
+        };
         zmodem_send(
             port,
             files,
-            self.use_crc32,
-            self.max_block_size,
+            crc_policy,
+            max_block_size,
             on_progress,
             on_file_event,
             cancel,
@@ -174,10 +193,13 @@ impl SerialTransferProtocol for ZModem {
         on_file_event: &dyn Fn(FileTransferEvent),
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
+        let ZModemRole::Receiver { crc_capability } = self.role else {
+            return Err("ZModem 发送器不能执行接收".into());
+        };
         zmodem_receive(
             port,
             download_dir,
-            self.use_crc32,
+            crc_capability,
             on_progress,
             on_file_event,
             cancel,
@@ -608,7 +630,7 @@ fn read_byte_required(
 fn zmodem_send(
     port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     files: &[FileInfo],
-    use_crc32: bool,
+    crc_policy: ZModemCrcPolicy,
     max_block_size: usize,
     on_progress: &dyn Fn(TransferProgress),
     on_file_event: &dyn Fn(FileTransferEvent),
@@ -619,8 +641,9 @@ fn zmodem_send(
     }
 
     let total_files = files.len() as u32;
+    let mut use_crc32 = false;
 
-    // ── 阶段 1: 发送 ZRQINIT，等待 ZRINIT ──
+    // ── 阶段 1: 发送 ZRQINIT，等待 ZRINIT 并协商 CRC 能力 ──
     log::info!("ZMODEM send: sending ZRQINIT");
     for retry in 0..MAX_RETRIES {
         if cancel() {
@@ -643,12 +666,23 @@ fn zmodem_send(
 
         match receive_frame(port, FRAME_TIMEOUT_S) {
             Ok(ZFrame::Header {
-                frame_type: ZRINIT, ..
+                frame_type: ZRINIT,
+                flags,
             }) => {
-                log::info!("ZMODEM send: received ZRINIT");
-                // Negotiate CRC32: if we can and receiver can, use CRC32
-                // rf[ZF0] & CANFC32 tells us if receiver supports it
-                // We'll use use_crc32 for simplicity
+                let receiver_crc32 = flags[ZF0] & CANFC32 != 0;
+                use_crc32 = match crc_policy {
+                    ZModemCrcPolicy::Auto => receiver_crc32,
+                    ZModemCrcPolicy::Crc16 => false,
+                    ZModemCrcPolicy::Crc32Required if receiver_crc32 => true,
+                    ZModemCrcPolicy::Crc32Required => {
+                        return Err("接收方未声明 CANFC32，无法满足 CRC32 Required 策略".into());
+                    }
+                };
+                log::info!(
+                    "ZMODEM send: received ZRINIT, receiver_crc32={}, negotiated_crc32={}",
+                    receiver_crc32,
+                    use_crc32
+                );
                 break;
             }
             Ok(ZFrame::Header {
@@ -1158,7 +1192,7 @@ fn send_data_frame_with_header(
 fn zmodem_receive(
     port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     download_dir: &str,
-    use_crc32: bool,
+    crc_capability: ZModemReceiveCrcCapability,
     on_progress: &dyn Fn(TransferProgress),
     on_file_event: &dyn Fn(FileTransferEvent),
     cancel: &mut dyn FnMut() -> bool,

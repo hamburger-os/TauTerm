@@ -1,9 +1,7 @@
 //! XModem 协议实现
 //!
-//! 支持三种变体：
-//! - Standard: 128B 块 + 1 字节校验和
-//! - CRC: 128B 块 + 2 字节 CRC-16/CCITT
-//! - OneK: 1024B 块 + 2 字节 CRC-16/CCITT
+//! 发送端独立选择 128B / 1K 数据块；接收端通过 NAK / `C` 协商
+//! checksum / CRC16。两者是正交维度，`G` 不代表 XMODEM-1K。
 //!
 //! 基于 lrzsz-0.12.20 `wcs`/`wcrx`/`wcputsec`/`wcgetsec` 标准流程实现。
 //!
@@ -13,6 +11,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::transfer::config::XModemReceiveMode;
 use crate::transfer::crc::{self, crc16_ccitt_feedthrough_verify, crc16_ccitt_zero_pad};
 use crate::transfer::io::{self, read_byte_with_timeout, CAN};
 use crate::transfer::protocol::SerialTransferProtocol;
@@ -28,7 +27,6 @@ const EOT: u8 = 0x04;
 const ACK: u8 = 0x06;
 const NAK: u8 = 0x15;
 const C: u8 = 0x43;
-const G: u8 = 0x47;
 
 const BLOCK_SIZE_128: usize = 128;
 const BLOCK_SIZE_1K: usize = 1024;
@@ -36,55 +34,48 @@ const MAX_RETRIES: u32 = 10;
 /// 启动握手总超时时间（秒）
 const INIT_TIMEOUT_SECS: u32 = 30;
 
-// ── XModem 变体枚举 ─────────────────────────────────
+// ── XMODEM 角色与校验模式 ───────────────────────────────
 
-/// XMODEM 三种协议变体
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum XModemVariant {
-    /// 标准 XMODEM: 128B 块 + 1 字节校验和（接收方发送 NAK 0x15 启动）
-    Standard,
-    /// XMODEM-CRC: 128B 块 + 2 字节 CRC-16/CCITT（接收方发送 'C' 0x43 启动）
-    Crc,
-    /// XMODEM-1k: 1024B 块 + 2 字节 CRC-16/CCITT（接收方发送 'G' 0x47 启动）
-    OneK,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum XModemCheckMode {
+    Checksum,
+    Crc16,
 }
 
-impl XModemVariant {
-    /// 返回该变体使用的数据块大小
-    fn block_size(&self) -> usize {
+impl XModemCheckMode {
+    const fn init_byte(self) -> u8 {
         match self {
-            XModemVariant::Standard | XModemVariant::Crc => BLOCK_SIZE_128,
-            XModemVariant::OneK => BLOCK_SIZE_1K,
-        }
-    }
-
-    /// 返回块头字节（SOH 或 STX）
-    fn header_byte(&self) -> u8 {
-        match self {
-            XModemVariant::Standard | XModemVariant::Crc => SOH,
-            XModemVariant::OneK => STX,
-        }
-    }
-
-    /// 从启动字节反推变体
-    fn from_init_byte(b: u8) -> Option<XModemVariant> {
-        match b {
-            NAK => Some(XModemVariant::Standard),
-            C => Some(XModemVariant::Crc),
-            G => Some(XModemVariant::OneK),
-            _ => None,
+            Self::Checksum => NAK,
+            Self::Crc16 => C,
         }
     }
 }
 
-// ── XModem 协议处理器 ─────────────────────────────────
+#[derive(Debug, Clone, Copy)]
+enum XModemRole {
+    Sender { block_size: usize },
+    Receiver { check_mode: XModemReceiveMode },
+}
 
-/// XMODEM 协议处理器
-///
-/// 实现 `SerialTransferProtocol` trait，提供标准的 XMODEM 文件收发功能。
-/// XMODEM 仅支持单文件传输——`send_files` 入参为切片但仅处理第一个文件。
-#[derive(Debug, Clone, Default)]
-pub struct XModem;
+/// XMODEM 协议处理器。实例在创建时绑定本机角色，避免把发送参数误用于接收。
+#[derive(Debug, Clone, Copy)]
+pub struct XModem {
+    role: XModemRole,
+}
+
+impl XModem {
+    pub fn sender(block_size: usize) -> Self {
+        Self {
+            role: XModemRole::Sender { block_size },
+        }
+    }
+
+    pub fn receiver(check_mode: XModemReceiveMode) -> Self {
+        Self {
+            role: XModemRole::Receiver { check_mode },
+        }
+    }
+}
 
 impl SerialTransferProtocol for XModem {
     fn send_files(
@@ -95,7 +86,10 @@ impl SerialTransferProtocol for XModem {
         on_file_event: &dyn Fn(FileTransferEvent),
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
-        xmodem_send(port, files, on_progress, on_file_event, cancel)
+        let XModemRole::Sender { block_size } = self.role else {
+            return Err("XModem 接收器不能执行发送".into());
+        };
+        xmodem_send(port, files, block_size, on_progress, on_file_event, cancel)
     }
 
     fn receive_files(
@@ -106,7 +100,17 @@ impl SerialTransferProtocol for XModem {
         on_file_event: &dyn Fn(FileTransferEvent),
         cancel: &mut dyn FnMut() -> bool,
     ) -> Result<Vec<BatchFileResult>, Box<dyn std::error::Error>> {
-        xmodem_receive(port, download_dir, on_progress, on_file_event, cancel)
+        let XModemRole::Receiver { check_mode } = self.role else {
+            return Err("XModem 发送器不能执行接收".into());
+        };
+        xmodem_receive(
+            port,
+            download_dir,
+            check_mode,
+            on_progress,
+            on_file_event,
+            cancel,
+        )
     }
 }
 
@@ -116,6 +120,7 @@ impl SerialTransferProtocol for XModem {
 fn xmodem_send(
     port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     files: &[FileInfo],
+    block_size: usize,
     on_progress: &dyn Fn(TransferProgress),
     on_file_event: &dyn Fn(FileTransferEvent),
     cancel: &mut dyn FnMut() -> bool,
@@ -129,13 +134,13 @@ fn xmodem_send(
     // XMODEM 仅支持单文件 — 只处理第一个
     let file_info = &files[0];
 
-    // ── 阶段 1: 等待接收方发送启动字节（getnak）──
-    // 接收方发送 NAK/C/G 表示就绪，同时声明其期望的变体
-    let variant = getnak(port, cancel)?;
+    // ── 阶段 1: 接收方只通过 NAK/C 协商校验方式；块长由发送端配置。
+    let check_mode = getnak(port, cancel)?;
 
     log::info!(
-        "XModem send: variant={:?}, file=\"{}\", size={}",
-        variant,
+        "XModem send: check={:?}, block_size={}, file=\"{}\", size={}",
+        check_mode,
+        block_size,
         file_info.name,
         file_info.size
     );
@@ -149,7 +154,6 @@ fn xmodem_send(
     });
 
     // ── 阶段 2: 发送文件数据块 ──
-    let block_size = variant.block_size();
     let mut file = std::io::BufReader::new(match fs::File::open(&file_info.path) {
         Ok(f) => f,
         Err(e) => {
@@ -210,7 +214,14 @@ fn xmodem_send(
         let mut send_buf = [0x1Au8; BLOCK_SIZE_1K];
         send_buf[..n].copy_from_slice(&buf_read[..n]);
 
-        if let Err(e) = send_block(port, block_num, &send_buf[..block_size], &variant, cancel) {
+        if let Err(e) = send_block(
+            port,
+            block_num,
+            &send_buf[..block_size],
+            block_size,
+            check_mode,
+            cancel,
+        ) {
             let err_msg = e.to_string();
             log::warn!(
                 "XModem send: block {} failed for \"{}\": {}",
@@ -305,37 +316,26 @@ fn xmodem_send(
     Ok(batch_results)
 }
 
-/// 等待接收方发送 NAK/C/G 启动字节，返回协商的变体（对齐 lrzsz getnak）
+/// 等待接收方发送 NAK/C 启动字节，返回协商的校验方式。
 fn getnak(
     port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     cancel: &mut dyn FnMut() -> bool,
-) -> Result<XModemVariant, Box<dyn std::error::Error>> {
-    for retry in 0..(INIT_TIMEOUT_SECS) {
+) -> Result<XModemCheckMode, Box<dyn std::error::Error>> {
+    for retry in 0..INIT_TIMEOUT_SECS {
         if cancel() {
             io::send_cancel(port);
             return Err("传输已取消".into());
         }
         match read_byte_with_timeout(port, 1000)? {
-            Some(b) if XModemVariant::from_init_byte(b).is_some() => {
-                let variant = XModemVariant::from_init_byte(b).unwrap();
-                log::info!(
-                    "XModem getnak: detected variant {:?} from 0x{:02X} (retry {})",
-                    variant,
-                    b,
-                    retry
-                );
-                return Ok(variant);
-            }
+            Some(NAK) => return Ok(XModemCheckMode::Checksum),
+            Some(C) => return Ok(XModemCheckMode::Crc16),
             Some(CAN) => return Err("接收方取消了传输".into()),
-            Some(other) => {
-                log::debug!(
-                    "XModem getnak: ignoring byte 0x{:02X} while waiting for init",
-                    other
-                );
-            }
-            None => {
-                // 超时 — 继续等待
-            }
+            Some(other) => log::debug!(
+                "XModem getnak: ignoring unsupported init byte 0x{:02X} (retry {})",
+                other,
+                retry
+            ),
+            None => {}
         }
     }
     Err(format!(
@@ -345,56 +345,48 @@ fn getnak(
     .into())
 }
 
-/// 发送单个数据块（对齐 lrzsz wcputsec）
-///
-/// 块格式: header_byte + block_num + ~block_num + data(128/1024B) + chk(1B)/crc(2B)
+/// 发送单个数据块。块长由发送端选择，校验方式由接收端握手选择。
 fn send_block(
     port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     block_num: u8,
     data: &[u8],
-    variant: &XModemVariant,
+    block_size: usize,
+    check_mode: XModemCheckMode,
     cancel: &mut dyn FnMut() -> bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let block_size = variant.block_size();
-    let header_byte = variant.header_byte();
-
-    // 构建完整数据包
-    let packet_size = 3
-        + block_size
-        + match variant {
-            XModemVariant::Standard => 1,                  // 1 字节校验和
-            XModemVariant::Crc | XModemVariant::OneK => 2, // 2 字节 CRC-16
-        };
-
-    let mut packet = Vec::with_capacity(packet_size);
+    let header_byte = match block_size {
+        BLOCK_SIZE_128 => SOH,
+        BLOCK_SIZE_1K => STX,
+        other => return Err(format!("XModem 不支持 {} 字节块", other).into()),
+    };
+    let trailer_size = match check_mode {
+        XModemCheckMode::Checksum => 1,
+        XModemCheckMode::Crc16 => 2,
+    };
+    let mut packet = Vec::with_capacity(3 + block_size + trailer_size);
     packet.push(header_byte);
     packet.push(block_num);
-    packet.push(!block_num); // 序号反码，对齐 lrzsz
+    packet.push(!block_num);
     packet.extend_from_slice(data);
 
-    match variant {
-        XModemVariant::Standard => {
-            // 校验和 = 数据字节算术和的两字节补码（对齐 lrzsz）
+    match check_mode {
+        XModemCheckMode::Checksum => {
             let sum = crc::checksum(data);
             packet.push((0u8).wrapping_sub(sum));
         }
-        XModemVariant::Crc | XModemVariant::OneK => {
-            // lrzsz 零填充 CRC: updcrc(0, updcrc(0, crc))
+        XModemCheckMode::Crc16 => {
             let crc = crc16_ccitt_zero_pad(data);
-            packet.push((crc >> 8) as u8); // CRC hi byte
-            packet.push((crc & 0xFF) as u8); // CRC lo byte
+            packet.push((crc >> 8) as u8);
+            packet.push((crc & 0xFF) as u8);
         }
     }
 
-    // 发送 + 重试循环
     for retry in 0..MAX_RETRIES {
         if cancel() {
             return Err("传输已取消".into());
         }
-
         port.write_all(&packet)?;
         port.flush()?;
-
         match read_byte_with_timeout(port, 3000)? {
             Some(ACK) => return Ok(()),
             Some(CAN) => return Err("接收方取消了传输".into()),
@@ -404,21 +396,8 @@ fn send_block(
                         format!("块 {} 重试次数耗尽（{} 次）", block_num, MAX_RETRIES).into(),
                     );
                 }
-                log::debug!(
-                    "XModem send: block {} NAK/timeout, retry {}/{}",
-                    block_num,
-                    retry + 1,
-                    MAX_RETRIES
-                );
             }
             Some(other) => {
-                log::debug!(
-                    "XModem send: block {} unexpected 0x{:02X}, retry {}/{}",
-                    block_num,
-                    other,
-                    retry + 1,
-                    MAX_RETRIES
-                );
                 if retry == MAX_RETRIES - 1 {
                     return Err(
                         format!("块 {} 收到意外响应 0x{:02X}，重试耗尽", block_num, other).into(),
@@ -427,7 +406,6 @@ fn send_block(
             }
         }
     }
-
     Err(format!("块 {} 发送失败", block_num).into())
 }
 
@@ -481,6 +459,7 @@ fn send_eot(
 fn xmodem_receive(
     port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
     download_dir: &str,
+    configured_check_mode: XModemReceiveMode,
     on_progress: &dyn Fn(TransferProgress),
     on_file_event: &dyn Fn(FileTransferEvent),
     cancel: &mut dyn FnMut() -> bool,
@@ -502,101 +481,72 @@ fn xmodem_receive(
         file_size: 0, // XMODEM 无法预知文件大小
     });
 
-    // ── 阶段 1: 启动握手 —— 发送启动字节尝试协商变体 ──
-    // 优先级: OneK > CRC > Standard（对齐 lrzsz 接收方逐步降级策略）
-    let probe_order = [
-        (XModemVariant::OneK, G),
-        (XModemVariant::Crc, C),
-        (XModemVariant::Standard, NAK),
-    ];
+    // ── 阶段 1: 接收方选择校验方式；块长由实际 SOH/STX 帧头决定。
+    let check_modes: &[XModemCheckMode] = match configured_check_mode {
+        XModemReceiveMode::Auto => &[XModemCheckMode::Crc16, XModemCheckMode::Checksum],
+        XModemReceiveMode::Crc16 => &[XModemCheckMode::Crc16],
+        XModemReceiveMode::Checksum => &[XModemCheckMode::Checksum],
+    };
+    let attempts_per_mode = if check_modes.len() > 1 {
+        INIT_TIMEOUT_SECS.div_ceil(check_modes.len() as u32)
+    } else {
+        INIT_TIMEOUT_SECS
+    };
+    let mut negotiated_check: Option<XModemCheckMode> = None;
+    let mut first_block_data: Option<(u8, Vec<u8>)> = None;
 
-    let mut variant: Option<XModemVariant> = None;
-    let mut first_block_data: Option<(u8, Vec<u8>)> = None; // (block_num, data)
-
-    'init: for &(probe_variant, probe_byte) in &probe_order {
-        for _retry in 0..INIT_TIMEOUT_SECS {
+    'init: for &check_mode in check_modes {
+        for _ in 0..attempts_per_mode {
             if cancel() {
                 io::send_cancel(port);
                 return Err("传输已取消".into());
             }
-
-            port.write_all(&[probe_byte])?;
+            port.write_all(&[check_mode.init_byte()])?;
             port.flush()?;
-
             match read_byte_with_timeout(port, 1000)? {
-                Some(h) if h == SOH || h == STX => {
-                    // 已收到块头 h（SOH 或 STX），立即读取剩余数据包
-                    variant = Some(probe_variant);
-
-                    // 读取块序号和反码
+                Some(header @ (SOH | STX)) => {
                     let bnum = read_or_fail(port)?;
                     let bnum_neg = read_or_fail(port)?;
-
                     if bnum != !bnum_neg {
-                        // 序列号不匹配，发送 NAK 并重新探测
                         port.write_all(&[NAK])?;
                         port.flush()?;
-                        variant = None;
-                        break;
+                        continue;
                     }
-
-                    // 读取数据
-                    let block_size = probe_variant.block_size();
-                    let mut data = vec![0u8; block_size];
-                    for b in data.iter_mut() {
-                        *b = read_or_fail(port)?;
-                    }
-
-                    // 读取并验证校验和/CRC
-                    let valid = match probe_variant {
-                        XModemVariant::Standard => {
-                            let chk = read_or_fail(port)?;
-                            crc::checksum_verify(&data, chk)
-                        }
-                        XModemVariant::Crc | XModemVariant::OneK => {
-                            let crc_hi = read_or_fail(port)?;
-                            let crc_lo = read_or_fail(port)?;
-                            crc16_ccitt_feedthrough_verify(&data, crc_hi, crc_lo)
-                        }
+                    let block_size = if header == STX {
+                        BLOCK_SIZE_1K
+                    } else {
+                        BLOCK_SIZE_128
                     };
-
+                    let mut data = vec![0u8; block_size];
+                    for byte in &mut data {
+                        *byte = read_or_fail(port)?;
+                    }
+                    let valid = verify_block(port, &data, check_mode)?;
                     if valid {
                         port.write_all(&[ACK])?;
                         port.flush()?;
+                        negotiated_check = Some(check_mode);
                         first_block_data = Some((bnum, data));
                         break 'init;
-                    } else {
-                        log::debug!(
-                            "XModem RX: first block {:?} verification failed, sending NAK",
-                            probe_variant
-                        );
-                        port.write_all(&[NAK])?;
-                        port.flush()?;
-                        variant = None; // 当前变体验证失败，尝试下一个
-                        break;
                     }
+                    port.write_all(&[NAK])?;
+                    port.flush()?;
                 }
-                Some(CAN) => {
-                    io::send_cancel(port);
-                    return Err("发送方取消了传输".into());
-                }
-                Some(other) => {
-                    log::debug!(
-                        "XModem RX: received 0x{:02X} while probing with 0x{:02X}",
-                        other,
-                        probe_byte
-                    );
-                }
-                None => {
-                    // 超时 — 继续发送探测
-                }
+                Some(CAN) => return Err("发送方取消了传输".into()),
+                Some(other) => log::debug!(
+                    "XModem RX: received 0x{:02X} while requesting {:?}",
+                    other,
+                    check_mode
+                ),
+                None => {}
             }
         }
     }
 
-    let variant = variant.ok_or("无法与发送方建立 XModem 连接：所有变体探测均未收到响应。\n请确认发送方已启动 XModem 发送（如 sx --xmodem、sx -X）。")?;
-
-    log::info!("XModem receive: negotiated variant {:?}", variant);
+    let check_mode = negotiated_check.ok_or(
+        "无法与发送方建立 XModem 连接。请确认发送方已启动 XModem 发送（如 sx --xmodem、sx -X）。",
+    )?;
+    log::info!("XModem receive: negotiated check mode {:?}", check_mode);
 
     // ── 阶段 2: 处理数据块循环 ──
     let mut received_data: Vec<u8> = Vec::new();
@@ -635,18 +585,9 @@ fn xmodem_receive(
 
         let header = 'read_header: loop {
             match read_byte_with_timeout(port, 10000)? {
-                Some(SOH) if variant.block_size() == BLOCK_SIZE_128 => break 'read_header SOH,
-                Some(STX) if variant.block_size() == BLOCK_SIZE_1K => break 'read_header STX,
+                Some(SOH) => break 'read_header SOH,
+                Some(STX) => break 'read_header STX,
                 Some(EOT) => break 'read_header EOT,
-                Some(CAN) => {
-                    io::send_cancel(port);
-                    return Err("发送方取消了传输".into());
-                }
-                Some(SOH) | Some(STX) => {
-                    // 收到与协商不符的块头类型（如期望 STX 却收到 SOH）
-                    // 接受并以此调整块大小
-                    break 'read_header SOH;
-                }
                 Some(other) => {
                     log::debug!(
                         "XModem RX: unexpected byte 0x{:02X} waiting for header",
@@ -763,18 +704,8 @@ fn xmodem_receive(
             *b = read_or_fail(port)?;
         }
 
-        // 读取并验证校验和/CRC
-        let valid = match variant {
-            XModemVariant::Standard => {
-                let chk = read_or_fail(port)?;
-                crc::checksum_verify(&data, chk)
-            }
-            XModemVariant::Crc | XModemVariant::OneK => {
-                let crc_hi = read_or_fail(port)?;
-                let crc_lo = read_or_fail(port)?;
-                crc16_ccitt_feedthrough_verify(&data, crc_hi, crc_lo)
-            }
-        };
+        // 读取并验证接收方在握手阶段选择的校验方式。
+        let valid = verify_block(port, &data, check_mode)?;
 
         if !valid {
             log::debug!("XModem RX: block {} checksum/CRC failed, sending NAK", bnum);
@@ -830,6 +761,24 @@ fn xmodem_receive(
     }
 
     Ok(batch_results)
+}
+
+fn verify_block(
+    port: &mut Box<dyn crate::transfer::protocol::TransferIo>,
+    data: &[u8],
+    check_mode: XModemCheckMode,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    Ok(match check_mode {
+        XModemCheckMode::Checksum => {
+            let check = read_or_fail(port)?;
+            crc::checksum_verify(data, check)
+        }
+        XModemCheckMode::Crc16 => {
+            let crc_hi = read_or_fail(port)?;
+            let crc_lo = read_or_fail(port)?;
+            crc16_ccitt_feedthrough_verify(data, crc_hi, crc_lo)
+        }
+    })
 }
 
 /// 生成接收文件名（XMODEM 无元数据，使用时间戳命名）

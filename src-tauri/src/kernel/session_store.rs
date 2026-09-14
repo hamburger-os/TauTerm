@@ -1232,13 +1232,10 @@ impl SessionStore {
         &mut self,
         session_id: &str,
         transfer_id: &str,
-        cancel_tx: tokio::sync::oneshot::Sender<()>,
-    ) -> Result<(), String> {
+    ) -> Result<std::sync::Arc<std::sync::atomic::AtomicBool>, String> {
         let not_found = self.session_not_found(session_id);
         let handle = self.sessions.get_mut(session_id).ok_or(not_found)?;
-        handle
-            .transfer_scheduler
-            .reserve_inline(transfer_id, cancel_tx)
+        handle.transfer_scheduler.reserve_inline(transfer_id)
     }
 
     /// 为 Auxiliary 传输预留活动槽，并返回协议循环使用的取消标志。

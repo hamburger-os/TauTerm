@@ -389,27 +389,21 @@ pub struct JournaldExportRequest {
 #[serde(rename_all = "camelCase")]
 pub struct FileTransferSendRequest {
     pub session_id: String,
-    pub protocol: String,
+    pub protocol_options: crate::transfer::config::SendProtocolOptions,
     pub file_paths: Vec<String>,
     pub remote_dir: Option<String>,
     pub overwrite_policy: Option<String>,
-    pub block_size: Option<usize>,
-    pub checksum_mode: Option<String>,
-    pub streaming: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileTransferReceiveRequest {
     pub session_id: String,
-    pub protocol: String,
+    pub protocol_options: crate::transfer::config::ReceiveProtocolOptions,
     pub download_dir: String,
     pub remote_paths: Vec<String>,
     pub destination_paths: Option<Vec<String>>,
     pub overwrite_policy: Option<String>,
-    pub block_size: Option<usize>,
-    pub checksum_mode: Option<String>,
-    pub streaming: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -3276,14 +3270,13 @@ pub async fn file_transfer_send(
 ) -> Result<crate::transfer::orchestrator::TransferStartAck, String> {
     let FileTransferSendRequest {
         session_id,
-        protocol,
+        protocol_options,
         file_paths,
         remote_dir,
         overwrite_policy,
-        block_size,
-        checksum_mode,
-        streaming,
     } = request;
+    protocol_options.validate()?;
+    let protocol = protocol_options.protocol().to_string();
     // 解析子通道 ID → 父会话 ID（SSH 多连接支持）。
     let internal_id = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -3338,9 +3331,7 @@ pub async fn file_transfer_send(
             },
             progress_tx,
             progress_rx,
-            block_size,
-            checksum_mode,
-            streaming,
+            protocol_options,
         },
         session_id, // client_session_id — 前端原始 ID，用于事件回传
     )
@@ -3359,15 +3350,13 @@ pub async fn file_transfer_receive(
 ) -> Result<crate::transfer::orchestrator::TransferStartAck, String> {
     let FileTransferReceiveRequest {
         session_id,
-        protocol,
+        protocol_options,
         download_dir,
         remote_paths,
         destination_paths,
         overwrite_policy,
-        block_size,
-        checksum_mode,
-        streaming,
     } = request;
+    let protocol = protocol_options.protocol().to_string();
     // 解析子通道 ID → 父会话 ID（SSH 多连接支持）。
     let internal_id = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
@@ -3404,9 +3393,7 @@ pub async fn file_transfer_receive(
             },
             progress_tx,
             progress_rx,
-            block_size,
-            checksum_mode,
-            streaming,
+            protocol_options,
         },
         session_id, // client_session_id — 前端原始 ID，用于事件回传
     )
