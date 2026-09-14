@@ -53,7 +53,7 @@ function initialProgressState(): TransferProgressState {
 }
 
 function displayFileName(rawName: string): string {
-  if (!rawName || rawName === "__batch_complete__") return "";
+  if (!rawName) return "";
   if (rawName.includes("/")) return rawName.split("/").pop() || rawName;
   if (rawName.includes("\\")) return rawName.split("\\").pop() || rawName;
   return rawName;

@@ -60,16 +60,18 @@ Shared:    DataPlane actor ──owns──> BlockingByteStream
                                │
                                │ acquire_exclusive
                                ▼
-Exclusive: protocol worker ──owns──> BlockingByteStream
+Exclusive: protocol worker ──owns──> BlockingByteStream + unread handoff bytes
                                │
                                │ release / Drop
                                ▼
 Shared:    DataPlane actor ──owns──> BlockingByteStream
 ```
 
-独占申请首先通过 DataPlane 的原子 admission 状态阻止新的共享 write/resize；actor 再把完整 `Box<dyn BlockingByteStream>` 移交给 lease。协议 worker 随后直接执行 driver 的 `read / write_all / flush`，不再通过 actor 命令代理物理 I/O。这样资源抽象仍由 Transport 定义，X/Y/ZModem 仍只看到 `TransferIo = Read + Write + Send`，同时串口等所有权敏感驱动可以保持“同一协议 worker 直接完成 read → write → flush → wait ACK”的执行语义。
+独占申请首先通过 DataPlane 的原子 admission 状态阻止新的共享 write/resize，并禁止 actor 再启动新的物理 read；actor 随后把完整 `Box<dyn BlockingByteStream>` 移交给 lease。若独占申请发生时已有一次 read 在进行，该 read 返回但尚未发布给共享订阅者的字节必须进入 handoff buffer，并与 driver 一起交给 lease。启动阶段尚未投递给任何订阅者的 startup bytes 同样属于未消费输入，也随 lease 一起移交。协议 worker 读取时先消费这些 prefetched bytes，再直接执行 driver 的 `read / write_all / flush`。
 
-Exclusive 期间 actor 不持有 byte-stream driver，不进行后台 read-ahead，也不能执行普通写入或终端 resize；它只保留订阅与生命周期控制。lease 释放时必须把**同一个 driver 对象**归还 actor并等待接收确认，之后才重新开放共享 admission。禁止重新引入 `StubChannel`、具体串口 downcast、重新打开端口、每次读写 IPC proxy 或平行的第二套 Session I/O owner。
+这一交接规则保证所有权切换是无损的：远端恰好在切换边界发送的 `C`、`NAK`、ZModem 初始化帧等不能被终端提前消费或被传输适配层清空。Inline 适配层因此禁止在取得 lease 后无条件 purge/flush RX；若协议本身需要丢弃噪声或跨文件残留，只能按该协议的同步规则在协议模块内部有限处理。
+
+Exclusive 期间 actor 不持有 byte-stream driver，不进行后台 read-ahead，也不能执行普通写入或终端 resize；它只保留订阅与生命周期控制。lease 释放时必须把**同一个 driver 对象**归还 actor并等待接收确认。若 lease 尚有未消费的 prefetched bytes，这些字节必须与 driver 一并归还并重新进入共享接收流，之后才重新开放共享 admission。禁止重新引入 `StubChannel`、具体串口 downcast、重新打开端口、每次读写 IPC proxy 或平行的第二套 Session I/O owner。
 
 传输期间的 driver I/O 错误属于当前协议任务：错误返回给 X/Y/ZModem，由任务结束路径释放 lease 并归还 driver；不能因为一次 exclusive 协议写失败就让 actor提前把整个 Session 判定为 `Closed`。归还后共享 I/O 是否仍可工作由后续真实 driver 操作决定。共享模式自身发生物理 I/O 错误时，仍进入统一 Session 断开生命周期。
 
@@ -79,7 +81,7 @@ Exclusive 期间 actor 不持有 byte-stream driver，不进行后台 read-ahead
 
 “上层统一异步/事件化契约”不意味着强迫底层全部换成异步库。`serialport`、部分 PTY 等阻塞 API 可以由专用 worker 驱动；差异只存在于 transport 内部。
 
-Raw Serial 使用稳定的驱动 I/O timeout。共享模式下 actor 可以通过该 timeout 周期性回到命令循环；Exclusive 模式下协议 worker 直接驱动同一个串口对象，协议自己的握手/重试时限建立在稳定的底层超时之上。Windows USB CDC 等驱动不应在每个 X/Y/ZModem block 前后反复切换 `SetCommTimeouts`，也不应在进入传输时额外执行破坏性的驱动级 purge；协议层已有的有限读丢弃负责清理传输开始前的残留字节。
+Raw Serial 使用稳定的驱动 I/O timeout。共享模式下 actor 可以通过该 timeout 周期性回到命令循环；Exclusive 模式下协议 worker 直接驱动同一个串口对象，协议自己的握手/重试时限建立在稳定的底层超时之上。Windows USB CDC 等驱动不应在每个 X/Y/ZModem block 前后反复切换 `SetCommTimeouts`，也不应在进入传输时额外执行破坏性的驱动级 purge。协议层只有在协议状态机明确要求重新同步时，才允许有限消费已确认属于噪声或前一阶段残留的字节。
 
 协议原生 async 驱动（当前 SSH）由 `AsyncBridgeDriver` 自有 Tokio runtime 驱动。任何依赖 Tokio reactor 的 future/timer 都必须在该 runtime 的上下文中创建并 poll，不能在普通 DataPlane OS 线程上先构造 `tokio::time` future 再交给 `block_on`。空闲读取使用短 read slice 让 actor 周期性处理共享写入、resize 和 shutdown；该 slice 属于 transport 内部调度参数，不得泄漏到 Session/UI。
 

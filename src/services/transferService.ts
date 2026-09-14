@@ -1,12 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  FileTransferReceiveRequest,
+  FileTransferSendRequest,
   TransferDirection,
   TransferFinishedPayload,
   TransferStartAck,
 } from "../types/transfer";
 
-export type TransferRequest = Record<string, unknown>;
+export type TransferRequest = FileTransferSendRequest | FileTransferReceiveRequest;
 
 function commandFor(direction: TransferDirection): "file_transfer_send" | "file_transfer_receive" {
   return direction === "send" ? "file_transfer_send" : "file_transfer_receive";
@@ -71,8 +73,7 @@ export async function startFileTransferAndWait(
     unlisten = await listen<TransferFinishedPayload>("file-transfer:finished", (event) => {
       const payload = event.payload;
       if (payload.session_id !== sessionId) return;
-      if (protocol && payload.protocol && payload.protocol !== protocol) return;
-      if (!payload.transfer_id) return;
+      if (protocol && payload.protocol !== protocol) return;
 
       if (!activeTransferId) {
         bufferedFinished.set(payload.transfer_id, payload);

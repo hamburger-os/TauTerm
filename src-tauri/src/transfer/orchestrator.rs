@@ -2,10 +2,9 @@
 //!
 //! 所有策略遵守同一启动契约：validate/setup → reserve/register task → emit started
 //! → return TransferStartAck。实际传输始终在后台任务中执行，终态只通过
-//! `file-transfer:finished` 表达；因此前端不会再因 Inline/Auxiliary 的 invoke
-//! 返回时机不同而维护第二套状态机。
+//! `file-transfer:finished` 表达。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -16,7 +15,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::kernel::file_transfer::{
     FileTransfer, FileTransferError, FileTransferOptions, UnifiedProgress,
 };
-use crate::kernel::plugin_adapter::TransferProtocolType;
+use crate::kernel::plugin_adapter::{TransferExecutionMode, TransferProtocolType};
 use crate::kernel::session_store::SessionState;
 use crate::transfer::panic_guard::PanicGuard;
 use crate::transfer::protocol::SerialTransferProtocol;
@@ -24,11 +23,7 @@ use crate::transfer::serial_transfer::SerialFileTransfer;
 use crate::transfer::types::{BatchFileResult, FileInfo};
 use crate::AppState;
 
-// ── Context types ──────────────────────────────────────────────────────────
-
-/// 发送传输上下文（upload）
 pub struct SendContext {
-    /// 内部会话 ID — 用于 SessionStore 操作
     pub session_id: String,
     pub files: Vec<FileInfo>,
     pub remote_dir: Option<String>,
@@ -40,9 +35,7 @@ pub struct SendContext {
     pub streaming: Option<bool>,
 }
 
-/// 接收传输上下文（download）
 pub struct ReceiveContext {
-    /// 内部会话 ID — 用于 SessionStore 操作
     pub session_id: String,
     pub download_dir: String,
     pub remote_paths: Vec<String>,
@@ -54,18 +47,11 @@ pub struct ReceiveContext {
     pub streaming: Option<bool>,
 }
 
-/// 启动命令的确认结果。
-///
-/// 对所有策略含义完全一致：任务已经获得唯一身份并注册，可以通过事件观察/取消；
-/// 它不表示文件数据已经传输完成。
 #[derive(Debug, Clone, Serialize)]
 pub struct TransferStartAck {
     pub transfer_id: String,
 }
 
-// ── Trait ──────────────────────────────────────────────────────────────────
-
-/// 传输编排器 — 每个策略独立实现完整的资源生命周期。
 #[async_trait]
 pub trait TransferOrchestrator: Send + Sync {
     #[allow(dead_code)]
@@ -89,35 +75,27 @@ pub trait TransferOrchestrator: Send + Sync {
     fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String>;
 }
 
-// ── Factory ──────────────────────────────────────────────────────────────────
-
-/// 协议能力到执行策略的唯一解析入口。
+/// 协议 descriptor 到执行策略的唯一解析入口。
 pub fn create_orchestrator(
     protocol_type: &TransferProtocolType,
 ) -> Result<Box<dyn TransferOrchestrator>, String> {
-    if protocol_type.is_serial_inline() {
-        Ok(Box::new(InlineTransferOrchestrator {
+    let descriptor = protocol_type
+        .descriptor()
+        .ok_or_else(|| format!("不支持的传输协议: '{}'", protocol_type))?;
+    match descriptor.execution_mode {
+        TransferExecutionMode::Inline => Ok(Box::new(InlineTransferOrchestrator {
             pt: protocol_type.clone(),
-        }))
-    } else if protocol_type.is_auxiliary_transfer() {
-        Ok(Box::new(AuxiliaryTransferOrchestrator {
+        })),
+        TransferExecutionMode::Auxiliary => Ok(Box::new(AuxiliaryTransferOrchestrator {
             pt: protocol_type.clone(),
-        }))
-    } else if protocol_type.is_separate_connection() {
-        Err(format!(
+        })),
+        TransferExecutionMode::SeparateConnection => Err(format!(
             "协议 '{}' 的独立连接传输策略尚未实现",
             protocol_type
-        ))
-    } else {
-        // TransferProtocolType 是开放集合；未声明执行能力的标识必须显式拒绝，
-        // 绝不静默回退到 Auxiliary。
-        Err(format!("不支持的传输协议: '{}'", protocol_type))
+        )),
     }
 }
 
-// ── Shared lifecycle helpers ────────────────────────────────────────────────
-
-/// 将协议内部进度统一注入 session_id + transfer_id 后广播。
 pub fn spawn_progress_broadcaster(
     app: AppHandle,
     mut rx: UnboundedReceiver<UnifiedProgress>,
@@ -219,34 +197,42 @@ fn emit_transfer_started(
     );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// InlineTransferOrchestrator
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// 串口内联协议（X/Y/ZModem）。
-///
-/// 启动阶段同步获取 Session DataPlane 的 exclusive lease，确保返回 ack 时任务已拥有
-/// 唯一物理字节流驱动；协议算法放入后台 task，完成后通过 RAII 把驱动归还 runtime。
 pub struct InlineTransferOrchestrator {
     pt: TransferProtocolType,
 }
 
 impl InlineTransferOrchestrator {
+    fn validate_options(
+        &self,
+        block_size: Option<usize>,
+        checksum_mode: Option<&str>,
+        streaming: Option<bool>,
+    ) -> Result<(), String> {
+        if checksum_mode.is_some() || streaming.is_some() {
+            return Err(format!(
+                "{} 的校验/流模式由协议握手协商，不接受显式 checksum_mode/streaming 配置",
+                self.pt
+            ));
+        }
+
+        match (self.pt.as_str(), block_size) {
+            ("ymodem", Some(128 | 1024)) | ("ymodem", None) => Ok(()),
+            ("ymodem", Some(value)) => Err(format!(
+                "YModem block_size 仅支持 128 或 1024，收到 {value}"
+            )),
+            (_, Some(_)) => Err(format!("{} 不接受显式 block_size 配置", self.pt)),
+            (_, None) => Ok(()),
+        }
+    }
+
     fn create_protocol_handler(
         &self,
         block_size: Option<usize>,
-        checksum_mode: Option<String>,
-        streaming: Option<bool>,
     ) -> Result<Box<dyn SerialTransferProtocol>, String> {
         if self.pt.as_str() == "ymodem" {
-            let bs = block_size.unwrap_or(1024).clamp(128, 1024);
-            if let Some(ref cm) = checksum_mode {
-                log::info!("YModem checksum_mode 请求: {}（协议自行协商）", cm);
-            }
-            if streaming.unwrap_or(false) {
-                log::info!("YModem streaming 模式请求（协议自行协商）");
-            }
-            Ok(Box::new(crate::transfer::ymodem::YModem { block_size: bs }))
+            Ok(Box::new(crate::transfer::ymodem::YModem {
+                block_size: block_size.unwrap_or(1024),
+            }))
         } else {
             crate::transfer::protocol::create_protocol(&self.pt)
                 .ok_or_else(|| format!("{} 协议未实现", self.pt))
@@ -261,12 +247,14 @@ impl InlineTransferOrchestrator {
     ) -> Result<
         (
             Box<dyn crate::transfer::protocol::TransferIo>,
-            tokio::sync::oneshot::Receiver<()>,
+            Arc<AtomicBool>,
         ),
         String,
     > {
-        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
-        let io = {
+        // SessionStore 的现有包装仍接收 sender；Scheduler 的真实取消状态统一由
+        // cancel_flag 返回的共享原子令牌表达，receiver 不参与协议取消链路。
+        let (cancel_tx, _cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let (io, cancel) = {
             let app_state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
             let mut store = app_state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(session_id);
@@ -284,27 +272,21 @@ impl InlineTransferOrchestrator {
             store.reserve_inline_transfer(session_id, transfer_id, cancel_tx)?;
             let not_found = store.session_not_found(session_id);
             let handle = store.get_session_mut(session_id).ok_or(not_found)?;
+            let cancel = handle
+                .transfer_scheduler
+                .cancel_flag(transfer_id)
+                .ok_or("文件传输取消令牌注册失败")?;
             handle.state = SessionState::Transferring;
-            io
+            (io, cancel)
         };
 
         match io.acquire_exclusive(format!("file-transfer:{transfer_id}")) {
-            Ok(lease) => Ok((Box::new(lease), cancel_rx)),
+            Ok(lease) => Ok((Box::new(lease), cancel)),
             Err(error) => {
                 restore_session_state(app, session_id, transfer_id);
                 Err(format!("无法获取文件传输独占 I/O: {error}"))
             }
         }
-    }
-
-    fn spawn_cancel_bridge(cancel_rx: tokio::sync::oneshot::Receiver<()>) -> Arc<AtomicBool> {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let signal = cancel.clone();
-        std::thread::spawn(move || {
-            let _ = cancel_rx.blocking_recv();
-            signal.store(true, Ordering::SeqCst);
-        });
-        cancel
     }
 }
 
@@ -320,13 +302,10 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: SendContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
+        self.validate_options(ctx.block_size, ctx.checksum_mode.as_deref(), ctx.streaming)?;
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (io, cancel_rx) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
-        let protocol_handler = match self.create_protocol_handler(
-            ctx.block_size,
-            ctx.checksum_mode.clone(),
-            ctx.streaming,
-        ) {
+        let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
+        let protocol_handler = match self.create_protocol_handler(ctx.block_size) {
             Ok(handler) => handler,
             Err(error) => {
                 drop(io);
@@ -334,7 +313,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 return Err(error);
             }
         };
-
         let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, io);
         let ack = TransferStartAck {
             transfer_id: transfer_id.clone(),
@@ -345,7 +323,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             client_id.clone(),
             transfer_id.clone(),
         );
-        let cancel = Self::spawn_cancel_bridge(cancel_rx);
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
         let task_app = app.clone();
@@ -364,7 +341,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 restore_session_state(&task_app, &task_sid, &task_transfer_id);
                 return;
             }
-
             let result = transfer
                 .send(
                     &task_files,
@@ -376,10 +352,8 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 .await;
             drop(progress_tx);
             let _ = broadcaster.await;
-
             drop(transfer);
             restore_session_state(&task_app, &task_sid, &task_transfer_id);
-
             emit_transfer_finished(
                 &task_app,
                 &task_client_id,
@@ -405,13 +379,10 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         ctx: ReceiveContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
+        self.validate_options(ctx.block_size, ctx.checksum_mode.as_deref(), ctx.streaming)?;
         let transfer_id = uuid::Uuid::new_v4().to_string();
-        let (io, cancel_rx) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
-        let protocol_handler = match self.create_protocol_handler(
-            ctx.block_size,
-            ctx.checksum_mode.clone(),
-            ctx.streaming,
-        ) {
+        let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
+        let protocol_handler = match self.create_protocol_handler(ctx.block_size) {
             Ok(handler) => handler,
             Err(error) => {
                 drop(io);
@@ -419,7 +390,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 return Err(error);
             }
         };
-
         let transfer = SerialFileTransfer::new(self.pt.clone(), protocol_handler, io);
         let ack = TransferStartAck {
             transfer_id: transfer_id.clone(),
@@ -430,7 +400,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
             client_id.clone(),
             transfer_id.clone(),
         );
-        let cancel = Self::spawn_cancel_bridge(cancel_rx);
         let (start_tx, start_rx) = tokio::sync::oneshot::channel::<()>();
 
         let task_app = app.clone();
@@ -449,7 +418,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 restore_session_state(&task_app, &task_sid, &task_transfer_id);
                 return;
             }
-
             let result = transfer
                 .receive(
                     &download_dir,
@@ -461,10 +429,8 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
                 .await;
             drop(progress_tx);
             let _ = broadcaster.await;
-
             drop(transfer);
             restore_session_state(&task_app, &task_sid, &task_transfer_id);
-
             emit_transfer_finished(
                 &task_app,
                 &task_client_id,
@@ -491,11 +457,6 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AuxiliaryTransferOrchestrator
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// SSH SFTP 等侧通道协议。
 pub struct AuxiliaryTransferOrchestrator {
     pt: TransferProtocolType,
 }
@@ -515,7 +476,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let internal_id = ctx.session_id.clone();
         let transfer_id = uuid::Uuid::new_v4().to_string();
-
         let (ft, cancel_flag) = {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(&internal_id);
@@ -530,7 +490,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
             let cancel_flag = store.transfer_start(&internal_id, &transfer_id)?;
             (ft, cancel_flag)
         };
-
         let protocol = ft.protocol().to_string();
         let ack = TransferStartAck {
             transfer_id: transfer_id.clone(),
@@ -552,10 +511,7 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
         let remote_dir = ctx.remote_dir;
         let options = ctx.options;
         let progress_tx = ctx.progress_tx;
-
         let handle = tokio::spawn(async move {
-            // Guard 在 gate 之前建立：如果 Session 在 task 注册阶段消失，start_tx 会被
-            // drop，Guard 仍会精确释放 Scheduler 占用，避免永久 busy。
             let mut guard = PanicGuard::new(
                 task_app.clone(),
                 task_internal_id,
@@ -568,7 +524,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
                 let _ = broadcaster.await;
                 return;
             }
-
             let result = ft
                 .send(
                     &files,
@@ -580,7 +535,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
                 .await;
             drop(progress_tx);
             let _ = broadcaster.await;
-
             guard.complete();
             emit_transfer_finished(
                 &task_app,
@@ -609,7 +563,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
         let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
         let internal_id = ctx.session_id.clone();
         let transfer_id = uuid::Uuid::new_v4().to_string();
-
         let (ft, cancel_flag) = {
             let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
             let not_found = store.session_not_found(&internal_id);
@@ -624,7 +577,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
             let cancel_flag = store.transfer_start(&internal_id, &transfer_id)?;
             (ft, cancel_flag)
         };
-
         let protocol = ft.protocol().to_string();
         let ack = TransferStartAck {
             transfer_id: transfer_id.clone(),
@@ -646,7 +598,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
         let remote_paths = ctx.remote_paths;
         let options = ctx.options;
         let progress_tx = ctx.progress_tx;
-
         let handle = tokio::spawn(async move {
             let mut guard = PanicGuard::new(
                 task_app.clone(),
@@ -660,7 +611,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
                 let _ = broadcaster.await;
                 return;
             }
-
             let result = ft
                 .receive(
                     &download_dir,
@@ -672,7 +622,6 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
                 .await;
             drop(progress_tx);
             let _ = broadcaster.await;
-
             guard.complete();
             emit_transfer_finished(
                 &task_app,
