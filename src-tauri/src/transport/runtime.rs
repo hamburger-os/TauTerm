@@ -621,15 +621,19 @@ fn publish_shared_data(state: &mut RuntimeLoopState, data: Vec<u8>) {
         state.startup_buffer.push_back(data);
         while state.startup_buffer_bytes > STARTUP_BUFFER_LIMIT {
             if let Some(dropped) = state.startup_buffer.pop_front() {
-                state.startup_buffer_bytes = state.startup_buffer_bytes.saturating_sub(dropped.len());
+                state.startup_buffer_bytes = state
+                    .startup_buffer_bytes
+                    .saturating_sub(dropped.len());
             } else {
                 break;
             }
         }
     } else {
-        state
-            .subscribers
-            .retain(|(_, subscriber)| subscriber.send(DataPlaneEvent::Data(data.clone())).is_ok());
+        state.subscribers.retain(|(_, subscriber)| {
+            subscriber
+                .send(DataPlaneEvent::Data(data.clone()))
+                .is_ok()
+        });
     }
 }
 
@@ -1224,8 +1228,7 @@ mod tests {
         }
     }
 
-    fn acquire_while_read_is_in_flight(
-    ) -> (DataPlaneRuntime, DataPlaneSubscription, ExclusiveIo) {
+    fn acquire_while_read_is_in_flight() -> (DataPlaneRuntime, DataPlaneSubscription, ExclusiveIo) {
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let runtime = DataPlaneRuntime::spawn(Box::new(HandoffStream {
@@ -1245,7 +1248,10 @@ mod tests {
         });
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
         while !runtime.handle.exclusive_active.load(Ordering::Acquire) {
-            assert!(std::time::Instant::now() < deadline, "exclusive request not observed");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "exclusive request not observed"
+            );
             std::thread::yield_now();
         }
         release_tx.send(()).unwrap();
