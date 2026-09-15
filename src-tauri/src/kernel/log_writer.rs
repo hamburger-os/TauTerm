@@ -21,6 +21,7 @@ pub struct LogWriter {
     session_name: String,
     endpoint: String,
     start_time: chrono::DateTime<Local>,
+    file_nonce: String,
     split_index: u32,
     data_mode: String,
     base_dir: PathBuf,
@@ -39,6 +40,12 @@ impl LogWriter {
     ) -> std::io::Result<Self> {
         std::fs::create_dir_all(log_dir)?;
         let now = Local::now();
+        let file_nonce = uuid::Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(8)
+            .collect();
         let mut writer = Self {
             file: None,
             current_path: PathBuf::new(),
@@ -48,6 +55,7 @@ impl LogWriter {
             session_name: session_name.to_string(),
             endpoint: endpoint.to_string(),
             start_time: now,
+            file_nonce,
             split_index: 0,
             data_mode: data_mode.to_string(),
             base_dir: log_dir.to_path_buf(),
@@ -211,7 +219,9 @@ impl LogWriter {
         let timestamp = self.start_time.format("%Y%m%d_%H%M%S%.3f");
         let session_key = Self::short_file_key(&self.session_id);
         let file_name = format!(
-            "Session_{session_key}_{timestamp}_{:04}.log",
+            "Session_{session_key}_p{}_{timestamp}_{}_{:04}.log",
+            std::process::id(),
+            self.file_nonce,
             self.split_index
         );
         let path = self.base_dir.join(file_name);
@@ -286,7 +296,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut writer = LogWriter::new(
             temp.path(),
-            280,
+            1024 * 1024,
             1024,
             "session-123",
             "Serial test",
@@ -296,7 +306,7 @@ mod tests {
         .unwrap();
 
         let first = writer.current_path().to_path_buf();
-        writer.write_entry(&entry(&vec![b'x'; 256])).unwrap();
+        assert!(writer.reconfigure(1024 * 1024, 2048).unwrap());
         writer.write_entry(&entry(b"rotated")).unwrap();
         writer.flush().unwrap();
         let second = writer.current_path().to_path_buf();
@@ -323,7 +333,7 @@ mod tests {
         )
         .unwrap();
         let name = writer.file_name();
-        assert!(name.starts_with("Session_2f09e8f4778b_"));
+        assert!(name.starts_with("Session_2f09e8f4778b_p"));
         assert!(!name.contains("unsafe"));
         assert!(!name.contains(".."));
     }
