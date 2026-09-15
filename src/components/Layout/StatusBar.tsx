@@ -10,6 +10,7 @@ import type { UpdatePhase } from "../../types/updater";
 import {
   AppVersionStatus,
   LoggingStatus,
+  SessionActivityStatus,
   SessionConnectionStatus,
   SessionTrafficStatus,
   SessionUptimeStatus,
@@ -21,6 +22,7 @@ import styles from "./StatusBar.module.css";
 /** 左区段优先级。插件与核心贡献共享同一条排序轴。 */
 const PRI = {
   connection: 1000,
+  activity: 760,
   uptime: 700,
   dataMode: 600,
   encoding: 500,
@@ -76,6 +78,10 @@ export default function StatusBar({
   const connected = activeTab?.state === "connected" || activeTab?.state === "transferring";
   const supportsStreamStatus = activePlugin?.manifest.content_type === "terminal"
     || activePlugin?.manifest.send_bar === true;
+  const dataMode = activeTab?.params?.data_mode;
+  const hasDataMode = dataMode === "text" || dataMode === "hex" || dataMode === "dual";
+  const hasEncoding = typeof activeTab?.params?.encoding === "string"
+    && activeTab.params.encoding.trim().length > 0;
 
   const statusBarContext: StatusBarContext = {
     sessionId: activeTab?.id ?? "",
@@ -100,6 +106,13 @@ export default function StatusBar({
           node: <SessionConnectionStatus tab={activeTab} />,
         }
       : null,
+    activeTab?.state === "transferring"
+      ? {
+          key: "core:activity",
+          priority: PRI.activity,
+          node: <SessionActivityStatus tab={activeTab} />,
+        }
+      : null,
     connected
       ? {
           key: "core:uptime",
@@ -107,14 +120,14 @@ export default function StatusBar({
           node: <SessionUptimeStatus tab={activeTab} />,
         }
       : null,
-    connected && supportsStreamStatus
+    connected && supportsStreamStatus && hasDataMode
       ? {
           key: "core:data-mode",
           priority: PRI.dataMode,
           node: <StreamModeStatus tab={activeTab} />,
         }
       : null,
-    connected && supportsStreamStatus
+    connected && supportsStreamStatus && hasEncoding
       ? {
           key: "core:encoding",
           priority: PRI.encoding,
