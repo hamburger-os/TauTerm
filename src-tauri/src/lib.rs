@@ -364,7 +364,8 @@ pub fn run() {
                         }
 
                         let files_present = vpm.are_files_present();
-                        let driver_installed = files_present && vpm.detect_driver();
+                        let driver_installed = files_present
+                            && virtual_port::windows_driver::is_com0com_driver_installed();
                         if !files_present {
                             log::warn!("com0com 驱动文件状态: missing；虚拟串口功能不可用");
                         } else if driver_installed {
