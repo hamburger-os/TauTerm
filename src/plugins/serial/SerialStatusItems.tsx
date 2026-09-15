@@ -1,9 +1,10 @@
 import { useTranslation } from "react-i18next";
 import type { StatusBarContext } from "../../core/plugin-registry";
-import { useSession } from "../../context/SessionContext";
+import { usePluginRuntime } from "../../core/usePluginRuntime";
 import { useCom0comStatus } from "../../hooks/useCom0comStatus";
 import { formatPortParams } from "../../utils/format";
 import Icon from "../../components/common/Icon";
+import { type SerialRuntimeSnapshot } from "./runtime-store";
 import styles from "./SerialStatusItems.module.css";
 
 export function SerialLinkStatus({ activeTab }: StatusBarContext) {
@@ -16,15 +17,9 @@ export function SerialTypeStatus() {
   return <span className={styles.badge}>{t("statusBar.typeSerial")}</span>;
 }
 
-/**
- * Virtual-port state is Serial-owned runtime state. The generic StatusBarContext intentionally
- * carries only common Session fields; this renderer resolves its plugin-private state from the
- * Session store by session id instead of widening the global plugin contract.
- */
 export function SerialVirtualPortStatus({ sessionId, activeTab }: StatusBarContext) {
   const { t } = useTranslation();
-  const { state } = useSession();
-  const runtimeTab = state.tabs.find(tab => tab.id === sessionId);
+  const runtime = usePluginRuntime<SerialRuntimeSnapshot>("serial", sessionId);
   const {
     driverMissing,
     driverInstalling,
@@ -34,12 +29,12 @@ export function SerialVirtualPortStatus({ sessionId, activeTab }: StatusBarConte
     handleCleanupVPorts,
   } = useCom0comStatus();
 
-  if (!activeTab || !runtimeTab) return null;
+  if (!activeTab) return null;
   const connected = activeTab.state === "connected" || activeTab.state === "transferring";
-  const virtualPortEnabled = runtimeTab.params?.virtual_port_enabled === true;
-  const endpoints = runtimeTab.virtualVirtualEndpoints ?? [];
-  const error = connected ? runtimeTab.virtualPortError : undefined;
-  const errorKind = runtimeTab.virtualPortErrorKind;
+  const virtualPortEnabled = activeTab.params?.virtual_port_enabled === true;
+  const endpoints = runtime.endpoints ?? [];
+  const error = connected ? runtime.error : undefined;
+  const errorKind = runtime.errorKind;
   const driverError = errorKind === "files_missing"
     || errorKind === "permission"
     || errorKind === "driver_missing";
