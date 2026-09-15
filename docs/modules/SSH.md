@@ -15,7 +15,7 @@ SSH 使用版本化的本地 `known_hosts.json` 作为主机身份信任源：
 - 已知算法且 fingerprint 一致：自动通过，并只更新该算法/指纹记录的 `last_seen`；
 - 已知 endpoint 出现新的 host-key 算法：按独立 TOFU 信任处理，必须再次由用户明确接受；
 - 同一 host-key 算法的 fingerprint 变化：默认拒绝，不允许普通“继续”确认静默覆盖旧信任；
-- `known_hosts.json` 使用当前 schema v2；旧版本、损坏文件或存储未初始化均备份后保持 fail-closed，不做静默迁移或降级 TOFU；
+- `known_hosts.json` 使用当前 schema v2。加载时先只读取 schema version：非当前版本不迁移旧信任，原文件从工作路径隔离后以空的当前信任库重新开始，所有主机都必须重新完成 TOFU 确认；当前版本内容损坏则同样隔离原文件，但本次进程保持 fail-closed，避免把损坏/篡改静默降级成新的信任起点；
 - endpoint key 对 IPv6 做标准化，不让带/不带方括号的同一地址形成两份信任记录；
 - 并发验证以独立 `request_id` 关联，不再用 fingerprint 作为 pending key；
 - 通用 `ProtocolAdapter::connect()` 不允许绕过 HostKeyVerifier；SSH 生产连接必须走受信路径；
