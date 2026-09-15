@@ -183,6 +183,18 @@ export interface PluginSessionTreeContribution {
   ) => void;
 }
 
+export interface PluginRightSidebarPanel {
+  id: string;
+  when?: (params: Record<string, unknown>) => boolean;
+  component: ComponentType<{ sessionId: string; isConnected: boolean }>;
+}
+
+export interface PluginRightSidebarContribution {
+  /** Override the content-type default: terminal=true, custom=false. */
+  available?: (params: Record<string, unknown>) => boolean;
+  panels?: PluginRightSidebarPanel[];
+}
+
 export interface PluginRegistration {
   manifest: PluginManifest;
   connectForm?: ComponentType<ConnectFormProps>;
@@ -217,6 +229,10 @@ export interface PluginRegistration {
   sendTargetVisible?: (params: Record<string, unknown>) => boolean;
   /** TerminalView 查询插件运行态后决定是否本地回显。 */
   terminalLocalEcho?: (runtimeSnapshot: unknown) => boolean;
+  /** 插件级应用覆盖层，例如连接安全确认；App Shell 只负责挂载。 */
+  appOverlay?: ComponentType;
+  /** 插件专属右侧栏能力；应用壳不识别具体协议 ID。 */
+  rightSidebar?: PluginRightSidebarContribution;
   toolbarItems?: ToolbarItem[];
   contextMenuItems?: ContextMenuItem[];
   bottomPanels?: BottomPanelDef[];

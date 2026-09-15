@@ -3,6 +3,8 @@ import { createElement } from "react";
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/ssh.json";
 import SshStatusItems from "./SshStatusItems";
+import SshHostKeyGate from "./SshHostKeyGate";
+import { SshFileManagerSidebarPanel, SshJournaldSidebarPanel } from "./SshRightSidebarPanels";
 
 function formatHostPort(host: string, port: number): string {
   const trimmedHost = host.trim();
@@ -43,6 +45,21 @@ registerPlugin({
         : 22;
       return formatHostPort(host, port);
     },
+  },
+  appOverlay: SshHostKeyGate,
+  rightSidebar: {
+    panels: [
+      {
+        id: "ssh-file-manager",
+        when: params => params.file_service_enabled === true,
+        component: SshFileManagerSidebarPanel,
+      },
+      {
+        id: "ssh-journald",
+        when: params => params.journald_enabled === true,
+        component: SshJournaldSidebarPanel,
+      },
+    ],
   },
   statusBarItems: [
     {

@@ -234,3 +234,26 @@ fn frontend_has_single_plugin_registry_for_presentation() {
         "frontend plugin contracts must stay dependency-free"
     );
 }
+
+#[test]
+fn frontend_app_shell_is_plugin_driven() {
+    let app = read_workspace_source("src/App.tsx");
+    for plugin_id in [
+        "ssh",
+        "network",
+        "local-shell",
+        "serial",
+        "telnet",
+        "trdp",
+        "modbus",
+    ] {
+        assert!(
+            !app.contains(&format!(r#"manifest.id === "{plugin_id}""#))
+                && !app.contains(&format!(r#"pluginId === "{plugin_id}""#)),
+            "App Shell must not branch on built-in plugin '{plugin_id}'"
+        );
+    }
+    assert!(!app.contains("ssh-host-key-verify"));
+    assert!(!app.contains("file_service_enabled"));
+    assert!(!app.contains("journald_enabled"));
+}

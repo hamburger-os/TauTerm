@@ -185,6 +185,7 @@ registerPlugin({
     },
   },
   customView: NetworkDebugSessionView,
+  rightSidebar: { available: () => true },
   statusBarItems,
 });
 

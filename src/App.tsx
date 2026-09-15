@@ -1,8 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";               // 窗口状态（最大化/还原追踪）
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "framer-motion";
 import AppShell from "./components/Layout/AppShell";
 import SpectrumAmbientBackground from "./components/Layout/SpectrumAmbientBackground";
@@ -17,7 +15,6 @@ import {
   ASSET_PERSISTENCE_ERROR_EVENT,
   type AssetPersistenceErrorDetail,
 } from "./components/SendBar/assetStore";
-import ConfirmDialog from "./components/common/ConfirmDialog";
 import type { ProtocolType } from "./types/transfer";
 import { useUpdater } from "./hooks/useUpdater";
 import RightSidebar from "./components/RightSidebar/RightSidebar";
@@ -40,13 +37,6 @@ const RIGHT_SIDEBAR_MIN = 160;
 const RIGHT_SIDEBAR_MAX_STATIC = 1600; // 静态后备值，实际上限由主内容区宽度动态计算
 const RIGHT_SIDEBAR_DEFAULT = 260;
 const RESIZE_DEBOUNCE_MS = 150;
-
-interface PendingHostKeyVerification {
-  requestId: string;
-  host: string;
-  port: number;
-  fingerprint: string;
-}
 
 function AppInner() {
   const { t } = useTranslation();
@@ -79,8 +69,6 @@ function AppInner() {
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [rightSidebarVisible, setRightSidebarVisible] = useState(true);
-  const [pendingHostKey, setPendingHostKey] = useState<PendingHostKeyVerification | null>(null);
-  const queuedHostKeysRef = useRef<PendingHostKeyVerification[]>([]);
   useEffect(() => {
     const handleProtocolInspect = (event: Event) => {
       const detail = (event as CustomEvent<{ sessionId?: string }>).detail;
@@ -184,97 +172,6 @@ function AppInner() {
       document.body.style.userSelect = "";
     };
   }, [isResizingSidebar, isResizingRightSidebar]);
-
-  const enqueueHostKey = useCallback((request: PendingHostKeyVerification) => {
-    setPendingHostKey(current => {
-      if (!current) return request;
-      queuedHostKeysRef.current.push(request);
-      return current;
-    });
-  }, []);
-
-  const settleHostKey = useCallback(async (accepted: boolean) => {
-    const current = pendingHostKey;
-    if (!current) return;
-    setPendingHostKey(queuedHostKeysRef.current.shift() ?? null);
-    try {
-      await invoke("confirm_host_key", {
-        requestId: current.requestId,
-        accepted,
-      });
-    } catch (error) {
-      const errStr = String(error);
-      if (
-        errStr.includes("未找到或已过期") ||
-        errStr.includes("not found") ||
-        errStr.includes("expired")
-      ) {
-        return;
-      }
-      showToast("error", t("ssh.hostKeyError", { error: errStr }));
-    }
-  }, [pendingHostKey, showToast, t]);
-
-  // SSH 主机密钥验证 — 监听后端事件，统一进入主题确认框。
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    (async () => {
-      const fn = await listen<{
-        request_id: string;
-        host: string;
-        port: number;
-        fingerprint: string;
-      }>(
-        "ssh-host-key-verify",
-        (event) => {
-          if (cancelled) return;
-          const { request_id: requestId, host, port, fingerprint } = event.payload;
-          enqueueHostKey({ requestId, host, port, fingerprint });
-        }
-      );
-      // await listen 返回时 cleanup 可能已执行 — 此时 cancelled=true，
-      // 立即取消刚注册的 listener 防止泄漏
-      if (cancelled) {
-        fn();
-        return;
-      }
-      unlisten = fn;
-    })();
-    return () => {
-      cancelled = true;
-      if (unlisten) unlisten();
-    };
-  }, [enqueueHostKey]);
-
-  // 已知主机密钥变化永不通过普通确认覆盖；默认 fail-closed。
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void listen<{
-      host: string;
-      port: number;
-      expected_fingerprint: string;
-      actual_fingerprint: string;
-    }>("ssh-host-key-changed", event => {
-      if (cancelled) return;
-      showToast("error", t("ssh.hostKeyChanged", {
-        defaultValue: "SSH host key changed for {{host}}:{{port}}. Connection was refused. Expected {{expected}}, received {{actual}}.",
-        host: event.payload.host,
-        port: event.payload.port,
-        expected: event.payload.expected_fingerprint,
-        actual: event.payload.actual_fingerprint,
-      }));
-    }).then(fn => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    }).catch(() => {});
-
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [showToast, t]);
 
   // 窗口最大化/还原状态追踪
   useEffect(() => {
@@ -405,18 +302,10 @@ function AppInner() {
                 // 仅为活跃 tab 计算是否有侧栏内容；custom 类型（TFTP）不显示
                 const activeTab = sessionState.tabs.find(t => t.id === sessionState.activeTabId);
                 const activePlugin = activeTab ? pluginRegistry.get(activeTab.pluginId) : null;
-                const isCustomContent = activePlugin?.manifest.content_type === "custom";
-                // 网络调试会话（custom）保留右侧栏：提供校验和/编码/协议解析等开发工具
-                const isNetworkDebug = activePlugin?.manifest.id === "network";
-                const isLocalShell = activePlugin?.manifest.id === "local-shell";
-                const hasAnyPanel = activeTab
-                  ? ((activePlugin?.manifest.transfer_protocols?.length ?? 0) > 0 && activeTab.transferEnabled !== false)
-                    || (activePlugin?.manifest.id === "ssh" && activeTab.params?.file_service_enabled === true)
-                    || (activePlugin?.manifest.id === "ssh" && activeTab.params?.journald_enabled === true)
-                  : false;
-
-                // custom 内容类型无侧栏面板时完全隐藏右侧栏（网络调试除外）
-                if (isLocalShell || (isCustomContent && !hasAnyPanel && !isNetworkDebug)) return null;
+                const params = activeTab?.params ?? {};
+                const defaultAvailable = activePlugin?.manifest.content_type !== "custom";
+                const sidebarAvailable = activePlugin?.rightSidebar?.available?.(params) ?? defaultAvailable;
+                if (!activeTab || !activePlugin || !sidebarAvailable) return null;
 
                 return (
                 <>
@@ -435,8 +324,6 @@ function AppInner() {
                         const showTransmission = tabPlugin
                           ? (tabPlugin.manifest.transfer_protocols?.length ?? 0) > 0 && tab.transferEnabled !== false
                           : false;
-                        const showFileManager = tabPlugin?.manifest.id === "ssh" && tab.params?.file_service_enabled === true;
-                        const showJournald = tabPlugin?.manifest.id === "ssh" && tab.params?.journald_enabled === true;
                         const isActive = tab.id === sessionState.activeTabId;
                         return (
                           <div
@@ -445,11 +332,11 @@ function AppInner() {
                           >
                             <SessionRightSidebar
                               sessionId={tab.id}
+                              pluginId={tab.pluginId}
+                              params={tab.params ?? {}}
                               isConnected={tab.state === "connected" || tab.state === "transferring"}
                               initialProtocol={tab.transferProtocol as ProtocolType | undefined}
                               showTransmission={showTransmission}
-                              showFileManager={showFileManager}
-                              showJournald={showJournald}
                             />
                           </div>
                         );
@@ -521,15 +408,10 @@ function AppInner() {
         editSessionId={editSessionId}
       />
 
-      <ConfirmDialog
-        open={pendingHostKey !== null}
-        title={t("ssh.hostKeyTitle")}
-        message={pendingHostKey
-          ? `${t("ssh.hostKeyHost", { defaultValue: "Host" })}: ${pendingHostKey.host}:${pendingHostKey.port}\n${t("ssh.hostKeyFingerprint")}: ${pendingHostKey.fingerprint}\n\n${t("ssh.hostKeyPrompt")}`
-          : undefined}
-        onConfirm={() => void settleHostKey(true)}
-        onCancel={() => void settleHostKey(false)}
-      />
+      {pluginRegistry.getAll().map(plugin => {
+        const Overlay = plugin.appOverlay;
+        return Overlay ? <Overlay key={plugin.manifest.id} /> : null;
+      })}
 
       {/* 拖拽调整大小时的全屏透明遮罩层
           确保 mouseup 事件始终在遮罩层（而非底层可能吞事件的禁用元素）上触发，

@@ -13,7 +13,8 @@ React 应用由全局上下文和通用组件组成：
 - `App.tsx` 负责桌面应用壳与顶层组合；
 - `TabContentDispatcher` / Workspace 将 Session 映射到 Pane；
 - renderer 层统一承载 Terminal、Custom、文件浏览和统计类内容；Pane 是显示槽位而不是 Session 实例身份，`CustomRenderer` 以 `pluginId + sessionId` 给插件视图建立 React identity，同一 Pane 被重新分配到另一个 custom Session 时必须重建插件视图，不能把组件本地状态泄漏给新的 Session；
-- Session 列表与 Pane Header 采用统一的双层身份模型：第一行 `Session.name` 是稳定、可显式重命名的会话身份，默认名称仅在创建时计算一次；第二行是当前配置摘要，允许随 host/port/串口/角色等参数变化。协议默认名与摘要优先由 `PluginRegistration.sessionPresentation` 声明，应用壳不重复维护协议格式；
+- Session 列表与 Pane Header 采用统一的双层身份模型：第一行 `Session.name` 是稳定、可显式重命名的会话身份，默认名称仅在创建时计算一次；第二行是当前配置摘要，允许随 host/port/串口/角色等参数变化。协议默认名与摘要由 `PluginRegistration.sessionPresentation` 声明；需要宿主能力计算默认名时使用 `resolveDefaultSessionName`，应用壳不维护 built-in 协议格式；
+- 前端只有一个运行时 `PluginRegistry`。协议的 presentation、运行态、发送目标、应用覆盖层和右侧栏面板都由 registration contribution 声明；`App.tsx` / `SessionRightSidebar` 只挂载这些 contribution，不识别 SSH、Network、Local Shell 等具体插件 ID；
 - Settings 集中管理外观、语言、日志、安全、快捷键和版本信息；
 - i18next 维护 `en-US` / `zh-CN` 两套公共资源；协议插件可通过 `PluginRegistration.locales` 注册自己的双语资源，Plugin Registry 在注册时把资源注入同一个 i18n 实例，协议专属文案因此不需要堆进全局 locale；
 - Shortcut Registry 和 Command Palette 共享稳定 action id；

@@ -10,6 +10,7 @@ registerPlugin({
   connectForm: LocalShellConnectForm,
   resolveDefaultSessionName: params => invoke<string>("resolve_local_shell_session_name", { params }),
   toolbarItems: [],
+  rightSidebar: { available: () => false },
   statusBarItems: [
     {
       id: "local-shell-type",
