@@ -1,16 +1,9 @@
 import type { BatchFileEntry } from "../../../types/transfer";
+import { formatBytes } from "../../../utils/format";
 import Icon from "../../common/Icon";
 import type { IconName } from "../../common/Icon";
 import ProgressBar from "./ProgressBar";
 import styles from "./PerFileList.module.css";
-
-/** 格式化文件大小 */
-function formatSize(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
-}
 
 function getStatusIconName(status: string): IconName {
   switch (status) {
@@ -76,7 +69,7 @@ export default function PerFileList({ entries }: PerFileListProps) {
             <span className={styles.fileSize}>
               {entry.status === "pending"
                 ? "—"
-                : formatSize(entry.bytesTransferred)}
+                : formatBytes(entry.bytesTransferred)}
             </span>
           </div>
         );
