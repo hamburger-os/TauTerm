@@ -34,6 +34,11 @@ struct KnownHostsFile {
     hosts: BTreeMap<String, KnownHostRecord>,
 }
 
+#[derive(Debug, Deserialize)]
+struct KnownHostsVersion {
+    version: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostTrustDecision {
     Trusted,
@@ -95,29 +100,60 @@ impl KnownHostStore {
         if raw.trim().is_empty() {
             return Ok(BTreeMap::new());
         }
-        match serde_json::from_str::<KnownHostsFile>(&raw) {
-            Ok(file) if file.version == KNOWN_HOSTS_VERSION => Ok(file.hosts),
-            Ok(file) => {
-                Self::backup_invalid(path)?;
-                Err(format!(
-                    "SSH known-host 版本 {} 不受支持（expected {}）；原文件已备份，信任存储保持 fail-closed",
-                    file.version, KNOWN_HOSTS_VERSION
-                ))
-            }
+
+        let version = match serde_json::from_str::<KnownHostsVersion>(&raw) {
+            Ok(header) => header.version,
             Err(error) => {
-                Self::backup_invalid(path)?;
+                let quarantine = Self::quarantine_invalid(path)?;
+                return Err(format!(
+                    "SSH known-host 文件损坏: {error}；原文件已隔离至 {:?}，本次进程保持 fail-closed",
+                    quarantine
+                ));
+            }
+        };
+
+        if version != KNOWN_HOSTS_VERSION {
+            let quarantine = Self::quarantine_invalid(path)?;
+            log::warn!(
+                "SSH known-host schema v{} 不受支持（expected v{}）；旧文件已隔离至 {:?}，不执行迁移并从空信任库重新开始，所有主机都需要重新确认",
+                version,
+                KNOWN_HOSTS_VERSION,
+                quarantine
+            );
+            return Ok(BTreeMap::new());
+        }
+
+        match serde_json::from_str::<KnownHostsFile>(&raw) {
+            Ok(file) => Ok(file.hosts),
+            Err(error) => {
+                let quarantine = Self::quarantine_invalid(path)?;
                 Err(format!(
-                    "SSH known-host 文件损坏: {error}；原文件已备份，信任存储保持 fail-closed"
+                    "SSH known-host schema v{KNOWN_HOSTS_VERSION} 文件损坏: {error}；原文件已隔离至 {:?}，本次进程保持 fail-closed",
+                    quarantine
                 ))
             }
         }
     }
 
-    fn backup_invalid(path: &Path) -> Result<(), String> {
-        let backup = path.with_extension("json.invalid.bak");
-        std::fs::copy(path, backup)
-            .map(|_| ())
-            .map_err(|e| format!("备份无效 SSH known-host 文件失败: {e}"))
+    fn quarantine_invalid(path: &Path) -> Result<PathBuf, String> {
+        let mut index = 0u32;
+        loop {
+            let extension = if index == 0 {
+                "json.invalid.bak".to_string()
+            } else {
+                format!("json.invalid.{index}.bak")
+            };
+            let quarantine = path.with_extension(extension);
+            if quarantine.exists() {
+                index = index
+                    .checked_add(1)
+                    .ok_or_else(|| "生成 SSH known-host 隔离文件名失败".to_string())?;
+                continue;
+            }
+            std::fs::rename(path, &quarantine)
+                .map_err(|e| format!("隔离无效 SSH known-host 文件失败: {e}"))?;
+            return Ok(quarantine);
+        }
     }
 
     fn normalized_host(host: &str) -> String {
@@ -368,7 +404,9 @@ mod tests {
         );
 
         std::fs::write(&bad_path, b"{not-json").unwrap();
-        assert!(store.configure(bad_path).is_err());
+        assert!(store.configure(bad_path.clone()).is_err());
+        assert!(!bad_path.exists());
+        assert!(bad_path.with_extension("json.invalid.bak").exists());
         assert!(matches!(
             store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
             HostTrustDecision::Unavailable { .. }
@@ -378,19 +416,80 @@ mod tests {
     }
 
     #[test]
-    fn invalid_known_hosts_never_downgrades_to_tofu() {
+    fn unsupported_version_is_quarantined_and_resets_to_empty_current_store() {
         let dir = temp_path();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("known_hosts.json");
-        std::fs::write(&path, b"{not-json").unwrap();
+        std::fs::write(
+            &path,
+            br#"{
+  "version": 1,
+  "hosts": {
+    "example.test:22": {
+      "host": "example.test",
+      "port": 22,
+      "fingerprint": "SHA256:legacy",
+      "first_seen_ms": 1,
+      "last_seen_ms": 1
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        let store = KnownHostStore::new();
+        store.configure(path.clone()).unwrap();
+
+        assert!(!path.exists());
+        assert!(path.with_extension("json.invalid.bak").exists());
+        assert_eq!(
+            store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:new"),
+            HostTrustDecision::Unknown
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn invalid_current_store_is_quarantined_and_fails_closed_only_for_current_process() {
+        let dir = temp_path();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("known_hosts.json");
+        std::fs::write(&path, br#"{"version":2,"hosts":{"broken":{}}}"#).unwrap();
 
         let store = KnownHostStore::new();
         assert!(store.configure(path.clone()).is_err());
+        assert!(!path.exists());
         assert!(path.with_extension("json.invalid.bak").exists());
         assert!(matches!(
             store.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
             HostTrustDecision::Unavailable { .. }
         ));
+
+        let reopened = KnownHostStore::new();
+        reopened.configure(path.clone()).unwrap();
+        assert_eq!(
+            reopened.evaluate("example.test", 22, "ssh-ed25519", "SHA256:first"),
+            HostTrustDecision::Unknown
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn quarantine_preserves_existing_backup() {
+        let dir = temp_path();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("known_hosts.json");
+        let first_backup = path.with_extension("json.invalid.bak");
+        std::fs::write(&first_backup, b"older-backup").unwrap();
+        std::fs::write(&path, b"{not-json").unwrap();
+
+        let store = KnownHostStore::new();
+        assert!(store.configure(path.clone()).is_err());
+
+        assert_eq!(std::fs::read(&first_backup).unwrap(), b"older-backup");
+        assert!(path.with_extension("json.invalid.1.bak").exists());
 
         let _ = std::fs::remove_dir_all(dir);
     }
