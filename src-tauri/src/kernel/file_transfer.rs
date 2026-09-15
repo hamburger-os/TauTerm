@@ -74,6 +74,16 @@ pub struct ProgressPosition {
     pub aggregate_total: u64,
 }
 
+/// 单文件完成事件的 payload 字节语义。
+///
+/// `transferred` 是已确认完成的 payload 字节，`total` 是原始文件总大小；
+/// `total == 0` 表示调用方不知道原始大小。
+#[derive(Debug, Clone, Copy)]
+pub struct FileProgressBytes {
+    pub transferred: u64,
+    pub total: u64,
+}
+
 /// 基于单调时钟的 payload 吞吐率采样器。
 ///
 /// 采样器只消费后端已经确认完成的累计 payload 字节，不依赖 WebView/IPC 到达时间。
@@ -245,12 +255,13 @@ impl UnifiedProgress {
         success: bool,
         error: Option<String>,
     ) -> Self {
-        let bytes_total = if success { bytes_transferred } else { 0 };
         Self::file_complete_with_total(
             protocol,
             file_name,
-            bytes_transferred,
-            bytes_total,
+            FileProgressBytes {
+                transferred: bytes_transferred,
+                total: if success { bytes_transferred } else { 0 },
+            },
             position,
             direction,
             success,
@@ -262,8 +273,7 @@ impl UnifiedProgress {
     pub fn file_complete_with_total(
         protocol: &str,
         file_name: &str,
-        bytes_transferred: u64,
-        bytes_total: u64,
+        bytes: FileProgressBytes,
         position: ProgressPosition,
         direction: TransferDirection,
         success: bool,
@@ -281,8 +291,8 @@ impl UnifiedProgress {
             kind: TransferProgressKind::FileComplete,
             protocol: protocol.to_string(),
             file_name: file_name.to_string(),
-            bytes_done: bytes_transferred,
-            bytes_total,
+            bytes_done: bytes.transferred,
+            bytes_total: bytes.total,
             bytes_per_second: None,
             file_index,
             total_files,
@@ -434,8 +444,10 @@ mod tests {
         let progress = UnifiedProgress::file_complete_with_total(
             "ymodem",
             "firmware.bin",
-            1024,
-            4096,
+            FileProgressBytes {
+                transferred: 1024,
+                total: 4096,
+            },
             ProgressPosition {
                 file_index: 0,
                 total_files: 1,
