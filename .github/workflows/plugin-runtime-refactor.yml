@@ -51,7 +51,9 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Apply architecture refactor
-        run: python3 .github/scripts/plugin_runtime_refactor.py
+        run: |
+          python3 .github/scripts/plugin_runtime_refactor.py
+          python3 .github/scripts/plugin_runtime_refactor_fix.py
 
       - name: Format Rust
         run: cargo fmt --manifest-path src-tauri/Cargo.toml
@@ -83,6 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           rm .github/scripts/plugin_runtime_refactor.py
+          rm .github/scripts/plugin_runtime_refactor_fix.py
           rm .github/workflows/plugin-runtime-refactor.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
