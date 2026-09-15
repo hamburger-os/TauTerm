@@ -39,6 +39,36 @@ jobs:
           path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
           PY
           python3 .github/finalize-backend-plugin-boundary.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected 1 match, got {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'src-tauri/src/lib.rs',
+              'plugins::network::plugins::network::commands::network_udp_send_to',
+              'plugins::network::commands::network_udp_send_to',
+              'network send_to invoke path',
+          )
+          replace_once(
+              'src-tauri/src/plugin_application.rs',
+              'use crate::kernel::plugin_adapter::ProtocolConnection;\n',
+              '',
+              'unused ProtocolConnection import',
+          )
+          replace_once(
+              'src-tauri/src/commands.rs',
+              'use tauri::{AppHandle, Emitter, Manager, State};\n',
+              'use tauri::{AppHandle, Emitter, State};\n',
+              'unused Manager import',
+          )
+          PY
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
       - name: Documentation contract
