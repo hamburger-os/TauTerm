@@ -26,10 +26,6 @@ export interface SessionStats {
   txPackets?: number;
 }
 
-/** 前端只接收用户可访问的虚拟端点；内部 bridge path 不属于 UI 契约。 */
-export interface VirtualPortEndpoint {
-  external_path: string;
-}
 
 export interface TabInfo {
   id: string;
@@ -53,20 +49,6 @@ export interface TabInfo {
   transferProtocol?: string;
   /** 是否启用发送栏（默认 true） */
   sendBarEnabled?: boolean;
-  /** Telnet: 本地回显状态（服务器 WONT ECHO 时客户端回显输入，由后端协商推送） */
-  localEcho?: boolean;
-  /** 对外虚拟端点列表（连接成功时后端推送） */
-  virtualVirtualEndpoints?: VirtualPortEndpoint[];
-  /** 虚拟端口创建失败时的错误信息 */
-  virtualPortError?: string;
-  /** 虚拟端口失败原因分类（driver_missing | files_missing | permission | create_failed | bridge_failed），供前端本地化 */
-  virtualPortErrorKind?: string;
-  /** SSH 文件服务是否启用（默认 true） */
-  fileServiceEnabled?: boolean;
-  /** SSH 文件服务协议（"sftp"） */
-  fileServiceProtocol?: string;
-  /** SSH: 是否启用 journald 日志查看器（默认 false） */
-  journaldEnabled?: boolean;
   /** 父会话 ID；非空表示通用子 channel。 */
   parentId?: string | null;
   /** 子 channel 在父会话中的自动编号（从 0 开始） */
@@ -87,7 +69,6 @@ export interface ConnectOptions {
   transferProtocol?: string;
   sendBarEnabled?: boolean;
   initialElevated?: boolean;
-  journaldEnabled?: boolean;
   sessionId?: string;
 }
 
@@ -107,16 +88,6 @@ export interface EndpointInfo {
   params?: Record<string, unknown>;
 }
 
-/** 网络调试会话的对端条目（左侧会话树 / 视图共用） */
-export interface NetworkPeerEntry {
-  peerId: string;
-  name: string;
-  addr: string;
-  localAddr?: string;
-  state: "connected" | "disconnected";
-  txBytes: number;
-  rxBytes: number;
-}
 
 interface SessionState {
   tabs: TabInfo[];
@@ -124,13 +95,6 @@ interface SessionState {
   connectionTypes: ConnectionTypeInfo[];
   endpoints: EndpointInfo[];
   error: string | null;
-  peerSessions: Record<string, boolean>;
-  networkPeers: Record<string, NetworkPeerEntry[]>;
-  selectedNetworkPeer: Record<string, string | null>;
-  networkManualTarget: Record<string, string>;
-  networkUdpSources: Record<string, string[]>;
-  networkLocalAddrs: Record<string, string>;
-  networkBroadcast: Record<string, boolean>;
 }
 
 type SessionAction =
@@ -147,27 +111,10 @@ type SessionAction =
   | { type: "SET_TAB_STATE"; id: string; state: ConnectionStatus }
   | { type: "SET_TAB_DISCONNECTED"; id: string; info?: DisconnectInfo }
   | { type: "UPDATE_TAB_STATS"; id: string; stats: SessionStats; connectedAt?: number | null }
-  | { type: "UPDATE_TAB_ECHO"; id: string; localEcho: boolean }
-  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null; journaldEnabled?: boolean; fileServiceEnabled?: boolean; fileServiceProtocol?: string }
-  | { type: "UPDATE_TAB_VPORTS"; id: string; pairs: VirtualPortEndpoint[] }
-  | { type: "SET_VPORT_ERROR"; id: string; error: string; kind?: string }
-  | { type: "CLEAR_VPORT_ERROR"; id: string }
-  | { type: "CLEAR_TABS" }
-  | { type: "REMOVE_CHILD"; id: string; parentId: string }
-  | { type: "REMOVE_ALL_CHILDREN"; parentId: string }
-  | { type: "SET_PEER_CONNECTED"; id: string; connected: boolean }
-  | { type: "REMOVE_PEER"; id: string }
-  | { type: "SET_NETWORK_PEER"; containerId: string; peer: NetworkPeerEntry }
-  | { type: "SET_NETWORK_PEERS_BATCH"; containerId: string; entries: NetworkPeerEntry[] }
-  | { type: "SET_NETWORK_PEER_STATE"; containerId: string; peerId: string; state: NetworkPeerEntry["state"]; txBytes?: number; rxBytes?: number }
-  | { type: "SET_NETWORK_PEER_STATS"; containerId: string; peerId: string; txBytes: number; rxBytes: number }
-  | { type: "REMOVE_NETWORK_PEER"; containerId: string; peerId: string }
-  | { type: "CLEAR_NETWORK_PEERS"; containerId: string }
-  | { type: "SELECT_NETWORK_PEER"; containerId: string; peerId: string | null }
-  | { type: "SET_NETWORK_MANUAL_TARGET"; containerId: string; target: string }
-  | { type: "ADD_NETWORK_UDP_SOURCE"; containerId: string; addr: string }
-  | { type: "SET_NETWORK_LOCAL_ADDR"; containerId: string; addr: string }
-  | { type: "SET_NETWORK_BROADCAST"; containerId: string; on: boolean };
+  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
+| { type: "CLEAR_TABS" }
+| { type: "REMOVE_CHILD"; id: string; parentId: string }
+| { type: "REMOVE_ALL_CHILDREN"; parentId: string };
 
 function decodeBase64(b64: string): Uint8Array {
   const binary = atob(b64);
@@ -190,13 +137,6 @@ const initialState: SessionState = {
   connectionTypes: [],
   endpoints: [],
   error: null,
-  peerSessions: {},
-  networkPeers: {},
-  selectedNetworkPeer: {},
-  networkManualTarget: {},
-  networkUdpSources: {},
-  networkLocalAddrs: {},
-  networkBroadcast: {},
 };
 
 function sessionReducer(state: SessionState, action: SessionAction): SessionState {
@@ -233,8 +173,6 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       return { ...state, tabs: state.tabs.map(t => t.id === action.id ? { ...t, state: "disconnected", disconnectInfo: action.info } : t) };
     case "UPDATE_TAB_STATS":
       return { ...state, tabs: state.tabs.map(t => t.id === action.id ? { ...t, stats: action.stats, connectedAt: action.connectedAt ?? t.connectedAt } : t) };
-    case "UPDATE_TAB_ECHO":
-      return { ...state, tabs: state.tabs.map(t => t.id === action.id ? { ...t, localEcho: action.localEcho } : t) };
     case "UPDATE_TAB_CONFIG":
       return {
         ...state,
@@ -248,17 +186,8 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
           sendBarEnabled: action.sendBarEnabled ?? t.sendBarEnabled,
           pluginId: action.pluginId ?? t.pluginId,
           connectedAt: action.connectedAt !== undefined ? action.connectedAt : t.connectedAt,
-          fileServiceEnabled: action.fileServiceEnabled ?? (action.params?.file_service_enabled as boolean) ?? t.fileServiceEnabled,
-          fileServiceProtocol: action.fileServiceProtocol ?? (action.params?.file_service_protocol as string) ?? t.fileServiceProtocol,
-          journaldEnabled: action.journaldEnabled ?? (action.params?.journald_enabled as boolean) ?? t.journaldEnabled,
         } : t),
       };
-    case "UPDATE_TAB_VPORTS":
-      return { ...state, tabs: state.tabs.map(tab => tab.id === action.id ? { ...tab, virtualVirtualEndpoints: action.pairs } : tab) };
-    case "SET_VPORT_ERROR":
-      return { ...state, tabs: state.tabs.map(tab => tab.id === action.id ? { ...tab, virtualPortError: action.error, virtualPortErrorKind: action.kind, virtualVirtualEndpoints: undefined } : tab) };
-    case "CLEAR_VPORT_ERROR":
-      return { ...state, tabs: state.tabs.map(tab => tab.id === action.id ? { ...tab, virtualPortError: undefined, virtualPortErrorKind: undefined } : tab) };
     case "REMOVE_CHILD": {
       const remaining = state.tabs.filter(t => t.id !== action.id);
       let nextActive = state.activeTabId;
@@ -288,63 +217,6 @@ function sessionReducer(state: SessionState, action: SessionAction): SessionStat
       };
     }
     case "CLEAR_TABS": return { ...state, tabs: [], activeTabId: null };
-    case "SET_PEER_CONNECTED": return { ...state, peerSessions: { ...state.peerSessions, [action.id]: action.connected } };
-    case "REMOVE_PEER": {
-      const next = { ...state.peerSessions };
-      delete next[action.id];
-      return { ...state, peerSessions: next };
-    }
-    case "SET_NETWORK_PEER": {
-      const list = state.networkPeers[action.containerId] ?? [];
-      const ix = list.findIndex(p => p.peerId === action.peer.peerId);
-      const nextList = ix >= 0 ? list.map(p => p.peerId === action.peer.peerId ? { ...p, ...action.peer } : p) : [...list, action.peer];
-      return { ...state, networkPeers: { ...state.networkPeers, [action.containerId]: nextList } };
-    }
-    case "SET_NETWORK_PEERS_BATCH": {
-      const merged = [...(state.networkPeers[action.containerId] ?? [])];
-      for (const entry of action.entries) {
-        const ix = merged.findIndex(p => p.peerId === entry.peerId);
-        if (ix >= 0) merged[ix] = { ...merged[ix], ...entry, txBytes: entry.txBytes || merged[ix].txBytes, rxBytes: entry.rxBytes || merged[ix].rxBytes };
-        else merged.push(entry);
-      }
-      return { ...state, networkPeers: { ...state.networkPeers, [action.containerId]: merged } };
-    }
-    case "SET_NETWORK_PEER_STATE": {
-      const list = state.networkPeers[action.containerId] ?? [];
-      return {
-        ...state,
-        networkPeers: {
-          ...state.networkPeers,
-          [action.containerId]: list.map(p => p.peerId === action.peerId ? { ...p, state: action.state, txBytes: action.txBytes ?? p.txBytes, rxBytes: action.rxBytes ?? p.rxBytes } : p),
-        },
-      };
-    }
-    case "SET_NETWORK_PEER_STATS": {
-      const list = state.networkPeers[action.containerId] ?? [];
-      return { ...state, networkPeers: { ...state.networkPeers, [action.containerId]: list.map(p => p.peerId === action.peerId ? { ...p, txBytes: action.txBytes, rxBytes: action.rxBytes } : p) } };
-    }
-    case "REMOVE_NETWORK_PEER": {
-      const list = state.networkPeers[action.containerId] ?? [];
-      return { ...state, networkPeers: { ...state.networkPeers, [action.containerId]: list.filter(p => p.peerId !== action.peerId) } };
-    }
-    case "CLEAR_NETWORK_PEERS": {
-      const nextPeers = { ...state.networkPeers };
-      delete nextPeers[action.containerId];
-      const nextSel = { ...state.selectedNetworkPeer };
-      delete nextSel[action.containerId];
-      return { ...state, networkPeers: nextPeers, selectedNetworkPeer: nextSel };
-    }
-    case "SELECT_NETWORK_PEER": return { ...state, selectedNetworkPeer: { ...state.selectedNetworkPeer, [action.containerId]: action.peerId } };
-    case "SET_NETWORK_MANUAL_TARGET": return { ...state, networkManualTarget: { ...state.networkManualTarget, [action.containerId]: action.target } };
-    case "ADD_NETWORK_UDP_SOURCE": {
-      const list = state.networkUdpSources[action.containerId] ?? [];
-      if (list.includes(action.addr)) return state;
-      const next = [...list, action.addr];
-      if (next.length > 32) next.splice(0, next.length - 32);
-      return { ...state, networkUdpSources: { ...state.networkUdpSources, [action.containerId]: next } };
-    }
-    case "SET_NETWORK_LOCAL_ADDR": return { ...state, networkLocalAddrs: { ...state.networkLocalAddrs, [action.containerId]: action.addr } };
-    case "SET_NETWORK_BROADCAST": return { ...state, networkBroadcast: { ...state.networkBroadcast, [action.containerId]: action.on } };
     default: return state;
   }
 }
@@ -361,22 +233,13 @@ interface SessionContextValue {
   sendData: (sessionId: string, data: string | Uint8Array) => Promise<void>;
   switchTab: (sessionId: string | null) => Promise<void>;
   renameTab: (sessionId: string, name: string) => Promise<void>;
-  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string, journaldEnabled?: boolean) => Promise<void>;
+  reconfigureSession: (sessionId: string, endpoint: string, params: Record<string, unknown>, name?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean, pluginId?: string) => Promise<void>;
   openChannel: (parentSessionId: string, elevated?: boolean) => Promise<string | null>;
   closeChannel: (channelId: string, parentId: string) => Promise<void>;
   onSessionData: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   onDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => void;
   subscribeDataSent: (callback: (sessionId: string, data: Uint8Array) => void) => () => void;
   isSessionConnected: (sessionId: string) => boolean;
-  selectNetworkPeer: (containerId: string, peerId: string | null) => void;
-  getNetworkPeers: (containerId: string) => NetworkPeerEntry[];
-  disconnectNetworkPeer: (containerId: string, peerId: string) => Promise<void>;
-  clearNetworkPeer: (containerId: string, peerId: string) => Promise<void>;
-  mergeNetworkPeers: (containerId: string, entries: NetworkPeerEntry[]) => void;
-  setNetworkManualTarget: (containerId: string, target: string) => void;
-  registerNetworkUdpSource: (containerId: string, addr: string) => void;
-  subscribeNetworkManualSent: (callback: (containerId: string, target: string, bytes: Uint8Array) => void) => () => void;
-  setNetworkBroadcast: (containerId: string, on: boolean) => void;
   sendToTarget: (containerId: string, data: string | Uint8Array) => Promise<void>;
   updateSessionStats: (sessionId: string, txBytes: number, rxBytes: number, rxPackets?: number, txPackets?: number) => void;
   onSessionDisconnect: (callback: (sessionId: string, reason?: string) => void) => void;
@@ -394,16 +257,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const dataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
   const sentDataCallbackRef = useRef<((sessionId: string, data: Uint8Array) => void) | null>(null);
   const sentDataSubscribersRef = useRef<Set<(sessionId: string, data: Uint8Array) => void>>(new Set());
-  const peerSessionsRef = useRef<Record<string, boolean>>({});
-  const networkPeerContainerRef = useRef<Record<string, string>>({});
-  const networkManualSentSubscribersRef = useRef<Set<(containerId: string, target: string, bytes: Uint8Array) => void>>(new Set());
   const disconnectCallbackRef = useRef<((sessionId: string, reason?: string) => void) | null>(null);
   const tabsRef = useRef(state.tabs);
   tabsRef.current = state.tabs;
-  const stateRef = useRef(state);
-  stateRef.current = state;
   const lastActiveChildRef = useRef<Map<string, string>>(new Map());
-  const pendingEchoRef = useRef<Map<string, boolean>>(new Map());
   const endpointRefreshesRef = useRef<Map<string, Promise<EndpointInfo[]>>>(new Map());
   const endpointRefreshCompletedAtRef = useRef<Map<string, number>>(new Map());
 
@@ -481,7 +338,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const connect = useCallback(async (opts: ConnectOptions) => {
-    const { endpoint, params, name, pluginId, transferEnabled, transferProtocol, sendBarEnabled, journaldEnabled, sessionId, initialElevated } = opts;
+    const { endpoint, params, name, pluginId, transferEnabled, transferProtocol, sendBarEnabled, sessionId, initialElevated } = opts;
     const plugin = pluginRegistry.get(pluginId);
     const effectiveParams = plugin?.normalizeConnectionParams?.(params) ?? params;
     const effectiveSendBarEnabled = pluginRegistry.resolveSendBarEnabled(pluginId, sendBarEnabled);
@@ -497,7 +354,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferEnabled: transferEnabled ?? true,
           transferProtocol: transferProtocol ?? null,
           sendBarEnabled: effectiveSendBarEnabled,
-          journaldEnabled: journaldEnabled ?? false,
           sessionId: sessionId || null,
           initialElevated: initialElevated ?? false,
         },
@@ -531,7 +387,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       transferEnabled: initialElevated ? false : tab.transferEnabled,
       transferProtocol: tab.transferProtocol,
       sendBarEnabled: tab.sendBarEnabled,
-      journaldEnabled: tab.journaldEnabled,
       sessionId: tab.id,
       initialElevated,
     });
@@ -584,9 +439,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferEnabled: transferEnabled ?? true,
           transferProtocol,
           sendBarEnabled: effectiveSendBarEnabled,
-          fileServiceEnabled: (params.file_service_enabled as boolean) ?? false,
-          fileServiceProtocol: params.file_service_protocol as string | undefined,
-          journaldEnabled: (params.journald_enabled as boolean) ?? false,
         },
       });
       return sessionId;
@@ -633,24 +485,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     dispatch({ type: "REMOVE_TAB", id: sessionId });
+    tab && pluginRegistry.get(tab.pluginId)?.runtimeStore?.release?.(sessionId);
     releaseSessionStore(sessionId);
   }, [state.tabs]);
 
-  const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
-    const tab = tabsRef.current.find(t => t.id === sessionId);
-    const isPeer = peerSessionsRef.current[sessionId] === true;
-    if ((!tab || tab.state === "disconnected") && !isPeer) return;
-    try {
-      const isText = typeof data === "string";
-      const bytes = isText ? new TextEncoder().encode(data) : data;
-      const written = await invoke<number[]>("write_data", { sessionId, data: Array.from(bytes), transcode: isText });
-      const writtenBytes = new Uint8Array(written);
-      sentDataCallbackRef.current?.(sessionId, writtenBytes);
-      sentDataSubscribersRef.current.forEach(cb => cb(sessionId, writtenBytes));
-    } catch (e) {
-      dispatch({ type: "SET_ERROR", error: `发送失败: ${e}` });
-    }
+  const writeData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
+    const isText = typeof data === "string";
+    const bytes = isText ? new TextEncoder().encode(data) : data;
+    const written = await invoke<number[]>("write_data", { sessionId, data: Array.from(bytes), transcode: isText });
+    const writtenBytes = new Uint8Array(written);
+    sentDataCallbackRef.current?.(sessionId, writtenBytes);
+    sentDataSubscribersRef.current.forEach(callback => callback(sessionId, writtenBytes));
   }, []);
+
+  const sendData = useCallback(async (sessionId: string, data: string | Uint8Array) => {
+    const tab = tabsRef.current.find(item => item.id === sessionId);
+    if (!tab || tab.state === "disconnected") return;
+    try {
+      await writeData(sessionId, data);
+    } catch (error) {
+      dispatch({ type: "SET_ERROR", error: `发送失败: ${error}` });
+    }
+  }, [writeData]);
 
   const switchTab = useCallback(async (sessionId: string | null) => {
     if (sessionId === null) {
@@ -708,7 +564,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     transferProtocol?: string,
     sendBarEnabled?: boolean,
     pluginId?: string,
-    journaldEnabled?: boolean,
   ) => {
     const tab = state.tabs.find(t => t.id === sessionId);
     const wasConnected = tab?.state === "connected" || tab?.state === "transferring";
@@ -765,9 +620,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       transferProtocol,
       sendBarEnabled: effectiveSendBarEnabled,
       pluginId: effectivePluginId,
-      journaldEnabled: journaldEnabled ?? (params?.journald_enabled as boolean) ?? tab?.journaldEnabled,
-      fileServiceEnabled: (params?.file_service_enabled as boolean) ?? tab?.fileServiceEnabled,
-      fileServiceProtocol: (params?.file_service_protocol as string) ?? tab?.fileServiceProtocol,
     });
 
     if (wasConnected) {
@@ -781,7 +633,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             transferEnabled: transferEnabled ?? true,
             transferProtocol: transferProtocol ?? null,
             sendBarEnabled: effectiveSendBarEnabled,
-            journaldEnabled: (persistedParams?.journald_enabled as boolean) ?? tab?.journaldEnabled ?? false,
             sessionId,
           },
         });
@@ -844,9 +695,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           transferEnabled: s.transfer_enabled ?? true,
           transferProtocol: s.transfer_protocol,
           sendBarEnabled: pluginRegistry.resolveSendBarEnabled(pluginId, s.send_bar_enabled),
-          fileServiceEnabled: (s.params?.file_service_enabled as boolean) ?? false,
-          fileServiceProtocol: s.params?.file_service_protocol as string | undefined,
-          journaldEnabled: (s.params?.journald_enabled as boolean) ?? false,
         };
       });
       dispatch({ type: "SET_TABS", tabs });
@@ -870,81 +718,29 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isSessionConnected = useCallback((sessionId: string): boolean => {
-    const tab = tabsRef.current.find(t => t.id === sessionId);
-    if (tab) return tab.state === "connected" || tab.state === "transferring";
-    return peerSessionsRef.current[sessionId] === true;
+    const tab = tabsRef.current.find(item => item.id === sessionId);
+    return tab?.state === "connected" || tab?.state === "transferring";
   }, []);
 
-  const selectNetworkPeer = useCallback((containerId: string, peerId: string | null) => {
-    dispatch({ type: "SELECT_NETWORK_PEER", containerId, peerId });
-  }, []);
-  const getNetworkPeers = useCallback((containerId: string): NetworkPeerEntry[] => stateRef.current.networkPeers[containerId] ?? [], []);
-  const disconnectNetworkPeer = useCallback(async (containerId: string, peerId: string) => {
-    try { await invoke("close_network_peer", { sessionId: peerId }); } catch (e) { console.error("网络调试: 断开对端失败:", e); }
-    dispatch({ type: "SET_NETWORK_PEER_STATE", containerId, peerId, state: "disconnected" });
-    peerSessionsRef.current[peerId] = false;
-    dispatch({ type: "SET_PEER_CONNECTED", id: peerId, connected: false });
-  }, []);
-  const clearNetworkPeer = useCallback(async (containerId: string, peerId: string) => {
-    try { await invoke("close_network_peer", { sessionId: peerId }).catch(() => {}); } catch (_e) { /* already closed */ }
-    delete peerSessionsRef.current[peerId];
-    if (networkPeerContainerRef.current[peerId] === containerId) delete networkPeerContainerRef.current[peerId];
-    dispatch({ type: "REMOVE_NETWORK_PEER", containerId, peerId });
-    dispatch({ type: "REMOVE_PEER", id: peerId });
-  }, []);
-  const mergeNetworkPeers = useCallback((containerId: string, entries: NetworkPeerEntry[]) => {
-    dispatch({ type: "SET_NETWORK_PEERS_BATCH", containerId, entries });
-  }, []);
-  const setNetworkManualTarget = useCallback((containerId: string, target: string) => {
-    dispatch({ type: "SET_NETWORK_MANUAL_TARGET", containerId, target });
-  }, []);
-  const registerNetworkUdpSource = useCallback((containerId: string, addr: string) => {
-    dispatch({ type: "ADD_NETWORK_UDP_SOURCE", containerId, addr });
-  }, []);
-  const subscribeNetworkManualSent = useCallback((callback: (containerId: string, target: string, bytes: Uint8Array) => void) => {
-    networkManualSentSubscribersRef.current.add(callback);
-    return () => { networkManualSentSubscribersRef.current.delete(callback); };
-  }, []);
-  const setNetworkBroadcast = useCallback((containerId: string, on: boolean) => {
-    dispatch({ type: "SET_NETWORK_BROADCAST", containerId, on });
-  }, []);
-
-  const sendToTarget = useCallback(async (containerId: string, data: string | Uint8Array) => {
-    const tab = tabsRef.current.find(t => t.id === containerId);
-    const params = (tab?.params ?? {}) as Record<string, unknown>;
-    const transport = params.transport as string | undefined;
-    if (transport !== "tcp" && transport !== "udp") {
-      await sendData(containerId, data);
-      return;
-    }
-    const role = (params.role as string | undefined) ?? "client";
-    const isText = typeof data === "string";
-    const bytes = isText ? new TextEncoder().encode(data) : data;
-    const byteArr = Array.from(bytes);
-    if (transport === "udp") {
-      if (role === "server") {
-        const target = (stateRef.current.networkManualTarget[containerId] ?? "").trim();
-        if (!target) throw new Error("无可用发送目标");
-        const written = await invoke<number[]>("network_udp_send_to", { sessionId: containerId, targetAddr: target, data: byteArr, transcode: isText });
-        networkManualSentSubscribersRef.current.forEach(cb => cb(containerId, target, new Uint8Array(written)));
+  const sendToTarget = useCallback(async (sessionId: string, data: string | Uint8Array) => {
+    const tab = tabsRef.current.find(item => item.id === sessionId);
+    if (!tab || tab.state === "disconnected") return;
+    const plugin = pluginRegistry.get(tab.pluginId);
+    try {
+      if (plugin?.sendData) {
+        await plugin.sendData({
+          sessionId,
+          params: tab.params ?? {},
+          data,
+          sendDefault: writeData,
+        });
       } else {
-        const written = await invoke<number[]>("network_udp_send", { sessionId: containerId, data: byteArr, transcode: isText });
-        const remote = `${params.remote_host ?? "127.0.0.1"}:${params.remote_port ?? 0}`;
-        networkManualSentSubscribersRef.current.forEach(cb => cb(containerId, remote, new Uint8Array(written)));
+        await writeData(sessionId, data);
       }
-      return;
+    } catch (error) {
+      dispatch({ type: "SET_ERROR", error: `发送失败: ${error}` });
     }
-    const peers = (stateRef.current.networkPeers[containerId] ?? []).filter(p => p.state === "connected");
-    if (stateRef.current.networkBroadcast[containerId] === true) {
-      for (const peer of peers) await sendData(peer.peerId, data);
-      return;
-    }
-    const selected = stateRef.current.selectedNetworkPeer[containerId];
-    const peer = peers.find(p => p.peerId === selected);
-    if (peer) { await sendData(peer.peerId, data); return; }
-    if (peers.length === 1) { await sendData(peers[0].peerId, data); return; }
-    throw new Error("无可用发送目标");
-  }, [sendData]);
+  }, [writeData]);
 
   const updateSessionStats = useCallback((sessionId: string, txBytes: number, rxBytes: number, rxPackets?: number, txPackets?: number) => {
     dispatch({
@@ -967,16 +763,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u1(); return; }
       unlisteners.push(u1);
 
-      const u1b = await listen<{ session_id: string; local_echo: boolean }>("telnet-echo-state", event => {
-        const sid = event.payload.session_id;
-        if (!tabsRef.current.some(t => t.id === sid)) {
-          pendingEchoRef.current.set(sid, event.payload.local_echo);
-          return;
-        }
-        dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: event.payload.local_echo });
-      });
-      if (cancelled) { u1b(); return; }
-      unlisteners.push(u1b);
 
       const u2 = await listen<{
         session_id: string;
@@ -989,25 +775,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         transfer_enabled?: boolean;
         transfer_protocol?: string;
         send_bar_enabled?: boolean;
-        virtual_endpoints?: VirtualPortEndpoint[];
-        file_service_enabled?: boolean;
-        file_service_protocol?: string;
-        journald_enabled?: boolean;
         parent_id?: string | null;
         channel_index?: number;
         elevated?: boolean;
         is_container?: boolean;
-        local_addr?: string | null;
       }>("session-connected", event => {
         const sid = event.payload.session_id;
         const eventPluginId = event.payload.plugin_id;
         const eventParams = pluginRegistry.get(eventPluginId)?.normalizeConnectionParams?.(event.payload.params) ?? event.payload.params;
         const eventSendBarEnabled = pluginRegistry.resolveSendBarEnabled(eventPluginId, event.payload.send_bar_enabled);
-        const vPairs = event.payload.virtual_endpoints;
         const parentId = event.payload.parent_id ?? null;
-        const isContainer = event.payload.is_container ?? false;
-        if (typeof event.payload.local_addr === "string") dispatch({ type: "SET_NETWORK_LOCAL_ADDR", containerId: sid, addr: event.payload.local_addr });
-        const existingTab = tabsRef.current.find(t => t.id === sid);
+        const existingTab = tabsRef.current.find(tab => tab.id === sid);
         if (existingTab) {
           dispatch({ type: "SET_TAB_STATE", id: sid, state: "connected" });
           dispatch({
@@ -1021,16 +799,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             sendBarEnabled: eventSendBarEnabled,
             pluginId: eventPluginId,
             connectedAt: event.payload.connected_at ?? Date.now(),
-            journaldEnabled: event.payload.journald_enabled ?? false,
-            fileServiceEnabled: event.payload.file_service_enabled ?? (eventParams?.file_service_enabled as boolean),
-            fileServiceProtocol: event.payload.file_service_protocol ?? (eventParams?.file_service_protocol as string),
           });
-          const pendingEcho = pendingEchoRef.current.get(sid);
-          if (pendingEcho !== undefined) {
-            pendingEchoRef.current.delete(sid);
-            dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: pendingEcho });
-          }
-          if (vPairs?.length) dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: vPairs });
         } else if (parentId) {
           dispatch({ type: "SET_TAB_STATE", id: parentId, state: "connected" });
           dispatch({
@@ -1051,36 +820,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               parentId,
               channelIndex: event.payload.channel_index,
               elevated: event.payload.elevated ?? false,
-              fileServiceEnabled: event.payload.file_service_enabled ?? (eventParams?.file_service_enabled as boolean) ?? false,
-              fileServiceProtocol: event.payload.file_service_protocol ?? (eventParams?.file_service_protocol as string),
-              journaldEnabled: event.payload.journald_enabled ?? (eventParams?.journald_enabled as boolean) ?? false,
-            },
-          });
-        } else if (isContainer) {
-          dispatch({
-            type: "ADD_TAB",
-            tab: {
-              id: sid,
-              name: event.payload.name,
-              connection_type: event.payload.connection_type,
-              endpoint: event.payload.endpoint,
-              state: "connected",
-              pluginId: eventPluginId,
-              params: eventParams,
-              stats: { txBytes: 0, rxBytes: 0 },
-              connectedAt: event.payload.connected_at ?? Date.now(),
-              transferEnabled: event.payload.transfer_enabled ?? false,
-              transferProtocol: event.payload.transfer_protocol,
-              sendBarEnabled: eventSendBarEnabled,
-              isContainer: true,
-              fileServiceEnabled: event.payload.file_service_enabled ?? false,
-              fileServiceProtocol: event.payload.file_service_protocol,
-              journaldEnabled: event.payload.journald_enabled ?? false,
             },
           });
         } else {
-          const pendingEcho = pendingEchoRef.current.get(sid);
-          if (pendingEcho !== undefined) pendingEchoRef.current.delete(sid);
           dispatch({
             type: "ADD_TAB",
             tab: {
@@ -1090,17 +832,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               endpoint: event.payload.endpoint,
               state: "connected",
               pluginId: eventPluginId,
-              localEcho: pendingEcho,
               params: eventParams,
               stats: { txBytes: 0, rxBytes: 0 },
               connectedAt: event.payload.connected_at ?? Date.now(),
               transferEnabled: event.payload.transfer_enabled ?? true,
               transferProtocol: event.payload.transfer_protocol,
               sendBarEnabled: eventSendBarEnabled,
-              virtualVirtualEndpoints: vPairs,
-              fileServiceEnabled: event.payload.file_service_enabled ?? (eventParams?.file_service_enabled as boolean) ?? false,
-              fileServiceProtocol: event.payload.file_service_protocol ?? (eventParams?.file_service_protocol as string),
-              journaldEnabled: event.payload.journald_enabled ?? (eventParams?.journald_enabled as boolean) ?? false,
+              isContainer: event.payload.is_container ?? false,
             },
           });
         }
@@ -1108,26 +846,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2(); return; }
       unlisteners.push(u2);
 
-      const u2b = await listen<{ session_id: string; endpoints: VirtualPortEndpoint[] }>("virtual-port-created", event => {
-        dispatch({ type: "UPDATE_TAB_VPORTS", id: event.payload.session_id, pairs: event.payload.endpoints });
-      });
-      if (cancelled) { u2b(); return; }
-      unlisteners.push(u2b);
-
-      const u2c = await listen<{ session_id: string; kind?: string; reason: string }>("virtual-port-failed", event => {
-        console.warn(`[VirtualPort] ${event.payload.session_id}: ${event.payload.reason}`);
-        dispatch({ type: "SET_VPORT_ERROR", id: event.payload.session_id, error: event.payload.reason, kind: event.payload.kind });
-      });
-      if (cancelled) { u2c(); return; }
-      unlisteners.push(u2c);
-
-      const u2d = await listen("virtual-port-driver-ready", () => {
-        tabsRef.current.forEach(tab => {
-          if (tab.virtualPortError) dispatch({ type: "CLEAR_VPORT_ERROR", id: tab.id });
-        });
-      });
-      if (cancelled) { u2d(); return; }
-      unlisteners.push(u2d);
 
       const u2e = await listen<{ channel_id: string; parent_id: string; disconnect_info?: DisconnectInfo }>("channel-closed", event => {
         if (event.payload.disconnect_info?.retain_terminal) dispatch({ type: "SET_TAB_DISCONNECTED", id: event.payload.channel_id, info: event.payload.disconnect_info });
@@ -1136,54 +854,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cancelled) { u2e(); return; }
       unlisteners.push(u2e);
 
-      const u2f = await listen<{ session_id: string; peer_id: string; peer_name: string; peer_addr: string; local_addr?: string }>("netdbg-peer-joined", event => {
-        const { session_id: cid, peer_id, peer_name, peer_addr, local_addr } = event.payload;
-        peerSessionsRef.current[peer_id] = true;
-        networkPeerContainerRef.current[peer_id] = cid;
-        dispatch({ type: "SET_PEER_CONNECTED", id: peer_id, connected: true });
-        dispatch({ type: "SET_NETWORK_PEER", containerId: cid, peer: { peerId: peer_id, name: peer_name, addr: peer_addr, localAddr: local_addr, state: "connected", txBytes: 0, rxBytes: 0 } });
-      });
-      if (cancelled) { u2f(); return; }
-      unlisteners.push(u2f);
-
-      const u2g = await listen<{ session_id: string; peer_id: string; tx_bytes?: number | null; rx_bytes?: number | null }>("netdbg-peer-left", event => {
-        const { session_id: cid, peer_id, tx_bytes, rx_bytes } = event.payload;
-        const containerTab = tabsRef.current.find(t => t.id === cid);
-        const isNetClient = containerTab?.pluginId === "network" && ((containerTab.params as Record<string, unknown> | undefined)?.role ?? "client") === "client";
-        if (isNetClient) {
-          invoke("disconnect_session", { sessionId: cid }).catch(() => {});
-          dispatch({ type: "SET_TAB_STATE", id: cid, state: "disconnected" });
-          return;
-        }
-        peerSessionsRef.current[peer_id] = false;
-        dispatch({ type: "SET_PEER_CONNECTED", id: peer_id, connected: false });
-        dispatch({
-          type: "SET_NETWORK_PEER_STATE",
-          containerId: cid,
-          peerId: peer_id,
-          state: "disconnected",
-          txBytes: typeof tx_bytes === "number" ? tx_bytes : undefined,
-          rxBytes: typeof rx_bytes === "number" ? rx_bytes : undefined,
-        });
-      });
-      if (cancelled) { u2g(); return; }
-      unlisteners.push(u2g);
 
       const u3 = await listen<{ session_id: string; reason?: string; disconnect_info?: DisconnectInfo }>("session-disconnected", event => {
         const sid = event.payload.session_id;
         dispatch({ type: "SET_TAB_DISCONNECTED", id: sid, info: event.payload.disconnect_info });
-        const peers = stateRef.current.networkPeers[sid];
-        if (peers) {
-          for (const peer of peers) {
-            delete peerSessionsRef.current[peer.peerId];
-            if (networkPeerContainerRef.current[peer.peerId] === sid) delete networkPeerContainerRef.current[peer.peerId];
-            dispatch({ type: "REMOVE_PEER", id: peer.peerId });
-          }
-          dispatch({ type: "CLEAR_NETWORK_PEERS", containerId: sid });
-        }
-        dispatch({ type: "UPDATE_TAB_ECHO", id: sid, localEcho: false });
         if (!event.payload.disconnect_info?.retain_terminal) dispatch({ type: "REMOVE_ALL_CHILDREN", parentId: sid });
-        dispatch({ type: "UPDATE_TAB_VPORTS", id: sid, pairs: [] });
         disconnectCallbackRef.current?.(sid, event.payload.reason);
         setLoggingSessions(prev => {
           if (!prev.has(sid)) return prev;
@@ -1226,11 +901,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       unlisteners.push(u8);
 
       const u9 = await listen<{ tab_id: string; tx_bytes: number; rx_bytes: number; connected_at?: number | null }>("session-stats", event => {
-        const cid = networkPeerContainerRef.current[event.payload.tab_id];
-        if (cid) {
-          dispatch({ type: "SET_NETWORK_PEER_STATS", containerId: cid, peerId: event.payload.tab_id, txBytes: event.payload.tx_bytes, rxBytes: event.payload.rx_bytes });
-          return;
-        }
         dispatch({ type: "UPDATE_TAB_STATS", id: event.payload.tab_id, stats: { txBytes: event.payload.tx_bytes, rxBytes: event.payload.rx_bytes }, connectedAt: event.payload.connected_at });
       });
       if (cancelled) { u9(); return; }
@@ -1307,15 +977,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       onDataSent,
       subscribeDataSent,
       isSessionConnected,
-      selectNetworkPeer,
-      getNetworkPeers,
-      disconnectNetworkPeer,
-      clearNetworkPeer,
-      mergeNetworkPeers,
-      setNetworkManualTarget,
-      registerNetworkUdpSource,
-      subscribeNetworkManualSent,
-      setNetworkBroadcast,
       sendToTarget,
       updateSessionStats,
       onSessionDisconnect,

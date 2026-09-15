@@ -464,7 +464,6 @@ export default function ConnectDialog({ isOpen, onClose, editSessionId }: Connec
           effectiveTransferProtocol,
           effectiveSendBarEnabled,
           undefined, // pluginId
-          journaldEnabled,
         );
         onClose();
       } else {

@@ -13,7 +13,7 @@ import manifestJson from "../../plugin-manifests/network.json";
 import { formatBytes } from "../../utils/format";
 import NetworkDebugSessionView from "../../components/Network/NetworkDebugSessionView";
 import statusStyles from "../../components/Layout/StatusBar.module.css";
-import NetworkSendTarget from "./NetworkSendTarget";
+import NetworkSendTarget, { isNetworkSendTargetVisible } from "./NetworkSendTarget";
 import {
   clearNetworkPeer,
   disconnectNetworkPeer,
@@ -141,6 +141,7 @@ registerPlugin({
   runtimeStore: networkRuntimeStore,
   sendData: sendNetworkData,
   sendTarget: NetworkSendTarget,
+  sendTargetVisible: params => isNetworkSendTargetVisible(params),
   sessionTree: {
     groupKey: (params, fallback) => {
       const transport = params.transport === "udp" ? "udp" : "tcp";

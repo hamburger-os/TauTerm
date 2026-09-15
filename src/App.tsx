@@ -12,7 +12,6 @@ import StatusBar from "./components/Layout/StatusBar";
 import ResizeHandle from "./components/Layout/ResizeHandle";
 import TabContentDispatcher from "./components/TabContentDispatcher";
 import SendBar from "./components/SendBar/SendBar";
-import { isTargetBarVisible } from "./components/SendBar/TargetBar";
 import { useSendBarLayout } from "./components/SendBar/useSendBarLayout";
 import {
   ASSET_PERSISTENCE_ERROR_EVENT,
@@ -66,7 +65,8 @@ function AppInner() {
   const activeShowSendBar = activeTabForBar
     ? pluginRegistry.resolveSendBarEnabled(activeTabForBar.pluginId, activeTabForBar.sendBarEnabled)
     : false;
-  const activeShowTargetBar = activeShowSendBar && isTargetBarVisible(activeTabForBar?.params);
+  const activeShowTargetBar = activeShowSendBar && !!activeTabForBar
+    && (pluginRegistry.get(activeTabForBar.pluginId)?.sendTargetVisible?.(activeTabForBar.params ?? {}) ?? false);
   const {
     isResizing: isResizingSendBar,
     hostStyle: sendBarHostStyle,

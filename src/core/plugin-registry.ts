@@ -182,6 +182,8 @@ export interface PluginRegistration {
   sessionTree?: PluginSessionTreeContribution;
   /** 全局 SendBar 中的插件专属目标选择区。 */
   sendTarget?: ComponentType<{ sessionId: string }>;
+  /** 插件决定目标选择区是否占用 SendBar 的固定附加行。 */
+  sendTargetVisible?: (params: Record<string, unknown>) => boolean;
   /** TerminalView 查询插件运行态后决定是否本地回显。 */
   terminalLocalEcho?: (runtimeSnapshot: unknown) => boolean;
   toolbarItems?: ToolbarItem[];
