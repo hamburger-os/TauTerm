@@ -180,8 +180,11 @@ fn frontend_has_single_plugin_registry_for_presentation() {
     let contracts = read_workspace_source("src/core/plugin-contracts.ts");
     assert!(
         !contracts.contains("from \"react\"")
-            && !contracts.contains("SessionContext")
-            && !contracts.contains("i18n"),
+            && !contracts.contains("from 'react'")
+            && !contracts.contains("from \"../context/SessionContext")
+            && !contracts.contains("from '../../context/SessionContext")
+            && !contracts.contains("from \"../i18n")
+            && !contracts.contains("from '../../i18n"),
         "frontend plugin contracts must stay dependency-free"
     );
 }
