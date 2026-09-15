@@ -232,7 +232,34 @@ impl UnifiedProgress {
         progress
     }
 
+    /// 构造文件完成事件；用于调用方没有独立原始总大小的场景。
+    ///
+    /// 成功时已传输字节就是总大小。失败时总大小保持未知（0），避免把部分传输
+    /// 伪装成 100%；已知原始大小的调用方应使用 `file_complete_with_total`。
     pub fn file_complete(
+        protocol: &str,
+        file_name: &str,
+        bytes_transferred: u64,
+        position: ProgressPosition,
+        direction: TransferDirection,
+        success: bool,
+        error: Option<String>,
+    ) -> Self {
+        let bytes_total = if success { bytes_transferred } else { 0 };
+        Self::file_complete_with_total(
+            protocol,
+            file_name,
+            bytes_transferred,
+            bytes_total,
+            position,
+            direction,
+            success,
+            error,
+        )
+    }
+
+    /// 构造文件完成事件，并保留调用方已知的原始文件总大小。
+    pub fn file_complete_with_total(
         protocol: &str,
         file_name: &str,
         bytes_transferred: u64,
@@ -404,7 +431,7 @@ mod tests {
 
     #[test]
     fn failed_file_complete_keeps_original_total() {
-        let progress = UnifiedProgress::file_complete(
+        let progress = UnifiedProgress::file_complete_with_total(
             "ymodem",
             "firmware.bin",
             1024,
@@ -422,5 +449,25 @@ mod tests {
         assert_eq!(progress.bytes_done, 1024);
         assert_eq!(progress.bytes_total, 4096);
         assert_eq!(progress.file_success, Some(false));
+    }
+
+    #[test]
+    fn failed_file_complete_without_known_total_keeps_total_unknown() {
+        let progress = UnifiedProgress::file_complete(
+            "sftp",
+            "partial.bin",
+            1024,
+            ProgressPosition {
+                file_index: 0,
+                total_files: 1,
+                aggregate_bytes: 1024,
+                aggregate_total: 0,
+            },
+            TransferDirection::Receive,
+            false,
+            Some("failed".into()),
+        );
+        assert_eq!(progress.bytes_done, 1024);
+        assert_eq!(progress.bytes_total, 0);
     }
 }
