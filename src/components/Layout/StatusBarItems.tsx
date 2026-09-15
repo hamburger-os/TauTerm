@@ -71,16 +71,15 @@ export function SessionUptimeStatus({ tab }: { tab: StatusBarTab | null }) {
 }
 
 export function StreamModeStatus({ tab }: { tab: StatusBarTab | null }) {
-  const { t } = useTranslation();
   if (!tab || !isConnected(tab)) return null;
 
   const mode = tab.params?.data_mode;
   const label = mode === "hex"
-    ? t("serial.dataModeHex")
+    ? "HEX"
     : mode === "dual"
-      ? t("serial.dataModeDual")
+      ? "DUAL"
       : mode === "text"
-        ? t("serial.dataModeText")
+        ? "TEXT"
         : null;
 
   return label ? <StatusBarBadge>{label}</StatusBarBadge> : null;
