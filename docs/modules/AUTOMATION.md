@@ -14,6 +14,8 @@ TauTerm 的发送能力既要支持人工调试，也要支持命令面板、自
 
 SendBar 的四个模式不全部常驻 DOM，只挂载当前模式。真正需要跨模式保留的输入、选择和执行所有权由每个 Session 的 `SendBarContext` 保存；Command Set、Auto Reply Config 与 Lua Script 的定义则是跨 Session 复用的工程资产。
 
+SendBar 的垂直分割尺寸采用像素空间模型：用户调整的是主体高度，主体最小值直接由主题中的 `--sendbar-min-height` 解析，保证四个竖排模式按钮在启动状态和拖回最小状态具有完全相同的几何；`TargetBar` 是固定附加行，不参与主体比例换算。终端区域始终通过 flex 获取剩余高度，SendBar 总高度上限为主内容区的 80%，主内容区高度变化时重新钳制当前值。禁止把主体最小高度先换算为整数百分比再回算像素，以免产生不可逆的高度量化误差。
+
 Command Set、Auto Reply Config 与 Lua Script 不把浏览器本地存储作为权威来源，统一保存到 Rust ConfigStore 的 `assets.*` 命名空间；WebView 内 `assetStore` 是这些 global asset 的单一内存协调层。同一 key 的写入串行执行，持久化成功后才广播，失败时回滚到最近一次已确认快照并显式报告错误。内置示例只在对应资产存储从未初始化时播种一次；显式空数组是合法用户状态。
 
 工程资产的“当前选择”仍是会话态。每个 SendBar 可以选不同的命令集、自动回复配置或脚本；持久化 active key 只作为新挂载 SendBar 的默认值。Lua 编辑器代码是本会话草稿，共享脚本更新不能覆盖未保存的本地修改。
@@ -40,6 +42,7 @@ flowchart LR
 ## 设计边界
 
 - SendBar 显示能力由插件 manifest/注册信息定义，Session 配置只能在支持范围内关闭，不能给不支持的插件强行开启。
+- SendBar 主体最小高度必须直接保持 CSS 定义的 canonical 像素值；拖高后再次拖到最小值必须与首次打开一致，不能通过百分比取整、向上取整或其它量化模型改变几何。
 - 自动回复与脚本必须受 Session 生命周期约束，断开后不能继续使用失效的运行时能力。
 - Network Debug 目标属于会话状态；后端目标同步只在已连接 runtime 上执行，并继续严格校验目标能力。
 - 文本编码和 raw bytes 明确分流，不能对 HEX/raw 数据做字符集二次转换。
@@ -53,6 +56,8 @@ flowchart LR
 
 - `src/components/SendBar/`
 - `src/components/SendBar/SendBarContext.tsx`
+- `src/components/SendBar/sendBarLayout.ts`
+- `src/components/SendBar/useSendBarLayout.ts`
 - `src/components/SendBar/sendPayload.ts`
 - `src/components/SendBar/assetStore.ts`
 - `src/components/SendBar/assetValidation.ts`
@@ -66,10 +71,10 @@ flowchart LR
 
 ## 回归检查
 
-`npm run check:sendbar` 验证基础发送 payload、重复发送背压、导入 schema、会话态/工程资产边界、Network Debug 目标同步生命周期、执行锁和公共确认弹窗等关键合同，并作为 CI 的前端 hygiene 检查之一。
+`npm run check:sendbar` 验证基础发送 payload、重复发送背压、导入 schema、会话态/工程资产边界、Network Debug 目标同步生命周期、执行锁、公共确认弹窗以及发送栏像素级最小高度/TargetBar 附加高度等关键合同，并作为 CI 的前端 hygiene 检查之一。
 
 ## 何时更新本文
 
-修改 SendBar 能力模型、SessionIo 发送语义、目标/编码路径、工程资产所有权、自动回复、Lua API、脚本隔离或自动化与 Session 生命周期的关系时，必须同步更新本文。
+修改 SendBar 能力模型、布局尺寸合同、SessionIo 发送语义、目标/编码路径、工程资产所有权、自动回复、Lua API、脚本隔离或自动化与 Session 生命周期的关系时，必须同步更新本文。
 
 Lua 5.4 与终端控制序列的权威入口见 [TERMINAL_SERIAL_AUTOMATION.md](../knowledge/TERMINAL_SERIAL_AUTOMATION.md)。
