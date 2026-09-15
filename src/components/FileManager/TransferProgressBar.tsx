@@ -5,6 +5,7 @@
  * 由 useSftpProgress 统一管理。
  */
 import { useTranslation } from "react-i18next";
+import { formatRate } from "../../utils/format";
 import Icon from "../common/Icon";
 import type { TransferPhase } from "./hooks/useSftpProgress";
 import { isTransferTerminalPhase } from "./hooks/useSftpProgress";
@@ -12,9 +13,7 @@ import styles from "./TransferProgressBar.module.css";
 
 function formatSpeed(bytesPerSec: number | null): string {
   if (bytesPerSec === null || !Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return "—";
-  if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`;
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
-  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+  return formatRate(bytesPerSec);
 }
 
 interface TransferProgressBarProps {

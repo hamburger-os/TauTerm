@@ -4,21 +4,27 @@
  * 提取重复的格式化逻辑到一处，避免在多个组件中维护相同代码。
  */
 
-/** 格式化字节数（自动选择 B/KB/MB/GB） */
-export function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+const BINARY_UNITS = ["B", "KiB", "MiB", "GiB", "TiB"] as const;
+
+function formatBinary(value: number, suffix: string): string {
+  if (!Number.isFinite(value) || value <= 0) return `0 B${suffix}`;
+  const unitIndex = Math.min(
+    Math.floor(Math.log(value) / Math.log(1024)),
+    BINARY_UNITS.length - 1,
+  );
+  const scaled = value / Math.pow(1024, unitIndex);
+  const text = unitIndex === 0 ? String(Math.round(scaled)) : scaled.toFixed(1);
+  return `${text} ${BINARY_UNITS[unitIndex]}${suffix}`;
 }
 
-/** 格式化速率（字节/秒，自适应单位 B/s → KB/s → MB/s） */
+/** 格式化字节数（自动选择 B/KiB/MiB/GiB/TiB） */
+export function formatBytes(bytes: number): string {
+  return formatBinary(bytes, "");
+}
+
+/** 格式化速率（字节/秒，自适应单位 B/s → KiB/s → MiB/s） */
 export function formatRate(bytesPerSecond: number): string {
-  if (!isFinite(bytesPerSecond) || bytesPerSecond < 0) return "0 B/s";
-  if (bytesPerSecond < 1024) return `${Math.round(bytesPerSecond)} B/s`;
-  if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
-  return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+  return formatBinary(bytesPerSecond, "/s");
 }
 
 /** 格式化秒数为 HH:MM:SS */

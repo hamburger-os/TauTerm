@@ -13,8 +13,10 @@
 //! - 串口 trait 同步，本 trait async（统一 tokio 运行时调度）
 
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// 传输方向
@@ -70,6 +72,85 @@ pub struct ProgressPosition {
     pub total_files: usize,
     pub aggregate_bytes: u64,
     pub aggregate_total: u64,
+}
+
+/// 单文件完成事件的 payload 字节语义。
+///
+/// `transferred` 是已确认完成的 payload 字节，`total` 是原始文件总大小；
+/// `total == 0` 表示调用方不知道原始大小。
+#[derive(Debug, Clone, Copy)]
+pub struct FileProgressBytes {
+    pub transferred: u64,
+    pub total: u64,
+}
+
+/// 基于单调时钟的 payload 吞吐率采样器。
+///
+/// 采样器只消费后端已经确认完成的累计 payload 字节，不依赖 WebView/IPC 到达时间。
+/// 首个样本只建立基线；后续样本在一个短滑动窗口内计算平均速率，既避免把协议启动
+/// 握手计入首块速度，也能抑制每块 ACK 带来的瞬时抖动。
+#[derive(Debug)]
+pub struct TransferRateMeter {
+    samples: VecDeque<(Instant, u64)>,
+    window: Duration,
+    min_sample_interval: Duration,
+}
+
+impl Default for TransferRateMeter {
+    fn default() -> Self {
+        Self::new(Duration::from_secs(2), Duration::from_millis(200))
+    }
+}
+
+impl TransferRateMeter {
+    pub fn new(window: Duration, min_sample_interval: Duration) -> Self {
+        Self {
+            samples: VecDeque::new(),
+            window,
+            min_sample_interval,
+        }
+    }
+
+    /// 记录一次累计 payload 字节样本，并在样本跨度足够时返回 bytes/s。
+    ///
+    /// 若累计字节回退（例如调用方切换到新的独立计数域），自动清空旧窗口重新建基线。
+    pub fn sample(&mut self, bytes_done: u64) -> Option<f64> {
+        let now = Instant::now();
+
+        if self
+            .samples
+            .back()
+            .is_some_and(|(_, previous_bytes)| bytes_done < *previous_bytes)
+        {
+            self.samples.clear();
+        }
+
+        self.samples.push_back((now, bytes_done));
+        while self.samples.len() > 2 {
+            let should_drop = self
+                .samples
+                .front()
+                .is_some_and(|(sampled_at, _)| now.duration_since(*sampled_at) > self.window);
+            if !should_drop {
+                break;
+            }
+            self.samples.pop_front();
+        }
+
+        let (started_at, started_bytes) = *self.samples.front()?;
+        let elapsed = now.duration_since(started_at);
+        let delta = bytes_done.saturating_sub(started_bytes);
+        if elapsed < self.min_sample_interval || delta == 0 {
+            return None;
+        }
+
+        let bytes_per_second = delta as f64 / elapsed.as_secs_f64();
+        (bytes_per_second.is_finite() && bytes_per_second > 0.0).then_some(bytes_per_second)
+    }
+
+    pub fn reset(&mut self) {
+        self.samples.clear();
+    }
 }
 
 impl UnifiedProgress {
@@ -161,10 +242,38 @@ impl UnifiedProgress {
         progress
     }
 
+    /// 构造文件完成事件；用于调用方没有独立原始总大小的场景。
+    ///
+    /// 成功时已传输字节就是总大小。失败时总大小保持未知（0），避免把部分传输
+    /// 伪装成 100%；已知原始大小的调用方应使用 `file_complete_with_total`。
     pub fn file_complete(
         protocol: &str,
         file_name: &str,
         bytes_transferred: u64,
+        position: ProgressPosition,
+        direction: TransferDirection,
+        success: bool,
+        error: Option<String>,
+    ) -> Self {
+        Self::file_complete_with_total(
+            protocol,
+            file_name,
+            FileProgressBytes {
+                transferred: bytes_transferred,
+                total: if success { bytes_transferred } else { 0 },
+            },
+            position,
+            direction,
+            success,
+            error,
+        )
+    }
+
+    /// 构造文件完成事件，并保留调用方已知的原始文件总大小。
+    pub fn file_complete_with_total(
+        protocol: &str,
+        file_name: &str,
+        bytes: FileProgressBytes,
         position: ProgressPosition,
         direction: TransferDirection,
         success: bool,
@@ -182,8 +291,8 @@ impl UnifiedProgress {
             kind: TransferProgressKind::FileComplete,
             protocol: protocol.to_string(),
             file_name: file_name.to_string(),
-            bytes_done: bytes_transferred,
-            bytes_total: bytes_transferred,
+            bytes_done: bytes.transferred,
+            bytes_total: bytes.total,
             bytes_per_second: None,
             file_index,
             total_files,
@@ -303,4 +412,74 @@ pub trait FileTransfer: Send + Sync {
         progress: UnboundedSender<UnifiedProgress>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<crate::transfer::types::BatchFileResult>, FileTransferError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_rate_meter_uses_delta_after_baseline() {
+        let mut meter = TransferRateMeter::new(Duration::from_secs(1), Duration::ZERO);
+        assert_eq!(meter.sample(1024), None);
+        std::thread::sleep(Duration::from_millis(2));
+        let rate = meter
+            .sample(2048)
+            .expect("second sample should produce a rate");
+        assert!(rate.is_finite());
+        assert!(rate > 0.0);
+    }
+
+    #[test]
+    fn transfer_rate_meter_resets_when_counter_moves_backwards() {
+        let mut meter = TransferRateMeter::new(Duration::from_secs(1), Duration::ZERO);
+        assert_eq!(meter.sample(4096), None);
+        std::thread::sleep(Duration::from_millis(1));
+        assert!(meter.sample(8192).is_some());
+        assert_eq!(meter.sample(1024), None);
+    }
+
+    #[test]
+    fn failed_file_complete_keeps_original_total() {
+        let progress = UnifiedProgress::file_complete_with_total(
+            "ymodem",
+            "firmware.bin",
+            FileProgressBytes {
+                transferred: 1024,
+                total: 4096,
+            },
+            ProgressPosition {
+                file_index: 0,
+                total_files: 1,
+                aggregate_bytes: 1024,
+                aggregate_total: 4096,
+            },
+            TransferDirection::Send,
+            false,
+            Some("failed".into()),
+        );
+        assert_eq!(progress.bytes_done, 1024);
+        assert_eq!(progress.bytes_total, 4096);
+        assert_eq!(progress.file_success, Some(false));
+    }
+
+    #[test]
+    fn failed_file_complete_without_known_total_keeps_total_unknown() {
+        let progress = UnifiedProgress::file_complete(
+            "sftp",
+            "partial.bin",
+            1024,
+            ProgressPosition {
+                file_index: 0,
+                total_files: 1,
+                aggregate_bytes: 1024,
+                aggregate_total: 0,
+            },
+            TransferDirection::Receive,
+            false,
+            Some("failed".into()),
+        );
+        assert_eq!(progress.bytes_done, 1024);
+        assert_eq!(progress.bytes_total, 0);
+    }
 }
