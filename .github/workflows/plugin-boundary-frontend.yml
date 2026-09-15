@@ -16,7 +16,19 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: python3 .github/plugin-boundary-frontend.py
+      - name: Apply asserted frontend migration
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/plugin-boundary-frontend.py')
+          text = path.read_text(encoding='utf-8')
+          old = r"r'''                    /\* 网络调试对端（非标签页树节点） \*/\n                    \{node\.peerChildren"
+          new = r"r'''                    \{/\* 网络调试对端（非标签页树节点） \*/\}\n                    \{node\.peerChildren"
+          if text.count(old) != 1:
+              raise SystemExit(f'frontend assertion hotfix: expected 1 match, got {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          python3 .github/plugin-boundary-frontend.py
       - run: npm ci
       - run: npx tsc --noEmit
       - name: Commit migration and remove one-shot tooling
