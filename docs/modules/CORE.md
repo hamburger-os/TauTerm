@@ -16,7 +16,7 @@ Saved Session Library 是独立的版本化磁盘配置集合，不受活动运�
 
 Tauri command 按阻塞风险分类：纯内存/短锁读取可以同步；文件系统、进程、凭据后端、驱动/平台探测、thread join 等潜在阻塞工作必须使用 async command，并在需要时进入 blocking worker。端点发现同样是配置辅助能力，不属于 Session 生命周期；前端进入配置页时按需请求，后端不得让硬件枚举阻塞 UI。
 
-前端插件连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件。统一 `ConnectDialog` 同时用它控制确认按钮和创建入口；协议专属必填规则留在插件中，公共对话框只消费布尔结果，不增加 Modbus、TRDP 等协议分支。
+前端 `PluginRegistry` 是唯一运行时插件注册目录；`plugin-contracts.ts` 只提供不依赖 React、i18n 或 SessionContext 的稳定类型合同，不建立第二套 registry。连接表单可以通过 `PluginRegistration.isConnectionConfigValid(params)` 声明“允许创建/保存 Session”的最低条件，插件也可以通过 `persistedConnectionParams`、`reconnectGuard` 与 `sessionPresentation` 分别拥有持久化参数投影、重连前置策略和会话展示格式。统一 Session/UI 层只调用这些 contribution，不按 SSH、TFTP、TRDP 等具体插件 ID 复制同一业务规则。
 
 ## 关键生命周期
 
@@ -39,15 +39,17 @@ stateDiagram-v2
 ## 设计边界
 
 - 核心只拥有可复用机制，不加入 TRDP、SSH、Modbus、串口等协议专属判断；`kernel/` 不允许依赖 `crate::plugins::*`。
-- 协议连接入口由 `PluginRuntime` 中注册的类型化 Session connector contribution 分发；公共 `connect_session` 不按插件 ID `match`。新增内建插件只在 composition root 注册 manifest、Adapter/能力和 connector。 `connect_session`、端点枚举和保存配置都要求显式 `plugin_id`，公共层不提供 Serial 等具体插件的兼容默认值。
-- 插件专属运行态必须由插件对象或 Session capability 持有，不把 SSH known-host verifier、协议 runtime registry 等字段泄漏到 `AppState`。 Adapter 需要按 `session_id` 查找专属 runtime 时使用 `SessionRuntimeRegistry<T>`：索引实例由 Adapter 持有且只保存 `Weak<T>`，SessionStore capability graph 仍是唯一强生命周期 owner；禁止模块级 `OnceLock`/静态 runtime registry。
+- 协议连接入口由 `PluginRuntime` 中注册的类型化 Session connector contribution 分发；公共 `connect_session` 不按插件 ID `match`。新增内建插件只在 composition root 注册 manifest、Adapter/能力和 connector。`connect_session`、端点枚举和保存配置都要求显式 `plugin_id`，公共层不提供 Serial 等具体插件的兼容默认值。
+- 插件专属运行态必须由插件对象或 Session capability 持有，不把 SSH known-host verifier、协议 runtime registry 等字段泄漏到 `AppState`。Adapter 需要按 `session_id` 查找专属 runtime 时使用 `SessionRuntimeRegistry<T>`：索引实例由 Adapter 持有且只保存 `Weak<T>`，SessionStore capability graph 仍是唯一强生命周期 owner；禁止模块级 `OnceLock`/静态 runtime registry。
+- 前端只保留一个 `PluginRegistry`。依赖无关的 contract 可以独立成类型模块，但不得为了绕过循环依赖再镜像插件注册数据；会话 presentation、持久化参数投影、重连策略、状态栏项和自定义视图均由插件 registration 直接声明。
+- 通用前端状态/渲染合同只包含协议无关字段。Serial 虚拟端口、SSH journald/文件服务、Network peer、TRDP A/B 链路等私有运行态不能为了某个 renderer 的便利继续扩张 `StatusBarContext`、通用 presentation helper 或其它公共 registry contract；插件 renderer 应通过自己的 Session/plugin store 获取私有状态。
 - UI 能力由插件 manifest/registration 声明；SendBar、自定义视图、连接配置合法性等不由页面临时猜测。
-- 运行时对象不能被持久化为 Session 配置。
+- 运行时对象不能被持久化为 Session 配置；插件需要从编辑态参数剥离凭据或其它瞬态字段时，通过自己的持久化投影 contribution 完成，公共 Session 层不解释字段名。
 - 所有流式 Session 都通过 `SessionIo/DataPlane` 发送、订阅和关闭，不建立协议专属第二套发送总线。
 - 需要独占主字节流的操作使用 `SessionIo::acquire_exclusive`；不转移底层 handle 所有权。
-- PTY resize、targeted send、多 peer、SFTP 等属于独立 capability，不塞进万能 stream trait。 文件传输 provider 的具体执行策略只存在于 `transfer/`；Kernel 仅传递不透明传输协议 ID，不维护 X/Y/ZModem、SFTP 等 provider 名称或执行模式。
+- PTY resize、targeted send、多 peer、SFTP 等属于独立 capability，不塞进万能 stream trait。文件传输 provider 的具体执行策略只存在于 `transfer/`；Kernel 仅传递不透明传输协议 ID，不维护 X/Y/ZModem、SFTP 等 provider 名称或执行模式。
 - 异常断开必须保留足够信息供 UI 呈现，同时后端负责确定性资源清理。
-- 新协议优先组合 Transport + Protocol + Session Runtime 现有能力；只有稳定需求无法表达时才扩展公共契约。
+- 新协议优先组合 Transport + Protocol + Session Runtime 现有能力；只有稳定需求无法表达时才扩展公共契约。新增协议的常规路径应只新增插件目录、canonical manifest 与 composition-root 注册，不修改公共 Session presentation/status contract。
 
 ## 代码锚点
 
@@ -61,14 +63,17 @@ stateDiagram-v2
 - `src-tauri/src/kernel/persistence.rs`
 - `src-tauri/src/commands.rs`
 - `src-tauri/src/commands/`
+- `src/core/plugin-contracts.ts`
 - `src/core/plugin-registry.ts`
 - `src/context/SessionContext.tsx`
 
 ## 单一来源约束
 
-内建插件元数据位于 `src/plugin-manifests/*.json`，TypeScript `PluginRegistry` 与 Rust `PluginRuntime` 都消费这组 canonical manifest。前端 registry 只叠加 React/UI contribution，重复插件 ID 直接失败；后端 runtime 将 manifest、可选 `ProtocolAdapter` 与类型化 contribution 收敛为单一注册记录，并在启动时校验 Adapter 自声明 ID 与 manifest ID 一致。Session 运行时生命周期仍只由 `SessionStore` 负责。
+内建插件元数据位于 `src/plugin-manifests/*.json`，TypeScript `PluginRegistry` 与 Rust `PluginRuntime` 都消费这组 canonical manifest。前端 registry 只叠加 UI/application contribution，重复插件 ID 直接失败；不存在独立的 Session presentation registry。后端 runtime 将 manifest、可选 `ProtocolAdapter` 与类型化 contribution 收敛为单一注册记录，并在启动时校验 Adapter 自声明 ID 与 manifest ID 一致。Session 运行时生命周期仍只由 `SessionStore` 负责。
 
 分屏/Workspace Layout 的真实 owner 是前端 SplitLayoutContext + `core/split-layout.ts`；不保留未接入运行时的平行 WindowManager/TabHost/IPC 骨架。通用 Tauri invoke/event 是当前 IPC 边界。
+
+架构回归测试不仅检查 Rust import 方向，也检查前端公共 plugin/status/presentation contract 不重新引入具体协议字段或 built-in plugin 分支。插件扩展性属于可执行架构约束，而不是仅靠文档约定。
 
 ## 何时更新本文
 
