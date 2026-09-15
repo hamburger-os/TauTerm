@@ -6,9 +6,16 @@
 //!
 //! - **生产者**: IoLoop（RX 数据）、commands（TX 数据、系统事件）、前端 log_event（用户操作）
 //! - **通道**: `std::sync::mpsc::SyncChannel<LogEntry>`，容量 256
-//! - **消费者**: 独立 `std::thread`，管理所有 LogWriter 实例
+//! - **消费者**: 最终绝对日志目录配置完成后启动的独立写线程，管理所有 LogWriter 实例
 //! - **刷新策略**: 缓冲区满 4KB 或 500ms 超时双重触发
 //! - **分卷**: 单文件超过设定阈值自动创建带序号的新文件
+//!
+//! ## 启动生命周期
+//!
+//! `LogEngine::new` 只建立有界队列并注册 `LogBridge`，不会启动消费者线程，也不会
+//! 创建任何日志文件。Tauri setup 完成最终日志目录解析后调用 `set_log_dir`；该方法只允许
+//! 成功一次，并在确认绝对目录可用后启动消费者。此前产生的启动日志保留在有界队列中，
+//! 随后统一落到最终目录，避免相对 `logs` 受当前工作目录影响。
 //!
 //! ## 线程安全
 //!
@@ -22,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
@@ -32,8 +39,10 @@ use std::time::Duration;
 static LOG_SENDER: Mutex<Option<mpsc::SyncSender<LogEntry>>> = Mutex::new(None);
 
 /// 系统日志是否启用（可由前端设置页控制）
-static SYSTEM_LOG_ENABLED: AtomicBool = AtomicBool::new(true);
-static SESSION_LOG_ENABLED: AtomicBool = AtomicBool::new(true);
+static SYSTEM_LOG_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+static SESSION_LOG_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
 static DROPPED_SESSION_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
 static DROPPED_SYSTEM_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
@@ -65,10 +74,8 @@ static SYSTEM_LOG_MIN_LEVEL: Mutex<String> = Mutex::new(String::new());
 /// `log` crate 桥接器
 ///
 /// 将所有 `log::info!()` / `log::warn!()` / `log::error!()` 调用
-/// 转发到 LogEngine 消费者线程，写入 `TauTerm_{date}.log`。
-///
-/// 初始化时机：`lib.rs` 的 `run()` 入口处调用 `log::set_logger(&LogBridge)`，
-/// LogEngine 创建时自动设置 `LOG_SENDER`。
+/// 转发到 LogEngine 有界队列。最终日志目录尚未配置时事件只排队，不创建文件；
+/// setup 完成 `set_log_dir` 后消费者线程开始写入 `TauTerm_{date}.log`。
 pub struct LogBridge;
 
 impl Log for LogBridge {
@@ -256,7 +263,8 @@ impl Default for LogConfig {
     fn default() -> Self {
         Self {
             session_enabled: true,
-            log_dir: PathBuf::from("logs"),
+            // bootstrap 阶段该值不用于文件 I/O；setup 会通过 set_log_dir 一次性写入最终绝对目录。
+            log_dir: PathBuf::new(),
             file_max_size: 10 * 1024 * 1024, // 10 MB
             buffer_size: 4096,               // 4 KB
             flush_interval_ms: 500,
@@ -306,15 +314,15 @@ pub struct LogHealth {
 
 /// 日志引擎
 ///
-/// 全局单例，管理所有日志写入器。
-/// 通过 `entry_tx` (SyncSender) 接收日志条目。
+/// `new()` 只建立入口队列；`set_log_dir()` 完成一次性目录配置后才启动消费者。
+/// 这样启动早期事件可以排队，但不会在当前工作目录创建隐式日志目录。
 pub struct LogEngine {
     /// 日志条目发送端（可克隆给生产者）
     entry_tx: mpsc::SyncSender<LogEntry>,
-    /// 消费者线程句柄
-    consumer_handle: Option<std::thread::JoinHandle<()>>,
-    /// 消费者线程取消标志
-    cancel_flag: Arc<AtomicBool>,
+    /// consumer 启动前暂存的唯一接收端；set_log_dir 成功后被永久取走。
+    pending_rx: Mutex<Option<mpsc::Receiver<LogEntry>>>,
+    /// 消费者线程句柄。目录配置成功前为 None。
+    consumer_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// 活跃的日志状态（用于前端查询）
     active_logs: Arc<Mutex<HashMap<String, LogStatus>>>,
     /// 当前配置（线程安全共享）
@@ -322,33 +330,25 @@ pub struct LogEngine {
 }
 
 impl LogEngine {
-    /// 创建日志引擎并启动消费者线程
+    /// 创建尚未绑定磁盘目录的日志引擎。
+    ///
+    /// 生产者可以立即向有界队列写入启动事件，但在 `set_log_dir` 成功之前不会启动
+    /// consumer，也不会创建任何文件。
     pub fn new(config: LogConfig) -> Self {
         SESSION_LOG_ENABLED.store(config.session_enabled, Ordering::Relaxed);
         let (entry_tx, entry_rx) = mpsc::sync_channel::<LogEntry>(256);
 
-        // 将 sender 注册到全局桥接器，使 log::info!/warn!/error! 自动写入系统日志
+        // sender 立即对 LogBridge 可见；consumer 延迟到最终目录配置完成后启动。
         if let Ok(mut guard) = LOG_SENDER.lock() {
             *guard = Some(entry_tx.clone());
         }
 
-        let cancel_flag = Arc::new(AtomicBool::new(false));
-        let cancel_flag_clone = cancel_flag.clone();
-        let active_logs = Arc::new(Mutex::new(HashMap::new()));
-        let active_logs_clone = active_logs.clone();
-        let config_arc = Arc::new(Mutex::new(config));
-        let config_clone = config_arc.clone();
-
-        let handle = std::thread::spawn(move || {
-            Self::consumer_loop(entry_rx, cancel_flag_clone, config_clone, active_logs_clone);
-        });
-
-        LogEngine {
+        Self {
             entry_tx,
-            consumer_handle: Some(handle),
-            cancel_flag,
-            active_logs,
-            config: config_arc,
+            pending_rx: Mutex::new(Some(entry_rx)),
+            consumer_handle: Mutex::new(None),
+            active_logs: Arc::new(Mutex::new(HashMap::new())),
+            config: Arc::new(Mutex::new(config)),
         }
     }
 
@@ -366,13 +366,49 @@ impl LogEngine {
         }
     }
 
-    /// 更新日志目录（应用启动时由 setup 回调调用）
+    /// 一次性配置最终日志目录并启动消费者线程。
+    ///
+    /// 日志目录是进程级 ownership，不是运行时可变设置。要求绝对路径，且每个 LogEngine
+    /// 只能成功配置一次；这样 UI 返回的目录与实际 writer 永远指向同一位置。
     pub fn set_log_dir(&self, dir: PathBuf) -> Result<(), String> {
-        let mut cfg = self
-            .config
+        if !dir.is_absolute() {
+            return Err(format!("日志目录必须是绝对路径: {:?}", dir));
+        }
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("无法创建日志目录 {:?}: {error}", dir))?;
+
+        let mut pending_rx = self
+            .pending_rx
             .lock()
-            .map_err(|error| format!("log config lock poisoned: {error}"))?;
-        cfg.log_dir = dir;
+            .map_err(|error| format!("log startup receiver lock poisoned: {error}"))?;
+        if pending_rx.is_none() {
+            return Err("日志目录已经配置，运行期间不允许重新绑定日志目录".to_string());
+        }
+
+        {
+            let mut cfg = self
+                .config
+                .lock()
+                .map_err(|error| format!("log config lock poisoned: {error}"))?;
+            cfg.log_dir = dir;
+        }
+
+        let receiver = pending_rx
+            .take()
+            .expect("pending receiver checked before take");
+        let config_clone = self.config.clone();
+        let active_logs_clone = self.active_logs.clone();
+        let handle = std::thread::Builder::new()
+            .name("tauterm-log-consumer".to_string())
+            .spawn(move || {
+                Self::consumer_loop(receiver, config_clone, active_logs_clone);
+            })
+            .map_err(|error| format!("启动日志消费者线程失败: {error}"))?;
+
+        self.consumer_handle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .replace(handle);
         Ok(())
     }
 
@@ -519,7 +555,6 @@ impl LogEngine {
 
     fn consumer_loop(
         rx: mpsc::Receiver<LogEntry>,
-        cancel_flag: Arc<AtomicBool>,
         config_arc: Arc<Mutex<LogConfig>>,
         active_logs: Arc<Mutex<HashMap<String, LogStatus>>>,
     ) {
@@ -537,8 +572,9 @@ impl LogEngine {
             }
         };
 
-        // 启动时清理过期日志。System Log 与 Session Log 启用状态彼此独立，
-        // 清理策略不应被任意一个开关短路。
+        debug_assert!(initial_config.log_dir.is_absolute());
+
+        // consumer 只在最终目录配置后启动，因此 retention 与所有 writer 都使用同一目录。
         Self::cleanup_old_logs(&initial_config);
 
         let mut writers: HashMap<String, LogWriter> = HashMap::new();
@@ -551,12 +587,6 @@ impl LogEngine {
         // 从配置获取超时
         let get_timeout = |cfg: &LogConfig| Duration::from_millis(cfg.flush_interval_ms);
         loop {
-            // 检查取消信号
-            if cancel_flag.load(Ordering::SeqCst) {
-                Self::flush_all(&mut writers, &active_logs, &mut system_writer);
-                break;
-            }
-
             // 动态读取配置获取最新超时。配置锁损坏时停止 consumer，
             // 不能退化成默认配置继续写入未知目录。
             let current_timeout = match read_config() {
@@ -806,7 +836,7 @@ impl LogEngine {
                         continue;
                     }
 
-                    // 按日期轮转系统日志文件
+                    // 按日期轮转系统日志文件；目录在 consumer 启动前已经冻结为最终绝对路径。
                     let today = timestamp.format("%Y%m%d").to_string();
                     if system_date.as_deref() != Some(&today) {
                         // 关闭旧文件
@@ -922,13 +952,22 @@ impl LogEngine {
 
 impl Drop for LogEngine {
     fn drop(&mut self) {
-        // 设置取消标志
-        self.cancel_flag.store(true, Ordering::SeqCst);
-        // 发送关闭信号（如果通道还开着）
-        let _ = self.entry_tx.send(LogEntry::Command(LogCommand::Shutdown));
-        // 等待消费者线程结束
-        if let Some(handle) = self.consumer_handle.take() {
+        let handle = self
+            .consumer_handle
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+
+        if let Some(handle) = handle {
+            // consumer 已启动时由队列中的 Shutdown 保证按顺序处理并最终 flush。
+            let _ = self.entry_tx.send(LogEntry::Command(LogCommand::Shutdown));
             let _ = handle.join();
+        } else {
+            // 尚未配置目录时没有消费者；直接丢弃 receiver，绝不在默认相对目录落盘。
+            self.pending_rx
+                .get_mut()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take();
         }
     }
 }
@@ -956,5 +995,58 @@ mod tests {
         try_send_session_log_when(&tx, sample_entry(), false);
 
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn startup_system_events_wait_for_final_log_directory() {
+        SYSTEM_LOG_ENABLED.store(true, Ordering::Relaxed);
+        let root = tempfile::tempdir().unwrap();
+        let final_dir = root.path().join("final-logs");
+        let timestamp = Local::now();
+        let log_path = final_dir.join(format!("TauTerm_{}.log", timestamp.format("%Y%m%d")));
+        let mut config = LogConfig::default();
+        config.flush_interval_ms = 10;
+        let engine = LogEngine::new(config);
+
+        try_send_system_event(
+            &engine.sender(),
+            "WARN".into(),
+            "startup-before-directory".into(),
+            timestamp,
+        );
+
+        assert!(!final_dir.exists());
+        assert!(engine
+            .consumer_handle
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_none());
+
+        engine.set_log_dir(final_dir.clone()).unwrap();
+        assert_eq!(engine.get_config().unwrap().log_dir, final_dir);
+
+        let mut written = false;
+        for _ in 0..100 {
+            if let Ok(content) = std::fs::read_to_string(&log_path) {
+                if content.contains("startup-before-directory") {
+                    written = true;
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(written, "queued startup event was not written to final log directory");
+    }
+
+    #[test]
+    fn log_directory_is_absolute_and_single_assignment() {
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        let engine = LogEngine::new(LogConfig::default());
+
+        assert!(engine.set_log_dir(PathBuf::from("relative-logs")).is_err());
+        engine.set_log_dir(first).unwrap();
+        assert!(engine.set_log_dir(second).is_err());
     }
 }
