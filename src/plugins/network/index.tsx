@@ -80,6 +80,29 @@ function UdpPacketCount({ sessionId }: { sessionId: string }) {
   );
 }
 
+function networkSubtitle(params: Record<string, unknown>, endpoint: string): string {
+  const transport = params.transport === "udp" ? "udp" : "tcp";
+  const role = params.role === "server" ? "server" : "client";
+  if (role === "client") {
+    const host = typeof params.remote_host === "string" && params.remote_host.trim()
+      ? params.remote_host.trim()
+      : "";
+    const port = typeof params.remote_port === "number" && Number.isFinite(params.remote_port)
+      ? params.remote_port
+      : undefined;
+    if (host && port) return `${transport.toUpperCase()} · ${host}:${port}`;
+  } else {
+    const host = typeof params.listen_ip === "string" && params.listen_ip.trim()
+      ? params.listen_ip.trim()
+      : "0.0.0.0";
+    const port = typeof params.listen_port === "number" && Number.isFinite(params.listen_port)
+      ? params.listen_port
+      : undefined;
+    if (port) return `${transport.toUpperCase()} · ${host}:${port}`;
+  }
+  return endpoint;
+}
+
 const statusBarItems: StatusBarItem[] = [
   {
     id: "network-role",
@@ -112,6 +135,7 @@ registerPlugin({
       const role = params.role === "server" ? "Server" : "Client";
       return `Network Debug @ ${transport} ${role}`;
     },
+    subtitle: networkSubtitle,
   },
   customView: NetworkDebugSessionView,
   statusBarItems,
