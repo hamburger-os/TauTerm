@@ -340,27 +340,41 @@ pub fn run() {
                                 error
                             );
                         }
+
                         let service_backend = virtual_port::service_backend::ServiceBackend::new();
-                        if service_backend.connect().is_ok() {
-                            log::info!("虚拟串口特权服务已连接");
-                            *vpm = Box::new(service_backend);
-                        } else {
-                            log::warn!("虚拟串口特权服务不可用，回退到直连模式（按需 UAC）");
-                            *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
+                        match service_backend.connect() {
+                            Ok(()) => {
+                                log::info!("虚拟串口管理后端: privileged-service");
+                                *vpm = Box::new(service_backend);
+                                let orphan_count = vpm.cleanup_orphans();
+                                if orphan_count > 0 {
+                                    log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
+                                }
+                            }
+                            Err(error) => {
+                                log::warn!(
+                                    "虚拟串口管理后端: direct-uac-on-demand（特权服务不可用: {}）",
+                                    error
+                                );
+                                // 直连回退的定义就是“显式动作时按需 UAC”。普通启动阶段
+                                // 不执行 setupc 枚举/清理，避免在未提权进程里触发 740；
+                                // ownership 仍持久化，后续创建/手动清理会在明确操作中处理。
+                                *vpm = Box::new(VirtualPortManager::new(vpm_dir, state_dir));
+                            }
                         }
-                        let orphan_count = vpm.cleanup_orphans();
-                        if orphan_count > 0 {
-                            log::info!("已清理 {} 个孤儿虚拟端口对", orphan_count);
-                        }
-                        if !vpm.are_files_present() {
-                            log::warn!("com0com 驱动文件缺失，虚拟串口功能不可用");
-                        } else if vpm.detect_driver() {
-                            log::info!("com0com 驱动已就绪（安装时已自动安装或先前已安装）");
-                        } else {
-                            log::info!("com0com 驱动文件已找到但驱动未安装 \u{2014} 首次连接时将通过 NSIS 安装或需管理员权限运行时安装");
-                        }
-                        let driver_installed = vpm.detect_driver();
+
                         let files_present = vpm.are_files_present();
+                        let driver_installed = files_present && vpm.detect_driver();
+                        if !files_present {
+                            log::warn!("com0com 驱动文件状态: missing；虚拟串口功能不可用");
+                        } else if driver_installed {
+                            log::info!("com0com 驱动状态: installed");
+                        } else {
+                            log::info!(
+                                "com0com 驱动状态: not-installed；首次使用时需要安装或管理员权限"
+                            );
+                        }
+
                         drop(vpm);
                         if files_present && !driver_installed {
                             let _ = app.handle().emit("com0com-driver-missing", serde_json::json!({
