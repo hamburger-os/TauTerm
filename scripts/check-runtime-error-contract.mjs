@@ -27,6 +27,9 @@ for (const required of [
   "isRetryableUpdaterError",
   "reportFrontendError",
   "MANUAL_CHECK_TIMEOUT_MS = 30_000",
+  "const UPDATER_RUNTIME_ENABLED = import.meta.env.PROD",
+  "if (!UPDATER_RUNTIME_ENABLED)",
+  "if (!UPDATER_RUNTIME_ENABLED || !shouldAutoCheck()) return",
   'recordFailure("download-install"',
   'recordFailure("relaunch"',
 ]) {
@@ -34,6 +37,35 @@ for (const required of [
 }
 if (/error:\s*String\s*\(/.test(updaterHook)) {
   fail("useUpdater must not expose raw updater errors directly in the UI.");
+}
+
+const releaseAssembler = fs.readFileSync("scripts/assemble-release.js", "utf8");
+if (!releaseAssembler.includes('["windows-x86_64-nsis", "_x64-setup.exe"]')) {
+  fail("release manifest must publish the exact Windows NSIS updater target.");
+}
+if (releaseAssembler.includes('["windows-x86_64",')) {
+  fail("release manifest must not publish a generic Windows compatibility target.");
+}
+
+const terminal = fs.readFileSync("src/components/Terminal/Terminal.tsx", "utf8");
+for (const required of [
+  "const scheduleFit = useCallback",
+  "container.isConnected",
+  "container.clientWidth <= 0",
+  "container.clientHeight <= 0",
+  "const scheduleInitialize = () =>",
+  "bootstrapObserver = new ResizeObserver(scheduleInitialize)",
+  "resizeObserver = new ResizeObserver(scheduleFit)",
+  "cancelAnimationFrame(fitRafRef.current)",
+]) {
+  if (!terminal.includes(required)) fail("Terminal lifecycle contract missing " + required);
+}
+const fitCalls = terminal.match(/\bfitAddon\.fit\(\)|\bnextFitAddon\.fit\(\)|fitAddonRef\.current\?\.fit\(\)/g) ?? [];
+if (fitCalls.length !== 1 || !terminal.includes("fitAddon.fit();")) {
+  fail("Terminal must route every fit through the single guarded scheduleFit path.");
+}
+if (terminal.includes("term.open(containerRef.current);\n    fitAddon.fit();")) {
+  fail("Terminal must not synchronously open and fit during React effect setup.");
 }
 
 const updaterClassifier = fs.readFileSync("src/utils/updaterError.ts", "utf8");
