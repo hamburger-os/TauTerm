@@ -6,10 +6,10 @@
 use serde_json::Value;
 
 use crate::kernel::session_store::SavedSession;
+use crate::plugin_application::{PreparedSessionConfig, SessionConfigHandler};
 use crate::security::credential_store::{
-    CredentialStoreError, CredentialType, CredentialValue,
+    CredentialStore, CredentialStoreError, CredentialType, CredentialValue,
 };
-use crate::AppState;
 
 use super::SshConfig;
 
@@ -73,16 +73,8 @@ fn strip_secret_fields(params: &mut Value) -> Result<bool, String> {
     Ok(changed)
 }
 
-pub(crate) fn scrub_secrets_from_saved_sessions(
-    sessions: &mut [SavedSession],
-) -> Result<bool, String> {
-    let mut changed = false;
-    for session in sessions {
-        if session.plugin_id == super::PLUGIN_ID {
-            changed |= strip_secret_fields(&mut session.params)?;
-        }
-    }
-    Ok(changed)
+fn sanitize_saved_session(session: &mut SavedSession) -> Result<bool, String> {
+    strip_secret_fields(&mut session.params)
 }
 
 #[derive(Debug)]
@@ -97,7 +89,7 @@ pub(crate) struct PendingSshCredential {
 /// Plaintext secrets are transient input only; persisted params contain a deterministic credential
 /// account reference and the actual secret is committed after the Session Library transaction.
 pub(crate) fn prepare_session_params(
-    state: &AppState,
+    credential_store: &CredentialStore,
     session_id: &str,
     params: &mut Value,
 ) -> Result<Option<PendingSshCredential>, String> {
@@ -124,7 +116,7 @@ pub(crate) fn prepare_session_params(
             description: format!("SSH {username}@{host}"),
         })
     } else {
-        match state.credential_store.get_credential(&account) {
+        match credential_store.get_credential(&account) {
             Ok(value) if credential_matches_auth(&auth_method, &value) => {}
             Ok(_) => return Err("SSH 认证方式已变更，请重新输入对应凭据".into()),
             Err(CredentialStoreError::NotFound(_)) => {
@@ -147,11 +139,10 @@ pub(crate) fn prepare_session_params(
 }
 
 pub(crate) fn commit_credential(
-    state: &AppState,
+    credential_store: &CredentialStore,
     pending: PendingSshCredential,
 ) -> Result<(), String> {
-    state
-        .credential_store
+    credential_store
         .store_credential(
             &pending.account,
             pending.credential_type,
@@ -159,6 +150,27 @@ pub(crate) fn commit_credential(
             &pending.description,
         )
         .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))
+}
+
+fn prepare_persisted_config(
+    credential_store: &CredentialStore,
+    session_id: &str,
+    params: &mut Value,
+) -> Result<PreparedSessionConfig, String> {
+    let pending = prepare_session_params(credential_store, session_id, params)?;
+    Ok(match pending {
+        Some(pending) => PreparedSessionConfig::with_commit(move |store| {
+            commit_credential(store, pending)
+        }),
+        None => PreparedSessionConfig::unchanged(),
+    })
+}
+
+pub(crate) fn session_config_handler() -> SessionConfigHandler {
+    SessionConfigHandler {
+        prepare: prepare_persisted_config,
+        sanitize_saved: Some(sanitize_saved_session),
+    }
 }
 
 fn apply_credential(config: &mut SshConfig, credential: CredentialValue) -> Result<(), String> {
@@ -186,7 +198,10 @@ fn apply_credential(config: &mut SshConfig, credential: CredentialValue) -> Resu
     Ok(())
 }
 
-pub(crate) fn hydrate_config(state: &AppState, params: &Value) -> Result<SshConfig, String> {
+pub(crate) fn hydrate_config(
+    credential_store: &CredentialStore,
+    params: &Value,
+) -> Result<SshConfig, String> {
     let mut config: SshConfig = serde_json::from_value(params.clone())
         .map_err(|error| format!("SSH 配置解析失败: {error}"))?;
     let account = params
@@ -194,8 +209,7 @@ pub(crate) fn hydrate_config(state: &AppState, params: &Value) -> Result<SshConf
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
-    let credential = state
-        .credential_store
+    let credential = credential_store
         .get_credential(account)
         .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
     apply_credential(&mut config, credential)?;
@@ -203,7 +217,7 @@ pub(crate) fn hydrate_config(state: &AppState, params: &Value) -> Result<SshConf
 }
 
 pub(crate) fn hydrate_config_with_pending(
-    state: &AppState,
+    credential_store: &CredentialStore,
     params: &Value,
     pending: Option<&PendingSshCredential>,
 ) -> Result<SshConfig, String> {
@@ -213,6 +227,23 @@ pub(crate) fn hydrate_config_with_pending(
         apply_credential(&mut config, pending.value.clone())?;
         Ok(config)
     } else {
-        hydrate_config(state, params)
+        hydrate_config(credential_store, params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_type_must_match_auth_method() {
+        assert!(credential_matches_auth(
+            "password",
+            &CredentialValue::Password("secret".into())
+        ));
+        assert!(!credential_matches_auth(
+            "key",
+            &CredentialValue::Password("secret".into())
+        ));
     }
 }
