@@ -18,6 +18,17 @@ function toneClass(tone: StatusBarTone): string {
   }
 }
 
+function indicatorClass(tone: StatusBarTone): string {
+  switch (tone) {
+    case "neutral": return styles.indicatorNeutral;
+    case "accent": return styles.indicatorAccent;
+    case "success": return styles.indicatorSuccess;
+    case "warning": return styles.indicatorWarning;
+    case "danger": return styles.indicatorDanger;
+    default: return styles.indicatorMuted;
+  }
+}
+
 interface StatusBarGroupProps extends HTMLAttributes<HTMLSpanElement> {
   children: ReactNode;
 }
@@ -84,7 +95,7 @@ export function StatusBarIndicator({
 }: StatusBarIndicatorProps) {
   return (
     <span
-      className={`${styles.primitiveIndicator} ${styles[`indicator${tone[0].toUpperCase()}${tone.slice(1)}` as keyof typeof styles] ?? ""} ${pulse ? styles.indicatorPulse : ""} ${className}`.trim()}
+      className={`${styles.primitiveIndicator} ${indicatorClass(tone)} ${pulse ? styles.indicatorPulse : ""} ${className}`.trim()}
       aria-hidden="true"
       {...props}
     />
