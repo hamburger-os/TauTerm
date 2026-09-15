@@ -4,7 +4,9 @@
 //! commands execute on the application main thread, so WebView-facing write/resize paths live here
 //! as async commands. SessionStore locks are released before awaiting transport acknowledgements.
 
-use crate::kernel::log_engine::{try_send_session_log, DataDirection, DataLogEntry};
+use crate::kernel::log_engine::{
+    session_log_is_active, try_send_session_log, DataDirection, DataLogEntry,
+};
 use crate::session::DisconnectInfo;
 use crate::AppState;
 use chrono::Local;
@@ -52,18 +54,22 @@ pub async fn write_data(
         data
     };
 
-    if let Ok(log_engine) = state.log_engine.lock() {
-        try_send_session_log(
-            &log_engine.sender(),
-            DataLogEntry {
-                session_id,
-                direction: DataDirection::TX,
-                data_mode,
-                encoding,
-                payload: data_out.clone(),
-                timestamp: Local::now(),
-            },
-        );
+    // Session logging is opt-in per Session. Do not allocate/copy a log payload on the transport
+    // hot path unless the recorder is actually active for this exact Session.
+    if session_log_is_active(&session_id) {
+        if let Ok(log_engine) = state.log_engine.lock() {
+            try_send_session_log(
+                &log_engine.sender(),
+                DataLogEntry {
+                    session_id,
+                    direction: DataDirection::TX,
+                    data_mode,
+                    encoding,
+                    payload: data_out.clone(),
+                    timestamp: Local::now(),
+                },
+            );
+        }
     }
     Ok(data_out)
 }
