@@ -14,7 +14,7 @@ import styles from "../../components/SendBar/TargetBar.module.css";
 
 const ALL_NETWORK_PEERS = "__all__";
 
-function isTargetVisible(params: Record<string, unknown> | undefined): boolean {
+export function isNetworkSendTargetVisible(params: Record<string, unknown> | undefined): boolean {
   const transport = params?.transport as string | undefined;
   return (transport === "tcp" || transport === "udp") && params?.role === "server";
 }
@@ -27,7 +27,7 @@ export default function NetworkSendTarget({ sessionId }: { sessionId: string }) 
   const tab = state.tabs.find(item => item.id === sessionId);
   const params = (tab?.params ?? {}) as Record<string, unknown>;
   const transport = params.transport as string | undefined;
-  const visible = isTargetVisible(params);
+  const visible = isNetworkSendTargetVisible(params);
   const syncReady = visible && tab?.state === "connected";
 
   useEffect(() => {
