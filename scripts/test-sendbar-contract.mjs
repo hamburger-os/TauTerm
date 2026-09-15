@@ -14,6 +14,11 @@ import {
   uniqueAssetName,
 } from "../src/components/SendBar/assetValidation.ts";
 import { canSyncNetworkSendTarget } from "../src/components/SendBar/networkSendTarget.ts";
+import {
+  clampSendBarBodyHeight,
+  getSendBarHostHeightCss,
+  getSendBarHostMinHeightCss,
+} from "../src/components/SendBar/sendBarLayout.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -118,6 +123,29 @@ assert.equal(canSyncNetworkSendTarget("network", "connected", udpServerParams), 
 assert.equal(canSyncNetworkSendTarget("network", "connected", { transport: "tcp", role: "client" }), false);
 assert.equal(canSyncNetworkSendTarget("serial", "connected", tcpServerParams), false);
 
+// SendBar splitter geometry is exact in pixel space. Returning to the minimum must
+// produce the same canonical body height regardless of container size or TargetBar.
+const bodyMinHeight = 156;
+const targetBarHeight = 42;
+for (const containerHeight of [640, 810, 900, 1200]) {
+  assert.equal(clampSendBarBodyHeight(-100, containerHeight, bodyMinHeight), bodyMinHeight);
+  assert.equal(
+    clampSendBarBodyHeight(-100, containerHeight, bodyMinHeight, targetBarHeight),
+    bodyMinHeight,
+  );
+}
+assert.equal(clampSendBarBodyHeight(999, 810, bodyMinHeight), 648);
+assert.equal(clampSendBarBodyHeight(999, 810, bodyMinHeight, targetBarHeight), 606);
+assert.equal(getSendBarHostHeightCss(null, false), "var(--sendbar-min-height)");
+assert.equal(
+  getSendBarHostHeightCss(bodyMinHeight, true),
+  "calc(156px + var(--sendbar-targetbar-height))",
+);
+assert.equal(
+  getSendBarHostMinHeightCss(true),
+  "calc(var(--sendbar-min-height) + var(--sendbar-targetbar-height))",
+);
+
 // Architecture contracts: presentation, per-session UI state, shared assets and execution stay separate.
 const basicSend = source("src/components/SendBar/BasicSend.tsx");
 assert.ok(basicSend.includes("buildSendPayload"));
@@ -150,6 +178,14 @@ assert.ok(sendBar.includes("const { mode, executionMode } = state"));
 assert.ok(sendBar.includes('dispatch({ type: "SET_EXECUTION_MODE", owner, running })'));
 assert.ok(!sendBar.includes("useState<"), "execution ownership should live in SendBarContext");
 assert.ok(!sendBar.includes("engineSessionId"), "dead optional engine routing API must not return");
+
+const app = source("src/App.tsx");
+assert.ok(app.includes("useSendBarLayout"), "App shell must delegate SendBar splitter geometry");
+assert.ok(!app.includes("sendBarPct"), "SendBar height must not be stored as a percentage");
+assert.ok(!app.includes("SENDBAR_MIN_PCT"), "percentage minimum quantization must not return");
+const sendBarLayoutHook = source("src/components/SendBar/useSendBarLayout.ts");
+assert.ok(sendBarLayoutHook.includes("clampSendBarBodyHeight"));
+assert.ok(sendBarLayoutHook.includes("new ResizeObserver(normalizeHeight)"));
 
 const commandPanel = source("src/components/SendBar/CommandPanel.tsx");
 assert.ok(commandPanel.includes("usePointerDragReorder"));
@@ -186,4 +222,4 @@ assert.ok(!types.includes("interface LoopConfig"));
 assert.ok(!types.includes("interface ExecutionState"));
 assert.ok(!types.includes("localStorage"));
 
-console.log("SendBar payload, state-boundary, lifecycle, execution and UI contracts passed.");
+console.log("SendBar payload, layout, state-boundary, lifecycle, execution and UI contracts passed.");

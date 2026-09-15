@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";               // 窗口状态（最大化/还原追踪）
 import { invoke } from "@tauri-apps/api/core";
@@ -13,6 +13,7 @@ import ResizeHandle from "./components/Layout/ResizeHandle";
 import TabContentDispatcher from "./components/TabContentDispatcher";
 import SendBar from "./components/SendBar/SendBar";
 import { isTargetBarVisible } from "./components/SendBar/TargetBar";
+import { useSendBarLayout } from "./components/SendBar/useSendBarLayout";
 import {
   ASSET_PERSISTENCE_ERROR_EVENT,
   type AssetPersistenceErrorDetail,
@@ -39,9 +40,6 @@ const SIDEBAR_MAX = 400;
 const RIGHT_SIDEBAR_MIN = 160;
 const RIGHT_SIDEBAR_MAX_STATIC = 1600; // 静态后备值，实际上限由主内容区宽度动态计算
 const RIGHT_SIDEBAR_DEFAULT = 260;
-const SENDBAR_MIN_PCT = 5;
-const SENDBAR_MAX_PCT = 80;
-const SENDBAR_DEFAULT_PCT = SENDBAR_MIN_PCT;
 const RESIZE_DEBOUNCE_MS = 150;
 
 interface PendingHostKeyVerification {
@@ -49,16 +47,6 @@ interface PendingHostKeyVerification {
   host: string;
   port: number;
   fingerprint: string;
-}
-
-/** 将 CSS 长度自定义属性（支持 calc()）解析为像素数值；失败返回 null */
-function resolveCssLengthPx(varName: string): number | null {
-  const probe = document.createElement("div");
-  probe.style.cssText = `position:absolute;visibility:hidden;height:var(${varName});`;
-  document.body.appendChild(probe);
-  const height = probe.getBoundingClientRect().height;
-  document.body.removeChild(probe);
-  return Number.isFinite(height) && height > 0 ? height : null;
 }
 
 function AppInner() {
@@ -73,15 +61,20 @@ function AppInner() {
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [rightSidebarWidth, setRightSidebarWidth] = useState(RIGHT_SIDEBAR_DEFAULT);
   const [isResizingRightSidebar, setIsResizingRightSidebar] = useState(false);
-  const [sendBarPct, setSendBarPct] = useState(SENDBAR_DEFAULT_PCT);
-  const [isResizingSendBar, setIsResizingSendBar] = useState(false);
-  /** SendBar 最小高度，从 CSS 自定义属性 --sendbar-min-height 读取，避免与 SendBar.module.css 硬编码不同步 */
-  const [sendbarMinHeight, setSendbarMinHeight] = useState(0);
-  /** 顶部目标栏（TargetBar）固定一行高度，从 --sendbar-targetbar-height 读取；发送栏整体最小高度 = sendbarMinHeight + targetBarHeight */
-  const [targetBarHeight, setTargetBarHeight] = useState(0);
-  const sendbarMinHeightRef = useRef(sendbarMinHeight);
-  sendbarMinHeightRef.current = sendbarMinHeight;
   const mainContentRef = useRef<HTMLDivElement>(null);
+  const activeTabForBar = sessionState.tabs.find(tab => tab.id === sessionState.activeTabId);
+  const activeShowSendBar = activeTabForBar
+    ? pluginRegistry.resolveSendBarEnabled(activeTabForBar.pluginId, activeTabForBar.sendBarEnabled)
+    : false;
+  const activeShowTargetBar = activeShowSendBar && isTargetBarVisible(activeTabForBar?.params);
+  const {
+    isResizing: isResizingSendBar,
+    hostStyle: sendBarHostStyle,
+    onResizeStart: handleSendBarMouseDown,
+  } = useSendBarLayout({
+    containerRef: mainContentRef,
+    showTargetBar: activeShowTargetBar,
+  });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
@@ -144,29 +137,6 @@ function AppInner() {
     };
   }, [showToast, t]);
 
-  // 从 CSS 自定义属性读取 SendBar 最小高度与目标栏高度，确保 JS 与 CSS 值一致。
-  // 使用 useLayoutEffect 在首次绘制前完成解析，并修正初始 sendBarPct，
-  // 避免默认百分比对应的像素值小于 CSS min-height 导致首次拖动时 SendBar 出现"跳变高"现象。
-  useLayoutEffect(() => {
-    const minHeight = resolveCssLengthPx("--sendbar-min-height");
-    const targetHeight = resolveCssLengthPx("--sendbar-targetbar-height");
-    if (minHeight !== null) setSendbarMinHeight(minHeight);
-    if (targetHeight !== null) setTargetBarHeight(targetHeight);
-
-    // 修正初始百分比，使其与 CSS min-height 像素值对齐
-    const container = mainContentRef.current;
-    if (minHeight !== null && container) {
-      const containerHeight = container.clientHeight;
-      if (containerHeight > 0) {
-        const minPct = Math.max(
-          SENDBAR_MIN_PCT,
-          Math.ceil((minHeight * 100) / containerHeight)
-        );
-        setSendBarPct(prev => Math.max(prev, minPct));
-      }
-    }
-  }, []);
-
   // Resize: sidebar
   const sidebarStartX = useRef(0); const sidebarStartWidth = useRef(0);
   const handleSidebarMouseDown = useCallback((e: React.MouseEvent) => {
@@ -181,15 +151,8 @@ function AppInner() {
     rightSidebarStartX.current = e.clientX; rightSidebarStartWidth.current = rightSidebarWidth;
   }, [rightSidebarWidth]);
 
-  // Resize: sendBar (flex ratio)
-  const sendBarStartY = useRef(0); const sendBarStartPct = useRef(SENDBAR_DEFAULT_PCT);
-  const handleSendBarMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault(); setIsResizingSendBar(true);
-    sendBarStartY.current = e.clientY; sendBarStartPct.current = sendBarPct;
-  }, [sendBarPct]);
-
   useEffect(() => {
-    const resizeActive = isResizingSidebar || isResizingRightSidebar || isResizingSendBar;
+    const resizeActive = isResizingSidebar || isResizingRightSidebar;
     if (!resizeActive) return;
 
     const handleMove = (e: MouseEvent) => {
@@ -204,27 +167,14 @@ function AppInner() {
           : RIGHT_SIDEBAR_MAX_STATIC;
         setRightSidebarWidth(Math.min(dynamicMax, Math.max(RIGHT_SIDEBAR_MIN, rightSidebarStartWidth.current - (e.clientX - rightSidebarStartX.current))));
       }
-      if (isResizingSendBar) {
-        const container = mainContentRef.current;
-        if (!container) return;
-        const containerHeight = container.clientHeight;
-        if (containerHeight <= 0) return;
-        // 向上拖增大 SendBar 占比
-        const deltaPct = ((sendBarStartY.current - e.clientY) / containerHeight) * 100;
-        // 动态最小百分比：确保 SendBar 不小于 CSS 变量定义的最小高度
-        const dynamicMinPct = Math.max(SENDBAR_MIN_PCT, Math.ceil((sendbarMinHeightRef.current * 100) / containerHeight));
-        const newPct = Math.min(SENDBAR_MAX_PCT, Math.max(dynamicMinPct, sendBarStartPct.current + deltaPct));
-        setSendBarPct(newPct);
-      }
     };
     const handleUp = () => {
       setIsResizingSidebar(false);
       setIsResizingRightSidebar(false);
-      setIsResizingSendBar(false);
     };
     document.addEventListener("mousemove", handleMove);
     document.addEventListener("mouseup", handleUp);
-    document.body.style.cursor = isResizingSendBar ? "row-resize" : "col-resize";
+    document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
 
     return () => {
@@ -233,7 +183,7 @@ function AppInner() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-  }, [isResizingSidebar, isResizingRightSidebar, isResizingSendBar]);
+  }, [isResizingSidebar, isResizingRightSidebar]);
 
   const enqueueHostKey = useCallback((request: PendingHostKeyVerification) => {
     setPendingHostKey(current => {
@@ -411,15 +361,6 @@ function AppInner() {
     }
   }, []);
 
-  // 活跃会话是否显示目标栏（TargetBar）。用于终端行 flex 计算：
-  // 发送栏主体（body）高度由 sendBarPct 控制，目标栏为额外固定高度，
-  // 使 body 高度在有无目标栏时保持一致（而非被目标栏挤占 42px）。
-  const activeTabForBar = sessionState.tabs.find(t => t.id === sessionState.activeTabId);
-  const activeShowSendBar = activeTabForBar
-    ? pluginRegistry.resolveSendBarEnabled(activeTabForBar.pluginId, activeTabForBar.sendBarEnabled)
-    : false;
-  const activeShowTargetBar = activeShowSendBar && isTargetBarVisible(activeTabForBar?.params);
-
   return (
     <div data-testid="app-root" className={`app-root ${isResizingSidebar || isResizingRightSidebar || isResizingSendBar ? "ui-resizing" : ""}`}>
       {/* Shared four-color ambient background (z-index: 0) */}
@@ -454,7 +395,7 @@ function AppInner() {
 
         {/* 主内容区：终端 + 传输面板 + 发送栏 */}
         <div className="main-content" ref={mainContentRef}>
-          <div className="terminal-transmission-row" style={{ flex: `${100 - sendBarPct} 1 calc(${100 - sendBarPct}% - ${activeShowTargetBar ? targetBarHeight : 0}px)` }}>
+          <div className="terminal-transmission-row">
             <main className="terminal-viewport">
               <TabContentDispatcher />
             </main>
@@ -525,8 +466,6 @@ function AppInner() {
             // PluginManifest 是全局 SendBar 能力的唯一来源；会话配置只能在支持时关闭它。
             // SendBar 仍与连接生命周期解耦：支持它的会话断开后也保留布局，发送动作单独禁用。
             const showSendBar = pluginRegistry.resolveSendBarEnabled(tab.pluginId, tab.sendBarEnabled);
-            // 顶部目标栏（TargetBar）仅在实际存在 SendBar 且目标选择适用时显示。
-            const showTargetBar = showSendBar && isTargetBarVisible(tab.params);
             return (
               <React.Fragment key={tab.id}>
                 {(showSendBar && isActive) && (
@@ -534,8 +473,8 @@ function AppInner() {
                 )}
                 {showSendBar && (
                   <div style={isActive
-                    ? { flex: `${sendBarPct} 1 calc(${sendBarPct}% + ${showTargetBar ? targetBarHeight : 0}px)`, minHeight: sendbarMinHeight + (showTargetBar ? targetBarHeight : 0), display: 'flex', flexDirection: 'column' as const }
-                    : { display: 'none' as const }
+                    ? sendBarHostStyle
+                    : { display: "none" }
                   }>
                     <SendBar containerId={tab.id} />
                   </div>
