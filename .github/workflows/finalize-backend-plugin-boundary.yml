@@ -50,6 +50,38 @@ jobs:
                   raise SystemExit(f'{label}: expected 1 match, got {count}')
               p.write_text(text.replace(old, new, 1), encoding='utf-8')
 
+          def remove_fn(path: str, signature: str, label: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              pos = text.find(signature)
+              if pos < 0:
+                  raise SystemExit(f'{label}: signature not found')
+              line_start = text.rfind('\n', 0, pos) + 1
+              while line_start > 0:
+                  prev_end = line_start - 1
+                  prev_start = text.rfind('\n', 0, prev_end) + 1
+                  previous = text[prev_start:prev_end].strip()
+                  if previous.startswith('#[') or previous.startswith('///') or previous == '':
+                      line_start = prev_start
+                  else:
+                      break
+              brace = text.find('{', pos)
+              depth = 0
+              end = None
+              for index in range(brace, len(text)):
+                  if text[index] == '{':
+                      depth += 1
+                  elif text[index] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          end = index + 1
+                          break
+              if end is None:
+                  raise SystemExit(f'{label}: closing brace not found')
+              while end < len(text) and text[end] == '\n':
+                  end += 1
+              p.write_text(text[:line_start] + text[end:], encoding='utf-8')
+
           replace_once(
               'src-tauri/src/lib.rs',
               'plugins::network::plugins::network::commands::network_udp_send_to',
@@ -67,6 +99,28 @@ jobs:
               'use tauri::{AppHandle, Emitter, Manager, State};\n',
               'use tauri::{AppHandle, Emitter, State};\n',
               'unused Manager import',
+          )
+          replace_once(
+              'src-tauri/src/plugin_application.rs',
+              'pub(crate) struct PreparedSessionConfig {\n    commit: Option<Box<dyn FnOnce(&CredentialStore) -> Result<(), String> + Send>>,\n}',
+              'type SessionConfigCommit = Box<dyn FnOnce(&CredentialStore) -> Result<(), String> + Send>;\n\npub(crate) struct PreparedSessionConfig {\n    commit: Option<SessionConfigCommit>,\n}',
+              'SessionConfig commit type alias',
+          )
+          replace_once(
+              'src-tauri/src/plugins/trdp.rs',
+              '/// TRDP connection implementation called by the shared kernel connection router.\n\npub(crate) fn session_connector(',
+              '/// TRDP connection implementation called by the shared kernel connection router.\npub(crate) fn session_connector(',
+              'TRDP connector doc spacing',
+          )
+          remove_fn(
+              'src-tauri/src/plugins/serial/mod.rs',
+              'pub fn virtual_endpoints(&self)',
+              'unused Serial virtual_endpoints method',
+          )
+          remove_fn(
+              'src-tauri/src/commands.rs',
+              'fn saved_session(plugin_id: &str, params: Value)',
+              'unused command test saved_session helper',
           )
           PY
       - name: Install frontend dependencies
