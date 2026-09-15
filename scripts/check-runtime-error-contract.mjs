@@ -27,7 +27,7 @@ for (const required of [
   "isRetryableUpdaterError",
   "reportFrontendError",
   "MANUAL_CHECK_TIMEOUT_MS = 30_000",
-  "const UPDATER_RUNTIME_ENABLED = import.meta.env.PROD",
+  'import.meta.env.PROD && import.meta.env.TAURI_ENV_DEBUG === "false"',
   "if (!UPDATER_RUNTIME_ENABLED)",
   "if (!UPDATER_RUNTIME_ENABLED || !shouldAutoCheck()) return",
   'recordFailure("download-install"',
@@ -37,6 +37,11 @@ for (const required of [
 }
 if (/error:\s*String\s*\(/.test(updaterHook)) {
   fail("useUpdater must not expose raw updater errors directly in the UI.");
+}
+
+const viteConfig = fs.readFileSync("vite.config.ts", "utf8");
+if (!viteConfig.includes('envPrefix: ["VITE_", "TAURI_ENV_"]')) {
+  fail("Vite must expose TAURI_ENV_* so release/debug updater policy reaches the frontend bundle.");
 }
 
 const releaseAssembler = fs.readFileSync("scripts/assemble-release.js", "utf8");
