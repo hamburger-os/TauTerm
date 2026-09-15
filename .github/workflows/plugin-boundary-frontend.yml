@@ -36,7 +36,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/plugin-boundary-frontend.py .github/workflows/plugin-boundary-frontend.yml
+          git rm -f .github/plugin-boundary-frontend.py .github/workflows/plugin-boundary-frontend.yml
           git add -A
           git commit -m "refactor: migrate frontend protocol runtime state into plugins"
           git push origin HEAD:refactor/plugin-boundary-cleanup
