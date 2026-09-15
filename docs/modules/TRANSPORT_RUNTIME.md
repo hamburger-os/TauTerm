@@ -83,7 +83,9 @@ Exclusive 期间 actor 不持有 byte-stream driver，不进行后台 read-ahead
 
 “上层统一异步/事件化契约”不意味着强迫底层全部换成异步库。`serialport`、部分 PTY 等阻塞 API 可以由专用 worker 驱动；差异只存在于 transport 内部。
 
-Raw Serial 使用稳定的驱动 I/O timeout。共享模式下 actor 可以通过该 timeout 周期性回到命令循环；Exclusive 模式下协议 worker 直接驱动同一个串口对象，协议自己的握手/重试时限建立在稳定的底层超时之上。Windows USB CDC 等驱动不应在每个 X/Y/ZModem block 前后反复切换 `SetCommTimeouts`，也不应在进入传输时额外执行破坏性的驱动级 purge。协议层只有在协议状态机明确要求重新同步时，才允许有限消费已确认属于噪声或前一阶段残留的字节。
+Raw Serial 的 read deadline 是 transport actor 的调度切片，不是协议数据包的 write deadline。Windows `COMMTIMEOUTS` 必须在端口打开时一次性配置为**读写非对称**：读取保持短总超时，使共享 actor 能及时处理 write、exclusive 和 shutdown；写入使用按 baud rate 与帧位数推导的每字节预算，再叠加固定调度裕量，使实际 deadline 随单次 `WriteFile` payload 长度增长。这样 128 B / 1 KiB X/YModem 块以及更大的串口写入不会继承短 read slice，同时也不需要在每个协议块前后反复调用 `SetCommTimeouts`。POSIX 串口继续使用平台原生阻塞语义。协议层不得为了绕过 transport deadline 自行修改底层串口 timeout。
+
+这一超时模型只描述物理 I/O 上界，不替代协议自身的 ACK、NAK、CRC、重试或取消时限。Windows 写超时应覆盖至少一个保守倍数的理论线速时间，并保留有限固定裕量；发生超时时仍作为当前真实 driver I/O 失败返回，不能把部分写入伪装成成功。
 
 协议原生 async 驱动（当前 SSH）由 `AsyncBridgeDriver` 自有 Tokio runtime 驱动。任何依赖 Tokio reactor 的 future/timer 都必须在该 runtime 的上下文中创建并 poll，不能在普通 DataPlane OS 线程上先构造 `tokio::time` future 再交给 `block_on`。空闲读取使用短 read slice 让 actor 周期性处理共享写入、resize 和 shutdown；该 slice 属于 transport 内部调度参数，不得泄漏到 Session/UI。
 
