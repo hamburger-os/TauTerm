@@ -145,7 +145,7 @@ impl FileTransfer for SerialFileTransfer {
                         .get(file_index as usize)
                         .copied()
                         .unwrap_or(bytes_transferred);
-                    let _ = progress2.send(UnifiedProgress::file_complete(
+                    let _ = progress2.send(UnifiedProgress::file_complete_with_total(
                         &proto2,
                         &file_name,
                         bytes_transferred,
@@ -342,7 +342,7 @@ impl FileTransfer for SerialFileTransfer {
                         .unwrap_or_else(|e| e.into_inner())
                         .remove(&file_index)
                         .unwrap_or(bytes_transferred);
-                    let _ = progress2.send(UnifiedProgress::file_complete(
+                    let _ = progress2.send(UnifiedProgress::file_complete_with_total(
                         &proto2,
                         &file_name,
                         bytes_transferred,
