@@ -55,6 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           sed -i 's/let manifest_dir = Path::new/let manifest_dir = std::path::Path::new/' .github/scripts/plugin_review_cleanup.py
+          sed -i 's/text = replace_once(text, old, "", label)/text = text.replace(old, "", 1)/' .github/scripts/plugin_review_cleanup.py
           python3 .github/scripts/plugin_review_cleanup.py
 
       - name: Format Rust
