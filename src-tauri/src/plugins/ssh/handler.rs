@@ -53,7 +53,9 @@ impl Handler for SshHandler {
         let algorithm = server_public_key.algorithm().as_str().to_string();
         let fingerprint = server_public_key.fingerprint(HashAlg::Sha256).to_string();
 
-        log::info!("SSH 服务器主机密钥: algorithm={algorithm}, fingerprint={fingerprint}");
+        // 原始 KEX 回调属于协议细节；INFO 只保留上层 trust decision，避免同一
+        // fingerprint 在 handler / verifier / session 三层重复刷屏。
+        log::debug!("SSH 服务器主机密钥: algorithm={algorithm}, fingerprint={fingerprint}");
 
         if let Some(tx) = &self.verifier_tx {
             let (response_tx, response_rx) = oneshot::channel();
@@ -67,7 +69,7 @@ impl Handler for SshHandler {
                 Ok(()) => match response_rx.await {
                     Ok(accepted) => {
                         if accepted {
-                            log::info!("SSH 主机密钥验证通过");
+                            log::debug!("SSH 主机密钥验证通过");
                             Ok(true)
                         } else {
                             log::warn!("SSH 主机密钥验证未通过");

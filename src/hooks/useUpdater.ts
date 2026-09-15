@@ -33,6 +33,14 @@ const MANUAL_CHECK_TIMEOUT_MS = 30_000;
 const AUTO_CHECK_TIMEOUT_MS = 15_000;
 const MANUAL_RETRY_DELAY_MS = 750;
 
+// Updater target resolution depends on installed bundle metadata (for example
+// the Windows NSIS installer marker). Tauri exposes TAURI_ENV_DEBUG to frontend
+// hook commands via Vite envPrefix. Only a non-debug Tauri build may access the
+// production updater endpoint; `tauri dev`, `build --debug`, and generic Vite
+// builds all stay outside that trust boundary.
+const UPDATER_RUNTIME_ENABLED =
+  import.meta.env.PROD && import.meta.env.TAURI_ENV_DEBUG === "false";
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -45,6 +53,9 @@ function sleep(ms: number): Promise<void> {
  *
  * 原始 updater 错误只进入统一运行时诊断日志；UI 仅展示稳定、可操作的
  * 本地化错误类别，避免把 reqwest/TLS 内部错误直接暴露给用户。
+ *
+ * 开发态/调试 bundle 没有可依赖的正式安装 target 身份，因此 updater 完全禁用；
+ * 只有 release Tauri bundle 可以访问正式更新端点。
  *
  * @param tr — i18n translate 函数，用于设置本地化状态文本
  */
@@ -76,6 +87,12 @@ export function useUpdater(
 
   // ── 检查更新 ──
   const handleCheckUpdate = useCallback(async (isManual = false) => {
+    if (!UPDATER_RUNTIME_ENABLED) {
+      updateObjRef.current = null;
+      setUpdateInfo({ phase: "idle" });
+      return;
+    }
+
     setUpdateInfo({ phase: "checking" });
     const maxAttempts = isManual ? 2 : 1;
     const timeout = isManual ? MANUAL_CHECK_TIMEOUT_MS : AUTO_CHECK_TIMEOUT_MS;
@@ -135,6 +152,8 @@ export function useUpdater(
 
   // ── 下载并安装更新 ──
   const handleDownloadUpdate = useCallback(async () => {
+    if (!UPDATER_RUNTIME_ENABLED) return;
+
     let update = updateObjRef.current;
     if (!update) {
       // 重新检查以获取 Update 对象，然后继续下载。
@@ -183,6 +202,8 @@ export function useUpdater(
 
   // ── 安装完成后重启；若系统安装器已接管流程，应用会在此前退出 ──
   const handleInstallUpdate = useCallback(async () => {
+    if (!UPDATER_RUNTIME_ENABLED) return;
+
     try {
       await relaunch();
     } catch (error) {
@@ -209,15 +230,15 @@ export function useUpdater(
 
   // ── 启动时自动检查 ──
   useEffect(() => {
-    if (shouldAutoCheck()) {
-      const timer = setTimeout(() => {
-        handleCheckUpdate(false).catch(error => {
-          // handleCheckUpdate 已处理预期 updater 错误；这里只兜底 Hook 外异常。
-          reportFrontendError("updater.autocheck", error);
-        });
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
+    if (!UPDATER_RUNTIME_ENABLED || !shouldAutoCheck()) return;
+
+    const timer = setTimeout(() => {
+      handleCheckUpdate(false).catch(error => {
+        // handleCheckUpdate 已处理预期 updater 错误；这里只兜底 Hook 外异常。
+        reportFrontendError("updater.autocheck", error);
+      });
+    }, 3000);
+    return () => clearTimeout(timer);
   }, [handleCheckUpdate]);
 
   return {

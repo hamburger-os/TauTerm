@@ -22,7 +22,9 @@ SSH 主机身份另由版本化 `known_hosts.json` 保存公开的 host/port/fin
 
 ### Windows 特权操作
 
-主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；开发/便携场景可以使用明确的按需 UAC 回退。Local Shell 的管理员 child 是独立的一次性提权路径，不等于给主应用提权。
+主 GUI 进程保持普通权限。虚拟串口等需要系统权限的操作，在正式安装场景通过受控服务执行，并限制 IPC API 与调用者身份；开发/便携场景使用明确的按需 UAC 回退。Local Shell 的管理员 child 是独立的一次性提权路径，不等于给主应用提权。
+
+虚拟串口启动恢复只属于特权服务：服务可在自己的机器级 ownership 状态上执行 orphan reconciliation/cleanup。主 GUI 无法连接服务时进入 `direct-uac-on-demand`，普通启动阶段只读取 TauTerm 自己的 ownership 与驱动安装状态，不运行 `setupc list`、不主动清理 orphan，也不因为“只读探测”触发 UAC；创建、安装或手动清理等用户明确动作才允许进入受控提权流程。`driver installed` 与 `privileged management backend available` 是两个独立状态，日志和 UI 不得混为“虚拟串口全部就绪”。
 
 ### Native helper 与动态库
 
@@ -30,7 +32,11 @@ TRDP sidecar、抓包库等 native 依赖只能从受控位置解析。生产构
 
 ### 打包与更新
 
-构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验，发布流程对此保持 fail-closed。Windows Authenticode 发布者签名当前尚未启用：开发阶段的 NSIS、主程序、service/TRDP helper 可能没有 publisher signature。这个限制必须在平台支持文档中明确披露；进入广泛生产分发前，需要恢复 Authenticode + RFC 3161 时间戳并在 CI 中验证 signer/timestamp。
+构建产物由平台 CI 生成，更新包按 Tauri updater 的签名链校验，发布流程对此保持 fail-closed。TauTerm 只在生产 bundle 中启用 updater；Vite/Tauri 开发运行没有可靠的已安装 bundle/installer target 身份，因此自动检查、手动检查、下载与重启更新路径均不访问正式 updater endpoint。开发态不得通过给 `latest.json` 增加 `windows-x86_64` 等通用兼容键来伪造安装包身份。
+
+正式更新清单只发布经过发布流水线验证的 exact bundle targets，例如 Windows NSIS 使用 `windows-x86_64-nsis`。CI 必须持续验证 Rust/JS updater 版本配对、exact target 清单和签名产物，不能用宽泛 fallback 掩盖运行时 target 与发布资产不一致。
+
+Windows Authenticode 发布者签名当前尚未启用：开发阶段的 NSIS、主程序、service/TRDP helper 可能没有 publisher signature。这个限制必须在平台支持文档中明确披露；进入广泛生产分发前，需要恢复 Authenticode + RFC 3161 时间戳并在 CI 中验证 signer/timestamp。
 
 依赖风险由 Dependabot 与定时 Dependency Security workflow 持续检查；npm 生产依赖高危 advisory 和 RustSec advisory 会形成明确失败/报告。许可证合规与漏洞风险是两个独立合同，不能用其中一个替代另一个。
 
@@ -55,10 +61,12 @@ flowchart LR
 
 - 不能为了方便让主应用长期以管理员/root 权限运行。
 - 特权 IPC 只暴露最小动作集合，并验证调用者和资源范围。
+- Windows 直连 UAC fallback 不在普通启动阶段执行需要特权的 `setupc` 探测/清理；启动恢复属于 TauTermService，直连路径只在明确动作中提权。
 - 密码、私钥、token 等不得进入普通日志或文档示例。
 - WebView 不获得没有当前功能需求支撑的通用文件系统 capability；用户通过 dialog 选择路径不等于授权前端任意文件 I/O。
 - 运行时可覆盖 native helper 的机制只能用于明确的受信开发场景，不能让导入配置变成任意代码执行入口。
 - 安装/更新状态与应用版本元数据必须由发布流程验证，不能靠 README 手工同步。
+- Updater 运行资格由生产 bundle 决定；开发态不访问正式 endpoint，正式 manifest 不提供为开发运行准备的通用平台 fallback。
 - 安全漏洞披露流程只在根 `SECURITY.md` 维护。
 
 ## 代码锚点
@@ -67,6 +75,7 @@ flowchart LR
 - `src-tauri/src/virtual_port/`
 - `src-tauri/src/bin/`
 - `src-tauri/tauri*.conf.json`
+- `src/hooks/useUpdater.ts`
 - `scripts/prepare-service-bin.js`
 - `scripts/stage-release.js`
 - `scripts/assemble-release.js`

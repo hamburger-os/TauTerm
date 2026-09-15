@@ -27,6 +27,9 @@ for (const required of [
   "isRetryableUpdaterError",
   "reportFrontendError",
   "MANUAL_CHECK_TIMEOUT_MS = 30_000",
+  'import.meta.env.PROD && import.meta.env.TAURI_ENV_DEBUG === "false"',
+  "if (!UPDATER_RUNTIME_ENABLED)",
+  "if (!UPDATER_RUNTIME_ENABLED || !shouldAutoCheck()) return",
   'recordFailure("download-install"',
   'recordFailure("relaunch"',
 ]) {
@@ -34,6 +37,82 @@ for (const required of [
 }
 if (/error:\s*String\s*\(/.test(updaterHook)) {
   fail("useUpdater must not expose raw updater errors directly in the UI.");
+}
+
+const viteConfig = fs.readFileSync("vite.config.ts", "utf8");
+if (!viteConfig.includes('envPrefix: ["VITE_", "TAURI_ENV_"]')) {
+  fail("Vite must expose TAURI_ENV_* so release/debug updater policy reaches the frontend bundle.");
+}
+
+const releaseAssembler = fs.readFileSync("scripts/assemble-release.js", "utf8");
+if (!releaseAssembler.includes('["windows-x86_64-nsis", "_x64-setup.exe"]')) {
+  fail("release manifest must publish the exact Windows NSIS updater target.");
+}
+if (releaseAssembler.includes('["windows-x86_64",')) {
+  fail("release manifest must not publish a generic Windows compatibility target.");
+}
+
+const terminal = fs.readFileSync("src/components/Terminal/Terminal.tsx", "utf8");
+for (const required of [
+  "const scheduleFit = useCallback",
+  "container.isConnected",
+  "container.clientWidth <= 0",
+  "container.clientHeight <= 0",
+  "const scheduleInitialize = () =>",
+  "bootstrapObserver = new ResizeObserver(scheduleInitialize)",
+  "resizeObserver = new ResizeObserver(scheduleFit)",
+  "cancelAnimationFrame(fitRafRef.current)",
+  "if (term) {",
+  "onCleanupRef.current?.(sessionId)",
+]) {
+  if (!terminal.includes(required)) fail("Terminal lifecycle contract missing " + required);
+}
+const fitCalls = terminal.match(/\bfitAddon\.fit\(\)|\bnextFitAddon\.fit\(\)|fitAddonRef\.current\?\.fit\(\)/g) ?? [];
+if (fitCalls.length !== 1 || !terminal.includes("fitAddon.fit();")) {
+  fail("Terminal must route every fit through the single guarded scheduleFit path.");
+}
+if (terminal.includes("term.open(containerRef.current);\n    fitAddon.fit();")) {
+  fail("Terminal must not synchronously open and fit during React effect setup.");
+}
+const strictCleanup = terminal.indexOf("if (term) {");
+const cleanupCallback = terminal.indexOf("onCleanupRef.current?.(sessionId)", strictCleanup);
+if (strictCleanup < 0 || cleanupCallback < strictCleanup) {
+  fail("Terminal parent cleanup must only run after a real xterm instance existed.");
+}
+
+const windowsDriver = fs.readFileSync("src-tauri/src/virtual_port/windows_driver.rs", "utf8");
+for (const required of [
+  "OpenSCManagerW",
+  "OpenServiceW",
+  "SC_MANAGER_CONNECT",
+  "SERVICE_QUERY_STATUS",
+  "CloseServiceHandle",
+]) {
+  if (!windowsDriver.includes(required)) fail("Windows driver SCM probe missing " + required);
+}
+if (/\bCommand::new\b|std::process::Command|CommandExt/.test(windowsDriver)) {
+  fail("Windows ordinary driver probe must use SCM API directly, not spawn an external command.");
+}
+if (/setupc/i.test(windowsDriver.replace(/\/\/!.*$/gm, ""))) {
+  fail("Windows ordinary driver probe must not execute setupc.");
+}
+const platformCommands = fs.readFileSync("src-tauri/src/commands/platform.rs", "utf8");
+if (!platformCommands.includes("windows_driver::is_com0com_driver_installed")) {
+  fail("virtual-port status/install commands must use the SCM-only Windows driver probe.");
+}
+const rustRuntime = fs.readFileSync("src-tauri/src/lib.rs", "utf8");
+if (!rustRuntime.includes("windows_driver::is_com0com_driver_installed")) {
+  fail("Windows startup must use the SCM-only driver probe.");
+}
+const directFallback = rustRuntime.indexOf("direct-uac-on-demand");
+const linuxBranch = rustRuntime.indexOf('#[cfg(any(target_os = "linux", target_os = "macos"))]');
+if (directFallback < 0 || linuxBranch < 0) {
+  fail("Windows direct UAC fallback boundary is missing.");
+} else {
+  const windowsStartup = rustRuntime.slice(directFallback, linuxBranch);
+  if (windowsStartup.includes("cleanup_orphans()")) {
+    fail("Windows direct UAC fallback must not perform startup orphan cleanup.");
+  }
 }
 
 const updaterClassifier = fs.readFileSync("src/utils/updaterError.ts", "utf8");
