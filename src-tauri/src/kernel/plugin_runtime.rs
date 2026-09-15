@@ -7,7 +7,7 @@
 use crate::kernel::plugin_adapter::{PluginId, PluginManifest, ProtocolAdapter};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 struct PluginEntry {
     manifest: PluginManifest,
@@ -166,6 +166,58 @@ impl PluginRuntime {
     }
 }
 
+/// Adapter-owned, non-owning Session runtime index.
+///
+/// SessionStore capability graph remains the strong lifecycle owner. A plugin Adapter keeps one
+/// registry instance and clones the lightweight handle into SessionAttach hooks; entries are Weak
+/// so lookup never extends a Session runtime lifetime or creates a second ownership graph.
+pub struct SessionRuntimeRegistry<T> {
+    entries: Arc<Mutex<HashMap<String, Weak<T>>>>,
+}
+
+impl<T> Clone for SessionRuntimeRegistry<T> {
+    fn clone(&self) -> Self {
+        Self {
+            entries: self.entries.clone(),
+        }
+    }
+}
+
+impl<T> Default for SessionRuntimeRegistry<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> SessionRuntimeRegistry<T> {
+    pub fn new() -> Self {
+        Self {
+            entries: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn get(&self, session_id: &str) -> Option<Arc<T>> {
+        let mut entries = self.entries.lock().ok()?;
+        let runtime = entries.get(session_id).and_then(Weak::upgrade);
+        if runtime.is_none() {
+            entries.remove(session_id);
+        }
+        runtime
+    }
+
+    pub fn attach(&self, session_id: &str, runtime: &Arc<T>) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.insert(session_id.to_string(), Arc::downgrade(runtime));
+        }
+    }
+
+    pub fn detach(&self, session_id: &str) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.remove(session_id);
+        }
+    }
+}
+
 impl Default for PluginRuntime {
     fn default() -> Self {
         Self::new()
@@ -270,6 +322,20 @@ mod tests {
             runtime.register_contribution(&plugin_id, 8_u32),
             Err(PluginRuntimeError::ContributionAlreadyRegistered { .. })
         ));
+    }
+
+    #[test]
+    fn session_runtime_registry_is_non_owning_and_cleans_stale_entries() {
+        let registry = SessionRuntimeRegistry::<String>::new();
+        let runtime = Arc::new("runtime".to_string());
+        registry.attach("session", &runtime);
+        assert_eq!(Arc::strong_count(&runtime), 1);
+        assert_eq!(
+            registry.get("session").as_deref().map(String::as_str),
+            Some("runtime")
+        );
+        drop(runtime);
+        assert!(registry.get("session").is_none());
     }
 
     #[test]

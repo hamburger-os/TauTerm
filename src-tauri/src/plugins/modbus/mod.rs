@@ -21,6 +21,7 @@ use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
+use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::kernel::session_store::{ContainerSessionCreateOptions, SessionStore};
 use crate::session::SessionError;
 use crate::transport::runtime::DataPlaneRuntime;
@@ -38,33 +39,18 @@ use data_model::DataModelSnapshot;
 use polling::{WatchRow, WatchScheduler, WatchValue};
 use server::ModbusServer;
 
-fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<ModbusRuntime>>> {
-    static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<ModbusRuntime>>>,
-    > = std::sync::OnceLock::new();
-    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-pub fn runtime(session_id: &str) -> Option<Arc<ModbusRuntime>> {
-    runtime_registry().lock().ok()?.get(session_id).cloned()
-}
-
 struct RuntimeAttach {
     runtime: Arc<ModbusRuntime>,
+    runtimes: SessionRuntimeRegistry<ModbusRuntime>,
 }
 
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.insert(session_id.to_string(), self.runtime.clone());
-        }
+        self.runtimes.attach(session_id, &self.runtime);
     }
 
     fn on_detached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.remove(session_id);
-        }
+        self.runtimes.detach(session_id);
     }
 }
 
@@ -89,11 +75,19 @@ impl SessionService for ModbusRuntime {
     }
 }
 
-pub struct ModbusAdapter;
+pub struct ModbusAdapter {
+    runtimes: SessionRuntimeRegistry<ModbusRuntime>,
+}
 
 impl ModbusAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            runtimes: SessionRuntimeRegistry::new(),
+        }
+    }
+
+    pub fn runtime(&self, session_id: &str) -> Option<Arc<ModbusRuntime>> {
+        self.runtimes.get(session_id)
     }
 }
 
@@ -174,7 +168,10 @@ impl ProtocolAdapter for ModbusAdapter {
             service: Some(runtime.clone()),
             file_transfer: None,
             channel_factory: None,
-            on_attached: Some(Arc::new(RuntimeAttach { runtime })),
+            on_attached: Some(Arc::new(RuntimeAttach {
+                runtime,
+                runtimes: self.runtimes.clone(),
+            })),
             teardown_delay: std::time::Duration::ZERO,
         })
     }
@@ -284,11 +281,14 @@ pub async fn connect_session(
 }
 
 fn with_modbus<T>(
-    _state: &State<'_, AppState>,
+    state: &State<'_, AppState>,
     session_id: &str,
     function: impl FnOnce(&ModbusRuntime) -> Result<T, String>,
 ) -> Result<T, String> {
-    let modbus = runtime(session_id).ok_or_else(|| format!("Modbus 会话 {session_id} 未连接"))?;
+    let modbus = state
+        .plugin::<ModbusAdapter>(PLUGIN_ID)
+        .runtime(session_id)
+        .ok_or_else(|| format!("Modbus 会话 {session_id} 未连接"))?;
     function(&modbus)
 }
 

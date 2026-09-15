@@ -14,7 +14,7 @@ mod known_hosts;
 
 use serde::Deserialize;
 use std::fmt;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::Duration;
 use tauri::Emitter;
 use tokio::sync::Mutex;
@@ -25,6 +25,7 @@ use crate::kernel::plugin_adapter::{
     ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach,
     SessionChannelFactory, SessionService,
 };
+use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::session::SessionError;
 use crate::transport::{AsyncBridgeDriver, DataPlaneRuntime};
 use driver::SshDriver;
@@ -289,19 +290,21 @@ async fn connect_ssh_socket(
 
 /// SSH 协议适配器
 ///
-/// 无状态结构体——每次 `connect()` 调用建立全新的 TCP 连接和 SSH 会话。
+/// Adapter 持有 host-key verifier 与非持有型 Session runtime 索引；每次 `connect()` 建立全新的 TCP/SSH 会话。
 /// 通过 `connect()` 返回 `ProtocolConnection`，携带：
 /// - `channel`: `SshChannel`（终端 I/O，async 路径）
 /// - 会话 I/O：由 SessionStore 统一绑定返回的 DataPlaneRuntime 与 SessionIo
 /// - `runtime`: `SshRuntime`（供 SFTP 文件服务复用 SSH Handle 和 SFTP 缓存）
 pub struct SshAdapter {
     host_key_verifier: HostKeyVerifier,
+    runtimes: SessionRuntimeRegistry<SshRuntime>,
 }
 
 impl SshAdapter {
     pub fn new() -> Self {
         Self {
             host_key_verifier: HostKeyVerifier::new(),
+            runtimes: SessionRuntimeRegistry::new(),
         }
     }
 
@@ -318,7 +321,7 @@ impl SshAdapter {
     }
 
     pub fn runtime(&self, session_id: &str) -> Option<Arc<SshRuntime>> {
-        runtime(session_id)
+        self.runtimes.get(session_id)
     }
 
     /// 使用类型化的 `SshConfig` 直接建立连接（跳过二次 JSON 解析）。
@@ -353,7 +356,10 @@ impl SshAdapter {
             service: Some(shared.clone()),
             file_transfer: Some(file_transfer),
             channel_factory: Some(shared.clone()),
-            on_attached: Some(Arc::new(RuntimeAttach { runtime: shared })),
+            on_attached: Some(Arc::new(RuntimeAttach {
+                runtime: shared,
+                runtimes: self.runtimes.clone(),
+            })),
             teardown_delay: self.teardown_delay(),
         })
     }
@@ -509,41 +515,20 @@ pub struct SshRuntime {
     pub home_dir: Option<String>,
 }
 
-fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Weak<SshRuntime>>> {
-    static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Weak<SshRuntime>>>,
-    > = std::sync::OnceLock::new();
-    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-pub fn runtime(session_id: &str) -> Option<Arc<SshRuntime>> {
-    let runtime = runtime_registry().lock().ok()?.get(session_id)?.upgrade();
-    if runtime.is_none() {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.remove(session_id);
-        }
-    }
-    runtime
-}
-
 struct RuntimeAttach {
     runtime: Arc<SshRuntime>,
+    runtimes: SessionRuntimeRegistry<SshRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.insert(session_id.to_string(), Arc::downgrade(&self.runtime));
-        }
+        self.runtimes.attach(session_id, &self.runtime);
     }
     fn on_detached(&self, session_id: &str) {
         // SSH-owned background operations are keyed by the final Session id, so their
         // lifecycle cleanup belongs in the SSH attachment hook rather than SessionStore.
         journald::stop_journald_stream(session_id);
         journald::stop_journald_export(session_id);
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.remove(session_id);
-        }
+        self.runtimes.detach(session_id);
     }
 }
 

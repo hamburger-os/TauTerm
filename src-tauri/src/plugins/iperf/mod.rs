@@ -27,6 +27,7 @@ use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
+use crate::kernel::plugin_runtime::SessionRuntimeRegistry;
 use crate::session::SessionError;
 
 // ── 基础枚举 ─────────────────────────────────────────────
@@ -294,31 +295,16 @@ pub struct IperfRuntime {
     pub lifecycle: tokio::sync::Mutex<()>,
 }
 
-fn runtime_registry(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, Arc<IperfRuntime>>> {
-    static REGISTRY: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, Arc<IperfRuntime>>>,
-    > = std::sync::OnceLock::new();
-    REGISTRY.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-pub fn runtime(session_id: &str) -> Option<Arc<IperfRuntime>> {
-    runtime_registry().lock().ok()?.get(session_id).cloned()
-}
-
 struct RuntimeAttach {
     runtime: Arc<IperfRuntime>,
+    runtimes: SessionRuntimeRegistry<IperfRuntime>,
 }
 impl SessionAttach for RuntimeAttach {
     fn on_attached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.insert(session_id.to_string(), self.runtime.clone());
-        }
+        self.runtimes.attach(session_id, &self.runtime);
     }
     fn on_detached(&self, session_id: &str) {
-        if let Ok(mut map) = runtime_registry().lock() {
-            map.remove(session_id);
-        }
+        self.runtimes.detach(session_id);
     }
 }
 
@@ -373,19 +359,23 @@ impl SessionService for IperfRuntime {
 
 /// iperf 协议适配器
 ///
-/// 无状态结构体——每次 `connect()` 创建侧通道。
+/// Adapter 持有非持有型 Session runtime 索引；每次 `connect()` 创建独立侧通道。
 /// 通过 `connect()` 返回 `ProtocolConnection`，携带：
 /// - `channel`: `None`（无终端 I/O — 容器会话模式，不创建 I/O loop）
 /// - `runtime`: `IperfRuntime`（服务端监听 + 测试状态管理）
-pub struct IperfAdapter;
+pub struct IperfAdapter {
+    runtimes: SessionRuntimeRegistry<IperfRuntime>,
+}
 
 impl IperfAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            runtimes: SessionRuntimeRegistry::new(),
+        }
     }
 
     pub fn runtime(&self, session_id: &str) -> Option<Arc<IperfRuntime>> {
-        runtime(session_id)
+        self.runtimes.get(session_id)
     }
 }
 
@@ -420,7 +410,10 @@ impl ProtocolAdapter for IperfAdapter {
             service: Some(runtime.clone()),
             file_transfer: None,
             channel_factory: None,
-            on_attached: Some(Arc::new(RuntimeAttach { runtime })),
+            on_attached: Some(Arc::new(RuntimeAttach {
+                runtime,
+                runtimes: self.runtimes.clone(),
+            })),
             teardown_delay: Duration::from_millis(100),
         })
     }

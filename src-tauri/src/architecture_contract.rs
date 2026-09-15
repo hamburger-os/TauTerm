@@ -77,6 +77,24 @@ fn common_connection_router_is_registry_driven() {
 }
 
 #[test]
+fn plugin_session_runtime_indices_are_adapter_owned() {
+    let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
+    for entry in std::fs::read_dir(&plugins_dir).expect("plugins directory") {
+        let entry = entry.expect("plugin entry");
+        let module = entry.path().join("mod.rs");
+        if !module.is_file() {
+            continue;
+        }
+        let source = std::fs::read_to_string(&module).expect("plugin module source");
+        assert!(
+            !source.contains("fn runtime_registry("),
+            "plugin module {} must keep Session runtime indices on its Adapter instance, not in process-global static state",
+            module.display()
+        );
+    }
+}
+
+#[test]
 fn kernel_transfer_protocol_id_is_provider_agnostic() {
     let source = read_source("kernel/plugin_adapter.rs");
     for protocol in ["xmodem", "ymodem", "zmodem", "sftp", "ftp"] {

@@ -19,7 +19,7 @@ TCP/UDP 使用统一的网络调试入口，但保持传输语义差异：
 - 发送目标由公共目标上下文表达，而不是把“广播”做成独立 UI 模式；
 - 目标选择可以在未连接会话中保留，但只有父 Session 已连接后才同步到后端运行时。
 
-TCP connect/listen 使用 `transport::tcp`，UDP bind/recv/send 使用 `transport::udp`。Network 协议层不再维护自己的通用 TCP channel 或第二套 I/O loop。
+TCP connect/listen 使用 `transport::tcp`，UDP bind/recv/send 使用 `transport::udp`。Network 协议层不再维护自己的通用 TCP channel 或第二套 I/O loop。 Network、TFTP、iperf 各自注册到 `PluginRuntime` 的 Adapter 持有自己的 `SessionRuntimeRegistry<T>` 弱索引；SessionStore capability graph 才持有 runtime 强引用，模块级静态 registry 不参与会话生命周期。
 
 ### TFTP
 
