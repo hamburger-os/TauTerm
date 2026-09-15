@@ -49,6 +49,7 @@ pub(crate) type PrepareSessionConfig = fn(
 ) -> Result<PreparedSessionConfig, String>;
 pub(crate) type DefaultSessionName = fn(&Value, &str) -> Result<String, String>;
 pub(crate) type SanitizeSavedSession = fn(&mut SavedSession) -> Result<bool, String>;
+pub(crate) type DeleteSessionConfig = fn(&CredentialStore, &str) -> Result<(), String>;
 
 #[derive(Clone, Copy)]
 pub(crate) struct SessionConfigHandler {
@@ -56,6 +57,7 @@ pub(crate) struct SessionConfigHandler {
     pub prepare: PrepareSessionConfig,
     pub default_name: Option<DefaultSessionName>,
     pub sanitize_saved: Option<SanitizeSavedSession>,
+    pub delete: Option<DeleteSessionConfig>,
 }
 
 pub(crate) fn unchanged_session_config(
