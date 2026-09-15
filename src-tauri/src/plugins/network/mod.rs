@@ -89,7 +89,10 @@ impl NetworkCore {
     }
 
     fn active_peer_count(&self) -> usize {
-        self.peer_handles.lock().map(|peers| peers.len()).unwrap_or(0)
+        self.peer_handles
+            .lock()
+            .map(|peers| peers.len())
+            .unwrap_or(0)
     }
 
     fn list_peers(&self) -> Vec<NetworkPeerInfo> {
@@ -541,52 +544,51 @@ fn register_tcp_peer(
     let peer_handles = core.peer_handles.clone();
     let peers = core.peers.clone();
     let disconnect_parent = core.role == "client";
-    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
-        Box::new(move |_id, info| {
-            if let Ok(mut handles) = peer_handles.lock() {
-                handles.remove(&peer_for_disconnect);
-            }
-            if let Ok(mut records) = peers.lock() {
-                records.remove(&peer_for_disconnect);
-            }
-            let mut parent_was_disconnected = false;
-            if let Ok(mut store) = app_disconnect
-                .state::<crate::AppState>()
-                .session_store
-                .lock()
+    let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> = Box::new(move |_id, info| {
+        if let Ok(mut handles) = peer_handles.lock() {
+            handles.remove(&peer_for_disconnect);
+        }
+        if let Ok(mut records) = peers.lock() {
+            records.remove(&peer_for_disconnect);
+        }
+        let mut parent_was_disconnected = false;
+        if let Ok(mut store) = app_disconnect
+            .state::<crate::AppState>()
+            .session_store
+            .lock()
+        {
+            store.mark_sub_disconnected(
+                &parent_for_disconnect,
+                &peer_for_disconnect,
+                info.retain_terminal,
+            );
+            if disconnect_parent
+                && store.session_state(&parent_for_disconnect) == Some(SessionState::Connected)
             {
-                store.mark_sub_disconnected(
-                    &parent_for_disconnect,
-                    &peer_for_disconnect,
-                    info.retain_terminal,
-                );
-                if disconnect_parent
-                    && store.session_state(&parent_for_disconnect) == Some(SessionState::Connected)
-                {
-                    store.mark_disconnected(&parent_for_disconnect);
-                    parent_was_disconnected = true;
-                }
+                store.mark_disconnected(&parent_for_disconnect);
+                parent_was_disconnected = true;
             }
+        }
+        let _ = app_disconnect.emit(
+            "netdbg-peer-left",
+            serde_json::json!({
+                "session_id": parent_for_disconnect,
+                "peer_id": peer_for_disconnect,
+                "tx_bytes": io_for_disconnect.tx_bytes(),
+                "rx_bytes": io_for_disconnect.rx_bytes(),
+            }),
+        );
+        if parent_was_disconnected {
             let _ = app_disconnect.emit(
-                "netdbg-peer-left",
+                "session-disconnected",
                 serde_json::json!({
                     "session_id": parent_for_disconnect,
-                    "peer_id": peer_for_disconnect,
-                    "tx_bytes": io_for_disconnect.tx_bytes(),
-                    "rx_bytes": io_for_disconnect.rx_bytes(),
+                    "reason": info.reason,
+                    "disconnect_info": info,
                 }),
             );
-            if parent_was_disconnected {
-                let _ = app_disconnect.emit(
-                    "session-disconnected",
-                    serde_json::json!({
-                        "session_id": parent_for_disconnect,
-                        "reason": info.reason,
-                        "disconnect_info": info,
-                    }),
-                );
-            }
-        });
+        }
+    });
     let data_plane = SessionDataPlane::attach(runtime, channel_id.clone(), on_data, on_disconnect)
         .map_err(|error| error.to_string())?;
     let stats_cancel_flag = Arc::new(AtomicBool::new(false));

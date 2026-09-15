@@ -23,10 +23,6 @@ use crate::kernel::session_store::{
 };
 use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
 use crate::transport::DataPlaneRuntime;
-use crate::virtual_port::backend::{
-    contains_elevation_indicator, VirtualEndpoint, VirtualPortConfig,
-};
-use crate::virtual_port::bridge::VirtualPortBridge;
 use crate::AppState;
 use chrono::Local;
 use serde::{Deserialize, Serialize};
@@ -582,336 +578,124 @@ async fn connect_session_serial(
         session_id,
         ..
     } = request;
-    // 通过 SerialAdapter（ProtocolAdapter trait）创建连接产物
-    let conn = state
-        .plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID)
+    let adapter =
+        state.plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID);
+    let conn = adapter
         .connect(&endpoint, &params)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|error| error.to_string())?;
 
-    let params_clone = params.clone();
     let session_name = name.unwrap_or_default();
-    // 提前读取虚拟串口开关，决定是否创建桥接数据通道
-    let virtual_enabled = params_clone
-        .get("virtual_port_enabled")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    log::info!(
-        "connect_session_serial: virtual_port_enabled={}, params keys={:?}",
-        virtual_enabled,
-        params_clone
-            .as_object()
-            .map(|o| o.keys().collect::<Vec<_>>())
-    );
-    // 获取 data_mode 用于日志格式化
-    let data_mode = params_clone
+    let data_mode = params
         .get("data_mode")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("text")
         .to_string();
-    let data_mode_for_log = data_mode.clone(); // clone for use after the closure
-                                               // 会话字符编码（用于日志按编码解码为 UTF-8）
-    let encoding_for_log = params_clone
+    let encoding = params
         .get("encoding")
-        .and_then(|v| v.as_str())
+        .and_then(Value::as_str)
         .unwrap_or("utf-8")
         .to_string();
-
-    let app_data = app.clone();
-    let log_tx = {
-        let log_engine = state.log_engine.lock().map_err(|e| e.to_string())?;
-        log_engine.sender()
-    };
-
-    // 共享 on_data 回调只负责 UI 批处理与日志；脚本/虚拟串口均通过
-    // DataPlane subscription 独立消费，避免耦合或静默丢字节。
-    let on_data = create_on_data_callback(&app_data, log_tx, data_mode.clone(), encoding_for_log);
+    let log_tx = state.log_engine.lock().map_err(|e| e.to_string())?.sender();
+    let on_data = create_on_data_callback(&app, log_tx, data_mode.clone(), encoding);
 
     let app_disconnect = app.clone();
     let on_disconnect: Box<dyn Fn(String, DisconnectInfo) + Send> =
         Box::new(move |session_id, info| {
-            let app_state: State<'_, AppState> = app_disconnect.state();
-
-            // 1. 在 mark_disconnected 之前读取虚拟端口对
-            //    （mark_disconnected 内部关闭桥接线程，但不销毁 pairs）
-            let pairs: Vec<VirtualEndpoint> = {
-                let store = match app_state.session_store.lock() {
-                    Ok(s) => s,
-                    Err(e) => e.into_inner(),
-                };
-                store
-                    .get_session(&session_id)
-                    .map(|h| h.virtual_endpoints.clone())
-                    .unwrap_or_default()
-            };
-
-            // 2. 标记运行态断开 — Saved Session Library 由显式配置命令独立持久化
-            if let Ok(mut store) = app_state.session_store.lock() {
+            if let Ok(mut store) = app_disconnect.state::<AppState>().session_store.lock() {
                 store.mark_disconnected(&session_id);
             }
-
-            // 3. 从内核驱动删除端口对 → 外部工具感知 COM 端口消失
-            if !pairs.is_empty() {
-                if let Ok(mut vpm) = app_state.virtual_port_manager.lock() {
-                    for pair in &pairs {
-                        let _ = vpm.destroy_endpoint(pair);
-                    }
-
-                    // 检查是否有因权限不足而写入 state 文件的残留端口
-                    // UAC 弹窗推迟到下次用户主动操作（状态栏 [清理残留端口] 按钮或
-                    // 下次连接的 create_endpoints_elevated），避免在断开回调中突然弹窗
-                    let orphan_count = vpm.pending_orphan_count();
-                    if orphan_count > 0 {
-                        log::warn!(
-                            "Session {} disconnected: {} port pair(s) need admin cleanup — \
-                         deferred to next explicit user action",
-                            session_id,
-                            orphan_count
-                        );
-                    }
-
-                    log::info!(
-                        "已清理断开会话 {} 的虚拟端口对 ({} 对)",
-                        session_id,
-                        pairs.len()
-                    );
-                }
-            }
-
             let _ = app_disconnect.emit(
                 "session-disconnected",
                 serde_json::json!({
                     "session_id": session_id,
-                    "reason": info.reason,
-                    "disconnect_info": info,
+                    "reason": &info.reason,
+                    "disconnect_info": &info,
                 }),
             );
         });
 
-    let transfer_enabled_val = transfer_enabled.unwrap_or(true);
-    let transfer_protocol_val = transfer_protocol.unwrap_or_else(|| "ymodem".into());
-    let send_bar_enabled_val = send_bar_enabled.unwrap_or(true);
-
-    // 在作用域块内创建会话并保存，利用 RAII 自动释放 MutexGuard
-    let session_id = {
+    let transfer_enabled = transfer_enabled.unwrap_or(true);
+    let transfer_protocol = transfer_protocol.unwrap_or_else(|| "ymodem".into());
+    let send_bar_enabled = send_bar_enabled.unwrap_or(true);
+    let sid = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        let session_id = store.create_session(
+        store.create_session(
             SessionCreateOptions {
                 name: session_name.clone(),
-                plugin_id: "serial".into(),
+                plugin_id: crate::plugins::serial::PLUGIN_ID.into(),
                 endpoint: endpoint.clone(),
-                params,
-                transfer_enabled: transfer_enabled_val,
-                transfer_protocol: Some(transfer_protocol_val.clone()),
-                send_bar_enabled: send_bar_enabled_val,
+                params: params.clone(),
+                transfer_enabled,
+                transfer_protocol: Some(transfer_protocol.clone()),
+                send_bar_enabled,
                 id_override: session_id,
             },
             conn,
             on_data,
             on_disconnect,
             app.clone(),
-        )?;
-
-        // Runtime Session 只消费 Saved Session 配置；连接生命周期不反向覆盖 Library。
-        session_id
+        )?
     };
 
-    // ── 虚拟串口桥接 ──
-    // virtual_enabled 已在上面读取，这里只读取 virtual_count
-    let virtual_count = params_clone
-        .get("virtual_port_count")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as u32)
-        .unwrap_or(0);
-
-    // vport_endpoints_json declared here so it's in scope for the session-connected emit below
-    // (even when virtual ports are disabled)
-    let mut vport_endpoints_json: Vec<serde_json::Value> = Vec::new();
-
-    // ── Virtual port pair creation + direct DataPlane/SessionIo bridge ──
-    if virtual_enabled && virtual_count > 0 {
-        let config = VirtualPortConfig {
-            enabled: true,
-            count: virtual_count,
-        };
-        let mut vpm = state
-            .virtual_port_manager
-            .lock()
-            .map_err(|e| e.to_string())?;
-
-        // 记录虚拟端口创建失败的真实原因，用于 `virtual-port-failed` 事件，避免
-        // 用一句写死的 "driver not installed" 掩盖真实问题（如端口耗尽、UAC 被取消）。
-        let mut vport_error: Option<String> = None;
-        let pairs: Vec<VirtualEndpoint> = vpm
-            .create_endpoints(&config)
-            .or_else(|first_err| {
-                log::warn!("直接创建端口对失败: {}；尝试先安装驱动...", first_err);
-                vpm.install_driver()
-                    .and_then(|_| vpm.create_endpoints(&config))
-            })
-            .unwrap_or_else(|e| {
-                let is_elevation = contains_elevation_indicator(&e);
-                if is_elevation && vpm.detect_driver() {
-                    log::info!("驱动已安装，尝试通过 UAC 提权创建端口对...");
-                    match vpm.create_endpoints_elevated(&config) {
-                        Ok(pairs) => return pairs,
-                        Err(elevated_err) => log::warn!("提权创建端口对也失败: {}", elevated_err),
-                    }
-                }
-                log::warn!("虚拟端口创建失败: {}", e);
-                vport_error = Some(e);
+    let virtual_endpoints = match adapter.runtime(&sid) {
+        Some(runtime) => runtime
+            .initialize_virtual_ports(&app, &sid, &params)
+            .unwrap_or_else(|error| {
+                log::warn!("Serial 虚拟串口 capability 初始化失败 (session={sid}): {error}");
+                let _ = app.emit(
+                    "virtual-port-failed",
+                    serde_json::json!({
+                        "session_id": sid,
+                        "kind": "create_failed",
+                        "reason": error,
+                    }),
+                );
                 Vec::new()
-            });
-        drop(vpm);
-
-        // 序列化 pairs 供 session-connected 事件使用
-        vport_endpoints_json = pairs
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "external_path": p.external_path,
-                })
-            })
-            .collect();
-
-        if !pairs.is_empty() {
-            let virtual_port_names: Vec<String> =
-                pairs.iter().map(|pair| pair.bridge_path.clone()).collect();
-            let virtual_baud_rate = params_clone
-                .get("baud_rate")
-                .and_then(|value| value.as_u64())
-                .map(|value| value as u32)
-                .ok_or_else(|| "串口配置缺少有效 baud_rate".to_string())?;
-            let io = {
-                let store = state
-                    .session_store
-                    .lock()
-                    .map_err(|error| error.to_string())?;
-                store
-                    .get_io_for(&session_id)
-                    .ok_or_else(|| "串口会话缺少共享 I/O capability".to_string())?
-            };
-            let error_app = app.clone();
-            let error_session_id = session_id.clone();
-            match VirtualPortBridge::spawn(
-                virtual_port_names,
-                virtual_baud_rate,
-                io,
-                Box::new(move |reason| {
-                    let _ = error_app.emit(
-                        "virtual-port-failed",
-                        serde_json::json!({
-                            "session_id": error_session_id,
-                            "kind": "bridge_failed",
-                            "reason": reason,
-                        }),
-                    );
-                }),
-            ) {
-                Ok(bridge) => {
-                    {
-                        let mut store = state
-                            .session_store
-                            .lock()
-                            .map_err(|error| error.to_string())?;
-                        if let Some(handle) = store.get_session_mut(&session_id) {
-                            handle.virtual_port_bridge = Some(bridge);
-                            handle.virtual_endpoints = pairs.clone();
-                        }
-                    }
-                    let _ = app.emit(
-                        "virtual-port-created",
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "endpoints": &vport_endpoints_json,
-                        }),
-                    );
-                }
-                Err(reason) => {
-                    // VPort is an optional capability. Roll back only the endpoints that were just
-                    // created; the already-established physical Serial session remains valid.
-                    if let Ok(mut vpm) = state.virtual_port_manager.lock() {
-                        for pair in &pairs {
-                            let _ = vpm.destroy_endpoint(pair);
-                        }
-                    }
-                    vport_endpoints_json.clear();
-                    log::warn!("虚拟端口桥接启动失败 (session={}): {}", session_id, reason);
-                    let _ = app.emit(
-                        "virtual-port-failed",
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "kind": "bridge_failed",
-                            "reason": reason,
-                        }),
-                    );
-                }
-            }
-        } else {
-            // 使用真实失败原因，避免用一句写死的 "driver not installed" 掩盖
-            // 端口耗尽 / UAC 被取消等真实问题。
-            let detail = vport_error.clone().unwrap_or_else(|| {
-                "com0com driver not installed. Run TauTerm as administrator once to install the driver."
-                    .to_string()
-            });
-            // 粗略分类，供前端映射到 i18n 文案（而非把英文错误直接展示给用户）
-            let detail_lower = detail.to_lowercase();
-            let kind = if detail_lower.contains("driver files missing") {
-                "files_missing"
-            } else if detail_lower.contains("driver not installed") {
-                "driver_missing"
-            } else if contains_elevation_indicator(&detail) || detail_lower.contains("cancel") {
-                "permission"
-            } else {
-                "create_failed"
-            };
-            log::warn!("虚拟端口创建失败 (session={}): {}", session_id, detail);
-            let _ = app.emit(
-                "virtual-port-failed",
-                serde_json::json!({
-                    "session_id": session_id,
-                    "kind": kind,
-                    "reason": detail,
-                }),
-            );
+            }),
+        None => {
+            log::warn!("Serial runtime 未注册 (session={sid})");
+            Vec::new()
         }
-    }
+    };
+
     let (actual_name, actual_params, connected_at) = {
         let store = state.session_store.lock().map_err(|e| e.to_string())?;
         store
-            .get_session(&session_id)
-            .map(|h| (h.name.clone(), h.params.clone(), h.connected_at))
-            .unwrap_or((session_name, params_clone, None))
+            .get_session(&sid)
+            .map(|handle| {
+                (
+                    handle.name.clone(),
+                    handle.params.clone(),
+                    handle.connected_at,
+                )
+            })
+            .unwrap_or((session_name, params.clone(), None))
     };
 
     log::info!(
         "会话已连接: {} @ {} (data_mode={})",
         actual_name,
         endpoint,
-        data_mode_for_log
+        data_mode
     );
-
     let _ = app.emit(
         "session-connected",
         serde_json::json!({
-            "session_id": session_id,
+            "session_id": sid,
             "endpoint": endpoint,
-            "connection_type": "serial",
-            "plugin_id": "serial",
+            "connection_type": crate::plugins::serial::PLUGIN_ID,
+            "plugin_id": crate::plugins::serial::PLUGIN_ID,
             "name": actual_name,
             "params": actual_params,
             "connected_at": connected_at,
-            "transfer_enabled": transfer_enabled_val,
-            "transfer_protocol": transfer_protocol_val,
-            "send_bar_enabled": send_bar_enabled_val,
-            // 合并虚拟端口对信息到 session-connected 中，
-            // 避免 virtual-port-created 事件先于 session-connected 到达
-            // 前端时因 tab 尚未创建而丢失数据
-            "virtual_endpoints": vport_endpoints_json,
+            "transfer_enabled": transfer_enabled,
+            "transfer_protocol": transfer_protocol,
+            "send_bar_enabled": send_bar_enabled,
+            "virtual_endpoints": virtual_endpoints,
         }),
     );
-
-    Ok(session_id)
+    Ok(sid)
 }
 
 /// Telnet 会话连接（TelnetAdapter → Channel → SessionStore）
@@ -1376,82 +1160,37 @@ pub async fn disconnect_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
-    // 单次锁获取：读取 → 关闭（close_session 内部调用 shutdown() 清理侧通道）
-    let (pairs_to_destroy, session_name, is_tftp, is_iperf) = {
+    let (session_name, plugin_id) = {
         let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-
         let handle = store
             .get_session(&session_id)
             .ok_or_else(|| store.session_not_found(&session_id))?;
-        let pairs = handle.virtual_endpoints.clone();
-        let name = handle.name.clone();
-        let is_tftp = handle.plugin_id == "tftp";
-        let is_iperf = handle.plugin_id == "iperf";
+        let snapshot = (handle.name.clone(), handle.plugin_id.clone());
         store.close_session(&session_id)?;
         store.reset_child_counter(&session_id);
-        // Disconnected 属于运行态，不写回 Saved Session Library。
-        (pairs, name, is_tftp, is_iperf)
+        snapshot
     };
-    // 锁已释放 — close_session 内部已关闭桥接
 
-    // 销毁虚拟端口对（从内核驱动移除 → 外部工具感知 COM 端口消失）
-    if !pairs_to_destroy.is_empty() {
-        if let Ok(mut vpm) = state.virtual_port_manager.lock() {
-            for pair in &pairs_to_destroy {
-                let _ = vpm.destroy_endpoint(pair);
-                // destroy_endpoint 对权限错误返回 Ok(()) 但通过 mark_for_deferred_cleanup
-                // 将 bus 号写入 state 文件，后续统一 UAC 清理
-            }
-
-            // 检查是否有因权限不足而写入 state 文件的残留端口
-            if vpm.pending_orphan_count() > 0 {
-                log::info!(
-                    "断开连接: {} 个端口对需要管理员权限，通过 UAC 批量清理...",
-                    vpm.pending_orphan_count()
-                );
-                match vpm.cleanup_endpoints_elevated() {
-                    Ok(cleaned) => {
-                        log::info!("断开连接: 通过 UAC 成功清理 {} 个端口对", cleaned);
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "断开连接: UAC 清理失败: {} — 可通过状态栏[清理残留端口]按钮手动清理",
-                            e
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    log::info!("会话已断开: {} (虚拟端口已清理)", session_name);
-    // TFTP 会话断开后通知前端服务端已停止
-    if is_tftp {
+    log::info!("会话已断开: {} ({})", session_name, plugin_id);
+    if plugin_id == crate::plugins::tftp::PLUGIN_ID {
         let _ = app.emit(
             "tftp-server-status",
-            serde_json::json!({
-                "session_id": session_id,
-                "running": false,
-            }),
+            serde_json::json!({ "session_id": session_id, "running": false }),
         );
     }
-    // iperf 会话断开 = 服务端生命周期结束（shutdown() 已复位 server_running，
-    // 此处显式通知前端刷新右侧面板状态）
-    if is_iperf {
+    if plugin_id == crate::plugins::iperf::PLUGIN_ID {
         let _ = app.emit(
             "iperf-server-status",
-            serde_json::json!({
-                "session_id": session_id,
-                "running": false,
-            }),
+            serde_json::json!({ "session_id": session_id, "running": false }),
         );
     }
+    let info = DisconnectInfo::user_requested();
     let _ = app.emit(
         "session-disconnected",
         serde_json::json!({
             "session_id": session_id,
-            "reason": "User requested disconnect",
-            "disconnect_info": DisconnectInfo::user_requested(),
+            "reason": &info.reason,
+            "disconnect_info": &info,
         }),
     );
     Ok(())
@@ -1545,8 +1284,8 @@ pub fn get_tabs(state: State<'_, AppState>) -> Result<Vec<TabInfo>, String> {
                 if sub.state == SessionState::Disconnected {
                     continue; // 跳过已断开的子连接，等待 channel-closed 事件触发 REMOVE_CHILD
                 }
-                if !sub.tabbed {
-                    continue; // 会话内对端（网络调试）不占标签页，由自定义视图展示
+                if !sub.visible_in_workspace {
+                    continue; // 插件后台子连接不直接占用 Workspace 标签页
                 }
                 tabs.push(TabInfo {
                     id: sub.id.clone(),
@@ -1937,9 +1676,10 @@ pub async fn open_channel(
 pub fn list_network_peers(
     state: State<'_, AppState>,
     session_id: String,
-) -> Result<Vec<crate::kernel::session_store::PeerInfo>, String> {
-    let store = state.session_store.lock().map_err(|e| e.to_string())?;
-    Ok(store.list_peers(&session_id))
+) -> Result<Vec<crate::plugins::network::NetworkPeerInfo>, String> {
+    Ok(state
+        .plugin::<crate::plugins::network::NetworkAdapter>(crate::plugins::network::PLUGIN_ID)
+        .list_peers(&session_id))
 }
 
 /// 关闭单个对端（网络调试）。
