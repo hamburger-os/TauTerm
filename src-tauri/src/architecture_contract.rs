@@ -43,9 +43,7 @@ fn kernel_does_not_depend_on_concrete_plugins() {
 #[test]
 fn app_state_does_not_own_concrete_protocol_adapters() {
     let source = include_str!("lib.rs");
-    let start = source
-        .find("pub struct AppState {")
-        .expect("AppState start");
+    let start = source.find("pub struct AppState {").expect("AppState start");
     let tail = &source[start..];
     let end = tail.find("\n}").expect("AppState end");
     let app_state = &tail[..end];
@@ -169,6 +167,26 @@ fn frontend_session_presentation_is_plugin_driven() {
             "common session presentation must not branch on built-in plugin '{plugin_id}'"
         );
     }
+}
+
+#[test]
+fn frontend_session_policy_is_plugin_driven() {
+    let source = read_workspace_source("src/context/SessionContext.tsx");
+    assert!(
+        source.contains("persistedConnectionParams") && source.contains("reconnectGuard"),
+        "common SessionContext must consume plugin-owned persistence/reconnect contributions"
+    );
+    assert!(
+        !source.contains(r#"pluginId === "tftp""#)
+            && !source.contains(r#"tab.pluginId === "tftp""#),
+        "TFTP reconnect policy must stay inside the TFTP plugin"
+    );
+    assert!(
+        !source.contains(r#"pluginId !== "ssh""#)
+            && !source.contains("delete sanitized.password")
+            && !source.contains("delete sanitized.private_key"),
+        "SSH persistence policy must stay inside the SSH plugin"
+    );
 }
 
 #[test]
