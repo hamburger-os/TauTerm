@@ -1,20 +1,47 @@
 /**
  * SSH 插件前端注册
  *
- * 向内核注册 SSH 协议插件的 manifest、翻译资源。
- * 连接表单在 ConnectDialog 中内联渲染（与串口表单相同的模式）。
+ * SSH 专属连接身份、持久化参数清洗与展示摘要均由插件拥有；公共 Session/UI
+ * 只消费声明式 contribution，不解析 SSH 字段。
  */
 import { registerPlugin, type PluginManifest } from "../../core/plugin-registry";
 import manifestJson from "../../plugin-manifests/ssh.json";
 
+function formatHostPort(host: string, port: number): string {
+  const trimmedHost = host.trim();
+  const displayHost = trimmedHost.includes(":")
+    && !(trimmedHost.startsWith("[") && trimmedHost.endsWith("]"))
+    ? `[${trimmedHost}]`
+    : trimmedHost;
+  return `${displayHost}:${port}`;
+}
+
 registerPlugin({
   manifest: manifestJson as PluginManifest,
+  persistedConnectionParams: (params, sessionId) => {
+    const persisted = { ...params };
+    delete persisted.password;
+    delete persisted.private_key;
+    delete persisted.passphrase;
+    persisted.credential_account = `ssh-session:${sessionId}`;
+    return persisted;
+  },
   sessionPresentation: {
     defaultName: params => {
       const username = typeof params.username === "string" && params.username.trim()
         ? params.username.trim()
         : "root";
       return `SSH @ ${username}`;
+    },
+    subtitle: (params, endpoint) => {
+      const host = typeof params.host === "string" && params.host.trim()
+        ? params.host.trim()
+        : endpoint;
+      const port = typeof params.port === "number" && Number.isInteger(params.port)
+        && params.port > 0 && params.port <= 65535
+        ? params.port
+        : 22;
+      return formatHostPort(host, port);
     },
   },
   locales: {
