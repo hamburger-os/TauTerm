@@ -6,7 +6,9 @@
 use serde_json::Value;
 
 use crate::kernel::session_store::SavedSession;
-use crate::plugin_application::{PreparedSessionConfig, SessionConfigHandler};
+use crate::plugin_application::{
+    PreparedSessionConfig, SessionConfigHandler, SessionConfigServices,
+};
 use crate::security::credential_store::{
     CredentialStore, CredentialStoreError, CredentialType, CredentialValue,
 };
@@ -153,11 +155,11 @@ pub(crate) fn commit_credential(
 }
 
 fn prepare_persisted_config(
-    credential_store: &CredentialStore,
+    services: &SessionConfigServices<'_>,
     session_id: &str,
     params: &mut Value,
 ) -> Result<PreparedSessionConfig, String> {
-    let pending = prepare_session_params(credential_store, session_id, params)?;
+    let pending = prepare_session_params(services.credential_store, session_id, params)?;
     Ok(match pending {
         Some(pending) => PreparedSessionConfig::with_commit(move |store| {
             commit_credential(store, pending)
@@ -168,7 +170,9 @@ fn prepare_persisted_config(
 
 pub(crate) fn session_config_handler() -> SessionConfigHandler {
     SessionConfigHandler {
+        validate: None,
         prepare: prepare_persisted_config,
+        default_name: None,
         sanitize_saved: Some(sanitize_saved_session),
     }
 }
