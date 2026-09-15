@@ -33,7 +33,7 @@ assert.match(
 );
 assert.match(
   context,
-  /function resultProjection\([\s\S]{0,180}payload\.results\.map/,
+  /function resultProjection\([\s\S]{0,500}payload\.results\.map/,
   "finished payload results must be projected into exact per-file terminal entries",
 );
 assert.match(
@@ -45,6 +45,21 @@ assert.match(
   context,
   /const files = exactResults \?\? current\.files\.map/,
   "TASK_FINISHED must prefer exact backend results over provisional progress state",
+);
+assert.match(
+  context,
+  /const remainingFiles = \[\.\.\.currentFiles\]/,
+  "finished-result merge must not assume terminal results share progress indexes",
+);
+assert.match(
+  context,
+  /remainingFiles\.findIndex\([\s\S]{0,160}entry\.fileName === result\.file_name/,
+  "finished-result merge must reconcile prior byte progress by file identity",
+);
+assert.doesNotMatch(
+  context,
+  /const existing = currentFiles\[index\]/,
+  "terminal results may contain synthesized entries that never emitted progress",
 );
 assert.match(context, /payload\.kind === "file_start"/);
 assert.match(context, /payload\.kind === "file_complete"/);
@@ -357,7 +372,6 @@ assert.match(service, /pub async fn sftp_list_tree_recursive/);
 assert.match(service, /pub async fn sftp_prepare_upload_directory/);
 assert.match(service, /pub async fn sftp_ensure_directory/);
 assert.match(service, /mode & 0o7777/);
-
 // ── Existing SFTP adapter safety invariants remain intact ───────────────────
 const sftp = await source("src-tauri/src/transfer/sftp_transfer.rs");
 assert.match(sftp, /struct ReceiveFilePlan/);
