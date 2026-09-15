@@ -19,13 +19,44 @@ DataBatcher 属于 **Presentation Path**：极端过载时允许丢弃显示数�
 
 ### 日志
 
-LogEngine 使用有界生产者/消费者队列和独立写线程处理系统日志与 Session 数据日志。两者拥有独立启用语义：`system_enabled/system_level` 只控制应用诊断日志，`session_enabled` 只控制 Session 数据日志；任一开关不能短路另一类日志的生命周期。Session Data Log 关闭时生产者直接停止入队，不能继续用“最终会被消费者丢弃”的数据占满共享队列。
+日志分成两个语义不同的流：
+
+- **System Log**：应用诊断事件，受启用状态和最低级别控制；
+- **Session Data Log**：用户对某个 Session 显式启动后记录的 TX/RX transcript，属于 best-effort 调试日志，不是证据记录器。
+
+LogEngine 使用有界生产者/消费者队列和独立写线程完成磁盘 I/O。共享入口不是无差别竞争：Session 数据和 System 事件分别拥有软预算，必须给控制命令保留队列容量；Session 数据达到自己的预算后先丢弃并累计 loss counter，不能把 Start/Stop/Clear 等控制命令一起挤出队列。控制命令仍保持 fail-fast ACK 语义，调用方不能为了等待日志队列而阻塞通信热路径或 Tauri 命令线程。
+
+Session Data Log 有两级开关。`session_enabled` 只表示应用允许使用 Session 日志；真正的数据生产还要求对应 Session 已成功创建活动 writer。未显式开始记录的 Session 必须在生产端短路，不能把 TX/RX 数据塞入共享日志队列后再由消费者丢弃。能够在调用点判断活动状态的发送路径还应在构造/复制日志 payload 前短路，避免日志关闭时仍承担无意义的数据复制成本。
+
+`system_enabled/system_level` 只控制应用诊断日志。Rust `log` facade 的全局 ceiling 保持可接收 Trace，真正的运行时级别过滤由 LogBridge 统一负责，因此 Settings 中的 Debug/Trace 不能在到达 LogBridge 前被静态 `Info` 上限提前吞掉。前端 `log_event` 与 Rust `log::*` 进入同一最低级别语义；非法级别不得伪装成普通日志事件。
 
 日志目录属于**进程启动期一次性资源**，不是运行时可变设置。LogEngine 创建时只建立有界队列和 LogBridge，不启动消费者、也不创建文件；Tauri setup 解析出最终可写的绝对目录后一次性完成目录配置并启动消费者。配置完成前产生的启动事件保留在有界队列中，随后统一写入最终目录。目录绑定成功后本进程不允许再次切换，因此 `get_log_dir`、设置 UI 和实际 writer 始终指向同一个位置，也不会因为 `tauri dev` 的当前工作目录而隐式创建 `src-tauri/logs`。
 
-日志队列溢出和实际文件写失败分别归入对应的 `dropped_system_entries` / `dropped_session_entries`，通过 `get_log_health` 暴露给设置 UI。System Log 文件自身无法打开/写入时，消费者不得再调用同一个 `log` bridge 递归记录该失败；只使用 stderr 诊断并累计 loss counter。出现非零计数时必须提示相关日志可能不完整，不能把 best-effort Session Log 描述为工程证据记录。
+所有可从 IPC/ConfigStore 到达的日志参数都必须由 Rust 再验证。单文件大小、buffer、flush interval、retention 等不能只依赖前端 slider 范围；非法值必须在发布运行态之前失败，不能出现 `flush_interval=0` 忙轮询、零大小无限分卷等状态。配置仍采用 ConfigStore snapshot 先持久化、后应用运行态；若 LogEngine 运行态应用失败，必须恢复旧 ConfigStore snapshot 并把失败显式返回给 UI。
 
-日志设置由 Rust ConfigStore 持久化；设置页只消费公开配置，不直接拥有文件句柄或浏览器本地持久化。相关设置以一个 ConfigStore snapshot 先持久化、后应用运行态；若 LogEngine 运行态应用失败，必须恢复旧 ConfigStore snapshot 并把失败显式返回给 UI。ConfigStore 未成功绑定磁盘时读写必须显式失败，不能退化成“仅本进程成功”。“清除所有日志”也由唯一持有 writer 的消费者线程执行 close/flush → delete → reopen → ACK，避免 Windows 打开句柄删除失败或 Linux unlink 后继续向不可见 inode 写入。 启动 Session Log 与清除日志的 ACK 等待必须运行在 blocking worker，而不是占用同步 Tauri 命令分发路径；日志控制命令使用有界队列的 fail-fast 入队语义，队列过载时向 UI 明确返回错误，不能为了等待控制队列而冻结界面。
+#### Flush 与分段存储
+
+`flush_interval` 表示最大缓冲驻留周期，而不是“队列连续空闲这么久才 flush”。消费者维护绝对 flush deadline；即使 Session 持续有数据进入，deadline 到达后也必须刷新全部活动 writer。这样低速但持续的流量不会因为永远触发不到 `recv_timeout` 的 idle timeout 而长期留在用户态 buffer。
+
+System Log 与 Session Data Log 共用同一组文件大小、buffer、flush 和 retention 存储策略，但保留不同格式语义。两者都使用**只追加分段**：达到阈值时关闭当前 segment 并新建下一个，禁止原地读取尾部、truncate、重写旧文件。Session 每个 segment 都写独立 Header，至少能识别 Session、Endpoint、开始时间、数据模式、segment 编号和 TauTerm 版本；单独拿到任意一个 rotated segment 也必须可以理解其来源。Session 数据行使用带时区的完整时间戳，不能只记录跨午夜后会失去日期语义的 `HH:mm:ss`。
+
+Session 文件名的唯一性来自不可变 Session 身份、进程/启动实例信息和 segment 序号，用户可修改的 Session 名称只进入 Header，不再承担文件唯一标识，也不能把路径字符带入文件系统命名。System Log 同样采用独立 segment，避免单个日期文件无限增长。
+
+#### Retention、容量与清理
+
+Retention 不是只在应用启动时运行一次。消费者启动时先执行一次维护，随后在运行期间周期执行，因此应用连续运行数天时过期文件仍会被回收。目录同时有独立于 `retention_days` 的总容量保护上限；达到上限时只从**已经关闭且不属于当前活动 writer** 的 segment 中按时间淘汰，绝不能 truncate 活动文件。
+
+“清除所有日志”继续由唯一持有 writer 的消费者线程执行 `close/flush → delete → reopen → ACK`。活动 Session reopen 后必须创建新的 segment 并重新写 Header，不能在 Linux 上继续向被 unlink 的 inode 写入，也不能在 Windows 上依赖删除仍打开的文件。
+
+#### 失败与健康状态
+
+日志仍然是 best-effort：通信成功不能因为日志磁盘慢、队列满或磁盘不可写而失败。所有丢失必须可观察。健康状态除 System/Session 总丢失计数外，还区分队列丢弃、文件写入失败和存储维护失败，并暴露当前 queue pressure、活动 Session writer 数与目录保护上限。System sink 打开/写入失败后采用有限退避，不能对每个后续事件立即重复打开失败路径形成 I/O/诊断风暴。
+
+System Log 文件自身无法打开/写入时，消费者不得再调用同一个 `log` bridge 递归记录该失败；只使用 stderr 诊断并累计 loss counter。System Log 持久化前还必须经过最终防御性 sanitizer：至少覆盖常见 password/passphrase/token/API key/authorization/cookie/private-key 形式，并把 CR/LF 转义为单条物理记录，避免任意前端/远端错误字符串伪造额外日志行。真正的凭据仍要求调用方在格式化日志前就移除，sanitizer 不能成为传输 Secret 的理由。
+
+Session Data Log 与 System Log 的安全边界不同：Session Data Log 的用途就是在用户明确启动后记录真实线路 TX/RX，所以不能为了“脱敏”任意改变 payload。它必须依靠显式启动、独立生命周期、文件边界和未来 Recorder/Evidence Path 的更强合同来保护。
+
+启动 Session Log 与清除日志的 ACK 等待必须运行在 blocking worker，而不是占用同步 Tauri 命令分发路径；日志控制命令使用有界队列的 fail-fast 入队语义，队列过载时向 UI 明确返回错误。
 
 ### 诊断与性能合同
 
@@ -93,9 +124,10 @@ flowchart TB
   IO["Session I/O"] --> Batch["Presentation: DataBatcher"]
   Batch --> UI["Terminal / Renderer / Stats"]
   Batch --> Loss["显式 overflow"]
-  IO --> Log["Best-effort LogEngine"]
-  Log --> Files["系统/会话日志"]
-  Log --> LogLoss["显式 drop counters"]
+  IO --> Gate["Active Session Log Gate"]
+  Gate --> Log["Best-effort LogEngine"]
+  Log --> Files["Append-only Segments"]
+  Log --> LogLoss["显式分类 loss counters"]
   IO -. future .-> Evidence["Recorder / Evidence Path"]
   Tools["工程工具"] --> Local["本地纯计算/轻量解析"]
 ```
@@ -103,8 +135,10 @@ flowchart TB
 ## 设计边界
 
 - 高频数据批处理不能改变字节顺序和 Session 归属。
-- 丢包、队列满或截断必须可观察，不能静默制造“完整数据”的假象。
-- 日志路径必须通过统一 sanitizer 处理敏感字段。
+- 丢包、队列满、磁盘失败或截断必须可观察，不能静默制造“完整数据”的假象。
+- 未启动 Session Log 的会话不能占用日志队列；能够提前判断的通信热路径还应避免构造日志 payload。
+- 活动日志文件只允许 append/flush/close/rotate，不允许 retention 或容量维护原地改写。
+- System Log 必须经过统一 sanitizer；Session Data Log 则保持真实线路字节，不把两种安全语义混为一谈。
 - 工程工具默认是本地纯函数式能力，不应暗中建立网络连接。
 - Modbus/AT 等 parser 只解析它明确支持的范围；协议标准依据记录在 `docs/knowledge/`，不能把工具 UI 当成标准。
 - 性能参数只有在成为长期合同后才写入本文；具体实现常量仍留在代码。Benchmark 输出是回归趋势证据，不是产品宣传跑分。
@@ -115,10 +149,12 @@ flowchart TB
 - `src-tauri/src/kernel/data_batcher.rs`
 - `src-tauri/src/kernel/log_engine.rs`
 - `src-tauri/src/kernel/log_writer.rs`
+- `src-tauri/src/security/log_sanitizer.rs`
+- `src-tauri/src/ipc_transport.rs`
 - `src/components/Tools/`
 - `src/renderers/StatsDashboardRenderer.tsx`
 - `src/components/Settings/panels/LoggingSettings.tsx`
 
 ## 何时更新本文
 
-修改数据批处理语义、日志数据模型/信任边界、统计所有权、工程工具范围或轻量协议 parser 的定位时，必须同步更新本文。
+修改数据批处理语义、日志数据模型/信任边界、日志存储与丢失语义、统计所有权、工程工具范围或轻量协议 parser 的定位时，必须同步更新本文。
