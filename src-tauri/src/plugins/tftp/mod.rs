@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService, TransferProtocolType,
+    ProtocolAdapter, ProtocolConnection, SessionAttach, SessionService,
 };
 use crate::session::SessionError;
 
@@ -351,10 +351,6 @@ impl ProtocolAdapter for TftpAdapter {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![]
     }
 
     fn teardown_delay(&self) -> Duration {

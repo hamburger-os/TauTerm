@@ -17,7 +17,7 @@ use telnet::{Action, Telnet, TelnetOption};
 
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
-    EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach, TransferProtocolType,
+    EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach,
 };
 use crate::session::SessionError;
 use crate::transport::DataPlaneRuntime;
@@ -220,10 +220,6 @@ impl ProtocolAdapter for TelnetAdapter {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![]
     }
 
     fn teardown_delay(&self) -> std::time::Duration {

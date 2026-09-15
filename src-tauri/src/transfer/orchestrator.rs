@@ -15,7 +15,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use crate::kernel::file_transfer::{
     FileTransfer, FileTransferError, FileTransferOptions, UnifiedProgress,
 };
-use crate::kernel::plugin_adapter::{TransferExecutionMode, TransferProtocolType};
+use crate::kernel::plugin_adapter::TransferProtocolType;
 use crate::kernel::session_store::SessionState;
 use crate::transfer::config::{ReceiveProtocolOptions, SendProtocolOptions};
 use crate::transfer::panic_guard::PanicGuard;
@@ -51,9 +51,6 @@ pub struct TransferStartAck {
 
 #[async_trait]
 pub trait TransferOrchestrator: Send + Sync {
-    #[allow(dead_code)]
-    fn protocol(&self) -> &str;
-
     async fn execute_send(
         &self,
         app: AppHandle,
@@ -67,29 +64,21 @@ pub trait TransferOrchestrator: Send + Sync {
         ctx: ReceiveContext,
         client_session_id: String,
     ) -> Result<TransferStartAck, String>;
-
-    #[allow(dead_code)]
-    fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String>;
 }
 
-/// 协议 descriptor 到执行策略的唯一解析入口。
+/// 根据传输子系统实际实现的 provider 创建执行编排器。
+///
+/// Kernel 只携带不透明协议 ID；具体协议与执行策略在这里收敛，新增 provider 时只修改
+/// transfer 模块，不修改插件 API 或 Session Kernel。
 pub fn create_orchestrator(
     protocol_type: &TransferProtocolType,
 ) -> Result<Box<dyn TransferOrchestrator>, String> {
-    let descriptor = protocol_type
-        .descriptor()
-        .ok_or_else(|| format!("不支持的传输协议: '{}'", protocol_type))?;
-    match descriptor.execution_mode {
-        TransferExecutionMode::Inline => Ok(Box::new(InlineTransferOrchestrator {
+    match protocol_type.as_str() {
+        "xmodem" | "ymodem" | "zmodem" => Ok(Box::new(InlineTransferOrchestrator {
             pt: protocol_type.clone(),
         })),
-        TransferExecutionMode::Auxiliary => Ok(Box::new(AuxiliaryTransferOrchestrator {
-            pt: protocol_type.clone(),
-        })),
-        TransferExecutionMode::SeparateConnection => Err(format!(
-            "协议 '{}' 的独立连接传输策略尚未实现",
-            protocol_type
-        )),
+        "sftp" => Ok(Box::new(AuxiliaryTransferOrchestrator)),
+        _ => Err(format!("不支持的传输协议: '{}'", protocol_type)),
     }
 }
 
@@ -287,16 +276,15 @@ impl InlineTransferOrchestrator {
 
 #[async_trait]
 impl TransferOrchestrator for InlineTransferOrchestrator {
-    fn protocol(&self) -> &str {
-        self.pt.as_str()
-    }
-
     async fn execute_send(
         &self,
         app: AppHandle,
         ctx: SendContext,
         client_id: String,
     ) -> Result<TransferStartAck, String> {
+        if ctx.files.iter().any(|file| file.is_dir) {
+            return Err(format!("传输协议 '{}' 只支持普通文件", self.pt));
+        }
         let transfer_id = uuid::Uuid::new_v4().to_string();
         let (io, cancel) = self.acquire_exclusive_io(&app, &ctx.session_id, &transfer_id)?;
         let protocol_handler = match self.create_send_protocol_handler(&ctx.protocol_options) {
@@ -442,24 +430,12 @@ impl TransferOrchestrator for InlineTransferOrchestrator {
         let _ = start_tx.send(());
         Ok(ack)
     }
-
-    fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
-        let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
-        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.cancel_scheduled_transfer(session_id, None)
-    }
 }
 
-pub struct AuxiliaryTransferOrchestrator {
-    pt: TransferProtocolType,
-}
+pub struct AuxiliaryTransferOrchestrator;
 
 #[async_trait]
 impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
-    fn protocol(&self) -> &str {
-        self.pt.as_str()
-    }
-
     async fn execute_send(
         &self,
         app: AppHandle,
@@ -632,11 +608,5 @@ impl TransferOrchestrator for AuxiliaryTransferOrchestrator {
         emit_transfer_started(&app, &client_id, &transfer_id, &protocol, "receive");
         let _ = start_tx.send(());
         Ok(ack)
-    }
-
-    fn cancel(&self, app: AppHandle, session_id: &str) -> Result<(), String> {
-        let state = app.try_state::<AppState>().ok_or("无法获取应用状态")?;
-        let mut store = state.session_store.lock().map_err(|e| e.to_string())?;
-        store.cancel_scheduled_transfer(session_id, None)
     }
 }

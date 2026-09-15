@@ -1,5 +1,20 @@
 //! Architecture regression tests for dependency direction and plugin composition.
 
+fn read_source(relative: &str) -> String {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    std::fs::read_to_string(manifest_dir.join("src").join(relative))
+        .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"))
+}
+
+fn read_workspace_source(relative: &str) -> String {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir
+        .parent()
+        .expect("src-tauri must have workspace parent");
+    std::fs::read_to_string(workspace_root.join(relative))
+        .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"))
+}
+
 #[test]
 fn kernel_does_not_depend_on_concrete_plugins() {
     let kernel_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/kernel");
@@ -58,5 +73,43 @@ fn common_connection_router_is_registry_driven() {
     assert!(
         !router.contains("match pid.as_str()"),
         "common connection router must not branch on concrete plugin IDs"
+    );
+}
+
+#[test]
+fn kernel_transfer_protocol_id_is_provider_agnostic() {
+    let source = read_source("kernel/plugin_adapter.rs");
+    for protocol in ["xmodem", "ymodem", "zmodem", "sftp", "ftp"] {
+        assert!(
+            !source.contains(protocol),
+            "kernel/plugin_adapter.rs must not encode concrete transfer provider '{protocol}'"
+        );
+    }
+    assert!(
+        !source.contains("TransferExecutionMode"),
+        "transfer execution policy belongs to transfer/, not kernel/"
+    );
+}
+
+#[test]
+fn common_session_ipc_has_no_serial_compatibility_default() {
+    let commands = read_source("commands.rs");
+    assert!(
+        !commands.contains("unwrap_or_else(|| crate::plugins::serial::PLUGIN_ID"),
+        "generic session IPC must require plugin_id instead of defaulting to Serial"
+    );
+    assert!(
+        !commands.contains(r#"plugin_id.unwrap_or_else(|| "serial""#),
+        "saved-session IPC must require plugin_id instead of defaulting to Serial"
+    );
+
+    let frontend = read_workspace_source("src/context/SessionContext.tsx");
+    assert!(
+        !frontend.contains(r#"pluginId || "serial""#),
+        "frontend generic session API must require pluginId"
+    );
+    assert!(
+        !frontend.contains(r#"transferProtocol || "ymodem""#),
+        "frontend generic session API must not inject a Serial transfer protocol"
     );
 }

@@ -32,7 +32,7 @@ export default function ModbusConnectForm({ params, onChange }: ConnectFormProps
       setPorts([]);
       return;
     }
-    void invoke<Endpoint[]>("enumerate_endpoints", { connectionType: "serial" })
+    void invoke<Endpoint[]>("enumerate_endpoints", { pluginId: "serial" })
       .then(setPorts)
       .catch(() => setPorts([]));
   }, [mode]);

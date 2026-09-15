@@ -101,7 +101,7 @@ pub struct ConnectSessionRequest {
     pub endpoint: String,
     pub params: Value,
     pub name: Option<String>,
-    pub plugin_id: Option<String>,
+    pub plugin_id: String,
     pub transfer_enabled: Option<bool>,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: Option<bool>,
@@ -152,7 +152,7 @@ pub struct SaveSessionConfigRequest {
     pub endpoint: String,
     pub params: Value,
     pub name: Option<String>,
-    pub plugin_id: Option<String>,
+    pub plugin_id: String,
     pub transfer_enabled: Option<bool>,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: Option<bool>,
@@ -471,11 +471,9 @@ pub fn get_connection_types(state: State<'_, AppState>) -> Vec<ConnectionTypeInf
 #[tauri::command]
 pub async fn enumerate_endpoints(
     state: State<'_, AppState>,
-    plugin_id: Option<String>,
+    plugin_id: String,
 ) -> Result<Vec<EndpointItem>, String> {
-    let raw_plugin_id = plugin_id.unwrap_or_else(|| crate::plugins::serial::PLUGIN_ID.into());
-    let plugin_id =
-        PluginId::parse(raw_plugin_id).map_err(|error| format!("无效插件 ID: {error}"))?;
+    let plugin_id = PluginId::parse(plugin_id).map_err(|error| format!("无效插件 ID: {error}"))?;
     let adapter = state
         .plugins
         .adapter(&plugin_id)
@@ -508,12 +506,8 @@ pub async fn connect_session(
     state: State<'_, AppState>,
     request: ConnectSessionRequest,
 ) -> Result<String, String> {
-    let raw_plugin_id = request
-        .plugin_id
-        .clone()
-        .unwrap_or_else(|| crate::plugins::serial::PLUGIN_ID.into());
-    let plugin_id =
-        PluginId::parse(raw_plugin_id).map_err(|error| format!("无效插件 ID: {error}"))?;
+    let plugin_id = PluginId::parse(request.plugin_id.clone())
+        .map_err(|error| format!("无效插件 ID: {error}"))?;
     let handler = state
         .plugins
         .contribution::<SessionConnectHandler>(&plugin_id)
@@ -594,19 +588,6 @@ async fn connect_session_serial(
         .connect(&endpoint, &params)
         .await
         .map_err(|e| e.to_string())?;
-
-    // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
-    let content_type = state
-        .plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID)
-        .content_type();
-    let transfer_protocols = state
-        .plugin::<crate::plugins::serial::SerialAdapter>(crate::plugins::serial::PLUGIN_ID)
-        .transfer_protocols();
-    log::info!(
-        "串口连接: content_type={:?}, transfer_protocols={:?}",
-        content_type,
-        transfer_protocols
-    );
 
     let params_clone = params.clone();
     let session_name = name.unwrap_or_default();
@@ -949,19 +930,6 @@ async fn connect_session_telnet(
         .await
         .map_err(|e| e.to_string())?;
 
-    // 查询插件能力（trait 方法调度，验证 ProtocolAdapter 全路径可用）
-    let content_type = state
-        .plugin::<crate::plugins::telnet::TelnetAdapter>(crate::plugins::telnet::PLUGIN_ID)
-        .content_type();
-    let transfer_protocols = state
-        .plugin::<crate::plugins::telnet::TelnetAdapter>(crate::plugins::telnet::PLUGIN_ID)
-        .transfer_protocols();
-    log::info!(
-        "Telnet 连接: content_type={:?}, transfer_protocols={:?}",
-        content_type,
-        transfer_protocols
-    );
-
     connect_simple_terminal_session(app, &state, request, "telnet", "Telnet", true, conn)
 }
 
@@ -1226,14 +1194,6 @@ async fn connect_session_ssh(
         .connect_with_config(ssh_config.clone(), app.clone())
         .await
         .map_err(|e| e.to_string())?;
-
-    let content_type = ssh_adapter.content_type();
-    let transfer_protocols_list = ssh_adapter.transfer_protocols();
-    log::info!(
-        "SSH 连接: content_type={:?}, transfer_protocols={:?}",
-        content_type,
-        transfer_protocols_list
-    );
 
     let session_name =
         name.unwrap_or_else(|| format!("{}@{}", ssh_config.username, ssh_config.host));
@@ -2248,7 +2208,7 @@ pub async fn save_session_config(
         send_bar_enabled,
         session_id,
     } = request;
-    let pid = plugin_id.unwrap_or_else(|| "serial".into());
+    let pid = plugin_id;
     if pid == "local-shell" {
         crate::plugins::local_shell::LocalShellAdapter::validate_params(&params)?;
     }
@@ -3247,9 +3207,6 @@ pub async fn file_transfer_send(
         .collect::<Result<_, _>>()?;
     if files.is_empty() {
         return Err("没有可传输的有效文件".into());
-    }
-    if pt.is_serial_inline() && files.iter().any(|file| file.is_dir) {
-        return Err("X/Y/ZModem 只支持普通文件；目录上传仅适用于 SFTP".into());
     }
 
     // 创建进度通道

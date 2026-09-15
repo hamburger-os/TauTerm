@@ -11,7 +11,7 @@ pub(crate) mod elevated;
 
 use crate::kernel::plugin_adapter::{
     ChannelOpenMode, ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection,
-    SessionChannelFactory, TransferProtocolType,
+    SessionChannelFactory,
 };
 use crate::session::SessionError;
 use crate::transport::DataPlaneRuntime;
@@ -357,10 +357,6 @@ impl ProtocolAdapter for LocalShellAdapter {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![]
     }
 }
 

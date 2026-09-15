@@ -5,7 +5,7 @@
 pub const PLUGIN_ID: &str = "serial";
 
 use crate::kernel::plugin_adapter::{
-    ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection, TransferProtocolType,
+    ContentType, EndpointInfo, ProtocolAdapter, ProtocolConnection,
 };
 use crate::session::SessionError;
 use crate::transport::serial::{open_serial, SerialTransportConfig};
@@ -144,14 +144,6 @@ impl ProtocolAdapter for SerialAdapter {
         ContentType::Terminal
     }
 
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![
-            TransferProtocolType::ymodem(),
-            TransferProtocolType::xmodem(),
-            TransferProtocolType::zmodem(),
-        ]
-    }
-
     fn teardown_delay(&self) -> std::time::Duration {
         #[cfg(target_os = "windows")]
         {
@@ -228,14 +220,8 @@ mod tests {
     }
 
     #[test]
-    fn serial_adapter_contract_exposes_expected_shared_capabilities() {
+    fn serial_adapter_contract_exposes_terminal_content_type() {
         let adapter = SerialAdapter::new();
-        let protocols = adapter
-            .transfer_protocols()
-            .into_iter()
-            .map(|protocol| protocol.to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(protocols, vec!["ymodem", "xmodem", "zmodem"]);
         assert_eq!(adapter.content_type(), ContentType::Terminal);
     }
 }

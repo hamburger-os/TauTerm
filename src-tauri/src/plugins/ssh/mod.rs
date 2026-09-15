@@ -23,7 +23,7 @@ use zeroize::Zeroize;
 use crate::kernel::plugin_adapter::ContentType;
 use crate::kernel::plugin_adapter::{
     ChannelOpenMode, EndpointInfo, ProtocolAdapter, ProtocolConnection, SessionAttach,
-    SessionChannelFactory, SessionService, TransferProtocolType,
+    SessionChannelFactory, SessionService,
 };
 use crate::session::SessionError;
 use crate::transport::{AsyncBridgeDriver, DataPlaneRuntime};
@@ -951,10 +951,6 @@ impl ProtocolAdapter for SshAdapter {
 
     fn content_type(&self) -> ContentType {
         ContentType::Terminal
-    }
-
-    fn transfer_protocols(&self) -> Vec<TransferProtocolType> {
-        vec![TransferProtocolType::sftp()]
     }
 
     /// SSH 无硬件端点枚举 — 返回空列表
