@@ -496,9 +496,12 @@ const TerminalInstance = forwardRef<any, TerminalInstanceProps>(function Termina
       if (fitAddonRef.current === fitAddon) {
         fitAddonRef.current = null;
       }
-      term?.dispose();
-      // 通知父组件清理此会话的 writeRefs 条目
-      onCleanupRef.current?.(sessionId);
+      if (term) {
+        term.dispose();
+        // React StrictMode 会执行一次没有真正初始化 xterm 的探测性 cleanup。
+        // 只有真实实例卸载才通知父层，避免误删仍在等待回放的 startup buffer。
+        onCleanupRef.current?.(sessionId);
+      }
     };
   }, []);
 
