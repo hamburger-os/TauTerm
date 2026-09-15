@@ -1,23 +1,25 @@
-//! 日志文件写入器
+//! Session data log segment writer.
 //!
-//! 管理单个日志文件的 BufWriter、格式化、自动分卷和安全的句柄关闭。
-//! 配合 LogEngine 的消费者线程使用，每个活跃的日志会话对应一个 LogWriter。
+//! A `LogWriter` owns exactly one active immutable segment at a time. Rotation never rewrites an
+//! existing segment: the current handle is flushed/closed and a fresh self-describing segment is
+//! created. This keeps high-volume logging crash-safe and makes every rotated file independently
+//! understandable.
 
-use chrono::Local;
+use chrono::{Local, SecondsFormat};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::log_engine::{DataDirection, DataLogEntry};
 
-/// 单个日志文件的写入器
 pub struct LogWriter {
     file: Option<BufWriter<File>>,
     current_path: PathBuf,
     bytes_written: u64,
     split_threshold: u64,
+    session_id: String,
     session_name: String,
-    port_name: String,
+    endpoint: String,
     start_time: chrono::DateTime<Local>,
     split_index: u32,
     data_mode: String,
@@ -26,69 +28,42 @@ pub struct LogWriter {
 }
 
 impl LogWriter {
-    /// 创建新的 LogWriter 并写入文件头
     pub fn new(
-        log_dir: &PathBuf,
+        log_dir: &Path,
         split_threshold: u64,
         buffer_size: usize,
+        session_id: &str,
         session_name: &str,
-        port_name: &str,
+        endpoint: &str,
         data_mode: &str,
     ) -> std::io::Result<Self> {
-        let sanitized_name = Self::sanitize(session_name);
-        let sanitized_port = Self::sanitize(port_name);
-        let now = Local::now();
-        let ts = now.format("%Y%m%d_%H%M%S");
-        let filename = format!("Log_{}_{}_{}.log", sanitized_name, sanitized_port, ts);
-
         std::fs::create_dir_all(log_dir)?;
-        let path = log_dir.join(&filename);
-
-        let file = OpenOptions::new().create(true).append(true).open(&path)?;
-        let mut buf_writer = BufWriter::with_capacity(buffer_size, file);
-
-        // 写入文件头
-        let header = format!(
-            "════ TauTerm Session Log ════\n\
-             Session: {}\n\
-             Port: {}\n\
-             Started: {}\n\
-             Data Mode: {}\n\
-             ═══════════════════════════════\n\n",
-            session_name,
-            port_name,
-            now.format("%Y-%m-%d %H:%M:%S"),
-            data_mode
-        );
-        let header_bytes = header.as_bytes();
-        buf_writer.write_all(header_bytes)?;
-        buf_writer.flush()?;
-
-        Ok(Self {
-            file: Some(buf_writer),
-            current_path: path,
-            bytes_written: header_bytes.len() as u64,
+        let now = Local::now();
+        let mut writer = Self {
+            file: None,
+            current_path: PathBuf::new(),
+            bytes_written: 0,
             split_threshold,
-            session_name: sanitized_name,
-            port_name: sanitized_port,
+            session_id: session_id.to_string(),
+            session_name: session_name.to_string(),
+            endpoint: endpoint.to_string(),
             start_time: now,
             split_index: 0,
             data_mode: data_mode.to_string(),
-            base_dir: log_dir.clone(),
+            base_dir: log_dir.to_path_buf(),
             buffer_size,
-        })
+        };
+        writer.open_segment()?;
+        Ok(writer)
     }
 
-    /// 写入一条数据日志条目
-    ///
-    /// 根据 data_mode 格式化行，检查分卷阈值，写入文件缓冲区。
-    /// 注意：BufWriter 不会每次调用都立即写入磁盘 — flush 由消费者线程的定时器/缓冲区策略控制。
     pub fn write_entry(&mut self, entry: &DataLogEntry) -> std::io::Result<()> {
         let line = self.format_entry(entry);
         let line_bytes = line.as_bytes();
 
-        // 检查是否需要分卷
-        if self.bytes_written + line_bytes.len() as u64 > self.split_threshold {
+        if self.bytes_written > 0
+            && self.bytes_written + line_bytes.len() as u64 > self.split_threshold
+        {
             self.rotate_file()?;
         }
 
@@ -101,15 +76,29 @@ impl LogWriter {
         Ok(())
     }
 
-    /// 强制刷新缓冲区到磁盘
+    /// Apply runtime storage settings. A buffer-capacity change is materialized by rotating to a
+    /// new segment because `BufWriter` cannot safely change capacity in place.
+    pub fn reconfigure(
+        &mut self,
+        split_threshold: u64,
+        buffer_size: usize,
+    ) -> std::io::Result<bool> {
+        self.split_threshold = split_threshold;
+        if self.buffer_size == buffer_size {
+            return Ok(false);
+        }
+        self.buffer_size = buffer_size;
+        self.rotate_file()?;
+        Ok(true)
+    }
+
     pub fn flush(&mut self) -> std::io::Result<()> {
-        if let Some(ref mut f) = self.file {
-            f.flush()?;
+        if let Some(file) = self.file.as_mut() {
+            file.flush()?;
         }
         Ok(())
     }
 
-    /// 刷新并关闭当前文件句柄，但保留 writer 元数据供稍后重新打开。
     pub fn close(&mut self) -> std::io::Result<()> {
         if let Some(mut file) = self.file.take() {
             file.flush()?;
@@ -117,29 +106,31 @@ impl LogWriter {
         Ok(())
     }
 
-    /// 获取已写入字节数（用于状态上报）
     pub fn bytes_written(&self) -> u64 {
         self.bytes_written
     }
 
-    /// 获取当前文件路径的文件名部分
     pub fn file_name(&self) -> String {
         self.current_path
             .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown.log".into())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "unknown.log".to_string())
     }
 
-    /// 清除日志文件后重新打开：关闭旧句柄，创建带递增序号的新文件
+    pub fn current_path(&self) -> &Path {
+        &self.current_path
+    }
+
+    /// Re-open after an explicit clear operation. The deleted segment is never recreated under the
+    /// same name; the sequence always advances.
     pub fn reopen(&mut self) -> std::io::Result<()> {
         self.rotate_file()
     }
 
-    // ── 内部方法 ──
-
-    /// 根据数据模式格式化日志行
     fn format_entry(&self, entry: &DataLogEntry) -> String {
-        let ts = entry.timestamp.format("%H:%M:%S%.3f");
+        let ts = entry
+            .timestamp
+            .to_rfc3339_opts(SecondsFormat::Millis, false);
         let dir = match entry.direction {
             DataDirection::TX => "[TX]",
             DataDirection::RX => "[RX]",
@@ -147,116 +138,193 @@ impl LogWriter {
 
         match self.data_mode.as_str() {
             "text" => {
-                // 所见即所得：按会话编码解码为 UTF-8 文本再写入。
-                // 非 UTF-8 会话（GBK 等）的 payload 为设备原始字节，直接
-                // from_utf8_lossy 会产生乱码；未知编码回退旧行为。
                 let text = crate::kernel::charset::decode_to_utf8(&entry.payload, &entry.encoding)
                     .unwrap_or_else(|| String::from_utf8_lossy(&entry.payload).into_owned());
-                format!("{} {} {}\n", ts, dir, text)
+                format!("{ts} {dir} {text}\n")
             }
             "hex" => {
-                // 经典 hexdump 格式：偏移 + HEX + ASCII
-                let mut result = format!("{} {}\n", ts, dir);
-                for (i, chunk) in entry.payload.chunks(16).enumerate() {
-                    result.push_str(&format!("{:08X}  ", i * 16));
-                    let hex_part: Vec<String> = chunk
+                let mut result = format!("{ts} {dir}\n");
+                for (index, chunk) in entry.payload.chunks(16).enumerate() {
+                    result.push_str(&format!("{:08X}  ", index * 16));
+                    let hex_line = chunk
                         .iter()
                         .enumerate()
-                        .map(|(j, b)| {
-                            let byte_str = format!("{:02X}", b);
-                            // 在第 8 字节后添加额外空格分隔
-                            if j == 7 {
-                                format!("{} ", byte_str)
+                        .map(|(byte_index, byte)| {
+                            if byte_index == 7 {
+                                format!("{byte:02X} ")
                             } else {
-                                byte_str
+                                format!("{byte:02X}")
                             }
                         })
-                        .collect();
-                    let hex_line = hex_part.join(" ");
-                    result.push_str(&format!("{:<49}", hex_line));
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    result.push_str(&format!("{hex_line:<49}"));
                     result.push_str(" |");
-                    for b in chunk {
-                        if b.is_ascii_graphic() || *b == b' ' {
-                            result.push(*b as char);
+                    for byte in chunk {
+                        result.push(if byte.is_ascii_graphic() || *byte == b' ' {
+                            *byte as char
                         } else {
-                            result.push('.');
-                        }
+                            '.'
+                        });
                     }
                     result.push_str("|\n");
                 }
                 result
             }
             "dual" => {
-                // Dual 模式：ASCII 文本 + HEX 双栏
                 let text: String = entry
                     .payload
                     .iter()
-                    .map(|&b| match b {
+                    .map(|byte| match *byte {
                         b'\r' => '␍',
                         b'\n' => '␊',
                         b'\t' => '␉',
-                        _ if b < 0x20 => '·',
-                        _ => b as char,
+                        value if value < 0x20 || value == 0x7f => '·',
+                        value if value.is_ascii() => value as char,
+                        _ => '·',
                     })
                     .collect();
-                let hex_part: Vec<String> =
-                    entry.payload.iter().map(|b| format!("{:02X}", b)).collect();
-                let hex_str = hex_part.join(" ");
-                format!("{} {} {}  |  {}\n", ts, dir, text, hex_str)
+                let hex = entry
+                    .payload
+                    .iter()
+                    .map(|byte| format!("{byte:02X}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("{ts} {dir} {text}  |  {hex}\n")
             }
             _ => {
-                // 未知模式，回退为原始文本（同样按会话编码解码，保持日志可读）
                 let text = crate::kernel::charset::decode_to_utf8(&entry.payload, &entry.encoding)
                     .unwrap_or_else(|| String::from_utf8_lossy(&entry.payload).into_owned());
-                format!("{} {} {}\n", ts, dir, text)
+                format!("{ts} {dir} {text}\n")
             }
         }
     }
 
-    /// 分卷：关闭当前文件，创建带递增序号的新文件
     fn rotate_file(&mut self) -> std::io::Result<()> {
-        // 先 flush 旧文件
-        if let Some(mut f) = self.file.take() {
-            f.flush()?;
-            // BufWriter 的 Drop 会再次 flush，但我们显式调用以确保
-        }
+        self.close()?;
+        self.split_index = self.split_index.saturating_add(1);
+        self.open_segment()
+    }
 
-        self.split_index += 1;
-        let ts = self.start_time.format("%Y%m%d_%H%M%S");
-        let new_filename = format!(
-            "Log_{}_{}_{}_{}.log",
-            self.session_name, self.port_name, ts, self.split_index
+    fn open_segment(&mut self) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.base_dir)?;
+        let timestamp = self.start_time.format("%Y%m%d_%H%M%S%.3f");
+        let session_key = Self::short_file_key(&self.session_id);
+        let file_name = format!(
+            "Session_{session_key}_{timestamp}_{:04}.log",
+            self.split_index
         );
-        let new_path = self.base_dir.join(&new_filename);
+        let path = self.base_dir.join(file_name);
+        let file = OpenOptions::new().create_new(true).write(true).open(&path)?;
+        let mut buffered = BufWriter::with_capacity(self.buffer_size, file);
+        let header = format!(
+            "════ TauTerm Session Log ════\n\
+             Session ID: {}\n\
+             Session: {}\n\
+             Endpoint: {}\n\
+             Started: {}\n\
+             Data Mode: {}\n\
+             Segment: {}\n\
+             TauTerm: {}\n\
+             ═══════════════════════════════\n\n",
+            self.session_id,
+            self.session_name,
+            self.endpoint,
+            self.start_time
+                .to_rfc3339_opts(SecondsFormat::Millis, false),
+            self.data_mode,
+            self.split_index,
+            env!("CARGO_PKG_VERSION")
+        );
+        buffered.write_all(header.as_bytes())?;
+        buffered.flush()?;
 
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&new_path)?;
-        self.file = Some(BufWriter::with_capacity(self.buffer_size, file));
-        self.current_path = new_path;
-        self.bytes_written = 0;
-
+        self.current_path = path;
+        self.bytes_written = header.len() as u64;
+        self.file = Some(buffered);
         Ok(())
     }
 
-    /// 文件名安全化：替换文件系统非法字符为下划线
-    fn sanitize(name: &str) -> String {
-        name.chars()
-            .map(|c| match c {
-                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-                _ => c,
-            })
-            .collect()
+    fn short_file_key(value: &str) -> String {
+        let filtered: String = value
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric())
+            .take(12)
+            .collect();
+        if filtered.is_empty() {
+            "session".to_string()
+        } else {
+            filtered
+        }
     }
 }
 
 impl Drop for LogWriter {
     fn drop(&mut self) {
-        // BufWriter 的 Drop 会自动 flush 并关闭底层文件句柄
-        // 但为了明确，我们显式 flush
-        if let Some(ref mut f) = self.file {
-            let _ = f.flush();
+        let _ = self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kernel::log_engine::{DataDirection, DataLogEntry};
+
+    fn entry(payload: &[u8]) -> DataLogEntry {
+        DataLogEntry {
+            session_id: "session-123".to_string(),
+            direction: DataDirection::RX,
+            data_mode: "text".to_string(),
+            encoding: "utf-8".to_string(),
+            payload: payload.to_vec(),
+            timestamp: Local::now(),
         }
+    }
+
+    #[test]
+    fn every_rotated_segment_is_self_describing() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut writer = LogWriter::new(
+            temp.path(),
+            280,
+            1024,
+            "session-123",
+            "Serial test",
+            "COM200",
+            "text",
+        )
+        .unwrap();
+
+        let first = writer.current_path().to_path_buf();
+        writer.write_entry(&entry(&vec![b'x'; 256])).unwrap();
+        writer.write_entry(&entry(b"rotated")).unwrap();
+        writer.flush().unwrap();
+        let second = writer.current_path().to_path_buf();
+
+        assert_ne!(first, second);
+        let content = std::fs::read_to_string(second).unwrap();
+        assert!(content.contains("TauTerm Session Log"));
+        assert!(content.contains("Session ID: session-123"));
+        assert!(content.contains("Segment: 1"));
+        assert!(content.contains("rotated"));
+    }
+
+    #[test]
+    fn filenames_use_session_identity_not_user_supplied_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let writer = LogWriter::new(
+            temp.path(),
+            1024 * 1024,
+            1024,
+            "2f09e8f4-778b-41e0-a7d0",
+            "../../unsafe:name",
+            "COM1",
+            "text",
+        )
+        .unwrap();
+        let name = writer.file_name();
+        assert!(name.starts_with("Session_2f09e8f4778b_"));
+        assert!(!name.contains("unsafe"));
+        assert!(!name.contains(".."));
     }
 }
