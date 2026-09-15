@@ -16,7 +16,33 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: python3 .github/session-context-cleanup.py
+      - name: Apply generic SessionContext cleanup
+        run: |
+          python3 .github/session-context-cleanup.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/context/SessionContext.tsx')
+          text = path.read_text(encoding='utf-8')
+          old = '  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null };'
+          new = '''  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
+          | { type: "CLEAR_TABS" }
+          | { type: "REMOVE_CHILD"; id: string; parentId: string }
+          | { type: "REMOVE_ALL_CHILDREN"; parentId: string };'''
+          if text.count(old) != 1:
+              raise SystemExit(f'child action repair: expected 1 match, got {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          path = Path('src/components/Layout/ConnectDialog.tsx')
+          text = path.read_text(encoding='utf-8')
+          old = '          undefined, // pluginId\n          journaldEnabled,\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'ConnectDialog reconfigure cleanup: expected 1 match, got {text.count(old)}')
+          path.write_text(text.replace(old, '          undefined, // pluginId\n', 1), encoding='utf-8')
+          PY
+          rm src/components/SendBar/TargetBar.tsx
+          rm src/components/SendBar/useNetworkSendTargetSync.ts
+          rm src/components/SendBar/networkSendTarget.ts
       - run: npm ci
       - run: npx tsc --noEmit
       - name: Commit cleanup and remove one-shot tooling
