@@ -6,13 +6,12 @@
 
 ## 当前方案
 
-后端存在统一 `FileTransfer` 抽象和统一进度模型。传输协议首先通过 `TransferProtocolDescriptor` 声明执行模式和能力，编排器只消费 descriptor，不再根据协议名字推断资源策略：
+后端存在统一 `FileTransfer` 抽象和统一进度模型。Kernel 中的 `TransferProtocolType` 只保存规范化后的不透明协议 ID，不知道 X/Y/ZModem、SFTP 等具体 provider，也不保存执行模式或 provider 能力。具体协议 ID 到资源策略的解析只存在于 `transfer/orchestrator.rs::create_orchestrator`：
 
-- **Inline**：传输通过 `SessionIo::acquire_exclusive` 获取当前 Session DataPlane 的独占 lease，例如串口 X/Y/ZModem；
-- **Auxiliary**：复用 Session 的独立协议能力，例如 SSH/SFTP；
-- **SeparateConnection**：模型已保留，但当前通用编排器尚未实现该策略。
+- **Inline**：X/Y/ZModem 通过 `SessionIo::acquire_exclusive` 获取当前 Session DataPlane 的独占 lease；
+- **Auxiliary**：SFTP 复用 Session 已提供的独立 `FileTransfer` capability，不占用主终端字节流。
 
-Descriptor 同时声明 send / receive / batch / directory / overwrite / resume 等能力。当前内建协议由 `TransferProtocolType::descriptor()` 作为单一注册表来源；调用方不得再建立第二套协议名 → 执行模式映射。
+未实现的协议 ID在 transfer provider 路由入口直接失败，不在 Kernel、公共命令层或 UI 建立兜底映射。目录、覆盖、批量等 provider 专属约束由对应传输实现负责；例如 Inline provider 自己拒绝目录发送，公共 IPC 不通过识别 X/Y/ZModem 名称来推导能力。插件 canonical manifest 只负责声明该插件对外支持哪些传输协议 ID，不与 Kernel 再维护一份能力 descriptor。
 
 Inline 传输不会取得具体 `serialport::SerialPort` 或做协议层 downcast。DataPlane 仍是底层资源的唯一生命周期 owner，但 Exclusive lease 会把当前通用 `Box<dyn BlockingByteStream>` 从共享 actor 临时移动到协议 worker：独占期间普通 Session write/resize 被拒绝，actor 不再持有或读取该 driver，X/Y/ZModem 通过 `TransferIo = Read + Write + Send` 直接执行同一个 driver 的 read/write/flush；任务结束、失败或取消后 drop lease 把 driver 归还 actor，再恢复共享模式。
 
@@ -34,8 +33,8 @@ Exclusive acquire 是无损所有权交接：申请开始后 actor 不再启动�
 flowchart LR
   UI["Transfer UI"] --> Context["TransferContext"]
   Context --> Command["传输命令"]
-  Command --> Descriptor["TransferProtocolDescriptor"]
-  Descriptor --> Orchestrator["策略编排器"]
+  Command --> ProtocolId["不透明传输协议 ID"]
+  ProtocolId --> Orchestrator["transfer provider 路由 / 策略编排器"]
   Orchestrator --> Inline["SessionIo ExclusiveIo"]
   Orchestrator --> Side["Auxiliary FileTransfer"]
   Orchestrator --> Progress["UnifiedProgress"]
@@ -67,7 +66,7 @@ flowchart LR
 - Exclusive 协议 I/O 错误默认属于当前传输，不自动等同于整个 Session transport 断开；任务清理并归还 driver 后，共享模式由下一次真实 I/O 判断设备是否仍可用。
 - Session 级传输准入必须经过 `TransferScheduler`；当前默认并发上限为 1，未来并发策略只能演进 Scheduler，不能在 SessionHandle 增加平行状态字段。
 - Inline / Auxiliary 只决定资源准入方式；取消统一使用 Scheduler 持有的同一类共享令牌，禁止新增协议专用取消通道或阻塞线程桥接。
-- 协议执行模式和能力必须来自 `TransferProtocolDescriptor`；编排器、命令层和 UI 不得分别维护协议名分类表。
+- Kernel 只保存不透明传输协议 ID；具体协议 ID → Inline/Auxiliary provider 的映射只允许存在于 `transfer/` 的唯一 provider 路由入口。公共命令层和 UI 不得复制该分类，也不得根据协议名推导底层资源策略。
 - 辅助文件传输 capability 不应阻塞普通终端 I/O。
 - 进度、取消和完成事件使用统一模型，协议实现不创造第二套后端事件协议。
 - Progress 阶段使用显式 `kind`，禁止通过互斥布尔组合或特殊文件名编码状态。
@@ -106,7 +105,7 @@ flowchart LR
 
 ## 何时更新本文
 
-修改传输策略、协议 capability descriptor、ExclusiveIo 所有权、统一进度/取消、批量传输、SFTP/串口编排或传输状态与 Session 生命周期的关系时，必须同步更新本文。
+修改传输 provider 路由、ExclusiveIo 所有权、统一进度/取消、批量传输、SFTP/串口编排或传输状态与 Session 生命周期的关系时，必须同步更新本文。
 
 
 ## Modem 角色感知配置
