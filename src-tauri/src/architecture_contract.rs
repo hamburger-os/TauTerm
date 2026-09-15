@@ -15,6 +15,13 @@ fn read_workspace_source(relative: &str) -> String {
         .unwrap_or_else(|error| panic!("failed to read {relative}: {error}"))
 }
 
+fn workspace_path(relative: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("src-tauri must have workspace parent")
+        .join(relative)
+}
+
 #[test]
 fn kernel_does_not_depend_on_concrete_plugins() {
     let kernel_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/kernel");
@@ -129,5 +136,52 @@ fn common_session_ipc_has_no_serial_compatibility_default() {
     assert!(
         !frontend.contains(r#"transferProtocol || "ymodem""#),
         "frontend generic session API must not inject a Serial transfer protocol"
+    );
+}
+
+#[test]
+fn frontend_plugin_registry_does_not_expose_protocol_private_status_state() {
+    let source = read_workspace_source("src/core/plugin-registry.ts");
+    for private_field in [
+        "virtualVirtualEndpoints",
+        "virtualPortError",
+        "virtualPortErrorKind",
+        "journaldEnabled",
+        "fileServiceEnabled",
+    ] {
+        assert!(
+            !source.contains(private_field),
+            "generic frontend plugin registry must not expose protocol-private field '{private_field}'"
+        );
+    }
+}
+
+#[test]
+fn frontend_session_presentation_is_plugin_driven() {
+    let source = read_workspace_source("src/components/Layout/sessionPresentation.ts");
+    assert!(
+        source.contains("pluginRegistry") && source.contains("sessionPresentation"),
+        "common session presentation must delegate to PluginRegistration.sessionPresentation"
+    );
+    for plugin_id in ["ssh", "iperf", "trdp", "network", "serial", "modbus"] {
+        assert!(
+            !source.contains(&format!(r#"pluginId === "{plugin_id}""#)),
+            "common session presentation must not branch on built-in plugin '{plugin_id}'"
+        );
+    }
+}
+
+#[test]
+fn frontend_has_single_plugin_registry_for_presentation() {
+    assert!(
+        !workspace_path("src/core/session-presentation-registry.ts").exists(),
+        "presentation metadata must live in PluginRegistry; mirrored registries are forbidden"
+    );
+    let contracts = read_workspace_source("src/core/plugin-contracts.ts");
+    assert!(
+        !contracts.contains("from \"react\"")
+            && !contracts.contains("SessionContext")
+            && !contracts.contains("i18n"),
+        "frontend plugin contracts must stay dependency-free"
     );
 }
