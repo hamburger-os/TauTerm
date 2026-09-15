@@ -81,8 +81,17 @@ if (strictCleanup < 0 || cleanupCallback < strictCleanup) {
 }
 
 const windowsDriver = fs.readFileSync("src-tauri/src/virtual_port/windows_driver.rs", "utf8");
-for (const required of ['Command::new("sc")', '["query", "com0com"]', "CREATE_NO_WINDOW"]) {
-  if (!windowsDriver.includes(required)) fail("Windows driver probe missing " + required);
+for (const required of [
+  "OpenSCManagerW",
+  "OpenServiceW",
+  "SC_MANAGER_CONNECT",
+  "SERVICE_QUERY_STATUS",
+  "CloseServiceHandle",
+]) {
+  if (!windowsDriver.includes(required)) fail("Windows driver SCM probe missing " + required);
+}
+if (/\bCommand::new\b|std::process::Command|CommandExt/.test(windowsDriver)) {
+  fail("Windows ordinary driver probe must use SCM API directly, not spawn an external command.");
 }
 if (/setupc/i.test(windowsDriver.replace(/\/\/!.*$/gm, ""))) {
   fail("Windows ordinary driver probe must not execute setupc.");
