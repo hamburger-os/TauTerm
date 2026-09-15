@@ -1003,8 +1003,10 @@ mod tests {
         let final_dir = root.path().join("final-logs");
         let timestamp = Local::now();
         let log_path = final_dir.join(format!("TauTerm_{}.log", timestamp.format("%Y%m%d")));
-        let mut config = LogConfig::default();
-        config.flush_interval_ms = 10;
+        let config = LogConfig {
+            flush_interval_ms: 10,
+            ..Default::default()
+        };
         let engine = LogEngine::new(config);
 
         try_send_system_event(
