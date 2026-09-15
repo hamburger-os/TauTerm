@@ -6,13 +6,14 @@
 //! Inline 传输拿到的是 DataPlane 的同一物理 driver；接管边界的输入字节属于协议，
 //! 不能在适配层无条件清空，否则会丢失已经到达的 C/NAK/ZMODEM 握手字节。
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::kernel::file_transfer::{
     FileTransfer, FileTransferError, FileTransferOptions, ProgressPosition, TransferDirection,
-    UnifiedProgress,
+    TransferRateMeter, UnifiedProgress,
 };
 use crate::kernel::plugin_adapter::TransferProtocolType;
 use crate::transfer::protocol::SerialTransferProtocol;
@@ -61,6 +62,7 @@ impl FileTransfer for SerialFileTransfer {
 
         let aggregate_total: u64 = files.iter().map(|f| f.size).sum();
         let aggregate_completed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let file_totals = Arc::new(files.iter().map(|file| file.size).collect::<Vec<_>>());
 
         log::info!("串口发送开始: protocol={}, files={}", proto, files.len());
 
@@ -71,9 +73,14 @@ impl FileTransfer for SerialFileTransfer {
             let proto = proto;
             let aggregate_total = aggregate_total;
             let aggregate_completed = aggregate_completed;
+            let rate_meter = std::sync::Mutex::new(TransferRateMeter::default());
 
             let on_progress = |p: TransferProgress| {
-                let _ = progress.send(UnifiedProgress::chunk(
+                let speed = rate_meter
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .sample(p.aggregate_bytes_transferred);
+                let _ = progress.send(UnifiedProgress::chunk_with_speed(
                     &proto,
                     &p.file_name,
                     p.bytes_transferred,
@@ -85,6 +92,7 @@ impl FileTransfer for SerialFileTransfer {
                         aggregate_total: p.aggregate_total_bytes,
                     },
                     p.direction,
+                    speed,
                 ));
             };
 
@@ -92,6 +100,7 @@ impl FileTransfer for SerialFileTransfer {
             let proto2 = proto.clone();
             let ac_start = aggregate_completed.clone();
             let ac_complete = aggregate_completed.clone();
+            let file_totals = file_totals.clone();
             let on_file_event = move |e: FileTransferEvent| match e {
                 FileTransferEvent::FileStart {
                     file_name,
@@ -126,10 +135,15 @@ impl FileTransfer for SerialFileTransfer {
                     if success {
                         ac_complete.store(new_ac, Ordering::SeqCst);
                     }
+                    let bytes_total = file_totals
+                        .get(file_index as usize)
+                        .copied()
+                        .unwrap_or(bytes_transferred);
                     let _ = progress2.send(UnifiedProgress::file_complete(
                         &proto2,
                         &file_name,
                         bytes_transferred,
+                        bytes_total,
                         ProgressPosition {
                             file_index: file_index as usize,
                             total_files: total_files as usize,
@@ -244,9 +258,15 @@ impl FileTransfer for SerialFileTransfer {
             let proto = proto;
             let download_dir = download_dir;
             let aggregate_completed = aggregate_completed;
+            let rate_meter = std::sync::Mutex::new(TransferRateMeter::default());
+            let file_totals = Arc::new(std::sync::Mutex::new(HashMap::<u32, u64>::new()));
 
             let on_progress = |p: TransferProgress| {
-                let _ = progress.send(UnifiedProgress::chunk(
+                let speed = rate_meter
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .sample(p.aggregate_bytes_transferred);
+                let _ = progress.send(UnifiedProgress::chunk_with_speed(
                     &proto,
                     &p.file_name,
                     p.bytes_transferred,
@@ -258,6 +278,7 @@ impl FileTransfer for SerialFileTransfer {
                         aggregate_total: p.aggregate_total_bytes,
                     },
                     p.direction,
+                    speed,
                 ));
             };
 
@@ -265,6 +286,7 @@ impl FileTransfer for SerialFileTransfer {
             let proto2 = proto.clone();
             let ac_start = aggregate_completed.clone();
             let ac_complete = aggregate_completed.clone();
+            let file_totals2 = file_totals.clone();
             let on_file_event = move |e: FileTransferEvent| match e {
                 FileTransferEvent::FileStart {
                     file_name,
@@ -272,6 +294,10 @@ impl FileTransfer for SerialFileTransfer {
                     total_files,
                     file_size,
                 } => {
+                    file_totals2
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(file_index, file_size);
                     let ac = ac_start.load(Ordering::SeqCst);
                     let _ = progress2.send(UnifiedProgress::file_start(
                         &proto2,
@@ -299,10 +325,16 @@ impl FileTransfer for SerialFileTransfer {
                     if success {
                         ac_complete.store(new_ac, Ordering::SeqCst);
                     }
+                    let bytes_total = file_totals2
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .remove(&file_index)
+                        .unwrap_or(bytes_transferred);
                     let _ = progress2.send(UnifiedProgress::file_complete(
                         &proto2,
                         &file_name,
                         bytes_transferred,
+                        bytes_total,
                         ProgressPosition {
                             file_index: file_index as usize,
                             total_files: total_files as usize,
