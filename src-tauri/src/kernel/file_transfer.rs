@@ -386,7 +386,9 @@ mod tests {
         let mut meter = TransferRateMeter::new(Duration::from_secs(1), Duration::ZERO);
         assert_eq!(meter.sample(1024), None);
         std::thread::sleep(Duration::from_millis(2));
-        let rate = meter.sample(2048).expect("second sample should produce a rate");
+        let rate = meter
+            .sample(2048)
+            .expect("second sample should produce a rate");
         assert!(rate.is_finite());
         assert!(rate > 0.0);
     }
