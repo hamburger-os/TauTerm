@@ -22,23 +22,58 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('src/context/SessionContext.tsx')
-          text = path.read_text(encoding='utf-8')
-          old = '  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null };'
-          new = '''  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
+          def replace_once(path_name: str, old: str, new: str, label: str) -> None:
+              path = Path(path_name)
+              text = path.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{label}: expected 1 match, got {text.count(old)}')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'src/context/SessionContext.tsx',
+              '  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null };',
+              '''  | { type: "UPDATE_TAB_CONFIG"; id: string; endpoint: string; params: Record<string, unknown>; name: string; transferEnabled?: boolean; transferProtocol?: string; sendBarEnabled?: boolean; pluginId?: string; connectedAt?: number | null }
           | { type: "CLEAR_TABS" }
           | { type: "REMOVE_CHILD"; id: string; parentId: string }
-          | { type: "REMOVE_ALL_CHILDREN"; parentId: string };'''
-          if text.count(old) != 1:
-              raise SystemExit(f'child action repair: expected 1 match, got {text.count(old)}')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
-
-          path = Path('src/components/Layout/ConnectDialog.tsx')
-          text = path.read_text(encoding='utf-8')
-          old = '          undefined, // pluginId\n          journaldEnabled,\n'
-          if text.count(old) != 1:
-              raise SystemExit(f'ConnectDialog reconfigure cleanup: expected 1 match, got {text.count(old)}')
-          path.write_text(text.replace(old, '          undefined, // pluginId\n', 1), encoding='utf-8')
+          | { type: "REMOVE_ALL_CHILDREN"; parentId: string };''',
+              'child action repair',
+          )
+          replace_once(
+              'src/components/Layout/ConnectDialog.tsx',
+              '          undefined, // pluginId\n          journaldEnabled,\n',
+              '          undefined, // pluginId\n',
+              'ConnectDialog reconfigure cleanup',
+          )
+          replace_once(
+              'src/core/plugin-registry.ts',
+              '  /** 全局 SendBar 中的插件专属目标选择区。 */\n  sendTarget?: ComponentType<{ sessionId: string }>;\n',
+              '  /** 全局 SendBar 中的插件专属目标选择区。 */\n  sendTarget?: ComponentType<{ sessionId: string }>;\n  /** 插件决定目标选择区是否占用 SendBar 的固定附加行。 */\n  sendTargetVisible?: (params: Record<string, unknown>) => boolean;\n',
+              'send target visibility contract',
+          )
+          replace_once(
+              'src/plugins/network/index.tsx',
+              'import NetworkSendTarget from "./NetworkSendTarget";\n',
+              'import NetworkSendTarget, { isNetworkSendTargetVisible } from "./NetworkSendTarget";\n',
+              'network send target import',
+          )
+          replace_once(
+              'src/plugins/network/index.tsx',
+              '  sendTarget: NetworkSendTarget,\n',
+              '  sendTarget: NetworkSendTarget,\n  sendTargetVisible: params => isNetworkSendTargetVisible(params),\n',
+              'network send target visibility registration',
+          )
+          replace_once(
+              'src/App.tsx',
+              'import { isTargetBarVisible } from "./components/SendBar/TargetBar";\n',
+              '',
+              'App legacy TargetBar import',
+          )
+          replace_once(
+              'src/App.tsx',
+              '  const activeShowTargetBar = activeShowSendBar && isTargetBarVisible(activeTabForBar?.params);\n',
+              '  const activeShowTargetBar = activeShowSendBar && !!activeTabForBar\n    && (pluginRegistry.get(activeTabForBar.pluginId)?.sendTargetVisible?.(activeTabForBar.params ?? {}) ?? false);\n',
+              'App plugin target visibility',
+          )
           PY
           rm src/components/SendBar/TargetBar.tsx
           rm src/components/SendBar/useNetworkSendTargetSync.ts
