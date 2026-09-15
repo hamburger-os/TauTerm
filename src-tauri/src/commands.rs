@@ -21,6 +21,7 @@ use crate::kernel::session_store::{
     ContainerSessionCreateOptions, ContainerSessionRuntime, SessionCreateOptions, SessionState,
     SessionStore,
 };
+use crate::plugin_application::{SessionConfigHandler, SessionConfigServices};
 use crate::session::{DisconnectInfo, SessionDataPlane, SessionIo};
 use crate::transport::DataPlaneRuntime;
 use crate::AppState;
@@ -101,7 +102,6 @@ pub struct ConnectSessionRequest {
     pub transfer_enabled: Option<bool>,
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: Option<bool>,
-    pub journald_enabled: Option<bool>,
     pub session_id: Option<String>,
     #[serde(default)]
     pub initial_elevated: bool,
@@ -153,235 +153,6 @@ pub struct SaveSessionConfigRequest {
     pub transfer_protocol: Option<String>,
     pub send_bar_enabled: Option<bool>,
     pub session_id: Option<String>,
-}
-
-const SSH_CREDENTIAL_ACCOUNT_KEY: &str = "credential_account";
-
-fn ssh_credential_account(session_id: &str) -> String {
-    format!("ssh-session:{session_id}")
-}
-
-fn non_empty_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
-    params
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-}
-
-fn ssh_credential_from_params(
-    params: &Value,
-) -> Result<
-    Option<(
-        crate::security::credential_store::CredentialType,
-        crate::security::credential_store::CredentialValue,
-    )>,
-    String,
-> {
-    use crate::security::credential_store::{CredentialType, CredentialValue};
-
-    let auth_method = params
-        .get("auth_method")
-        .and_then(Value::as_str)
-        .unwrap_or("password");
-
-    match auth_method {
-        "password" => Ok(non_empty_param(params, "password").map(|password| {
-            (
-                CredentialType::Password,
-                CredentialValue::Password(password.to_string()),
-            )
-        })),
-        "key" => Ok(non_empty_param(params, "private_key").map(|private_key| {
-            let passphrase = non_empty_param(params, "passphrase").map(str::to_string);
-            (
-                CredentialType::SshKey,
-                CredentialValue::SshKey {
-                    private_key: private_key.to_string(),
-                    passphrase,
-                },
-            )
-        })),
-        other => Err(format!("不支持的 SSH 认证方式: {other}")),
-    }
-}
-
-fn credential_matches_auth(
-    auth_method: &str,
-    credential: &crate::security::credential_store::CredentialValue,
-) -> bool {
-    use crate::security::credential_store::CredentialValue;
-
-    matches!(
-        (auth_method, credential),
-        ("password", CredentialValue::Password(_)) | ("key", CredentialValue::SshKey { .. })
-    )
-}
-
-fn strip_ssh_secret_fields(params: &mut Value) -> Result<bool, String> {
-    let object = params
-        .as_object_mut()
-        .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
-    let mut changed = false;
-    changed |= object.remove("password").is_some();
-    changed |= object.remove("private_key").is_some();
-    changed |= object.remove("passphrase").is_some();
-    Ok(changed)
-}
-
-fn scrub_ssh_secrets_from_saved_sessions(
-    sessions: &mut [crate::kernel::session_store::SavedSession],
-) -> Result<bool, String> {
-    let mut changed = false;
-    for session in sessions {
-        if session.plugin_id == "ssh" {
-            changed |= strip_ssh_secret_fields(&mut session.params)?;
-        }
-    }
-    Ok(changed)
-}
-
-#[derive(Debug)]
-struct PendingSshCredential {
-    account: String,
-    credential_type: crate::security::credential_store::CredentialType,
-    value: crate::security::credential_store::CredentialValue,
-    description: String,
-}
-
-/// Prepare the only supported SSH persistence model without mutating the credential store.
-///
-/// Plaintext authentication material is accepted only as transient input. Persisted/session params
-/// contain only the deterministic credential account reference. A new credential is returned as a
-/// pending commit so the Session Library and credential store can be coordinated transactionally.
-fn prepare_ssh_session_params(
-    state: &AppState,
-    session_id: &str,
-    params: &mut Value,
-) -> Result<Option<PendingSshCredential>, String> {
-    use crate::security::credential_store::CredentialStoreError;
-
-    let auth_method = params
-        .get("auth_method")
-        .and_then(Value::as_str)
-        .unwrap_or("password")
-        .to_string();
-    let account = ssh_credential_account(session_id);
-
-    let pending = if let Some((credential_type, value)) = ssh_credential_from_params(params)? {
-        let username = params
-            .get("username")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let host = params
-            .get("host")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        Some(PendingSshCredential {
-            account: account.clone(),
-            credential_type,
-            value,
-            description: format!("SSH {username}@{host}"),
-        })
-    } else {
-        match state.credential_store.get_credential(&account) {
-            Ok(value) if credential_matches_auth(&auth_method, &value) => {}
-            Ok(_) => return Err("SSH 认证方式已变更，请重新输入对应凭据".into()),
-            Err(CredentialStoreError::NotFound(_)) => {
-                return Err("SSH 会话没有可用的安全凭据，请重新输入密码或私钥".into());
-            }
-            Err(error) => return Err(format!("无法读取 SSH 安全凭据: {error}")),
-        }
-        None
-    };
-
-    let object = params
-        .as_object_mut()
-        .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
-    object.insert(
-        SSH_CREDENTIAL_ACCOUNT_KEY.to_string(),
-        Value::String(account),
-    );
-    strip_ssh_secret_fields(params)?;
-    Ok(pending)
-}
-
-fn commit_ssh_credential(state: &AppState, pending: PendingSshCredential) -> Result<(), String> {
-    state
-        .credential_store
-        .store_credential(
-            &pending.account,
-            pending.credential_type,
-            pending.value,
-            &pending.description,
-        )
-        .map_err(|error| format!("无法安全保存 SSH 凭据: {error}"))
-}
-
-fn apply_ssh_credential(
-    config: &mut crate::plugins::ssh::SshConfig,
-    credential: crate::security::credential_store::CredentialValue,
-) -> Result<(), String> {
-    use crate::security::credential_store::CredentialValue;
-
-    match (config.auth_method.as_str(), credential) {
-        ("password", CredentialValue::Password(password)) => {
-            config.password = Some(password);
-            config.private_key = None;
-            config.passphrase = None;
-        }
-        (
-            "key",
-            CredentialValue::SshKey {
-                private_key,
-                passphrase,
-            },
-        ) => {
-            config.password = None;
-            config.private_key = Some(private_key);
-            config.passphrase = passphrase;
-        }
-        _ => {
-            return Err("SSH 安全凭据类型与当前认证方式不匹配，请重新配置会话".into());
-        }
-    }
-    Ok(())
-}
-
-fn hydrate_ssh_config(
-    state: &AppState,
-    params: &Value,
-) -> Result<crate::plugins::ssh::SshConfig, String> {
-    let mut config: crate::plugins::ssh::SshConfig =
-        serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
-
-    let account = params
-        .get(SSH_CREDENTIAL_ACCOUNT_KEY)
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "SSH 会话缺少安全凭据引用，请重新配置会话".to_string())?;
-
-    let credential = state
-        .credential_store
-        .get_credential(account)
-        .map_err(|error| format!("无法读取 SSH 安全凭据: {error}"))?;
-
-    apply_ssh_credential(&mut config, credential)?;
-    Ok(config)
-}
-
-fn hydrate_ssh_config_with_pending(
-    state: &AppState,
-    params: &Value,
-    pending: Option<&PendingSshCredential>,
-) -> Result<crate::plugins::ssh::SshConfig, String> {
-    if let Some(pending) = pending {
-        let mut config: crate::plugins::ssh::SshConfig =
-            serde_json::from_value(params.clone()).map_err(|e| format!("SSH 配置解析失败: {e}"))?;
-        apply_ssh_credential(&mut config, pending.value.clone())?;
-        Ok(config)
-    } else {
-        hydrate_ssh_config(state, params)
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -944,7 +715,6 @@ async fn connect_session_ssh(
         transfer_enabled,
         transfer_protocol,
         send_bar_enabled,
-        journald_enabled,
         session_id,
         ..
     } = request;
@@ -952,24 +722,20 @@ async fn connect_session_ssh(
     let effective_session_id = session_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    let pending_ssh_credential =
-        prepare_ssh_session_params(&state, &effective_session_id, &mut params)?;
-    let ssh_config =
-        hydrate_ssh_config_with_pending(&state, &params, pending_ssh_credential.as_ref())?;
-
-    // 将 journald_enabled 提升为 params 的通用字段（不再耦合 SshConfig）。
-    // reconfigure/restore 统一从当前 Session params 读取。
-    let journald_enabled_val = if let Some(obj) = params.as_object_mut() {
-        if let Some(existing) = obj.get("journald_enabled").and_then(|v| v.as_bool()) {
-            existing
-        } else {
-            let v = journald_enabled.unwrap_or(false);
-            obj.insert("journald_enabled".to_string(), serde_json::Value::Bool(v));
-            v
-        }
-    } else {
-        journald_enabled.unwrap_or(false)
-    };
+    let pending_ssh_credential = crate::plugins::ssh::application::prepare_session_params(
+        &state.credential_store,
+        &effective_session_id,
+        &mut params,
+    )?;
+    let ssh_config = crate::plugins::ssh::application::hydrate_config_with_pending(
+        &state.credential_store,
+        &params,
+        pending_ssh_credential.as_ref(),
+    )?;
+    let journald_enabled_val = params
+        .get("journald_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     // SSH 插件自己持有 known-host 验证状态；AppState 只通过 PluginRuntime 取得 contribution。
     let ssh_adapter =
@@ -1065,7 +831,9 @@ async fn connect_session_ssh(
     // Persist transient credentials only after the SSH parent and channel 0 are both
     // registered and readable. A credential failure rolls back the newly-created runtime Session.
     if let Some(pending) = pending_ssh_credential {
-        if let Err(error) = commit_ssh_credential(&state, pending) {
+        if let Err(error) =
+            crate::plugins::ssh::application::commit_credential(&state.credential_store, pending)
+        {
             if let Ok(mut store) = state.session_store.lock() {
                 if let Err(cleanup_error) = store.close_session(&parent_id) {
                     log::warn!(
@@ -1900,16 +1668,24 @@ pub fn set_network_send_target(
 // ── 会话持久化命令 ─────────────────────────────────
 
 #[tauri::command]
-pub async fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, String> {
+pub async fn load_sessions(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<SavedSessionInfo>, String> {
     let path = SessionStore::sessions_file_path(&app)?;
     let mut saved = SessionStore::load_from_disk(&path)?;
-
-    // SSH has one current persistence model only. Any plaintext authentication
-    // material found in sessions.json is a stale development artifact: scrub it
-    // from disk immediately instead of migrating it. The session card may remain,
-    // but reconnect must be explicitly reconfigured if no current credential
-    // reference exists.
-    if scrub_ssh_secrets_from_saved_sessions(&mut saved)? {
+    let mut changed = false;
+    for session in &mut saved {
+        if let Some(handler) = state
+            .plugins
+            .contribution_by_str::<SessionConfigHandler>(&session.plugin_id)
+        {
+            if let Some(sanitize) = handler.sanitize_saved {
+                changed |= sanitize(session)?;
+            }
+        }
+    }
+    if changed {
         SessionStore::replace_saved_sessions(&path, &saved)?;
     }
 
@@ -1924,7 +1700,7 @@ pub async fn load_sessions(app: AppHandle) -> Result<Vec<SavedSessionInfo>, Stri
             timestamp: s.timestamp,
             plugin_id: s.plugin_id,
             transfer_enabled: s.transfer_enabled,
-            transfer_protocol: s.transfer_protocol.clone(),
+            transfer_protocol: s.transfer_protocol,
             send_bar_enabled: s.send_bar_enabled,
         })
         .collect())
@@ -1949,9 +1725,6 @@ pub async fn save_session_config(
         session_id,
     } = request;
     let pid = plugin_id;
-    if pid == "local-shell" {
-        crate::plugins::local_shell::LocalShellAdapter::validate_params(&params)?;
-    }
     let id = if let Some(ref raw) = session_id {
         if uuid::Uuid::parse_str(raw).is_err() {
             return Err(format!("无效的 session_id 格式: {}", raw));
@@ -1961,78 +1734,44 @@ pub async fn save_session_config(
         uuid::Uuid::new_v4().to_string()
     };
 
-    let pending_ssh_credential = if pid == "ssh" {
-        prepare_ssh_session_params(&state, &id, &mut params)?
-    } else {
-        None
-    };
-
-    // TRDP Workspace is edited and persisted by the custom session view rather
-    // than the connection form. Reconfiguring a saved/disconnected TRDP
-    // session must therefore preserve the latest Workspace even when the form's
-    // params snapshot does not contain it.
-    if pid == "trdp" && params.get("trdp_workspace").is_none() {
-        let active_workspace = state.session_store.lock().ok().and_then(|store| {
-            store
-                .get_session(&id)
-                .and_then(|handle| handle.params.get("trdp_workspace"))
-                .cloned()
-        });
-        let persisted_workspace = if active_workspace.is_some() {
-            active_workspace
-        } else {
-            let path = SessionStore::sessions_file_path(&app)?;
-            SessionStore::load_from_disk(&path)?
-                .into_iter()
-                .find(|saved| saved.id == id)
-                .and_then(|saved| saved.params.get("trdp_workspace").cloned())
-        };
-        if let Some(workspace) = persisted_workspace {
-            params
-                .as_object_mut()
-                .ok_or("TRDP 会话参数必须是 JSON object")?
-                .insert("trdp_workspace".to_string(), workspace);
-        }
+    let handler = state
+        .plugins
+        .contribution_by_str::<SessionConfigHandler>(&pid);
+    if let Some(validate) = handler.as_deref().and_then(|handler| handler.validate) {
+        validate(&params)?;
     }
-    let session_name = match name.filter(|value| !value.trim().is_empty()) {
-        Some(name) => name,
-        None if pid == "local-shell" => {
-            crate::plugins::local_shell::LocalShellAdapter::default_session_name(&params)?
-        }
-        None => format!("{} @ {}", pid, endpoint),
+    let services = SessionConfigServices {
+        credential_store: &state.credential_store,
+        session_store: &state.session_store,
+    };
+    let prepared = if let Some(handler) = handler.as_deref() {
+        (handler.prepare)(&services, &id, &mut params)?
+    } else {
+        crate::plugin_application::unchanged_session_config(&services, &id, &mut params)?
     };
 
-    let now = chrono::Utc::now().timestamp_millis() as u64;
-
+    let session_name = if let Some(name) = name.filter(|value| !value.trim().is_empty()) {
+        name
+    } else if let Some(default_name) = handler.as_deref().and_then(|handler| handler.default_name) {
+        default_name(&params, &endpoint)?
+    } else {
+        format!("{} @ {}", pid, endpoint)
+    };
     let saved = crate::kernel::session_store::SavedSession {
         id: id.clone(),
         name: session_name,
-        plugin_id: pid.clone(),
+        plugin_id: pid,
         endpoint,
-        params: params.clone(),
-        timestamp: now,
+        params,
+        timestamp: chrono::Utc::now().timestamp_millis() as u64,
         transfer_enabled: transfer_enabled.unwrap_or(true),
-        transfer_protocol: transfer_protocol.clone(),
+        transfer_protocol,
         send_bar_enabled: send_bar_enabled.unwrap_or(true),
     };
-
-    if pid == "ssh" {
-        SessionStore::save_config_to_disk_transactional(&app, saved, || {
-            if let Some(pending) = pending_ssh_credential {
-                commit_ssh_credential(&state, pending)?;
-            }
-            Ok(())
-        })?;
-    } else {
-        SessionStore::save_config_to_disk(&app, saved)?;
-    }
-
+    SessionStore::save_config_to_disk_transactional(&app, saved, || {
+        prepared.commit(&state.credential_store)
+    })?;
     Ok(id)
-}
-
-#[tauri::command]
-pub fn resolve_local_shell_session_name(params: Value) -> Result<String, String> {
-    crate::plugins::local_shell::LocalShellAdapter::default_session_name(&params)
 }
 
 /// 删除会话配置（从 sessions.json 中移除指定会话）
@@ -2043,17 +1782,15 @@ pub async fn delete_session_config(
     session_id: String,
 ) -> Result<(), String> {
     SessionStore::delete_config_from_disk_transactional(&app, &session_id, |deleted_session| {
-        if deleted_session.is_some_and(|saved| saved.plugin_id == "ssh") {
-            let account = ssh_credential_account(&session_id);
-            state
-                .credential_store
-                .delete_credential(&account)
-                .map_err(|error| {
-                    format!(
-                        "无法删除 SSH 安全凭据；Session 删除已回滚，请重试: {}",
-                        error
-                    )
-                })?;
+        if let Some(saved) = deleted_session {
+            if let Some(handler) = state
+                .plugins
+                .contribution_by_str::<SessionConfigHandler>(&saved.plugin_id)
+            {
+                if let Some(delete) = handler.delete {
+                    delete(&state.credential_store, &session_id)?;
+                }
+            }
         }
         Ok(())
     })
@@ -3824,7 +3561,6 @@ pub async fn iperf_get_status(
 mod command_security_tests {
     use super::*;
     use crate::kernel::session_store::SavedSession;
-    use crate::security::credential_store::CredentialValue;
 
     fn saved_session(plugin_id: &str, params: Value) -> SavedSession {
         SavedSession {
@@ -3838,83 +3574,5 @@ mod command_security_tests {
             transfer_protocol: None,
             send_bar_enabled: false,
         }
-    }
-
-    #[test]
-    fn ssh_secret_fields_are_removed_from_persisted_params() {
-        let mut params = serde_json::json!({
-            "host": "example.invalid",
-            "username": "tester",
-            "auth_method": "key",
-            "password": "should-not-persist",
-            "private_key": "private-key-material",
-            "passphrase": "secret",
-            "credential_account": "ssh-session:test"
-        });
-
-        assert!(strip_ssh_secret_fields(&mut params).unwrap());
-        assert!(params.get("password").is_none());
-        assert!(params.get("private_key").is_none());
-        assert!(params.get("passphrase").is_none());
-        assert_eq!(params["credential_account"], "ssh-session:test");
-        assert!(!strip_ssh_secret_fields(&mut params).unwrap());
-    }
-
-    #[test]
-    fn saved_session_scrub_does_not_touch_other_protocol_params() {
-        let mut sessions = vec![
-            saved_session(
-                "ssh",
-                serde_json::json!({
-                    "host": "example.invalid",
-                    "auth_method": "password",
-                    "password": "secret"
-                }),
-            ),
-            saved_session(
-                "serial",
-                serde_json::json!({
-                    "password": "protocol-owned-field"
-                }),
-            ),
-        ];
-
-        assert!(scrub_ssh_secrets_from_saved_sessions(&mut sessions).unwrap());
-        assert!(sessions[0].params.get("password").is_none());
-        assert_eq!(
-            sessions[1].params.get("password").and_then(Value::as_str),
-            Some("protocol-owned-field")
-        );
-        assert!(!scrub_ssh_secrets_from_saved_sessions(&mut sessions).unwrap());
-    }
-
-    #[test]
-    fn ssh_credential_type_must_match_auth_method() {
-        assert!(credential_matches_auth(
-            "password",
-            &CredentialValue::Password("secret".into())
-        ));
-        assert!(credential_matches_auth(
-            "key",
-            &CredentialValue::SshKey {
-                private_key: "key".into(),
-                passphrase: None,
-            }
-        ));
-        assert!(!credential_matches_auth(
-            "password",
-            &CredentialValue::SshKey {
-                private_key: "key".into(),
-                passphrase: None,
-            }
-        ));
-    }
-
-    #[test]
-    fn ssh_session_credential_account_is_stable() {
-        assert_eq!(
-            ssh_credential_account("00000000-0000-0000-0000-000000000001"),
-            "ssh-session:00000000-0000-0000-0000-000000000001"
-        );
     }
 }

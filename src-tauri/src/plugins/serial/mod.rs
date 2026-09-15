@@ -82,7 +82,7 @@ impl SerialRuntime {
                     manager.pending_orphan_count()
                 );
             }
-        }
+        };
     }
 
     /// 幂等关闭 Serial 私有运行时资源。

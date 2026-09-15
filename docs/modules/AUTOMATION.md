@@ -22,7 +22,7 @@ Command Set、Auto Reply Config 与 Lua Script 不把浏览器本地存储作为
 
 自动回复与 Lua Script 启动时使用不可变运行快照。SendBar 从启动请求发出开始占有执行权，直到启动失败、停止成功或会话断开后才释放；运行期间禁止切换会改变当前执行语义的状态。命令面板执行同样基于启动时选中命令的串行快照。
 
-Network Debug 的目标选择由 SessionContext 拥有；`TargetBar` 只负责展示和选择，目标同步桥接把 TCP/UDP server 当前目标传给后端运行时。只有已连接的 Network Debug 会话才允许同步运行时副作用；断开、连接中或被新目标取代的异步同步不能产生陈旧状态。
+Network Debug 的目标选择、peer 列表和 targeted-send 状态由 Network 插件自己的 runtime store 拥有；公共 SendBar 只通过 `sendTarget` / `sendData` contribution 挂载目标选择和发送策略。目标同步桥接仅在已连接的 Network runtime 上执行，断开、连接中或被新目标取代的异步同步不能产生陈旧状态。
 
 ## 数据流
 
@@ -44,7 +44,7 @@ flowchart LR
 - SendBar 显示能力由插件 manifest/注册信息定义，Session 配置只能在支持范围内关闭，不能给不支持的插件强行开启。
 - SendBar 主体最小高度必须直接保持 CSS 定义的 canonical 像素值；拖高后再次拖到最小值必须与首次打开一致，不能通过百分比取整、向上取整或其它量化模型改变几何。
 - 自动回复与脚本必须受 Session 生命周期约束，断开后不能继续使用失效的运行时能力。
-- Network Debug 目标属于会话状态；后端目标同步只在已连接 runtime 上执行，并继续严格校验目标能力。
+- Network Debug 目标属于插件私有 Session runtime 状态；公共 SessionContext 不保存 peer/target 字段，后端目标同步只在已连接 runtime 上执行并严格校验目标能力。
 - 文本编码和 raw bytes 明确分流，不能对 HEX/raw 数据做字符集二次转换。
 - 重复发送和命令序列必须尊重底层写入背压，不能用不等待结果的固定间隔制造重叠发送。
 - 自动化不能绕过协议模块的目标选择、安全确认、独占 lease 或连接状态。
@@ -61,7 +61,8 @@ flowchart LR
 - `src/components/SendBar/sendPayload.ts`
 - `src/components/SendBar/assetStore.ts`
 - `src/components/SendBar/assetValidation.ts`
-- `src/components/SendBar/useNetworkSendTargetSync.ts`
+- `src/plugins/network/NetworkSendTarget.tsx`
+- `src/plugins/network/runtime-store.ts`
 - `src-tauri/src/session/io.rs`
 - `src-tauri/src/session/runtime.rs`
 - `src-tauri/src/transport/runtime.rs`

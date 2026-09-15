@@ -124,13 +124,6 @@ function decodeBase64(b64: string): Uint8Array {
   return bytes;
 }
 
-function localizeSessionError(error: unknown): string {
-  const message = String(error);
-  return message.includes("User cancelled the UAC elevation prompt")
-    ? i18n.t("localShell.elevationCancelled")
-    : message;
-}
-
 const initialState: SessionState = {
   tabs: [],
   activeTabId: null,
@@ -359,7 +352,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         },
       });
     } catch (e) {
-      dispatch({ type: "SET_ERROR", error: `${i18n.t("localShell.connectFailed")}: ${localizeSessionError(e)}` });
+      dispatch({ type: "SET_ERROR", error: String(e) });
       if (sessionId) dispatch({ type: "SET_TAB_STATE", id: sessionId, state: "disconnected" });
       return null;
     }
@@ -409,9 +402,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const pluginName = plugin?.manifest.name || pluginId.toUpperCase();
       const requestedName = name?.trim();
       const presentationName = plugin?.sessionPresentation?.defaultName?.(normalizedParams, endpoint)?.trim();
-      const effectiveName = requestedName || (pluginId === "local-shell"
-        ? await invoke<string>("resolve_local_shell_session_name", { params })
-        : presentationName || `${pluginName} @ ${endpoint}`);
+      const resolvedName = plugin?.resolveDefaultSessionName
+        ? (await plugin.resolveDefaultSessionName(normalizedParams, endpoint)).trim()
+        : "";
+      const effectiveName = requestedName || resolvedName || presentationName || `${pluginName} @ ${endpoint}`;
       const sessionId = await invoke<string>("save_session_config", {
         request: {
           endpoint,
@@ -647,7 +641,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       return await invoke<string>("open_channel", { sessionId: parentSessionId, elevated });
     } catch (e) {
-      dispatch({ type: "SET_ERROR", error: `${i18n.t("localShell.openFailed")}: ${localizeSessionError(e)}` });
+      dispatch({ type: "SET_ERROR", error: String(e) });
       return null;
     }
   }, []);

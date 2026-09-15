@@ -84,19 +84,45 @@ fn common_connection_router_is_registry_driven() {
 }
 
 #[test]
-fn plugin_session_runtime_indices_are_adapter_owned() {
-    let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
-    for entry in std::fs::read_dir(&plugins_dir).expect("plugins directory") {
-        let entry = entry.expect("plugin entry");
-        let module = entry.path().join("mod.rs");
-        if !module.is_file() {
-            continue;
+fn plugin_session_runtime_indices_are_plugin_owned() {
+    fn visit(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).expect("plugin directory") {
+            let path = entry.expect("plugin entry").path();
+            if path.is_dir() {
+                visit(&path, files);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                files.push(path);
+            }
         }
-        let source = std::fs::read_to_string(&module).expect("plugin module source");
+    }
+    let plugins_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins");
+    let mut files = Vec::new();
+    visit(&plugins_dir, &mut files);
+    for path in files {
+        let source = std::fs::read_to_string(&path).expect("plugin source");
         assert!(
-            !source.contains("fn runtime_registry("),
-            "plugin module {} must keep Session runtime indices on its Adapter instance, not in process-global static state",
-            module.display()
+            !source.contains("fn runtime_registry(") && !source.contains("static REGISTRY: std::sync::OnceLock"),
+            "plugin source {} must keep Session runtime indices on a registered plugin/Adapter instance",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn common_session_config_commands_are_plugin_driven() {
+    let source = read_source("commands.rs");
+    assert!(source.contains("SessionConfigHandler"));
+    for forbidden in [
+        r#"pid == "ssh""#,
+        r#"pid == "trdp""#,
+        r#"pid == "local-shell""#,
+        "SSH_CREDENTIAL_ACCOUNT_KEY",
+        "prepare_ssh_session_params",
+        "scrub_ssh_secrets_from_saved_sessions",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "common Session config commands must not own plugin policy: {forbidden}"
         );
     }
 }

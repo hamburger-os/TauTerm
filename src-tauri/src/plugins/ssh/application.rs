@@ -132,10 +132,7 @@ pub(crate) fn prepare_session_params(
     let object = params
         .as_object_mut()
         .ok_or_else(|| "SSH 会话参数必须是 JSON object".to_string())?;
-    object.insert(
-        CREDENTIAL_ACCOUNT_KEY.to_string(),
-        Value::String(account),
-    );
+    object.insert(CREDENTIAL_ACCOUNT_KEY.to_string(), Value::String(account));
     strip_secret_fields(params)?;
     Ok(pending)
 }
@@ -161,11 +158,20 @@ fn prepare_persisted_config(
 ) -> Result<PreparedSessionConfig, String> {
     let pending = prepare_session_params(services.credential_store, session_id, params)?;
     Ok(match pending {
-        Some(pending) => PreparedSessionConfig::with_commit(move |store| {
-            commit_credential(store, pending)
-        }),
+        Some(pending) => {
+            PreparedSessionConfig::with_commit(move |store| commit_credential(store, pending))
+        }
         None => PreparedSessionConfig::unchanged(),
     })
+}
+
+fn delete_session_config(
+    credential_store: &CredentialStore,
+    session_id: &str,
+) -> Result<(), String> {
+    credential_store
+        .delete_credential(&credential_account(session_id))
+        .map_err(|error| format!("无法删除 SSH 安全凭据: {error}"))
 }
 
 pub(crate) fn session_config_handler() -> SessionConfigHandler {
@@ -174,6 +180,7 @@ pub(crate) fn session_config_handler() -> SessionConfigHandler {
         prepare: prepare_persisted_config,
         default_name: None,
         sanitize_saved: Some(sanitize_saved_session),
+        delete: Some(delete_session_config),
     }
 }
 

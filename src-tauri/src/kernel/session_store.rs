@@ -655,7 +655,10 @@ impl SessionStore {
         sub: SubConnection,
     ) -> Result<(), String> {
         let not_found = self.session_not_found(parent_id);
-        let handle = self.sessions.get_mut(parent_id).ok_or(not_found)?;
+        let handle = self
+            .sessions
+            .get_mut(parent_id)
+            .ok_or_else(|| not_found.clone())?;
         if handle.state != SessionState::Connected {
             return Err(not_found);
         }
