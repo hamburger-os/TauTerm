@@ -157,6 +157,18 @@ jobs:
           if count < 1:
               raise SystemExit('inline directory validation anchor missing')
           text = text.replace(anchor, replacement, 1)
+          text = replace_once(
+              text,
+              '''        "sftp" => Ok(Box::new(AuxiliaryTransferOrchestrator {\n            pt: protocol_type.clone(),\n        })),''',
+              '''        "sftp" => Ok(Box::new(AuxiliaryTransferOrchestrator)),''',
+              'auxiliary transfer factory identity',
+          )
+          text = replace_once(
+              text,
+              '''pub struct AuxiliaryTransferOrchestrator {\n    pt: TransferProtocolType,\n}\n''',
+              '''pub struct AuxiliaryTransferOrchestrator;\n''',
+              'auxiliary transfer dead identity field',
+          )
           path.write_text(text, encoding='utf-8')
 
           # Fix architecture-contract string literals produced by the migration script.
