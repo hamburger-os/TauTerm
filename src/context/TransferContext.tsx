@@ -237,8 +237,17 @@ function resultProjection(
   currentFiles: BatchFileEntry[],
 ): BatchFileEntry[] | null {
   if (!payload.results) return null;
-  return payload.results.map((result, index) => {
-    const existing = currentFiles[index];
+
+  // Terminal results may include synthesized/skipped entries that never emitted progress.
+  // Reconcile byte progress by file identity instead of assuming result indexes match progress indexes.
+  const remainingFiles = [...currentFiles];
+  return payload.results.map((result) => {
+    const existingIndex = remainingFiles.findIndex(
+      (entry) => entry.fileName === result.file_name,
+    );
+    const existing = existingIndex >= 0
+      ? remainingFiles.splice(existingIndex, 1)[0]
+      : undefined;
     const completed = result.status === "completed";
     const bytesTransferred = completed
       ? result.size
