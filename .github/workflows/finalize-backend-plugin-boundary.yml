@@ -122,6 +122,18 @@ jobs:
               'fn saved_session(plugin_id: &str, params: Value)',
               'unused command test saved_session helper',
           )
+          replace_once(
+              'src-tauri/src/commands.rs',
+              '    use super::*;\n',
+              '',
+              'obsolete command test super import',
+          )
+          replace_once(
+              'src-tauri/src/commands.rs',
+              '    use crate::kernel::session_store::SavedSession;\n',
+              '',
+              'obsolete SavedSession test import',
+          )
           PY
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
