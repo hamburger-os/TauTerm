@@ -39,8 +39,7 @@ use std::time::Duration;
 static LOG_SENDER: Mutex<Option<mpsc::SyncSender<LogEntry>>> = Mutex::new(None);
 
 /// 系统日志是否启用（可由前端设置页控制）
-static SYSTEM_LOG_ENABLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
+static SYSTEM_LOG_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 static SESSION_LOG_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(true);
 static DROPPED_SESSION_LOG_ENTRIES: AtomicU64 = AtomicU64::new(0);
@@ -1035,7 +1034,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(written, "queued startup event was not written to final log directory");
+        assert!(
+            written,
+            "queued startup event was not written to final log directory"
+        );
     }
 
     #[test]
