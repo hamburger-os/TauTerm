@@ -22,6 +22,11 @@ jobs:
           from pathlib import Path
           path = Path('.github/finalize-backend-plugin-boundary.py')
           text = path.read_text(encoding='utf-8')
+          old_brace = "    brace = text.find('{', match.end())"
+          new_brace = "    brace = text.find('{', match.start())"
+          if text.count(old_brace) != 1:
+              raise SystemExit(f'item parser brace marker expected 1 match, got {text.count(old_brace)}')
+          text = text.replace(old_brace, new_brace, 1)
           start = text.index('alias_match = re.search(')
           end = text.index('\nsave_marker =', start)
           replacement = '''alias_start = commands.find("pub(crate) type SessionConnectFuture")
