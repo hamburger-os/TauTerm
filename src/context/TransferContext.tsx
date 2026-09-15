@@ -221,12 +221,20 @@ function updateFileProjection(
   const status: FileTransferState = payload.kind === "file_complete"
     ? (payload.file_success === false ? "failed" : "completed")
     : "transferring";
+  const preserveFailedProgress =
+    payload.kind === "file_complete"
+    && payload.file_success === false
+    && payload.bytes_total <= 0;
 
   next[index] = {
     fileName: payload.file_name,
     status,
-    bytesTransferred: payload.bytes_done,
-    totalBytes: payload.bytes_total,
+    bytesTransferred: preserveFailedProgress
+      ? (existing?.bytesTransferred ?? payload.bytes_done)
+      : payload.bytes_done,
+    totalBytes: preserveFailedProgress
+      ? (existing?.totalBytes ?? payload.bytes_total)
+      : payload.bytes_total,
     error: payload.file_error ?? existing?.error,
   };
   return next;
