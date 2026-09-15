@@ -1,0 +1,29 @@
+name: Plugin Boundary Frontend
+on:
+  push:
+    branches: [refactor/plugin-boundary-cleanup]
+permissions:
+  contents: write
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/plugin-boundary-cleanup
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: python3 .github/plugin-boundary-frontend.py
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - name: Commit migration and remove one-shot tooling
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/plugin-boundary-frontend.py .github/workflows/plugin-boundary-frontend.yml
+          git add -A
+          git commit -m "refactor: migrate frontend protocol runtime state into plugins"
+          git push origin HEAD:refactor/plugin-boundary-cleanup
