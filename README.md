@@ -91,7 +91,7 @@ Documentation is organized by audience instead of duplicating the same facts in 
 
 ## Contributing
 
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), then use the platform setup in [Building TauTerm](docs/community/BUILDING.md).
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), then use the platform setup in [docs/community/BUILDING.md](docs/community/BUILDING.md).
 
 Architecture or behavior changes must update the corresponding design document in the same pull request; the repository enforces documentation consistency in CI.
 
