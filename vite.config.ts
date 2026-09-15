@@ -58,6 +58,11 @@ export default defineConfig(async () => ({
       },
     },
   ],
+  // Tauri CLI injects TAURI_ENV_DEBUG into beforeDev/beforeBuild hooks. Expose
+  // TAURI_ENV_* so frontend runtime policy can distinguish a release bundle
+  // from `tauri dev` and `tauri build --debug`; generic Vite builds leave it
+  // undefined and therefore cannot accidentally access production updater APIs.
+  envPrefix: ["VITE_", "TAURI_ENV_"],
   // Prevent vite from obscuring Rust errors
   clearScreen: false,
   build: {
