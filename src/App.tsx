@@ -466,8 +466,6 @@ function AppInner() {
             // PluginManifest 是全局 SendBar 能力的唯一来源；会话配置只能在支持时关闭它。
             // SendBar 仍与连接生命周期解耦：支持它的会话断开后也保留布局，发送动作单独禁用。
             const showSendBar = pluginRegistry.resolveSendBarEnabled(tab.pluginId, tab.sendBarEnabled);
-            // 顶部目标栏（TargetBar）仅在实际存在 SendBar 且目标选择适用时显示。
-            const showTargetBar = showSendBar && isTargetBarVisible(tab.params);
             return (
               <React.Fragment key={tab.id}>
                 {(showSendBar && isActive) && (
