@@ -54,8 +54,57 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sed -i 's/let manifest_dir = Path::new/let manifest_dir = std::path::Path::new/' .github/scripts/plugin_review_cleanup.py
-          sed -i 's/text = replace_once(text, old, "", label)/text = text.replace(old, "", 1)/' .github/scripts/plugin_review_cleanup.py
+          # Keep the migration script strict, but teach it about every generic Serial fallback
+          # discovered by the final review. These are source transformations, not compatibility shims.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/plugin_review_cleanup.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace('let manifest_dir = Path::new', 'let manifest_dir = std::path::Path::new')
+          text = text.replace('text = replace_once(text, old, "", label)', 'text = text.replace(old, "", 1)')
+          anchor = 'text = text.replace("  /** 文件传输协议（ymodem / xmodem / zmodem） */", "  /** 文件传输协议 ID */")'
+          extra = r'''
+          text = replace_once(
+              text,
+              '  createOfflineSession: (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;',
+              '  createOfflineSession: (endpoint: string, params: Record<string, unknown>, name: string | undefined, pluginId: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => Promise<string | null>;',
+              "createOfflineSession contract pluginId",
+          )
+          text = replace_once(
+              text,
+              '  const createOfflineSession = useCallback(async (endpoint: string, params: Record<string, unknown>, name?: string, pluginId?: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => {',
+              '  const createOfflineSession = useCallback(async (endpoint: string, params: Record<string, unknown>, name: string | undefined, pluginId: string, transferEnabled?: boolean, transferProtocol?: string, sendBarEnabled?: boolean) => {',
+              "createOfflineSession implementation pluginId",
+          )
+          text = replace_once(text, '      const pid = pluginId || "serial";', '      const pid = pluginId;', "offline session serial fallback")
+          text = replace_once(text, '        plugin_id?: string;', '        plugin_id: string;', "saved session plugin identity")
+          text = replace_once(text, '          const pluginId = s.plugin_id || "serial";', '          const pluginId = s.plugin_id;', "saved session serial fallback")
+          text = replace_once(
+              text,
+              '      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id?: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_endpoints?: VirtualPortEndpoint[]; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; elevated?: boolean; is_container?: boolean; local_addr?: string | null }>',
+              '      const u2 = await listen<{ session_id: string; endpoint: string; connection_type: string; plugin_id: string; name: string; params: Record<string, unknown>; connected_at?: number | null; transfer_enabled?: boolean; transfer_protocol?: string; send_bar_enabled?: boolean; virtual_endpoints?: VirtualPortEndpoint[]; file_service_enabled?: boolean; file_service_protocol?: string; journald_enabled?: boolean; parent_id?: string | null; channel_index?: number; elevated?: boolean; is_container?: boolean; local_addr?: string | null }>',
+              "session-connected plugin identity",
+          )
+          text = replace_once(
+              text,
+              '          const eventPluginId = event.payload.plugin_id || event.payload.connection_type || "serial";',
+              '          const eventPluginId = event.payload.plugin_id;',
+              "session-connected serial fallback",
+          )
+          text = replace_once(
+              text,
+              '                name: event.payload.name || `${(event.payload.plugin_id && pluginRegistry.get(event.payload.plugin_id)?.manifest.name) || event.payload.plugin_id?.toUpperCase() || "Serial"} @ ${event.payload.endpoint}`,' ,
+              '                name: event.payload.name || `${pluginRegistry.get(eventPluginId)?.manifest.name || eventPluginId.toUpperCase()} @ ${event.payload.endpoint}`,' ,
+              "session-connected Serial display fallback",
+          )
+          '''
+          if anchor not in text:
+              raise SystemExit('frontend cleanup anchor missing')
+          text = text.replace(anchor, extra + '\n' + anchor, 1)
+          # Make the migration guard reject every generic Serial fallback, not only connect().
+          text = text.replace("for forbidden in ['pluginId || \"serial\"', 'transferProtocol || \"ymodem\"']:", "for forbidden in [' || \"serial\"', ' || \"Serial\"', 'transferProtocol || \"ymodem\"']:")
+          path.write_text(text, encoding='utf-8')
+          PY
           python3 .github/scripts/plugin_review_cleanup.py
           python3 - <<'PY'
           from pathlib import Path
